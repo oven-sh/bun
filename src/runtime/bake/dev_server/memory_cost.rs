@@ -80,7 +80,6 @@ pub(crate) fn memory_cost_detailed(dev: &DevServer) -> MemoryCost {
             next_bundle: _,
             deferred_request_pool: _,
             active_websocket_connections: _,
-            dump_dir: _,
             emit_incremental_visualizer_events: _,
             emit_memory_visualizer_events: _,
             memory_visualizer_timer: _,
@@ -96,7 +95,6 @@ pub(crate) fn memory_cost_detailed(dev: &DevServer) -> MemoryCost {
     //   .configuration_hash_key
     //   .inspector_server_id
     //   .deferred_request_pool
-    //   .dump_dir
     //   .emit_incremental_visualizer_events
     //   .emit_memory_visualizer_events
     //   .frontend_only

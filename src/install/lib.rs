@@ -441,44 +441,35 @@ impl RunCommand {
         path: &[u8],
         cwd: &[u8],
     ) -> Option<&'a ZStr> {
-        #[cfg(windows)]
-        {
-            let _ = (buf, path, cwd);
-            return Some(bun_core::zstr!("C:\\Windows\\System32\\cmd.exe"));
+        for shell in Self::SHELLS_TO_SEARCH {
+            if let Some(found) = bun_which::which(buf, path, cwd, shell) {
+                // `which()` writes a NUL-terminated path into `buf` and
+                // returns a borrow of it; reborrow as `&ZStr`.
+                let len = found.len();
+                return Some(ZStr::from_buf(buf, len));
+            }
         }
 
-        #[cfg(not(windows))]
-        {
-            for shell in Self::SHELLS_TO_SEARCH {
-                if let Some(found) = bun_which::which(buf, path, cwd, shell) {
-                    // `which()` writes a NUL-terminated path into `buf` and
-                    // returns a borrow of it; reborrow as `&ZStr`.
-                    let len = found.len();
-                    return Some(ZStr::from_buf(buf, len));
-                }
+        const HARDCODED_POPULAR_ONES: &[&ZStr] = &[
+            bun_core::zstr!("/bin/bash"),
+            bun_core::zstr!("/usr/bin/bash"),
+            bun_core::zstr!("/usr/local/bin/bash"), // don't think this is a real one
+            bun_core::zstr!("/bin/sh"),
+            bun_core::zstr!("/usr/bin/sh"), // don't think this is a real one
+            bun_core::zstr!("/usr/bin/zsh"),
+            bun_core::zstr!("/usr/local/bin/zsh"),
+            bun_core::zstr!("/system/bin/sh"), // Android
+        ];
+        for &shell in HARDCODED_POPULAR_ONES {
+            if bun_sys::is_executable_file_path(shell) {
+                let body = shell.as_bytes();
+                buf[..body.len()].copy_from_slice(body);
+                buf[body.len()] = 0;
+                return Some(ZStr::from_buf(buf, body.len()));
             }
-
-            const HARDCODED_POPULAR_ONES: &[&ZStr] = &[
-                bun_core::zstr!("/bin/bash"),
-                bun_core::zstr!("/usr/bin/bash"),
-                bun_core::zstr!("/usr/local/bin/bash"), // don't think this is a real one
-                bun_core::zstr!("/bin/sh"),
-                bun_core::zstr!("/usr/bin/sh"), // don't think this is a real one
-                bun_core::zstr!("/usr/bin/zsh"),
-                bun_core::zstr!("/usr/local/bin/zsh"),
-                bun_core::zstr!("/system/bin/sh"), // Android
-            ];
-            for &shell in HARDCODED_POPULAR_ONES {
-                if bun_sys::is_executable_file_path(shell) {
-                    let body = shell.as_bytes();
-                    buf[..body.len()].copy_from_slice(body);
-                    buf[body.len()] = 0;
-                    return Some(ZStr::from_buf(buf, body.len()));
-                }
-            }
-
-            None
         }
+
+        None
     }
 
     /// Find the "best" shell to use. Cached to only run once.

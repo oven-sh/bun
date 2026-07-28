@@ -162,21 +162,17 @@ impl<'a> CopyFile<'a> {
         let close_output = !matches!(self.source_file_store.pathlike, PathOrFileDescriptor::Fd(_))
             && self.source_fd != Fd::INVALID;
 
-        // Apply destination mode using fchmod before closing (for POSIX platforms)
+        // Apply destination mode using fchmod before closing.
         // This ensures mode is applied even when overwriting existing files, since
         // open()'s mode argument only affects newly created files.
         // On macOS clonefile path, chmod is called separately after clonefile.
-        // On Windows, this is handled via async uv_fs_chmod.
-        #[cfg(not(windows))]
-        {
-            if let Some(mode) = self.destination_mode {
-                if self.destination_fd != Fd::INVALID && self.system_error.is_none() {
-                    match bun_sys::fchmod(self.destination_fd, mode) {
-                        bun_sys::Result::Err(err) => {
-                            self.system_error = Some(err.to_system_error());
-                        }
-                        bun_sys::Result::Ok(()) => {}
+        if let Some(mode) = self.destination_mode {
+            if self.destination_fd != Fd::INVALID && self.system_error.is_none() {
+                match bun_sys::fchmod(self.destination_fd, mode) {
+                    bun_sys::Result::Err(err) => {
+                        self.system_error = Some(err.to_system_error());
                     }
+                    bun_sys::Result::Ok(()) => {}
                 }
             }
         }

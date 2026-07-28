@@ -74,8 +74,7 @@ pub mod api {
         Bundle = 4,
     }
 
-    /// Open `enum(u32)` in the wire schema. Kept closed.
-    /// PascalCased: `bun_ast::Kind::to_api` matches on `Err`/`Warn`/`Note`/`Debug`.
+    /// Open `enum(u32)` in the wire schema. Kept closed. PascalCased.
     #[repr(u32)]
     #[derive(Copy, Clone, Eq, PartialEq, Debug, Default)]
     pub enum MessageLevel {

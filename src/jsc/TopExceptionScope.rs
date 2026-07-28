@@ -297,18 +297,15 @@ impl TopExceptionScope {
     /// Asserts there has not been any exception thrown.
     #[cfg(any(debug_assertions, bun_asan))]
     pub(crate) fn assert_no_exception(&mut self) {
-        #[cfg(any(debug_assertions, bun_asan))]
-        {
-            if let Some(e) = self.exception() {
-                // TerminationException can be raised at any safepoint (worker
-                // terminate(), worker process.exit()) regardless of what the host
-                // function returned, so it's never a return-value/exception
-                // mismatch — let the caller's safepoint observe it.
-                if JSValue::from_cell(e.as_ptr()).is_termination_exception() {
-                    return;
-                }
-                self.assertion_failure(e);
+        if let Some(e) = self.exception() {
+            // TerminationException can be raised at any safepoint (worker
+            // terminate(), worker process.exit()) regardless of what the host
+            // function returned, so it's never a return-value/exception
+            // mismatch — let the caller's safepoint observe it.
+            if JSValue::from_cell(e.as_ptr()).is_termination_exception() {
+                return;
             }
+            self.assertion_failure(e);
         }
     }
 
@@ -317,21 +314,16 @@ impl TopExceptionScope {
     /// this function prints a trace of where it was thrown.
     #[cfg(any(debug_assertions, bun_asan))]
     pub(crate) fn assert_exception_presence_matches(&mut self, should_have_exception: bool) {
-        #[cfg(any(debug_assertions, bun_asan))]
-        {
-            if should_have_exception {
-                // Must call `has_exception()` unconditionally inside this cfg block
-                // (not via `debug_assert!`): release+ASAN builds enter here via
-                // `bun_asan` with `debug_assertions` off, and the C++ scope's
-                // destructor will fail `verifyExceptionCheckNeedIsSatisfied` unless
-                // the underlying `VM::exception()` was actually invoked.
-                assert!(self.has_exception(), "Expected an exception to be thrown");
-            } else {
-                self.assert_no_exception();
-            }
+        if should_have_exception {
+            // Must call `has_exception()` unconditionally (not via
+            // `debug_assert!`): release+ASAN builds enter here via `bun_asan`
+            // with `debug_assertions` off, and the C++ scope's destructor will
+            // fail `verifyExceptionCheckNeedIsSatisfied` unless the underlying
+            // `VM::exception()` was actually invoked.
+            assert!(self.has_exception(), "Expected an exception to be thrown");
+        } else {
+            self.assert_no_exception();
         }
-        #[cfg(not(any(debug_assertions, bun_asan)))]
-        let _ = should_have_exception;
     }
 
     /// If no exception, returns.

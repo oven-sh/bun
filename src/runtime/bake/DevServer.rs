@@ -413,7 +413,6 @@ pub struct DevServer {
     pub(crate) active_websocket_connections: HashMap<*mut HmrSocket, ()>,
 
     // Debugging
-    pub dump_dir: (),
     /// Reference count to number of active sockets with the incremental_visualizer enabled.
     pub(crate) emit_incremental_visualizer_events: u32,
     /// Reference count to number of active sockets with the memory_visualizer enabled.
@@ -477,8 +476,6 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
     // relaxed `fetch_add(1)` is equivalent in practice.
     bun_core::analytics::Features::DEV_SERVER.fetch_add(1, ::core::sync::atomic::Ordering::Relaxed);
 
-    let dump_dir = ();
-
     let separate_ssr_graph = options
         .framework
         .server_components
@@ -525,10 +522,6 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
         );
         w!(generation, 0);
         w!(graph_safety_lock, ThreadLock::init_unlocked());
-        // `dump_dir` is written LAST (just before `assume_init()` below), not
-        // here — see the comment at its declaration. Moving it into the
-        // `MaybeUninit` early would leak the fd on any error return between
-        // here and `assume_init()`, since `MaybeUninit` never drops fields.
         w!(framework, options.framework);
         w!(bundler_options, options.bundler_options);
         w!(emit_incremental_visualizer_events, 0);
@@ -722,12 +715,6 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
 
         w!(bundler_framework_views, bundler_framework_views);
     }
-
-    // `dump_dir` is moved into the struct as the *last* field write so its
-    // `Drop` (which closes the fd) still runs if any earlier `?` above
-    // returned early — `MaybeUninit` never runs field destructors.
-    // SAFETY: per-field write into uninit struct; see `w!` SAFETY above.
-    unsafe { w!(dump_dir, dump_dir) };
 
     // ── every field is now written ───────────────────────────────────────────
     // SAFETY: all fields of `*p` were written exactly once above via
@@ -1067,7 +1054,6 @@ impl Drop for DevServer {
                 next_bundle: _,
                 deferred_request_pool: _,
                 active_websocket_connections: _,
-                dump_dir: _,
                 emit_incremental_visualizer_events: _,
                 emit_memory_visualizer_events: _,
                 memory_visualizer_timer: _,

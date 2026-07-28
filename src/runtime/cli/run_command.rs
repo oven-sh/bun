@@ -3931,7 +3931,6 @@ impl BunXFastPath {
     /// UTF-8 argument to UTF-16, applying Windows command-line quoting/escaping
     /// per the canonical "Everyone quotes command line arguments the wrong way"
     /// rules. Writes into `buffer` and returns the number of u16s written.
-    #[cfg(windows)]
     fn append_windows_argument(buffer: &mut [u16], arg: &[u8]) -> usize {
         let mut wbuf = [0u16; bun_paths::MAX_WPATH];
         let warg = strings::convert_utf8_to_utf16_in_buffer(&mut wbuf, arg);
@@ -4001,7 +4000,6 @@ impl BunXFastPath {
     }
 
     /// If this returns, it implies the fast path cannot be taken.
-    #[cfg(windows)]
     pub(crate) fn try_launch(
         ctx: &mut ContextData,
         path_len: usize,
@@ -4085,7 +4083,6 @@ impl BunXFastPath {
         bun_core::scoped_log!(BUNX_FAST_PATH_LOG, "did not start via shim");
     }
 
-    #[cfg(windows)]
     fn direct_launch_callback(wpath: &mut [u16], ctx: bun_options_types::context::Context<'_>) {
         // SAFETY: process-lifetime static, single-threaded CLI dispatch.
         // `try_launch` (still on the call stack) holds live `&mut [u16]`

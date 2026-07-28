@@ -409,26 +409,8 @@ type Str = &'static [u8];
 // `Str` is a lifetime-erased byte-slice alias; see the module-level OWNERSHIP
 // note for the real ownership story.
 
-// ───────────────────────────────────────────────────────────────────────────
-// api — hand-written slice of `bun.schema.api` consumed by
-// `Kind/Location/Data/Msg/Log::to_api`. The full
-// peechy → .rs codegen (`bun_api`) will supersede this; field shapes are kept
-// faithful so the generated diff stays reviewable. Lives here (not `bun_api`)
-// ───────────────────────────────────────────────────────────────────────────
+// api — warning/error counters returned by `Log::to_api`.
 pub mod api {
-    /// `MessageLevel` — u32 enum, 1-based; `None` = 0.
-    #[repr(u32)]
-    #[derive(Clone, Copy, Default, PartialEq, Eq, Debug)]
-    pub enum MessageLevel {
-        #[default]
-        None = 0,
-        Err = 1,
-        Warn = 2,
-        Note = 3,
-        Info = 4,
-        Debug = 5,
-    }
-
     #[derive(Clone, Default, Debug)]
     pub struct Log {
         pub warnings: u32,

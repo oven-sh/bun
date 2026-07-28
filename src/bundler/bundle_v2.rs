@@ -1306,7 +1306,6 @@ pub mod bv2_impl {
     use crate::parse_task::{self, ParseTask};
     use crate::thread_pool::ThreadPool;
 
-    bun_core::declare_scope!(part_dep_tree, visible);
     bun_core::declare_scope!(Bundle, visible);
     bun_core::declare_scope!(scan_counter, visible);
     bun_core::declare_scope!(ReachableFiles, visible);

@@ -2254,7 +2254,6 @@ pub mod internal {
 
     #[cfg(target_os = "macos")]
     impl MacAsyncDNS {
-        #[cfg(target_os = "macos")]
         pub(crate) fn on_machport_change(this: *mut Request) {
             // SAFETY: `this` is the heap-allocated Request the FilePoll was registered with.
             unsafe {

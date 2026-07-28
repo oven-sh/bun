@@ -4229,19 +4229,12 @@ pub(crate) fn which<'a>(
         buf.0[n..n + bin.len()].copy_from_slice(bin);
         n += bin.len();
         buf.0[n] = 0;
-        #[cfg(unix)]
         // SAFETY: `buf.0[n] == 0` was just written, so `buf.0.as_ptr()` is a
         // valid NUL-terminated C string for `access(2)`.
         unsafe {
             if libc::access(buf.0.as_ptr().cast(), libc::X_OK) == 0 {
                 return Some(n);
             }
-        }
-        #[cfg(not(unix))]
-        {
-            // No X_OK probe here: this tier-0 helper is only reached from the
-            // linux/freebsd `spawn_sync_inherit` path. Windows callers resolve
-            // executables via `bun_which` (PATHEXT-aware) instead.
         }
         None
     };
@@ -4263,8 +4256,7 @@ pub(crate) fn which<'a>(
         return check(buf, cwd, bin).map(|n| ZStr::from_buf(&buf.0, n));
     }
     // Bare names go straight to PATH — do NOT consult cwd.
-    let delim: u8 = if cfg!(windows) { b';' } else { b':' };
-    for dir in path.split(|&b| b == delim) {
+    for dir in path.split(|&b| b == b':') {
         if dir.is_empty() {
             continue;
         }

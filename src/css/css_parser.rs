@@ -2154,15 +2154,11 @@ mod rule_parsers {
     }
 } // mod rule_parsers
 
-/// A result returned from `to_css`, including the serialized CSS and other
-/// metadata depending on the input options.
+/// A result returned from `to_css`.
 pub struct ToCssResult {
     /// Serialized CSS code.
     pub code: Vec<u8>,
 }
-
-/// Like `ToCssResult`, but with the css-module maps at their real borrowed lifetime.
-pub struct ToCssResultInternal {}
 
 #[derive(Default)]
 pub struct MinifyOptions {
@@ -2466,7 +2462,7 @@ mod stylesheet_impl {
             import_info: Option<ImportInfo<'a>>,
             local_names: Option<&'a LocalsResultsMap>,
             symbols: &'a bun_ast::symbol::Map,
-        ) -> PrintResult<ToCssResultInternal> {
+        ) -> PrintResult<()> {
             // Note: PrinterOptions has `&mut SourceMap` and so isn't Copy; capture
             // the lone field we re-read after moving `options` into Printer::new.
             let project_root = options.project_root;
@@ -2492,7 +2488,7 @@ mod stylesheet_impl {
             &'a self,
             printer: &mut Printer<'a>,
             project_root: Option<&[u8]>,
-        ) -> Result<ToCssResultInternal, PrintErr> {
+        ) -> Result<(), PrintErr> {
             // #[cfg(feature = "sourcemap")] { printer.sources = Some(&self.sources); }
             // #[cfg(feature = "sourcemap")] if printer.source_map.is_some() { ... }
 
@@ -2535,11 +2531,11 @@ mod stylesheet_impl {
 
                 printer.css_module = None;
 
-                return Ok(ToCssResultInternal {});
+                return Ok(());
             } else {
                 self.rules.to_css(printer)?;
                 printer.newline()?;
-                return Ok(ToCssResultInternal {});
+                return Ok(());
             }
         }
 
@@ -2555,14 +2551,7 @@ mod stylesheet_impl {
             // Make sure we always have capacity > 0: https://github.com/napi-rs/napi-rs/issues/1124.
             // PERF: this always heap-allocates — profile if hot.
             let mut dest: Vec<u8> = Vec::with_capacity(1);
-            let ToCssResultInternal {} = self.to_css_with_writer(
-                arena,
-                &mut dest,
-                options,
-                import_info,
-                local_names,
-                symbols,
-            )?;
+            self.to_css_with_writer(arena, &mut dest, options, import_info, local_names, symbols)?;
             return Ok(ToCssResult { code: dest });
         }
 

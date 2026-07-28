@@ -441,7 +441,6 @@ impl FSWatchTaskWindows {
         ctx.unref_task();
     }
 
-    #[cfg(windows)]
     fn run_path<const EVENT_TYPE: EventType>(ctx: &FSWatcher, path: &mut StringOrBytesToDecode) {
         use bun_jsc::StringJsc;
         if ctx.encoding == Encoding::Utf8 {
@@ -466,11 +465,6 @@ impl FSWatchTaskWindows {
             ctx.emit::<EVENT_TYPE>(&bytes);
             drop(bytes);
         }
-    }
-
-    #[cfg(not(windows))]
-    fn run_path<const EVENT_TYPE: EventType>(_ctx: &FSWatcher, _path: &mut EventPathString) {
-        unreachable!("FSWatchTaskWindows::run is windows-only")
     }
 
     /// `FSWatchTaskWindows.deinit`. Explicit, not
@@ -511,7 +505,6 @@ impl FSWatcher {
 
         if this.verbose {
             match &event {
-                #[cfg(not(windows))]
                 Event::Rename(value) | Event::Change(value) => {
                     if is_file {
                         bun_core::pretty_errorln!(
@@ -529,12 +522,7 @@ impl FSWatcher {
             }
         }
 
-        #[cfg(not(windows))]
-        {
-            this.current_task.with_mut(|t| t.append(event, true));
-        }
-        #[cfg(windows)]
-        let _ = (event, is_file);
+        this.current_task.with_mut(|t| t.append(event, true));
     }
 
     #[cfg(windows)]
@@ -543,7 +531,6 @@ impl FSWatcher {
 
         if this.verbose {
             match &event {
-                #[cfg(windows)]
                 Event::Rename(value) | Event::Change(value) => {
                     if is_file {
                         bun_core::pretty_errorln!("<r> <d>File changed: {}<r>", value);

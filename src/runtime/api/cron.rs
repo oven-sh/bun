@@ -2498,19 +2498,12 @@ fn make_temp_path(prefix: &'static str) -> Result<ZString, bun_alloc::AllocError
 // No JSC dependencies — operate on `&[u8]` and `cron_parser::CronExpression`.
 // ============================================================================
 
-/// Get the current user ID portably.
+/// Get the current user ID.
 #[cfg(target_os = "macos")]
 pub(crate) fn get_uid() -> u32 {
-    #[cfg(unix)]
-    {
-        // `bun_sys::c::getuid` is declared `safe fn` (no args, never fails) —
-        // discharges the per-site proof the raw `libc` decl required.
-        sys::c::getuid() as u32
-    }
-    #[cfg(not(unix))]
-    {
-        0
-    }
+    // `bun_sys::c::getuid` is declared `safe fn` (no args, never fails) —
+    // discharges the per-site proof the raw `libc` decl required.
+    sys::c::getuid() as u32
 }
 
 /// Validate title: only [a-zA-Z0-9_-], non-empty.

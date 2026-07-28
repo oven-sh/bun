@@ -1224,6 +1224,9 @@ pub fn enqueue_zeroed_concurrent_task_for_testing(
     global_object: &JSGlobalObject,
     _frame: &CallFrame,
 ) -> JsResult<JSValue> {
+    // The next drain panics deliberately; keep the core file and crash-report
+    // upload out of CI's result set.
+    bun_crash_handler::suppress_reporting();
     let event_loop = global_object.bun_vm().event_loop_shared();
     let raw = ConcurrentTaskItem::new(ConcurrentTaskItem {
         auto_delete: true,

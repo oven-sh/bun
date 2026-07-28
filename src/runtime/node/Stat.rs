@@ -53,7 +53,8 @@ impl<const BIG: bool> StatType<BIG> {
 
     fn to_time_ms_i64(ts: StatTimespec) -> i64 {
         let (sec, nsec) = Self::timespec_parts(ts);
-        sec.saturating_mul(MS_PER_S).saturating_add(nsec / NS_PER_MS)
+        sec.saturating_mul(MS_PER_S)
+            .saturating_add(nsec / NS_PER_MS)
     }
 
     fn to_time_ms_f64(ts: StatTimespec) -> f64 {

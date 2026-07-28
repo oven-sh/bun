@@ -1582,7 +1582,8 @@ impl PublishCommand {
     /// the first match from `readdir` (same ordering npm's glob walks, in practice),
     /// or `None` if none is present.
     pub(crate) fn find_workspace_readme(abs_workspace_path: &[u8]) -> Option<ReadmeInfo> {
-        let workspace_dir = bun_sys::Dir::from_fd(bun_sys::open_dir_absolute(abs_workspace_path).ok()?);
+        let workspace_dir =
+            bun_sys::Dir::from_fd(bun_sys::open_dir_absolute(abs_workspace_path).ok()?);
 
         let mut iter = DirIterator::iterate(workspace_dir.fd);
         while let Some(entry) = iter.next().ok().flatten() {

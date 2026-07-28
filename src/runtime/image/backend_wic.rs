@@ -527,7 +527,9 @@ impl ComPtr<IWICBitmapEncoder> {
         unsafe { ((*(*self.as_ptr()).vt).Initialize)(self.as_ptr(), stream, cache) }
     }
     #[inline]
-    fn create_new_frame(&self) -> Option<(ComPtr<IWICBitmapFrameEncode>, Option<ComPtr<IUnknown>>)> {
+    fn create_new_frame(
+        &self,
+    ) -> Option<(ComPtr<IWICBitmapFrameEncode>, Option<ComPtr<IUnknown>>)> {
         let mut frame = ptr::null_mut();
         let mut props = ptr::null_mut();
         let hr = unsafe {

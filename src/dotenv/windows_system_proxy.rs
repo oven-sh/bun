@@ -304,7 +304,6 @@ unsafe impl Sync for PacInner {}
 impl Pac {
     #[cfg(windows)]
     fn new(auto_detect: bool, auto_config_url: &[u8]) -> Option<Self> {
-        let session = ffi::open_session()?;
         let auto_config_url: Box<[u16]> = if auto_config_url.is_empty() {
             Box::new([])
         } else {
@@ -312,6 +311,7 @@ impl Pac {
                 .ok()?
                 .into_boxed_slice()
         };
+        let session = ffi::open_session()?;
         Some(Self {
             inner: PacInner {
                 session,

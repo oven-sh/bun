@@ -1960,6 +1960,68 @@ describe("should support Content-Range with Bun.file()", () => {
       });
     });
   }
+
+  // The auto-206 for `.slice()` must key on the caller having supplied a
+  // `headers` init, not on whether a FetchHeaders object happens to exist:
+  // the lazy `headers` getter and the body-derived Content-Type also
+  // materialize one.
+  it("206 for a slice is not defeated by reading response.headers", async () => {
+    await runTest(
+      {
+        fetch() {
+          const response = new Response(Bun.file(fixture).slice(0, 10));
+          response.headers.get("x-not-set");
+          return response;
+        },
+      },
+      async server => {
+        const response = await fetch(server.url.origin);
+        expect(await response.arrayBuffer()).toEqual(full.buffer.slice(0, 10));
+        // A `.slice()` has no resolved total, so the range is reported as `*`.
+        expect(response.headers.get("content-range")).toBe("bytes 0-9/*");
+        expect(response.status).toBe(206);
+      },
+    );
+  });
+
+  it("slice with a headers init and no Content-Range stays 200", async () => {
+    await runTest(
+      {
+        fetch() {
+          return new Response(Bun.file(fixture).slice(0, 10), { headers: { "x-custom": "1" } });
+        },
+      },
+      async server => {
+        const response = await fetch(server.url.origin);
+        expect(response.headers.get("x-custom")).toBe("1");
+        expect(await response.arrayBuffer()).toEqual(full.buffer.slice(0, 10));
+        expect(response.headers.get("content-range")).toBeNull();
+        expect(response.status).toBe(200);
+      },
+    );
+  });
+
+  // `new Response(body, existingResponse)` is a headers-carrying init exactly
+  // like a plain `{ headers }`; it must not inherit the donor's own
+  // headers_from_init (the donor may have materialized its headers lazily).
+  it("slice with a Response as the headers-carrying init stays 200", async () => {
+    await runTest(
+      {
+        fetch() {
+          const donor = new Response("x");
+          donor.headers.set("x-custom", "1");
+          return new Response(Bun.file(fixture).slice(0, 10), donor);
+        },
+      },
+      async server => {
+        const response = await fetch(server.url.origin);
+        expect(response.headers.get("x-custom")).toBe("1");
+        expect(await response.arrayBuffer()).toEqual(full.buffer.slice(0, 10));
+        expect(response.headers.get("content-range")).toBeNull();
+        expect(response.status).toBe(200);
+      },
+    );
+  });
 });
 
 it("formats error responses correctly", async () => {

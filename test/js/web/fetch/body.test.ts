@@ -1,6 +1,7 @@
 import { file, spawn, version } from "bun";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, exampleSite } from "harness";
+import { bunEnv, bunExe, exampleSite, tempDir } from "harness";
+import { join } from "node:path";
 
 const exampleServer = exampleSite("http");
 
@@ -65,6 +66,22 @@ const utf8 = [
     string: "⁉️",
     buffer: new Uint8Array([0xe2, 0x81, 0x89, 0xef, 0xb8, 0x8f]),
   },
+];
+
+// Body types whose extracted Blob carries a Content-Type that the
+// Request/Response headers must reflect.
+const bodyContentTypeCases: Array<[label: string, makeBody: () => BodyInit, pattern: RegExp]> = [
+  [
+    "FormData",
+    () => {
+      const f = new FormData();
+      f.append("n", "V");
+      return f;
+    },
+    /^multipart\/form-data; boundary=/,
+  ],
+  ["URLSearchParams", () => new URLSearchParams({ a: "b" }), /^application\/x-www-form-urlencoded/],
+  ["Blob with type", () => new Blob(["x"], { type: "application/json" }), /^application\/json/],
 ];
 
 for (const { body, fn } of bodyTypes) {
@@ -671,8 +688,141 @@ for (const { body, fn } of bodyTypes) {
         });
       });
     });
+
+    // Per Fetch, the header list is fixed at construction: the body-derived
+    // Content-Type (multipart boundary, urlencoded, blob type) must be the
+    // same whether the body or the headers is read first.
+    describe("content-type survives reading the body before the headers", () => {
+      for (const [label, makeBody, pattern] of bodyContentTypeCases) {
+        for (const consume of ["arrayBuffer", "bytes", "text", "blob"] as const) {
+          test(`${label} via .${consume}()`, async () => {
+            const obj = fn(makeBody());
+            const payload = await obj[consume]();
+            const ct = obj.headers.get("content-type");
+            expect(ct).toMatch(pattern);
+            if (label === "FormData") {
+              const boundary = ct!.slice("multipart/form-data; boundary=".length);
+              expect(boundary.length).toBeGreaterThan(0);
+              const text =
+                typeof payload === "string"
+                  ? payload
+                  : payload instanceof Blob
+                    ? await payload.text()
+                    : new TextDecoder().decode(payload as ArrayBuffer | Uint8Array);
+              // The boundary in the header must match the one used in the body.
+              expect(text).toContain("--" + boundary);
+            }
+          });
+        }
+
+        // json() rejects for these non-JSON bodies but still consumes them;
+        // the header must be intact regardless of how the call settled.
+        test(`${label} via .json()`, async () => {
+          const obj = fn(makeBody());
+          await obj.json().catch(() => {});
+          expect(obj.headers.get("content-type")).toMatch(pattern);
+        });
+
+        // formData() must actually parse the multipart / urlencoded body. The
+        // typed Blob is excluded: its formData() rejects on the MIME check
+        // before consuming the body, so nothing new would be observed.
+        if (label !== "Blob with type") {
+          test(`${label} via .formData()`, async () => {
+            const obj = fn(makeBody());
+            const parsed = await obj.formData();
+            expect(Array.from(parsed.keys())).toHaveLength(1);
+            expect(obj.headers.get("content-type")).toMatch(pattern);
+          });
+        }
+
+        test(`${label} via draining .body`, async () => {
+          const obj = fn(makeBody());
+          for await (const _ of obj.body!) {
+          }
+          expect(obj.headers.get("content-type")).toMatch(pattern);
+        });
+
+        test(`${label} matches headers-first order`, async () => {
+          const a = fn(makeBody());
+          const ctBefore = a.headers.get("content-type");
+          await a.arrayBuffer();
+          expect(a.headers.get("content-type")).toBe(ctBefore);
+
+          const b = fn(makeBody());
+          await b.arrayBuffer();
+          expect(b.headers.get("content-type")).toMatch(pattern);
+        });
+
+        test(`${label} explicit Content-Type header is not overridden`, async () => {
+          const obj = fn(makeBody(), { "content-type": "text/plain" });
+          await obj.arrayBuffer();
+          expect(obj.headers.get("content-type")).toBe("text/plain");
+        });
+      }
+    });
   });
 }
+
+// fetch(request) extracts the body Blob directly, without going through the
+// BodyMixin body-consuming methods. The user-held Request's headers must still
+// carry the body-derived Content-Type afterwards (it is what a proxy or
+// middleware forwards), and it must match what was actually sent on the wire.
+describe("Request content-type survives fetch(request) and matches the wire", () => {
+  for (const [label, makeBody, pattern] of bodyContentTypeCases) {
+    test(label, async () => {
+      const { promise, resolve } = Promise.withResolvers<{ contentType: string | null; body: string }>();
+      await using server = Bun.serve({
+        port: 0,
+        async fetch(req) {
+          resolve({ contentType: req.headers.get("content-type"), body: await req.text() });
+          return new Response("ok");
+        },
+      });
+
+      const req = new Request(server.url, { method: "POST", body: makeBody() });
+      const res = await fetch(req);
+      expect(await res.text()).toBe("ok");
+
+      const received = await promise;
+      const ct = req.headers.get("content-type");
+      expect(ct).toMatch(pattern);
+      expect(received.contentType).toBe(ct);
+      if (label === "FormData") {
+        const boundary = ct!.slice("multipart/form-data; boundary=".length);
+        expect(boundary.length).toBeGreaterThan(0);
+        expect(received.body).toContain("--" + boundary);
+      }
+    });
+  }
+});
+
+// Responses fetched from data:, file:, and blob: URLs derive their Content-Type
+// from the body Blob too, so it must also survive the body being read first.
+describe("fetch() non-remote response content-type survives body consumption", () => {
+  test("data: URL", async () => {
+    const res = await fetch("data:application/json,{}");
+    expect(await res.text()).toBe("{}");
+    expect(res.headers.get("content-type")).toBe("application/json;charset=utf-8");
+  });
+
+  test("blob: URL", async () => {
+    const url = URL.createObjectURL(new Blob(["body"], { type: "text/css" }));
+    try {
+      const res = await fetch(url);
+      expect(await res.text()).toBe("body");
+      expect(res.headers.get("content-type")).toBe("text/css;charset=utf-8");
+    } finally {
+      URL.revokeObjectURL(url);
+    }
+  });
+
+  test("file: URL", async () => {
+    using dir = tempDir("body-file-url-ct", { "a.json": "{}" });
+    const res = await fetch(Bun.pathToFileURL(join(String(dir), "a.json")));
+    expect(await res.text()).toBe("{}");
+    expect(res.headers.get("content-type")).toBe("application/json;charset=utf-8");
+  });
+});
 
 function arrayBuffer(buffer: BufferSource) {
   if (buffer instanceof ArrayBuffer) {

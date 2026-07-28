@@ -244,6 +244,26 @@ describe("blob: scheme fetch", () => {
       expect(async () => await fetch(url, { headers: { Range: header } })).toThrow(TypeError);
     },
   );
+
+  test("resolves a file-backed blob's size before Content-Length/Range", async () => {
+    using dir = tempDir("blob-scheme-file", { "x.bin": "hello" });
+    const fileUrl = URL.createObjectURL(Bun.file(path.join(String(dir), "x.bin")));
+    try {
+      const full = await fetch(fileUrl);
+      expect(full.headers.get("Content-Length")).toBe("5");
+      expect(await full.text()).toBe("hello");
+
+      const part = await fetch(fileUrl, { headers: { Range: "bytes=-3" } });
+      expect({
+        status: part.status,
+        contentLength: part.headers.get("Content-Length"),
+        contentRange: part.headers.get("Content-Range"),
+      }).toEqual({ status: 206, contentLength: "3", contentRange: "bytes 2-4/5" });
+      expect(await part.text()).toBe("llo");
+    } finally {
+      URL.revokeObjectURL(fileUrl);
+    }
+  });
 });
 
 test("blob: URL has Content-Type", async () => {

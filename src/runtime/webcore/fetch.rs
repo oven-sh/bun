@@ -253,13 +253,17 @@ fn blob_scheme_fetch(
         ));
     };
 
+    if blob.size.get() == blob::MAX_SIZE {
+        blob.resolve_size();
+    }
     let full_length = blob.size.get();
+    let size_known = full_length != blob::MAX_SIZE;
     let mut status_code: u16 = 200;
     let mut status_text: &[u8] = b"OK";
     let mut content_range_buf = [0u8; crate::server::range_request::CONTENT_RANGE_BUF];
     let mut content_range: &[u8] = b"";
 
-    if let Some(header) = range_header {
+    if let Some(header) = range_header.filter(|_| size_known) {
         match crate::server::range_request::parse(header, full_length) {
             crate::server::range_request::Result::Satisfiable { start, end } => {
                 let len = end - start + 1;
@@ -284,14 +288,18 @@ fn blob_scheme_fetch(
     }
 
     let mut response_headers = response::HeadersRef::create_empty();
-    let mut len_buf = [0u8; 20];
-    let len_str =
-        bun_core::fmt::buf_print_infallible(&mut len_buf, format_args!("{}", blob.size.get()));
-    response_headers.put(
-        HTTPHeaderName::ContentLength,
-        &BunString::borrow_utf8(len_str),
-        global_this,
-    )?;
+    if size_known {
+        let mut len_buf = [0u8; 20];
+        let len_str = bun_core::fmt::buf_print_infallible(
+            &mut len_buf,
+            format_args!("{}", blob.size.get()),
+        );
+        response_headers.put(
+            HTTPHeaderName::ContentLength,
+            &BunString::borrow_utf8(len_str),
+            global_this,
+        )?;
+    }
     let content_type = blob.content_type.get();
     response_headers.put(
         HTTPHeaderName::ContentType,

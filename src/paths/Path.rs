@@ -505,6 +505,14 @@ impl<U: PathUnit, const SEP_OPT: u8> Buf<U, SEP_OPT> {
     }
 }
 
+impl<U: PathUnit, const SEP_OPT: u8> path::PathDest for Buf<U, SEP_OPT> {
+    #[inline]
+    fn writable(&mut self, min: usize) -> &mut [u8] {
+        self.ensure_capacity(min);
+        U::id_u8_mut(self.as_mut_slice())
+    }
+}
+
 /// Width-generic `bun.strings.basename`.
 /// Platform-split: POSIX recognizes only `/`; Windows recognizes `/`, `\`, and
 /// the `X:` drive designator at index 1.
@@ -1132,18 +1140,16 @@ impl<U: PathUnit, const KIND: u8, const SEP_OPT: u8, const CHECK: u8>
         let cloned = self.clone();
 
         {
-            let mut needed = cloned.len() + 8;
-            for part in parts {
-                needed += part.len() + 1;
-            }
-            self._buf.ensure_capacity(needed);
-            let pooled: &mut [u8] = U::id_u8_mut(self._buf.as_mut_slice());
             let cloned_slice: &[u8] = U::id_u8(cloned.slice());
             // TypeId check above proves U == u8; trait-dispatched identity (no
             // `unsafe`) — the u8 impl is `fn(s) { s }`, the u16 default is
             // `unreachable!()` and is const-folded out in this monomorphisation.
             let parts_u8: &[&[u8]] = U::id_u8_slices(parts);
-            let joined = sep_dispatch!(join_abs_string_buf(cloned_slice, pooled, parts_u8));
+            let joined = sep_dispatch!(join_abs_string_buf_dest(
+                cloned_slice,
+                &mut self._buf,
+                parts_u8
+            ));
 
             let trimmed = trim_input(TrimInputKind::Abs, joined);
             self._buf.len = trimmed.len();
@@ -1171,11 +1177,10 @@ impl<U: PathUnit, const KIND: u8, const SEP_OPT: u8, const CHECK: u8>
                 // part: &[u8], unit: u8
                 let cloned = self.clone();
                 let part_u8: &[u8] = C::id_u8(part);
-                self._buf.ensure_capacity(cloned.len() + part_u8.len() + 8);
                 let cwd_path: &[u8] = U::id_u8(cloned.slice());
 
-                let pooled: &mut [u8] = U::id_u8_mut(self._buf.as_mut_slice());
-                let joined = sep_dispatch!(join_string_buf(pooled, &[cwd_path, part_u8]));
+                let joined =
+                    sep_dispatch!(join_string_buf_dest(&mut self._buf, &[cwd_path, part_u8]));
 
                 let trimmed = trim_input(TrimInputKind::Abs, joined);
                 self._buf.len = trimmed.len();
@@ -1190,8 +1195,9 @@ impl<U: PathUnit, const KIND: u8, const SEP_OPT: u8, const CHECK: u8>
                 // part: &[u16], unit: u16
                 let cloned = self.clone();
                 let part_u16: &[u16] = C::id_u16(part);
-                self._buf.ensure_capacity(cloned.len() + part_u16.len() + 8);
                 let cwd_path: &[u16] = U::id_u16(cloned.slice());
+                self._buf
+                    .ensure_capacity(path::join_capacity(&[cwd_path, part_u16]));
 
                 let pooled: &mut [u16] = U::id_u16_mut(self._buf.as_mut_slice());
                 let joined = sep_dispatch!(join_string_buf_w_same(pooled, &[cwd_path, part_u16]));
@@ -1221,11 +1227,7 @@ impl<U: PathUnit, const KIND: u8, const SEP_OPT: u8, const CHECK: u8>
         if TypeId::of::<U>() == TypeId::of::<u8>() {
             let from_u8: &[u8] = U::id_u8(self.slice());
             let to_u8: &[u8] = U::id_u8(to.slice());
-            output
-                ._buf
-                .ensure_capacity(relative_capacity(from_u8, to_u8));
-            let pooled: &mut [u8] = U::id_u8_mut(output._buf.as_mut_slice());
-            let rel = path::relative_buf_z(pooled, from_u8, to_u8);
+            let rel = path::relative_buf_z_dest(&mut output._buf, from_u8, to_u8);
             let trimmed = trim_input(TrimInputKind::Rel, rel.as_bytes());
             output._buf.len = trimmed.len();
         } else {
@@ -1238,15 +1240,9 @@ impl<U: PathUnit, const KIND: u8, const SEP_OPT: u8, const CHECK: u8>
             let mut to_tmp: Path<u8, { Kind::ANY }, { PathSeparators::ANY }> = Path::init();
             to_tmp.buf_append_input(to.slice(), false);
             let mut rel_tmp: Path<u8, { Kind::ANY }, { PathSeparators::ANY }> = Path::init();
-            rel_tmp
-                ._buf
-                .ensure_capacity(relative_capacity(from_tmp.slice(), to_tmp.slice()));
 
-            let rel = path::relative_buf_z(
-                rel_tmp._buf.as_mut_slice(),
-                from_tmp.slice(),
-                to_tmp.slice(),
-            );
+            let rel =
+                path::relative_buf_z_dest(&mut rel_tmp._buf, from_tmp.slice(), to_tmp.slice());
             let trimmed = trim_input(TrimInputKind::Rel, rel.as_bytes());
 
             output._buf.ensure_capacity(trimmed.len());
@@ -1346,23 +1342,6 @@ impl<U: PathUnit, const KIND: u8, const SEP_OPT: u8, const CHECK: u8> Drop
             U::pool_put(pooled);
         }
     }
-}
-
-/// Provable worst-case output length of `resolve_path::relative_buf_z`: every
-/// component of the normalized `from` can expand to a `..` + separator,
-/// followed by the tail of the normalized `to`, plus the NUL sentinel.
-/// Relative inputs are resolved against `top_level_dir`; both normalized
-/// forms live in fixed `MAX_PATH_BYTES` scratch inside the helper.
-fn relative_capacity(from: &[u8], to: &[u8]) -> usize {
-    let normalized_bound = |input: &[u8]| -> usize {
-        let top_level = if is_input_absolute(input) || !crate::fs::FileSystem::instance_loaded() {
-            0
-        } else {
-            crate::fs::FileSystem::instance().top_level_dir().len() + 2
-        };
-        (input.len() + top_level).min(MAX_PATH_BYTES)
-    };
-    3 * (normalized_bound(from) + 2) + normalized_bound(to) + 8
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -1682,6 +1661,44 @@ mod tests {
         expected.extend_from_slice(b"/b/x");
         assert!(expected.len() > MAX_PATH_BYTES);
         assert_eq!(rel.slice(), &expected[..]);
+    }
+
+    #[test]
+    fn relative_on_path_grown_past_max_path_bytes() {
+        let mut from_bytes: Vec<u8> = Vec::new();
+        while from_bytes.len() <= MAX_PATH_BYTES {
+            from_bytes.extend_from_slice(b"/from");
+        }
+        let components = from_bytes.len() / 5;
+        let from_path: AbsPath = AbsPath::from(&from_bytes[..]).assume_ok();
+        assert!(from_path.len() > MAX_PATH_BYTES);
+        let to_path: AbsPath = AbsPath::from(b"/other/leaf".as_slice()).assume_ok();
+        let rel = from_path.relative(&to_path);
+
+        let mut expected: Vec<u8> = Vec::new();
+        for i in 0..components {
+            if i > 0 {
+                expected.push(b'/');
+            }
+            expected.extend_from_slice(b"..");
+        }
+        expected.extend_from_slice(b"/other/leaf");
+        assert_eq!(rel.slice(), &expected[..]);
+    }
+
+    #[test]
+    fn join_on_path_grown_past_max_path_bytes() {
+        let mut base: Vec<u8> = Vec::from(&b"/root"[..]);
+        while base.len() <= MAX_PATH_BYTES {
+            base.extend_from_slice(b"/grown");
+        }
+        let mut path: AbsPath = AbsPath::from(&base[..]).assume_ok();
+        assert!(path.len() > MAX_PATH_BYTES);
+        path.join(&[b"tail", b"../leaf"]).assume_ok();
+
+        let mut expected = base.clone();
+        expected.extend_from_slice(b"/leaf");
+        assert_eq!(path.slice(), &expected[..]);
     }
 
     #[test]

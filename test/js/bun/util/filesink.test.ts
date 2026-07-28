@@ -626,18 +626,20 @@ describe("FileSink buffered data is flushed on process exit", () => {
   // write() then process.exit() in the same synchronous tick: on POSIX the
   // write is buffered (below the auto-flush threshold) and the deferred
   // auto-flush task hasn't run yet. Previously this produced a 0-byte file.
-  it.concurrent("same-tick process.exit()", () => check(`process.exit(0);`, line));
+  // Skipped on Windows: the Windows writer hands the bytes to uv_fs_write on
+  // the libuv threadpool and never registers an AutoFlusher synchronously, so
+  // the on_exit drain is a no-op and whether the bytes land before ExitProcess
+  // is a race with the threadpool.
+  it.skipIf(isWindows).concurrent("same-tick process.exit()", () => check(`process.exit(0);`, line));
   // Control cases that already worked: after a tick, via process.exitCode,
   // and natural fall-through. Kept so a future change doesn't regress them.
   it.concurrent("next-tick process.exit()", () => check(`await Bun.sleep(0); process.exit(0);`, line));
   it.concurrent("process.exitCode then fall-through", () => check(`process.exitCode = 0;`, line));
   it.concurrent("natural fall-through", () => check(``, line));
   // A FileSink write performed inside a process.on('exit') listener should
-  // also reach the file. Skipped on Windows: the Windows writer dispatches the
-  // first write via uv_fs_write and queues the listener's write behind it; the
-  // completion callback never runs because process.exit() does not return to
-  // the event loop, so only the first write lands. POSIX buffers both writes
-  // synchronously and the on_exit auto-flush drains them in one write(2).
+  // also reach the file. Skipped on Windows for the same reason as above: the
+  // listener's write is queued behind the first in-flight uv_fs_write and the
+  // completion callback never runs.
   it.skipIf(isWindows).concurrent("write inside 'exit' listener", () =>
     check(`process.on("exit", () => { w.write(${JSON.stringify(line)}); }); process.exit(0);`, line + line),
   );

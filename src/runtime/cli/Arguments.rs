@@ -665,9 +665,7 @@ pub(crate) static BASE_RUNTIME_TRANSPILER_TABLE: &clap::ConvertedTable =
 pub(crate) fn tag_table(cmd: CommandTag) -> &'static clap::ConvertedTable {
     match cmd {
         CommandTag::AutoCommand => AUTO_TABLE,
-        CommandTag::RunCommand | CommandTag::RunAsNodeCommand | CommandTag::ReplCommand => {
-            RUN_TABLE
-        }
+        CommandTag::RunCommand | CommandTag::RunAsNodeCommand => RUN_TABLE,
         CommandTag::BuildCommand => BUILD_TABLE,
         CommandTag::TestCommand => TEST_TABLE,
         CommandTag::BunxCommand => RUN_TABLE,
@@ -714,7 +712,15 @@ pub use bun_bunfig::arguments::{load_config, load_config_path, load_config_with_
 /// `command::tag_params(cmd)` does a runtime lookup of the per-subcommand
 /// param table, and the per-`cmd` blocks below are guarded by
 /// `if matches!(cmd, …)`.
-pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::TransformOptions> {
+///
+/// `help_as` is the tag whose help text is printed on `--help` or a clap parse
+/// error. It equals `cmd` except for `bun repl`, which parses as `RunCommand`
+/// but prints `ReplCommand`'s help.
+pub fn parse(
+    cmd: CommandTag,
+    help_as: CommandTag,
+    ctx: Context<'_>,
+) -> crate::Result<api::TransformOptions> {
     let mut diag = clap::Diagnostic::default();
     let table = tag_table(cmd);
 
@@ -723,7 +729,7 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::TransformO
         clap::ParseOptions {
             diagnostic: Some(&mut diag),
             stop_after_positional_at: match cmd {
-                CommandTag::RunCommand | CommandTag::ReplCommand => 2,
+                CommandTag::RunCommand => 2,
                 CommandTag::AutoCommand | CommandTag::RunAsNodeCommand => 1,
                 _ => 0,
             },
@@ -733,13 +739,13 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::TransformO
         Err(err) => {
             // Report useful error and exit
             let _ = diag.report(Output::error_writer(), err);
-            command::tag_print_help(cmd, false);
+            command::tag_print_help(help_as, false);
             Global::exit(1);
         }
     };
 
     if args.flag(b"--help") {
-        command::tag_print_help(cmd, true);
+        command::tag_print_help(help_as, true);
         Output::flush();
         Global::exit(0);
     }
@@ -789,20 +795,14 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::TransformO
     // BUN_FEATURE_FLAG_NO_ORPHANS env var in main()→install() instead.
     if matches!(
         cmd,
-        CommandTag::RunCommand
-            | CommandTag::AutoCommand
-            | CommandTag::TestCommand
-            | CommandTag::ReplCommand
+        CommandTag::RunCommand | CommandTag::AutoCommand | CommandTag::TestCommand
     ) {
         if args.flag(b"--no-orphans") {
             bun_io::parent_death_watchdog::enable();
         }
     }
 
-    if matches!(
-        cmd,
-        CommandTag::RunCommand | CommandTag::AutoCommand | CommandTag::ReplCommand
-    ) {
+    if matches!(cmd, CommandTag::RunCommand | CommandTag::AutoCommand) {
         ctx.filters = slice_to_owned(args.options(b"--filter"));
         ctx.workspaces = args.flag(b"--workspaces");
         ctx.if_present = args.flag(b"--if-present");
@@ -919,7 +919,6 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::TransformO
             | CommandTag::RunCommand
             | CommandTag::BuildCommand
             | CommandTag::TestCommand
-            | CommandTag::ReplCommand
     ) {
         if !args.options(b"--conditions").is_empty() {
             opts.conditions = slice_to_owned(args.options(b"--conditions"));
@@ -933,7 +932,6 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::TransformO
             | CommandTag::RunCommand
             | CommandTag::TestCommand
             | CommandTag::RunAsNodeCommand
-            | CommandTag::ReplCommand
     ) {
         {
             let preloads = args.options(b"--preload");
@@ -1398,10 +1396,7 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::TransformO
     let jsx_runtime = args.option(b"--jsx-runtime");
     let jsx_side_effects = args.flag(b"--jsx-side-effects");
 
-    if matches!(
-        cmd,
-        CommandTag::AutoCommand | CommandTag::RunCommand | CommandTag::ReplCommand
-    ) {
+    if matches!(cmd, CommandTag::AutoCommand | CommandTag::RunCommand) {
         // "run.silent" in bunfig.toml
         if args.flag(b"--silent") {
             ctx.debug.silent = true;
@@ -1433,10 +1428,7 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::TransformO
 
     if matches!(
         cmd,
-        CommandTag::RunCommand
-            | CommandTag::AutoCommand
-            | CommandTag::BunxCommand
-            | CommandTag::ReplCommand
+        CommandTag::RunCommand | CommandTag::AutoCommand | CommandTag::BunxCommand
     ) {
         // "run.bun" in bunfig.toml
         if args.flag(b"--bun") {
@@ -1542,10 +1534,7 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::TransformO
         ctx.debug.output_file = of.into();
     }
 
-    if matches!(
-        cmd,
-        CommandTag::RunCommand | CommandTag::AutoCommand | CommandTag::ReplCommand
-    ) {
+    if matches!(cmd, CommandTag::RunCommand | CommandTag::AutoCommand) {
         if let Some(shell) = args.option(b"--shell") {
             if shell == b"bun" {
                 ctx.debug.use_system_shell = false;

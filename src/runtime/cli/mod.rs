@@ -1102,6 +1102,17 @@ pub mod command {
         }
     }
 
+    /// `ContextData.create` — see [`create_context_data_help_as`].
+    #[track_caller]
+    #[inline(always)]
+    pub fn create_context_data(
+        cmd: Tag,
+        log: &mut bun_ast::Log,
+    ) -> crate::Result<&'static mut ContextData> {
+        create_context_data_help_as(cmd, cmd, log)
+    }
+    pub use create_context_data as init;
+
     /// `ContextData.create` — populates the global ctx and runs `Arguments::parse`.
     ///
     /// `Tag` lacks `ConstParamTy` (lower-tier crate), so `cmd` is a runtime
@@ -1111,6 +1122,11 @@ pub mod command {
     /// borrow at the time of return; callers thread it down via the `ctx`
     /// parameter rather than re-deriving.
     ///
+    /// `help_as` is the user-facing subcommand: recorded in `CMD` / the crash
+    /// handler and used by `arguments::parse` for `--help` / parse-error
+    /// output. It equals `cmd` everywhere except `bun repl`, which parses as
+    /// `RunCommand`.
+    ///
     /// `#[inline(never)]`: this is the `init` step of the `bun run <script>`
     /// dispatch chain (`exec_auto_or_run → init → RunCommand::exec_with_cfg`)
     /// and must stay a concrete symbol so `src/startup.order` can place it —
@@ -1118,22 +1134,23 @@ pub mod command {
     /// would otherwise make it an inlining candidate, scattering those callees.
     #[track_caller]
     #[inline(never)]
-    pub fn create_context_data(
+    pub fn create_context_data_help_as(
         cmd: Tag,
+        help_as: Tag,
         log: &mut bun_ast::Log,
     ) -> crate::Result<&'static mut ContextData> {
         // SAFETY: single-threaded CLI startup — no other thread exists yet.
         // `CMD` is read by debug logging and `run_command` (feedback dispatch).
-        unsafe { CMD.write(Some(cmd)) };
+        unsafe { CMD.write(Some(help_as)) };
         // The crash handler can't read `CMD` (lower-tier crate); mirror the
         // one-byte command tag into its `cli_state` so crash-report trace
         // strings encode the running subcommand (Zig: `Cli.cmd = command`).
-        bun_crash_handler::cli_state::set_cmd_char(cmd.char());
+        bun_crash_handler::cli_state::set_cmd_char(help_as.char());
 
         let ctx = write_context_no_parse(log);
 
         if USES_GLOBAL_OPTIONS[cmd] {
-            ctx.args = arguments::parse(cmd, ctx)?;
+            ctx.args = arguments::parse(cmd, help_as, ctx)?;
         }
 
         #[cfg(windows)]
@@ -1151,7 +1168,6 @@ pub mod command {
 
         Ok(ctx)
     }
-    pub use create_context_data as init;
 
     /// Full subcommand dispatch.
     ///
@@ -1544,7 +1560,7 @@ pub mod command {
     #[cold]
     #[inline(never)]
     fn exec_repl(log: &mut bun_ast::Log) -> CmdResult {
-        let ctx = init(Tag::ReplCommand, log)?;
+        let ctx = create_context_data_help_as(Tag::RunCommand, Tag::ReplCommand, log)?;
         super::repl_command::ReplCommand::exec(ctx)
     }
 

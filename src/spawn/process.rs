@@ -260,17 +260,17 @@ impl Process {
         let _ = sync_;
     }
 
+    /// The waiter thread only observes exit (`WNOWAIT`); the reap happens
+    /// here, on the loop that owns `poller`/`status`, so `kill()` never sees
+    /// a live poller for a pid the kernel could have recycled.
+    ///
     /// # Safety
     /// `this` carries the +1 ref taken when the waiter-thread task was queued.
     /// `ScopedRef::adopt` releases it on return — which may free `this` — so
     /// this takes `*mut Self`, not `&mut self` (a `&mut` argument's
     /// Stacked-Borrows protector outliving the allocation is UB; see :215).
     #[cfg(unix)]
-    pub(crate) unsafe fn on_wait_pid_from_waiter_thread(
-        this: *mut Self,
-        waitpid_result: &bun_sys::Result<WaitPidResult>,
-        rusage: &Rusage,
-    ) {
+    pub(crate) unsafe fn on_wait_pid_from_waiter_thread(this: *mut Self) {
         // SAFETY: caller contract — adopts the queued +1 ref.
         let _g = unsafe { bun_ptr::ScopedRef::<Process>::adopt(this) };
         // SAFETY: `_g` keeps `this` live for this block.
@@ -280,7 +280,7 @@ impl Process {
             waiter.unref(ctx);
             self_.poller = Poller::Detached;
         }
-        self_.on_wait_pid(waitpid_result, rusage);
+        self_.wait_posix(false);
     }
 
     /// # Safety
@@ -967,12 +967,11 @@ pub mod waiter_thread_posix {
 
     pub type ConcurrentQueue<T> = UnboundedQueue<TaskQueueEntry<T>>;
 
-    /// Posted to the JS event loop from the waiter thread when a `wait4()`
-    /// resolves. Maps to `task_tag::ProcessWaiterThreadTask` in `jsc::Task`.
+    /// Posted to the JS event loop from the waiter thread once the child is
+    /// observed to have exited (still a zombie — the owning loop reaps it).
+    /// Maps to `task_tag::ProcessWaiterThreadTask` in `jsc::Task`.
     pub struct ResultTask<T: 'static> {
-        pub(crate) result: bun_sys::Result<WaitPidResult>,
         pub(crate) subprocess: *mut T,
-        pub(crate) rusage: Rusage,
     }
 
     impl<T: ProcessLike> ResultTask<T> {
@@ -988,9 +987,7 @@ pub mod waiter_thread_posix {
         pub(crate) fn run_from_main_thread(self) {
             // SAFETY: subprocess strong-ref'd before append(); released by
             // on_wait_pid_from_waiter_thread → deref().
-            unsafe {
-                T::on_wait_pid_from_waiter_thread(self.subprocess, &self.result, &self.rusage)
-            };
+            unsafe { T::on_wait_pid_from_waiter_thread(self.subprocess) };
         }
     }
 
@@ -998,7 +995,6 @@ pub mod waiter_thread_posix {
     /// the embedded intrusive `task: AnyTaskWithExtraContext` (`.ctx == self`).
     #[repr(C)]
     pub(crate) struct ResultTaskMini<T: 'static> {
-        pub(crate) result: bun_sys::Result<WaitPidResult>,
         pub(crate) subprocess: *mut T,
         pub(crate) task: AnyTaskWithExtraContext,
     }
@@ -1010,10 +1006,8 @@ pub mod waiter_thread_posix {
         }
 
         pub(crate) fn run_from_main_thread(self) {
-            let result = self.result;
-            let subprocess = self.subprocess;
             // SAFETY: see ResultTask::run_from_main_thread.
-            unsafe { T::on_wait_pid_from_waiter_thread(subprocess, &result, &rusage_zeroed()) };
+            unsafe { T::on_wait_pid_from_waiter_thread(self.subprocess) };
         }
 
         /// Stored thunk for `AnyTaskWithExtraContext` (`fn(*mut T, *mut C)`
@@ -1035,11 +1029,7 @@ pub mod waiter_thread_posix {
         fn event_loop(&self) -> EventLoopHandle;
         /// # Safety
         /// `this` must be a live, strong-ref'd pointer; callee releases one ref.
-        unsafe fn on_wait_pid_from_waiter_thread(
-            this: *mut Self,
-            result: &bun_sys::Result<WaitPidResult>,
-            rusage: &Rusage,
-        );
+        unsafe fn on_wait_pid_from_waiter_thread(this: *mut Self);
     }
 
     impl ProcessLike for Process {
@@ -1053,13 +1043,9 @@ pub mod waiter_thread_posix {
             self.event_loop
         }
         #[inline]
-        unsafe fn on_wait_pid_from_waiter_thread(
-            this: *mut Self,
-            result: &bun_sys::Result<WaitPidResult>,
-            rusage: &Rusage,
-        ) {
+        unsafe fn on_wait_pid_from_waiter_thread(this: *mut Self) {
             // SAFETY: caller contract.
-            unsafe { Process::on_wait_pid_from_waiter_thread(this, result, rusage) };
+            unsafe { Process::on_wait_pid_from_waiter_thread(this) };
         }
     }
 
@@ -1112,13 +1098,11 @@ pub mod waiter_thread_posix {
                 if pid == 0 {
                     remove = true;
                 } else {
-                    let mut rusage = rusage_zeroed();
-                    let result = posix_spawn::wait4(pid, libc::WNOHANG as u32, Some(&mut rusage));
-                    let matched = match &result {
-                        Err(_) => true,
-                        Ok(r) => r.pid == pid,
-                    };
-                    if matched {
+                    // Do not reap here — the owning event loop reaps in
+                    // `on_wait_pid_from_waiter_thread`, keeping the pid a zombie
+                    // (never recycled) while `Process::kill` may still signal it.
+                    let exited = posix_spawn::poll_exited_no_reap(pid).unwrap_or(true);
+                    if exited {
                         remove = true;
 
                         match T::event_loop(process_ref) {
@@ -1126,9 +1110,7 @@ pub mod waiter_thread_posix {
                                 let ct = ConcurrentTask::create(Task::new(
                                     T::TASK_TAG,
                                     ResultTask::<T>::new(ResultTask {
-                                        result,
                                         subprocess: process,
-                                        rusage,
                                     })
                                     .cast(),
                                 ));
@@ -1136,7 +1118,6 @@ pub mod waiter_thread_posix {
                             }
                             EventLoopHandle::Mini(mut mini) => {
                                 let out = ResultTaskMini::<T>::new(ResultTaskMini {
-                                    result,
                                     subprocess: process,
                                     task: AnyTaskWithExtraContext::default(),
                                 });

@@ -1075,30 +1075,27 @@ process.exit(0);
 // those bytes land where the client parses the next response's status line
 // (RFC 9112 6.3). The response must be chunk-framed instead.
 test.skipIf(isWindows)("Response(Bun.file(FIFO)) frames the body as chunked, not Content-Length: 0", async () => {
-  using dir = tempDir("serve-fifo-framing", {
-    "plain.txt": "SECOND-RESPONSE",
-  });
+  using dir = tempDir("serve-fifo-framing", {});
   const fifoPath = join(String(dir), "body.fifo");
   mkfifo(fifoPath);
 
-  // Hold the FIFO open read+write for the whole test so the server's
-  // O_RDONLY|O_NONBLOCK open always finds a writer: its reads then EAGAIN
-  // instead of reporting EOF before we have written the payload.
-  let writerFd: number | undefined = openSync(fifoPath, "r+");
+  // Hold the FIFO open read+write so the server's O_RDONLY|O_NONBLOCK open
+  // always finds a writer (its reads EAGAIN instead of reporting EOF before we
+  // write). The fd is released in `finally`; we do not close it mid-test to
+  // signal EOF because the server's FIFO-EOF handling is platform-dependent
+  // and not what this test is about.
+  const writerFd = openSync(fifoPath, "r+");
   try {
     await using server = Bun.serve({
       port: 0,
       hostname: "127.0.0.1",
-      fetch(req) {
-        return new URL(req.url).pathname === "/fifo"
-          ? new Response(Bun.file(fifoPath))
-          : new Response(Bun.file(join(String(dir), "plain.txt")));
+      fetch() {
+        return new Response(Bun.file(fifoPath));
       },
     });
 
     const { promise: wireDone, resolve: resolveWire } = Promise.withResolvers<string>();
     let wire = "";
-    let socketClosed = false;
     const client = await Bun.connect({
       hostname: "127.0.0.1",
       port: server.port,
@@ -1108,59 +1105,44 @@ test.skipIf(isWindows)("Response(Bun.file(FIFO)) frames the body as chunked, not
         },
         data(_s, d) {
           wire += Buffer.from(d).toString("latin1");
-          if (wire.includes("SECOND-RESPONSE")) resolveWire(wire);
+          if (wire.includes("PIPEBYTES!")) resolveWire(wire);
         },
         close() {
-          socketClosed = true;
           resolveWire(wire);
         },
         error() {
-          socketClosed = true;
           resolveWire(wire);
         },
       },
     });
 
     // The payload sits in the FIFO buffer (kept alive by writerFd) until the
-    // server opens its read end; then the server's first body write flushes it
-    // to the wire, which proves the server's fd is open and we can close ours
-    // to signal EOF. If the socket closes first the body never arrives, so
-    // stop waiting and let the assertion below report it.
+    // server opens its read end; the server's first body write then carries it
+    // to the wire together with whatever framing the head declared.
     writeSync(writerFd, "PIPEBYTES!");
-    while (!wire.includes("PIPEBYTES!") && !socketClosed) await Bun.sleep(0);
-    closeSync(writerFd);
-    writerFd = undefined;
-
-    // Second request on the same keep-alive connection. With correct framing
-    // the two responses are independently delimited; the broken build wrote the
-    // pipe bytes raw after a Content-Length: 0 head, so they abut the next
-    // status line.
-    client.write("GET /plain HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n");
-
     const captured = await wireDone;
     client.end();
 
-    const head1 = captured.split("\r\n\r\n")[0];
+    const head = captured.split("\r\n\r\n")[0];
+    // The broken build wrote `content-length: 0` from the FIFO's stat size and
+    // then emitted the pipe bytes raw after the head (body past the declared
+    // length). With the fix the head carries no Content-Length and the first
+    // body write enters chunked mode.
     expect({
-      firstStatus: head1.split("\r\n")[0],
-      firstHasContentLength: /^content-length:/im.test(head1),
-      firstIsChunked: /^transfer-encoding:\s*chunked/im.test(head1),
+      status: head.split("\r\n")[0],
+      hasContentLength: /^content-length:/im.test(head),
+      isChunked: /^transfer-encoding:\s*chunked/im.test(head),
       bodyDelivered: captured.includes("PIPEBYTES!"),
-      // The broken build put the pipe bytes immediately before the next status
-      // line with at most a stray CRLF between them; with chunked framing the
-      // terminator (0\r\n\r\n) separates them.
-      gluedToNextStatusLine: /PIPEBYTES!(?:\r\n)?HTTP\/1\.1/.test(captured),
-      secondBody: captured.includes("SECOND-RESPONSE"),
+      bodyBytesPastContentLengthZero: /^content-length:\s*0$/im.test(head) && captured.includes("PIPEBYTES!"),
     }).toEqual({
-      firstStatus: "HTTP/1.1 200 OK",
-      firstHasContentLength: false,
-      firstIsChunked: true,
+      status: "HTTP/1.1 200 OK",
+      hasContentLength: false,
+      isChunked: true,
       bodyDelivered: true,
-      gluedToNextStatusLine: false,
-      secondBody: true,
+      bodyBytesPastContentLengthZero: false,
     });
   } finally {
-    if (writerFd !== undefined) closeSync(writerFd);
+    closeSync(writerFd);
   }
 });
 

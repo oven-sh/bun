@@ -4620,9 +4620,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 .original_name
                 .slice();
 
+            // Expr names bind inside the function; Stmt names bind in the enclosing scope.
             if original_name == b"await" {
-                // Expr: name binds inside the function (reserved when the function is async).
-                // Stmt: name binds in the enclosing scope (reserved when that scope is [+Await]).
                 let reject = match kind {
                     FunctionKind::Expr => func.flags.contains(Flags::Function::IsAsync),
                     FunctionKind::Stmt => {

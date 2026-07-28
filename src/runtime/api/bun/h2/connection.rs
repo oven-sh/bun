@@ -110,11 +110,8 @@ pub struct Feed {
 /// behind a non-reading peer before the session is treated as flooded (NGHTTP2_ERR_FLOODED).
 const MAX_OUTBOUND_ACK_QUEUE: u32 = 1000;
 
-/// nghttp2's NGHTTP2_DEFAULT_STREAM_RESET_BURST / NGHTTP2_DEFAULT_STREAM_RESET_RATE
-/// (CVE-2023-44487 mitigation, nghttp2_option_set_stream_reset_rate_limit): inbound RST_STREAM
-/// frames are charged against a token bucket of `burst` tokens refilling at `rate` per second;
-/// an empty bucket tears the session down with GOAWAY(ENHANCE_YOUR_CALM) / NGHTTP2_ERR_FLOODED.
-/// node exposes these as the streamResetBurst / streamResetRate session options.
+/// nghttp2's NGHTTP2_DEFAULT_STREAM_RESET_BURST / _RATE (CVE-2023-44487): inbound RST_STREAM
+/// token-bucket defaults, exposed to JS as node's streamResetBurst / streamResetRate.
 pub const DEFAULT_STREAM_RESET_BURST: u32 = 1000;
 pub const DEFAULT_STREAM_RESET_RATE: u32 = 33;
 
@@ -251,10 +248,8 @@ pub struct Connection {
     /// Header-block reassembly across CONTINUATION (RFC 9113 §4.3). 0 = not assembling; otherwise
     /// the stream id whose header block is mid-flight and which the next frame MUST continue.
     continuation_stream: u32,
-    /// CVE-2023-44487 lookahead: receive() peeks at the frame that follows an inbound HEADERS and
-    /// records its stream id here when it is an RST_STREAM for that same stream. finish_header_block
-    /// reads it and skips on_headers_complete for a newly-opened request that the peer has already
-    /// cancelled in the very next frame, so the JS 'stream' handler never runs for it.
+    /// Set by receive() when the frame right after an inbound HEADERS is RST_STREAM for the same
+    /// id (CVE-2023-44487). finish_header_block skips on_headers_complete for that stream.
     rst_after_headers: u32,
     header_block: Vec<u8>,
     /// In-progress partial DATA frame streamed incrementally. nghttp2 delivers DATA in
@@ -286,10 +281,8 @@ pub struct Connection {
     /// obq_flood_counter_). Reset only via note_outbound_drained() when the
     /// embedder confirms its outbound buffer emptied — never per receive().
     obq_ack_pending: u32,
-    /// Inbound RST_STREAM rate limit (nghttp2's stream_reset_ratelim, CVE-2023-44487): a token
-    /// bucket of `stream_reset_burst` tokens refilling at `stream_reset_rate` per second. Each
-    /// peer-sent RST_STREAM drains one token; an empty bucket tears the session down with
-    /// GOAWAY(ENHANCE_YOUR_CALM) / NGHTTP2_ERR_FLOODED.
+    /// Inbound RST_STREAM token bucket (nghttp2's stream_reset_ratelim, CVE-2023-44487): each
+    /// peer-sent RST_STREAM drains one token; empty bucket → GOAWAY(ENHANCE_YOUR_CALM).
     pub stream_reset_burst: u32,
     pub stream_reset_rate: u32,
     reset_tokens: u32,
@@ -552,11 +545,8 @@ impl Connection {
                 break;
             }
             let payload = &remaining[wire::FRAME_HEADER_SIZE..total];
-            // CVE-2023-44487 lookahead (server only, new-stream HEADERS carrying END_HEADERS): peek
-            // at the 9-byte header of the next frame in this buffer. If it is RST_STREAM for the
-            // same id, the peer has already cancelled the stream it just opened; finish_header_block
-            // then skips on_headers_complete so the JS 'stream' handler is never reached. A HEADERS
-            // without END_HEADERS is followed by CONTINUATION, not RST_STREAM, so no lookahead there.
+            // CVE-2023-44487: peek at the next frame header. If this HEADERS is immediately
+            // followed by RST_STREAM for the same id, finish_header_block will skip dispatch.
             self.rst_after_headers = 0;
             if self.is_server
                 && matches!(hdr.typ(), Some(FrameType::Headers))
@@ -809,10 +799,8 @@ impl Connection {
         self.obq_ack_pending = 0;
     }
 
-    /// Charge one inbound RST_STREAM against the stream-reset token bucket (nghttp2's
-    /// nghttp2_ratelim_drain on stream_reset_ratelim, CVE-2023-44487). Refills `stream_reset_rate`
-    /// tokens per elapsed second up to `stream_reset_burst`; an empty bucket tears the session
-    /// down with GOAWAY(ENHANCE_YOUR_CALM) / NGHTTP2_ERR_FLOODED. Returns true when torn down.
+    /// Drain one token from the inbound RST_STREAM bucket (nghttp2_ratelim, CVE-2023-44487),
+    /// refilling `stream_reset_rate` per elapsed second. Returns true if the session was GOAWAY'd.
     fn note_peer_reset(&mut self, sink: &impl Sink) -> bool {
         let now = std::time::Instant::now();
         let elapsed = now
@@ -825,9 +813,7 @@ impl Connection {
             self.reset_tokens = self.reset_tokens.saturating_add(gain);
             self.reset_last_refill = now;
         }
-        // Clamp unconditionally: the burst is synced from the embedder after Connection::new, so
-        // the initial token count (DEFAULT_STREAM_RESET_BURST) may exceed a user-supplied
-        // streamResetBurst until the first reset arrives.
+        // burst is synced after Connection::new, so clamp every time (not only on refill).
         self.reset_tokens = self.reset_tokens.min(self.stream_reset_burst);
         if self.reset_tokens > 0 {
             self.reset_tokens -= 1;
@@ -1362,10 +1348,8 @@ impl Connection {
         {
             s.recv_final_headers = true;
         }
-        // receive() saw RST_STREAM for this id immediately after this HEADERS frame: the peer has
-        // already cancelled the request it just opened (rapid-reset), so don't dispatch it. The RST
-        // is processed as the next frame and tears the stream down normally. Gated on is_request so
-        // a trailer block (which the embedder surfaces as 'trailers', not 'stream') is unaffected.
+        // The peer already cancelled this request in the very next frame (rapid-reset): the RST
+        // runs next and tears it down, so skip dispatch. Trailer blocks are left alone.
         if is_request && self.rst_after_headers == target {
             return false;
         }

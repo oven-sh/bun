@@ -8773,10 +8773,8 @@ impl H2FrameParser {
             return Ok(JSValue::js_number(-1.0));
         }
 
-        // A server response on a stream the peer already reset (rapid-reset / client abort): the
-        // peer will discard anything sent on it, so skip HPACK encoding and the HEADERS write
-        // entirely. writeStream() already guards DATA via can_send_data(); this is the HEADERS
-        // counterpart. Client requests allocate a fresh id above and never hit this branch.
+        // Server response on a stream the peer already reset: skip HPACK + write (the DATA
+        // counterpart lives in writeStream via can_send_data()).
         if this.is_server.get()
             && let Some(existing) = this.streams.get().get(&stream_id).copied()
             // SAFETY: *mut Stream from self.streams; valid while the map entry exists.

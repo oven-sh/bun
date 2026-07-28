@@ -3668,9 +3668,7 @@ impl VirtualMachine {
         vm_ref.hot_reload = parent.hot_reload;
         vm_ref.initial_script_execution_context_identifier = worker.execution_context_id() as i32;
         vm_ref.transpiler.resolver.store_fd = opts.store_fd;
-        // Auto-install settings are CLI-wired post-init
-        // (`run_command::wire_transpiler_from_ctx`), not carried by
-        // `TransformOptions`, so inherit them from the parent.
+        // Auto-install settings (wired post-init by run_command::wire_transpiler_from_ctx).
         {
             let b = &mut vm_ref.transpiler;
             let p = &parent.transpiler;

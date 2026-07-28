@@ -252,13 +252,11 @@ test(".env value expansion", () => {
   expect(stdout).toBe("foo|foo bar|foo foo bar moo");
 });
 
-test(".env ${VAR:-default} with nested references", () => {
-  // A ${NAME} nested inside a ${VAR:-default} clause used to panic the loader
-  // ("slice index starts at N but ends at M") before any user code ran. The
-  // expander now scans left-to-right, pairs `${` with its matching `}` by
-  // depth, and expands the default clause recursively, so every case below
-  // loads and malformed forms fall through as literals.
-  const dir = tempDirWithFiles("dotenv-expand-nested", {
+test(".env ${VAR:-default} with nested references (issue #32411)", () => {
+  // https://github.com/oven-sh/bun/issues/32411
+  // `${` pairs with its matching `}` by depth and the `:-` default is expanded
+  // recursively; malformed forms (unterminated, non-`:-`) fall through as literals.
+  using dir = tempDir("dotenv-expand-nested", {
     ".env": [
       "NSTD_FALLBACK=localhost",
       "NSTD_SET=hi",
@@ -306,7 +304,7 @@ test(".env ${VAR:-default} with nested references", () => {
     "NSTD_DASH",
   ];
   const result = Bun.spawnSync([bunExe(), `${dir}/index.ts`, ...keys], {
-    cwd: dir,
+    cwd: String(dir),
     env: { ...bunEnv, NODE_ENV: undefined },
   });
   const stdout = result.stdout.toString("utf8").trim();

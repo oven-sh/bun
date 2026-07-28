@@ -147,6 +147,30 @@ impl<'a> Coordinator<'a> {
     /// group kill here plus stdin EOF in the worker loop is the best effort.
     fn abort_all(&mut self) -> ! {
         abort_handler::uninstall();
+        // Name what was still running so a stalled run is diagnosable from
+        // the log alone (a CI runner sends SIGTERM before it gives up).
+        let now = bun_core::time::milli_timestamp();
+        let workers = &self.workers[..self.spawned_count as usize];
+        let running: Vec<(u32, i64)> = workers
+            .iter()
+            .filter_map(|w| w.inflight.map(|idx| (idx, now - w.dispatched_at)))
+            .collect();
+        if !running.is_empty() {
+            bun_core::pretty_errorln!("<r>\n<red>Interrupted<r> while still running:");
+            for (idx, running_ms) in &running {
+                bun_core::pretty_errorln!(
+                    "  {} <d>({}s)<r>",
+                    bstr::BStr::new(self.rel_path(*idx)),
+                    running_ms / 1000
+                );
+            }
+            // Ranges are pre-split across every worker slot, spawned or not.
+            let not_started: u32 = self.workers.iter().map(|w| w.range.len()).sum();
+            if not_started > 0 {
+                bun_core::pretty_errorln!("<d>{} file(s) had not started<r>", not_started);
+            }
+            Output::flush();
+        }
         for w in self.workers[..self.spawned_count as usize].iter_mut() {
             if let Some(p) = w.process {
                 #[cfg(unix)]
@@ -306,18 +330,31 @@ impl<'a> Coordinator<'a> {
         if self.last_header_idx == Some(file_idx) {
             return;
         }
+        self.end_group();
         self.last_header_idx = Some(file_idx);
         let file_prefix: &[u8] = if Output::is_github_action() {
             b"::group::"
         } else {
             b""
         };
+        // One write so a `::group::` line reaches the log intact (the serial
+        // reporter's header goes out through the buffered writer).
+        let mut header: Vec<u8> = Vec::with_capacity(64);
         let _ = write!(
-            Output::error_writer(),
+            header,
             "\n{}{}:\n",
             bstr::BStr::new(file_prefix),
             bstr::BStr::new(self.rel_path(file_idx))
         );
+        let _ = Output::error_writer().write_all(&header);
+    }
+
+    /// Close the `::group::` opened by the last `ensure_header`, if any. The
+    /// worker doesn't emit its own group markers under --parallel.
+    pub(crate) fn end_group(&mut self) {
+        if self.last_header_idx.take().is_some() && Output::is_github_action() {
+            let _ = Output::error_writer().write_all(b"\n::endgroup::\n");
+        }
     }
 
     fn break_dots(&mut self) {
@@ -387,6 +424,9 @@ impl<'a> Coordinator<'a> {
                 ] = nums;
 
                 self.flush_captured(w);
+                if self.last_header_idx == Some(idx) {
+                    self.end_group();
+                }
 
                 // A worker can write file_done and crash before the coordinator
                 // reads the frame; onWorkerExit() will already have called

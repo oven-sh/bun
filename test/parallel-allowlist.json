@@ -8,11 +8,11 @@
       83745
     ],
     "fast_ms": 15000,
-    "rule": "a directory is listed when >= 67% of its bun test files are <= 15000ms (median, default lane of expected-durations.json) with zero flaky/failed annotations in the scanned builds; its other files are listed in excludeFiles",
+    "rule": "a directory is listed when >= 67% of its bun test files are <= 15000ms (median, default lane of expected-durations.json) with zero flaky/failed annotations in the scanned builds; its other files are listed in excludeFiles; docker-service and stress-named tests never qualify",
     "stats": {
       "dirs": 283,
-      "files": 1666,
-      "excluded": 129
+      "files": 1659,
+      "excluded": 136
     }
   },
   "dirs": [
@@ -342,6 +342,7 @@
     "cli/update_interactive_snapshots.test.ts",
     "js/bun/crypto/wpt-webcrypto.generateKey.test.ts",
     "js/bun/ffi/cc.test.ts",
+    "js/bun/glob/stress.test.ts",
     "js/bun/http/async-iterator-stream.test.ts",
     "js/bun/http/bun-serve-file.test.ts",
     "js/bun/http/bun-serve-html.test.ts",
@@ -353,12 +354,16 @@
     "js/bun/http/proxy-stress-adversarial.test.ts",
     "js/bun/http/proxy-stress-concurrent.test.ts",
     "js/bun/http/proxy-stress-errors.test.ts",
+    "js/bun/http/proxy-stress-headers.test.ts",
+    "js/bun/http/proxy-stress-lifecycle.test.ts",
+    "js/bun/http/proxy-stress-matrix.test.ts",
     "js/bun/http/proxy-stress-protocol.test.ts",
     "js/bun/http/proxy.test.ts",
     "js/bun/http/serve-async-stream-client-abort.test.ts",
     "js/bun/http/serve-body-leak.test.ts",
     "js/bun/http/serve-http3.test.ts",
     "js/bun/http/serve.test.ts",
+    "js/bun/jsc-stress/fixtures/simd-baseline.test.ts",
     "js/bun/net/socket.test.ts",
     "js/bun/shell/commands/rm.test.ts",
     "js/bun/shell/shell-hang.test.ts",
@@ -366,6 +371,7 @@
     "js/bun/spawn/spawn-pipe-leak.test.ts",
     "js/bun/spawn/spawn-stdin-pipe-fd-leak.test.ts",
     "js/bun/spawn/spawn-streaming-stdin.test.ts",
+    "js/bun/spawn/spawn-stress.test.ts",
     "js/bun/spawn/spawn.ipc.node-bun.test.ts",
     "js/bun/spawn/spawn.test.ts",
     "js/bun/terminal/terminal-platform-gaps.test.ts",
@@ -411,6 +417,7 @@
     "js/web/fetch/fetch-http3-client.test.ts",
     "js/web/fetch/fetch-leak.test.ts",
     "js/web/fetch/fetch-redirect.test.ts",
+    "js/web/fetch/fetch-tcp-stress.test.ts",
     "js/web/fetch/fetch.stream.test.ts",
     "js/web/fetch/fetch.test.ts",
     "js/web/fetch/headers-case.test.ts",

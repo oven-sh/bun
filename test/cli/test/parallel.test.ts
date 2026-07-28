@@ -449,8 +449,10 @@ test("--parallel --dots prints one status character per test", async () => {
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  // No file headers in dots mode.
-  expect(stderr).not.toContain(".test.js:");
+  // Dots don't get file headers; a failure's full output does (same as
+  // serial --dots), so the only header is the failing file's.
+  expect(stderr).toContain("a.test.js:");
+  expect(stderr).not.toContain("b.test.js:");
   // 7 dots (6 pass + 1 skip), no per-test "(pass) name" lines for them.
   expect(stderr.match(/\./g)!.length).toBeGreaterThanOrEqual(7);
   expect(stderr).not.toMatch(/\(pass\)/);

@@ -157,6 +157,9 @@ const dockerPrefixes = Object.keys(dockerPrestartMap);
 const files = listBunTestFiles();
 const isGood = file => {
   if (dockerPrefixes.some(prefix => file.startsWith(prefix))) return false;
+  // Stress tests saturate a machine on their own; running one alongside
+  // other workers is what makes it (or its neighbours) time out.
+  if (/stress/i.test(file)) return false;
   if (flakeCounts.has(file)) return false;
   const ms = durations[file]?.default;
   // Files without a recorded duration are new; give them the benefit of the
@@ -189,7 +192,7 @@ const out = {
     builds_scanned: builds.length,
     build_range: [Math.min(...builds), Math.max(...builds)],
     fast_ms: FAST_MS,
-    rule: `a directory is listed when >= ${Math.round(DIR_MIN_FRACTION * 100)}% of its bun test files are <= ${FAST_MS}ms (median, default lane of expected-durations.json) with zero flaky/failed annotations in the scanned builds; its other files are listed in excludeFiles`,
+    rule: `a directory is listed when >= ${Math.round(DIR_MIN_FRACTION * 100)}% of its bun test files are <= ${FAST_MS}ms (median, default lane of expected-durations.json) with zero flaky/failed annotations in the scanned builds; its other files are listed in excludeFiles; docker-service and stress-named tests never qualify`,
     stats: { dirs: dirs.length, files: eligibleFiles, excluded: excludeFiles.length },
   },
   dirs,

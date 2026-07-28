@@ -3390,7 +3390,9 @@ impl TestCommand {
 
             vm.global().handle_rejected_promises();
 
-            if Output::is_github_action() {
+            // A --parallel worker leaves group markers to the coordinator, which
+            // owns the terminal and the file headers (see CurrentFile::set).
+            if Output::is_github_action() && reporter.worker_ipc_file_idx.is_none() {
                 pretty_errorln!("<r>\n::endgroup::\n");
                 Output::flush();
             }

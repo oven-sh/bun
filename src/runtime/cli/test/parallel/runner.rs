@@ -258,6 +258,7 @@ pub fn run_as_coordinator(
     unsafe { (*(*vm_ptr).event_loop()).ensure_waker() };
     // SAFETY: see vm_ptr note above.
     unsafe { &*vm_ptr }.run_with_api_lock(|| coord.drive());
+    coord.end_group();
 
     if ctx.test_options.reporters.junit {
         if let Some(outfile) = &ctx.test_options.reporter_outfile {

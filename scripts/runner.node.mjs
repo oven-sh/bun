@@ -950,7 +950,7 @@ async function runTests() {
       }
       if (isAsan) env.BUN_FEATURE_FLAG_NO_ORPHANS = "1";
 
-      const { ok, stdout, crashes } = await startGroup(`${range} ${label}`, () =>
+      const { ok, error, stdout, crashes } = await startGroup(`${range} ${label}`, () =>
         spawnBun(execPath, {
           args: [
             "test",
@@ -961,6 +961,7 @@ async function runTests() {
           ],
           cwd,
           timeout: Math.max(10 * 60_000, bucketFiles.length * 5_000),
+          gracefulTimeout: true,
           env,
           stdout: chunk => pipeTestStdout(process.stdout, chunk),
           stderr: chunk => pipeTestStdout(process.stderr, chunk),
@@ -970,11 +971,17 @@ async function runTests() {
 
       // Attribute the bucket's failures to files: the `::error file=…`
       // annotations bun prints for each failure and the coordinator's
-      // `✗ <path> (worker crashed …)` lines.
+      // `✗ <path> (worker crashed …)` lines. A coordinator that didn't exit
+      // on its own (runner timeout, crash) leaves files it never ran with no
+      // output at all, so nothing is trusted then and the whole batch reruns.
       const byPath = new Map(bucketFiles.map(t => [join("test", t).replaceAll("\\", "/"), t]));
       const norm = p => byPath.get(p.replaceAll("\\", "/"));
       const failed = new Set();
-      if (!ok) {
+      // Only a coordinator that exited on its own with test failures gives
+      // trustworthy per-file output; a timeout, signal, or crash label means
+      // files it never ran printed nothing, so re-run the batch instead.
+      const selfExited = !error || /failing$|^code \d+$/.test(error);
+      if (!ok && selfExited) {
         // A `::error` without a usable file= (timeouts, an assertion thrown
         // from a shared helper) is attributed to the `::group::<file>:` it
         // was printed under.
@@ -1048,6 +1055,7 @@ async function runTests() {
       parallelism === 1 &&
       isTestStrict(t) &&
       !isNodeTest(t) &&
+      !/stress/i.test(t) &&
       isParallelAllowlisted(t) &&
       !needsDockerService(t) &&
       (!validationApplies || (shouldValidateExceptions(t) && shouldValidateLeakSan(t)));
@@ -1368,6 +1376,7 @@ async function spawnSafe(options) {
   let signalCode;
   let spawnError;
   let timestamp;
+  let timedOut = false;
   let duration;
   let subprocess;
   let timer;
@@ -1418,13 +1427,25 @@ async function spawnSafe(options) {
       }
       subprocess = spawn(command, args, {
         stdio: ["ignore", "pipe", "pipe"],
-        timeout,
+        timeout: options.gracefulTimeout ? undefined : timeout,
         cwd,
         env,
       });
       subprocess.on("spawn", () => {
         timestamp = Date.now();
-        timer = setTimeout(() => done(resolve), timeout);
+        // gracefulTimeout: the only kill signal is one SIGTERM (a `bun test
+        // --parallel` coordinator then names its in-flight files), then
+        // SIGKILL 15s later if it lingers; Node's own timeout kill is off in
+        // that mode so the coordinator isn't hit twice mid-abort.
+        timer = setTimeout(() => {
+          timedOut = true;
+          if (options.gracefulTimeout && !isWindows) {
+            subprocess.kill("SIGTERM");
+            timer = setTimeout(() => done(resolve), 15_000);
+            return;
+          }
+          done(resolve);
+        }, timeout);
       });
       subprocess.on("error", error => {
         spawnError = error;
@@ -1535,6 +1556,7 @@ async function spawnSafe(options) {
     }
     error = `code ${exitCode}`;
   }
+  if (timedOut) error = "timeout";
   return {
     ok: exitCode === 0 && !signalCode && !spawnError,
     error,
@@ -1584,7 +1606,7 @@ function getCombinedPath(execPath) {
  * @param {SpawnOptions} options
  * @returns {Promise<SpawnBunResult>}
  */
-async function spawnBun(execPath, { args, cwd, timeout, env, stdout, stderr }) {
+async function spawnBun(execPath, { args, cwd, timeout, gracefulTimeout, env, stdout, stderr }) {
   const path = getCombinedPath(execPath);
   const tmpdirPath = mkdtempSync(join(tmpdir(), "buntmp-"));
   const { username, homedir } = userInfo();
@@ -1638,6 +1660,7 @@ async function spawnBun(execPath, { args, cwd, timeout, env, stdout, stderr }) {
       args,
       cwd,
       timeout,
+      gracefulTimeout,
       env: bunEnv,
       stdout,
       stderr,

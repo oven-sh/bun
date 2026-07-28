@@ -53,6 +53,7 @@ use crate::program::{Host, JsxImportKind};
 /// Result of code generation for a single function.
 pub struct CodegenFunction {
     pub(crate) id: Option<LocRef>,
+    #[cfg(any(debug_assertions, bun_asan, feature = "fixtures"))]
     pub(crate) name_hint: Option<String>,
     pub(crate) params: Vec<G::Arg>,
     pub(crate) has_rest_arg: bool,
@@ -81,6 +82,7 @@ impl std::fmt::Debug for CodegenFunction {
 
 pub struct OutlinedFunction {
     pub(crate) func: CodegenFunction,
+    #[cfg(any(debug_assertions, bun_asan, feature = "fixtures"))]
     pub(crate) fn_type: Option<crate::hir::ReactFunctionType>,
 }
 
@@ -358,6 +360,7 @@ pub(crate) fn codegen_function(
         let codegen = codegen_reactive_function(&mut outlined_cx, &reactive_fn_mut)?;
         outlined.push(OutlinedFunction {
             func: codegen,
+            #[cfg(any(debug_assertions, bun_asan, feature = "fixtures"))]
             fn_type: entry.fn_type,
         });
     }
@@ -514,6 +517,7 @@ fn codegen_reactive_function(
 
     Ok(CodegenFunction {
         id,
+        #[cfg(any(debug_assertions, bun_asan, feature = "fixtures"))]
         name_hint: func.name_hint.clone(),
         params,
         has_rest_arg,

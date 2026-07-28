@@ -4678,6 +4678,7 @@ impl<const DEBUG_MODE: bool> Flags<DEBUG_MODE> {
     pub(crate) fn has_finalized(self) -> bool {
         cfg!(debug_assertions) && self.0.contains(FlagsBits::HAS_FINALIZED)
     }
+    #[cfg(debug_assertions)]
     #[inline]
     pub(crate) fn set_has_finalized(&mut self, v: bool) {
         #[cfg(debug_assertions)]

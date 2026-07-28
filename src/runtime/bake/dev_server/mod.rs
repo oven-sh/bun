@@ -387,6 +387,7 @@ pub struct HotReloadEvent {
     pub(crate) extra_files: Vec<u8>,
     pub(crate) timer: std::time::Instant,
     /// 1 if referenced, 0 if unreferenced; see `WatcherAtomics`.
+    #[cfg(debug_assertions)]
     pub(crate) contention_indicator: core::sync::atomic::AtomicU32,
     #[cfg(debug_assertions)]
     pub(crate) debug_mutex: bun_threading::Mutex,
@@ -406,6 +407,7 @@ impl HotReloadEvent {
             dirs: Default::default(),
             extra_files: Vec::new(),
             timer: std::time::Instant::now(),
+            #[cfg(debug_assertions)]
             contention_indicator: core::sync::atomic::AtomicU32::new(0),
             #[cfg(debug_assertions)]
             debug_mutex: bun_threading::Mutex::default(),

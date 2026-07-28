@@ -4012,16 +4012,14 @@ impl<'a> HTTPClient<'a> {
         socket.set_timeout(self.effective_idle_timeout_seconds());
     }
 
-    /// Decompressed-output budget per `process_body_buffer` call. Capped
-    /// only while a streaming reader is attached (`AutoPause`/`Paused`):
-    /// the reader's pull cadence drives the decode, so one socket read
-    /// cannot inflate a high-ratio compressed chunk into hundreds of MB
-    /// ahead of demand. `BufferAll`/`Ignore` and unwired callers decode
-    /// unbounded as before.
+    /// Decompressed-output budget per `process_body_buffer` call: capped to
+    /// 1 MB while a streaming reader is attached so one socket read cannot
+    /// inflate a high-ratio body ahead of demand. h3 has no leftover-drain
+    /// hook yet, so it stays unbounded.
     #[inline]
     fn decompress_output_cap(&self) -> usize {
         const STREAMING_DECOMPRESS_MAX_OUTPUT: usize = 1024 * 1024;
-        if self.signals.is_auto_pause() {
+        if self.flags.protocol != Protocol::Http3 && self.signals.is_auto_pause() {
             STREAMING_DECOMPRESS_MAX_OUTPUT
         } else {
             usize::MAX

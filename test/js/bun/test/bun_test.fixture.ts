@@ -259,7 +259,7 @@ describe("done parameter", () => {
       throw "promise error";
     });
   });
-  test("second call of done callback ignores triggers error", done => {
+  test("second call of done callback triggers error", done => {
     done();
     done("uh oh!");
   });

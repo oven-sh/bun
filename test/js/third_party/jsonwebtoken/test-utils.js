@@ -122,7 +122,12 @@ function signJWTHelper(payload, secretOrPrivateKey, options, callback) {
   if (typeof payload === "object" && !Buffer.isBuffer(payload) && !payload.iat) {
     payload = { ...payload, iat: timestamp };
   }
+  // jsonwebtoken@9 can invoke this callback twice for the Object.keys(options_to_payload)
+  // validation path (the `return failure(...)` is inside a .forEach and does not stop sign()).
+  let invoked = false;
   jwt.sign(payload, secretOrPrivateKey, options, (err, asyncSigned) => {
+    if (invoked) return;
+    invoked = true;
     let error;
     let syncSigned;
     try {
@@ -147,7 +152,10 @@ function signJWTHelper(payload, secretOrPrivateKey, options, callback) {
 // Same as above but won't automatically set the iat field. When we implement fake timers,
 // we can delete this function and use the one above with a fake timer.
 function signJWTHelperWithoutAddingTimestamp(payload, secretOrPrivateKey, options, callback) {
+  let invoked = false;
   jwt.sign(payload, secretOrPrivateKey, options, (err, asyncSigned) => {
+    if (invoked) return;
+    invoked = true;
     let error;
     let syncSigned;
     try {

@@ -6132,9 +6132,7 @@ impl crate::api::h2::connection::Sink for H2FrameParser {
                 JSValue::js_number(old_state as f64),
             );
         } else if code == ErrorCode::NO_ERROR.0 {
-            // A NO_ERROR reset closes the stream cleanly: the readable side ends ('end' then
-            // 'close'), with no 'error'. Routing it through onStreamError would destroy the
-            // stream before the queued EOF can surface. Matches handle_rst_stream_frame.
+            // Matches handle_rst_stream_frame: a NO_ERROR reset is a clean stream end.
             self.dispatch_with_extra(
                 JSH2FrameParser::Gc::onStreamEnd,
                 stream_ctx,

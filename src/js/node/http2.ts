@@ -2613,9 +2613,6 @@ class Http2Stream extends Duplex {
       }
       this.push(null);
       const { ending } = this._writableState;
-      // The RST_STREAM scheduled below replaces the stream's end-of-stream; letting _final
-      // flush an END_STREAM first would close the stream on the wire, and the peer would read
-      // an aborted response as a complete one.
       this[bunHTTP2StreamStatus] |= StreamState.RstPending;
       if (!ending) {
         // If the writable side of the Http2Stream is still open, emit the
@@ -2662,8 +2659,6 @@ class Http2Stream extends Duplex {
         this[kAborted] = true;
         this.emit("aborted");
       }
-      // As in close(): the stream is being reset, so the end-of-stream must not reach the wire
-      // ahead of the RST_STREAM scheduled below.
       this[bunHTTP2StreamStatus] |= StreamState.RstPending;
       // at this state destroyed will be true but we need to close the writable side
       this._writableState.destroyed = false;
@@ -2757,10 +2752,6 @@ class Http2Stream extends Duplex {
           return;
         }
         this[bunHTTP2StreamStatus] |= StreamState.FinalCalled;
-        // A reset is pending: settle the writable side without announcing an end-of-stream.
-        // The RST_STREAM carries the close, and an END_STREAM here would both truncate it
-        // (the native stream reaches CLOSED, which makes rstStream a no-op) and tell the peer
-        // the aborted response completed successfully.
         if ((this[bunHTTP2StreamStatus] & StreamState.RstPending) !== 0) {
           this[bunHTTP2StreamStatus] |= StreamState.WritableClosed;
           callback();
@@ -3525,7 +3516,6 @@ class ServerHttp2Stream extends Http2Stream {
     session[bunHTTP2Native]?.request(this.id, undefined, headers, sensitiveNames);
   }
   respond(headers: any, options?: any) {
-    // A closed stream is being reset: nothing more may go out on it.
     if (this.destroyed || this.closed || this.session === undefined) {
       throw $ERR_HTTP2_INVALID_STREAM();
     }

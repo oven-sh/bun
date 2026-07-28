@@ -576,6 +576,46 @@ describe("junit reporter", () => {
     expect(exitCode).toBe(1);
   });
 
+  it("records load errors under --parallel and aggregates errors= in the merged root", async () => {
+    await using tmpDir = tempDir("junit-load-errors-parallel", {
+      "package.json": "{}",
+      "a_good.test.js": `
+        import { test, expect } from "bun:test";
+        test("good", () => { expect(1).toBe(1); });
+      `,
+      "b_throw.test.js": `throw new Error("boom");`,
+      "c_syntax.test.js": `const x = ;`,
+    });
+
+    const junitPath = join(tmpDir, "junit.xml");
+    await using proc = spawn(
+      [bunExe(), "test", "--parallel=2", "--reporter=junit", "--reporter-outfile", junitPath],
+      {
+        cwd: tmpDir,
+        env: { ...bunEnv, BUN_DEBUG_QUIET_LOGS: "1" },
+        stdout: "pipe",
+        stderr: "pipe",
+      },
+    );
+    const [, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    const xmlContent = await file(junitPath).text();
+    const result = await new Promise((resolve, reject) => {
+      xml2js.parseString(xmlContent, { strict: true }, (err, r) => (err ? reject(err) : resolve(r)));
+    });
+
+    // The merged <testsuites> must carry the same errors= as the sum of inner
+    // suites; before this change the aggregator dropped it entirely.
+    const outerErrors = Number(result.testsuites.$.errors);
+    const innerErrors = result.testsuites.testsuite.reduce((a, s) => a + Number(s.$.errors), 0);
+    expect({ outerErrors, innerErrors }).toEqual({ outerErrors: 2, innerErrors: 2 });
+    expect(result.testsuites.$.tests).toBe("3");
+
+    const names = result.testsuites.testsuite.map(s => s.$.name).sort();
+    expect(names).toEqual(["a_good.test.js", "b_throw.test.js", "c_syntax.test.js"]);
+    expect(exitCode).toBe(1);
+  });
+
   it("writes the junit outfile even when every file fails to load", async () => {
     await using tmpDir = tempDir("junit-all-errors", {
       "package.json": "{}",

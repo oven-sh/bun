@@ -1386,13 +1386,25 @@ impl BunTest {
                     &mut *junit_ctx.cast::<crate::cli::test_command::JunitReporter>()
                 };
                 // `run_error_handler` short-circuits before populating a
-                // `ZigException` for `BuildMessage`/`ResolveMessage`, so pull
-                // their text directly when the callback never fired.
+                // `ZigException` for `BuildMessage`/`ResolveMessage` (and for an
+                // `AggregateError` wrapping them), so pull their text directly
+                // when the callback never fired.
                 if junit.last_failure.is_none() {
                     if let Some(m) = exception.as_class_ref::<crate::api::BuildMessage>() {
                         junit.record_failure_text(b"BuildMessage", m.msg.data.text.as_ref());
                     } else if let Some(m) = exception.as_class_ref::<crate::api::ResolveMessage>() {
                         junit.record_failure_text(b"ResolveMessage", m.msg.data.text.as_ref());
+                    } else if exception.is_aggregate_error(global_this) {
+                        let msg = exception
+                            .fast_get(global_this, bun_jsc::BuiltinName::Message)
+                            .ok()
+                            .flatten()
+                            .and_then(|v| v.to_bun_string(global_this).ok());
+                        global_this.clear_exception();
+                        if let Some(msg) = msg {
+                            let bytes = msg.to_utf8();
+                            junit.record_failure_text(b"AggregateError", bytes.slice());
+                        }
                     }
                 }
                 junit.write_unhandled_error(file).expect("oom");

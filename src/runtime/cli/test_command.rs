@@ -864,12 +864,12 @@ impl JunitReporter {
             file
         };
 
-        while !self.suite_stack.is_empty()
-            && !self.suite_stack[self.suite_stack.len() - 1].is_file_suite
-        {
-            self.end_test_suite()?;
-        }
         if !strings::eql(&self.current_file, filename) {
+            while !self.suite_stack.is_empty()
+                && !self.suite_stack[self.suite_stack.len() - 1].is_file_suite
+            {
+                self.end_test_suite()?;
+            }
             if !self.current_file.is_empty() {
                 self.end_test_suite()?;
             }

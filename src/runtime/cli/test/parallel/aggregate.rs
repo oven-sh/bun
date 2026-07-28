@@ -43,6 +43,7 @@ pub(crate) fn merge_junit_fragments(coord: &mut Coordinator, outfile: &[u8], sum
     struct Totals {
         tests: u32,
         failures: u32,
+        errors: u32,
         skipped: u32,
     }
     let mut totals = Totals::default();
@@ -64,6 +65,7 @@ pub(crate) fn merge_junit_fragments(coord: &mut Coordinator, outfile: &[u8], sum
         let head = &file[open_start..head_end];
         totals.tests += attr_value(head, b"tests");
         totals.failures += attr_value(head, b"failures");
+        totals.errors += attr_value(head, b"errors");
         totals.skipped += attr_value(head, b"skipped");
         let body_start = head_end + 1;
         let Some(body_end) = strings::last_index_of(&file, b"</testsuites>") else {
@@ -84,7 +86,7 @@ pub(crate) fn merge_junit_fragments(coord: &mut Coordinator, outfile: &[u8], sum
         let rel = coord.rel_path(idx);
         body.extend_from_slice(b"  <testsuite name=\"");
         let _ = test_command::escape_xml(rel, &mut body); // fmt::Result into Vec<u8> is infallible
-        body.extend_from_slice(b"\" tests=\"1\" assertions=\"0\" failures=\"1\" skipped=\"0\" time=\"0\">\n    <testcase name=\"(worker crashed)\" classname=\"");
+        body.extend_from_slice(b"\" tests=\"1\" assertions=\"0\" failures=\"1\" errors=\"0\" skipped=\"0\" time=\"0\">\n    <testcase name=\"(worker crashed)\" classname=\"");
         let _ = test_command::escape_xml(rel, &mut body); // fmt::Result into Vec<u8> is infallible
         body.extend_from_slice(
             b"\">\n\
@@ -102,8 +104,8 @@ pub(crate) fn merge_junit_fragments(coord: &mut Coordinator, outfile: &[u8], sum
     let _ = write!(
         &mut contents,
         "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n\
-         <testsuites name=\"bun test\" tests=\"{}\" assertions=\"{}\" failures=\"{}\" skipped=\"{}\" time=\"{}\">\n",
-        totals.tests, summary.expectations, totals.failures, totals.skipped, elapsed_time,
+         <testsuites name=\"bun test\" tests=\"{}\" assertions=\"{}\" failures=\"{}\" errors=\"{}\" skipped=\"{}\" time=\"{}\">\n",
+        totals.tests, summary.expectations, totals.failures, totals.errors, totals.skipped, elapsed_time,
     );
     contents.extend_from_slice(&body);
     contents.extend_from_slice(b"</testsuites>\n");

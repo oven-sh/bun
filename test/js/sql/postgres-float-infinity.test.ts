@@ -75,13 +75,13 @@ test.each(["float8", "float4"] as const)("scalar %s text 'Infinity'/'-Infinity'/
 
 // The array path already handled these tokens; pin it so scalar and array stay
 // consistent.
-test("float8[] text '{Infinity,-Infinity,NaN,1.5}' decodes to [Infinity, -Infinity, NaN, 1.5]", async () => {
-  const row = await runSimple(
-    [{ name: "a", typeOid: OID.float8_array }],
-    [Buffer.from("{Infinity,-Infinity,NaN,1.5}")],
-  );
-  expect(row.a[0]).toBe(Infinity);
-  expect(row.a[1]).toBe(-Infinity);
-  expect(Number.isNaN(row.a[2])).toBe(true);
-  expect(row.a[3]).toBe(1.5);
-});
+test.each(["float8_array", "float4_array"] as const)(
+  "%s text '{Infinity,-Infinity,NaN,1.5}' decodes to [Infinity, -Infinity, NaN, 1.5]",
+  async t => {
+    const row = await runSimple([{ name: "a", typeOid: OID[t] }], [Buffer.from("{Infinity,-Infinity,NaN,1.5}")]);
+    expect(row.a[0]).toBe(Infinity);
+    expect(row.a[1]).toBe(-Infinity);
+    expect(Number.isNaN(row.a[2])).toBe(true);
+    expect(row.a[3]).toBe(1.5);
+  },
+);

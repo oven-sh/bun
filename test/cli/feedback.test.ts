@@ -51,7 +51,7 @@ test("bun feedback keeps a bare word that matches a file in the cwd as message t
   expect(form.getAll("files[]")).toEqual([]);
   expect(stderr.split("\n")).not.toContain("+ crash");
   expect(stdout).toContain("Feedback sent.");
-  expect(exitCode).toBe(0);
+  expect({ exitCode, stderr }).toEqual({ exitCode: 0, stderr: expect.any(String) });
 });
 
 test("bun feedback attaches an explicit path positional and lists it on stderr", async () => {
@@ -68,5 +68,5 @@ test("bun feedback attaches an explicit path positional and lists it on stderr",
   expect(await files[0].text()).toBe("log contents");
   expect(stderr.split("\n")).toContain("+ details.log");
   expect(stdout).toContain("Feedback sent.");
-  expect(exitCode).toBe(0);
+  expect({ exitCode, stderr }).toEqual({ exitCode: 0, stderr: expect.any(String) });
 });

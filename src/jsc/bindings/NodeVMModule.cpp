@@ -107,7 +107,9 @@ JSValue NodeVMModule::evaluate(JSGlobalObject* globalObject, uint32_t timeout, b
             if (vm.hasTerminationRequest() || vm.hasPendingTerminationException()) {
                 // See checkForTermination in NodeVMScript.cpp: a termination
                 // node:vm doesn't own propagates instead.
-                if (Bun__VM__isWatchExitRequested(Bun::vm(vm)) || (!getSigintReceived() && timeout == 0)) {
+                void* bunVM = Bun::vm(vm);
+                if (Bun__VM__isWatchExitRequested(bunVM) || Bun__VM__isWorkerTerminationRequested(bunVM)
+                    || (!getSigintReceived() && timeout == 0)) {
                     scope.throwException(globalObject, vm.terminationException());
                     return {};
                 }
@@ -253,7 +255,9 @@ JSValue NodeVMModule::evaluate(JSGlobalObject* globalObject, uint32_t timeout, b
     if (vm.hasTerminationRequest() || vm.hasPendingTerminationException()) {
         // See checkForTermination in NodeVMScript.cpp: a termination node:vm
         // doesn't own propagates instead.
-        if (Bun__VM__isWatchExitRequested(Bun::vm(vm)) || (!getSigintReceived() && timeout == 0)) {
+        void* bunVM = Bun::vm(vm);
+        if (Bun__VM__isWatchExitRequested(bunVM) || Bun__VM__isWorkerTerminationRequested(bunVM)
+            || (!getSigintReceived() && timeout == 0)) {
             scope.throwException(globalObject, vm.terminationException());
             return {};
         }

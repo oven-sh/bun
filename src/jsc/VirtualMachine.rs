@@ -4553,6 +4553,15 @@ impl VirtualMachine {
         self.watch_exit_requested
     }
 
+    /// Whether this VM's Worker was asked to end (a worker-side
+    /// `process.exit()` or `worker.terminate()`); `node:vm` propagates such
+    /// terminations instead of mapping them to SIGINT/timeout errors.
+    #[unsafe(export_name = "Bun__VM__isWorkerTerminationRequested")]
+    pub extern "C" fn is_worker_termination_requested(&self) -> bool {
+        self.worker_ref()
+            .is_some_and(|worker| worker.has_requested_terminate())
+    }
+
     /// Whether the per-test-isolation source provider cache is active.
     #[unsafe(export_name = "Bun__VM__useIsolationSourceProviderCache")]
     pub extern "C" fn use_isolation_source_provider_cache(&self) -> bool {

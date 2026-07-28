@@ -312,7 +312,9 @@ static bool checkForTermination(JSC::VM& vm, JSC::JSGlobalObject* globalObject, 
         // A termination node:vm doesn't own — a `--watch` or worker
         // process.exit(), worker.terminate() — stays pending so it unwinds
         // past node:vm instead of being mapped to a SIGINT/timeout error.
-        if (Bun__VM__isWatchExitRequested(Bun::vm(vm)) || (!script->getSigintReceived() && !timeout)) {
+        void* bunVM = Bun::vm(vm);
+        if (Bun__VM__isWatchExitRequested(bunVM) || Bun__VM__isWorkerTerminationRequested(bunVM)
+            || (!script->getSigintReceived() && !timeout)) {
             scope.throwException(globalObject, vm.terminationException());
             return true;
         }

@@ -2,6 +2,10 @@
 // A preload script that touches process.nextTick (directly, or via a module that
 // does) must not change the relative order of process.nextTick vs microtasks
 // scheduled at the top level of the entry module.
+//
+// node:worker_threads workers hit the same path: since #31216 every such worker
+// implicitly preloads node:worker_threads, which pulls in node:stream and
+// touches process.nextTick before the worker's own entry runs.
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 
@@ -51,6 +55,42 @@ describe("process.nextTick ordering is preserved with --preload", () => {
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
     expect(stdout).toBe("a\nb\nnextTick\nmicrotask\npromise\n");
+    expect(exitCode).toBe(0);
+  });
+});
+
+describe("process.nextTick ordering at the top level of a worker_threads CJS entry", () => {
+  const workerOrderBody = `
+const seq = ["sync"];
+Promise.resolve().then(() => seq.push("pt"));
+queueMicrotask(() => seq.push("qm"));
+process.nextTick(() => seq.push("nt"));
+setImmediate(() => require("node:worker_threads").parentPort.postMessage(seq.join(",")));
+`;
+
+  test.concurrent.each([
+    ["file entry", `"./worker.cjs"`],
+    ["eval: true", `${JSON.stringify(workerOrderBody)}, { eval: true }`],
+  ])("matches the main thread (%s)", async (_name, workerArgs) => {
+    using dir = tempDir("issue-34115-worker", {
+      "worker.cjs": workerOrderBody,
+      "main.mjs": `
+import { Worker } from "node:worker_threads";
+const w = new Worker(${workerArgs});
+w.on("message", seq => { console.log(seq); w.terminate(); });
+w.on("error", e => { console.error(String(e)); process.exitCode = 1; });
+`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "main.mjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("sync,nt,pt,qm\n");
     expect(exitCode).toBe(0);
   });
 });

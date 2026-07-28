@@ -679,6 +679,7 @@ dependencies = [
  "bun_errno",
  "bun_paths",
  "bun_sys",
+ "bun_threading",
  "bun_url",
  "bun_which",
  "bun_wyhash",

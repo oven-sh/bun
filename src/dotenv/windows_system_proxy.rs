@@ -112,11 +112,13 @@ pub fn get() -> Option<&'static SystemProxy> {
 
 fn load() -> Option<SystemProxy> {
     if let Some(raw) = test_hook_config() {
-        return parse_raw_config(raw);
+        return parse_raw_config(&raw);
     }
     #[cfg(windows)]
     {
-        return ffi::read_ie_proxy_config().and_then(parse_raw_config);
+        return ffi::read_ie_proxy_config()
+            .as_ref()
+            .and_then(parse_raw_config);
     }
     #[cfg(not(windows))]
     None
@@ -130,7 +132,7 @@ struct RawConfig {
     proxy_bypass: Vec<u8>,
 }
 
-fn parse_raw_config(raw: RawConfig) -> Option<SystemProxy> {
+fn parse_raw_config(raw: &RawConfig) -> Option<SystemProxy> {
     let (http_proxy, https_proxy) = parse_proxy_server(&raw.proxy);
     let (no_proxy, bypass_local, disable_implicit_loopback) = parse_bypass_list(&raw.proxy_bypass);
 
@@ -189,7 +191,7 @@ fn parse_proxy_server(raw: &[u8]) -> (Vec<u8>, Vec<u8>) {
     if raw.is_empty() {
         return (Vec::new(), Vec::new());
     }
-    if !raw.iter().any(|&b| b == b'=') {
+    if !raw.contains(&b'=') {
         let href = schemeify_proxy(raw);
         return (href.clone(), href);
     }
@@ -276,7 +278,7 @@ fn first_proxy_from_list(list: &[u8]) -> Option<Vec<u8>> {
 struct Pac {
     #[cfg(windows)]
     inner: PacInner,
-    cache: std::sync::Mutex<std::collections::HashMap<Box<[u8]>, Option<Box<[u8]>>>>,
+    cache: bun_threading::Guarded<bun_collections::StringHashMap<Option<Box<[u8]>>>>,
 }
 
 #[cfg(windows)]
@@ -311,7 +313,7 @@ impl Pac {
                 auto_detect,
                 failed: std::sync::atomic::AtomicBool::new(false),
             },
-            cache: std::sync::Mutex::new(std::collections::HashMap::new()),
+            cache: bun_threading::Guarded::new(bun_collections::StringHashMap::new()),
         })
     }
 
@@ -326,17 +328,17 @@ impl Pac {
             return None;
         }
         let key = pac_cache_key(url);
-        if let Some(cached) = self.cache.lock().ok()?.get(key.as_slice()) {
+        if let Some(cached) = self.cache.lock().get(key.as_slice()) {
             return cached.as_deref().map(Self::as_static);
         }
         // CVE-2016-5134: pass only `scheme://host/`; never hand userinfo/path/query to a WPAD-fetched PAC script.
         let mut sanitized = key.clone();
         sanitized.push(b'/');
         let proxy = self.resolve_uncached(&sanitized).map(Vec::into_boxed_slice);
-        let mut cache = self.cache.lock().ok()?;
-        cache
-            .entry(key.into_boxed_slice())
-            .or_insert(proxy)
+        self.cache
+            .lock()
+            .get_or_put_value(&key, proxy)
+            .ok()?
             .as_deref()
             .map(Self::as_static)
     }

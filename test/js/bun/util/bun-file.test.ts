@@ -273,6 +273,29 @@ describe("BunFile exists()/size/lastModified reflect the current filesystem stat
       type: "text/plain",
       exists: true,
     });
+    fs.writeFileSync(p, "hello world");
+    expect(await s.text()).toBe("hello");
+  });
+
+  test("slice() with no end stays unbounded when the file grows", async () => {
+    using dir = tempDir("bunfile-slice-noend", {});
+    const p = join(String(dir), "f");
+    fs.writeFileSync(p, "0123456789");
+    const a = Bun.file(p).slice(2);
+    const b = Bun.file(p).slice();
+    fs.appendFileSync(p, "ABCDE");
+    expect({ a: await a.text(), b: await b.text() }).toEqual({
+      a: "23456789ABCDE",
+      b: "0123456789ABCDE",
+    });
+  });
+
+  test("slice() negative indices use the live file size", async () => {
+    using dir = tempDir("bunfile-slice-neg", {});
+    const p = join(String(dir), "f");
+    fs.writeFileSync(p, "BunFoo");
+    const f = Bun.file(p);
+    expect(await f.slice(-3, 4).slice(-1, 3).text()).toBe("F");
   });
 
   test("structuredClone does not poison the source blob's later read", async () => {

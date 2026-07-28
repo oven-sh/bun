@@ -1997,15 +1997,18 @@ impl BlobExt for Blob {
         // index the full fixed-3 array (args[2] is written below regardless of len).
         let args = &mut arguments_[..];
 
-        let this_size = self.view_size();
-
-        if this_size == 0 && !self.is_bun_file() {
+        if self.size.get() == 0 && !self.is_bun_file() {
             let ptr = Blob::new(Blob::init_empty(global_this));
             // SAFETY: `ptr` just came from `heap::alloc` in `Blob::new`; force
             // the inherent `Blob::to_js(&mut self)` over `JsClass::to_js`.
             return Ok(unsafe { BlobExt::to_js(&*ptr, global_this) });
         }
-        let this_size_i64 = i64::try_from(this_size).expect("int cast");
+
+        let this_size_i64 = i64::try_from(self.size.get()).expect("int cast");
+        let mut neg_base: Option<i64> = None;
+        let mut resolve_neg = || {
+            *neg_base.get_or_insert_with(|| i64::try_from(self.view_size()).expect("int cast"))
+        };
 
         // If the optional start parameter is not used as a parameter, let relativeStart be 0.
         let mut relative_start: i64 = 0;
@@ -2027,7 +2030,7 @@ impl BlobExt for Blob {
             if start_.is_number() {
                 let start = start_.to_int64();
                 if start < 0 {
-                    relative_start = (start.wrapping_add(this_size_i64)).max(0);
+                    relative_start = (start.wrapping_add(resolve_neg())).max(0);
                 } else {
                     relative_start = start.min(this_size_i64);
                 }
@@ -2038,7 +2041,7 @@ impl BlobExt for Blob {
             if end_.is_number() {
                 let end = end_.to_int64();
                 if end < 0 {
-                    relative_end = (end.wrapping_add(this_size_i64)).max(0);
+                    relative_end = (end.wrapping_add(resolve_neg())).max(0);
                 } else {
                     relative_end = end.min(this_size_i64);
                 }

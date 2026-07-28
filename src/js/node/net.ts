@@ -1933,8 +1933,7 @@ Socket.prototype[Symbol.for("::bunUpgradeServerTLS::")] = function (connection, 
   // pulled off the fd into the connection's readable buffer; hand them to the
   // TLS engine so the handshake doesn't stall.
   const pending = connection.read();
-  // Must be set before upgradeTLS: native feeds initialData through the
-  // ciphertext tap synchronously inside this call.
+  // Set before upgradeTLS: it feeds initialData through the ciphertext tap synchronously.
   connection[kupgradedToTLS] = true;
   let result;
   try {

@@ -128,6 +128,7 @@ pub mod js_bundler {
         pub outdir: OwnedString,
         pub rootdir: OwnedString,
         pub jsx: api::Jsx,
+        pub jsx_development_explicit: Option<bool>,
         pub force_node_env: options::ForceNodeEnv,
         pub code_splitting: bool,
         pub minify: Minify,
@@ -191,6 +192,7 @@ pub mod js_bundler {
                     development: true, // Default to development mode like old Pragma
                     ..Default::default()
                 },
+                jsx_development_explicit: None,
                 force_node_env: options::ForceNodeEnv::Unspecified,
                 code_splitting: false,
                 minify: Minify::default(),
@@ -717,11 +719,7 @@ pub mod js_bundler {
                         this.jsx.runtime = jsx_runtime_to_api(runtime.runtime);
                         if let Some(dev) = runtime.development {
                             this.jsx.development = dev;
-                            this.force_node_env = if dev {
-                                options::ForceNodeEnv::Development
-                            } else {
-                                options::ForceNodeEnv::Production
-                            };
+                            this.jsx_development_explicit = Some(dev);
                         }
                     } else {
                         return Err(global_this.throw_invalid_arguments(format_args!(
@@ -749,11 +747,7 @@ pub mod js_bundler {
 
                 if let Some(dev) = jsx_value.get_boolean_loose(global_this, "development")? {
                     this.jsx.development = dev;
-                    this.force_node_env = if dev {
-                        options::ForceNodeEnv::Development
-                    } else {
-                        options::ForceNodeEnv::Production
-                    };
+                    this.jsx_development_explicit = Some(dev);
                 }
 
                 if let Some(val) = jsx_value.get_boolean_loose(global_this, "sideEffects")? {

@@ -409,18 +409,28 @@ test("dns.promises.reverse", async () => {
   }
 });
 
-// https://github.com/oven-sh/bun/issues/6580
 describe("dns.reverse rejects invalid IP strings with EINVAL", () => {
-  const invalid = ["1.2.3", "127.1", "1", "999.9.9.9", "not-an-ip", "1.2.3.4.5", ""];
+  const invalid = [
+    "1.2.3",
+    "127.1",
+    "1",
+    "0x7f000001",
+    "10/8",
+    "256.1.1.1",
+    "999.9.9.9",
+    "not-an-ip",
+    "1.2.3.4.5",
+    " 1.2.3.4",
+    "1.2.3.4 ",
+    "",
+  ];
 
-  it("callback form throws synchronously", () => {
-    for (const ip of invalid) {
-      let called = false;
-      expect(() => dns.reverse(ip, () => (called = true))).toThrow(
-        expect.objectContaining({ code: "EINVAL", syscall: "getHostByAddr" }),
-      );
-      expect(called).toBe(false);
-    }
+  it.each(invalid)("callback form throws synchronously for %j", ip => {
+    let called = false;
+    expect(() => dns.reverse(ip, () => (called = true))).toThrow(
+      expect.objectContaining({ code: "EINVAL", syscall: "getHostByAddr" }),
+    );
+    expect(called).toBe(false);
   });
 
   it("callback form validates argument types in order", () => {
@@ -434,7 +444,9 @@ describe("dns.reverse rejects invalid IP strings with EINVAL", () => {
   it("promises form rejects asynchronously and never queries", async () => {
     // Local PTR responder: records every queried name and answers with a fixed PTR.
     const wire = [];
+    let srvError;
     const srv = dgram.createSocket("udp4");
+    srv.on("error", err => (srvError = err));
     await new Promise(resolve => srv.bind(0, "127.0.0.1", resolve));
     srv.on("message", (m, ri) => {
       let o = 12;
@@ -477,7 +489,7 @@ describe("dns.reverse rejects invalid IP strings with EINVAL", () => {
             ...(ip ? { hostname: ip } : {}),
           }),
         );
-        if (!ip) expect("hostname" in err).toBe(false);
+        expect("hostname" in err).toBe(!!ip);
       }
 
       // top-level dns.promises.reverse should behave the same
@@ -490,11 +502,65 @@ describe("dns.reverse rejects invalid IP strings with EINVAL", () => {
       // non-string input is a synchronous ERR_INVALID_ARG_TYPE even in the promises form
       expect(() => dns.promises.reverse(123)).toThrow(expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }));
 
-      // control: a valid IP still reaches the local responder
+      // control: valid IPv4 and IPv6 still reach the local responder
       expect(await resolver.reverse("192.0.2.1")).toEqual(["host.example"]);
-      expect(wire).toEqual(["1.2.0.192.in-addr.arpa"]);
+      expect(await resolver.reverse("2001:db8::5")).toEqual(["host.example"]);
+      expect(srvError).toBeUndefined();
+      expect(wire).toEqual([
+        "1.2.0.192.in-addr.arpa",
+        "5.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.8.b.d.0.1.0.0.2.ip6.arpa",
+      ]);
     } finally {
       await new Promise(resolve => srv.close(resolve));
+    }
+  });
+});
+
+describe("dns.lookupService rejects non-IP address strings", () => {
+  it.each(["127.1", "1.2.3", "0x7f000001", "google.com", "", 123])(
+    "throws ERR_INVALID_ARG_VALUE synchronously for %j",
+    address => {
+      const expected = expect.objectContaining({ code: "ERR_INVALID_ARG_VALUE" });
+      expect(() => dns.lookupService(address, 22, () => {})).toThrow(expected);
+      expect(() => dns.promises.lookupService(address, 22)).toThrow(expected);
+    },
+  );
+
+  it("validates arguments in Node's order (address, port, callback)", () => {
+    expect(() => dns.lookupService("127.1", "bad", 123)).toThrow(
+      expect.objectContaining({ code: "ERR_INVALID_ARG_VALUE" }),
+    );
+    expect(() => dns.lookupService("1.2.3.4", "bad", 123)).toThrow(
+      expect.objectContaining({ code: "ERR_SOCKET_BAD_PORT" }),
+    );
+    expect(() => dns.lookupService("1.2.3.4", 22, 123)).toThrow(
+      expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }),
+    );
+  });
+});
+
+describe("Resolver.setLocalAddress validates IP strings", () => {
+  it.each([
+    [["127.1"], "ERR_INVALID_ARG_VALUE", "Invalid IP address."],
+    [["0x7f000001"], "ERR_INVALID_ARG_VALUE", "Invalid IP address."],
+    [[""], "ERR_INVALID_ARG_VALUE", "Invalid IP address."],
+    [["1.2.3.4", "127.1"], "ERR_INVALID_ARG_VALUE", "Invalid IP address."],
+    [["1.2.3.4", "5.6.7.8"], "ERR_INVALID_ARG_VALUE", "Cannot specify two IPv4 addresses."],
+    [["::1", "::2"], "ERR_INVALID_ARG_VALUE", "Cannot specify two IPv6 addresses."],
+    [[123], "ERR_INVALID_ARG_TYPE", /"ipv4" argument/],
+    [["1.2.3.4", 123], "ERR_INVALID_ARG_TYPE", /"ipv6" argument/],
+  ])("rejects %j with %s", (args, code, message) => {
+    for (const Resolver of [dns.Resolver, dns.promises.Resolver]) {
+      const r = new Resolver();
+      expect(() => r.setLocalAddress(...args)).toThrow(expect.objectContaining({ code }));
+      expect(() => r.setLocalAddress(...args)).toThrow(message);
+    }
+  });
+
+  it.each([[["1.2.3.4"]], [["::1"]], [["1.2.3.4", "::1"]], [["::1", "1.2.3.4"]]])("accepts %j", args => {
+    for (const Resolver of [dns.Resolver, dns.promises.Resolver]) {
+      const r = new Resolver();
+      expect(() => r.setLocalAddress(...args)).not.toThrow();
     }
   });
 });
@@ -528,10 +594,10 @@ describe("test invalid arguments", () => {
   it("dns.lookupService", async () => {
     expect(() => {
       dns.lookupService("", 443, (err, hostname, service) => {});
-    }).toThrow("Expected address to be a non-empty string for 'lookupService'.");
+    }).toThrow("The argument 'address' is invalid. Received ''");
     expect(() => {
       dns.lookupService("google.com", 443, (err, hostname, service) => {});
-    }).toThrow(`The "address" argument is invalid. Received type string ('google.com')`);
+    }).toThrow("The argument 'address' is invalid. Received 'google.com'");
   });
 });
 

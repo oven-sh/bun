@@ -179,6 +179,10 @@ static int us_ssl_is_socket_ex_idx = -1;
  * (node's ssl.verifyError() verdict) as (void*)(intptr_t). */
 static int us_ssl_inline_reject_enabled_ex_idx = -1;
 static int us_ssl_inline_reject_err_ex_idx = -1;
+/* (SSL_CTX) packed client-certificate policy of a Bun.serve per-serverName
+ * entry — see us_ssl_ctx_set_sni_policy. Absent on node:tls SecureContexts,
+ * whose policy is server-level. */
+static int us_ctx_sni_policy_ex_idx = -1;
 /* Defined in Rust (src/uws_sys/SocketKind.rs) so the ordinal tracks the enum. */
 extern const unsigned char BUN_SOCKET_KIND_BUN_SOCKET_TLS;
 extern const unsigned char BUN_SOCKET_KIND_UWS_HTTP_TLS;
@@ -392,6 +396,7 @@ static void us_ex_idx_init(void) {
   us_sni_ex_idx = SSL_CTX_get_ex_new_index(0, NULL, NULL, NULL, NULL);
   us_ctx_cache_ex_idx = SSL_CTX_get_ex_new_index(0, NULL, NULL, NULL, bun_ssl_ctx_cache_on_free);
   us_ctx_user_ca_ex_idx = SSL_CTX_get_ex_new_index(0, NULL, NULL, NULL, NULL);
+  us_ctx_sni_policy_ex_idx = SSL_CTX_get_ex_new_index(0, NULL, NULL, NULL, NULL);
   us_ssl_reneg_state_idx = SSL_get_ex_new_index(0, NULL, NULL, NULL, us_ssl_reneg_state_free);
   us_ssl_sni_pending_idx = SSL_get_ex_new_index(0, NULL, NULL, NULL, us_ssl_sni_pending_free);
   us_ssl_listener_ex_idx = SSL_get_ex_new_index(0, NULL, NULL, NULL, NULL);
@@ -2605,6 +2610,55 @@ static struct sni_node_t *resolve_listener_ctx(struct us_listen_socket_t *ls, co
   return (struct sni_node_t *)sni_find(ls->sni, hostname);
 }
 
+#define US_SNI_POLICY_REQUEST_CERT ((uintptr_t)1)
+#define US_SNI_POLICY_REJECT_UNAUTHORIZED ((uintptr_t)2)
+
+static _Atomic uint32_t us_sni_sid_ctx_counter = 0;
+
+/* Record the client-certificate policy of a per-serverName entry on its
+ * SSL_CTX and give it a session-id context of its own: SSL_set_SSL_CTX copies
+ * the certificate (with its sid_ctx) but not verify_mode, so the SNI switch
+ * reapplies the policy per connection, and a session established under any
+ * other context is never resumed under this one (a resumed handshake skips
+ * client authentication entirely). */
+void us_ssl_ctx_set_sni_policy(SSL_CTX *ctx, int request_cert, int reject_unauthorized) {
+  if (!ctx) return;
+  us_ex_idx_ensure();
+  uintptr_t packed = (request_cert ? US_SNI_POLICY_REQUEST_CERT : 0) |
+                     (reject_unauthorized ? US_SNI_POLICY_REJECT_UNAUTHORIZED : 0);
+  SSL_CTX_set_ex_data(ctx, us_ctx_sni_policy_ex_idx, (void *)packed);
+  uint32_t sid = atomic_fetch_add(&us_sni_sid_ctx_counter, 1) + 1;
+  SSL_CTX_set_session_id_context(ctx, (const uint8_t *)&sid, sizeof(sid));
+}
+
+/* Every SNI context switch goes through here: SSL_set_SSL_CTX alone leaves
+ * verify_mode as inherited from the default context at accept, so a
+ * per-serverName entry's requestCert/rejectUnauthorized are added on top of
+ * it (the connection's inherited requirement is kept). A context without a
+ * recorded policy (node:tls SecureContext, whose policy is server-level)
+ * leaves the connection's verify mode untouched. */
+static void us_ssl_apply_selected_ctx(SSL *ssl, SSL_CTX *ctx) {
+  SSL_set_SSL_CTX(ssl, ctx);
+  if (us_ctx_sni_policy_ex_idx < 0) return;
+  uintptr_t policy = (uintptr_t)SSL_CTX_get_ex_data(ctx, us_ctx_sni_policy_ex_idx);
+  if (!(policy & US_SNI_POLICY_REQUEST_CERT)) return;
+  int mode = SSL_get_verify_mode(ssl) | SSL_VERIFY_PEER;
+  if (policy & US_SNI_POLICY_REJECT_UNAUTHORIZED) mode |= SSL_VERIFY_FAIL_IF_NO_PEER_CERT;
+  SSL_set_verify(ssl, mode, us_verify_callback);
+}
+
+/* Whether the SNI-selected context of this connection demands closing on a
+ * client-certificate verification error (requestCert && rejectUnauthorized
+ * of the per-serverName entry). */
+int us_socket_server_name_reject_unauthorized(struct us_socket_t *s) {
+  if (!s->ssl || us_ctx_sni_policy_ex_idx < 0) return 0;
+  SSL_CTX *ctx = SSL_get_SSL_CTX(s_ssl(s));
+  if (!ctx) return 0;
+  uintptr_t packed = (uintptr_t)SSL_CTX_get_ex_data(ctx, us_ctx_sni_policy_ex_idx);
+  return (packed & US_SNI_POLICY_REQUEST_CERT) &&
+         (packed & US_SNI_POLICY_REJECT_UNAUTHORIZED);
+}
+
 /* Extracts the host_name from the ClientHello's server_name extension.
  * Returns the length written to `out` (NUL-terminated), or 0 if absent /
  * malformed. BoringSSL does document SSL_get_servername as usable inside
@@ -2654,7 +2708,7 @@ static enum ssl_select_cert_result_t us_select_cert_cb(const SSL_CLIENT_HELLO *h
   if (pending && pending->state == 2) {
     pending->state = 0;
     if (pending->resolved_ctx) {
-      SSL_set_SSL_CTX(ssl, pending->resolved_ctx);
+      us_ssl_apply_selected_ctx(ssl, pending->resolved_ctx);
       SSL_CTX_free(pending->resolved_ctx);
       pending->resolved_ctx = NULL;
       return ssl_select_cert_success;
@@ -2674,7 +2728,7 @@ static enum ssl_select_cert_result_t us_select_cert_cb(const SSL_CLIENT_HELLO *h
       if (us_client_hello_servername(hello, resumed_host, sizeof(resumed_host))) {
         struct sni_node_t *resumed_node = resolve_listener_ctx(resumed_ls, resumed_host);
         if (resumed_node) {
-          SSL_set_SSL_CTX(ssl, resumed_node->ctx);
+          us_ssl_apply_selected_ctx(ssl, resumed_node->ctx);
         }
       }
     }
@@ -2751,7 +2805,7 @@ static enum ssl_select_cert_result_t us_select_cert_cb(const SSL_CLIENT_HELLO *h
     return ssl_select_cert_retry;
   }
   if (dyn) {
-    SSL_set_SSL_CTX(ssl, dyn);
+    us_ssl_apply_selected_ctx(ssl, dyn);
     SSL_CTX_free(dyn);
     return ssl_select_cert_success;
   }
@@ -2761,7 +2815,7 @@ static enum ssl_select_cert_result_t us_select_cert_cb(const SSL_CLIENT_HELLO *h
   if (ls) {
     struct sni_node_t *node = resolve_listener_ctx(ls, hostname);
     if (node) {
-      SSL_set_SSL_CTX(ssl, node->ctx);
+      us_ssl_apply_selected_ctx(ssl, node->ctx);
     }
   }
   return ssl_select_cert_success;
@@ -2790,7 +2844,7 @@ static int sni_cb(SSL *ssl, int *al, void *arg) {
      * listener). */
     struct sni_node_t *node = resolve_listener_ctx(ls, hostname);
     if (node) {
-      SSL_set_SSL_CTX(ssl, node->ctx);
+      us_ssl_apply_selected_ctx(ssl, node->ctx);
     }
   }
   return SSL_TLSEXT_ERR_OK;

@@ -647,7 +647,8 @@ extern "C"
   }
   int uws_add_server_name_with_options(
       int ssl, uws_app_t *app, const char *hostname_pattern,
-      struct us_bun_socket_context_options_t options)
+      struct us_bun_socket_context_options_t options,
+      int apply_client_cert_policy)
   {
     uWS::SocketContextOptions sco;
     memcpy(&sco, &options, sizeof(uWS::SocketContextOptions));
@@ -656,12 +657,12 @@ extern "C"
     if (ssl)
     {
       uWS::SSLApp *uwsApp = (uWS::SSLApp *)app;
-      uwsApp->addServerName(hostname_pattern, sco, &success);
+      uwsApp->addServerName(hostname_pattern, sco, &success, apply_client_cert_policy != 0);
     }
     else
     {
       uWS::App *uwsApp = (uWS::App *)app;
-      uwsApp->addServerName(hostname_pattern, sco, &success);
+      uwsApp->addServerName(hostname_pattern, sco, &success, apply_client_cert_policy != 0);
     }
     return !success;
   }

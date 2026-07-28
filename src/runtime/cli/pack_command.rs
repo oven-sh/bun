@@ -210,12 +210,12 @@ pub(crate) fn warn_lockfile_unreadable(
             LoadStep::ReadFile => "read",
             LoadStep::Migrating => "migrate",
         };
-        Output::warn(format_args!(
+        bun_core::warn!(
             "failed to {} {}: {}, continuing without it",
             step,
             bstr::BStr::new(cause.lockfile_path.as_bytes()),
             cause.value.name(),
-        ));
+        );
         if log.has_errors() {
             let _ = log.print(std::ptr::from_mut(Output::error_writer()));
         }

@@ -121,7 +121,7 @@ function windowsCompileArgs(target: GypTarget, include: string, lib: string, out
     "clang-cl",
     "/nologo",
     ...(target.sources[0].endsWith(".cc") ? ["/std:c++20", "/EHsc"] : []),
-    "/MDd",
+    "/MTd",
     "/Od",
     `/I${include}`,
     `/DNODE_GYP_MODULE_NAME=${target.target_name}`,
@@ -194,16 +194,13 @@ async function tryBuildFast(dir: string): Promise<boolean> {
           );
           return false;
         }
-        if (process.platform === "win32") {
-          renameSync(join(tmp, `${target.target_name}.node`), output);
-          await rm(tmp, { recursive: true, force: true });
-        } else {
-          renameSync(tmp, output);
-        }
+        renameSync(process.platform === "win32" ? join(tmp, `${target.target_name}.node`) : tmp, output);
         return true;
       } catch (error) {
         console.warn(`direct compile of ${target.target_name} in ${dir} failed, falling back to node-gyp: ${error}`);
         return false;
+      } finally {
+        if (process.platform === "win32") await rm(tmp, { recursive: true, force: true });
       }
     }),
   );

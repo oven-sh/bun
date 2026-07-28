@@ -200,7 +200,10 @@ test.skipIf(isWindows)("fetch rejects when the Bun.file body is truncated mid-up
       gotHead.resolve();
     });
   });
-  await new Promise<void>(r => server.listen(0, "127.0.0.1", r));
+  await new Promise<void>((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", resolve);
+  });
   try {
     const port = (server.address() as net.AddressInfo).port;
     const req = fetch(`http://127.0.0.1:${port}/upload`, {

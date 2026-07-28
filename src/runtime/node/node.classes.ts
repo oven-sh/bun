@@ -46,6 +46,10 @@ export default [
         fn: "resolveCaa",
         length: 1,
       },
+      resolveTlsa: {
+        fn: "resolveTlsa",
+        length: 1,
+      },
       resolveNs: {
         fn: "resolveNs",
         length: 1,

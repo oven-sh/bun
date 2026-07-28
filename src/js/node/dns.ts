@@ -619,6 +619,23 @@ var InternalResolver = class Resolver {
       );
   }
 
+  resolveTlsa(hostname, callback) {
+    if (typeof callback !== "function") {
+      throw $ERR_INVALID_ARG_TYPE("callback", "function", callback);
+    }
+
+    Resolver.#getResolver(this)
+      .resolveTlsa(hostname)
+      .then(
+        results => {
+          callback(null, results);
+        },
+        error => {
+          callback(withTranslatedError(error));
+        },
+      );
+  }
+
   resolveTxt(hostname, callback) {
     if (arguments.length > 2) {
       callback = arguments[2];
@@ -709,6 +726,7 @@ var {
   resolvePtr,
   resolveSoa,
   resolveSrv,
+  resolveTlsa,
   reverse,
   resolveTxt,
 } = InternalResolver.prototype;
@@ -877,6 +895,9 @@ const promises = {
   resolveCaa(hostname) {
     return translateErrorCode(dns.resolveCaa(hostname));
   },
+  resolveTlsa(hostname) {
+    return translateErrorCode(dns.resolveTlsa(hostname));
+  },
   resolveNs(hostname) {
     return translateErrorCode(dns.resolveNs(hostname));
   },
@@ -974,6 +995,10 @@ const promises = {
       return translateErrorCode(Resolver.#getResolver(this).resolveCaa(hostname));
     }
 
+    resolveTlsa(hostname) {
+      return translateErrorCode(Resolver.#getResolver(this).resolveTlsa(hostname));
+    }
+
     resolveTxt(hostname) {
       return translateErrorCode(Resolver.#getResolver(this).resolveTxt(hostname));
     }
@@ -1014,6 +1039,7 @@ for (const [method, pMethod] of [
   [resolvePtr, promises.resolvePtr],
   [resolveSoa, promises.resolveSoa],
   [resolveSrv, promises.resolveSrv],
+  [resolveTlsa, promises.resolveTlsa],
   [resolveTxt, promises.resolveTxt],
   [resolveNaptr, promises.resolveNaptr],
 ]) {
@@ -1046,6 +1072,7 @@ export default {
   resolvePtr,
   resolveSoa,
   resolveSrv,
+  resolveTlsa,
   resolveTxt,
   resolveNaptr,
   promises,

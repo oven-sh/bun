@@ -220,6 +220,8 @@ pub enum NSType {
     ns_t_nsec = 47,
     /// DNS Public Key (RFC4034)
     ns_t_dnskey = 48,
+    /// TLSA certificate association (RFC6698)
+    ns_t_tlsa = 52,
     /// Transaction key
     ns_t_tkey = 249,
     /// Transaction signature.
@@ -1166,6 +1168,145 @@ impl struct_ares_caa_reply {
             // SAFETY: same invariant as `property_bytes` — `value` points to
             // `length` bytes owned by the reply node for `&self`'s lifetime.
             unsafe { core::slice::from_raw_parts(self.value, self.length) }
+        }
+    }
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// TLSA — c-ares has no legacy `ares_parse_tlsa_reply`; it's exposed only via
+// the newer `ares_dns_record` API. We parse into a Rust-owned linked list so
+// the rest of the resolver pipeline (which expects a `*mut R` list head) sees
+// the same shape as the other reply structs.
+// ──────────────────────────────────────────────────────────────────────────
+
+bun_opaque::opaque_ffi! { pub struct ares_dns_record_t; }
+bun_opaque::opaque_ffi! { pub struct ares_dns_rr_t; }
+
+pub const ARES_SECTION_ANSWER: c_int = 1;
+pub const ARES_REC_TYPE_TLSA: c_int = 52;
+pub const ARES_RR_TLSA_CERT_USAGE: c_int = ARES_REC_TYPE_TLSA * 100 + 1;
+pub const ARES_RR_TLSA_SELECTOR: c_int = ARES_REC_TYPE_TLSA * 100 + 2;
+pub const ARES_RR_TLSA_MATCH: c_int = ARES_REC_TYPE_TLSA * 100 + 3;
+pub const ARES_RR_TLSA_DATA: c_int = ARES_REC_TYPE_TLSA * 100 + 4;
+
+unsafe extern "C" {
+    pub fn ares_dns_parse(
+        buf: *const u8,
+        buf_len: usize,
+        flags: c_uint,
+        dnsrec: *mut *mut ares_dns_record_t,
+    ) -> c_int;
+    pub fn ares_dns_record_destroy(dnsrec: *mut ares_dns_record_t);
+    pub fn ares_dns_record_rr_cnt(dnsrec: *const ares_dns_record_t, sect: c_int) -> usize;
+    pub fn ares_dns_record_rr_get_const(
+        dnsrec: *const ares_dns_record_t,
+        sect: c_int,
+        idx: usize,
+    ) -> *const ares_dns_rr_t;
+    pub fn ares_dns_rr_get_type(rr: *const ares_dns_rr_t) -> c_int;
+    pub fn ares_dns_rr_get_u8(rr: *const ares_dns_rr_t, key: c_int) -> u8;
+    pub fn ares_dns_rr_get_bin(
+        rr: *const ares_dns_rr_t,
+        key: c_int,
+        len: *mut usize,
+    ) -> *const u8;
+}
+
+/// Rust-owned TLSA reply node; shaped like the other `struct_ares_*_reply`
+/// linked lists so the generic list walker and `ares_reply_callback` thunk
+/// apply unchanged.
+pub struct struct_ares_tlsa_reply {
+    pub next: *mut struct_ares_tlsa_reply,
+    pub cert_usage: u8,
+    pub selector: u8,
+    pub match_: u8,
+    pub data: Box<[u8]>,
+}
+
+impl AresReply for struct_ares_tlsa_reply {
+    unsafe fn parse(abuf: *const u8, alen: c_int, out: *mut *mut Self) -> c_int {
+        // SAFETY: caller guarantees `out` is a valid stack slot.
+        unsafe { *out = ptr::null_mut() };
+
+        let mut dnsrec: *mut ares_dns_record_t = ptr::null_mut();
+        // SAFETY: caller upholds the `AresReply::parse` contract; `abuf[..alen]`
+        // is the c-ares response buffer and `&mut dnsrec` is a valid out-param.
+        let status = unsafe {
+            ares_dns_parse(
+                abuf,
+                usize::try_from(alen).unwrap_or(0),
+                0,
+                &raw mut dnsrec,
+            )
+        };
+        if status != ARES_SUCCESS {
+            // SAFETY: c-ares accepts null here.
+            unsafe { ares_dns_record_destroy(dnsrec) };
+            return status;
+        }
+        // SAFETY: `dnsrec` is non-null on success; destroyed below.
+        scopeguard::defer! { unsafe { ares_dns_record_destroy(dnsrec) }; }
+
+        let mut head: *mut Self = ptr::null_mut();
+        let mut tail: *mut *mut Self = &raw mut head;
+        // SAFETY: `dnsrec` is a live record for the duration of this scope.
+        let rr_count = unsafe { ares_dns_record_rr_cnt(dnsrec, ARES_SECTION_ANSWER) };
+        for i in 0..rr_count {
+            // SAFETY: `i < rr_count`; returned pointer borrows from `dnsrec`.
+            let rr = unsafe { ares_dns_record_rr_get_const(dnsrec, ARES_SECTION_ANSWER, i) };
+            if rr.is_null() {
+                continue;
+            }
+            // SAFETY: `rr` is non-null and borrows from `dnsrec`.
+            if unsafe { ares_dns_rr_get_type(rr) } != ARES_REC_TYPE_TLSA {
+                continue;
+            }
+            let mut data_len: usize = 0;
+            // SAFETY: `rr` is a valid TLSA record; key is `ARES_DATATYPE_BIN`.
+            let data_ptr = unsafe { ares_dns_rr_get_bin(rr, ARES_RR_TLSA_DATA, &raw mut data_len) };
+            if data_ptr.is_null() || data_len == 0 {
+                continue;
+            }
+            // SAFETY: c-ares guarantees `data_ptr[..data_len]` is readable while
+            // `dnsrec` is live; we copy into a Rust-owned buffer before destroy.
+            let data: Box<[u8]> =
+                unsafe { core::slice::from_raw_parts(data_ptr, data_len) }.into();
+            let node = Box::into_raw(Box::new(Self {
+                next: ptr::null_mut(),
+                // SAFETY: `rr` is a valid TLSA record; keys are `ARES_DATATYPE_U8`.
+                cert_usage: unsafe { ares_dns_rr_get_u8(rr, ARES_RR_TLSA_CERT_USAGE) },
+                selector: unsafe { ares_dns_rr_get_u8(rr, ARES_RR_TLSA_SELECTOR) },
+                match_: unsafe { ares_dns_rr_get_u8(rr, ARES_RR_TLSA_MATCH) },
+                data,
+            }));
+            // SAFETY: `tail` always points at either `head` or the `.next` slot
+            // of the previously appended node (both valid for write).
+            unsafe {
+                *tail = node;
+                tail = &raw mut (*node).next;
+            }
+        }
+
+        if head.is_null() {
+            return Error::ENODATA as c_int;
+        }
+        // SAFETY: caller guarantees `out` is a valid stack slot.
+        unsafe { *out = head };
+        ARES_SUCCESS
+    }
+}
+
+impl struct_ares_tlsa_reply {
+    /// Walk and drop a Rust-owned list built by `AresReply::parse`.
+    ///
+    /// # Safety
+    /// `this` must be null or the head returned from `parse`; not aliased.
+    pub unsafe fn destroy(this: *mut Self) {
+        let mut p = this;
+        while !p.is_null() {
+            // SAFETY: each node was `Box::into_raw`'d in `parse`.
+            let node = unsafe { Box::from_raw(p) };
+            p = node.next;
         }
     }
 }

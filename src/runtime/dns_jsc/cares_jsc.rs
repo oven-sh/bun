@@ -247,6 +247,7 @@ impl_cares_linked!(
     c_ares::struct_ares_mx_reply,
     c_ares::struct_ares_txt_reply,
     c_ares::struct_ares_naptr_reply,
+    c_ares::struct_ares_tlsa_reply,
 );
 
 fn cares_list_to_js_array<T: CAresLinked>(
@@ -302,6 +303,48 @@ fn caa_reply_to_js(
     let property = bstr::String::borrow_utf8(this.property_bytes());
     let value = this.value_bytes();
     obj.put_may_be_index(global_this, &property, utf8_to_js(global_this, value)?)?;
+
+    Ok(obj)
+}
+
+// ── struct_ares_tlsa_reply ─────────────────────────────────────────────────
+pub(crate) fn tlsa_reply_to_js_response(
+    this: &mut c_ares::struct_ares_tlsa_reply,
+    global_this: &JSGlobalObject,
+    _lookup_name: &'static [u8],
+) -> JsResult<JSValue> {
+    cares_list_to_js_array(this, global_this, tlsa_reply_to_js)
+}
+
+pub(crate) fn tlsa_reply_to_js(
+    this: &mut c_ares::struct_ares_tlsa_reply,
+    global_this: &JSGlobalObject,
+) -> JsResult<JSValue> {
+    let obj = JSValue::create_empty_object(global_this, 4);
+
+    obj.put(
+        global_this,
+        b"certUsage",
+        JSValue::js_number(this.cert_usage as f64),
+    );
+    obj.put(
+        global_this,
+        b"selector",
+        JSValue::js_number(this.selector as f64),
+    );
+    obj.put(
+        global_this,
+        b"match",
+        JSValue::js_number(this.match_ as f64),
+    );
+    obj.put(
+        global_this,
+        b"data",
+        bun_jsc::array_buffer::ArrayBuffer::create::<{ bun_jsc::JSType::ArrayBuffer }>(
+            global_this,
+            &this.data,
+        )?,
+    );
 
     Ok(obj)
 }

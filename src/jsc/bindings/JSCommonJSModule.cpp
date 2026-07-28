@@ -167,9 +167,7 @@ static bool evaluateCommonJSModuleOnce(JSC::VM& vm, Zig::GlobalObject* globalObj
         // exit 0 silently. Use the out-param overload and rethrow.
         WTF::NakedPtr<JSC::Exception> returnedException;
         JSValue result = JSC::evaluate(globalObject, code, jsUndefined(), returnedException);
-        // The script's synchronous top-level code just ran. Mark the enclosing microtask's end as
-        // a process.nextTick checkpoint: CommonJS bodies evaluate here rather than through
-        // GlobalObject::moduleLoaderEvaluate, which does the same for ES modules.
+        // See checkIfNextTickWasCalledDuringMicrotask; moduleLoaderEvaluate does this for ES modules.
         defaultGlobalObject()->nextTickQueueCheckpointAtEndOfMicrotask = true;
         if (returnedException) [[unlikely]] {
             scope.throwException(globalObject, returnedException.get());

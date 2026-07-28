@@ -780,6 +780,11 @@ impl AnyRoute {
 
                 let style_js = argument.get(global, b"style")?;
                 if style_js.is_none() {
+                    if strings::index_of_char(path, b':').is_some() {
+                        return Err(global.throw_invalid_arguments(format_args!(
+                            "Directory routes do not support :parameters; use a fixed prefix ending in `/*`"
+                        )));
+                    }
                     // `{ dir }` without `style` serves the directory tree
                     // verbatim; `{ dir, style }` opts into framework routing.
                     let url_prefix: &[u8] = if path.len() == 2 {

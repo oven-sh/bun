@@ -393,6 +393,16 @@ describe("Bun.serve() directory routes", () => {
     ).toThrow(/ends in `\/\*`/);
   });
 
+  it("rejects :parameters in the route path", () => {
+    using dir = tempDir("serve-dir-param", { "public/x.txt": "x" });
+    expect(() =>
+      serve({
+        port: 0,
+        routes: { "/users/:id/files/*": { dir: join(String(dir), "public") } },
+      }),
+    ).toThrow(/do not support :parameters/);
+  });
+
   it("throws if the directory does not exist", () => {
     using dir = tempDir("serve-dir-enoent", {});
     expect(() =>
@@ -404,7 +414,7 @@ describe("Bun.serve() directory routes", () => {
   });
 
   it("serves correctly with more unique paths than stat-cache slots", async () => {
-    const N = 1100; // > STAT_CACHE_SLOTS (1024)
+    const N = 300; // > STAT_CACHE_SLOTS (256)
     const files: Record<string, string> = {};
     for (let i = 0; i < N; i++) files[`public/f${i}.txt`] = `v${i}`;
     using dir = tempDir("serve-dir-exhaust", files);

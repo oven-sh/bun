@@ -21,7 +21,7 @@ use crate::server::{AnyServer, FileResponseStream, HTTPStatusText, RangeRequest}
 bun_output::declare_scope!(DirectoryRoute, hidden);
 
 /// `wyhash(subpath) % N` direct-mapped StatHash cache; collisions overwrite.
-const STAT_CACHE_SLOTS: usize = 1024;
+const STAT_CACHE_SLOTS: usize = 256;
 
 #[derive(Default)]
 struct StatCacheEntry {
@@ -292,6 +292,13 @@ impl DirectoryRoute {
     fn open_beneath(&self, rel: &[u8]) -> Option<File> {
         let mut buf = bun_paths::path_buffer_pool::get();
         let zrel = resolve_path::z(rel, &mut *buf);
+        // NONBLOCK so opening a FIFO without a writer cannot block the event
+        // loop on POSIX. Not on Windows: there `openat` maps it to omitting
+        // FILE_SYNCHRONOUS_IO_NONALERT, which breaks the synchronous reads
+        // FileResponseStream issues.
+        #[cfg(not(windows))]
+        let flags = bun_sys::O::RDONLY | bun_sys::O::CLOEXEC | bun_sys::O::NONBLOCK;
+        #[cfg(windows)]
         let flags = bun_sys::O::RDONLY | bun_sys::O::CLOEXEC;
         #[cfg(any(target_os = "linux", target_os = "android"))]
         let fd = bun_sys::openat2_in_root(self.root_fd.get(), zrel, flags, 0).ok()?;
@@ -360,9 +367,7 @@ struct ResponseGuard {
 
 impl ResponseGuard {
     fn into_ctx(self) -> *mut c_void {
-        let ctx = self.route.as_ptr().cast::<c_void>();
-        core::mem::forget(self);
-        ctx
+        core::mem::ManuallyDrop::new(self).route.as_ptr().cast()
     }
 }
 

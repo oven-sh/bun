@@ -607,7 +607,7 @@ declare module "bun" {
       dir: string;
       /**
        * Cache formatted `Last-Modified` strings per path so repeated requests
-       * for an unchanged file skip the date formatter. Uses ~60KB per route.
+       * for an unchanged file skip the date formatter. Uses ~20 KB per route.
        * @default true
        */
       statCache?: boolean;

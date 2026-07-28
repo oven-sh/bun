@@ -1457,7 +1457,6 @@ it("server.upgrade() does not blank the Request's url/headers read afterwards", 
   // detaches that context, so fields not touched before the call must be
   // snapshotted onto the Request at detach time (same as the async path).
   let captured: { ok: boolean; url: string; host: string | null; ua: string | null; headerCount: number } | undefined;
-  const opened = Promise.withResolvers<void>();
 
   await using server = serve({
     port: 0,
@@ -1476,20 +1475,21 @@ it("server.upgrade() does not blank the Request's url/headers read afterwards", 
     },
     websocket: {
       open(ws) {
-        opened.resolve();
         ws.close();
       },
       message() {},
     },
   });
 
-  const closed = Promise.withResolvers<void>();
+  const done = Promise.withResolvers<void>();
   const ws = new WebSocket(`ws://127.0.0.1:${server.port}/some/path?q=1`, {
     headers: { "user-agent": "bun-test" },
   });
-  ws.onclose = () => closed.resolve();
-  await opened.promise;
-  await closed.promise;
+  // close fires on both the happy path and a failed handshake, so the
+  // expect() below always runs and shows `captured` instead of timing out.
+  ws.onerror = () => done.resolve();
+  ws.onclose = () => done.resolve();
+  await done.promise;
 
   expect(captured).toEqual({
     ok: true,

@@ -285,10 +285,10 @@ mod windows {
                     &raw mut expiry,
                 )
             };
-            self.have_ctx = true;
 
             if status == sspi::SEC_I_COMPLETE_NEEDED || status == sspi::SEC_I_COMPLETE_AND_CONTINUE
             {
+                self.have_ctx = true;
                 // SAFETY: `self.ctx` was just populated by
                 // `InitializeSecurityContextW`; `out_desc` points at the same
                 // live `out_buf`.
@@ -302,10 +302,14 @@ mod windows {
 
             match status {
                 sspi::SEC_E_OK => {
+                    self.have_ctx = true;
                     self.complete = true;
                     Some(&self.out_buf[..out_buf.cbBuffer as usize])
                 }
-                sspi::SEC_I_CONTINUE_NEEDED => Some(&self.out_buf[..out_buf.cbBuffer as usize]),
+                sspi::SEC_I_CONTINUE_NEEDED => {
+                    self.have_ctx = true;
+                    Some(&self.out_buf[..out_buf.cbBuffer as usize])
+                }
                 _ => {
                     bun_core::scoped_log!(
                         proxy_sspi,

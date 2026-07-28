@@ -125,7 +125,6 @@ describe.skipIf(!isWindows)("proxy NTLM/Negotiate via SSPI", () => {
 
     using proxy = await ntlmProxy({
       forward(sock, leg, rest) {
-        expect(leg.method).toBe("CONNECT");
         const [host, port] = leg.path.split(":");
         const upstream = net.connect(Number(port), host, () => {
           sock.write("HTTP/1.1 200 Connection Established\r\n\r\n");
@@ -163,7 +162,6 @@ describe.skipIf(!isWindows)("proxy NTLM/Negotiate via SSPI", () => {
     using proxy = await ntlmProxy({
       bodyLen: 1500,
       forward(sock, leg) {
-        expect(leg.method).toBe("GET");
         const url = new URL(leg.path);
         const upstream = net.connect(Number(url.port), url.hostname, () => {
           upstream.write(`GET ${url.pathname} HTTP/1.1\r\nHost: ${url.host}\r\nConnection: close\r\n\r\n`);

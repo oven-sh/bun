@@ -447,7 +447,10 @@ describe("dns.reverse rejects invalid IP strings with EINVAL", () => {
     let srvError;
     const srv = dgram.createSocket("udp4");
     srv.on("error", err => (srvError = err));
-    await new Promise(resolve => srv.bind(0, "127.0.0.1", resolve));
+    await new Promise((resolve, reject) => {
+      srv.once("error", reject);
+      srv.bind(0, "127.0.0.1", resolve);
+    });
     srv.on("message", (m, ri) => {
       let o = 12;
       const labels = [];

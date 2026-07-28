@@ -22,6 +22,19 @@ bun_opaque::opaque_ffi! {
     pub struct CppWebSocket;
 }
 
+/// A single HTTP response header passed across the FFI to
+/// `WebSocket__didReceiveHandshakeResponse`. Name/value point into the
+/// PicoHTTP-parsed response head, which the caller keeps alive for the
+/// duration of the synchronous dispatch. Matches `WebCore::WebSocket::
+/// HandshakeRawHeader` (src/jsc/bindings/webcore/WebSocket.h).
+#[repr(C)]
+pub struct RawHeader {
+    pub name_ptr: *const u8,
+    pub name_len: usize,
+    pub value_ptr: *const u8,
+    pub value_len: usize,
+}
+
 // FFI surface for `WebCore::WebSocket` (src/jsc/bindings/webcore/WebSocket.cpp).
 // Kept private to this module — the safe wrappers below are the only callers.
 //
@@ -45,6 +58,16 @@ unsafe extern "C" {
         deflate_params: *const websocket_deflate::Params,
     );
     safe fn WebSocket__didAbruptClose(websocket_context: &CppWebSocket, reason: ErrorCode);
+    fn WebSocket__didReceiveHandshakeResponse(
+        websocket_context: &CppWebSocket,
+        status_code: u16,
+        status_message: *const u8,
+        status_message_len: usize,
+        headers: *const RawHeader,
+        headers_len: usize,
+        body: *const u8,
+        body_len: usize,
+    );
     fn WebSocket__didClose(websocket_context: &CppWebSocket, code: u16, reason: *const BunString);
     fn WebSocket__didReceiveText(
         websocket_context: &CppWebSocket,
@@ -75,6 +98,39 @@ impl CppWebSocket {
         let event_loop = VirtualMachine::get().event_loop_mut();
         event_loop.enter();
         WebSocket__didAbruptClose(self, reason);
+        event_loop.exit();
+    }
+
+    /// Dispatch the native `'handshake'` event to the `ws` shim.
+    ///
+    /// `status_message`, `headers`, and `body` are borrowed for the call only
+    /// — the C++ side copies whatever it needs into JS values synchronously.
+    // Forwards raw pointers to C++ without dereferencing on the Rust side.
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
+    pub(crate) fn did_receive_handshake_response(
+        &self,
+        status_code: u16,
+        status_message: &[u8],
+        headers: &[RawHeader],
+        body: &[u8],
+    ) {
+        // SAFETY: VirtualMachine::get() returns the live current-thread VM;
+        // event_loop() yields its raw event-loop pointer (live for VM lifetime).
+        let event_loop = VirtualMachine::get().event_loop_mut();
+        event_loop.enter();
+        // SAFETY: self is a valid C++ WebCore::WebSocket; the slices outlive the call.
+        unsafe {
+            WebSocket__didReceiveHandshakeResponse(
+                self,
+                status_code,
+                status_message.as_ptr(),
+                status_message.len(),
+                headers.as_ptr(),
+                headers.len(),
+                body.as_ptr(),
+                body.len(),
+            )
+        };
         event_loop.exit();
     }
 

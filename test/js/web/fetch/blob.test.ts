@@ -150,9 +150,9 @@ describe("blob: URL scheme fetch", () => {
     async method => {
       using u = blobURL(["hi"]);
       const body = method === "HEAD" ? undefined : "x";
-      expect(fetch(u.url, { method, body })).rejects.toThrow(TypeError);
+      await expect(fetch(u.url, { method, body })).rejects.toThrow(TypeError);
       // and via a Request object
-      expect(fetch(new Request(u.url, { method, body }))).rejects.toThrow(TypeError);
+      await expect(fetch(new Request(u.url, { method, body }))).rejects.toThrow(TypeError);
     },
   );
 
@@ -224,12 +224,13 @@ describe("blob: URL scheme fetch", () => {
   test.each([
     "bytes=20-30", // start >= size
     "bytes=5-2", // end < start
+    "bytes=-0", // zero-length suffix
     "bytes=", // both missing
     "not-a-range", // wrong unit
     "bytes=0-1,3-4", // multi-range
   ])("Range %j is a network error", async range => {
     using u = blobURL(["0123456789"]);
-    expect(fetch(u.url, { headers: { Range: range } })).rejects.toThrow(TypeError);
+    await expect(fetch(u.url, { headers: { Range: range } })).rejects.toThrow(TypeError);
   });
 
   test("Range on a Request object", async () => {

@@ -1465,6 +1465,8 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                     }};
                 }
 
+                use crate::server::RangeRequest;
+
                 if method != Method::GET {
                     reject!("fetch failed: only GET is allowed for blob: URLs");
                 }
@@ -1476,29 +1478,22 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                     );
                 };
 
-                let url_string = BunString::create_format(format_args!(
-                    "blob:{}",
-                    bstr::BStr::new(url_path_decoded)
-                ));
-
                 blob.resolve_size();
                 let full_length = blob.size.get();
-                let blob_type = blob.content_type_slice();
 
                 let mut status_code: u16 = 200;
                 let mut status_text: &[u8] = b"OK";
                 let mut length = full_length;
-                let mut content_range: Option<(u64, u64)> = None;
+                let mut content_range = RangeRequest::Result::None;
 
                 if let Some(range_header) = &range {
-                    use crate::server::RangeRequest;
                     let (start, end) = match RangeRequest::parse_raw(range_header.as_bytes()) {
                         RangeRequest::Raw::None => {
                             reject!("fetch failed: invalid Range header")
                         }
                         RangeRequest::Raw::Suffix(n) => {
-                            if full_length == 0 {
-                                reject!("fetch failed: Range is unsatisfiable for an empty blob")
+                            if n == 0 || full_length == 0 {
+                                reject!("fetch failed: Range is unsatisfiable")
                             }
                             (full_length.saturating_sub(n), full_length - 1)
                         }
@@ -1518,7 +1513,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                     blob.size.set(length);
                     status_code = 206;
                     status_text = b"Partial Content";
-                    content_range = Some((start, end));
+                    content_range = RangeRequest::Result::Satisfiable { start, end };
                 }
 
                 let mut response_headers = response::HeadersRef::create_empty();
@@ -1533,16 +1528,17 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                 )?;
                 response_headers.put(
                     HTTPHeaderName::ContentType,
-                    &BunString::ascii(blob_type),
+                    &BunString::ascii(blob.content_type_slice()),
                     global_this,
                 )?;
-                if let Some((start, end)) = content_range {
-                    let mut cr_buf = [0u8; crate::server::RangeRequest::CONTENT_RANGE_BUF];
+                if let RangeRequest::Result::Satisfiable { .. } = content_range {
+                    let mut cr_buf = [0u8; RangeRequest::CONTENT_RANGE_BUF];
                     response_headers.put(
                         HTTPHeaderName::ContentRange,
-                        &BunString::ascii(bun_core::fmt::buf_print_infallible(
+                        &BunString::ascii(RangeRequest::format_content_range(
                             &mut cr_buf,
-                            format_args!("bytes {}-{}/{}", start, end, full_length),
+                            content_range,
+                            Some(full_length),
                         )),
                         global_this,
                     )?;
@@ -1556,7 +1552,10 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                         ..Default::default()
                     },
                     Body::new(BodyValue::Blob(blob)),
-                    url_string,
+                    BunString::create_format(format_args!(
+                        "blob:{}",
+                        bstr::BStr::new(url_path_decoded)
+                    )),
                     false,
                 )));
 

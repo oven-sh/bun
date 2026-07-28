@@ -404,9 +404,7 @@ fn release<T>(p: *mut T) {
     }
 }
 
-/// Owning non-null COM interface pointer — `Drop` calls `Release`. Also moves
-/// the per-call-site `unsafe { ((*(*p).vt).Method)(p, ..) }` vtable dance into
-/// one place per method, so `decode`/`encode` read as straight-line safe code.
+/// Owning non-null COM interface pointer; `Drop` calls `Release`.
 #[repr(transparent)]
 struct ComPtr<T>(ptr::NonNull<T>);
 
@@ -854,9 +852,7 @@ static FACTORY_PTR: core::sync::atomic::AtomicPtr<IWICImagingFactory> =
     core::sync::atomic::AtomicPtr::new(ptr::null_mut());
 static FACTORY_ONCE: Once = Once::new();
 
-/// Returns a non-owning view: the factory is a process-lifetime singleton held
-/// in `FACTORY_PTR` and is never released, so the `ComPtr` is wrapped in
-/// `ManuallyDrop` to suppress the `Drop` → `Release` on the caller's handle.
+/// `ManuallyDrop`: the factory is a process-lifetime singleton and is never `Release`d.
 fn factory() -> Result<core::mem::ManuallyDrop<ComPtr<IWICImagingFactory>>, BackendError> {
     // COM apartment must be entered on the *calling* thread; the factory
     // itself is created once and shared (valid in the MTA).

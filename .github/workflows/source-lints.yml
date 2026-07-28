@@ -3,39 +3,39 @@ name: source-lints
 permissions:
   contents: read
 
-# All of test/internal/: source-tree lints, build-script unit tests, and
-# internal-API smoke tests. These run against a released bun on push instead
-# of being repeated across every Buildkite test lane (excluded there via
-# .buildkite/ci.mjs).
+# Source-tree lints and build-script unit tests from test/internal/source-lints/.
+# These never touch the built bun binary (no bun:internal-for-testing, no
+# bunExe() spawns), so they can run against a released bun immediately on push
+# instead of waiting for build-bun in every Buildkite test lane.
 on:
   workflow_dispatch:
   push:
     branches: [main]
     paths:
-      - "src/**/*.rs"
-      - "src/jsc/bindings/**"
+      - "src/**"
       - "scripts/**"
       - "test/harness.ts"
       - "test/tsconfig.json"
       - "test/_util/**"
-      - "test/internal/**"
+      - "test/internal/source-lints/**"
+      - "test/expected-durations.json"
       - ".github/workflows/source-lints.yml"
       - ".github/actions/setup-bun/**"
   pull_request:
     paths:
-      - "src/**/*.rs"
-      - "src/jsc/bindings/**"
+      - "src/**"
       - "scripts/**"
       - "test/harness.ts"
       - "test/tsconfig.json"
       - "test/_util/**"
-      - "test/internal/**"
+      - "test/internal/source-lints/**"
+      - "test/expected-durations.json"
       - ".github/workflows/source-lints.yml"
       - ".github/actions/setup-bun/**"
   merge_group:
 
 env:
-  BUN_VERSION: "1.3.14"
+  BUN_VERSION: "1.3.2"
 
 jobs:
   source-lints:
@@ -57,10 +57,5 @@ jobs:
       - name: Setup Dependencies
         # oxlint-plugin-bun.test.ts needs node_modules/oxlint from devDependencies.
         run: bun install --frozen-lockfile
-      - name: Run test/internal
-        env:
-          # Enable bun:internal-for-testing in release builds. The env var is
-          # only read when BUN_GARBAGE_COLLECTOR_LEVEL is also set.
-          BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING: "1"
-          BUN_GARBAGE_COLLECTOR_LEVEL: "0"
-        run: bun test test/internal/
+      - name: Run source lints
+        run: bun test test/internal/source-lints/

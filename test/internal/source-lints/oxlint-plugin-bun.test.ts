@@ -9,7 +9,7 @@ import { existsSync } from "fs";
 import { bunEnv, bunExe, isASAN, tempDir } from "harness";
 import path from "path";
 
-const root = path.resolve(import.meta.dir, "..", "..");
+const root = path.resolve(import.meta.dir, "..", "..", "..");
 const pluginPath = path.join(root, "scripts", "oxlint-plugins", "bun.js");
 // Use the pinned oxlint from the repo's devDependencies so the test is
 // hermetic (no registry fetch) and version-locked to the jsPlugins API the

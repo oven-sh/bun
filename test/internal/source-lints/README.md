@@ -1,11 +1,14 @@
 # test/internal/source-lints/
 
-Tests in this directory are source-tree lints: they grep `src/**` for
-anti-patterns and never touch the built `bun` binary.
+Source-tree lints (grep `src/**` for anti-patterns) and build-script unit
+tests. These never touch the built `bun` binary, so they run on GitHub Actions
+via `.github/workflows/source-lints.yml` against a released bun and are
+excluded from the Buildkite test shards (`.buildkite/ci.mjs`).
 
-All of `test/internal/` (including this directory) runs on GitHub Actions via
-`.github/workflows/source-lints.yml` against a released bun, and is excluded
-from the Buildkite test shards (`.buildkite/ci.mjs`), so it reports in seconds
-instead of waiting for `build-bun` on every lane.
+**Criterion:** a test belongs here if it does **not** import
+`bun:internal-for-testing`, does **not** spawn `bunExe()`, and does **not**
+call `Bun.build`/`Bun.Transpiler`. Tests that exercise code compiled into the
+bun binary stay in `test/internal/` so the Buildkite lanes run them against
+the build under test.
 
-To run locally: `bun test test/internal/`.
+To run locally: `bun test test/internal/source-lints/`.

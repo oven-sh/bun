@@ -50,8 +50,8 @@ pub enum StripMode {
 
 #[derive(Copy, Clone)]
 pub struct StripOpts {
-    pub require_overlay: bool,
-    pub recompute_checksum: bool,
+    pub(crate) require_overlay: bool,
+    pub(crate) recompute_checksum: bool,
 }
 
 impl Default for StripOpts {
@@ -65,16 +65,12 @@ impl Default for StripOpts {
 
 /// Windows PE Binary manipulation for codesigning standalone executables
 pub struct PEFile {
-    pub data: Vec<u8>,
+    pub(crate) data: Vec<u8>,
     // Store offsets instead of pointers to avoid invalidation after resize
-    pub pe_header_offset: usize,
-    pub optional_header_offset: usize,
-    pub section_headers_offset: usize,
-    pub num_sections: u16,
-    // Cached values from init
-    pub first_raw: u32,
-    pub last_file_end: u32,
-    pub last_va_end: u32,
+    pub(crate) pe_header_offset: usize,
+    pub(crate) optional_header_offset: usize,
+    pub(crate) section_headers_offset: usize,
+    pub(crate) num_sections: u16,
 }
 
 // PE/COFF on-disk header structs are byte-packed (no padding) per spec, and may
@@ -346,38 +342,19 @@ impl PEFile {
             return Err(Error::InvalidPEFile);
         }
 
-        // 7. Precompute first_raw, last_file_end, last_va_end
-        let mut first_raw: u32 = u32::try_from(data.len()).expect("int cast");
-        let mut last_file_end: u32 = 0;
-        let mut last_va_end: u32 = 0;
-
+        // 7. Validate each section's aligned virtual extent up front.
         let section_alignment = optional_header.section_alignment;
-
-        if num_sections > 0 {
-            for i in 0..num_sections as usize {
-                let sh_off = section_headers_offset + i * size_of::<SectionHeader>();
-                // SAFETY: `sh_off + size_of::<SectionHeader>()` is within `data` per the
-                // `section_headers_offset + section_headers_size <= data.len()` check above.
-                let section = unsafe {
-                    ptr::read_unaligned(data.as_ptr().add(sh_off).cast::<SectionHeader>())
-                };
-                if section.size_of_raw_data > 0 {
-                    if section.pointer_to_raw_data < first_raw {
-                        first_raw = section.pointer_to_raw_data;
-                    }
-                    let file_end = section.pointer_to_raw_data + section.size_of_raw_data;
-                    if file_end > last_file_end {
-                        last_file_end = file_end;
-                    }
-                }
-                // Use effective virtual size (max of virtual_size and size_of_raw_data)
-                let vs_effective = section.virtual_size.max(section.size_of_raw_data);
-                let va_end =
-                    section.virtual_address + align_up_u32(vs_effective, section_alignment)?;
-                if va_end > last_va_end {
-                    last_va_end = va_end;
-                }
-            }
+        for i in 0..num_sections as usize {
+            let sh_off = section_headers_offset + i * size_of::<SectionHeader>();
+            // SAFETY: `sh_off + size_of::<SectionHeader>()` is within `data` per the
+            // `section_headers_offset + section_headers_size <= data.len()` check above.
+            let section =
+                unsafe { ptr::read_unaligned(data.as_ptr().add(sh_off).cast::<SectionHeader>()) };
+            let vs_effective = section.virtual_size.max(section.size_of_raw_data);
+            section
+                .virtual_address
+                .checked_add(align_up_u32(vs_effective, section_alignment)?)
+                .ok_or(Error::Overflow)?;
         }
 
         Ok(Box::new(PEFile {
@@ -386,16 +363,13 @@ impl PEFile {
             optional_header_offset,
             section_headers_offset,
             num_sections,
-            first_raw,
-            last_file_end,
-            last_va_end,
         }))
     }
 
     // deinit: Drop is automatic — Vec<u8> field freed; Box<PEFile> dropped by caller.
 
     /// Strip Authenticode signatures from the PE file
-    pub fn strip_authenticode(&mut self, opts: StripOpts) -> Result<(), Error> {
+    pub(crate) fn strip_authenticode(&mut self, opts: StripOpts) -> Result<(), Error> {
         let opt = view_at_mut::<OptionalHeader64>(&mut self.data, self.optional_header_offset)?;
 
         // Read Security directory (index 4)

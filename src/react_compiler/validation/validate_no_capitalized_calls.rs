@@ -8,7 +8,7 @@ use bun_core::BStr;
 /// Validates that capitalized functions are not called directly (they should be rendered as JSX).
 ///
 /// Port of ValidateNoCapitalizedCalls.ts.
-pub fn validate_no_capitalized_calls(
+pub(crate) fn validate_no_capitalized_calls(
     func: &HirFunction,
     env: &mut Environment,
 ) -> Result<(), CompilerError> {

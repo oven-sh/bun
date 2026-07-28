@@ -18,7 +18,7 @@ pub(crate) fn create(global: &JSGlobalObject) -> JSValue {
 }
 
 #[bun_jsc::host_fn]
-pub(crate) fn gc_aggression_level(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+fn gc_aggression_level(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     // SAFETY: `bun_vm()` returns a non-null `*mut VirtualMachine` for a Bun-owned global;
     // we hold no other Rust borrow of the VM across these accesses.
     let vm = global.bun_vm().as_mut();
@@ -37,7 +37,7 @@ pub(crate) fn gc_aggression_level(global: &JSGlobalObject, frame: &CallFrame) ->
 }
 
 #[bun_jsc::host_fn]
-pub(crate) fn array_buffer_to_string(
+fn array_buffer_to_string(
     global: &JSGlobalObject,
     frame: &CallFrame,
 ) -> JsResult<JSValue> {

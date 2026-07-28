@@ -6,13 +6,13 @@ use crate::watcher_impl::{Op, WatchEvent, Watcher};
 pub(crate) type Platform = KEventWatcher;
 
 pub struct KEventWatcher {
-    pub fd: Fd,
+    pub(crate) fd: Fd,
 }
 
 const CHANGELIST_COUNT: usize = 128;
 
 impl KEventWatcher {
-    pub fn new(_root: &[u8]) -> crate::Result<Self> {
+    pub(crate) fn new(_root: &[u8]) -> crate::Result<Self> {
         let fd = bun_sys::kqueue()?;
         if fd.native() == 0 {
             return Err(crate::Error::KQueueError);
@@ -20,7 +20,7 @@ impl KEventWatcher {
         Ok(Self { fd })
     }
 
-    pub fn stop(&mut self) {
+    pub(crate) fn stop(&mut self) {
         if self.fd.is_valid() {
             let _ = bun_sys::close(self.fd);
             self.fd = Fd::INVALID;
@@ -28,7 +28,7 @@ impl KEventWatcher {
     }
 }
 
-pub(crate) fn watch_event_from_kevent(kevent: &libc::kevent) -> WatchEvent {
+fn watch_event_from_kevent(kevent: &libc::kevent) -> WatchEvent {
     let mut op = Op::empty();
     if (kevent.fflags & libc::NOTE_DELETE) > 0 {
         op |= Op::DELETE;

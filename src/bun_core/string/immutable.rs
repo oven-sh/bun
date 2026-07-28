@@ -68,8 +68,6 @@ pub mod unicode {
     pub struct NewCodePointIterator<'a> {
         pub bytes: &'a [u8],
         pub i: usize,
-        pub width: u8,
-        pub c: CodePoint,
     }
     pub type CodepointIterator<'a> = NewCodePointIterator<'a>;
     pub type UnsignedCodepointIterator<'a> = NewCodePointIterator<'a>;
@@ -80,16 +78,12 @@ pub mod unicode {
             Self {
                 bytes,
                 i: 0,
-                width: 0,
-                c: 0,
             }
         }
         pub fn init_offset(bytes: &'a [u8], i: usize) -> Self {
             Self {
                 bytes,
                 i,
-                width: 0,
-                c: 0,
             }
         }
 
@@ -362,7 +356,6 @@ pub fn contains(self_: &[u8], str: &[u8]) -> bool {
 
 // Canonical impl lives in tier-0 `crate::strings_impl` (which `bun_paths` etc.
 // reach without depending on this crate); re-export to avoid a second copy.
-pub use crate::strings_impl::contains_case_insensitive_ascii;
 
 /// Index of the first byte in `slice` that appears in `chars` (SIMD via
 /// highway). Returns `usize` (unlike the `u32`-returning single-char
@@ -479,7 +472,7 @@ pub fn is_npm_package_name_ignore_length(target: &[u8]) -> bool {
 
 // Secret-redaction scanners are canonical in crate::strings_impl (only callers
 // live in bun_core/fmt.rs). Re-exported here to preserve the bun.strings.* path.
-pub use crate::strings_impl::{
+pub(crate) use crate::strings_impl::{
     find_url_password, is_uuid, starts_with_npm_secret, starts_with_secret, starts_with_uuid,
 };
 
@@ -598,9 +591,9 @@ pub fn split<'a>(self_: &'a [u8], delimiter: &'a [u8]) -> SplitIterator<'a> {
 }
 
 pub struct SplitIterator<'a> {
-    pub buffer: &'a [u8],
-    pub index: Option<usize>,
-    pub delimiter: &'a [u8],
+    pub(crate) buffer: &'a [u8],
+    pub(crate) index: Option<usize>,
+    pub(crate) delimiter: &'a [u8],
 }
 
 impl<'a> SplitIterator<'a> {
@@ -683,7 +676,7 @@ impl StringOrTinyStringMeta {
 const _: () = assert!(core::mem::size_of::<StringOrTinyString>() == 32);
 
 impl StringOrTinyString {
-    pub const MAX: usize = 31;
+    pub(crate) const MAX: usize = 31;
 
     #[inline]
     pub fn slice(&self) -> &[u8] {
@@ -1015,7 +1008,7 @@ fn eql_comptime_check_len_with_known_type<T: crate::NoUninit + Eq, const CHECK_L
 ///
 ///   strings.eql_comptime(input, b"hello world");
 ///   strings.eql_comptime(input, b"hai");
-pub fn eql_comptime_check_len_with_type<T: crate::NoUninit + Eq, const CHECK_LEN: bool>(
+pub(crate) fn eql_comptime_check_len_with_type<T: crate::NoUninit + Eq, const CHECK_LEN: bool>(
     a: &[T],
     b: &[T],
 ) -> bool {
@@ -1074,7 +1067,7 @@ pub fn eql_case_insensitive_t<T: crate::NoUninit + Into<u32>>(a: &[T], b: &[u8])
     true
 }
 
-pub fn has_prefix_case_insensitive_t<T: crate::NoUninit + Into<u32>>(
+pub(crate) fn has_prefix_case_insensitive_t<T: crate::NoUninit + Into<u32>>(
     str: &[T],
     prefix: &[u8],
 ) -> bool {
@@ -1223,7 +1216,7 @@ macro_rules! w {
 pub fn first_non_ascii(slice: &[u8]) -> Option<u32> {
     first_non_ascii_usize(slice).map(|i| i as u32)
 }
-pub use crate::strings_impl::first_non_ascii_usize;
+pub(crate) use crate::strings_impl::first_non_ascii_usize;
 
 /// `bun.strings.isValidUTF8` — SIMD-validated UTF-8 check.
 /// Wraps `simdutf::validate::utf8`; the gated `unicode_draft` adds a
@@ -1321,7 +1314,7 @@ pub fn index_of_needs_escape_for_java_script_string(slice: &[u8], quote_char: u8
     highway::index_of_needs_escape_for_javascript_string(slice, quote_char)
 }
 
-pub fn index_of_needs_url_encode(slice: &[u8]) -> Option<u32> {
+pub(crate) fn index_of_needs_url_encode(slice: &[u8]) -> Option<u32> {
     if slice.is_empty() {
         return None;
     }
@@ -1638,11 +1631,11 @@ pub fn trim_suffix<'a>(buffer: &'a [u8], suffix: &[u8]) -> &'a [u8] {
 /// The final element is the end index of the desired line
 #[derive(Copy, Clone, Default)]
 pub struct LineRange {
-    pub start: u32,
-    pub end: u32,
+    pub(crate) start: u32,
+    pub(crate) end: u32,
 }
 
-pub fn index_of_line_ranges<const LINE_RANGE_COUNT: usize>(
+pub(crate) fn index_of_line_ranges<const LINE_RANGE_COUNT: usize>(
     text: &[u8],
     target_line: u32,
 ) -> BoundedArray<LineRange, LINE_RANGE_COUNT> {
@@ -2049,8 +2042,8 @@ pub fn format_escapes(str: &[u8], flags: QuoteEscapeFormatFlags) -> QuoteEscapeF
 }
 
 pub struct QuoteEscapeFormat<'a> {
-    pub data: &'a [u8],
-    pub flags: QuoteEscapeFormatFlags,
+    pub(crate) data: &'a [u8],
+    pub(crate) flags: QuoteEscapeFormatFlags,
 }
 
 impl core::fmt::Display for QuoteEscapeFormat<'_> {
@@ -2223,11 +2216,11 @@ pub const fn is_unicode_space_separator(cp: u32) -> bool {
 /// The C++ side uses ANSI::findEscapeCharacter (SIMD) and ANSI::consumeANSI.
 #[repr(C)]
 pub struct ANSIIterator {
-    pub input: *const u8,
-    pub input_len: usize,
-    pub cursor: usize,
-    pub slice_ptr: *const u8,
-    pub slice_len: usize,
+    pub(crate) input: *const u8,
+    pub(crate) input_len: usize,
+    pub(crate) cursor: usize,
+    pub(crate) slice_ptr: *const u8,
+    pub(crate) slice_len: usize,
 }
 
 impl ANSIIterator {

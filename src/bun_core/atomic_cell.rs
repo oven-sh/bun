@@ -114,7 +114,8 @@ impl<T: Atom> AtomicCell<T> {
     /// Returns `Ok(previous)` if `f` produced a new value (and it was
     /// installed), `Err(current)` if `f` returned `None`.
     #[inline]
-    pub fn fetch_update(&self, mut f: impl FnMut(T) -> Option<T>) -> Result<T, T> {
+    #[cfg(test)]
+    pub(crate) fn fetch_update(&self, mut f: impl FnMut(T) -> Option<T>) -> Result<T, T> {
         let mut prev = self.load();
         while let Some(next) = f(prev) {
             match self.compare_exchange(prev, next) {
@@ -541,7 +542,7 @@ impl<T: ?Sized> ThreadCell<T> {
 
     /// Debug-panic if the cell is claimed by a different thread.
     #[inline]
-    pub fn assert_owner(&self) {
+    pub(crate) fn assert_owner(&self) {
         #[cfg(debug_assertions)]
         {
             let owner = self.owner.load(Ordering::Acquire);

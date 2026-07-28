@@ -176,7 +176,7 @@ use bun_io::pipe_writer::PosixPipeWriter; // brings `on_poll` into scope for Fil
 /// Per-arm result for [`run_task`]: `Continue` means proceed to drain
 /// microtasks and the next item; `EarlyReturn` is the HotReloadTask special
 /// case — microtasks must NOT drain.
-pub enum RunTaskResult {
+pub(crate) enum RunTaskResult {
     Continue,
     EarlyReturn,
 }
@@ -194,7 +194,7 @@ pub enum RunTaskResult {
 // function's hot residue (AnyTask/ManagedTask/CppTask + fs/napi) fits in 1-2
 // pages.
 #[inline(never)]
-pub fn run_task(
+pub(crate) fn run_task(
     task: Task,
     el: &mut EventLoop,
     vm: &mut VirtualMachine,
@@ -595,7 +595,7 @@ const _: () = assert!(
 // `tick_queue_with_count` — the full drain loop.
 // ────────────────────────────────────────────────────────────────────────────
 
-pub fn tick_queue_with_count(
+pub(crate) fn tick_queue_with_count(
     el: &mut EventLoop,
     vm: &mut VirtualMachine,
     counter: &mut u32,
@@ -639,7 +639,7 @@ pub fn tick_queue_with_count(
 /// (guaranteed by `FilePoll::on_update`, the only caller).
 #[cfg(not(windows))]
 #[unsafe(no_mangle)]
-pub unsafe fn __bun_run_file_poll(poll: *mut FilePoll, size_or_offset: i64) {
+pub(crate) unsafe fn __bun_run_file_poll(poll: *mut FilePoll, size_or_offset: i64) {
     // SAFETY: contract above.
     let poll_ref = unsafe { &mut *poll };
     let owner = poll_ref.owner;
@@ -778,7 +778,7 @@ use crate::webcore::blob::write_file::WriteFile;
 /// # Safety
 /// `poll` is the `io_poll` field of a live owner of type `tag`.
 #[unsafe(no_mangle)]
-pub(crate) unsafe fn __bun_io_pollable_on_ready(tag: bun_io::PollableTag, poll: *mut bun_io::Poll) {
+unsafe fn __bun_io_pollable_on_ready(tag: bun_io::PollableTag, poll: *mut bun_io::Poll) {
     match tag {
         bun_io::PollableTag::ReadFile => {
             // SAFETY: per fn contract.
@@ -803,7 +803,7 @@ pub(crate) unsafe fn __bun_io_pollable_on_ready(tag: bun_io::PollableTag, poll: 
 /// # Safety
 /// `poll` is the `io_poll` field of a live owner of type `tag`.
 #[unsafe(no_mangle)]
-pub(crate) unsafe fn __bun_io_pollable_on_io_error(
+unsafe fn __bun_io_pollable_on_io_error(
     tag: bun_io::PollableTag,
     poll: *mut bun_io::Poll,
     err: &bun_sys::Error,
@@ -841,7 +841,7 @@ pub(crate) unsafe fn __bun_io_pollable_on_io_error(
 /// `task` was produced by `enqueue_immediate_task` from a live
 /// `timer::ImmediateObject`; `vm` is the live per-thread VM.
 #[unsafe(no_mangle)]
-pub(crate) unsafe fn __bun_run_immediate_task(
+unsafe fn __bun_run_immediate_task(
     task: *mut (),
     vm: *mut bun_jsc::virtual_machine::VirtualMachine,
 ) -> bool {
@@ -864,7 +864,7 @@ pub(crate) unsafe fn __bun_run_immediate_task(
 /// `timer::ImmediateObject` whose event-loop ref has not yet been released;
 /// `vm` is the live per-thread VM with `RuntimeState` still installed.
 #[unsafe(no_mangle)]
-pub(crate) unsafe fn __bun_cancel_pending_immediate(
+unsafe fn __bun_cancel_pending_immediate(
     task: *mut (),
     vm: *mut bun_jsc::virtual_machine::VirtualMachine,
 ) {
@@ -885,7 +885,7 @@ pub(crate) unsafe fn __bun_cancel_pending_immediate(
 /// `timer` was published by `WTFTimer::update` into `imminent_gc_timer` and
 /// remains live until consumed; `vm` is the live per-thread VM.
 #[unsafe(no_mangle)]
-pub(crate) unsafe fn __bun_run_wtf_timer(
+unsafe fn __bun_run_wtf_timer(
     timer: *mut (),
     vm: *mut bun_jsc::virtual_machine::VirtualMachine,
 ) {
@@ -914,7 +914,7 @@ pub(crate) unsafe fn __bun_run_wtf_timer(
 /// `*mut VirtualMachine`. The handler may free the container — do not touch
 /// `t` after the per-arm call returns.
 #[unsafe(no_mangle)]
-pub unsafe fn __bun_fire_timer(t: *mut EventLoopTimer, now: *const ElTimespec, vm: *mut ()) {
+pub(crate) unsafe fn __bun_fire_timer(t: *mut EventLoopTimer, now: *const ElTimespec, vm: *mut ()) {
     use crate::timer::{ImmediateObject, TimeoutObject, TimerObjectInternals, WTFTimer};
 
     /// Recover the embedding container from `t` (the popped timer slot).
@@ -1123,7 +1123,7 @@ pub unsafe fn __bun_fire_timer(t: *mut EventLoopTimer, now: *const ElTimespec, v
 /// # Safety
 /// `t` points at a live [`EventLoopTimer`] currently linked into a `TimerHeap`.
 #[unsafe(no_mangle)]
-pub unsafe fn __bun_js_timer_epoch(
+pub(crate) unsafe fn __bun_js_timer_epoch(
     _tag: EventLoopTimerTag,
     t: *const EventLoopTimer,
 ) -> Option<u32> {
@@ -1142,7 +1142,7 @@ pub unsafe fn __bun_js_timer_epoch(
 /// `el` and `vm` must point at live `EventLoop`/`VirtualMachine` instances
 /// with no other `&mut` held across this call.
 #[unsafe(no_mangle)]
-pub(crate) unsafe fn __bun_tick_queue_with_count(
+unsafe fn __bun_tick_queue_with_count(
     el: *mut EventLoop,
     vm: *mut bun_jsc::virtual_machine::VirtualMachine,
     counter: &mut u32,
@@ -1164,7 +1164,7 @@ pub(crate) unsafe fn __bun_tick_queue_with_count(
 /// would have dropped. Tags not yet listed leak their box at exit; add them
 /// as LSan surfaces them.
 #[unsafe(no_mangle)]
-pub(crate) fn __bun_release_task_at_shutdown(task: bun_event_loop::Task) -> bool {
+fn __bun_release_task_at_shutdown(task: bun_event_loop::Task) -> bool {
     use bun_event_loop::task_tag;
     match task.tag {
         // `callback` (HTTP thread) won the `has_schedule_callback` CAS and

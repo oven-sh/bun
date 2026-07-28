@@ -211,7 +211,7 @@ pub mod subprocess {
             Self::OwnedBytes(bytes)
         }
 
-        pub fn slice(&self) -> &[u8] {
+        pub(crate) fn slice(&self) -> &[u8] {
             match self {
                 Source::OwnedBytes(b) => b,
                 Source::Any(s) => s.slice(),
@@ -229,7 +229,7 @@ pub mod subprocess {
             *self = Source::Detached;
         }
 
-        pub fn memory_cost(&self) -> usize {
+        pub(crate) fn memory_cost(&self) -> usize {
             match self {
                 Source::OwnedBytes(b) => b.len(),
                 Source::Any(s) => s.memory_cost(),

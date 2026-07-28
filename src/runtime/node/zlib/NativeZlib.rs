@@ -38,7 +38,7 @@ mod _impl {
     #[derive(bun_ptr::CellRefCounted)]
     #[ref_count(destroy = Self::deinit)]
     pub struct NativeZlib {
-        pub ref_count: Cell<u32>,
+        pub(crate) ref_count: Cell<u32>,
         // JSC_BORROW backref; global outlives this m_ctx payload. `BackRef`
         // centralises the single unsafe deref so the trait impl is safe.
         pub global_this: bun_ptr::BackRef<JSGlobalObject>,
@@ -61,7 +61,7 @@ mod _impl {
     impl NativeZlib {
         // NB: no `#[bun_jsc::host_fn]` here — the `#[bun_jsc::JsClass]` derive emits
         // the constructor shim that calls `<NativeZlib>::constructor(g, f)` directly.
-        pub fn constructor(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<Box<Self>> {
+        pub(crate) fn constructor(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<Box<Self>> {
             let arguments = frame.arguments_undef::<4>();
 
             let mode = arguments.ptr[0];
@@ -107,14 +107,14 @@ mod _impl {
         }
 
         //// adding this didnt help much but leaving it here to compare the number with later
-        pub fn estimated_size(&self) -> usize {
+        pub(crate) fn estimated_size(&self) -> usize {
             // @sizeOf(@cImport(@cInclude("deflate.h")).internal_state) @ cloudflare/zlib @ 92530568d2c128b4432467b76a3b54d93d6350bd
             const INTERNAL_STATE_SIZE: usize = 3309;
             mem::size_of::<Self>() + INTERNAL_STATE_SIZE
         }
 
         #[bun_jsc::host_fn(method)]
-        pub fn init(&self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+        pub(crate) fn init(&self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
             let arguments = frame.arguments_undef::<7>();
             let this_value = frame.this();
 
@@ -219,7 +219,7 @@ mod _impl {
         }
 
         #[bun_jsc::host_fn(method)]
-        pub fn params(&self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+        pub(crate) fn params(&self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
             let arguments = frame.arguments_undef::<2>();
 
             if arguments.len != 2 {
@@ -272,12 +272,12 @@ pub use _impl::NativeZlib;
 // ─── non-JSC body (real): zlib stream Context ─────────────────────────────
 
 pub struct Context {
-    pub mode: c::NodeMode,
-    pub state: c::z_stream,
-    pub err: c::ReturnCode,
+    pub(crate) mode: c::NodeMode,
+    pub(crate) state: c::z_stream,
+    pub(crate) err: c::ReturnCode,
     pub flush: c::FlushValue,
     pub dictionary: Vec<u8>,
-    pub gzip_id_bytes_read: u8,
+    pub(crate) gzip_id_bytes_read: u8,
 }
 
 impl Default for Context {
@@ -302,7 +302,7 @@ impl Context {
         &self.dictionary
     }
 
-    pub fn init(
+    pub(crate) fn init(
         &mut self,
         level: c_int,
         window_bits: c_int,
@@ -364,7 +364,7 @@ impl Context {
         let _ = self.set_dictionary();
     }
 
-    pub fn set_dictionary(&mut self) -> Error {
+    pub(crate) fn set_dictionary(&mut self) -> Error {
         use c::NodeMode::*;
         // Reshaped for borrowck — capture raw ptr/len before
         // re-borrowing `self.state` mutably.
@@ -393,7 +393,7 @@ impl Context {
         Error::ok()
     }
 
-    pub fn set_params(&mut self, level: c_int, strategy: c_int) -> Error {
+    pub(crate) fn set_params(&mut self, level: c_int, strategy: c_int) -> Error {
         use c::NodeMode::*;
         self.err = c::ReturnCode::Ok;
         match self.mode {

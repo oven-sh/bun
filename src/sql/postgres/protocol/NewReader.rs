@@ -86,7 +86,7 @@ impl<Context: ReaderContext> NewReaderWrap<Context> {
     }
 
     #[inline]
-    pub fn read(&mut self, count: usize) -> Result<Data, AnyPostgresError> {
+    pub(crate) fn read(&mut self, count: usize) -> Result<Data, AnyPostgresError> {
         self.wrapped.read(count)
     }
 
@@ -102,7 +102,7 @@ impl<Context: ReaderContext> NewReaderWrap<Context> {
         Err(AnyPostgresError::InvalidMessage)
     }
 
-    pub fn skip(&mut self, count: usize) -> Result<(), AnyPostgresError> {
+    pub(crate) fn skip(&mut self, count: usize) -> Result<(), AnyPostgresError> {
         self.wrapped.skip(count);
         Ok(())
     }
@@ -112,7 +112,7 @@ impl<Context: ReaderContext> NewReaderWrap<Context> {
     }
 
     #[inline]
-    pub fn read_z(&mut self) -> Result<Data, AnyPostgresError> {
+    pub(crate) fn read_z(&mut self) -> Result<Data, AnyPostgresError> {
         self.wrapped.read_z()
     }
 
@@ -122,7 +122,7 @@ impl<Context: ReaderContext> NewReaderWrap<Context> {
     /// bytes are the message body, so a missing terminator is a framing
     /// violation, not a partial read. Returns the string without its NUL and
     /// the total bytes consumed (string + NUL).
-    pub fn string_within(&mut self, limit: usize) -> Result<(Data, usize), AnyPostgresError> {
+    pub(crate) fn string_within(&mut self, limit: usize) -> Result<(Data, usize), AnyPostgresError> {
         let view = self.wrapped.peek();
         let bound = view.len().min(limit);
         let Some(zero) = view[..bound].iter().position(|&b| b == 0) else {
@@ -134,7 +134,7 @@ impl<Context: ReaderContext> NewReaderWrap<Context> {
     }
 
     #[inline]
-    pub fn ensure_capacity(&mut self, count: usize) -> Result<(), AnyPostgresError> {
+    pub(crate) fn ensure_capacity(&mut self, count: usize) -> Result<(), AnyPostgresError> {
         if !self.wrapped.ensure_length(count) {
             return Err(AnyPostgresError::ShortRead);
         }
@@ -146,16 +146,16 @@ impl<Context: ReaderContext> NewReaderWrap<Context> {
         Ok(Int::from_be_slice(data.slice()))
     }
 
-    pub fn expect_int<Int: ProtocolInt>(&mut self, value: Int) -> Result<bool, AnyPostgresError> {
+    pub(crate) fn expect_int<Int: ProtocolInt>(&mut self, value: Int) -> Result<bool, AnyPostgresError> {
         let actual = self.int::<Int>()?;
         Ok(actual == value)
     }
 
-    pub fn int4(&mut self) -> Result<PostgresInt32, AnyPostgresError> {
+    pub(crate) fn int4(&mut self) -> Result<PostgresInt32, AnyPostgresError> {
         self.int::<PostgresInt32>()
     }
 
-    pub fn short(&mut self) -> Result<PostgresShort, AnyPostgresError> {
+    pub(crate) fn short(&mut self) -> Result<PostgresShort, AnyPostgresError> {
         self.int::<PostgresShort>()
     }
 
@@ -170,7 +170,7 @@ impl<Context: ReaderContext> NewReaderWrap<Context> {
         Ok(raw)
     }
 
-    pub fn length(&mut self) -> Result<PostgresInt32, AnyPostgresError> {
+    pub(crate) fn length(&mut self) -> Result<PostgresInt32, AnyPostgresError> {
         let expected = Self::validate_length(self.int::<PostgresInt32>()?)?;
         self.ensure_capacity((expected - 4) as usize)?;
         Ok(expected)
@@ -199,7 +199,7 @@ impl<Context: ReaderContext> NewReaderWrap<Context> {
     /// `length()` has already returned `InvalidMessageLength` for any value
     /// below 4, and `ensure_capacity` has confirmed those bytes are present.
     #[inline]
-    pub fn body_length(&mut self) -> Result<usize, AnyPostgresError> {
+    pub(crate) fn body_length(&mut self) -> Result<usize, AnyPostgresError> {
         Ok((self.length()? - 4) as usize)
     }
 
@@ -209,7 +209,7 @@ impl<Context: ReaderContext> NewReaderWrap<Context> {
     }
 
     #[inline]
-    pub fn bytes(&mut self, count: usize) -> Result<Data, AnyPostgresError> {
+    pub(crate) fn bytes(&mut self, count: usize) -> Result<Data, AnyPostgresError> {
         self.read(count)
     }
 }

@@ -25,32 +25,32 @@ pub type Loop = uv::Loop;
 // `KeepAlive` (struct + 14-method impl) was duplicated here and in
 // `posix_event_loop.rs`; both copies now live in `crate::keep_alive`.
 
-pub type Flags = posix::Flags;
+pub(crate) type Flags = posix::Flags;
 pub type FlagsSet = posix::FlagsSet;
 pub type Owner = posix::Owner;
 
 pub struct FilePoll {
-    pub fd: Fd,
-    pub owner: Owner,
-    pub flags: FlagsSet,
-    pub next_to_free: *mut FilePoll,
+    pub(crate) fd: Fd,
+    pub(crate) owner: Owner,
+    pub(crate) flags: FlagsSet,
+    pub(crate) next_to_free: *mut FilePoll,
 }
 
 impl FilePoll {
     #[inline]
-    pub fn is_active(&self) -> bool {
+    pub(crate) fn is_active(&self) -> bool {
         self.flags.contains(Flags::HasIncrementedPollCount)
     }
 
     #[inline]
-    pub fn is_watching(&self) -> bool {
+    pub(crate) fn is_watching(&self) -> bool {
         !self.flags.contains(Flags::NeedsRearm)
             && (self.flags.contains(Flags::PollReadable)
                 || self.flags.contains(Flags::PollWritable)
                 || self.flags.contains(Flags::PollProcess))
     }
 
-    pub fn is_registered(&self) -> bool {
+    pub(crate) fn is_registered(&self) -> bool {
         self.flags.contains(Flags::PollWritable)
             || self.flags.contains(Flags::PollReadable)
             || self.flags.contains(Flags::PollProcess)
@@ -58,7 +58,7 @@ impl FilePoll {
     }
 
     /// Make calling ref() on this poll into a no-op.
-    pub fn disable_keeping_process_alive(&mut self, vm: EventLoopCtx) {
+    pub(crate) fn disable_keeping_process_alive(&mut self, vm: EventLoopCtx) {
         if self.flags.contains(Flags::Closed) {
             return;
         }
@@ -67,11 +67,11 @@ impl FilePoll {
         vm.loop_sub_active(self.flags.contains(Flags::HasIncrementedPollCount) as u32);
     }
 
-    pub fn init(vm: EventLoopCtx, fd: Fd, flags: FlagsSet, owner: Owner) -> *mut FilePoll {
+    pub(crate) fn init(vm: EventLoopCtx, fd: Fd, flags: FlagsSet, owner: Owner) -> *mut FilePoll {
         Self::init_with_owner(vm, fd, flags, owner)
     }
 
-    pub fn init_with_owner(
+    pub(crate) fn init_with_owner(
         vm: EventLoopCtx,
         fd: Fd,
         flags: FlagsSet,
@@ -94,11 +94,11 @@ impl FilePoll {
         self.deinit_with_vm(js_vm_ctx());
     }
 
-    pub fn deinit_force_unregister(&mut self) {
+    pub(crate) fn deinit_force_unregister(&mut self) {
         self.deinit()
     }
 
-    pub fn unregister(&mut self, _loop: &mut WindowsLoop) -> bool {
+    pub(crate) fn unregister(&mut self, _loop: &mut WindowsLoop) -> bool {
         // TODO: This cast is extremely suspicious. At best, `fd` is
         // the wrong type (it should be a uv handle), at worst this code is a
         // crash due to invalid memory access.
@@ -149,7 +149,7 @@ impl FilePoll {
         readable
     }
 
-    pub fn deinit_with_vm(&mut self, vm: EventLoopCtx) {
+    pub(crate) fn deinit_with_vm(&mut self, vm: EventLoopCtx) {
         // `loop_mut()` — crate-private nonnull-asref accessor (single deref in
         // `EventLoopCtx`); the uws loop is a disjoint allocation from `self`.
         // Stacked-Borrows: `self` may live inside `Store.hive`'s inline buffer,
@@ -159,7 +159,7 @@ impl FilePoll {
         self.deinit_possibly_defer(vm, loop_);
     }
 
-    pub fn enable_keeping_process_alive(&mut self, vm: EventLoopCtx) {
+    pub(crate) fn enable_keeping_process_alive(&mut self, vm: EventLoopCtx) {
         if !self.flags.contains(Flags::Closed) {
             return;
         }
@@ -245,11 +245,11 @@ impl Store {
     }
 
     #[inline]
-    pub fn get_init(&mut self, value: FilePoll) -> ptr::NonNull<FilePoll> {
+    pub(crate) fn get_init(&mut self, value: FilePoll) -> ptr::NonNull<FilePoll> {
         self.hive.get_init(value)
     }
 
-    pub fn process_deferred_frees(&mut self) {
+    pub(crate) fn process_deferred_frees(&mut self) {
         let mut next = self.pending_free_head;
         while !next.is_null() {
             let current = next;

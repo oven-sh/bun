@@ -26,24 +26,24 @@ bun_opaque::opaque_ffi! {
 /// Both slot fields are `Copy` `Cell`s, so every method takes `&self` —
 /// callers reach this through a shared `&Debugger` borrow.
 #[repr(transparent)]
-pub struct BunFrontendDevServerAgent(ErasedAgentSlot);
+pub(crate) struct BunFrontendDevServerAgent(ErasedAgentSlot);
 
 impl BunFrontendDevServerAgent {
     /// Reinterpret the `Debugger`'s erased slot as this agent. Sound because
     /// `Self` is `#[repr(transparent)]` over [`ErasedAgentSlot`] and this
     /// module is the slot's sole owner.
-    pub fn from_slot(slot: &ErasedAgentSlot) -> &Self {
+    pub(crate) fn from_slot(slot: &ErasedAgentSlot) -> &Self {
         // SAFETY: `#[repr(transparent)]` guarantees identical layout.
         unsafe { &*core::ptr::from_ref(slot).cast::<Self>() }
     }
 
     /// `nextConnectionID` — wrapping post-increment.
-    pub fn next_connection_id(&self) -> i32 {
+    pub(crate) fn next_connection_id(&self) -> i32 {
         self.0.post_increment_sequence()
     }
 
     #[inline]
-    pub fn is_enabled(&self) -> bool {
+    pub(crate) fn is_enabled(&self) -> bool {
         !self.0.agent_ptr().is_null()
     }
 
@@ -64,7 +64,7 @@ impl BunFrontendDevServerAgent {
         ))
     }
 
-    pub fn notify_client_connected(&self, dev_server_id: DebuggerId, connection_id: i32) {
+    pub(crate) fn notify_client_connected(&self, dev_server_id: DebuggerId, connection_id: i32) {
         if let Some(handle) = self.handle_mut() {
             ffi::InspectorBunFrontendDevServerAgent__notifyClientConnected(
                 handle,
@@ -74,7 +74,7 @@ impl BunFrontendDevServerAgent {
         }
     }
 
-    pub fn notify_client_disconnected(&self, dev_server_id: DebuggerId, connection_id: i32) {
+    pub(crate) fn notify_client_disconnected(&self, dev_server_id: DebuggerId, connection_id: i32) {
         if let Some(handle) = self.handle_mut() {
             ffi::InspectorBunFrontendDevServerAgent__notifyClientDisconnected(
                 handle,
@@ -84,7 +84,7 @@ impl BunFrontendDevServerAgent {
         }
     }
 
-    pub fn notify_bundle_start(&self, dev_server_id: DebuggerId, trigger_files: &mut [BunString]) {
+    pub(crate) fn notify_bundle_start(&self, dev_server_id: DebuggerId, trigger_files: &mut [BunString]) {
         if let Some(handle) = self.handle_mut() {
             // SAFETY: `trigger_files` is a valid contiguous slice for the call;
             // `(ptr, len)` pair derived from it.
@@ -99,7 +99,7 @@ impl BunFrontendDevServerAgent {
         }
     }
 
-    pub fn notify_bundle_complete(&self, dev_server_id: DebuggerId, duration_ms: f64) {
+    pub(crate) fn notify_bundle_complete(&self, dev_server_id: DebuggerId, duration_ms: f64) {
         if let Some(handle) = self.handle_mut() {
             ffi::InspectorBunFrontendDevServerAgent__notifyBundleComplete(
                 handle,
@@ -109,7 +109,7 @@ impl BunFrontendDevServerAgent {
         }
     }
 
-    pub fn notify_bundle_failed(
+    pub(crate) fn notify_bundle_failed(
         &self,
         dev_server_id: DebuggerId,
         build_errors_payload_base64: &mut BunString,
@@ -126,7 +126,7 @@ impl BunFrontendDevServerAgent {
     /// `notifyClientNavigated`. `route_bundle_id` is the pre-resolved
     /// `DevServer.RouteBundle.Index` (`-1` for `None`) — caller does
     /// `rbi.map(|i| i.get() as i32).unwrap_or(-1)`.
-    pub fn notify_client_navigated(
+    pub(crate) fn notify_client_navigated(
         &self,
         dev_server_id: DebuggerId,
         connection_id: i32,
@@ -146,7 +146,7 @@ impl BunFrontendDevServerAgent {
 
     /// `notifyConsoleLog`. `kind` is `DevServer.ConsoleLogKind as u8` (`b'l'`
     /// / `b'e'`) — caller does `kind as u8`.
-    pub fn notify_console_log(&self, dev_server_id: DebuggerId, kind: u8, data: &mut BunString) {
+    pub(crate) fn notify_console_log(&self, dev_server_id: DebuggerId, kind: u8, data: &mut BunString) {
         if let Some(handle) = self.handle_mut() {
             ffi::InspectorBunFrontendDevServerAgent__notifyConsoleLog(
                 handle,

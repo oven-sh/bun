@@ -19,12 +19,15 @@ use core::ffi::c_void;
 #[cfg(any(target_os = "linux", target_os = "android"))]
 use core::sync::atomic::{AtomicUsize, Ordering};
 
-use bun_alloc::{Alignment, AllocatorVTable, StdAllocator};
+use bun_alloc::{Alignment, AllocatorVTable};
+#[cfg(any(target_os = "linux", target_os = "android"))]
+use bun_alloc::StdAllocator;
 use bun_core::Fd;
 // bun_sys (T1) — mmap/munmap/pwrite/ftruncate/memfd_create/Result/Error/E/Tag/can_use_memfd.
 use bun_sys as sys;
 use bun_sys::FdExt;
 
+#[cfg(any(target_os = "linux", target_os = "android"))]
 use crate::webcore::blob::store::Bytes as BlobStoreBytes;
 
 /// Intrusive thread-safe ref-counted memfd allocator.
@@ -38,8 +41,9 @@ use crate::webcore::blob::store::Bytes as BlobStoreBytes;
 #[ref_count(destroy = Self::deinit)]
 pub struct LinuxMemFdAllocator {
     ref_count: bun_ptr::ThreadSafeRefCount<LinuxMemFdAllocator>,
-    pub fd: Fd,
-    pub size: usize,
+    pub(crate) fd: Fd,
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    pub(crate) size: usize,
 }
 
 impl LinuxMemFdAllocator {
@@ -59,7 +63,8 @@ impl LinuxMemFdAllocator {
 static MEMFD_COUNTER: AtomicUsize = AtomicUsize::new(0);
 
 impl LinuxMemFdAllocator {
-    pub fn new(fd: Fd, size: usize) -> bun_ptr::RefPtr<Self> {
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    pub(crate) fn new(fd: Fd, size: usize) -> bun_ptr::RefPtr<Self> {
         bun_ptr::RefPtr::new(Self {
             ref_count: bun_ptr::ThreadSafeRefCount::init(),
             fd,
@@ -97,14 +102,16 @@ impl LinuxMemFdAllocator {
     /// `free` will call [`Self::deref`] on it, which on the final ref drops
     /// the `Box`. A `*mut Self` derived from `&self` (SharedReadOnly
     /// provenance) would make that `heap::take` UB.
-    pub unsafe fn allocator(this: *mut Self) -> StdAllocator {
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    pub(crate) unsafe fn allocator(this: *mut Self) -> StdAllocator {
         StdAllocator {
             ptr: this.cast::<c_void>(),
             vtable: allocator_interface::VTABLE,
         }
     }
 
-    pub fn from(alloc: StdAllocator) -> Option<*mut Self> {
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    pub(crate) fn from(alloc: StdAllocator) -> Option<*mut Self> {
         if core::ptr::eq(alloc.vtable, allocator_interface::VTABLE) {
             Some(alloc.ptr.cast::<Self>())
         } else {
@@ -116,7 +123,8 @@ impl LinuxMemFdAllocator {
     /// `this` must be a live Box-allocated `*mut Self` (see [`Self::allocator`]).
     /// On `Ok`, the returned `Bytes` borrows one ref on `*this` (via the
     /// embedded allocator); the caller must NOT consume that ref separately.
-    pub unsafe fn alloc(
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    pub(crate) unsafe fn alloc(
         this: *mut Self,
         len: usize,
         offset: usize,
@@ -180,7 +188,8 @@ impl LinuxMemFdAllocator {
         } // #[cfg(not(windows))]
     }
 
-    pub fn should_use(bytes: &[u8]) -> bool {
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    pub(crate) fn should_use(bytes: &[u8]) -> bool {
         #[cfg(not(any(target_os = "linux", target_os = "android")))]
         {
             let _ = bytes;
@@ -203,7 +212,8 @@ impl LinuxMemFdAllocator {
         }
     }
 
-    pub fn create(bytes: &[u8]) -> sys::Result<BlobStoreBytes> {
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    pub(crate) fn create(bytes: &[u8]) -> sys::Result<BlobStoreBytes> {
         #[cfg(not(any(target_os = "linux", target_os = "android")))]
         {
             let _ = bytes;

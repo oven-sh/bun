@@ -256,7 +256,7 @@ impl<'a, T> BabyVec<'a, T> {
     /// `Vec::leak` parity — forget the `BabyVec`, return the buffer as an
     /// arena-lifetime slice. Reclaimed when the arena resets/drops.
     #[inline]
-    pub fn leak(self) -> &'a mut [T] {
+    pub(crate) fn leak(self) -> &'a mut [T] {
         let me = ManuallyDrop::new(self);
         // SAFETY: `[ptr, ptr+len)` are `len` initialized `T` valid for `'a`
         // (the buffer is owned by `me.alloc`, which outlives `'a`).

@@ -171,11 +171,11 @@ impl jsc::FromJsEnum for codecs::Filter {
 
 #[derive(Clone, Copy)]
 pub struct Resize {
-    pub w: u32,
-    pub h: u32,
-    pub filter: codecs::Filter,
-    pub fit: Fit,
-    pub without_enlargement: bool,
+    pub(crate) w: u32,
+    pub(crate) h: u32,
+    pub(crate) filter: codecs::Filter,
+    pub(crate) fit: Fit,
+    pub(crate) without_enlargement: bool,
 }
 
 impl Default for Resize {
@@ -200,22 +200,22 @@ impl Default for Resize {
 /// upright space; modulate runs last so it operates on the fewest pixels.
 #[derive(Clone, Copy, Default)]
 pub struct Pipeline {
-    pub rotate: u16, // 0/90/180/270
-    pub flip: bool,  // vertical
-    pub flop: bool,  // horizontal
-    pub resize: Option<Resize>,
-    pub modulate: Option<Modulate>,
+    pub(crate) rotate: u16, // 0/90/180/270
+    pub(crate) flip: bool,  // vertical
+    pub(crate) flop: bool,  // horizontal
+    pub(crate) resize: Option<Resize>,
+    pub(crate) modulate: Option<Modulate>,
     /// Output settings from `.jpeg()/.png()/.webp()`. `None` ⇒ re-encode in
     /// source format.
-    pub output: Option<codecs::EncodeOptions>,
+    pub(crate) output: Option<codecs::EncodeOptions>,
 }
 
 #[derive(Clone, Copy)]
 pub struct Modulate {
     /// Multiplier; 1.0 = identity.
-    pub brightness: f32,
+    pub(crate) brightness: f32,
     /// 0 = greyscale, 1 = identity, >1 = boost.
-    pub saturation: f32,
+    pub(crate) saturation: f32,
 }
 
 impl Default for Modulate {
@@ -258,7 +258,7 @@ impl Image {
     // No `#[bun_jsc::host_fn]` here — `#[bun_jsc::JsClass]` on the
     // struct emits the constructor C-ABI shim; the bare attribute would expand
     // to a free-fn call (`constructor(__g, __f)`) that can't resolve in `impl`.
-    pub fn constructor(
+    pub(crate) fn constructor(
         global: &JSGlobalObject,
         callframe: &CallFrame,
         this_value: JSValue,
@@ -288,7 +288,7 @@ impl Image {
     /// after `toJS()` is a double-free. (Contrast `from_input_js` where the
     /// codegen constructor only wires `m_ctx` after the fn returns, so its
     /// errdefer is safe.)
-    pub fn from_blob_js(
+    pub(crate) fn from_blob_js(
         global: &JSGlobalObject,
         blob_value: JSValue,
         options: JSValue,
@@ -316,7 +316,7 @@ impl Image {
         // `source` is dropped by Box drop.
     }
 
-    pub fn estimated_size(&self) -> usize {
+    pub(crate) fn estimated_size(&self) -> usize {
         // Only the bytes WE own. .js_buffer is the caller's ArrayBuffer (already
         // counted via the cached value slot); the worker's RGBA scratch is
         // task-scoped and freed before any GC could observe it.
@@ -448,7 +448,7 @@ impl Image {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn do_resize(&self, global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn do_resize(&self, global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         let args = callframe.arguments();
         if args.len() < 1 || !args[0].is_number() {
             return Err(
@@ -485,7 +485,7 @@ impl Image {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn do_rotate(&self, global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn do_rotate(&self, global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         let args = callframe.arguments();
         if args.len() < 1 || !args[0].is_number() {
             return Err(global
@@ -505,19 +505,19 @@ impl Image {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn do_flip(&self, _: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn do_flip(&self, _: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         self.update_pipeline(|p| p.flip = true);
         Ok(callframe.this())
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn do_flop(&self, _: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn do_flop(&self, _: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         self.update_pipeline(|p| p.flop = true);
         Ok(callframe.this())
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn do_modulate(&self, global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn do_modulate(&self, global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         let args = callframe.arguments();
         let mut m: Modulate = self.pipeline.get().modulate.unwrap_or_default();
         if args.len() > 0 && args[0].is_object() {
@@ -600,23 +600,23 @@ impl Image {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn do_format_jpeg(&self, g: &JSGlobalObject, cf: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn do_format_jpeg(&self, g: &JSGlobalObject, cf: &CallFrame) -> JsResult<JSValue> {
         self.set_format(g, cf, codecs::Format::Jpeg)
     }
     #[bun_jsc::host_fn(method)]
-    pub fn do_format_png(&self, g: &JSGlobalObject, cf: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn do_format_png(&self, g: &JSGlobalObject, cf: &CallFrame) -> JsResult<JSValue> {
         self.set_format(g, cf, codecs::Format::Png)
     }
     #[bun_jsc::host_fn(method)]
-    pub fn do_format_webp(&self, g: &JSGlobalObject, cf: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn do_format_webp(&self, g: &JSGlobalObject, cf: &CallFrame) -> JsResult<JSValue> {
         self.set_format(g, cf, codecs::Format::Webp)
     }
     #[bun_jsc::host_fn(method)]
-    pub fn do_format_heic(&self, g: &JSGlobalObject, cf: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn do_format_heic(&self, g: &JSGlobalObject, cf: &CallFrame) -> JsResult<JSValue> {
         self.set_format(g, cf, codecs::Format::Heic)
     }
     #[bun_jsc::host_fn(method)]
-    pub fn do_format_avif(&self, g: &JSGlobalObject, cf: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn do_format_avif(&self, g: &JSGlobalObject, cf: &CallFrame) -> JsResult<JSValue> {
         self.set_format(g, cf, codecs::Format::Avif)
     }
 }
@@ -794,7 +794,7 @@ impl Image {
 // through but `get_backend` ignores.
 
 impl Image {
-    pub fn get_backend(global: &JSGlobalObject, _: JSValue, _: PropertyName) -> JsResult<JSValue> {
+    pub(crate) fn get_backend(global: &JSGlobalObject, _: JSValue, _: PropertyName) -> JsResult<JSValue> {
         // `BACKEND` only ever stores a valid `Backend as u8` discriminant
         // (`set_backend` round-trips through `Backend`); any other value is
         // corruption — trap.
@@ -806,7 +806,7 @@ impl Image {
         bun_core::String::static_(<&'static str>::from(&b)).to_js(global)
     }
 
-    pub fn set_backend(
+    pub(crate) fn set_backend(
         global: &JSGlobalObject,
         _: JSValue,
         value: JSValue,
@@ -832,7 +832,7 @@ impl Image {
     // shelling out to `wl-paste`/`xclip` from inside `Bun.Image` is the wrong
     // layer.
 
-    pub fn from_clipboard(global: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn from_clipboard(global: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
         // `codecs::system_backend` is a cfg-gated module re-export.
         #[cfg(any(target_os = "macos", windows))]
         {
@@ -859,7 +859,7 @@ impl Image {
         }
     }
 
-    pub fn has_clipboard_image(_: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn has_clipboard_image(_: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
         #[cfg(any(target_os = "macos", windows))]
         {
             return Ok(JSValue::from(codecs::system_backend::has_clipboard_image()));
@@ -873,7 +873,7 @@ impl Image {
     /// clipboard-change notification, so polling this and calling
     /// `hasClipboardImage()` only when it moves is the cheapest hint-UI
     /// pattern. `-1` on Linux.
-    pub fn clipboard_change_count(_: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn clipboard_change_count(_: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
         #[cfg(any(target_os = "macos", windows))]
         {
             return Ok(JSValue::js_number(
@@ -889,12 +889,12 @@ impl Image {
 
 impl Image {
     #[bun_jsc::host_fn(getter)]
-    pub fn get_width(&self, _: &JSGlobalObject) -> JSValue {
+    pub(crate) fn get_width(&self, _: &JSGlobalObject) -> JSValue {
         JSValue::js_number(f64::from(self.last_width.get()))
     }
 
     #[bun_jsc::host_fn(getter)]
-    pub fn get_height(&self, _: &JSGlobalObject) -> JSValue {
+    pub(crate) fn get_height(&self, _: &JSGlobalObject) -> JSValue {
         JSValue::js_number(f64::from(self.last_height.get()))
     }
 }
@@ -903,7 +903,7 @@ impl Image {
 
 impl Image {
     #[bun_jsc::host_fn(method)]
-    pub fn do_metadata(&self, global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn do_metadata(&self, global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         // Header-only probe is a few dozen byte reads — when the bytes are already
         // in memory it's cheaper to do it inline than to bounce off the WorkPool
         // (~0.4 ms roundtrip). Path-backed sources still go async for the file I/O.
@@ -950,7 +950,7 @@ impl Image {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn do_bytes(&self, global: &JSGlobalObject, cf: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn do_bytes(&self, global: &JSGlobalObject, cf: &CallFrame) -> JsResult<JSValue> {
         self.schedule(
             global,
             cf.this(),
@@ -960,7 +960,7 @@ impl Image {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn do_buffer(&self, global: &JSGlobalObject, cf: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn do_buffer(&self, global: &JSGlobalObject, cf: &CallFrame) -> JsResult<JSValue> {
         self.schedule(
             global,
             cf.this(),
@@ -970,7 +970,7 @@ impl Image {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn do_blob(&self, global: &JSGlobalObject, cf: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn do_blob(&self, global: &JSGlobalObject, cf: &CallFrame) -> JsResult<JSValue> {
         self.schedule(
             global,
             cf.this(),
@@ -980,7 +980,7 @@ impl Image {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn do_to_base64(&self, global: &JSGlobalObject, cf: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn do_to_base64(&self, global: &JSGlobalObject, cf: &CallFrame) -> JsResult<JSValue> {
         self.schedule(
             global,
             cf.this(),
@@ -992,7 +992,7 @@ impl Image {
     /// `data:image/{format};base64,{…}`. Same encode as `.toBase64()` plus the
     /// MIME prefix, so it drops straight into `<img src>`.
     #[bun_jsc::host_fn(method)]
-    pub fn do_data_url(&self, global: &JSGlobalObject, cf: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn do_data_url(&self, global: &JSGlobalObject, cf: &CallFrame) -> JsResult<JSValue> {
         self.schedule(
             global,
             cf.this(),
@@ -1007,7 +1007,7 @@ impl Image {
     /// pipeline ops (resize/rotate/…) are skipped — a placeholder is OF the
     /// source, not of the output.
     #[bun_jsc::host_fn(method)]
-    pub fn do_placeholder(&self, global: &JSGlobalObject, cf: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn do_placeholder(&self, global: &JSGlobalObject, cf: &CallFrame) -> JsResult<JSValue> {
         let args = cf.arguments();
         // Single positional `"dataurl"` for now — leaves room for `"hash"` /
         // `"color"` without growing methods. Anything else throws so the
@@ -1030,7 +1030,7 @@ impl Image {
     /// string, the encode format is inferred from its extension, falling back to
     /// the source format — so `img.resize(100).write("thumb.webp")` Just Works.
     #[bun_jsc::host_fn(method)]
-    pub fn do_write(&self, global: &JSGlobalObject, cf: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn do_write(&self, global: &JSGlobalObject, cf: &CallFrame) -> JsResult<JSValue> {
         let args = cf.arguments();
         if args.len() < 1 || args[0].is_undefined_or_null() {
             return Err(global.throw_invalid_arguments(format_args!(
@@ -1140,7 +1140,7 @@ impl Image {
     ///
     /// A later refinement is to return a `.Locked` body and resolve it from the
     /// worker pool; this is the simple, correct first cut.
-    pub fn encode_for_body(
+    pub(crate) fn encode_for_body(
         &self,
         global: &JSGlobalObject,
         this_value: JSValue,
@@ -1488,7 +1488,7 @@ pub enum TaskResult {
 
 impl<'a> PipelineTask<'a> {
     /// Runs on a `WorkPool` thread. No JSC access.
-    pub fn run(&mut self) {
+    pub(crate) fn run(&mut self) {
         // `self.input` was prepared on the JS thread by `pin_for_task`: either a
         // pinned ArrayBuffer slice (pin lives until `then()` unpins), an owned
         // buffer, or a path to read here.
@@ -1704,7 +1704,7 @@ impl<'a> PipelineTask<'a> {
     }
 
     /// Back on the JS thread.
-    pub fn then(&mut self, promise: &mut JSPromise) -> Result<(), jsc::JsTerminated> {
+    pub(crate) fn then(&mut self, promise: &mut JSPromise) -> Result<(), jsc::JsTerminated> {
         // `defer self.deinit()` → handled by `Drop for PipelineTask` when the
         // owning `ConcurrentPromiseTask` Box is destroyed by the event-loop
         // dispatch (`run_from_js` → `destroy`), immediately after this returns.

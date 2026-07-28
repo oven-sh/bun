@@ -64,7 +64,7 @@ pub enum Status {
 #[repr(C)]
 #[derive(bun_ptr::CellRefCounted)]
 pub struct ResumableSink<Js: ResumableSinkJs, Context: ResumableSinkContext> {
-    pub ref_count: Cell<u32>,
+    pub(crate) ref_count: Cell<u32>,
     js_this: JsRef,
     /// We can have a detached self, and still have a strong reference to the stream
     stream: crate::webcore::readable_stream::Strong,
@@ -95,7 +95,7 @@ impl<Js: ResumableSinkJs, Context: ResumableSinkContext> ResumableSink<Js, Conte
     /// Current backpressure high-water mark in bytes (initialized to 16384,
     /// updated from the wrapped ByteStream on `init`/`set_stream_if_possible`).
     #[inline]
-    pub fn high_water_mark(&self) -> i64 {
+    pub(crate) fn high_water_mark(&self) -> i64 {
         self.high_water_mark
     }
     #[inline]
@@ -132,7 +132,7 @@ impl<Js: ResumableSinkJs, Context: ResumableSinkContext> ResumableSink<Js, Conte
         unsafe { (*ctx).write_end_request(err) }
     }
 
-    pub fn constructor(global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<*mut Self> {
+    pub(crate) fn constructor(global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<*mut Self> {
         Err(global.throw_illegal_constructor())
     }
 
@@ -144,7 +144,7 @@ impl<Js: ResumableSinkJs, Context: ResumableSinkContext> ResumableSink<Js, Conte
         Self::init_exact_refs(global_this, stream, context, 1)
     }
 
-    pub fn init_exact_refs(
+    pub(crate) fn init_exact_refs(
         global_this: &JSGlobalObject,
         stream: ReadableStream,
         context: *mut Context,
@@ -245,7 +245,7 @@ impl<Js: ResumableSinkJs, Context: ResumableSinkContext> ResumableSink<Js, Conte
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn js_set_handlers(
+    pub(crate) fn js_set_handlers(
         _this: &mut Self,
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
@@ -273,7 +273,7 @@ impl<Js: ResumableSinkJs, Context: ResumableSinkContext> ResumableSink<Js, Conte
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn js_start(
+    pub(crate) fn js_start(
         this: &mut Self,
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
@@ -292,7 +292,7 @@ impl<Js: ResumableSinkJs, Context: ResumableSinkContext> ResumableSink<Js, Conte
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn js_write(
+    pub(crate) fn js_write(
         this: &mut Self,
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
@@ -334,7 +334,7 @@ impl<Js: ResumableSinkJs, Context: ResumableSinkContext> ResumableSink<Js, Conte
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn js_end(
+    pub(crate) fn js_end(
         this: &mut Self,
         _global_this: &JSGlobalObject,
         callframe: &CallFrame,
@@ -356,7 +356,7 @@ impl<Js: ResumableSinkJs, Context: ResumableSinkContext> ResumableSink<Js, Conte
         Ok(JSValue::UNDEFINED)
     }
 
-    pub fn drain(&mut self) {
+    pub(crate) fn drain(&mut self) {
         scoped_log!(ResumableSink, "drain");
         if self.status != Status::Paused {
             return;
@@ -382,7 +382,7 @@ impl<Js: ResumableSinkJs, Context: ResumableSinkContext> ResumableSink<Js, Conte
         }
     }
 
-    pub fn cancel(&mut self, reason: JSValue) {
+    pub(crate) fn cancel(&mut self, reason: JSValue) {
         // onEnd must fire at most once. After the first cancel(), js_this is downgraded
         // to .weak (which still resolves via tryGet), so this guard is the only thing
         // preventing a second cancel() from re-invoking onEnd.
@@ -424,7 +424,7 @@ impl<Js: ResumableSinkJs, Context: ResumableSinkContext> ResumableSink<Js, Conte
         }
     }
 
-    pub fn is_detached(&self) -> bool {
+    pub(crate) fn is_detached(&self) -> bool {
         !self.js_this.is_strong() || self.status == Status::Done
     }
 
@@ -436,7 +436,7 @@ impl<Js: ResumableSinkJs, Context: ResumableSinkContext> ResumableSink<Js, Conte
     ///
     /// NOT safe during GC sweep (Weak/cell finalizers): the cached-value
     /// setters downcast the wrapper cell and issue a write barrier.
-    pub fn detach_js(&mut self) {
+    pub(crate) fn detach_js(&mut self) {
         if let Some(js_this) = self.js_this.try_get() {
             let global = self.global_this;
             let global = global.get();
@@ -543,7 +543,7 @@ impl<Js: ResumableSinkJs, Context: ResumableSinkContext> ResumableSink<Js, Conte
     // kept as a thin alias so existing raw-pointer call sites (s3::client) keep
     // compiling without churn.
     #[inline]
-    pub unsafe fn deref_(this: *mut Self) {
+    pub(crate) unsafe fn deref_(this: *mut Self) {
         // SAFETY: forwarded caller contract.
         unsafe { <Self as bun_ptr::CellRefCounted>::deref(this) }
     }

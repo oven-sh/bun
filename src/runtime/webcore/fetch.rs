@@ -4,9 +4,9 @@
 
 pub(crate) const FETCH_ERROR_NO_ARGS: &str = "fetch() expects a string but received no arguments.";
 pub(crate) const FETCH_ERROR_BLANK_URL: &str = "fetch() URL must not be a blank string.";
-pub(crate) const FETCH_ERROR_UNEXPECTED_BODY: &str =
+const FETCH_ERROR_UNEXPECTED_BODY: &str =
     "fetch() request with GET/HEAD method cannot have body.";
-pub(crate) const FETCH_ERROR_PROXY_UNIX: &str = "fetch() cannot use a proxy with a unix socket.";
+const FETCH_ERROR_PROXY_UNIX: &str = "fetch() cannot use a proxy with a unix socket.";
 
 pub(crate) fn fetch_type_error_string(value: bun_jsc::JSValue) -> &'static str {
     if value.is_undefined() {
@@ -226,7 +226,7 @@ fn data_url_response(data_url_: DataURL, global_this: &JSGlobalObject) -> JSValu
 // ──────────────────────────────────────────────────────────────────────────
 
 #[bun_jsc::host_fn(export = "Bun__fetchPreconnect")]
-pub(crate) fn bun_fetch_preconnect(
+fn bun_fetch_preconnect(
     global_object: &JSGlobalObject,
     callframe: &CallFrame,
 ) -> JsResult<JSValue> {
@@ -315,7 +315,7 @@ pub(crate) fn bun_fetch_preconnect(
 struct StringOrURL;
 
 impl StringOrURL {
-    pub(crate) fn from_js(
+    fn from_js(
         value: JSValue,
         global_this: &JSGlobalObject,
     ) -> JsResult<Option<BunString>> {
@@ -337,7 +337,7 @@ impl StringOrURL {
 
 /// Public entry point for `Bun.fetch` - validates body on GET/HEAD
 #[bun_jsc::host_fn(export = "Bun__fetch")]
-pub(crate) fn bun_fetch(ctx: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+fn bun_fetch(ctx: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
     reject_on_exception(ctx, fetch_impl::<false>(ctx, callframe))
 }
 
@@ -2129,7 +2129,7 @@ struct S3StreamWrapper<'a> {
 }
 
 impl<'a> S3StreamWrapper<'a> {
-    pub(crate) fn resolve(
+    fn resolve(
         result: s3::S3UploadResult,
         self_: *mut Self,
     ) -> Result<(), bun_jsc::JsTerminated> {

@@ -228,7 +228,7 @@ impl FetchHeaders {
         })
     }
 
-    pub fn get_(&mut self, name_: &ZigString, out: &mut ZigString, global: &JSGlobalObject) {
+    pub(crate) fn get_(&mut self, name_: &ZigString, out: &mut ZigString, global: &JSGlobalObject) {
         WebCore__FetchHeaders__get_(self, name_, out, global)
     }
 
@@ -267,7 +267,7 @@ impl FetchHeaders {
         WebCore__FetchHeaders__fastHas_(self, name_)
     }
 
-    pub fn fast_get_(&mut self, name_: u8, str: &mut ZigString) {
+    pub(crate) fn fast_get_(&mut self, name_: u8, str: &mut ZigString) {
         WebCore__FetchHeaders__fastGet_(self, name_, str)
     }
 
@@ -275,7 +275,7 @@ impl FetchHeaders {
         self.fast_remove_(header as u8)
     }
 
-    pub fn fast_remove_(&mut self, header: u8) {
+    pub(crate) fn fast_remove_(&mut self, header: u8) {
         WebCore__FetchHeaders__fastRemove_(self, header)
     }
 

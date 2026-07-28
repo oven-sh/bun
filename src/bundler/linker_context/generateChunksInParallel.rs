@@ -45,7 +45,7 @@ use crate::linker_context_mod::debug;
 
 // Const generics cannot vary the return type, so we always return
 // `Vec<OutputFile>` and the IS_DEV_SERVER path returns an empty Vec.
-pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
+pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
     c: &mut LinkerContext,
     chunks: &mut [Chunk],
 ) -> crate::Result<Vec<options::OutputFile>> {

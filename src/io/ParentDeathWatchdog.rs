@@ -379,7 +379,7 @@ extern "C" fn on_process_exit() {
 /// (so its child set is stable while we recurse), which is what makes the
 /// verify step sufficient. The only forking process is `self`, and we're in
 /// the exit handler — not forking.
-pub(crate) fn kill_descendants() {
+fn kill_descendants() {
     #[cfg(unix)]
     {
         let self_pid = getpid();

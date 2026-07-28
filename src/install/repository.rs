@@ -112,7 +112,7 @@ struct SloppyGlobalGitConfig {
 static SLOPPY_HOLDER: OnceLock<SloppyGlobalGitConfig> = OnceLock::new();
 
 impl SloppyGlobalGitConfig {
-    pub(crate) fn get() -> SloppyGlobalGitConfig {
+    fn get() -> SloppyGlobalGitConfig {
         *SLOPPY_HOLDER.get_or_init(Self::load_and_parse)
     }
 
@@ -237,7 +237,7 @@ pub(crate) struct SharedEnv {
 // Lazy-init on the install main thread, then `&'static`-read from worker
 // threads. RacyCell — the install enqueue path is single-threaded at the
 // write point.
-pub(crate) static SHARED_ENV: bun_core::RacyCell<SharedEnv> =
+static SHARED_ENV: bun_core::RacyCell<SharedEnv> =
     bun_core::RacyCell::new(SharedEnv { env: None });
 
 impl SharedEnv {
@@ -293,7 +293,7 @@ bun_core::comptime_string_map! {
 }
 
 #[inline]
-pub(crate) fn host_tld(host: &[u8]) -> Option<&'static [u8]> {
+fn host_tld(host: &[u8]) -> Option<&'static [u8]> {
     HOST_TLDS.get(host).copied()
 }
 

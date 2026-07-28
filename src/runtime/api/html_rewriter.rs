@@ -212,14 +212,14 @@ macro_rules! lol_content_ops {
 pub struct LOLHTMLContext {
     /// Paired with `element_handlers` by index: each `on()` pushes one entry
     /// into both.
-    pub selectors: Vec<lol_html::Selector>,
+    pub(crate) selectors: Vec<lol_html::Selector>,
     // The `Box` is load-bearing: the lol-html handler closures produced by
     // `build_settings` capture raw pointers into the box interiors; unboxing
     // would dangle them on `Vec` realloc.
     #[expect(clippy::vec_box)]
-    pub element_handlers: Vec<Box<ElementHandler>>,
+    pub(crate) element_handlers: Vec<Box<ElementHandler>>,
     #[expect(clippy::vec_box)]
-    pub document_handlers: Vec<Box<DocumentHandler>>,
+    pub(crate) document_handlers: Vec<Box<DocumentHandler>>,
 }
 
 /// `true` = the STOP directive from an `ElementHandler`/`DocumentHandler`/
@@ -330,14 +330,14 @@ fn build_settings(
 
 #[bun_jsc::JsClass]
 pub struct HTMLRewriter {
-    pub context: Rc<RefCell<LOLHTMLContext>>,
+    pub(crate) context: Rc<RefCell<LOLHTMLContext>>,
 }
 
 impl HTMLRewriter {
     // Note: no `#[bun_jsc::host_fn]` here — `#[bun_jsc::JsClass]` on the
     // struct already emits the C-ABI constructor shim that calls
     // `<HTMLRewriter>::constructor(__g, __f)`.
-    pub fn constructor(
+    pub(crate) fn constructor(
         _global: &JSGlobalObject,
         _frame: &CallFrame,
     ) -> JsResult<*mut HTMLRewriter> {
@@ -349,7 +349,7 @@ impl HTMLRewriter {
         Ok(rewriter)
     }
 
-    pub fn on_(
+    pub(crate) fn on_(
         &self,
         global: &JSGlobalObject,
         selector_name: ZigString,
@@ -372,7 +372,7 @@ impl HTMLRewriter {
         Ok(call_frame.this())
     }
 
-    pub fn on_document_(
+    pub(crate) fn on_document_(
         &self,
         global: &JSGlobalObject,
         listener: JSValue,
@@ -389,7 +389,7 @@ impl HTMLRewriter {
     #[expect(clippy::boxed_local)]
     pub fn finalize(self: Box<Self>) {}
 
-    pub fn begin_transform(
+    pub(crate) fn begin_transform(
         &self,
         global: &JSGlobalObject,
         response: &mut Response,
@@ -400,7 +400,7 @@ impl HTMLRewriter {
         unsafe { BufferOutputSink::init(new_context, global, response) }
     }
 
-    pub fn transform_(
+    pub(crate) fn transform_(
         &self,
         global: &JSGlobalObject,
         response_value: JSValue,
@@ -512,14 +512,14 @@ impl HTMLRewriter {
     // ── instance-method arg-decode wrappers ──────────────────────────────
     // See arg-decode helpers at top of file.
 
-    pub fn on(&self, global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn on(&self, global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
         let mut iter = ArgumentsSlice::init(global.bun_vm_ref(), call_frame.arguments());
         let selector_name = eat_zig_string(&mut iter, global)?;
         let listener = eat_js_value(&mut iter, global)?;
         self.on_(global, selector_name, call_frame, listener)
     }
 
-    pub fn on_document(
+    pub(crate) fn on_document(
         &self,
         global: &JSGlobalObject,
         call_frame: &CallFrame,
@@ -529,7 +529,7 @@ impl HTMLRewriter {
         self.on_document_(global, listener, call_frame)
     }
 
-    pub fn transform(&self, global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn transform(&self, global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
         let mut iter = ArgumentsSlice::init(global.bun_vm_ref(), call_frame.arguments());
         let response_value = eat_js_value(&mut iter, global)?;
         self.transform_(global, response_value)
@@ -543,19 +543,19 @@ pub struct BufferOutputSink {
     // Intrusive RefCount; *Self is the `SinkRef` carried inside `rewriter`.
     ref_count: Cell<u32>,
     pub global: GlobalRef, // JSC_BORROW
-    pub bytes: MutableString,
+    pub(crate) bytes: MutableString,
     // Heap-allocated (never held by value): `run_output_sink` must reach the
     // rewriter through a raw pointer, never a `&mut` of `*sink`, because the
     // output sink re-enters `&mut *sink` while the rewriter runs.
-    pub rewriter: *mut lol_html::HtmlRewriter<'static, SinkRef>, // null when unset
-    pub context: Rc<RefCell<LOLHTMLContext>>,
-    pub response: *mut Response, // BORROW_FIELD: kept alive by response_value Strong
-    pub response_value: StrongOptional,
-    pub body_value_bufferer: Option<webcore::body::ValueBufferer<'static>>,
+    pub(crate) rewriter: *mut lol_html::HtmlRewriter<'static, SinkRef>, // null when unset
+    pub(crate) context: Rc<RefCell<LOLHTMLContext>>,
+    pub(crate) response: *mut Response, // BORROW_FIELD: kept alive by response_value Strong
+    pub(crate) response_value: StrongOptional,
+    pub(crate) body_value_bufferer: Option<webcore::body::ValueBufferer<'static>>,
     // Points at the `sink_error` stack local in `init()`;
     // only written while `init()` is on the stack.
     // See `write_tmp_sync_error` for the full liveness/provenance argument.
-    pub tmp_sync_error: Option<NonNull<JSValue>>,
+    pub(crate) tmp_sync_error: Option<NonNull<JSValue>>,
 }
 
 impl BufferOutputSink {
@@ -924,7 +924,7 @@ impl BufferOutputSink {
         None
     }
 
-    pub fn done(&mut self) {
+    pub(crate) fn done(&mut self) {
         // SAFETY: self.response is kept alive by self.response_value (Strong
         // root) for the lifetime of this sink.
         let body_value = unsafe { (*self.response).get_body_value() };
@@ -983,18 +983,18 @@ pub struct DocumentHandler {
     // `unprotect` pair). `Option::None` ⇒ no protect was taken; `Some` drops
     // its guard on field drop, so neither error-path cleanup at init nor a
     // manual `Drop` impl is needed.
-    pub on_doc_type_callback: Option<ProtectedJSValue>,
-    pub on_comment_callback: Option<ProtectedJSValue>,
-    pub on_text_callback: Option<ProtectedJSValue>,
-    pub on_end_callback: Option<ProtectedJSValue>,
+    pub(crate) on_doc_type_callback: Option<ProtectedJSValue>,
+    pub(crate) on_comment_callback: Option<ProtectedJSValue>,
+    pub(crate) on_text_callback: Option<ProtectedJSValue>,
+    pub(crate) on_end_callback: Option<ProtectedJSValue>,
     /// Protected only on the success path of `init()`; starts as
     /// `adopt(ZERO)` (drop = unprotect(ZERO) = C++ no-op for non-cells).
-    pub this_object: ProtectedJSValue,
+    pub(crate) this_object: ProtectedJSValue,
     pub global: GlobalRef, // JSC_BORROW
 }
 
 impl DocumentHandler {
-    pub fn on_doc_type(
+    pub(crate) fn on_doc_type(
         this: *mut Self,
         value: *mut lol_html::html_content::Doctype<'static>,
     ) -> bool {
@@ -1005,7 +1005,7 @@ impl DocumentHandler {
             |h| h.on_doc_type_callback.as_ref().map(ProtectedJSValue::value),
         )
     }
-    pub fn on_comment(
+    pub(crate) fn on_comment(
         this: *mut Self,
         value: *mut lol_html::html_content::Comment<'static>,
     ) -> bool {
@@ -1016,7 +1016,7 @@ impl DocumentHandler {
             |h| h.on_comment_callback.as_ref().map(ProtectedJSValue::value),
         )
     }
-    pub fn on_text(
+    pub(crate) fn on_text(
         this: *mut Self,
         value: *mut lol_html::html_content::TextChunk<'static>,
     ) -> bool {
@@ -1027,7 +1027,7 @@ impl DocumentHandler {
             |h| h.on_text_callback.as_ref().map(ProtectedJSValue::value),
         )
     }
-    pub fn on_end(
+    pub(crate) fn on_end(
         this: *mut Self,
         value: *mut lol_html::html_content::DocumentEnd<'static>,
     ) -> bool {
@@ -1039,7 +1039,7 @@ impl DocumentHandler {
         )
     }
 
-    pub fn init(global: &JSGlobalObject, this_object: JSValue) -> JsResult<DocumentHandler> {
+    pub(crate) fn init(global: &JSGlobalObject, this_object: JSValue) -> JsResult<DocumentHandler> {
         if !this_object.is_object() {
             return Err(global.throw_invalid_arguments(format_args!("Expected object")));
         }
@@ -1311,15 +1311,15 @@ where
 
 pub struct ElementHandler {
     // See `DocumentHandler` — `ProtectedJSValue` fields self-unprotect on drop.
-    pub on_element_callback: Option<ProtectedJSValue>,
-    pub on_comment_callback: Option<ProtectedJSValue>,
-    pub on_text_callback: Option<ProtectedJSValue>,
-    pub this_object: ProtectedJSValue,
+    pub(crate) on_element_callback: Option<ProtectedJSValue>,
+    pub(crate) on_comment_callback: Option<ProtectedJSValue>,
+    pub(crate) on_text_callback: Option<ProtectedJSValue>,
+    pub(crate) this_object: ProtectedJSValue,
     pub global: GlobalRef, // JSC_BORROW
 }
 
 impl ElementHandler {
-    pub fn init(global: &JSGlobalObject, this_object: JSValue) -> JsResult<ElementHandler> {
+    pub(crate) fn init(global: &JSGlobalObject, this_object: JSValue) -> JsResult<ElementHandler> {
         let mut handler = ElementHandler {
             on_element_callback: None,
             on_comment_callback: None,
@@ -1361,7 +1361,7 @@ impl ElementHandler {
         Ok(handler)
     }
 
-    pub fn on_element(
+    pub(crate) fn on_element(
         this: *mut Self,
         value: *mut lol_html::html_content::Element<'static, 'static>,
     ) -> bool {
@@ -1373,7 +1373,7 @@ impl ElementHandler {
         )
     }
 
-    pub fn on_comment(
+    pub(crate) fn on_comment(
         this: *mut Self,
         value: *mut lol_html::html_content::Comment<'static>,
     ) -> bool {
@@ -1385,7 +1385,7 @@ impl ElementHandler {
         )
     }
 
-    pub fn on_text(
+    pub(crate) fn on_text(
         this: *mut Self,
         value: *mut lol_html::html_content::TextChunk<'static>,
     ) -> bool {
@@ -1402,7 +1402,7 @@ impl ElementHandler {
 
 #[derive(Default, Clone, Copy)]
 pub struct ContentOptions {
-    pub html: bool,
+    pub(crate) html: bool,
 }
 
 // ────────────────────────── error helpers ────────────────────────────────
@@ -1479,13 +1479,13 @@ pub struct TextChunk {
     // Intrusive RefCount; *Self is the JS wrapper m_ctx.
     ref_count: Cell<u32>,
     // R-2: `Cell` so host-fns take `&self` (re-entry-safe).
-    pub text_chunk: Cell<*mut RawTextChunk>,
+    pub(crate) text_chunk: Cell<*mut RawTextChunk>,
 }
 
 impl TextChunk {
     // `ref_()`/`deref()` provided by `#[derive(CellRefCounted)]`.
 
-    pub fn init(text_chunk: *mut RawTextChunk) -> *mut TextChunk {
+    pub(crate) fn init(text_chunk: *mut RawTextChunk) -> *mut TextChunk {
         bun_core::heap::into_raw(Box::new(TextChunk {
             ref_count: Cell::new(1),
             text_chunk: Cell::new(text_chunk),
@@ -1499,7 +1499,7 @@ impl TextChunk {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn remove(&self, _global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn remove(&self, _global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
         let Some(chunk) = cell_get(&self.text_chunk) else {
             return Ok(JSValue::UNDEFINED);
         };
@@ -1508,7 +1508,7 @@ impl TextChunk {
     }
 
     #[bun_jsc::host_fn(getter)]
-    pub fn get_text(&self, global: &JSGlobalObject) -> JsResult<JSValue> {
+    pub(crate) fn get_text(&self, global: &JSGlobalObject) -> JsResult<JSValue> {
         let Some(chunk) = cell_get(&self.text_chunk) else {
             return Ok(JSValue::UNDEFINED);
         };
@@ -1516,7 +1516,7 @@ impl TextChunk {
     }
 
     #[bun_jsc::host_fn(getter)]
-    pub fn removed(&self, _global: &JSGlobalObject) -> JSValue {
+    pub(crate) fn removed(&self, _global: &JSGlobalObject) -> JSValue {
         match cell_get(&self.text_chunk) {
             Some(chunk) => JSValue::from(chunk.removed()),
             None => JSValue::UNDEFINED,
@@ -1524,7 +1524,7 @@ impl TextChunk {
     }
 
     #[bun_jsc::host_fn(getter)]
-    pub fn last_in_text_node(&self, _global: &JSGlobalObject) -> JSValue {
+    pub(crate) fn last_in_text_node(&self, _global: &JSGlobalObject) -> JSValue {
         match cell_get(&self.text_chunk) {
             Some(chunk) => JSValue::from(chunk.last_in_text_node()),
             None => JSValue::UNDEFINED,
@@ -1546,7 +1546,7 @@ pub struct DocType {
     // Intrusive RefCount; *Self is the JS wrapper m_ctx.
     ref_count: Cell<u32>,
     // R-2: `Cell` so host-fns take `&self` (re-entry-safe).
-    pub doctype: Cell<*mut RawDoctype>,
+    pub(crate) doctype: Cell<*mut RawDoctype>,
 }
 
 impl DocType {
@@ -1556,7 +1556,7 @@ impl DocType {
         bun_ptr::finalize_js_box_noop(self);
     }
 
-    pub fn init(doctype: *mut RawDoctype) -> *mut DocType {
+    pub(crate) fn init(doctype: *mut RawDoctype) -> *mut DocType {
         bun_core::heap::into_raw(Box::new(DocType {
             ref_count: Cell::new(1),
             doctype: Cell::new(doctype),
@@ -1573,7 +1573,7 @@ impl DocType {
     }
 
     #[bun_jsc::host_fn(getter)]
-    pub fn system_id(&self, global_object: &JSGlobalObject) -> JsResult<JSValue> {
+    pub(crate) fn system_id(&self, global_object: &JSGlobalObject) -> JsResult<JSValue> {
         let Some(dt) = cell_get(&self.doctype) else {
             return Ok(JSValue::UNDEFINED);
         };
@@ -1581,7 +1581,7 @@ impl DocType {
     }
 
     #[bun_jsc::host_fn(getter)]
-    pub fn public_id(&self, global_object: &JSGlobalObject) -> JsResult<JSValue> {
+    pub(crate) fn public_id(&self, global_object: &JSGlobalObject) -> JsResult<JSValue> {
         let Some(dt) = cell_get(&self.doctype) else {
             return Ok(JSValue::UNDEFINED);
         };
@@ -1589,7 +1589,7 @@ impl DocType {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn remove(&self, _global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn remove(&self, _global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
         let Some(dt) = cell_get(&self.doctype) else {
             return Ok(JSValue::UNDEFINED);
         };
@@ -1598,7 +1598,7 @@ impl DocType {
     }
 
     #[bun_jsc::host_fn(getter)]
-    pub fn removed(&self, _global: &JSGlobalObject) -> JSValue {
+    pub(crate) fn removed(&self, _global: &JSGlobalObject) -> JSValue {
         match cell_get(&self.doctype) {
             Some(dt) => JSValue::from(dt.removed()),
             None => JSValue::UNDEFINED,
@@ -1616,13 +1616,13 @@ pub struct DocEnd {
     // Intrusive RefCount; *Self is the JS wrapper m_ctx.
     ref_count: Cell<u32>,
     // R-2: `Cell` so host-fns take `&self` (re-entry-safe).
-    pub doc_end: Cell<*mut RawDocumentEnd>,
+    pub(crate) doc_end: Cell<*mut RawDocumentEnd>,
 }
 
 impl DocEnd {
     // `ref_()`/`deref()` provided by `#[derive(CellRefCounted)]`.
 
-    pub fn init(doc_end: *mut RawDocumentEnd) -> *mut DocEnd {
+    pub(crate) fn init(doc_end: *mut RawDocumentEnd) -> *mut DocEnd {
         bun_core::heap::into_raw(Box::new(DocEnd {
             ref_count: Cell::new(1),
             doc_end: Cell::new(doc_end),
@@ -1648,13 +1648,13 @@ pub struct Comment {
     // Intrusive RefCount; *Self is the JS wrapper m_ctx.
     ref_count: Cell<u32>,
     // R-2: `Cell` so host-fns take `&self` (re-entry-safe).
-    pub comment: Cell<*mut RawComment>,
+    pub(crate) comment: Cell<*mut RawComment>,
 }
 
 impl Comment {
     // `ref_()`/`deref()` provided by `#[derive(CellRefCounted)]`.
 
-    pub fn init(comment: *mut RawComment) -> *mut Comment {
+    pub(crate) fn init(comment: *mut RawComment) -> *mut Comment {
         bun_core::heap::into_raw(Box::new(Comment {
             ref_count: Cell::new(1),
             comment: Cell::new(comment),
@@ -1668,7 +1668,7 @@ impl Comment {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn remove(&self, _global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn remove(&self, _global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
         let Some(comment) = cell_get(&self.comment) else {
             return Ok(JSValue::NULL);
         };
@@ -1677,7 +1677,7 @@ impl Comment {
     }
 
     #[bun_jsc::host_fn(getter)]
-    pub fn get_text(&self, global_object: &JSGlobalObject) -> JsResult<JSValue> {
+    pub(crate) fn get_text(&self, global_object: &JSGlobalObject) -> JsResult<JSValue> {
         let Some(comment) = cell_get(&self.comment) else {
             return Ok(JSValue::NULL);
         };
@@ -1688,7 +1688,7 @@ impl Comment {
     // emits `CommentPrototype__setText` via `host_setter_result` (which wants
     // `JsResult<()>`); the proc-macro shim would emit a second, conflicting
     // `JsResult<bool>` wrapper.
-    pub fn set_text(&self, global: &JSGlobalObject, value: JSValue) -> JsResult<()> {
+    pub(crate) fn set_text(&self, global: &JSGlobalObject, value: JSValue) -> JsResult<()> {
         if self.comment.get().is_null() {
             return Ok(());
         }
@@ -1703,7 +1703,7 @@ impl Comment {
     }
 
     #[bun_jsc::host_fn(getter)]
-    pub fn removed(&self, _global: &JSGlobalObject) -> JSValue {
+    pub(crate) fn removed(&self, _global: &JSGlobalObject) -> JSValue {
         match cell_get(&self.comment) {
             Some(comment) => JSValue::from(comment.removed()),
             None => JSValue::UNDEFINED,
@@ -1725,7 +1725,7 @@ pub struct EndTag {
     // Intrusive RefCount; *Self is the JS wrapper m_ctx.
     ref_count: Cell<u32>,
     // R-2: `Cell` so host-fns take `&self` (re-entry-safe).
-    pub end_tag: Cell<*mut RawEndTag>,
+    pub(crate) end_tag: Cell<*mut RawEndTag>,
 }
 
 pub struct EndTagHandler {
@@ -1736,7 +1736,7 @@ pub struct EndTagHandler {
 }
 
 impl EndTagHandler {
-    pub fn on_end_tag(this: *mut Self, value: *mut RawEndTag) -> bool {
+    pub(crate) fn on_end_tag(this: *mut Self, value: *mut RawEndTag) -> bool {
         handler_callback::<Self, EndTag, RawEndTag>(
             this,
             value,
@@ -1749,7 +1749,7 @@ impl EndTagHandler {
 impl EndTag {
     // `ref_()`/`deref()` provided by `#[derive(CellRefCounted)]`.
 
-    pub fn init(end_tag: *mut RawEndTag) -> *mut EndTag {
+    pub(crate) fn init(end_tag: *mut RawEndTag) -> *mut EndTag {
         bun_core::heap::into_raw(Box::new(EndTag {
             ref_count: Cell::new(1),
             end_tag: Cell::new(end_tag),
@@ -1767,7 +1767,7 @@ impl EndTag {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn remove(&self, _global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn remove(&self, _global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
         let Some(end_tag) = cell_get(&self.end_tag) else {
             return Ok(JSValue::UNDEFINED);
         };
@@ -1776,7 +1776,7 @@ impl EndTag {
     }
 
     #[bun_jsc::host_fn(getter)]
-    pub fn get_name(&self, global_object: &JSGlobalObject) -> JsResult<JSValue> {
+    pub(crate) fn get_name(&self, global_object: &JSGlobalObject) -> JsResult<JSValue> {
         let Some(end_tag) = cell_get(&self.end_tag) else {
             return Ok(JSValue::UNDEFINED);
         };
@@ -1785,7 +1785,7 @@ impl EndTag {
 
     // Note: no `#[bun_jsc::host_fn(setter)]` — generated_classes.rs already
     // emits `EndTagPrototype__setName` via `host_setter_result`.
-    pub fn set_name(&self, global: &JSGlobalObject, value: JSValue) -> JsResult<()> {
+    pub(crate) fn set_name(&self, global: &JSGlobalObject, value: JSValue) -> JsResult<()> {
         if self.end_tag.get().is_null() {
             return Ok(());
         }
@@ -1814,7 +1814,7 @@ pub struct AttributeIterator {
     // Intrusive RefCount; *Self is the JS wrapper m_ctx.
     ref_count: Cell<u32>,
     // R-2: `Cell` so host-fns take `&self` (re-entry-safe).
-    pub iterator: Cell<*mut RawAttributeIterator>,
+    pub(crate) iterator: Cell<*mut RawAttributeIterator>,
 }
 
 impl AttributeIterator {
@@ -1855,7 +1855,7 @@ impl AttributeIterator {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn next(&self, global_object: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn next(&self, global_object: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
         let done_label = bun_core::ZigString::init(b"done");
         let value_label = bun_core::ZigString::init(b"value");
 
@@ -1891,7 +1891,7 @@ impl AttributeIterator {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn get_this(&self, _global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn get_this(&self, _global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
         Ok(call_frame.this())
     }
 }
@@ -1905,7 +1905,7 @@ pub struct Element {
     // Intrusive RefCount; *Self is the JS wrapper m_ctx.
     ref_count: Cell<u32>,
     // R-2: `Cell` so host-fns take `&self` (re-entry-safe).
-    pub element: Cell<*mut RawElement>,
+    pub(crate) element: Cell<*mut RawElement>,
     /// AttributeIterator instances created by `getAttributes()` that borrow
     /// from `element`. They must be detached in `invalidate()` when the
     /// handler returns so that JS cannot dereference the freed lol-html
@@ -1914,7 +1914,7 @@ pub struct Element {
     /// (`get_attributes`, `set_attribute`, `remove_attribute`). The `with_mut`
     /// closures do not call into JS, so the short `&mut Vec` borrow cannot
     /// overlap a re-entrant access.
-    pub attribute_iterators: JsCell<Vec<*mut AttributeIterator>>,
+    pub(crate) attribute_iterators: JsCell<Vec<*mut AttributeIterator>>,
 }
 
 impl Element {
@@ -1933,7 +1933,7 @@ impl Element {
         }
     }
 
-    pub fn init(element: *mut RawElement) -> *mut Element {
+    pub(crate) fn init(element: *mut RawElement) -> *mut Element {
         bun_core::heap::into_raw(Box::new(Element {
             ref_count: Cell::new(1),
             element: Cell::new(element),
@@ -1968,13 +1968,13 @@ impl Element {
     /// `*LOLHTML.Element` (and the attribute buffer any `AttributeIterator`
     /// borrows from) is only valid during handler execution, so we must null
     /// it out here along with any iterators we handed to JS.
-    pub fn invalidate(&self) {
+    pub(crate) fn invalidate(&self) {
         self.element.set(core::ptr::null_mut());
         self.detach_attribute_iterators();
         self.attribute_iterators.set(Vec::new());
     }
 
-    pub fn on_end_tag_(
+    pub(crate) fn on_end_tag_(
         &self,
         global_object: &JSGlobalObject,
         function: JSValue,
@@ -2020,7 +2020,7 @@ impl Element {
     }
 
     /// Returns the value for a given attribute name on the element, or null if it is not found.
-    pub fn get_attribute_(
+    pub(crate) fn get_attribute_(
         &self,
         global_object: &JSGlobalObject,
         name: ZigString,
@@ -2038,7 +2038,7 @@ impl Element {
     }
 
     /// Returns a boolean indicating whether an attribute exists on the element.
-    pub fn has_attribute_(&self, global: &JSGlobalObject, name: ZigString) -> JsResult<JSValue> {
+    pub(crate) fn has_attribute_(&self, global: &JSGlobalObject, name: ZigString) -> JsResult<JSValue> {
         let Some(el) = cell_get(&self.element) else {
             return Ok(JSValue::FALSE);
         };
@@ -2048,7 +2048,7 @@ impl Element {
     }
 
     /// Sets an attribute to a provided value, creating the attribute if it does not exist.
-    pub fn set_attribute_(
+    pub(crate) fn set_attribute_(
         &self,
         call_frame: &CallFrame,
         global_object: &JSGlobalObject,
@@ -2075,7 +2075,7 @@ impl Element {
     }
 
     /// Removes the attribute.
-    pub fn remove_attribute_(
+    pub(crate) fn remove_attribute_(
         &self,
         call_frame: &CallFrame,
         global_object: &JSGlobalObject,
@@ -2097,13 +2097,13 @@ impl Element {
 
     // ── instance-method arg-decode wrappers (attribute ops) ──────────────
 
-    pub fn on_end_tag(&self, global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn on_end_tag(&self, global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
         let mut iter = ArgumentsSlice::init(global.bun_vm_ref(), call_frame.arguments());
         let function = eat_js_value(&mut iter, global)?;
         self.on_end_tag_(global, function, call_frame)
     }
 
-    pub fn get_attribute(
+    pub(crate) fn get_attribute(
         &self,
         global: &JSGlobalObject,
         call_frame: &CallFrame,
@@ -2113,7 +2113,7 @@ impl Element {
         self.get_attribute_(global, name)
     }
 
-    pub fn has_attribute(
+    pub(crate) fn has_attribute(
         &self,
         global: &JSGlobalObject,
         call_frame: &CallFrame,
@@ -2123,7 +2123,7 @@ impl Element {
         self.has_attribute_(global, name)
     }
 
-    pub fn set_attribute(
+    pub(crate) fn set_attribute(
         &self,
         global: &JSGlobalObject,
         call_frame: &CallFrame,
@@ -2134,7 +2134,7 @@ impl Element {
         self.set_attribute_(call_frame, global, name, value)
     }
 
-    pub fn remove_attribute(
+    pub(crate) fn remove_attribute(
         &self,
         global: &JSGlobalObject,
         call_frame: &CallFrame,
@@ -2161,7 +2161,7 @@ impl Element {
 
     /// Removes the element with all its content.
     #[bun_jsc::host_fn(method)]
-    pub fn remove(&self, _global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn remove(&self, _global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
         let Some(el) = cell_get(&self.element) else {
             return Ok(JSValue::UNDEFINED);
         };
@@ -2171,7 +2171,7 @@ impl Element {
 
     /// Removes the start tag and end tag of the element but keeps its inner content intact.
     #[bun_jsc::host_fn(method)]
-    pub fn remove_and_keep_content(
+    pub(crate) fn remove_and_keep_content(
         &self,
         _global: &JSGlobalObject,
         call_frame: &CallFrame,
@@ -2184,7 +2184,7 @@ impl Element {
     }
 
     #[bun_jsc::host_fn(getter)]
-    pub fn get_tag_name(&self, global_object: &JSGlobalObject) -> JsResult<JSValue> {
+    pub(crate) fn get_tag_name(&self, global_object: &JSGlobalObject) -> JsResult<JSValue> {
         let Some(el) = cell_get(&self.element) else {
             return Ok(JSValue::UNDEFINED);
         };
@@ -2193,7 +2193,7 @@ impl Element {
 
     // Note: no `#[bun_jsc::host_fn(setter)]` — generated_classes.rs already
     // emits `ElementPrototype__setTagName` via `host_setter_result`.
-    pub fn set_tag_name(&self, global: &JSGlobalObject, value: JSValue) -> JsResult<()> {
+    pub(crate) fn set_tag_name(&self, global: &JSGlobalObject, value: JSValue) -> JsResult<()> {
         if self.element.get().is_null() {
             return Ok(());
         }
@@ -2208,7 +2208,7 @@ impl Element {
     }
 
     #[bun_jsc::host_fn(getter)]
-    pub fn get_removed(&self, _global: &JSGlobalObject) -> JSValue {
+    pub(crate) fn get_removed(&self, _global: &JSGlobalObject) -> JSValue {
         match cell_get(&self.element) {
             Some(el) => JSValue::from(el.removed()),
             None => JSValue::UNDEFINED,
@@ -2216,7 +2216,7 @@ impl Element {
     }
 
     #[bun_jsc::host_fn(getter)]
-    pub fn get_self_closing(&self, _global: &JSGlobalObject) -> JSValue {
+    pub(crate) fn get_self_closing(&self, _global: &JSGlobalObject) -> JSValue {
         match cell_get(&self.element) {
             Some(el) => JSValue::from(el.is_self_closing()),
             None => JSValue::UNDEFINED,
@@ -2224,7 +2224,7 @@ impl Element {
     }
 
     #[bun_jsc::host_fn(getter)]
-    pub fn get_can_have_content(&self, _global: &JSGlobalObject) -> JSValue {
+    pub(crate) fn get_can_have_content(&self, _global: &JSGlobalObject) -> JSValue {
         match cell_get(&self.element) {
             Some(el) => JSValue::from(el.can_have_content()),
             None => JSValue::UNDEFINED,
@@ -2232,7 +2232,7 @@ impl Element {
     }
 
     #[bun_jsc::host_fn(getter)]
-    pub fn get_namespace_uri(&self, global_object: &JSGlobalObject) -> JsResult<JSValue> {
+    pub(crate) fn get_namespace_uri(&self, global_object: &JSGlobalObject) -> JsResult<JSValue> {
         let Some(el) = cell_get(&self.element) else {
             return Ok(JSValue::UNDEFINED);
         };
@@ -2240,7 +2240,7 @@ impl Element {
     }
 
     #[bun_jsc::host_fn(getter)]
-    pub fn get_attributes(&self, global_object: &JSGlobalObject) -> JsResult<JSValue> {
+    pub(crate) fn get_attributes(&self, global_object: &JSGlobalObject) -> JsResult<JSValue> {
         let Some(el) = cell_get(&self.element) else {
             return Ok(JSValue::UNDEFINED);
         };

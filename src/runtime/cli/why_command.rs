@@ -267,7 +267,7 @@ impl<'a> GlobPattern<'a> {
 }
 
 impl WhyCommand {
-    pub(crate) fn print_usage() {
+    fn print_usage() {
         bun_core::prettyln!(
             concat!("<r><b>bun why<r> <d>v", "{}", "<r>"),
             Global::package_json_version_with_sha
@@ -329,7 +329,7 @@ impl WhyCommand {
         Self::exec_with_manager(ctx, pm, positionals[1], pm.options.top_only)
     }
 
-    pub(crate) fn exec_with_manager(
+    fn exec_with_manager(
         ctx: command::Context,
         pm: &mut PackageManager,
         package_pattern: &[u8],
@@ -563,7 +563,7 @@ fn print_package_with_type(prefix: &[u8], package: &DependentInfo) {
     }
 }
 
-pub struct TreeContext<'a> {
+pub(crate) struct TreeContext<'a> {
     all_dependents: &'a HashMap<PackageID, Vec<DependentInfo>>,
     path_tracker: HashMap<PackageID, usize>,
 }

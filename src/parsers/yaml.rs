@@ -116,26 +116,26 @@ pub enum Context {
     FlowKey,
 }
 
-pub struct ContextStack {
+pub(crate) struct ContextStack {
     list: Vec<Context>,
 }
 
 impl ContextStack {
-    pub fn init() -> Self {
+    pub(crate) fn init() -> Self {
         Self { list: Vec::new() }
     }
 
-    pub fn set(&mut self, context: Context) -> Result<(), AllocError> {
+    pub(crate) fn set(&mut self, context: Context) -> Result<(), AllocError> {
         self.list.push(context);
         Ok(())
     }
 
-    pub fn unset(&mut self, context: Context) {
+    pub(crate) fn unset(&mut self, context: Context) {
         let prev_context = self.list.pop();
         debug_assert!(prev_context.is_some() && prev_context.unwrap() == context);
     }
 
-    pub fn get(&self) -> Context {
+    pub(crate) fn get(&self) -> Context {
         // top level context is always BLOCK-OUT
         self.list.last().copied().unwrap_or(Context::BlockOut)
     }
@@ -159,7 +159,7 @@ pub enum Chomp {
 }
 
 impl Chomp {
-    pub const DEFAULT: Chomp = Chomp::Clip;
+    pub(crate) const DEFAULT: Chomp = Chomp::Clip;
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -171,21 +171,21 @@ impl Chomp {
 pub struct Indent(usize);
 
 impl Indent {
-    pub const NONE: Indent = Indent(0);
+    pub(crate) const NONE: Indent = Indent(0);
 
-    pub fn from(indent: usize) -> Indent {
+    pub(crate) fn from(indent: usize) -> Indent {
         Indent(indent)
     }
 
-    pub fn cast(self) -> usize {
+    pub(crate) fn cast(self) -> usize {
         self.0
     }
 
-    pub fn inc(&mut self, n: usize) {
+    pub(crate) fn inc(&mut self, n: usize) {
         self.0 += n;
     }
 
-    pub fn add(self, n: usize) -> Indent {
+    pub(crate) fn add(self, n: usize) -> Indent {
         Indent(self.0 + n)
     }
 
@@ -193,15 +193,15 @@ impl Indent {
         Indent(self.0 - n)
     }
 
-    pub fn is_less_than(self, other: Indent) -> bool {
+    pub(crate) fn is_less_than(self, other: Indent) -> bool {
         self.0 < other.0
     }
 
-    pub fn is_less_than_or_equal(self, other: Indent) -> bool {
+    pub(crate) fn is_less_than_or_equal(self, other: Indent) -> bool {
         self.0 <= other.0
     }
 
-    pub fn cmp(self, r: Indent) -> Ordering {
+    pub(crate) fn cmp(self, r: Indent) -> Ordering {
         if self.0 > r.0 {
             return Ordering::Greater;
         }
@@ -229,13 +229,13 @@ pub enum IndentIndicator {
 }
 
 impl IndentIndicator {
-    pub const DEFAULT: IndentIndicator = IndentIndicator::Auto;
+    pub(crate) const DEFAULT: IndentIndicator = IndentIndicator::Auto;
 
-    pub fn get(self) -> u8 {
+    pub(crate) fn get(self) -> u8 {
         self as u8
     }
 
-    pub const fn from_raw(n: u8) -> Self {
+    pub(crate) const fn from_raw(n: u8) -> Self {
         match n {
             0 => IndentIndicator::Auto,
             1 => IndentIndicator::N1,
@@ -254,26 +254,26 @@ impl IndentIndicator {
     }
 }
 
-pub struct IndentStack {
+pub(crate) struct IndentStack {
     list: Vec<Indent>,
 }
 
 impl IndentStack {
-    pub fn init() -> Self {
+    pub(crate) fn init() -> Self {
         Self { list: Vec::new() }
     }
 
-    pub fn push(&mut self, indent: Indent) -> Result<(), AllocError> {
+    pub(crate) fn push(&mut self, indent: Indent) -> Result<(), AllocError> {
         self.list.push(indent);
         Ok(())
     }
 
-    pub fn pop(&mut self) {
+    pub(crate) fn pop(&mut self) {
         debug_assert!(!self.list.is_empty());
         self.list.pop();
     }
 
-    pub fn get(&self) -> Option<Indent> {
+    pub(crate) fn get(&self) -> Option<Indent> {
         self.list.last().copied()
     }
 }
@@ -287,31 +287,31 @@ impl IndentStack {
 pub struct Pos(usize);
 
 impl Pos {
-    pub const ZERO: Pos = Pos(0);
+    pub(crate) const ZERO: Pos = Pos(0);
 
-    pub fn from(pos: usize) -> Pos {
+    pub(crate) fn from(pos: usize) -> Pos {
         Pos(pos)
     }
 
-    pub fn cast(self) -> usize {
+    pub(crate) fn cast(self) -> usize {
         self.0
     }
 
-    pub fn loc(self) -> bun_ast::Loc {
+    pub(crate) fn loc(self) -> bun_ast::Loc {
         bun_ast::Loc {
             start: i32::try_from(self.0).expect("int cast"),
         }
     }
 
-    pub fn add(self, n: usize) -> Pos {
+    pub(crate) fn add(self, n: usize) -> Pos {
         Pos(self.0 + n)
     }
 
-    pub fn sub(self, n: usize) -> Pos {
+    pub(crate) fn sub(self, n: usize) -> Pos {
         Pos(self.0 - n)
     }
 
-    pub fn is_less_than(self, other: usize) -> bool {
+    pub(crate) fn is_less_than(self, other: usize) -> bool {
         self.0 < other
     }
 
@@ -335,7 +335,7 @@ impl Pos {
 pub struct Line(usize);
 
 impl Line {
-    pub fn from(line: usize) -> Line {
+    pub(crate) fn from(line: usize) -> Line {
         Line(line)
     }
 
@@ -343,7 +343,7 @@ impl Line {
         self.0
     }
 
-    pub fn inc(&mut self, n: usize) {
+    pub(crate) fn inc(&mut self, n: usize) {
         self.0 += n;
     }
 
@@ -571,26 +571,26 @@ impl Encoding for Utf16 {
 // chars — character classification
 // ───────────────────────────────────────────────────────────────────────────
 
-pub mod chars {
+pub(crate) mod chars {
     use super::{Encoding, EncodingKind};
 
-    pub fn is_ns_dec_digit<Enc: Encoding>(c: Enc::Unit) -> bool {
+    pub(crate) fn is_ns_dec_digit<Enc: Encoding>(c: Enc::Unit) -> bool {
         matches!(Enc::wide(c), 0x30..=0x39)
     }
 
-    pub fn is_ns_hex_digit<Enc: Encoding>(c: Enc::Unit) -> bool {
+    pub(crate) fn is_ns_hex_digit<Enc: Encoding>(c: Enc::Unit) -> bool {
         // YAML 1.2 production [36] ns-hex-digit — keep spec name, delegate to canonical.
         bun_core::strings::is_hex_code_point(Enc::wide(c))
     }
 
-    pub fn is_ns_word_char<Enc: Encoding>(c: Enc::Unit) -> bool {
+    pub(crate) fn is_ns_word_char<Enc: Encoding>(c: Enc::Unit) -> bool {
         matches!(
             Enc::wide(c),
             0x30..=0x39 | 0x41..=0x5A | 0x61..=0x7A | 0x2D /* '-' */
         )
     }
 
-    pub fn is_ns_char<Enc: Encoding>(c: Enc::Unit) -> bool {
+    pub(crate) fn is_ns_char<Enc: Encoding>(c: Enc::Unit) -> bool {
         let cw = Enc::wide(c);
         match Enc::KIND {
             EncodingKind::Utf8 => match cw {
@@ -623,7 +623,7 @@ pub mod chars {
     }
 
     /// null if false, length if true
-    pub fn is_ns_tag_char<Enc: Encoding>(cs: &[Enc::Unit]) -> Option<u8> {
+    pub(crate) fn is_ns_tag_char<Enc: Encoding>(cs: &[Enc::Unit]) -> Option<u8> {
         if cs.is_empty() {
             return None;
         }
@@ -654,21 +654,21 @@ pub mod chars {
         }
     }
 
-    pub fn is_b_char<Enc: Encoding>(c: Enc::Unit) -> bool {
+    pub(crate) fn is_b_char<Enc: Encoding>(c: Enc::Unit) -> bool {
         let cw = Enc::wide(c);
         cw == 0x0A || cw == 0x0D
     }
 
-    pub fn is_s_white<Enc: Encoding>(c: Enc::Unit) -> bool {
+    pub(crate) fn is_s_white<Enc: Encoding>(c: Enc::Unit) -> bool {
         let cw = Enc::wide(c);
         cw == 0x20 || cw == 0x09
     }
 
-    pub fn is_c_flow_indicator<Enc: Encoding>(c: Enc::Unit) -> bool {
+    pub(crate) fn is_c_flow_indicator<Enc: Encoding>(c: Enc::Unit) -> bool {
         matches!(Enc::wide(c), 0x2C | 0x5B | 0x5D | 0x7B | 0x7D)
     }
 
-    pub fn is_ns_uri_char<Enc: Encoding>(cs: &[Enc::Unit]) -> bool {
+    pub(crate) fn is_ns_uri_char<Enc: Encoding>(cs: &[Enc::Unit]) -> bool {
         if cs.is_empty() {
             return false;
         }
@@ -690,7 +690,7 @@ pub mod chars {
         }
     }
 
-    pub fn is_ns_anchor_char<Enc: Encoding>(c: Enc::Unit) -> bool {
+    pub(crate) fn is_ns_anchor_char<Enc: Encoding>(c: Enc::Unit) -> bool {
         // TODO: inline isCFlowIndicator
         is_ns_char::<Enc>(c) && !is_c_flow_indicator::<Enc>(c)
     }
@@ -746,20 +746,20 @@ bun_core::oom_from_alloc!(ParseError);
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct StringRange {
-    pub off: Pos,
-    pub end: Pos,
+    pub(crate) off: Pos,
+    pub(crate) end: Pos,
 }
 
 impl StringRange {
-    pub fn is_empty(&self) -> bool {
+    pub(crate) fn is_empty(&self) -> bool {
         self.off == self.end
     }
 
-    pub fn len(&self) -> usize {
+    pub(crate) fn len(&self) -> usize {
         self.end.cast() - self.off.cast()
     }
 
-    pub fn slice<'i, U>(&self, input: &'i [U]) -> &'i [U] {
+    pub(crate) fn slice<'i, U>(&self, input: &'i [U]) -> &'i [U] {
         &input[self.off.cast()..self.end.cast()]
     }
 }
@@ -769,12 +769,12 @@ impl StringRange {
 // Capture only `off` and have callers pass the end `Pos` explicitly.
 #[derive(Clone, Copy)]
 pub struct StringRangeStart {
-    pub off: Pos,
+    pub(crate) off: Pos,
 }
 
 impl StringRangeStart {
     #[inline]
-    pub fn end(self, end: Pos) -> StringRange {
+    pub(crate) fn end(self, end: Pos) -> StringRange {
         StringRange { off: self.off, end }
     }
 }
@@ -793,7 +793,7 @@ impl<Enc: Encoding> YamlString<Enc> {
         }
     }
 
-    pub fn len(&self) -> usize {
+    pub(crate) fn len(&self) -> usize {
         match self {
             YamlString::Range(range) => range.len(),
             YamlString::List(list) => list.len(),
@@ -821,14 +821,14 @@ impl<Enc: Encoding> YamlString<Enc> {
 
 // Plain-scalar string builder. `whitespace_buf` is taken from the parser by
 // `string_builder()` and returned by `done()` for capacity reuse.
-pub struct StringBuilder<'i, Enc: Encoding> {
+pub(crate) struct StringBuilder<'i, Enc: Encoding> {
     input: &'i [Enc::Unit],
     whitespace_buf: Vec<Whitespace<Enc>>,
-    pub str: YamlString<Enc>,
+    pub(crate) str: YamlString<Enc>,
 }
 
 impl<'i, Enc: Encoding> StringBuilder<'i, Enc> {
-    pub fn append_source(&mut self, unit: Enc::Unit, pos: Pos) -> Result<(), AllocError> {
+    pub(crate) fn append_source(&mut self, unit: Enc::Unit, pos: Pos) -> Result<(), AllocError> {
         self.drain_whitespace()?;
 
         assert!(self.input[pos.cast()] == unit);
@@ -885,11 +885,11 @@ impl<'i, Enc: Encoding> StringBuilder<'i, Enc> {
     }
 
     /// Discards pending (not yet drained) whitespace.
-    pub fn clear_whitespace(&mut self) {
+    pub(crate) fn clear_whitespace(&mut self) {
         self.whitespace_buf.clear();
     }
 
-    pub fn append_source_whitespace(
+    pub(crate) fn append_source_whitespace(
         &mut self,
         unit: Enc::Unit,
         pos: Pos,
@@ -898,12 +898,12 @@ impl<'i, Enc: Encoding> StringBuilder<'i, Enc> {
         Ok(())
     }
 
-    pub fn append_whitespace(&mut self, unit: Enc::Unit) -> Result<(), AllocError> {
+    pub(crate) fn append_whitespace(&mut self, unit: Enc::Unit) -> Result<(), AllocError> {
         self.whitespace_buf.push(Whitespace::New(unit));
         Ok(())
     }
 
-    pub fn append_whitespace_n_times(
+    pub(crate) fn append_whitespace_n_times(
         &mut self,
         unit: Enc::Unit,
         n: usize,
@@ -914,7 +914,7 @@ impl<'i, Enc: Encoding> StringBuilder<'i, Enc> {
         Ok(())
     }
 
-    pub fn append_expected_source_slice(
+    pub(crate) fn append_expected_source_slice(
         &mut self,
         off: Pos,
         end: Pos,
@@ -941,45 +941,13 @@ impl<'i, Enc: Encoding> StringBuilder<'i, Enc> {
         Ok(())
     }
 
-    pub fn append(&mut self, unit: Enc::Unit) -> Result<(), AllocError> {
-        self.drain_whitespace()?;
-        let input = self.input;
-        match &mut self.str {
-            YamlString::Range(range) => {
-                let mut list: Vec<Enc::Unit> = Vec::with_capacity(range.len() + 1);
-                list.extend_from_slice(range.slice(input));
-                list.push(unit);
-                self.str = YamlString::List(list);
-            }
-            YamlString::List(list) => list.push(unit),
-        }
-        Ok(())
-    }
 
-    pub fn append_slice(&mut self, s: &[Enc::Unit]) -> Result<(), AllocError> {
-        if s.is_empty() {
-            return Ok(());
-        }
-        self.drain_whitespace()?;
-        let input = self.input;
-        match &mut self.str {
-            YamlString::Range(range) => {
-                let mut list: Vec<Enc::Unit> = Vec::with_capacity(range.len() + s.len());
-                list.extend_from_slice(range.slice(input));
-                list.extend_from_slice(s);
-                self.str = YamlString::List(list);
-            }
-            YamlString::List(list) => list.extend_from_slice(s),
-        }
-        Ok(())
-    }
-
-    pub fn len(&self) -> usize {
+    pub(crate) fn len(&self) -> usize {
         self.str.len()
     }
 
     /// Returns the built string and hands the whitespace buffer back to the parser.
-    pub fn done(mut self, parser: &mut Parser<'i, Enc>) -> YamlString<Enc> {
+    pub(crate) fn done(mut self, parser: &mut Parser<'i, Enc>) -> YamlString<Enc> {
         self.whitespace_buf.clear();
         parser.whitespace_buf = core::mem::take(&mut self.whitespace_buf);
         self.str
@@ -998,23 +966,23 @@ pub enum FirstChar {
     Other,
 }
 
-pub struct ScalarResolverCtx<'i, Enc: Encoding> {
-    pub str_builder: StringBuilder<'i, Enc>,
+pub(crate) struct ScalarResolverCtx<'i, Enc: Encoding> {
+    pub(crate) str_builder: StringBuilder<'i, Enc>,
 
-    pub resolved: bool,
-    pub scalar: Option<NodeScalar<Enc>>,
-    pub tag: NodeTag,
+    pub(crate) resolved: bool,
+    pub(crate) scalar: Option<NodeScalar<Enc>>,
+    pub(crate) tag: NodeTag,
 
-    pub resolved_scalar_len: usize,
+    pub(crate) resolved_scalar_len: usize,
 
-    pub start: Pos,
-    pub line: Line,
-    pub line_indent: Indent,
-    pub multiline: bool,
+    pub(crate) start: Pos,
+    pub(crate) line: Line,
+    pub(crate) line_indent: Indent,
+    pub(crate) multiline: bool,
 }
 
 impl<'i, Enc: Encoding> ScalarResolverCtx<'i, Enc> {
-    pub fn done(self, parser: &mut Parser<'i, Enc>) -> Token<Enc> {
+    pub(crate) fn done(self, parser: &mut Parser<'i, Enc>) -> Token<Enc> {
         let multiline = self.multiline;
         let start = self.start;
         let line_indent = self.line_indent;
@@ -1051,7 +1019,7 @@ impl<'i, Enc: Encoding> ScalarResolverCtx<'i, Enc> {
         })
     }
 
-    pub fn check_append(&mut self, parser: &Parser<'i, Enc>) {
+    pub(crate) fn check_append(&mut self, parser: &Parser<'i, Enc>) {
         if self.str_builder.len() == 0 {
             self.line_indent = parser.line_indent;
             self.line = parser.line;
@@ -1060,7 +1028,7 @@ impl<'i, Enc: Encoding> ScalarResolverCtx<'i, Enc> {
         }
     }
 
-    pub fn append_source(
+    pub(crate) fn append_source(
         &mut self,
         parser: &Parser<'i, Enc>,
         unit: Enc::Unit,
@@ -1070,7 +1038,7 @@ impl<'i, Enc: Encoding> ScalarResolverCtx<'i, Enc> {
         self.str_builder.append_source(unit, pos)
     }
 
-    pub fn append_source_whitespace(
+    pub(crate) fn append_source_whitespace(
         &mut self,
         unit: Enc::Unit,
         pos: Pos,
@@ -1079,7 +1047,7 @@ impl<'i, Enc: Encoding> ScalarResolverCtx<'i, Enc> {
     }
 
     // may or may not contain whitespace
-    pub fn append_unknown_source_slice(
+    pub(crate) fn append_unknown_source_slice(
         &mut self,
         parser: &Parser<'i, Enc>,
         off: Pos,
@@ -1101,25 +1069,11 @@ impl<'i, Enc: Encoding> ScalarResolverCtx<'i, Enc> {
         Ok(())
     }
 
-    pub fn append(&mut self, parser: &Parser<'i, Enc>, unit: Enc::Unit) -> Result<(), AllocError> {
-        self.check_append(parser);
-        self.str_builder.append(unit)
-    }
-
-    pub fn append_whitespace(&mut self, unit: Enc::Unit) -> Result<(), AllocError> {
+    pub(crate) fn append_whitespace(&mut self, unit: Enc::Unit) -> Result<(), AllocError> {
         self.str_builder.append_whitespace(unit)
     }
 
-    pub fn append_slice(
-        &mut self,
-        parser: &Parser<'i, Enc>,
-        str: &[Enc::Unit],
-    ) -> Result<(), AllocError> {
-        self.check_append(parser);
-        self.str_builder.append_slice(str)
-    }
-
-    pub fn append_whitespace_n_times(
+    pub(crate) fn append_whitespace_n_times(
         &mut self,
         unit: Enc::Unit,
         n: usize,
@@ -1130,7 +1084,7 @@ impl<'i, Enc: Encoding> ScalarResolverCtx<'i, Enc> {
         self.str_builder.append_whitespace_n_times(unit, n)
     }
 
-    pub fn resolve(
+    pub(crate) fn resolve(
         &mut self,
         scalar: NodeScalar<Enc>,
         off: Pos,
@@ -1184,7 +1138,7 @@ impl<'i, Enc: Encoding> ScalarResolverCtx<'i, Enc> {
         Ok(())
     }
 
-    pub fn try_resolve_number(
+    pub(crate) fn try_resolve_number(
         &mut self,
         parser: &mut Parser<'i, Enc>,
         first_char: FirstChar,
@@ -1633,7 +1587,7 @@ pub enum NodeTag {
 }
 
 impl NodeTag {
-    pub fn resolve_null(self, loc: bun_ast::Loc) -> Expr {
+    pub(crate) fn resolve_null(self, loc: bun_ast::Loc) -> Expr {
         match self {
             NodeTag::None
             | NodeTag::Bool
@@ -1658,7 +1612,7 @@ pub enum NodeScalar<Enc: Encoding> {
 }
 
 impl<Enc: Encoding> NodeScalar<Enc> {
-    pub fn to_expr(&self, pos: Pos, input: &[Enc::Unit], bump: &bun_alloc::Arena) -> Expr {
+    pub(crate) fn to_expr(&self, pos: Pos, input: &[Enc::Unit], bump: &bun_alloc::Arena) -> Expr {
         match self {
             NodeScalar::Null => Expr::init(E::Null {}, pos.loc()),
             NodeScalar::Boolean(value) => Expr::init(E::Boolean { value: *value }, pos.loc()),
@@ -1698,42 +1652,15 @@ impl<Enc: Encoding> NodeScalar<Enc> {
 // Directive / Document / Stream
 // ───────────────────────────────────────────────────────────────────────────
 
-pub enum Directive {
+pub(crate) enum Directive {
     Yaml,
-    Tag(DirectiveTag),
-    Reserved(StringRange),
+    Tag,
+    Reserved,
 }
 
-/// '%TAG <handle> <prefix>'
-pub struct DirectiveTag {
-    pub handle: DirectiveTagHandle,
-    pub prefix: DirectiveTagPrefix,
+pub(crate) struct Document {
+    pub(crate) root: Expr,
 }
-
-pub enum DirectiveTagHandle {
-    /// '!name!'
-    Named(StringRange),
-    /// '!!'
-    Secondary,
-    /// '!'
-    Primary,
-}
-
-pub enum DirectiveTagPrefix {
-    /// c-ns-local-tag-prefix
-    /// '!my-prefix'
-    Local(StringRange),
-    /// ns-global-tag-prefix
-    /// 'tag:example.com,2000:app/'
-    Global(StringRange),
-}
-
-pub struct Document {
-    pub directives: Vec<Directive>,
-    pub root: Expr,
-}
-
-// impl Drop for Document — Vec<Directive> auto-drops; Expr is arena-backed.
 
 /// Should only be used with expressions created with the YAML parser. It assumes
 /// only null, boolean, number, string, array, object are possible. It also only
@@ -1785,9 +1712,8 @@ fn yaml_merge_key_expr_hash(key: &Expr) -> u64 {
 }
 
 pub struct Stream<'i, Enc: Encoding> {
-    pub docs: Vec<Document>,
-    /// Borrows the parser input.
-    pub input: &'i [Enc::Unit],
+    pub(crate) docs: Vec<Document>,
+    pub(crate) _input: core::marker::PhantomData<&'i [Enc::Unit]>,
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -1796,19 +1722,19 @@ pub struct Stream<'i, Enc: Encoding> {
 
 #[derive(Clone, Copy)]
 pub struct TokenInit {
-    pub start: Pos,
-    pub indent: Indent,
-    pub line: Line,
+    pub(crate) start: Pos,
+    pub(crate) indent: Indent,
+    pub(crate) line: Line,
 }
 
 // `Clone` deep-copies the `Vec` inside `YamlString::List`, which is fine for
 // the read-only uses here.
 #[derive(Clone)]
 pub struct Token<Enc: Encoding> {
-    pub start: Pos,
-    pub indent: Indent,
-    pub line: Line,
-    pub data: TokenData<Enc>,
+    pub(crate) start: Pos,
+    pub(crate) indent: Indent,
+    pub(crate) line: Line,
+    pub(crate) data: TokenData<Enc>,
 }
 
 #[derive(Clone)]
@@ -1851,8 +1777,8 @@ pub enum TokenData<Enc: Encoding> {
 
 #[derive(Clone)]
 pub struct TokenScalar<Enc: Encoding> {
-    pub data: NodeScalar<Enc>,
-    pub style: ScalarStyle,
+    pub(crate) data: NodeScalar<Enc>,
+    pub(crate) style: ScalarStyle,
 }
 
 /// How a scalar token was written in the source. Only `Plain` carries
@@ -1872,31 +1798,31 @@ pub enum ScalarStyle {
 
 #[derive(Clone, Copy)]
 pub struct AnchorInit {
-    pub start: Pos,
-    pub indent: Indent,
-    pub line: Line,
-    pub name: StringRange,
+    pub(crate) start: Pos,
+    pub(crate) indent: Indent,
+    pub(crate) line: Line,
+    pub(crate) name: StringRange,
 }
 
-pub type AliasInit = AnchorInit;
+pub(crate) type AliasInit = AnchorInit;
 
 #[derive(Clone, Copy)]
 pub struct TagInit {
-    pub start: Pos,
-    pub indent: Indent,
-    pub line: Line,
-    pub tag: NodeTag,
+    pub(crate) start: Pos,
+    pub(crate) indent: Indent,
+    pub(crate) line: Line,
+    pub(crate) tag: NodeTag,
 }
 
-pub struct ScalarInit<Enc: Encoding> {
-    pub start: Pos,
-    pub indent: Indent,
-    pub line: Line,
-    pub resolved: TokenScalar<Enc>,
+pub(crate) struct ScalarInit<Enc: Encoding> {
+    pub(crate) start: Pos,
+    pub(crate) indent: Indent,
+    pub(crate) line: Line,
+    pub(crate) resolved: TokenScalar<Enc>,
 }
 
 impl<Enc: Encoding> Token<Enc> {
-    pub fn eof(init: TokenInit) -> Self {
+    pub(crate) fn eof(init: TokenInit) -> Self {
         Self {
             start: init.start,
             indent: init.indent,
@@ -1904,7 +1830,7 @@ impl<Enc: Encoding> Token<Enc> {
             data: TokenData::Eof,
         }
     }
-    pub fn sequence_entry(init: TokenInit) -> Self {
+    pub(crate) fn sequence_entry(init: TokenInit) -> Self {
         Self {
             start: init.start,
             indent: init.indent,
@@ -1912,7 +1838,7 @@ impl<Enc: Encoding> Token<Enc> {
             data: TokenData::SequenceEntry,
         }
     }
-    pub fn mapping_key(init: TokenInit) -> Self {
+    pub(crate) fn mapping_key(init: TokenInit) -> Self {
         Self {
             start: init.start,
             indent: init.indent,
@@ -1920,7 +1846,7 @@ impl<Enc: Encoding> Token<Enc> {
             data: TokenData::MappingKey,
         }
     }
-    pub fn mapping_value(init: TokenInit) -> Self {
+    pub(crate) fn mapping_value(init: TokenInit) -> Self {
         Self {
             start: init.start,
             indent: init.indent,
@@ -1928,7 +1854,7 @@ impl<Enc: Encoding> Token<Enc> {
             data: TokenData::MappingValue,
         }
     }
-    pub fn collect_entry(init: TokenInit) -> Self {
+    pub(crate) fn collect_entry(init: TokenInit) -> Self {
         Self {
             start: init.start,
             indent: init.indent,
@@ -1936,7 +1862,7 @@ impl<Enc: Encoding> Token<Enc> {
             data: TokenData::CollectEntry,
         }
     }
-    pub fn sequence_start(init: TokenInit) -> Self {
+    pub(crate) fn sequence_start(init: TokenInit) -> Self {
         Self {
             start: init.start,
             indent: init.indent,
@@ -1944,7 +1870,7 @@ impl<Enc: Encoding> Token<Enc> {
             data: TokenData::SequenceStart,
         }
     }
-    pub fn sequence_end(init: TokenInit) -> Self {
+    pub(crate) fn sequence_end(init: TokenInit) -> Self {
         Self {
             start: init.start,
             indent: init.indent,
@@ -1952,7 +1878,7 @@ impl<Enc: Encoding> Token<Enc> {
             data: TokenData::SequenceEnd,
         }
     }
-    pub fn mapping_start(init: TokenInit) -> Self {
+    pub(crate) fn mapping_start(init: TokenInit) -> Self {
         Self {
             start: init.start,
             indent: init.indent,
@@ -1960,7 +1886,7 @@ impl<Enc: Encoding> Token<Enc> {
             data: TokenData::MappingStart,
         }
     }
-    pub fn mapping_end(init: TokenInit) -> Self {
+    pub(crate) fn mapping_end(init: TokenInit) -> Self {
         Self {
             start: init.start,
             indent: init.indent,
@@ -1968,7 +1894,7 @@ impl<Enc: Encoding> Token<Enc> {
             data: TokenData::MappingEnd,
         }
     }
-    pub fn anchor(init: AnchorInit) -> Self {
+    pub(crate) fn anchor(init: AnchorInit) -> Self {
         Self {
             start: init.start,
             indent: init.indent,
@@ -1976,7 +1902,7 @@ impl<Enc: Encoding> Token<Enc> {
             data: TokenData::Anchor(init.name),
         }
     }
-    pub fn alias(init: AliasInit) -> Self {
+    pub(crate) fn alias(init: AliasInit) -> Self {
         Self {
             start: init.start,
             indent: init.indent,
@@ -1984,7 +1910,7 @@ impl<Enc: Encoding> Token<Enc> {
             data: TokenData::Alias(init.name),
         }
     }
-    pub fn tag(init: TagInit) -> Self {
+    pub(crate) fn tag(init: TagInit) -> Self {
         Self {
             start: init.start,
             indent: init.indent,
@@ -1992,7 +1918,7 @@ impl<Enc: Encoding> Token<Enc> {
             data: TokenData::Tag(init.tag),
         }
     }
-    pub fn directive(init: TokenInit) -> Self {
+    pub(crate) fn directive(init: TokenInit) -> Self {
         Self {
             start: init.start,
             indent: init.indent,
@@ -2000,7 +1926,7 @@ impl<Enc: Encoding> Token<Enc> {
             data: TokenData::Directive,
         }
     }
-    pub fn reserved(init: TokenInit) -> Self {
+    pub(crate) fn reserved(init: TokenInit) -> Self {
         Self {
             start: init.start,
             indent: init.indent,
@@ -2008,7 +1934,7 @@ impl<Enc: Encoding> Token<Enc> {
             data: TokenData::Reserved,
         }
     }
-    pub fn document_start(init: TokenInit) -> Self {
+    pub(crate) fn document_start(init: TokenInit) -> Self {
         Self {
             start: init.start,
             indent: init.indent,
@@ -2016,7 +1942,7 @@ impl<Enc: Encoding> Token<Enc> {
             data: TokenData::DocumentStart,
         }
     }
-    pub fn document_end(init: TokenInit) -> Self {
+    pub(crate) fn document_end(init: TokenInit) -> Self {
         Self {
             start: init.start,
             indent: init.indent,
@@ -2024,7 +1950,7 @@ impl<Enc: Encoding> Token<Enc> {
             data: TokenData::DocumentEnd,
         }
     }
-    pub fn scalar(init: ScalarInit<Enc>) -> Self {
+    pub(crate) fn scalar(init: ScalarInit<Enc>) -> Self {
         Self {
             start: init.start,
             indent: init.indent,
@@ -2069,7 +1995,7 @@ pub enum ParseResultError {
 }
 
 impl ParseResultError {
-    pub fn add_to_log(
+    pub(crate) fn add_to_log(
         &self,
         source: &bun_ast::Source,
         log: &mut bun_ast::Log,
@@ -2136,7 +2062,7 @@ impl<'i, Enc: Encoding> ParseResult<'i, Enc> {
         ParseResult::Result(ParseResultOk { stream })
     }
 
-    pub fn fail(err: ParseError, parser: &Parser<'_, Enc>) -> Self {
+    pub(crate) fn fail(err: ParseError, parser: &Parser<'_, Enc>) -> Self {
         let e = match err {
             ParseError::OutOfMemory => ParseResultError::Oom,
             ParseError::StackOverflow => ParseResultError::StackOverflow,
@@ -2198,7 +2124,7 @@ impl<'i, Enc: Encoding> ParseResult<'i, Enc> {
 // Whitespace (parser-internal)
 // ───────────────────────────────────────────────────────────────────────────
 
-pub enum Whitespace<Enc: Encoding> {
+pub(crate) enum Whitespace<Enc: Encoding> {
     Source { pos: Pos, unit: Enc::Unit },
     New(Enc::Unit),
 }
@@ -2208,43 +2134,43 @@ pub enum Whitespace<Enc: Encoding> {
 // ───────────────────────────────────────────────────────────────────────────
 
 pub struct Parser<'i, Enc: Encoding> {
-    pub input: &'i [Enc::Unit],
+    pub(crate) input: &'i [Enc::Unit],
 
-    pub pos: Pos,
+    pub(crate) pos: Pos,
     /// Position of the first byte of the current line (one past the most
     /// recently consumed `\n`/`\r`). Set in `newline()`.
-    pub line_start_pos: Pos,
-    pub line_indent: Indent,
+    pub(crate) line_start_pos: Pos,
+    pub(crate) line_indent: Indent,
     /// A tab was seen between the line's s-indent (or post-indicator
     /// additional_parent_indent position) and the current token's content.
     /// [62]/[63] s-indent is spaces only; tab here is s-separate-in-line, valid
     /// before [197] flow-in-block content but not before a [185] compact
     /// construct or a sibling block entry. Reset on newline().
-    pub tab_after_indent: bool,
-    pub line: Line,
-    pub token: Token<Enc>,
+    pub(crate) tab_after_indent: bool,
+    pub(crate) line: Line,
+    pub(crate) token: Token<Enc>,
 
     /// Growable buffers use the global
     /// allocator (and `Drop`); the arena is threaded for the few places that
     /// must hand a borrowed slice into the long-lived `Expr` tree (see
     /// `NodeScalar::to_expr`).
-    pub bump: &'i bun_alloc::Arena,
+    pub(crate) bump: &'i bun_alloc::Arena,
 
-    pub context: ContextStack,
-    pub block_indents: IndentStack,
+    pub(crate) context: ContextStack,
+    pub(crate) block_indents: IndentStack,
 
-    pub explicit_document_start_line: Option<Line>,
+    pub(crate) explicit_document_start_line: Option<Line>,
 
-    pub anchors: StringHashMap<Expr>,
-    pub tag_handles: StringHashMap<()>,
+    pub(crate) anchors: StringHashMap<Expr>,
+    pub(crate) tag_handles: StringHashMap<()>,
 
     /// Backing storage lent to `StringBuilder`; empty while a builder is live.
-    pub whitespace_buf: Vec<Whitespace<Enc>>,
+    pub(crate) whitespace_buf: Vec<Whitespace<Enc>>,
 
-    pub stack_check: StackCheck,
+    pub(crate) stack_check: StackCheck,
 
-    pub merge_props_budget: usize,
-    pub alias_expansion_budget: usize,
+    pub(crate) merge_props_budget: usize,
+    pub(crate) alias_expansion_budget: usize,
 }
 
 impl<'i, Enc: Encoding> Parser<'i, Enc> {
@@ -2254,9 +2180,9 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
     /// deduplicate, so this needs enough headroom for legitimate documents that
     /// reuse a large anchor many times while still rejecting exponential
     /// (billion-laughs style) expansion.
-    pub const MAX_ALIAS_EXPANSION: usize = 16 * 1024 * 1024;
+    pub(crate) const MAX_ALIAS_EXPANSION: usize = 16 * 1024 * 1024;
 
-    pub fn init(bump: &'i bun_alloc::Arena, input: &'i [Enc::Unit]) -> Self {
+    pub(crate) fn init(bump: &'i bun_alloc::Arena, input: &'i [Enc::Unit]) -> Self {
         // [206] l-document-prefix ::= c-byte-order-mark? l-comment*
         let start = Pos::from(Enc::bom_len(input));
         Self {
@@ -2290,7 +2216,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         ParseError::UnexpectedToken
     }
 
-    pub fn parse(&mut self) -> Result<Stream<'i, Enc>, ParseError> {
+    pub(crate) fn parse(&mut self) -> Result<Stream<'i, Enc>, ParseError> {
         self.scan(ScanOptions {
             first_scan: true,
             ..Default::default()
@@ -2298,7 +2224,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         self.parse_stream()
     }
 
-    pub fn parse_stream(&mut self) -> Result<Stream<'i, Enc>, ParseError> {
+    pub(crate) fn parse_stream(&mut self) -> Result<Stream<'i, Enc>, ParseError> {
         let mut docs: Vec<Document> = Vec::new();
 
         // we want one null document if eof, not zero documents.
@@ -2311,7 +2237,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
 
         Ok(Stream {
             docs,
-            input: self.input,
+            _input: core::marker::PhantomData,
         })
     }
 
@@ -2393,24 +2319,18 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
             // primary tag handle
             if self.is_s_white() {
                 self.skip_s_white();
-                let prefix = self.parse_directive_tag_prefix()?;
+                self.parse_directive_tag_prefix()?;
                 self.try_skip_to_new_line()?;
-                return Ok(Directive::Tag(DirectiveTag {
-                    handle: DirectiveTagHandle::Primary,
-                    prefix,
-                }));
+                return Ok(Directive::Tag);
             }
 
             // secondary tag handle
             if self.is_char(Enc::ch(b'!')) {
                 self.inc(1);
                 self.try_skip_s_white()?;
-                let prefix = self.parse_directive_tag_prefix()?;
+                self.parse_directive_tag_prefix()?;
                 self.try_skip_to_new_line()?;
-                return Ok(Directive::Tag(DirectiveTag {
-                    handle: DirectiveTagHandle::Secondary,
-                    prefix,
-                }));
+                return Ok(Directive::Tag);
             }
 
             // named tag handle
@@ -2423,18 +2343,13 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
             self.tag_handles
                 .put(Enc::key_bytes(handle.slice(self.input)), ())?;
 
-            let prefix = self.parse_directive_tag_prefix()?;
+            self.parse_directive_tag_prefix()?;
             self.try_skip_to_new_line()?;
-            return Ok(Directive::Tag(DirectiveTag {
-                handle: DirectiveTagHandle::Named(handle),
-                prefix,
-            }));
+            return Ok(Directive::Tag);
         }
 
         // reserved directive
-        let range = self.string_range();
         self.try_skip_ns_chars()?;
-        let reserved = range.end(self.pos);
 
         self.skip_s_white();
 
@@ -2445,30 +2360,28 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
 
         self.try_skip_to_new_line()?;
 
-        Ok(Directive::Reserved(reserved))
+        Ok(Directive::Reserved)
     }
 
-    pub fn parse_directive_tag_prefix(&mut self) -> Result<DirectiveTagPrefix, ParseError> {
+    pub(crate) fn parse_directive_tag_prefix(&mut self) -> Result<(), ParseError> {
         // local tag prefix
         if self.is_char(Enc::ch(b'!')) {
             self.inc(1);
-            let range = self.string_range();
             self.skip_ns_uri_chars();
-            return Ok(DirectiveTagPrefix::Local(range.end(self.pos)));
+            return Ok(());
         }
 
         // global tag prefix
         if let Some(char_len) = self.is_ns_tag_char() {
-            let range = self.string_range();
             self.inc(char_len as usize);
             self.skip_ns_uri_chars();
-            return Ok(DirectiveTagPrefix::Global(range.end(self.pos)));
+            return Ok(());
         }
 
         Err(ParseError::InvalidDirective)
     }
 
-    pub fn parse_document(&mut self) -> Result<Document, ParseError> {
+    pub(crate) fn parse_document(&mut self) -> Result<Document, ParseError> {
         let mut directives: Vec<Directive> = Vec::new();
 
         self.anchors.clear();
@@ -2527,7 +2440,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
             }
         }
 
-        Ok(Document { root, directives })
+        Ok(Document { root })
     }
 
     /// [149] c-ns-flow-map-json-key-entry — when a JSON-style key (quoted
@@ -3152,16 +3065,16 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
 // MappingProps
 // ───────────────────────────────────────────────────────────────────────────
 
-pub struct MappingProps {
+pub(crate) struct MappingProps {
     list: G::PropertyList,
     merge_index: bun_collections::HashMap<u64, Vec<u32>>,
     merge_indexed: usize,
 }
 
 impl MappingProps {
-    pub const MAX_MERGED_PROPERTIES: usize = 1024 * 1024;
+    pub(crate) const MAX_MERGED_PROPERTIES: usize = 1024 * 1024;
 
-    pub fn init() -> Self {
+    pub(crate) fn init() -> Self {
         Self {
             list: bun_alloc::AstAlloc::vec(),
             merge_index: bun_collections::HashMap::default(),
@@ -3169,7 +3082,7 @@ impl MappingProps {
         }
     }
 
-    pub fn append(&mut self, mut prop: G::Property) -> Result<(), AllocError> {
+    pub(crate) fn append(&mut self, mut prop: G::Property) -> Result<(), AllocError> {
         if let Some(key) = &prop.key {
             prop.flags |= E::own_key_property_flags(key);
         }
@@ -3177,7 +3090,7 @@ impl MappingProps {
         Ok(())
     }
 
-    pub fn merge(
+    pub(crate) fn merge(
         &mut self,
         merge_props: &[G::Property],
         budget: &mut usize,
@@ -3225,7 +3138,7 @@ impl MappingProps {
         Ok(())
     }
 
-    pub fn append_maybe_merge(
+    pub(crate) fn append_maybe_merge(
         &mut self,
         key: Expr,
         value: Expr,
@@ -3264,7 +3177,7 @@ impl MappingProps {
         }
     }
 
-    pub fn move_list(&mut self) -> G::PropertyList {
+    pub(crate) fn move_list(&mut self) -> G::PropertyList {
         self.merge_index.clear();
         self.merge_indexed = 0;
         core::mem::replace(&mut self.list, bun_alloc::AstAlloc::vec())
@@ -3277,12 +3190,12 @@ impl MappingProps {
 
 pub struct NodeProperties<Enc: Encoding> {
     // c-ns-properties
-    pub has_anchor: Option<Token<Enc>>,
-    pub has_tag: Option<Token<Enc>>,
+    pub(crate) has_anchor: Option<Token<Enc>>,
+    pub(crate) has_tag: Option<Token<Enc>>,
 
     // when properties for mapping and first key are right next to eachother
-    pub has_mapping_anchor: Option<Token<Enc>>,
-    pub has_mapping_tag: Option<Token<Enc>>,
+    pub(crate) has_mapping_anchor: Option<Token<Enc>>,
+    pub(crate) has_mapping_tag: Option<Token<Enc>>,
 }
 
 impl<Enc: Encoding> Default for NodeProperties<Enc> {
@@ -3296,17 +3209,17 @@ impl<Enc: Encoding> Default for NodeProperties<Enc> {
     }
 }
 
-pub struct ImplicitKeyAnchors {
-    pub key_anchor: Option<StringRange>,
-    pub mapping_anchor: Option<StringRange>,
+pub(crate) struct ImplicitKeyAnchors {
+    pub(crate) key_anchor: Option<StringRange>,
+    pub(crate) mapping_anchor: Option<StringRange>,
 }
 
 impl<Enc: Encoding> NodeProperties<Enc> {
-    pub fn has_anchor_or_tag(&self) -> bool {
+    pub(crate) fn has_anchor_or_tag(&self) -> bool {
         self.has_anchor.is_some() || self.has_tag.is_some()
     }
 
-    pub fn set_anchor(&mut self, anchor_token: Token<Enc>) -> Result<(), ParseError> {
+    pub(crate) fn set_anchor(&mut self, anchor_token: Token<Enc>) -> Result<(), ParseError> {
         if let Some(previous_anchor) = &self.has_anchor {
             if previous_anchor.line == anchor_token.line || self.has_mapping_anchor.is_some() {
                 return Err(ParseError::MultipleAnchors);
@@ -3317,18 +3230,18 @@ impl<Enc: Encoding> NodeProperties<Enc> {
         Ok(())
     }
 
-    pub fn anchor(&self) -> Option<StringRange> {
+    pub(crate) fn anchor(&self) -> Option<StringRange> {
         self.has_anchor.as_ref().and_then(|t| match &t.data {
             TokenData::Anchor(r) => Some(*r),
             _ => None,
         })
     }
 
-    pub fn anchor_line(&self) -> Option<Line> {
+    pub(crate) fn anchor_line(&self) -> Option<Line> {
         self.has_anchor.as_ref().map(|t| t.line)
     }
 
-    pub fn implicit_key_anchors(
+    pub(crate) fn implicit_key_anchors(
         &self,
         implicit_key_line: Line,
     ) -> Result<ImplicitKeyAnchors, ParseError> {
@@ -3377,7 +3290,7 @@ impl<Enc: Encoding> NodeProperties<Enc> {
         })
     }
 
-    pub fn set_tag(&mut self, tag_token: Token<Enc>) -> Result<(), ParseError> {
+    pub(crate) fn set_tag(&mut self, tag_token: Token<Enc>) -> Result<(), ParseError> {
         if let Some(previous_tag) = &self.has_tag {
             if previous_tag.line == tag_token.line {
                 return Err(ParseError::MultipleTags);
@@ -3388,7 +3301,7 @@ impl<Enc: Encoding> NodeProperties<Enc> {
         Ok(())
     }
 
-    pub fn tag(&self) -> NodeTag {
+    pub(crate) fn tag(&self) -> NodeTag {
         self.has_tag
             .as_ref()
             .and_then(|t| match &t.data {
@@ -3398,11 +3311,11 @@ impl<Enc: Encoding> NodeProperties<Enc> {
             .unwrap_or(NodeTag::None)
     }
 
-    pub fn tag_line(&self) -> Option<Line> {
+    pub(crate) fn tag_line(&self) -> Option<Line> {
         self.has_tag.as_ref().map(|t| t.line)
     }
 
-    pub fn take_tag(&mut self) -> NodeTag {
+    pub(crate) fn take_tag(&mut self) -> NodeTag {
         let t = self.tag();
         self.has_tag = None;
         t
@@ -3414,14 +3327,14 @@ impl<Enc: Encoding> NodeProperties<Enc> {
 // ───────────────────────────────────────────────────────────────────────────
 
 pub struct ParseNodeOptions<Enc: Encoding> {
-    pub current_mapping_indent: Option<Indent>,
-    pub explicit_mapping_key: bool,
+    pub(crate) current_mapping_indent: Option<Indent>,
+    pub(crate) explicit_mapping_key: bool,
     /// [139] ns-flow-seq-entry may be a [150] ns-flow-pair, so a JSON-style
     /// node followed by an adjacent `:` is a key. Set by parse_flow_sequence;
     /// flow-mapping values are plain ns-flow-node and must not become a pair.
-    pub flow_pair_allowed: bool,
-    pub scanned_tag: Option<Token<Enc>>,
-    pub scanned_anchor: Option<Token<Enc>>,
+    pub(crate) flow_pair_allowed: bool,
+    pub(crate) scanned_tag: Option<Token<Enc>>,
+    pub(crate) scanned_anchor: Option<Token<Enc>>,
 }
 
 impl<Enc: Encoding> Default for ParseNodeOptions<Enc> {
@@ -3443,13 +3356,13 @@ impl<Enc: Encoding> Default for ParseNodeOptions<Enc> {
 #[derive(Clone, Copy)]
 pub struct ScanOptions {
     /// Used by compact sequences. We need to add the parent indentation
-    pub additional_parent_indent: Option<Indent>,
+    pub(crate) additional_parent_indent: Option<Indent>,
     /// If a scalar is scanned, this tag might be used.
-    pub tag: NodeTag,
+    pub(crate) tag: NodeTag,
     /// The scanner only counts indentation after a newline (or in compact
     /// collections). First scan needs to count indentation.
-    pub first_scan: bool,
-    pub outside_context: bool,
+    pub(crate) first_scan: bool,
+    pub(crate) outside_context: bool,
 }
 
 impl Default for ScanOptions {

@@ -34,36 +34,36 @@ bun_core::declare_scope!(NodeHTTPResponse, visible);
 // interior mutability via `Cell` (Copy) / `JsCell` (non-Copy).
 #[bun_jsc::JsClass(no_constructor)]
 pub struct NodeHTTPResponse {
-    pub ref_count: Cell<u32>,
+    pub(crate) ref_count: Cell<u32>,
 
-    pub raw_response: Cell<Option<uws::AnyResponse>>,
+    pub(crate) raw_response: Cell<Option<uws::AnyResponse>>,
 
-    pub flags: Cell<Flags>,
+    pub(crate) flags: Cell<Flags>,
 
     pub poll_ref: JsCell<jsc::Ref>,
 
-    pub body_read_state: Cell<BodyReadState>,
-    pub body_read_ref: JsCell<jsc::Ref>,
-    pub promise: JsCell<StrongOptional>, // Strong.Optional
-    pub server: AnyServer,
+    pub(crate) body_read_state: Cell<BodyReadState>,
+    pub(crate) body_read_ref: JsCell<jsc::Ref>,
+    pub(crate) promise: JsCell<StrongOptional>, // Strong.Optional
+    pub(crate) server: AnyServer,
 
     /// When you call pause() on the node:http IncomingMessage
     /// We might've already read from the socket.
     /// So we need to buffer that data.
     /// This should be pretty uncommon though.
-    pub buffered_request_body_data_during_pause: JsCell<Vec<u8>>,
+    pub(crate) buffered_request_body_data_during_pause: JsCell<Vec<u8>>,
     /// node:http: the raw trailer section that followed THIS request's chunked
     /// body. Moved off the connection's single per-parse buffer the moment the
     /// body finishes (still inside the parser), because a pipelined request's
     /// parse would otherwise overwrite it before this request's JS reads it.
-    pub request_trailers: JsCell<Vec<u8>>,
+    pub(crate) request_trailers: JsCell<Vec<u8>>,
     /// node:http: this request's header section captured at dispatch as
     /// [u32 nameLen][u32 valueLen][name][value]... so req.rawHeaders /
     /// req.headers materialize lazily (takeRawHeaders) instead of paying
     /// 2N JSStrings + a JSArray on every request. One-shot: emptied on first
     /// access.
-    pub raw_request_headers: JsCell<Vec<u8>>,
-    pub bytes_written: Cell<usize>,
+    pub(crate) raw_request_headers: JsCell<Vec<u8>>,
+    pub(crate) bytes_written: Cell<usize>,
 
     pending_pinned_write: Cell<PendingPinnedWrite>,
     /// Owns the bytes referenced by `pending_pinned_write`: either a
@@ -72,9 +72,9 @@ pub struct NodeHTTPResponse {
     /// buffers the underlying ArrayBuffer is additionally `pin()`ed.
     pending_pinned_write_owner: JsCell<crate::node::StringOrBuffer>,
 
-    pub upgrade_context: JsCell<UpgradeCTX>,
+    pub(crate) upgrade_context: JsCell<UpgradeCTX>,
 
-    pub auto_flusher: JsCell<AutoFlusher>,
+    pub(crate) auto_flusher: JsCell<AutoFlusher>,
 }
 
 // Intrusive refcount methods (`ref_` / `deref`) are hand-rolled below over the
@@ -109,25 +109,25 @@ impl Default for Flags {
 impl Flags {
     /// Did the user end the request?
     #[inline]
-    pub fn is_requested_completed_or_ended(self) -> bool {
+    pub(crate) fn is_requested_completed_or_ended(self) -> bool {
         self.intersects(Flags::REQUEST_HAS_COMPLETED | Flags::ENDED)
     }
 
     #[inline]
-    pub fn is_done(self) -> bool {
+    pub(crate) fn is_done(self) -> bool {
         self.is_requested_completed_or_ended() || self.contains(Flags::SOCKET_CLOSED)
     }
 }
 
 pub struct UpgradeCTX {
-    pub context: *mut uws_sys::WebSocketUpgradeContext,
+    pub(crate) context: *mut uws_sys::WebSocketUpgradeContext,
     // request will be detached when go async
-    pub request: *mut uws_sys::Request,
+    pub(crate) request: *mut uws_sys::Request,
 
     // we need to store this, if we wanna to enable async upgrade
-    pub sec_websocket_key: Box<[u8]>,
-    pub sec_websocket_protocol: Box<[u8]>,
-    pub sec_websocket_extensions: Box<[u8]>,
+    pub(crate) sec_websocket_key: Box<[u8]>,
+    pub(crate) sec_websocket_protocol: Box<[u8]>,
+    pub(crate) sec_websocket_extensions: Box<[u8]>,
 }
 
 impl Default for UpgradeCTX {
@@ -145,13 +145,13 @@ impl Default for UpgradeCTX {
 impl UpgradeCTX {
     // this can be called multiple times
     // Mid-lifetime reset, not a destructor.
-    pub(crate) fn reset(&mut self) {
+    fn reset(&mut self) {
         // Dropping the taken value frees the old `Box<[u8]>` headers; raw
         // pointers are nulled. Nothing from the old value is reused.
         drop(core::mem::take(self));
     }
 
-    pub(crate) fn preserve_web_socket_headers_if_needed(&mut self) {
+    fn preserve_web_socket_headers_if_needed(&mut self) {
         if !self.request.is_null() {
             // S008: `uws::Request` is an `opaque_ffi!` ZST — safe deref. We
             // null `self.request` immediately after reading headers so it
@@ -426,7 +426,7 @@ impl NodeHTTPResponse {
         Bun__getNodeHTTPResponseThisValue(any_response_is_ssl(&raw), raw.socket().cast())
     }
 
-    pub(crate) fn get_server_socket_value(&self) -> JSValue {
+    fn get_server_socket_value(&self) -> JSValue {
         let flags = self.flags.get();
         let Some(raw) = self.raw_response.get() else {
             return JSValue::ZERO;
@@ -480,7 +480,7 @@ impl NodeHTTPResponse {
         raw.pause();
     }
 
-    pub(crate) fn resume_socket(&self) {
+    fn resume_socket(&self) {
         scoped_log!(NodeHTTPResponse, "resumeSocket");
         let flags = self.flags.get();
         let Some(raw) = self.raw_response.get() else {
@@ -630,7 +630,7 @@ impl NodeHTTPResponse {
         }
     }
 
-    pub(crate) fn should_request_be_pending(&self) -> bool {
+    fn should_request_be_pending(&self) -> bool {
         let flags = self.flags.get();
         // Once the socket is closed or has been adopted by the WebSocket
         // layer, the HTTP request/response cycle is over — no further uws
@@ -1331,7 +1331,7 @@ impl NodeHTTPResponse {
         self.update_flags(|f| f.insert(Flags::TUNNELED));
     }
 
-    pub(crate) fn on_timeout(&self, _resp: uws::AnyResponse) {
+    fn on_timeout(&self, _resp: uws::AnyResponse) {
         scoped_log!(NodeHTTPResponse, "onTimeout");
         self.handle_abort_or_timeout::<{ AbortEvent::Timeout }>(JSValue::ZERO);
     }
@@ -1457,7 +1457,7 @@ impl NodeHTTPResponse {
 }
 
 #[bun_jsc::host_fn(export = "Bun__NodeHTTPRequest__onResolve")]
-pub(crate) fn node_http_request_on_resolve(
+fn node_http_request_on_resolve(
     global_object: &JSGlobalObject,
     callframe: &CallFrame,
 ) -> JSValue {
@@ -1504,7 +1504,7 @@ pub(crate) fn node_http_request_on_resolve(
 }
 
 #[bun_jsc::host_fn(export = "Bun__NodeHTTPRequest__onReject")]
-pub(crate) fn node_http_request_on_reject(
+fn node_http_request_on_reject(
     global_object: &JSGlobalObject,
     callframe: &CallFrame,
 ) -> JSValue {
@@ -1700,7 +1700,7 @@ impl NodeHTTPResponse {
         }
     }
 
-    pub(crate) fn on_data(&self, chunk: &[u8], last: bool) {
+    fn on_data(&self, chunk: &[u8], last: bool) {
         scoped_log!(
             NodeHTTPResponse,
             "onData({} bytes, is_last = {})",
@@ -2302,7 +2302,7 @@ impl NodeHTTPResponse {
         self.write_or_end::<false>(global_object, arguments, JSValue::ZERO)
     }
 
-    pub(crate) fn on_auto_flush(&self) -> bool {
+    fn on_auto_flush(&self) -> bool {
         // defer this.deref(); — moved to tail.
         let flags = self.flags.get();
         if !flags.contains(Flags::SOCKET_CLOSED) && !flags.contains(Flags::UPGRADED) {
@@ -2571,7 +2571,7 @@ impl NodeHTTPResponse {
 
     // Intrusive refcount helpers.
     #[inline]
-    pub(crate) fn ref_(&self) {
+    fn ref_(&self) {
         self.ref_count.set(self.ref_count.get() + 1);
     }
 
@@ -2626,7 +2626,7 @@ impl bun_ptr::AnyRefCounted for NodeHTTPResponse {
 /// `NodeHTTPResponse__createForJS` earlier in the same dispatch and is live;
 /// `data`/`length` describe a caller-owned buffer valid for the call.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn NodeHTTPResponse__adoptRawRequestHeaders(
+pub(crate) unsafe extern "C" fn NodeHTTPResponse__adoptRawRequestHeaders(
     response: *mut NodeHTTPResponse,
     data: *const u8,
     length: usize,
@@ -2646,7 +2646,7 @@ pub unsafe extern "C" fn NodeHTTPResponse__adoptRawRequestHeaders(
 /// are provided by C++ NodeHTTPServer and must be valid for the duration of the
 /// call; `has_body` and `node_response_ptr` must be writable.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn NodeHTTPResponse__createForJS(
+pub(crate) unsafe extern "C" fn NodeHTTPResponse__createForJS(
     any_server_tag: u64,
     global_object: &JSGlobalObject,
     has_body: *mut bool,

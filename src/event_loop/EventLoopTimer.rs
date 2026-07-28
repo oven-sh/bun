@@ -141,7 +141,7 @@ impl EventLoopTimer {
     /// `bun_runtime::dispatch::__bun_js_timer_epoch` (link-time extern).
     /// Returns `None` for non-JS timer tags.
     #[inline]
-    pub fn js_timer_epoch(&self) -> Option<u32> {
+    pub(crate) fn js_timer_epoch(&self) -> Option<u32> {
         // SAFETY: `self` is a live timer; the extern impl reads `tag` and
         // recovers the container via `offset_of`.
         unsafe { __bun_js_timer_epoch(self.tag, self) }

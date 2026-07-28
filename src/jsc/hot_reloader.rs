@@ -1,7 +1,9 @@
 use core::marker::PhantomData;
 use core::sync::atomic::{AtomicU32, Ordering};
 
-use bun_collections::{StringHashMap, StringSet};
+#[cfg(not(windows))]
+use bun_collections::StringHashMap;
+use bun_collections::StringSet;
 use bun_core::Output;
 use bun_core::ZStr;
 #[cfg(not(windows))]
@@ -469,12 +471,13 @@ pub struct NewHotReloader<Ctx, EventLoopType, const RELOAD_IMMEDIATELY: bool> {
     /// created this reloader. Set once at init and never reassigned; the
     /// context outlives the reloader (and every `Task` it spawns).
     pub ctx: bun_ptr::BackRef<Ctx>,
-    pub verbose: bool,
-    pub pending_count: AtomicU32,
+    pub(crate) verbose: bool,
+    pub(crate) pending_count: AtomicU32,
 
-    pub main: MainFile,
+    pub(crate) main: MainFile,
 
-    pub tombstones: StringHashMap<*mut Fs::EntriesOption>,
+    #[cfg(not(windows))]
+    pub(crate) tombstones: StringHashMap<*mut Fs::EntriesOption>,
 
     _event_loop: PhantomData<*mut EventLoopType>,
 }
@@ -484,11 +487,11 @@ pub struct MainFile {
     // `'static` is the API contract of `enable_hot_module_reloading`
     // (`entry_path: Option<&'static [u8]>`): the entry path is owned by the
     // Ctx, which outlives the leaked Reloader for the process lifetime.
-    pub dir: &'static [u8],
-    pub dir_hash: bun_watcher::HashType,
+    pub(crate) dir: &'static [u8],
+    pub(crate) dir_hash: bun_watcher::HashType,
 
     pub file: &'static [u8],
-    pub hash: bun_watcher::HashType,
+    pub(crate) hash: bun_watcher::HashType,
 
     /// On macOS, vim's atomic save triggers a race condition:
     /// 1. Old file gets NOTE_RENAME (file renamed to temp name: a.js -> a.js~)
@@ -500,7 +503,7 @@ pub struct MainFile {
     /// To fix this: when the entrypoint gets NOTE_RENAME, we set this flag
     /// and skip the reload. Then when the parent directory gets NOTE_WRITE,
     /// we check if the file exists and trigger the reload.
-    pub is_waiting_for_dir_change: bool,
+    pub(crate) is_waiting_for_dir_change: bool,
 }
 
 impl Default for MainFile {
@@ -516,7 +519,7 @@ impl Default for MainFile {
 }
 
 impl MainFile {
-    pub fn init(file: &'static [u8]) -> MainFile {
+    pub(crate) fn init(file: &'static [u8]) -> MainFile {
         let mut main = MainFile {
             file,
             hash: if !file.is_empty() {
@@ -540,15 +543,15 @@ impl MainFile {
 }
 
 pub struct Task<Ctx, EventLoopType, const RELOAD_IMMEDIATELY: bool> {
-    pub count: u8,
-    pub hashes: [u32; 8],
+    pub(crate) count: u8,
+    pub(crate) hashes: [u32; 8],
     // Only meaningful for the DevServer Ctx, but Rust can't branch a field
     // type on a generic parameter without specialization, so it is stored
     // unconditionally (8 fat pointers of overhead for non-DevServer Ctx).
-    pub paths: [&'static [u8]; 8],
+    pub(crate) paths: [&'static [u8]; 8],
     /// Left `None` until [`Self::enqueue`] populates it on the heap copy.
-    pub concurrent_task: Option<ConcurrentTask>,
-    pub reloader: *mut NewHotReloader<Ctx, EventLoopType, RELOAD_IMMEDIATELY>,
+    pub(crate) concurrent_task: Option<ConcurrentTask>,
+    pub(crate) reloader: *mut NewHotReloader<Ctx, EventLoopType, RELOAD_IMMEDIATELY>,
 }
 
 impl<Ctx, EventLoopType, const RELOAD_IMMEDIATELY: bool>
@@ -557,7 +560,7 @@ where
     Ctx: HotReloaderCtx<EventLoop = EventLoopType>,
     EventLoopType: HotReloaderEventLoop,
 {
-    pub fn init_empty(
+    pub(crate) fn init_empty(
         reloader: *mut NewHotReloader<Ctx, EventLoopType, RELOAD_IMMEDIATELY>,
     ) -> Self {
         Self {
@@ -605,7 +608,7 @@ where
         unsafe { (*core::ptr::addr_of!((*self.reloader).ctx)).as_ptr() }
     }
 
-    pub fn append(&mut self, id: u32) {
+    pub(crate) fn append(&mut self, id: u32) {
         if self.count == 8 {
             self.enqueue();
             self.count = 0;
@@ -643,7 +646,7 @@ where
         }
     }
 
-    pub fn enqueue(&mut self) {
+    pub(crate) fn enqueue(&mut self) {
         crate::mark_binding!();
         if self.count == 0 {
             return;
@@ -719,6 +722,7 @@ where
             verbose: cfg!(feature = "debug_logs") || verbose,
             pending_count: AtomicU32::new(0),
             main: MainFile::default(),
+            #[cfg(not(windows))]
             tombstones: StringHashMap::default(),
             _event_loop: PhantomData,
         }));
@@ -774,6 +778,7 @@ where
             verbose: cfg!(feature = "debug_logs") || ctx.log_level_at_least_info(),
             pending_count: AtomicU32::new(0),
             main: MainFile::init(entry_path.unwrap_or(b"")),
+            #[cfg(not(windows))]
             tombstones: StringHashMap::default(),
             _event_loop: PhantomData,
         }));
@@ -814,7 +819,7 @@ where
         self.tombstones.get(key).copied()
     }
 
-    pub fn on_error(_: &mut Self, err: &bun_sys::Error) {
+    pub(crate) fn on_error(_: &mut Self, err: &bun_sys::Error) {
         // `bun_sys::Error::name()` does the errno→tag-name lookup.
         Output::err(err.name(), "Watcher crashed", ());
         if cfg!(debug_assertions) {
@@ -834,12 +839,12 @@ where
         unsafe { self.ctx.get_mut() }
     }
 
-    pub fn get_context(&mut self) -> &mut Watcher {
+    pub(crate) fn get_context(&mut self) -> &mut Watcher {
         self.ctx_mut().bun_watcher_mut()
     }
 
     #[inline(never)]
-    pub fn on_file_update(
+    pub(crate) fn on_file_update(
         &mut self,
         events: &mut [bun_watcher::WatchEvent],
         changed_files: &[ChangedFilePath],

@@ -58,7 +58,7 @@ pub struct Archive {
 impl Archive {
     /// Borrow the backing `StoreRef`.
     #[inline]
-    pub fn store_ref(&self) -> &StoreRef {
+    pub(crate) fn store_ref(&self) -> &StoreRef {
         &self.store
     }
 }
@@ -84,7 +84,7 @@ impl Archive {
     }
 
     /// Pretty-print for console.log
-    pub fn write_format<F, W, const ENABLE_ANSI_COLORS: bool>(
+    pub(crate) fn write_format<F, W, const ENABLE_ANSI_COLORS: bool>(
         &self,
         formatter: &mut F,
         writer: &mut W,
@@ -177,7 +177,7 @@ impl Archive {
     /// When no options are provided, no compression is applied
     // NOTE: `#[bun_jsc::host_fn]` has no `constructor` kind yet; the
     // `JsClass` derive emits a `constructor` shim that calls this directly.
-    pub fn constructor(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<Box<Archive>> {
+    pub(crate) fn constructor(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<Box<Archive>> {
         let [data_arg, options_arg] = callframe.arguments_as_array::<2>();
         if data_arg.is_empty() {
             return Err(
@@ -510,7 +510,7 @@ impl Archive {
     ///   - glob: string | string[] - Only extract files matching the glob pattern(s). Supports negative patterns with "!".
     /// Returns Promise<number> with count of extracted files
     #[bun_jsc::host_fn(method)]
-    pub fn extract(&self, global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn extract(&self, global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         let [path_arg, options_arg] = callframe.arguments_as_array::<2>();
         if path_arg.is_empty() || !path_arg.is_string() {
             return Err(global.throw_invalid_arguments(format_args!(
@@ -616,21 +616,21 @@ impl Archive {
     /// Instance method: archive.blob()
     /// Returns Promise<Blob> with the archive data (compressed if gzip was set in options)
     #[bun_jsc::host_fn(method)]
-    pub fn blob(&self, global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn blob(&self, global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
         start_blob_task(global, &self.store, self.compress, BlobOutputType::Blob)
     }
 
     /// Instance method: archive.bytes()
     /// Returns Promise<Uint8Array> with the archive data (compressed if gzip was set in options)
     #[bun_jsc::host_fn(method)]
-    pub fn bytes(&self, global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn bytes(&self, global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
         start_blob_task(global, &self.store, self.compress, BlobOutputType::Bytes)
     }
 
     /// Instance method: archive.files(glob?)
     /// Returns Promise<Map<string, File>> with archive file contents
     #[bun_jsc::host_fn(method)]
-    pub fn files(&self, global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn files(&self, global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         let glob_arg = callframe.argument(0);
 
         let mut glob_patterns: Option<Vec<Box<[u8]>>> = None;
@@ -762,7 +762,7 @@ impl<C: TaskContext> AsyncTask<C> {
     // Forwards `this` to `bun_core::heap::take` without dereferencing it here;
     // not_unsafe_ptr_arg_deref is a false positive on opaque-token forwarding.
     #[allow(clippy::not_unsafe_ptr_arg_deref)]
-    pub fn run_from_js(this: *mut Self) -> Result<(), bun_jsc::JsTerminated> {
+    pub(crate) fn run_from_js(this: *mut Self) -> Result<(), bun_jsc::JsTerminated> {
         // SAFETY: see fn-level safety contract.
         let mut owned = unsafe { bun_core::heap::take(this) };
         owned.keep_alive.unref(bun_io::js_vm_ctx());
@@ -864,7 +864,7 @@ impl ExtractContext {
     }
 }
 
-pub type ExtractTask = AsyncTask<ExtractContext>;
+pub(crate) type ExtractTask = AsyncTask<ExtractContext>;
 
 fn start_extract_task(
     global: &JSGlobalObject,
@@ -980,7 +980,7 @@ impl TaskContext for BlobContext {
     }
 }
 
-pub type BlobTask = AsyncTask<BlobContext>;
+pub(crate) type BlobTask = AsyncTask<BlobContext>;
 
 fn start_blob_task(
     global: &JSGlobalObject,
@@ -1086,7 +1086,7 @@ impl WriteContext {
     }
 }
 
-pub type WriteTask = AsyncTask<WriteContext>;
+pub(crate) type WriteTask = AsyncTask<WriteContext>;
 
 fn start_write_task(
     global: &JSGlobalObject,
@@ -1289,7 +1289,7 @@ impl TaskContext for FilesContext {
     }
 }
 
-pub type FilesTask = AsyncTask<FilesContext>;
+pub(crate) type FilesTask = AsyncTask<FilesContext>;
 
 fn start_files_task(
     global: &JSGlobalObject,
@@ -1365,7 +1365,7 @@ fn compress_gzip(data: &[u8], level: u8) -> Result<Vec<u8>, CompressError> {
 }
 
 /// Check if a path is safe (no absolute paths or path traversal)
-pub fn is_safe_path(pathname: &[u8]) -> bool {
+pub(crate) fn is_safe_path(pathname: &[u8]) -> bool {
     // Reject empty paths
     if pathname.is_empty() {
         return false;
@@ -1401,7 +1401,7 @@ pub fn is_safe_path(pathname: &[u8]) -> bool {
 /// Positive patterns: at least one must match for the path to be included.
 /// Negative patterns (starting with "!"): if any matches, the path is excluded.
 /// Returns true if the path should be included, false if excluded.
-pub fn match_glob_patterns(patterns: &[Box<[u8]>], pathname: &[u8]) -> bool {
+pub(crate) fn match_glob_patterns(patterns: &[Box<[u8]>], pathname: &[u8]) -> bool {
     let mut has_positive_patterns = false;
     let mut matches_positive = false;
 

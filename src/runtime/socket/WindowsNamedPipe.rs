@@ -55,36 +55,36 @@ type WrapperType = SSLWrapper<*mut WindowsNamedPipe>;
 use crate::jsc_hooks::timer_all_mut as timer_all;
 
 pub struct WindowsNamedPipe {
-    pub wrapper: Option<WrapperType>,
+    pub(crate) wrapper: Option<WrapperType>,
     /// Non-owning alias of the heap `uv::Pipe`. The owning
     /// `Box<uv::Pipe>` is leaked in [`from`] and adopted by
     /// `self.writer.source` (`Source::Pipe`) inside [`start`]; this field only
     /// ever observes/null-checks the handle, never frees it.
     #[cfg(windows)]
-    pub pipe: Option<NonNull<uv::Pipe>>, // any duplex
+    pub(crate) pipe: Option<NonNull<uv::Pipe>>, // any duplex
     #[cfg(not(windows))]
     pub pipe: (),
     /// The per-thread VM singleton outlives this struct (it is torn down only
     /// at thread exit, after every named pipe is closed), so `&'static` is the
     /// honest model here rather than a threaded lifetime.
-    pub vm: &'static VirtualMachine,
+    pub(crate) vm: &'static VirtualMachine,
     /// Typed enum mirror of `vm.event_loop()` for the io-layer FilePoll vtable
     /// (`bun_io::EventLoopHandle` wraps `*const EventLoopHandle`).
     pub event_loop_handle: bun_jsc::EventLoopHandle,
 
-    pub writer: StreamingWriter<WindowsNamedPipe>,
+    pub(crate) writer: StreamingWriter<WindowsNamedPipe>,
 
-    pub incoming: Vec<u8>, // Maybe we should use IPCBuffer here as well
-    pub ssl_error: CertError,
-    pub handlers: Handlers,
+    pub(crate) incoming: Vec<u8>, // Maybe we should use IPCBuffer here as well
+    pub(crate) ssl_error: CertError,
+    pub(crate) handlers: Handlers,
     #[cfg(windows)]
-    pub connect_req: uv::uv_connect_t,
+    pub(crate) connect_req: uv::uv_connect_t,
     #[cfg(not(windows))]
     pub connect_req: (),
 
-    pub event_loop_timer: EventLoopTimer,
-    pub current_timeout: u32,
-    pub flags: Flags,
+    pub(crate) event_loop_timer: EventLoopTimer,
+    pub(crate) current_timeout: u32,
+    pub(crate) flags: Flags,
 }
 
 bun_event_loop::impl_timer_owner!(WindowsNamedPipe; from_timer_ptr => event_loop_timer);
@@ -116,19 +116,19 @@ bitflags::bitflags! {
 
 impl Flags {
     #[inline]
-    pub fn disconnected(self) -> bool {
+    pub(crate) fn disconnected(self) -> bool {
         self.contains(Self::DISCONNECTED)
     }
     #[inline]
-    pub fn set_disconnected(&mut self, v: bool) {
+    pub(crate) fn set_disconnected(&mut self, v: bool) {
         self.set(Self::DISCONNECTED, v)
     }
     #[inline]
-    pub fn is_closed(self) -> bool {
+    pub(crate) fn is_closed(self) -> bool {
         self.contains(Self::IS_CLOSED)
     }
     #[inline]
-    pub fn set_is_closed(&mut self, v: bool) {
+    pub(crate) fn set_is_closed(&mut self, v: bool) {
         self.set(Self::IS_CLOSED, v)
     }
     #[inline]
@@ -136,36 +136,36 @@ impl Flags {
         self.contains(Self::IS_CLIENT)
     }
     #[inline]
-    pub fn set_is_client(&mut self, v: bool) {
+    pub(crate) fn set_is_client(&mut self, v: bool) {
         self.set(Self::IS_CLIENT, v)
     }
     #[inline]
-    pub fn is_ssl(self) -> bool {
+    pub(crate) fn is_ssl(self) -> bool {
         self.contains(Self::IS_SSL)
     }
     #[inline]
-    pub fn set_is_ssl(&mut self, v: bool) {
+    pub(crate) fn set_is_ssl(&mut self, v: bool) {
         self.set(Self::IS_SSL, v)
     }
 }
 
 pub struct Handlers {
     pub ctx: *mut c_void,
-    pub ref_ctx: fn(*mut c_void),
-    pub deref_ctx: fn(*mut c_void),
-    pub on_open: fn(*mut c_void),
-    pub on_handshake: fn(*mut c_void, bool, us_bun_verify_error_t),
-    pub on_data: fn(*mut c_void, &[u8]),
+    pub(crate) ref_ctx: fn(*mut c_void),
+    pub(crate) deref_ctx: fn(*mut c_void),
+    pub(crate) on_open: fn(*mut c_void),
+    pub(crate) on_handshake: fn(*mut c_void, bool, us_bun_verify_error_t),
+    pub(crate) on_data: fn(*mut c_void, &[u8]),
     pub on_close: fn(*mut c_void),
-    pub on_end: fn(*mut c_void),
-    pub on_writable: fn(*mut c_void),
-    pub on_error: fn(*mut c_void, bun_sys::Error),
-    pub on_timeout: fn(*mut c_void),
+    pub(crate) on_end: fn(*mut c_void),
+    pub(crate) on_writable: fn(*mut c_void),
+    pub(crate) on_error: fn(*mut c_void, bun_sys::Error),
+    pub(crate) on_timeout: fn(*mut c_void),
     /// A new resumable TLS session (serialized SSL_SESSION) - node's
     /// `'session'` event on the wrapping TLSSocket.
-    pub on_session: fn(*mut c_void, &[u8]),
+    pub(crate) on_session: fn(*mut c_void, &[u8]),
     /// An NSS key-log line - node's `'keylog'` event.
-    pub on_keylog: fn(*mut c_void, &[u8]),
+    pub(crate) on_keylog: fn(*mut c_void, &[u8]),
 }
 
 impl WindowsNamedPipe {
@@ -592,7 +592,7 @@ impl WindowsNamedPipe {
         }
     }
 
-    pub fn on_timeout(&mut self) {
+    pub(crate) fn on_timeout(&mut self) {
         bun_output::scoped_log!(WindowsNamedPipe, "onTimeout");
 
         let has_been_cleared = self.event_loop_timer.state == EventLoopTimerState::CANCELLED
@@ -609,7 +609,7 @@ impl WindowsNamedPipe {
     }
 
     #[cfg(windows)]
-    pub fn from(
+    pub(crate) fn from(
         pipe: Box<uv::Pipe>,
         handlers: Handlers,
         vm: &'static VirtualMachine,
@@ -637,7 +637,7 @@ impl WindowsNamedPipe {
         }
     }
 
-    pub fn r#ref(&mut self) {
+    pub(crate) fn r#ref(&mut self) {
         (self.handlers.ref_ctx)(self.handlers.ctx);
     }
 
@@ -715,7 +715,7 @@ impl WindowsNamedPipe {
     }
 
     #[cfg(windows)]
-    pub fn get_accepted_by(
+    pub(crate) fn get_accepted_by(
         &mut self,
         server: &mut uv::Pipe,
         ssl_ctx: Option<*mut boringssl::SSL_CTX>,
@@ -810,7 +810,7 @@ impl WindowsNamedPipe {
     }
 
     #[cfg(windows)]
-    pub fn open(
+    pub(crate) fn open(
         &mut self,
         fd: Fd,
         ssl_options: Option<SSLConfig>,
@@ -852,7 +852,7 @@ impl WindowsNamedPipe {
     }
 
     #[cfg(windows)]
-    pub fn connect(
+    pub(crate) fn connect(
         &mut self,
         path: &[u8],
         ssl_options: Option<SSLConfig>,
@@ -915,7 +915,7 @@ impl WindowsNamedPipe {
     }
 
     #[cfg(not(windows))]
-    pub fn open(
+    pub(crate) fn open(
         &mut self,
         _fd: Fd,
         _ssl_options: Option<SSLConfig>,
@@ -927,7 +927,7 @@ impl WindowsNamedPipe {
     }
 
     #[cfg(not(windows))]
-    pub fn connect(
+    pub(crate) fn connect(
         &mut self,
         _path: &[u8],
         _ssl_options: Option<SSLConfig>,
@@ -1037,7 +1037,7 @@ impl WindowsNamedPipe {
         Ok(())
     }
 
-    pub fn start(&mut self, is_client: bool) -> bool {
+    pub(crate) fn start(&mut self, is_client: bool) -> bool {
         self.flags.set_is_client(is_client);
         #[cfg(windows)]
         {
@@ -1090,7 +1090,7 @@ impl WindowsNamedPipe {
         }
     }
 
-    pub fn is_tls(&self) -> bool {
+    pub(crate) fn is_tls(&self) -> bool {
         self.flags.is_ssl()
     }
 
@@ -1274,7 +1274,7 @@ impl WindowsNamedPipe {
         !self.is_closed()
     }
 
-    pub fn ssl(&self) -> Option<*mut boringssl::SSL> {
+    pub(crate) fn ssl(&self) -> Option<*mut boringssl::SSL> {
         if let Some(wrapper) = &self.wrapper {
             return wrapper.ssl.map(|p| p.as_ptr());
         }
@@ -1299,11 +1299,11 @@ impl WindowsNamedPipe {
         }
     }
 
-    pub fn reset_timeout(&mut self) {
+    pub(crate) fn reset_timeout(&mut self) {
         self.set_timeout_in_milliseconds(self.current_timeout);
     }
 
-    pub fn set_timeout_in_milliseconds(&mut self, ms: c_uint) {
+    pub(crate) fn set_timeout_in_milliseconds(&mut self, ms: c_uint) {
         if self.event_loop_timer.state == EventLoopTimerState::ACTIVE {
             timer_all().remove(&raw mut self.event_loop_timer);
         }
@@ -1413,7 +1413,7 @@ impl Drop for WindowsNamedPipe {
 // raw pointer. All other `WindowsNamedPipe__*` symbols are emitted by
 // `#[uws_callback(export = …)]` on the inherent methods above.
 #[unsafe(no_mangle)]
-pub extern "C" fn WindowsNamedPipe__ssl(this: *const c_void) -> *mut boringssl::SSL {
+pub(crate) extern "C" fn WindowsNamedPipe__ssl(this: *const c_void) -> *mut boringssl::SSL {
     // SAFETY: `this` is a live `*const WindowsNamedPipe` from the bun_uws opaque handle.
     unsafe {
         (*this.cast::<WindowsNamedPipe>())

@@ -88,9 +88,9 @@ define_rect_shorthand! {
 #[derive(Clone, PartialEq)]
 pub struct InsetBlock {
     /// The block start value.
-    pub block_start: LengthPercentageOrAuto,
+    pub(crate) block_start: LengthPercentageOrAuto,
     /// The block end value.
-    pub block_end: LengthPercentageOrAuto,
+    pub(crate) block_end: LengthPercentageOrAuto,
 }
 
 impl InsetBlock {
@@ -102,9 +102,9 @@ impl InsetBlock {
 #[derive(Clone, PartialEq)]
 pub struct InsetInline {
     /// The inline start value.
-    pub inline_start: LengthPercentageOrAuto,
+    pub(crate) inline_start: LengthPercentageOrAuto,
     /// The inline end value.
-    pub inline_end: LengthPercentageOrAuto,
+    pub(crate) inline_end: LengthPercentageOrAuto,
 }
 
 impl InsetInline {
@@ -116,9 +116,9 @@ impl InsetInline {
 #[derive(Clone, PartialEq)]
 pub struct MarginBlock {
     /// The block start value.
-    pub block_start: LengthPercentageOrAuto,
+    pub(crate) block_start: LengthPercentageOrAuto,
     /// The block end value.
-    pub block_end: LengthPercentageOrAuto,
+    pub(crate) block_end: LengthPercentageOrAuto,
 }
 
 impl MarginBlock {
@@ -130,9 +130,9 @@ impl MarginBlock {
 #[derive(Clone, PartialEq)]
 pub struct MarginInline {
     /// The inline start value.
-    pub inline_start: LengthPercentageOrAuto,
+    pub(crate) inline_start: LengthPercentageOrAuto,
     /// The inline end value.
-    pub inline_end: LengthPercentageOrAuto,
+    pub(crate) inline_end: LengthPercentageOrAuto,
 }
 
 impl MarginInline {
@@ -153,9 +153,9 @@ define_rect_shorthand! {
 #[derive(Clone, PartialEq)]
 pub struct PaddingBlock {
     /// The block start value.
-    pub block_start: LengthPercentageOrAuto,
+    pub(crate) block_start: LengthPercentageOrAuto,
     /// The block end value.
-    pub block_end: LengthPercentageOrAuto,
+    pub(crate) block_end: LengthPercentageOrAuto,
 }
 
 impl PaddingBlock {
@@ -167,9 +167,9 @@ impl PaddingBlock {
 #[derive(Clone, PartialEq)]
 pub struct PaddingInline {
     /// The inline start value.
-    pub inline_start: LengthPercentageOrAuto,
+    pub(crate) inline_start: LengthPercentageOrAuto,
     /// The inline end value.
-    pub inline_end: LengthPercentageOrAuto,
+    pub(crate) inline_end: LengthPercentageOrAuto,
 }
 
 impl PaddingInline {
@@ -190,9 +190,9 @@ define_rect_shorthand! {
 #[derive(Clone, PartialEq)]
 pub struct ScrollMarginBlock {
     /// The block start value.
-    pub block_start: LengthPercentageOrAuto,
+    pub(crate) block_start: LengthPercentageOrAuto,
     /// The block end value.
-    pub block_end: LengthPercentageOrAuto,
+    pub(crate) block_end: LengthPercentageOrAuto,
 }
 
 impl ScrollMarginBlock {
@@ -204,9 +204,9 @@ impl ScrollMarginBlock {
 #[derive(Clone, PartialEq)]
 pub struct ScrollMarginInline {
     /// The inline start value.
-    pub inline_start: LengthPercentageOrAuto,
+    pub(crate) inline_start: LengthPercentageOrAuto,
     /// The inline end value.
-    pub inline_end: LengthPercentageOrAuto,
+    pub(crate) inline_end: LengthPercentageOrAuto,
 }
 
 impl ScrollMarginInline {
@@ -227,9 +227,9 @@ define_rect_shorthand! {
 #[derive(Clone, PartialEq)]
 pub struct ScrollPaddingBlock {
     /// The block start value.
-    pub block_start: LengthPercentageOrAuto,
+    pub(crate) block_start: LengthPercentageOrAuto,
     /// The block end value.
-    pub block_end: LengthPercentageOrAuto,
+    pub(crate) block_end: LengthPercentageOrAuto,
 }
 
 impl ScrollPaddingBlock {
@@ -241,9 +241,9 @@ impl ScrollPaddingBlock {
 #[derive(Clone, PartialEq)]
 pub struct ScrollPaddingInline {
     /// The inline start value.
-    pub inline_start: LengthPercentageOrAuto,
+    pub(crate) inline_start: LengthPercentageOrAuto,
     /// The inline end value.
-    pub inline_end: LengthPercentageOrAuto,
+    pub(crate) inline_end: LengthPercentageOrAuto,
 }
 
 impl ScrollPaddingInline {
@@ -395,16 +395,16 @@ pub trait SizeHandlerSpec {
 
 /// Generic margin/padding/inset/scroll-* handler.
 pub struct SizeHandler<S: SizeHandlerSpec> {
-    pub top: Option<LengthPercentageOrAuto>,
-    pub bottom: Option<LengthPercentageOrAuto>,
-    pub left: Option<LengthPercentageOrAuto>,
-    pub right: Option<LengthPercentageOrAuto>,
-    pub block_start: Option<Property>,
-    pub block_end: Option<Property>,
-    pub inline_start: Option<Property>,
-    pub inline_end: Option<Property>,
-    pub has_any: bool,
-    pub category: PropertyCategory,
+    pub(crate) top: Option<LengthPercentageOrAuto>,
+    pub(crate) bottom: Option<LengthPercentageOrAuto>,
+    pub(crate) left: Option<LengthPercentageOrAuto>,
+    pub(crate) right: Option<LengthPercentageOrAuto>,
+    pub(crate) block_start: Option<Property>,
+    pub(crate) block_end: Option<Property>,
+    pub(crate) inline_start: Option<Property>,
+    pub(crate) inline_end: Option<Property>,
+    pub(crate) has_any: bool,
+    pub(crate) category: PropertyCategory,
     _spec: core::marker::PhantomData<S>,
 }
 
@@ -463,7 +463,7 @@ impl<S: SizeHandlerSpec> SizeHandler<S> {
         }
     }
 
-    pub fn handle_property(
+    pub(crate) fn handle_property(
         &mut self,
         property: &Property,
         dest: &mut DeclarationList,
@@ -720,7 +720,7 @@ impl<S: SizeHandlerSpec> SizeHandler<S> {
         true
     }
 
-    pub fn finalize(&mut self, dest: &mut DeclarationList, context: &mut PropertyHandlerContext) {
+    pub(crate) fn finalize(&mut self, dest: &mut DeclarationList, context: &mut PropertyHandlerContext) {
         self.flush(dest, context);
     }
 

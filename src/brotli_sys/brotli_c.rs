@@ -296,7 +296,6 @@ pub enum BrotliEncoderOperation {
 // `output` borrows the encoder's internal buffer; valid until the next encoder call.
 pub struct CompressionResult<'a> {
     pub success: bool,
-    pub has_more: bool,
     pub output: &'a [u8],
 }
 
@@ -304,7 +303,6 @@ impl<'a> Default for CompressionResult<'a> {
     fn default() -> Self {
         Self {
             success: false,
-            has_more: false,
             output: b"",
         }
     }
@@ -368,7 +366,6 @@ impl BrotliEncoder {
         CompressionResult {
             success,
             output,
-            has_more: BrotliEncoderHasMoreOutput(state) > 0,
         }
     }
 }

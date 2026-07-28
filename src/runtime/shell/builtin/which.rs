@@ -12,7 +12,7 @@ use crate::shell::yield_::Yield;
 
 #[derive(Default)]
 pub struct Which {
-    pub state: State,
+    pub(crate) state: State,
 }
 
 #[derive(Default)]
@@ -86,7 +86,7 @@ impl Which {
         Self::next(interp, cmd)
     }
 
-    pub(crate) fn next(interp: &Interpreter, cmd: NodeId) -> Yield {
+    fn next(interp: &Interpreter, cmd: NodeId) -> Yield {
         let argc = Builtin::of(interp, cmd).args_slice().len();
         let (arg_idx, had_not_found) = match &Self::state_mut(interp, cmd).state {
             State::MultiArgs {

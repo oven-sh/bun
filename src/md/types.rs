@@ -87,23 +87,23 @@ pub trait RendererImpl {
 
 impl<'a> Renderer<'a> {
     #[inline]
-    pub fn enter_block(&mut self, block_type: BlockType, data: u32, flags: u32) -> JsResult<()> {
+    pub(crate) fn enter_block(&mut self, block_type: BlockType, data: u32, flags: u32) -> JsResult<()> {
         self.ptr.enter_block(block_type, data, flags)
     }
     #[inline]
-    pub fn leave_block(&mut self, block_type: BlockType, data: u32) -> JsResult<()> {
+    pub(crate) fn leave_block(&mut self, block_type: BlockType, data: u32) -> JsResult<()> {
         self.ptr.leave_block(block_type, data)
     }
     #[inline]
-    pub fn enter_span(&mut self, span_type: SpanType, detail: SpanDetail<'_>) -> JsResult<()> {
+    pub(crate) fn enter_span(&mut self, span_type: SpanType, detail: SpanDetail<'_>) -> JsResult<()> {
         self.ptr.enter_span(span_type, detail)
     }
     #[inline]
-    pub fn leave_span(&mut self, span_type: SpanType) -> JsResult<()> {
+    pub(crate) fn leave_span(&mut self, span_type: SpanType) -> JsResult<()> {
         self.ptr.leave_span(span_type)
     }
     #[inline]
-    pub fn text(&mut self, text_type: TextType, content: &[u8]) -> JsResult<()> {
+    pub(crate) fn text(&mut self, text_type: TextType, content: &[u8]) -> JsResult<()> {
         self.ptr.text(text_type, content)
     }
 }
@@ -116,13 +116,13 @@ pub struct SpanDetail<'a> {
     pub href: &'a [u8],
     pub title: &'a [u8],
     /// Standard autolink (angle-bracket): use writeUrlEscaped (no entity/escape processing)
-    pub autolink: bool,
+    pub(crate) autolink: bool,
     /// Standard autolink is an email: prepend "mailto:" to href
-    pub autolink_email: bool,
+    pub(crate) autolink_email: bool,
     /// Permissive autolink: use HTML-escaping for href (not URL-escaping)
-    pub permissive_autolink: bool,
+    pub(crate) permissive_autolink: bool,
     /// Permissive www autolink: prepend "http://" to href
-    pub autolink_www: bool,
+    pub(crate) autolink_www: bool,
 }
 
 impl<'a> Default for SpanDetail<'a> {
@@ -160,12 +160,12 @@ pub enum LineType {
 /// A line analysis result.
 #[derive(Copy, Clone)]
 pub struct Line {
-    pub r#type: LineType,
-    pub beg: OFF,
-    pub end: OFF,
-    pub indent: u32,
-    pub data: u32,
-    pub enforce_new_block: bool,
+    pub(crate) r#type: LineType,
+    pub(crate) beg: OFF,
+    pub(crate) end: OFF,
+    pub(crate) indent: u32,
+    pub(crate) data: u32,
+    pub(crate) enforce_new_block: bool,
 }
 
 impl Default for Line {
@@ -185,47 +185,47 @@ impl Default for Line {
 #[repr(C)]
 #[derive(Copy, Clone)]
 pub struct VerbatimLine {
-    pub beg: OFF,
-    pub end: OFF,
-    pub indent: u32,
+    pub(crate) beg: OFF,
+    pub(crate) end: OFF,
+    pub(crate) indent: u32,
 }
 
 /// Container types: blockquote or list item.
 #[derive(Copy, Clone, Default)]
 pub struct Container {
-    pub ch: u8,
-    pub is_loose: bool,
-    pub is_task: bool,
-    pub task_mark_off: OFF,
-    pub start: u32,
-    pub mark_indent: u32,
-    pub contents_indent: u32,
-    pub block_byte_off: u32,
+    pub(crate) ch: u8,
+    pub(crate) is_loose: bool,
+    pub(crate) is_task: bool,
+    pub(crate) task_mark_off: OFF,
+    pub(crate) start: u32,
+    pub(crate) mark_indent: u32,
+    pub(crate) contents_indent: u32,
+    pub(crate) block_byte_off: u32,
 }
 
-pub const BLOCK_CONTAINER_CLOSER: u32 = 0x01;
-pub const BLOCK_CONTAINER_OPENER: u32 = 0x02;
-pub const BLOCK_LOOSE_LIST: u32 = 0x04;
-pub const BLOCK_SETEXT_HEADER: u32 = 0x08;
+pub(crate) const BLOCK_CONTAINER_CLOSER: u32 = 0x01;
+pub(crate) const BLOCK_CONTAINER_OPENER: u32 = 0x02;
+pub(crate) const BLOCK_LOOSE_LIST: u32 = 0x04;
+pub(crate) const BLOCK_SETEXT_HEADER: u32 = 0x08;
 pub const BLOCK_FENCED_CODE: u32 = 0x10;
-pub const BLOCK_REF_DEF_ONLY: u32 = 0x20;
+pub(crate) const BLOCK_REF_DEF_ONLY: u32 = 0x20;
 
 /// Parser flags controlling which extensions are enabled.
 #[derive(Copy, Clone)]
 pub struct Flags {
-    pub collapse_whitespace: bool,
-    pub permissive_atx_headers: bool,
-    pub permissive_url_autolinks: bool,
-    pub permissive_www_autolinks: bool,
-    pub permissive_email_autolinks: bool,
-    pub no_indented_code_blocks: bool,
-    pub no_html_blocks: bool,
-    pub no_html_spans: bool,
-    pub tables: bool,
-    pub strikethrough: bool,
-    pub tasklists: bool,
-    pub latex_math: bool,
-    pub wiki_links: bool,
+    pub(crate) collapse_whitespace: bool,
+    pub(crate) permissive_atx_headers: bool,
+    pub(crate) permissive_url_autolinks: bool,
+    pub(crate) permissive_www_autolinks: bool,
+    pub(crate) permissive_email_autolinks: bool,
+    pub(crate) no_indented_code_blocks: bool,
+    pub(crate) no_html_blocks: bool,
+    pub(crate) no_html_spans: bool,
+    pub(crate) tables: bool,
+    pub(crate) strikethrough: bool,
+    pub(crate) tasklists: bool,
+    pub(crate) latex_math: bool,
+    pub(crate) wiki_links: bool,
 }
 
 impl Flags {
@@ -254,7 +254,7 @@ impl Default for Flags {
     }
 }
 
-pub const TABLE_MAXCOLCOUNT: u32 = 128;
+pub(crate) const TABLE_MAXCOLCOUNT: u32 = 128;
 
 // ========================================
 // Metadata extraction helpers

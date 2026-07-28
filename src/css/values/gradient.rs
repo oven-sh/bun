@@ -304,15 +304,15 @@ impl Gradient {
 #[derive(PartialEq)]
 pub struct LinearGradient {
     /// The vendor prefixes for the gradient.
-    pub vendor_prefix: VendorPrefix,
+    pub(crate) vendor_prefix: VendorPrefix,
     /// The direction of the gradient.
-    pub direction: LineDirection,
+    pub(crate) direction: LineDirection,
     /// The color stops and transition hints for the gradient.
-    pub items: Vec<GradientItem<LengthPercentage>>,
+    pub(crate) items: Vec<GradientItem<LengthPercentage>>,
 }
 
 impl LinearGradient {
-    pub(crate) fn parse(
+    fn parse(
         input: &mut css::Parser,
         vendor_prefix: VendorPrefix,
     ) -> Result<LinearGradient> {
@@ -332,7 +332,7 @@ impl LinearGradient {
         })
     }
 
-    pub(crate) fn to_css(
+    fn to_css(
         &self,
         dest: &mut Printer,
         is_prefixed: bool,
@@ -448,7 +448,7 @@ impl LinearGradient {
         }
     }
 
-    pub(crate) fn get_fallback(&self, bump: &Arena, kind: ColorFallbackKind) -> LinearGradient {
+    fn get_fallback(&self, bump: &Arena, kind: ColorFallbackKind) -> LinearGradient {
         let fallback_items: Vec<_> = self
             .items
             .iter()
@@ -467,17 +467,17 @@ impl LinearGradient {
 #[derive(PartialEq)]
 pub struct RadialGradient {
     /// The vendor prefixes for the gradient.
-    pub vendor_prefix: VendorPrefix,
+    pub(crate) vendor_prefix: VendorPrefix,
     /// The shape of the gradient.
-    pub shape: EndingShape,
+    pub(crate) shape: EndingShape,
     /// The position of the gradient.
-    pub position: Position,
+    pub(crate) position: Position,
     /// The color stops and transition hints for the gradient.
-    pub items: Vec<GradientItem<LengthPercentage>>,
+    pub(crate) items: Vec<GradientItem<LengthPercentage>>,
 }
 
 impl RadialGradient {
-    pub(crate) fn parse(
+    fn parse(
         input: &mut css::Parser,
         vendor_prefix: VendorPrefix,
     ) -> Result<RadialGradient> {
@@ -505,7 +505,7 @@ impl RadialGradient {
         })
     }
 
-    pub(crate) fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
+    fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
         if self.shape != EndingShape::default() {
             self.shape.to_css(dest)?;
             if self.position.is_center() {
@@ -533,7 +533,7 @@ impl RadialGradient {
         true
     }
 
-    pub(crate) fn get_fallback(&self, bump: &Arena, kind: ColorFallbackKind) -> RadialGradient {
+    fn get_fallback(&self, bump: &Arena, kind: ColorFallbackKind) -> RadialGradient {
         let items: Vec<_> = self
             .items
             .iter()
@@ -566,15 +566,15 @@ impl RadialGradient {
 #[derive(PartialEq)]
 pub struct ConicGradient {
     /// The angle of the gradient.
-    pub angle: Angle,
+    pub(crate) angle: Angle,
     /// The position of the gradient.
-    pub position: Position,
+    pub(crate) position: Position,
     /// The color stops and transition hints for the gradient.
-    pub items: Vec<GradientItem<AnglePercentage>>,
+    pub(crate) items: Vec<GradientItem<AnglePercentage>>,
 }
 
 impl ConicGradient {
-    pub(crate) fn parse(input: &mut css::Parser) -> Result<ConicGradient> {
+    fn parse(input: &mut css::Parser) -> Result<ConicGradient> {
         let angle = input.try_parse(|i: &mut css::Parser| -> Result<Angle> {
             i.expect_ident_matching(b"from")?;
             // Spec allows unitless zero angles for gradients.
@@ -599,7 +599,7 @@ impl ConicGradient {
         })
     }
 
-    pub(crate) fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
+    fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
         if !self.angle.is_zero() {
             dest.write_str(b"from ")?;
             self.angle.to_css(dest)?;
@@ -629,7 +629,7 @@ impl ConicGradient {
         true
     }
 
-    pub(crate) fn get_fallback(&self, bump: &Arena, kind: ColorFallbackKind) -> ConicGradient {
+    fn get_fallback(&self, bump: &Arena, kind: ColorFallbackKind) -> ConicGradient {
         let items: Vec<_> = self
             .items
             .iter()
@@ -660,11 +660,11 @@ impl ConicGradient {
 #[derive(PartialEq)]
 pub struct WebKitGradientLinear {
     /// The starting point of the gradient.
-    pub from: WebKitGradientPoint,
+    pub(crate) from: WebKitGradientPoint,
     /// The ending point of the gradient.
-    pub to: WebKitGradientPoint,
+    pub(crate) to: WebKitGradientPoint,
     /// The color stops in the gradient.
-    pub stops: Vec<WebKitColorStop>,
+    pub(crate) stops: Vec<WebKitColorStop>,
 }
 
 impl WebKitGradientLinear {
@@ -685,15 +685,15 @@ impl WebKitGradientLinear {
 #[derive(PartialEq)]
 pub struct WebKitGradientRadial {
     /// The starting point of the gradient.
-    pub from: WebKitGradientPoint,
+    pub(crate) from: WebKitGradientPoint,
     /// The starting radius of the gradient.
-    pub r0: CSSNumber,
+    pub(crate) r0: CSSNumber,
     /// The ending point of the gradient.
-    pub to: WebKitGradientPoint,
+    pub(crate) to: WebKitGradientPoint,
     /// The ending radius of the gradient.
-    pub r1: CSSNumber,
+    pub(crate) r1: CSSNumber,
     /// The color stops in the gradient.
-    pub stops: Vec<WebKitColorStop>,
+    pub(crate) stops: Vec<WebKitColorStop>,
 }
 
 impl WebKitGradientRadial {
@@ -722,7 +722,7 @@ pub enum WebKitGradient {
 }
 
 impl WebKitGradient {
-    pub(crate) fn parse(input: &mut css::Parser) -> Result<WebKitGradient> {
+    fn parse(input: &mut css::Parser) -> Result<WebKitGradient> {
         let location = input.current_source_location();
         let ident = input.expect_ident_cloned()?;
         input.expect_comma()?;
@@ -760,7 +760,7 @@ impl WebKitGradient {
         }}
     }
 
-    pub(crate) fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
+    fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
         match self {
             WebKitGradient::Linear(linear) => {
                 dest.write_str(b"linear")?;
@@ -793,7 +793,7 @@ impl WebKitGradient {
         }
     }
 
-    pub(crate) fn get_fallback(&self, bump: &Arena, kind: ColorFallbackKind) -> WebKitGradient {
+    fn get_fallback(&self, bump: &Arena, kind: ColorFallbackKind) -> WebKitGradient {
         match self {
             WebKitGradient::Linear(linear) => {
                 let stops: Vec<_> = linear
@@ -824,7 +824,7 @@ impl WebKitGradient {
         }
     }
 
-    pub(crate) fn from_standard(gradient: &Gradient, bump: &Arena) -> Option<WebKitGradient> {
+    fn from_standard(gradient: &Gradient, bump: &Arena) -> Option<WebKitGradient> {
         match gradient {
             Gradient::Linear(linear) => {
                 // Convert from line direction to a from and to point, if possible.
@@ -921,9 +921,9 @@ impl WebKitGradient {
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub struct LineDirectionCorner {
     /// A horizontal position keyword, e.g. `left` or `right`.
-    pub horizontal: HorizontalPositionKeyword,
+    pub(crate) horizontal: HorizontalPositionKeyword,
     /// A vertical position keyword, e.g. `top` or `bottom`.
-    pub vertical: VerticalPositionKeyword,
+    pub(crate) vertical: VerticalPositionKeyword,
 }
 
 /// The direction of a CSS `linear-gradient()`.
@@ -942,7 +942,7 @@ pub enum LineDirection {
 }
 
 impl LineDirection {
-    pub(crate) fn parse(input: &mut css::Parser, is_prefixed: bool) -> Result<LineDirection> {
+    fn parse(input: &mut css::Parser, is_prefixed: bool) -> Result<LineDirection> {
         // Spec allows unitless zero angles for gradients.
         // https://w3c.github.io/csswg-drafts/css-images-3/#linear-gradient-syntax
         if let Ok(angle) = input.try_parse(Angle::parse_with_unitless_zero) {
@@ -973,7 +973,7 @@ impl LineDirection {
         Ok(LineDirection::Vertical(y))
     }
 
-    pub(crate) fn to_css(
+    fn to_css(
         &self,
         dest: &mut Printer,
         is_prefixed: bool,
@@ -1031,18 +1031,18 @@ pub enum GradientItem<D> {
 }
 
 impl<D: GradientPosition> GradientItem<D> {
-    pub(crate) fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
+    fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
         match self {
             GradientItem::ColorStop(c) => c.to_css(dest),
             GradientItem::Hint(h) => h.to_css(dest),
         }
     }
 
-    pub(crate) fn deep_clone(&self, _bump: &Arena) -> Self {
+    fn deep_clone(&self, _bump: &Arena) -> Self {
         self.clone()
     }
 
-    pub(crate) fn is_compatible(&self, browsers: &css::targets::Browsers) -> bool {
+    fn is_compatible(&self, browsers: &css::targets::Browsers) -> bool {
         match self {
             GradientItem::ColorStop(c) => c.color.is_compatible(browsers),
             GradientItem::Hint(_) => {
@@ -1052,7 +1052,7 @@ impl<D: GradientPosition> GradientItem<D> {
     }
 
     /// Returns a fallback gradient item for the given color fallback type.
-    pub(crate) fn get_fallback(&self, bump: &Arena, kind: ColorFallbackKind) -> GradientItem<D> {
+    fn get_fallback(&self, bump: &Arena, kind: ColorFallbackKind) -> GradientItem<D> {
         match self {
             GradientItem::ColorStop(stop) => GradientItem::ColorStop(ColorStop {
                 color: stop.color.get_fallback(bump, kind),
@@ -1063,7 +1063,7 @@ impl<D: GradientPosition> GradientItem<D> {
     }
 
     /// Returns the color fallback types needed for the given browser targets.
-    pub(crate) fn get_necessary_fallbacks(
+    fn get_necessary_fallbacks(
         &self,
         targets: &css::targets::Targets,
     ) -> ColorFallbackKind {
@@ -1088,7 +1088,7 @@ pub enum EndingShape {
 impl EndingShape {
     // parse + to_css — provided by #[derive(css::Parse, css::ToCss)].
 
-    pub(crate) fn default() -> EndingShape {
+    fn default() -> EndingShape {
         EndingShape::Ellipse(Ellipse::Extent(ShapeExtent::FarthestCorner))
     }
 }
@@ -1097,19 +1097,19 @@ impl EndingShape {
 #[derive(Clone, PartialEq)]
 pub struct WebKitGradientPoint {
     /// The x-position.
-    pub x: WebKitGradientPointComponent<HorizontalPositionKeyword>,
+    pub(crate) x: WebKitGradientPointComponent<HorizontalPositionKeyword>,
     /// The y-position.
-    pub y: WebKitGradientPointComponent<VerticalPositionKeyword>,
+    pub(crate) y: WebKitGradientPointComponent<VerticalPositionKeyword>,
 }
 
 impl WebKitGradientPoint {
-    pub(crate) fn parse(input: &mut css::Parser) -> Result<WebKitGradientPoint> {
+    fn parse(input: &mut css::Parser) -> Result<WebKitGradientPoint> {
         let x = WebKitGradientPointComponent::<HorizontalPositionKeyword>::parse(input)?;
         let y = WebKitGradientPointComponent::<VerticalPositionKeyword>::parse(input)?;
         Ok(WebKitGradientPoint { x, y })
     }
 
-    pub(crate) fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
+    fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
         self.x.to_css(dest)?;
         dest.write_char(b' ')?;
         self.y.to_css(dest)
@@ -1128,7 +1128,7 @@ pub enum WebKitGradientPointComponent<S> {
 }
 
 impl<S: GradientSideKeyword> WebKitGradientPointComponent<S> {
-    pub(crate) fn parse(input: &mut css::Parser) -> Result<Self> {
+    fn parse(input: &mut css::Parser) -> Result<Self> {
         if input
             .try_parse(|i| i.expect_ident_matching(b"center"))
             .is_ok()
@@ -1144,7 +1144,7 @@ impl<S: GradientSideKeyword> WebKitGradientPointComponent<S> {
         Ok(WebKitGradientPointComponent::Side(keyword))
     }
 
-    pub(crate) fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
+    fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
         match self {
             WebKitGradientPointComponent::Center => {
                 if dest.minify {
@@ -1172,7 +1172,7 @@ impl<S: GradientSideKeyword> WebKitGradientPointComponent<S> {
     }
 
     /// Attempts to convert a standard position to a webkit gradient point.
-    pub(crate) fn from_position(
+    fn from_position(
         this: &PositionComponent<S>,
         _bump: &Arena,
     ) -> Option<WebKitGradientPointComponent<S>> {
@@ -1201,13 +1201,13 @@ impl<S: GradientSideKeyword> WebKitGradientPointComponent<S> {
 #[derive(Clone, PartialEq)]
 pub struct WebKitColorStop {
     /// The color of the color stop.
-    pub color: CssColor,
+    pub(crate) color: CssColor,
     /// The position of the color stop.
-    pub position: CSSNumber,
+    pub(crate) position: CSSNumber,
 }
 
 impl WebKitColorStop {
-    pub(crate) fn parse(input: &mut css::Parser) -> Result<WebKitColorStop> {
+    fn parse(input: &mut css::Parser) -> Result<WebKitColorStop> {
         let location = input.current_source_location();
         let function = input.expect_function_cloned()?;
         input.parse_nested_block(|i: &mut css::Parser| -> Result<WebKitColorStop> {
@@ -1226,7 +1226,7 @@ impl WebKitColorStop {
         })
     }
 
-    pub(crate) fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
+    fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
         if self.position == 0.0 {
             dest.write_str(b"from(")?;
             self.color.to_css(dest)?;
@@ -1242,14 +1242,14 @@ impl WebKitColorStop {
         dest.write_char(b')')
     }
 
-    pub(crate) fn get_fallback(&self, bump: &Arena, kind: ColorFallbackKind) -> WebKitColorStop {
+    fn get_fallback(&self, bump: &Arena, kind: ColorFallbackKind) -> WebKitColorStop {
         WebKitColorStop {
             color: self.color.get_fallback(bump, kind),
             position: self.position,
         }
     }
 
-    pub(crate) fn deep_clone(&self, _bump: &Arena) -> Self {
+    fn deep_clone(&self, _bump: &Arena) -> Self {
         self.clone()
     }
 }
@@ -1261,19 +1261,19 @@ impl WebKitColorStop {
 #[derive(Clone, PartialEq)]
 pub struct ColorStop<D> {
     /// The color of the color stop.
-    pub color: CssColor,
+    pub(crate) color: CssColor,
     /// The position of the color stop.
-    pub position: Option<D>,
+    pub(crate) position: Option<D>,
 }
 
 impl<D: GradientPosition> ColorStop<D> {
-    pub(crate) fn parse(input: &mut css::Parser) -> Result<ColorStop<D>> {
+    fn parse(input: &mut css::Parser) -> Result<ColorStop<D>> {
         let color = CssColor::parse(input)?;
         let position = input.try_parse(D::parse).ok();
         Ok(ColorStop { color, position })
     }
 
-    pub(crate) fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
+    fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
         self.color.to_css(dest)?;
         if let Some(position) = &self.position {
             dest.write_char(b' ')?;
@@ -1287,9 +1287,9 @@ impl<D: GradientPosition> ColorStop<D> {
 #[derive(Clone, PartialEq)]
 pub struct EllipseSize {
     /// The x-radius of the ellipse.
-    pub x: LengthPercentage,
+    pub(crate) x: LengthPercentage,
     /// The y-radius of the ellipse.
-    pub y: LengthPercentage,
+    pub(crate) y: LengthPercentage,
 }
 
 /// An ellipse ending shape for a `radial-gradient()`.
@@ -1304,7 +1304,7 @@ pub enum Ellipse {
 }
 
 impl Ellipse {
-    pub(crate) fn parse(input: &mut css::Parser) -> Result<Ellipse> {
+    fn parse(input: &mut css::Parser) -> Result<Ellipse> {
         if let Ok(extent) = input.try_parse(ShapeExtent::parse) {
             // The `ellipse` keyword is optional, but only if the `circle` keyword is not present.
             // If it is, then we'll re-parse as a circle.
@@ -1345,7 +1345,7 @@ impl Ellipse {
         Err(input.new_error_for_next_token())
     }
 
-    pub(crate) fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
+    fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
         // The `ellipse` keyword is optional, so we don't emit it.
         match self {
             Ellipse::Size(s) => {
@@ -1382,7 +1382,7 @@ pub enum Circle {
 }
 
 impl Circle {
-    pub(crate) fn parse(input: &mut css::Parser) -> Result<Circle> {
+    fn parse(input: &mut css::Parser) -> Result<Circle> {
         if let Ok(extent) = input.try_parse(ShapeExtent::parse) {
             // The `circle` keyword is required. If it's not there, then it's an ellipse.
             input.expect_ident_matching(b"circle")?;
@@ -1415,7 +1415,7 @@ impl Circle {
         Err(input.new_error_for_next_token())
     }
 
-    pub(crate) fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
+    fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
         match self {
             Circle::Radius(r) => r.to_css(dest),
             Circle::Extent(extent) => {
@@ -1449,7 +1449,7 @@ crate::css_eql_partialeq!(
     Circle,
 );
 
-pub fn parse_items<D: GradientPosition>(input: &mut css::Parser) -> Result<Vec<GradientItem<D>>> {
+pub(crate) fn parse_items<D: GradientPosition>(input: &mut css::Parser) -> Result<Vec<GradientItem<D>>> {
     let mut items: Vec<GradientItem<D>> = Vec::new();
     let mut seen_stop = false;
 
@@ -1493,7 +1493,7 @@ pub fn parse_items<D: GradientPosition>(input: &mut css::Parser) -> Result<Vec<G
     Ok(items)
 }
 
-pub(crate) fn serialize_items<D: GradientPosition>(
+fn serialize_items<D: GradientPosition>(
     items: &[GradientItem<D>],
     dest: &mut Printer,
 ) -> core::result::Result<(), PrintErr> {
@@ -1539,7 +1539,7 @@ pub(crate) fn serialize_items<D: GradientPosition>(
     Ok(())
 }
 
-pub(crate) fn convert_stops_to_webkit(
+fn convert_stops_to_webkit(
     bump: &Arena,
     items: &[GradientItem<LengthPercentage>],
 ) -> Option<Vec<WebKitColorStop>> {

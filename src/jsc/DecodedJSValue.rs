@@ -11,7 +11,7 @@ pub struct DecodedJSValue {
 #[repr(C)]
 #[derive(Copy, Clone)]
 pub union EncodedValueDescriptor {
-    pub as_int64: i64,
+    pub(crate) as_int64: i64,
     pub ptr: *mut JSCell,
     pub as_bits: AsBits,
 }

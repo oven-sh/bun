@@ -29,12 +29,12 @@ use super::{
 #[repr(C)]
 pub struct TimerObjectInternals {
     /// Identifier for this timer that is exposed to JavaScript (by `+timer`).
-    pub id: i32,
-    pub interval: Cell<u32>,
+    pub(crate) id: i32,
+    pub(crate) interval: Cell<u32>,
     pub this_value: JsCell<JsRef>,
-    pub flags: Cell<Flags>,
+    pub(crate) flags: Cell<Flags>,
     /// `bun test --isolate` generation this timer was created in.
-    pub generation: u32,
+    pub(crate) generation: u32,
 }
 
 impl TimerObjectInternals {
@@ -169,7 +169,7 @@ impl TimerObjectInternals {
     }
 
     #[inline]
-    pub fn async_id(&self) -> u64 {
+    pub(crate) fn async_id(&self) -> u64 {
         ID {
             id: self.id,
             kind: self.flags.get().kind().into(),
@@ -272,7 +272,7 @@ impl TimerObjectInternals {
     ///
     /// Note (jsc/runtime crate cycle): `vm.timer.epoch` resolved via `runtime_state()`
     /// (low-tier `VirtualMachine.timer` is `()`).
-    pub fn init(
+    pub(crate) fn init(
         &mut self,
         timer: JSValue,
         global: &JSGlobalObject,
@@ -359,7 +359,7 @@ impl TimerObjectInternals {
     /// `this` points at a live `TimerObjectInternals` embedded in its
     /// `ImmediateObject` parent (FIRE_TIMER hook contract); `vm` is the live
     /// per-thread VM.
-    pub unsafe fn run_immediate_task(this: *mut Self, vm: *mut VirtualMachine) -> bool {
+    pub(crate) unsafe fn run_immediate_task(this: *mut Self, vm: *mut VirtualMachine) -> bool {
         // SAFETY: per fn contract — `this` live. `&Self` (NOT `&mut`) — fields
         // are `Cell`/`JsCell` so re-entrant JS touching this object via another
         // `&Self` is sound (no `noalias`). Last use of `s` is the final
@@ -436,7 +436,7 @@ impl TimerObjectInternals {
 
     /// # Safety
     /// `this` must be the live `internals` of a queued `ImmediateObject`.
-    pub unsafe fn cancel_pending_immediate(this: *mut Self, vm: *mut VirtualMachine) {
+    pub(crate) unsafe fn cancel_pending_immediate(this: *mut Self, vm: *mut VirtualMachine) {
         // SAFETY: per fn contract.
         let s = unsafe { &*this };
         s.set_enable_keeping_event_loop_alive(vm, false);
@@ -471,7 +471,7 @@ impl TimerObjectInternals {
     /// `this` points at a live `TimerObjectInternals` embedded in its
     /// `TimeoutObject`/`ImmediateObject` parent (FIRE_TIMER hook contract);
     /// `vm` is the live per-thread VM.
-    pub unsafe fn fire(this: *mut Self, _now: &ElTimespec, vm: *mut VirtualMachine) {
+    pub(crate) unsafe fn fire(this: *mut Self, _now: &ElTimespec, vm: *mut VirtualMachine) {
         // SAFETY: per fn contract — `this` live. `&Self` (NOT `&mut`) — fields
         // are `Cell`/`JsCell` so re-entrant JS touching this object via another
         // `&Self` is sound (no `noalias`; LLVM cannot cache `Cell` reads across
@@ -743,7 +743,7 @@ impl TimerObjectInternals {
     /// `init()`, `do_refresh()`, and `convert_to_interval()` above.
     ///
     /// Note (jsc/runtime crate cycle): `vm.timer` resolved via `runtime_state()`.
-    pub fn reschedule(
+    pub(crate) fn reschedule(
         &self,
         timer: JSValue,
         vm: *mut VirtualMachine,
@@ -817,7 +817,7 @@ impl TimerObjectInternals {
     /// `TimeoutObject`/`ImmediateObject` whose refcount has just reached zero.
     /// The per-thread `RuntimeState` and `VirtualMachine` are installed (always
     /// true on the JS thread by the time a timer can be dropped).
-    pub unsafe fn deinit(&mut self) {
+    pub(crate) unsafe fn deinit(&mut self) {
         let vm = VirtualMachine::get_mut_ptr();
         let kind = self.flags.get().kind();
 
@@ -899,7 +899,7 @@ impl TimerObjectInternals {
         unsafe { (*self.event_loop_timer()).state = state };
     }
 
-    pub fn do_ref(&self, _global: &JSGlobalObject, this_value: JSValue) -> JsResult<JSValue> {
+    pub(crate) fn do_ref(&self, _global: &JSGlobalObject, this_value: JSValue) -> JsResult<JSValue> {
         this_value.ensure_still_alive();
 
         let did_have_js_ref = self.flags.get().has_js_ref();
@@ -919,7 +919,7 @@ impl TimerObjectInternals {
         Ok(this_value)
     }
 
-    pub fn do_unref(&self, _global: &JSGlobalObject, this_value: JSValue) -> JsResult<JSValue> {
+    pub(crate) fn do_unref(&self, _global: &JSGlobalObject, this_value: JSValue) -> JsResult<JSValue> {
         this_value.ensure_still_alive();
 
         let did_have_js_ref = self.flags.get().has_js_ref();
@@ -932,7 +932,7 @@ impl TimerObjectInternals {
         Ok(this_value)
     }
 
-    pub fn do_refresh(
+    pub(crate) fn do_refresh(
         &self,
         global_object: &JSGlobalObject,
         this_value: JSValue,
@@ -961,7 +961,7 @@ impl TimerObjectInternals {
         Ok(this_value)
     }
 
-    pub fn has_ref(&self) -> JsResult<JSValue> {
+    pub(crate) fn has_ref(&self) -> JsResult<JSValue> {
         Ok(JSValue::from(
             self.flags.get().is_keeping_event_loop_alive(),
         ))
@@ -972,7 +972,7 @@ impl TimerObjectInternals {
     /// `clearImmediate(+t)` (numeric-id form) can resolve it.
     ///
     /// Note (jsc/runtime crate cycle): `vm.timer.maps` resolved via `runtime_state()`.
-    pub fn to_primitive(&self) -> JsResult<JSValue> {
+    pub(crate) fn to_primitive(&self) -> JsResult<JSValue> {
         if !self.flags.get().has_accessed_primitive() {
             self.update_flags(|f| f.set_has_accessed_primitive(true));
             let state = crate::jsc_hooks::runtime_state();
@@ -995,7 +995,7 @@ impl TimerObjectInternals {
 
     /// Getter for `_destroyed`
     /// on JS Timeout and Immediate objects.
-    pub fn get_destroyed(&self) -> bool {
+    pub(crate) fn get_destroyed(&self) -> bool {
         if self.flags.get().has_cleared_timer() {
             return true;
         }
@@ -1023,7 +1023,7 @@ impl TimerObjectInternals {
     /// `global.bun_vm()` (raw ptr) and the body forwards to
     /// `set_enable_keeping_event_loop_alive` which already uses the raw-ptr
     /// contract. `vm.timer` resolved via `runtime_state()` (jsc/runtime crate cycle).
-    pub fn cancel(&self, vm: *mut VirtualMachine) {
+    pub(crate) fn cancel(&self, vm: *mut VirtualMachine) {
         self.set_enable_keeping_event_loop_alive(vm, false);
         self.update_flags(|f| f.set_has_cleared_timer(true));
 

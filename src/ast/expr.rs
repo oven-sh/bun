@@ -374,7 +374,7 @@ impl Expr {
     /// Only use this for pretty-printing JSON. Do not use in transpiler.
     ///
     /// This does not handle edgecases like `-1` or stringifying arbitrary property lookups.
-    pub fn get_by_index(&self, index: u32, index_str: &[u8], bump: &Bump) -> Option<Expr> {
+    pub(crate) fn get_by_index(&self, index: u32, index_str: &[u8], bump: &Bump) -> Option<Expr> {
         match &self.data {
             Data::EArray(array) => {
                 if index >= array.items.len_u32() {
@@ -704,7 +704,7 @@ impl Expr {
     }
 
     #[inline]
-    pub fn as_string_hash(
+    pub(crate) fn as_string_hash(
         &self,
         bump: &Bump,
         hash_fn: fn(&[u8]) -> u64,
@@ -1167,7 +1167,7 @@ impl Tag {
         )
     }
 
-    pub fn typeof_(tag: Tag) -> Option<&'static [u8]> {
+    pub(crate) fn typeof_(tag: Tag) -> Option<&'static [u8]> {
         // This must only return `Some` when the operand is guaranteed to have
         // no side effects. Array/object/class literals are omitted because
         // their elements, properties, and static initializers can run code.
@@ -1266,7 +1266,7 @@ impl Expr {
     // `assign` lives in the `init`/`allocate` impl block above.
 
     #[inline]
-    pub fn at<T: IntoExprData>(&self, t: T) -> Expr {
+    pub(crate) fn at<T: IntoExprData>(&self, t: T) -> Expr {
         Expr::init(t, self.loc)
     }
 
@@ -1274,7 +1274,7 @@ impl Expr {
     // will potentially be simplified to avoid generating unnecessary extra "!"
     // operators. For example, calling this with "!!x" will return "!x" instead
     // of returning "!!!x".
-    pub fn not(&self, bump: &Bump) -> Expr {
+    pub(crate) fn not(&self, bump: &Bump) -> Expr {
         self.maybe_simplify_not(bump).unwrap_or_else(|| {
             Expr::init(
                 E::Unary {
@@ -1374,7 +1374,7 @@ impl Expr {
         None
     }
 
-    pub fn to_string_expr_without_side_effects(&self, bump: &Bump) -> Option<Expr> {
+    pub(crate) fn to_string_expr_without_side_effects(&self, bump: &Bump) -> Option<Expr> {
         let expr = self;
         let unwrapped = expr.unwrap_inlined();
         let slice: Option<&[u8]> = match unwrapped.data {
@@ -1441,7 +1441,7 @@ pub enum PrimitiveType {
 }
 
 impl PrimitiveType {
-    pub fn merge(left_known: PrimitiveType, right_known: PrimitiveType) -> PrimitiveType {
+    pub(crate) fn merge(left_known: PrimitiveType, right_known: PrimitiveType) -> PrimitiveType {
         if right_known == PrimitiveType::Unknown || left_known == PrimitiveType::Unknown {
             return PrimitiveType::Unknown;
         }
@@ -1871,7 +1871,7 @@ impl Data {
 
     // Per-variant `as_*` accessors live alongside the enum decl above
     // (`e_string`/`e_object`/...).
-    pub fn as_e_identifier(&self) -> Option<E::Identifier> {
+    pub(crate) fn as_e_identifier(&self) -> Option<E::Identifier> {
         if let Data::EIdentifier(i) = self {
             Some(*i)
         } else {
@@ -2364,7 +2364,7 @@ impl Data {
     /// "const values" here refers to expressions that can participate in constant
     /// inlining, as they have no side effects on instantiation, and there would be
     /// no observable difference if duplicated. This is a subset of canBeMoved()
-    pub fn can_be_const_value(&self) -> bool {
+    pub(crate) fn can_be_const_value(&self) -> bool {
         match self {
             Data::ENumber(_)
             | Data::EBoolean(_)
@@ -2382,7 +2382,7 @@ impl Data {
     /// Expressions that can be moved are those that do not have side
     /// effects on their own. This is used to determine what can be moved
     /// outside of a module wrapper (__esm/__commonJS).
-    pub fn can_be_moved(&self) -> bool {
+    pub(crate) fn can_be_moved(&self) -> bool {
         match self {
             // TODO: identifiers can be removed if unused, however code that
             // moves expressions around sometimes does so incorrectly when
@@ -2657,7 +2657,7 @@ impl Data {
         }
     }
 
-    pub fn extract_numeric_value(&self) -> Option<f64> {
+    pub(crate) fn extract_numeric_value(&self) -> Option<f64> {
         match self {
             Data::ENumber(n) => Some(n.value()),
             Data::EInlinedEnum(inlined) => match &inlined.value.data {
@@ -2668,7 +2668,7 @@ impl Data {
         }
     }
 
-    pub fn extract_string_value(data: Data) -> Option<crate::StoreRef<E::String>> {
+    pub(crate) fn extract_string_value(data: Data) -> Option<crate::StoreRef<E::String>> {
         match data {
             Data::EString(s) => Some(s),
             Data::EInlinedEnum(inlined) => match inlined.value.data {
@@ -2706,17 +2706,17 @@ pub struct Equality {
 }
 
 impl Equality {
-    pub const TRUE: Equality = Equality {
+    pub(crate) const TRUE: Equality = Equality {
         ok: true,
         equal: true,
         is_require_main_and_module: false,
     };
-    pub const FALSE: Equality = Equality {
+    pub(crate) const FALSE: Equality = Equality {
         ok: true,
         equal: false,
         is_require_main_and_module: false,
     };
-    pub const UNKNOWN: Equality = Equality {
+    pub(crate) const UNKNOWN: Equality = Equality {
         ok: false,
         equal: false,
         is_require_main_and_module: false,

@@ -189,7 +189,7 @@ bun_core::comptime_string_map! {
 }
 
 impl Family {
-    pub fn to_libc(self) -> i32 {
+    pub(crate) fn to_libc(self) -> i32 {
         match self {
             Family::Unspecified => 0,
             Family::Inet => sock::AF_INET,
@@ -217,7 +217,7 @@ bun_core::comptime_string_map! {
 }
 
 impl SocketType {
-    pub fn to_libc(self) -> i32 {
+    pub(crate) fn to_libc(self) -> i32 {
         match self {
             SocketType::Unspecified => 0,
             SocketType::Stream => sock::SOCK_STREAM,
@@ -242,7 +242,7 @@ bun_core::comptime_string_map! {
 }
 
 impl Protocol {
-    pub fn to_libc(self) -> i32 {
+    pub(crate) fn to_libc(self) -> i32 {
         match self {
             Protocol::Unspecified => 0,
             Protocol::Tcp => sock::IPPROTO_TCP,

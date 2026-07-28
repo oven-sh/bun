@@ -18,7 +18,7 @@ bun_opaque::opaque_ffi! {
 }
 
 impl WeakImpl {
-    pub(crate) fn init(
+    fn init(
         global_this: &JSGlobalObject,
         value: JSValue,
         ref_type: WeakRefType,
@@ -40,7 +40,7 @@ impl WeakImpl {
     /// [`WeakImpl::destroy`] before releasing the slot — so any
     /// `NonNull<WeakImpl>` reachable here is a live C++ `JSC::Weak` handle.
     /// Same contract as [`crate::strong::Impl::get`].
-    pub(crate) fn get(this: NonNull<WeakImpl>) -> JSValue {
+    fn get(this: NonNull<WeakImpl>) -> JSValue {
         Bun__WeakRef__get(WeakImpl::opaque_ref(this.as_ptr()))
     }
 
@@ -48,11 +48,11 @@ impl WeakImpl {
     ///
     /// Safe for the same reason as [`WeakImpl::get`] — the handle is live by
     /// construction; `clear` is idempotent and does not invalidate `this`.
-    pub(crate) fn clear(this: NonNull<WeakImpl>) {
+    fn clear(this: NonNull<WeakImpl>) {
         Bun__WeakRef__clear(WeakImpl::opaque_ref(this.as_ptr()))
     }
 
-    pub(crate) unsafe fn destroy(this: NonNull<WeakImpl>) {
+    unsafe fn destroy(this: NonNull<WeakImpl>) {
         // SAFETY: `this` is a live WeakImpl handle; consumed here.
         unsafe { Bun__WeakRef__delete(this.as_ptr()) }
     }

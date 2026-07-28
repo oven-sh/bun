@@ -26,7 +26,7 @@ macro_rules! pfmt {
 use super::s3_client;
 use super::s3_stat::S3Stat;
 
-pub fn write_format<F, W: core::fmt::Write, const ENABLE_ANSI_COLORS: bool>(
+pub(crate) fn write_format<F, W: core::fmt::Write, const ENABLE_ANSI_COLORS: bool>(
     s3: &blob::store::S3,
     formatter: &mut F,
     writer: &mut W,
@@ -477,11 +477,11 @@ pub(crate) struct S3BlobStatTask {
 }
 
 impl S3BlobStatTask {
-    pub(crate) fn new(init: S3BlobStatTask) -> *mut S3BlobStatTask {
+    fn new(init: S3BlobStatTask) -> *mut S3BlobStatTask {
         bun_core::heap::into_raw(Box::new(init))
     }
 
-    pub(crate) fn on_s3_exists_resolved(
+    fn on_s3_exists_resolved(
         result: s3::S3StatResult,
         this: *mut core::ffi::c_void,
     ) -> Result<(), bun_jsc::JsTerminated> {
@@ -515,7 +515,7 @@ impl S3BlobStatTask {
         Ok(())
     }
 
-    pub(crate) fn on_s3_size_resolved(
+    fn on_s3_size_resolved(
         result: s3::S3StatResult,
         this: *mut core::ffi::c_void,
     ) -> Result<(), bun_jsc::JsTerminated> {
@@ -543,7 +543,7 @@ impl S3BlobStatTask {
         Ok(())
     }
 
-    pub(crate) fn on_s3_stat_resolved(
+    fn on_s3_stat_resolved(
         result: s3::S3StatResult,
         this: *mut core::ffi::c_void,
     ) -> Result<(), bun_jsc::JsTerminated> {
@@ -752,7 +752,7 @@ pub(crate) fn get_presign_url_from(
     )
 }
 
-pub(crate) fn get_bucket_name(this: &Blob) -> Option<&[u8]> {
+fn get_bucket_name(this: &Blob) -> Option<&[u8]> {
     let store = this.store.get().as_ref()?;
     if !matches!(store.data, blob::store::Data::S3(_)) {
         return None;
@@ -780,14 +780,14 @@ pub(crate) fn get_bucket_name(this: &Blob) -> Option<&[u8]> {
 // context). These are free fns on `*Blob` exported manually as `JSS3File__*`
 // (see the `exports` block below) and called as `s3_file::get_*` from `Blob::get_*`,
 // so the proc-macro shim is not used here — the raw ABI shim is hand-wired.
-pub(crate) fn get_bucket(this: &Blob, global: &JSGlobalObject) -> JsResult<JSValue> {
+fn get_bucket(this: &Blob, global: &JSGlobalObject) -> JsResult<JSValue> {
     if let Some(name) = get_bucket_name(this) {
         return bun_jsc::bun_string_jsc::create_utf8_for_js(global, name);
     }
     Ok(JSValue::UNDEFINED)
 }
 
-pub(crate) fn get_presign_url(
+fn get_presign_url(
     this: &mut Blob,
     global: &JSGlobalObject,
     callframe: &CallFrame,
@@ -853,13 +853,13 @@ pub(crate) fn construct_internal_js(
     Ok(BlobExt::to_js(unsafe { &mut *blob }, global))
 }
 
-pub fn to_js_unchecked(global: &JSGlobalObject, this: *mut Blob) -> JSValue {
+pub(crate) fn to_js_unchecked(global: &JSGlobalObject, this: *mut Blob) -> JSValue {
     // C++ adopts `this` opaquely (stored as `void* m_ctx` in the JS wrapper);
     // ownership-transfer contract lives on `to_js_unchecked`'s callers.
     BUN__createJSS3FileUnsafely(global, this.cast::<core::ffi::c_void>())
 }
 
-pub(crate) fn construct_internal(
+fn construct_internal(
     global: &JSGlobalObject,
     callframe: &CallFrame,
 ) -> JsResult<*mut Blob> {
@@ -875,7 +875,7 @@ pub(crate) fn construct_internal(
 
 // Hand-written ABI shim: returns `*mut Blob` (codegen constructor contract),
 // which `#[bun_jsc::host_fn]` does not model; the exported symbol name is wired below.
-pub(crate) fn construct(global: &JSGlobalObject, callframe: &CallFrame) -> *mut Blob {
+fn construct(global: &JSGlobalObject, callframe: &CallFrame) -> *mut Blob {
     match construct_internal(global, callframe) {
         Ok(b) => b,
         Err(JsError::Thrown) => core::ptr::null_mut(),
@@ -887,7 +887,7 @@ pub(crate) fn construct(global: &JSGlobalObject, callframe: &CallFrame) -> *mut 
     }
 }
 
-pub(crate) fn has_instance(_: JSValue, _global: &JSGlobalObject, value: JSValue) -> bool {
+fn has_instance(_: JSValue, _global: &JSGlobalObject, value: JSValue) -> bool {
     bun_jsc::mark_binding();
     let Some(blob) = value.as_class_ref::<Blob>() else {
         return false;
@@ -902,14 +902,14 @@ pub(crate) fn has_instance(_: JSValue, _global: &JSGlobalObject, value: JSValue)
 // JSS3File__bucket      -> get_bucket
 // JSS3File__stat        -> raw shim wrapping get_stat (method-with-context)
 
-pub mod exports {
+pub(crate) mod exports {
     use super::*;
 
     /// `customHasInstance` hook (JSC calling convention, `(EncodedJSValue,
     /// *JSGlobalObject, EncodedJSValue) -> bool`).
     #[unsafe(no_mangle)]
     #[bun_jsc::host_call]
-    pub(crate) fn JSS3File__hasInstance(
+    fn JSS3File__hasInstance(
         this: JSValue,
         global: &JSGlobalObject,
         value: JSValue,
@@ -921,7 +921,7 @@ pub mod exports {
     /// `*mut Blob`, not `JSValue`).
     #[unsafe(no_mangle)]
     #[bun_jsc::host_call]
-    pub(crate) fn JSS3File__construct(global: &JSGlobalObject, callframe: &CallFrame) -> *mut Blob {
+    fn JSS3File__construct(global: &JSGlobalObject, callframe: &CallFrame) -> *mut Blob {
         super::construct(global, callframe)
     }
 
@@ -929,7 +929,7 @@ pub mod exports {
     /// returns JSValue).
     #[unsafe(no_mangle)]
     #[bun_jsc::host_call]
-    pub(crate) fn JSS3File__bucket(this: *mut Blob, global: *mut JSGlobalObject) -> JSValue {
+    fn JSS3File__bucket(this: *mut Blob, global: *mut JSGlobalObject) -> JSValue {
         // SAFETY: C++ prototype getter passes the live `m_ctx` Blob and global.
         let (this, global) = unsafe { (&*this, &*global) };
         bun_jsc::to_js_host_call(global, || super::get_bucket(this, global))
@@ -938,7 +938,7 @@ pub mod exports {
     /// Method-with-context shim wrapping `get_presign_url`.
     #[unsafe(no_mangle)]
     #[bun_jsc::host_call]
-    pub(crate) fn JSS3File__presign(
+    fn JSS3File__presign(
         this: *mut Blob,
         global: *mut JSGlobalObject,
         callframe: *mut CallFrame,
@@ -950,7 +950,7 @@ pub mod exports {
 
     #[unsafe(no_mangle)]
     #[bun_jsc::host_call]
-    pub(crate) fn JSS3File__stat(
+    fn JSS3File__stat(
         this: *mut Blob,
         global: *mut JSGlobalObject,
         callframe: *mut CallFrame,

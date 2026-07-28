@@ -7,7 +7,7 @@ use crate::bake::dev_server::{
 use bun_collections::ArrayHashMap;
 
 #[derive(Clone, Copy, Default)]
-pub struct MemoryCost {
+pub(crate) struct MemoryCost {
     pub incremental_graph_client: usize,
     pub incremental_graph_server: usize,
     pub js_code: usize,
@@ -270,7 +270,7 @@ pub(crate) fn memory_cost_array_list<T>(slice: &Vec<T>) -> usize {
     slice.capacity() * size_of::<T>()
 }
 
-pub(crate) fn memory_cost_slice<T>(slice: &[T]) -> usize {
+fn memory_cost_slice<T>(slice: &[T]) -> usize {
     std::mem::size_of_val(slice)
 }
 

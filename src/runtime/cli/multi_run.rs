@@ -174,7 +174,7 @@ impl<'a> ProcessHandle<'a> {
         let stdout_fd = spawned.stdout;
         #[cfg(unix)]
         let stderr_fd = spawned.stderr;
-        let process = spawned.to_process(EventLoopHandle::init_mini(state.event_loop), false);
+        let process = spawned.to_process(EventLoopHandle::init_mini(state.event_loop));
 
         self.stdout_reader.handle = std::ptr::from_ref(self);
         self.stderr_reader.handle = std::ptr::from_ref(self);
@@ -302,7 +302,7 @@ struct State<'a> {
 }
 
 impl<'a> State<'a> {
-    pub(crate) fn is_done(&self) -> bool {
+    fn is_done(&self) -> bool {
         self.remaining_scripts == 0
     }
 
@@ -496,7 +496,7 @@ impl<'a> State<'a> {
         }
     }
 
-    pub(crate) fn abort(&mut self) {
+    fn abort(&mut self) {
         self.aborted = true;
         for handle in self.handles.iter_mut() {
             if let Some(proc) = &mut handle.process {
@@ -509,7 +509,7 @@ impl<'a> State<'a> {
         }
     }
 
-    pub(crate) fn finalize(&self) -> u8 {
+    fn finalize(&self) -> u8 {
         for handle in self.handles.iter() {
             if let Some(proc) = &handle.process {
                 match &proc.status {
@@ -554,7 +554,7 @@ impl AbortHandler {
         bun_sys::windows::FALSE
     }
 
-    pub(crate) fn install() {
+    fn install() {
         #[cfg(unix)]
         {
             // bun_sys::posix::Sigaction is a re-export of libc::sigaction; construct
@@ -583,7 +583,7 @@ impl AbortHandler {
         }
     }
 
-    pub(crate) fn uninstall() {
+    fn uninstall() {
         #[cfg(windows)]
         {
             let _ = bun_sys::windows::SetConsoleCtrlHandler(None, bun_sys::windows::FALSE);

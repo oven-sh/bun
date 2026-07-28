@@ -11,14 +11,14 @@ use crate::shell::{ExitCode, ShellErr};
 
 #[derive(Default)]
 pub struct Cp {
-    pub opts: Opts,
-    pub state: State,
+    pub(crate) opts: Opts,
+    pub(crate) state: State,
     /// FIFO of in-flight OutputTask pointers awaiting an IOWriter chunk
     /// completion. Stopgap until `WriterTag` can carry the `*mut OutputTask`
     /// directly (see mkdir.rs `Exec::output_queue`). Lives on `Cp` (not
     /// `ExecState`) because `print_shell_cp_task` is also driven from
     /// [`State::Ebusy`] on Windows; both states must be able to stash/pop.
-    pub output_queue: std::collections::VecDeque<*mut OutputTask<Cp>>,
+    pub(crate) output_queue: std::collections::VecDeque<*mut OutputTask<Cp>>,
 }
 
 #[derive(Default)]
@@ -34,17 +34,17 @@ pub enum State {
 
 pub struct ExecState {
     /// Index into argv where source paths start.
-    pub sources_start: usize,
+    pub(crate) sources_start: usize,
     /// argv[sources_start..target_idx] are sources; argv[target_idx] is the
     /// destination.
-    pub target_idx: usize,
-    pub started: bool,
-    pub tasks_count: u32,
-    pub output_waiting: u32,
-    pub output_done: u32,
-    pub err: Option<ShellErr>,
+    pub(crate) target_idx: usize,
+    pub(crate) started: bool,
+    pub(crate) tasks_count: u32,
+    pub(crate) output_waiting: u32,
+    pub(crate) output_done: u32,
+    pub(crate) err: Option<ShellErr>,
     #[cfg(windows)]
-    pub ebusy: EbusyState,
+    pub(crate) ebusy: EbusyState,
 }
 
 /// On Windows it is possible to get an EBUSY error very simply by running
@@ -52,13 +52,18 @@ pub struct ExecState {
 /// ignores the EBUSY if at least one task succeeded for that dest.
 #[derive(Default)]
 pub struct EbusyState {
-    pub tasks: Vec<*mut ShellCpTask>,
-    pub idx: usize,
-    pub main_exit_code: ExitCode,
+    #[cfg(windows)]
+    pub(crate) tasks: Vec<*mut ShellCpTask>,
+    #[cfg(windows)]
+    pub(crate) idx: usize,
+    #[cfg(windows)]
+    pub(crate) main_exit_code: ExitCode,
     /// Absolute target paths that some task copied successfully — used to
     /// suppress a sibling task's EBUSY on the same target.
-    pub absolute_targets: bun_collections::StringSet,
-    pub absolute_srcs: bun_collections::StringSet,
+    #[cfg(windows)]
+    pub(crate) absolute_targets: bun_collections::StringSet,
+    #[cfg(windows)]
+    pub(crate) absolute_srcs: bun_collections::StringSet,
 }
 
 impl Cp {
@@ -97,7 +102,7 @@ impl Cp {
         Self::next(interp, cmd)
     }
 
-    pub(crate) fn next(interp: &Interpreter, cmd: NodeId) -> Yield {
+    fn next(interp: &Interpreter, cmd: NodeId) -> Yield {
         enum Action {
             Done(ExitCode),
             Schedule {
@@ -260,7 +265,7 @@ impl Cp {
         Builtin::done(interp, cmd, exit_code)
     }
 
-    pub(crate) fn on_shell_cp_task_done(interp: &Interpreter, cmd: NodeId, task: *mut ShellCpTask) {
+    fn on_shell_cp_task_done(interp: &Interpreter, cmd: NodeId, task: *mut ShellCpTask) {
         if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
             exec.tasks_count -= 1;
         }
@@ -282,17 +287,21 @@ impl Cp {
                             || tref.src_absolute.as_deref()
                                     .map_or(false, |p| sys.path.eql_utf8(p)));
                     if is_ebusy {
+                        #[cfg(windows)]
                         exec.ebusy.tasks.push(task);
                         return Self::next(interp, cmd).run(interp);
                     }
                 } else {
                     // Record successful absolute paths so a deferred EBUSY
                     // sibling can be suppressed.
-                    if let Some(tgt) = tref.tgt_absolute.take() {
-                        bun_core::handle_oom(exec.ebusy.absolute_targets.insert(&tgt));
-                    }
-                    if let Some(src) = tref.src_absolute.take() {
-                        bun_core::handle_oom(exec.ebusy.absolute_srcs.insert(&src));
+                    #[cfg(windows)]
+                    {
+                        if let Some(tgt) = tref.tgt_absolute.take() {
+                            bun_core::handle_oom(exec.ebusy.absolute_targets.insert(&tgt));
+                        }
+                        if let Some(src) = tref.src_absolute.take() {
+                            bun_core::handle_oom(exec.ebusy.absolute_srcs.insert(&src));
+                        }
                     }
                 }
             }
@@ -386,24 +395,24 @@ impl OutputTaskVTable for Cp {
 /// which POSIX `cp` synopsis applies, then hands off to the node:fs async cp
 /// implementation.
 pub struct ShellCpTask {
-    pub cmd: NodeId,
-    pub opts: Opts,
-    pub operands: usize,
-    pub src: Vec<u8>,
-    pub tgt: Vec<u8>,
-    pub src_absolute: Option<Vec<u8>>,
-    pub tgt_absolute: Option<Vec<u8>>,
-    pub cwd_path: Vec<u8>,
+    pub(crate) cmd: NodeId,
+    pub(crate) opts: Opts,
+    pub(crate) operands: usize,
+    pub(crate) src: Vec<u8>,
+    pub(crate) tgt: Vec<u8>,
+    pub(crate) src_absolute: Option<Vec<u8>>,
+    pub(crate) tgt_absolute: Option<Vec<u8>>,
+    pub(crate) cwd_path: Vec<u8>,
     /// `cp_on_copy` is invoked from work-pool threads (concurrently per
     /// copied file) while the directory walk is still fanning out, so the
     /// buffer must live inside the mutex.
-    pub verbose_output: bun_threading::Guarded<Vec<u8>>,
-    pub err: Option<ShellErr>,
+    pub(crate) verbose_output: bun_threading::Guarded<Vec<u8>>,
+    pub(crate) err: Option<ShellErr>,
     pub task: ShellTask,
 }
 
 impl ShellCpTask {
-    pub(crate) fn create(
+    fn create(
         cmd: NodeId,
         evtloop: EventLoopHandle,
         opts: Opts,
@@ -497,7 +506,7 @@ impl ShellCpTask {
     ///
     /// # Safety
     /// `this` must be a fresh `heap::alloc`'d task (see [`create`]).
-    pub(crate) unsafe fn schedule(this: *mut ShellCpTask) {
+    unsafe fn schedule(this: *mut ShellCpTask) {
         use bun_threading::work_pool::WorkPool;
         // SAFETY: `this` is live; `task` is the embedded `ShellTask`. Stay on
         // raw pointers — once `WorkPool::schedule` returns the worker thread
@@ -694,7 +703,6 @@ impl ShellCpTask {
                 false,
             )),
             flags: crate::node::fs::args::CpFlags {
-                mode: crate::node::fs::constants::Copyfile::from_raw(0),
                 recursive: self.opts.recursive,
                 force: true,
                 error_on_exist: false,
@@ -738,7 +746,7 @@ impl ShellCpTask {
     /// # Safety
     /// `this` must be a live `heap::alloc`'d task (see [`create`](Self::create));
     /// ownership is consumed via [`Cp::on_shell_cp_task_done`].
-    pub(crate) fn run_from_main_thread(this: *mut ShellCpTask, interp: &Interpreter) {
+    fn run_from_main_thread(this: *mut ShellCpTask, interp: &Interpreter) {
         // SAFETY: `this` is a live heap-allocated task per the caller's contract.
         let cmd = unsafe { (*this).cmd };
         Cp::on_shell_cp_task_done(interp, cmd, this);
@@ -771,9 +779,9 @@ impl crate::shell::interpreter::ShellTaskCtx for ShellCpTask {
 #[derive(Clone, Copy, Default)]
 pub struct Opts {
     /// `-R` — copy file hierarchies
-    pub recursive: bool,
+    pub(crate) recursive: bool,
     /// `-v` — verbose
-    pub verbose: bool,
+    pub(crate) verbose: bool,
 }
 
 impl FlagParser for Opts {

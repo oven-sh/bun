@@ -9,5 +9,3 @@ pub mod chrome_process;
 #[path = "HostProcess.rs"]
 pub mod host_process;
 
-pub use chrome_process::ChromeProcess;
-pub use host_process::HostProcess;

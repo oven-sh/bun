@@ -74,7 +74,7 @@ pub(crate) fn options_from_js(
     Err(FromJSError::InvalidOptions)
 }
 
-pub(crate) fn family_from_js(
+fn family_from_js(
     value: JSValue,
     global: &JSGlobalObject,
 ) -> Result<Family, FromJSError> {
@@ -109,7 +109,7 @@ pub(crate) fn family_from_js(
     Err(FromJSError::InvalidFamily)
 }
 
-pub(crate) fn socket_type_from_js(
+fn socket_type_from_js(
     value: JSValue,
     global: &JSGlobalObject,
 ) -> Result<SocketType, FromJSError> {
@@ -142,7 +142,7 @@ pub(crate) fn socket_type_from_js(
     Err(FromJSError::InvalidSocketType)
 }
 
-pub(crate) fn protocol_from_js(
+fn protocol_from_js(
     value: JSValue,
     global: &JSGlobalObject,
 ) -> Result<Protocol, FromJSError> {
@@ -175,7 +175,7 @@ pub(crate) fn protocol_from_js(
     Err(FromJSError::InvalidProtocol)
 }
 
-pub(crate) fn backend_from_js(
+fn backend_from_js(
     value: JSValue,
     global: &JSGlobalObject,
 ) -> Result<Backend, FromJSError> {
@@ -250,7 +250,7 @@ pub(crate) fn address_to_js(
     address_to_string(address).transfer_to_js(global)
 }
 
-pub(crate) fn addr_info_to_js_array(
+fn addr_info_to_js_array(
     addr_info: &super::netc::addrinfo,
     global: &JSGlobalObject,
 ) -> JsResult<JSValue> {

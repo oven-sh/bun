@@ -7,15 +7,9 @@ use bun_url::PercentEncoding;
 // lifetime param to `URLPath` so the input-borrow case is checked.
 #[derive(Default)]
 pub struct URLPath {
-    pub extname: &'static [u8],
     pub path: &'static [u8],
     pub pathname: &'static [u8],
-    pub first_segment: &'static [u8],
     pub query_string: &'static [u8],
-    pub needs_redirect: bool,
-    /// Treat URLs as non-sourcemap URLS
-    /// Then at the very end, we check.
-    pub is_source_map: bool,
     /// Owned backing storage for the slice fields when `parse()` had to
     /// percent-decode. Heap-stable: the slice fields above point into this
     /// allocation, which is never resized and lives exactly as long as `self`.
@@ -49,8 +43,6 @@ impl URLPath {
 pub fn parse(possibly_encoded_pathname_: &[u8]) -> Result<URLPath, bun_url::DecodeError> {
     let mut decoded_pathname: &[u8] = possibly_encoded_pathname_;
     let mut decoded_storage: Option<Box<[u8]>> = None;
-    let mut needs_redirect = false;
-
     if strings::index_of_char(decoded_pathname, b'%').is_some() {
         // The in-place decode buffer is capped at 16384 bytes of input.
         let capped = &possibly_encoded_pathname_[..possibly_encoded_pathname_.len().min(16384)];
@@ -59,7 +51,7 @@ pub fn parse(possibly_encoded_pathname_: &[u8]) -> Result<URLPath, bun_url::Deco
         let n = PercentEncoding::decode_fault_tolerant::<_, true>(
             &mut buf,
             capped,
-            Some(&mut needs_redirect),
+            None,
         )?;
         debug_assert!(n as usize <= buf.len());
         buf.truncate(n as usize);
@@ -85,7 +77,6 @@ pub fn parse(possibly_encoded_pathname_: &[u8]) -> Result<URLPath, bun_url::Deco
     let mut question_mark_i: i32 = -1;
     let mut period_i: i32 = -1;
 
-    let mut first_segment_end: i32 = i32::MAX;
     let mut last_slash: i32 = -1;
 
     let mut i: i32 = i32::try_from(decoded_pathname.len()).expect("int cast") - 1;
@@ -109,10 +100,6 @@ pub fn parse(possibly_encoded_pathname_: &[u8]) -> Result<URLPath, bun_url::Deco
             }
             b'/' => {
                 last_slash = last_slash.max(i);
-
-                if i > 0 {
-                    first_segment_end = first_segment_end.min(i);
-                }
             }
             _ => {}
         }
@@ -149,17 +136,13 @@ pub fn parse(possibly_encoded_pathname_: &[u8]) -> Result<URLPath, bun_url::Deco
     };
     let mut path: &[u8] = &decoded_pathname[1.min(path_end)..path_end];
 
-    let first_segment_end_u: usize =
-        (usize::try_from(first_segment_end).expect("int cast")).min(decoded_pathname.len());
-    let first_segment = &decoded_pathname[1.min(first_segment_end_u)..first_segment_end_u];
     let is_source_map = extname == b"map";
-    let mut backup_extname: &[u8] = extname;
     if is_source_map && path.len() > b".map".len() {
         if let Some(j) = path[0..path.len() - b".map".len()]
             .iter()
             .rposition(|&b| b == b'.')
         {
-            backup_extname = &path[j + 1..];
+            let mut backup_extname = &path[j + 1..];
             backup_extname = &backup_extname[0..backup_extname.len() - b".map".len()];
             path = &path[0..j + backup_extname.len() + 1];
         }
@@ -177,14 +160,7 @@ pub fn parse(possibly_encoded_pathname_: &[u8]) -> Result<URLPath, bun_url::Deco
     }
 
     Ok(URLPath {
-        extname: extend(if !is_source_map {
-            extname
-        } else {
-            backup_extname
-        }),
-        is_source_map,
         pathname: extend(decoded_pathname),
-        first_segment: extend(first_segment),
         path: extend(if decoded_pathname.len() == 1 {
             b"."
         } else {
@@ -196,7 +172,6 @@ pub fn parse(possibly_encoded_pathname_: &[u8]) -> Result<URLPath, bun_url::Deco
         } else {
             b""
         }),
-        needs_redirect,
         _decoded_storage: decoded_storage,
     })
 }

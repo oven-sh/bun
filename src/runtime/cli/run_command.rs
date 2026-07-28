@@ -64,20 +64,20 @@ fn runner_arena() -> &'static bun_alloc::Arena {
 // the shell escaper cannot silently diverge.
 use bun_shell_parser::{escape_8bit, needs_escape_utf8_ascii_latin1};
 
-pub(crate) struct NpmArgs;
+struct NpmArgs;
 impl NpmArgs {
     // https://github.com/npm/rfcs/blob/main/implemented/0021-reduce-lifecycle-script-environment.md#detailed-explanation
-    pub(crate) const PACKAGE_NAME: &'static [u8] = b"npm_package_name";
-    pub(crate) const PACKAGE_VERSION: &'static [u8] = b"npm_package_version";
+    const PACKAGE_NAME: &'static [u8] = b"npm_package_name";
+    const PACKAGE_VERSION: &'static [u8] = b"npm_package_version";
 }
 
 /// Runtime knobs `Command::start` passes through to select the per-tag exec
 /// behavior.
 #[derive(Clone, Copy)]
 pub struct ExecCfg {
-    pub bin_dirs_only: bool,
-    pub log_errors: bool,
-    pub allow_fast_run_for_extensions: bool,
+    pub(crate) bin_dirs_only: bool,
+    pub(crate) log_errors: bool,
+    pub(crate) allow_fast_run_for_extensions: bool,
 }
 
 impl Default for ExecCfg {
@@ -90,11 +90,11 @@ impl Default for ExecCfg {
     }
 }
 
-pub struct RunCommand;
+pub(crate) struct RunCommand;
 
 impl RunCommand {
     /// `bun run --help` body.
-    pub fn print_help(package_json: Option<&PackageJSON>) {
+    pub(crate) fn print_help(package_json: Option<&PackageJSON>) {
         // templates are passed as *string literals* so the
         // `pretty_fmt!` proc-macro rewrites the `<tag>` color markup at compile
         // time. Routing them through a `const &str` + `{}` prints the raw
@@ -195,7 +195,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
     }
 
     /// Find the "best" shell to use. Cached to only run once.
-    pub fn find_shell(path: &[u8], cwd: &[u8]) -> Option<&'static ZStr> {
+    pub(crate) fn find_shell(path: &[u8], cwd: &[u8]) -> Option<&'static ZStr> {
         // Process-lifetime; written exactly once on the CLI thread.
         // PORTING.md §Global mutable state: scratch buffer behind
         // a `Once` gate → RacyCell.
@@ -220,7 +220,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
     // → bun_runtime cycle. This is a thin re-export for `bun run` /
     // filter_run / multi_run callers.
     #[inline]
-    pub fn replace_package_manager_run(
+    pub(crate) fn replace_package_manager_run(
         copy_script: &mut Vec<u8>,
         script: &[u8],
     ) -> crate::Result<()> {
@@ -232,7 +232,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
     /// non-zero.
     ///
     /// `passthrough` is `&[Box<[u8]>]` to match `ctx.passthrough` directly.
-    pub fn run_package_script_foreground(
+    pub(crate) fn run_package_script_foreground(
         ctx: &mut ContextData,
         original_script: &[u8],
         name: &[u8],
@@ -257,7 +257,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
 
     /// Like [`Self::run_package_script_foreground`], but resolves the shell
     /// interpreter from `shell_path` instead of the loader's `PATH`.
-    pub fn run_package_script_foreground_with_shell_path(
+    pub(crate) fn run_package_script_foreground_with_shell_path(
         ctx: &mut ContextData,
         original_script: &[u8],
         name: &[u8],
@@ -526,7 +526,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
     /// [`Self::configure_env_for_run_without_linker`] instead — that skips the
     /// `configure_linker()` + `load_tsconfig_json` work, which is the single
     /// largest block of bundler/linker code otherwise faulted in by `bun run`.
-    pub fn configure_env_for_run(
+    pub(crate) fn configure_env_for_run(
         ctx: &mut ContextData,
         this_transpiler: &mut ::core::mem::MaybeUninit<Transpiler<'static>>,
         env: Option<*mut DotEnv::Loader>,
@@ -540,7 +540,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
     /// bundler linker or enable `load_tsconfig_json` — for callers that only
     /// use the returned `Transpiler` for module resolution / env / `$PATH`
     /// lookup (the `bun run <script>` dispatch path), never for transpiling.
-    pub fn configure_env_for_run_without_linker(
+    pub(crate) fn configure_env_for_run_without_linker(
         ctx: &mut ContextData,
         this_transpiler: &mut ::core::mem::MaybeUninit<Transpiler<'static>>,
         env: Option<*mut DotEnv::Loader>,
@@ -1806,11 +1806,11 @@ impl RunCommand {
     // Canonical definition lives in `bun_install::RunCommand` (lower tier so
     // the package manager can use it without depending on `bun_runtime`).
     #[cfg(not(windows))]
-    pub const BUN_NODE_DIR: &'static str = bun_install::RunCommand::BUN_NODE_DIR;
+    pub(crate) const BUN_NODE_DIR: &'static str = bun_install::RunCommand::BUN_NODE_DIR;
 
     /// Returns the path to the
     /// fake `node` shim that points back at the running `bun` binary.
-    pub fn bun_node_file_utf8() -> crate::Result<&'static ZStr> {
+    pub(crate) fn bun_node_file_utf8() -> crate::Result<&'static ZStr> {
         #[cfg(not(windows))]
         {
             const BUN_NODE_DIR_Z: &str = const_format::concatcp!(RunCommand::BUN_NODE_DIR, "\0");
@@ -1872,7 +1872,7 @@ impl RunCommand {
     /// package manager can call it without depending on `bun_runtime`; this is
     /// a thin delegate so existing `Self::` callers keep compiling.
     #[inline]
-    pub fn create_fake_temporary_node_executable(
+    pub(crate) fn create_fake_temporary_node_executable(
         path: &mut Vec<u8>,
         optional_bun_path: &mut &[u8],
     ) -> crate::Result<()> {
@@ -1883,7 +1883,7 @@ impl RunCommand {
     /// Prepends workspace
     /// `.bin` dirs + the bun-node shim dir to `PATH` and writes the original
     /// PATH back through `original_path`.
-    pub fn configure_path_for_run(
+    pub(crate) fn configure_path_for_run(
         ctx: &mut ContextData,
         root_dir_info: bun_resolver::DirInfoRef,
         this_transpiler: &mut Transpiler<'static>,
@@ -1921,7 +1921,7 @@ impl RunCommand {
     /// (plus `package_json_dir` and the bun-node shim dir) prepended, returns
     /// it as an owned buffer, and writes the original PATH out via
     /// `original_path`.
-    pub fn configure_path_for_run_with_package_json_dir(
+    pub(crate) fn configure_path_for_run_with_package_json_dir(
         _ctx: &mut ContextData,
         package_json_dir: &[u8],
         this_transpiler: &mut Transpiler<'static>,
@@ -2067,7 +2067,7 @@ impl RunCommand {
     ///
     /// This function only returns if an error starting the process is
     /// encountered; most other errors are handled by printing and exiting.
-    pub fn run_binary(
+    pub(crate) fn run_binary(
         ctx: &mut ContextData,
         executable: &[u8],
         executable_z: &ZStr,
@@ -2122,7 +2122,7 @@ impl RunCommand {
     }
 
     /// `executable_z` is the NUL-terminated form of `executable`.
-    pub fn run_binary_without_bunx_path(
+    pub(crate) fn run_binary_without_bunx_path(
         ctx: &mut ContextData,
         executable: &[u8],
         executable_z: &ZStr,
@@ -2332,17 +2332,7 @@ impl RunCommand {
     }
 
     /// Dispatch `bun run <target>`: classify as file path vs. package.json
-    /// script, then either boot the VM or spawn the script.
-    ///
-    /// All three `ExecCfg` knobs are forwarded so
-    /// `--if-present` (suppresses missing-script errors) and the Auto-command
-    /// fast-path-by-extension behave as expected.
-    #[inline]
-    pub fn exec(ctx: &mut ContextData, cfg: ExecCfg) -> crate::Result<bool> {
-        Self::exec_with_cfg(ctx, cfg)
-    }
-
-    pub fn exec_with_cfg(ctx: &mut ContextData, cfg: ExecCfg) -> crate::Result<bool> {
+    pub(crate) fn exec_with_cfg(ctx: &mut ContextData, cfg: ExecCfg) -> crate::Result<bool> {
         let bin_dirs_only = cfg.bin_dirs_only;
         let log_errors = cfg.log_errors;
 
@@ -2939,7 +2929,7 @@ impl RunCommand {
     /// `bun --interactive` — boots the embedded `eval/node-repl.ts` script,
     /// the Node.js-compatible REPL (node:repl). Distinct from `bun repl`,
     /// which is Bun's own native REPL.
-    pub fn exec_node_repl(ctx: &mut ContextData) -> crate::Result<()> {
+    pub(crate) fn exec_node_repl(ctx: &mut ContextData) -> crate::Result<()> {
         // Every caller has already established there's no user script target;
         // any remaining positionals are dispatch artifacts (e.g. RunCommand's
         // leading "run"), not user data — keep them out of `process.argv`.
@@ -2959,7 +2949,7 @@ impl RunCommand {
     /// in `ctx.runtime_options.eval.script`. Public so `Command::start` can
     /// route the `-e`/`-p` AutoCommand path here without re-implementing the
     /// path-buffer dance.
-    pub fn exec_eval(ctx: &mut ContextData) -> crate::Result<()> {
+    pub(crate) fn exec_eval(ctx: &mut ContextData) -> crate::Result<()> {
         // prepend positionals into the existing passthrough vec
         // (cold path, single allocation).
         if !ctx.positionals.is_empty() {
@@ -2984,7 +2974,7 @@ impl RunCommand {
     }
 
     /// `node` argv0 emulation. Port of `execAsIfNode`.
-    pub fn exec_as_if_node(ctx: &mut ContextData) -> crate::Result<()> {
+    pub(crate) fn exec_as_if_node(ctx: &mut ContextData) -> crate::Result<()> {
         // SAFETY: single-threaded CLI startup; `PRETEND_TO_BE_NODE` is set in
         // `Command::which()` before dispatch.
         debug_assert!(crate::cli::PRETEND_TO_BE_NODE.load(::core::sync::atomic::Ordering::Relaxed));
@@ -3587,7 +3577,7 @@ impl RunCommand {
 
     /// Shell-completion entries for `bun run`. Called from
     /// `cli_body::bun_getcompletes`.
-    pub fn completions<const FILTER: Filter>(
+    pub(crate) fn completions<const FILTER: Filter>(
         ctx: &mut ContextData,
         default_completions: Option<&'static [&'static [u8]]>,
         reject_list: &[&[u8]],
@@ -3923,7 +3913,8 @@ impl RunCommand {
 
 bun_core::declare_scope!(BUNX_FAST_PATH_LOG, visible);
 
-pub enum BunXFastPath {}
+#[cfg(windows)]
+pub(crate) enum BunXFastPath {}
 
 #[cfg(windows)]
 mod bunx_fast_path_buffers {
@@ -3934,6 +3925,7 @@ mod bunx_fast_path_buffers {
         bun_core::RacyCell::new(WPathBuffer::ZEROED);
 }
 
+#[cfg(windows)]
 impl BunXFastPath {
     /// Convert a
     /// UTF-8 argument to UTF-16, applying Windows command-line quoting/escaping
@@ -4010,7 +4002,7 @@ impl BunXFastPath {
 
     /// If this returns, it implies the fast path cannot be taken.
     #[cfg(windows)]
-    pub fn try_launch(
+    pub(crate) fn try_launch(
         ctx: &mut ContextData,
         path_len: usize,
         env: &mut DotEnv::Loader,

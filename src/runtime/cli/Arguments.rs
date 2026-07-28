@@ -40,7 +40,7 @@ pub(crate) fn loader_resolver(input: &[u8]) -> crate::Result<api::Loader> {
     Ok(option_loader.to_api())
 }
 
-pub(crate) fn resolve_jsx_runtime(s: &[u8]) -> crate::Result<api::JsxRuntime> {
+fn resolve_jsx_runtime(s: &[u8]) -> crate::Result<api::JsxRuntime> {
     if s == b"automatic" {
         Ok(api::JsxRuntime::Automatic)
     } else if s == b"fallback" || s == b"classic" {
@@ -89,7 +89,7 @@ macro_rules! maybe_verbose_error_trace {
     };
 }
 
-pub(crate) const BASE_PARAMS_: &[ParamType] = concat_params!(
+const BASE_PARAMS_: &[ParamType] = concat_params!(
     maybe_debug_params!(),
     &[
         parse_param!(
@@ -117,7 +117,7 @@ const DEBUG_PARAMS: &[ParamType] = &[
     ),
 ];
 
-pub(crate) const TRANSPILER_PARAMS_: &[ParamType] = &[
+const TRANSPILER_PARAMS_: &[ParamType] = &[
     parse_param!(
         "--main-fields <STR>...             Main fields to lookup in package.json. Defaults to --target dependent"
     ),
@@ -162,7 +162,7 @@ pub(crate) const TRANSPILER_PARAMS_: &[ParamType] = &[
     ),
 ];
 
-pub(crate) const RUNTIME_PARAMS_: &[ParamType] = &[
+const RUNTIME_PARAMS_: &[ParamType] = &[
     parse_param!(
         "--watch                           Automatically restart the process on file change"
     ),
@@ -309,7 +309,7 @@ pub(crate) const RUNTIME_PARAMS_: &[ParamType] = &[
     parse_param!("--stack-trace-limit <STR>"),
 ];
 
-pub(crate) const AUTO_OR_RUN_PARAMS: &[ParamType] = &[
+const AUTO_OR_RUN_PARAMS: &[ParamType] = &[
     parse_param!(
         "-F, --filter <STR>...             Run a script in all workspace packages matching the pattern"
     ),
@@ -336,7 +336,7 @@ pub(crate) const AUTO_OR_RUN_PARAMS: &[ParamType] = &[
     ),
 ];
 
-pub(crate) const AUTO_ONLY_PARAMS: &[ParamType] = concat_params!(
+const AUTO_ONLY_PARAMS: &[ParamType] = concat_params!(
     &[
         // parse_param!("--all"),
         parse_param!("--silent                          Don't print the script command"),
@@ -355,7 +355,7 @@ pub(crate) const AUTO_PARAMS: &[ParamType] = concat_params!(
     BASE_PARAMS_
 );
 
-pub(crate) const RUN_ONLY_PARAMS: &[ParamType] = concat_params!(
+const RUN_ONLY_PARAMS: &[ParamType] = concat_params!(
     &[
         parse_param!("--silent                          Don't print the script command"),
         parse_param!(
@@ -539,7 +539,7 @@ pub(crate) const BUILD_ONLY_PARAMS: &[ParamType] = concat_params!(
     ],
     maybe_bake_debug_params!(),
 );
-pub(crate) const BUILD_PARAMS: &[ParamType] =
+const BUILD_PARAMS: &[ParamType] =
     concat_params!(BUILD_ONLY_PARAMS, TRANSPILER_PARAMS_, BASE_PARAMS_);
 
 // TODO: update test completions
@@ -615,7 +615,7 @@ pub(crate) const TEST_ONLY_PARAMS: &[ParamType] = &[
         "--shard <STR>                    Run a subset of test files, e.g. '--shard=1/3' runs the first of three shards. Useful for splitting tests across multiple CI jobs."
     ),
 ];
-pub(crate) const TEST_PARAMS: &[ParamType] = concat_params!(
+const TEST_PARAMS: &[ParamType] = concat_params!(
     TEST_ONLY_PARAMS,
     RUNTIME_PARAMS_,
     TRANSPILER_PARAMS_,
@@ -623,7 +623,7 @@ pub(crate) const TEST_PARAMS: &[ParamType] = concat_params!(
 );
 
 /// Fallback table for `Command::tag_params`.
-pub(crate) const BASE_RUNTIME_TRANSPILER_PARAMS: &[ParamType] =
+const BASE_RUNTIME_TRANSPILER_PARAMS: &[ParamType] =
     concat_params!(BASE_PARAMS_, RUNTIME_PARAMS_, TRANSPILER_PARAMS_);
 
 // ─── pre-converted tables (rodata) ───────────────────────────────────────────
@@ -654,18 +654,18 @@ pub(crate) const BASE_RUNTIME_TRANSPILER_PARAMS: &[ParamType] =
     any(target_os = "linux", target_os = "android"),
     unsafe(link_section = ".rodata.startup")
 )]
-pub static AUTO_TABLE: &clap::ConvertedTable = clap::comptime_table!(AUTO_PARAMS);
-pub static RUN_TABLE: &clap::ConvertedTable = clap::comptime_table!(RUN_PARAMS, cold);
-pub static BUILD_TABLE: &clap::ConvertedTable = clap::comptime_table!(BUILD_PARAMS, cold);
-pub static TEST_TABLE: &clap::ConvertedTable = clap::comptime_table!(TEST_PARAMS, cold);
-pub(crate) static BASE_RUNTIME_TRANSPILER_TABLE: &clap::ConvertedTable =
+pub(crate) static AUTO_TABLE: &clap::ConvertedTable = clap::comptime_table!(AUTO_PARAMS);
+pub(crate) static RUN_TABLE: &clap::ConvertedTable = clap::comptime_table!(RUN_PARAMS, cold);
+pub(crate) static BUILD_TABLE: &clap::ConvertedTable = clap::comptime_table!(BUILD_PARAMS, cold);
+pub(crate) static TEST_TABLE: &clap::ConvertedTable = clap::comptime_table!(TEST_PARAMS, cold);
+static BASE_RUNTIME_TRANSPILER_TABLE: &clap::ConvertedTable =
     clap::comptime_table!(BASE_RUNTIME_TRANSPILER_PARAMS, cold);
 
 /// Per-tag pre-converted clap table (rodata, built at compile time via
 /// `comptime_table!`). This is what `parse` consumes so the startup path never
 /// hits `ConvertedTable::build`'s alloc/sort/lock.
 #[inline]
-pub(crate) fn tag_table(cmd: CommandTag) -> &'static clap::ConvertedTable {
+fn tag_table(cmd: CommandTag) -> &'static clap::ConvertedTable {
     match cmd {
         CommandTag::AutoCommand => AUTO_TABLE,
         CommandTag::RunCommand | CommandTag::RunAsNodeCommand => RUN_TABLE,
@@ -681,13 +681,13 @@ pub(crate) fn tag_table(cmd: CommandTag) -> &'static clap::ConvertedTable {
 // `#[no_mangle]` symbol layout is unchanged for the C++ side that reads these
 // as plain `bool`. Rust writes go through `.store(.., Relaxed)`.
 #[unsafe(no_mangle)]
-pub(crate) static Bun__Node__ZeroFillBuffers: core::sync::atomic::AtomicBool =
+static Bun__Node__ZeroFillBuffers: core::sync::atomic::AtomicBool =
     core::sync::atomic::AtomicBool::new(false);
 #[unsafe(no_mangle)]
-pub(crate) static Bun__Node__ProcessNoDeprecation: core::sync::atomic::AtomicBool =
+static Bun__Node__ProcessNoDeprecation: core::sync::atomic::AtomicBool =
     core::sync::atomic::AtomicBool::new(false);
 #[unsafe(no_mangle)]
-pub(crate) static Bun__Node__ProcessThrowDeprecation: core::sync::atomic::AtomicBool =
+static Bun__Node__ProcessThrowDeprecation: core::sync::atomic::AtomicBool =
     core::sync::atomic::AtomicBool::new(false);
 
 #[repr(u8)]
@@ -698,7 +698,7 @@ pub(crate) enum BunCAStore {
     System,
 }
 #[unsafe(no_mangle)]
-pub(crate) static Bun__Node__CAStore: core::sync::atomic::AtomicU8 =
+static Bun__Node__CAStore: core::sync::atomic::AtomicU8 =
     core::sync::atomic::AtomicU8::new(BunCAStore::Bundled as u8);
 #[unsafe(no_mangle)]
 pub(crate) static Bun__Node__UseSystemCA: core::sync::atomic::AtomicBool =
@@ -715,7 +715,7 @@ pub use bun_bunfig::arguments::{load_config, load_config_path, load_config_with_
 /// `command::tag_params(cmd)` does a runtime lookup of the per-subcommand
 /// param table, and the per-`cmd` blocks below are guarded by
 /// `if matches!(cmd, …)`.
-pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::TransformOptions> {
+pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::TransformOptions> {
     let mut diag = clap::Diagnostic::default();
     let table = tag_table(cmd);
 

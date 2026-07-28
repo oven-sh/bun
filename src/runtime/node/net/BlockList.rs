@@ -100,7 +100,7 @@ impl BlockList {
 
     // NOTE: no `#[bun_jsc::host_fn]` — the `#[bun_jsc::JsClass]` derive emits
     // the `${T}Class__construct` C-ABI shim that calls `<Self>::constructor`.
-    pub fn constructor(_global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<*mut Self> {
+    pub(crate) fn constructor(_global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<*mut Self> {
         let ptr = bun_core::heap::into_raw(Box::new(Self {
             ref_count: bun_ptr::ThreadSafeRefCount::init(),
             da_rules: JsCell::new(Vec::new()),
@@ -116,7 +116,7 @@ impl BlockList {
     }
 
     /// May be called from any thread.
-    pub fn estimated_size(&self) -> usize {
+    pub(crate) fn estimated_size(&self) -> usize {
         (core::mem::size_of::<Self>() + self.estimated_size.load(AtomicOrdering::SeqCst) as usize)
             / (self.ref_count.get().max(1) as usize)
     }
@@ -129,13 +129,13 @@ impl BlockList {
     // by the Free-kind shim (it emits a bare `fn_name(...)` call). The
     // `.classes.ts` codegen owns the static-method link name and calls
     // `<Self>::is_block_list` directly.
-    pub fn is_block_list(_global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn is_block_list(_global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         let [value] = frame.arguments_as_array::<1>();
         Ok(JSValue::from(value.as_::<Self>().is_some()))
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn add_address(
+    pub(crate) fn add_address(
         this: &Self,
         global: &JSGlobalObject,
         frame: &CallFrame,
@@ -162,7 +162,7 @@ impl BlockList {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn add_range(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn add_range(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         let [start_js, end_js, mut family_js] = frame.arguments_as_array::<3>();
         if family_js.is_undefined() {
             family_js = BunString::static_str("ipv4").to_js(global)?;
@@ -201,7 +201,7 @@ impl BlockList {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn add_subnet(
+    pub(crate) fn add_subnet(
         this: &Self,
         global: &JSGlobalObject,
         frame: &CallFrame,
@@ -249,7 +249,7 @@ impl BlockList {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn check(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn check(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         let [address_js, mut family_js] = frame.arguments_as_array::<2>();
         if family_js.is_undefined() {
             family_js = BunString::static_str("ipv4").to_js(global)?;
@@ -359,7 +359,7 @@ impl BlockList {
     }
 
     #[bun_jsc::host_fn(getter)]
-    pub fn rules(this: &Self, global: &JSGlobalObject) -> JsResult<JSValue> {
+    pub(crate) fn rules(this: &Self, global: &JSGlobalObject) -> JsResult<JSValue> {
         let _guard = this.mutex.lock_guard();
         let rules = this.da_rules.get();
         // GC must be able to visit
@@ -400,7 +400,7 @@ impl BlockList {
         Ok(array)
     }
 
-    pub fn on_structured_clone_serialize(
+    pub(crate) fn on_structured_clone_serialize(
         this: &Self,
         _global: &JSGlobalObject,
         ctx: *mut c_void,
@@ -427,7 +427,7 @@ impl BlockList {
     // signature is fixed by `generate-classes.ts`, so the deref is documented with
     // the SAFETY comment below.
     #[allow(clippy::not_unsafe_ptr_arg_deref)]
-    pub fn on_structured_clone_deserialize(
+    pub(crate) fn on_structured_clone_deserialize(
         global: &JSGlobalObject,
         ptr: *mut *mut u8,
         end: *const u8,

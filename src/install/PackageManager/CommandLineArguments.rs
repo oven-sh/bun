@@ -125,7 +125,7 @@ const SHARED_PARAMS: &[ParamType] = &[
     clap::param!("-h, --help                            Print this help menu"),
 ];
 
-pub static INSTALL_PARAMS: &[ParamType] = concat_params![
+pub(crate) static INSTALL_PARAMS: &[ParamType] = concat_params![
     SHARED_PARAMS,
     &[
         clap::param!("-d, --dev                 Add dependency to \"devDependencies\""),
@@ -148,7 +148,7 @@ pub static INSTALL_PARAMS: &[ParamType] = concat_params![
     ]
 ];
 
-pub static UPDATE_PARAMS: &[ParamType] = concat_params![
+pub(crate) static UPDATE_PARAMS: &[ParamType] = concat_params![
     SHARED_PARAMS,
     &[
         clap::param!(
@@ -165,7 +165,7 @@ pub static UPDATE_PARAMS: &[ParamType] = concat_params![
     ]
 ];
 
-pub static PM_PARAMS: &[ParamType] = concat_params![
+pub(crate) static PM_PARAMS: &[ParamType] = concat_params![
     SHARED_PARAMS,
     &[
         clap::param!("-a, --all"),
@@ -196,7 +196,7 @@ pub static PM_PARAMS: &[ParamType] = concat_params![
     ]
 ];
 
-pub static ADD_PARAMS: &[ParamType] = concat_params![
+pub(crate) static ADD_PARAMS: &[ParamType] = concat_params![
     SHARED_PARAMS,
     &[
         clap::param!("-d, --dev                 Add dependency to \"devDependencies\""),
@@ -218,21 +218,21 @@ pub static ADD_PARAMS: &[ParamType] = concat_params![
     ]
 ];
 
-pub static REMOVE_PARAMS: &[ParamType] = concat_params![
+pub(crate) static REMOVE_PARAMS: &[ParamType] = concat_params![
     SHARED_PARAMS,
     &[clap::param!(
         "<POS> ...                         \"name\" of package(s) to remove from package.json"
     ),]
 ];
 
-pub static LINK_PARAMS: &[ParamType] = concat_params![
+pub(crate) static LINK_PARAMS: &[ParamType] = concat_params![
     SHARED_PARAMS,
     &[clap::param!(
         "<POS> ...                         \"name\" install package as a link"
     ),]
 ];
 
-pub static UNLINK_PARAMS: &[ParamType] = concat_params![
+pub(crate) static UNLINK_PARAMS: &[ParamType] = concat_params![
     SHARED_PARAMS,
     &[clap::param!(
         "<POS> ...                         \"name\" uninstall package as a link"
@@ -358,88 +358,88 @@ static WHY_PARAMS: &[ParamType] = concat_params![
 // copy.
 #[derive(Clone)]
 pub struct CommandLineArguments {
-    pub cache_dir: Option<&'static [u8]>,
+    pub(crate) cache_dir: Option<&'static [u8]>,
     pub lockfile: &'static [u8],
-    pub token: &'static [u8],
-    pub global: bool,
-    pub config: Option<&'static [u8]>,
-    pub network_concurrency: Option<u16>,
-    pub backend: Option<package_install::Method>,
+    pub(crate) token: &'static [u8],
+    pub(crate) global: bool,
+    pub(crate) config: Option<&'static [u8]>,
+    pub(crate) network_concurrency: Option<u16>,
+    pub(crate) backend: Option<package_install::Method>,
     pub analyze: bool,
-    pub only_missing: bool,
+    pub(crate) only_missing: bool,
     pub positionals: &'static [&'static [u8]],
 
-    pub yarn: bool,
+    pub(crate) yarn: bool,
     pub production: bool,
-    pub frozen_lockfile: bool,
-    pub no_save: bool,
-    pub dry_run: bool,
-    pub force: bool,
-    pub no_cache: bool,
+    pub(crate) frozen_lockfile: bool,
+    pub(crate) no_save: bool,
+    pub(crate) dry_run: bool,
+    pub(crate) force: bool,
+    pub(crate) no_cache: bool,
     pub silent: bool,
-    pub quiet: bool,
-    pub verbose: bool,
-    pub no_progress: bool,
-    pub no_verify: bool,
-    pub ignore_scripts: bool,
-    pub trusted: bool,
-    pub no_summary: bool,
-    pub latest: bool,
+    pub(crate) quiet: bool,
+    pub(crate) verbose: bool,
+    pub(crate) no_progress: bool,
+    pub(crate) no_verify: bool,
+    pub(crate) ignore_scripts: bool,
+    pub(crate) trusted: bool,
+    pub(crate) no_summary: bool,
+    pub(crate) latest: bool,
     pub interactive: bool,
     pub json_output: bool,
-    pub recursive: bool,
-    pub filters: &'static [&'static [u8]],
+    pub(crate) recursive: bool,
+    pub(crate) filters: &'static [&'static [u8]],
 
-    pub pack_destination: &'static [u8],
-    pub pack_filename: &'static [u8],
-    pub pack_gzip_level: Option<&'static [u8]>,
+    pub(crate) pack_destination: &'static [u8],
+    pub(crate) pack_filename: &'static [u8],
+    pub(crate) pack_gzip_level: Option<&'static [u8]>,
 
-    pub development: bool,
-    pub optional: bool,
-    pub peer: bool,
+    pub(crate) development: bool,
+    pub(crate) optional: bool,
+    pub(crate) peer: bool,
 
-    pub omit: Option<Omit>,
+    pub(crate) omit: Option<Omit>,
 
-    pub exact: bool,
+    pub(crate) exact: bool,
 
-    pub concurrent_scripts: Option<usize>,
+    pub(crate) concurrent_scripts: Option<usize>,
 
-    pub patch: PatchOpts,
+    pub(crate) patch: PatchOpts,
 
-    pub registry: &'static [u8],
+    pub(crate) registry: &'static [u8],
 
-    pub publish_config: Options::PublishConfig,
+    pub(crate) publish_config: Options::PublishConfig,
 
-    pub tolerate_republish: bool,
+    pub(crate) tolerate_republish: bool,
 
-    pub ca: &'static [&'static [u8]],
-    pub ca_file_name: &'static [u8],
+    pub(crate) ca: &'static [&'static [u8]],
+    pub(crate) ca_file_name: &'static [u8],
 
-    pub save_text_lockfile: Option<bool>,
+    pub(crate) save_text_lockfile: Option<bool>,
 
-    pub lockfile_only: bool,
+    pub(crate) lockfile_only: bool,
 
-    pub node_linker: Option<Options::NodeLinker>,
+    pub(crate) node_linker: Option<Options::NodeLinker>,
 
-    pub minimum_release_age_ms: Option<f64>,
+    pub(crate) minimum_release_age_ms: Option<f64>,
 
     // `bun pm version` options
-    pub git_tag_version: bool,
-    pub allow_same_version: bool,
-    pub preid: &'static [u8],
-    pub message: Option<&'static [u8]>,
+    pub(crate) git_tag_version: bool,
+    pub(crate) allow_same_version: bool,
+    pub(crate) preid: &'static [u8],
+    pub(crate) message: Option<&'static [u8]>,
 
     // `bun pm why` options
     pub top_only: bool,
-    pub depth: Option<usize>,
+    pub(crate) depth: Option<usize>,
 
     // `bun audit` options
     pub audit_level: Option<AuditLevel>,
     pub audit_ignore_list: &'static [&'static [u8]],
 
     // CPU and OS overrides for optional dependencies
-    pub cpu: Npm::Architecture,
-    pub os: Npm::OperatingSystem,
+    pub(crate) cpu: Npm::Architecture,
+    pub(crate) os: Npm::OperatingSystem,
 }
 
 impl Default for CommandLineArguments {
@@ -546,7 +546,7 @@ bun_core::comptime_string_map! {
 }
 
 impl AuditLevel {
-    pub fn from_string(str: &[u8]) -> Option<AuditLevel> {
+    pub(crate) fn from_string(str: &[u8]) -> Option<AuditLevel> {
         AUDIT_LEVEL_MAP.get(str).copied()
     }
 
@@ -568,9 +568,9 @@ pub enum PatchOpts {
 
 #[derive(Default, Copy, Clone)]
 pub struct Omit {
-    pub dev: bool,
-    pub optional: bool,
-    pub peer: bool,
+    pub(crate) dev: bool,
+    pub(crate) optional: bool,
+    pub(crate) peer: bool,
 }
 
 impl CommandLineArguments {

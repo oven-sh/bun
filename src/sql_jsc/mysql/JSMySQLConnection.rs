@@ -66,10 +66,10 @@ pub struct JSMySQLConnection {
     // `from_field_ptr!` (offset unchanged — `JsCell` is transparent).
     pub(crate) connection: JsCell<my_sql_connection::MySQLConnection>,
 
-    pub auto_flusher: JsCell<AutoFlusher>,
+    pub(crate) auto_flusher: JsCell<AutoFlusher>,
 
-    pub idle_timeout_interval_ms: u32,
-    pub connection_timeout_ms: u32,
+    pub(crate) idle_timeout_interval_ms: u32,
+    pub(crate) connection_timeout_ms: u32,
     /// Before being connected, this is a connection timeout timer.
     /// After being connected, this is an idle timeout timer.
     // Private — intrusive heap node; cross-crate `container_of` goes through
@@ -79,7 +79,7 @@ pub struct JSMySQLConnection {
     /// This timer controls the maximum lifetime of a connection.
     /// It starts when the connection successfully starts (i.e. after handshake is complete).
     /// It stops when the connection is closed.
-    pub max_lifetime_interval_ms: u32,
+    pub(crate) max_lifetime_interval_ms: u32,
     // Private — see `timer`; recovered via [`Self::from_max_lifetime_timer_ptr`].
     max_lifetime_timer: JsCell<EventLoopTimer>,
 }
@@ -172,7 +172,7 @@ impl JSMySQLConnection {
     /// the same connection.
     #[inline]
     #[allow(clippy::mut_from_ref)]
-    pub(crate) fn connection_mut(&self) -> &mut my_sql_connection::MySQLConnection {
+    fn connection_mut(&self) -> &mut my_sql_connection::MySQLConnection {
         // SAFETY: R-2 single-JS-thread invariant (see `JsCell` docs). The
         // `&mut` is fresh per call site; reentrancy through
         // `MySQLConnection::get_js_connection()` forms a shared
@@ -182,7 +182,7 @@ impl JSMySQLConnection {
 
     // ────────────────────────────────────────────────────────────────────────
 
-    pub fn on_auto_flush(&self) -> bool {
+    pub(crate) fn on_auto_flush(&self) -> bool {
         bun_core::scoped_log!(MySQLConnection, "onAutoFlush");
         if self.connection.get().has_backpressure() {
             self.auto_flusher.with_mut(|a| a.registered = false);
@@ -243,7 +243,7 @@ impl JSMySQLConnection {
         }
     }
 
-    pub fn reset_connection_timeout(&self) {
+    pub(crate) fn reset_connection_timeout(&self) {
         let interval = self.get_timeout_interval();
         bun_core::scoped_log!(MySQLConnection, "resetConnectionTimeout {}", interval);
         if self.timer.get().state == EventLoopTimerState::ACTIVE {
@@ -352,14 +352,14 @@ impl JSMySQLConnection {
         )))
     }
 
-    pub fn enqueue_request(&self, item: *mut JSMySQLQuery) {
+    pub(crate) fn enqueue_request(&self, item: *mut JSMySQLQuery) {
         bun_core::scoped_log!(MySQLConnection, "enqueueRequest");
         self.connection_mut().enqueue_request(item);
         self.reset_connection_timeout();
         self.register_auto_flusher();
     }
 
-    pub fn close(&self) {
+    pub(crate) fn close(&self) {
         // Re-enter through a `ParentRef` (lifetime-erased `&Self`) so no Rust
         // borrow is held across the potential free in `deref()`. Guard drop
         // order is LIFO: `_ref` (deref) drops last, after
@@ -462,7 +462,7 @@ impl JSMySQLConnection {
     }
 
     // — same proc-macro limitation as `constructor` above.
-    pub fn create_instance(
+    pub(crate) fn create_instance(
         global_object: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
@@ -678,7 +678,7 @@ impl JSMySQLConnection {
         None
     }
 
-    pub fn get_queries_array(&self) -> JSValue {
+    pub(crate) fn get_queries_array(&self) -> JSValue {
         if self.vm().is_shutting_down() {
             return JSValue::UNDEFINED;
         }
@@ -689,7 +689,7 @@ impl JSMySQLConnection {
     }
 
     #[inline]
-    pub fn is_able_to_write(&self) -> bool {
+    pub(crate) fn is_able_to_write(&self) -> bool {
         self.connection.get().is_able_to_write()
     }
     #[inline]
@@ -697,19 +697,19 @@ impl JSMySQLConnection {
         self.connection.get().status == my_sql_connection::Status::Connected
     }
     #[inline]
-    pub fn can_pipeline(&self) -> bool {
+    pub(crate) fn can_pipeline(&self) -> bool {
         self.connection_mut().can_pipeline()
     }
     #[inline]
-    pub fn can_prepare_query(&self) -> bool {
+    pub(crate) fn can_prepare_query(&self) -> bool {
         self.connection_mut().can_prepare_query()
     }
     #[inline]
-    pub fn can_execute_query(&self) -> bool {
+    pub(crate) fn can_execute_query(&self) -> bool {
         self.connection_mut().can_execute_query()
     }
     #[inline]
-    pub fn get_writer(&self) -> NewWriter<my_sql_connection::Writer> {
+    pub(crate) fn get_writer(&self) -> NewWriter<my_sql_connection::Writer> {
         self.connection_mut().writer()
     }
 
@@ -786,7 +786,7 @@ impl JSMySQLConnection {
         self.fail_with_js_value(instance);
     }
 
-    pub fn on_connection_estabilished(&self) {
+    pub(crate) fn on_connection_estabilished(&self) {
         if self.vm().is_shutting_down() {
             return;
         }
@@ -800,11 +800,11 @@ impl JSMySQLConnection {
             .queue_microtask(on_connect, &[JSValue::NULL, js_value]);
     }
 
-    pub fn on_query_result(&self, request: &JSMySQLQuery, result: &MySQLQueryResult) {
+    pub(crate) fn on_query_result(&self, request: &JSMySQLQuery, result: &MySQLQueryResult) {
         request.resolve(self.get_queries_array(), result);
     }
 
-    pub fn on_result_row<C: bun_sql::mysql::protocol::ReaderContext>(
+    pub(crate) fn on_result_row<C: bun_sql::mysql::protocol::ReaderContext>(
         &self,
         request: &JSMySQLQuery,
         statement: &mut MySQLStatement,
@@ -881,7 +881,7 @@ impl JSMySQLConnection {
         Ok(())
     }
 
-    pub fn on_error(&self, request: Option<&JSMySQLQuery>, err: AnyMySQLErrorT) {
+    pub(crate) fn on_error(&self, request: Option<&JSMySQLQuery>, err: AnyMySQLErrorT) {
         if let Some(request) = request {
             if self.vm().is_shutting_down() {
                 request.mark_as_failed();
@@ -905,7 +905,7 @@ impl JSMySQLConnection {
         }
     }
 
-    pub fn on_error_packet(&self, request: Option<&JSMySQLQuery>, err: &ErrorPacket) {
+    pub(crate) fn on_error_packet(&self, request: Option<&JSMySQLQuery>, err: &ErrorPacket) {
         if let Some(request) = request {
             if self.vm().is_shutting_down() {
                 request.mark_as_failed();
@@ -932,7 +932,7 @@ impl JSMySQLConnection {
         }
     }
 
-    pub fn get_statement_from_signature_name(
+    pub(crate) fn get_statement_from_signature_name(
         &self,
         signature_name: &[u8],
     ) -> Result<my_sql_connection::PreparedStatementsMapGetOrPutResult<'_>, bun_core::AllocError>

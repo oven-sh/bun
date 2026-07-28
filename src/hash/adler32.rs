@@ -7,7 +7,7 @@
 //! ignored for Adler32.
 
 pub struct Adler32 {
-    pub adler: u32,
+    pub(crate) adler: u32,
 }
 
 impl Default for Adler32 {
@@ -26,7 +26,7 @@ impl Adler32 {
         Self::default()
     }
 
-    pub fn permute(state: u32, input: &[u8]) -> u32 {
+    pub(crate) fn permute(state: u32, input: &[u8]) -> u32 {
         let mut s1 = state & 0xffff;
         let mut s2 = (state >> 16) & 0xffff;
 

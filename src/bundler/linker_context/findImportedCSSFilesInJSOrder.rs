@@ -25,7 +25,7 @@ use bun_collections::DynamicBitSet as BitSet;
 /// "require()" and "import()"). This is because the import order is impossible
 /// to determine since the imports happen at run-time instead of compile-time.
 /// In this case we just pick an arbitrary but consistent order.
-pub fn find_imported_css_files_in_js_order(
+pub(crate) fn find_imported_css_files_in_js_order(
     this: &LinkerContext,
     _temp: &Arena,
     entry_point: Index,

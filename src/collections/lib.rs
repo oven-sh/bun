@@ -57,7 +57,7 @@ pub trait PriorityCompare<T> {
 }
 pub struct PriorityQueue<T, C> {
     pub items: Vec<T>,
-    pub context: C,
+    pub(crate) context: C,
 }
 impl<T, C: Default> Default for PriorityQueue<T, C> {
     fn default() -> Self {

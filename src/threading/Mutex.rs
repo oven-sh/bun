@@ -157,7 +157,7 @@ pub(crate) struct DebugImpl {
 
 #[cfg(debug_assertions)]
 impl DebugImpl {
-    pub(crate) const fn new() -> Self {
+    const fn new() -> Self {
         Self {
             locking_thread: AtomicU64::new(0),
             impl_: ReleaseImpl::new(),
@@ -225,7 +225,7 @@ unsafe extern "system" {
 
 #[cfg(windows)]
 impl WindowsImpl {
-    pub(crate) const fn new() -> Self {
+    const fn new() -> Self {
         Self {
             srwlock: core::cell::UnsafeCell::new(bun_sys::windows::SRWLOCK_INIT),
         }
@@ -283,7 +283,7 @@ unsafe extern "C" {
 
 #[cfg(target_vendor = "apple")]
 impl DarwinImpl {
-    pub(crate) const fn new() -> Self {
+    const fn new() -> Self {
         Self {
             oul: core::cell::UnsafeCell::new(OsUnfairLock { _opaque: 0 }),
         }
@@ -310,7 +310,7 @@ pub struct FutexImpl {
 
 #[cfg(not(any(windows, target_vendor = "apple")))]
 impl FutexImpl {
-    pub(crate) const fn new() -> Self {
+    const fn new() -> Self {
         Self {
             state: AtomicU32::new(0),
         }
@@ -396,17 +396,17 @@ impl FutexImpl {
 
 // These have to be a size known to C.
 #[unsafe(no_mangle)]
-pub(crate) unsafe extern "C" fn Bun__lock(ptr: *mut ReleaseImpl) {
+unsafe extern "C" fn Bun__lock(ptr: *mut ReleaseImpl) {
     // SAFETY: C caller passes a valid, initialized ReleaseImpl pointer.
     unsafe { (*ptr).lock() }
 }
 
 // These have to be a size known to C.
 #[unsafe(no_mangle)]
-pub(crate) unsafe extern "C" fn Bun__unlock(ptr: *mut ReleaseImpl) {
+unsafe extern "C" fn Bun__unlock(ptr: *mut ReleaseImpl) {
     // SAFETY: C caller passes a valid, initialized ReleaseImpl pointer that this thread locked.
     unsafe { (*ptr).unlock() }
 }
 
 #[unsafe(no_mangle)]
-pub(crate) static Bun__lock__size: usize = core::mem::size_of::<ReleaseImpl>();
+static Bun__lock__size: usize = core::mem::size_of::<ReleaseImpl>();

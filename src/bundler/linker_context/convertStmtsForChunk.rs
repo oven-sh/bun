@@ -44,7 +44,7 @@ use crate::options::Format;
 /// In that case, when bundling, we still need to preserve that module
 /// namespace object (foo) because we cannot know what they are going to
 /// attempt to access statically
-pub fn convert_stmts_for_chunk(
+pub(crate) fn convert_stmts_for_chunk(
     c: &mut LinkerContext<'_>,
     source_index: u32,
     stmts: &mut StmtList,

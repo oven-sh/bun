@@ -34,16 +34,16 @@ pub enum SupportsCondition {
 // cannot carry inherent methods).
 pub struct Declaration {
     /// The property id for the declaration.
-    pub property_id: PropertyId,
+    pub(crate) property_id: PropertyId,
     /// The raw value of the declaration.
     ///
     /// What happens if the value is a URL? A URL in this context does nothing
     /// e.g. `@supports (background-image: url('example.png'))`
-    pub value: &'static [u8],
+    pub(crate) value: &'static [u8],
 }
 
 impl Declaration {
-    pub(crate) fn deep_clone(&self, _bump: &bun_alloc::Arena) -> Self {
+    fn deep_clone(&self, _bump: &bun_alloc::Arena) -> Self {
         // `PropertyId` is `Copy`; `value` is an arena-owned slice → identity copy.
         Self {
             property_id: self.property_id,
@@ -53,7 +53,7 @@ impl Declaration {
 }
 
 impl Declaration {
-    pub(crate) fn eql(&self, other: &Self) -> bool {
+    fn eql(&self, other: &Self) -> bool {
         // `PropertyId` carries its own tag+prefix `PartialEq` (see
         // properties_generated.rs `impl PartialEq for PropertyId`); `value` is
         // byte-slice equality.
@@ -70,7 +70,7 @@ impl SupportsCondition {
         self.deep_clone(bump)
     }
 
-    pub fn deep_clone(&self, bump: &bun_alloc::Arena) -> SupportsCondition {
+    pub(crate) fn deep_clone(&self, bump: &bun_alloc::Arena) -> SupportsCondition {
         // Hand-rolled variant-walk —
         // `#[derive(DeepClone)]` can't be used while `Selector`/`Unknown`
         // carry `&'static [u8]`; the blanket `&'bump [u8]` impl doesn't unify
@@ -154,7 +154,7 @@ impl SupportsCondition {
         }
     }
 
-    pub fn to_css_with_parens_if_needed(
+    pub(crate) fn to_css_with_parens_if_needed(
         &self,
         dest: &mut Printer,
         needs_parens: bool,
@@ -355,7 +355,7 @@ impl SupportsCondition {
         Ok(in_parens)
     }
 
-    pub fn parse_declaration(input: &mut css::Parser) -> css::Result<SupportsCondition> {
+    pub(crate) fn parse_declaration(input: &mut css::Parser) -> css::Result<SupportsCondition> {
         let property_id = PropertyId::parse(input)?;
         input.expect_colon()?;
         input.skip_whitespace();
@@ -438,7 +438,7 @@ pub struct SupportsRule<R> {
 }
 
 impl<R> SupportsRule<R> {
-    pub fn minify(
+    pub(crate) fn minify(
         &mut self,
         context: &mut MinifyContext,
         parent_is_unused: bool,
@@ -473,7 +473,7 @@ impl<R> SupportsRule<R> {
 }
 
 impl<R> SupportsRule<R> {
-    pub fn deep_clone<'bump>(&self, bump: &'bump bun_alloc::Arena) -> Self
+    pub(crate) fn deep_clone<'bump>(&self, bump: &'bump bun_alloc::Arena) -> Self
     where
         R: css::generics::DeepClone<'bump>,
     {

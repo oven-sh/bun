@@ -25,7 +25,7 @@ pub mod ffi {
     /// `#define EVP_MAX_MD_SIZE 64` — SHA-512 is the longest digest. Re-typed
     /// as `usize` (sys crate exposes `c_int`) so `[u8; EVP_MAX_MD_SIZE]` array
     /// lengths in `hmac` / `SASL` / `s3_signing` keep compiling unchanged.
-    pub const EVP_MAX_MD_SIZE: usize = bun_boringssl_sys::EVP_MAX_MD_SIZE as usize;
+    pub(crate) const EVP_MAX_MD_SIZE: usize = bun_boringssl_sys::EVP_MAX_MD_SIZE as usize;
 }
 
 // ──────────────────────────────────────────────────────────────────────────

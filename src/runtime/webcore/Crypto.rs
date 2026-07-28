@@ -14,7 +14,7 @@ pub struct Crypto {}
 
 impl Crypto {
     #[bun_jsc::host_fn(method)]
-    pub fn timing_safe_equal(
+    pub(crate) fn timing_safe_equal(
         &self,
         global: &JSGlobalObject,
         callframe: &CallFrame,
@@ -28,7 +28,7 @@ impl Crypto {
     // the JIT checks for a pending exception after the call.
 
     #[bun_jsc::host_fn(method)]
-    pub fn get_random_values(
+    pub(crate) fn get_random_values(
         &self,
         global: &JSGlobalObject,
         callframe: &CallFrame,
@@ -79,7 +79,7 @@ impl Crypto {
     // DOMJIT fast path.
 
     #[bun_jsc::host_fn(method)]
-    pub fn random_uuid(
+    pub(crate) fn random_uuid(
         &self,
         global: &JSGlobalObject,
         _callframe: &CallFrame,
@@ -100,7 +100,7 @@ impl Crypto {
     // DOMJIT fast path.
 
     // `#[JsClass]` emits `CryptoClass__construct` calling this.
-    pub fn constructor(global: &JSGlobalObject, _callframe: &CallFrame) -> JsResult<*mut Crypto> {
+    pub(crate) fn constructor(global: &JSGlobalObject, _callframe: &CallFrame) -> JsResult<*mut Crypto> {
         Err(global.throw_illegal_constructor())
     }
 }
@@ -128,7 +128,7 @@ fn random_data(global: &JSGlobalObject, slice: &mut [u8]) {
 // The #[bun_jsc::host_fn] attribute macro emits the `extern "C"` shim with the
 // correct calling convention and `#[unsafe(no_mangle)]` under the exported name.
 #[bun_jsc::host_fn(export = "Bun__randomUUIDv7")]
-pub(crate) fn bun_random_uuid_v7(
+fn bun_random_uuid_v7(
     global: &JSGlobalObject,
     callframe: &CallFrame,
 ) -> JsResult<JSValue> {
@@ -234,7 +234,7 @@ pub(crate) fn bun_random_uuid_v7(
 }
 
 #[bun_jsc::host_fn(export = "Bun__randomUUIDv5")]
-pub(crate) fn bun_random_uuid_v5(
+fn bun_random_uuid_v5(
     global: &JSGlobalObject,
     callframe: &CallFrame,
 ) -> JsResult<JSValue> {
@@ -368,7 +368,7 @@ pub(crate) fn bun_random_uuid_v5(
 }
 
 #[unsafe(no_mangle)]
-pub(crate) extern "C" fn CryptoObject__create(global: &JSGlobalObject) -> JSValue {
+extern "C" fn CryptoObject__create(global: &JSGlobalObject) -> JSValue {
     bun_jsc::mark_binding!();
 
     // Box::new aborts on OOM, so an out-of-memory throw arm is unreachable.

@@ -18,21 +18,21 @@ use bun_alloc::ArenaVecExt as _;
 #[cfg_attr(any(), derive(Clone))]
 pub struct Background {
     /// The background image.
-    pub image: Image,
+    pub(crate) image: Image,
     /// The background color.
-    pub color: CssColor,
+    pub(crate) color: CssColor,
     /// The background position.
-    pub position: BackgroundPosition,
+    pub(crate) position: BackgroundPosition,
     /// How the background image should repeat.
-    pub repeat: BackgroundRepeat,
+    pub(crate) repeat: BackgroundRepeat,
     /// The size of the background image.
-    pub size: BackgroundSize,
+    pub(crate) size: BackgroundSize,
     /// The background attachment.
-    pub attachment: BackgroundAttachment,
+    pub(crate) attachment: BackgroundAttachment,
     /// The background origin.
-    pub origin: BackgroundOrigin,
+    pub(crate) origin: BackgroundOrigin,
     /// How the background should be clipped.
-    pub clip: BackgroundClip,
+    pub(crate) clip: BackgroundClip,
 }
 
 impl Background {
@@ -215,24 +215,24 @@ impl Background {
         Ok(())
     }
 
-    pub(crate) fn get_image(&self) -> &Image {
+    fn get_image(&self) -> &Image {
         &self.image
     }
 
-    pub(crate) fn with_image(&self, arena: &Bump, image: Image) -> Self {
+    fn with_image(&self, arena: &Bump, image: Image) -> Self {
         let mut ret = self.deep_clone(arena);
         ret.image = image;
         ret
     }
 
-    pub(crate) fn get_fallback(&self, arena: &Bump, kind: ColorFallbackKind) -> Background {
+    fn get_fallback(&self, arena: &Bump, kind: ColorFallbackKind) -> Background {
         let mut ret = self.deep_clone(arena);
         ret.color = self.color.get_fallback(arena, kind);
         ret.image = self.image.get_fallback(arena, kind);
         ret
     }
 
-    pub(crate) fn get_necessary_fallbacks(
+    fn get_necessary_fallbacks(
         &self,
         targets: &css::targets::Targets,
     ) -> ColorFallbackKind {
@@ -281,9 +281,9 @@ pub enum BackgroundSize {
 #[derive(Clone, PartialEq)]
 pub struct ExplicitBackgroundSize {
     /// The width of the background.
-    pub width: LengthPercentageOrAuto,
+    pub(crate) width: LengthPercentageOrAuto,
     /// The height of the background.
-    pub height: LengthPercentageOrAuto,
+    pub(crate) height: LengthPercentageOrAuto,
 }
 
 impl BackgroundSize {
@@ -340,9 +340,9 @@ impl BackgroundSize {
 #[derive(Clone, PartialEq)]
 pub struct BackgroundPosition {
     /// The x-position.
-    pub x: HorizontalPosition,
+    pub(crate) x: HorizontalPosition,
     /// The y-position.
-    pub y: VerticalPosition,
+    pub(crate) y: VerticalPosition,
 }
 
 impl BackgroundPosition {
@@ -356,15 +356,15 @@ impl BackgroundPosition {
         pos.to_css(dest)
     }
 
-    pub(crate) fn default() -> Self {
+    fn default() -> Self {
         BackgroundPosition::from_position(Position::default())
     }
 
-    pub(crate) fn from_position(pos: Position) -> BackgroundPosition {
+    fn from_position(pos: Position) -> BackgroundPosition {
         BackgroundPosition { x: pos.x, y: pos.y }
     }
 
-    pub(crate) fn into_position(&self) -> Position {
+    fn into_position(&self) -> Position {
         Position {
             x: self.x.clone(),
             y: self.y.clone(),
@@ -381,9 +381,9 @@ impl BackgroundPosition {
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub struct BackgroundRepeat {
     /// A repeat style for the x direction.
-    pub x: BackgroundRepeatKeyword,
+    pub(crate) x: BackgroundRepeatKeyword,
     /// A repeat style for the y direction.
-    pub y: BackgroundRepeatKeyword,
+    pub(crate) y: BackgroundRepeatKeyword,
 }
 
 impl BackgroundRepeat {
@@ -471,7 +471,7 @@ pub enum BackgroundAttachment {
 }
 
 impl BackgroundAttachment {
-    pub(crate) fn default() -> Self {
+    fn default() -> Self {
         BackgroundAttachment::Scroll
     }
 }
@@ -505,11 +505,11 @@ pub enum BackgroundClip {
 }
 
 impl BackgroundClip {
-    pub(crate) fn default() -> BackgroundClip {
+    fn default() -> BackgroundClip {
         BackgroundClip::BorderBox
     }
 
-    pub(crate) fn eql_origin(self, other: BackgroundOrigin) -> bool {
+    fn eql_origin(self, other: BackgroundOrigin) -> bool {
         match self {
             BackgroundClip::BorderBox => other == BackgroundOrigin::BorderBox,
             BackgroundClip::PaddingBox => other == BackgroundOrigin::PaddingBox,
@@ -518,7 +518,7 @@ impl BackgroundClip {
         }
     }
 
-    pub(crate) fn is_background_box(self) -> bool {
+    fn is_background_box(self) -> bool {
         matches!(
             self,
             BackgroundClip::BorderBox | BackgroundClip::PaddingBox | BackgroundClip::ContentBox
@@ -542,18 +542,18 @@ bitflags::bitflags! {
 }
 
 impl BackgroundProperty {
-    pub(crate) const BACKGROUND_COLOR: Self = Self::COLOR;
-    pub(crate) const BACKGROUND_IMAGE: Self = Self::IMAGE;
-    pub(crate) const BACKGROUND_POSITION_X: Self = Self::POSITION_X;
-    pub(crate) const BACKGROUND_POSITION_Y: Self = Self::POSITION_Y;
-    pub(crate) const BACKGROUND_POSITION: Self =
+    const BACKGROUND_COLOR: Self = Self::COLOR;
+    const BACKGROUND_IMAGE: Self = Self::IMAGE;
+    const BACKGROUND_POSITION_X: Self = Self::POSITION_X;
+    const BACKGROUND_POSITION_Y: Self = Self::POSITION_Y;
+    const BACKGROUND_POSITION: Self =
         Self::from_bits_truncate(Self::POSITION_X.bits() | Self::POSITION_Y.bits());
-    pub(crate) const BACKGROUND_REPEAT: Self = Self::REPEAT;
-    pub(crate) const BACKGROUND_SIZE: Self = Self::SIZE;
-    pub(crate) const BACKGROUND_ATTACHMENT: Self = Self::ATTACHMENT;
-    pub(crate) const BACKGROUND_ORIGIN: Self = Self::ORIGIN;
+    const BACKGROUND_REPEAT: Self = Self::REPEAT;
+    const BACKGROUND_SIZE: Self = Self::SIZE;
+    const BACKGROUND_ATTACHMENT: Self = Self::ATTACHMENT;
+    const BACKGROUND_ORIGIN: Self = Self::ORIGIN;
 
-    pub(crate) const BACKGROUND: Self = Self::from_bits_truncate(
+    const BACKGROUND: Self = Self::from_bits_truncate(
         Self::COLOR.bits()
             | Self::IMAGE.bits()
             | Self::POSITION_X.bits()
@@ -565,7 +565,7 @@ impl BackgroundProperty {
             | Self::CLIP.bits(),
     );
 
-    pub(crate) fn try_from_property_id(property_id: PropertyId) -> Option<BackgroundProperty> {
+    fn try_from_property_id(property_id: PropertyId) -> Option<BackgroundProperty> {
         match property_id {
             PropertyId::BackgroundColor => Some(Self::BACKGROUND_COLOR),
             PropertyId::BackgroundImage => Some(Self::BACKGROUND_IMAGE),
@@ -584,21 +584,21 @@ impl BackgroundProperty {
 
 #[derive(Default)]
 pub struct BackgroundHandler {
-    pub color: Option<CssColor>,
-    pub images: Option<SmallList<Image, 1>>,
-    pub has_prefix: bool,
-    pub x_positions: Option<SmallList<HorizontalPosition, 1>>,
-    pub y_positions: Option<SmallList<VerticalPosition, 1>>,
-    pub repeats: Option<SmallList<BackgroundRepeat, 1>>,
-    pub sizes: Option<SmallList<BackgroundSize, 1>>,
-    pub attachments: Option<SmallList<BackgroundAttachment, 1>>,
-    pub origins: Option<SmallList<BackgroundOrigin, 1>>,
-    pub clips: Option<(SmallList<BackgroundClip, 1>, VendorPrefix)>,
+    pub(crate) color: Option<CssColor>,
+    pub(crate) images: Option<SmallList<Image, 1>>,
+    pub(crate) has_prefix: bool,
+    pub(crate) x_positions: Option<SmallList<HorizontalPosition, 1>>,
+    pub(crate) y_positions: Option<SmallList<VerticalPosition, 1>>,
+    pub(crate) repeats: Option<SmallList<BackgroundRepeat, 1>>,
+    pub(crate) sizes: Option<SmallList<BackgroundSize, 1>>,
+    pub(crate) attachments: Option<SmallList<BackgroundAttachment, 1>>,
+    pub(crate) origins: Option<SmallList<BackgroundOrigin, 1>>,
+    pub(crate) clips: Option<(SmallList<BackgroundClip, 1>, VendorPrefix)>,
     // TODO(perf): should be `bun_alloc::ArenaVec<'bump, Property>`; threading
     // `'bump` through BackgroundHandler would avoid the heap alloc.
-    pub decls: Vec<Property>,
-    pub flushed_properties: BackgroundProperty,
-    pub has_any: bool,
+    pub(crate) decls: Vec<Property>,
+    pub(crate) flushed_properties: BackgroundProperty,
+    pub(crate) has_any: bool,
 }
 
 // Struct fields cannot be indexed by string at runtime; the `flushHelper` /

@@ -21,14 +21,14 @@ pub mod BrotliAllocator {
 // ──────────────────────────────────────────────────────────────────────────
 
 pub struct DecoderOptions {
-    pub params: DecoderParams,
+    pub(crate) params: DecoderParams,
 }
 
 /// One `bool` per `BrotliDecoderParameter` variant, default `false`.
 #[derive(Default)]
 pub struct DecoderParams {
-    pub large_window: bool,
-    pub disable_ring_buffer_reallocation: bool,
+    pub(crate) large_window: bool,
+    pub(crate) disable_ring_buffer_reallocation: bool,
 }
 
 impl Default for DecoderOptions {
@@ -48,7 +48,7 @@ impl Default for DecoderOptions {
 
 pub struct BrotliReaderArrayList<'a> {
     pub input: &'a [u8],
-    pub brotli: *mut c::BrotliDecoder,
+    pub(crate) brotli: *mut c::BrotliDecoder,
     pub state: ReaderState,
 }
 
@@ -96,10 +96,10 @@ impl<'a> Drop for BrotliReaderArrayList<'a> {
 /// without lifetime erasure.
 pub struct StreamingDecoder {
     brotli: ptr::NonNull<c::BrotliDecoder>,
-    pub state: ReaderState,
+    pub(crate) state: ReaderState,
     /// Decompression-bomb guard: `decompress` errors instead of growing the
     /// output past this many bytes. Defaults to unbounded.
-    pub max_output_size: usize,
+    pub(crate) max_output_size: usize,
 }
 
 impl StreamingDecoder {
@@ -268,11 +268,11 @@ pub fn encode(
 // ──────────────────────────────────────────────────────────────────────────
 
 pub struct BrotliCompressionStream {
-    pub brotli: *mut c::BrotliEncoder,
-    pub state: CompressionState,
-    pub total_in: usize,
-    pub flush_op: c::BrotliEncoderOperation,
-    pub finish_flush_op: c::BrotliEncoderOperation,
+    pub(crate) brotli: *mut c::BrotliEncoder,
+    pub(crate) state: CompressionState,
+    pub(crate) total_in: usize,
+    pub(crate) flush_op: c::BrotliEncoderOperation,
+    pub(crate) finish_flush_op: c::BrotliEncoderOperation,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -321,7 +321,7 @@ impl BrotliCompressionStream {
     // The returned slice borrows brotli's internal buffer, valid until the
     // next compress_stream/destroy call. Tying it to `&mut self` prevents
     // overlapping calls that would invalidate it.
-    pub fn write_chunk(&mut self, input: &[u8], last: bool) -> crate::Result<&[u8]> {
+    pub(crate) fn write_chunk(&mut self, input: &[u8], last: bool) -> crate::Result<&[u8]> {
         self.total_in += input.len();
         let op = if last {
             self.finish_flush_op
@@ -344,7 +344,7 @@ impl BrotliCompressionStream {
         Ok(result.output)
     }
 
-    pub fn write(&mut self, input: &[u8], last: bool) -> crate::Result<&[u8]> {
+    pub(crate) fn write(&mut self, input: &[u8], last: bool) -> crate::Result<&[u8]> {
         if self.state == CompressionState::End || self.state == CompressionState::Error {
             return Ok(b"");
         }
@@ -383,8 +383,8 @@ impl Drop for BrotliCompressionStream {
 }
 
 pub struct BrotliWriter<'a, W> {
-    pub compressor: &'a mut BrotliCompressionStream,
-    pub input_writer: W,
+    pub(crate) compressor: &'a mut BrotliCompressionStream,
+    pub(crate) input_writer: W,
 }
 
 impl<'a, W: bun_io::Write> BrotliWriter<'a, W> {
@@ -395,7 +395,7 @@ impl<'a, W: bun_io::Write> BrotliWriter<'a, W> {
         }
     }
 
-    pub fn write(&mut self, to_compress: &[u8]) -> crate::Result<usize> {
+    pub(crate) fn write(&mut self, to_compress: &[u8]) -> crate::Result<usize> {
         let decompressed = self.compressor.write(to_compress, false)?;
         self.input_writer.write_all(decompressed)?;
         Ok(to_compress.len())

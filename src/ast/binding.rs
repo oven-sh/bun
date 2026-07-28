@@ -158,12 +158,12 @@ impl ToExprWrapper {
     }
 
     #[inline]
-    pub fn wrap_identifier(&self, ctx: *mut core::ffi::c_void, loc: crate::Loc, ref_: Ref) -> Expr {
+    pub(crate) fn wrap_identifier(&self, ctx: *mut core::ffi::c_void, loc: crate::Loc, ref_: Ref) -> Expr {
         (self.wrap)(ctx, loc, ref_)
     }
 
     #[inline]
-    pub fn arena(&self) -> &Arena {
+    pub(crate) fn arena(&self) -> &Arena {
         // `BackRef::get` encapsulates the deref under the owner-outlives-holder
         // invariant; `expect` mirrors the prior `debug_assert!(!null)`.
         self.arena

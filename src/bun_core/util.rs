@@ -635,7 +635,7 @@ impl<T> Mutex<T> {
     }
 
     #[inline]
-    pub fn try_lock(&self) -> Option<MutexGuard<'_, T>> {
+    pub(crate) fn try_lock(&self) -> Option<MutexGuard<'_, T>> {
         match self.0.try_lock() {
             Ok(g) => Some(g),
             Err(std::sync::TryLockError::Poisoned(e)) => Some(e.into_inner()),
@@ -1519,17 +1519,22 @@ impl core::fmt::Display for Fd {
 /// Fd module-level statics + Windows libuv/PEB FFI shims (T0 → no
 /// crate dep, just `extern` symbols; libuv is linked into the final binary).
 pub mod fd {
+    #[cfg(windows)]
     use super::Fd;
     #[cfg(windows)]
     use core::ffi::{c_int, c_void};
 
     // Written once in windows_stdio::init() during single-threaded startup
     // (S015: write-once → `Once`; readers fall back to `Fd::INVALID`).
-    pub static WINDOWS_CACHED_STDIN: crate::Once<Fd> = crate::Once::new();
-    pub static WINDOWS_CACHED_STDOUT: crate::Once<Fd> = crate::Once::new();
-    pub static WINDOWS_CACHED_STDERR: crate::Once<Fd> = crate::Once::new();
+    #[cfg(windows)]
+    pub(crate) static WINDOWS_CACHED_STDIN: crate::Once<Fd> = crate::Once::new();
+    #[cfg(windows)]
+    pub(crate) static WINDOWS_CACHED_STDOUT: crate::Once<Fd> = crate::Once::new();
+    #[cfg(windows)]
+    pub(crate) static WINDOWS_CACHED_STDERR: crate::Once<Fd> = crate::Once::new();
+    #[cfg(windows)]
     #[cfg(debug_assertions)]
-    pub static WINDOWS_CACHED_FD_SET: core::sync::atomic::AtomicBool =
+    pub(crate) static WINDOWS_CACHED_FD_SET: core::sync::atomic::AtomicBool =
         core::sync::atomic::AtomicBool::new(false);
 
     #[cfg(windows)]
@@ -1549,7 +1554,7 @@ pub mod fd {
     #[cfg(windows)]
     pub use crate::windows_sys::{STD_ERROR_HANDLE, STD_INPUT_HANDLE, STD_OUTPUT_HANDLE};
     #[cfg(windows)]
-    pub fn is_stdio_handle(id: u32, handle: *mut c_void) -> bool {
+    pub(crate) fn is_stdio_handle(id: u32, handle: *mut c_void) -> bool {
         // The `GetStdHandle` wrapper maps both NULL and
         // INVALID_HANDLE_VALUE to `None`, so use the Option-returning
         // wrapper here. Without the INVALID_HANDLE_VALUE filter, a detached
@@ -1567,13 +1572,13 @@ pub mod fd {
     /// read here, so a minimal view is exposed via accessor fns.
     #[cfg(windows)]
     #[repr(C)]
-    pub struct ProcessParametersStdio {
-        pub hStdInput: *mut c_void,
-        pub hStdOutput: *mut c_void,
-        pub hStdError: *mut c_void,
+    pub(crate) struct ProcessParametersStdio {
+        pub(crate) hStdInput: *mut c_void,
+        pub(crate) hStdOutput: *mut c_void,
+        pub(crate) hStdError: *mut c_void,
     }
     #[cfg(windows)]
-    pub fn windows_process_parameters() -> ProcessParametersStdio {
+    pub(crate) fn windows_process_parameters() -> ProcessParametersStdio {
         // PEB → ProcessParameters → {hStdInput,hStdOutput,hStdError}. Snapshot
         // the three handles by value (raw-pointer reads — no `&` formed over
         // OS-mutable memory) so the call site is safe.
@@ -1590,7 +1595,7 @@ pub mod fd {
         }
     }
     #[cfg(windows)]
-    pub fn windows_current_directory_handle() -> *mut c_void {
+    pub(crate) fn windows_current_directory_handle() -> *mut c_void {
         // Reads `peb().ProcessParameters.CurrentDirectory.Handle`. Offset 0x48 on
         // x64, asserted in `bun_core::windows_sys`. The OS updates this handle
         // on `SetCurrentDirectoryW`, so re-read on every call rather than
@@ -1990,7 +1995,8 @@ impl Version {
     /// or empty fields default to 0. Tolerates trailing junk (e.g. uname's
     /// `"5.10.16-microsoft-standard"` → {5,10,16}). `const fn` so it can
     /// populate `static`/`const` initializers.
-    pub const fn parse_dotted(bytes: &[u8]) -> Self {
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    pub(crate) const fn parse_dotted(bytes: &[u8]) -> Self {
         let mut nums = [0u32; 3];
         let mut idx = 0usize;
         let mut i = 0usize;
@@ -2564,7 +2570,7 @@ impl<T> Once<T> {
     /// `Err(value)` rather than waiting, which is fine for the write-once
     /// startup statics that use it (`START_TIME`, `STD*_DESCRIPTOR_TYPE`, …).
     #[inline]
-    pub fn set(&self, value: T) -> Result<(), T> {
+    pub(crate) fn set(&self, value: T) -> Result<(), T> {
         use core::sync::atomic::Ordering::{Acquire, Release};
         if self
             .state
@@ -2627,7 +2633,8 @@ pub enum Pollable {
 impl Pollable {
     /// Lowercase tag name for the `[sys]` debug log.
     #[inline]
-    pub const fn tag_name(self) -> &'static str {
+    #[cfg(not(windows))]
+    pub(crate) const fn tag_name(self) -> &'static str {
         match self {
             Pollable::Ready => "ready",
             Pollable::NotReady => "not_ready",
@@ -4030,7 +4037,7 @@ pub fn bun_options_argc() -> usize {
 }
 /// Write accessor (single-threaded startup).
 #[inline]
-pub fn set_bun_options_argc(n: usize) {
+pub(crate) fn set_bun_options_argc(n: usize) {
     BUN_OPTIONS_ARGC.store(n, core::sync::atomic::Ordering::Relaxed);
 }
 
@@ -4297,7 +4304,8 @@ pub fn getcwd(buf: &mut PathBuffer) -> crate::CrateResult<&ZStr> {
 /// for an executable named `bin`; returns the NUL-terminated match written
 /// into `buf`. POSIX semantics; Windows `PATHEXT` handling stays in
 /// `bun_which` (tier-2).
-pub fn which<'a>(buf: &'a mut PathBuffer, path: &[u8], cwd: &[u8], bin: &[u8]) -> Option<&'a ZStr> {
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
+pub(crate) fn which<'a>(buf: &'a mut PathBuffer, path: &[u8], cwd: &[u8], bin: &[u8]) -> Option<&'a ZStr> {
     if bin.is_empty() {
         return None;
     }
@@ -4396,7 +4404,7 @@ pub fn is_process_reload_in_progress_on_another_thread() -> bool {
 
 /// Terminate the current OS thread without unwinding.
 /// POSIX `pthread_exit`; Windows `ExitThread`. Called from worker `shutdown()`.
-pub fn exit_thread() -> ! {
+pub(crate) fn exit_thread() -> ! {
     #[cfg(unix)]
     {
         // `retval` is stored opaquely for `pthread_join` and never
@@ -4568,7 +4576,7 @@ pub fn reload_process(clear_terminal: bool, may_return: bool) {
 /// Full `bun.spawnSync` (with buffered stdio, env, cwd) is in bun_spawn.
 #[derive(Debug, Clone, Copy)]
 pub struct SpawnStatus {
-    pub code: i32,
+    pub(crate) code: i32,
 }
 impl SpawnStatus {
     #[inline]
@@ -5119,7 +5127,7 @@ impl Timespec {
     /// Construct from a signed nanosecond count. Euclidean division keeps
     /// `nsec ∈ [0, 1e9)` for negative inputs so `ns()`/`order()` round-trip.
     #[inline]
-    pub const fn from_ns(ns: i64) -> Timespec {
+    pub(crate) const fn from_ns(ns: i64) -> Timespec {
         Timespec {
             sec: ns.div_euclid(Self::NS_PER_S),
             nsec: ns.rem_euclid(Self::NS_PER_S),
@@ -5234,7 +5242,7 @@ pub mod mock_time {
     }
     /// Current mocked wall-clock time in ms, or `None` if not mocked.
     #[inline]
-    pub fn wall_ms() -> Option<f64> {
+    pub(crate) fn wall_ms() -> Option<f64> {
         let v = f64::from_bits(MOCKED_WALL_MS.load(Ordering::Relaxed));
         if v.is_nan() { None } else { Some(v) }
     }
@@ -5248,11 +5256,11 @@ pub mod mock_time {
 #[allow(non_camel_case_types)]
 #[repr(transparent)]
 #[derive(Clone, Copy, PartialEq, Eq, Default, Debug)]
-pub struct f16(pub u16);
+pub struct f16(pub(crate) u16);
 
 impl f16 {
     /// Widen to `f64` (exact).
-    pub fn to_f64(self) -> f64 {
+    pub(crate) fn to_f64(self) -> f64 {
         let h = self.0 as u32;
         let sign = (h >> 15) & 1;
         let exp = (h >> 10) & 0x1F;
@@ -5327,7 +5335,7 @@ pub mod perf {
         linux: Option<Linux>,
     }
     impl Ctx {
-        pub const DISABLED: Ctx = Ctx {
+        pub(crate) const DISABLED: Ctx = Ctx {
             #[cfg(any(target_os = "linux", target_os = "android"))]
             linux: None,
         };
@@ -5374,7 +5382,7 @@ pub mod perf {
     }
 
     #[inline]
-    pub fn is_enabled() -> bool {
+    pub(crate) fn is_enabled() -> bool {
         match IS_ENABLED.load(Ordering::Relaxed) {
             DISABLED => false,
             ENABLED => true,

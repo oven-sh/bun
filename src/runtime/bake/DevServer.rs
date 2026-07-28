@@ -82,14 +82,14 @@ impl DevServer {
     /// `DevServer.memoryCost` — sums the per-category breakdown from
     /// `memory_cost_detailed`. Body lives in `dev_server::memory_cost`.
     #[inline]
-    pub fn memory_cost(&self) -> usize {
+    pub(crate) fn memory_cost(&self) -> usize {
         crate::bake::dev_server::memory_cost::memory_cost(self)
     }
 
     /// `DevServer.memoryCostDetailed` — body lives in
     /// `dev_server::memory_cost`.
     #[inline]
-    pub fn memory_cost_detailed(&self) -> MemoryCost {
+    pub(crate) fn memory_cost_detailed(&self) -> MemoryCost {
         crate::bake::dev_server::memory_cost::memory_cost_detailed(self)
     }
 
@@ -97,7 +97,7 @@ impl DevServer {
     /// Safe `Deref` via [`BackRef`](bun_ptr::BackRef): vm is valid for
     /// DevServer's entire lifetime.
     #[inline]
-    pub(crate) fn vm(&self) -> &VirtualMachine {
+    fn vm(&self) -> &VirtualMachine {
         self.vm.get()
     }
 
@@ -105,7 +105,7 @@ impl DevServer {
     /// `'static` so the borrow is decoupled from `&self` and may be held
     /// across `&mut self` reborrows.
     #[inline]
-    pub(crate) fn global(&self) -> &'static JSGlobalObject {
+    fn global(&self) -> &'static JSGlobalObject {
         self.vm().global()
     }
 
@@ -125,27 +125,27 @@ impl DevServer {
     // through these helpers; the SAFETY contract is that `init()` is the only
     // constructor and it always populates all three before returning `Ok`.
     #[inline]
-    pub fn server_transpiler(&self) -> &Transpiler<'static> {
+    pub(crate) fn server_transpiler(&self) -> &Transpiler<'static> {
         // SAFETY: written in `init()` before any access.
         unsafe { self.server_transpiler.assume_init_ref() }
     }
     #[inline]
-    pub fn server_transpiler_mut(&mut self) -> &mut Transpiler<'static> {
+    pub(crate) fn server_transpiler_mut(&mut self) -> &mut Transpiler<'static> {
         // SAFETY: written in `init()` before any access.
         unsafe { self.server_transpiler.assume_init_mut() }
     }
     #[inline]
-    pub fn client_transpiler(&self) -> &Transpiler<'static> {
+    pub(crate) fn client_transpiler(&self) -> &Transpiler<'static> {
         // SAFETY: written in `init()` before any access.
         unsafe { self.client_transpiler.assume_init_ref() }
     }
     #[inline]
-    pub fn client_transpiler_mut(&mut self) -> &mut Transpiler<'static> {
+    pub(crate) fn client_transpiler_mut(&mut self) -> &mut Transpiler<'static> {
         // SAFETY: written in `init()` before any access.
         unsafe { self.client_transpiler.assume_init_mut() }
     }
     #[inline]
-    pub fn ssr_transpiler_mut(&mut self) -> &mut Transpiler<'static> {
+    pub(crate) fn ssr_transpiler_mut(&mut self) -> &mut Transpiler<'static> {
         // SAFETY: written in `init()` before any access.
         unsafe { self.ssr_transpiler.assume_init_mut() }
     }
@@ -166,16 +166,17 @@ pub(crate) use map_log;
 
 pub struct Options<'a> {
     /// Arena must live until DevServer drops
-    pub arena: &'a Arena,
-    pub root: &'a ZStr,
-    pub vm: &'a VirtualMachine,
-    pub framework: bake::Framework,
-    pub bundler_options: bake::SplitBundlerOptions,
-    pub broadcast_console_log_from_browser_to_server: bool,
+    pub(crate) arena: &'a Arena,
+    pub(crate) root: &'a ZStr,
+    pub(crate) vm: &'a VirtualMachine,
+    pub(crate) framework: bake::Framework,
+    pub(crate) bundler_options: bake::SplitBundlerOptions,
+    pub(crate) broadcast_console_log_from_browser_to_server: bool,
 
     // Debugging features
-    pub dump_sources: Option<&'static [u8]>,
-    pub dump_state_on_crash: Option<bool>,
+    #[cfg(feature = "bake_debugging_features")]
+    pub(crate) dump_sources: Option<&'static [u8]>,
+    pub(crate) dump_state_on_crash: Option<bool>,
 }
 
 // Note: the fields (`arena`, `root`, `vm`, `framework`,
@@ -185,7 +186,8 @@ pub struct Options<'a> {
 // (see `bake_body.rs::UserOptions::into_dev_server_options`).
 impl<'a> Options<'a> {
     /// Debug builds dump bundled sources to `.bake-debug` by default.
-    pub const DEFAULT_DUMP_SOURCES: Option<&'static [u8]> = if bun_core::env::IS_DEBUG {
+    #[cfg(feature = "bake_debugging_features")]
+    pub(crate) const DEFAULT_DUMP_SOURCES: Option<&'static [u8]> = if bun_core::env::IS_DEBUG {
         Some(b".bake-debug")
     } else {
         None
@@ -255,37 +257,37 @@ pub struct CurrentBundle {
     /// (`start_async_bundle`'s AST scope); dropped with the bundle.
     pub ast_alloc_state: Option<Box<bun_alloc::ast_alloc::AstAllocState>>,
     /// Information BundleV2 needs to finalize the bundle
-    pub start_data: bundler::bundle_v2::DevServerInput,
+    pub(crate) start_data: bundler::bundle_v2::DevServerInput,
     /// Started when the bundle was queued
-    pub timer: Instant,
+    pub(crate) timer: Instant,
     /// If any files in this bundle were due to hot-reloading, some extra work
     /// must be done to inform clients to reload routes. When this is false,
     /// all entry points do not have bundles yet.
-    pub had_reload_event: bool,
+    pub(crate) had_reload_event: bool,
     /// After a bundle finishes, these requests will be continued, either
     /// calling their handler on success or sending the error page on failure.
     /// Owned by `deferred_request_pool` in DevServer.
-    pub requests: deferred_request::List,
+    pub(crate) requests: deferred_request::List,
     /// Resolution failures are grouped by incremental graph file index.
     /// Unlike parse failures (`handleParseTaskFailure`), the resolution
     /// failures can be created asynchronously, and out of order.
-    pub resolution_failure_entries: ArrayHashMap<serialized_failure::OwnerPacked, Log>,
+    pub(crate) resolution_failure_entries: ArrayHashMap<serialized_failure::OwnerPacked, Log>,
 
     /// 1. Always make sure to deinit this promise
     /// 2. Always drain microtasks after resolving it
-    pub promise: DeferredPromise,
+    pub(crate) promise: DeferredPromise,
 }
 
 pub struct NextBundle {
     /// A list of `RouteBundle`s which have active requests to bundle it.
-    pub route_queue: ArrayHashMap<route_bundle::Index, ()>,
+    pub(crate) route_queue: ArrayHashMap<route_bundle::Index, ()>,
     /// If a reload event exists and should be drained. The information
     /// for this watch event is in one of the `watch_events`
-    pub reload_event: Option<*mut HotReloadEvent>, // BORROW_FIELD: ptr into dev.watcher_atomics.events[]
+    pub(crate) reload_event: Option<*mut HotReloadEvent>, // BORROW_FIELD: ptr into dev.watcher_atomics.events[]
     /// The list of requests that are blocked on this bundle.
-    pub requests: deferred_request::List,
+    pub(crate) requests: deferred_request::List,
 
-    pub promise: DeferredPromise,
+    pub(crate) promise: DeferredPromise,
 }
 
 // Note: this is the **canonical** `DevServer` struct. `dev_server/mod.rs`
@@ -298,17 +300,17 @@ pub struct NextBundle {
 pub struct DevServer {
     /// To validate the DevServer has not been collected, this can be checked.
     /// When freed, this is set to `undefined`. UAF here also trips ASAN.
-    pub magic: Magic,
+    pub(crate) magic: Magic,
     /// Absolute path to project root directory. For the HMR
     /// runtime, its module IDs are strings relative to this.
-    pub root: Box<[u8]>,
+    pub(crate) root: Box<[u8]>,
     /// Unique identifier for this DevServer instance. Used to identify it
     /// when using the debugger protocol.
-    pub inspector_server_id: DebuggerId,
+    pub(crate) inspector_server_id: DebuggerId,
     /// Hex string generated by hashing the framework config and bun revision.
     /// Emebedding in client bundles and sent when the HMR Socket is opened;
     /// When the value mismatches the page is forcibly reloaded.
-    pub configuration_hash_key: [u8; 16],
+    pub(crate) configuration_hash_key: [u8; 16],
     /// The virtual machine (global object) to execute code in.
     /// JSC_BORROW (LIFETIMES.tsv): passed in via `Options.vm`; deinit no-op.
     /// [`BackRef`](bun_ptr::BackRef) (not `&'a`) so `DevServer` is not
@@ -316,62 +318,62 @@ pub struct DevServer {
     /// the VM anyway. The back-reference invariant (pointee outlives holder)
     /// is the JSC_BORROW guarantee: vm is valid for DevServer's entire
     /// lifetime.
-    pub vm: bun_ptr::BackRef<VirtualMachine>,
+    pub(crate) vm: bun_ptr::BackRef<VirtualMachine>,
     /// May be `None` if not attached to an HTTP server yet. When no server is
     /// available, functions taking in requests and responses are unavailable.
     /// However, a lot of testing in this mode is missing, so it may hit assertions.
-    pub server: Option<AnyServer>,
+    pub(crate) server: Option<AnyServer>,
     /// Contains the tree of routes. This structure contains FileIndex
-    pub router: FrameworkRouter,
+    pub(crate) router: FrameworkRouter,
     /// Every navigatable route has bundling state here.
-    pub route_bundles: Vec<RouteBundle>,
+    pub(crate) route_bundles: Vec<RouteBundle>,
     /// All access into IncrementalGraph is guarded by a ThreadLock. This is
     /// only a debug assertion as contention to this is always a bug; If a bundle is
     /// active and a file is changed, that change is placed into the next bundle.
-    pub graph_safety_lock: ThreadLock,
-    pub client_graph: IncrementalGraph<{ bake::Side::Client }>,
-    pub server_graph: IncrementalGraph<{ bake::Side::Server }>,
+    pub(crate) graph_safety_lock: ThreadLock,
+    pub(crate) client_graph: IncrementalGraph<{ bake::Side::Client }>,
+    pub(crate) server_graph: IncrementalGraph<{ bake::Side::Server }>,
     /// Barrel files with deferred (is_unused) import records. These files must
     /// be re-parsed on every incremental build because the set of needed exports
     /// may have changed. Populated by applyBarrelOptimization.
-    pub barrel_files_with_deferrals: bun_collections::StringArrayHashMap<()>,
+    pub(crate) barrel_files_with_deferrals: bun_collections::StringArrayHashMap<()>,
     /// Accumulated barrel export requests across all builds. Maps barrel file
     /// path → set of export names that have been requested. This ensures that
     /// when a barrel is re-parsed in an incremental build, exports requested
     /// by non-stale files (from previous builds) are still kept.
-    pub barrel_needed_exports: bun_collections::StringArrayHashMap<StringHashMap<()>>,
+    pub(crate) barrel_needed_exports: bun_collections::StringArrayHashMap<StringHashMap<()>>,
     /// State populated during bundling and hot updates. Often cleared
-    pub incremental_result: IncrementalResult,
+    pub(crate) incremental_result: IncrementalResult,
     /// Quickly retrieve a framework route's index from its entry point file. These
     /// are populated as the routes are discovered. The route may not be bundled OR
     /// navigatable, such as the case where a layout's index is looked up.
-    pub route_lookup: ArrayHashMap<incremental_graph::ServerFileIndex, RouteIndexAndRecurseFlag>,
+    pub(crate) route_lookup: ArrayHashMap<incremental_graph::ServerFileIndex, RouteIndexAndRecurseFlag>,
     /// This acts as a duplicate of the lookup table in uws, but only for HTML routes
     /// Used to identify what route a connected WebSocket is on, so that only
     /// the active pages are notified of a hot updates.
-    pub html_router: HTMLRouter,
+    pub(crate) html_router: HTMLRouter,
     /// Assets are accessible via `/_bun/asset/<key>`
     /// This store is not thread safe.
-    pub assets: Assets,
+    pub(crate) assets: Assets,
     /// Similar to `assets`, specialized for the additional needs of source mappings.
-    pub source_maps: SourceMapStore,
+    pub(crate) source_maps: SourceMapStore,
     /// All bundling failures are stored until a file is saved and rebuilt.
     /// They are stored in the wire format the HMR runtime expects so that
     /// serialization only happens once.
     /// Keyed by `failure.owner`, stored as `OwnerPacked → SerializedFailure`.
-    pub bundling_failures: ArrayHashMap<serialized_failure::OwnerPacked, SerializedFailure>,
+    pub(crate) bundling_failures: ArrayHashMap<serialized_failure::OwnerPacked, SerializedFailure>,
     /// When set, nothing is ever bundled for the server-side,
     /// and DevSever acts purely as a frontend bundler.
-    pub frontend_only: bool,
+    pub(crate) frontend_only: bool,
     /// The Plugin API is missing a way to attach filesystem watchers (addWatchFile)
     /// This special case makes `bun-plugin-tailwind` work, which is a requirement
     /// to ship initial incremental bundling support for HTML files.
-    pub has_tailwind_plugin_hack: Option<ArrayHashMap<Box<[u8]>, ()>>,
+    pub(crate) has_tailwind_plugin_hack: Option<ArrayHashMap<Box<[u8]>, ()>>,
 
     // These values are handles to the functions in `hmr-runtime-server.ts`.
     // For type definitions, see `./bake.private.d.ts`
-    pub server_fetch_function_callback: jsc::StrongOptional,
-    pub server_register_update_callback: jsc::StrongOptional,
+    pub(crate) server_fetch_function_callback: jsc::StrongOptional,
+    pub(crate) server_register_update_callback: jsc::StrongOptional,
 
     // Watching
     // Note: the watcher thread owns this allocation at shutdown (it frees it
@@ -392,13 +394,13 @@ pub struct DevServer {
 
     /// Number of bundles that have been executed. This is currently not read, but
     /// will be used later to determine when to invoke graph garbage collection.
-    pub generation: usize,
+    pub(crate) generation: usize,
     /// Displayed in the HMR success indicator
-    pub bundles_since_last_error: usize,
+    pub(crate) bundles_since_last_error: usize,
 
-    pub framework: bake::Framework,
-    pub bundler_framework_views: Vec<*mut bun_bundler::bake_types::Framework>,
-    pub bundler_options: bake::SplitBundlerOptions,
+    pub(crate) framework: bake::Framework,
+    pub(crate) bundler_framework_views: Vec<*mut bun_bundler::bake_types::Framework>,
+    pub(crate) bundler_options: bake::SplitBundlerOptions,
     // Each logical graph gets its own bundler configuration.
     // Note: `'static` is the DevServer-self lifetime stand-in (see
     // `CurrentBundle.bv2`). `Transpiler<'a>` borrows the global
@@ -408,48 +410,48 @@ pub struct DevServer {
     // `MaybeUninit` until `Framework::init_transpiler` populates them in place
     // (in `init()` below) — `Transpiler` contains a non-nullable `&Arena`, so
     // neither `Default` nor `mem::zeroed()` are sound (PORTING.md §Forbidden).
-    pub server_transpiler: ::core::mem::MaybeUninit<Transpiler<'static>>,
-    pub client_transpiler: ::core::mem::MaybeUninit<Transpiler<'static>>,
-    pub ssr_transpiler: ::core::mem::MaybeUninit<Transpiler<'static>>,
+    pub(crate) server_transpiler: ::core::mem::MaybeUninit<Transpiler<'static>>,
+    pub(crate) client_transpiler: ::core::mem::MaybeUninit<Transpiler<'static>>,
+    pub(crate) ssr_transpiler: ::core::mem::MaybeUninit<Transpiler<'static>>,
     /// The log used by all `server_transpiler`, `client_transpiler` and `ssr_transpiler`.
     /// Note that it is rarely correct to write messages into it. Instead, associate
     /// messages with the IncrementalGraph file or Route using `SerializedFailure`
-    pub log: Log,
-    pub plugin_state: PluginState,
+    pub(crate) log: Log,
+    pub(crate) plugin_state: PluginState,
     /// See `CurrentBundle` doc comment.
-    pub current_bundle: Option<CurrentBundle>,
+    pub(crate) current_bundle: Option<CurrentBundle>,
     /// When `current_bundle` is non-null and new requests to bundle come in,
     /// those are temporaried here. When the current bundle is finished, it
     /// will immediately enqueue this.
-    pub next_bundle: NextBundle,
-    pub deferred_request_pool:
+    pub(crate) next_bundle: NextBundle,
+    pub(crate) deferred_request_pool:
         HiveArrayFallback<deferred_request::Node, { DeferredRequest::MAX_PREALLOCATED }>,
     /// UWS can handle closing the websocket connections themselves
-    pub active_websocket_connections: HashMap<*mut HmrSocket, ()>,
+    pub(crate) active_websocket_connections: HashMap<*mut HmrSocket, ()>,
 
     // Debugging
     #[cfg(feature = "bake_debugging_features")]
     pub dump_dir: Option<sys::Dir>,
     #[cfg(not(feature = "bake_debugging_features"))]
-    pub dump_dir: (),
+    pub(crate) dump_dir: (),
     /// Reference count to number of active sockets with the incremental_visualizer enabled.
-    pub emit_incremental_visualizer_events: u32,
+    pub(crate) emit_incremental_visualizer_events: u32,
     /// Reference count to number of active sockets with the memory_visualizer enabled.
-    pub emit_memory_visualizer_events: u32,
-    pub memory_visualizer_timer: EventLoopTimer,
+    pub(crate) emit_memory_visualizer_events: u32,
+    pub(crate) memory_visualizer_timer: EventLoopTimer,
 
-    pub has_pre_crash_handler: bool,
-    pub assume_perfect_incremental_bundling: bool,
+    pub(crate) has_pre_crash_handler: bool,
+    pub(crate) assume_perfect_incremental_bundling: bool,
 
     /// If true, console logs from the browser will be echoed to the server console.
-    pub broadcast_console_log_from_browser_to_server: bool,
+    pub(crate) broadcast_console_log_from_browser_to_server: bool,
 }
 
 bun_event_loop::impl_timer_owner!(DevServer; from_timer_ptr => memory_visualizer_timer);
 
-pub(super) const INTERNAL_PREFIX: &str = "/_bun";
+const INTERNAL_PREFIX: &str = "/_bun";
 /// Assets which are routed to the `Assets` storage.
-pub(super) const ASSET_PREFIX: &str = const_format::concatcp!(INTERNAL_PREFIX, "/asset");
+const ASSET_PREFIX: &str = const_format::concatcp!(INTERNAL_PREFIX, "/asset");
 /// Client scripts are available at `/_bun/client/{name}-{rbi}{generation}.js`
 /// where:
 /// - `name` is the display name of the route, such as "index" or
@@ -459,16 +461,16 @@ pub(super) const ASSET_PREFIX: &str = const_format::concatcp!(INTERNAL_PREFIX, "
 ///                re-randomized whenever `client_bundle` is invalidated.
 ///
 /// Example: `/_bun/client/index-00000000f209a20e.js`
-pub(super) const CLIENT_PREFIX: &str = const_format::concatcp!(INTERNAL_PREFIX, "/client");
+const CLIENT_PREFIX: &str = const_format::concatcp!(INTERNAL_PREFIX, "/client");
 
 #[derive(Default)]
 pub struct DeferredPromise {
-    pub strong: jsc::JSPromiseStrong,
-    pub route_bundle_indices: ArrayHashMap<route_bundle::Index, ()>,
+    pub(crate) strong: jsc::JSPromiseStrong,
+    pub(crate) route_bundle_indices: ArrayHashMap<route_bundle::Index, ()>,
 }
 
 impl DeferredPromise {
-    pub fn set_route_bundle_state(&mut self, dev: &mut DevServer, state: route_bundle::State) {
+    pub(crate) fn set_route_bundle_state(&mut self, dev: &mut DevServer, state: route_bundle::State) {
         for route_bundle_index in self.route_bundle_indices.keys() {
             dev.route_bundle_ptr(*route_bundle_index).server_state = state;
         }
@@ -479,14 +481,14 @@ impl DeferredPromise {
         self.route_bundle_indices.clear_retaining_capacity();
     }
 
-    pub fn deinit_idempotently(&mut self) {
+    pub(crate) fn deinit_idempotently(&mut self) {
         self.strong = jsc::JSPromiseStrong::empty();
         self.route_bundle_indices = Default::default();
     }
 }
 
 /// DevServer is stored on the heap, storing its allocator.
-pub fn init(options: Options) -> JsResult<Box<DevServer>> {
+pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
     // Note: `Features.dev_server +|= 1` (saturating add). AtomicUsize has
     // no `saturating_inc`; on a 64-bit counter overflow is unreachable, so a
     // relaxed `fetch_add(1)` is equivalent in practice.
@@ -1002,7 +1004,6 @@ pub fn init(options: Options) -> JsResult<Box<DevServer>> {
 
             types.push(framework_router::Type {
                 abs_root: strings::without_trailing_slash(entry.abs_path).into(),
-                prefix: fsr.prefix.clone().into(),
                 ignore_underscores: fsr.ignore_underscores,
                 ignore_dirs: fsr
                     .ignore_dirs
@@ -1360,7 +1361,7 @@ impl DevServer {
     }
 
     /// Returns true if a catch-all handler was attached.
-    pub fn set_routes<const SSL: bool, const DEBUG: bool>(
+    pub(crate) fn set_routes<const SSL: bool, const DEBUG: bool>(
         &mut self,
         server: &mut crate::server::NewServer<SSL, DEBUG>,
     ) -> crate::Result<bool> {
@@ -2242,7 +2243,7 @@ enum ReqOrSaved {
 }
 
 impl ReqOrSaved {
-    pub(crate) fn method(&self) -> Method {
+    fn method(&self) -> Method {
         match self {
             ReqOrSaved::Req(req) => {
                 // SAFETY: `req` is a uWS `Request*` valid for the handler callback's duration.
@@ -3023,7 +3024,7 @@ impl DevServer {
         Ok(array.into_boxed_slice())
     }
 
-    pub fn on_js_request_with_bundle(
+    pub(crate) fn on_js_request_with_bundle(
         &mut self,
         bundle_index: route_bundle::Index,
         resp: AnyResponse,
@@ -3064,7 +3065,7 @@ impl DevServer {
     }
 }
 
-pub(super) enum DevResponse<'a> {
+enum DevResponse<'a> {
     Http(AnyResponse),
     Promise(PromiseResponse<'a>),
 }
@@ -3072,13 +3073,13 @@ pub(super) enum DevResponse<'a> {
 /// When requests are waiting on a bundle, the relevant request information is
 /// prepared and stored in a linked list.
 pub struct DeferredRequest {
-    pub route_bundle_index: route_bundle::Index,
-    pub handler: Handler,
-    pub dev: *const DevServer, // BACKREF: owned by dev.deferred_request_pool
+    pub(crate) route_bundle_index: route_bundle::Index,
+    pub(crate) handler: Handler,
+    pub(crate) dev: *const DevServer, // BACKREF: owned by dev.deferred_request_pool
 
     /// This struct can be referenced by the dev server (`dev.current_bundle.requests`)
-    pub referenced_by_devserver: bool,
-    pub weakly_referenced_by_requestcontext: bool,
+    pub(crate) referenced_by_devserver: bool,
+    pub(crate) weakly_referenced_by_requestcontext: bool,
 }
 
 pub mod deferred_request {
@@ -3098,7 +3099,7 @@ pub mod deferred_request {
     /// Sometimes we will call `await bundleNewRoute()` and this will either
     /// resolve with the args for the route, or reject with data
     pub struct PromiseResponse<'a> {
-        pub promise: jsc::JSPromiseStrong,
+        pub(crate) promise: jsc::JSPromiseStrong,
         pub global: &'a JSGlobalObject,
     }
 
@@ -3131,13 +3132,13 @@ pub(super) use crate::server::SavedRequestUnion;
 impl DeferredRequest {
     pub const MAX_PREALLOCATED: usize = deferred_request::MAX_PREALLOCATED;
 
-    pub fn is_alive(&self) -> bool {
+    pub(crate) fn is_alive(&self) -> bool {
         self.referenced_by_devserver
     }
 
     // NOTE: This should only be called from the DevServer which is the only
     // place that can hold a strong reference
-    pub fn deref_(&mut self) {
+    pub(crate) fn deref_(&mut self) {
         self.referenced_by_devserver = false;
         let should_free = !self.weakly_referenced_by_requestcontext;
         self.__deinit();
@@ -3146,12 +3147,12 @@ impl DeferredRequest {
         }
     }
 
-    pub fn weak_ref(&mut self) {
+    pub(crate) fn weak_ref(&mut self) {
         debug_assert!(!self.weakly_referenced_by_requestcontext);
         self.weakly_referenced_by_requestcontext = true;
     }
 
-    pub fn weak_deref(&mut self) {
+    pub(crate) fn weak_deref(&mut self) {
         self.weakly_referenced_by_requestcontext = false;
         if !self.referenced_by_devserver {
             self.__free();
@@ -3256,7 +3257,7 @@ pub struct ResponseAndMethod {
 }
 
 impl DevServer {
-    pub fn start_async_bundle(
+    pub(crate) fn start_async_bundle(
         &mut self,
         entry_points: EntryPointList,
         had_reload_event: bool,
@@ -3408,7 +3409,7 @@ impl DevServer {
         Ok(())
     }
 
-    pub fn prepare_and_log_resolution_failures(&mut self) -> crate::Result<()> {
+    pub(crate) fn prepare_and_log_resolution_failures(&mut self) -> crate::Result<()> {
         // Since resolution failures can be asynchronous, their logs are not inserted
         // until the very end.
         let resolution_failures = &self
@@ -3796,13 +3797,11 @@ impl DevServer {
     }
 }
 
-pub struct HotUpdateContext<'a> {
+pub(crate) struct HotUpdateContext<'a> {
     /// bundle_v2.Graph.input_files.items(.source)
     pub sources: &'a [bun_ast::Source],
     /// bundle_v2.Graph.ast.items(.import_records)
     pub import_records: &'a [bun_ast::import_record::List<'a>],
-    /// bundle_v2.Graph.server_component_boundaries.slice()
-    pub scbs: bun_ast::server_component_boundary::Slice<'a>,
     /// bundle_v2.Graph.input_files.items(.loader)
     pub loaders: &'a [Loader],
     /// Which files have a server-component boundary.
@@ -3820,11 +3819,11 @@ pub struct HotUpdateContext<'a> {
 /// callers re-tag with the correct `FileIndex<SIDE>` on `unwrap`.
 #[repr(transparent)]
 #[derive(Copy, Clone, Eq, PartialEq)]
-pub struct CachedFileIndex(pub u32);
+pub(crate) struct CachedFileIndex(pub u32);
 impl CachedFileIndex {
-    pub const NONE: Self = Self(u32::MAX);
+    pub(crate) const NONE: Self = Self(u32::MAX);
     #[inline]
-    pub fn unwrap<const SIDE: bake::Side>(self) -> Option<incremental_graph::FileIndex<SIDE>> {
+    pub(crate) fn unwrap<const SIDE: bake::Side>(self) -> Option<incremental_graph::FileIndex<SIDE>> {
         if self.0 == u32::MAX {
             None
         } else {
@@ -3842,7 +3841,7 @@ impl<const SIDE: bake::Side> From<Option<incremental_graph::FileIndex<SIDE>>> fo
 }
 
 impl<'a> HotUpdateContext<'a> {
-    pub fn get_cached_index(
+    pub(crate) fn get_cached_index(
         &mut self,
         side: bake::Side,
         i: impl Into<bun_ast::Index>,
@@ -4024,7 +4023,6 @@ pub(super) fn finalize_bundle(
         import_records,
         sources: input_file_sources,
         loaders: input_file_loaders,
-        scbs,
         server_to_client_bitset: scb_bitset,
         resolved_index_cache: &mut resolved_index_cache,
         server_seen_bit_set: DynamicBitSet::default(), // assigned below
@@ -4323,7 +4321,6 @@ pub(super) fn finalize_bundle(
     // Load all new chunks into the server runtime.
     if !dev.frontend_only && dev.server_graph.current_chunk_len > 0 {
         // Generate a script_id for server bundles
-        let server_script_id = source_map_store::Key::init((1u64 << 63) | dev.generation as u64);
 
         // Get the source map if available and render to JSON
         let source_map_json = if !dev.server_graph.current_chunk_source_maps.is_empty() {
@@ -4358,7 +4355,6 @@ pub(super) fn finalize_bundle(
         let server_bundle = dev.server_graph.take_js_bundle_server(
             &incremental_graph::TakeJSBundleOptionsServer {
                 kind: ChunkKind::HmrChunk,
-                script_id: server_script_id,
             },
         )?;
 
@@ -5056,7 +5052,7 @@ impl DevServer {
     }
 
     /// Note: The log is not consumed here
-    pub fn handle_parse_task_failure(
+    pub(crate) fn handle_parse_task_failure(
         &mut self,
         err: &crate::Error,
         graph: bake::Graph,
@@ -5105,7 +5101,7 @@ impl DevServer {
     }
 
     /// Return a log to write resolution failures into.
-    pub fn get_log_for_resolution_failures(
+    pub(crate) fn get_log_for_resolution_failures(
         &mut self,
         abs_path: &[u8],
         graph: bake::Graph,
@@ -5139,11 +5135,11 @@ impl DevServer {
 
 #[derive(Copy, Clone)]
 pub struct CacheEntry {
-    pub kind: FileKind,
+    pub(crate) kind: FileKind,
 }
 
 impl DevServer {
-    pub fn is_file_cached(&mut self, path: &[u8], side: bake::Graph) -> Option<CacheEntry> {
+    pub(crate) fn is_file_cached(&mut self, path: &[u8], side: bake::Graph) -> Option<CacheEntry> {
         // Barrel files with deferred records must always be re-parsed.
         if self.barrel_files_with_deferrals.contains_key(path) {
             return None;
@@ -5204,7 +5200,7 @@ impl DevServer {
         Ok(())
     }
 
-    pub fn route_bundle_ptr(&mut self, idx: route_bundle::Index) -> &mut RouteBundle {
+    pub(crate) fn route_bundle_ptr(&mut self, idx: route_bundle::Index) -> &mut RouteBundle {
         &mut self.route_bundles[idx.get() as usize]
     }
 }
@@ -5267,7 +5263,7 @@ fn on_request(dev: &mut DevServer, req: &mut Request, mut resp: AnyResponse) {
 }
 
 impl DevServer {
-    pub fn respond_for_html_bundle(
+    pub(crate) fn respond_for_html_bundle(
         &mut self,
         html: *mut HTMLBundleRoute,
         req: &mut Request,
@@ -5666,7 +5662,7 @@ pub fn dump_bundle_for_chunk(
 }
 
 impl DevServer {
-    pub fn emit_visualizer_message_if_needed(&mut self) {
+    pub(crate) fn emit_visualizer_message_if_needed(&mut self) {
         #[cfg(feature = "bake_debugging_features")]
         {
             // Note: erase `self` to a raw ptr so the `defer!` doesn't pin a
@@ -5693,7 +5689,7 @@ impl DevServer {
         crate::jsc_hooks::timer_all_mut()
     }
 
-    pub fn emit_memory_visualizer_message_timer(
+    pub(crate) fn emit_memory_visualizer_message_timer(
         timer: &mut EventLoopTimer,
         _: &bun_core::Timespec,
     ) {
@@ -5708,7 +5704,7 @@ impl DevServer {
         dev.timer_heap().insert(timer);
     }
 
-    pub fn emit_memory_visualizer_message_if_needed(&mut self) {
+    pub(crate) fn emit_memory_visualizer_message_if_needed(&mut self) {
         if !cfg!(feature = "bake_debugging_features") {
             return;
         }
@@ -5718,7 +5714,7 @@ impl DevServer {
         self.emit_memory_visualizer_message();
     }
 
-    pub fn emit_memory_visualizer_message(&mut self) {
+    pub(crate) fn emit_memory_visualizer_message(&mut self) {
         debug_assert!(cfg!(feature = "bake_debugging_features"));
         debug_assert!(self.emit_memory_visualizer_events > 0);
 
@@ -5730,7 +5726,7 @@ impl DevServer {
         self.publish(HmrTopic::MemoryVisualizer, &payload, Opcode::BINARY);
     }
 
-    pub fn write_memory_visualizer_message(&self, payload: &mut Vec<u8>) -> crate::Result<()> {
+    pub(crate) fn write_memory_visualizer_message(&self, payload: &mut Vec<u8>) -> crate::Result<()> {
         let cost = self.memory_cost_detailed();
         let system_total = crate::node::os::totalmem();
         // Wire format: 10 contiguous native-endian u32s. `[u32; 10]` has no
@@ -5874,7 +5870,7 @@ bitflags::bitflags! {
 }
 
 impl DevServer {
-    pub fn route_to_bundle_index_slow(&mut self, pattern: &[u8]) -> Option<route_bundle::Index> {
+    pub(crate) fn route_to_bundle_index_slow(&mut self, pattern: &[u8]) -> Option<route_bundle::Index> {
         let mut params: framework_router::MatchedParams = Default::default();
         if let Some(route_index) = self.router.match_slow(pattern, &mut params) {
             return Some(
@@ -5992,7 +5988,7 @@ impl DevServer {
     /// The dev server's inspector agent, or `None` while the
     /// `BunFrontendDevServer` domain is disabled. The agent's state is
     /// `Cell`-based, so a shared borrow suffices. JS-thread only.
-    pub fn inspector(&self) -> Option<&BunFrontendDevServerAgent> {
+    pub(crate) fn inspector(&self) -> Option<&BunFrontendDevServerAgent> {
         if let Some(debugger) = self.vm().debugger.as_ref() {
             bun_core::hint::cold();
             let agent = BunFrontendDevServerAgent::from_slot(&debugger.extension_agent);
@@ -6005,7 +6001,7 @@ impl DevServer {
     }
 
     /// Called on watcher's thread; Access to dev-server state restricted.
-    pub fn on_file_update(
+    pub(crate) fn on_file_update(
         &mut self,
         events: &[bun_watcher::Event],
         changed_files: &[bun_watcher::ChangedFilePath],
@@ -6112,7 +6108,7 @@ impl DevServer {
         }
     }
 
-    pub fn on_watch_error(&self, err: sys::Error) {
+    pub(crate) fn on_watch_error(&self, err: sys::Error) {
         if !err.path.is_empty() {
             // Note: split out path before moving `err` into `Output::err`.
             let path = err.path.clone();
@@ -6130,13 +6126,13 @@ impl DevServer {
         // TODO: attempt to automatically restart the watcher thread, perhaps wait for next request.
     }
 
-    pub fn publish(&self, topic: HmrTopic, message: &[u8], opcode: Opcode) {
+    pub(crate) fn publish(&self, topic: HmrTopic, message: &[u8], opcode: Opcode) {
         if let Some(s) = &self.server {
             let _ = s.publish(&topic.uws_topic(), message, opcode, false);
         }
     }
 
-    pub fn num_subscribers(&self, topic: HmrTopic) -> u32 {
+    pub(crate) fn num_subscribers(&self, topic: HmrTopic) -> u32 {
         if let Some(s) = &self.server {
             s.num_subscribers(&topic.uws_topic())
         } else {
@@ -6166,7 +6162,7 @@ impl SafeFileId {
 
 impl DevServer {
     /// Interface function for FrameworkRouter
-    pub fn get_file_id_for_router(
+    pub(crate) fn get_file_id_for_router(
         &mut self,
         abs_path: &[u8],
         associated_route: framework_router::RouteIndex,
@@ -6186,7 +6182,7 @@ impl DevServer {
         Ok(to_opaque_file_id::<{ bake::Side::Server }>(index))
     }
 
-    pub fn on_router_syntax_error(
+    pub(crate) fn on_router_syntax_error(
         &self,
         rel_path: &[u8],
         log: &framework_router::TinyLog,
@@ -6196,7 +6192,7 @@ impl DevServer {
         Ok(())
     }
 
-    pub fn on_router_collision_error(
+    pub(crate) fn on_router_collision_error(
         &self,
         rel_path: &[u8],
         other_id: OpaqueFileId,
@@ -6275,7 +6271,7 @@ fn from_opaque_file_id<const SIDE: bake::Side>(
 impl DevServer {
     /// Returns posix style path, suitible for URLs and reproducible hashes.
     /// The caller must provide a PathBuffer from the pool.
-    pub fn relative_path<'a>(
+    pub(crate) fn relative_path<'a>(
         &self,
         relative_path_buf: &'a mut PathBuffer,
         path: &'a [u8],
@@ -6407,7 +6403,7 @@ fn dump_state_due_to_crash(dev: &mut DevServer) -> crate::Result<()> {
 #[derive(Copy, Clone)]
 pub struct RouteIndexAndRecurseFlag(pub u32);
 impl RouteIndexAndRecurseFlag {
-    pub fn new(
+    pub(crate) fn new(
         route_index: framework_router::RouteIndex,
         should_recurse_when_visiting: bool,
     ) -> Self {
@@ -6415,17 +6411,17 @@ impl RouteIndexAndRecurseFlag {
             (route_index.get() & 0x7FFF_FFFF) | ((should_recurse_when_visiting as u32) << 31),
         )
     }
-    pub fn route_index(self) -> framework_router::RouteIndex {
+    pub(crate) fn route_index(self) -> framework_router::RouteIndex {
         framework_router::RouteIndex::init(self.0 & 0x7FFF_FFFF)
     }
-    pub fn should_recurse_when_visiting(self) -> bool {
+    pub(crate) fn should_recurse_when_visiting(self) -> bool {
         (self.0 >> 31) != 0
     }
 }
 /// Bake needs to specify which graph (client/server/ssr) each entry point is.
 #[derive(Default)]
 pub struct EntryPointList {
-    pub set: bun_collections::StringArrayHashMap<entry_point_list::Flags>,
+    pub(crate) set: bun_collections::StringArrayHashMap<entry_point_list::Flags>,
 }
 
 pub mod entry_point_list {
@@ -6443,11 +6439,11 @@ pub mod entry_point_list {
 }
 
 impl EntryPointList {
-    pub fn empty() -> EntryPointList {
+    pub(crate) fn empty() -> EntryPointList {
         EntryPointList::default()
     }
 
-    pub fn append_js(&mut self, abs_path: &[u8], side: bake::Graph) -> crate::Result<()> {
+    pub(crate) fn append_js(&mut self, abs_path: &[u8], side: bake::Graph) -> crate::Result<()> {
         self.append(
             abs_path,
             match side {
@@ -6458,7 +6454,7 @@ impl EntryPointList {
         )
     }
 
-    pub fn append_css(&mut self, abs_path: &[u8]) -> crate::Result<()> {
+    pub(crate) fn append_css(&mut self, abs_path: &[u8]) -> crate::Result<()> {
         self.append(
             abs_path,
             entry_point_list::Flags::CLIENT | entry_point_list::Flags::CSS,
@@ -6466,7 +6462,7 @@ impl EntryPointList {
     }
 
     /// Deduplictes requests to bundle the same file twice.
-    pub fn append(&mut self, abs_path: &[u8], flags: entry_point_list::Flags) -> crate::Result<()> {
+    pub(crate) fn append(&mut self, abs_path: &[u8], flags: entry_point_list::Flags) -> crate::Result<()> {
         let gop = self.set.get_or_put(abs_path)?;
         if gop.found_existing {
             *gop.value_ptr |= flags;
@@ -6482,13 +6478,13 @@ impl EntryPointList {
 /// `<'a>` retained only for the owning `DevServer<'a>`'s `Transpiler` borrows.
 #[derive(Default)]
 pub struct HTMLRouter {
-    pub map: StringHashMap<*mut HTMLBundleRoute>,
+    pub(crate) map: StringHashMap<*mut HTMLBundleRoute>,
     /// If a catch-all route exists, it is not stored in map, but here.
-    pub fallback: Option<*mut HTMLBundleRoute>,
+    pub(crate) fallback: Option<*mut HTMLBundleRoute>,
 }
 
 impl HTMLRouter {
-    pub fn empty() -> HTMLRouter {
+    pub(crate) fn empty() -> HTMLRouter {
         HTMLRouter {
             map: StringHashMap::new(),
             fallback: None,
@@ -6499,7 +6495,7 @@ impl HTMLRouter {
         self.map.get(path).copied().or(self.fallback)
     }
 
-    pub fn put(&mut self, path: &[u8], route: *mut HTMLBundleRoute) -> crate::Result<()> {
+    pub(crate) fn put(&mut self, path: &[u8], route: *mut HTMLBundleRoute) -> crate::Result<()> {
         if path == b"/*" {
             self.fallback = Some(route);
         } else {
@@ -6508,7 +6504,7 @@ impl HTMLRouter {
         Ok(())
     }
 
-    pub fn clear(&mut self) {
+    pub(crate) fn clear(&mut self) {
         self.map.clear();
         self.fallback = None;
     }
@@ -6517,7 +6513,7 @@ impl HTMLRouter {
 // HTMLRouter::deinit → Drop on map
 
 impl DevServer {
-    pub fn put_or_overwrite_asset(
+    pub(crate) fn put_or_overwrite_asset(
         &mut self,
         path: &bun_bundler::bun_fs::Path<'_>,
         contents: crate::webcore::blob::Any,
@@ -6533,7 +6529,7 @@ impl DevServer {
         Ok(())
     }
 
-    pub fn on_plugins_resolved(
+    pub(crate) fn on_plugins_resolved(
         &mut self,
         plugins: Option<*mut crate::api::js_bundler::Plugin>,
     ) -> crate::Result<()> {
@@ -6543,7 +6539,7 @@ impl DevServer {
         Ok(())
     }
 
-    pub fn on_plugins_rejected(&mut self) -> crate::Result<()> {
+    pub(crate) fn on_plugins_rejected(&mut self) -> crate::Result<()> {
         self.plugin_state = PluginState::Err;
         while let Some(item) = self.next_bundle.requests.pop_first() {
             // SAFETY: `pop_first` returns a valid `*mut Node<DeferredRequest>`;
@@ -6653,17 +6649,17 @@ impl UnrefSourceMapRequest {
 #[derive(Default)]
 pub struct TestingBatch {
     /// Keys are borrowed.
-    pub entry_points: EntryPointList,
+    pub(crate) entry_points: EntryPointList,
 }
 
 impl TestingBatch {
-    pub fn empty() -> TestingBatch {
+    pub(crate) fn empty() -> TestingBatch {
         TestingBatch {
             entry_points: EntryPointList::empty(),
         }
     }
 
-    pub fn append(&mut self, entry_points: &EntryPointList) -> crate::Result<()> {
+    pub(crate) fn append(&mut self, entry_points: &EntryPointList) -> crate::Result<()> {
         debug_assert!(!entry_points.set.is_empty());
         for (k, v) in entry_points
             .set
@@ -6966,7 +6962,7 @@ bun_jsc::jsc_abi_extern! {
     ) -> JSValue;
 }
 
-pub(super) fn create_dev_server_framework_request_args_object(
+fn create_dev_server_framework_request_args_object(
     global: &JSGlobalObject,
     router_type_main: JSValue,
     route_modules: JSValue,
@@ -6987,7 +6983,7 @@ pub(super) fn create_dev_server_framework_request_args_object(
 }
 
 #[bun_jsc::host_fn(export = "Bake__getNewRouteParamsJSFunctionImpl")]
-pub(super) fn bake_get_new_route_params_js_function_impl(
+fn bake_get_new_route_params_js_function_impl(
     global: &JSGlobalObject,
     callframe: &CallFrame,
 ) -> JSValue {

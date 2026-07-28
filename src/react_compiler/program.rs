@@ -298,15 +298,6 @@ fn is_valid_gating_identifier(s: &[u8]) -> bool {
 // hardcoded test defaults when given without a value.
 // -----------------------------------------------------------------------
 
-/// Outcome of [`parse_fixture_pragmas`].
-#[cfg(any(debug_assertions, bun_asan, feature = "fixtures"))]
-#[derive(Debug, Default)]
-pub struct PragmaParseResult {
-    /// `Some(key)` when the source uses a pragma the port can't honor; the
-    /// fixture runner should skip output comparison for that file.
-    pub skip: Option<&'static str>,
-}
-
 /// Iterator over `(key, value)` pairs in a pragma string. Mirrors upstream's
 /// `splitPragma`: split on `@`, then split each entry on the first `:` (or
 /// `(` for the `@key(value)` form).
@@ -399,9 +390,8 @@ fn leading_comment_pragma(source: &[u8]) -> Vec<u8> {
 /// Parse `// @key[:value]` pragmas from the leading comment block of `source`
 /// and apply them to `opts` (and `opts.environment`) in place.
 #[cfg(any(debug_assertions, bun_asan, feature = "fixtures"))]
-pub fn parse_fixture_pragmas(source: &[u8], opts: &mut ReactCompilerOptions) -> PragmaParseResult {
+pub(crate) fn parse_fixture_pragmas(source: &[u8], opts: &mut ReactCompilerOptions) {
     let pragma = leading_comment_pragma(source);
-    let mut skip: Option<&'static str> = None;
     // Match upstream snap harness defaults (compiler/packages/snap/src/compiler.ts
     // makePluginOptions + Utils/TestUtils.ts parseConfigPragmaForTests):
     //   - panicThreshold: 'all_errors'
@@ -453,9 +443,6 @@ pub fn parse_fixture_pragmas(source: &[u8], opts: &mut ReactCompilerOptions) -> 
                     source: "ReactForgetFeatureFlag".to_owned(),
                     import_specifier_name: "isForgetEnabled_Fixtures".to_owned(),
                 });
-                if val.is_some_and(|v| v.first() == Some(&b'{')) {
-                    skip.get_or_insert("gating");
-                }
             }
             b"dynamicGating" => {
                 // Value is a JSON object `{"source":"<module>"}`, not a quoted
@@ -470,8 +457,6 @@ pub fn parse_fixture_pragmas(source: &[u8], opts: &mut ReactCompilerOptions) -> 
                 });
                 if let Some(source) = parsed {
                     opts.dynamic_gating = Some(source);
-                } else {
-                    skip.get_or_insert("dynamicGating");
                 }
             }
             b"ignoreUseNoForget" => {
@@ -479,15 +464,14 @@ pub fn parse_fixture_pragmas(source: &[u8], opts: &mut ReactCompilerOptions) -> 
                     opts.ignore_use_no_forget = b
                 }
             }
-            b"eslintSuppressionRules" => skip = Some("eslintSuppressionRules"),
+            b"eslintSuppressionRules" => {}
             b"loggerTestOnly" => {
                 opts.logger_test_only = true;
-                skip.get_or_insert("loggerTestOnly");
             }
             b"expectNothingCompiled" => {
                 opts.expect_nothing_compiled = true;
             }
-            b"debug" => skip = Some("debug"),
+            b"debug" => {}
             b"flow" | b"script" => {} // language/sourceType markers, handled by the runner
 
             // ---- EnvironmentConfig: Option<bool> ----------------------------
@@ -581,15 +565,11 @@ pub fn parse_fixture_pragmas(source: &[u8], opts: &mut ReactCompilerOptions) -> 
             b"validateNoCapitalizedCalls" => {
                 env.validate_no_capitalized_calls = Some(Vec::new());
             }
-            b"validateBlocklistedImports" => {
-                skip.get_or_insert("validateBlocklistedImports");
-            }
+            b"validateBlocklistedImports" => {}
             b"customMacros" => {
                 if let Some(v) = val.and_then(pragma_string_value) {
                     let head = v.split('.').next().unwrap_or(&v).to_owned();
                     env.custom_macros = Some(vec![head]);
-                } else {
-                    skip.get_or_insert("customMacros");
                 }
             }
             b"enableEmitHookGuards" => {
@@ -611,14 +591,11 @@ pub fn parse_fixture_pragmas(source: &[u8], opts: &mut ReactCompilerOptions) -> 
                     global_gating: Some("DEV".to_owned()),
                 });
             }
-            b"hookPattern" | b"customHooks" | b"moduleTypeProvider" => {
-                skip.get_or_insert("hookPattern/customHooks/moduleTypeProvider");
-            }
+            b"hookPattern" | b"customHooks" | b"moduleTypeProvider" => {}
             _ => {}
         }
     }
 
-    PragmaParseResult { skip }
 }
 
 // -----------------------------------------------------------------------
@@ -1016,21 +993,11 @@ fn get_component_or_hook_like(
 
 fn handle_error(
     err: CompilerError,
-    fn_name: Option<&str>,
-    fn_loc: Loc,
     diagnostics: &mut Vec<CompileDiagnostic>,
     opts: &ReactCompilerOptions,
 ) -> Option<CompileOutput> {
-    for detail in &err.details {
-        let msg = match detail {
-            CompilerErrorOrDiagnostic::Diagnostic(d) => d.reason.clone(),
-            CompilerErrorOrDiagnostic::ErrorDetail(d) => d.reason.clone(),
-        };
-        diagnostics.push(CompileDiagnostic {
-            fn_name: fn_name.map(str::to_owned),
-            loc: fn_loc,
-            message: msg,
-        });
+    for _ in &err.details {
+        diagnostics.push(CompileDiagnostic {});
     }
 
     let should_panic = match opts.panic_threshold.as_deref().unwrap_or("none") {
@@ -1184,7 +1151,7 @@ impl ReactCompilerState {
 
         #[cfg(any(debug_assertions, bun_asan, feature = "fixtures"))]
         if self.options.parse_test_pragmas {
-            let _ = parse_fixture_pragmas(host.source(), &mut self.options);
+            parse_fixture_pragmas(host.source(), &mut self.options);
             self.context.opts.compilation_mode = self.options.compilation_mode.clone();
             self.env_config = self.options.environment.clone();
         }
@@ -1204,7 +1171,7 @@ impl ReactCompilerState {
             .clone();
         if let Some(err) = validate_restricted_imports(host.import_records(), &restricted) {
             if let Some(fatal) =
-                handle_error(err, None, Loc::EMPTY, &mut self.diagnostics, &self.options)
+                handle_error(err, &mut self.diagnostics, &self.options)
             {
                 self.fatal = Some(fatal);
             }
@@ -1268,7 +1235,6 @@ pub fn maybe_compile_pending(
         FunctionNode::Function(&tmp),
         name,
         pending.in_react_hoc,
-        pending.body_loc,
     )?;
     let mut flags = pending.flags;
     set_flag(&mut flags, flags::Function::IsAsync, cf.is_async);
@@ -1289,7 +1255,6 @@ fn maybe_compile_node(
     node: FunctionNode<'_>,
     name: Option<&[u8]>,
     in_react_hoc: bool,
-    fn_loc: Loc,
 ) -> Option<CodegenFunction> {
     bun_core::scoped_log!(
         react_compiler,
@@ -1333,8 +1298,6 @@ fn maybe_compile_node(
             Err(err) => {
                 if let Some(fatal) = handle_error(
                     err,
-                    fn_name.as_deref(),
-                    fn_loc,
                     &mut state.diagnostics,
                     &state.options,
                 ) {
@@ -1380,8 +1343,6 @@ fn maybe_compile_node(
             bun_core::scoped_log!(react_compiler, "  -> compile_fn err: {:?}", err);
             if let Some(fatal) = handle_error(
                 err,
-                fn_name.as_deref(),
-                fn_loc,
                 &mut state.diagnostics,
                 &state.options,
             ) {

@@ -32,28 +32,28 @@ pub type DeclarationList<'bump> = bun_alloc::ArenaVec<'bump, css::Property>;
 /// instead of two.
 pub struct DeclarationBlock<'bump> {
     /// A list of `!important` declarations in the block.
-    pub important_declarations: DeclarationList<'bump>,
+    pub(crate) important_declarations: DeclarationList<'bump>,
     /// A list of normal declarations in the block.
-    pub declarations: DeclarationList<'bump>,
+    pub(crate) declarations: DeclarationList<'bump>,
 }
 
 impl<'bump> DeclarationBlock<'bump> {
-    pub fn is_empty(&self) -> bool {
+    pub(crate) fn is_empty(&self) -> bool {
         self.declarations.is_empty() && self.important_declarations.is_empty()
     }
 
-    pub fn len(&self) -> usize {
+    pub(crate) fn len(&self) -> usize {
         self.declarations.len() + self.important_declarations.len()
     }
 
-    pub fn new_in(bump: &'bump Bump) -> Self {
+    pub(crate) fn new_in(bump: &'bump Bump) -> Self {
         Self {
             important_declarations: DeclarationList::new_in(bump),
             declarations: DeclarationList::new_in(bump),
         }
     }
 
-    pub fn minify(
+    pub(crate) fn minify(
         &mut self,
         handler: &mut DeclarationHandler<'bump>,
         important_handler: &mut DeclarationHandler<'bump>,
@@ -309,7 +309,7 @@ impl<'a, 'bump> css::RuleBodyItemParser for PropertyDeclarationParser<'a, 'bump>
 
 // ─── parse_declaration ────────────────────────────────────────────────────
 
-pub fn parse_declaration<'bump>(
+pub(crate) fn parse_declaration<'bump>(
     name: &[u8],
     input: &mut css::Parser,
     declarations: &mut DeclarationList<'bump>,
@@ -330,7 +330,7 @@ pub fn parse_declaration<'bump>(
 // trait (defined in `css_parser.rs`); `NoComposesCtx` returns
 // `DisallowEntirely` so the no-tracking fast-path collapses into the match's
 // no-op arm.
-pub fn parse_declaration_impl<'bump, C>(
+pub(crate) fn parse_declaration_impl<'bump, C>(
     name: &[u8],
     input: &mut css::Parser,
     declarations: &mut DeclarationList<'bump>,
@@ -403,27 +403,27 @@ where
 
 /// Per-shorthand-group handler state used by `DeclarationBlock::minify`.
 pub struct DeclarationHandler<'bump> {
-    pub background: BackgroundHandler,
-    pub border: BorderHandler,
-    pub flex: FlexHandler,
-    pub align: AlignHandler,
-    pub size: SizeHandler,
-    pub margin: MarginHandler,
-    pub padding: PaddingHandler,
-    pub scroll_margin: ScrollMarginHandler,
-    pub transition: TransitionHandler,
-    pub font: FontHandler,
-    pub inset: InsetHandler,
-    pub transform: TransformHandler,
-    pub box_shadow: BoxShadowHandler,
-    pub color_scheme: ColorSchemeHandler,
+    pub(crate) background: BackgroundHandler,
+    pub(crate) border: BorderHandler,
+    pub(crate) flex: FlexHandler,
+    pub(crate) align: AlignHandler,
+    pub(crate) size: SizeHandler,
+    pub(crate) margin: MarginHandler,
+    pub(crate) padding: PaddingHandler,
+    pub(crate) scroll_margin: ScrollMarginHandler,
+    pub(crate) transition: TransitionHandler,
+    pub(crate) font: FontHandler,
+    pub(crate) inset: InsetHandler,
+    pub(crate) transform: TransformHandler,
+    pub(crate) box_shadow: BoxShadowHandler,
+    pub(crate) color_scheme: ColorSchemeHandler,
     pub fallback: FallbackHandler,
-    pub direction: Option<Direction>,
-    pub decls: DeclarationList<'bump>,
+    pub(crate) direction: Option<Direction>,
+    pub(crate) decls: DeclarationList<'bump>,
 }
 
 impl<'bump> DeclarationHandler<'bump> {
-    pub fn finalize(&mut self, context: &mut css::PropertyHandlerContext) {
+    pub(crate) fn finalize(&mut self, context: &mut css::PropertyHandlerContext) {
         if let Some(direction) = self.direction.take() {
             self.decls.push(css::Property::Direction(direction));
         }
@@ -449,7 +449,7 @@ impl<'bump> DeclarationHandler<'bump> {
         self.fallback.finalize(&mut self.decls, context);
     }
 
-    pub fn handle_property(
+    pub(crate) fn handle_property(
         &mut self,
         property: &css::Property,
         context: &mut css::PropertyHandlerContext,
@@ -501,7 +501,7 @@ impl<'bump> DeclarationHandler<'bump> {
                 .handle_property(property, &mut self.decls, context)
     }
 
-    pub fn new(bump: &'bump Bump) -> Self {
+    pub(crate) fn new(bump: &'bump Bump) -> Self {
         Self {
             background: Default::default(),
             border: Default::default(),

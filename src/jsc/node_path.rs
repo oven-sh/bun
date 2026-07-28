@@ -182,7 +182,7 @@ impl PathLike {
         }
     }
 
-    pub fn estimated_size(&self) -> usize {
+    pub(crate) fn estimated_size(&self) -> usize {
         match self {
             Self::String(s) => s.length(),
             Self::Buffer(b) => b.slice().len(),

@@ -135,14 +135,14 @@ fn split(
     bun_string_jsc::to_js_array(global, OwnedString::as_raw_slice(&lines))
 }
 
-pub(crate) struct SplitNewlineIterator<'a, T> {
+struct SplitNewlineIterator<'a, T> {
     buffer: &'a [T],
     index: Option<usize>,
 }
 
 impl<'a, T: Copy + PartialEq + From<u8>> SplitNewlineIterator<'a, T> {
     /// Returns a slice of the next field, or null if splitting is complete.
-    pub(crate) fn next(&mut self) -> Option<&'a [T]> {
+    fn next(&mut self) -> Option<&'a [T]> {
         let start = self.index?;
 
         if let Some(delim_start) = self.buffer[start..]
@@ -177,7 +177,7 @@ pub(crate) fn normalize_encoding(global: &JSGlobalObject, frame: &CallFrame) -> 
 }
 
 #[bun_jsc::host_fn]
-pub fn parse_env(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+pub(crate) fn parse_env(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     let content = frame.argument(0);
     validators::validate_string(global, content, "content")?;
 

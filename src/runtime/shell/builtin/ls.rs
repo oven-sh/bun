@@ -16,8 +16,8 @@ use crate::shell::yield_::Yield;
 
 #[derive(Default)]
 pub struct Ls {
-    pub opts: Opts,
-    pub state: State,
+    pub(crate) opts: Opts,
+    pub(crate) state: State,
 }
 
 #[derive(Default)]
@@ -30,15 +30,15 @@ pub enum State {
 }
 
 pub struct ExecState {
-    pub err: Option<bun_sys::Error>,
-    pub task_count: AtomicUsize,
-    pub tasks_done: usize,
-    pub output_waiting: usize,
-    pub output_done: usize,
+    pub(crate) err: Option<bun_sys::Error>,
+    pub(crate) task_count: AtomicUsize,
+    pub(crate) tasks_done: usize,
+    pub(crate) output_waiting: usize,
+    pub(crate) output_done: usize,
     /// FIFO of in-flight OutputTask pointers awaiting an IOWriter chunk
     /// completion. Stopgap until `WriterTag` can carry the `*mut OutputTask`
     /// directly — see mkdir.rs `Exec::output_queue` for rationale.
-    pub output_queue: std::collections::VecDeque<*mut OutputTask<Ls>>,
+    pub(crate) output_queue: std::collections::VecDeque<*mut OutputTask<Ls>>,
 }
 
 enum ParseFlag {
@@ -52,7 +52,7 @@ impl Ls {
         Self::next(interp, cmd)
     }
 
-    pub(crate) fn next(interp: &Interpreter, cmd: NodeId) -> Yield {
+    fn next(interp: &Interpreter, cmd: NodeId) -> Yield {
         // Match on a tag, drop the borrow, then act.
         enum Tag {
             Idle,
@@ -198,7 +198,7 @@ impl Ls {
     /// # Safety
     /// `task` must be a live heap allocation produced by
     /// [`ShellLsTask::create`]; ownership is reclaimed here.
-    pub(crate) fn on_shell_ls_task_done(
+    fn on_shell_ls_task_done(
         interp: &Interpreter,
         cmd: NodeId,
         task: NonNull<ShellLsTask>,
@@ -369,7 +369,7 @@ pub(crate) struct ShellLsTask {
 }
 
 impl ShellLsTask {
-    pub(crate) fn create(
+    fn create(
         cmd: NodeId,
         opts: Opts,
         task_count: *const AtomicUsize,
@@ -444,7 +444,7 @@ impl ShellLsTask {
         ZBox::from_bytes(out)
     }
 
-    pub(crate) fn run_from_thread_pool(this: &mut ShellLsTask) {
+    fn run_from_thread_pool(this: &mut ShellLsTask) {
         // Cache current time once per task for timestamp formatting.
         if this.opts.long_listing {
             this.now_secs = bun_core::time::timestamp().max(0) as u64;
@@ -607,7 +607,7 @@ impl ShellLsTask {
     /// `this` must be a live heap allocation produced by
     /// [`ShellLsTask::create`]; ownership is reclaimed via
     /// [`Ls::on_shell_ls_task_done`].
-    pub(crate) fn run_from_main_thread(this: NonNull<ShellLsTask>, interp: &Interpreter) {
+    fn run_from_main_thread(this: NonNull<ShellLsTask>, interp: &Interpreter) {
         // SAFETY: precondition.
         let cmd = unsafe { this.as_ref() }.cmd;
         Ls::on_shell_ls_task_done(interp, cmd, this);
@@ -770,13 +770,13 @@ impl crate::shell::interpreter::ShellTaskCtx for ShellLsTask {
 #[derive(Clone, Copy, Default)]
 pub struct Opts {
     /// `-a`, `--all` — do not ignore entries starting with `.`
-    pub show_all: bool,
+    pub(crate) show_all: bool,
     /// `-A`, `--almost-all` — like `-a` but skip `.` and `..`
-    pub show_almost_all: bool,
+    pub(crate) show_almost_all: bool,
     /// `-d`, `--directory` — list directories themselves, not their contents
-    pub list_directories: bool,
+    pub(crate) list_directories: bool,
     /// `-l` — use a long listing format
-    pub long_listing: bool,
+    pub(crate) long_listing: bool,
     /// `-R`, `--recursive` — list subdirectories recursively
-    pub recursive: bool,
+    pub(crate) recursive: bool,
 }

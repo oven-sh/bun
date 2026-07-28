@@ -376,7 +376,7 @@ impl PropertyIdTag {
     /// prefixes, if one exists. Returns `None` for unprefixed properties *and*
     /// for the 23 prefixed-but-unmapped legacy properties (`box-orient`,
     /// `flex-pack`, `mask-box-image-*`, …) that have no `Feature` entry.
-    pub const fn prefix_feature(self) -> Option<PrefixFeature> {
+    pub(crate) const fn prefix_feature(self) -> Option<PrefixFeature> {
         use PropertyIdTag as T;
         Some(match self {
             T::BackgroundClip => PrefixFeature::BackgroundClip,
@@ -975,7 +975,7 @@ impl core::hash::Hash for PropertyId {
 }
 
 impl PropertyId {
-    pub const fn tag(&self) -> PropertyIdTag {
+    pub(crate) const fn tag(&self) -> PropertyIdTag {
         match self {
             PropertyId::BackgroundColor => PropertyIdTag::BackgroundColor,
             PropertyId::BackgroundImage => PropertyIdTag::BackgroundImage,
@@ -1244,7 +1244,7 @@ impl PropertyId {
     /// Mutable reference to the stored vendor-prefix slot, if this variant
     /// carries one. The 65 prefixed `PropertyId` variants share a single
     /// or-pattern arm; everything else returns `None`.
-    pub fn prefix_slot_mut(&mut self) -> Option<&mut VendorPrefix> {
+    pub(crate) fn prefix_slot_mut(&mut self) -> Option<&mut VendorPrefix> {
         match self {
             PropertyId::BackgroundClip(p)
             | PropertyId::BoxShadow(p)
@@ -1318,14 +1318,14 @@ impl PropertyId {
     }
 
     /// Returns the vendor prefix for this property id.
-    pub fn prefix(&self) -> VendorPrefix {
+    pub(crate) fn prefix(&self) -> VendorPrefix {
         let mut id = *self;
         id.prefix_slot_mut().map_or(VendorPrefix::empty(), |p| *p)
     }
 
     /// Returns this id with its prefix replaced by `pre` (no-op for
     /// unprefixed variants).
-    pub fn with_prefix(&self, pre: VendorPrefix) -> PropertyId {
+    pub(crate) fn with_prefix(&self, pre: VendorPrefix) -> PropertyId {
         let mut id = *self;
         if let Some(p) = id.prefix_slot_mut() {
             *p = pre;
@@ -1334,14 +1334,14 @@ impl PropertyId {
     }
 
     /// Bitwise-ORs `pre` into the stored prefix (no-op for unprefixed).
-    pub fn add_prefix(&mut self, pre: VendorPrefix) {
+    pub(crate) fn add_prefix(&mut self, pre: VendorPrefix) {
         if let Some(p) = self.prefix_slot_mut() {
             *p |= pre;
         }
     }
 
     /// Expands the stored prefix to the full set required by `targets`.
-    pub fn set_prefixes_for_targets(&mut self, targets: &Targets) {
+    pub(crate) fn set_prefixes_for_targets(&mut self, targets: &Targets) {
         let Some(feature) = self.tag().prefix_feature() else {
             return;
         };
@@ -1353,7 +1353,7 @@ impl PropertyId {
     /// Maps a (case-insensitive) bare property name + parsed prefix to a
     /// `PropertyId`. Returns `None` if the name is unknown *or* the prefix
     /// isn't allowed for that property.
-    pub fn from_name_and_prefix(name: &[u8], pre: VendorPrefix) -> Option<PropertyId> {
+    pub(crate) fn from_name_and_prefix(name: &[u8], pre: VendorPrefix) -> Option<PropertyId> {
         use bun_core::strings;
         // PERF: the linear scan here is correct but slow — a length-gated
         // match (`comptime_string_map!`) would be an optimization.
@@ -3143,7 +3143,7 @@ impl PropertyId {
     }
 
     #[inline]
-    pub fn deep_clone(&self, _arena: &bun_alloc::Arena) -> PropertyId {
+    pub(crate) fn deep_clone(&self, _arena: &bun_alloc::Arena) -> PropertyId {
         *self
     }
 
@@ -3156,7 +3156,7 @@ impl PropertyId {
     }
 
     #[inline]
-    pub fn from_string(name: &[u8]) -> PropertyId {
+    pub(crate) fn from_string(name: &[u8]) -> PropertyId {
         properties_impl::property_id_mixin::from_string(name)
     }
 }
@@ -3469,7 +3469,7 @@ pub enum Property {
 
 impl Property {
     /// Returns the [`PropertyId`] for this declaration.
-    pub fn property_id(&self) -> PropertyId {
+    pub(crate) fn property_id(&self) -> PropertyId {
         match self {
             Property::BackgroundColor(..) => PropertyId::BackgroundColor,
             Property::BackgroundImage(..) => PropertyId::BackgroundImage,
@@ -3738,7 +3738,7 @@ impl Property {
     }
 
     /// Serializes the value (right-hand side) of this declaration.
-    pub fn value_to_css(&self, dest: &mut css::Printer) -> Result<(), css::PrintErr> {
+    pub(crate) fn value_to_css(&self, dest: &mut css::Printer) -> Result<(), css::PrintErr> {
         match self {
             Property::BackgroundColor(v) => css::generic::to_css(v, dest),
             Property::BackgroundImage(v) => css::generic::to_css(v, dest),
@@ -6247,7 +6247,7 @@ impl Property {
         properties_impl::property_mixin::to_css(self, dest, important)
     }
 
-    pub fn deep_clone(&self, arena: &bun_alloc::Arena) -> Property {
+    pub(crate) fn deep_clone(&self, arena: &bun_alloc::Arena) -> Property {
         match self {
             Property::BackgroundColor(v) => {
                 Property::BackgroundColor(css::generic::deep_clone(v, arena))

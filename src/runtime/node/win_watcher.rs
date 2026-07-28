@@ -29,7 +29,7 @@ bun_output::declare_scope!(PathWatcherManager, visible);
 // tag string, keeping `BUN_DEBUG_fs.watch` env matching and the
 // `[fs.watch]` log prefix.
 #[allow(non_upper_case_globals)]
-pub static fs_watch: bun_output::ScopedLogger =
+pub(crate) static fs_watch: bun_output::ScopedLogger =
     bun_output::ScopedLogger::new("fs.watch", bun_output::Visibility::Visible);
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -67,7 +67,7 @@ pub(crate) struct PathWatcherManager {
 }
 
 impl PathWatcherManager {
-    pub(crate) fn init(vm: &'static jsc::VirtualMachineRef) -> *mut PathWatcherManager {
+    fn init(vm: &'static jsc::VirtualMachineRef) -> *mut PathWatcherManager {
         bun_core::heap::into_raw(Box::new(PathWatcherManager {
             watchers: StringArrayHashMap::default(),
             vm,
@@ -168,7 +168,7 @@ impl Default for ChangeEvent {
 }
 
 impl ChangeEvent {
-    pub(crate) fn emit(
+    fn emit(
         &mut self,
         hash: bun_watcher::HashType,
         timestamp: u64,
@@ -262,7 +262,7 @@ impl PathWatcher {
         this.emit(path.as_bytes(), hash, timestamp, is_file, event_type);
     }
 
-    pub(crate) fn emit(
+    fn emit(
         &mut self,
         path: &[u8],
         hash: bun_watcher::HashType,
@@ -311,7 +311,7 @@ impl PathWatcher {
         self.maybe_deinit();
     }
 
-    pub(crate) fn init(
+    fn init(
         manager: &mut PathWatcherManager,
         path: &ZStr,
         recursive: bool,
@@ -469,7 +469,7 @@ impl PathWatcher {
 
 // ──────────────────────────────────────────────────────────────────────────
 
-pub fn watch(
+pub(crate) fn watch(
     vm: &'static jsc::VirtualMachineRef,
     path: &ZStr,
     recursive: bool,

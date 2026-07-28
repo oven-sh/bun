@@ -11,7 +11,7 @@ use bun_collections::bit_set::{ArrayBitSet, num_masks_for};
 // inline scanner in inlines.rs depends on `is_set()` being real — a no-op
 // stub here makes every byte fall through the fast path and disables all
 // inline-span recognition (emphasis, links, code, entities, breaks).
-pub type MarkCharMap = ArrayBitSet<256, { num_masks_for(256) }>;
+pub(crate) type MarkCharMap = ArrayBitSet<256, { num_masks_for(256) }>;
 use bun_core::StackCheck;
 
 use super::helpers;
@@ -23,86 +23,86 @@ use crate::RenderOptions;
 
 // Rust has no struct-scoped type
 // aliases, so these live at module scope as `parser::EmphDelim` etc.
-pub use super::inlines::{EmphDelim, HtmlScanMemo};
-pub use super::ref_defs::RefDef;
+pub(crate) use super::inlines::{EmphDelim, HtmlScanMemo};
+pub(crate) use super::ref_defs::RefDef;
 
 /// Parser context holding all state during parsing.
 // `text` is a caller-owned borrow for the parser's lifetime.
 // PORTING.md's mechanical-port guidance was "no struct lifetimes", but raw-ptr
 // here would obscure every `ch()` call; one obvious `'a` is the honest mapping.
-pub struct Parser<'a> {
-    pub text: &'a [u8],
-    pub size: OFF,
-    pub flags: Flags,
+pub(crate) struct Parser<'a> {
+    pub(crate) text: &'a [u8],
+    pub(crate) size: OFF,
+    pub(crate) flags: Flags,
 
     // Output
-    pub renderer: Renderer<'a>,
-    pub image_nesting_level: u32,
-    pub link_nesting_level: u32,
+    pub(crate) renderer: Renderer<'a>,
+    pub(crate) image_nesting_level: u32,
+    pub(crate) link_nesting_level: u32,
 
     // Code indent offset: 4 normally, maxInt if no_indented_code_blocks
-    pub code_indent_offset: u32,
+    pub(crate) code_indent_offset: u32,
 
     // Mark character map — bitset of characters that need special handling
-    pub mark_char_map: MarkCharMap,
+    pub(crate) mark_char_map: MarkCharMap,
 
     // Dynamic arrays
-    pub containers: Vec<Container>,
+    pub(crate) containers: Vec<Container>,
     // 4-byte alignment is
     // load-bearing for the `BlockHeader` reinterpretation in
     // `get_block_header_at`. Here the invariant rests on (a) offsets being
     // padded to a multiple of 4 by every writer and (b) the global allocator
     // returning >=16-byte-aligned bases; `get_block_header_at`
     // debug-asserts it on every access.
-    pub block_bytes: Vec<u8>,
-    pub buffer: Vec<u8>,
-    pub emph_delims: Vec<EmphDelim>,
+    pub(crate) block_bytes: Vec<u8>,
+    pub(crate) buffer: Vec<u8>,
+    pub(crate) emph_delims: Vec<EmphDelim>,
     // Scratch storage recycled by compute_bracket_matches (links.rs) so inline
     // processing does not allocate a bracket-pair map per block.
-    pub bracket_pairs: Vec<(OFF, OFF)>,
+    pub(crate) bracket_pairs: Vec<(OFF, OFF)>,
     // Label-frame stack recycled by process_inline_content (inlines.rs) so
     // blocks with links do not allocate a frame stack per block.
-    pub label_frames: Vec<crate::inlines::LabelFrame>,
+    pub(crate) label_frames: Vec<crate::inlines::LabelFrame>,
     // Memo of failed closing-delimiter searches in find_html_tag (inlines.rs).
     // Cell because find_html_tag is a &self query reached from both &self and
     // &mut self scanners.
-    pub html_scan_memo: Cell<HtmlScanMemo>,
+    pub(crate) html_scan_memo: Cell<HtmlScanMemo>,
 
     // Number of active containers
-    pub n_containers: u32,
+    pub(crate) n_containers: u32,
 
     // Current block being built
-    pub current_block: Option<usize>,
-    pub current_block_lines: Vec<VerbatimLine>,
+    pub(crate) current_block: Option<usize>,
+    pub(crate) current_block_lines: Vec<VerbatimLine>,
 
     // HTML block tracking
-    pub html_block_type: u8,
+    pub(crate) html_block_type: u8,
     // Fenced code block indent
-    pub fence_indent: u32,
+    pub(crate) fence_indent: u32,
 
     // Table column alignments
-    pub table_alignments: [Align; TABLE_MAXCOLCOUNT as usize],
+    pub(crate) table_alignments: [Align; TABLE_MAXCOLCOUNT as usize],
 
     // Ref defs
-    pub ref_defs: Vec<RefDef>,
-    pub ref_def_labels: bun_collections::StringSet,
+    pub(crate) ref_defs: Vec<RefDef>,
+    pub(crate) ref_def_labels: bun_collections::StringSet,
 
     // State
-    pub last_line_has_list_loosening_effect: bool,
-    pub last_list_item_starts_with_two_blank_lines: bool,
-    pub max_ref_def_output: u64,
+    pub(crate) last_line_has_list_loosening_effect: bool,
+    pub(crate) last_list_item_starts_with_two_blank_lines: bool,
+    pub(crate) max_ref_def_output: u64,
 
     // Stack overflow protection for recursive inline processing
-    pub stack_check: StackCheck,
+    pub(crate) stack_check: StackCheck,
 }
 
 #[repr(C)]
 pub struct BlockHeader {
-    pub block_type: BlockType,
-    pub _pad: [u8; 3],
-    pub flags: u32,
-    pub data: u32,
-    pub n_lines: u32,
+    pub(crate) block_type: BlockType,
+    pub(crate) _pad: [u8; 3],
+    pub(crate) flags: u32,
+    pub(crate) data: u32,
+    pub(crate) n_lines: u32,
 }
 
 impl Default for BlockHeader {
@@ -121,7 +121,7 @@ impl Default for BlockHeader {
 /// with the parser-specific `{ StackOverflow, InputTooLarge, TooManyBlocks }`.
 // (`bun_jsc::JsError` covers the first three, but the md crate sits below
 // `bun_jsc` in the layering, so the variants stay flat here.)
-pub type Error = ParserError;
+pub(crate) type Error = ParserError;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, strum::IntoStaticStr)]
 pub enum ParserError {
@@ -165,7 +165,7 @@ pub const MAX_INPUT_LEN: usize = (OFF::MAX - MAX_LOOKAHEAD) as usize;
 /// it), and each new header is written at the end of `block_bytes` rounded
 /// up to its alignment, so the buffer must stop one aligned header short of
 /// `OFF::MAX`.
-pub(crate) const MAX_BLOCK_BYTES: usize =
+const MAX_BLOCK_BYTES: usize =
     OFF::MAX as usize - (size_of::<BlockHeader>() + align_of::<BlockHeader>());
 
 // The headroom proof: a buffer filled to the cap can still be aligned up and
@@ -213,7 +213,7 @@ pub(crate) fn input_size(text: &[u8]) -> Result<OFF, ParserError> {
 }
 
 impl<'a> Parser<'a> {
-    pub fn get_block_header_at(&mut self, off: usize) -> &mut BlockHeader {
+    pub(crate) fn get_block_header_at(&mut self, off: usize) -> &mut BlockHeader {
         // SAFETY: `off` is produced by start_new_block / push_container_bytes which pad it
         // to a multiple of `align_of::<BlockHeader>()`, and the global allocator returns
         // blocks aligned to at least `align_of::<usize>()`, so the resulting pointer is
@@ -231,7 +231,7 @@ impl<'a> Parser<'a> {
     }
 
     #[inline]
-    pub fn get_block_at(&mut self, off: usize) -> &mut BlockHeader {
+    pub(crate) fn get_block_at(&mut self, off: usize) -> &mut BlockHeader {
         self.get_block_header_at(off)
     }
 
@@ -311,7 +311,7 @@ impl<'a> Parser<'a> {
     // All owned buffers are `Vec<_>`, so `Drop` is automatic — no explicit impl.
 
     #[inline]
-    pub fn ch(&self, off: OFF) -> u8 {
+    pub(crate) fn ch(&self, off: OFF) -> u8 {
         if off >= self.size {
             return 0;
         }
@@ -412,7 +412,7 @@ impl<'a> Parser<'a> {
 // Public API
 // ========================================
 
-pub fn render_to_html(
+pub(crate) fn render_to_html(
     text: &[u8],
     flags: Flags,
     render_opts: RenderOptions,
@@ -434,7 +434,7 @@ pub fn render_to_html(
 /// Renderer implementation (e.g. for JS callback-based rendering).
 /// `render_options` carries render-only flags (tag_filter, heading_ids,
 /// autolink_headings) so they are not silently dropped by the API.
-pub fn render_with_renderer<'a>(
+pub(crate) fn render_with_renderer<'a>(
     text: &'a [u8],
     flags: Flags,
     render_options: RenderOptions,

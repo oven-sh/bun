@@ -302,7 +302,7 @@ pub struct Timeout {
 
     /// See `swapGlobalForTestIsolation`: timers from a prior isolated test
     /// file must not fire abort handlers in the new global.
-    pub generation: u32,
+    pub(crate) generation: u32,
 }
 
 bun_event_loop::impl_timer_owner!(Timeout; from_timer_ptr => event_loop_timer);
@@ -412,7 +412,7 @@ impl Timeout {
 
 /// Caller is expected to have already ref'd the AbortSignal.
 #[unsafe(no_mangle)]
-pub(crate) extern "C" fn AbortSignal__Timeout__create(
+extern "C" fn AbortSignal__Timeout__create(
     vm: *mut VirtualMachine,
     signal_: *mut AbortSignal,
     milliseconds: u64,
@@ -424,7 +424,7 @@ pub(crate) extern "C" fn AbortSignal__Timeout__create(
 /// `this` must be a live boxed `Timeout` returned from `AbortSignal__Timeout__create`;
 /// `vm` must be the live per-thread `VirtualMachine`.
 #[unsafe(no_mangle)]
-pub(crate) unsafe extern "C" fn AbortSignal__Timeout__run(
+unsafe extern "C" fn AbortSignal__Timeout__run(
     this: *mut Timeout,
     vm: *mut VirtualMachine,
 ) {
@@ -437,7 +437,7 @@ pub(crate) unsafe extern "C" fn AbortSignal__Timeout__run(
 /// Must be called on the owning JS thread — `deinit` resolves the VM via the
 /// thread-local `VirtualMachine::get_mut_ptr()` and `Timeout::cancel` requires it.
 #[unsafe(no_mangle)]
-pub(crate) unsafe extern "C" fn AbortSignal__Timeout__deinit(this: *mut Timeout) {
+unsafe extern "C" fn AbortSignal__Timeout__deinit(this: *mut Timeout) {
     // Called from ~AbortSignal() / cancelTimer(). The AbortSignal's
     // ScriptExecutionContext may be a dead global under --isolate, so
     // we resolve the VM via the threadlocal instead of taking it as a

@@ -65,12 +65,12 @@ pub struct PackageJSON {
 /// crate owns the shape and `bun_resolver` re-imports it (move-in pass).
 #[derive(Clone, Copy)]
 pub struct AnyResolveWatcher {
-    pub context: *mut (),
+    pub(crate) context: *mut (),
     // Safe fn-pointer: the callback has no caller-side preconditions — it
     // receives exactly the `context` it was paired with at construction (a
     // closure-style invariant upheld by this struct), and the body discharges
     // its own type-recovery `unsafe` internally.
-    pub callback: fn(*mut (), dir_path: &[u8], dir_fd: Fd),
+    pub(crate) callback: fn(*mut (), dir_path: &[u8], dir_fd: Fd),
 }
 
 impl AnyResolveWatcher {
@@ -96,11 +96,11 @@ pub type ChangedFilePath = Option<&'static ZStr>;
 pub struct Watcher {
     // This will always be [MAX_COUNT]WatchEvent,
     // We avoid statically allocating because it increases the binary size.
-    pub watch_events: Box<[WatchEvent]>,
-    pub changed_filepaths: [ChangedFilePath; MAX_COUNT],
+    pub(crate) watch_events: Box<[WatchEvent]>,
+    pub(crate) changed_filepaths: [ChangedFilePath; MAX_COUNT],
 
     /// The platform-specific implementation of the watcher
-    pub platform: Platform,
+    pub(crate) platform: Platform,
 
     pub watchlist: WatchList,
     pub mutex: Mutex,
@@ -111,27 +111,27 @@ pub struct Watcher {
     /// Whether `thread_main` is running. Written by the watcher thread, read
     /// by `start`/`shutdown` on the main thread. The actual `ThreadId` value
     /// was never read — only `is_some()`/`is_none()` — so this is a `bool`.
-    pub watchloop_handle: bun_core::AtomicCell<bool>,
-    pub cwd: &'static [u8],
-    pub thread: Option<std::thread::JoinHandle<()>>,
+    pub(crate) watchloop_handle: bun_core::AtomicCell<bool>,
+    pub(crate) cwd: &'static [u8],
+    pub(crate) thread: Option<std::thread::JoinHandle<()>>,
     /// Main thread clears this in `shutdown`; watcher thread polls it in
     /// `watch_loop` and the platform `watch_loop_cycle`.
-    pub running: bun_core::AtomicCell<bool>,
+    pub(crate) running: bun_core::AtomicCell<bool>,
     /// Set by `shutdown` (main thread), read by `thread_main` (watcher
     /// thread) after the loop exits.
-    pub close_descriptors: bun_core::AtomicCell<bool>,
+    pub(crate) close_descriptors: bun_core::AtomicCell<bool>,
 
-    pub evict_list: [WatchItemIndex; MAX_EVICTION_COUNT],
-    pub evict_list_i: WatchItemIndex,
+    pub(crate) evict_list: [WatchItemIndex; MAX_EVICTION_COUNT],
+    pub(crate) evict_list_i: WatchItemIndex,
 
     /// Scratch snapshot of `watchlist.eventlist_index` used by
     /// `watch_loop_cycle`; owned by the watcher thread.
     #[cfg(any(target_os = "linux", target_os = "android"))]
-    pub eventlist_index_scratch: Vec<platform::EventListIndex>,
+    pub(crate) eventlist_index_scratch: Vec<platform::EventListIndex>,
 
-    pub ctx: *mut (),
-    pub on_file_update: fn(*mut (), &mut [WatchEvent], &[ChangedFilePath], &WatchList),
-    pub on_error: fn(*mut (), sys::Error),
+    pub(crate) ctx: *mut (),
+    pub(crate) on_file_update: fn(*mut (), &mut [WatchEvent], &[ChangedFilePath], &WatchList),
+    pub(crate) on_error: fn(*mut (), sys::Error),
 
     pub thread_lock: ThreadLock,
 }
@@ -460,7 +460,7 @@ impl Watcher {
     ///
     /// Does not propagate kevent registration errors.
     #[cfg(any(target_os = "macos", target_os = "freebsd"))]
-    pub fn add_file_descriptor_to_kqueue_without_checks(&mut self, fd: Fd, watchlist_id: usize) {
+    pub(crate) fn add_file_descriptor_to_kqueue_without_checks(&mut self, fd: Fd, watchlist_id: usize) {
         use libc::{EV_ADD, EV_CLEAR, EV_ENABLE, EVFILT_VNODE, kevent as KEvent};
         use libc::{NOTE_DELETE, NOTE_RENAME, NOTE_WRITE};
 
@@ -647,7 +647,7 @@ impl Watcher {
 
     // Below is platform-independent
 
-    pub fn append_file_maybe_lock<const CLONE_FILE_PATH: bool, const LOCK: bool>(
+    pub(crate) fn append_file_maybe_lock<const CLONE_FILE_PATH: bool, const LOCK: bool>(
         &mut self,
         fd: Fd,
         file_path: &[u8],
@@ -934,7 +934,7 @@ impl Watcher {
         }
     }
 
-    pub fn on_maybe_watch_directory(watch: &mut Self, file_path: &[u8], dir_fd: Fd) {
+    pub(crate) fn on_maybe_watch_directory(watch: &mut Self, file_path: &[u8], dir_fd: Fd) {
         // We don't want to watch:
         // - Directories outside the root directory
         // - Directories inside node_modules
@@ -952,8 +952,8 @@ impl Watcher {
 pub struct WatchEvent {
     pub index: WatchItemIndex,
     pub op: Op,
-    pub name_off: u8,
-    pub name_len: u8,
+    pub(crate) name_off: u8,
+    pub(crate) name_len: u8,
 }
 
 impl WatchEvent {
@@ -964,11 +964,12 @@ impl WatchEvent {
         &buf[self.name_off as usize..][..self.name_len as usize]
     }
 
-    pub fn sort_by_index(event: WatchEvent, rhs: WatchEvent) -> core::cmp::Ordering {
+    #[cfg(any(target_os = "linux", target_os = "android", windows))]
+    pub(crate) fn sort_by_index(event: WatchEvent, rhs: WatchEvent) -> core::cmp::Ordering {
         event.index.cmp(&rhs.index)
     }
 
-    pub fn merge(&mut self, other: WatchEvent) {
+    pub(crate) fn merge(&mut self, other: WatchEvent) {
         self.name_len += other.name_len;
         self.op = Op::merge(self.op, other.op);
     }
@@ -988,7 +989,7 @@ bitflags::bitflags! {
 }
 
 impl Op {
-    pub fn merge(before: Op, after: Op) -> Op {
+    pub(crate) fn merge(before: Op, after: Op) -> Op {
         before | after
     }
 }

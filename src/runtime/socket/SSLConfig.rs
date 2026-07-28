@@ -435,7 +435,7 @@ fn handle_single_file(
 /// Returns null if parsing fails (an exception will be set on globalThis).
 /// The returned SSLConfig is heap-allocated and ownership is transferred to the caller.
 #[unsafe(no_mangle)]
-pub(crate) extern "C" fn Bun__WebSocket__parseSSLConfig(
+extern "C" fn Bun__WebSocket__parseSSLConfig(
     global_this: &JSGlobalObject,
     tls_value: JSValue,
 ) -> Option<Box<bun_http::ssl_config::SSLConfig>> {
@@ -465,7 +465,7 @@ pub(crate) extern "C" fn Bun__WebSocket__parseSSLConfig(
 /// `Bun__WebSocket__parseSSLConfig` whose ownership the caller is transferring
 /// back (i.e. not already freed or handed to an upgrade client).
 #[unsafe(no_mangle)]
-pub(crate) unsafe extern "C" fn Bun__WebSocket__freeSSLConfig(
+unsafe extern "C" fn Bun__WebSocket__freeSSLConfig(
     config: *mut bun_http::ssl_config::SSLConfig,
 ) {
     // SAFETY: caller upholds the `# Safety` contract above — `config` is null

@@ -75,7 +75,7 @@ macro_rules! col_ref {
     };
 }
 
-pub fn scan_imports_and_exports(
+pub(crate) fn scan_imports_and_exports(
     this: &mut LinkerContext,
 ) -> Result<(), ScanImportsAndExportsError> {
     let _outer_trace = perf::trace("Bundler.scanImportsAndExports");

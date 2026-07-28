@@ -56,13 +56,13 @@ unsafe extern "C" {
 
 #[derive(Clone, Copy)]
 pub struct Options {
-    pub max_colors: u16,
+    pub(crate) max_colors: u16,
     /// Floyd–Steinberg error diffusion. Hides banding on gradients at the
     /// cost of grain on flat areas; off by default to match Sharp's
     /// `palette:true` default.
     // No `Default` impl — callers must
     // pass this explicitly.
-    pub dither: bool,
+    pub(crate) dither: bool,
 }
 
 pub(crate) fn quantize(

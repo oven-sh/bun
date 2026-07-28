@@ -1,7 +1,5 @@
 use bun_simdutf_sys::simdutf::{self, SIMDUTFResult};
 
-pub use zig_base64::STANDARD_ALPHABET_CHARS;
-
 // ASCII control codes used in the ignore set below.
 const VT: u8 = 0x0B; // vertical tab
 const FF: u8 = 0x0C; // form feed
@@ -127,7 +125,7 @@ pub fn encode_alloc(source: &[u8]) -> Vec<u8> {
     destination
 }
 
-pub(crate) fn simdutf_encode_len_url_safe(source_len: usize) -> usize {
+fn simdutf_encode_len_url_safe(source_len: usize) -> usize {
     simdutf::base64::encode_len(source_len, true)
 }
 
@@ -173,7 +171,7 @@ pub const fn encode_len_from_size(source: usize) -> usize {
 }
 
 #[inline]
-pub(crate) const fn url_safe_encode_len_from_size(n: usize) -> usize {
+const fn url_safe_encode_len_from_size(n: usize) -> usize {
     // Equivalent to WebKit's `ceil(n * 4 / 3)`, but split so the intermediate
     // product can't overflow before the divide for large `n`.
     let full_chunks = n / 3;
@@ -201,7 +199,7 @@ pub mod vlq {
     /// These are 7 bytes long. This makes the `VLQ` struct 8 bytes.
     #[derive(Copy, Clone)]
     pub struct VLQ {
-        pub bytes: [u8; VLQ_MAX_IN_BYTES],
+        pub(crate) bytes: [u8; VLQ_MAX_IN_BYTES],
         pub len: u8,
     }
 
@@ -214,7 +212,7 @@ pub mod vlq {
         }
     }
 
-    pub(crate) const VLQ_MAX_IN_BYTES: usize = 7;
+    const VLQ_MAX_IN_BYTES: usize = 7;
 
     impl VLQ {
         #[inline]
@@ -421,18 +419,13 @@ pub mod zig_base64 {
         NoSpaceLeft,
     }
 
-    pub(crate) type DecoderWithIgnoreProto = fn(ignore: &[u8]) -> Base64DecoderWithIgnore;
-
     /// Base64 codecs
     pub struct Codecs {
-        pub alphabet_chars: [u8; 64],
-        pub pad_char: Option<u8>,
-        pub decoder_with_ignore: DecoderWithIgnoreProto,
         pub encoder: Base64Encoder,
         pub decoder: Base64Decoder,
     }
 
-    pub const STANDARD_ALPHABET_CHARS: [u8; 64] =
+    pub(crate) const STANDARD_ALPHABET_CHARS: [u8; 64] =
         *b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
     pub(crate) const fn standard_base64_decoder_with_ignore(
@@ -444,18 +437,12 @@ pub mod zig_base64 {
     /// Standard Base64 codecs, with padding
     // Const-initialized `static` (lives in `.rodata`, no `Once`).
     pub static STANDARD: Codecs = Codecs {
-        alphabet_chars: STANDARD_ALPHABET_CHARS,
-        pad_char: Some(b'='),
-        decoder_with_ignore: standard_base64_decoder_with_ignore,
         encoder: Base64Encoder::init(STANDARD_ALPHABET_CHARS, Some(b'=')),
         decoder: Base64Decoder::init(STANDARD_ALPHABET_CHARS, Some(b'=')),
     };
 
     /// Standard Base64 codecs, without padding
     pub static STANDARD_NO_PAD: Codecs = Codecs {
-        alphabet_chars: STANDARD_ALPHABET_CHARS,
-        pad_char: None,
-        decoder_with_ignore: standard_base64_decoder_with_ignore,
         encoder: Base64Encoder::init(STANDARD_ALPHABET_CHARS, None),
         decoder: Base64Decoder::init(STANDARD_ALPHABET_CHARS, None),
     };
@@ -465,13 +452,13 @@ pub mod zig_base64 {
 
     #[derive(Copy, Clone)]
     pub struct Base64Encoder {
-        pub alphabet_chars: [u8; 64],
-        pub pad_char: Option<u8>,
+        pub(crate) alphabet_chars: [u8; 64],
+        pub(crate) pad_char: Option<u8>,
     }
 
     impl Base64Encoder {
         /// A bunch of assertions, then simply pass the data right through.
-        pub const fn init(alphabet_chars: [u8; 64], pad_char: Option<u8>) -> Base64Encoder {
+        pub(crate) const fn init(alphabet_chars: [u8; 64], pad_char: Option<u8>) -> Base64Encoder {
             let mut char_in_alphabet = [false; 256];
             let mut i = 0;
             while i < 64 {
@@ -514,7 +501,7 @@ pub mod zig_base64 {
             &dest[0..out_len]
         }
 
-        pub fn encode_without_size_check(&self, dest: &mut [u8], source: &[u8]) -> usize {
+        pub(crate) fn encode_without_size_check(&self, dest: &mut [u8], source: &[u8]) -> usize {
             let mut acc: u16 = 0;
             let mut acc_len: u8 = 0;
             let mut out_idx: usize = 0;
@@ -539,14 +526,14 @@ pub mod zig_base64 {
     pub struct Base64Decoder {
         /// e.g. 'A' => 0.
         /// `INVALID_CHAR` for any value not in the 64 alphabet chars.
-        pub char_to_index: [u8; 256],
-        pub pad_char: Option<u8>,
+        pub(crate) char_to_index: [u8; 256],
+        pub(crate) pad_char: Option<u8>,
     }
 
     impl Base64Decoder {
-        pub const INVALID_CHAR: u8 = 0xFF;
+        pub(crate) const INVALID_CHAR: u8 = 0xFF;
 
-        pub const fn init(alphabet_chars: [u8; 64], pad_char: Option<u8>) -> Base64Decoder {
+        pub(crate) const fn init(alphabet_chars: [u8; 64], pad_char: Option<u8>) -> Base64Decoder {
             let mut result = Base64Decoder {
                 char_to_index: [Self::INVALID_CHAR; 256],
                 pad_char,
@@ -571,7 +558,7 @@ pub mod zig_base64 {
 
         /// Return the maximum possible decoded size for a given input length - The actual length may be less if the input includes padding.
         /// `InvalidPadding` is returned if the input length is not valid.
-        pub fn calc_size_upper_bound(&self, source_len: usize) -> Result<usize, Error> {
+        pub(crate) fn calc_size_upper_bound(&self, source_len: usize) -> Result<usize, Error> {
             let mut result = source_len / 4 * 3;
             let leftover = source_len % 4;
             if self.pad_char.is_some() {
@@ -667,12 +654,12 @@ pub mod zig_base64 {
 
     #[derive(Clone)]
     pub struct Base64DecoderWithIgnore {
-        pub decoder: Base64Decoder,
-        pub char_is_ignored: [bool; 256],
+        pub(crate) decoder: Base64Decoder,
+        pub(crate) char_is_ignored: [bool; 256],
     }
 
     impl Base64DecoderWithIgnore {
-        pub(crate) const fn init(
+        const fn init(
             alphabet_chars: [u8; 64],
             pad_char: Option<u8>,
             ignore_chars: &[u8],
@@ -796,13 +783,13 @@ pub mod zig_base64 {
             test_all_apis(codecs, b"fooba", b"Zm9vYmE=", b"Zm9vYmE=");
             test_all_apis(codecs, b"foobar", b"Zm9vYmFy", b"Zm9vYmFy");
 
-            test_decode_ignore_space(codecs, b"", b" ");
-            test_decode_ignore_space(codecs, b"f", b"Z g= =");
-            test_decode_ignore_space(codecs, b"fo", b"    Zm8=");
-            test_decode_ignore_space(codecs, b"foo", b"Zm9v    ");
-            test_decode_ignore_space(codecs, b"foob", b"Zm9vYg = = ");
-            test_decode_ignore_space(codecs, b"fooba", b"Zm9v YmE=");
-            test_decode_ignore_space(codecs, b"foobar", b" Z m 9 v Y m F y ");
+            test_decode_ignore_space(b"", b" ");
+            test_decode_ignore_space(b"f", b"Z g= =");
+            test_decode_ignore_space(b"fo", b"    Zm8=");
+            test_decode_ignore_space(b"foo", b"Zm9v    ");
+            test_decode_ignore_space(b"foob", b"Zm9vYg = = ");
+            test_decode_ignore_space(b"fooba", b"Zm9v YmE=");
+            test_decode_ignore_space(b"foobar", b" Z m 9 v Y m F y ");
 
             // test getting some api errors
             test_error(
@@ -896,7 +883,7 @@ pub mod zig_base64 {
 
             // Base64DecoderWithIgnore
             {
-                let decoder_ignore_nothing = (codecs.decoder_with_ignore)(b"");
+                let decoder_ignore_nothing = standard_base64_decoder_with_ignore(b"");
                 let mut buffer = [0u8; 0x100];
                 let decoded = &mut buffer[..];
                 let mut written: usize = 0;
@@ -908,8 +895,8 @@ pub mod zig_base64 {
             }
         }
 
-        fn test_decode_ignore_space(codecs: &Codecs, expected_decoded: &[u8], encoded: &[u8]) {
-            let decoder_ignore_space = (codecs.decoder_with_ignore)(b" ");
+        fn test_decode_ignore_space(expected_decoded: &[u8], encoded: &[u8]) {
+            let decoder_ignore_space = standard_base64_decoder_with_ignore(b" ");
             let mut buffer = [0u8; 0x100];
             let decoded = &mut buffer[..];
             let mut written: usize = 0;
@@ -929,7 +916,7 @@ pub mod zig_base64 {
             expected_err: Error,
             expected_with_ignore: Option<Error>,
         ) {
-            let decoder_ignore_space = (codecs.decoder_with_ignore)(b" ");
+            let decoder_ignore_space = standard_base64_decoder_with_ignore(b" ");
             let mut buffer = [0u8; 0x100];
             match codecs.decoder.calc_size_for_slice(encoded) {
                 Ok(decoded_size) => {
@@ -951,7 +938,7 @@ pub mod zig_base64 {
         }
 
         fn test_no_space_left_error(codecs: &Codecs, encoded: &[u8]) {
-            let decoder_ignore_space = (codecs.decoder_with_ignore)(b" ");
+            let decoder_ignore_space = standard_base64_decoder_with_ignore(b" ");
             let mut buffer = [0u8; 0x100];
             let size = codecs.decoder.calc_size_for_slice(encoded).unwrap() - 1;
             let decoded = &mut buffer[0..size];

@@ -4128,7 +4128,15 @@ impl Resolver {
                     c_ares::ARES_SOCKET_BAD,
                     c_ares::ARES_SOCKET_BAD,
                 );
-                let _ = self.add_timer(Some(&now));
+                // c-ares detaches a query only after its callback returns, so
+                // `request_completed` (run inside the callback above) may have
+                // re-armed the timer against a still-counted query. Re-check
+                // now that `ares_process_fd` has returned; mirrors `on_dns_poll`.
+                if self.any_requests_pending() {
+                    let _ = self.add_timer(Some(&now));
+                } else {
+                    self.remove_timer();
+                }
             }
         }
     }

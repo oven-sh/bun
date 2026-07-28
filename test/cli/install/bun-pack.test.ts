@@ -75,10 +75,7 @@ describe("unreadable lockfile", () => {
   ]) {
     test(`packs with ${label}`, async () => {
       await Promise.all([
-        write(
-          join(packageDir, "package.json"),
-          JSON.stringify({ name: "pack-bad-lockfile", version: "1.0.0" }),
-        ),
+        write(join(packageDir, "package.json"), JSON.stringify({ name: "pack-bad-lockfile", version: "1.0.0" })),
         write(join(packageDir, "index.js"), "module.exports = 1"),
         write(join(packageDir, file), contents),
       ]);
@@ -135,10 +132,7 @@ describe("unreadable lockfile", () => {
 
   test("bun publish --dry-run packs with corrupt lockfile", async () => {
     await Promise.all([
-      write(
-        join(packageDir, "package.json"),
-        JSON.stringify({ name: "publish-bad-lockfile", version: "1.0.0" }),
-      ),
+      write(join(packageDir, "package.json"), JSON.stringify({ name: "publish-bad-lockfile", version: "1.0.0" })),
       write(join(packageDir, "index.js"), "module.exports = 1"),
       write(join(packageDir, "bun.lock"), ""),
     ]);

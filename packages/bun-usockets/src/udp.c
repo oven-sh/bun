@@ -19,6 +19,9 @@
 #include "internal/internal.h"
 
 #include <string.h>
+#ifndef _WIN32
+#include <errno.h>
+#endif
 
 // int us_udp_packet_buffer_ecn(struct us_udp_packet_buffer_t *buf, int index) {
 //     return bsd_udp_packet_buffer_ecn((struct udp_recvbuf *)buf, index);
@@ -51,12 +54,11 @@ int us_udp_socket_send(struct us_udp_socket_t *s, void** payloads, size_t* lengt
     struct udp_sendbuf *buf = (struct udp_sendbuf *)s->loop->data.send_buf;
 
     int total_sent = 0;
+#ifndef _WIN32
+    int stale_icmp_retried = 0;
+#endif
     while (num > 0) {
         int count = bsd_udp_setup_sendbuf(buf, LIBUS_SEND_BUFFER_LENGTH, payloads, lengths, addresses, num);
-        payloads += count;
-        lengths += count;
-        addresses += count;
-        num -= count;
         // TODO nohang flag?
         int sent = bsd_sendmmsg(fd, buf, MSG_DONTWAIT);
         if (sent < 0) {
@@ -67,15 +69,47 @@ int us_udp_socket_send(struct us_udp_socket_t *s, void** payloads, size_t* lengt
                 us_poll_change((struct us_poll_t *) s, s->loop, LIBUS_SOCKET_READABLE | LIBUS_SOCKET_WRITABLE);
                 return total_sent;
             }
+#ifndef _WIN32
+            /* On an unconnected socket with IP_RECVERR armed, an ICMP for a
+             * previous datagram (to a different peer) is mirrored into sk_err
+             * and consumed by THIS sendmsg as ECONNREFUSED/E*UNREACH, failing
+             * a datagram whose own destination was never tried. sock_error()
+             * already cleared sk_err, so one retry succeeds. Connected sockets
+             * keep the error: there the ICMP is about the only peer. */
+            if (!s->connected && !stale_icmp_retried &&
+                (errno == ECONNREFUSED || errno == EHOSTUNREACH || errno == ENETUNREACH)) {
+                stale_icmp_retried = 1;
+                continue;
+            }
+#endif
             return total_sent > 0 ? total_sent : sent;
         }
         total_sent += sent;
+        payloads += sent;
+        lengths += sent;
+        addresses += sent;
+        num -= sent;
         if (sent < count) {
-            /* Partial batch: kernel send buffer is full. Re-arm writable so
-             * on_drain fires and stop — retrying now would just spin on EAGAIN. */
+#ifndef _WIN32
+            /* Partial batch on an unconnected socket: Linux sendmmsg returns a
+             * short count without setting errno, so a stale sk_err consumed
+             * mid-batch is indistinguishable from a full send buffer here.
+             * Resume at the failed index; the next iteration tells them apart
+             * (EAGAIN re-arms above, cleared sk_err succeeds). sent > 0
+             * guarantees forward progress so this cannot spin. */
+            if (sent > 0 && !s->connected) {
+                stale_icmp_retried = 0;
+                continue;
+            }
+#endif
+            /* Kernel send buffer is full. Re-arm writable so on_drain fires
+             * and stop; retrying now would just spin on EAGAIN. */
             us_poll_change((struct us_poll_t *) s, s->loop, LIBUS_SOCKET_READABLE | LIBUS_SOCKET_WRITABLE);
             return total_sent;
         }
+#ifndef _WIN32
+        stale_icmp_retried = 0;
+#endif
     }
     return total_sent;
 }
@@ -148,11 +182,15 @@ int us_udp_socket_set_ttl_multicast(struct us_udp_socket_t *s, int ttl) {
 }
 
 int us_udp_socket_connect(struct us_udp_socket_t *s, const char* host, unsigned short port) {
-    return bsd_connect_udp_socket(us_poll_fd((struct us_poll_t *)s), host, port);
+    int rc = bsd_connect_udp_socket(us_poll_fd((struct us_poll_t *)s), host, port);
+    if (rc == 0) s->connected = 1;
+    return rc;
 }
 
 int us_udp_socket_disconnect(struct us_udp_socket_t *s) {
-    return bsd_disconnect_udp_socket(us_poll_fd((struct us_poll_t *)s));
+    int rc = bsd_disconnect_udp_socket(us_poll_fd((struct us_poll_t *)s));
+    if (rc == 0) s->connected = 0;
+    return rc;
 }
 
 int us_udp_socket_set_multicast_loopback(struct us_udp_socket_t *s, int enabled) {

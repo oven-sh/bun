@@ -1,7 +1,7 @@
 import { udpSocket } from "bun";
 import { heapStats } from "bun:jsc";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, disableAggressiveGCScope, isWindows, randomPort } from "harness";
+import { bunEnv, bunExe, disableAggressiveGCScope, isLinux, isWindows, randomPort } from "harness";
 import path from "node:path";
 import { dataCases, dataTypes } from "./testdata";
 
@@ -582,6 +582,122 @@ describe("udpSocket()", () => {
       },
       30_000,
     );
+  });
+});
+
+// IP_RECVERR (Linux-only, enabled by default on every Bun UDP socket) mirrors
+// an ICMP port-unreachable into sk_err; the next sendmsg on the same socket
+// consumes it via sock_error() and fails with ECONNREFUSED for a datagram whose
+// own destination was never tried. The send path must retry once on an
+// unconnected socket so a bounce off one dead peer cannot poison the next send
+// to a healthy one.
+describe.skipIf(!isLinux)("send() is not poisoned by a stale ICMP from a previous datagram", () => {
+  async function deadPort() {
+    const tmp = await udpSocket({ hostname: "127.0.0.1" });
+    const port = tmp.port;
+    tmp.close();
+    return port;
+  }
+
+  test("same-tick send after a bounce reaches a healthy peer", async () => {
+    const got: string[] = [];
+    const live = await udpSocket({
+      hostname: "127.0.0.1",
+      socket: { data: (_s, d) => void got.push(d.toString()) },
+    });
+    const dead = await deadPort();
+    try {
+      let threw = 0;
+      let lost = 0;
+      for (let t = 0; t < 30 && threw === 0 && lost === 0; t++) {
+        const s = await udpSocket({ hostname: "127.0.0.1", socket: { error() {} } });
+        s.send("to-dead", dead, "127.0.0.1");
+        const before = got.length;
+        try {
+          s.send(`victim-${t}`, live.port, "127.0.0.1");
+        } catch {
+          threw++;
+        }
+        for (let i = 0; i < 100 && got.length === before; i++) await Bun.sleep(1);
+        if (got.length === before) lost++;
+        s.close();
+      }
+      expect({ threw, lost }).toEqual({ threw: 0, lost: 0 });
+    } finally {
+      live.close();
+    }
+  });
+
+  test("sendMany() after a bounce delivers the whole healthy batch", async () => {
+    const got: string[] = [];
+    const live = await udpSocket({
+      hostname: "127.0.0.1",
+      socket: { data: (_s, d) => void got.push(d.toString()) },
+    });
+    const dead = await deadPort();
+    const s = await udpSocket({ hostname: "127.0.0.1", socket: { error() {} } });
+    try {
+      s.send("to-dead", dead, "127.0.0.1");
+      const batch = Array.from({ length: 10 }, (_, i) => [`b${i}`, live.port, "127.0.0.1"]).flat();
+      const ret = s.sendMany(batch);
+      for (let i = 0; i < 200 && got.length < 10; i++) await Bun.sleep(1);
+      expect({ ret, delivered: got.length }).toEqual({ ret: 10, delivered: 10 });
+    } finally {
+      s.close();
+      live.close();
+    }
+  });
+
+  test("sendMany() resumes past a dead destination inside the batch", async () => {
+    const got = new Set<string>();
+    const live = await udpSocket({
+      hostname: "127.0.0.1",
+      socket: { data: (_s, d) => void got.add(d.toString()) },
+    });
+    const dead = await deadPort();
+    // The ICMP for index 1 lands during sendmmsg on loopback and short-counts
+    // the batch at index 2; the send loop must resume there instead of
+    // re-arming writable.
+    const batch: (string | number)[] = [];
+    const liveTags: string[] = [];
+    for (let i = 0; i < 8; i++) {
+      const d = i === 1 || i === 4;
+      batch.push(`m${i}`, d ? dead : live.port, "127.0.0.1");
+      if (!d) liveTags.push(`m${i}`);
+    }
+    const s = await udpSocket({ hostname: "127.0.0.1", socket: { error() {} } });
+    try {
+      const ret = s.sendMany(batch);
+      for (let i = 0; i < 200 && got.size < liveTags.length; i++) await Bun.sleep(1);
+      expect(ret).toBe(8);
+      expect([...got].sort()).toEqual(liveTags.sort());
+    } finally {
+      s.close();
+      live.close();
+    }
+  });
+
+  test("connected socket still surfaces ECONNREFUSED on the next same-tick send", async () => {
+    const dead = await deadPort();
+    let threw = 0;
+    for (let t = 0; t < 30; t++) {
+      const s = await udpSocket({
+        hostname: "127.0.0.1",
+        connect: { hostname: "127.0.0.1", port: dead },
+        socket: { error() {} },
+      });
+      s.send("a");
+      try {
+        s.send("b");
+      } catch (e: any) {
+        if (e.code === "ECONNREFUSED") threw++;
+      }
+      s.close();
+    }
+    // The unconnected-retry must not apply here: the ICMP IS about this
+    // socket's only peer. Loopback delivers it between the two sends, so the
+    // second send sees it on every trial.
+    expect(threw).toBe(30);
   });
 });
 

@@ -14,10 +14,8 @@ const {
   SQLQueryFlags,
   symbols: { _results, _handle },
 } = require("internal/sql/query");
-function isTypedArray(value: any) {
-  // Buffer should be treated as a normal object
-  // Typed arrays should be treated like an array
-  return ArrayBuffer.isView(value) && !Buffer.isBuffer(value);
+function isByteView(value: ArrayBufferView) {
+  return value instanceof Uint8Array || value instanceof Uint8ClampedArray || value instanceof DataView;
 }
 
 const { PostgresError } = require("internal/sql/errors");
@@ -146,10 +144,31 @@ function arrayValueSerializer(type: ArrayType, is_numeric: boolean, is_json: boo
   // we do minimal to none type validation, we just try to format nicely and let the server handle if is valid SQL
   // postgres will try to convert string -> array type
   // postgres will emit a nice error saying what value dont have the expected format outputing the value in the error
-  if ($isArray(value) || isTypedArray(value)) {
+  if ($isArray(value)) {
     if (!value.length) return "{}";
     const delimiter = type === "BOX" ? ";" : ",";
     return `{${value.map(arrayValueSerializer.bind(this, type, is_numeric, is_json)).join(delimiter)}}`;
+  }
+  if (ArrayBuffer.isView(value)) {
+    // Uint8Array / Uint8ClampedArray / DataView (and Buffer, a Uint8Array
+    // subclass) are a single binary element, so they follow the Buffer hex
+    // path. Every other typed array is a nested dimension of numbers; build
+    // the per-element strings into a plain Array because
+    // TypedArray.prototype.map would coerce them back to numbers.
+    if (isByteView(value)) {
+      const buf = Buffer.isBuffer(value) ? value : Buffer.from(value.buffer, value.byteOffset, value.byteLength);
+      const hexValue = buf.toString("hex");
+      if (type === "BYTEA") {
+        return `"\\x${arrayEscape(hexValue)}"`;
+      }
+      if (is_json) {
+        return `"${arrayEscape(JSON.stringify(hexValue))}"`;
+      }
+      return `"${arrayEscape(hexValue)}"`;
+    }
+    if (!value.length) return "{}";
+    const delimiter = type === "BOX" ? ";" : ",";
+    return `{${Array.from(value, arrayValueSerializer.bind(this, type, is_numeric, is_json)).join(delimiter)}}`;
   }
 
   switch (typeof value) {
@@ -190,17 +209,6 @@ function arrayValueSerializer(type: ArrayType, is_numeric: boolean, is_json: boo
         }
         return `"${arrayEscape(isoValue)}"`;
       }
-      if (Buffer.isBuffer(value)) {
-        const hexValue = value.toString("hex");
-        // bytea array
-        if (type === "BYTEA") {
-          return `"\\x${arrayEscape(hexValue)}"`;
-        }
-        if (is_json) {
-          return `"${arrayEscape(JSON.stringify(hexValue))}"`;
-        }
-        return `"${arrayEscape(hexValue)}"`;
-      }
       // fallback to JSON.stringify
       return `"${arrayEscape(JSON.stringify(value))}"`;
   }
@@ -230,14 +238,19 @@ function getArrayType(typeNameOrID: number | ArrayType | undefined = undefined):
   return "JSON";
 }
 function serializeArray(values: any[], type: ArrayType) {
-  if (!$isArray(values) && !isTypedArray(values)) return values;
+  const isArray = $isArray(values);
+  if (!isArray && !(ArrayBuffer.isView(values) && !Buffer.isBuffer(values))) return values;
 
   if (!values.length) return "{}";
 
   // Only _box (1020) has the ';' delimiter for arrays, all other types use the ',' delimiter
   const delimiter = type === "BOX" ? ";" : ",";
 
-  return `{${values.map(arrayValueSerializer.bind(this, type, isPostgresNumericType(type), isPostgresJsonType(type))).join(delimiter)}}`;
+  const serialize = arrayValueSerializer.bind(this, type, isPostgresNumericType(type), isPostgresJsonType(type));
+  // TypedArray.prototype.map returns the same typed array species, which would
+  // coerce the serialized strings back to numbers; build a plain Array instead.
+  const parts = isArray ? values.map(serialize) : Array.from(values as ArrayLike<unknown>, serialize);
+  return `{${parts.join(delimiter)}}`;
 }
 
 function wrapPostgresError(error: Error | PostgresErrorOptions) {

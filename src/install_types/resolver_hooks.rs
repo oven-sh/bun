@@ -1339,10 +1339,8 @@ pub struct WakeHandler {
 impl WakeHandler {
     #[inline]
     pub fn get_handler(&self) -> fn(*mut c_void, *mut c_void) {
-        // `handler` is Some whenever `context` is Some: the sole installer
-        // (runtime::jsc_hooks) sets both together, and callers gate on
-        // `context.is_some()` before invoking — so this unwrap cannot fire.
-        self.handler.unwrap()
+        self.handler
+            .expect("runtime::jsc_hooks sets handler whenever context is Some")
     }
 }
 

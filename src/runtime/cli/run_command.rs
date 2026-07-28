@@ -4024,7 +4024,9 @@ impl BunXFastPath {
         let direct_launch_buffer =
             unsafe { &mut *bunx_fast_path_buffers::DIRECT_LAUNCH_BUFFER.get() };
 
-        debug_assert!(paths::is_absolute_windows_wtf16(&direct_launch_buffer[..path_len]));
+        debug_assert!(paths::is_absolute_windows_wtf16(
+            &direct_launch_buffer[..path_len]
+        ));
         debug_assert!(direct_launch_buffer[..path_len].ends_with(bun_core::w!(".bunx")));
 
         let open_opts = sys::NtCreateFileOptions {

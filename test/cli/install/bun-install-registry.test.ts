@@ -8807,10 +8807,7 @@ registry = "http://localhost:${port}/"
 
   test("reinstall removes stale .bunx sidecars from the two-file layout", async () => {
     const dir = tmpdirSync();
-    await writeFile(
-      join(dir, "bunfig.toml"),
-      `[install]\ncache = false\nregistry = "http://localhost:${port}/"\n`,
-    );
+    await writeFile(join(dir, "bunfig.toml"), `[install]\ncache = false\nregistry = "http://localhost:${port}/"\n`);
     await writeFile(
       join(dir, "package.json"),
       JSON.stringify({ name: "foo", version: "1.0.0", dependencies: { "what-bin": "1.0.0" } }),

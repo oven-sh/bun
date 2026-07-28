@@ -521,12 +521,9 @@ impl<R> CssRuleList<R> {
 
                         keyframez.minify(context);
 
-                        // Merge @keyframes rules with the same name.
                         if let Some(existing_idx) = keyframe_rules.get(&keyframez.name).copied()
                             && let Some(CssRule::Keyframes(existing)) = rules.get_mut(existing_idx)
                         {
-                            // If the existing rule has the same vendor
-                            // prefixes, replace it with this rule.
                             if existing.vendor_prefix == keyframez.vendor_prefix {
                                 *existing = core::mem::replace(
                                     keyframez,
@@ -539,8 +536,6 @@ impl<R> CssRuleList<R> {
                                 );
                                 break 'arm;
                             }
-                            // Otherwise, if the keyframes are identical, merge
-                            // the prefixes.
                             if existing.keyframes_eql(keyframez) {
                                 existing.vendor_prefix |= keyframez.vendor_prefix;
                                 existing.vendor_prefix = context.targets.prefixes(
@@ -559,10 +554,7 @@ impl<R> CssRuleList<R> {
                         let fallbacks =
                             keyframez.get_fallbacks::<R>(context.arena, context.targets);
 
-                        // Appending a non-style rule ends the current
-                        // style-rule merge run; mirror the fall-through path
-                        // at the bottom of the loop. The flush can shrink
-                        // `rules`, so record the keyframes index after it.
+                        // Flush may shrink `rules`; record the index after.
                         flush_pending_style_merge(&mut rules, &mut merge_state, context);
                         merge_state.last_compat = None;
                         keyframe_rules.insert(name, rules.len());
@@ -1316,8 +1308,6 @@ pub struct MinifyContext<'a, 'bump> {
     pub selector_expansion_total: u32,
 }
 
-/// Borrowed-`[u8]` lookup against `MinifyContext::unused_symbols`'s owned
-/// `Box<[u8]>` keys.
 pub(crate) struct SliceAdapter;
 impl bun_collections::array_hash_map::ArrayHashAdapter<[u8], Box<[u8]>> for SliceAdapter {
     #[inline]

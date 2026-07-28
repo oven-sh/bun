@@ -26,8 +26,6 @@ pub enum KeyframesName {
 }
 
 impl KeyframesName {
-    /// The name bytes, regardless of whether it was written as an ident or a
-    /// string. Used for the unused-symbol lookup.
     pub(crate) fn as_bytes(&self) -> &[u8] {
         match self {
             KeyframesName::Ident(ident) => ident.v(),
@@ -340,8 +338,6 @@ impl KeyframesRule {
         }
     }
 
-    /// Run the property handlers over every keyframe's declarations so they
-    /// fold shorthands / emit prefix fallbacks exactly like style-rule bodies.
     pub(crate) fn minify(&mut self, context: &mut MinifyContext<'_, '_>) {
         context.handler_context.context = DeclarationContext::Keyframes;
 
@@ -353,9 +349,7 @@ impl KeyframesRule {
             );
         }
 
-        // Property handlers for logical properties stage `ltr`/`rtl` entries
-        // regardless of the declaration context; keyframe blocks have no
-        // `:dir()` wrapper to emit them into, so drop whatever was staged.
+        // Drop any ltr/rtl staging; keyframes have no `:dir()` to emit it into.
         context.handler_context.reset();
         context.handler_context.context = DeclarationContext::None;
     }
@@ -369,11 +363,7 @@ impl KeyframesRule {
                 .all(|(a, b)| a.eql(b))
     }
 
-    /// Compute color-gamut fallback `@supports` rules for wide-gamut colors in
-    /// custom / unparsed property values, and rewrite those values in `self`
-    /// to the lowest common fallback. Only custom and unparsed values are
-    /// inspected because typed color properties have already been lowered by
-    /// the property handlers in [`minify`](Self::minify).
+    /// Typed color properties were already lowered in [`minify`](Self::minify).
     pub(crate) fn get_fallbacks<R>(
         &mut self,
         arena: &bun_alloc::Arena,

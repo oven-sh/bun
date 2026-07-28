@@ -71,8 +71,8 @@ describe.skipIf(!isLinux)("UV_THREADPOOL_SIZE", () => {
     expect(await poolThreads({ UV_THREADPOOL_SIZE: "4" })).toBe(4);
   });
 
-  test.concurrent("=999999 caps at ceiling, does not collapse to floor", async () => {
-    expect(await poolThreads({ UV_THREADPOOL_SIZE: "999999" })).toBeGreaterThan(4);
+  test.concurrent(">u32::MAX caps at ceiling (Overflow arm), does not collapse to floor", async () => {
+    expect(await poolThreads({ UV_THREADPOOL_SIZE: "99999999999" })).toBeGreaterThan(4);
   });
 
   test.concurrent("GOMAXPROCS=1 clamps to floor (2)", async () => {

@@ -753,6 +753,38 @@ async function runTests() {
     }
   }
 
+  // Build this shard's node-napi-tests addons once, in the background, so no
+  // do.test.ts compiles its own (test/napi/node-napi-tests/prebuild.ts: one
+  // bounded clang fan on posix, a single merged node-gyp/MSBuild run on
+  // Windows). Only the first do.test.ts to run waits on it; every other test
+  // proceeds meanwhile. A failed prebuild just means the addon's own
+  // build() does the work as before.
+  const isNapiAddonTest = t => /napi[\\/]node-napi-tests[\\/].*[\\/]do\.test\.ts$/.test(t);
+  const napiAddonDirs = [...new Set(tests.filter(isNapiAddonTest).map(t => dirname(join(testsPath, t))))];
+  /** @type {Promise<void> | null} awaited by the first do.test.ts before it runs */
+  let napiPrebuild = null;
+  if (napiAddonDirs.length) {
+    let output = "";
+    const started = Date.now();
+    napiPrebuild = spawnBun(execPath, {
+      args: [join(testsPath, "napi/node-napi-tests/prebuild.ts"), ...napiAddonDirs],
+      cwd,
+      timeout: integrationTimeout,
+      stdout: chunk => (output += chunk),
+      stderr: chunk => (output += chunk),
+    }).then(({ ok, error }) => {
+      startGroup(`napi prebuild: ${napiAddonDirs.length} addon(s), ${((Date.now() - started) / 1000).toFixed(1)}s`);
+      process.stdout.write(output);
+      if (!ok) console.warn("napi prebuild failed; each do.test.ts builds its own addon:", error);
+    });
+  }
+  const awaitNapiPrebuild = async testPath => {
+    if (napiPrebuild && isNapiAddonTest(testPath)) {
+      await napiPrebuild;
+      napiPrebuild = null; // settled; later addon tests skip the check
+    }
+  };
+
   if (!failedResults.length) {
     // TODO: remove windows exclusion here
     if (isCI && !isWindows) {
@@ -795,7 +827,8 @@ async function runTests() {
       }
     }
 
-    const runOneTest = (testPath, concurrent) => {
+    const runOneTest = async (testPath, concurrent) => {
+      await awaitNapiPrebuild(testPath);
       const absoluteTestPath = join(testsPath, testPath);
       const title = relative(cwd, absoluteTestPath).replaceAll(sep, "/");
       if (isNodeTest(testPath)) {
@@ -934,6 +967,7 @@ async function runTests() {
      * @param {string[]} bucketFiles
      */
     const runParallelBucket = async bucketFiles => {
+      for (const t of bucketFiles) await awaitNapiPrebuild(t);
       const width = parallelSafeWidth;
       const label = `test/ (parallel bucket: ${bucketFiles.length} files, ${width}-wide)`;
       const range = `${getAnsi("gray")}[${i + 1}-${i + bucketFiles.length}/${total}]${getAnsi("reset")}`;

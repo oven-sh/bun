@@ -149,7 +149,7 @@ async function tryBuildFast(dir: string): Promise<boolean> {
   return results.every(Boolean);
 }
 
-async function buildWithNodeGyp(dir: string) {
+export async function buildWithNodeGyp(dir: string) {
   const child = spawn({
     // `configure build` instead of `rebuild`: `clean` is pure waste (CI checkouts are always
     // cold) and skipping it keeps local re-runs incremental. No `--verbose`/`-j max`: every
@@ -175,13 +175,33 @@ async function buildWithNodeGyp(dir: string) {
   });
   const [stderr, exitCode] = await Promise.all([new Response(child.stderr).text(), child.exited]);
   if (exitCode !== 0) {
-    console.error(`node-gyp build in ${dir} failed:\n${stderr}`);
-    console.error("bailing out!");
-    process.exit(1);
+    throw new Error(`node-gyp build in ${dir} failed:\n${stderr}`);
   }
 }
 
+// The addon's targets when its binding.gyp is the trivial shape every one in
+// this suite uses; null otherwise (or if there is no binding.gyp).
+export async function parseBindingGyp(dir: string): Promise<GypTarget[] | null> {
+  const gypPath = join(dir, "binding.gyp");
+  if (!existsSync(gypPath)) return null;
+  return parseSimpleBindingGyp(await Bun.file(gypPath).text());
+}
+
+// Both build paths write build/Debug/<target>.node.
+export async function isBuilt(dir: string): Promise<boolean> {
+  const targets = await parseBindingGyp(dir);
+  if (targets === null) return false;
+  return targets.every(target => existsSync(join(dir, "build", "Debug", `${target.target_name}.node`)));
+}
+
+// Alias used by prebuild.ts, which merges many addons into one binding.gyp
+// and drives node-gyp once over that directory.
+export const buildGypDir = buildWithNodeGyp;
+
 export async function build(dir: string) {
+  // A shard prebuilds its addons up front (prebuild.ts); the per-file
+  // build() then finds the artifact already there.
+  if (await isBuilt(dir)) return;
   if (await tryBuildFast(dir)) return;
   await buildWithNodeGyp(dir);
 }

@@ -4432,9 +4432,17 @@ impl<'a> Resolver<'a> {
                 open_dir_count.set(open_dir_count.get() + 1);
             }
             // When `open_dir` is not stored as `DirEntry.fd` (entry already
-            // fresh, or an existing handle carried over), it is released after
-            // `dir_info_uncached` below; the `store_fd` guard does not.
-            let mut open_dir_adopted = false;
+            // fresh, or an existing handle carried over), it is released at
+            // the end of this iteration; the `store_fd` guard does not.
+            let open_dir_adopted = core::cell::Cell::new(false);
+            let _close_unadopted = scopeguard::guard((), |()| {
+                if open_dir_freshly_opened && !open_dir_adopted.get() {
+                    let n = open_dir_count.get();
+                    debug_assert!(n > 0 && bufs!(open_dirs)[n - 1] == open_dir);
+                    open_dir_count.set(n - 1);
+                    let _ = ::bun_sys::close(open_dir);
+                }
+            });
 
             let dir_path: &'static [u8] = if !queue_top_safe_path.is_empty() {
                 // SAFETY: non-empty `safe_path` is always a dirname_store-backed
@@ -4563,7 +4571,7 @@ impl<'a> Resolver<'a> {
                 new_entry.fd = if let Some(prev) = prev_fd {
                     prev
                 } else if self.store_fd {
-                    open_dir_adopted = open_dir.is_valid();
+                    open_dir_adopted.set(open_dir.is_valid());
                     open_dir
                 } else {
                     FD::INVALID
@@ -4630,13 +4638,6 @@ impl<'a> Resolver<'a> {
                 open_dir,
                 None,
             )?;
-
-            if open_dir_freshly_opened && !open_dir_adopted {
-                let n = open_dir_count.get();
-                debug_assert!(n > 0 && bufs!(open_dirs)[n - 1] == open_dir);
-                open_dir_count.set(n - 1);
-                let _ = ::bun_sys::close(open_dir);
-            }
 
             top_parent = queue_top.result;
 

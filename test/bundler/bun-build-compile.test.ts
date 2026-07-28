@@ -809,7 +809,7 @@ describe("compile --target executable download", () => {
     dir: string,
     integrity: (tarball: Uint8Array) => string,
     manifest?: (defaults: Record<string, unknown>) => Record<string, unknown>,
-    registryEnvKey: "BUN_CONFIG_REGISTRY" | "NPM_CONFIG_REGISTRY" = "BUN_CONFIG_REGISTRY",
+    registryEnvKey: "BUN_CONFIG_REGISTRY" | "NPM_CONFIG_REGISTRY" | "npm_config_registry" = "BUN_CONFIG_REGISTRY",
   ) {
     const tarball = await makeTarball();
     using server = Bun.serve({
@@ -863,6 +863,14 @@ describe("compile --target executable download", () => {
     return { stdout, stderr, exitCode, cachedExecutable: join(cacheDir, target) };
   }
 
+
+  function shasumOnly(manifest: Record<string, any>) {
+    const versionEntry = manifest.versions[version];
+    versionEntry.dist.shasum = versionEntry.dist.integrity;
+    delete versionEntry.dist.integrity;
+    return manifest;
+  }
+
   test("installs the downloaded executable when it matches the registry integrity", async () => {
     using dir = tempDir("build-compile-target-integrity-match", {
       "app.js": `console.log("hi");`,
@@ -889,20 +897,52 @@ describe("compile --target executable download", () => {
     expect(exitCode).not.toBe(0);
   });
 
-  test("resolves the target through NPM_CONFIG_REGISTRY when BUN_CONFIG_REGISTRY is not set", async () => {
-    using dir = tempDir("build-compile-target-npm-config-registry", {
+  for (const registryEnvKey of ["NPM_CONFIG_REGISTRY", "npm_config_registry"] as const) {
+    test(`resolves the target through ${registryEnvKey} when BUN_CONFIG_REGISTRY is not set`, async () => {
+      using dir = tempDir("build-compile-target-npm-config-registry", {
+        "app.js": `console.log("hi");`,
+      });
+      const { stderr, cachedExecutable } = await compileWithRegistry(
+        String(dir),
+        tarball => sriFor(tarball),
+        undefined,
+        registryEnvKey,
+      );
+
+      expect(stderr).not.toContain("did not match the integrity value");
+      expect(stderr).not.toContain("appears to be corrupted");
+      expect(existsSync(cachedExecutable)).toBe(true);
+    });
+  }
+
+  test("installs the downloaded executable when it matches the registry shasum", async () => {
+    using dir = tempDir("build-compile-target-shasum-match", {
       "app.js": `console.log("hi");`,
     });
     const { stderr, cachedExecutable } = await compileWithRegistry(
       String(dir),
-      tarball => sriFor(tarball),
-      undefined,
-      "NPM_CONFIG_REGISTRY",
+      tarball => new Bun.CryptoHasher("sha1").update(tarball).digest("hex"),
+      defaults => shasumOnly(defaults),
     );
 
     expect(stderr).not.toContain("did not match the integrity value");
     expect(stderr).not.toContain("appears to be corrupted");
     expect(existsSync(cachedExecutable)).toBe(true);
+  });
+
+  test("rejects the downloaded executable when it does not match the registry shasum", async () => {
+    using dir = tempDir("build-compile-target-shasum-mismatch", {
+      "app.js": `console.log("hi");`,
+    });
+    const { stderr, exitCode, cachedExecutable } = await compileWithRegistry(
+      String(dir),
+      tarball => new Bun.CryptoHasher("sha1").update(Buffer.alloc(tarball.byteLength, "x")).digest("hex"),
+      defaults => shasumOnly(defaults),
+    );
+
+    expect(stderr).toContain("did not match the integrity value reported by the npm registry");
+    expect(existsSync(cachedExecutable)).toBe(false);
+    expect(exitCode).not.toBe(0);
   });
 
   test("reports unusable registry metadata as a metadata error, not a corrupted download", async () => {

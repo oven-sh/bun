@@ -1626,12 +1626,12 @@ use bun_core::Environment::OperatingSystem as CompileTargetOs;
 use bun_install_types::integrity::Integrity;
 pub use bun_options_types::compile_target::CompileTarget;
 
-const NPM_MANIFEST_HEADERS_BUF: &[u8] =
-    b"Acceptapplication/vnd.npm.install-v1+json; q=1.0, application/json; q=0.8, */*";
+const NPM_MANIFEST_ACCEPT: &[u8] =
+    b"application/vnd.npm.install-v1+json; q=1.0, application/json; q=0.8, */*";
 
 fn http_get(
     url_bytes: &[u8],
-    headers_buf: &[u8],
+    accept: Option<&[u8]>,
     env: &mut bun_dotenv::Loader,
     refresher: &mut bun_core::Progress::Progress,
     initial_capacity: usize,
@@ -1639,17 +1639,21 @@ fn http_get(
     let mut body = Box::new(bun_core::MutableString::init(initial_capacity)?);
     let url = bun_url::URL::parse(url_bytes);
 
+    const ACCEPT_NAME: &[u8] = b"Accept";
+    let mut headers_buf: Vec<u8> = Vec::new();
     let mut header_entries = bun_http::headers::EntryList::default();
-    if !headers_buf.is_empty() {
-        const NAME_LEN: u32 = "Accept".len() as u32;
+    if let Some(value) = accept {
+        headers_buf.reserve_exact(ACCEPT_NAME.len() + value.len());
+        headers_buf.extend_from_slice(ACCEPT_NAME);
+        headers_buf.extend_from_slice(value);
         header_entries.append(bun_http::headers::Entry {
             name: bun_http::headers::api::StringPointer {
                 offset: 0,
-                length: NAME_LEN,
+                length: ACCEPT_NAME.len() as u32,
             },
             value: bun_http::headers::api::StringPointer {
-                offset: NAME_LEN,
-                length: u32::try_from(headers_buf.len()).expect("int cast") - NAME_LEN,
+                offset: ACCEPT_NAME.len() as u32,
+                length: u32::try_from(value.len()).expect("int cast"),
             },
         })?;
     }
@@ -1664,7 +1668,7 @@ fn http_get(
         bun_http::Method::GET,
         url,
         header_entries,
-        headers_buf,
+        &headers_buf,
         &raw mut *body,
         b"",
         http_proxy,
@@ -1701,7 +1705,7 @@ fn resolve_release(
         Box::from(target.to_npm_manifest_url_with_url(&mut url_buffer, &registry)?);
     let manifest = http_get(
         &manifest_url,
-        NPM_MANIFEST_HEADERS_BUF,
+        Some(NPM_MANIFEST_ACCEPT),
         env,
         refresher,
         64 * 1024,
@@ -1793,7 +1797,7 @@ pub(crate) fn download_to_path(
             };
 
         let compressed_archive_bytes =
-            http_get(&tarball_url, b"", env, &mut refresher, 24 * 1024 * 1024)?;
+            http_get(&tarball_url, None, env, &mut refresher, 24 * 1024 * 1024)?;
         if compressed_archive_bytes.list.is_empty() {
             // Return error without printing - let caller handle the messaging
             return Err(crate::Error::InvalidResponse);

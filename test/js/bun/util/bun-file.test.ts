@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import fs from "fs";
 import fsPromises from "fs/promises";
-import { bunEnv, bunExe, tempDir, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, isPosix, tempDir, tempDirWithFiles } from "harness";
 import { join } from "path";
 
 test("delete() and stat() should work with unicode paths", async () => {
@@ -274,5 +274,18 @@ describe("Bun.file().slice() is a read-only view", () => {
       statSize: 10,
       text: "234",
     });
+  });
+});
+
+// The threadpool ReadFile loop caps each read by `max_length - read_off`, but
+// `read_off` was never advanced on POSIX, so a character-device slice kept
+// reading whole 64 KiB stack-buffer chunks and returned the next multiple of
+// 64 KiB above the requested length (1_000_000 -> 1_048_576).
+describe.skipIf(!isPosix)("Bun.file(chardev).slice().bytes() returns exactly the requested length", () => {
+  test.concurrent.each([1, 4095, 4096, 4097, 65535, 65536, 65537, 1_000_000])("%d bytes", async n => {
+    const bytes = await Bun.file("/dev/zero").slice(0, n).bytes();
+    expect(bytes.length).toBe(n);
+    expect(bytes[0]).toBe(0);
+    expect(bytes[n - 1]).toBe(0);
   });
 });

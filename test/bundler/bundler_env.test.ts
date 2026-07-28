@@ -1,4 +1,5 @@
-import { describe } from "bun:test";
+import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { itBundled } from "./expectBundled";
 
 for (let backend of ["api", "cli"] as const) {
@@ -118,3 +119,87 @@ for (let backend of ["api", "cli"] as const) {
       });
   });
 }
+
+// Patterns that used to be silently accepted but are now rejected.
+// A leading '*' ("*_PUBLIC", "*") previously meant "inline every env var",
+// and any text after the first '*' ("A*B") was dropped with no diagnostic.
+describe("env/invalid-pattern", () => {
+  const source = `console.log(process.env.SECRET_ZZ, process.env.A_B);`;
+  const childEnv = { ...bunEnv, SECRET_ZZ: "sec", A_B: "ab" };
+
+  const cases = [
+    { pattern: "*_PUBLIC", expect: "must be the final character" },
+    { pattern: "A*B", expect: "must be the final character" },
+    { pattern: "A*B*", expect: "must be the final character" },
+    { pattern: "*", expect: "inline every environment variable" },
+  ] as const;
+
+  describe.each(cases)("$pattern", ({ pattern, expect: fragment }) => {
+    test.concurrent("cli", async () => {
+      using dir = tempDir("bundler-env-invalid", { "a.js": source });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "build", "a.js", `--env=${pattern}`],
+        env: childEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([
+        proc.stdout.text(),
+        proc.stderr.text(),
+        proc.exited,
+      ]);
+      expect(stderr).toContain(fragment);
+      expect(stdout).not.toContain("sec");
+      expect(exitCode).not.toBe(0);
+    });
+
+    test.concurrent("Bun.build", async () => {
+      using dir = tempDir("bundler-env-invalid", { "a.js": source });
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `try { await Bun.build({ entrypoints: ["a.js"], env: ${JSON.stringify(pattern)} }); console.log("built"); } catch (e) { console.error(e.message); process.exitCode = 1; }`,
+        ],
+        env: childEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([
+        proc.stdout.text(),
+        proc.stderr.text(),
+        proc.exited,
+      ]);
+      expect(stderr).toContain(fragment);
+      expect(stdout).not.toContain("built");
+      expect(exitCode).not.toBe(0);
+    });
+  });
+
+  // Positive control: a single trailing '*' with a non-empty prefix is still
+  // accepted and only inlines matching vars.
+  test.concurrent("trailing-star prefix still works", async () => {
+    using dir = tempDir("bundler-env-valid", {
+      "a.js": `console.log(process.env.A_B, process.env.SECRET_ZZ);`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "a.js", "--env=A_*"],
+      env: childEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([
+      proc.stdout.text(),
+      proc.stderr.text(),
+      proc.exited,
+    ]);
+    expect(stderr).toBe("");
+    expect(stdout).toContain(`"ab"`);
+    expect(stdout).toContain("process.env.SECRET_ZZ");
+    expect(stdout).not.toContain(`"sec"`);
+    expect(exitCode).toBe(0);
+  });
+});

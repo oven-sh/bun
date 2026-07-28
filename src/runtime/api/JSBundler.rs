@@ -678,14 +678,15 @@ pub mod js_bundler {
                                     this.env_prefix.append_slice_exact(prefix)?;
                                 }
                             }
-                            Err(()) => {
-                                return Err(global_this.throw_invalid_arguments(format_args!("env must be 'inline', 'disable', or a string with a '*' character")));
+                            Err(msg) => {
+                                return Err(global_this
+                                    .throw_invalid_arguments(format_args!("env: {msg}")));
                             }
                         }
                         drop(slice);
                     } else {
                         return Err(global_this.throw_invalid_arguments(format_args!(
-                            "env must be 'inline', 'disable', or a string with a '*' character"
+                            "env must be 'inline', 'disable', or a prefix pattern ending in '*'"
                         )));
                     }
                 }

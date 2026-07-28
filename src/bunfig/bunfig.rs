@@ -1645,19 +1645,19 @@ impl<'a> Parser<'a> {
                             }
                             self.ctx.args.serve_env_behavior = behavior;
                         }
-                        Err(()) => {
-                            self.add_error(
-                                    env.loc,
-                                    b"Invalid env behavior, must be 'inline', 'disable', or a string with a '*' character",
-                                )?;
+                        Err(msg) => {
+                            self.add_error_format(
+                                env.loc,
+                                format_args!("Invalid serve.static.env: {msg}"),
+                            )?;
                         }
                     }
                 }
                 _ => {
                     self.add_error(
-                            env.loc,
-                            b"Invalid env behavior, must be 'inline', 'disable', or a string with a '*' character",
-                        )?;
+                        env.loc,
+                        b"Invalid serve.static.env, must be 'inline', 'disable', or a prefix pattern ending in '*'",
+                    )?;
                 }
             }
         }

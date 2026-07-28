@@ -441,6 +441,9 @@ test/bake/dev/react-spa.test.ts
 test/bake/dev/sourcemap.test.ts
 test/bake/dev/ssg-pages-router.test.ts
 test/bake/dev/deinitialization.test.ts
+# NewServer <-> HTMLBundle::Route back-pointer cycle survives server.stop();
+# each disposed dev server leaks its ServerConfig/NewServer init allocations.
+test/bake/dev-server-watcher-release.test.ts
 
 # Need to terminate HTTP thread.
 test/js/bun/test/parallel/test-http-should-not-accept-untrusted-certificates.ts

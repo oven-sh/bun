@@ -1434,6 +1434,7 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::TransformO
         || jsx_fragment.is_some()
         || jsx_import_source.is_some()
         || jsx_runtime.is_some()
+        || jsx_side_effects
     {
         let default_factory: &[u8] = b"";
         let default_fragment: &[u8] = b"";
@@ -1448,7 +1449,7 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::TransformO
                 } else {
                     api::JsxRuntime::Automatic
                 },
-                development: false,
+                development: true,
                 side_effects: jsx_side_effects,
             });
         } else {
@@ -1464,8 +1465,8 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::TransformO
                 } else {
                     prev.runtime
                 },
-                development: false,
-                side_effects: jsx_side_effects,
+                development: prev.development,
+                side_effects: jsx_side_effects || prev.side_effects,
             });
         }
     }

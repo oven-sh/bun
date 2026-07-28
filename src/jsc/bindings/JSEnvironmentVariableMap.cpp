@@ -783,8 +783,7 @@ static void reinstallSideEffectingEnvAccessor(VM& vm, JSGlobalObject* globalObje
         JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DontEnum);
 }
 
-// process.env: overrides deleteProperty so the TZ/TLS/verbose accessors survive
-// `delete` and later assignments still reach the setter.
+// process.env: deleteProperty reinstalls the TZ/TLS/verbose accessors.
 class JSProcessEnv final : public JSC::JSNonFinalObject {
 public:
     using Base = JSC::JSNonFinalObject;

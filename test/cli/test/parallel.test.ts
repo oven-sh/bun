@@ -342,11 +342,6 @@ test("--parallel --reporter=junit produces a merged report covering all files", 
 });
 
 test("--parallel --reporter=junit keeps the suites of files a worker finished before it crashed", async () => {
-  // Files stream their <testsuite> to the coordinator over IPC as they
-  // finish, so a worker that later dies mid-file still contributes the
-  // reports of the files it completed — plus a crash entry for the file it
-  // was running. Names sort so worker 1 runs `pass` then `zcrash` while
-  // worker 0 is held busy by `aslow`.
   using dir = tempDir("parallel-junit-crash", {
     "aslow.test.js": `import {test,expect} from "bun:test"; test("slow", async () => { await Bun.sleep(400); expect(1).toBe(1); });`,
     "pass.test.js": `import {test,expect} from "bun:test"; test("finished before the crash", () => expect(1).toBe(1));`,
@@ -361,23 +356,17 @@ test("--parallel --reporter=junit keeps the suites of files a worker finished be
   });
   const [, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   const xml = await Bun.file(String(dir) + "/out.xml").text();
-  // The passing file that ran in the crashed worker is still reported.
   expect(xml).toContain('name="finished before the crash"');
   expect(xml).toContain("pass.test.js");
   expect(xml).toContain("aslow.test.js");
-  // The crashed file gets a synthetic failing suite, not silence.
   expect(xml).toContain("zcrash.test.js");
   expect(xml).toContain("worker process crashed");
-  // Still exactly one document.
   expect(xml.split("<testsuites ").length - 1).toBe(1);
   expect(xml.split("</testsuites>").length - 1).toBe(1);
   expect(exitCode).toBe(1);
 });
 
 test("--parallel --reporter=junit carries a large per-file report intact over IPC", async () => {
-  // One file whose <testsuite> is multiple MB — far larger than a single
-  // channel write — so the chunk arrives across many reads under
-  // backpressure. Every testcase must survive and the document stays whole.
   const cases = 4000;
   const pad = "x".repeat(240);
   using dir = tempDir("parallel-junit-large", {
@@ -511,8 +500,6 @@ test("--parallel --dots prints one status character per test", async () => {
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  // Dots don't get file headers; a failure's full output does (same as
-  // serial --dots), so the only header is the failing file's.
   expect(stderr).toContain("a.test.js:");
   expect(stderr).not.toContain("b.test.js:");
   // 7 dots (6 pass + 1 skip), no per-test "(pass) name" lines for them.

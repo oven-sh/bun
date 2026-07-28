@@ -25,7 +25,6 @@ pub enum Kind {
     Run,
     /// (empty)
     Shutdown,
-    // worker → coordinator (appended; discriminants above stay stable)
     /// u32 file_idx, str xml — one file's completed <testsuite> element(s).
     /// Workers never write reports to disk; the coordinator files chunks by
     /// index and emits them in the run's canonical file order, so the merged

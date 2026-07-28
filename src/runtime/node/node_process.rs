@@ -454,12 +454,9 @@ mod _impl {
         // path=cwd, dest=target so the
         // resulting Node SystemError carries `path: cwd`, `dest: target` and the
         // `chdir '<cwd>' -> '<target>'` message format (test-process-chdir-errormessage).
-        // Owned copy: `set_process_cwd` rewrites `top_level_dir` in place.
         let prev_cwd: Box<[u8]> = Box::from(fs.top_level_dir);
         match vm.set_process_cwd(slice) {
             bun_sys::Result::Ok(()) => {
-                // Under `bun test --isolate`, remember this file's original cwd
-                // (its first chdir only) so the isolation swap can restore it.
                 vm.test_isolation_scope(|state| {
                     state.saved_cwd.get_or_insert(prev_cwd);
                 });

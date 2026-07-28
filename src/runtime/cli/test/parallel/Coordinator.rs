@@ -40,14 +40,8 @@ pub struct Coordinator<'a> {
     pub envps: Vec<bun_dotenv::NullDelimitedEnvMap>,
 
     pub workers: &'a mut [Worker],
-    /// Merged junit, index-parallel to `files`: each worker streams a
-    /// file's completed <testsuite> as a JunitChunk right after that file
-    /// (so a crashed worker's finished files are already here) and it lands
-    /// in its file's slot. Written in file order, so the report is
-    /// deterministic regardless of scheduling; only the coordinator writes it.
     pub junit_chunks: Vec<Option<Box<[u8]>>>,
     pub junit_totals: super::aggregate::JunitTotals,
-    /// Each worker's LCOV bytes (CoverageChunk at worker exit).
     pub coverage_chunks: Vec<Box<[u8]>>,
     /// File index whose `path:` header was most recently written. Result lines
     /// from concurrent workers interleave; whenever the source file changes the
@@ -150,8 +144,6 @@ impl<'a> Coordinator<'a> {
     /// group kill here plus stdin EOF in the worker loop is the best effort.
     fn abort_all(&mut self) -> ! {
         abort_handler::uninstall();
-        // Name what was still running so a stalled run is diagnosable from
-        // the log alone (a CI runner sends SIGTERM before it gives up).
         let now = bun_core::time::milli_timestamp();
         let workers = &self.workers[..self.spawned_count as usize];
         let running: Vec<(u32, i64)> = workers
@@ -167,7 +159,6 @@ impl<'a> Coordinator<'a> {
                     running_ms / 1000
                 );
             }
-            // Ranges are pre-split across every worker slot, spawned or not.
             let not_started: u32 = self.workers.iter().map(|w| w.range.len()).sum();
             if not_started > 0 {
                 bun_core::pretty_errorln!("{} file(s) had not started:", not_started);
@@ -329,9 +320,6 @@ impl<'a> Coordinator<'a> {
     }
 
     fn ensure_header(&mut self, file_idx: u32) {
-        // Under --dots the callers only reach here for non-dot output (a
-        // failure, an error body, captured stdout), so the header is printed
-        // lazily on the file's first real line — same as the serial reporter.
         if self.last_header_idx == Some(file_idx) {
             return;
         }
@@ -342,8 +330,6 @@ impl<'a> Coordinator<'a> {
         } else {
             b""
         };
-        // One write so a `::group::` line reaches the log intact (the serial
-        // reporter's header goes out through the buffered writer).
         let mut header: Vec<u8> = Vec::with_capacity(64);
         let _ = write!(
             header,
@@ -354,8 +340,6 @@ impl<'a> Coordinator<'a> {
         let _ = Output::error_writer().write_all(&header);
     }
 
-    /// Close the `::group::` opened by the last `ensure_header`, if any. The
-    /// worker doesn't emit its own group markers under --parallel.
     pub(crate) fn end_group(&mut self) {
         if self.last_header_idx.take().is_some() && Output::is_github_action() {
             let _ = Output::error_writer().write_all(b"\n::endgroup::\n");
@@ -500,8 +484,6 @@ impl<'a> Coordinator<'a> {
                     self.coverage_chunks.push(Box::<[u8]>::from(chunk));
                 }
             }
-            // No longer sent (reports stream as chunks over IPC); tolerate
-            // them so an old worker binary can't corrupt the channel.
             frame::Kind::JunitFile | frame::Kind::CoverageFile => {
                 let _ = rd.str();
             }

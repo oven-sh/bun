@@ -2,12 +2,10 @@
 
 /**
  * Regenerate test/expected-durations.json from recent Buildkite runs.
- *
  * The file maps each test path (relative to test/, forward slashes) to its
  * median per-lane cost in ms (see `lanes` below). runner.node.mjs uses it
  * to bin-pack test files across --max-shards so every shard does roughly
  * the same amount of work instead of `index % shards`.
- *
  * Usage: BUILDKITE_API_TOKEN=... node scripts/update-test-durations.mjs [--builds N]
  * Intended to be run by a scheduled Buildkite job on oven-sh/bun; it only
  * reads public build metadata and writes one file in the repo.
@@ -83,9 +81,6 @@ function parseLog(raw) {
     const m = /^\x1b_bk;t=(\d+)\x07(.*)$/.exec(line);
     const ts = m ? Number(m[1]) : null;
     const text = m ? m[2] : line;
-    // The parallel bucket prints its files' junit wall clocks as
-    // `  12.34s test/...` lines (one group after each bucket); those files
-    // no longer get a timed `[N/M] path` header of their own.
     const timing = /^  (\d+(?:\.\d+)?)s (test\/\S+)$/.exec(text);
     if (timing) {
       out.push([timing[2], Math.round(parseFloat(timing[1]) * 1000)]);
@@ -97,9 +92,6 @@ function parseLog(raw) {
       // Retry/error headers (`... - code 1`, `... [attempt #2]`) are not file
       // paths; treat them as a delimiter so the preceding span closes cleanly.
       const title = hdr[2].trim();
-      // A parallel-bucket file's synthetic group carries its junit wall clock
-      // in the title (`test/... (1.23s)`); take that, not a timestamp gap —
-      // its group is printed after the fact and spans no real time.
       const timed = /^(.+\.(?:[cm]?[jt]sx?|json)) \((\d+(?:\.\d+)?)s\)$/.exec(title);
       if (timed) {
         out.push([timed[1], Math.round(parseFloat(timed[2]) * 1000)]);

@@ -1,10 +1,9 @@
-# Regenerates test/expected-durations.json and test/parallel-allowlist.json
-# from recent Buildkite runs and uploads them as build artifacts. Attach a weekly schedule to this pipeline in
+# Regenerates test/expected-durations.json from recent Buildkite runs and
+# uploads it as a build artifact. Attach a weekly schedule to this pipeline in
 # the Buildkite UI (it is not wired into ci.mjs so it never runs on PRs).
 #
-# The runner uses the checked-in copies (LPT sharding, parallel buckets);
-# refresh them by downloading these artifacts and committing them when the
-# shard balance drifts or a bucketed file starts flaking.
+# The runner uses the checked-in copy for sharding; refresh that copy by
+# downloading this artifact and committing it when the shard balance drifts.
 steps:
   - label: ":stopwatch: update-test-durations"
     if: build.source == "schedule" || build.source == "ui"

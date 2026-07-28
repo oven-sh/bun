@@ -179,28 +179,21 @@ export async function buildWithNodeGyp(dir: string) {
   }
 }
 
-// The addon's targets when its binding.gyp is the trivial shape every one in
-// this suite uses; null otherwise (or if there is no binding.gyp).
 export async function parseBindingGyp(dir: string): Promise<GypTarget[] | null> {
   const gypPath = join(dir, "binding.gyp");
   if (!existsSync(gypPath)) return null;
   return parseSimpleBindingGyp(await Bun.file(gypPath).text());
 }
 
-// Both build paths write build/Debug/<target>.node.
 export async function isBuilt(dir: string): Promise<boolean> {
   const targets = await parseBindingGyp(dir);
   if (targets === null) return false;
   return targets.every(target => existsSync(join(dir, "build", "Debug", `${target.target_name}.node`)));
 }
 
-// Alias used by prebuild.ts, which merges many addons into one binding.gyp
-// and drives node-gyp once over that directory.
 export const buildGypDir = buildWithNodeGyp;
 
 export async function build(dir: string) {
-  // A shard prebuilds its addons up front (prebuild.ts); the per-file
-  // build() then finds the artifact already there.
   if (await isBuilt(dir)) return;
   if (await tryBuildFast(dir)) return;
   await buildWithNodeGyp(dir);

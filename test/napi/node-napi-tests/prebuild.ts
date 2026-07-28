@@ -1,16 +1,3 @@
-// Build the native addons for a set of node-napi-tests directories once, up
-// front, before their do.test.ts files run.
-//
-// Usage: bun test/napi/node-napi-tests/prebuild.ts <addon-dir>...
-//
-// A test file's own harness build() finds build/Debug/<target>.node already
-// present and does nothing, so nothing recompiles inside the test run.
-// Where the harness has its direct-compile fast path (posix), the addons
-// build here as one bounded fan of clang invocations — a make -jN, in
-// effect. Where it must use node-gyp (Windows), all requested addons are
-// merged into ONE binding.gyp so a single gyp + MSBuild run builds every
-// target, instead of one multi-second gyp/MSBuild bootstrap per addon; the
-// artifacts are then copied back to each addon's build/Debug/.
 
 import { availableParallelism } from "node:os";
 import { existsSync } from "node:fs";
@@ -35,8 +22,6 @@ const failed: string[] = [];
 
 if (pending.length) {
   if (process.platform !== "win32") {
-    // build() takes the direct-compile path here (one clang per addon); run
-    // them as a bounded fan.
     const width = Math.max(2, Math.min(8, availableParallelism()));
     let next = 0;
     const worker = async () => {
@@ -47,8 +32,6 @@ if (pending.length) {
           await build(dir);
           built++;
         } catch (error) {
-          // The addon's own do.test.ts repeats build() and reports this
-          // against the right test file.
           failed.push(dir);
           console.error(`prebuild: ${dir} failed:`, error);
         }
@@ -56,10 +39,6 @@ if (pending.length) {
     };
     await Promise.all(Array.from({ length: Math.min(width, pending.length) }, worker));
   } else {
-    // One node-gyp run for all of them: merge every target into a single
-    // binding.gyp (names namespaced by their directory so identically-named
-    // targets from different suites don't collide), build once, then copy
-    // each artifact back under the name its test expects.
     const combinedDir = join(import.meta.dir, ".prebuild");
     await mkdir(combinedDir, { recursive: true });
     const targets: { target_name: string; sources: string[]; defines?: string[] }[] = [];

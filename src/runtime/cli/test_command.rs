@@ -246,16 +246,8 @@ pub struct JunitReporter {
     pub total_metrics: Metrics,
     pub offset_of_testsuites_value: usize,
     pub current_file: Box<[u8]>,
-    /// Under `--parallel`, how much of `contents` the worker has already
-    /// streamed to the coordinator (JunitChunk frames); zero elsewhere.
     pub sent_upto: usize,
-    /// A worker streams bare <testsuite> elements to the coordinator, which
-    /// owns the document; so a worker never writes the `<?xml…>` /
-    /// `<testsuites>` preamble into its buffer.
     pub elements_only: bool,
-    /// Monotonic ns stamped by the file loop when a file starts / finishes.
-    /// The file-level suite opens on the file's first result and closes on
-    /// the next file's, so its element span is not the file's; these are.
     pub file_start_ns: u64,
     pub file_end_ns: u64,
     pub properties_list_to_repeat_in_every_test_suite: Option<Box<[u8]>>,
@@ -277,8 +269,6 @@ pub struct SuiteInfo {
     pub metrics: Metrics,
     pub is_file_suite: bool,
     pub line_number: u32,
-    /// Monotonic ns when a file-level suite opened; its `time` attribute is
-    /// end minus start (the file's wall clock), not the sum of test bodies.
     pub started_ns: u64,
 }
 
@@ -614,8 +604,6 @@ impl JunitReporter {
         let suite_info = self.suite_stack.swap_remove(self.suite_stack.len() - 1);
 
         let elapsed_time_seconds = if suite_info.is_file_suite && suite_info.started_ns > 0 {
-            // File-level suites report the file's wall clock: its recorded end
-            // (or now, if it hasn't finished) minus its recorded start.
             let end_ns = if self.file_end_ns >= suite_info.started_ns {
                 self.file_end_ns
             } else {
@@ -1613,8 +1601,6 @@ impl CommandLineReporter {
 
     /// Write an LCOV-only report to a specific path. Used by `--parallel`
     /// workers to emit a fragment the coordinator merges.
-    /// Render this process's coverage as LCOV. `None` when there is
-    /// nothing to report.
     pub fn render_lcov(
         &mut self,
         vm: &mut VirtualMachine,
@@ -3432,8 +3418,6 @@ impl TestCommand {
                 junit.file_end_ns = bun::Timespec::now(bun::TimespecMockMode::ForceRealTime).ns();
             }
 
-            // A --parallel worker leaves group markers to the coordinator, which
-            // owns the terminal and the file headers (see CurrentFile::set).
             if Output::is_github_action() && reporter.worker_ipc_file_idx.is_none() {
                 pretty_errorln!("<r>\n::endgroup::\n");
                 Output::flush();

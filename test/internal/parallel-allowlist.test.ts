@@ -2,9 +2,6 @@ import { expect, test } from "bun:test";
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
-// Guards the checked-in allowlist scripts/runner.node.mjs uses to batch
-// files into `bun test --parallel` buckets. Regenerate via
-// scripts/update-parallel-allowlist.mjs.
 const testDir = join(import.meta.dir, "..");
 const table = JSON.parse(readFileSync(join(testDir, "parallel-allowlist.json"), "utf8"));
 
@@ -13,7 +10,6 @@ test("test/parallel-allowlist.json has the shape the runner reads", () => {
   expect(table.dirs).toBeArray();
   expect(table.excludeFiles).toBeArray();
   expect(table.dirs.length).toBeGreaterThan(100);
-  // dirs and excludeFiles are test/-relative forward-slash paths.
   for (const p of [...table.dirs, ...table.excludeFiles]) {
     expect(p).not.toContain("\\");
     expect(p).not.toStartWith("test/");

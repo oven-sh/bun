@@ -33,8 +33,6 @@ fn attr_value(head: &[u8], name: &'static [u8]) -> u32 {
     strings::parse_int::<u32>(&head[start..end], 10).unwrap_or(0)
 }
 
-/// Outer <testsuites> totals, accumulated as chunks arrive so they always
-/// equal the sum of the inner file suites; CI tools schema-validate this.
 #[derive(Default)]
 pub struct JunitTotals {
     pub tests: u32,
@@ -42,8 +40,6 @@ pub struct JunitTotals {
     pub skipped: u32,
 }
 
-/// A chunk is one file's completed <testsuite> (nested describes inside);
-/// its head carries the file's counts, which already include the nested ones.
 pub(crate) fn add_junit_chunk_totals(totals: &mut JunitTotals, chunk: &[u8]) {
     let Some(open) = strings::index_of(chunk, b"<testsuite ") else {
         return;
@@ -58,10 +54,6 @@ pub(crate) fn add_junit_chunk_totals(totals: &mut JunitTotals, chunk: &[u8]) {
 }
 
 pub(crate) fn merge_junit_fragments(coord: &mut Coordinator, outfile: &[u8], summary: &Summary) {
-    // Each file's <testsuite> sits in its own slot (streamed over IPC as the
-    // file finished, so a crashed worker's earlier files are here); crashed
-    // files get a synthetic failing suite in their slot. Walking the slots in
-    // file order makes the document the same on every run.
     let mut totals = core::mem::take(&mut coord.junit_totals);
     let chunks = core::mem::take(&mut coord.junit_chunks);
     let crashed = core::mem::take(&mut coord.crashed_files);

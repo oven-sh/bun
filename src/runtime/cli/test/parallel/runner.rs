@@ -69,8 +69,6 @@ pub fn run_as_coordinator(
     if ctx.test_options.reporters.junit {
         // Coordinator's own JunitReporter would otherwise produce an empty
         // document and overwrite the merged one in writeJUnitReportIfNeeded.
-        // Workers keep their reporter and stream each file's suite back over
-        // IPC (JunitChunk); only this process writes the report.
         if let Some(jr) = reporter.reporters.junit.take() {
             let _ = env.map.put(b"BUN_TEST_WORKER_JUNIT", b"1");
             drop(jr);
@@ -556,9 +554,6 @@ impl<'a> WorkerLoop<'a> {
             self.reporter.jest.default_timeout_override = u32::MAX;
 
             if let Some(junit) = &mut self.reporter.reporters.junit {
-                // The file suite otherwise closes lazily on the next file's
-                // first result; close it now so its element is complete, then
-                // stream it. Only the coordinator writes the report.
                 while !junit.suite_stack.is_empty() {
                     let _ = junit.end_test_suite();
                 }
@@ -625,8 +620,6 @@ pub fn run_as_worker(
     let env = vm_ref.env_loader();
     if env.get(b"BUN_TEST_WORKER_JUNIT").is_some() && reporter.reporters.junit.is_none() {
         let mut junit = test_command::JunitReporter::init();
-        // Elements only: this worker streams suites; the coordinator writes
-        // the document.
         junit.elements_only = true;
         reporter.reporters.junit = Some(junit);
     }
@@ -691,11 +684,6 @@ fn worker_flush_aggregates(
     wf.str(reporter.todos_to_repeat_buf.as_slice());
     cmds.send(wf.finish());
 
-    // Any junit bytes not yet streamed (normally none — each file's suite
-    // went out right after the file) and this worker's coverage, both over
-    // IPC. Only the coordinator writes reports to disk. `junit_sent` is
-    // the cursor the file loop maintains; pass the whole buffer offset by
-    // what the loop already sent via the shared counter on the reporter.
     if let Some(junit) = &mut reporter.reporters.junit {
         while !junit.suite_stack.is_empty() {
             let _ = junit.end_test_suite();

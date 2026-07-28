@@ -1,21 +1,5 @@
 #!/usr/bin/env node
 
-/**
- * Regenerate test/parallel-allowlist.json: the directories whose `bun test`
- * files runner.node.mjs may batch into `bun test --parallel` buckets instead
- * of spawning one process per file.
- *
- * A directory qualifies when at least 2/3 of its files are both fast (median
- * ≤ FAST_MS on the default lane in test/expected-durations.json) and have zero
- * flaky/failed CI annotations across the last N finished PR builds. The
- * remaining files inside a qualifying directory are listed in `excludeFiles`
- * so they keep running one-at-a-time. Node-style tests (js/node/test/*,
- * js/bun/test/parallel) and docker-service directories are never included —
- * the runner schedules those separately.
- *
- * Usage: BUILDKITE_API_TOKEN=... node scripts/update-parallel-allowlist.mjs [--builds N] [--fast-ms MS]
- */
-
 import { readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -37,8 +21,6 @@ const { values: opts } = parseArgs({
 });
 const FAST_MS = parseInt(opts["fast-ms"], 10);
 const WANT_BUILDS = parseInt(opts.builds, 10);
-// A directory qualifies when at least this fraction of its files do; the
-// stragglers go into excludeFiles instead of costing the whole directory.
 const DIR_MIN_FRACTION = 2 / 3;
 
 const token = process.env.BUILDKITE_API_TOKEN || process.env.BUILDKITE_TOKEN;
@@ -63,8 +45,6 @@ const api = async path => {
   }
 };
 
-// Test file discovery mirrors getTests()/isTestStrict() in runner.node.mjs so
-// the directory set matches what a shard actually enumerates.
 const isNodeStyle = p =>
   p.includes("js/node/test/parallel/") || p.includes("js/node/test/sequential/") || p.includes("js/bun/test/parallel/");
 function listBunTestFiles() {
@@ -83,9 +63,6 @@ function listBunTestFiles() {
   return out.sort();
 }
 
-// Recent finished PR builds that ran the sharded test-bun steps. One
-// annotations request per build gives every flaky (passed on retry) and
-// failed test file that build reported, across all platforms.
 async function findBuilds(want) {
   const picked = [];
   for (let page = 1; picked.length < want && page <= 25; page++) {
@@ -102,7 +79,6 @@ async function findBuilds(want) {
   return picked;
 }
 
-// file (relative to test/) -> number of builds in which it flaked or failed
 async function collectFlakes(builds) {
   const counts = new Map();
   let done = 0;
@@ -121,8 +97,6 @@ async function collectFlakes(builds) {
       const seen = new Set();
       for (const a of annotations) {
         if (a.context !== "flaky" && a.style !== "error") continue;
-        // Each failing/flaky file is a <details> block whose summary links the
-        // path as <code>test/...</code>; see reportAnnotationToBuildKite().
         for (const m of (a.body_html || "").matchAll(/<code>test\/([^<]+)<\/code><\/a> - /g)) {
           seen.add(m[1]);
         }
@@ -157,13 +131,9 @@ const dockerPrefixes = Object.keys(dockerPrestartMap);
 const files = listBunTestFiles();
 const isGood = file => {
   if (dockerPrefixes.some(prefix => file.startsWith(prefix))) return false;
-  // Stress tests saturate a machine on their own; running one alongside
-  // other workers is what makes it (or its neighbours) time out.
   if (/stress/i.test(file)) return false;
   if (flakeCounts.has(file)) return false;
   const ms = durations[file]?.default;
-  // Files without a recorded duration are new; give them the benefit of the
-  // doubt so a fresh test in an allowlisted directory doesn't need a regen.
   return ms === undefined || ms <= FAST_MS;
 };
 

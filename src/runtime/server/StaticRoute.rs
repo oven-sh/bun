@@ -505,7 +505,7 @@ impl StaticRoute {
                 &buf[value.offset as usize..][..value.length as usize],
             );
         }
-        if !matches!(resp, AnyResponse::H3(_) | AnyResponse::H2(_)) {
+        if !matches!(resp, AnyResponse::H3(_)) {
             if let Some(srv) = self.server.get() {
                 if let Some(alt) = srv.h3_alt_svc() {
                     resp.write_header(b"alt-svc", alt);

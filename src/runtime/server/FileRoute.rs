@@ -261,7 +261,11 @@ impl FileRoute {
                 for (name, value) in names.iter().zip(values) {
                     s.write_header(sp_slice(*name, buf), sp_slice(*value, buf));
                 }
-                // tag == .H2 → no alt-svc header
+                if let Some(srv) = self.server.get() {
+                    if let Some(alt) = srv.h3_alt_svc() {
+                        s.write_header(b"alt-svc", alt);
+                    }
+                }
             }
         }
 

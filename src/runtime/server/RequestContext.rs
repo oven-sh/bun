@@ -1275,7 +1275,8 @@ where
         match MUX {
             MUX_H3 => uws::AnyRequest::H3(r.cast::<bun_uws_sys::h3::Request>()),
             MUX_H2 => uws::AnyRequest::H2(r.cast::<bun_uws_sys::h2::Request>()),
-            _ => uws::AnyRequest::H1(r.cast::<bun_uws_sys::Request>()),
+            MUX_H1 => uws::AnyRequest::H1(r.cast::<bun_uws_sys::Request>()),
+            _ => unreachable!(),
         }
     }
 
@@ -1287,7 +1288,8 @@ where
             match MUX {
                 MUX_H3 => (*r.cast::<bun_uws_sys::h3::Request>()).method(),
                 MUX_H2 => (*r.cast::<bun_uws_sys::h2::Request>()).method(),
-                _ => (*r.cast::<bun_uws_sys::Request>()).method(),
+                MUX_H1 => (*r.cast::<bun_uws_sys::Request>()).method(),
+                _ => unreachable!(),
             }
         }
     }
@@ -3704,10 +3706,10 @@ where
             resp.write_header(b"content-type", &content_type.value);
         }
 
-        // Advertise the QUIC endpoint on H1 responses so browsers can
+        // Advertise the QUIC endpoint on H1/H2 responses so browsers can
         // discover it (RFC 7838). Multiple Alt-Svc fields are valid, so a
         // user-supplied one composes rather than conflicts.
-        if !Self::IS_MUX {
+        if !Self::IS_H3 {
             // SAFETY: BACKREF
             if let Some(alt) = self.server().h3_alt_svc() {
                 resp.write_header(b"alt-svc", alt);

@@ -202,6 +202,13 @@ inline void Http2Response::endWithoutBody(std::optional<size_t> cl, bool) {
         writeHeader("content-length", (uint64_t) *cl);
     }
     if (data.state & Http2ResponseData::HTTP_WRITE_CALLED) {
+        /* Earlier write()s may have left bytes in backpressure; sending
+         * END_STREAM now would close the stream before drain() framed
+         * them. Defer to endAfterDrain like sendTerminatingChunk(). */
+        if (data.backpressure.length() != 0) {
+            data.endAfterDrain = true;
+            return;
+        }
         context()->writeData(socket, this, "", 0, true);
     } else {
         writeStatus("200 OK");

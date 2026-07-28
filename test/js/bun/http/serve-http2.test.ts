@@ -1,5 +1,4 @@
 import { describe, expect, test } from "bun:test";
-import { createHash } from "crypto";
 import { bunEnv, bunExe, tls } from "harness";
 import { once } from "node:events";
 import nodetls from "node:tls";
@@ -97,9 +96,12 @@ for await (const line of console) {
 }
 `;
 
-async function withServer(body: (port: number, send: (cmd: string) => Promise<void>) => Promise<void>) {
+async function withServer(
+  body: (port: number, send: (cmd: string) => Promise<void>) => Promise<void>,
+  source: string = fixture,
+) {
   await using proc = Bun.spawn({
-    cmd: [bunExe(), "-e", fixture],
+    cmd: [bunExe(), "-e", source],
     env: bunEnv,
     stdin: "pipe",
     stdout: "pipe",
@@ -210,14 +212,9 @@ describe("Bun.serve http2: true", () => {
     await withServer(async port => {
       const res = await fetchH2(port, "/big");
       expect(res.status).toBe(200);
-      const buf = new Uint8Array(await res.arrayBuffer());
+      const buf = Buffer.from(await res.arrayBuffer());
       expect(buf.length).toBe(256 * 1024);
-      // verify content integrity — 16-byte repeating pattern
-      const want = createHash("sha1")
-        .update(Buffer.alloc(256 * 1024, "abcdefghijklmnop"))
-        .digest("hex");
-      const got = createHash("sha1").update(buf).digest("hex");
-      expect(got).toBe(want);
+      expect(buf.equals(Buffer.alloc(256 * 1024, "abcdefghijklmnop"))).toBe(true);
     });
   });
 
@@ -248,7 +245,7 @@ describe("Bun.serve http2: true", () => {
       // Loopback over either stack; what matters is a well-formed text
       // address (not raw in_addr bytes) and a real ephemeral port.
       expect(["127.0.0.1", "::1", "::ffff:127.0.0.1"]).toContain(info.address);
-      expect(info.family === "IPv4" || info.family === "IPv6").toBe(true);
+      expect(["IPv4", "IPv6"]).toContain(info.family);
       expect(info.port).toBeGreaterThan(0);
     });
   });
@@ -330,7 +327,18 @@ describe("Bun.serve http2: true", () => {
       sock.write(frame(0x06, 0, 0, Buffer.alloc(8)));
       await waitFor(f => f.type === 0x06 && !!(f.flags & 0x01));
     };
-    return { sock, frame, request, frames, waitFor, pong };
+    return {
+      sock,
+      frame,
+      request,
+      frames,
+      waitFor,
+      pong,
+      [Symbol.dispose]() {
+        sock.on("error", () => {});
+        sock.destroy();
+      },
+    };
   }
 
   test("request terminated by a trailer section delivers body to the handler", async () => {
@@ -341,7 +349,7 @@ describe("Bun.serve http2: true", () => {
     // branch, not only from DATA(END_STREAM), or `await req.text()`
     // never resolves.
     await withServer(async port => {
-      const h2 = await rawH2(port);
+      using h2 = await rawH2(port);
       h2.request(1, "POST", "/echo", false);
       h2.sock.write(h2.frame(0x00, 0x00, 1, Buffer.from("trailed-body"))); // DATA, no END_STREAM
       // Trailer HEADERS carrying END_STREAM. HPACK literal-without-
@@ -359,7 +367,6 @@ describe("Bun.serve http2: true", () => {
       await h2.waitFor(f => f.type === 0x00 && f.sid === 1 && !!(f.flags & 0x01));
       const body = Buffer.concat(h2.frames.filter(f => f.type === 0x00 && f.sid === 1).map(f => f.payload));
       expect(body.toString()).toBe("trailed-body");
-      h2.sock.destroy();
     });
   });
 
@@ -369,7 +376,7 @@ describe("Bun.serve http2: true", () => {
     // as a connection FLOW_CONTROL_ERROR. Without the int64 widening
     // guard the int32 add hits UB (UBSan trap on ASAN builds).
     await withServer(async port => {
-      const h2 = await rawH2(port);
+      using h2 = await rawH2(port);
       const setting = (id: number, v: number) => {
         const b = Buffer.alloc(6);
         b.writeUInt16BE(id, 0);
@@ -390,7 +397,6 @@ describe("Bun.serve http2: true", () => {
       const goaway = await h2.waitFor(f => f.type === 0x07);
       expect(goaway.payload.readUInt32BE(4)).toBe(3); // FLOW_CONTROL_ERROR
       h2.sock.on("error", () => {}); // RST after GOAWAY is expected
-      h2.sock.destroy();
     });
   });
 
@@ -400,7 +406,7 @@ describe("Bun.serve http2: true", () => {
     // setting with a value constraint — it's not in the "unknown settings
     // MUST be ignored" bucket even though the server never pushes.
     await withServer(async port => {
-      const h2 = await rawH2(port);
+      using h2 = await rawH2(port);
       const setting = (id: number, v: number) => {
         const b = Buffer.alloc(6);
         b.writeUInt16BE(id, 0);
@@ -415,7 +421,6 @@ describe("Bun.serve http2: true", () => {
       const goaway = await h2.waitFor(f => f.type === 0x07);
       expect(goaway.payload.readUInt32BE(4)).toBe(1); // PROTOCOL_ERROR
       h2.sock.on("error", () => {});
-      h2.sock.destroy();
     });
   });
 
@@ -436,7 +441,7 @@ describe("Bun.serve http2: true", () => {
       ["WINDOW_UPDATE inc=0", 0x08, u32(0)], // §6.9 stream error — but on idle → connection error
     ] as const) {
       await withServer(async port => {
-        const h2 = await rawH2(port);
+        using h2 = await rawH2(port);
         // Open and complete stream 1 so lastStreamId=1; then target stream 3 (idle).
         h2.request(1, "GET", "/hello", true);
         await h2.waitFor(f => f.sid === 1 && f.type === 0x00 && (f.flags & 0x1) !== 0);
@@ -455,7 +460,6 @@ describe("Bun.serve http2: true", () => {
         const goaway = await h2.waitFor(f => f.type === 0x07);
         expect(goaway.payload.readUInt32BE(4), `${label} on idle stream 3`).toBe(1);
         h2.sock.on("error", () => {});
-        h2.sock.destroy();
       });
     }
   });
@@ -468,7 +472,7 @@ describe("Bun.serve http2: true", () => {
     // delta, like handleWindowUpdate does, or a stream parked on
     // flow-control backpressure never resumes.
     await withServer(async port => {
-      const h2 = await rawH2(port);
+      using h2 = await rawH2(port);
       const setting = (id: number, v: number) => {
         const b = Buffer.alloc(6);
         b.writeUInt16BE(id, 0);
@@ -494,7 +498,6 @@ describe("Bun.serve http2: true", () => {
       await h2.waitFor(f => f.type === 0x00 && f.sid === 1 && !!(f.flags & 0x01));
       const body = Buffer.concat(h2.frames.filter(f => f.type === 0x00 && f.sid === 1).map(f => f.payload));
       expect(body.toString()).toBe("hello over h2");
-      h2.sock.destroy();
     });
   });
 
@@ -505,7 +508,7 @@ describe("Bun.serve http2: true", () => {
     // malicious client could re-invoke the body callback after the
     // handler already finalised it on the first END_STREAM.
     await withServer(async port => {
-      const h2 = await rawH2(port);
+      using h2 = await rawH2(port);
       // /hold reads the body then blocks forever so the stream stays in
       // the server's map (half-closed remote, open local) when the
       // violating DATA arrives.
@@ -519,7 +522,6 @@ describe("Bun.serve http2: true", () => {
       h2.sock.write(h2.frame(0x00, 0x01, 1, Buffer.from("evil")));
       const rst = await h2.waitFor(f => f.type === 0x03 && f.sid === 1);
       expect(rst.payload.readUInt32BE(0)).toBe(5); // STREAM_CLOSED
-      h2.sock.destroy();
     });
   });
 
@@ -529,13 +531,15 @@ describe("Bun.serve http2: true", () => {
     // alone (TemplatedApp::close) would miss them. The abrupt path must
     // walk h2ChildContext the same way it walks webSocketContexts[].
     await withServer(async (port, send) => {
-      const h2 = await rawH2(port);
+      using h2 = await rawH2(port);
       h2.request(1, "POST", "/hold", false);
       h2.sock.write(h2.frame(0x00, 0x01, 1, Buffer.from("x")));
       await h2.pong(); // server has the stream open, handler is parked
       h2.sock.on("error", () => {}); // RST is expected
 
-      const closed = once(h2.sock, "close");
+      // once() rejects on 'error' (ECONNRESET on Windows when the
+      // server RSTs); wait for 'close' directly.
+      const closed = new Promise<void>(r => h2.sock.once("close", () => r()));
       await send("abrupt");
       // Without the h2ChildContext walk the socket would sit open until
       // the 10s idle timeout; the test's default 5s timeout makes that
@@ -551,7 +555,7 @@ describe("Bun.serve http2: true", () => {
     // shutdown the write side itself once the last stream drains,
     // otherwise the connection idles open until the 10s timeout.
     await withServer(async (port, send) => {
-      const h2 = await rawH2(port);
+      using h2 = await rawH2(port);
       h2.request(1, "GET", "/deferred", true);
       await h2.pong(); // handler is awaiting `deferred`
 
@@ -559,7 +563,8 @@ describe("Bun.serve http2: true", () => {
       const goaway = await h2.waitFor(f => f.type === 0x07);
       expect(goaway.payload.readUInt32BE(4)).toBe(0); // NO_ERROR
 
-      const ended = once(h2.sock, "end"); // server FIN
+      h2.sock.on("error", () => {});
+      const ended = new Promise<void>(r => h2.sock.once("end", () => r())); // server FIN
       await send("release");
       // Response completes over the still-open connection. The server
       // may split body + END_STREAM across two DATA frames, so wait
@@ -569,7 +574,6 @@ describe("Bun.serve http2: true", () => {
       expect(body.toString()).toBe("late");
       // … and the server shuts its write side promptly (no 10s idle wait).
       await ended;
-      h2.sock.destroy();
     });
   });
 
@@ -592,38 +596,22 @@ describe("Bun.serve http2: true", () => {
       console.log(server.port);
       for await (const line of console) if (line === "stop") { server.stop(true); break; }
     `;
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "-e", sniFixture],
-      env: bunEnv,
-      stdin: "pipe",
-      stdout: "pipe",
-      stderr: "inherit",
-    });
-    const reader = proc.stdout.getReader();
-    let buf = "";
-    while (!buf.includes("\n")) {
-      const { value, done } = await reader.read();
-      if (done) throw new Error("server exited before printing port");
-      buf += new TextDecoder().decode(value);
-    }
-    reader.releaseLock();
-    const port = parseInt(buf.trim(), 10);
-
-    // Connect with SNI "localhost" so sni_cb swaps to the per-SNI ctx.
-    const sock = nodetls.connect({
-      host: "127.0.0.1",
-      port,
-      servername: "localhost",
-      ALPNProtocols: ["h2", "http/1.1"],
-      rejectUnauthorized: false,
-    });
-    await once(sock, "secureConnect");
-    expect(sock.alpnProtocol).toBe("h2");
-    sock.destroy();
-
-    proc.stdin.write("stop\n");
-    proc.stdin.end();
-    expect(await proc.exited).toBe(0);
+    await withServer(async port => {
+      // Connect with SNI "localhost" so sni_cb swaps to the per-SNI ctx.
+      const sock = nodetls.connect({
+        host: "127.0.0.1",
+        port,
+        servername: "localhost",
+        ALPNProtocols: ["h2", "http/1.1"],
+        rejectUnauthorized: false,
+      });
+      try {
+        await once(sock, "secureConnect");
+        expect(sock.alpnProtocol).toBe("h2");
+      } finally {
+        sock.destroy();
+      }
+    }, sniFixture);
   });
 
   test("http2: true without tls throws", () => {

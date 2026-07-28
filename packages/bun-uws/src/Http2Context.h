@@ -499,9 +499,11 @@ struct Http2Context {
         for (auto &kv : c->streams) live.append(kv.second);
         for (auto *r : live) {
             if (r->dead) continue;
-            if (!r->drain()) continue;
-            /* drain() may have completed the response and closed the
-             * socket via GOAWAY-last-stream. */
+            r->drain();
+            /* drain() → onWritable re-enters JS; a server.stop(true) or
+             * GOAWAY-last-stream close there frees every pointer in this
+             * snapshot via onClose → ~Http2Connection. Check regardless
+             * of drain()'s return so the backpressured path is covered. */
             if (us_socket_is_closed(s)) return;
         }
     }
@@ -816,7 +818,7 @@ struct Http2Context {
         std::string store;
         if (!decodeHeaderBlock(s, &hdrs, &store)) return;
 
-        auto *res = new Http2Response(s, stream, c->remoteInitialWindow);
+        auto *res = new Http2Response(s, stream, c->remoteInitialWindow, h2::LOCAL_INIT_WINDOW);
         res->getHttpResponseData()->reset();
         res->getHttpResponseData()->remoteClosed = endStream;
         c->streams.emplace(stream, res);
@@ -880,6 +882,19 @@ struct Http2Context {
             if (used + nlen + vlen > h2::MAX_HEADER_LIST) {
                 protocolError(s, h2::ERR_ENHANCE_YOUR_CALM);
                 return false;
+            }
+            /* §8.2.1: field names MUST NOT contain uppercase and MUST be
+             * valid tokens. A malformed name is a PROTOCOL_ERROR on the
+             * connection (the HPACK decoder state is already advanced). */
+            const char *np = hpackBuf + xh.name_offset;
+            if (nlen == 0) { protocolError(s, h2::ERR_PROTOCOL); return false; }
+            for (size_t j = 0; j < nlen; j++) {
+                unsigned char b = (unsigned char) np[j];
+                if ((unsigned)(b - 'A') < 26u || b == 0 || b == '\r' ||
+                    b == '\n' || b == ' ' || b == '\t') {
+                    protocolError(s, h2::ERR_PROTOCOL);
+                    return false;
+                }
             }
             store->append(hpackBuf + xh.name_offset, nlen);
             store->append(hpackBuf + xh.val_offset, vlen);
@@ -1012,17 +1027,19 @@ struct Http2Context {
         Http2Response *r = it->second;
         Http2ResponseData *d = r->getHttpResponseData();
         c->streams.erase(it);
-        if (d->onAborted) d->onAborted(r, d->userData);
-        delete r;
-        /* onAborted re-enters JS; a server.stop() in an abort listener
-         * can close this socket. Check before touching `c` — `r` is
-         * ours regardless (erased from the map before the callback),
-         * so delete it above either way. */
-        if (us_socket_is_closed(s)) return;
-        if (c->goaway && c->streams.empty()) {
-            ((AsyncSocket<true> *) s)->uncork();
-            us_socket_close(s, 0, nullptr);
+        r->dead = true;
+        d->remoteClosed = true;
+        /* Park before the JS-reentrant callback so a server.stop() in an
+         * abort listener that fires on_close → ~Http2Connection still
+         * frees `r` cleanly. dispatchDepth>0 (set in onSocketData) keeps
+         * sweep() from freeing mid-callback. */
+        c->pendingDelete.append(r);
+        if (d->onAborted) {
+            auto cb = d->onAborted;
+            d->onAborted = nullptr;
+            cb(r, d->userData);
         }
+        /* goaway-last-stream close is handled by sweep() at on_data exit. */
     }
 };
 

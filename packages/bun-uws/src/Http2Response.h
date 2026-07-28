@@ -28,9 +28,10 @@ struct Http2Response {
     bool dead = false;
     Http2ResponseData data;
 
-    Http2Response(us_socket_t *s, uint32_t stream, int32_t remoteInitWin)
+    Http2Response(us_socket_t *s, uint32_t stream, int32_t remoteInitWin,
+                  int32_t localInitWin)
         : socket(s), id(stream), sendWindow(remoteInitWin),
-          recvWindow((int32_t) 1024 * 1024) {}
+          recvWindow(localInitWin) {}
 
     Http2ResponseData *getHttpResponseData() { return &data; }
     Http2Context *context() {

@@ -172,7 +172,7 @@ bool uws_h2_res_write(uws_h2_res_t* res, const char* data, size_t* length)
 uint64_t uws_h2_res_get_write_offset(uws_h2_res_t* res) { return ((Http2Response*)res)->getWriteOffset(); }
 void uws_h2_res_override_write_offset(uws_h2_res_t* res, uint64_t off) { ((Http2Response*)res)->overrideWriteOffset(off); }
 bool uws_h2_res_has_responded(uws_h2_res_t* res) { return ((Http2Response*)res)->hasResponded(); }
-size_t uws_h2_res_get_buffered_amount(uws_h2_res_t* res) { return ((Http2Response*)res)->getBufferedAmount(); }
+uint64_t uws_h2_res_get_buffered_amount(uws_h2_res_t* res) { return (uint64_t)((Http2Response*)res)->getBufferedAmount(); }
 
 void uws_h2_res_reset_timeout(uws_h2_res_t*) {}
 void uws_h2_res_timeout(uws_h2_res_t*, uint8_t) {}

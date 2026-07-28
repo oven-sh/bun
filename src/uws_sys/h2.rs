@@ -168,7 +168,8 @@ impl Response {
         let mut port: i32 = 0;
         let mut is_ipv6: bool = false;
         let mut ip_ptr: *const u8 = ptr::null();
-        let len = c::uws_h2_res_get_remote_address_info(self, &mut ip_ptr, &mut port, &mut is_ipv6);
+        let len = c::uws_h2_res_get_remote_address_info(self, &mut ip_ptr, &mut port, &mut is_ipv6)
+            as usize;
         if len == 0 {
             return None;
         }
@@ -607,7 +608,7 @@ mod c {
             ip: &mut *const u8,
             port: &mut i32,
             is_ipv6: &mut bool,
-        ) -> usize;
+        ) -> u64;
 
         pub(super) safe fn uws_h2_req_set_yield(req: &mut Request, y: bool);
         // Out-param `out` is `&mut *const u8` (non-null, valid for write); the C

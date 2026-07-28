@@ -100,7 +100,10 @@ private:
     static bool equalsIgnoreCase(std::string_view a, std::string_view b) {
         if (a.size() != b.size()) return false;
         for (size_t i = 0; i < a.size(); i++) {
-            if ((a[i] | 0x20) != (b[i] | 0x20)) return false;
+            char ca = a[i], cb = b[i];
+            ca = (char)(ca | ((unsigned char)(ca - 'A') < 26 ? 0x20 : 0));
+            cb = (char)(cb | ((unsigned char)(cb - 'A') < 26 ? 0x20 : 0));
+            if (ca != cb) return false;
         }
         return true;
     }

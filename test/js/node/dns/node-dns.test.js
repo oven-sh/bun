@@ -425,10 +425,12 @@ describe("dns.reverse rejects invalid IP strings with EINVAL", () => {
     "",
   ];
 
+  const UV_EINVAL = isWindows ? -4071 : -22;
+
   it.each(invalid)("callback form throws synchronously for %j", ip => {
     let called = false;
     expect(() => dns.reverse(ip, () => (called = true))).toThrow(
-      expect.objectContaining({ code: "EINVAL", syscall: "getHostByAddr" }),
+      expect.objectContaining({ code: "EINVAL", errno: UV_EINVAL, syscall: "getHostByAddr" }),
     );
     expect(called).toBe(false);
   });
@@ -488,6 +490,7 @@ describe("dns.reverse rejects invalid IP strings with EINVAL", () => {
         expect(err).toEqual(
           expect.objectContaining({
             code: "EINVAL",
+            errno: UV_EINVAL,
             syscall: "getHostByAddr",
             ...(ip ? { hostname: ip } : {}),
           }),

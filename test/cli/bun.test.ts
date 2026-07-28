@@ -126,6 +126,21 @@ describe("bun", () => {
       }
     });
   });
+  describe("repl --help", () => {
+    test.concurrent.each(["--help", "-h"])("bun repl %s prints repl help, not run help", async flag => {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "repl", flag],
+        env: { ...bunEnv, NO_COLOR: "1" },
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      const out = stdout + stderr;
+      const usage = out.split(/\r?\n/).find(l => l.startsWith("Usage:")) ?? "";
+      expect(usage).toBe("Usage: bun repl [flags]");
+      expect(out).not.toContain("bun run");
+      expect(exitCode).toBe(0);
+    });
+  });
   describe("test command line arguments", () => {
     test("test --config, issue #4128", () => {
       const path = `${tmpdir()}/bunfig-${Date.now()}.toml`;

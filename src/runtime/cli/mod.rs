@@ -1544,7 +1544,15 @@ pub mod command {
     #[cold]
     #[inline(never)]
     fn exec_repl(log: &mut bun_ast::Log) -> CmdResult {
-        // Inits with RunCommand (repl reuses run params).
+        // Inits with RunCommand (repl reuses run's param table), so `--help`
+        // inside `arguments::parse` would print `bun run`'s help. Intercept it
+        // here first.
+        for a in bun::argv().iter().skip(2) {
+            if matches!(a, b"--help" | b"-h") {
+                tag_print_help(Tag::ReplCommand, true);
+                Global::exit(0);
+            }
+        }
         let ctx = init(Tag::RunCommand, log)?;
         super::repl_command::ReplCommand::exec(ctx)
     }

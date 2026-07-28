@@ -126,8 +126,8 @@ describe("bun", () => {
       }
     });
   });
-  describe("repl --help", () => {
-    test.concurrent.each(["--help", "-h"])("bun repl %s prints repl help, not run help", async flag => {
+  describe.concurrent("repl --help", () => {
+    test.each(["--help", "-h"])("bun repl %s prints repl help, not run help", async flag => {
       await using proc = Bun.spawn({
         cmd: [bunExe(), "repl", flag],
         env: { ...bunEnv, NO_COLOR: "1" },

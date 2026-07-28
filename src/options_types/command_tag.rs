@@ -214,6 +214,7 @@ pub static LOADS_CONFIG: TagTable<bool> = TagTable({
     a[Tag::AutoCommand as usize] = true;
     a[Tag::RunCommand as usize] = true;
     a[Tag::RunAsNodeCommand as usize] = true;
+    a[Tag::ReplCommand as usize] = true;
     a[Tag::OutdatedCommand as usize] = true;
     a[Tag::UpdateInteractiveCommand as usize] = true;
     a[Tag::PublishCommand as usize] = true;

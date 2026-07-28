@@ -789,14 +789,20 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::TransformO
     // BUN_FEATURE_FLAG_NO_ORPHANS env var in main()→install() instead.
     if matches!(
         cmd,
-        CommandTag::RunCommand | CommandTag::AutoCommand | CommandTag::TestCommand
+        CommandTag::RunCommand
+            | CommandTag::AutoCommand
+            | CommandTag::TestCommand
+            | CommandTag::ReplCommand
     ) {
         if args.flag(b"--no-orphans") {
             bun_io::parent_death_watchdog::enable();
         }
     }
 
-    if matches!(cmd, CommandTag::RunCommand | CommandTag::AutoCommand) {
+    if matches!(
+        cmd,
+        CommandTag::RunCommand | CommandTag::AutoCommand | CommandTag::ReplCommand
+    ) {
         ctx.filters = slice_to_owned(args.options(b"--filter"));
         ctx.workspaces = args.flag(b"--workspaces");
         ctx.if_present = args.flag(b"--if-present");
@@ -913,6 +919,7 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::TransformO
             | CommandTag::RunCommand
             | CommandTag::BuildCommand
             | CommandTag::TestCommand
+            | CommandTag::ReplCommand
     ) {
         if !args.options(b"--conditions").is_empty() {
             opts.conditions = slice_to_owned(args.options(b"--conditions"));
@@ -1391,7 +1398,10 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::TransformO
     let jsx_runtime = args.option(b"--jsx-runtime");
     let jsx_side_effects = args.flag(b"--jsx-side-effects");
 
-    if matches!(cmd, CommandTag::AutoCommand | CommandTag::RunCommand) {
+    if matches!(
+        cmd,
+        CommandTag::AutoCommand | CommandTag::RunCommand | CommandTag::ReplCommand
+    ) {
         // "run.silent" in bunfig.toml
         if args.flag(b"--silent") {
             ctx.debug.silent = true;
@@ -1423,7 +1433,10 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::TransformO
 
     if matches!(
         cmd,
-        CommandTag::RunCommand | CommandTag::AutoCommand | CommandTag::BunxCommand
+        CommandTag::RunCommand
+            | CommandTag::AutoCommand
+            | CommandTag::BunxCommand
+            | CommandTag::ReplCommand
     ) {
         // "run.bun" in bunfig.toml
         if args.flag(b"--bun") {
@@ -1529,7 +1542,10 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::TransformO
         ctx.debug.output_file = of.into();
     }
 
-    if matches!(cmd, CommandTag::RunCommand | CommandTag::AutoCommand) {
+    if matches!(
+        cmd,
+        CommandTag::RunCommand | CommandTag::AutoCommand | CommandTag::ReplCommand
+    ) {
         if let Some(shell) = args.option(b"--shell") {
             if shell == b"bun" {
                 ctx.debug.use_system_shell = false;

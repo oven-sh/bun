@@ -270,9 +270,6 @@ it("should ignore authTagLength for non-authenticated cipher modes", () => {
   expect(gcm.getAuthTag().length).toBe(12);
 });
 
-// https://github.com/oven-sh/bun/issues/6890
-// BoringSSL's cipher lookup table omitted aes-192-cfb while its 128/256
-// siblings (and every other aes-192-* mode) were present.
 it.each([
   ["aes-128-cfb", 16],
   ["aes-192-cfb", 24],

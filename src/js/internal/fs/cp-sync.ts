@@ -17,6 +17,7 @@ const {
   utimesSync,
 } = require("node:fs");
 const { dirname, isAbsolute, join, parse, resolve, sep } = require("node:path");
+const { Buffer } = require("node:buffer");
 
 const { EEXIST, EISDIR, EINVAL, ENOTDIR } = $processBindingConstants.os.errno;
 
@@ -39,10 +40,18 @@ const defaultCpOptions = {
 };
 
 function decorateSystemError(err, prefix, context) {
-  const { syscall, code, message: ctxMessage, path, dest, errno } = context;
+  const { syscall, code, message: ctxMessage, errno } = context;
+  const path = pathToString(context.path);
+  const dest = pathToString(context.dest);
   let message = `${prefix}: ${syscall} returned ${code} (${ctxMessage})`;
-  if (path !== undefined) message += ` ${path}`;
-  if (dest !== undefined) message += ` => ${dest}`;
+  if (path !== undefined) {
+    message += ` ${path}`;
+    context.path = path;
+  }
+  if (dest !== undefined) {
+    message += ` => ${dest}`;
+    context.dest = dest;
+  }
   err.message = message;
   err.name = "SystemError";
   err.info = context;
@@ -146,20 +155,38 @@ function areIdentical(srcStat, destStat) {
   return destStat.ino && destStat.dev && destStat.ino === srcStat.ino && destStat.dev === srcStat.dev;
 }
 
+// POSIX entry names are arbitrary bytes; read them as Buffers so the next
+// syscall sees the exact on-disk bytes. Windows names are native UTF-16.
+const SEP_BYTE = sep.charCodeAt(0);
+const SEP_BUF = Buffer.from(sep);
+const kReaddirBufferOpts =
+  process.platform === "win32" ? { withFileTypes: true } : { withFileTypes: true, encoding: "buffer" };
+
+function joinDirEntry(dir, name) {
+  if (!Buffer.isBuffer(name)) return join(dir, name);
+  const dirBuf = Buffer.isBuffer(dir) ? dir : Buffer.from(String(dir));
+  if (dirBuf.length && dirBuf[dirBuf.length - 1] === SEP_BYTE) return Buffer.concat([dirBuf, name]);
+  return Buffer.concat([dirBuf, SEP_BUF, name]);
+}
+
+function pathToString(p) {
+  return Buffer.isBuffer(p) ? p.toString() : p;
+}
+
 const normalizePathToArray = path =>
   ArrayPrototypeFilter.$call(StringPrototypeSplit.$call(resolve(path), sep), Boolean);
 
 // Return true if dest is a subdir of src, otherwise false.
 // It only checks the path strings.
 function isSrcSubdir(src, dest) {
-  const srcArr = normalizePathToArray(src);
-  const destArr = normalizePathToArray(dest);
+  const srcArr = normalizePathToArray(pathToString(src));
+  const destArr = normalizePathToArray(pathToString(dest));
   return ArrayPrototypeEvery.$call(srcArr, (cur, i) => destArr[i] === cur);
 }
 
 function checkPathsSync(src, dest, opts) {
   if (opts.filter) {
-    const shouldCopy = opts.filter(src, dest);
+    const shouldCopy = opts.filter(pathToString(src), pathToString(dest));
     if ($isPromise(shouldCopy)) {
       throw $ERR_INVALID_RETURN_VALUE("boolean", "filter", shouldCopy);
     }
@@ -260,14 +287,14 @@ function treeContainsOnlyFilesAndDirsSync(root) {
     const dir = stack.pop();
     let entries;
     try {
-      entries = readdirSync(dir, { withFileTypes: true });
+      entries = readdirSync(dir, kReaddirBufferOpts);
     } catch {
       return false;
     }
     for (let i = 0; i < entries.length; i++) {
       const entry = entries[i];
       if (entry.isDirectory()) {
-        stack.push(join(dir, entry.name));
+        stack.push(joinDirEntry(dir, entry.name));
       } else if (!entry.isFile()) {
         return false;
       }
@@ -442,10 +469,10 @@ function mkDirAndCopy(srcMode, src, dest, opts) {
 }
 
 function copyDir(src, dest, opts) {
-  for (const dirent of readdirSync(src, { withFileTypes: true })) {
+  for (const dirent of readdirSync(src, kReaddirBufferOpts)) {
     const { name } = dirent;
-    const srcItem = join(src, name);
-    const destItem = join(dest, name);
+    const srcItem = joinDirEntry(src, name);
+    const destItem = joinDirEntry(dest, name);
     const { destStat, skipped } = checkPathsSync(srcItem, destItem, opts);
     if (!skipped) getStats(destStat, srcItem, destItem, opts);
   }
@@ -454,7 +481,7 @@ function copyDir(src, dest, opts) {
 function onLink(destStat, src, dest, opts) {
   let resolvedSrc = readlinkSync(src);
   if (!opts.verbatimSymlinks && !isAbsolute(resolvedSrc)) {
-    resolvedSrc = resolve(dirname(src), resolvedSrc);
+    resolvedSrc = resolve(dirname(pathToString(src)), resolvedSrc);
   }
   if (!destStat) {
     return symlinkSync(resolvedSrc, dest);
@@ -472,7 +499,7 @@ function onLink(destStat, src, dest, opts) {
     throw err;
   }
   if (!isAbsolute(resolvedDest)) {
-    resolvedDest = resolve(dirname(dest), resolvedDest);
+    resolvedDest = resolve(dirname(pathToString(dest)), resolvedDest);
   }
   let srcIsDir = false;
   try {
@@ -511,6 +538,9 @@ export default {
   cpSyncFn,
   validateCpOptions,
   tryNativeFastPathSync,
+  joinDirEntry,
+  pathToString,
+  kReaddirBufferOpts,
   errno: { EEXIST, EISDIR, EINVAL, ENOTDIR },
   fsCpDirToNonDirError,
   fsCpEExistError,

@@ -312,6 +312,123 @@ for (const [name, copy] of impls) {
       expect(e.code).toBe("ERR_FS_CP_FIFO_PIPE");
     });
 
+    test.skipIf(!isLinux)("recursive - entries with non-UTF-8 names are copied byte-exact", async () => {
+      using root = tempDir("cp-nonutf8", {});
+      const src = join(String(root), "src");
+      fs.mkdirSync(src);
+      const srcBuf = Buffer.from(src + "/");
+      // caf<0xe9> (Latin-1), d<0xe4>r/ (Latin-1 subdir), foo<0xff><0xfe>bar (raw bytes)
+      fs.writeFileSync(Buffer.concat([srcBuf, Buffer.from([0x63, 0x61, 0x66, 0xe9])]), "cafe");
+      fs.writeFileSync(join(src, "ok.txt"), "ok");
+      const sub = Buffer.concat([srcBuf, Buffer.from([0x64, 0xe4, 0x72])]);
+      fs.mkdirSync(sub);
+      fs.writeFileSync(Buffer.concat([sub, Buffer.from("/inner.txt")]), "inner");
+      fs.writeFileSync(Buffer.concat([sub, Buffer.from([0x2f, 0x66, 0x6f, 0x6f, 0xff, 0xfe, 0x62, 0x61, 0x72])]), "w");
+
+      const tree = (d: string) => {
+        const out: Record<string, string> = {};
+        const walk = (cur: Buffer) => {
+          for (const name of fs.readdirSync(cur, { encoding: "buffer" })) {
+            const full = Buffer.concat([cur, Buffer.from("/"), name]);
+            if (fs.lstatSync(full).isDirectory()) walk(full);
+            else out[full.subarray(Buffer.byteLength(d) + 1).toString("hex")] = fs.readFileSync(full, "utf8");
+          }
+        };
+        walk(Buffer.from(d));
+        return out;
+      };
+
+      for (const opts of [{ recursive: true }, { recursive: true, filter: () => true }] as const) {
+        const dest = join(String(root), opts.filter ? "dest-filter" : "dest");
+        await copy(src, dest, opts);
+        expect(tree(dest)).toEqual(tree(src));
+      }
+    });
+
+    test.skipIf(isWindows)(
+      "recursive - valid UTF-8 non-ASCII names reach filter as strings and symlinks resolve",
+      async () => {
+        const basename = tempDirWithFiles("cp-utf8-nonascii", {
+          "from/caf\u00e9/sibling.txt": "s",
+          "from/a.txt": "a",
+        });
+        fs.symlinkSync("sibling.txt", join(basename, "from", "caf\u00e9", "link"));
+
+        const seen: string[] = [];
+        await copy(join(basename, "from"), join(basename, "result"), {
+          recursive: true,
+          filter: src => {
+            seen.push(src);
+            return true;
+          },
+        });
+
+        const copiedLink = join(basename, "result", "caf\u00e9", "link");
+        expect({
+          filterSawUtf8: seen.some(s => s.endsWith(join("caf\u00e9", "sibling.txt"))),
+          filterSawMojibake: seen.some(s => s.includes("caf\u00c3\u00a9")),
+          linkTarget: fs.readlinkSync(copiedLink),
+          followed: fs.readFileSync(copiedLink, "utf8"),
+        }).toEqual({
+          filterSawUtf8: true,
+          filterSawMojibake: false,
+          linkTarget: join(basename, "from", "caf\u00e9", "sibling.txt"),
+          followed: "s",
+        });
+      },
+    );
+
+    test.skipIf(!isLinux)("recursive - merge into existing dest with non-UTF-8 entry names", async () => {
+      using root = tempDir("cp-nonutf8-merge", {});
+      const src = join(String(root), "src");
+      const dest = join(String(root), "dest");
+      fs.mkdirSync(src);
+      fs.mkdirSync(dest);
+      const name = Buffer.from([0x63, 0x61, 0x66, 0xe9]);
+      fs.writeFileSync(Buffer.concat([Buffer.from(src + "/"), name]), "hello");
+      fs.writeFileSync(join(dest, "keep.txt"), "keep");
+
+      await copy(src, dest, { recursive: true });
+
+      expect({
+        copied: fs.readFileSync(Buffer.concat([Buffer.from(dest + "/"), name]), "utf8"),
+        kept: fs.readFileSync(join(dest, "keep.txt"), "utf8"),
+        entries: fs
+          .readdirSync(dest, { encoding: "buffer" })
+          .map(b => b.toString("hex"))
+          .sort(),
+      }).toEqual({
+        copied: "hello",
+        kept: "keep",
+        entries: [name.toString("hex"), Buffer.from("keep.txt").toString("hex")].sort(),
+      });
+    });
+
+    test.skipIf(isWindows)("filter - trailing slash on src/dest does not double the separator", async () => {
+      const basename = tempDirWithFiles("cp-trailing", { "from/a.txt": "a" });
+      const seen: [string, string][] = [];
+      await copy(basename + "/from/", basename + "/result/", {
+        recursive: true,
+        filter: (s, d) => (seen.push([s, d]), true),
+      });
+      expect(seen).toContainEqual([basename + "/from/a.txt", basename + "/result/a.txt"]);
+      expect(seen.some(([s]) => s.includes("//"))).toBe(false);
+    });
+
+    test("err.path is a string when a nested entry's type conflicts", async () => {
+      const basename = tempDirWithFiles("cp-errpath", {
+        "from/sub/x.txt": "x",
+        "result/sub": "not a dir",
+      });
+      const e = await copyShouldThrow(join(basename, "from"), join(basename, "result"), { recursive: true });
+      expect({ code: e.code, pathType: typeof e.path, path: e.path, infoPathType: typeof e.info?.path }).toEqual({
+        code: "ERR_FS_CP_DIR_TO_NON_DIR",
+        pathType: "string",
+        path: join(basename, "result", "sub"),
+        infoPathType: "string",
+      });
+    });
+
     test("filter - works", async () => {
       await using basename = tempDir("cp", {
         "from/a.txt": "a",

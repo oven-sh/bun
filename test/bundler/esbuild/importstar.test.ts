@@ -1457,4 +1457,48 @@ describe("bundler", () => {
       ].join("\n"),
     },
   });
+  itBundled("importstar/ExportStarAsNamespaceSorted", {
+    files: {
+      "/entry.js": /* js */ `
+        import { ns } from './mid'
+        console.log(JSON.stringify(ns))
+      `,
+      "/mid.js": /* js */ `
+        export * as ns from './leaf'
+      `,
+      "/leaf.js": /* js */ `
+        export const b = 2
+        export const a = 1
+        export default "dflt"
+      `,
+    },
+    run: {
+      stdout: '{"a":1,"b":2,"default":"dflt"}',
+    },
+  });
+  itBundled("importstar/CjsEntryPointExportsSorted", {
+    files: {
+      "/entry.js": /* js */ `
+        export const top = 0
+        import * as inner from './leaf'
+        export { inner }
+        export { default as innerDefault } from './leaf'
+      `,
+      "/leaf.js": /* js */ `
+        export const b = 2
+        export const a = 1
+        export default "d"
+      `,
+    },
+    format: "cjs",
+    runtimeFiles: {
+      "/test.js": /* js */ `
+        console.log(JSON.stringify(require('./out.js')))
+      `,
+    },
+    run: {
+      file: "/test.js",
+      stdout: '{"inner":{"a":1,"b":2,"default":"d"},"innerDefault":"d","top":0}',
+    },
+  });
 });

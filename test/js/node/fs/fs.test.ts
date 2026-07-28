@@ -2076,105 +2076,102 @@ describe.each([
   ["1.5", 1.5],
   ["MAX_SAFE_INTEGER+1", Number.MAX_SAFE_INTEGER + 1],
   ["5n", 5n],
-] as [string, any][])(
-  "fs.write with position=%s uses the current file offset",
-  (_label, position) => {
-    it("writeSync(fd, buffer, offset, length, position)", () => {
-      using dir = tempDir("fs-write-pos-buf", {});
-      const p = join(String(dir), "out.txt");
-      const fd = openSync(p, "w");
-      try {
-        writeSync(fd, "AAAAAAAAAA");
-        writeSync(fd, Buffer.from("XX"), 0, 2, position);
-      } finally {
-        closeSync(fd);
-      }
-      expect(readFileSync(p, "utf8")).toBe("AAAAAAAAAAXX");
-    });
+] as [string, any][])("fs.write with position=%s uses the current file offset", (_label, position) => {
+  it("writeSync(fd, buffer, offset, length, position)", () => {
+    using dir = tempDir("fs-write-pos-buf", {});
+    const p = join(String(dir), "out.txt");
+    const fd = openSync(p, "w");
+    try {
+      writeSync(fd, "AAAAAAAAAA");
+      writeSync(fd, Buffer.from("XX"), 0, 2, position);
+    } finally {
+      closeSync(fd);
+    }
+    expect(readFileSync(p, "utf8")).toBe("AAAAAAAAAAXX");
+  });
 
-    it("writeSync(fd, string, position)", () => {
-      using dir = tempDir("fs-write-pos-str", {});
-      const p = join(String(dir), "out.txt");
-      const fd = openSync(p, "w");
-      try {
-        writeSync(fd, "AAAAAAAAAA");
-        writeSync(fd, "YY", position);
-      } finally {
-        closeSync(fd);
-      }
-      expect(readFileSync(p, "utf8")).toBe("AAAAAAAAAAYY");
-    });
+  it("writeSync(fd, string, position)", () => {
+    using dir = tempDir("fs-write-pos-str", {});
+    const p = join(String(dir), "out.txt");
+    const fd = openSync(p, "w");
+    try {
+      writeSync(fd, "AAAAAAAAAA");
+      writeSync(fd, "YY", position);
+    } finally {
+      closeSync(fd);
+    }
+    expect(readFileSync(p, "utf8")).toBe("AAAAAAAAAAYY");
+  });
 
-    it("fs.write(fd, buffer, offset, length, position, cb)", async () => {
-      using dir = tempDir("fs-write-pos-cb", {});
-      const p = join(String(dir), "out.txt");
-      const fd = openSync(p, "w");
-      try {
-        writeSync(fd, "AAAAAAAAAA");
-        const { promise, resolve, reject } = Promise.withResolvers<number>();
-        fs.write(fd, Buffer.from("ZZ"), 0, 2, position, (err, n) => (err ? reject(err) : resolve(n)));
-        expect(await promise).toBe(2);
-      } finally {
-        closeSync(fd);
-      }
-      expect(readFileSync(p, "utf8")).toBe("AAAAAAAAAAZZ");
-    });
+  it("fs.write(fd, buffer, offset, length, position, cb)", async () => {
+    using dir = tempDir("fs-write-pos-cb", {});
+    const p = join(String(dir), "out.txt");
+    const fd = openSync(p, "w");
+    try {
+      writeSync(fd, "AAAAAAAAAA");
+      const { promise, resolve, reject } = Promise.withResolvers<number>();
+      fs.write(fd, Buffer.from("ZZ"), 0, 2, position, (err, n) => (err ? reject(err) : resolve(n)));
+      expect(await promise).toBe(2);
+    } finally {
+      closeSync(fd);
+    }
+    expect(readFileSync(p, "utf8")).toBe("AAAAAAAAAAZZ");
+  });
 
-    it("writevSync(fd, buffers, position)", () => {
-      using dir = tempDir("fs-writev-pos", {});
-      const p = join(String(dir), "out.txt");
-      const fd = openSync(p, "w");
-      try {
-        writeSync(fd, "AAAAAAAAAA");
-        expect(writevSync(fd, [Buffer.from("V"), Buffer.from("V")], position as any)).toBe(2);
-      } finally {
-        closeSync(fd);
-      }
-      expect(readFileSync(p, "utf8")).toBe("AAAAAAAAAAVV");
-    });
+  it("writevSync(fd, buffers, position)", () => {
+    using dir = tempDir("fs-writev-pos", {});
+    const p = join(String(dir), "out.txt");
+    const fd = openSync(p, "w");
+    try {
+      writeSync(fd, "AAAAAAAAAA");
+      expect(writevSync(fd, [Buffer.from("V"), Buffer.from("V")], position as any)).toBe(2);
+    } finally {
+      closeSync(fd);
+    }
+    expect(readFileSync(p, "utf8")).toBe("AAAAAAAAAAVV");
+  });
 
-    it("readvSync(fd, buffers, position)", () => {
-      using dir = tempDir("fs-readv-pos", { "in.txt": "ABCDEFGHIJ" });
-      const fd = openSync(join(String(dir), "in.txt"), "r");
-      try {
-        readSync(fd, Buffer.alloc(3), 0, 3, null);
-        const b = Buffer.alloc(3);
-        expect(readvSync(fd, [b], position as any)).toBe(3);
-        expect(b.toString()).toBe("DEF");
-      } finally {
-        closeSync(fd);
-      }
-    });
+  it("readvSync(fd, buffers, position)", () => {
+    using dir = tempDir("fs-readv-pos", { "in.txt": "ABCDEFGHIJ" });
+    const fd = openSync(join(String(dir), "in.txt"), "r");
+    try {
+      readSync(fd, Buffer.alloc(3), 0, 3, null);
+      const b = Buffer.alloc(3);
+      expect(readvSync(fd, [b], position as any)).toBe(3);
+      expect(b.toString()).toBe("DEF");
+    } finally {
+      closeSync(fd);
+    }
+  });
 
-    it("FileHandle.write(buffer, offset, length, position)", async () => {
-      using dir = tempDir("fs-fh-write-pos", {});
-      const p = join(String(dir), "out.txt");
-      writeFileSync(p, "AAAAAAAAAA");
-      const fh = await promises.open(p, "r+");
-      try {
-        await fh.read(Buffer.alloc(10), 0, 10, null);
-        await fh.write(Buffer.from("WW"), 0, 2, position);
-      } finally {
-        await fh.close();
-      }
-      expect(readFileSync(p, "utf8")).toBe("AAAAAAAAAAWW");
-    });
+  it("FileHandle.write(buffer, offset, length, position)", async () => {
+    using dir = tempDir("fs-fh-write-pos", {});
+    const p = join(String(dir), "out.txt");
+    writeFileSync(p, "AAAAAAAAAA");
+    const fh = await promises.open(p, "r+");
+    try {
+      await fh.read(Buffer.alloc(10), 0, 10, null);
+      await fh.write(Buffer.from("WW"), 0, 2, position);
+    } finally {
+      await fh.close();
+    }
+    expect(readFileSync(p, "utf8")).toBe("AAAAAAAAAAWW");
+  });
 
-    it("FileHandle.writev(buffers, position)", async () => {
-      using dir = tempDir("fs-fh-writev-pos", {});
-      const p = join(String(dir), "out.txt");
-      writeFileSync(p, "AAAAAAAAAA");
-      const fh = await promises.open(p, "r+");
-      try {
-        await fh.read(Buffer.alloc(10), 0, 10, null);
-        await fh.writev([Buffer.from("QQ")], position);
-      } finally {
-        await fh.close();
-      }
-      expect(readFileSync(p, "utf8")).toBe("AAAAAAAAAAQQ");
-    });
-  },
-);
+  it("FileHandle.writev(buffers, position)", async () => {
+    using dir = tempDir("fs-fh-writev-pos", {});
+    const p = join(String(dir), "out.txt");
+    writeFileSync(p, "AAAAAAAAAA");
+    const fh = await promises.open(p, "r+");
+    try {
+      await fh.read(Buffer.alloc(10), 0, 10, null);
+      await fh.writev([Buffer.from("QQ")], position);
+    } finally {
+      await fh.close();
+    }
+    expect(readFileSync(p, "utf8")).toBe("AAAAAAAAAAQQ");
+  });
+});
 
 describe("fs.readv/writev with a non-number position uses the current file offset", () => {
   it.each([null, undefined, "3", {}, true] as const)("writevSync position=%p", position => {

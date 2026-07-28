@@ -153,6 +153,88 @@ describe.skipIf(!isWindows)("proxy NTLM/Negotiate via SSPI", () => {
     ]);
   });
 
+  // CONNECT framing is independent of the user's method: a HEAD fetch still
+  // writes CONNECT on the wire, and the 407 body must be drained in full.
+  test("HEAD via CONNECT tunnel drains 407 body", async () => {
+    await using target = Bun.serve({
+      port: 0,
+      tls: tlsCert,
+      fetch: () => new Response("tunneled"),
+    });
+
+    using proxy = await ntlmProxy({
+      bodyLen: 1024,
+      forward(sock, leg, rest) {
+        const [host, port] = leg.path.split(":");
+        const upstream = net.connect(Number(port), host, () => {
+          sock.write("HTTP/1.1 200 Connection Established\r\n\r\n");
+          if (rest.length) upstream.write(rest);
+          sock.pipe(upstream);
+          upstream.pipe(sock);
+        });
+        upstream.on("error", () => sock.end());
+        sock.on("close", () => upstream.end());
+      },
+    });
+
+    const res = await fetch(`https://localhost:${target.port}/hello`, {
+      method: "HEAD",
+      proxy: proxy.url,
+      tls: { ca: tlsCert.cert },
+    });
+    expect(res.status).toBe(200);
+
+    expect(proxy.conns.length).toBe(1);
+    expect(proxy.conns[0].map(l => [l.method, ntlmMessageType(l.auth)])).toEqual([
+      ["CONNECT", null],
+      ["CONNECT", 1],
+      ["CONNECT", 3],
+    ]);
+  });
+
+  // SSPI proxy auth is hop-by-hop with http_proxy; a 407 that arrives through
+  // an established tunnel is end-to-end and must surface to the caller.
+  test("origin-sent 407 through established tunnel is surfaced, not retried", async () => {
+    await using origin = Bun.serve({
+      port: 0,
+      tls: tlsCert,
+      fetch: () =>
+        new Response("", {
+          status: 407,
+          headers: { "Proxy-Authenticate": "NTLM" },
+        }),
+    });
+
+    // Proxy lets CONNECT through without auth.
+    const server = net.createServer(sock => {
+      sock.once("data", data => {
+        const [, path] = data.toString("latin1").split(" ");
+        const [host, port] = path.split(":");
+        const upstream = net.connect(Number(port), host, () => {
+          sock.write("HTTP/1.1 200 Connection Established\r\n\r\n");
+          sock.pipe(upstream);
+          upstream.pipe(sock);
+        });
+        upstream.on("error", () => sock.end());
+        sock.on("close", () => upstream.end());
+      });
+      sock.on("error", () => {});
+    });
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const proxyPort = (server.address() as AddressInfo).port;
+    try {
+      const res = await fetch(`https://localhost:${origin.port}/`, {
+        proxy: `http://127.0.0.1:${proxyPort}`,
+        tls: { ca: tlsCert.cert },
+      });
+      expect(res.status).toBe(407);
+      expect(res.headers.get("proxy-authenticate")).toBe("NTLM");
+    } finally {
+      server.close();
+    }
+  });
+
   test("absolute-form http target, 407 body drained before retry", async () => {
     await using target = Bun.serve({
       port: 0,

@@ -292,7 +292,15 @@ mod windows {
                 // SAFETY: `self.ctx` was just populated by
                 // `InitializeSecurityContextW`; `out_desc` points at the same
                 // live `out_buf`.
-                unsafe { sspi::CompleteAuthToken(&raw mut self.ctx, &raw mut out_desc) };
+                let cat = unsafe { sspi::CompleteAuthToken(&raw mut self.ctx, &raw mut out_desc) };
+                if cat != sspi::SEC_E_OK {
+                    bun_core::scoped_log!(
+                        proxy_sspi,
+                        "CompleteAuthToken failed: 0x{:08x}",
+                        cat as u32
+                    );
+                    return None;
+                }
                 status = if status == sspi::SEC_I_COMPLETE_NEEDED {
                     sspi::SEC_E_OK
                 } else {

@@ -2293,6 +2293,10 @@ impl<'a> HTTPClient<'a> {
             // Retry replays `original_request_body`; a consumed ReadableStream can't be rewound.
             return false;
         }
+        if !self.state.request_body.slice().is_empty() {
+            // Leg-1 body not fully written; retrying would desync against the declared Content-Length.
+            return false;
+        }
         if self.state.transfer_encoding == Encoding::Chunked || self.state.content_length.is_none()
         {
             // Only content-length 407 bodies are drained; chunked/close-delimited surface as-is.
@@ -4922,7 +4926,8 @@ impl<'a> HTTPClient<'a> {
                     else {
                         return Err(crate::Error::InvalidContentLength);
                     };
-                    if self.method.has_body() {
+                    let is_connect_leg = self.flags.proxy_tunneling && self.proxy_tunnel.is_none();
+                    if self.method.has_body() || is_connect_leg {
                         if self
                             .state
                             .content_length
@@ -5116,6 +5121,7 @@ impl<'a> HTTPClient<'a> {
         if status_code == 407 {
             if !is_proxy_connect_failure
                 && self.http_proxy.is_some()
+                && self.proxy_tunnel.is_none()
                 && self.try_sspi_proxy_auth(response)
             {
                 return Ok(ShouldContinue::ProxyAuthRetry);

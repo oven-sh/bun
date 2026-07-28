@@ -41,12 +41,8 @@ pub struct ConnectionFlags {
     pub failed: bool,
     pub enable_auto_pipelining: bool,
     pub finalized: bool,
-    /// Set when the in-flight connection was initiated by `--redis-preconnect`
-    /// rather than user code. While true the connect/reconnect machinery does
-    /// not ref the event loop on its own (pending commands and subscriptions
-    /// still do), so a script that never touches Redis can exit instead of
-    /// waiting out the retry backoff. Cleared on the first explicit
-    /// `.connect()` call.
+    /// Connection was initiated by `--redis-preconnect`; while set,
+    /// connect/reconnect does not ref the event loop on its own.
     pub is_preconnecting: bool,
     // This flag is a slight hack to allow returning the client instance in the
     // promise which resolves when the connection is established. There are two

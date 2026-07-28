@@ -1081,11 +1081,8 @@ impl JSValkeyClient {
         Ok(promise)
     }
 
-    /// Best-effort connect for `--redis-preconnect`: starts the connection
-    /// without letting it (or its retry loop) keep the event loop alive, and
-    /// marks the connection promise handled so a failure never becomes an
-    /// unhandled rejection. A later explicit `.connect()` or any queued
-    /// command re-asserts the keep-alive.
+    /// Best-effort connect for `--redis-preconnect`. Does not ref the event
+    /// loop; marks the returned promise handled so a failure is silent.
     pub fn do_preconnect(
         &self,
         global_object: &JSGlobalObject,
@@ -1105,11 +1102,9 @@ impl JSValkeyClient {
         global_object: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        // An explicit .connect() supersedes any background preconnect: the
-        // caller is now waiting on the returned promise, so the loop must
-        // stay alive for it. `do_connect` may early-return the cached promise
-        // without touching `poll_ref`, hence the explicit update here.
         if self.client.get().flags.is_preconnecting {
+            // `do_connect` early-returns the cached promise without touching
+            // `poll_ref`, so re-ref explicitly now the user is waiting on it.
             self.client_mut().flags.is_preconnecting = false;
             self.update_poll_ref();
         }
@@ -1737,8 +1732,6 @@ impl JSValkeyClient {
                 .has_subscriptions(&self.global_object)
                 .unwrap_or(false);
 
-        // A `--redis-preconnect`-initiated attempt must not keep the loop alive
-        // on its own; real work (commands/subscriptions) still refs below.
         let keep_alive_for_connect = !self.client.get().flags.is_preconnecting
             && (self.client.get().flags.is_reconnecting
                 || self.client.get().status == valkey::Status::Connecting);

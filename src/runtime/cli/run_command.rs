@@ -1456,9 +1456,6 @@ impl Run {
             };
             match connect_fn.call(global, sql_object, &[]) {
                 Ok(promise) => {
-                    // Preconnect is best-effort: a failed attempt must not
-                    // surface as an unhandled rejection and kill a script that
-                    // never touches SQL.
                     if let Some(p) = promise.as_promise() {
                         bun_jsc::JSPromise::opaque_mut(p).set_handled();
                     }

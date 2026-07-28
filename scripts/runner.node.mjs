@@ -618,8 +618,13 @@ async function runTests() {
   // finished, so no parallel-safe process ever overlaps a serial test (an
   // overlap surfaced new flakes in tight-timeout / port-bind tests such as
   // dns-tcp-bidirectional-poll and test-https-timeout). `--parallel` already
-  // widens `limit` above and supersedes this split.
-  const parallelSafeWidth = parallelism > 1 ? parallelism : Math.max(availableParallelism() - 1, 1);
+  // widens `limit` above and supersedes this split. The Intel Mac minis are
+  // 6-core i7-8700B (12 HT threads): 11 coordinators each spawning worker
+  // processes pushes the 800-file batch past the 45-minute job timeout, so
+  // darwin x64 is capped at 4.
+  const parallelSafeCap = isMacOS && isX64 ? 4 : Infinity;
+  const parallelSafeWidth =
+    parallelism > 1 ? parallelism : Math.min(parallelSafeCap, Math.max(availableParallelism() - 1, 1));
   const parallelSafeLimit = parallelism > 1 ? limit : pLimit(parallelSafeWidth);
   const isParallelSafeTest = testPath => {
     const p = testPath.replaceAll("\\", "/");

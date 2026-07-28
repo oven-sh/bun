@@ -1018,32 +1018,6 @@ impl FileSink {
             .set(self.received_bytes.get() + accepted as u64);
     }
 
-    /// UTF-8 length matching `convert_utf16_to_utf8_append`: unpaired surrogates become U+FFFD (3 bytes).
-    fn utf8_len_from_utf16_lossy(utf16: &[u16]) -> usize {
-        let mut len = 0usize;
-        let mut i = 0usize;
-        while i < utf16.len() {
-            let u = utf16[i];
-            if u < 0x80 {
-                len += 1;
-            } else if u < 0x800 {
-                len += 2;
-            } else if (0xD800..0xDC00).contains(&u)
-                && i + 1 < utf16.len()
-                && (0xDC00..0xE000).contains(&utf16[i + 1])
-            {
-                // Surrogate pair: one 4-byte code point.
-                len += 4;
-                i += 1;
-            } else {
-                // BMP character, or an unpaired surrogate encoded as U+FFFD.
-                len += 3;
-            }
-            i += 1;
-        }
-        len
-    }
-
     pub fn write(&self, data: &streams::Result) -> streams::Writable {
         if self.done.get() {
             return streams::Writable::Done;
@@ -1080,7 +1054,10 @@ impl FileSink {
         let buffered_before = self.writer.get().buffered_len();
         // SAFETY(JsCell): `IOWriter::write_utf16` buffers/writes; no JS.
         let rc = self.writer.with_mut(|w| w.write_utf16(data.slice16()));
-        self.count_received(&rc, Self::utf8_len_from_utf16_lossy(data.slice16()));
+        self.count_received(
+            &rc,
+            simdutf::length::utf8::from::utf16::le_with_replacement(data.slice16()),
+        );
         let accepted = self.bytes_accepted(buffered_before, &rc);
         self.to_result(rc, accepted)
     }

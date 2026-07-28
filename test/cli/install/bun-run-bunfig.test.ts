@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { realpathSync } from "fs";
+import { chmodSync, realpathSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDirWithFiles, toTOMLString } from "harness";
 import { join as pathJoin } from "node:path";
 
@@ -246,5 +246,85 @@ describe.each(["bun run", "bun"])(`%s`, cmd => {
 
     expect(realpathSync(nodeBin)).toBe(realpathSync(node));
     expect(result.success).toBeTrue();
+  });
+});
+
+describe("--bun node shim for file entry points (#7703)", () => {
+  const execPath = process.execPath;
+  const whereNode = `
+    const node = Bun.which("node");
+    if (!node) throw new Error("node not on PATH");
+    console.log(require("fs").realpathSync(node));
+  `;
+
+  for (const [label, argv] of [
+    ["bun <file>", ["./where-node.js"]],
+    ["bun run ./<file>", ["run", "./where-node.js"]],
+    ["bun -e", ["-e", whereNode]],
+  ] as const) {
+    test(`--bun adds the node shim for \`${label}\``, async () => {
+      const cwd = tempDirWithFiles("run.bun.file", { "where-node.js": whereNode });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "--bun", ...argv],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+        cwd,
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr.trim()).toBe("");
+      if (isWindows) {
+        expect(stdout.trim()).toContain("\\bun-node-");
+      } else {
+        expect(stdout.trim()).toBe(realpathSync(execPath));
+      }
+      expect(exitCode).toBe(0);
+    });
+  }
+
+  test("bunfig [run] bun=true adds the node shim for `bun <file>`", async () => {
+    const cwd = tempDirWithFiles("run.bun.file", {
+      "bunfig.toml": toTOMLString({ run: { bun: true } }),
+      "where-node.js": whereNode,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-c=bunfig.toml", "./where-node.js"],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+      cwd,
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr.trim()).toBe("");
+    if (isWindows) {
+      expect(stdout.trim()).toContain("\\bun-node-");
+    } else {
+      expect(stdout.trim()).toBe(realpathSync(execPath));
+    }
+    expect(exitCode).toBe(0);
+  });
+
+  test.skipIf(isWindows)("spawning a bin with a node shebang works under --bun without node on PATH", async () => {
+    const cwd = tempDirWithFiles("run.bun.shebang", {
+      "bin/my-cli": `#!/usr/bin/env node\nprocess.stdout.write("ran under " + process.argv0);\n`,
+      "index.js": `
+        const result = Bun.spawnSync({ cmd: ["my-cli"], stdout: "pipe", stderr: "pipe" });
+        process.stdout.write(result.stdout.toString());
+        process.stderr.write(result.stderr.toString());
+        process.exit(result.exitCode);
+      `,
+    });
+    chmodSync(pathJoin(cwd, "bin", "my-cli"), 0o755);
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--bun", "index.js"],
+      env: { ...bunEnv, PATH: pathJoin(cwd, "bin") },
+      stdout: "pipe",
+      stderr: "pipe",
+      cwd,
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("ran under node");
+    expect(exitCode).toBe(0);
   });
 });

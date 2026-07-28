@@ -182,7 +182,14 @@ test.skipIf(isWindows)("fetch rejects when the Bun.file body is truncated mid-up
   const socketClosed = Promise.withResolvers<void>();
   const server = net.createServer(s => {
     socket = s;
-    s.once("close", () => socketClosed.resolve());
+    s.once("close", () => {
+      gotHead.reject(new Error("socket closed before request head"));
+      socketClosed.resolve();
+    });
+    s.on("error", e => {
+      gotHead.reject(e);
+      socketClosed.resolve();
+    });
     s.on("data", d => {
       if (head !== "") return;
       buf += d.toString("latin1");

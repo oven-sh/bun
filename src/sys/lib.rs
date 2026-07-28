@@ -9297,9 +9297,11 @@ pub fn renameat_concurrently_without_fallback(
                     attempts_left -= 1;
                 }
                 Err(err) => {
-                    // Best-effort restore of the displaced destination.
-                    if moved_aside {
-                        let _ = renameat(to_dir_fd, aside, to_dir_fd, to);
+                    // Best-effort restore of the displaced destination; if it
+                    // was recreated meanwhile, drop the displaced tree instead
+                    // of leaking it.
+                    if moved_aside && renameat(to_dir_fd, aside, to_dir_fd, to).is_err() {
+                        delete_tree_at(aside.as_bytes());
                     }
                     return Err(err);
                 }

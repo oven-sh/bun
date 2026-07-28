@@ -10,7 +10,6 @@
 import { afterAll, beforeAll, expect, setDefaultTimeout, test } from "bun:test";
 import { bunEnv, bunExe, isLinux, tempDir } from "harness";
 import { createHash } from "node:crypto";
-import { createServer, type Server } from "node:http";
 import { join } from "node:path";
 import { gzipSync } from "node:zlib";
 
@@ -120,42 +119,37 @@ function buildTarball(): { tgz: Buffer; shasum: string; integrity: string } {
   };
 }
 
-async function makeRegistry(tgz: Buffer, shasum: string, integrity: string) {
-  const server: Server = createServer((req, res) => {
-    const url = new URL(req.url!, "http://x");
-    if (url.pathname === `/${PKG_NAME}`) {
-      const body = JSON.stringify({
-        name: PKG_NAME,
-        "dist-tags": { latest: "1.0.0" },
-        versions: {
-          "1.0.0": {
-            name: PKG_NAME,
-            version: "1.0.0",
-            dist: {
-              shasum,
-              integrity,
-              tarball: `http://127.0.0.1:${port}/${PKG_NAME}/-/${PKG_NAME}-1.0.0.tgz`,
+function makeRegistry(tgz: Buffer, shasum: string, integrity: string) {
+  const server = Bun.serve({
+    port: 0,
+    fetch(req) {
+      const url = new URL(req.url);
+      if (url.pathname === `/${PKG_NAME}`) {
+        return Response.json({
+          name: PKG_NAME,
+          "dist-tags": { latest: "1.0.0" },
+          versions: {
+            "1.0.0": {
+              name: PKG_NAME,
+              version: "1.0.0",
+              dist: {
+                shasum,
+                integrity,
+                tarball: `http://127.0.0.1:${server.port}/${PKG_NAME}/-/${PKG_NAME}-1.0.0.tgz`,
+              },
             },
           },
-        },
-      });
-      res.setHeader("content-type", "application/json");
-      res.end(body);
-      return;
-    }
-    if (url.pathname.endsWith(".tgz")) {
-      res.setHeader("content-type", "application/octet-stream");
-      res.end(tgz);
-      return;
-    }
-    res.statusCode = 404;
-    res.end("not found");
+        });
+      }
+      if (url.pathname.endsWith(".tgz")) {
+        return new Response(tgz, { headers: { "content-type": "application/octet-stream" } });
+      }
+      return new Response("not found", { status: 404 });
+    },
   });
-  await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
-  const port = (server.address() as { port: number }).port;
   return {
-    url: `http://127.0.0.1:${port}/`,
-    [Symbol.asyncDispose]: () => new Promise<void>(resolve => server.close(() => resolve())),
+    url: `http://127.0.0.1:${server.port}/`,
+    [Symbol.asyncDispose]: () => server.stop(true),
   };
 }
 
@@ -186,7 +180,7 @@ test.skipIf(!isLinux || !cc)(
   "concurrent installs sharing a cache survive a filesystem without RENAME_EXCHANGE",
   async () => {
     const { tgz, shasum, integrity } = buildTarball();
-    await using registry = await makeRegistry(tgz, shasum, integrity);
+    await using registry = makeRegistry(tgz, shasum, integrity);
 
     const PROCS = 4;
     const ITERATIONS = 3;

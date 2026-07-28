@@ -99,6 +99,23 @@ JSC_DEFINE_CUSTOM_GETTER(jsGetterProxyEnvironmentVariable, (JSGlobalObject * glo
     RELEASE_AND_RETURN(scope, JSValue::encode(jsString(vm, value.toWTFString())));
 }
 
+// Drop DontEnum from a side-effecting accessor on first write so
+// {...process.env} / Object.keys carry it. Static JSObject::deleteProperty
+// avoids re-entering JSProcessEnv::deleteProperty; the CustomAccessor check
+// guards against a re-entrant defineProperty during the setter's coercion.
+static void promoteSideEffectingAccessorToEnumerable(VM& vm, JSGlobalObject* globalObject, JSObject* object, PropertyName propertyName)
+{
+    unsigned attributes = 0;
+    JSValue existing = object->getDirect(vm, propertyName, attributes);
+    if (!existing || !(attributes & JSC::PropertyAttribute::DontEnum) || !(attributes & JSC::PropertyAttribute::CustomAccessor))
+        return;
+    DeletePropertySlot deleteSlot;
+    if (!JSObject::deleteProperty(object, globalObject, propertyName, deleteSlot))
+        return;
+    object->putDirectCustomAccessor(vm, propertyName, existing,
+        attributes & ~JSC::PropertyAttribute::DontEnum);
+}
+
 JSC_DEFINE_CUSTOM_SETTER(jsSetterProxyEnvironmentVariable, (JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::EncodedJSValue value, PropertyName propertyName))
 {
     VM& vm = globalObject->vm();
@@ -119,25 +136,8 @@ JSC_DEFINE_CUSTOM_SETTER(jsSetterProxyEnvironmentVariable, (JSGlobalObject * glo
     BunString val = Bun::toStringView(view);
     Bun__setEnvValue(globalObject, &name, &val);
 
-    // The proxy-var accessors are added with `DontEnum` when the var was not
-    // present in the OS env at startup. The regular env-var setter
-    // (`jsSetterEnvironmentVariable`) makes a written var enumerable by
-    // replacing the accessor with a data property; this setter keeps the
-    // accessor (so the native env map stays the source of truth) but must
-    // still clear `DontEnum` — otherwise `process.env.HTTP_PROXY = "..."`
-    // followed by `Bun.spawn({env: {...process.env}})` silently drops the var
-    // (the spread skips non-enumerable properties).
-    unsigned attributes;
-    JSValue existing = object->getDirect(vm, propertyName, attributes);
-    if (existing && (attributes & JSC::PropertyAttribute::DontEnum) && (attributes & JSC::PropertyAttribute::CustomAccessor)) {
-        // Static delete: the method-table one would re-enter JSProcessEnv::deleteProperty.
-        DeletePropertySlot deleteSlot;
-        if (JSObject::deleteProperty(object, globalObject, propertyName, deleteSlot)) {
-            object->putDirectCustomAccessor(vm, propertyName, existing,
-                attributes & ~JSC::PropertyAttribute::DontEnum);
-        }
-        RETURN_IF_EXCEPTION(scope, false);
-    }
+    promoteSideEffectingAccessorToEnumerable(vm, globalObject, object, propertyName);
+    RETURN_IF_EXCEPTION(scope, false);
     return true;
 }
 
@@ -176,20 +176,6 @@ JSC_DEFINE_CUSTOM_GETTER(jsTimeZoneEnvironmentVariableGetter, (JSGlobalObject * 
 static void applyTZFromString(JSGlobalObject*, const String&);
 static void applyTLSRejectFromString(JSGlobalObject*, const String&);
 static void applyVerboseFetchFromString(JSGlobalObject*, const String&);
-
-static void promoteSideEffectingAccessorToEnumerable(VM& vm, JSGlobalObject* globalObject, JSObject* object, PropertyName propertyName)
-{
-    unsigned attributes = 0;
-    JSValue existing = object->getDirect(vm, propertyName, attributes);
-    if (!existing || !(attributes & JSC::PropertyAttribute::DontEnum) || !(attributes & JSC::PropertyAttribute::CustomAccessor))
-        return;
-    DeletePropertySlot deleteSlot;
-    // Static dispatch: the method-table path would re-enter JSProcessEnv::deleteProperty.
-    if (!JSObject::deleteProperty(object, globalObject, propertyName, deleteSlot))
-        return;
-    object->putDirectCustomAccessor(vm, propertyName, existing,
-        attributes & ~JSC::PropertyAttribute::DontEnum);
-}
 
 // In Node.js, the "TZ" environment variable is special.
 // Setting it automatically updates the timezone.
@@ -603,7 +589,7 @@ bool JSSharedEnvMap::deleteProperty(JSCell* cell, JSGlobalObject* globalObject, 
     else {
         for (auto proxyName : kProxyEnvVarNames) {
             if (normalized == proxyName) {
-                BunString name = Bun::toString(keyStr);
+                BunString name = Bun::toString(normalized);
                 Bun__deleteEnvValue(globalObject, &name);
                 break;
             }

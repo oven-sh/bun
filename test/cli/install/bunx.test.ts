@@ -1212,8 +1212,6 @@ it.skipIf(!isWindows)("should not crash on corrupted .bunx file with missing quo
     subprocess1.exited,
   ]);
 
-  // Find the metadata store. Current installs use the `:bunx` alternate data
-  // stream on the exe; older layouts used a sibling `.bunx` file.
   const binDir = join(x_dir, "node_modules", ".bin");
   expect(await Bun.file(join(binDir, "tsc.exe")).exists()).toBe(true);
   const adsFile = join(binDir, "tsc.exe:bunx");

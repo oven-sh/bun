@@ -98,7 +98,7 @@ pub const DISABLE_AUTO_JS_TO_TS_IN_NODE_MODULES: bool = true;
 pub const RUNTIME_TRANSPILER_CACHE: bool = true;
 
 /// On Windows, the fast path reads the bin-shim metadata (`<exe>:bunx` stream
-/// or `.bunx` sidecar) inside `bun.exe` via `bun_shim_impl.tryStartupFromBunJS`
+/// or `.bunx` sidecar) inside `bun.exe` via `bun_shim_impl::try_startup_from_bun_js`
 /// instead of spawning `bun_shim_impl.exe`. Disable to isolate runner bugs.
 pub const WINDOWS_BUNX_FAST_PATH: bool = true;
 

@@ -8794,11 +8794,10 @@ registry = "http://localhost:${port}/"
         stderr: "pipe",
         env: mergeWindowEnvs([env, { PATH: PATH }]),
       });
-      const err = await stderr.text();
-      const out = await stdout.text();
+      const [err, out, exitCode] = await Promise.all([stderr.text(), stdout.text(), exited]);
       expect(err.trim()).toBe("");
       expect(out.trim()).toBe("i am bin1 arg1 arg2");
-      expect(await exited).toBe(0);
+      expect(exitCode).toBe(0);
     } finally {
       writeFileSync(stream, metadata);
       rmSync(sidecar, { force: true });

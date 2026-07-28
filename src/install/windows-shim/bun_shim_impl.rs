@@ -592,7 +592,10 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
     } else {
         image_path_b_len - 2 * suffix.len()
     };
-    // SAFETY: buf1 has room for nt_prefix + image_path; image_path_u8 is valid for the copy len.
+    if NT_OBJECT_PREFIX.len() + image_path_to_copy_b_len / 2 > BUF1_LEN {
+        return LauncherMode::fail(MODE, FailReason::InvalidShimBounds);
+    }
+    // SAFETY: bounds checked above; image_path_u8 is valid for the copy len.
     unsafe {
         core::ptr::copy_nonoverlapping(
             image_path_u8.as_ptr(),
@@ -653,39 +656,50 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
             }
         };
 
-        // BUF1: '\??\C:\Users\chloe\project\node_modules\.bin\hello.exe:bunx!!!!!!!!!!!!!!!!!!'
-        // SAFETY: writing 5 u16s (":bunx") into buf1 directly after the copied image path.
-        unsafe {
-            buf1_u8
-                .add(image_path_b_len + 2 * NT_OBJECT_PREFIX.len())
-                .cast::<[u16; 5]>()
-                .write_unaligned([':' as u16, 'b' as u16, 'u' as u16, 'n' as u16, 'x' as u16]);
-        }
-        let ads_path_len_bytes: u16 =
-            u16::try_from(image_path_b_len + 2 * (NT_OBJECT_PREFIX.len() + 5/* ":bunx".len */))
-                .unwrap();
-        let mut rc = open_metadata(ads_path_len_bytes, &mut metadata_handle, &mut io);
+        let ads_path_len = NT_OBJECT_PREFIX.len() + image_path_b_len / 2 + 5 /* ":bunx".len */;
+        let mut rc = if ads_path_len <= BUF1_LEN {
+            // BUF1: '\??\C:\Users\chloe\project\node_modules\.bin\hello.exe:bunx!!!!!!!!!!!!!!!!!!'
+            // SAFETY: ads_path_len <= BUF1_LEN guarantees the 5 u16s after the copied image path
+            // are within buf1.
+            unsafe {
+                buf1_u8
+                    .add(image_path_b_len + 2 * NT_OBJECT_PREFIX.len())
+                    .cast::<[u16; 5]>()
+                    .write_unaligned([':' as u16, 'b' as u16, 'u' as u16, 'n' as u16, 'x' as u16]);
+            }
+            open_metadata(
+                u16::try_from(2 * ads_path_len).unwrap(),
+                &mut metadata_handle,
+                &mut io,
+            )
+        } else {
+            NTSTATUS::OBJECT_NAME_NOT_FOUND
+        };
 
         if rc != NTSTATUS::SUCCESS {
             if DBG {
                 debug!("ADS open failed ({}), trying .bunx sidecar", rc.0);
             }
+            let sidecar_path_len =
+                NT_OBJECT_PREFIX.len() + image_path_b_len / 2 - 3 /* "exe".len */ + 4 /* "bunx".len */;
+            if sidecar_path_len > BUF1_LEN {
+                return LauncherMode::fail(MODE, FailReason::InvalidShimBounds);
+            }
             // BUF1: '\??\C:\Users\chloe\project\node_modules\.bin\hello.bunxbunx!!!!!!!!!!!!!!!!!!'
             //                                                       ^^^^ overwritten, trailing
             //                                                            bytes ignored by Length
-            // SAFETY: writing 4 u16s ("bunx") into buf1 at the computed offset, which is in bounds.
+            // SAFETY: sidecar_path_len <= BUF1_LEN guarantees the 4 u16s are within buf1.
             unsafe {
                 buf1_u8
                     .add(image_path_b_len + 2 * (NT_OBJECT_PREFIX.len() - 3/* "exe".len */))
                     .cast::<[u16; 4]>()
                     .write_unaligned(['b' as u16, 'u' as u16, 'n' as u16, 'x' as u16]);
             }
-            let path_len_bytes: u16 = u16::try_from(
-                image_path_b_len
-                    + 2 * (NT_OBJECT_PREFIX.len() - 3 /* "exe".len */ + 4/* "bunx".len */),
-            )
-            .unwrap();
-            rc = open_metadata(path_len_bytes, &mut metadata_handle, &mut io);
+            rc = open_metadata(
+                u16::try_from(2 * sidecar_path_len).unwrap(),
+                &mut metadata_handle,
+                &mut io,
+            );
         }
 
         if rc != NTSTATUS::SUCCESS {

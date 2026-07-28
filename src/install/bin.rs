@@ -1243,32 +1243,37 @@ impl<'a> Linker<'a> {
         let abs_ads_file =
             bun_core::WStr::from_buf(&dest_buf[..], abs_dest_w_len + b".exe:bunx".len());
 
-        if let Ok(ads_file) = sys::File::openat_os_path(
+        let wrote_ads = match sys::File::openat_os_path(
             Fd::invalid(),
             abs_ads_file,
             sys::O::WRONLY | sys::O::CREAT | sys::O::TRUNC,
             0o664,
         ) {
-            if let Err(err) = ads_file.write_all(metadata) {
-                self.err = Some(err.into());
-                return;
+            Ok(ads_file) => {
+                if let Err(err) = ads_file.write_all(metadata) {
+                    self.err = Some(err.into());
+                    return;
+                }
+                true
             }
-            // Drop any stale `.bunx` sidecar from the old two-file layout.
-            let bunx_suffix = w!(".bunx\x00");
-            dest_buf[abs_dest_w_len..abs_dest_w_len + bunx_suffix.len()]
-                .copy_from_slice(bunx_suffix);
-            // SAFETY: dest_buf[abs_dest_w_len + ".bunx".len()] == 0 written above
-            let abs_bunx_file =
-                bun_core::WStr::from_buf(&dest_buf[..], abs_dest_w_len + b".bunx".len());
-            let _ = sys::unlink_w(abs_bunx_file);
-            return;
-        }
+            Err(_) => {
+                // Readers probe the stream first, so a stale one from a prior
+                // install must not survive the sidecar fallback.
+                let _ = sys::unlink_w(abs_ads_file);
+                false
+            }
+        };
 
         let bunx_suffix = w!(".bunx\x00");
         dest_buf[abs_dest_w_len..abs_dest_w_len + bunx_suffix.len()].copy_from_slice(bunx_suffix);
         // SAFETY: dest_buf[abs_dest_w_len + ".bunx".len()] == 0 written above
         let abs_bunx_file =
             bun_core::WStr::from_buf(&dest_buf[..], abs_dest_w_len + b".bunx".len());
+
+        if wrote_ads {
+            let _ = sys::unlink_w(abs_bunx_file);
+            return;
+        }
 
         let bunx_file = match sys::File::openat_os_path(
             Fd::invalid(),

@@ -39,7 +39,6 @@ console.log(JSON.stringify(process.argv.slice(2)));
     });
     await installProc.exited;
 
-    // Verify the bin shim was created (this is what triggers the fast path)
     const exePath = path.join(String(dir), "node_modules", ".bin", "echo-args-test.exe");
     expect(fs.existsSync(exePath)).toBe(true);
 

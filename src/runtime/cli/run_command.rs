@@ -4045,19 +4045,20 @@ impl BunXFastPath {
         // `.bunx` tail afterwards since the launcher walks that shape.
         let ads_suffix = bun_core::w!(".exe:bunx");
         let ads_len = path_len - b".bunx".len() + ads_suffix.len();
-        direct_launch_buffer[ads_len - ads_suffix.len()..ads_len].copy_from_slice(ads_suffix);
-        bun_core::scoped_log!(
-            BUNX_FAST_PATH_LOG,
-            "Attempting to find and load bunx file: '{}'",
-            bun_core::fmt::utf16(&direct_launch_buffer[..ads_len])
-        );
-        let handle = match sys::open_file_at_windows(
-            Fd::INVALID, // absolute path is given
-            &direct_launch_buffer[..ads_len],
-            open_opts,
-        ) {
-            Ok(fd) => fd.native(),
-            Err(_) => {
+        let ads_fd = if ads_len < direct_launch_buffer.len() {
+            direct_launch_buffer[ads_len - ads_suffix.len()..ads_len].copy_from_slice(ads_suffix);
+            bun_core::scoped_log!(
+                BUNX_FAST_PATH_LOG,
+                "Attempting to find and load bunx file: '{}'",
+                bun_core::fmt::utf16(&direct_launch_buffer[..ads_len])
+            );
+            sys::open_file_at_windows(Fd::INVALID, &direct_launch_buffer[..ads_len], open_opts).ok()
+        } else {
+            None
+        };
+        let handle = match ads_fd {
+            Some(fd) => fd.native(),
+            None => {
                 let bunx_suffix = bun_core::w!(".bunx");
                 direct_launch_buffer[path_len - bunx_suffix.len()..path_len]
                     .copy_from_slice(bunx_suffix);

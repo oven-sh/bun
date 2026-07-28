@@ -969,24 +969,41 @@ async function runTests() {
       );
       if (crashes) process.stderr.write(crashes);
 
-      // Attribute the bucket's failures to files: the `::error file=…`
-      // annotations bun prints for each failure and the coordinator's
-      // `✗ <path> (worker crashed …)` lines. A coordinator that didn't exit
-      // on its own (runner timeout, crash) leaves files it never ran with no
-      // output at all, so nothing is trusted then and the whole batch reruns.
+      // Which files did not come out clean? The bucket's own output names
+      // them: `::error file=…` per failure (its file header is printed above
+      // it even under --dots), `✗ <path> (worker crashed …)`, and, when the
+      // coordinator was stopped, its "Interrupted while still running:" /
+      // "N file(s) had not started:" lists. A file the bucket passed is never
+      // re-run; only a coordinator that dies without any report leaves
+      // nothing to trust, and that alone re-runs the batch.
       const byPath = new Map(bucketFiles.map(t => [join("test", t).replaceAll("\\", "/"), t]));
-      const norm = p => byPath.get(p.replaceAll("\\", "/"));
-      const failed = new Set();
-      // Only a coordinator that exited on its own with test failures gives
-      // trustworthy per-file output; a timeout, signal, or crash label means
-      // files it never ran printed nothing, so re-run the batch instead.
-      const selfExited = !error || /failing$|^code \d+$/.test(error);
-      if (!ok && selfExited) {
-        // A `::error` without a usable file= (timeouts, an assertion thrown
-        // from a shared helper) is attributed to the `::group::<file>:` it
-        // was printed under.
+      const norm = p =>
+        byPath.get(
+          p
+            .trim()
+            .replace(/ \(\d+s\)$/, "")
+            .replaceAll("\\", "/"),
+        );
+      const failed = new Set(); // ran and failed (or hung) — a solo pass is a parallel-mode flake
+      const notStarted = new Set(); // never ran — re-run quietly, no annotation
+      if (!ok) {
         let currentFile = null;
+        let list = null; // "running" | "not-started" while inside an interrupt report list
         for (const line of stripAnsi(stdout).split(/\r?\n/)) {
+          if (line.startsWith("Interrupted while still running:")) {
+            list = "running";
+            continue;
+          }
+          if (/^\d+ file\(s\) had not started:$/.test(line)) {
+            list = "not-started";
+            continue;
+          }
+          if (list && /^ {2}\S/.test(line)) {
+            const testPath = norm(line);
+            if (testPath) (list === "running" ? failed : notStarted).add(testPath);
+            continue;
+          }
+          list = null;
           const group = /^::group::(.+):$/.exec(line);
           if (group) {
             currentFile = norm(group[1]) ?? null;
@@ -1001,7 +1018,8 @@ async function runTests() {
           if (testPath) failed.add(testPath);
         }
       }
-      const rerun = !ok && !failed.size ? [...bucketFiles] : [...failed];
+      const attributed = failed.size + notStarted.size > 0;
+      const rerun = !ok && !attributed ? [...bucketFiles] : [...failed, ...notStarted].filter(t => !!t);
       const rerunSet = new Set(rerun);
       for (const t of bucketFiles) {
         if (rerunSet.has(t)) continue;
@@ -1018,13 +1036,12 @@ async function runTests() {
       }
       if (rerun.length) {
         console.log(
-          `${getAnsi("yellow")}parallel bucket: re-running ${rerun.length}${failed.size ? "" : " (all, unattributed failure)"} file(s) individually${getAnsi("reset")}`,
+          `${getAnsi("yellow")}parallel bucket: ${attributed ? `retrying ${failed.size} failed and ${notStarted.size} never-started file(s)` : `coordinator gave no report, re-running all ${rerun.length} file(s)`} one at a time${getAnsi("reset")}`,
         );
         for (const testPath of rerun) {
           const result = await runOneTest(testPath, false);
-          // Only a file the bucket actually blamed and that then passes alone
-          // is a parallel-mode flake; a whole-bucket fallback proves nothing
-          // per file, so it re-runs quietly.
+          // Only a file the bucket ran and blamed (failure or hang) that then
+          // passes alone is a parallel-mode flake; never-started files just run.
           if (result?.ok && failed.has(testPath) && isBuildkite) {
             const title = join("test", testPath).replaceAll("\\", "/");
             reportAnnotationToBuildKite({

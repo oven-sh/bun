@@ -167,7 +167,12 @@ impl<'a> Coordinator<'a> {
             // Ranges are pre-split across every worker slot, spawned or not.
             let not_started: u32 = self.workers.iter().map(|w| w.range.len()).sum();
             if not_started > 0 {
-                bun_core::pretty_errorln!("<d>{} file(s) had not started<r>", not_started);
+                bun_core::pretty_errorln!("{} file(s) had not started:", not_started);
+                for w in self.workers.iter() {
+                    for idx in w.range.lo..w.range.hi {
+                        bun_core::pretty_errorln!("  {}", bstr::BStr::new(self.rel_path(idx)));
+                    }
+                }
             }
             Output::flush();
         }

@@ -492,7 +492,7 @@ impl NodeHTTPResponse {
         {
             return;
         }
-        raw.resume_();
+        raw.resume();
     }
 
     pub(crate) fn upgrade(

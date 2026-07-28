@@ -2370,6 +2370,27 @@ where
                 return Ok(true);
             }
         }
+
+        // `req.textStream()` transitions the body to `Value::Used`, so the
+        // Locked check above falls through. Error the ByteStream via our own
+        // strong ref instead so a pending read rejects rather than hanging.
+        if self.request_body_readable_stream_ref.has() {
+            let global_this = self.server().global_this();
+            let strong = core::mem::take(&mut self.request_body_readable_stream_ref);
+            if let Some(readable) = strong.get(global_this) {
+                readable.value.ensure_still_alive();
+                if let Some(bytes) = readable.ptr.bytes() {
+                    let mut err =
+                        Body::ValueError::AbortReason(jsc::CommonAbortReason::ConnectionClosed);
+                    bytes.on_data(WebCore::streams::Result::Err(
+                        err.to_stream_error(global_this),
+                    ))?;
+                    err.reset();
+                    return Ok(true);
+                }
+            }
+        }
+
         Ok(false)
     }
 
@@ -2379,7 +2400,7 @@ where
         if let Some(resp) = self.resp.take() {
             if self.flags.request_body_paused() {
                 self.flags.set_request_body_paused(false);
-                resp.resume_();
+                resp.resume();
             }
             if self.flags.is_waiting_for_request_body() {
                 self.flags.set_is_waiting_for_request_body(false);
@@ -4123,7 +4144,7 @@ where
             return;
         }
         if let Some(resp) = self.resp {
-            resp.resume_();
+            resp.resume();
         }
     }
 
@@ -4179,7 +4200,7 @@ where
                 }
             }
             if let Some(resp) = (*this).resp {
-                resp.resume_();
+                resp.resume();
             }
         }
     }

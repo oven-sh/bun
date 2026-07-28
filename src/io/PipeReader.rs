@@ -1275,7 +1275,7 @@ impl WindowsBufferedReader {
         MaxBuf::on_read_bytes(maxbuf, bytes_read as u64)
     }
 
-    fn _on_read_chunk(&mut self, buf: &[u8], has_more: ReadState) -> bool {
+    fn on_read_chunk(&mut self, buf: &[u8], has_more: ReadState) -> bool {
         if has_more == ReadState::Eof {
             self.flags.insert(WindowsFlags::RECEIVED_EOF);
         }
@@ -1902,7 +1902,7 @@ impl WindowsBufferedReader {
 
         let over_budget = self.charge_max_buffer(amount_result);
 
-        let should_continue = self._on_read_chunk(slice, has_more);
+        let should_continue = self.on_read_chunk(slice, has_more);
 
         // Streaming parents (shell IOReader, subprocess) cannot re-derive
         // `&mut Self` from inside the vtable callback to restart the pipe

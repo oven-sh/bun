@@ -310,7 +310,7 @@ impl SQLDataCell {
     }
 
     #[inline]
-    pub fn bool_(value: bool) -> SQLDataCell {
+    pub fn bool(value: bool) -> SQLDataCell {
         SQLDataCell {
             tag: Tag::Bool,
             value: Value { bool_: value as u8 },

@@ -1465,12 +1465,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         let prev_in_branch = p.in_branch_condition;
         p.in_branch_condition = true;
-        p.visit_expr(&mut e_.test_);
+        p.visit_expr(&mut e_.test);
         p.in_branch_condition = prev_in_branch;
 
-        e_.test_ = SideEffects::simplify_boolean(p, e_.test_);
+        e_.test = SideEffects::simplify_boolean(p, e_.test);
 
-        let side_effects = SideEffects::to_boolean(p, &e_.test_.data);
+        let side_effects = SideEffects::to_boolean(p, &e_.test.data);
 
         if !side_effects.ok {
             p.visit_expr(&mut e_.yes);
@@ -1486,8 +1486,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 p.is_control_flow_dead = old;
 
                 if side_effects.side_effects == SideEffects::CouldHaveSideEffects {
-                    *e = SideEffects::simplify_unused_expr(p, e_.test_)
-                        .unwrap_or_else(|| p.new_expr(E::Missing {}, e_.test_.loc))
+                    *e = SideEffects::simplify_unused_expr(p, e_.test)
+                        .unwrap_or_else(|| p.new_expr(E::Missing {}, e_.test.loc))
                         .join_with_comma(e_.yes);
                     return;
                 }
@@ -1497,7 +1497,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 // "(1 ? this.fn : 2)()" => "(0, this.fn)()"
                 if is_call_target && e_.yes.has_value_for_this_in_call() {
                     *e = p
-                        .new_expr(E::Number::new(0.0), e_.test_.loc)
+                        .new_expr(E::Number::new(0.0), e_.test.loc)
                         .join_with_comma(e_.yes);
                     return;
                 }
@@ -1514,8 +1514,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                 // "(a, false) ? b : c" => "a, c"
                 if side_effects.side_effects == SideEffects::CouldHaveSideEffects {
-                    *e = SideEffects::simplify_unused_expr(p, e_.test_)
-                        .unwrap_or_else(|| p.new_expr(E::Missing {}, e_.test_.loc))
+                    *e = SideEffects::simplify_unused_expr(p, e_.test)
+                        .unwrap_or_else(|| p.new_expr(E::Missing {}, e_.test.loc))
                         .join_with_comma(e_.no);
                     return;
                 }
@@ -1525,7 +1525,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 // "(1 ? this.fn : 2)()" => "(0, this.fn)()"
                 if is_call_target && e_.no.has_value_for_this_in_call() {
                     *e = p
-                        .new_expr(E::Number::new(0.0), e_.test_.loc)
+                        .new_expr(E::Number::new(0.0), e_.test.loc)
                         .join_with_comma(e_.no);
                     return;
                 }

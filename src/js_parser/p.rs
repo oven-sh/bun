@@ -896,7 +896,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 E::If {
                     yes: self.maybe_transpose_if_import(ex.yes, state),
                     no: self.maybe_transpose_if_import(ex.no, state),
-                    test_: ex.test_,
+                    test: ex.test,
                 },
                 arg.loc,
             ),
@@ -910,7 +910,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 E::If {
                     yes: self.maybe_transpose_if_require(ex.yes, state),
                     no: self.maybe_transpose_if_require(ex.no, state),
-                    test_: ex.test_,
+                    test: ex.test,
                 },
                 arg.loc,
             ),
@@ -927,7 +927,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             E::If {
                 yes: self.maybe_transpose_if_require(ex.yes, state),
                 no: self.maybe_transpose_if_require(ex.no, state),
-                test_: ex.test_,
+                test: ex.test,
             },
             arg.loc,
         )
@@ -939,7 +939,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 E::If {
                     yes: self.maybe_transpose_if_require_resolve(ex.yes, state),
                     no: self.maybe_transpose_if_require_resolve(ex.no, state),
-                    test_: ex.test_,
+                    test: ex.test,
                 },
                 arg.loc,
             ),
@@ -956,7 +956,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             E::If {
                 yes: self.maybe_transpose_if_require_resolve(ex.yes, state),
                 no: self.maybe_transpose_if_require_resolve(ex.no, state),
-                test_: ex.test_,
+                test: ex.test,
             },
             arg.loc,
         )
@@ -2078,10 +2078,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
                 }
                 js_ast::StmtData::SIf(mut if_stmt) => {
-                    break 'brk js_ast::StoreRef::from_bump(&mut if_stmt.test_);
+                    break 'brk js_ast::StoreRef::from_bump(&mut if_stmt.test);
                 }
                 js_ast::StmtData::SSwitch(mut switch_stmt) => {
-                    break 'brk js_ast::StoreRef::from_bump(&mut switch_stmt.test_);
+                    break 'brk js_ast::StoreRef::from_bump(&mut switch_stmt.test);
                 }
                 js_ast::StmtData::SLocal(mut local) => {
                     if local.decls.len_u32() > 0 {
@@ -2409,18 +2409,18 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
                 js_ast::ExprData::EIf(mut e) => {
                     match self.substitute_single_use_symbol_in_expr(
-                        e.test_,
+                        e.test,
                         r#ref,
                         replacement,
                         replacement_can_be_removed,
                     ) {
                         Substitution::Continue(_) => {}
                         Substitution::Success(result) => {
-                            e.test_ = result;
+                            e.test = result;
                             return Substitution::Success(expr);
                         }
                         Substitution::Failure(result) => {
-                            e.test_ = result;
+                            e.test = result;
                             return Substitution::Failure(expr);
                         }
                     }
@@ -5517,10 +5517,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 return true;
             }
             js_ast::ExprData::EIf(ex) => {
-                return self.expr_can_be_removed_if_unused_without_dce_check(&ex.test_)
-                    && (self.is_side_effect_free_unbound_identifier_ref(ex.yes, ex.test_, true)
+                return self.expr_can_be_removed_if_unused_without_dce_check(&ex.test)
+                    && (self.is_side_effect_free_unbound_identifier_ref(ex.yes, ex.test, true)
                         || self.expr_can_be_removed_if_unused_without_dce_check(&ex.yes))
-                    && (self.is_side_effect_free_unbound_identifier_ref(ex.no, ex.test_, false)
+                    && (self.is_side_effect_free_unbound_identifier_ref(ex.no, ex.test, false)
                         || self.expr_can_be_removed_if_unused_without_dce_check(&ex.no));
             }
             js_ast::ExprData::EArray(ex) => {
@@ -7187,7 +7187,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     E::If {
                         yes,
                         no: dots,
-                        test_: maybe_defined_dots,
+                        test: maybe_defined_dots,
                     },
                     bun_ast::Loc::EMPTY,
                 );
@@ -9208,7 +9208,7 @@ impl LowerUsingDeclarationsContext {
             S::Try {
                 body: non_exported_statements,
                 body_loc: loc,
-                catch_: Some(js_ast::Catch {
+                catch: Some(js_ast::Catch {
                     binding: Some(catch_binding),
                     body: catch_body,
                     body_loc: loc,

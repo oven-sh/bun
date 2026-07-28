@@ -361,7 +361,7 @@ impl Worker {
         // SAFETY: coord backref valid; frame mutation — see `coord` field doc (provenance caveats).
         let f = unsafe { &mut (*self.coord.cast_mut()).frame };
         f.begin(frame::Kind::Run);
-        f.u32_(file_idx);
+        f.u32(file_idx);
         f.str(file);
         self.ipc.send(f.finish());
         self.inflight = Some(file_idx);

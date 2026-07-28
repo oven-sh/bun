@@ -15,6 +15,7 @@ test("bun:ffi read.* with a negative byteOffset does not abort the process", () 
   expect(read.u8(base, -1)).toBe(8);
   expect(read.u8(base, -2)).toBe(9);
   expect(() => read.u8(1, -5)).toThrow("ptr cannot be zero");
+  expect(() => read.u8(0)).toThrow("ptr cannot be zero");
 });
 
 test("bun:ffi rejects negative BigInt pointers instead of wrapping to usize::MAX", () => {

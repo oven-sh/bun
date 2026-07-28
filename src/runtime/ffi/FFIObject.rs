@@ -279,11 +279,11 @@ pub mod reader {
             } else {
                 addr = addr.saturating_add(off as usize);
             }
-            if addr == 0 {
-                return Err(global_object.throw_invalid_arguments(format_args!(
-                    "ptr cannot be zero, that would segfault Bun :("
-                )));
-            }
+        }
+        if addr == 0 {
+            return Err(global_object.throw_invalid_arguments(format_args!(
+                "ptr cannot be zero, that would segfault Bun :("
+            )));
         }
         Ok(addr)
     }

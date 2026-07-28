@@ -2865,11 +2865,7 @@ pub fn get_thread_count() -> u16 {
                 crate::zstr!("UV_THREADPOOL_SIZE"),
                 crate::zstr!("GOMAXPROCS"),
             ] {
-                // A set override is always honoured (clamped), never discarded:
-                // libuv does `atoi(val); if 0 → 1; cap 1024`, so `=1`/`=0`/junk
-                // all yield the floor. Previously `n < MIN` fell through to
-                // `numberOfProcessorCores()`, turning `UV_THREADPOOL_SIZE=1`
-                // into <cores> threads.
+                // Set var is always honoured (libuv semantics): unparseable/0/1 → MIN, not core count.
                 if let Some(v) = getenv_z(key) {
                     return Some(
                         crate::fmt::parse_int::<u16>(v.trim_ascii(), 10)

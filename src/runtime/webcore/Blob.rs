@@ -257,6 +257,7 @@ pub trait BlobExt {
     fn get_size_for_bindings(&self) -> u64;
     fn get_stat(&self, global_this: &JSGlobalObject, callback: &CallFrame) -> JsResult<JSValue>;
     fn get_size(&self, _: &JSGlobalObject) -> JSValue;
+    fn view_size(&self) -> SizeType;
     fn resolve_size(&self);
     fn resolved_size(&self) -> (SizeType, SizeType);
     fn constructor(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<*mut Blob>
@@ -1997,17 +1998,20 @@ impl BlobExt for Blob {
         // index the full fixed-3 array (args[2] is written below regardless of len).
         let args = &mut arguments_[..];
 
-        if self.size.get() == 0 {
+        let this_size = self.view_size();
+
+        if this_size == 0 {
             let ptr = Blob::new(Blob::init_empty(global_this));
             // SAFETY: `ptr` just came from `heap::alloc` in `Blob::new`; force
             // the inherent `Blob::to_js(&mut self)` over `JsClass::to_js`.
             return Ok(unsafe { BlobExt::to_js(&*ptr, global_this) });
         }
+        let this_size_i64 = i64::try_from(this_size).expect("int cast");
 
         // If the optional start parameter is not used as a parameter, let relativeStart be 0.
         let mut relative_start: i64 = 0;
         // If the optional end parameter is not used, let relativeEnd be size.
-        let mut relative_end: i64 = i64::try_from(self.size.get()).expect("int cast");
+        let mut relative_end: i64 = this_size_i64;
 
         // Mutate the fixed-3 args array in place to shift the string arg into [2].
         if args[0].is_string() {
@@ -2024,11 +2028,9 @@ impl BlobExt for Blob {
             if start_.is_number() {
                 let start = start_.to_int64();
                 if start < 0 {
-                    relative_start = (start
-                        .wrapping_add(i64::try_from(self.size.get()).expect("int cast")))
-                    .max(0);
+                    relative_start = (start.wrapping_add(this_size_i64)).max(0);
                 } else {
-                    relative_start = start.min(i64::try_from(self.size.get()).expect("int cast"));
+                    relative_start = start.min(this_size_i64);
                 }
             }
         }
@@ -2037,11 +2039,9 @@ impl BlobExt for Blob {
             if end_.is_number() {
                 let end = end_.to_int64();
                 if end < 0 {
-                    relative_end = (end
-                        .wrapping_add(i64::try_from(self.size.get()).expect("int cast")))
-                    .max(0);
+                    relative_end = (end.wrapping_add(this_size_i64)).max(0);
                 } else {
-                    relative_end = end.min(i64::try_from(self.size.get()).expect("int cast"));
+                    relative_end = end.min(this_size_i64);
                 }
             }
         }
@@ -2260,8 +2260,6 @@ impl BlobExt for Blob {
                     if self.size_is_explicit.get() {
                         return JSValue::js_number(available.min(self.size.get()) as f64);
                     }
-                    // Cache for `get_slice` (negative-index math reads it).
-                    self.size.set(available);
                     return JSValue::js_number(available as f64);
                 }
                 if self.size_is_explicit.get() {
@@ -2283,6 +2281,22 @@ impl BlobExt for Blob {
             }
         }
         JSValue::js_number(self.size.get() as f64)
+    }
+
+    /// Live size for the W3C slice algorithm; does not write `self.size`.
+    fn view_size(&self) -> SizeType {
+        if let Some(store) = self.store.get() {
+            if matches!(store.data, store::Data::File(_)) && !self.size_is_explicit.get() {
+                resolve_file_stat(store);
+                let file = store.data_mut().as_file();
+                if file.seekable.is_some() && file.max_size != MAX_SIZE {
+                    let offset = file.max_size.min(self.offset.get());
+                    return file.max_size - offset;
+                }
+                return MAX_SIZE;
+            }
+        }
+        self.size.get()
     }
 
     fn resolve_size(&self) {

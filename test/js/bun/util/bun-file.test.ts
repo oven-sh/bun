@@ -251,4 +251,24 @@ describe("BunFile exists()/size/lastModified reflect the current filesystem stat
     fs.writeFileSync(p, "content");
     expect(await f.text()).toBe("content");
   });
+
+  test("size on a shrunken file does not poison a later read", async () => {
+    using dir = tempDir("bunfile-stat-shrink", {});
+    const p = join(String(dir), "f");
+    fs.writeFileSync(p, "0123456789abcdefg");
+    const f = Bun.file(p);
+    expect(f.size).toBe(17);
+    fs.truncateSync(p, 1);
+    expect(f.size).toBe(1);
+    fs.writeFileSync(p, "hello world");
+    expect(await f.text()).toBe("hello world");
+  });
+
+  test("slice() negative indices use the live file size", async () => {
+    using dir = tempDir("bunfile-slice-neg", {});
+    const p = join(String(dir), "f");
+    fs.writeFileSync(p, "BunFoo");
+    const f = Bun.file(p);
+    expect(await f.slice(-3, 4).slice(-1, 3).text()).toBe("F");
+  });
 });

@@ -1,7 +1,17 @@
 import { pathToFileURL } from "bun";
 import { describe, expect, it } from "bun:test";
 import { chmodSync, chownSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from "fs";
-import { bunEnv, bunExe, bunRun, isLinux, isWindows, joinP, tempDir, tempDirWithFiles } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  bunRun,
+  isLinux,
+  isWindows,
+  joinP,
+  tempDir,
+  tempDirWithFiles,
+  withoutAggressiveGC,
+} from "harness";
 import { join, resolve, sep } from "path";
 
 const fixture = (...segs: string[]) => resolve(import.meta.dir, "fixtures", ...segs);
@@ -1055,4 +1065,87 @@ it("resolves through many directories without corrupting the dir cache", async (
   expect(stderr).toBe("");
   expect(stdout).toBe(`${(N * (N - 1)) / 2}\n${3 + 77}\n`);
   expect(exitCode).toBe(0);
+});
+
+// Exact-key lookup in a wide `exports` map must be O(1), not O(keys):
+// `value_for_key` consults a hash index built at parse time.
+describe("package.json exports exact-subpath lookup", () => {
+  function exportsMapPackage(name: string, n: number) {
+    const exportsObj: Record<string, string> = { ".": "./dist/t.js" };
+    for (let i = 0; i < n; i++) exportsObj["./k" + i] = "./dist/t.js";
+    return {
+      [`node_modules/${name}/package.json`]: JSON.stringify({ name, exports: exportsObj }),
+      [`node_modules/${name}/dist/t.js`]: "",
+    };
+  }
+
+  it("resolves first, last, and root entries in a large exports map", () => {
+    const N = 300;
+    using dir = tempDir("exports-large-map-correctness", {
+      "package.json": JSON.stringify({ name: "host" }),
+      ...exportsMapPackage("wide", N),
+    });
+    const root = String(dir);
+    const target = join(root, "node_modules/wide/dist/t.js");
+    expect(Bun.resolveSync("wide", root)).toBe(target);
+    expect(Bun.resolveSync("wide/k0", root)).toBe(target);
+    expect(Bun.resolveSync("wide/k" + (N - 1), root)).toBe(target);
+    expect(() => Bun.resolveSync("wide/k" + N, root)).toThrow(
+      expect.objectContaining({ name: "ResolveMessage", message: expect.stringContaining("wide/k" + N) }),
+    );
+  });
+
+  it("on duplicate keys, returns the first occurrence", () => {
+    const exportsObj: Record<string, string> = {};
+    for (let i = 0; i < 30; i++) exportsObj["./k" + i] = "./dist/a.js";
+    // JSON.stringify dedupes object keys; build the JSON by hand.
+    const head = JSON.stringify(exportsObj).slice(0, -1);
+    const pkg = `{"name":"dup","exports":${head},"./k0":"./dist/b.js"}}`;
+    using dir = tempDir("exports-large-map-dup", {
+      "package.json": JSON.stringify({ name: "host" }),
+      "node_modules/dup/package.json": pkg,
+      "node_modules/dup/dist/a.js": "",
+      "node_modules/dup/dist/b.js": "",
+    });
+    const root = String(dir);
+    expect(Bun.resolveSync("dup/k0", root)).toBe(join(root, "node_modules/dup/dist/a.js"));
+  });
+
+  // Ratio assertion, not absolute time: with a linear scan the last key in a
+  // 20000-entry map resolves ~15x (release) / ~30x (debug+ASAN) slower than
+  // the first; with the hash index both cost the same.
+  it("last-key and first-key lookups take comparable time in a large map", () => {
+    const N = 20000;
+    using dir = tempDir("exports-large-map-perf", {
+      "package.json": JSON.stringify({ name: "host" }),
+      ...exportsMapPackage("big", N),
+    });
+    const root = String(dir);
+    const target = join(root, "node_modules/big/dist/t.js");
+
+    // Parse + populate the DirInfo/package.json cache before timing.
+    expect(Bun.resolveSync("big/k0", root)).toBe(target);
+    expect(Bun.resolveSync("big/k" + (N - 1), root)).toBe(target);
+
+    withoutAggressiveGC(() => {
+      const ITERS = 500;
+      function bench(spec: string) {
+        let best = Infinity;
+        for (let run = 0; run < 3; run++) {
+          const t0 = Bun.nanoseconds();
+          for (let i = 0; i < ITERS; i++) Bun.resolveSync(spec, root);
+          const dt = Bun.nanoseconds() - t0;
+          if (dt < best) best = dt;
+        }
+        return best;
+      }
+
+      const first = bench("big/k0");
+      const last = bench("big/k" + (N - 1));
+
+      // Both keys live in the same cached map; the only per-call difference is
+      // the position in `list`. O(1) lookup makes position irrelevant.
+      expect(last / first).toBeLessThan(8);
+    });
+  });
 });

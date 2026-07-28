@@ -8771,12 +8771,6 @@ impl H2FrameParser {
                 global_object.throw(format_args!("Expected sensitiveHeaders to be an object"))
             );
         }
-        let mut encoded_headers: Vec<u8> = Vec::new();
-        if encoded_headers.try_reserve(16384).is_err() {
-            return Err(global_object.throw(format_args!("Failed to allocate header buffer")));
-        }
-        // max header name length for lshpack
-        let mut name_buffer = [0u8; 4096];
         let stream_id: u32 =
             if !stream_id_arg.is_empty_or_undefined_or_null() && stream_id_arg.is_number() {
                 stream_id_arg.to_u32()
@@ -8802,6 +8796,13 @@ impl H2FrameParser {
         {
             return Ok(JSValue::js_number(stream_id as f64));
         }
+
+        let mut encoded_headers: Vec<u8> = Vec::new();
+        if encoded_headers.try_reserve(16384).is_err() {
+            return Err(global_object.throw(format_args!("Failed to allocate header buffer")));
+        }
+        // max header name length for lshpack
+        let mut name_buffer = [0u8; 4096];
 
         // we iterate twice, because pseudo headers must be sent first, but can appear anywhere in the headers object
         let mut single_value_headers = [false; SINGLE_VALUE_HEADERS_LEN];

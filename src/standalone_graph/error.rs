@@ -10,6 +10,10 @@ pub enum Error {
     InvalidResponse,
     #[error("ExtractionFailed")]
     ExtractionFailed,
+    #[error("IntegrityCheckFailed")]
+    IntegrityCheckFailed,
+    #[error("MissingIntegrity")]
+    MissingIntegrity,
     #[error("UnsupportedTarget")]
     UnsupportedTarget,
     #[error("InvalidSourceMap")]
@@ -45,6 +49,8 @@ impl Error {
             Self::NetworkError => "NetworkError",
             Self::InvalidResponse => "InvalidResponse",
             Self::ExtractionFailed => "ExtractionFailed",
+            Self::IntegrityCheckFailed => "IntegrityCheckFailed",
+            Self::MissingIntegrity => "MissingIntegrity",
             Self::UnsupportedTarget => "UnsupportedTarget",
             Self::InvalidSourceMap => "InvalidSourceMap",
             Self::SourceMapTooLarge => "SourceMapTooLarge",

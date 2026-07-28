@@ -1623,7 +1623,148 @@ pub(crate) fn inject(
 }
 
 use bun_core::Environment::OperatingSystem as CompileTargetOs;
+use bun_install_types::integrity::Integrity;
 pub use bun_options_types::compile_target::CompileTarget;
+
+const NPM_MANIFEST_HEADERS_BUF: &[u8] =
+    b"Acceptapplication/vnd.npm.install-v1+json; q=1.0, application/json; q=0.8, */*";
+
+fn http_get(
+    url_bytes: &[u8],
+    headers_buf: &[u8],
+    env: &mut bun_dotenv::Loader,
+    refresher: &mut bun_core::Progress::Progress,
+    initial_capacity: usize,
+) -> crate::Result<Box<bun_core::MutableString>> {
+    let mut body = Box::new(bun_core::MutableString::init(initial_capacity)?);
+    let url = bun_url::URL::parse(url_bytes);
+
+    let mut header_entries = bun_http::headers::EntryList::default();
+    if !headers_buf.is_empty() {
+        const NAME_LEN: u32 = "Accept".len() as u32;
+        header_entries.append(bun_http::headers::Entry {
+            name: bun_http::headers::api::StringPointer {
+                offset: 0,
+                length: NAME_LEN,
+            },
+            value: bun_http::headers::api::StringPointer {
+                offset: NAME_LEN,
+                length: u32::try_from(headers_buf.len()).expect("int cast") - NAME_LEN,
+            },
+        })?;
+    }
+
+    // Note: reshaped for borrowck — `get_http_proxy_for` borrows
+    // `env` for the proxy URL lifetime; read the bool first.
+    let reject_unauthorized = env.get_tls_reject_unauthorized();
+    let http_proxy: Option<bun_url::URL<'_>> = env.get_http_proxy_for(&url);
+    let progress = refresher.start(b"Downloading", 0);
+
+    let mut async_http = Box::new(bun_http::AsyncHTTP::init_sync(
+        bun_http::Method::GET,
+        url,
+        header_entries,
+        headers_buf,
+        &raw mut *body,
+        b"",
+        http_proxy,
+        None,
+        bun_http::FetchRedirect::Follow,
+    ));
+    async_http.client.progress_node = core::ptr::NonNull::new(core::ptr::from_mut(progress));
+    async_http.client.flags.reject_unauthorized = reject_unauthorized;
+    let send_result = async_http.send_sync();
+
+    progress.end();
+    let status_code = send_result?.status_code() as u16;
+
+    // Return errors without printing - let caller handle the messaging
+    match status_code {
+        404 => return Err(crate::Error::TargetNotFound),
+        403 | 429 | 499..=599 => return Err(crate::Error::NetworkError),
+        200 => {}
+        _ => return Err(crate::Error::NetworkError),
+    }
+    Ok(body)
+}
+
+/// Looks up the target's release in the npm registry manifest and returns
+/// the tarball URL together with the digest the registry reports for it.
+fn resolve_release(
+    target: &CompileTarget,
+    env: &mut bun_dotenv::Loader,
+    refresher: &mut bun_core::Progress::Progress,
+) -> crate::Result<(Box<[u8]>, Integrity)> {
+    let registry: Box<[u8]> = Box::from(CompileTarget::npm_registry_url(env));
+    let mut url_buffer = [0u8; 2048];
+    let manifest_url: Box<[u8]> =
+        Box::from(target.to_npm_manifest_url_with_url(&mut url_buffer, &registry)?);
+    let manifest = http_get(
+        &manifest_url,
+        NPM_MANIFEST_HEADERS_BUF,
+        env,
+        refresher,
+        64 * 1024,
+    )?;
+    if manifest.list.is_empty() {
+        return Err(crate::Error::InvalidResponse);
+    }
+
+    let source = bun_ast::Source::init_path_string("manifest.json", manifest.list.as_slice());
+    let mut log = bun_ast::Log::init();
+    bun_ast::initialize_store();
+    let _reset_guard = bun_ast::StoreResetGuard::new();
+    let parsed = bun_parsers::json::ParsedJson::parse_json(&source, &mut log)
+        .map_err(|_| crate::Error::InvalidResponse)?;
+    let versions = parsed
+        .root
+        .get(b"versions")
+        .ok_or(crate::Error::InvalidResponse)?;
+
+    let version_str = format!(
+        "{}.{}.{}",
+        target.version.major, target.version.minor, target.version.patch
+    );
+    let dist = versions
+        .get(version_str.as_bytes())
+        .ok_or(crate::Error::TargetNotFound)?
+        .get(b"dist")
+        .ok_or(crate::Error::InvalidResponse)?;
+
+    let integrity = 'integrity: {
+        if let Some(field) = dist.get(b"integrity") {
+            if let Some(sri) = field.as_utf8_string_literal() {
+                let integrity = Integrity::parse(sri);
+                if integrity.tag.is_supported() {
+                    break 'integrity integrity;
+                }
+            }
+        }
+        if let Some(field) = dist.get(b"shasum") {
+            if let Some(shasum) = field.as_utf8_string_literal() {
+                if let Ok(integrity) = Integrity::parse_sha_sum(shasum) {
+                    if integrity.tag.is_supported() {
+                        break 'integrity integrity;
+                    }
+                }
+            }
+        }
+        return Err(crate::Error::MissingIntegrity);
+    };
+
+    let tarball_url: Box<[u8]> = 'tarball: {
+        if let Some(field) = dist.get(b"tarball") {
+            if let Some(url) = field.as_utf8_string_literal() {
+                if !url.is_empty() {
+                    break 'tarball Box::from(url);
+                }
+            }
+        }
+        Box::from(target.to_npm_registry_url_with_url(&mut url_buffer, &registry)?)
+    };
+
+    Ok((tarball_url, integrity))
+}
 
 /// Moved up from `bun_options_types` (T3) so it can name
 /// `bun_http::AsyncHTTP` directly
@@ -1640,60 +1781,26 @@ pub(crate) fn download_to_path(
     {
         refresher.refresh();
 
-        // TODO: This is way too much code necessary to send a single HTTP request...
-        let mut compressed_archive_bytes =
-            Box::new(bun_core::MutableString::init(24 * 1024 * 1024)?);
-        let mut url_buffer = [0u8; 2048];
-        let url_str = match target.to_npm_registry_url(&mut url_buffer) {
-            Ok(s) => s,
-            Err(err) => {
-                // Return error without printing - let caller decide how to handle
-                return Err(err.into());
-            }
-        };
-        let url_str_copy: Box<[u8]> = Box::from(url_str);
-        let url = bun_url::URL::parse(&url_str_copy);
-        {
-            // The unconditional
-            // `progress.end()` below is sufficient: no fallible call sits between
-            // `refresher.start` and it, so every exit path (including the
-            // error returns after it) ends the node exactly once.
-            // Note: reshaped for borrowck — `get_http_proxy_for` borrows
-            // `env` for the proxy URL lifetime; read the bool first.
-            let reject_unauthorized = env.get_tls_reject_unauthorized();
-            let http_proxy: Option<bun_url::URL<'_>> = env.get_http_proxy_for(&url);
-            let progress = refresher.start(b"Downloading", 0);
-
-            let mut async_http = Box::new(bun_http::AsyncHTTP::init_sync(
-                bun_http::Method::GET,
-                url,
-                Default::default(),
-                b"",
-                &raw mut *compressed_archive_bytes,
-                b"",
-                http_proxy,
-                None,
-                bun_http::FetchRedirect::Follow,
-            ));
-            async_http.client.progress_node =
-                core::ptr::NonNull::new(core::ptr::from_mut(progress));
-            async_http.client.flags.reject_unauthorized = reject_unauthorized;
-            let send_result = async_http.send_sync();
-
-            progress.end();
-            let status_code = send_result?.status_code() as u16;
-
-            match status_code {
-                404 => {
-                    // Return error without printing - let caller handle the messaging
-                    return Err(crate::Error::TargetNotFound);
+        // An explicit `BUN_COMPILE_TARGET_TARBALL_URL` has no registry
+        // metadata to check the download against.
+        let (tarball_url, expected_integrity): (Box<[u8]>, Option<Integrity>) =
+            match CompileTarget::tarball_url_override() {
+                Some(url) => (Box::from(url), None),
+                None => {
+                    let (url, integrity) = resolve_release(target, env, &mut refresher)?;
+                    (url, Some(integrity))
                 }
-                403 | 429 | 499..=599 => {
-                    // Return error without printing - let caller handle the messaging
-                    return Err(crate::Error::NetworkError);
-                }
-                200 => {}
-                _ => return Err(crate::Error::NetworkError),
+            };
+
+        let compressed_archive_bytes =
+            http_get(&tarball_url, b"", env, &mut refresher, 24 * 1024 * 1024)?;
+        if compressed_archive_bytes.list.is_empty() {
+            // Return error without printing - let caller handle the messaging
+            return Err(crate::Error::InvalidResponse);
+        }
+        if let Some(expected) = expected_integrity {
+            if !expected.verify(compressed_archive_bytes.list.as_slice()) {
+                return Err(crate::Error::IntegrityCheckFailed);
             }
         }
 
@@ -1701,11 +1808,6 @@ pub(crate) fn download_to_path(
         {
             refresher.refresh();
             // defer compressed_archive_bytes.list.deinit(allocator) — handled by Drop
-
-            if compressed_archive_bytes.list.is_empty() {
-                // Return error without printing - let caller handle the messaging
-                return Err(crate::Error::InvalidResponse);
-            }
 
             {
                 // Note: reshaped for borrowck — `refresher.start` borrows
@@ -1763,7 +1865,7 @@ pub(crate) fn download_to_path(
                     } else {
                         bun_core::zstr!("bun")
                     };
-                    let mv = bun_sys::move_file_z(tmpdir.fd(), src_name, Fd::INVALID, dest_z);
+                    let mv = bun_sys::move_file_z(tmpdir.fd(), src_name, Fd::cwd(), dest_z);
                     if mv.is_err() {
                         if !did_retry {
                             did_retry = true;
@@ -1867,6 +1969,14 @@ pub fn to_executable(
                     )),
                     crate::Error::ExtractionFailed => CompileResult::fail_fmt(format_args!(
                         "Failed to extract executable for '{}'. The download may be incomplete.",
+                        target
+                    )),
+                    crate::Error::IntegrityCheckFailed => CompileResult::fail_fmt(format_args!(
+                        "The downloaded executable for '{}' did not match the integrity value reported by the npm registry. Please try again.",
+                        target
+                    )),
+                    crate::Error::MissingIntegrity => CompileResult::fail_fmt(format_args!(
+                        "The npm registry did not report a supported integrity value for '{}'.",
                         target
                     )),
                     crate::Error::UnsupportedTarget => CompileResult::fail_fmt(format_args!(

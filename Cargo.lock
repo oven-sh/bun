@@ -1008,16 +1008,20 @@ dependencies = [
  "bstr",
  "bun_alloc",
  "bun_ast",
+ "bun_base64",
  "bun_collections",
  "bun_core",
  "bun_semver",
+ "bun_sha_hmac",
  "bun_wyhash",
+ "bytemuck",
  "const_format",
  "enum-map",
  "enumset",
  "libc",
  "scopeguard",
  "strum",
+ "thiserror",
 ]
 
 [[package]]
@@ -1983,6 +1987,7 @@ dependencies = [
  "bun_errno",
  "bun_exe_format",
  "bun_http",
+ "bun_install_types",
  "bun_io",
  "bun_js_parser",
  "bun_libarchive",

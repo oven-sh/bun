@@ -33,7 +33,7 @@ impl Default for Integrity {
 
 const EMPTY_DIGEST_BUF: [u8; DIGEST_BUF_LEN] = [0u8; DIGEST_BUF_LEN];
 
-const DIGEST_BUF_LEN: usize = {
+pub const DIGEST_BUF_LEN: usize = {
     let mut m = SHA1_DIGEST_LEN;
     if SHA512_DIGEST_LEN > m {
         m = SHA512_DIGEST_LEN;
@@ -47,8 +47,12 @@ const DIGEST_BUF_LEN: usize = {
     m
 };
 
+#[derive(thiserror::Error, Debug, Clone, Copy, PartialEq, Eq)]
+#[error("InvalidCharacter")]
+pub struct InvalidCharacter;
+
 impl Integrity {
-    pub(crate) fn parse_sha_sum(buf: &[u8]) -> crate::Result<Integrity> {
+    pub fn parse_sha_sum(buf: &[u8]) -> Result<Integrity, InvalidCharacter> {
         if buf.is_empty() {
             return Ok(Integrity {
                 tag: Tag::UNKNOWN,
@@ -65,7 +69,7 @@ impl Integrity {
             .len()
             .min(buf.len());
         if !end.is_multiple_of(2) {
-            return Err(crate::Error::InvalidCharacter);
+            return Err(InvalidCharacter);
         }
         let mut out_i: usize = 0;
         let mut i: usize = 0;
@@ -80,8 +84,8 @@ impl Integrity {
         while i < end {
             // npm sha1 strings are always [0-9a-f]; canonical hex_pair_value
             // narrows the original over-broad b'g'..=b'z' acceptance.
-            integrity.value[out_i] = bun_core::fmt::hex_pair_value(buf[i], buf[i + 1])
-                .ok_or(crate::Error::InvalidCharacter)?;
+            integrity.value[out_i] =
+                bun_core::fmt::hex_pair_value(buf[i], buf[i + 1]).ok_or(InvalidCharacter)?;
             out_i += 1;
             i += 2;
         }
@@ -332,12 +336,12 @@ impl Tag {
 /// algorithm so `verify()` can compare against the lockfile value. When
 /// there is no expected value yet (first install of a GitHub/remote
 /// tarball) we default to SHA-512 to match `for_bytes`.
-pub(crate) struct Streaming {
+pub struct Streaming {
     pub expected: Integrity,
     pub hasher: Hasher,
 }
 
-pub(crate) enum Hasher {
+pub enum Hasher {
     None,
     Sha1(Crypto::SHA1),
     Sha256(Crypto::SHA256),
@@ -346,7 +350,7 @@ pub(crate) enum Hasher {
 }
 
 impl Streaming {
-    pub(crate) fn init(expected: &Integrity, compute_if_missing: bool) -> Streaming {
+    pub fn init(expected: &Integrity, compute_if_missing: bool) -> Streaming {
         Streaming {
             expected: *expected,
             hasher: match expected.tag {
@@ -365,7 +369,7 @@ impl Streaming {
         }
     }
 
-    pub(crate) fn update(&mut self, bytes: &[u8]) {
+    pub fn update(&mut self, bytes: &[u8]) {
         if bytes.is_empty() {
             return;
         }
@@ -378,7 +382,7 @@ impl Streaming {
         }
     }
 
-    pub(crate) fn final_(&mut self) -> Integrity {
+    pub fn final_(&mut self) -> Integrity {
         let mut out: [u8; DIGEST_BUF_LEN] = EMPTY_DIGEST_BUF;
         match &mut self.hasher {
             Hasher::None => Integrity::default(),
@@ -432,7 +436,7 @@ impl Streaming {
     /// Returns true if the computed digest matches `expected`, or if no
     /// expected value was supplied. Callers that need to persist the
     /// computed value should call `final_()` instead.
-    pub(crate) fn verify(&mut self) -> bool {
+    pub fn verify(&mut self) -> bool {
         if !self.expected.tag.is_supported() {
             return true;
         }

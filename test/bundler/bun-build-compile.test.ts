@@ -782,4 +782,103 @@ describe("compiled binary in a deleted cwd", () => {
   );
 });
 
+describe("compile --target executable download", () => {
+  // The current platform with a version that isn't the running build, so
+  // `--compile` has to fetch the executable from the registry.
+  const os = isMacOS ? "darwin" : isLinux ? "linux" : isWindows ? "windows" : "unknown";
+  const arch = isArm64 ? "aarch64" : "x64";
+  const musl = isMusl ? "-musl" : "";
+  const version = "0.0.1";
+  const packageName = `bun-${os}-${arch}${musl}`;
+  const target = `${packageName}-v${version}`;
+
+  async function makeTarball() {
+    const executableName = isWindows ? "bun.exe" : "bun";
+    const archive = new Bun.Archive(
+      { [`package/bin/${executableName}`]: Buffer.alloc(1024, "not really an executable") },
+      { compress: "gzip" },
+    );
+    return new Uint8Array(await (await archive.blob()).arrayBuffer());
+  }
+
+  function sriFor(bytes: Uint8Array) {
+    return "sha512-" + new Bun.CryptoHasher("sha512").update(bytes).digest("base64");
+  }
+
+  async function compileWithRegistry(dir: string, integrity: (tarball: Uint8Array) => string) {
+    const tarball = await makeTarball();
+    using server = Bun.serve({
+      port: 0,
+      fetch(req) {
+        const pathname = decodeURIComponent(new URL(req.url).pathname);
+        if (pathname === `/@oven/${packageName}`) {
+          return Response.json({
+            name: `@oven/${packageName}`,
+            versions: {
+              [version]: {
+                name: `@oven/${packageName}`,
+                version,
+                dist: {
+                  tarball: `${server.url.origin}/-/${packageName}-${version}.tgz`,
+                  integrity: integrity(tarball),
+                },
+              },
+            },
+          });
+        }
+        if (pathname === `/-/${packageName}-${version}.tgz`) {
+          return new Response(tarball);
+        }
+        return new Response("not found", { status: 404 });
+      },
+    });
+
+    const cacheDir = join(dir, "cache");
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "--compile", `--target=${target}`, join(dir, "app.js"), "--outfile", "out/app"],
+      env: {
+        ...bunEnv,
+        BUN_CONFIG_REGISTRY: server.url.origin,
+        BUN_INSTALL_CACHE_DIR: cacheDir,
+        // A released bun ignores BUN_CONFIG_REGISTRY here; keep it from
+        // reaching the public registry by pointing the proxy at ourselves.
+        HTTP_PROXY: server.url.origin,
+        HTTPS_PROXY: server.url.origin,
+        NO_PROXY: "127.0.0.1,localhost",
+      },
+      cwd: dir,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode, cachedExecutable: join(cacheDir, target) };
+  }
+
+  test("installs the downloaded executable when it matches the registry integrity", async () => {
+    using dir = tempDir("build-compile-target-integrity-match", {
+      "app.js": `console.log("hi");`,
+    });
+    const { stderr, cachedExecutable } = await compileWithRegistry(String(dir), sriFor);
+
+    // The payload is not a real bun executable, so linking the module
+    // graph into it may fail afterwards; the download itself must have
+    // been verified and installed into the cache.
+    expect(stderr).not.toContain("did not match the integrity value");
+    expect(existsSync(cachedExecutable)).toBe(true);
+  });
+
+  test("rejects the downloaded executable when it does not match the registry integrity", async () => {
+    using dir = tempDir("build-compile-target-integrity-mismatch", {
+      "app.js": `console.log("hi");`,
+    });
+    const { stderr, exitCode, cachedExecutable } = await compileWithRegistry(String(dir), tarball =>
+      sriFor(Buffer.alloc(tarball.byteLength, "x")),
+    );
+
+    expect(stderr).toContain("did not match the integrity value reported by the npm registry");
+    expect(existsSync(cachedExecutable)).toBe(false);
+    expect(exitCode).not.toBe(0);
+  });
+});
+
 // file command test works well

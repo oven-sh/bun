@@ -141,6 +141,102 @@ describe("Intl.Collator", () => {
 });
 
 // ---------------------------------------------------------------------------
+// String.prototype.localeCompare — collator caching for (string locale, no options)
+// ---------------------------------------------------------------------------
+
+describe("String.prototype.localeCompare with a string locale", () => {
+  // JSC caches a per-global IntlCollator for a.localeCompare(b, "<locale>") with undefined
+  // options so that arr.sort((a, b) => a.localeCompare(b, "en")) does not rebuild a UCollator
+  // on every comparison. These tests guard against the cache returning stale results.
+
+  test("matches new Intl.Collator(locale).compare", () => {
+    for (const loc of ["en", "sv", "de", "ja", "fr", "de-u-co-phonebk"]) {
+      const cmp = new Intl.Collator(loc).compare;
+      for (const [a, b] of [
+        ["ä", "z"],
+        ["ä", "ae"],
+        ["a", "A"],
+        ["abc", "abd"],
+      ] as const) {
+        expect(a.localeCompare(b, loc)).toBe(cmp(a, b));
+      }
+    }
+  });
+
+  test("changing the locale string returns the new locale's order", () => {
+    // Swedish puts ä after z, English before.
+    expect("ä".localeCompare("z", "en")).toBeLessThan(0);
+    expect("ä".localeCompare("z", "sv")).toBeGreaterThan(0);
+    expect("ä".localeCompare("z", "en")).toBeLessThan(0);
+    // German phonebook sorts ä with ae.
+    expect("ä".localeCompare("ae", "de")).toBeLessThan(0);
+    expect("ä".localeCompare("ae", "de-u-co-phonebk")).toBeGreaterThan(0);
+    expect("ä".localeCompare("ae", "de")).toBeLessThan(0);
+  });
+
+  test("invalid locale still throws; cache is not poisoned", () => {
+    expect("ä".localeCompare("z", "en")).toBeLessThan(0);
+    expect(() => "a".localeCompare("b", "bad locale!!")).toThrow(RangeError);
+    // A repeat with the same invalid string must still throw: guards against the cache key being
+    // written before initializeCollator throws, which would leave a stale collator under this key.
+    expect(() => "a".localeCompare("b", "bad locale!!")).toThrow(RangeError);
+    expect("ä".localeCompare("z", "en")).toBeLessThan(0);
+  });
+
+  test("does not leak into calls that pass options", () => {
+    // Seed the cache first so an options call that wrongly reads it would be caught below.
+    expect("a".localeCompare("A", "en")).not.toBe(0);
+    // options=null must throw at ToObject(null); a warm cache must not swallow that.
+    expect(() => "a".localeCompare("b", "en", null as any)).toThrow(TypeError);
+    expect("a".localeCompare("A", "en", { sensitivity: "base" })).toBe(0);
+    // And the cached collator must not have been overwritten by the options call.
+    expect("a".localeCompare("A", "en")).not.toBe(0);
+  });
+
+  test("non-string locales and no-arg form still work", () => {
+    expect("ä".localeCompare("z", ["sv"])).toBeGreaterThan(0);
+    expect("ä".localeCompare("z", ["en"])).toBeLessThan(0);
+    expect("a".localeCompare("b")).toBeLessThan(0);
+  });
+
+  test("cached collator survives GC", () => {
+    // Use "sv" so a cleared slot that fell through to a default/root collator would return the
+    // opposite sign for "ä" vs "z" and fail the assertion, not just avoid crashing.
+    "a".localeCompare("b", "sv");
+    Bun.gc(true);
+    expect("ä".localeCompare("z", "sv")).toBeGreaterThan(0);
+    Bun.gc(true);
+    expect("ä".localeCompare("z", "sv")).toBeGreaterThan(0);
+  });
+
+  test("reuses the collator: sort by localeCompare(b,'en') is as fast as a hoisted Intl.Collator", () => {
+    // A 1500-element sort does ~16k comparisons. With the cache this costs one
+    // ucol_open instead of ~16k, so the two sorts should take about the same time.
+    // Without the cache the ratio is >5 on a debug build and >20 on a release build.
+    const N = 1500;
+    const arr = Array.from({ length: N }, (_, i) => ((i * 2654435761) >>> 0).toString(36) + "aä"[i % 2]);
+
+    // Best-of-3 on each side so a single GC pause or scheduler hiccup doesn't flip the ratio.
+    // The first iteration doubles as the warmup.
+    const bestOf3 = (fn: () => void) => {
+      let best = Infinity;
+      for (let i = 0; i < 3; i++) {
+        const t = performance.now();
+        fn();
+        best = Math.min(best, performance.now() - t);
+      }
+      return best;
+    };
+
+    const compare = new Intl.Collator("en").compare;
+    const withLocale = bestOf3(() => [...arr].sort((a, b) => a.localeCompare(b, "en")));
+    const hoisted = bestOf3(() => [...arr].sort(compare));
+
+    expect(withLocale / hoisted).toBeLessThan(3);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Segmenter — brkitr/* raw (incl. cjdict)
 // ---------------------------------------------------------------------------
 

@@ -1410,9 +1410,9 @@ impl VirtualMachine {
             // `bun_runtime::node::process::exit`, normally `noreturn` on the
             // main thread.
             unsafe { (hooks.process_exit)(global_object.as_ptr(), 7) };
-            // Under `--watch` / in a worker, `process_exit` returns after
-            // requesting termination; let that unwind instead of panicking.
-            if self.watch_exit_requested || self.worker_ref().is_some() {
+            // Under `--watch`, `process_exit` returns after requesting
+            // termination; let that unwind instead of panicking.
+            if self.watch_exit_requested {
                 return true;
             }
             panic!("Uncaught exception while handling uncaught exception");
@@ -1437,8 +1437,8 @@ impl VirtualMachine {
                 self.is_handling_uncaught_exception = false;
                 // SAFETY: see above.
                 unsafe { (hooks.process_exit)(global_object.as_ptr(), 1) };
-                // As above: `process_exit` may return under `--watch` / worker.
-                if self.watch_exit_requested || self.worker_ref().is_some() {
+                // As above: `process_exit` may return under `--watch`.
+                if self.watch_exit_requested {
                     return true;
                 }
                 panic!("made it past process.exit()");

@@ -62,8 +62,6 @@ impl DotEnvBehavior {
     pub const LoadAll: Self = Self::load_all;
     pub const LoadAllWithoutInlining: Self = Self::load_all_without_inlining;
 
-    /// Shared string classifier for `Bun.build({env})` and bunfig `serve.static.env`.
-    /// `Err` carries a user-facing reason; callers own the surrounding null/bool dispatch.
     pub fn parse_str(s: &[u8]) -> Result<(Self, Option<&[u8]>), &'static str> {
         if s == b"inline" {
             Ok((Self::load_all, None))

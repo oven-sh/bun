@@ -9,6 +9,14 @@ test("bun:ffi read.* and toArrayBuffer accept a BigInt pointer", () => {
   expect(new Uint8Array(toArrayBuffer(address, 0, 8))).toEqual(buf);
 });
 
+test("bun:ffi read.* with a negative byteOffset does not abort the process", () => {
+  const buf = new Uint8Array([9, 8, 7, 6]);
+  const base = ptr(buf) + 2;
+  expect(read.u8(base, -1)).toBe(8);
+  expect(read.u8(base, -2)).toBe(9);
+  expect(() => read.u8(1, -5)).toThrow("ptr cannot be zero");
+});
+
 test("bun:ffi rejects negative BigInt pointers instead of wrapping to usize::MAX", () => {
   expect(() => read.u8(-1n, 0)).toThrow("Expected a pointer");
   expect(() => new CString(-1n)).toThrow(/out of range/);

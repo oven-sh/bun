@@ -271,12 +271,21 @@ pub mod reader {
         } else {
             return Err(global_object.throw_invalid_arguments(format_args!("Expected a pointer")));
         };
-        let off = if arguments.len() > 1 {
-            usize::try_from(arguments[1].to_int32()).expect("int cast")
-        } else {
-            0usize
-        };
-        Ok(base + off)
+        let mut addr = base;
+        if let Some(off_value) = arguments.get(1) {
+            let off = off_value.to_int32();
+            if off < 0 {
+                addr = addr.saturating_sub(off.unsigned_abs() as usize);
+            } else {
+                addr = addr.saturating_add(off as usize);
+            }
+            if addr == 0 {
+                return Err(global_object.throw_invalid_arguments(format_args!(
+                    "ptr cannot be zero, that would segfault Bun :("
+                )));
+            }
+        }
+        Ok(addr)
     }
 
     /// Read a `T` from a user-supplied raw address (unaligned).

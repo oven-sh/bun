@@ -35,8 +35,6 @@ void JSFFICStringConstructor::finishCreation(VM& vm)
     Base::finishCreation(vm, 3, "CString"_s, PropertyAdditionMode::WithoutStructureTransition);
 }
 
-JSC_DECLARE_HOST_FUNCTION(constructFFICString);
-
 JSC_DEFINE_HOST_FUNCTION(callFFICString, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     return constructFFICString(globalObject, callFrame);

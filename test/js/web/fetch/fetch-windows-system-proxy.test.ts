@@ -44,9 +44,7 @@ async function makeHttpProxy() {
       const head = buf.subarray(0, end).toString("latin1");
       const m = head.split("\r\n")[0].match(/^GET (\S+) HTTP/);
       if (m) sawHost = m[1];
-      sock.end(
-        "HTTP/1.1 200 OK\r\nContent-Length: 10\r\nConnection: close\r\n\r\nFROM_PROXY",
-      );
+      sock.end("HTTP/1.1 200 OK\r\nContent-Length: 10\r\nConnection: close\r\n\r\nFROM_PROXY");
     });
     sock.on("error", () => {});
   });
@@ -89,11 +87,7 @@ describe.concurrent("Windows system proxy fallback", () => {
       }),
       stderr: "pipe",
     });
-    const [stdout, stderr, exitCode] = await Promise.all([
-      proc.stdout.text(),
-      proc.stderr.text(),
-      proc.exited,
-    ]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
     expect(stdout).toBe("FROM_PROXY");
     // Absolute-form request-target proves the client spoke forward-proxy HTTP.
@@ -106,17 +100,12 @@ describe.concurrent("Windows system proxy fallback", () => {
     await using proc = Bun.spawn({
       cmd: [bunExe(), "-e", CHILD],
       env: envWithoutProxy({
-        BUN_INTERNAL_WINHTTP_IE_PROXY_CONFIG:
-          `0||http=${proxy.url};https=192.0.2.1:1;ftp=ignored:1|`,
+        BUN_INTERNAL_WINHTTP_IE_PROXY_CONFIG: `0||http=${proxy.url};https=192.0.2.1:1;ftp=ignored:1|`,
         TARGET_URL: `http://127.0.0.1:1/x`,
       }),
       stderr: "pipe",
     });
-    const [stdout, , exitCode] = await Promise.all([
-      proc.stdout.text(),
-      proc.stderr.text(),
-      proc.exited,
-    ]);
+    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stdout).toBe("FROM_PROXY");
     expect(exitCode).toBe(0);
   });
@@ -134,17 +123,12 @@ describe.concurrent("Windows system proxy fallback", () => {
     await using proc = Bun.spawn({
       cmd: [bunExe(), "-e", CHILD],
       env: envWithoutProxy({
-        BUN_INTERNAL_WINHTTP_IE_PROXY_CONFIG:
-          `0||${proxy.url}|*.example.com;<local>`,
+        BUN_INTERNAL_WINHTTP_IE_PROXY_CONFIG: `0||${proxy.url}|*.example.com;<local>`,
         TARGET_URL: `http://127.0.0.1:${direct.port}/`,
       }),
       stderr: "pipe",
     });
-    const [stdout, , exitCode] = await Promise.all([
-      proc.stdout.text(),
-      proc.stderr.text(),
-      proc.exited,
-    ]);
+    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stdout).toBe("FROM_PROXY");
     expect(proxy.connections).toBe(1);
     expect(exitCode).toBe(0);
@@ -166,11 +150,7 @@ describe.concurrent("Windows system proxy fallback", () => {
       }),
       stderr: "pipe",
     });
-    const [stdout, , exitCode] = await Promise.all([
-      proc.stdout.text(),
-      proc.stderr.text(),
-      proc.exited,
-    ]);
+    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stdout).toBe("DIRECT");
     expect(proxy.connections).toBe(0);
     expect(exitCode).toBe(0);
@@ -189,11 +169,7 @@ describe.concurrent("Windows system proxy fallback", () => {
       },
       stderr: "pipe",
     });
-    const [stdout, , exitCode] = await Promise.all([
-      proc.stdout.text(),
-      proc.stderr.text(),
-      proc.exited,
-    ]);
+    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stdout).toBe("FROM_PROXY");
     expect(envProxy.connections).toBe(1);
     expect(exitCode).toBe(0);
@@ -217,11 +193,7 @@ describe.concurrent("Windows system proxy fallback", () => {
       },
       stderr: "pipe",
     });
-    const [stdout, , exitCode] = await Promise.all([
-      proc.stdout.text(),
-      proc.stderr.text(),
-      proc.exited,
-    ]);
+    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stdout).toBe("DIRECT");
     expect(proxy.connections).toBe(0);
     expect(exitCode).toBe(0);

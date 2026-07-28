@@ -359,7 +359,10 @@ impl Pac {
         }
         let proxy = self.resolve_uncached(url.href);
         let interned: Option<&'static [u8]> = proxy.map(|v| &*Box::leak(v.into_boxed_slice()));
-        self.cache.lock().ok()?.insert(key.into_boxed_slice(), interned);
+        self.cache
+            .lock()
+            .ok()?
+            .insert(key.into_boxed_slice(), interned);
         interned
     }
 
@@ -501,8 +504,7 @@ mod ffi {
         auto_detect: bool,
         auto_config_url: &[u16],
     ) -> Result<Option<Vec<u8>>, u32> {
-        let url_w =
-            strings::to_utf16_alloc_for_real(url_href, false, true).map_err(|_| 0u32)?;
+        let url_w = strings::to_utf16_alloc_for_real(url_href, false, true).map_err(|_| 0u32)?;
         let mut opts = WINHTTP_AUTOPROXY_OPTIONS {
             dwFlags: 0,
             dwAutoDetectFlags: 0,
@@ -513,8 +515,7 @@ mod ffi {
         };
         if auto_detect {
             opts.dwFlags |= WINHTTP_AUTOPROXY_AUTO_DETECT;
-            opts.dwAutoDetectFlags =
-                WINHTTP_AUTO_DETECT_TYPE_DHCP | WINHTTP_AUTO_DETECT_TYPE_DNS_A;
+            opts.dwAutoDetectFlags = WINHTTP_AUTO_DETECT_TYPE_DHCP | WINHTTP_AUTO_DETECT_TYPE_DNS_A;
         }
         if !auto_config_url.is_empty() {
             opts.dwFlags |= WINHTTP_AUTOPROXY_CONFIG_URL;
@@ -527,8 +528,7 @@ mod ffi {
         };
         // SAFETY: all pointers are valid for the duration of the call; WinHTTP
         // writes into `info` and allocates its string fields on success.
-        let ok =
-            unsafe { WinHttpGetProxyForUrl(session, url_w.as_ptr(), &mut opts, &mut info) };
+        let ok = unsafe { WinHttpGetProxyForUrl(session, url_w.as_ptr(), &mut opts, &mut info) };
         if ok == 0 {
             return Err(bun_sys::windows::kernel32::GetLastError());
         }

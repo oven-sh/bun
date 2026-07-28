@@ -805,14 +805,18 @@ describe("compile --target executable download", () => {
     return "sha512-" + new Bun.CryptoHasher("sha512").update(bytes).digest("base64");
   }
 
-  async function compileWithRegistry(dir: string, integrity: (tarball: Uint8Array) => string) {
+  async function compileWithRegistry(
+    dir: string,
+    integrity: (tarball: Uint8Array) => string,
+    manifest?: (defaults: Record<string, unknown>) => Record<string, unknown>,
+  ) {
     const tarball = await makeTarball();
     using server = Bun.serve({
       port: 0,
       fetch(req) {
         const pathname = decodeURIComponent(new URL(req.url).pathname);
         if (pathname === `/@oven/${packageName}`) {
-          return Response.json({
+          const defaults = {
             name: `@oven/${packageName}`,
             versions: {
               [version]: {
@@ -824,7 +828,8 @@ describe("compile --target executable download", () => {
                 },
               },
             },
-          });
+          };
+          return Response.json(manifest ? manifest(defaults) : defaults);
         }
         if (pathname === `/-/${packageName}-${version}.tgz`) {
           return new Response(tarball);
@@ -876,6 +881,22 @@ describe("compile --target executable download", () => {
     );
 
     expect(stderr).toContain("did not match the integrity value reported by the npm registry");
+    expect(existsSync(cachedExecutable)).toBe(false);
+    expect(exitCode).not.toBe(0);
+  });
+
+  test("reports unusable registry metadata as a metadata error, not a corrupted download", async () => {
+    using dir = tempDir("build-compile-target-registry-metadata", {
+      "app.js": `console.log("hi");`,
+    });
+    const { stderr, exitCode, cachedExecutable } = await compileWithRegistry(
+      String(dir),
+      tarball => sriFor(tarball),
+      () => ({ name: `@oven/${packageName}`, versions: { [version]: { name: `@oven/${packageName}`, version } } }),
+    );
+
+    expect(stderr).toContain("registry returned unusable metadata");
+    expect(stderr).not.toContain("appears to be corrupted");
     expect(existsSync(cachedExecutable)).toBe(false);
     expect(exitCode).not.toBe(0);
   });

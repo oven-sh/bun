@@ -1707,7 +1707,7 @@ fn resolve_release(
         64 * 1024,
     )?;
     if manifest.list.is_empty() {
-        return Err(crate::Error::InvalidResponse);
+        return Err(crate::Error::InvalidRegistryMetadata);
     }
 
     let source = bun_ast::Source::init_path_string("manifest.json", manifest.list.as_slice());
@@ -1715,11 +1715,11 @@ fn resolve_release(
     bun_ast::initialize_store();
     let _reset_guard = bun_ast::StoreResetGuard::new();
     let parsed = bun_parsers::json::ParsedJson::parse_json(&source, &mut log)
-        .map_err(|_| crate::Error::InvalidResponse)?;
+        .map_err(|_| crate::Error::InvalidRegistryMetadata)?;
     let versions = parsed
         .root
         .get(b"versions")
-        .ok_or(crate::Error::InvalidResponse)?;
+        .ok_or(crate::Error::InvalidRegistryMetadata)?;
 
     let version_str = format!(
         "{}.{}.{}",
@@ -1729,7 +1729,7 @@ fn resolve_release(
         .get(version_str.as_bytes())
         .ok_or(crate::Error::TargetNotFound)?
         .get(b"dist")
-        .ok_or(crate::Error::InvalidResponse)?;
+        .ok_or(crate::Error::InvalidRegistryMetadata)?;
 
     let integrity = 'integrity: {
         if let Some(field) = dist.get(b"integrity") {
@@ -1965,6 +1965,10 @@ pub fn to_executable(
                     )),
                     crate::Error::InvalidResponse => CompileResult::fail_fmt(format_args!(
                         "Downloaded file for '{}' appears to be corrupted. Please try again.",
+                        target
+                    )),
+                    crate::Error::InvalidRegistryMetadata => CompileResult::fail_fmt(format_args!(
+                        "The registry returned unusable metadata for '{}'. Please try again.",
                         target
                     )),
                     crate::Error::ExtractionFailed => CompileResult::fail_fmt(format_args!(

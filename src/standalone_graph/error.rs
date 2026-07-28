@@ -8,6 +8,8 @@ pub enum Error {
     NetworkError,
     #[error("InvalidResponse")]
     InvalidResponse,
+    #[error("InvalidRegistryMetadata")]
+    InvalidRegistryMetadata,
     #[error("ExtractionFailed")]
     ExtractionFailed,
     #[error("IntegrityCheckFailed")]
@@ -48,6 +50,7 @@ impl Error {
             Self::TargetNotFound => "TargetNotFound",
             Self::NetworkError => "NetworkError",
             Self::InvalidResponse => "InvalidResponse",
+            Self::InvalidRegistryMetadata => "InvalidRegistryMetadata",
             Self::ExtractionFailed => "ExtractionFailed",
             Self::IntegrityCheckFailed => "IntegrityCheckFailed",
             Self::MissingIntegrity => "MissingIntegrity",

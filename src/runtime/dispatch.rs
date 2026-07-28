@@ -467,12 +467,8 @@ pub fn run_task(
             panic!("Unexpected Task tag: {}", task.tag.0);
         }
 
-        // ── reserved sentinel ────────────────────────────────────────────
+        // ── reserved sentinel (all-zeros `Task`) ─────────────────────────
         task_tag::INVALID => {
-            // All-zeros `Task` — the consumer read a `ConcurrentTask` whose
-            // `.task` field was never written (or whose owner was freed and
-            // its storage reused) between enqueue and drain. See
-            // `bun_event_loop::task_tag::INVALID`.
             panic!(
                 "zeroed ConcurrentTask (tag=INVALID, ptr={:p}): use-after-free of an inline \
                  concurrent_task field, or enqueue of a default-initialised ConcurrentTask",

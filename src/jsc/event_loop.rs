@@ -1217,12 +1217,8 @@ pub fn get_active_tasks(global_object: &JSGlobalObject, _frame: &CallFrame) -> J
     Ok(result)
 }
 
-/// Testing API: enqueues a `ConcurrentTask` whose `.task` field is left at its
-/// `Default` (all-zeros) value, so the next drain observes
-/// `task_tag::INVALID` and the dispatch panic fires. This is the shape a
-/// use-after-free of an inline `concurrent_task` field produces in the wild;
-/// exercising it directly proves the sentinel reports it rather than
-/// dispatching as whichever real type is tag 0.
+/// Testing API: enqueues a `ConcurrentTask` with `.task` left zeroed so the
+/// next drain hits `task_tag::INVALID` and the dispatch panic fires.
 #[bun_jsc::host_fn]
 pub fn enqueue_zeroed_concurrent_task_for_testing(
     global_object: &JSGlobalObject,

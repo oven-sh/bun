@@ -192,14 +192,6 @@ fn eq_nocase(a: &[u8], b: &[u8]) -> bool {
     strings::eql_case_insensitive_ascii(a, b, true)
 }
 
-#[inline]
-fn contains_nocase(haystack: &[u8], needle: &'static [u8]) -> bool {
-    haystack.len() >= needle.len()
-        && haystack
-            .windows(needle.len())
-            .any(|w| strings::eql_case_insensitive_ascii(w, needle, false))
-}
-
 /// Wildcard interpretation for [`match_hostname`]'s left-most label.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Wildcards {
@@ -292,7 +284,7 @@ pub fn match_hostname(pattern: &[u8], hostname: &[u8], opts: MatchOpts) -> bool 
     // comparison (the `*` can never appear in a real hostname, so this is a
     // rejection in practice).
     if strings::index_of_char(suffix, b'*').is_some()
-        || contains_nocase(pat_first, b"xn--")
+        || strings::contains_case_insensitive_ascii(pat_first, b"xn--")
         || strings::index_of_char(pat_rest, b'.').is_none()
         || (matches!(opts.wildcards, Wildcards::FullLabel) && !is_full_label)
         || (matches!(opts.wildcards, Wildcards::EdgePartial)
@@ -326,8 +318,28 @@ pub fn match_hostname(pattern: &[u8], hostname: &[u8], opts: MatchOpts) -> bool 
     if prefix.len() + suffix.len() > host_first.len() {
         return false;
     }
-    eq_nocase(prefix, &host_first[..prefix.len()])
-        && eq_nocase(suffix, &host_first[host_first.len() - suffix.len()..])
+    if !eq_nocase(prefix, &host_first[..prefix.len()])
+        || !eq_nocase(suffix, &host_first[host_first.len() - suffix.len()..])
+    {
+        return false;
+    }
+    // OpenSSL `wildcard_match`: the bytes the `*` spans must be LDH (plus `.`
+    // under multi-label) and a partial wildcard never matches an IDNA host
+    // label. Node lib/tls.js `check()` applies neither host-side check.
+    if matches!(opts.wildcards, Wildcards::FullLabel | Wildcards::EdgePartial) {
+        let span = &host_first[prefix.len()..host_first.len() - suffix.len()];
+        let allow_dot = opts.multi_label_wildcards && is_full_label;
+        if span
+            .iter()
+            .any(|&b| !(b.is_ascii_alphanumeric() || b == b'-' || (allow_dot && b == b'.')))
+        {
+            return false;
+        }
+        if !is_full_label && strings::starts_with_case_insensitive_ascii(host_first, b"xn--") {
+            return false;
+        }
+    }
+    true
 }
 
 /// Node.js lib/tls.js `check()` — the matcher `tls.checkServerIdentity` applies

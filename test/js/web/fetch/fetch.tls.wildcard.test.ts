@@ -493,9 +493,10 @@ describe("TLS certificate name matching: fetch() / checkServerIdentity / checkHo
       ["dns", "exact.test"],
     ]);
     const P = makeCert("x", [["dns", "f*.partial.test"]]);
+    const Sfx = makeCert("x", [["dns", "*foo.wild.test"]]);
     const Sub = makeCert("x", [["dns", "a.b.wild.test"]]);
     const NoSan = makeCert("nosan.a.test", []);
-    const certs = { W, P, Sub, NoSan };
+    const certs = { W, P, Sfx, Sub, NoSan };
 
     it.each([
       // [cert, host, opts, expected]
@@ -514,6 +515,14 @@ describe("TLS certificate name matching: fetch() / checkServerIdentity / checkHo
       ["Sub", ".wild.test", { singleLabelSubdomains: true }, undefined],
       ["Sub", ".b.wild.test", { singleLabelSubdomains: true }, "a.b.wild.test"],
       ["W", "foo.wild.test", {}, "*.wild.test"],
+      // OpenSSL wildcard_match host-side checks: the span under `*` must be
+      // LDH, and a partial wildcard never matches an IDNA host label.
+      ["W", "foo-bar.wild.test", undefined, "*.wild.test"],
+      ["W", "foo_bar.wild.test", undefined, undefined],
+      ["P", "foo_bar.partial.test", undefined, undefined],
+      ["W", "a_b.c.wild.test", { multiLabelWildcards: true }, undefined],
+      ["W", "xn--foo.wild.test", undefined, "*.wild.test"],
+      ["Sfx", "xn--foo.wild.test", undefined, undefined],
     ] as const)("%s checkHost(%j, %o) -> %j", (name, host, opts, expected) => {
       expect(checkHost(certs[name].x509, host, opts)).toBe(expected);
     });

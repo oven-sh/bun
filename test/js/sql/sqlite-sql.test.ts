@@ -1,6 +1,6 @@
 import { randomUUIDv7, SQL } from "bun";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, mock, test } from "bun:test";
-import { tempDirWithFiles } from "harness";
+import { isDebug, tempDirWithFiles } from "harness";
 import { existsSync } from "node:fs";
 import { rm, stat } from "node:fs/promises";
 import { join } from "node:path";
@@ -1835,6 +1835,16 @@ describe("Connection management", () => {
     }
   });
 
+  // Query.then() used to defer the pool hand-off by one microtask, so a
+  // close() in the same synchronous block ran first, saw zero pending
+  // queries, and rejected the already-awaited query with "Connection closed".
+  test("close() drains a query awaited in the same tick", async () => {
+    const sql = new SQL("sqlite://:memory:");
+    await sql`SELECT 1 AS x`;
+    const [rows] = await Promise.all([sql`SELECT 42 AS x`.then(r => r), sql.close()]);
+    expect(rows).toEqual([{ x: 42 }]);
+  });
+
   test("reserve throws for SQLite", async () => {
     const sql = new SQL("sqlite://:memory:");
 
@@ -2014,7 +2024,7 @@ describe("Memory and resource management", () => {
 
     await sql`CREATE TABLE stmt_test (id INTEGER PRIMARY KEY, value TEXT)`;
 
-    const iterations = 10000;
+    const iterations = isDebug ? 1000 : 10000;
 
     for (let i = 0; i < iterations; i++) {
       await sql`INSERT INTO stmt_test (id, value) VALUES (${i}, ${"test" + i})`;

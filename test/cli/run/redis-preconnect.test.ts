@@ -61,11 +61,7 @@ describe("--redis-preconnect", () => {
       stderr: "pipe",
     });
 
-    const [stdout, stderr, exitCode] = await Promise.all([
-      proc.stdout.text(),
-      proc.stderr.text(),
-      proc.exited,
-    ]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
     expect(stdout).toBe("script done\n");
     expect(stderr).not.toContain("RedisError");
@@ -93,12 +89,7 @@ describe("--redis-preconnect", () => {
     });
 
     await using proc = Bun.spawn({
-      cmd: [
-        bunExe(),
-        "--redis-preconnect",
-        "-e",
-        `await Bun.redis.connect(); console.log("connected");`,
-      ],
+      cmd: [bunExe(), "--redis-preconnect", "-e", `await Bun.redis.connect(); console.log("connected");`],
       env: {
         ...bunEnv,
         REDIS_URL: `redis://127.0.0.1:${server.port}`,
@@ -106,11 +97,7 @@ describe("--redis-preconnect", () => {
       stderr: "pipe",
     });
 
-    const [stdout, stderr, exitCode] = await Promise.all([
-      proc.stdout.text(),
-      proc.stderr.text(),
-      proc.exited,
-    ]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     await promise;
 
     expect(stderr).toBe("");

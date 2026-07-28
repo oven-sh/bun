@@ -131,7 +131,7 @@ fn create_jsc_ffi_function(
     owner: JSValue,
 ) -> JSValue {
     let arg_types: Vec<u8> = function.arg_types.iter().map(|t| *t as u8).collect();
-    // SAFETY: `global` is a live JSC handle; `arg_types` is a valid slice for `arg_types.len()`
+    // SAFETY: `global` is a live JSC handle and `arg_types` outlives the call.
     unsafe {
         Bun__CreateJSCFFIFunction(
             global,
@@ -234,7 +234,6 @@ impl Default for FFI {
 impl FFI {
     // Intentional leak when not close()d: dlclose on GC is unsound because .ptr addresses escape the collector's view.
     pub fn finalize(self: Box<Self>) {
-        //
         if self.closed.get() {
             drop(self);
         } else {
@@ -1318,7 +1317,7 @@ impl FFI {
         js_callback.ensure_still_alive();
 
         let arg_types: Vec<u8> = func.arg_types.iter().map(|t| *t as u8).collect();
-        // SAFETY: `global_this` is a live JSC handle; `js_callback` is a callable JSValue kept
+        // SAFETY: `global_this` is a live JSC handle and `js_callback` is a live callable.
         let cb = unsafe {
             Bun__CreateJSCFFICallback(
                 global_this,

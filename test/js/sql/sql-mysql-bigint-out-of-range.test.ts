@@ -6,6 +6,7 @@ async function assertOutOfRangeBigIntRejected(url: string) {
   await using sql = new SQL(url);
   await sql`select 1`;
   await expect(sql`select ${2n ** 65n} as v`.execute()).rejects.toMatchObject({ code: "ERR_OUT_OF_RANGE" });
+  expect(await sql`select ${-1n} as v`).toEqual([{ v: -1 }]);
 }
 
 if (isDockerEnabled()) {

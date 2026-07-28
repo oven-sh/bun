@@ -10,8 +10,8 @@ test("bun:ffi read.* and toArrayBuffer accept a BigInt pointer", () => {
 });
 
 test("bun:ffi rejects negative BigInt pointers instead of wrapping to usize::MAX", () => {
-  expect(() => read.u8(-1n as unknown as number, 0)).toThrow("Expected a pointer");
+  expect(() => read.u8(-1n, 0)).toThrow("Expected a pointer");
   expect(() => new CString(-1n)).toThrow(/out of range/);
   expect(() => CString(-1n)).toThrow(/out of range/);
-  expect(() => CFunction({ ptr: -1n as unknown as number, args: [], returns: "void" })).toThrow(/out of range/);
+  expect(() => CFunction({ ptr: -1n, args: [], returns: "void" })).toThrow(/out of range/);
 });

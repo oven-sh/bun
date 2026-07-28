@@ -720,7 +720,7 @@ declare module "bun:ffi" {
    * ```
    *
    */
-  function CFunction(fn: FFIFunction & { ptr: Pointer }): CallableFunction & {
+  function CFunction(fn: FFIFunction & { ptr: Pointer | number | bigint }): CallableFunction & {
     /**
      * Free the memory allocated by the wrapping function
      */

@@ -59,8 +59,7 @@ static void Bun__jscFFIThreadsafeDispatch(JSC::FFI::ThreadsafeInvocation& invoca
 {
     static_assert(sizeof(WebCore::ScriptExecutionContextIdentifier) <= sizeof(void*));
     auto contextId = static_cast<WebCore::ScriptExecutionContextIdentifier>(reinterpret_cast<uintptr_t>(invocation.embedderContext()));
-    WebCore::ScriptExecutionContext::postTaskTo(contextId, [&invocation] { invocation.ref(); }, [invocation = &invocation](WebCore::ScriptExecutionContext&) mutable {
-        Ref protectedInvocation = adoptRef(*invocation);
+    WebCore::ScriptExecutionContext::postTaskTo(contextId, [&invocation] { invocation.ref(); }, [protectedInvocation = adoptRef(invocation)](WebCore::ScriptExecutionContext&) mutable {
         JSC::FFI::runThreadsafeInvocation(protectedInvocation.get()); });
 }
 

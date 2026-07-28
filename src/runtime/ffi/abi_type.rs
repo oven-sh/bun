@@ -161,8 +161,7 @@ impl ABIType {
     /// See [`ABI_TYPE_LABEL`].
     pub const LABEL: &'static __ComptimeStringMap_ABI_TYPE_LABEL = &ABI_TYPE_LABEL;
 
-    /// Returns `None` for
-    /// out-of-range discriminants. The enum is `#[repr(i32)]` with contiguous
+    /// Returns `None` for out-of-range discriminants.
     #[inline]
     pub const fn from_int(n: i32) -> Option<Self> {
         Some(match n {

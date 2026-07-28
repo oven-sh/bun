@@ -2316,8 +2316,7 @@ impl<'a> HTTPClient<'a> {
         // machine costs more complexity than it saves; corporate proxies in
         // practice send content-length framed (often 0-length) bodies for
         // the auth challenge. Give up and surface the 407 otherwise.
-        if self.state.transfer_encoding == Encoding::Chunked
-            || self.state.content_length.is_none()
+        if self.state.transfer_encoding == Encoding::Chunked || self.state.content_length.is_none()
         {
             return false;
         }
@@ -2378,8 +2377,7 @@ impl<'a> HTTPClient<'a> {
         self.state.encoding = Encoding::Identity;
         self.state.content_encoding_i = u8::MAX;
         self.state.flags = internal_state::InternalStateFlags::new();
-        self.state.request_body =
-            bun_ptr::RawSlice::new(self.state.original_request_body.slice());
+        self.state.request_body = bun_ptr::RawSlice::new(self.state.original_request_body.slice());
         self.compressed_request_body.clear();
         self.compressed_body_len = 0;
         // `send_initial_request_payload` re-evaluates `http_proxy`/`url` and

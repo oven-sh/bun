@@ -3,9 +3,9 @@
 // the current user's logon session, so these tests only run on Windows.
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tls as tlsCert } from "harness";
-import net from "node:net";
 import { once } from "node:events";
 import type { AddressInfo } from "node:net";
+import net from "node:net";
 
 // MS-NLMP §2.2.1.2 CHALLENGE_MESSAGE, 48-byte minimum:
 //   Signature        "NTLMSSP\0"
@@ -61,10 +61,7 @@ function ntlmMessageType(authHeader: string | null): number | null {
 // A raw TCP proxy that runs the NTLM handshake before forwarding. `forward`
 // handles the authenticated request (CONNECT tunnel vs absolute-form GET);
 // the test inspects `conns` to assert every leg happened on one connection.
-async function ntlmProxy(opts: {
-  bodyLen?: number;
-  forward: (sock: net.Socket, leg: Leg, rest: Buffer) => void;
-}) {
+async function ntlmProxy(opts: { bodyLen?: number; forward: (sock: net.Socket, leg: Leg, rest: Buffer) => void }) {
   const bodyLen = opts.bodyLen ?? 0;
   const body = Buffer.alloc(bodyLen, "x");
   const conns: Leg[][] = [];
@@ -92,8 +89,7 @@ async function ntlmProxy(opts: {
           opts.forward(sock, leg, rest);
           return;
         }
-        const challenge =
-          msgType === 1 ? `NTLM ${ntlmType2().toString("base64")}` : `NTLM`;
+        const challenge = msgType === 1 ? `NTLM ${ntlmType2().toString("base64")}` : `NTLM`;
         sock.write(
           `HTTP/1.1 407 Proxy Authentication Required\r\n` +
             `Proxy-Authenticate: ${challenge}\r\n` +
@@ -170,9 +166,7 @@ describe.skipIf(!isWindows)("proxy NTLM/Negotiate via SSPI", () => {
         expect(leg.method).toBe("GET");
         const url = new URL(leg.path);
         const upstream = net.connect(Number(url.port), url.hostname, () => {
-          upstream.write(
-            `GET ${url.pathname} HTTP/1.1\r\nHost: ${url.host}\r\nConnection: close\r\n\r\n`,
-          );
+          upstream.write(`GET ${url.pathname} HTTP/1.1\r\nHost: ${url.host}\r\nConnection: close\r\n\r\n`);
           upstream.pipe(sock);
         });
         upstream.on("error", () => sock.end());
@@ -220,9 +214,7 @@ describe.skipIf(!isWindows)("proxy NTLM/Negotiate via SSPI", () => {
       forward(sock, leg) {
         const url = new URL(leg.path);
         const upstream = net.connect(Number(url.port), url.hostname, () => {
-          upstream.write(
-            `GET ${url.pathname} HTTP/1.1\r\nHost: ${url.host}\r\nConnection: close\r\n\r\n`,
-          );
+          upstream.write(`GET ${url.pathname} HTTP/1.1\r\nHost: ${url.host}\r\nConnection: close\r\n\r\n`);
           upstream.pipe(sock);
         });
         upstream.on("error", () => sock.end());
@@ -230,30 +222,17 @@ describe.skipIf(!isWindows)("proxy NTLM/Negotiate via SSPI", () => {
     });
 
     await using proc = Bun.spawn({
-      cmd: [
-        bunExe(),
-        "pm",
-        "view",
-        "proxy-sspi-pkg",
-        "--registry",
-        `http://127.0.0.1:${registry.port}/`,
-      ],
+      cmd: [bunExe(), "pm", "view", "proxy-sspi-pkg", "--registry", `http://127.0.0.1:${registry.port}/`],
       env: { ...bunEnv, HTTP_PROXY: proxy.url, HTTPS_PROXY: proxy.url },
       stderr: "pipe",
     });
-    const [stdout, stderr, exitCode] = await Promise.all([
-      proc.stdout.text(),
-      proc.stderr.text(),
-      proc.exited,
-    ]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).not.toContain("407");
     expect(stdout).toContain("proxy-sspi-pkg");
     expect(exitCode).toBe(0);
 
     expect(proxy.conns.length).toBeGreaterThan(0);
-    expect(
-      proxy.conns[0].map(l => ntlmMessageType(l.auth)),
-    ).toEqual([null, 1, 3]);
+    expect(proxy.conns[0].map(l => ntlmMessageType(l.auth))).toEqual([null, 1, 3]);
   });
 });
 
@@ -262,9 +241,7 @@ test.skipIf(isWindows)("407 with Proxy-Authenticate: NTLM surfaces unchanged", a
   const server = net.createServer(sock => {
     sock.once("data", () => {
       sock.end(
-        "HTTP/1.1 407 Proxy Authentication Required\r\n" +
-          "Proxy-Authenticate: NTLM\r\n" +
-          "Content-Length: 0\r\n\r\n",
+        "HTTP/1.1 407 Proxy Authentication Required\r\n" + "Proxy-Authenticate: NTLM\r\n" + "Content-Length: 0\r\n\r\n",
       );
     });
   });

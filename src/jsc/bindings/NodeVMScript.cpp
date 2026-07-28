@@ -309,10 +309,10 @@ void NodeVMScript::destroy(JSCell* cell)
 static bool checkForTermination(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, NodeVMScript* script, std::optional<double> timeout)
 {
     if (vm.hasTerminationRequest()) {
-        if (Bun__VM__isWatchExitRequested(Bun::vm(vm))) {
-            // `process.exit()` under `bun --watch` terminated this run; keep
-            // the termination pending so it unwinds past node:vm instead of
-            // being mapped to a SIGINT/timeout error.
+        // A termination node:vm doesn't own — a `--watch` or worker
+        // process.exit(), worker.terminate() — stays pending so it unwinds
+        // past node:vm instead of being mapped to a SIGINT/timeout error.
+        if (Bun__VM__isWatchExitRequested(Bun::vm(vm)) || (!script->getSigintReceived() && !timeout)) {
             scope.throwException(globalObject, vm.terminationException());
             return true;
         }
@@ -326,10 +326,9 @@ static bool checkForTermination(JSC::VM& vm, JSC::JSGlobalObject* globalObject, 
         if (script->getSigintReceived()) {
             script->setSigintReceived(false);
             throwError(globalObject, scope, ErrorCode::ERR_SCRIPT_EXECUTION_INTERRUPTED, "Script execution was interrupted by `SIGINT`"_s);
-        } else if (timeout) {
-            throwError(globalObject, scope, ErrorCode::ERR_SCRIPT_EXECUTION_TIMEOUT, makeString("Script execution timed out after "_s, *timeout, "ms"_s));
         } else {
-            RELEASE_ASSERT_NOT_REACHED_WITH_MESSAGE("vm.Script terminated due neither to SIGINT nor to timeout");
+            // `timeout` is set: the neither-SIGINT-nor-timeout case returned above.
+            throwError(globalObject, scope, ErrorCode::ERR_SCRIPT_EXECUTION_TIMEOUT, makeString("Script execution timed out after "_s, *timeout, "ms"_s));
         }
         return true;
     }

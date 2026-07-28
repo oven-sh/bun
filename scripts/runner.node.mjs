@@ -925,19 +925,19 @@ async function runTests() {
     };
 
     /**
-     * Run allowlisted files as one `bun test --parallel` invocation. With
-     * GITHUB_ACTIONS set every failure prints a `::error file=<path>` line
-     * and a dead worker prints `✗ <path> (worker crashed …)`; those files
-     * fall back to their own runOneTest for retries and an annotation. A
-     * failure that names no bucket file (a timeout annotation, an error
-     * thrown from a shared helper) re-runs the whole bucket individually
-     * without annotating anything.
+     * Run allowlisted files as one `bun test --parallel` invocation and read
+     * the per-file outcome from its junit report: a file's <testsuite>
+     * carries its failures count and its wall clock (start/end are recorded
+     * relative to the run's origin, so `time=` is end minus start). A file
+     * with failures, or with no testsuite at all (hung / never started),
+     * falls back to its own runOneTest; a file the bucket passed never re-runs.
      * @param {string[]} bucketFiles
      */
     const runParallelBucket = async bucketFiles => {
       const width = parallelSafeWidth;
       const label = `test/ (parallel bucket: ${bucketFiles.length} files, ${width}-wide)`;
       const range = `${getAnsi("gray")}[${i + 1}-${i + bucketFiles.length}/${total}]${getAnsi("reset")}`;
+      const junitPath = join(tmpdir(), `bun-parallel-bucket-${process.pid}.xml`);
       const isAsan = basename(execPath).includes("asan");
       const perTestTimeout = Math.ceil(testTimeout / 2) * (isAsan ? 3 : 1);
       const env = { GITHUB_ACTIONS: "true" };
@@ -957,6 +957,8 @@ async function runTests() {
             `--parallel=${width}`,
             `--timeout=${perTestTimeout}`,
             "--dots",
+            "--reporter=junit",
+            `--reporter-outfile=${junitPath}`,
             ...bucketFiles.map(t => join(testsPath, t)),
           ],
           cwd,
@@ -969,13 +971,14 @@ async function runTests() {
       );
       if (crashes) process.stderr.write(crashes);
 
-      // Which files did not come out clean? The bucket's own output names
-      // them: `::error file=…` per failure (its file header is printed above
-      // it even under --dots), `✗ <path> (worker crashed …)`, and, when the
-      // coordinator was stopped, its "Interrupted while still running:" /
-      // "N file(s) had not started:" lists. A file the bucket passed is never
-      // re-run; only a coordinator that dies without any report leaves
-      // nothing to trust, and that alone re-runs the batch.
+      // Per-file outcome. The junit is authoritative when it exists (a
+      // finished coordinator writes it: failures count and wall clock per
+      // file; no suite ⇒ the file didn't finish). It only appears at the
+      // end, so if the coordinator died mid-run the streamed output is what
+      // we have: `::error file=…` per failure, `✗ <path> (worker crashed …)`,
+      // and the interrupt report's still-running / not-started lists. A file
+      // that passed either way is never re-run; only a run that left neither
+      // junit nor streamed evidence re-runs the whole batch.
       const byPath = new Map(bucketFiles.map(t => [join("test", t).replaceAll("\\", "/"), t]));
       const norm = p =>
         byPath.get(
@@ -984,9 +987,27 @@ async function runTests() {
             .replace(/ \(\d+s\)$/, "")
             .replaceAll("\\", "/"),
         );
+      const suites = new Map(); // repo-relative path -> failures count
+      try {
+        for (const [, attrs] of readFileSync(junitPath, "utf-8").matchAll(/<testsuite\b([^>]*)>/g)) {
+          const file = /\bfile="([^"]+)"/.exec(attrs)?.[1]?.replace(/&amp;/g, "&");
+          const failures = Number(/\bfailures="(\d+)"/.exec(attrs)?.[1] ?? 0);
+          if (file) suites.set(file.replaceAll("\\", "/"), failures);
+        }
+      } catch {}
+      rmSync(junitPath, { force: true });
+
       const failed = new Set(); // ran and failed (or hung) — a solo pass is a parallel-mode flake
-      const notStarted = new Set(); // never ran — re-run quietly, no annotation
-      if (!ok) {
+      const incomplete = new Set(); // never finished/started — re-run quietly
+      let evidence = suites.size > 0;
+      if (!ok && suites.size) {
+        for (const t of bucketFiles) {
+          const failures = suites.get(join("test", t).replaceAll("\\", "/"));
+          if (failures === undefined) incomplete.add(t);
+          else if (failures > 0) failed.add(t);
+        }
+      } else if (!ok) {
+        // No junit: the coordinator didn't finish. Read what streamed.
         let currentFile = null;
         let list = null; // "running" | "not-started" while inside an interrupt report list
         for (const line of stripAnsi(stdout).split(/\r?\n/)) {
@@ -1000,7 +1021,7 @@ async function runTests() {
           }
           if (list && /^ {2}\S/.test(line)) {
             const testPath = norm(line);
-            if (testPath) (list === "running" ? failed : notStarted).add(testPath);
+            if (testPath) (list === "running" ? failed : incomplete).add(testPath);
             continue;
           }
           list = null;
@@ -1017,9 +1038,9 @@ async function runTests() {
           const testPath = (named && norm(named)) || (line.startsWith("::error") && currentFile);
           if (testPath) failed.add(testPath);
         }
+        evidence = failed.size + incomplete.size > 0;
       }
-      const attributed = failed.size + notStarted.size > 0;
-      const rerun = !ok && !attributed ? [...bucketFiles] : [...failed, ...notStarted].filter(t => !!t);
+      const rerun = !ok && !evidence ? [...bucketFiles] : [...failed, ...incomplete];
       const rerunSet = new Set(rerun);
       for (const t of bucketFiles) {
         if (rerunSet.has(t)) continue;
@@ -1036,12 +1057,12 @@ async function runTests() {
       }
       if (rerun.length) {
         console.log(
-          `${getAnsi("yellow")}parallel bucket: ${attributed ? `retrying ${failed.size} failed and ${notStarted.size} never-started file(s)` : `coordinator gave no report, re-running all ${rerun.length} file(s)`} one at a time${getAnsi("reset")}`,
+          `${getAnsi("yellow")}parallel bucket: ${evidence ? `retrying ${failed.size} failed and ${incomplete.size} unfinished file(s)${suites.size ? "" : " (from streamed output; no junit)"}` : `no junit and no streamed evidence, re-running all ${rerun.length} file(s)`} one at a time${getAnsi("reset")}`,
         );
         for (const testPath of rerun) {
           const result = await runOneTest(testPath, false);
-          // Only a file the bucket ran and blamed (failure or hang) that then
-          // passes alone is a parallel-mode flake; never-started files just run.
+          // Only a file the bucket ran and failed that then passes alone is a
+          // parallel-mode flake; unfinished files just run.
           if (result?.ok && failed.has(testPath) && isBuildkite) {
             const title = join("test", testPath).replaceAll("\\", "/");
             reportAnnotationToBuildKite({

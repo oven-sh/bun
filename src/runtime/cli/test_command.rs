@@ -246,6 +246,11 @@ pub struct JunitReporter {
     pub total_metrics: Metrics,
     pub offset_of_testsuites_value: usize,
     pub current_file: Box<[u8]>,
+    /// Monotonic ns stamped by the file loop when a file starts / finishes.
+    /// The file-level suite opens on the file's first result and closes on
+    /// the next file's, so its element span is not the file's; these are.
+    pub file_start_ns: u64,
+    pub file_end_ns: u64,
     pub properties_list_to_repeat_in_every_test_suite: Option<Box<[u8]>>,
 
     pub suite_stack: Vec<SuiteInfo>,
@@ -265,6 +270,9 @@ pub struct SuiteInfo {
     pub metrics: Metrics,
     pub is_file_suite: bool,
     pub line_number: u32,
+    /// Monotonic ns when a file-level suite opened; its `time` attribute is
+    /// end minus start (the file's wall clock), not the sum of test bodies.
+    pub started_ns: u64,
 }
 
 // We dupe the name unconditionally in begin_test_suite_with_line, so the
@@ -580,6 +588,7 @@ impl JunitReporter {
             metrics: Metrics::default(),
             is_file_suite,
             line_number,
+            started_ns: if is_file_suite { self.file_start_ns } else { 0 },
         });
 
         self.current_depth += 1;
@@ -597,9 +606,18 @@ impl JunitReporter {
         self.current_depth -= 1;
         let suite_info = self.suite_stack.swap_remove(self.suite_stack.len() - 1);
 
-        let elapsed_time_ms = suite_info.metrics.elapsed_time;
-        let elapsed_time_ms_f64: f64 = elapsed_time_ms as f64;
-        let elapsed_time_seconds = elapsed_time_ms_f64 / bun::time::MS_PER_S as f64;
+        let elapsed_time_seconds = if suite_info.is_file_suite && suite_info.started_ns > 0 {
+            // File-level suites report the file's wall clock: its recorded end
+            // (or now, if it hasn't finished) minus its recorded start.
+            let end_ns = if self.file_end_ns >= suite_info.started_ns {
+                self.file_end_ns
+            } else {
+                bun::Timespec::now(bun::TimespecMockMode::ForceRealTime).ns()
+            };
+            end_ns.saturating_sub(suite_info.started_ns) as f64 / bun::time::NS_PER_S as f64
+        } else {
+            suite_info.metrics.elapsed_time as f64 / bun::time::MS_PER_S as f64
+        };
 
         // Reshaped for borrowck — get hostname first
         let hostname = self.get_hostname().map(|h| h.to_vec()).unwrap_or_default();
@@ -3281,6 +3299,9 @@ impl TestCommand {
             );
             // Bun.jsc.Jest.bun_test.debug.group.log → local declare_scope!(bun_test).
 
+            if let Some(junit) = reporter.reporters.junit.as_mut() {
+                junit.file_start_ns = bun::Timespec::now(bun::TimespecMockMode::ForceRealTime).ns();
+            }
             // need to wake up so autoTick() doesn't wait for 16-100ms after loading the entrypoint
             vm.wakeup();
             let promise = vm.load_entry_point_for_test_runner(file_path)?;
@@ -3389,6 +3410,10 @@ impl TestCommand {
             }
 
             vm.global().handle_rejected_promises();
+
+            if let Some(junit) = reporter.reporters.junit.as_mut() {
+                junit.file_end_ns = bun::Timespec::now(bun::TimespecMockMode::ForceRealTime).ns();
+            }
 
             // A --parallel worker leaves group markers to the coordinator, which
             // owns the terminal and the file headers (see CurrentFile::set).

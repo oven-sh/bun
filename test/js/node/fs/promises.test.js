@@ -477,8 +477,12 @@ describe("AbortSignal rejections use node's AbortError shape", () => {
   test.skipIf(!isLinux)("readFile aborted mid-read stops before the full file is read", async () => {
     await using dir = tempDir("fs-abort-readfile-midread", {});
     const big = join(String(dir), "big.bin");
-    const SIZE = 128 * 1024 * 1024;
-    fs.writeFileSync(big, Buffer.alloc(SIZE, 1));
+    // A sparse 512 MiB file: no disk writes, and 1024 x 512 KiB chunks gives the
+    // JS thread ample margin to observe f_pos and abort before the worker could
+    // finish, even on an oversubscribed runner.
+    const SIZE = 512 * 1024 * 1024;
+    fs.closeSync(fs.openSync(big, "w"));
+    fs.truncateSync(big, SIZE);
     const fd = fs.openSync(big, "r");
     try {
       const pos = () => Number(/pos:\t(\d+)/.exec(fs.readFileSync(`/proc/self/fdinfo/${fd}`, "utf8"))[1]);
@@ -489,7 +493,14 @@ describe("AbortSignal rejections use node's AbortError shape", () => {
       // jumps straight from 256 KiB to SIZE.
       const ac = new AbortController();
       const promise = fsPromises.readFile(fd, { signal: ac.signal });
-      while (pos() <= 256 * 1024);
+      const deadline = performance.now() + 10_000;
+      while (pos() <= 256 * 1024) {
+        if (performance.now() > deadline) {
+          ac.abort();
+          await promise.catch(() => {});
+          throw new Error("worker never advanced the fd past 256 KiB");
+        }
+      }
       ac.abort();
       let rejected;
       try {

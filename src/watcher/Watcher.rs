@@ -294,13 +294,24 @@ impl Watcher {
                 me.mutex.lock();
                 me.close_descriptors.store(close_descriptors);
                 me.running.store(false);
+                // Wake the watcher thread out of its blocking wait so it can
+                // observe `running == false`, run `platform.stop()`, and free
+                // `*this`. Without this the thread stays parked (in inotify
+                // `read()` / `kevent()`) and every disposed dev server leaks its
+                // inotify/kqueue instance until process exit.
+                me.platform.wake();
                 me.mutex.unlock();
+                // `*this` may be freed by the watcher thread any time after this
+                // point; `thread_main` takes/releases `mutex` as a barrier before
+                // `heap::take(this)` so it cannot proceed until the unlock above.
                 false
             } else {
                 if close_descriptors && me.running.load() {
                     let fds = me.watchlist.items_fd();
                     for &fd in fds {
-                        let _ = bun_sys::close(fd);
+                        if fd.is_valid() {
+                            let _ = bun_sys::close(fd);
+                        }
                     }
                 }
                 true
@@ -310,7 +321,13 @@ impl Watcher {
             // watchlist freed by Drop on Box
             // SAFETY: this was heap-allocated by caller of init(); no borrow of it
             // is live here.
-            drop(unsafe { bun_core::heap::take(this) });
+            let mut me = unsafe { bun_core::heap::take(this) };
+            // A spawned thread runs `platform.stop()` itself in `thread_body`,
+            // also when it hands `*this` back after a watch error.
+            if me.thread.is_none() {
+                me.platform.stop();
+            }
+            drop(me);
         }
     }
 
@@ -357,7 +374,6 @@ impl Watcher {
         let owner_still_alive = match self.watch_loop() {
             Err(err) => {
                 self.watchloop_handle.store(false);
-                self.platform.stop();
                 let running = self.running.load();
                 if running {
                     (self.on_error)(self.ctx, err);
@@ -367,11 +383,27 @@ impl Watcher {
             Ok(()) => false,
         };
 
+        // Barrier: `shutdown()` holds `self.mutex` across
+        // `running.store(false)` and `platform.wake()`. This thread can
+        // observe `running == false` at the unlocked `while` check and
+        // fall through here before `shutdown()` has unlocked, so without
+        // this pair `platform.stop()` below could race `wake()` touching
+        // the same platform fds, and `heap::take(this)` could free
+        // `self.mutex` out from under `shutdown()`'s pending unlock.
+        self.mutex.lock();
+        self.mutex.unlock();
+
+        // Release platform resources. `wake()` makes the loop exit via
+        // `Ok(())`, so this must run on both arms (previously only `Err`).
+        self.platform.stop();
+
         // deinit and close descriptors if needed
         if self.close_descriptors.load() {
             let fds = self.watchlist.items_fd();
             for &fd in fds {
-                let _ = bun_sys::close(fd);
+                if fd.is_valid() {
+                    let _ = bun_sys::close(fd);
+                }
             }
         }
         owner_still_alive

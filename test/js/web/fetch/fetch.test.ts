@@ -3068,3 +3068,69 @@ it("an explicit numeric `timeout` extends the socket idle deadline past the defa
   expect(out.withDefault).toStartWith("ERR:");
   expect(exitCode).toBe(0);
 }, 60_000);
+
+// The fetch network-failure Error is constructed from native code at the top of the
+// event loop with no JS frames on the stack. When the rejected promise is consumed via
+// .catch/.then rather than `await` inside an async function, no async frames can be
+// recovered either, and ErrorInstance::materializeErrorInfoIfNeeded used to leave
+// .stack undefined for a zero-frame trace. Node/V8 install the "Name: message" header
+// string in that case. This has to run in a child process: the test body is itself an
+// async function, so in-process `.catch()` would be reachable via its await chain.
+it("network-failure Error carries a .stack string in .catch and top-level await", async () => {
+  const script = /* js */ `
+    const s = require("net").createServer();
+    await new Promise(r => s.listen(0, "127.0.0.1", r));
+    const port = s.address().port;
+    await new Promise(r => s.close(r));
+
+    const results = {};
+    const record = (key, e) => {
+      results[key] = {
+        isError: e instanceof Error,
+        stackType: typeof e.stack,
+        hasOwnStack: Object.prototype.hasOwnProperty.call(e, "stack"),
+        stackStartsWithHeader: typeof e.stack === "string" && e.stack.startsWith(e.name + ": " + e.message),
+      };
+    };
+
+    await fetch("http://127.0.0.1:" + port + "/").catch(e => record("dotcatch", e));
+
+    try { await fetch("http://127.0.0.1:" + port + "/"); }
+    catch (e) { record("toplevel", e); }
+
+    const p = fetch("http://127.0.0.1:" + port + "/");
+    await p.then(() => {}, e => record("then", e));
+
+    await (async function namedAsyncCaller() {
+      try { await fetch("http://127.0.0.1:" + port + "/"); }
+      catch (e) {
+        record("asyncfn", e);
+        results.asyncfn.hasCallerFrame = e.stack.includes("namedAsyncCaller");
+      }
+    })();
+
+    console.log(JSON.stringify(results));
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  const results = JSON.parse(stdout.trim());
+  expect(results).toEqual({
+    dotcatch: { isError: true, stackType: "string", hasOwnStack: true, stackStartsWithHeader: true },
+    toplevel: { isError: true, stackType: "string", hasOwnStack: true, stackStartsWithHeader: true },
+    then: { isError: true, stackType: "string", hasOwnStack: true, stackStartsWithHeader: true },
+    asyncfn: {
+      isError: true,
+      stackType: "string",
+      hasOwnStack: true,
+      stackStartsWithHeader: true,
+      hasCallerFrame: true,
+    },
+  });
+  expect(exitCode).toBe(0);
+});

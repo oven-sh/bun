@@ -4,6 +4,7 @@
 
 #include "BunClientData.h"
 #include "ErrorStackFrame.h"
+#include "ZigGlobalObject.h"
 
 #include <JavaScriptCore/CodeBlock.h>
 #include <JavaScriptCore/ErrorInstance.h>
@@ -171,8 +172,21 @@ extern "C" void Bun__attachAsyncStackFromPromise(JSC::JSGlobalObject* globalObje
 
     WTF::Vector<JSC::StackFrame> frames;
     collectAsyncStackFramesFromPromise(vm, instance, promise, frames, limit);
-    if (frames.isEmpty())
+    if (frames.isEmpty()) {
+        // No await chain (the promise is consumed via .then/.catch), and the
+        // error's own trace is empty too. ErrorInstance::materializeErrorInfoIfNeeded
+        // skips .stack entirely for an empty trace, which would leave err.stack
+        // resolving to undefined. V8 materializes the "Name: message" header for
+        // zero-frame errors; install the lazy .stack accessor so the same header
+        // is produced on first read (and Error.prepareStackTrace still runs lazily).
+        if (!instance->stackTrace())
+            return;
+        if (instance->getDirect(vm, vm.propertyNames->stack))
+            return;
+        auto* zigGlobal = defaultGlobalObject(globalObject);
+        instance->putDirectCustomAccessor(vm, vm.propertyNames->stack, zigGlobal->m_lazyStackCustomGetterSetter.get(zigGlobal), static_cast<unsigned>(PropertyAttribute::DontEnum) | static_cast<unsigned>(PropertyAttribute::CustomAccessor));
         return;
+    }
 
     instance->setStackFrames(vm, WTF::move(frames));
 }

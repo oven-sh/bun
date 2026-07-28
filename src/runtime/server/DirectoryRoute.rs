@@ -400,9 +400,15 @@ fn resolve_subpath(
     scratch: &mut [u8],
     out: &mut [u8],
 ) -> Option<usize> {
-    // `req.url()` is uWS `getFullUrl()`: the raw request-target. Strip an
-    // absolute-form scheme+authority (RFC 9112 §3.2.2) and the query string,
-    // mirroring what uWS `getUrlForRouting()` did to dispatch to this handler.
+    // `req.url()` is uWS `getFullUrl()`: the raw request-target. Strip the
+    // query string first, then an absolute-form scheme+authority (RFC 9112
+    // §3.2.2), mirroring uWS `getUrlForRouting()` exactly — it operates on
+    // `getUrl()` (already truncated at `?`) so the authority search never
+    // sees a `/` that appears inside the query.
+    let url = match strings::index_of_char(url, b'?') {
+        Some(i) => &url[..i as usize],
+        None => url,
+    };
     let url = if !url.is_empty() && url[0] != b'/' {
         let skip = if strings::has_prefix_case_insensitive(url, b"http://") {
             7
@@ -421,10 +427,6 @@ fn resolve_subpath(
         }
     } else {
         url
-    };
-    let url = match strings::index_of_char(url, b'?') {
-        Some(i) => &url[..i as usize],
-        None => url,
     };
     let after_prefix = if strings::starts_with(url, url_prefix) {
         &url[url_prefix.len()..]
@@ -524,6 +526,8 @@ mod tests {
             resolve(b"HTTP://x/static/a.txt", b"/static/").as_deref(),
             Some(&b"a.txt"[..])
         );
+        assert_eq!(resolve(b"http://x?q/admin/secret", b"/").as_deref(), Some(&b""[..]));
+        assert_eq!(resolve(b"http://x", b"/").as_deref(), Some(&b""[..]));
         assert_eq!(
             resolve(b"https://x:8080/static/a.txt?v=1", b"/static/").as_deref(),
             Some(&b"a.txt"[..])

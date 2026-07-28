@@ -3235,13 +3235,25 @@ impl RunCommand {
             else {
                 return false;
             };
-            // IPv4-mapped (`::ffff:a.b.c.d`) and deprecated IPv4-compatible
-            // (`::a.b.c.d`) addresses embed an IPv4 target; judge that target.
+            // Addresses that embed an IPv4 target are judged by that target:
+            // IPv4-mapped `::ffff:a.b.c.d`, deprecated IPv4-compatible
+            // `::a.b.c.d`, the NAT64 well-known prefix `64:ff9b::/96` (RFC
+            // 6052), and 6to4 `2002:AABB:CCDD::/16` (RFC 3056).
+            let seg = v6.segments();
             let embedded_v4 = v6.to_ipv4_mapped().or_else(|| {
-                let seg = v6.segments();
-                (seg[..6] == [0u16; 6] && (seg[6] != 0 || seg[7] > 1)).then(|| {
-                    ::core::net::Ipv4Addr::from(u32::from(seg[6]) << 16 | u32::from(seg[7]))
-                })
+                let low32 =
+                    || ::core::net::Ipv4Addr::from(u32::from(seg[6]) << 16 | u32::from(seg[7]));
+                if seg[..6] == [0u16; 6] && (seg[6] != 0 || seg[7] > 1) {
+                    Some(low32())
+                } else if seg[..6] == [0x64, 0xff9b, 0, 0, 0, 0] {
+                    Some(low32())
+                } else if seg[0] == 0x2002 {
+                    Some(::core::net::Ipv4Addr::from(
+                        u32::from(seg[1]) << 16 | u32::from(seg[2]),
+                    ))
+                } else {
+                    None
+                }
             });
             if let Some(v4) = embedded_v4 {
                 return !(v4.is_loopback()
@@ -4233,6 +4245,10 @@ mod remote_image_prefetch_tests {
         assert!(!allowed("https://[::7f00:1]/img.png"));
         assert!(!allowed("https://[::169.254.169.254]/img.png"));
         assert!(!allowed("https://[::a01:203]/img.png"));
+        assert!(!allowed("https://[64:ff9b::7f00:1]/img.png"));
+        assert!(!allowed("https://[64:ff9b::a9fe:a9fe]/img.png"));
+        assert!(!allowed("https://[2002:7f00:1::]/img.png"));
+        assert!(!allowed("https://[2002:c0a8:101::1]/img.png"));
         assert!(!allowed("https://printer.local/img.png"));
         assert!(!allowed("https://metadata.google.internal/img.png"));
         assert!(!allowed("https://nas.home.arpa/img.png"));

@@ -170,6 +170,24 @@ describe("env/invalid-pattern", () => {
       expect(stdout).not.toContain("built");
       expect(exitCode).not.toBe(0);
     });
+
+    test.concurrent("bunfig serve.static.env", async () => {
+      using dir = tempDir("bundler-env-invalid", {
+        "a.js": source,
+        "bunfig.toml": `[serve.static]\nenv = ${JSON.stringify(pattern)}\n`,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "build", "a.js"],
+        env: childEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toContain(fragment);
+      expect(stdout).not.toContain("sec");
+      expect(exitCode).not.toBe(0);
+    });
   });
 
   // Positive control: a single trailing '*' with a non-empty prefix is still

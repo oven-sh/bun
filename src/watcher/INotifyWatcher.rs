@@ -129,8 +129,7 @@ impl INotifyWatcher {
         use bun_sys::linux::IN;
         debug_assert!(self.loaded);
         let old_count = self.watch_count.fetch_add(1, Ordering::Release);
-        // IN_ATTRIB: a rename-over of a held-open watched inode delivers only
-        // the link-count ATTRIB (DELETE_SELF waits for the last close).
+        // IN_ATTRIB catches the link-count drop when a held-open inode is renamed over.
         let watch_file_mask = IN::EXCL_UNLINK
             | IN::MOVE_SELF
             | IN::DELETE_SELF

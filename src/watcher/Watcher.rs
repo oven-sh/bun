@@ -752,10 +752,8 @@ impl Watcher {
         if strings::contains(dir, b"node_modules") {
             return false;
         }
-        // Windows' ReadDirectoryChangesW is rooted at cwd; on POSIX the
-        // parent-dir watch is what recovers from a rename-over, so allow it
-        // for any imported file's parent regardless of cwd.
         if cfg!(windows) {
+            // ReadDirectoryChangesW is cwd-rooted; POSIX has no such restriction.
             return strings::contains(dir, self.top_level_dir());
         }
         true

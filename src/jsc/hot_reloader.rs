@@ -919,10 +919,7 @@ where
                         ctx.remove_at_index(bun_watcher::Kind::File, event.index, 0, &[]);
                     }
 
-                    // inotify follows the inode: a rename-over delivers only
-                    // IN_ATTRIB while bun holds the old inode open. Evict on
-                    // st_nlink == 0 (or MOVE_SELF) so the reload re-opens by
-                    // path instead of reading the stale fd.
+                    // Rename-over of a held-open inode delivers only IN_ATTRIB; evict on st_nlink==0.
                     #[cfg(any(target_os = "linux", target_os = "android"))]
                     if !event.op.contains(WatchOp::DELETE)
                         && event.op.intersects(WatchOp::METADATA | WatchOp::RENAME)

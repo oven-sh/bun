@@ -4480,6 +4480,7 @@ pub enum MkdirpParentResult {
 }
 
 /// `mkdir -p` the parent of `dest_path`; the ENOENT retry for `pipe_readable_stream_to_blob`'s open.
+#[inline(never)]
 fn mkdirp_parent_of(dest_path: &[u8]) -> MkdirpParentResult {
     let Some(dirname) = bun_core::dirname(dest_path) else {
         return MkdirpParentResult::NoParent;

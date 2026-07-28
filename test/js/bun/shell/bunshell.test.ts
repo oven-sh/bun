@@ -915,7 +915,7 @@ booga"
     });
 
     test.if(isPosix && !isRoot)("glob over an unreadable directory reports the real error", async () => {
-      const dir = tempDirWithFiles("glob-eacces", { "placeholder.txt": "" });
+      await using dir = tempDir("glob-eacces", { "placeholder.txt": "" });
       const noaccess = join(dir, "noaccess").replaceAll("\\", "/");
       mkdirSync(noaccess);
       chmodSync(noaccess, 0o000);
@@ -1142,7 +1142,7 @@ booga"
     // to stderr or calling done(), so any errno other than NOTDIR/NOENT/NAMETOOLONG
     // (e.g. EACCES, ELOOP) left the shell promise unresolved forever.
     test.if(isPosix && !isRoot)("cd with EACCES fails with exit code 1 instead of hanging", async () => {
-      const dir = tempDirWithFiles("cd-eacces", { "placeholder.txt": "" });
+      await using dir = tempDir("cd-eacces", { "placeholder.txt": "" });
       const noaccess = join(dir, "noaccess");
       mkdirSync(noaccess);
       chmodSync(noaccess, 0o000);

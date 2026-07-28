@@ -88,7 +88,7 @@ function writePackageJSONImportsFixture() {
 }
 
 it("file url in import resolves", async () => {
-  const dir = tempDirWithFiles("fileurl", {
+  await using dir = tempDir("fileurl", {
     "index.js": "export const foo = 1;",
   });
   writeFileSync(`${dir}/test.js`, `import {foo} from '${pathToFileURL(dir)}/index.js';\nconsole.log(foo);`);
@@ -109,7 +109,7 @@ it("file url in import resolves", async () => {
 });
 
 it("invalid file url in import throws error", async () => {
-  const dir = tempDirWithFiles("fileurl", {});
+  await using dir = tempDir("fileurl", {});
   writeFileSync(`${dir}/test.js`, `import {foo} from 'file://\0invalid url';\nconsole.log(foo);`);
 
   const { exitCode, stdout, stderr } = Bun.spawnSync({
@@ -122,7 +122,7 @@ it("invalid file url in import throws error", async () => {
 });
 
 it("file url in await import resolves", async () => {
-  const dir = tempDirWithFiles("fileurl", {
+  await using dir = tempDir("fileurl", {
     "index.js": "export const foo = 1;",
   });
   writeFileSync(`${dir}/test.js`, `const {foo} = await import('${pathToFileURL(dir)}/index.js');\nconsole.log(foo);`);
@@ -138,7 +138,7 @@ it("file url in await import resolves", async () => {
 
 it("file url with special characters in await import resolves", async () => {
   const filename = "🅱️ndex.js";
-  const dir = tempDirWithFiles("file url", {
+  await using dir = tempDir("file url", {
     [filename]: "export const foo = 1;",
   });
   console.log(dir);
@@ -158,7 +158,7 @@ it("file url with special characters in await import resolves", async () => {
 
 it("file url with special characters not encoded in await import resolves", async () => {
   const filename = "🅱️ndex.js";
-  const dir = tempDirWithFiles("file url", {
+  await using dir = tempDir("file url", {
     [filename]: "export const foo = 1;",
   });
   writeFileSync(
@@ -177,7 +177,7 @@ it("file url with special characters not encoded in await import resolves", asyn
 
 it("file url with special characters in import statement resolves", async () => {
   const filename = "🅱️ndex.js";
-  const dir = tempDirWithFiles("file url", {
+  await using dir = tempDir("file url", {
     [filename]: "export const foo = 1;",
   });
   writeFileSync(
@@ -196,7 +196,7 @@ it("file url with special characters in import statement resolves", async () => 
 
 it("file url with special characters not encoded in import statement resolves", async () => {
   const filename = "🅱️ndex.js";
-  const dir = tempDirWithFiles("file url", {
+  await using dir = tempDir("file url", {
     [filename]: "export const foo = 1;",
   });
   writeFileSync(`${dir}/test.js`, `import {foo} from '${pathToFileURL(dir)}/${filename}';\nconsole.log(foo);`);
@@ -211,7 +211,7 @@ it("file url with special characters not encoded in import statement resolves", 
 });
 
 it("file url in require resolves", async () => {
-  const dir = tempDirWithFiles("fileurl", {
+  await using dir = tempDir("fileurl", {
     "index.js": "export const foo = 1;",
   });
   writeFileSync(`${dir}/test.js`, `const {foo} = require('${pathToFileURL(dir)}/index.js');\nconsole.log(foo);`);
@@ -227,7 +227,7 @@ it("file url in require resolves", async () => {
 
 it("file url with special characters in require resolves", async () => {
   const filename = "🅱️ndex.js";
-  const dir = tempDirWithFiles("file url", {
+  await using dir = tempDir("file url", {
     [filename]: "export const foo = 1;",
   });
   writeFileSync(
@@ -245,7 +245,7 @@ it("file url with special characters in require resolves", async () => {
 });
 
 it("file url in require.resolve resolves", async () => {
-  const dir = tempDirWithFiles("fileurl", {
+  await using dir = tempDir("fileurl", {
     "index.js": "export const foo = 1;",
   });
   writeFileSync(`${dir}/test.js`, `const to = require.resolve('${pathToFileURL(dir)}/index.js');\nconsole.log(to);`);
@@ -261,7 +261,7 @@ it("file url in require.resolve resolves", async () => {
 
 it("file url with special characters in require resolves", async () => {
   const filename = "🅱️ndex.js";
-  const dir = tempDirWithFiles("file url", {
+  await using dir = tempDir("file url", {
     [filename]: "export const foo = 1;",
   });
   writeFileSync(
@@ -415,7 +415,7 @@ it("can resolve with source directories that do not exist", () => {
   // This seems to be a bug in their code, not using a concrete file path for
   // this virtual module, such as 'node_modules/@vue/server-renderer/index.js',
   // but the same exact resolution happens and succeeds in Node.js
-  const dir = tempDirWithFiles("resolve", {
+  using dir = tempDir("resolve", {
     "node_modules/vue/index.js": "export default 123;",
     "test.js": `
       const { createRequire } = require('module');
@@ -1043,7 +1043,7 @@ it("resolves through many directories without corrupting the dir cache", async (
   files[`${deep}/leaf.js`] = `module.exports = require("pkg-3") + require("pkg-77");`;
   files["index.js"] = `let total = 0;\n${imports}console.log(total);\nconsole.log(require("./${deep}/leaf.js"));`;
 
-  const dir = tempDirWithFiles("dir-cache-stress", files);
+  await using dir = tempDir("dir-cache-stress", files);
   await using proc = Bun.spawn({
     cmd: [bunExe(), "index.js"],
     env: bunEnv,

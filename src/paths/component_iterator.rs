@@ -193,8 +193,8 @@ pub enum MakePathStep<E> {
     Created,
     /// Directory already exists (`EEXIST`). Walk advances forward.
     Exists,
-    /// A parent is missing (`ENOENT`). Walk steps back one component;
-    /// if there is no previous component the carried error is returned.
+    /// A parent is missing (`ENOENT`). Returns the error if the walk has
+    /// already advanced or there is no previous component; else steps back.
     NotFound(E),
 }
 

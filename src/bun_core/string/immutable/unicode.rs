@@ -44,7 +44,7 @@ fn append_u16_as_u8(dst: &mut Vec<u8>, src: &[u16]) {
 // ───── canonical WTF-8 single-rune decode ─────
 // Lives in `bun_core::string::immutable::unicode_draft` (this file), re-exported
 // through the inline `pub mod unicode` in immutable.rs and onward as
-// `bun_core::strings::{decode_wtf8_rune_t, decode_wtf8_rune_t_multibyte, codepoint_size}`.
+// `bun_core::strings::{decode_wtf8_rune_t, decode_wtf8_rune_t_multibyte}`.
 //
 // Visibility promoted pub(super) → pub so the inline shim mod can re-export
 // instead of carrying a second body, and so md/glob/parsers can call directly.

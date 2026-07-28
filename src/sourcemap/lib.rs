@@ -182,7 +182,7 @@ impl LineColumnOffset {
             debug_assert!(i >= offset);
             debug_assert!((i as usize) < input.len());
 
-            let iter = strings::CodepointIterator::init_offset(input, i as usize);
+            let iter = strings::CodepointIterator::init(input);
             let mut cursor = strings::Cursor {
                 i,
                 ..Default::default()

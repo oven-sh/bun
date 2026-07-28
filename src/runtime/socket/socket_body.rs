@@ -651,11 +651,6 @@ impl<const SSL: bool> NewSocket<SSL> {
         Ok(())
     }
 
-    // no `#[bun_jsc::host_fn]` here — that macro's free-fn shim
-    // emits a bare `constructor(...)` call which doesn't resolve inside an
-    // `impl<const SSL: bool>` block. The codegen `JsClass` derive owns the
-    // constructor link name, so the placeholder shim isn't needed.
-
     #[bun_jsc::host_fn(method)]
     pub(crate) fn resume_from_js(
         this: &Self,

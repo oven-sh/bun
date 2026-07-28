@@ -573,17 +573,6 @@ pub mod cli {
 }
 pub use cli as Cli;
 
-// ─── debug_flags (resolve/print breakpoints) ─────────────────────────────────
-pub(crate) mod debug_flags {
-    // `Vec<&'static [u8]>` (not `&'static [&[u8]]`) so `parse()` can
-    // hand off ownership of the argv-borrowed list without leaking the backing
-    // storage. Each `&'static [u8]` element is a process-lifetime argv slice.
-    pub(crate) static RESOLVE_BREAKPOINTS: std::sync::OnceLock<Vec<&'static [u8]>> =
-        std::sync::OnceLock::new();
-    pub(crate) static PRINT_BREAKPOINTS: std::sync::OnceLock<Vec<&'static [u8]>> =
-        std::sync::OnceLock::new();
-}
-
 // ─── HelpCommand ─────────────────────────────────────────────────────────────
 pub mod help_command {
     use super::*;

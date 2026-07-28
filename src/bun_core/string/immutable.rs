@@ -65,7 +65,6 @@ pub mod unicode {
     /// `CodepointIterator` — yields WTF-8 codepoints with byte-width.
     pub struct NewCodePointIterator<'a> {
         pub bytes: &'a [u8],
-        pub i: usize,
     }
     pub type CodepointIterator<'a> = NewCodePointIterator<'a>;
     pub type UnsignedCodepointIterator<'a> = NewCodePointIterator<'a>;
@@ -73,10 +72,7 @@ pub mod unicode {
     impl<'a> NewCodePointIterator<'a> {
         pub const ZERO_VALUE: CodePoint = -1;
         pub fn init(bytes: &'a [u8]) -> Self {
-            Self { bytes, i: 0 }
-        }
-        pub fn init_offset(bytes: &'a [u8], i: usize) -> Self {
-            Self { bytes, i }
+            Self { bytes }
         }
 
         /// True iff any byte in `slice` begins a multi-byte WTF-8 sequence.
@@ -1636,7 +1632,7 @@ pub(crate) fn index_of_line_ranges<const LINE_RANGE_COUNT: usize>(
         return ranges;
     };
 
-    let iter = CodepointIterator::init_offset(text, 0);
+    let iter = CodepointIterator::init(text);
     let mut cursor = unicode::Cursor {
         i: first_newline_or_nonascii_i,
         ..Default::default()

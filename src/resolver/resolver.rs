@@ -1069,7 +1069,7 @@ impl<'a> Resolver<'a> {
         // is done very often, and has a very low crash rate.
         #[cfg(debug_assertions)]
         let _crash_guard =
-            ::bun_crash_handler::set_current_action_resolver(source_dir, import_path, kind);
+            ::bun_crash_handler::set_current_action_resolver();
 
         #[cfg(debug_assertions)]
         if bun_core::debug_flags::has_resolve_breakpoint(import_path) {

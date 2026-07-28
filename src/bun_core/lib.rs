@@ -2145,19 +2145,6 @@ pub(crate) mod strings_impl {
         wtf8_byte_sequence_length(first_byte)
     }
 
-    /// Port of `bun.strings.codepointSize` — UTF-8 byte length for an
-    /// already-decoded code point (NOT a lead byte). Returns 0 for >U+10FFFF.
-    #[inline]
-    pub fn codepoint_size<R: Into<u32> + Copy>(r: R) -> u8 {
-        match r.into() {
-            0x0000..=0x007F => 1,
-            0x0080..=0x07FF => 2,
-            0x0800..=0xFFFF => 3,
-            0x1_0000..=0x10_FFFF => 4,
-            _ => 0,
-        }
-    }
-
     /// `strings.convertUTF16ToUTF8InBuffer` — write UTF-8 into `out`, return
     /// the written sub-slice. Infallible. The
     /// caller is responsible for sizing `out` for the worst case (≤ 3× input

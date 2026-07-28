@@ -710,7 +710,7 @@ mod draft {
         // is not truly `'static`. Correctness relies on the `scoped_action`
         // RAII guard restoring the thread-local before the owning arena or
         // resolver storage is freed.
-        Resolver(()),
+        Resolver,
         Dlopen(&'static [u8]),
     }
 
@@ -720,7 +720,7 @@ mod draft {
                 Action::Parse(path) => write!(writer, "parsing {}", bstr::BStr::new(path)),
                 Action::Visit(path) => write!(writer, "visiting {}", bstr::BStr::new(path)),
                 Action::Print(path) => write!(writer, "printing {}", bstr::BStr::new(path)),
-                Action::Resolver(()) => Ok(()),
+                Action::Resolver => writer.write_str("resolving a module"),
                 Action::Dlopen(path) => {
                     write!(writer, "loading native module: {}", bstr::BStr::new(path))
                 }
@@ -765,15 +765,8 @@ mod draft {
 
     /// Scoped `CURRENT_ACTION = Resolver`.
     #[inline]
-    pub fn set_current_action_resolver(
-        source_dir: &[u8],
-        import_path: &[u8],
-        kind: bun_ast::ImportKind,
-    ) -> ActionGuard {
-        let prev = current_action();
-        let _ = (source_dir, import_path, kind);
-        set_current_action(Some(Action::Resolver(())));
-        ActionGuard(prev)
+    pub fn set_current_action_resolver() -> ActionGuard {
+        scoped_action(Action::Resolver)
     }
 
     /// Where the crash trace is seeded from. Each call site has exactly one.

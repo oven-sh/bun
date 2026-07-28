@@ -17,7 +17,7 @@ pub struct Cp {
     /// completion. Stopgap until `WriterTag` can carry the `*mut OutputTask`
     /// directly (see mkdir.rs `Exec::output_queue`). Lives on `Cp` (not
     /// `ExecState`) because `print_shell_cp_task` is also driven from
-    /// [`State::Ebusy`] on Windows; both states must be able to stash/pop.
+    /// `State::Ebusy` on Windows; both states must be able to stash/pop.
     pub(crate) output_queue: std::collections::VecDeque<*mut OutputTask<Cp>>,
 }
 
@@ -27,6 +27,7 @@ pub enum State {
     Idle,
     Exec(Box<ExecState>),
     /// Windows-only post-processing of EBUSY collisions.
+    #[cfg(windows)]
     Ebusy(EbusyState),
     WaitingWriteErr,
     Done,
@@ -50,19 +51,15 @@ pub struct ExecState {
 /// On Windows it is possible to get an EBUSY error very simply by running
 /// `cp myfile.txt myfile.txt mydir/` — two tasks race for the same dest. Bun
 /// ignores the EBUSY if at least one task succeeded for that dest.
+#[cfg(windows)]
 #[derive(Default)]
 pub struct EbusyState {
-    #[cfg(windows)]
     pub(crate) tasks: Vec<*mut ShellCpTask>,
-    #[cfg(windows)]
     pub(crate) idx: usize,
-    #[cfg(windows)]
     pub(crate) main_exit_code: ExitCode,
     /// Absolute target paths that some task copied successfully — used to
     /// suppress a sibling task's EBUSY on the same target.
-    #[cfg(windows)]
     pub(crate) absolute_targets: bun_collections::StringSet,
-    #[cfg(windows)]
     pub(crate) absolute_srcs: bun_collections::StringSet,
 }
 
@@ -144,14 +141,8 @@ impl Cp {
                     }
                 }
             }
-            State::Ebusy(_) => {
-                #[cfg(windows)]
-                {
-                    return Self::ignore_ebusy_error_if_possible(interp, cmd);
-                }
-                #[cfg(not(windows))]
-                panic!("Should only be called on Windows");
-            }
+            #[cfg(windows)]
+            State::Ebusy(_) => return Self::ignore_ebusy_error_if_possible(interp, cmd),
             State::WaitingWriteErr => return Yield::failed(),
             State::Done => return Builtin::done(interp, cmd, 0),
         };
@@ -287,21 +278,17 @@ impl Cp {
                             || tref.src_absolute.as_deref()
                                     .map_or(false, |p| sys.path.eql_utf8(p)));
                     if is_ebusy {
-                        #[cfg(windows)]
                         exec.ebusy.tasks.push(task);
                         return Self::next(interp, cmd).run(interp);
                     }
                 } else {
                     // Record successful absolute paths so a deferred EBUSY
                     // sibling can be suppressed.
-                    #[cfg(windows)]
-                    {
-                        if let Some(tgt) = tref.tgt_absolute.take() {
-                            bun_core::handle_oom(exec.ebusy.absolute_targets.insert(&tgt));
-                        }
-                        if let Some(src) = tref.src_absolute.take() {
-                            bun_core::handle_oom(exec.ebusy.absolute_srcs.insert(&src));
-                        }
+                    if let Some(tgt) = tref.tgt_absolute.take() {
+                        bun_core::handle_oom(exec.ebusy.absolute_targets.insert(&tgt));
+                    }
+                    if let Some(src) = tref.src_absolute.take() {
+                        bun_core::handle_oom(exec.ebusy.absolute_srcs.insert(&src));
                     }
                 }
             }

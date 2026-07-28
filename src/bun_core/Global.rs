@@ -381,20 +381,24 @@ pub static JSC_SCOPE: crate::output::ScopedLogger =
     crate::output::ScopedLogger::new("JSC", crate::output::Visibility::Hidden);
 
 // ─── debug_flags (MOVE_DOWN from bun_cli, for bun_resolver) ───────────────
-// Debug-build-only breakpoint matchers.
+// Debug-build-only breakpoint matchers, set from `--breakpoint-resolve`.
 pub mod debug_flags {
-    #[cfg(debug_assertions)]
-    static RESOLVE_BREAKPOINTS: crate::Once<&'static [&'static [u8]]> = crate::Once::new();
+    static RESOLVE_BREAKPOINTS: crate::Once<Vec<&'static [u8]>> = crate::Once::new();
+
+    /// Called once during argument parsing. `list` entries are
+    /// process-lifetime argv slices.
+    #[inline]
+    pub fn set_resolve_breakpoints(list: Vec<&'static [u8]>) {
+        let _ = RESOLVE_BREAKPOINTS.get_or_init(|| list);
+    }
 
     #[inline]
     pub fn has_resolve_breakpoint(str_: &[u8]) -> bool {
-        #[cfg(debug_assertions)]
-        for bp in RESOLVE_BREAKPOINTS.get().copied().unwrap_or(&[]) {
+        for bp in RESOLVE_BREAKPOINTS.get().map(|v| v.as_slice()).unwrap_or(&[]) {
             if crate::strings::includes(str_, bp) {
                 return true;
             }
         }
-        let _ = str_;
         false
     }
 }

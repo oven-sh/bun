@@ -112,9 +112,6 @@ const DEBUG_PARAMS: &[ParamType] = &[
     parse_param!(
         "--breakpoint-resolve <STR>...     DEBUG MODE: breakpoint when resolving something that includes this string"
     ),
-    parse_param!(
-        "--breakpoint-print <STR>...       DEBUG MODE: breakpoint when printing something that includes this string"
-    ),
 ];
 
 const TRANSPILER_PARAMS_: &[ParamType] = &[
@@ -1547,10 +1544,9 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
 
     if bun_core::env::SHOW_CRASH_TRACE {
         // argv slices are process-lifetime.
-        let _ = cli::debug_flags::RESOLVE_BREAKPOINTS
-            .set(args.options(b"--breakpoint-resolve").to_vec());
-        let _ =
-            cli::debug_flags::PRINT_BREAKPOINTS.set(args.options(b"--breakpoint-print").to_vec());
+        bun_core::debug_flags::set_resolve_breakpoints(
+            args.options(b"--breakpoint-resolve").to_vec(),
+        );
     }
 
     Ok(opts)

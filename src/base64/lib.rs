@@ -767,8 +767,6 @@ pub mod zig_base64 {
         fn test_base64() {
             let codecs = &STANDARD;
 
-            // STANDARD's `decoder_with_ignore` matches its `pad_char`, so
-            // both decoders take the same encoded form.
             test_all_apis(codecs, b"", b"", b"");
             test_all_apis(codecs, b"f", b"Zg==", b"Zg==");
             test_all_apis(codecs, b"fo", b"Zm8=", b"Zm8=");
@@ -847,9 +845,9 @@ pub mod zig_base64 {
             test_no_space_left_error(codecs, b"AAAAAA==");
         }
 
-        /// `expected_with_ignore` is the input for `Base64DecoderWithIgnore`,
-        /// which may differ from `expected_encoded` when the codec's
-        /// `decoder_with_ignore` doesn't share its `pad_char` (URL-safe family).
+        /// `expected_with_ignore` is the input for the standard-alphabet
+        /// `Base64DecoderWithIgnore`, which may differ from `expected_encoded`
+        /// for the URL-safe family.
         fn test_all_apis(
             codecs: &Codecs,
             expected_decoded: &[u8],
@@ -900,10 +898,9 @@ pub mod zig_base64 {
             assert_eq!(expected_decoded, &decoded[0..written]);
         }
 
-        /// `expected_with_ignore` is the error `decoder_with_ignore` reports
-        /// for the same input, or `None` if it accepts the input. Differs from
-        /// `expected_err` when the codec's `decoder_with_ignore` doesn't share
-        /// its `pad_char` (URL-safe family).
+        /// `expected_with_ignore` is the error the standard-alphabet
+        /// ignore-decoder reports for the same input, or `None` if it accepts
+        /// the input. Differs from `expected_err` for the URL-safe family.
         fn test_error(
             codecs: &Codecs,
             encoded: &[u8],

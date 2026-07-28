@@ -32,7 +32,6 @@ pub struct PrinterOptions<'a> {
     /// A mapping of pseudo classes to replace with class names that can be applied
     /// from JavaScript. Useful for polyfills, for example.
     pub pseudo_classes: Option<PseudoClasses<'a>>,
-    pub public_path: &'a [u8],
 }
 
 impl<'a> PrinterOptions<'a> {
@@ -50,7 +49,6 @@ impl<'a> PrinterOptions<'a> {
             },
             analyze_dependencies: None,
             pseudo_classes: None,
-            public_path: b"",
         }
     }
 }
@@ -263,7 +261,7 @@ impl<'a> Printer<'a> {
         Err(PrintErr::CSSPrintError)
     }
 
-    // deinit() dropped — scratchbuf/indentation_buf/dependencies are arena-backed
+    // deinit() dropped — scratchbuf/dependencies are arena-backed
     // BumpVec<'a, _>; freed in bulk by `arena.reset()`. No explicit Drop impl needed.
 
     /// If `import_records` is null, then the printer will error when it encounters code that relies on import records (urls())

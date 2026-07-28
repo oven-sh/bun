@@ -25,7 +25,7 @@ pub struct Context {
     pub flush: Op,
 
     pub last_result: LastResult,
-    pub error_: c::BrotliDecoderErrorCode2,
+    pub error: c::BrotliDecoderErrorCode2,
 
     /// Owned copy of the dictionary bytes. The prepared dictionary (encode) and
     /// the decoder (decode) borrow this buffer, so it must outlive both; it is
@@ -47,7 +47,7 @@ impl Default for Context {
             flush: Op::process,
             // SAFETY: all-zero is a valid LastResult (c_int 0 / enum 0).
             last_result: unsafe { bun_core::ffi::zeroed_unchecked() },
-            error_: c::BrotliDecoderErrorCode2::NO_ERROR,
+            error: c::BrotliDecoderErrorCode2::NO_ERROR,
             dictionary: Vec::new(),
             prepared_dictionary: None,
         }
@@ -602,7 +602,7 @@ mod _impl {
                     };
                     // SAFETY: d was just written by the line above.
                     if unsafe { self.last_result.d } == c::BrotliDecoderResult::err {
-                        self.error_ = c::BrotliDecoderGetErrorCode(self.decoder_mut());
+                        self.error = c::BrotliDecoderGetErrorCode(self.decoder_mut());
                     }
                 }
                 _ => unreachable!(),
@@ -628,11 +628,11 @@ mod _impl {
                     Error::ok()
                 }
                 bun_zlib::NodeMode::BROTLI_DECODE => {
-                    if self.error_ != c::BrotliDecoderErrorCode2::NO_ERROR {
+                    if self.error != c::BrotliDecoderErrorCode2::NO_ERROR {
                         return Error::init(
                             c"Decompression failed".as_ptr(),
-                            self.error_ as i32,
-                            code_for_error(self.error_),
+                            self.error as i32,
+                            code_for_error(self.error),
                         );
                     } else if self.flush == Op::finish
                     // SAFETY: d is the active field after a decode do_work().

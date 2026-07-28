@@ -22,14 +22,6 @@ pub mod js_valkey_functions; // 200+ prototype methods (get/set/hget/…)
 #[path = "ValkeyCommand.rs"]
 pub mod valkey_command_body; // Command::serialize, Promise::resolve/reject
 
-pub mod valkey_context {
-    /// Per-VM Valkey state. Empty: connections link into
-    /// `RareData.valkey_group` / `valkey_tls_group` directly, and the
-    /// default-TLS `SSL_CTX` is `RareData.defaultClientSslCtx()`.
-    #[derive(Default)]
-    pub struct ValkeyContext;
-}
-
 #[path = "protocol_jsc.rs"]
 pub mod protocol_jsc; // RESPValue → JSValue, RedisError → JS Error
 
@@ -47,7 +39,6 @@ pub use protocol_jsc::{
     ToJSOptions, resp_value_to_js, resp_value_to_js_with_options, valkey_error_to_js,
 };
 pub use valkey::{Options, Protocol, Status, ValkeyClient};
-pub use valkey_context::ValkeyContext;
 
 // ── ValkeyCommand ────────────────────────────────────────────────────────────
 // `ValkeyCommand` is both a namespace

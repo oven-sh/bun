@@ -1,9 +1,9 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "path";
 
 test("cyclic imports with async dependencies should generate async wrappers", async () => {
-  const dir = tempDirWithFiles("cyclic-imports-async", {
+  await using dir = tempDir("cyclic-imports-async", {
     "build.ts": `
       import { build } from "bun";
       build({

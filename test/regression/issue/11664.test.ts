@@ -1,9 +1,9 @@
 import { test } from "bun:test";
-import { bunRun, tempDirWithFiles } from "harness";
+import { bunRun, tempDir } from "harness";
 import { join } from "path";
 
 test("does not segfault", () => {
-  const dir = tempDirWithFiles("segfault", {
+  using dir = tempDir("segfault", {
     "dir/a.ts": `
       import { mock } from "bun:test";
 

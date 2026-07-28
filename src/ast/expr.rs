@@ -2146,7 +2146,7 @@ impl Data {
             }
             Data::EIf(el) => {
                 let item = bump.alloc(E::If {
-                    test_: el.test_.deep_clone_no_detach(bump)?,
+                    test: el.test.deep_clone_no_detach(bump)?,
                     yes: el.yes.deep_clone_no_detach(bump)?,
                     no: el.no.deep_clone_no_detach(bump)?,
                 });

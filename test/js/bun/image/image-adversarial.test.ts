@@ -544,15 +544,15 @@ describe("memory hygiene", () => {
   async function leakCheck(body: () => Promise<unknown>, warm = 2000, run = 1500) {
     for (let i = 0; i < warm; i++) {
       await body();
-      if ((i & 127) === 0) gcTick(true);
+      if ((i & 127) === 0) gcTick();
     }
-    gcTick(true);
+    gcTick();
     const before = process.memoryUsage().rss;
     for (let i = 0; i < run; i++) {
       await body();
-      if ((i & 127) === 0) gcTick(true);
+      if ((i & 127) === 0) gcTick();
     }
-    gcTick(true);
+    gcTick();
     return process.memoryUsage().rss - before;
   }
 
@@ -580,9 +580,9 @@ describe("memory hygiene", () => {
           },
         });
       } catch {}
-      if ((i & 1023) === 0) gcTick(true);
+      if ((i & 1023) === 0) gcTick();
     }
-    gcTick(true);
+    gcTick();
     expect(process.memoryUsage().rss - before).toBeLessThan((isASAN ? 256 : 64) * 1024 * 1024);
   });
 });

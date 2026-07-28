@@ -759,9 +759,8 @@ impl Expect {
         Err(global_this.throw(format_args!("expect() cannot be called with new")))
     }
 
-    // pass here has a leading underscore to avoid name collision with the pass variable in other functions
     #[bun_jsc::host_fn(method)]
-    pub fn _pass(
+    pub fn pass(
         &self,
         global_this: &JSGlobalObject,
         call_frame: &CallFrame,

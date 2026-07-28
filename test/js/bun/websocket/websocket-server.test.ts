@@ -1,7 +1,7 @@
 import type { Server, ServerWebSocket, Subprocess, WebSocketHandler } from "bun";
 import { serve, spawn } from "bun";
 import { afterEach, describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, forceGuardMalloc, isWindows } from "harness";
+import { bunEnv, bunExe, forceGuardMalloc, isWindows, tempDir } from "harness";
 import net, { isIP } from "node:net";
 import path from "node:path";
 
@@ -791,6 +791,122 @@ describe("ServerWebSocket", () => {
       done();
     },
   }));
+  describe("Blob", () => {
+    async function openOne() {
+      const opened = Promise.withResolvers<ServerWebSocket<unknown>>();
+      const flushed = Promise.withResolvers<void>();
+      const received: unknown[] = [];
+      const server = serve({
+        port: 0,
+        fetch: (req, s) => (s.upgrade(req) ? undefined : new Response()),
+        websocket: { publishToSelf: true, open: ws => opened.resolve(ws), message() {} },
+      });
+      const c = new WebSocket(`ws://${server.hostname}:${server.port}/`);
+      c.binaryType = "arraybuffer";
+      c.onmessage = e => {
+        if (e.data === "done") return flushed.resolve();
+        received.push(typeof e.data === "string" ? e.data : Buffer.from(e.data));
+      };
+      c.onerror = c.onclose = ev => {
+        const err = new Error(`client ${ev.type}`);
+        opened.reject(err);
+        flushed.reject(err);
+      };
+      let ws: ServerWebSocket<unknown>;
+      try {
+        ws = await opened.promise;
+      } catch (e) {
+        c.onclose = c.onerror = null;
+        c.close();
+        server.stop(true);
+        throw e;
+      }
+      return {
+        server,
+        ws,
+        received,
+        flush: () => (ws.send("done"), flushed.promise),
+        [Symbol.dispose]() {
+          c.onclose = c.onerror = null;
+          c.close();
+          server.stop(true);
+        },
+      };
+    }
+
+    it.concurrent("send/sendBinary/ping/pong send the blob's bytes, not '[object Blob]'", async () => {
+      using h = await openOne();
+      const blobs = [
+        ["Blob", new Blob([new Uint8Array([1, 2, 3, 4])]), [1, 2, 3, 4]],
+        ["Blob.slice", new Blob([new Uint8Array([9, 9, 1, 2, 3, 4, 9, 9])]).slice(2, 6), [1, 2, 3, 4]],
+        ["File", new File([new Uint8Array([5, 6, 7, 8])], "name.bin"), [5, 6, 7, 8]],
+      ] as const;
+      const rcs: Record<string, unknown> = {};
+      for (const [label, blob] of blobs) {
+        rcs[`send ${label}`] = h.ws.send(blob);
+        rcs[`sendBinary ${label}`] = h.ws.sendBinary(blob);
+        rcs[`ping ${label}`] = h.ws.ping(blob);
+        rcs[`pong ${label}`] = h.ws.pong(blob);
+      }
+      rcs["send empty"] = h.ws.send(new Blob([]));
+      rcs["sendBinary empty"] = h.ws.sendBinary(new Blob([]));
+      await h.flush();
+      expect({ rcs, received: h.received }).toEqual({
+        rcs: {
+          "send Blob": 4,
+          "sendBinary Blob": 4,
+          "ping Blob": 4,
+          "pong Blob": 4,
+          "send Blob.slice": 4,
+          "sendBinary Blob.slice": 4,
+          "ping Blob.slice": 4,
+          "pong Blob.slice": 4,
+          "send File": 4,
+          "sendBinary File": 4,
+          "ping File": 4,
+          "pong File": 4,
+          "send empty": 0,
+          "sendBinary empty": 0,
+        },
+        received: [
+          ...blobs.flatMap(([, , bytes]) => [Buffer.from(bytes), Buffer.from(bytes)]),
+          Buffer.alloc(0),
+          Buffer.alloc(0),
+        ],
+      });
+    });
+
+    it.concurrent("publish/publishBinary/server.publish send the blob's bytes", async () => {
+      using h = await openOne();
+      h.ws.subscribe("t");
+      const blob = new Blob([new Uint8Array([1, 2, 3, 4])]);
+      const rcs = {
+        "ws.publish": h.ws.publish("t", blob),
+        "ws.publishBinary": h.ws.publishBinary("t", blob),
+        "server.publish": h.server.publish("t", blob),
+      };
+      await h.flush();
+      expect({ rcs, received: h.received }).toEqual({
+        rcs: { "ws.publish": 4, "ws.publishBinary": 4, "server.publish": 4 },
+        received: [Buffer.from([1, 2, 3, 4]), Buffer.from([1, 2, 3, 4]), Buffer.from([1, 2, 3, 4])],
+      });
+    });
+
+    it.concurrent("throws on file- or S3-backed Blob", async () => {
+      using h = await openOne();
+      h.ws.subscribe("t");
+      using dir = tempDir("ws-blob-file", { "a.bin": "abcd" });
+      const file = Bun.file(path.join(String(dir), "a.bin"));
+      const msg = (fn: string) => `${fn} cannot send a file- or S3-backed Blob synchronously; await blob.bytes() first`;
+      expect(() => h.ws.send(file)).toThrow(msg("send"));
+      expect(() => h.ws.sendBinary(file)).toThrow(msg("sendBinary"));
+      expect(() => h.ws.publish("t", file)).toThrow(msg("publish"));
+      expect(() => h.ws.publishBinary("t", file)).toThrow(msg("publishBinary"));
+      expect(() => h.ws.ping(file)).toThrow(msg("ping"));
+      expect(() => h.ws.pong(file)).toThrow(msg("pong"));
+      expect(() => h.server.publish("t", file)).toThrow(msg("publish"));
+    });
+  });
   describe("sendBinary()", () => {
     for (const { label, message, bytes } of buffers) {
       test(label, done => ({

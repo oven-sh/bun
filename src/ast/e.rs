@@ -2282,7 +2282,7 @@ pub struct Yield {
 }
 
 pub struct If {
-    pub test_: ExprNodeIndex,
+    pub test: ExprNodeIndex,
     pub yes: ExprNodeIndex,
     pub no: ExprNodeIndex,
 }

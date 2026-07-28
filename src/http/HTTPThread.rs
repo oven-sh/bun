@@ -21,8 +21,8 @@ bun_core::declare_scope!(HTTPThread, hidden); // threadlog
 bun_core::declare_scope!(HTTPThread_log, visible); // log
 
 /// SSL context cache keyed by interned SSLConfig pointer.
-/// Since configs are interned via SSLConfig.GlobalRegistry, pointer equality
-/// is sufficient for lookup. Each entry holds a ref on its SSLConfig.
+/// Since configs are interned via `ssl_config::global_registry`, pointer
+/// equality is sufficient for lookup. Each entry holds a ref on its SSLConfig.
 struct SslContextCacheEntry {
     /// Intrusive-refcounted custom-SSL context. The cache holds one strong
     /// ref (taken in `connect`); released via `ctx.deref()` on eviction.

@@ -138,27 +138,17 @@ impl DirectoryRoute {
             &mut path_buf.0[..],
         ) else {
             bun_output::scoped_log!(DirectoryRoute, "reject {}", bstr::BStr::new(req.url()));
-            req.set_yield(true);
+            write_miss(&mut req, resp);
             return;
         };
         drop(decode_buf);
         let rel: &[u8] = &path_buf.0[..rel_len];
 
-        let Some((file, is_index)) = self.open_subpath(rel) else {
+        let Some((file, stat, is_index)) = self.open_subpath(rel) else {
             bun_output::scoped_log!(DirectoryRoute, "miss  {}", bstr::BStr::new(rel));
-            req.set_yield(true);
+            write_miss(&mut req, resp);
             return;
         };
-
-        let Ok(stat) = file.stat() else {
-            req.set_yield(true);
-            return;
-        };
-        let mode = stat.st_mode as bun_sys::Mode;
-        if !bun_sys::S::ISREG(mode) {
-            req.set_yield(true);
-            return;
-        }
 
         let size: u64 = u64::try_from(stat.st_size.max(0)).expect("int cast");
 
@@ -265,25 +255,31 @@ impl DirectoryRoute {
         });
     }
 
-    /// Returns `(fd, served_index_html)`; tries `index.html` for directories.
-    fn open_subpath(&self, rel: &[u8]) -> Option<(File, bool)> {
+    /// Returns `(file, stat, served_index_html)` for a regular file; tries
+    /// `index.html` for directories.
+    fn open_subpath(&self, rel: &[u8]) -> Option<(File, bun_sys::Stat, bool)> {
+        let open_and_stat = |p: &[u8]| -> Option<(File, bun_sys::Stat)> {
+            let f = self.open_beneath(p)?;
+            let s = f.stat().ok()?;
+            Some((f, s))
+        };
         if rel.is_empty() || rel == b"." {
-            return self.open_beneath(b"index.html").map(|f| (f, true));
+            let (f, s) = open_and_stat(b"index.html")?;
+            return bun_sys::S::ISREG(s.st_mode as bun_sys::Mode).then_some((f, s, true));
         }
-        let file = self.open_beneath(rel)?;
-        match file.stat() {
-            Ok(s) if bun_sys::S::ISDIR(s.st_mode as bun_sys::Mode) => {
-                drop(file);
-                let mut buf = bun_paths::path_buffer_pool::get();
-                let joined = resolve_path::join_string_buf::<resolve_path::platform::Posix>(
-                    &mut buf.0[..],
-                    &[rel, b"index.html"],
-                );
-                self.open_beneath(joined).map(|f| (f, true))
-            }
-            Ok(_) => Some((file, false)),
-            Err(_) => None,
+        let (file, stat) = open_and_stat(rel)?;
+        let mode = stat.st_mode as bun_sys::Mode;
+        if bun_sys::S::ISDIR(mode) {
+            drop(file);
+            let mut buf = bun_paths::path_buffer_pool::get();
+            let joined = resolve_path::join_string_buf::<resolve_path::platform::Posix>(
+                &mut buf.0[..],
+                &[rel, b"index.html"],
+            );
+            let (f, s) = open_and_stat(joined)?;
+            return bun_sys::S::ISREG(s.st_mode as bun_sys::Mode).then_some((f, s, true));
         }
+        bun_sys::S::ISREG(mode).then_some((file, stat, false))
     }
 
     /// `openat2(RESOLVE_IN_ROOT|NO_MAGICLINKS)` on Linux, `openat` elsewhere.
@@ -375,6 +371,13 @@ fn on_stream_error(ctx: *mut c_void, resp: AnyResponse, _err: bun_sys::Error) {
     DirectoryRoute::on_response_complete(NonNull::new(ctx.cast()).unwrap(), resp);
 }
 
+fn write_miss(req: &mut AnyRequest, resp: AnyResponse) {
+    req.set_yield(false);
+    write_any_status(resp, 404);
+    resp.write_mark();
+    resp.end(b"", resp.should_close_connection());
+}
+
 /// Strip `url_prefix`, percent-decode once, reject NUL/`\`, normalize `.`/`..`;
 /// `None` if the result would escape the root. Writes into `out`.
 fn resolve_subpath(
@@ -396,7 +399,7 @@ fn resolve_subpath(
         return None;
     };
 
-    if after_prefix.len() > scratch.len() {
+    if after_prefix.len() >= scratch.len() {
         return None;
     }
 
@@ -418,10 +421,11 @@ fn resolve_subpath(
         return Some(0);
     }
 
+    let out_len = out.len();
     let norm = resolve_path::normalize_string_buf::<true, resolve_path::platform::Posix, false>(
         decoded, out,
     );
-    if norm == b".." || strings::starts_with(norm, b"../") {
+    if norm == b".." || strings::starts_with(norm, b"../") || norm.len() >= out_len {
         return None;
     }
     Some(norm.len())

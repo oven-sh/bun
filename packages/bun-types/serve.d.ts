@@ -591,8 +591,7 @@ declare module "bun" {
      * Responses carry `Content-Type` (from the file extension),
      * `Last-Modified`, a weak `ETag`, and support single-range `Range`
      * requests. Requests that resolve to a directory are served
-     * `index.html` from that directory. Missing files fall through to the
-     * next matching route (or `fetch`).
+     * `index.html` from that directory. Missing files return `404`.
      *
      * @example
      * ```ts

@@ -103,24 +103,29 @@ describe("Bun.serve() directory routes", () => {
     expect(await subNoSlash.text()).toBe("<h1>sub</h1>");
   });
 
-  it("falls through to fetch for missing files", async () => {
-    using dir = tempDir("serve-dir-404", {
-      "public/exists.txt": "yes",
+  describe.each(["/static/*", "/*"] as const)("mounted at %s", prefix => {
+    const base = prefix === "/*" ? "" : "static/";
+    it("returns 404 for missing files", async () => {
+      using dir = tempDir("serve-dir-404", {
+        "public/exists.txt": "yes",
+      });
+
+      server = serve({
+        port: 0,
+        routes: { [prefix]: { dir: join(String(dir), "public") } },
+        fetch: () => new Response("fallback", { status: 200 }),
+      });
+
+      const hit = await fetch(`${server.url}${base}exists.txt`);
+      expect(hit.status).toBe(200);
+      expect(await hit.text()).toBe("yes");
+
+      // A miss returns a plain 404 from the directory route itself; the
+      // fetch handler is not consulted for paths under the mounted prefix.
+      const miss = await fetch(`${server.url}${base}nope.txt`);
+      expect(miss.status).toBe(404);
+      expect(await miss.text()).toBe("");
     });
-
-    server = serve({
-      port: 0,
-      routes: { "/static/*": { dir: join(String(dir), "public") } },
-      fetch: () => new Response("fallback", { status: 404 }),
-    });
-
-    const hit = await fetch(`${server.url}static/exists.txt`);
-    expect(hit.status).toBe(200);
-    expect(await hit.text()).toBe("yes");
-
-    const miss = await fetch(`${server.url}static/nope.txt`);
-    expect(miss.status).toBe(404);
-    expect(await miss.text()).toBe("fallback");
   });
 
   it("supports HEAD", async () => {
@@ -461,6 +466,50 @@ describe("Bun.serve() directory routes", () => {
     expect(results.every(r => r === "hot")).toBe(true);
   });
 
+  it("yields to more-specific overlapping routes", async () => {
+    using dir = tempDir("serve-dir-precedence", {
+      "public/file.txt": "from-dir",
+      "public/api": "from-dir",
+      "public/sub/x.txt": "parent",
+      "public/other.txt": "from-dir",
+      "inner/x.txt": "inner",
+    });
+
+    server = serve({
+      port: 0,
+      routes: {
+        "/static/file.txt": new Response("exact", { status: 200 }),
+        "/static/api": () => new Response("handler"),
+        "/static/sub/*": { dir: join(String(dir), "inner") },
+        "/static/*": { dir: join(String(dir), "public") },
+      },
+    });
+
+    // Exact static route beats the wildcard directory.
+    expect(await (await fetch(`${server.url}static/file.txt`)).text()).toBe("exact");
+    // Handler route beats the directory.
+    expect(await (await fetch(`${server.url}static/api`)).text()).toBe("handler");
+    // More specific wildcard prefix beats the broader one.
+    expect(await (await fetch(`${server.url}static/sub/x.txt`)).text()).toBe("inner");
+    // Paths only the broad wildcard matches still reach it.
+    expect(await (await fetch(`${server.url}static/other.txt`)).text()).toBe("from-dir");
+  });
+
+  it.skipIf(!isLinux)("is case-sensitive on a case-sensitive filesystem", async () => {
+    using dir = tempDir("serve-dir-case", {
+      "public/File.txt": "upper",
+    });
+    server = serve({
+      port: 0,
+      routes: { "/static/*": { dir: join(String(dir), "public") } },
+      fetch: () => new Response("miss", { status: 404 }),
+    });
+
+    expect(await (await fetch(`${server.url}static/File.txt`)).text()).toBe("upper");
+    expect((await fetch(`${server.url}static/file.txt`)).status).toBe(404);
+    expect((await fetch(`${server.url}static/FILE.TXT`)).status).toBe(404);
+  });
+
   it("rejects adversarial inputs", async () => {
     using dir = tempDir("serve-dir-adversarial", {
       "secret.txt": "SECRET",
@@ -520,9 +569,14 @@ describe("Bun.serve() directory routes", () => {
     expect(utf8.status).toBe(200);
     expect(await utf8.text()).toBe("utf8");
 
-    // Very long path (yields, does not crash).
-    const long = await raw("/static/" + Buffer.alloc(8000, "a").toString());
-    expect([404, 400, 414]).toContain(long.status);
+    // Paths at and around PATH_MAX (1024 on macOS, 4096 on Linux) must not
+    // crash the server; they yield or 404.
+    for (const len of [1023, 1024, 1025, 4095, 4096, 4097, 8000]) {
+      const r = await raw("/static/" + Buffer.alloc(len, "a").toString());
+      expect([404, 400, 414]).toContain(r.status);
+    }
+    // Server still responds after the boundary probes.
+    expect((await fetch(`${server.url}static/ok.txt`)).status).toBe(200);
 
     // Oversized Range start must not overflow.
     const hugeRange = await fetch(`${server.url}static/ok.txt`, {

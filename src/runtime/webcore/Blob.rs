@@ -2275,7 +2275,9 @@ impl BlobExt for Blob {
     fn view_size(&self) -> SizeType {
         if let Some(store) = self.store.get() {
             if matches!(store.data, store::Data::File(_)) {
-                return self.stat_file_size(store).unwrap_or_else(|| self.size.get());
+                return self
+                    .stat_file_size(store)
+                    .unwrap_or_else(|| self.size.get());
             }
         }
         self.size.get()

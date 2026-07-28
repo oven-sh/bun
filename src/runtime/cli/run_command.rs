@@ -3235,7 +3235,15 @@ impl RunCommand {
             else {
                 return false;
             };
-            if let Some(v4) = v6.to_ipv4_mapped() {
+            // IPv4-mapped (`::ffff:a.b.c.d`) and deprecated IPv4-compatible
+            // (`::a.b.c.d`) addresses embed an IPv4 target; judge that target.
+            let embedded_v4 = v6.to_ipv4_mapped().or_else(|| {
+                let seg = v6.segments();
+                (seg[..6] == [0u16; 6] && (seg[6] != 0 || seg[7] > 1)).then(|| {
+                    ::core::net::Ipv4Addr::from(u32::from(seg[6]) << 16 | u32::from(seg[7]))
+                })
+            });
+            if let Some(v4) = embedded_v4 {
                 return !(v4.is_loopback()
                     || v4.is_unspecified()
                     || v4.is_private()
@@ -3255,14 +3263,29 @@ impl RunCommand {
         if last_label.is_empty() || last_label[0].is_ascii_digit() {
             return false;
         }
-        let localhost = b"localhost";
-        !(hostname.len() > localhost.len()
-            && hostname[hostname.len() - localhost.len() - 1] == b'.'
-            && strings::eql_case_insensitive_ascii(
-                &hostname[hostname.len() - localhost.len()..],
-                localhost,
-                true,
-            ))
+        // Special-use names that resolve locally or to internal
+        // infrastructure (RFC 6761/6762, ICANN-reserved `.internal`, and the
+        // conventional intranet suffixes) never leave the machine/site.
+        const LOCAL_ONLY_SUFFIXES: [&[u8]; 9] = [
+            b"localhost",
+            b"local",
+            b"internal",
+            b"home",
+            b"home.arpa",
+            b"lan",
+            b"intranet",
+            b"corp",
+            b"private",
+        ];
+        !LOCAL_ONLY_SUFFIXES.iter().any(|suffix| {
+            hostname.len() > suffix.len()
+                && hostname[hostname.len() - suffix.len() - 1] == b'.'
+                && strings::eql_case_insensitive_ascii(
+                    &hostname[hostname.len() - suffix.len()..],
+                    suffix,
+                    true,
+                )
+        })
     }
 
     /// Parse `contents` once with an ImageUrlCollector, download every
@@ -4205,5 +4228,14 @@ mod remote_image_prefetch_tests {
         assert!(!allowed("https://[fe80::1]/img.png"));
         assert!(!allowed("https://[fd00::1]/img.png"));
         assert!(!allowed("https://[::ffff:127.0.0.1]/img.png"));
+        assert!(!allowed("https://[::127.0.0.1]/img.png"));
+        assert!(!allowed("https://[::7f00:1]/img.png"));
+        assert!(!allowed("https://[::169.254.169.254]/img.png"));
+        assert!(!allowed("https://[::a01:203]/img.png"));
+        assert!(!allowed("https://printer.local/img.png"));
+        assert!(!allowed("https://metadata.google.internal/img.png"));
+        assert!(!allowed("https://nas.home.arpa/img.png"));
+        assert!(!allowed("https://dev.corp/img.png"));
+        assert!(!allowed("https://box.lan/img.png"));
     }
 }

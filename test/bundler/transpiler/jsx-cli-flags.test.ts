@@ -23,27 +23,44 @@ describe.concurrent("jsx: --jsx-* CLI flags preserve development runtime", () =>
     "a.jsx": "console.log(JSON.stringify(<div/>));",
   };
 
-  const cases: Array<[extraArgs: string[], nodeEnv: string | undefined, expected: "DEV" | "PROD"]> = [
+  type Case = [
+    extraArgs: string[],
+    nodeEnv: string | undefined,
+    bunfig: string | undefined,
+    expected: "DEV" | "PROD",
+  ];
+  const cases: Case[] = [
     // Baselines (no --jsx-* flags): dev by default, prod only when NODE_ENV=production.
-    [[], undefined, "DEV"],
-    [[], "development", "DEV"],
-    [[], "production", "PROD"],
-    // Any --jsx-* flag must not change the dev/prod selection.
-    [["--jsx-import-source=react"], undefined, "DEV"],
-    [["--jsx-import-source=react"], "development", "DEV"],
-    [["--jsx-import-source=react"], "production", "PROD"],
-    [["--jsx-fragment=Fragment"], undefined, "DEV"],
-    [["--jsx-fragment=Fragment"], "development", "DEV"],
-    [["--jsx-fragment=Fragment"], "production", "PROD"],
-    [["--jsx-factory=h"], undefined, "DEV"],
-    [["--jsx-runtime=automatic"], undefined, "DEV"],
-    [["--jsx-runtime=automatic"], "production", "PROD"],
+    [[], undefined, undefined, "DEV"],
+    [[], "development", undefined, "DEV"],
+    [[], "production", undefined, "PROD"],
+    // Any --jsx-* flag must not change the dev/prod selection (no bunfig: fresh-construct branch).
+    [["--jsx-import-source=react"], undefined, undefined, "DEV"],
+    [["--jsx-import-source=react"], "development", undefined, "DEV"],
+    [["--jsx-import-source=react"], "production", undefined, "PROD"],
+    [["--jsx-fragment=Fragment"], undefined, undefined, "DEV"],
+    [["--jsx-fragment=Fragment"], "development", undefined, "DEV"],
+    [["--jsx-fragment=Fragment"], "production", undefined, "PROD"],
+    [["--jsx-factory=h"], undefined, undefined, "DEV"],
+    [["--jsx-runtime=automatic"], undefined, undefined, "DEV"],
+    [["--jsx-runtime=automatic"], "production", undefined, "PROD"],
+    // With a bunfig present, opts.jsx is already populated and CLI flags go through the
+    // merge-with-bunfig branch, which must preserve bunfig's `development` value.
+    [["--jsx-import-source=react"], undefined, "", "DEV"],
+    [["--jsx-import-source=react"], "production", "", "PROD"],
+    [["--jsx-fragment=Fragment"], undefined, "", "DEV"],
+    [["--jsx-import-source=react"], undefined, 'jsx = "react-jsx"\n', "PROD"],
+    [["--jsx-import-source=react"], undefined, 'jsx = "react-jsxDEV"\n', "DEV"],
   ];
 
-  for (const [extraArgs, nodeEnv, expected] of cases) {
-    const label = `bun ${extraArgs.join(" ") || "(no flags)"} NODE_ENV=${nodeEnv ?? "<unset>"} -> ${expected}`;
+  for (const [extraArgs, nodeEnv, bunfig, expected] of cases) {
+    const bunfigLabel =
+      bunfig === undefined ? "no bunfig" : bunfig === "" ? "empty bunfig" : `bunfig ${bunfig.trim()}`;
+    const label = `bun ${extraArgs.join(" ") || "(no flags)"} NODE_ENV=${nodeEnv ?? "<unset>"} [${bunfigLabel}] -> ${expected}`;
     test(label, async () => {
-      using dir = tempDir("jsx-cli-dev", shimFiles);
+      const files: Record<string, string> = { ...shimFiles };
+      if (bunfig !== undefined) files["bunfig.toml"] = bunfig;
+      using dir = tempDir("jsx-cli-dev", files);
       const env: Record<string, string | undefined> = { ...bunEnv, NODE_ENV: nodeEnv };
       if (nodeEnv === undefined) delete env.NODE_ENV;
       await using proc = Bun.spawn({

@@ -154,7 +154,7 @@ test("binary element in a non-BYTEA non-JSON array is rejected", () => {
         throw new Error(`expected sql.array([${element.constructor.name}], ${JSON.stringify(type)}) to throw`);
       })();
       expect(err.code).toBe("ERR_INVALID_ARG_VALUE");
-      expect(err.message).toContain("BYTEA or JSON");
+      expect(err.message).toContain("BYTEA, JSON, or JSONB");
     }
   }
 });

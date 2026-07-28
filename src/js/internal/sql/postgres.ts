@@ -158,7 +158,7 @@ function arrayValueSerializer(type: ArrayType, is_numeric: boolean, is_json: boo
     throw $ERR_INVALID_ARG_VALUE(
       "values",
       value,
-      `binary (ArrayBuffer / TypedArray) elements are only supported in BYTEA or JSON arrays (got ${type})`,
+      `binary (ArrayBuffer / TypedArray) elements are only supported in BYTEA, JSON, or JSONB arrays (got ${type})`,
     );
   }
   if ($isArray(value)) {

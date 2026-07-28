@@ -552,10 +552,10 @@ impl PatchTask {
                     return Ok(());
                 }
             };
-            let _close_guard = sys::CloseOnDrop::new(patch_pkg_dir);
+            let patch_pkg_dir = sys::Dir::from_fd(patch_pkg_dir);
 
             // 4. apply patch
-            if let Some(e) = patchfile.apply(patch_pkg_dir) {
+            if let Some(e) = patchfile.apply(patch_pkg_dir.fd) {
                 log.add_error_fmt_opts(
                     format_args!("failed applying patch file: {}", e),
                     Default::default(),
@@ -576,7 +576,7 @@ impl PatchTask {
             };
             buntagbuf[bun_tag_prefix.len() + hashlen] = 0;
             let buntag_zstr = ZStr::from_buf(&buntagbuf, bun_tag_prefix.len() + hashlen);
-            if let Err(e) = sys::File::write_file(patch_pkg_dir, buntag_zstr, b"") {
+            if let Err(e) = sys::File::write_file(patch_pkg_dir.fd, buntag_zstr, b"") {
                 log.add_error_fmt_opts(
                     format_args!(
                         "failed adding bun tag: {}",

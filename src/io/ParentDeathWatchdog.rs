@@ -678,17 +678,16 @@ fn list_child_pids_linux(parent: libc::pid_t, out: &mut [libc::pid_t]) -> Option
         &path_buf[..n]
     };
 
-    let task_fd = match bun_sys::open_dir_for_iteration_os_path(Fd::cwd(), task_path) {
-        Ok(fd) => fd,
+    let task_dir = match bun_sys::open_dir_for_iteration_os_path(Fd::cwd(), task_path) {
+        Ok(fd) => bun_sys::Dir::from_fd(fd),
         Err(_) => return None,
     };
-    let _task_fd_guard = bun_sys::CloseOnDrop::new(task_fd);
 
     let mut written: usize = 0;
     // Sized so a single read can saturate the 4096-pid `out` buffer
     // (~8 bytes per "1234567 " entry × 4096).
     let mut read_buf = [0u8; 32 * 1024];
-    let mut it = bun_sys::dir_iterator::iterate(task_fd);
+    let mut it = bun_sys::dir_iterator::iterate(task_dir.fd);
     loop {
         let entry = match it.next() {
             Ok(Some(e)) => e,
@@ -732,16 +731,15 @@ fn list_child_pids_linux(parent: libc::pid_t, out: &mut [libc::pid_t]) -> Option
 /// we don't need.
 #[cfg(any(target_os = "linux", target_os = "android"))]
 fn read_file_once<'a>(path: &ZStr, buf: &'a mut [u8]) -> Option<&'a [u8]> {
-    let fd = match bun_sys::open(path, O::RDONLY, 0) {
-        Ok(fd) => fd,
+    let file = match bun_sys::open(path, O::RDONLY, 0) {
+        Ok(fd) => bun_sys::File::from_fd(fd),
         Err(_) => return None,
     };
-    let _guard = bun_sys::CloseOnDrop::new(fd);
     // Fixed-buffer read-until-EOF-or-full. `File::read_all` grows a `Vec`,
     // which would allocate; do the loop here.
     let mut written = 0usize;
     while written < buf.len() {
-        match bun_sys::read(fd, &mut buf[written..]) {
+        match bun_sys::read(file.fd(), &mut buf[written..]) {
             Ok(0) => break,
             Ok(n) => written += n,
             Err(_) => return None,

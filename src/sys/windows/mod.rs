@@ -1131,6 +1131,12 @@ pub fn DeleteFileBun(sub_path_w: &[u16], options: DeleteFileOptions) -> bun_sys:
         return err;
     }
     struct CloseHandleOnDrop(HANDLE);
+    impl CloseHandleOnDrop {
+        #[inline]
+        fn as_raw(&self) -> HANDLE {
+            self.0
+        }
+    }
     impl Drop for CloseHandleOnDrop {
         #[inline]
         fn drop(&mut self) {
@@ -1140,7 +1146,7 @@ pub fn DeleteFileBun(sub_path_w: &[u16], options: DeleteFileOptions) -> bun_sys:
             }
         }
     }
-    let _close_guard = CloseHandleOnDrop(tmp_handle);
+    let tmp_handle = CloseHandleOnDrop(tmp_handle);
 
     // FileDispositionInformationEx (and therefore FILE_DISPOSITION_POSIX_SEMANTICS and FILE_DISPOSITION_IGNORE_READONLY_ATTRIBUTE)
     // are only supported on NTFS filesystems, so the version check on its own is only a partial solution. To support non-NTFS filesystems
@@ -1158,7 +1164,7 @@ pub fn DeleteFileBun(sub_path_w: &[u16], options: DeleteFileOptions) -> bun_sys:
     // SAFETY: tmp_handle and io are valid
     rc = unsafe {
         ntdll::NtSetInformationFile(
-            tmp_handle,
+            tmp_handle.as_raw(),
             &mut io,
             core::ptr::from_mut(&mut info).cast::<c_void>(),
             size_of::<windows::FILE_DISPOSITION_INFORMATION_EX>() as u32,
@@ -1187,7 +1193,7 @@ pub fn DeleteFileBun(sub_path_w: &[u16], options: DeleteFileOptions) -> bun_sys:
         // SAFETY: tmp_handle and io are valid
         rc = unsafe {
             ntdll::NtSetInformationFile(
-                tmp_handle,
+                tmp_handle.as_raw(),
                 &mut io,
                 core::ptr::from_mut(&mut file_dispo).cast::<c_void>(),
                 size_of::<windows::FILE_DISPOSITION_INFORMATION>() as u32,
@@ -1730,9 +1736,18 @@ pub fn spawn_watcher_child(
     // SAFETY: NUL written at [len]
     let image_path_z = bun_core::WStr::from_buf(&wbuf[..], image_path.len());
 
-    let kernelenv = kernel32_2::GetEnvironmentStringsW();
-    struct FreeEnvOnDrop(LPWSTR);
-    impl Drop for FreeEnvOnDrop {
+    struct EnvStringsW(LPWSTR);
+    impl EnvStringsW {
+        #[inline]
+        fn as_ptr(&self) -> LPWSTR {
+            self.0
+        }
+        #[inline]
+        fn is_null(&self) -> bool {
+            self.0.is_null()
+        }
+    }
+    impl Drop for EnvStringsW {
         #[inline]
         fn drop(&mut self) {
             if !self.0.is_null() {
@@ -1743,16 +1758,16 @@ pub fn spawn_watcher_child(
             }
         }
     }
-    let _free_env = FreeEnvOnDrop(kernelenv);
+    let kernelenv = EnvStringsW(kernel32_2::GetEnvironmentStringsW());
 
     let mut size: usize = 0;
     if !kernelenv.is_null() {
         // SAFETY: env block is double-NUL terminated
         unsafe {
             // check that env is non-empty
-            if *kernelenv.add(0) != 0 || *kernelenv.add(1) != 0 {
+            if *kernelenv.as_ptr().add(0) != 0 || *kernelenv.as_ptr().add(1) != 0 {
                 // array is terminated by two nulls
-                while *kernelenv.add(size) != 0 || *kernelenv.add(size + 1) != 0 {
+                while *kernelenv.as_ptr().add(size) != 0 || *kernelenv.as_ptr().add(size + 1) != 0 {
                     size += 1;
                 }
                 size += 1;
@@ -1765,7 +1780,7 @@ pub fn spawn_watcher_child(
     if !kernelenv.is_null() {
         // SAFETY: kernelenv has at least `size` elements
         unsafe {
-            ptr::copy_nonoverlapping(kernelenv, envbuf.as_mut_ptr(), size);
+            ptr::copy_nonoverlapping(kernelenv.as_ptr(), envbuf.as_mut_ptr(), size);
         }
     }
     envbuf[size..size + WATCHER_CHILD_ENV.len()].copy_from_slice(WATCHER_CHILD_ENV);

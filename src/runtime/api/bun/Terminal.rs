@@ -705,15 +705,9 @@ impl Terminal {
         }
         // Both reader callbacks below re-enter user JS and may deref; hold a
         // +1 so `self` stays live for the trailing field accesses.
-        struct DerefGuard<'a>(&'a Terminal);
-        impl Drop for DerefGuard<'_> {
-            #[inline]
-            fn drop(&mut self) {
-                self.0.deref_();
-            }
-        }
-        self.ref_();
-        let guard = DerefGuard(self);
+        // SAFETY: `self` is the heap-stable `heap::into_raw` allocation (see
+        // `as_ctx_ptr`); the guard's own +1 keeps it live until `drop(guard)`.
+        let guard = unsafe { bun_ptr::ScopedRef::new(self.as_ctx_ptr()) };
         if flags.contains(Flags::READER_STARTED) && !flags.contains(Flags::READER_DONE) {
             // SAFETY: single JS thread; re-entrant user JS (data callback may
             // call `terminal.close()`) is handled via the raw-pointer dispatch

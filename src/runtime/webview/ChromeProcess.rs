@@ -303,8 +303,7 @@ fn find_playwright_shell() -> Option<ZBox> {
     let parts: [&[u8]; 2] = [home, cache_subpath];
     let cache_dir = resolve_path::join_string_buf_z::<platform::Auto>(&mut dir_buf[..], &parts);
 
-    let fd = bun_sys::open(cache_dir, O::RDONLY | O::DIRECTORY, 0).ok()?;
-    let _fd_guard = bun_sys::CloseOnDrop::new(fd);
+    let dir = bun_sys::Dir::from_fd(bun_sys::open(cache_dir, O::RDONLY | O::DIRECTORY, 0).ok()?);
 
     // Scan for chromium_headless_shell-<rev> and track max rev.
     let mut best_rev: u32 = 0;
@@ -312,7 +311,7 @@ fn find_playwright_shell() -> Option<ZBox> {
     let mut best_len: usize = 0;
     const PREFIX: &[u8] = b"chromium_headless_shell-";
 
-    let mut iter = bun_sys::iterate_dir(fd);
+    let mut iter = bun_sys::iterate_dir(dir.fd);
     loop {
         let entry = match iter.next() {
             Ok(Some(e)) => e,

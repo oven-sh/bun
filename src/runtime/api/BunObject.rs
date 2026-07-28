@@ -883,11 +883,11 @@ pub fn get_main(global_this: &JSGlobalObject) -> JSValue {
                 break 'use_resolved_path;
             };
 
-            let _close = bun_sys::CloseOnDrop::new(fd);
+            let fd = bun_sys::File::from_fd(fd);
             #[cfg(windows)]
             {
                 let mut wpath = WPathBuffer::uninit();
-                let Ok(fdpath) = bun_sys::get_fd_path_w(fd, &mut wpath) else {
+                let Ok(fdpath) = bun_sys::get_fd_path_w(fd.handle, &mut wpath) else {
                     break 'use_resolved_path;
                 };
                 vm.main_resolved_path = BunString::clone_utf16(fdpath);
@@ -895,7 +895,7 @@ pub fn get_main(global_this: &JSGlobalObject) -> JSValue {
             #[cfg(not(windows))]
             {
                 let mut path = PathBuffer::uninit();
-                let Ok(fdpath) = bun_sys::get_fd_path(fd, &mut path) else {
+                let Ok(fdpath) = bun_sys::get_fd_path(fd.handle, &mut path) else {
                     break 'use_resolved_path;
                 };
 

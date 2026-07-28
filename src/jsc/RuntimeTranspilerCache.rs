@@ -886,10 +886,10 @@ impl RuntimeTranspilerCache {
 
             break 'brk Fd::cwd();
         };
-        let _dir_guard = sys::Dir::from_fd(cache_dir_fd);
+        let cache_dir = sys::Dir::from_fd(cache_dir_fd);
 
         Entry::save(
-            cache_dir_fd,
+            cache_dir.fd,
             cache_file_path,
             input_byte_length,
             input_hash,

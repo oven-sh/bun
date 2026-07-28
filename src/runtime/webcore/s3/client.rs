@@ -558,6 +558,7 @@ pub(crate) fn writable_stream(
     Ok(sink.to_js(global_this))
 }
 
+#[derive(bun_ptr::CellRefCounted)]
 pub struct S3UploadStreamWrapper {
     // intrusive ref_count — bun.ptr.RefCount(@This(), "ref_count", deinit, .{}) → bun_ptr::IntrusiveRc<Self>
     pub ref_count: core::cell::Cell<u32>,
@@ -575,31 +576,7 @@ pub struct S3UploadStreamWrapper {
 // Inherent associated types are unstable; expose as a module-level alias instead.
 pub(crate) type ResumableSink = ResumableS3UploadSink;
 
-/// RAII `deref_()` on scope exit for [`S3UploadStreamWrapper`].
-struct DerefOnDrop(*mut S3UploadStreamWrapper);
-impl Drop for DerefOnDrop {
-    #[inline]
-    fn drop(&mut self) {
-        // SAFETY: constructed from a live Box-allocated `S3UploadStreamWrapper`;
-        // `deref_` decrements ref_count and frees only after the last ref drops.
-        unsafe { S3UploadStreamWrapper::deref_(self.0) };
-    }
-}
-
 impl S3UploadStreamWrapper {
-    /// Intrusive `deref()` — decrements ref_count; runs finalizer + frees on zero.
-    /// SAFETY: `this` must be a live Box-allocated `Self` (created via heap::alloc).
-    pub(crate) unsafe fn deref_(this: *mut Self) {
-        // SAFETY: caller contract above.
-        let rc = unsafe { (*this).ref_count.get() } - 1;
-        // SAFETY: caller contract above — `this` is still live (freed only after rc hits zero below).
-        unsafe { (*this).ref_count.set(rc) };
-        if rc == 0 {
-            // SAFETY: ref_count hit zero; reconstitute the Box to run Drop and free.
-            drop(unsafe { bun_core::heap::take(this) });
-        }
-    }
-
     fn detach_sink(&mut self) {
         bun_output::scoped_log!(S3UploadStream, "detachSink {}", self.sink.is_some());
         if let Some(sink) = self.sink.take() {
@@ -649,7 +626,8 @@ impl S3UploadStreamWrapper {
     pub(crate) fn write_end_request(&mut self, err: Option<JSValue>) {
         bun_output::scoped_log!(S3UploadStream, "writeEndRequest {}", err.is_some());
         self.detach_sink();
-        let _deref_guard = DerefOnDrop(std::ptr::from_mut::<Self>(self));
+        // SAFETY: `self` is a live Box-allocated `Self` holding the ref this scope consumes.
+        let _deref_guard = unsafe { bun_ptr::ScopedRef::adopt(std::ptr::from_mut::<Self>(self)) };
         if let Some(js_err) = err {
             if self.end_promise.has_value() && !js_err.is_empty_or_undefined_or_null() {
                 // if we have a explicit error, reject the promise
@@ -672,7 +650,8 @@ impl S3UploadStreamWrapper {
 
     pub(crate) fn resolve(result: S3UploadResult, self_: &mut Self) -> JsTerminatedResult<()> {
         bun_output::scoped_log!(S3UploadStream, "resolve");
-        let _deref_guard = DerefOnDrop(std::ptr::from_mut::<Self>(self_));
+        // SAFETY: `self_` is a live Box-allocated `Self` holding the ref this scope consumes.
+        let _deref_guard = unsafe { bun_ptr::ScopedRef::adopt(std::ptr::from_mut::<Self>(self_)) };
         match &result {
             S3UploadResult::Success => {
                 if self_.end_promise.has_value() {

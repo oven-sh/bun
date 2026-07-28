@@ -537,8 +537,8 @@ impl InitCommand {
                 let Ok(dir) = bun_sys::open_dir_at(Fd::cwd(), b".") else {
                     break 'infer;
                 };
-                let _close = bun_sys::CloseOnDrop::new(dir);
-                let mut it = bun_sys::iterate_dir(dir);
+                let dir = bun_sys::Dir::from_fd(dir);
+                let mut it = bun_sys::iterate_dir(dir.fd);
                 while let Some(file) = it.next().map_err(crate::Error::from)? {
                     if file.kind != bun_sys::FileKind::File {
                         continue;

@@ -1720,12 +1720,12 @@ pub(crate) fn install_isolated_packages(
                     // so close explicitly. The guard fires on
                     // normal fall-through to step 3 and on every
                     // `break 'is_new_bun_modules true` early exit.
-                    let _close_node_modules = sys::Dir::from_fd(node_modules);
+                    let node_modules = sys::Dir::from_fd(node_modules);
 
                     let mut entry_path = AutoRelPath::from(b"node_modules").assume_ok();
 
                     // 2
-                    let mut node_modules_iter = sys::iterate_dir(node_modules);
+                    let mut node_modules_iter = sys::iterate_dir(node_modules.fd);
                     loop {
                         let Some(entry) = (match node_modules_iter.next() {
                             Ok(v) => v,

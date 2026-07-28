@@ -1356,40 +1356,44 @@ impl DirectoryWatchStore {
                 Ok(None) | Err(_) => None,
             };
 
-        let (fd, owned_fd): (bun_sys::Fd, bool) = if bun_watcher::REQUIRES_FILE_DESCRIPTORS {
-            if let Some(fd) = cache_fd {
-                (fd, false)
-            } else {
-                // Build a NUL-terminated path buffer.
-                if dir_name_to_watch.len() >= bun_paths::MAX_PATH_BYTES {
-                    return Err(DirectoryWatchInsertError::Ignore); // NameTooLong
-                }
-                let mut zbuf = bun_paths::path_buffer_pool::get();
-                let zpath = bun_paths::resolve_path::z(dir_name_to_watch, &mut *zbuf);
-                match bun_sys::open(
-                    zpath,
-                    bun_sys::O::DIRECTORY | bun_watcher::WATCH_OPEN_FLAGS,
-                    0,
-                ) {
-                    Ok(fd) => (fd, true),
-                    Err(err) => match err.get_errno() {
-                        // If this directory doesn't exist, a watcher should be placed
-                        // on the parent directory. Then, if this directory is later
-                        // created, the watcher can be properly initialized.
-                        bun_sys::E::ENOENT => {
-                            // TODO: implement that. for now it ignores (BUN-10968)
-                            return Err(DirectoryWatchInsertError::Ignore);
+        let (fd_guard, fd): (Option<bun_sys::CloseOnDrop>, bun_sys::Fd) =
+            if bun_watcher::REQUIRES_FILE_DESCRIPTORS {
+                if let Some(fd) = cache_fd {
+                    (None, fd)
+                } else {
+                    // Build a NUL-terminated path buffer.
+                    if dir_name_to_watch.len() >= bun_paths::MAX_PATH_BYTES {
+                        return Err(DirectoryWatchInsertError::Ignore); // NameTooLong
+                    }
+                    let mut zbuf = bun_paths::path_buffer_pool::get();
+                    let zpath = bun_paths::resolve_path::z(dir_name_to_watch, &mut *zbuf);
+                    match bun_sys::open(
+                        zpath,
+                        bun_sys::O::DIRECTORY | bun_watcher::WATCH_OPEN_FLAGS,
+                        0,
+                    ) {
+                        Ok(opened) => {
+                            let guard = bun_sys::CloseOnDrop::new(opened);
+                            let fd = guard.fd();
+                            (Some(guard), fd)
                         }
-                        bun_sys::E::ENOTDIR => return Err(DirectoryWatchInsertError::Ignore),
-                        _ => bun_core::todo_panic!("log watcher error"),
-                    },
+                        Err(err) => match err.get_errno() {
+                            // If this directory doesn't exist, a watcher should be placed
+                            // on the parent directory. Then, if this directory is later
+                            // created, the watcher can be properly initialized.
+                            bun_sys::E::ENOENT => {
+                                // TODO: implement that. for now it ignores (BUN-10968)
+                                return Err(DirectoryWatchInsertError::Ignore);
+                            }
+                            bun_sys::E::ENOTDIR => return Err(DirectoryWatchInsertError::Ignore),
+                            _ => bun_core::todo_panic!("log watcher error"),
+                        },
+                    }
                 }
-            }
-        } else {
-            (bun_sys::Fd::INVALID, false)
-        };
-        let fd_guard = (bun_watcher::REQUIRES_FILE_DESCRIPTORS && owned_fd)
-            .then(|| bun_sys::CloseOnDrop::new(fd));
+            } else {
+                (None, bun_sys::Fd::INVALID)
+            };
+        let owned_fd = fd_guard.is_some();
 
         // `add_directory::<true>` so the `WatchItem` owns its path: the watcher
         // retains the path until eviction runs (deferred onto `evict_list` and
@@ -1409,7 +1413,7 @@ impl DirectoryWatchStore {
         };
 
         // Disarm errdefer guards: success path.
-        let _ = fd_guard.map(bun_sys::CloseOnDrop::into_raw);
+        let fd = fd_guard.map_or(fd, bun_sys::CloseOnDrop::into_raw);
         let _ = scopeguard::ScopeGuard::into_inner(watches_guard);
 
         let dep = self.append_dep_assume_capacity(directory_watch_store::Dep {

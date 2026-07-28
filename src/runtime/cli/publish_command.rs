@@ -1546,9 +1546,9 @@ impl PublishCommand {
                     Global::crash();
                 }
             };
-            let _close = bun_sys::CloseOnDrop::new(workspace_root);
+            let workspace_root = bun_sys::Dir::from_fd(workspace_root);
 
-            Self::normalize_bin(json, &bump, package_name, workspace_root)?;
+            Self::normalize_bin(json, &bump, package_name, workspace_root.fd)?;
         }
 
         let buffer_writer = bun_js_printer::BufferWriter::init();
@@ -1582,10 +1582,9 @@ impl PublishCommand {
     /// the first match from `readdir` (same ordering npm's glob walks, in practice),
     /// or `None` if none is present.
     pub(crate) fn find_workspace_readme(abs_workspace_path: &[u8]) -> Option<ReadmeInfo> {
-        let workspace_dir = bun_sys::open_dir_absolute(abs_workspace_path).ok()?;
-        let _close = bun_sys::CloseOnDrop::new(workspace_dir);
+        let workspace_dir = bun_sys::Dir::from_fd(bun_sys::open_dir_absolute(abs_workspace_path).ok()?);
 
-        let mut iter = DirIterator::iterate(workspace_dir);
+        let mut iter = DirIterator::iterate(workspace_dir.fd);
         while let Some(entry) = iter.next().ok().flatten() {
             if entry.kind == bun_sys::EntryKind::Directory {
                 continue;
@@ -1596,7 +1595,7 @@ impl PublishCommand {
                 continue;
             }
 
-            let contents = match bun_sys::File::read_from(workspace_dir, name) {
+            let contents = match bun_sys::File::read_from(workspace_dir.fd, name) {
                 Ok(bytes) => bytes,
                 Err(_) => return None,
             };
@@ -1801,7 +1800,7 @@ impl PublishCommand {
 
                 while let Some(dir_info) = dirs.pop() {
                     let (dir, dir_subpath, close_dir) = dir_info;
-                    let _close = close_dir.then(|| bun_sys::CloseOnDrop::new(dir));
+                    let _dir: Option<bun_sys::Dir> = close_dir.then(|| bun_sys::Dir::from_fd(dir));
 
                     let mut iter = DirIterator::iterate(dir);
                     while let Some(entry) = iter.next().ok().flatten() {

@@ -517,8 +517,7 @@ JSUint8Array* NodeVMSourceTextModule::cachedData(JSGlobalObject* globalObject)
     if (!m_cachedBytecodeBuffer) {
         RefPtr<CachedBytecode> cachedBytecode = bytecode(globalObject);
         RETURN_IF_EXCEPTION(scope, nullptr);
-        // getBytecode can fail without throwing (for example when serialization
-        // fails); surface the same error as NodeVM::createCachedData.
+        // getBytecode can return null without throwing (serialization failure).
         if (!cachedBytecode) [[unlikely]] {
             throwVMError(globalObject, scope, "createCachedData failed"_s);
             return nullptr;

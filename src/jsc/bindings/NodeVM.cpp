@@ -129,9 +129,7 @@ bool extractCachedData(JSValue cachedDataValue, WTF::Vector<uint8_t>& outCachedD
     return false;
 }
 
-// JSC's bytecode decoder trusts embedded offsets without bounds-checking, so
-// cachedData carries this header (the same shape as V8's SerializedCodeData)
-// and anything that fails it is rejected before reaching the decoder.
+// Integrity header verified by unwrapCachedData before decodeCodeBlock sees the payload; same role as V8's SerializedCodeData header.
 struct CachedDataHeader {
     uint32_t magic;
     uint32_t payloadLength;
@@ -183,7 +181,6 @@ RefPtr<JSC::CachedBytecode> unwrapCachedData(const JSC::SourceCode& source, std:
     }
 
     std::span<const uint8_t> payload = cachedData.subspan(sizeof(CachedDataHeader));
-    // Explicit length check catches truncation/extension without hashing first.
     if (payload.size() != header.payloadLength) {
         return nullptr;
     }
@@ -197,9 +194,7 @@ RefPtr<JSC::CachedBytecode> unwrapCachedData(const JSC::SourceCode& source, std:
         return nullptr;
     }
 
-    // Decoded functions keep a reference to the decoder (and through it, to these
-    // bytes) for lazy code block decoding, so the payload must own its memory
-    // rather than borrow the caller's buffer.
+    // Copy: decoded functions retain the Decoder for lazy code block decoding, so a borrowed span would dangle.
     auto payloadCopy = WTF::MallocSpan<uint8_t, JSC::VMMalloc>::malloc(payload.size());
     memcpySpan(payloadCopy.mutableSpan(), payload);
     return JSC::CachedBytecode::create(WTF::move(payloadCopy), {});

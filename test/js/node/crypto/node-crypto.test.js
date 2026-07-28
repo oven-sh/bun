@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, isASAN } from "harness";
+import { bunEnv, bunExe } from "harness";
 
 import crypto from "node:crypto";
 import { PassThrough, Readable } from "node:stream";

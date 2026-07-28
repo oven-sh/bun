@@ -985,12 +985,14 @@ it("match() returns null when the URL has fewer segments than a dynamic route re
   }
 });
 
-it.skipIf(isWindows || isMacOS)("src is computed for a route whose path is longer than the fast-path buffer", async () => {
-  using dir = tempDir("fsr-long-route-src", {
-    "pages/keep.tsx": "export default 1;\n",
-  });
+it.skipIf(isWindows || isMacOS)(
+  "src is computed for a route whose path is longer than the fast-path buffer",
+  async () => {
+    using dir = tempDir("fsr-long-route-src", {
+      "pages/keep.tsx": "export default 1;\n",
+    });
 
-  const code = /* ts */ `
+    const code = /* ts */ `
     const fs = require("fs");
     const path = require("path");
     const pagesDir = ${JSON.stringify(path.join(String(dir), "pages"))};
@@ -1012,14 +1014,15 @@ it.skipIf(isWindows || isMacOS)("src is computed for a route whose path is longe
     console.log("ok " + m.src.length);
   `;
 
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "-e", code],
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stderr).toBe("");
-  expect(stdout.trim()).toBe("ok 2264");
-  expect(exitCode).toBe(0);
-});
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", code],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout.trim()).toBe("ok 2264");
+    expect(exitCode).toBe(0);
+  },
+);

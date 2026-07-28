@@ -2102,10 +2102,7 @@ pub(crate) mod strings_impl {
         if let Some(nl) = rest.iter().position(|&b| b == b'\n') {
             rest = &rest[..nl];
         }
-        if let Some(end) = rest
-            .iter()
-            .position(|&b| matches!(b, b'/' | b'?' | b'#'))
-        {
+        if let Some(end) = rest.iter().position(|&b| matches!(b, b'/' | b'?' | b'#')) {
             rest = &rest[..end];
         }
         let at = rest.iter().position(|&b| b == b'@')?;

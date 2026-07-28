@@ -69,6 +69,10 @@ const exitScenarios = {
   // termination must propagate through it instead.
   "node:vm script": (n: number) =>
     `console.log("MARK:${n}");\nrequire("node:vm").runInThisContext("process.exit(1)");\nconsole.log("AFTER_EXIT_SHOULD_NOT_PRINT");\n`,
+  // process.exit() inside an uncaughtExceptionCaptureCallback: the termination
+  // unwinding the callback must not be logged as if the callback threw.
+  "capture callback": (n: number) =>
+    `console.log("MARK:${n}");\nprocess.setUncaughtExceptionCaptureCallback(() => { process.exit(1); console.log("AFTER_EXIT_SHOULD_NOT_PRINT"); });\nthrow new Error("handled by capture callback");\n`,
 } as const;
 
 for (const [scenario, fixture] of Object.entries(exitScenarios)) {
@@ -121,7 +125,10 @@ for (const [scenario, fixture] of Object.entries(exitScenarios)) {
 
     await reader.cancel();
     proc.kill();
-    await stderrText;
+    // Every scenario's error is consumed before it becomes unhandled, so
+    // nothing (like a rendering of the internal termination exception) may
+    // reach stderr.
+    expect(await stderrText).toBe("");
   });
 }
 

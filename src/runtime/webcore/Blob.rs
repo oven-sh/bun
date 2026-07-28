@@ -755,10 +755,15 @@ impl BlobExt for Blob {
                 writer.write_int_le::<u32>(stored_name.len() as u32)?;
                 writer.write_all(stored_name)?;
             } else {
-                // Version 4: a file-backed slice's window end. Written before
-                // resolve_size() so an unresolved blob stays MAX_SIZE (unknown)
-                // on the wire and the receiver stats it locally, like v3.
-                writer.write_int_le::<u64>(self.size.get())?;
+                // Version 4: a file-backed slice's window end. A stat-derived
+                // `size` is a hint (the receiver re-stats locally), so only a
+                // caller-supplied slice bound goes on the wire; an unbounded
+                // view stays MAX_SIZE (unknown), like v3.
+                writer.write_int_le::<u64>(if self.size_is_explicit.get() {
+                    self.size.get()
+                } else {
+                    MAX_SIZE
+                })?;
                 self.resolve_size();
                 store.serialize(writer)?;
             }
@@ -4289,6 +4294,7 @@ fn on_structured_clone_deserialize<B: AsRef<[u8]>>(
         // resolve_size() clamps this to the actual file size on first use.
         if size != MAX_SIZE {
             blob.size.set(size as SizeType);
+            blob.size_is_explicit.set(true);
         }
     }
     if let Some(store) = blob.store.get() {

@@ -110,6 +110,12 @@ pub struct Feed {
 /// behind a non-reading peer before the session is treated as flooded (NGHTTP2_ERR_FLOODED).
 const MAX_OUTBOUND_ACK_QUEUE: u32 = 1000;
 
+/// nghttp2's NGHTTP2_DEFAULT_STREAM_RESET_BURST (CVE-2023-44487): inbound RST_STREAM frames
+/// tolerated on a single connection before the session is treated as flooded. The rapid-reset
+/// attack opens a stream and immediately cancels it in a tight loop; without this bound every
+/// cancelled stream still reaches the JS handler and a full response is encoded for it.
+const MAX_PEER_RESET_STREAMS: u32 = 1000;
+
 /// What the connection engine calls back into the embedder (the JSC binding) for. Methods take
 /// `&self`: the JSC binding (H2FrameParser) is fully interior-mutable (Cell/JsCell) and its host
 /// functions receive `&Self`, so it can own the `Connection` and pass itself as the sink without an
@@ -273,6 +279,10 @@ pub struct Connection {
     /// obq_flood_counter_). Reset only via note_outbound_drained() when the
     /// embedder confirms its outbound buffer emptied — never per receive().
     obq_ack_pending: u32,
+    /// Inbound RST_STREAM frames seen on this connection (nghttp2's stream_reset_ratelim,
+    /// CVE-2023-44487). Past MAX_PEER_RESET_STREAMS the session is torn down with
+    /// GOAWAY(ENHANCE_YOUR_CALM) / NGHTTP2_ERR_FLOODED.
+    peer_reset_count: u32,
 
     /// Scratch buffer for the outbound HPACK-encoded header block.
     enc_buf: Vec<u8>,
@@ -318,6 +328,7 @@ impl Connection {
             header_stream_refused: false,
             terminated: false,
             obq_ack_pending: 0,
+            peer_reset_count: 0,
             enc_buf: Vec::new(),
             replenish_buf: Vec::new(),
             evict_buf: Vec::new(),
@@ -1612,6 +1623,19 @@ impl Connection {
             return true;
         }
         sink.on_stream_reset(hdr.stream_id, code_raw);
+        // CVE-2023-44487 rapid-reset: bound inbound RST_STREAM per connection the same way
+        // nghttp2's stream_reset_ratelim does (default burst 1000). Checked after on_stream_reset
+        // so the stream is still torn down and accounted for before the session GOAWAYs.
+        self.peer_reset_count = self.peer_reset_count.saturating_add(1);
+        if self.peer_reset_count > MAX_PEER_RESET_STREAMS {
+            self.local_connection_error(
+                sink,
+                ErrorCode::EnhanceYourCalm,
+                wire::lib_error::FLOODED,
+                b"too many RST_STREAM frames",
+            );
+            return true;
+        }
         false
     }
 

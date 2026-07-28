@@ -1623,3 +1623,107 @@ describe("inbound stream lifecycle", () => {
     }
   });
 });
+
+// CVE-2023-44487: a peer that opens a stream and immediately resets it in a tight loop must not
+// be able to drive unbounded handler invocations / response encoding. nghttp2 bounds inbound
+// RST_STREAM per connection (default burst 1000) and tears the session down with
+// GOAWAY(ENHANCE_YOUR_CALM) / NGHTTP2_ERR_FLOODED once exceeded; node surfaces that as a
+// sessionError with code ERR_HTTP2_ERROR.
+describe("RST_STREAM flood (CVE-2023-44487 rapid-reset)", () => {
+  test("an RST_STREAM flood is answered with GOAWAY(ENHANCE_YOUR_CALM) and bounded handler work", async () => {
+    let handlers = 0;
+    const sessionError = Promise.withResolvers<any>();
+    const server = http2.createServer();
+    server.on("sessionError", e => sessionError.resolve(e));
+    server.on("session", s => s.on("error", () => {}));
+    server.on("stream", (stream: any) => {
+      handlers++;
+      stream.on("error", () => {});
+      try {
+        stream.respond({ ":status": 200 });
+        stream.end("x");
+      } catch {}
+    });
+    server.listen(0);
+    await once(server, "listening");
+    const c = await RawH2.connect((server.address() as net.AddressInfo).port);
+    try {
+      c.sendPreface();
+      c.sendEmptySettings();
+      c.sendSettingsAck();
+      const block = requestHeaderBlock("GET");
+      const cancel = Buffer.alloc(4);
+      cancel.writeUInt32BE(ErrorCode.CANCEL, 0);
+      // One contiguous write so HEADERS(n)+RST_STREAM(n) are parsed back-to-back and the handler
+      // runs synchronously for every stream that gets through: this is the worst case for the
+      // server, and the one the mitigation bounds.
+      const batch: Buffer[] = [];
+      for (let i = 0; i < 1200; i++) {
+        const sid = 1 + 2 * i;
+        batch.push(encodeFrame(FrameType.HEADERS, 0x5, sid, block), encodeFrame(FrameType.RST_STREAM, 0, sid, cancel));
+      }
+      c.send(Buffer.concat(batch));
+
+      const goaway = await c.waitForGoaway(10_000);
+      expect(goawayErrorCode(goaway)).toBe(ErrorCode.ENHANCE_YOUR_CALM);
+      expect(Buffer.from(goaway.payload.subarray(8)).toString()).toBe("too many RST_STREAM frames");
+      // The handler fires once per stream whose RST had not yet been counted past the threshold;
+      // nghttp2's default burst is 1000, so at most 1001 handlers run. The exact count is
+      // deterministic here because every HEADERS+RST pair is in the same receive batch.
+      expect(handlers).toBeGreaterThan(0);
+      expect(handlers).toBeLessThanOrEqual(1001);
+
+      const err = await sessionError.promise;
+      expect(err?.code).toBe("ERR_HTTP2_ERROR");
+    } finally {
+      c.destroy();
+      server.close();
+    }
+  });
+
+  test("fewer than the burst threshold of resets does not tear the session down", async () => {
+    // The bound must not trip on ordinary client-initiated cancellations: 500 resets is well under
+    // nghttp2's default burst of 1000, and a follow-up request on the same connection must still
+    // be served.
+    let handlers = 0;
+    const server = http2.createServer();
+    server.on("session", s => s.on("error", () => {}));
+    server.on("stream", (stream: any) => {
+      handlers++;
+      stream.on("error", () => {});
+      try {
+        stream.respond({ ":status": 200 });
+        stream.end("ok");
+      } catch {}
+    });
+    server.listen(0);
+    await once(server, "listening");
+    const c = await RawH2.connect((server.address() as net.AddressInfo).port);
+    try {
+      c.sendPreface();
+      c.sendEmptySettings();
+      c.sendSettingsAck();
+      const block = requestHeaderBlock("GET");
+      const cancel = Buffer.alloc(4);
+      cancel.writeUInt32BE(ErrorCode.CANCEL, 0);
+      const batch: Buffer[] = [];
+      for (let i = 0; i < 500; i++) {
+        const sid = 1 + 2 * i;
+        batch.push(encodeFrame(FrameType.HEADERS, 0x5, sid, block), encodeFrame(FrameType.RST_STREAM, 0, sid, cancel));
+      }
+      c.send(Buffer.concat(batch));
+      // A fresh request after the reset burst is answered normally, no GOAWAY on the wire.
+      c.sendFrame(FrameType.HEADERS, 0x5, 1001, block);
+      const resp = await c.waitFor(
+        f => (f.type === FrameType.HEADERS && f.streamId === 1001) || f.type === FrameType.GOAWAY,
+        10_000,
+      );
+      expect(resp.type).toBe(FrameType.HEADERS);
+      expect(c.frames.find(f => f.type === FrameType.GOAWAY)).toBeUndefined();
+      expect(handlers).toBe(501);
+    } finally {
+      c.destroy();
+      server.close();
+    }
+  });
+});

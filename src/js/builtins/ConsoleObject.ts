@@ -145,6 +145,13 @@ export function createConsoleConstructor(console: typeof globalThis.console) {
   const { inspect, formatWithOptions } = require("node:util");
   const { isBuffer } = require("node:buffer");
   const { isMapIterator, isSetIterator } = require("node:util/types");
+  const { channel } = require("node:diagnostics_channel");
+
+  const onLog = channel("console.log");
+  const onWarn = channel("console.warn");
+  const onError = channel("console.error");
+  const onInfo = channel("console.info");
+  const onDebug = channel("console.debug");
 
   const { validateObject, validateInteger, validateArray, validateOneOf } = require("internal/validators");
   const kMaxGroupIndentation = 1000;
@@ -537,10 +544,37 @@ export function createConsoleConstructor(console: typeof globalThis.console) {
 
   const consoleMethods: any = {
     log(...args) {
+      if (onLog.hasSubscribers) {
+        onLog.publish(args);
+      }
+      this[kWriteToConsole](kUseStdout, this[kFormatForStdout](args));
+    },
+
+    info(...args) {
+      if (onInfo.hasSubscribers) {
+        onInfo.publish(args);
+      }
+      this[kWriteToConsole](kUseStdout, this[kFormatForStdout](args));
+    },
+
+    debug(...args) {
+      if (onDebug.hasSubscribers) {
+        onDebug.publish(args);
+      }
       this[kWriteToConsole](kUseStdout, this[kFormatForStdout](args));
     },
 
     warn(...args) {
+      if (onWarn.hasSubscribers) {
+        onWarn.publish(args);
+      }
+      this[kWriteToConsole](kUseStderr, this[kFormatForStderr](args));
+    },
+
+    error(...args) {
+      if (onError.hasSubscribers) {
+        onError.publish(args);
+      }
       this[kWriteToConsole](kUseStderr, this[kFormatForStderr](args));
     },
 
@@ -812,10 +846,7 @@ export function createConsoleConstructor(console: typeof globalThis.console) {
 
   for (const method of Reflect.ownKeys(consoleMethods)) Console.prototype[method] = consoleMethods[method];
 
-  Console.prototype.debug = Console.prototype.log;
-  Console.prototype.info = Console.prototype.log;
   Console.prototype.dirxml = Console.prototype.log;
-  Console.prototype.error = Console.prototype.warn;
   Console.prototype.groupCollapsed = Console.prototype.group;
 
   return Console;

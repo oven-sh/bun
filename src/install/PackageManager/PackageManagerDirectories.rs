@@ -336,11 +336,14 @@ unsafe fn ensure_cache_directory(this: *mut PackageManager) -> Dir {
                 Global::crash();
             }
             Err(err) => {
-                bun_core::pretty_errorln!(
-                    "<r><yellow>warn<r>: cache directory {} is not creatable: {}, falling back to node_modules/.cache",
-                    bun_fmt::quote(&cache_dir.path),
-                    bun_fmt::s(err.name())
-                );
+                // SAFETY: shared read of `options.log_level`; see fn safety contract.
+                if unsafe { (*this).options.log_level } != LogLevel::Silent {
+                    bun_core::pretty_errorln!(
+                        "<r><yellow>warn<r>: cache directory {} is not creatable: {}, falling back to node_modules/.cache",
+                        bun_fmt::quote(&cache_dir.path),
+                        bun_fmt::s(err.name())
+                    );
+                }
                 // SAFETY: narrow `&mut enable` projection; disjoint from
                 // any `&options.{registries,scope}` the caller may hold.
                 unsafe { (*this).options.enable.set(Enable::CACHE, false) };

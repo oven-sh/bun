@@ -9254,11 +9254,9 @@ pub fn renameat_concurrently_without_fallback(
             }
         }
 
-        // Sad path: no atomic exchange (NFS/FUSE, Windows). Deleting the
-        // destination in place would let a concurrent reader open the
-        // directory and then hit ENOENT on its files mid-delete, so move the
-        // destination aside first, rename the source into place, and only
-        // then delete the old tree under its aside name.
+        // Sad path (no atomic exchange, e.g. NFS/FUSE or Windows): move the
+        // destination aside, rename the source into place, then delete the old
+        // tree. An in-place delete_tree(dest) would ENOENT concurrent readers.
         let delete_tree_at = |path: &[u8]| {
             if to_dir_fd.is_valid() {
                 let _ = Dir::borrow(&to_dir_fd).delete_tree(path);
@@ -9270,16 +9268,14 @@ pub fn renameat_concurrently_without_fallback(
         let mut attempts_left: u32 = 8;
         loop {
             let Some(aside) = rename_aside_name(to, &mut aside_buf) else {
-                // No room to append a suffix; fall back to the racy
-                // in-place delete.
+                // No room to append a suffix; fall back to the in-place delete.
                 delete_tree_at(to.as_bytes());
                 renameat(from_dir_fd, from, to_dir_fd, to)?;
                 break;
             };
             let moved_aside = match renameat(to_dir_fd, to, to_dir_fd, aside) {
                 Ok(()) => true,
-                // The destination vanished (e.g. a concurrent process moved
-                // it aside itself); go straight to the rename.
+                // The destination vanished; go straight to the rename.
                 Err(err) if err.get_errno() == E::ENOENT => false,
                 Err(err) => return Err(err),
             };

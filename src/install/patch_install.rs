@@ -613,10 +613,9 @@ impl PatchTask {
         if !renamed
             && sys::directory_exists_at(patch.cache_dir, cache_dir_subpath_z).unwrap_or(false)
         {
-            // A concurrent `bun install` created the same entry; its name embeds
-            // the patch hash, so the contents are equivalent. Keep theirs and
-            // discard ours: replacing it would unlink files while another
-            // process copies them out of the cache.
+            // A concurrent `bun install` created the same entry (its name embeds
+            // the patch hash, so contents are equivalent): keep it, since
+            // replacing it unlinks files another process may be copying out.
             let _ = sys::Dir::borrow(&system_tmpdir).delete_tree(path_in_tmpdir.as_bytes());
         } else if !renamed {
             if let Err(e) = sys::renameat_concurrently(

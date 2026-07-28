@@ -678,17 +678,11 @@ impl ExtractTarball {
             }
             #[cfg(not(windows))]
             {
-                // Gracefully handle duplicate concurrent `bun install` calls:
-                //
-                // 1. Rename from the temporary directory into the cache, failing if
-                //    the destination already exists.
-                // 2. If it already exists, a concurrent `bun install` put a complete
-                //    entry there (entries only appear via an atomic rename of a fully
-                //    extracted tree), so keep it and discard ours. Replacing it would
-                //    unlink files while another process copies them out of the cache.
-                // 3. If the existing entry is incomplete (e.g. a crashed copy left it
-                //    without package.json), replace it: that is the only repair path
-                //    for a corrupt entry.
+                // An existing destination is a complete entry from a concurrent
+                // `bun install` (entries only appear via atomic rename): keep it,
+                // since replacing it unlinks files another process may be copying
+                // out of the cache (#36227). Only an incomplete entry (no
+                // package.json, e.g. a crashed copy) is replaced.
 
                 if create_subdir {
                     if let Some(folder) = bun_paths::Dirname::dirname(folder_name) {

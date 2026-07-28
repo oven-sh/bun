@@ -1546,7 +1546,8 @@ test.concurrent("Bun.build inside bun test resolves imports through scanner-cach
     stdout: "pipe",
     stderr: "pipe",
   });
-  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+  const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(stderr).not.toContain("Could not resolve");
+  expect(stderr).toContain("1 pass");
   expect(exitCode).toBe(0);
 });

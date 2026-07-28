@@ -1137,79 +1137,113 @@ impl<'a> Parser<'a> {
         if value.len() < 2 {
             return Ok(None);
         }
-
         self.value_buffer.clear();
-
-        let mut pos = value.len() - 2;
-        let mut last = value.len();
-        loop {
-            if value[pos] == b'$' {
-                if pos > 0 && value[pos - 1] == b'\\' {
-                    // PERF: splice at the front is O(n)
-                    self.value_buffer
-                        .splice(0..0, value[pos..last].iter().copied());
-                    pos -= 1;
-                } else {
-                    let mut end = if value[pos + 1] == b'{' {
-                        pos + 2
-                    } else {
-                        pos + 1
-                    };
-                    let key_start = end;
-                    // Forward scans are bounded by `last`, not `value.len()`: the
-                    // right-to-left outer loop has already consumed `value[last..]`
-                    // into `value_buffer`, so a `${A:-${B}}` whose `:-` clause nests
-                    // another reference must not re-scan the inner bytes (that would
-                    // leave `end > last` and panic on the `value[end..last]` splice).
-                    while end < last {
-                        match value[end] {
-                            b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_' => {
-                                end += 1;
-                                continue;
-                            }
-                            _ => break,
-                        }
-                    }
-                    let lookup_value = map.get(&value[key_start..end]);
-                    let default_value: &[u8] = if value[end..last].starts_with(b":-") {
-                        end += b":-".len();
-                        let value_start = end;
-                        while end < last {
-                            match value[end] {
-                                b'}' | b'\\' => break,
-                                _ => {
-                                    end += 1;
-                                    continue;
-                                }
-                            }
-                        }
-                        &value[value_start..end]
-                    } else {
-                        b""
-                    };
-                    if end < last && value[end] == b'}' {
-                        end += 1;
-                    }
-                    self.value_buffer
-                        .splice(0..0, value[end..last].iter().copied());
-                    self.value_buffer
-                        .splice(0..0, lookup_value.unwrap_or(default_value).iter().copied());
-                }
-                last = pos;
-            }
-            if pos == 0 {
-                if last == value.len() {
-                    return Ok(None);
-                }
-                break;
-            }
-            pos -= 1;
-        }
-        if last > 0 {
-            self.value_buffer
-                .splice(0..0, value[..last].iter().copied());
+        if !Self::expand_into(map, value, self.value_buffer, 0) {
+            return Ok(None);
         }
         Ok(Some(self.value_buffer.as_slice()))
+    }
+
+    /// Left-to-right expansion of `$NAME` / `${NAME}` / `${NAME:-default}`.
+    /// `${...}` finds its closing brace by depth counting (`${` opens, `}`
+    /// closes, `\x` is skipped), so a nested `${A:-${B}}` pairs correctly and
+    /// no slice index can invert. Malformed references (unterminated `${`,
+    /// junk after the key) are emitted literally; the loader never aborts on
+    /// input shape. The `:-` default clause is itself expanded via a bounded
+    /// recursive call so `${A:-${B:-c}}` composes.
+    fn expand_into(map: &Map, value: &[u8], out: &mut Vec<u8>, depth: u8) -> bool {
+        #[inline]
+        fn is_ident(b: u8) -> bool {
+            matches!(b, b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')
+        }
+
+        let mut pos = 0;
+        let mut changed = false;
+        while pos < value.len() {
+            let b = value[pos];
+            if b == b'\\' && value.get(pos + 1) == Some(&b'$') {
+                out.push(b'$');
+                pos += 2;
+                changed = true;
+                continue;
+            }
+            if b != b'$' || pos + 1 >= value.len() {
+                out.push(b);
+                pos += 1;
+                continue;
+            }
+            let next = value[pos + 1];
+            if next == b'{' {
+                let inner_start = pos + 2;
+                let close = {
+                    let mut i = inner_start;
+                    let mut nest = 1usize;
+                    loop {
+                        if i >= value.len() {
+                            break None;
+                        }
+                        match value[i] {
+                            b'\\' if i + 1 < value.len() => i += 2,
+                            b'$' if value.get(i + 1) == Some(&b'{') => {
+                                nest += 1;
+                                i += 2;
+                            }
+                            b'}' => {
+                                nest -= 1;
+                                if nest == 0 {
+                                    break Some(i);
+                                }
+                                i += 1;
+                            }
+                            _ => i += 1,
+                        }
+                    }
+                };
+                let Some(close) = close else {
+                    out.extend_from_slice(&value[pos..]);
+                    pos = value.len();
+                    continue;
+                };
+                changed = true;
+                let inner = &value[inner_start..close];
+                let key_end = inner.iter().position(|&c| !is_ident(c)).unwrap_or(inner.len());
+                let key = &inner[..key_end];
+                let rest = &inner[key_end..];
+                if rest.is_empty() {
+                    if let Some(v) = map.get(key) {
+                        out.extend_from_slice(v);
+                    }
+                } else if let Some(default) = rest.strip_prefix(b":-") {
+                    if let Some(v) = map.get(key) {
+                        out.extend_from_slice(v);
+                    } else if depth < 200 {
+                        Self::expand_into(map, default, out, depth + 1);
+                    } else {
+                        out.extend_from_slice(default);
+                    }
+                } else {
+                    out.extend_from_slice(&value[pos..=close]);
+                }
+                pos = close + 1;
+                continue;
+            }
+            if is_ident(next) {
+                changed = true;
+                let key_start = pos + 1;
+                let mut k = key_start;
+                while k < value.len() && is_ident(value[k]) {
+                    k += 1;
+                }
+                if let Some(v) = map.get(&value[key_start..k]) {
+                    out.extend_from_slice(v);
+                }
+                pos = k;
+                continue;
+            }
+            out.push(b'$');
+            pos += 1;
+        }
+        changed
     }
 
     fn parse<const OVERRIDE: bool, const IS_PROCESS: bool, const EXPAND: bool>(

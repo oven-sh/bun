@@ -252,43 +252,83 @@ test(".env value expansion", () => {
   expect(stdout).toBe("foo|foo bar|foo foo bar moo");
 });
 
-test(".env nested ${...} inside :- default does not panic", () => {
-  // A ${NAME} reference nested in a ${VAR:-default} clause used to push the
-  // forward default scan past the right-to-left `last` boundary and panic on
-  // the `value[end..last]` slice before any user code ran.
+test(".env ${VAR:-default} with nested references", () => {
+  // A ${NAME} nested inside a ${VAR:-default} clause used to panic the loader
+  // ("slice index starts at N but ends at M") before any user code ran. The
+  // expander now scans left-to-right, pairs `${` with its matching `}` by
+  // depth, and expands the default clause recursively, so every case below
+  // loads and malformed forms fall through as literals.
   const dir = tempDirWithFiles("dotenv-expand-nested", {
     ".env": [
-      "NESTD_FALLBACK=localhost",
-      "NESTD_HOST=${NESTD_UNSET:-${NESTD_FALLBACK}}",
-      "NESTD_Y=${NESTD_UNSET:-${NESTD_ALSO_UNSET}}",
-      "NESTD_Z=${NESTD_UNSET:-${NESTD_ALSO_UNSET:-c}}",
-      "NESTD_W=${NESTD_UNSET:-x${NESTD_ALSO_UNSET}}",
-      'NESTD_Q="${NESTD_UNSET:-${NESTD_ALSO_UNSET}}"',
-      "NESTD_PRESET=hi",
-      "NESTD_P=${NESTD_PRESET:-${NESTD_ALSO_UNSET}}",
+      "NSTD_FALLBACK=localhost",
+      "NSTD_SET=hi",
+      "NSTD_HOST=${NSTD_UNSET:-${NSTD_FALLBACK}}",
+      "NSTD_EMPTY=${NSTD_UNSET:-${NSTD_ALSO_UNSET}}",
+      "NSTD_DEEP=${NSTD_UNSET:-${NSTD_ALSO_UNSET:-c}}",
+      "NSTD_PREFIX=${NSTD_UNSET:-x${NSTD_ALSO_UNSET}}",
+      'NSTD_QUOTED="${NSTD_UNSET:-${NSTD_ALSO_UNSET:-${NSTD_FALLBACK}}}suffix"',
+      "NSTD_SET_WINS=${NSTD_SET:-${NSTD_ALSO_UNSET}}",
+      "NSTD_BARE=${NSTD_UNSET:-$NSTD_FALLBACK}",
+      "NSTD_DOLLAR=${NSTD_UNSET:-$}",
+      "NSTD_DUBL=$${NSTD_UNSET:-${NSTD_FALLBACK}}",
+      "NSTD_NOKEY=${:-${NSTD_FALLBACK}}",
+      "NSTD_AROUND=pre${NSTD_UNSET:-$NSTD_FALLBACK}post",
+      "NSTD_TWO=${NSTD_FALLBACK}${NSTD_UNSET:-$NSTD_FALLBACK}",
+      "NSTD_PATH=$NSTD_FALLBACK/${NSTD_UNSET:-$NSTD_FALLBACK}/x",
+      "NSTD_UNTERM=${NSTD_UNSET:-${",
+      "NSTD_UNTERM2=${NSTD_UNSET",
+      "NSTD_BSLASH=${NSTD_UNSET:-a\\b}",
+      "NSTD_DASH=${NSTD_UNSET-${NSTD_FALLBACK}}",
     ].join("\n"),
     "index.ts":
-      "const e = process.env;" +
-      "console.log(JSON.stringify({" +
-      "HOST:e.NESTD_HOST,Y:e.NESTD_Y,Z:e.NESTD_Z,W:e.NESTD_W,Q:e.NESTD_Q,P:e.NESTD_P" +
-      "}));",
+      "const keys = process.argv.slice(2);" +
+      "const out = {};" +
+      "for (const k of keys) out[k] = process.env[k];" +
+      "console.log(JSON.stringify(out));",
   });
-  const result = Bun.spawnSync([bunExe(), `${dir}/index.ts`], {
+  const keys = [
+    "NSTD_HOST",
+    "NSTD_EMPTY",
+    "NSTD_DEEP",
+    "NSTD_PREFIX",
+    "NSTD_QUOTED",
+    "NSTD_SET_WINS",
+    "NSTD_BARE",
+    "NSTD_DOLLAR",
+    "NSTD_DUBL",
+    "NSTD_NOKEY",
+    "NSTD_AROUND",
+    "NSTD_TWO",
+    "NSTD_PATH",
+    "NSTD_UNTERM",
+    "NSTD_UNTERM2",
+    "NSTD_BSLASH",
+    "NSTD_DASH",
+  ];
+  const result = Bun.spawnSync([bunExe(), `${dir}/index.ts`, ...keys], {
     cwd: dir,
     env: { ...bunEnv, NODE_ENV: undefined },
   });
   const stdout = result.stdout.toString("utf8").trim();
   expect(stdout).toStartWith("{");
-  // The loader does not yet implement full recursive default expansion, so the
-  // enclosing `}` can leak through; the contract here is that loading never
-  // aborts and the inner reference is resolved.
   expect(JSON.parse(stdout)).toEqual({
-    HOST: "localhost}",
-    Y: "}",
-    Z: "c}",
-    W: "x}",
-    Q: "}",
-    P: "hi}",
+    NSTD_HOST: "localhost",
+    NSTD_EMPTY: "",
+    NSTD_DEEP: "c",
+    NSTD_PREFIX: "x",
+    NSTD_QUOTED: "localhostsuffix",
+    NSTD_SET_WINS: "hi",
+    NSTD_BARE: "localhost",
+    NSTD_DOLLAR: "$",
+    NSTD_DUBL: "$localhost",
+    NSTD_NOKEY: "localhost",
+    NSTD_AROUND: "prelocalhostpost",
+    NSTD_TWO: "localhostlocalhost",
+    NSTD_PATH: "localhost/localhost/x",
+    NSTD_UNTERM: "${NSTD_UNSET:-${",
+    NSTD_UNTERM2: "${NSTD_UNSET",
+    NSTD_BSLASH: "a\\b",
+    NSTD_DASH: "${NSTD_UNSET-${NSTD_FALLBACK}}",
   });
   expect(result.exitCode).toBe(0);
 });

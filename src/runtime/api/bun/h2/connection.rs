@@ -561,8 +561,11 @@ impl Connection {
                 && remaining.len() >= total + wire::FRAME_HEADER_SIZE
             {
                 let next = FrameHeader::parse(&remaining[total..]);
+                // Require the full RST_STREAM (header + 4-byte payload): a truncated one would
+                // drop the response while the stream is never actually reset.
                 if matches!(next.typ(), Some(FrameType::RstStream))
                     && next.stream_id == hdr.stream_id
+                    && remaining.len() >= total + wire::FRAME_HEADER_SIZE + next.length as usize
                 {
                     self.rst_after_headers = hdr.stream_id;
                 }

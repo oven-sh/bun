@@ -105,7 +105,12 @@ pub(crate) fn merge_junit_fragments(coord: &mut Coordinator, outfile: &[u8], sum
         &mut contents,
         "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n\
          <testsuites name=\"bun test\" tests=\"{}\" assertions=\"{}\" failures=\"{}\" errors=\"{}\" skipped=\"{}\" time=\"{}\">\n",
-        totals.tests, summary.expectations, totals.failures, totals.errors, totals.skipped, elapsed_time,
+        totals.tests,
+        summary.expectations,
+        totals.failures,
+        totals.errors,
+        totals.skipped,
+        elapsed_time,
     );
     contents.extend_from_slice(&body);
     contents.extend_from_slice(b"</testsuites>\n");

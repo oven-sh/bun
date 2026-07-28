@@ -588,15 +588,12 @@ describe("junit reporter", () => {
     });
 
     const junitPath = join(tmpDir, "junit.xml");
-    await using proc = spawn(
-      [bunExe(), "test", "--parallel=2", "--reporter=junit", "--reporter-outfile", junitPath],
-      {
-        cwd: tmpDir,
-        env: { ...bunEnv, BUN_DEBUG_QUIET_LOGS: "1" },
-        stdout: "pipe",
-        stderr: "pipe",
-      },
-    );
+    await using proc = spawn([bunExe(), "test", "--parallel=2", "--reporter=junit", "--reporter-outfile", junitPath], {
+      cwd: tmpDir,
+      env: { ...bunEnv, BUN_DEBUG_QUIET_LOGS: "1" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
     const [, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
     const xmlContent = await file(junitPath).text();

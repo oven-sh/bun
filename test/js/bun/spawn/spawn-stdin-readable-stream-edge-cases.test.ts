@@ -28,17 +28,23 @@ describe("spawn stdin ReadableStream edge cases", () => {
       },
     });
 
+    const { promise: onExit, resolve } = Promise.withResolvers<unknown>();
     const proc = spawn({
       cmd: [bunExe(), "-e", "process.stdin.pipe(process.stdout)"],
       stdin: stream,
       stdout: "pipe",
       env: bunEnv,
+      onExit(_proc, _code, _signal, err) {
+        resolve(err);
+      },
     });
 
     const text = await proc.stdout.text();
     // Should receive data before the exception
     expect(text).toContain("chunk 1\n");
     expect(text).toContain("chunk 2\n");
+    // The pull exception is delivered as onExit's error argument.
+    expect(((await onExit) as Error)?.message).toBe("Pull error");
   });
 
   test("ReadableStream writing after process closed", async () => {

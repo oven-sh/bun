@@ -1472,7 +1472,7 @@ pub trait AutoInstaller {
 
     // ── PackageManager ops ────────────────────────────────────────────────
     fn set_on_wake(&mut self, handler: WakeHandler);
-    fn remove_on_wake(&mut self, context: NonNull<c_void>);
+    fn remove_on_wake(&self, context: NonNull<c_void>);
     fn path_for_resolution<'b>(
         &mut self,
         package_id: PackageID,

@@ -908,10 +908,10 @@ impl<'a> Resolver<'a> {
         if let (Some(pm), Some(ctx)) = (self.package_manager, self.on_wake_package_manager.context)
         {
             // SAFETY: BACKREF — `package_manager` names the process-static
-            // singleton; `remove_on_wake` only touches the `on_wake` field via
-            // its own mutex (the `wake_raw` serialization barrier), so no
-            // `auto_install_lock` is needed here.
-            unsafe { &mut *pm.as_ptr() }.remove_on_wake(ctx);
+            // singleton; `remove_on_wake` takes `&self` and only touches the
+            // `on_wake` field via its own mutex (the `wake_raw` serialization
+            // barrier), so no `auto_install_lock` is needed here.
+            unsafe { &*pm.as_ptr() }.remove_on_wake(ctx);
         }
     }
 

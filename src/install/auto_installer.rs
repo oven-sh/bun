@@ -314,7 +314,7 @@ impl hooks::AutoInstaller for PackageManager {
         }
     }
 
-    fn remove_on_wake(&mut self, context: core::ptr::NonNull<core::ffi::c_void>) {
+    fn remove_on_wake(&self, context: core::ptr::NonNull<core::ffi::c_void>) {
         self.on_wake.lock().retain(|h| h.context != Some(context));
     }
 

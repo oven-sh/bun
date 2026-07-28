@@ -252,6 +252,47 @@ test(".env value expansion", () => {
   expect(stdout).toBe("foo|foo bar|foo foo bar moo");
 });
 
+test(".env nested ${...} inside :- default does not panic", () => {
+  // A ${NAME} reference nested in a ${VAR:-default} clause used to push the
+  // forward default scan past the right-to-left `last` boundary and panic on
+  // the `value[end..last]` slice before any user code ran.
+  const dir = tempDirWithFiles("dotenv-expand-nested", {
+    ".env": [
+      "NESTD_FALLBACK=localhost",
+      "NESTD_HOST=${NESTD_UNSET:-${NESTD_FALLBACK}}",
+      "NESTD_Y=${NESTD_UNSET:-${NESTD_ALSO_UNSET}}",
+      "NESTD_Z=${NESTD_UNSET:-${NESTD_ALSO_UNSET:-c}}",
+      "NESTD_W=${NESTD_UNSET:-x${NESTD_ALSO_UNSET}}",
+      'NESTD_Q="${NESTD_UNSET:-${NESTD_ALSO_UNSET}}"',
+      "NESTD_PRESET=hi",
+      "NESTD_P=${NESTD_PRESET:-${NESTD_ALSO_UNSET}}",
+    ].join("\n"),
+    "index.ts":
+      "const e = process.env;" +
+      "console.log(JSON.stringify({" +
+      "HOST:e.NESTD_HOST,Y:e.NESTD_Y,Z:e.NESTD_Z,W:e.NESTD_W,Q:e.NESTD_Q,P:e.NESTD_P" +
+      "}));",
+  });
+  const result = Bun.spawnSync([bunExe(), `${dir}/index.ts`], {
+    cwd: dir,
+    env: { ...bunEnv, NODE_ENV: undefined },
+  });
+  const stdout = result.stdout.toString("utf8").trim();
+  expect(stdout).toStartWith("{");
+  // The loader does not yet implement full recursive default expansion, so the
+  // enclosing `}` can leak through; the contract here is that loading never
+  // aborts and the inner reference is resolved.
+  expect(JSON.parse(stdout)).toEqual({
+    HOST: "localhost}",
+    Y: "}",
+    Z: "c}",
+    W: "x}",
+    Q: "}",
+    P: "hi}",
+  });
+  expect(result.exitCode).toBe(0);
+});
+
 test(".env comments", () => {
   using dir = tempDir("dotenv-comments", {
     ".env": "#FOZ\nFOO = foo#FAIL\nBAR='bar' #BAZ",

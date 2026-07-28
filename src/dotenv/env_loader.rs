@@ -1156,7 +1156,12 @@ impl<'a> Parser<'a> {
                         pos + 1
                     };
                     let key_start = end;
-                    while end < value.len() {
+                    // Forward scans are bounded by `last`, not `value.len()`: the
+                    // right-to-left outer loop has already consumed `value[last..]`
+                    // into `value_buffer`, so a `${A:-${B}}` whose `:-` clause nests
+                    // another reference must not re-scan the inner bytes (that would
+                    // leave `end > last` and panic on the `value[end..last]` splice).
+                    while end < last {
                         match value[end] {
                             b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_' => {
                                 end += 1;
@@ -1166,10 +1171,10 @@ impl<'a> Parser<'a> {
                         }
                     }
                     let lookup_value = map.get(&value[key_start..end]);
-                    let default_value: &[u8] = if value[end..].starts_with(b":-") {
+                    let default_value: &[u8] = if value[end..last].starts_with(b":-") {
                         end += b":-".len();
                         let value_start = end;
-                        while end < value.len() {
+                        while end < last {
                             match value[end] {
                                 b'}' | b'\\' => break,
                                 _ => {
@@ -1182,7 +1187,7 @@ impl<'a> Parser<'a> {
                     } else {
                         b""
                     };
-                    if end < value.len() && value[end] == b'}' {
+                    if end < last && value[end] == b'}' {
                         end += 1;
                     }
                     self.value_buffer

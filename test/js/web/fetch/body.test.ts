@@ -608,6 +608,43 @@ for (const { body, fn } of bodyTypes) {
           // The native-handle buffered fast path must not bypass the decode.
           expect(await res.textStream().text()).toBe("a\ufffdb");
         });
+        // When a multi-byte character is split so that two (or more) consecutive
+        // native pulls each decode to the empty string, the adapter must keep
+        // pulling rather than stall with a read request still pending.
+        test.each([
+          ["4-byte char as [lead][cont][cont cont]", [[0x41], [0xf0], [0x9f], [0xab, 0xa0], [0x42]], "A🫠B"],
+          ["4-byte char byte-at-a-time", [[0x41], [0xf0], [0x9f], [0xab], [0xa0], [0x42]], "A🫠B"],
+          ["3-byte char byte-at-a-time", [[0x41], [0xe4], [0xb8], [0xad], [0x42]], "A中B"],
+          ["BOM byte-at-a-time then text", [[0xef], [0xbb], [0xbf], [0x68], [0x69]], "hi"],
+        ])(
+          "completes a fetch textStream() when consecutive chunks decode to nothing: %s",
+          async (_, parts, expected) => {
+            const listening = Promise.withResolvers<void>();
+            const server = net.createServer(sock => {
+              sock.once("data", async () => {
+                sock.write("HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n");
+                for (const p of parts) {
+                  sock.write(p.length.toString(16) + "\r\n");
+                  sock.write(Uint8Array.from(p));
+                  sock.write("\r\n");
+                  await new Promise(r => setImmediate(r));
+                }
+                sock.end("0\r\n\r\n");
+              });
+            });
+            server.listen(0, "127.0.0.1", () => listening.resolve());
+            await listening.promise;
+            try {
+              const { port } = server.address() as net.AddressInfo;
+              const res = await fetch(`http://127.0.0.1:${port}/`);
+              const chunks = await Array.fromAsync(res.textStream());
+              for (const chunk of chunks) expect(typeof chunk).toBe("string");
+              expect(chunks.join("")).toBe(expected);
+            } finally {
+              await new Promise<void>(r => server.close(() => r()));
+            }
+          },
+        );
       }
       if (body === Request) {
         test("streams an incoming request body server-side", async () => {

@@ -331,6 +331,12 @@ impl WindowsWatcher {
                 if err == w::Win32Error::TIMEOUT || err == w::Win32Error(258) {
                     return Ok(None);
                 } else {
+                    // GQCS returning FALSE with `*lpOverlapped != NULL`
+                    // dequeued a failed-I/O completion; nothing remains
+                    // outstanding on our OVERLAPPED in that case.
+                    if overlapped == &mut self.watcher.overlapped as *mut w::OVERLAPPED {
+                        self.armed = false;
+                    }
                     bun_core::scoped_log!(watcher, "GetQueuedCompletionStatus failed: {}", err.0);
                     return Err(bun_sys::Error {
                         errno: bun_sys::SystemErrno::init(err.0 as u32)

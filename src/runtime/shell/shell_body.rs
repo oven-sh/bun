@@ -28,8 +28,8 @@ pub use super::subproc; // declared once in `shell/mod.rs`
 // (ShellErr, GlobalJS/Mini, shell_cmd_from_js, ShellSrcBuilder, TestingAPIs).
 pub use bun_shell_parser::parse::{
     IfClauseTok, LEX_JS_OBJREF_PREFIX, LEX_JS_STRING_PREFIX, LexerAscii, LexerUnicode, ParseError,
-    Parser, Token, ast, is_if_clause_keyword_bunstr, needs_escape_bunstr,
-    needs_escape_utf8_ascii_latin1,
+    Parser, Token, ast, is_if_clause_keyword_bunstr, is_reserved_word_bunstr, is_reserved_word_text,
+    needs_escape_bunstr, needs_escape_utf8_ascii_latin1,
 };
 
 pub const WINDOWS_DEV_NULL: &ZStr = bun_core::zstr!("NUL");
@@ -611,7 +611,7 @@ impl<'a> ShellSrcBuilder<'a> {
             // `needs_escape_bunstr` is true for empty strings: `${''}` must still
             // produce an argument. Routing through appendJSStrRef makes the \x08
             // marker recognized regardless of quote context (e.g. inside single quotes).
-            if needs_escape_bunstr(bunstr) || is_if_clause_keyword_bunstr(bunstr) {
+            if needs_escape_bunstr(bunstr) || is_reserved_word_bunstr(bunstr) {
                 self.append_js_str_ref(bunstr)?;
                 return Ok(true);
             }
@@ -635,7 +635,7 @@ impl<'a> ShellSrcBuilder<'a> {
             return Ok(false);
         }
         if ALLOW_ESCAPE {
-            if needs_escape_utf8_ascii_latin1(utf8) || IfClauseTok::from_text(utf8).is_some() {
+            if needs_escape_utf8_ascii_latin1(utf8) || is_reserved_word_text(utf8) {
                 let bunstr = OwnedString::new(BunString::clone_utf8(utf8));
                 self.append_js_str_ref(bunstr.get())?;
                 return Ok(true);

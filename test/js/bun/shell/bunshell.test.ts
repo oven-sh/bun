@@ -2336,6 +2336,74 @@ cat redir_out`
   });
 });
 
+describe("unsupported reserved words fail at parse time", () => {
+  // A reserved word in command position must not be dispatched as an external
+  // command: before this was rejected, `while false; do BODY; done` ran BODY
+  // once with exit 0, and `for f in a b c; do ...; done` ran one iteration
+  // with $f empty.
+  const words = ["while", "until", "for", "do", "done", "case", "esac", "select", "function", "!", "{", "}"] as const;
+  const msg = (w: string) => `"${w}" is a reserved shell keyword that Bun Shell does not support yet.`;
+
+  for (const w of words) {
+    TestBuilder.command`${{ raw: w }} BUN_SHELL_SENTINEL_NEVER_RUNS`
+      .error(msg(w))
+      .runAsTest(`bare ${w} in command position is a parse error`);
+
+    TestBuilder.command`${{ raw: `"${w}"` }}`
+      .stderr(`bun: command not found: ${w}\n`)
+      .exitCode(1)
+      .runAsTest(`quoted ${w} is not a reserved word`);
+
+    TestBuilder.command`${w}`
+      .stderr(`bun: command not found: ${w}\n`)
+      .exitCode(1)
+      .runAsTest(`interpolated ${w} is not a reserved word`);
+
+    TestBuilder.command`echo ${{ raw: w }}`.stdout(`${w}\n`).runAsTest(`${w} in argument position stays a plain word`);
+  }
+
+  TestBuilder.command`while false
+do
+  echo BODY-RAN-EVEN-THOUGH-GUARD-IS-FALSE
+done
+echo tail`
+    .error(msg("while"))
+    .runAsTest("while-false body does not run");
+
+  TestBuilder.command`for f in one two three
+do
+  echo "iteration f=[$f]"
+done`
+    .error(msg("for"))
+    .runAsTest("for-in body does not run with empty loop var");
+
+  TestBuilder.command`until true; do echo body; done`
+    .error(msg("until"))
+    .runAsTest("until loop is rejected");
+
+  TestBuilder.command`! echo hi`.error(msg("!")).runAsTest("pipeline negation is rejected");
+
+  TestBuilder.command`{ echo hi; echo bye; }`.error(msg("{")).runAsTest("brace group is rejected");
+
+  TestBuilder.command`echo before; while false; do echo body; done`
+    .error(msg("while"))
+    .runAsTest("reserved word after a valid statement still fails the whole parse");
+
+  TestBuilder.command`echo $(while false; do echo x; done)`
+    .error(msg("while"))
+    .runAsTest("reserved word inside command substitution is rejected");
+
+  TestBuilder.command`if false; then echo a; else while false; do echo b; done; fi`
+    .error(msg("while"))
+    .runAsTest("reserved word inside if-else body is rejected");
+
+  TestBuilder.command`echo whilex`.stdout("whilex\n").runAsTest("reserved-word prefix of a longer word is not reserved");
+
+  TestBuilder.command`echo while${"x"}`
+    .stdout("whilex\n")
+    .runAsTest("reserved word glued to an interpolated suffix is not reserved");
+});
+
 describe("condexprs", () => {
   TestBuilder.command`[[ -f package.json ]] && echo yes!`.file("package.json", "hi").stdout("yes!\n").runAsTest("-f");
   TestBuilder.command`[[ -f mumbo.jumbo ]] && echo yes!`.exitCode(1).runAsTest("-f non-existent");

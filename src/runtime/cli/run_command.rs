@@ -1448,8 +1448,15 @@ impl Run {
             };
             let mut key = bun_jsc::zig_string::ZigString::init(b"bun.sql.preconnect");
             let sym = JSValue::symbol_for(global, &mut key);
-            let Some(preconnect_fn) = sql_object.get_own_by_value(global, sym) else {
-                break 'do_postgres_preconnect;
+            let preconnect_fn = match bun_jsc::from_js_host_call_generic(global, || {
+                sql_object.get_own_by_value(global, sym)
+            }) {
+                Ok(Some(v)) => v,
+                Ok(None) => break 'do_postgres_preconnect,
+                Err(e) => {
+                    global.report_active_exception_as_unhandled(e);
+                    break 'do_postgres_preconnect;
+                }
             };
             if let Err(e) = preconnect_fn.call(global, sql_object, &[]) {
                 global.report_active_exception_as_unhandled(e);

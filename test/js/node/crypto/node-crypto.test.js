@@ -814,6 +814,32 @@ describe("ArrayBuffer accepted where Node accepts it", () => {
     const ref = a.computeSecret(b.getPublicKey());
     expect(a.computeSecret(toAB(b.getPublicKey())).equals(ref)).toBe(true);
   });
+
+  it("createCipheriv iv and key.passphrase accept an ArrayBuffer", () => {
+    const key = Buffer.alloc(32, 1);
+    const iv = Buffer.alloc(12, 2);
+    const enc = crypto.createCipheriv("aes-256-gcm", key, toAB(iv));
+    Buffer.concat([enc.update("x"), enc.final()]);
+    expect(enc.getAuthTag().length).toBe(16);
+
+    const { privateKey } = crypto.generateKeyPairSync("ec", {
+      namedCurve: "P-256",
+      privateKeyEncoding: { type: "pkcs8", format: "pem", cipher: "aes-128-cbc", passphrase: "secret" },
+    });
+    const keyObj = crypto.createPrivateKey({ key: privateKey, passphrase: toAB(Buffer.from("secret")) });
+    expect(keyObj.asymmetricKeyType).toBe("ec");
+  });
+
+  it("cipher.update still rejects an ArrayBuffer like Node does", () => {
+    const cipher = crypto.createCipheriv("aes-256-gcm", Buffer.alloc(32, 1), Buffer.alloc(12, 2));
+    expect(() => cipher.update(new ArrayBuffer(4))).toThrow(
+      expect.objectContaining({
+        code: "ERR_INVALID_ARG_TYPE",
+        message:
+          'The "data" argument must be of type string or an instance of Buffer, TypedArray, or DataView. Received an instance of ArrayBuffer',
+      }),
+    );
+  });
 });
 
 it("x25519", () => {

@@ -1277,13 +1277,8 @@ pub mod fs {
                     entries.fd = handle;
                 }
 
-                // When refreshing a slot that already holds an open directory
-                // handle, keep that handle: its raw value may also be cached
-                // in `ParseTask.contents_or_fd`, the watcher's watchlist, or
-                // the dev server's `DirectoryWatchStore`, so replacing it
-                // would strand an open fd with no owner. The freshly-opened
-                // `handle` was only needed for the readdir above; release it
-                // here (the guard above does not, under `store_fd`).
+                // See `DirEntry::stale`: carry an existing handle forward and
+                // release the fresh one the guard above would keep open.
                 if let Some(original) = in_place {
                     // SAFETY: BSSMap-owned; entries_mutex held.
                     let prev_fd = unsafe { (*original).fd };
@@ -1320,34 +1315,22 @@ pub mod fs {
 
         /// Invalidates `file_path` in the directory-entry cache; returns
         /// whether an entry was invalidated.
+        ///
+        /// `BSSMap::remove()` only drops the hash→index mapping, so removing a
+        /// live `DirEntry` would orphan its open `.fd` (also cached in
+        /// `ParseTask.contents_or_fd`, the watcher's watchlist, and the dev
+        /// server's `DirectoryWatchStore`, so closing it here would race those
+        /// readers). Mark it [stale](DirEntry::stale) instead so the next
+        /// locked directory read re-scans the slot in place and carries the
+        /// fd forward.
         pub fn bust_entries_cache(&mut self, file_path: &[u8]) -> bool {
-            // `entries` is the process-global BSSMap singleton; callers
-            // (transpiler / hot-reloader / VM) reach this without
-            // `RESOLVER_MUTEX`. `read_directory_with_iterator` and
-            // `dir_info_cached_miss` hold `entries_mutex` while they read and
-            // overwrite slot contents, so take it here too for the tag check
-            // and `stale` write. No caller already holds it (no re-entry from
-            // `read_directory`/`dir_info_cached_maybe_log`).
+            // No caller already holds `entries_mutex` (non-recursive).
             let _g = self.entries_mutex.lock_guard();
-
-            // `BSSMap::remove()` only drops the hash→index mapping; the backing
-            // slot (and the leaked `Box<DirEntry>` it points at, with its open
-            // `.fd` when `store_fd` is true) is orphaned, and the next lookup
-            // allocates a fresh slot and re-opens the directory. Under
-            // `--hot`/`--watch` this leaked one directory fd per reload.
-            //
-            // The fd cannot simply be closed here: its raw value is also copied
-            // into `ParseTask.contents_or_fd`, the dev server's
-            // `DirectoryWatchStore`, and the watcher's own watchlist, and a
-            // close would race those readers on another thread. Instead keep
-            // the slot reachable and mark it stale; the next locked directory
-            // read takes the in-place re-scan path and carries the fd forward.
             if let Some(EntriesOption::Entries(entries)) = self.entries.get(file_path) {
                 entries.stale = true;
                 return true;
             }
-            // `Err` slots and `NotFound` sentinels hold no `DirEntry`; drop the
-            // key so the next read re-checks disk.
+            // `Err`/`NotFound` sentinels hold no `DirEntry`.
             self.entries.remove(file_path)
         }
 
@@ -1632,11 +1615,7 @@ pub mod fs {
                         Ok(mut new_entry) => {
                             // SAFETY: see above.
                             unsafe { (*e_ptr).data.clear() };
-                            // `readdir(store_fd=false, …)` leaves `new_entry.fd` invalid;
-                            // carry over any previously stored descriptor so callers that
-                            // cached it via `DirInfo::get_file_descriptor` keep a live
-                            // handle and it is not leaked by the overwrite below.
-                            // SAFETY: see above.
+                            // SAFETY: see above. Preserve any stored descriptor.
                             new_entry.fd = unsafe { (*e_ptr).fd };
                             // SAFETY: see above — slot is exclusively owned here.
                             unsafe { *e_ptr = new_entry };

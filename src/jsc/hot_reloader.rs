@@ -984,9 +984,7 @@ where
 
                         let affected_len: usize = 'brk: {
                             if IS_KQUEUE {
-                                // Index lookup only (`BSSMap::get` locks internally); the slot
-                                // contents are read under `entries_mutex` in the 'locked block
-                                // below, since a JS-thread resolve can now rewrite them in place.
+                                // Slot contents are read under `entries_mutex` below.
                                 if let Some(existing) = rfs.entries.get(file_path) {
                                     self.put_tombstone(file_path, existing);
                                     entries_option = Some(existing);
@@ -1138,11 +1136,8 @@ where
                             let Some(dir_ent) = entries_option else {
                                 break 'locked;
                             };
-                            // `bust_entries_cache` now marks the `DirEntry` stale in place
-                            // instead of orphaning the slot, so a concurrent resolve on the
-                            // JS thread can rewrite this exact `DirEntry`/`EntryMap` via the
-                            // in-place path. Serialize with those writers by holding the
-                            // same mutex they take.
+                            // A stale `DirEntry` slot can be rewritten in place by a
+                            // JS-thread resolve; serialize with those writers.
                             let _entries_g = rfs.entries_mutex.lock_guard();
                             // SAFETY: dir_ent points into rfs.entries (or a tombstoned copy);
                             // both outlive this loop iteration.
@@ -1275,8 +1270,7 @@ where
                             }
                         }
 
-                        // Bust after releasing `entries_mutex`: `bust_entries_cache`
-                        // takes it internally and the lock is non-recursive.
+                        // `bust_entries_cache` takes `entries_mutex` itself (non-recursive).
                         let _ = self.ctx_mut().bust_dir_cache(
                             strings::paths::without_trailing_slash_windows_path(file_path),
                         );

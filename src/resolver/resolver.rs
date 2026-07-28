@@ -3436,8 +3436,6 @@ impl<'a> Resolver<'a> {
                 .map(|p| unsafe { (*p).fd })
                 .filter(|f| f.is_valid());
             if let Some(prev) = prev_fd {
-                // Keep the descriptor that was already stored for this slot;
-                // see `bust_entries_cache` for why it cannot be released here.
                 new_entry.fd = prev;
             } else if self.store_fd {
                 new_entry.fd = open_dir;
@@ -4427,12 +4425,9 @@ impl<'a> Resolver<'a> {
                 bufs!(open_dirs)[open_dir_count.get()] = open_dir;
                 open_dir_count.set(open_dir_count.get() + 1);
             }
-            // Set when `open_dir` is stored as `DirEntry.fd`; otherwise, a
-            // freshly-opened `open_dir` is released after `dir_info_uncached`
-            // (which still uses it for `openat`). Previously the `store_fd`
-            // guard above assumed every opened handle was adopted and never
-            // closed the ones that were not (entry already fresh, or an
-            // existing handle carried over in place), leaking one per call.
+            // When `open_dir` is not stored as `DirEntry.fd` (entry already
+            // fresh, or an existing handle carried over), it is released after
+            // `dir_info_uncached` below; the `store_fd` guard does not.
             let mut open_dir_adopted = false;
 
             let dir_path: &'static [u8] = if !queue_top_safe_path.is_empty() {
@@ -4553,16 +4548,13 @@ impl<'a> Resolver<'a> {
                     // NOTE: bun_collections::StringHashMap exposes `clear`, which drops all entries.
                     unsafe { &mut *existing }.data.clear();
                 }
+                // See `bust_entries_cache`: carry an existing handle forward
+                // instead of stranding it.
                 // SAFETY: see block-wide note above.
                 let prev_fd = in_place
                     .map(|p| unsafe { (*p).fd })
                     .filter(|f| f.is_valid());
                 new_entry.fd = if let Some(prev) = prev_fd {
-                    // This slot already holds an open directory handle. Keep it:
-                    // its raw value may also be cached in `ParseTask`/bake/the
-                    // watcher (see `bust_entries_cache`), so replacing it would
-                    // strand an open fd with no owner. `open_dir` was only used
-                    // for the readdir above and for `dir_info_uncached` below.
                     prev
                 } else if self.store_fd {
                     open_dir_adopted = open_dir.is_valid();

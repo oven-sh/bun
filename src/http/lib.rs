@@ -4614,9 +4614,9 @@ impl<'a> HTTPClient<'a> {
             // and may mutate `compressed_body` (via decompress_bytes' reset) or `body_out_str`,
             // so any `&` into `self.state` held across the call would be aliased UB.
             let buffer_snap = core::mem::take(&mut self.state.get_body_buffer().list);
-            let processed = self
-                .state
-                .process_body_buffer(buffer_snap, is_final_chunk, max_output)?;
+            let processed =
+                self.state
+                    .process_body_buffer(buffer_snap, is_final_chunk, max_output)?;
 
             // We can only use the libdeflate fast path when we are not streaming
             // If we ever call processBodyBuffer again, it cannot go through the fast path.

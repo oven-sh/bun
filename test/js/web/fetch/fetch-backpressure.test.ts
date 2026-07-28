@@ -331,27 +331,22 @@ describe("fetch() receive backpressure — compressed body inflates on demand", 
     ["br", false],
     ["zstd", false],
   ] as const) {
-    test(
-      `${encoding}${chunked ? " chunked" : ""}: one read() does not inflate the whole body`,
-      async () => {
-        await using server = await serveBomb(encoding, chunked);
-        const { peak, total, firstLen, exitCode } = await spawnClient(server.url, "h1", STALL_AND_DRAIN);
-        expect({
-          total,
-          firstLenAtMost2MB: firstLen <= 2 * 1024 * 1024,
-          peakUnder: peak < PEAK_LIMIT || { peak, limit: PEAK_LIMIT, wire: server.wire },
-        }).toEqual({
-          total: DECOMPRESSED,
-          firstLenAtMost2MB: true,
-          peakUnder: true,
-        });
-        expect(exitCode).toBe(0);
-      },
-      60_000,
-    );
+    test(`${encoding}${chunked ? " chunked" : ""}: one read() does not inflate the whole body`, async () => {
+      await using server = await serveBomb(encoding, chunked);
+      const { peak, total, firstLen, exitCode } = await spawnClient(server.url, "h1", STALL_AND_DRAIN);
+      expect({
+        total,
+        firstLenAtMost2MB: firstLen <= 2 * 1024 * 1024,
+        peakUnder: peak < PEAK_LIMIT || { peak, limit: PEAK_LIMIT, wire: server.wire },
+      }).toEqual({
+        total: DECOMPRESSED,
+        firstLenAtMost2MB: true,
+        peakUnder: true,
+      });
+      expect(exitCode).toBe(0);
+    }, 60_000);
   }
 });
-
 
 describe.concurrent("fetch() receive backpressure — buffered consumers are not throttled", () => {
   const cases = [

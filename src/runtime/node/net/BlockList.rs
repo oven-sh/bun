@@ -162,7 +162,11 @@ impl BlockList {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub(crate) fn add_range(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn add_range(
+        this: &Self,
+        global: &JSGlobalObject,
+        frame: &CallFrame,
+    ) -> JsResult<JSValue> {
         let [start_js, end_js, mut family_js] = frame.arguments_as_array::<3>();
         if family_js.is_undefined() {
             family_js = BunString::static_str("ipv4").to_js(global)?;
@@ -249,7 +253,11 @@ impl BlockList {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub(crate) fn check(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn check(
+        this: &Self,
+        global: &JSGlobalObject,
+        frame: &CallFrame,
+    ) -> JsResult<JSValue> {
         let [address_js, mut family_js] = frame.arguments_as_array::<2>();
         if family_js.is_undefined() {
             family_js = BunString::static_str("ipv4").to_js(global)?;

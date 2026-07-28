@@ -1919,7 +1919,11 @@ impl PackageManager {
         schedule_tasks(self)
     }
     #[inline]
-    pub(crate) fn has_created_network_task(&mut self, task_id: Task::Id, is_required: bool) -> bool {
+    pub(crate) fn has_created_network_task(
+        &mut self,
+        task_id: Task::Id,
+        is_required: bool,
+    ) -> bool {
         has_created_network_task(self, task_id, is_required)
     }
     #[inline]

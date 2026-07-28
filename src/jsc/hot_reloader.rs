@@ -39,8 +39,6 @@ pub enum ImportWatcher {
 const _: () = assert!(bun_watcher::Loader::File.0 == bun_ast::Loader::File as u8);
 
 impl ImportWatcher {
-
-
     /// Look up the cached fd (and `package_json` column) for `hash` under the
     /// watcher's mutex, snapshotting both before returning.
     ///
@@ -692,7 +690,6 @@ where
     Ctx: HotReloaderCtx<EventLoop = EventLoopType>,
     EventLoopType: HotReloaderEventLoop,
 {
-
     fn debug(args: core::fmt::Arguments<'_>) {
         if cfg!(feature = "debug_logs") {
             bun_core::scoped_log!(hot_reloader, "{}", args);
@@ -700,7 +697,6 @@ where
             bun_core::pretty_errorln!("<cyan>watcher<r><d>:<r> {}", args);
         }
     }
-
 
     /// # Safety
     /// `this` must point to a live `Ctx` (VirtualMachine / DevServer / BundleV2)

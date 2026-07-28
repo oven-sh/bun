@@ -574,7 +574,6 @@ impl<T: ?Sized> ThreadCell<T> {
     pub fn get_unchecked(&self) -> *mut T {
         self.inner.get()
     }
-
 }
 
 impl<T: Default> Default for ThreadCell<T> {

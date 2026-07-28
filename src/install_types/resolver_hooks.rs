@@ -383,8 +383,7 @@ pub struct TagInfo {
     pub tag: SemverString,
 }
 
-impl TagInfo {
-}
+impl TagInfo {}
 
 #[derive(Clone, Copy)]
 pub struct TarballInfo {
@@ -939,7 +938,6 @@ impl Architecture {
     #[cfg(target_arch = "x86_64")]
     pub const CURRENT: Self = Self(Self::X64);
 
-
     #[inline]
     pub const fn none() -> Self {
         Self::NONE
@@ -1229,7 +1227,6 @@ impl Features {
     pub const fn main() -> Self {
         Self::MAIN
     }
-
 
     const fn base() -> Self {
         Self {

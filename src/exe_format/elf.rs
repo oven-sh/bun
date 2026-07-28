@@ -430,7 +430,6 @@ impl ElfFile {
         Ok(())
     }
 
-
     // --- Internal helpers ---
 
     /// Returns the file offset and section index of the `.bun` section.

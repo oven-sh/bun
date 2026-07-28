@@ -1288,7 +1288,11 @@ impl<H: StaticHasher> StaticCryptoHasher<H> {
         JSValue::js_number(H::DIGEST as f64)
     }
 
-    pub(crate) fn get_byte_length_static(_: &JSGlobalObject, _: JSValue, _: PropertyName) -> JSValue {
+    pub(crate) fn get_byte_length_static(
+        _: &JSGlobalObject,
+        _: JSValue,
+        _: PropertyName,
+    ) -> JSValue {
         JSValue::js_number(H::DIGEST as f64)
     }
 

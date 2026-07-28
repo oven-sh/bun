@@ -105,7 +105,8 @@ pub struct BundleV2<'a> {
 
     /// There is a race condition where an onResolve plugin may schedule a task
     /// on the bundle thread before its parsing task completes.
-    pub(crate) resolve_tasks_waiting_for_import_source_index: ArrayHashMap<IndexInt, Vec<PendingImport>>,
+    pub(crate) resolve_tasks_waiting_for_import_source_index:
+        ArrayHashMap<IndexInt, Vec<PendingImport>>,
 
     /// Allocations not tracked by a threadlocal heap.
     pub(crate) free_list: Vec<Box<[u8]>>,
@@ -1525,7 +1526,9 @@ pub mod bv2_impl {
             }
         }
 
-        pub(crate) fn initialize_client_transpiler(&mut self) -> Result<&mut Transpiler<'a>, Error> {
+        pub(crate) fn initialize_client_transpiler(
+            &mut self,
+        ) -> Result<&mut Transpiler<'a>, Error> {
             // Builds a fresh owned `Transpiler` via `Transpiler::for_worker`
             // (per-field deep clone), mutates the browser-specific options with
             // ordinary assignment (every field is owned by the clone, so `Drop` on
@@ -1641,7 +1644,8 @@ pub mod bv2_impl {
         pub(crate) scb_list: server_component_boundary::Slice<'a>,
 
         /// Files which are imported by JS and inlined in CSS
-        pub(crate) additional_files_imported_by_js_and_inlined_in_css: &'a mut DynamicBitSetUnmanaged,
+        pub(crate) additional_files_imported_by_js_and_inlined_in_css:
+            &'a mut DynamicBitSetUnmanaged,
         /// Files which are imported by CSS and inlined in CSS
         pub(crate) additional_files_imported_by_css_and_inlined: &'a mut DynamicBitSetUnmanaged,
 
@@ -3651,7 +3655,8 @@ pub mod bv2_impl {
     pub struct DependenciesScanner {
         pub(crate) ctx: *mut (),
         pub entry_points: Box<[Box<[u8]>]>,
-        pub(crate) on_fetch: fn(ctx: *mut (), result: &mut DependenciesScannerResult) -> Result<(), Error>,
+        pub(crate) on_fetch:
+            fn(ctx: *mut (), result: &mut DependenciesScannerResult) -> Result<(), Error>,
     }
 
     pub struct DependenciesScannerResult<'r, 'a> {
@@ -4029,7 +4034,10 @@ pub mod bv2_impl {
             Ok(())
         }
 
-        pub(crate) fn process_files_to_copy(&mut self, reachable_files: &[Index]) -> Result<(), Error> {
+        pub(crate) fn process_files_to_copy(
+            &mut self,
+            reachable_files: &[Index],
+        ) -> Result<(), Error> {
             if self.graph.estimated_file_loader_count > 0 {
                 // SAFETY: MultiArrayList columns are disjoint backing storage; raw-ptr
                 // sidestep so we can hold several read-only column slices, one mutable
@@ -5561,7 +5569,10 @@ pub mod bv2_impl {
             false
         }
 
-        pub(crate) fn enqueue_on_load_plugin_if_needed_impl(&mut self, parse: &mut ParseTask) -> bool {
+        pub(crate) fn enqueue_on_load_plugin_if_needed_impl(
+            &mut self,
+            parse: &mut ParseTask,
+        ) -> bool {
             if let Some(plugins) = self.plugins_ref() {
                 if plugins.has_any_matches(&parse.path, true) {
                     // This is where onLoad plugins are enqueued
@@ -6766,7 +6777,10 @@ pub mod bv2_impl {
             this.on_notify_defer();
         }
 
-        pub(crate) fn on_parse_task_complete(parse_result: &mut parse_task::Result, this: &mut BundleV2) {
+        pub(crate) fn on_parse_task_complete(
+            parse_result: &mut parse_task::Result,
+            this: &mut BundleV2,
+        ) {
             let _trace = crate::perf::trace("Bundler.onParseTaskComplete");
             // Borrowck rejects holding a `&this.graph` alias
             // across the `this.*` method calls below (each takes

@@ -33,7 +33,10 @@ struct MutationInfo {
 /// and the receiver has no way to avoid calling the function, this pass detects functions
 /// with *known* mutations (Mutate or MutateTransitive, not conditional) that are passed
 /// where a frozen value is expected and reports an error.
-pub(crate) fn validate_no_freezing_known_mutable_functions(func: &HirFunction, env: &mut Environment) {
+pub(crate) fn validate_no_freezing_known_mutable_functions(
+    func: &HirFunction,
+    env: &mut Environment,
+) {
     let diagnostics = check_no_freezing_known_mutable_functions(
         func,
         &env.identifiers,

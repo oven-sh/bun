@@ -212,7 +212,9 @@ impl Result {
     /// already mutably borrowed (e.g. while iterating `path_pair`). Takes the
     /// `Copy` field directly so the borrow checker only sees a field read.
     #[inline]
-    pub(crate) fn deref_package_json(ptr: Option<*const PackageJSON>) -> Option<&'static PackageJSON> {
+    pub(crate) fn deref_package_json(
+        ptr: Option<*const PackageJSON>,
+    ) -> Option<&'static PackageJSON> {
         // SAFETY: ARENA — every `*const PackageJSON` stored in
         // `Result::package_json` is interned in the resolver's process-lifetime
         // PackageJSON cache (or a `'static` fallback-module literal); never

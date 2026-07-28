@@ -267,7 +267,10 @@ impl ParsedSourceMap {
             + self.external_source_names.len() * core::mem::size_of::<Box<[u8]>>()
     }
 
-    pub(crate) fn write_vlqs<W: bun_io::Write + ?Sized>(&self, writer: &mut W) -> bun_io::Result<()> {
+    pub(crate) fn write_vlqs<W: bun_io::Write + ?Sized>(
+        &self,
+        writer: &mut W,
+    ) -> bun_io::Result<()> {
         if let Some(ism) = &self.internal {
             let mut buf = bun_core::MutableString::init_empty();
             ism.append_vlq_to(&mut buf);

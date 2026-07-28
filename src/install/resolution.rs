@@ -461,7 +461,10 @@ impl<SemverInt: VersionInt> ResolutionType<SemverInt> {
         }
     }
 
-    pub(crate) fn fmt_store_path<'a>(&'a self, string_buf: &'a [u8]) -> StorePathFormatter<'a, SemverInt> {
+    pub(crate) fn fmt_store_path<'a>(
+        &'a self,
+        string_buf: &'a [u8],
+    ) -> StorePathFormatter<'a, SemverInt> {
         StorePathFormatter {
             res: self,
             string_buf,
@@ -475,7 +478,10 @@ impl<SemverInt: VersionInt> ResolutionType<SemverInt> {
         }
     }
 
-    pub(crate) fn fmt_for_debug<'a>(&'a self, string_bytes: &'a [u8]) -> DebugFormatter<'a, SemverInt> {
+    pub(crate) fn fmt_for_debug<'a>(
+        &'a self,
+        string_bytes: &'a [u8],
+    ) -> DebugFormatter<'a, SemverInt> {
         DebugFormatter {
             resolution: self,
             buf: string_bytes,

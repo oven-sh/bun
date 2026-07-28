@@ -595,7 +595,6 @@ pub(crate) fn parse_fixture_pragmas(source: &[u8], opts: &mut ReactCompilerOptio
             _ => {}
         }
     }
-
 }
 
 // -----------------------------------------------------------------------
@@ -1170,9 +1169,7 @@ impl ReactCompilerState {
             .validate_blocklisted_imports
             .clone();
         if let Some(err) = validate_restricted_imports(host.import_records(), &restricted) {
-            if let Some(fatal) =
-                handle_error(err, &mut self.diagnostics, &self.options)
-            {
+            if let Some(fatal) = handle_error(err, &mut self.diagnostics, &self.options) {
                 self.fatal = Some(fatal);
             }
         }
@@ -1296,11 +1293,7 @@ fn maybe_compile_node(
         match find_dynamic_gating_directive(&body_directives) {
             Ok(ident) => ident,
             Err(err) => {
-                if let Some(fatal) = handle_error(
-                    err,
-                    &mut state.diagnostics,
-                    &state.options,
-                ) {
+                if let Some(fatal) = handle_error(err, &mut state.diagnostics, &state.options) {
                     state.fatal = Some(fatal);
                 }
                 return None;
@@ -1341,11 +1334,7 @@ fn maybe_compile_node(
     ) {
         Err(err) => {
             bun_core::scoped_log!(react_compiler, "  -> compile_fn err: {:?}", err);
-            if let Some(fatal) = handle_error(
-                err,
-                &mut state.diagnostics,
-                &state.options,
-            ) {
+            if let Some(fatal) = handle_error(err, &mut state.diagnostics, &state.options) {
                 state.fatal = Some(fatal);
             }
             None

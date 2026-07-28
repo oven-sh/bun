@@ -168,7 +168,6 @@ impl<'a> JSPropertyIterator<'a> {
         })
     }
 
-
     /// The bun.String returned has not incremented its reference count.
     pub fn next(&mut self) -> JsResult<Option<bstr::String>> {
         // Reuse stack space.

@@ -1352,10 +1352,7 @@ impl WindowsBufferedReader {
         self.vtable.on_reader_error(err);
     }
 
-    fn get_read_buffer_with_stable_memory_address(
-        &mut self,
-        suggested_size: usize,
-    ) -> &mut [u8] {
+    fn get_read_buffer_with_stable_memory_address(&mut self, suggested_size: usize) -> &mut [u8] {
         self.flags.insert(WindowsFlags::HAS_INFLIGHT_READ);
         // Spare capacity grows well past `suggested_size`, so an unclamped read
         // overshoots `maxBuffer` by however much the buffer had room for.
@@ -1891,12 +1888,7 @@ impl WindowsBufferedReader {
         drop(unsafe { bun_core::heap::take(handle) });
     }
 
-    fn on_read(
-        &mut self,
-        amount: sys::Result<usize>,
-        slice: &mut [u8],
-        has_more: ReadState,
-    ) {
+    fn on_read(&mut self, amount: sys::Result<usize>, slice: &mut [u8], has_more: ReadState) {
         if let sys::Result::Err(err) = amount {
             self.on_error(err);
             return;

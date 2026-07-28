@@ -384,7 +384,6 @@ impl<'a> Printer<'a> {
     pub(crate) fn context(&self) -> Option<&css::StyleContext<'a>> {
         self.ctx
     }
-
 }
 
 /// `Printer` participates in `serializer::serialize_*<W: bun_io::Write>` so
@@ -550,7 +549,11 @@ impl<'a> Printer<'a> {
     /// Writes a CSS identifier to the underlying destination, escaping it
     /// as appropriate. If the `css_modules` option was enabled, then a hash
     /// is added, and the mapping is added to the CSS module.
-    pub(crate) fn write_ident(&mut self, ident: &'a [u8], handle_css_module: bool) -> PrintResult<()> {
+    pub(crate) fn write_ident(
+        &mut self,
+        ident: &'a [u8],
+        handle_css_module: bool,
+    ) -> PrintResult<()> {
         if handle_css_module {
             if self.css_module.is_some() {
                 // Copy the `'a`-lifetime references out of `css_module` up front so
@@ -728,7 +731,10 @@ impl<'a> Printer<'a> {
     /// `@-moz-document`, unknown at-rules). The body closure is responsible
     /// for its own leading `newline()` if it wants one — per-item printers
     /// (e.g. `@font-face`, `@keyframes`) interleave newlines differently.
-    pub(crate) fn block(&mut self, f: impl FnOnce(&mut Self) -> PrintResult<()>) -> PrintResult<()> {
+    pub(crate) fn block(
+        &mut self,
+        f: impl FnOnce(&mut Self) -> PrintResult<()>,
+    ) -> PrintResult<()> {
         self.whitespace()?;
         self.write_char(b'{')?;
         self.indent();
@@ -748,7 +754,12 @@ impl<'a> Printer<'a> {
     /// `sep` is a closure — not a `u8` — because the dominant separator in CSS
     /// printing is [`delim`](Self::delim) (minify-aware whitespace around a byte),
     /// and several sites need a multi-statement or `minify`-conditional separator.
-    pub(crate) fn write_separated<I, S, F>(&mut self, iter: I, mut sep: S, mut f: F) -> PrintResult<()>
+    pub(crate) fn write_separated<I, S, F>(
+        &mut self,
+        iter: I,
+        mut sep: S,
+        mut f: F,
+    ) -> PrintResult<()>
     where
         I: IntoIterator,
         S: FnMut(&mut Self) -> PrintResult<()>,

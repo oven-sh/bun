@@ -381,4 +381,3 @@ impl<T: ExternalSharedDescriptor> BindgenOptionalRepr for BindgenExternalShared<
         }
     }
 }
-

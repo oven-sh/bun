@@ -115,7 +115,8 @@ impl Version {
     const SUFFIX: &'static str = Version::SUFFIX_ABI;
     pub(crate) const FOLDER_NAME: &'static str =
         const_format::concatcp!("bun-", Version::TRIPLET, Version::SUFFIX);
-    pub(crate) const ZIP_FILENAME: &'static str = const_format::concatcp!(Version::FOLDER_NAME, ".zip");
+    pub(crate) const ZIP_FILENAME: &'static str =
+        const_format::concatcp!(Version::FOLDER_NAME, ".zip");
 
     pub(crate) const PROFILE_FOLDER_NAME: &'static str =
         const_format::concatcp!("bun-", Version::TRIPLET, Version::SUFFIX, "-profile");
@@ -1506,10 +1507,7 @@ pub(crate) mod upgrade_js_bindings {
     }
 
     #[bun_jsc::host_fn]
-    fn js_close_temp_dir_handle(
-        _global: &JSGlobalObject,
-        _frame: &CallFrame,
-    ) -> JsResult<JSValue> {
+    fn js_close_temp_dir_handle(_global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
         #[cfg(not(windows))]
         {
             return Ok(JSValue::UNDEFINED);

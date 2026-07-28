@@ -460,7 +460,11 @@ impl Watcher {
     ///
     /// Does not propagate kevent registration errors.
     #[cfg(any(target_os = "macos", target_os = "freebsd"))]
-    pub(crate) fn add_file_descriptor_to_kqueue_without_checks(&mut self, fd: Fd, watchlist_id: usize) {
+    pub(crate) fn add_file_descriptor_to_kqueue_without_checks(
+        &mut self,
+        fd: Fd,
+        watchlist_id: usize,
+    ) {
         use libc::{EV_ADD, EV_CLEAR, EV_ENABLE, EVFILT_VNODE, kevent as KEvent};
         use libc::{NOTE_DELETE, NOTE_RENAME, NOTE_WRITE};
 

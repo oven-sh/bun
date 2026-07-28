@@ -4,9 +4,9 @@ use core::mem;
 use bun_collections::VecExt;
 #[cfg(unix)]
 use bun_io as aio;
-use bun_io::{BufferedReader, ReadState};
 #[cfg(not(windows))]
 use bun_io::FileType;
+use bun_io::{BufferedReader, ReadState};
 use bun_jsc::JsCell;
 use bun_ptr::AsCtxPtr;
 use bun_sys::{self as sys, Fd, FdExt};
@@ -315,8 +315,6 @@ impl FileReader {
         // across a vtable-callback re-entry point (see field doc comment).
         unsafe { &mut *self.reader.get() }
     }
-
-
 
     // In-place init — `self` is the `context` field of an already-allocated
     // `Source`; `event_loop` is set to its real value right after the reset.

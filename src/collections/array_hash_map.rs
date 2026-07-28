@@ -1720,7 +1720,6 @@ impl<V, A: Allocator + HashbrownAllocator + Clone + Default> StringHashMap<V, A>
         Self::default()
     }
 
-
     #[inline]
     pub fn count(&self) -> usize {
         self.inner.len()
@@ -1743,7 +1742,6 @@ impl<V, A: Allocator + HashbrownAllocator + Clone + Default> StringHashMap<V, A>
         self.inner.reserve(need);
         Ok(())
     }
-
 
     pub fn put(&mut self, key: &[u8], value: V) -> Result<(), AllocError> {
         use hashbrown::hash_map::RawEntryMut;

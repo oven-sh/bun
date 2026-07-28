@@ -588,8 +588,7 @@ pub use bun_install_types::resolver_hooks::WakeHandler;
 /// both the main thread and ThreadPool workers thereafter — `AtomicBool` with
 /// `Relaxed` is sufficient (no ordering against other state; the write
 /// happens-before any worker spawn).
-static VERBOSE_INSTALL: core::sync::atomic::AtomicBool =
-    core::sync::atomic::AtomicBool::new(false);
+static VERBOSE_INSTALL: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
 
 impl PackageManager {
     /// Read as `PackageManager::verbose_install()` throughout the install pipeline.
@@ -766,7 +765,6 @@ impl PackageManager {
     pub(crate) fn clear_cached_items_depending_on_lockfile_buffer(&mut self) {
         self.root_package_id.id = None;
     }
-
 
     /// Reshaped for borrowck — `Lockfile::load_from_cwd` takes the manager as
     /// a separate argument while the receiver borrows `self.lockfile`, which

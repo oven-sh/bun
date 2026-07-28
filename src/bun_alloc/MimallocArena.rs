@@ -318,7 +318,12 @@ impl MimallocArena {
     /// In-place expand/shrink, no relocation.
     /// Returns `true` if the block now has at least `new_len` bytes.
     #[inline]
-    pub(crate) fn resize_in_place(&self, ptr: NonNull<u8>, _old_len: usize, new_len: usize) -> bool {
+    pub(crate) fn resize_in_place(
+        &self,
+        ptr: NonNull<u8>,
+        _old_len: usize,
+        new_len: usize,
+    ) -> bool {
         // SAFETY: `ptr` was allocated by this arena (caller contract), and is
         // therefore a real mimalloc block head.
         unsafe { !mimalloc::mi_expand(ptr.as_ptr().cast(), new_len).is_null() }

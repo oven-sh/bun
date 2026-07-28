@@ -231,7 +231,11 @@ unsafe extern "C" fn us_dispatch_ssl_raw_tap(
 /// `openssl.c` must pass a live, non-null `s` whose ext slot holds a valid
 /// `*mut TLSSocket`, and `data` must point to `len` readable bytes.
 #[unsafe(no_mangle)]
-pub(crate) unsafe extern "C" fn us_dispatch_session(s: *mut us_socket_t, data: *const u8, len: c_int) {
+pub(crate) unsafe extern "C" fn us_dispatch_session(
+    s: *mut us_socket_t,
+    data: *const u8,
+    len: c_int,
+) {
     let s_ref = us_socket_t::opaque_mut(s);
     if s_ref.kind() != SocketKind::BunSocketTls {
         return;
@@ -258,7 +262,11 @@ pub(crate) unsafe extern "C" fn us_dispatch_session(s: *mut us_socket_t, data: *
 /// `openssl.c` must pass a live, non-null `s` whose ext slot holds a valid
 /// `*mut TLSSocket`, and `data` must point to `len` readable bytes.
 #[unsafe(no_mangle)]
-pub(crate) unsafe extern "C" fn us_dispatch_keylog(s: *mut us_socket_t, data: *const u8, len: c_int) {
+pub(crate) unsafe extern "C" fn us_dispatch_keylog(
+    s: *mut us_socket_t,
+    data: *const u8,
+    len: c_int,
+) {
     let s_ref = us_socket_t::opaque_mut(s);
     if s_ref.kind() != SocketKind::BunSocketTls {
         return;

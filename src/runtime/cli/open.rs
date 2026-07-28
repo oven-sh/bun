@@ -103,7 +103,10 @@ impl Editor {
         false
     }
 
-    pub(crate) fn by_fallback_path_for_editor(editor: Editor, out: Option<&mut &'static [u8]>) -> bool {
+    pub(crate) fn by_fallback_path_for_editor(
+        editor: Editor,
+        out: Option<&mut &'static [u8]>,
+    ) -> bool {
         if let Some(paths) = bin_path(editor) {
             for path in paths {
                 match bun_sys::File::open_at(bun_sys::Fd::cwd(), path, bun_sys::O::RDONLY, 0) {

@@ -134,9 +134,11 @@ pub struct CoreFoundation {
     pub(crate) retain: unsafe extern "C" fn(CFTypeRef) -> CFTypeRef,
     pub(crate) release: unsafe extern "C" fn(CFTypeRef),
 
-    pub(crate) run_loop_add_source: unsafe extern "C" fn(CFRunLoopRef, CFRunLoopSourceRef, CFStringRef),
+    pub(crate) run_loop_add_source:
+        unsafe extern "C" fn(CFRunLoopRef, CFRunLoopSourceRef, CFStringRef),
     pub(crate) run_loop_get_current: unsafe extern "C" fn() -> CFRunLoopRef,
-    pub(crate) run_loop_remove_source: unsafe extern "C" fn(CFRunLoopRef, CFRunLoopSourceRef, CFStringRef),
+    pub(crate) run_loop_remove_source:
+        unsafe extern "C" fn(CFRunLoopRef, CFRunLoopSourceRef, CFStringRef),
     pub(crate) run_loop_run: unsafe extern "C" fn(),
     pub(crate) run_loop_source_create: unsafe extern "C" fn(
         CFAllocatorRef,
@@ -351,11 +353,7 @@ unsafe impl bun_threading::Linked for ConcurrentTask {
 }
 
 impl ConcurrentTask {
-    fn from(
-        this: &mut ConcurrentTask,
-        task: Task,
-        auto_delete: bool,
-    ) -> &mut ConcurrentTask {
+    fn from(this: &mut ConcurrentTask, task: Task, auto_delete: bool) -> &mut ConcurrentTask {
         *this = ConcurrentTask {
             task,
             next: bun_threading::Link::new(),

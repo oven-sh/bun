@@ -885,10 +885,7 @@ unsafe fn __bun_cancel_pending_immediate(
 /// `timer` was published by `WTFTimer::update` into `imminent_gc_timer` and
 /// remains live until consumed; `vm` is the live per-thread VM.
 #[unsafe(no_mangle)]
-unsafe fn __bun_run_wtf_timer(
-    timer: *mut (),
-    vm: *mut bun_jsc::virtual_machine::VirtualMachine,
-) {
+unsafe fn __bun_run_wtf_timer(timer: *mut (), vm: *mut bun_jsc::virtual_machine::VirtualMachine) {
     // SAFETY: per fn contract — the only producer (`WTFTimer::update`) stores a
     // `*mut crate::timer::WTFTimer`, so the cast is the identity.
     let real = timer.cast::<crate::timer::WTFTimer>();

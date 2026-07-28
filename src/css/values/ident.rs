@@ -351,7 +351,6 @@ impl IdentOrRef {
         None
     }
 
-
     pub(crate) fn as_original_string(self, symbols: &[bun_ast::Symbol]) -> &[u8] {
         if self.is_ident() {
             // SAFETY: arena slice reconstructed from packed ptr/len
@@ -385,7 +384,6 @@ impl IdentOrRef {
         }
         false
     }
-
 }
 
 impl core::fmt::Display for IdentOrRef {

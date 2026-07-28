@@ -419,7 +419,6 @@ impl Interned {
         self.0
     }
 
-
     #[inline]
     pub const fn is_empty(self) -> bool {
         self.0.is_empty()

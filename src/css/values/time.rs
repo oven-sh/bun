@@ -119,7 +119,6 @@ impl Time {
         }
     }
 
-
     pub(crate) fn mul_f32(self, other: f32) -> Time {
         match self {
             Time::Seconds(s) => Time::Seconds(s * other),
@@ -130,7 +129,6 @@ impl Time {
     pub(crate) fn add_internal(self, other: Time) -> Time {
         self.add(other)
     }
-
 
     pub(crate) fn add(self, other: Self) -> Time {
         self.op(other, |a, b| a + b)

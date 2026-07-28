@@ -148,7 +148,6 @@ pub(crate) type DedupeMap = HashMap<
 >;
 
 impl NetworkTask {
-
     /// Mutable counterpart of [`http`]; same precondition.
     #[inline]
     pub(crate) fn http_mut(&mut self) -> &mut AsyncHTTP<'static> {

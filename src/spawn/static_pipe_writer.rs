@@ -89,7 +89,6 @@ impl<P: StaticPipeWriterProcess> StaticPipeWriter<P> {
         self.writer.update_ref(self.io_evtloop(), add);
     }
 
-
     pub fn close(&mut self) {
         bun_output::scoped_log!(
             StaticPipeWriter,
@@ -98,7 +97,6 @@ impl<P: StaticPipeWriterProcess> StaticPipeWriter<P> {
         );
         self.writer.close();
     }
-
 
     /// Callers resolve to an `EventLoopHandle` before calling and we accept
     /// it directly.
@@ -285,13 +283,11 @@ impl<P: StaticPipeWriterProcess> StaticPipeWriter<P> {
         size_of::<Self>() + self.source.memory_cost() + self.writer.memory_cost()
     }
 
-
     pub fn watch(&mut self) {
         if self.buffer.len() > 0 {
             self.writer.watch();
         }
     }
-
 }
 
 /// The `RefCount` destructor callback.

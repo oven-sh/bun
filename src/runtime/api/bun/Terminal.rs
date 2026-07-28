@@ -255,7 +255,10 @@ impl Options {
     pub(crate) const MAX_TERM_NAME_LEN: usize = 128;
 
     /// Parse terminal options from a JS object
-    pub(crate) fn parse_from_js(global_object: &JSGlobalObject, js_options: JSValue) -> JsResult<Options> {
+    pub(crate) fn parse_from_js(
+        global_object: &JSGlobalObject,
+        js_options: JSValue,
+    ) -> JsResult<Options> {
         let mut options = Options::default();
         // errdefer options.deinit() — handled by Drop on early return.
 

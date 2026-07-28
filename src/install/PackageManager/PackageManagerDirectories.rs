@@ -14,9 +14,9 @@ use bun_install::resolution::Tag as ResolutionTag;
 use bun_install::{PackageID, Resolution};
 use bun_paths::{self as path, AbsPath, PathBuffer, SEP};
 use bun_semver::{self as Semver, String as SemverString};
-use bun_sys::{self as sys, Dir, Fd, File};
 #[cfg(windows)]
 use bun_sys::FdDirExt;
+use bun_sys::{self as sys, Dir, Fd, File};
 
 use crate::bun_progress::Node as ProgressNode;
 

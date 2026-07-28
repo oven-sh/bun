@@ -265,7 +265,12 @@ impl Comparator {
         }
     }
 
-    pub(crate) fn satisfies(self, version: Version, comparator_buf: &[u8], version_buf: &[u8]) -> bool {
+    pub(crate) fn satisfies(
+        self,
+        version: Version,
+        comparator_buf: &[u8],
+        version_buf: &[u8],
+    ) -> bool {
         let order = version.order_without_build(self.version, version_buf, comparator_buf);
 
         match order {

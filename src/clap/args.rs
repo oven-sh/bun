@@ -24,7 +24,6 @@ pub struct SliceIterator<'a> {
 }
 
 impl<'a> SliceIterator<'a> {
-
     pub(crate) fn next(&mut self) -> Option<&'a [u8]> {
         pop_first(&mut self.remain)
     }

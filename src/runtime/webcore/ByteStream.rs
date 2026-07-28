@@ -355,11 +355,7 @@ impl ByteStream {
         Ok(())
     }
 
-    fn append(
-        &self,
-        stream: streams::Result,
-        offset: usize,
-    ) -> Result<(), bun_alloc::AllocError> {
+    fn append(&self, stream: streams::Result, offset: usize) -> Result<(), bun_alloc::AllocError> {
         if self.buffer.get().capacity() == 0 {
             match stream {
                 streams::Result::Owned(mut owned) | streams::Result::OwnedAndDone(mut owned) => {

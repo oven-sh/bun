@@ -206,7 +206,6 @@ impl<'bump> DeclarationBlock<'bump> {
                 .zip(other.important_declarations.iter())
                 .all(|(a, b)| a.eql(b))
     }
-
 }
 
 // ─── PropertyDeclarationParser ────────────────────────────────────────────

@@ -62,7 +62,11 @@ impl TimeoutObject {
     // Signature does not match the standard `host_fn(getter/setter)` shape; the
     // `#[JsClass]` derive emits the C-ABI shims directly.
 
-    pub(crate) fn get_on_timeout(_this: &Self, this_value: JSValue, _global: &JSGlobalObject) -> JSValue {
+    pub(crate) fn get_on_timeout(
+        _this: &Self,
+        this_value: JSValue,
+        _global: &JSGlobalObject,
+    ) -> JSValue {
         js::callback_get_cached(this_value).unwrap()
     }
 
@@ -92,15 +96,28 @@ impl TimeoutObject {
         js::idle_timeout_set_cached(this_value, global, value);
     }
 
-    pub(crate) fn get_repeat(_this: &Self, this_value: JSValue, _global: &JSGlobalObject) -> JSValue {
+    pub(crate) fn get_repeat(
+        _this: &Self,
+        this_value: JSValue,
+        _global: &JSGlobalObject,
+    ) -> JSValue {
         js::repeat_get_cached(this_value).unwrap()
     }
 
-    pub(crate) fn set_repeat(_this: &Self, this_value: JSValue, global: &JSGlobalObject, value: JSValue) {
+    pub(crate) fn set_repeat(
+        _this: &Self,
+        this_value: JSValue,
+        global: &JSGlobalObject,
+        value: JSValue,
+    ) {
         js::repeat_set_cached(this_value, global, value);
     }
 
-    pub(crate) fn get_idle_start(_this: &Self, this_value: JSValue, _global: &JSGlobalObject) -> JSValue {
+    pub(crate) fn get_idle_start(
+        _this: &Self,
+        this_value: JSValue,
+        _global: &JSGlobalObject,
+    ) -> JSValue {
         js::idle_start_get_cached(this_value).unwrap()
     }
 

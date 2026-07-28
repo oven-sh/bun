@@ -194,7 +194,6 @@ impl FetchHeaders {
         .expect("WebCore__FetchHeaders__createFromPicoHeaders_ returned null")
     }
 
-
     /// `value`'s tag carries its encoding, and a `WTFStringImpl`-tagged value
     /// is ref'd by the C++ side instead of copied character-by-character.
     pub fn put(
@@ -224,7 +223,6 @@ impl FetchHeaders {
 
         None
     }
-
 
     pub fn fast_has(&mut self, name_: HTTPHeaderName) -> bool {
         self.fast_has_(name_ as u8)
@@ -256,7 +254,6 @@ impl FetchHeaders {
         WebCore__FetchHeaders__fastRemove_(self, header)
     }
 
-
     pub fn cast_(value: JSValue, vm: &VM) -> Option<NonNull<FetchHeaders>> {
         NonNull::new(WebCore__FetchHeaders__cast_(value, vm))
     }
@@ -275,7 +272,6 @@ impl FetchHeaders {
     pub fn count(&mut self, names: &mut u32, buf_len: &mut u32) {
         WebCore__FetchHeaders__count(self, names, buf_len)
     }
-
 
     pub fn clone_this(
         &mut self,

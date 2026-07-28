@@ -286,10 +286,7 @@ impl PipeReader {
         }
     }
 
-    fn to_readable_stream(
-        &mut self,
-        global_object: &JSGlobalObject,
-    ) -> JsResult<JSValue> {
+    fn to_readable_stream(&mut self, global_object: &JSGlobalObject) -> JsResult<JSValue> {
         // detach() at scope exit = clear `process` backref + deref. The deref
         // may drop the last ref, so it must run after the result is computed; the backref
         // clear must also wait (from_pipe hands `&mut self.reader` to JS, which may

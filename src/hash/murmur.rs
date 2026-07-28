@@ -25,7 +25,6 @@ fn read_u64_le(b: &[u8]) -> u64 {
 pub struct Murmur2_32;
 
 impl Murmur2_32 {
-
     pub fn hash_with_seed(str: &[u8], seed: u32) -> u32 {
         const M: u32 = 0x5bd1e995;
         let len: u32 = str.len() as u32; // @truncate
@@ -69,7 +68,6 @@ impl Murmur2_32 {
 pub struct Murmur2_64;
 
 impl Murmur2_64 {
-
     pub fn hash_with_seed(str: &[u8], seed: u64) -> u64 {
         const M: u64 = 0xc6a4a7935bd1e995;
         let mut h1: u64 = seed ^ (str.len() as u64).wrapping_mul(M);
@@ -124,7 +122,6 @@ impl Murmur3_32 {
     fn rotl32(x: u32, r: u32) -> u32 {
         x.rotate_left(r)
     }
-
 
     pub fn hash_with_seed(str: &[u8], seed: u32) -> u32 {
         const C1: u32 = 0xcc9e2d51;

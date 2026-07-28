@@ -3,7 +3,12 @@ use super::parser::{Error as ParserError, Parser};
 use super::types::{self, BlockType, JsResult, TextType, VerbatimLine};
 
 impl Parser<'_> {
-    pub(crate) fn enter_block(&mut self, block_type: BlockType, data: u32, flags: u32) -> JsResult<()> {
+    pub(crate) fn enter_block(
+        &mut self,
+        block_type: BlockType,
+        data: u32,
+        flags: u32,
+    ) -> JsResult<()> {
         if self.image_nesting_level > 0 {
             return Ok(());
         }

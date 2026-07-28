@@ -259,19 +259,18 @@ impl FileSystemRouter {
         };
 
         let mut router = Router::Router::init(RouteConfig {
-                dir: Box::from(&path_to_use[..]),
-                extensions: if !extensions.is_empty() {
-                    extensions.iter().map(|s| Box::<[u8]>::from(*s)).collect()
-                } else {
-                    DEFAULT_EXTENSIONS
-                        .iter()
-                        .map(|s| Box::<[u8]>::from(*s))
-                        .collect()
-                },
-                asset_prefix_path: Box::from(asset_prefix_slice.slice()),
-                ..Default::default()
+            dir: Box::from(&path_to_use[..]),
+            extensions: if !extensions.is_empty() {
+                extensions.iter().map(|s| Box::<[u8]>::from(*s)).collect()
+            } else {
+                DEFAULT_EXTENSIONS
+                    .iter()
+                    .map(|s| Box::<[u8]>::from(*s))
+                    .collect()
             },
-        )
+            asset_prefix_path: Box::from(asset_prefix_slice.slice()),
+            ..Default::default()
+        })
         .expect("unreachable");
 
         {
@@ -498,12 +497,11 @@ impl FileSystemRouter {
         };
 
         let mut router = Router::Router::init(RouteConfig {
-                dir: cfg_dir,
-                extensions: cfg_extensions,
-                asset_prefix_path: cfg_asset_prefix_path,
-                ..Default::default()
-            },
-        )
+            dir: cfg_dir,
+            extensions: cfg_extensions,
+            asset_prefix_path: cfg_asset_prefix_path,
+            ..Default::default()
+        })
         .expect("unreachable");
         {
             let config_dir = router.config.dir.clone();

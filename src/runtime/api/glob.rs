@@ -357,7 +357,10 @@ impl Glob {
     // the struct already emits the `GlobClass__construct` shim that calls
     // `<Glob>::constructor(..)`. The free-fn `host_fn` expansion can't name an
     // associated fn without a receiver.
-    pub(crate) fn constructor(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<Box<Glob>> {
+    pub(crate) fn constructor(
+        global_this: &JSGlobalObject,
+        callframe: &CallFrame,
+    ) -> JsResult<Box<Glob>> {
         // SAFETY: bun_vm() returns a non-null *mut to the live VirtualMachine for this global.
         let mut arguments = ArgumentsSlice::init(global_this.bun_vm(), callframe.arguments());
         // `arguments` drops at scope exit.
@@ -408,7 +411,11 @@ impl Glob {
     // `&mut self` receivers were vestigial. The codegen shim still emits
     // `this: &mut Glob`; `&mut T` auto-derefs to `&T`.
     #[bun_jsc::host_fn(method)]
-    pub(crate) fn __scan(&self, global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn __scan(
+        &self,
+        global_this: &JSGlobalObject,
+        callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
         // SAFETY: bun_vm() returns a non-null *mut to the live VirtualMachine for this global.
         let mut arguments = ArgumentsSlice::init(global_this.bun_vm(), callframe.arguments());
         // `arguments` drops at scope exit.

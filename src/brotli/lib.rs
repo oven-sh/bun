@@ -220,4 +220,3 @@ pub fn encode(
     };
     (ok != 0).then_some(out_len)
 }
-

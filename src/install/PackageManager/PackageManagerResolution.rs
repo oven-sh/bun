@@ -274,7 +274,11 @@ impl PackageManager {
         }
     }
 
-    pub(crate) fn assign_root_resolution(&mut self, dependency_id: DependencyID, package_id: PackageID) {
+    pub(crate) fn assign_root_resolution(
+        &mut self,
+        dependency_id: DependencyID,
+        package_id: PackageID,
+    ) {
         // reshaped for borrowck — capture lengths before mutable borrows.
         debug_assert!(
             (dependency_id as usize) < self.lockfile.buffers.resolutions.as_slice().len()

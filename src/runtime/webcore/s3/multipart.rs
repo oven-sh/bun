@@ -245,10 +245,7 @@ impl UploadPart {
         unsafe { &*self.data }
     }
 
-    fn on_part_response(
-        result: S3PartResult,
-        this: *mut c_void,
-    ) -> JsTerminatedResult<()> {
+    fn on_part_response(result: S3PartResult, this: *mut c_void) -> JsTerminatedResult<()> {
         let this = this.cast::<Self>();
         // SAFETY: callback context — `this` is the `*mut UploadPart` passed in `perform()`
         let this = unsafe { &mut *this };

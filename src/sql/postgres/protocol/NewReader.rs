@@ -122,7 +122,10 @@ impl<Context: ReaderContext> NewReaderWrap<Context> {
     /// bytes are the message body, so a missing terminator is a framing
     /// violation, not a partial read. Returns the string without its NUL and
     /// the total bytes consumed (string + NUL).
-    pub(crate) fn string_within(&mut self, limit: usize) -> Result<(Data, usize), AnyPostgresError> {
+    pub(crate) fn string_within(
+        &mut self,
+        limit: usize,
+    ) -> Result<(Data, usize), AnyPostgresError> {
         let view = self.wrapped.peek();
         let bound = view.len().min(limit);
         let Some(zero) = view[..bound].iter().position(|&b| b == 0) else {
@@ -146,7 +149,10 @@ impl<Context: ReaderContext> NewReaderWrap<Context> {
         Ok(Int::from_be_slice(data.slice()))
     }
 
-    pub(crate) fn expect_int<Int: ProtocolInt>(&mut self, value: Int) -> Result<bool, AnyPostgresError> {
+    pub(crate) fn expect_int<Int: ProtocolInt>(
+        &mut self,
+        value: Int,
+    ) -> Result<bool, AnyPostgresError> {
         let actual = self.int::<Int>()?;
         Ok(actual == value)
     }

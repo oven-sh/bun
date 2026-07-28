@@ -247,7 +247,10 @@ impl Request {
     /// If the headers are empty, it will look at request_context to get the headers.
     /// If the headers are empty and request_context is null, it will create an empty FetchHeaders object.
     #[allow(clippy::mut_from_ref)]
-    pub(crate) fn ensure_fetch_headers(&self, global_this: &JSGlobalObject) -> JsResult<&mut HeadersRef> {
+    pub(crate) fn ensure_fetch_headers(
+        &self,
+        global_this: &JSGlobalObject,
+    ) -> JsResult<&mut HeadersRef> {
         if self.headers.get().is_some() {
             // headers is already set
             return Ok(self.headers_mut().as_mut().unwrap());
@@ -322,7 +325,10 @@ impl Request {
         Ok(self.ensure_fetch_headers(global_this)?.to_js(global_this))
     }
 
-    pub(crate) fn clone_headers(&self, global_this: &JSGlobalObject) -> JsResult<Option<HeadersRef>> {
+    pub(crate) fn clone_headers(
+        &self,
+        global_this: &JSGlobalObject,
+    ) -> JsResult<Option<HeadersRef>> {
         if self.headers.get().is_none() {
             if let Some(uws_req) = self.request_context.get_request() {
                 self.headers.set(Some(HeadersRef::create_from_uws(

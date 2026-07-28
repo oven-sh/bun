@@ -47,7 +47,6 @@ impl RefString {
         bun_hash::XxHash32::hash(0, input)
     }
 
-
     /// Single audited deref of the set-once `impl_` backref so `ref_` /
     /// `deref` below are safe callers. `impl_` is assigned at construction
     /// from a live refcounted `WTF::StringImpl*` and remains valid until

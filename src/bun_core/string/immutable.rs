@@ -11,7 +11,8 @@ use bun_highway as highway;
 use bun_simdutf_sys::simdutf;
 
 pub use self::unicode::{
-    CodepointIterator, Cursor, NewCodePointIterator, UnsignedCodepointIterator,     contains_non_bmp_code_point_or_is_invalid_identifier, decode_wtf8_rune_t,
+    CodepointIterator, Cursor, NewCodePointIterator, UnsignedCodepointIterator,
+    contains_non_bmp_code_point_or_is_invalid_identifier, decode_wtf8_rune_t,
     decode_wtf8_rune_t_multibyte, wtf8_byte_sequence_length,
     wtf8_byte_sequence_length_with_invalid,
 };
@@ -59,9 +60,7 @@ pub mod unicode {
         wtf8_byte_sequence_length, wtf8_byte_sequence_length_with_invalid,
     };
 
-    pub use super::unicode_draft::{
-decode_wtf8_rune_t, decode_wtf8_rune_t_multibyte,
-    };
+    pub use super::unicode_draft::{decode_wtf8_rune_t, decode_wtf8_rune_t_multibyte};
 
     /// `CodepointIterator` — yields WTF-8 codepoints with byte-width.
     pub struct NewCodePointIterator<'a> {
@@ -74,16 +73,10 @@ decode_wtf8_rune_t, decode_wtf8_rune_t_multibyte,
     impl<'a> NewCodePointIterator<'a> {
         pub const ZERO_VALUE: CodePoint = -1;
         pub fn init(bytes: &'a [u8]) -> Self {
-            Self {
-                bytes,
-                i: 0,
-            }
+            Self { bytes, i: 0 }
         }
         pub fn init_offset(bytes: &'a [u8], i: usize) -> Self {
-            Self {
-                bytes,
-                i,
-            }
+            Self { bytes, i }
         }
 
         /// True iff any byte in `slice` begins a multi-byte WTF-8 sequence.
@@ -596,7 +589,6 @@ pub struct SplitIterator<'a> {
 }
 
 impl<'a> SplitIterator<'a> {
-
     /// Returns a slice of the next field, or null if splitting is complete.
     pub fn next(&mut self) -> Option<&'a [u8]> {
         let start = self.index?;
@@ -618,7 +610,6 @@ impl<'a> SplitIterator<'a> {
         let start = self.index.unwrap_or(end);
         &self.buffer[start..end]
     }
-
 }
 
 pub fn cat(first: &[u8], second: &[u8]) -> Result<Box<[u8]>, AllocError> {

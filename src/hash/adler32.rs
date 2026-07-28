@@ -12,7 +12,6 @@ impl Adler32 {
     const BASE: u32 = 65521;
     const NMAX: usize = 5552;
 
-
     pub(crate) fn permute(state: u32, input: &[u8]) -> u32 {
         let mut s1 = state & 0xffff;
         let mut s2 = (state >> 16) & 0xffff;
@@ -75,7 +74,6 @@ impl Adler32 {
 
         s1 | (s2 << 16)
     }
-
 
     #[inline]
     pub fn hash(input: &[u8]) -> u32 {

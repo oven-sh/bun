@@ -69,7 +69,10 @@ pub mod write_file;
 /// Body wraps its only privileged op (`Store::deref`) locally; a safe
 /// `extern "C" fn` coerces to the `JSTypedArrayBytesDeallocator` pointer
 /// expected by `to_js_with_context`.
-pub(crate) extern "C" fn blob_store_array_buffer_deallocator(_bytes: *mut c_void, ctx: *mut c_void) {
+pub(crate) extern "C" fn blob_store_array_buffer_deallocator(
+    _bytes: *mut c_void,
+    ctx: *mut c_void,
+) {
     if let Some(store) = NonNull::new(ctx.cast::<Store>()) {
         // SAFETY: `ctx` is a `*mut Store` previously yielded by `StoreRef::into_raw`
         // (one outstanding strong ref). `Store::deref` consumes that ref.
@@ -398,7 +401,10 @@ pub trait BlobExt {
 /// the type-erased `SqlRuntimeHooks` vtable in `hw_exports.rs`, which forwards
 /// `*const c_void` without materialising a reference.
 #[unsafe(no_mangle)]
-pub(crate) unsafe extern "C" fn Bun__Blob__sharedView(this: *const Blob, len: *mut usize) -> *const u8 {
+pub(crate) unsafe extern "C" fn Bun__Blob__sharedView(
+    this: *const Blob,
+    len: *mut usize,
+) -> *const u8 {
     // SAFETY: preconditions documented on the fn item above.
     let view = unsafe { (*this).shared_view() };
     // SAFETY: `len` is a valid writable out-param per the fn safety contract.
@@ -6535,7 +6541,11 @@ impl Any {
         promise.wrap(global_this, |g| self.to_action_value(g, action))
     }
 
-    pub(crate) fn to_json(&mut self, global: &JSGlobalObject, lifetime: Lifetime) -> JsResult<JSValue> {
+    pub(crate) fn to_json(
+        &mut self,
+        global: &JSGlobalObject,
+        lifetime: Lifetime,
+    ) -> JsResult<JSValue> {
         match self {
             Any::Blob(b) => b.to_json(global, lifetime),
             Any::InternalBlob(ib) => {
@@ -6575,7 +6585,10 @@ impl Any {
         self.to_uint8_array(global, Lifetime::Transfer)
     }
 
-    pub(crate) fn to_array_buffer_transfer(&mut self, global: &JSGlobalObject) -> JsResult<JSValue> {
+    pub(crate) fn to_array_buffer_transfer(
+        &mut self,
+        global: &JSGlobalObject,
+    ) -> JsResult<JSValue> {
         self.to_array_buffer(global, Lifetime::Transfer)
     }
 
@@ -6605,7 +6618,11 @@ impl Any {
         blob
     }
 
-    pub(crate) fn to_string(&mut self, global: &JSGlobalObject, lifetime: Lifetime) -> JsResult<JSValue> {
+    pub(crate) fn to_string(
+        &mut self,
+        global: &JSGlobalObject,
+        lifetime: Lifetime,
+    ) -> JsResult<JSValue> {
         match self {
             Any::Blob(b) => b.to_string(global, lifetime),
             Any::InternalBlob(ib) => {
@@ -6833,7 +6850,6 @@ impl Internal {
         &self.bytes
     }
 
-
     pub(crate) fn to_owned_slice(&mut self) -> Vec<u8> {
         if self.bytes.is_empty() && self.bytes.capacity() > 0 {
             self.bytes = Vec::new();
@@ -6870,7 +6886,8 @@ impl Inline {
     const REAL_BLOB_SIZE: usize = core::mem::size_of::<Blob>();
     // Inherent assoc types are nightly-only;
     // the int-size alias is hoisted to module-level `InlineIntSize` above.
-    pub(crate) const AVAILABLE_BYTES: usize = Self::REAL_BLOB_SIZE - core::mem::size_of::<u8>() - 1 - 1;
+    pub(crate) const AVAILABLE_BYTES: usize =
+        Self::REAL_BLOB_SIZE - core::mem::size_of::<u8>() - 1 - 1;
 
     pub fn concat(first: &[u8], second: &[u8]) -> Inline {
         let total = first.len() + second.len();
@@ -6889,11 +6906,6 @@ impl Inline {
         inline_blob.len = total as u8;
         inline_blob
     }
-
-
-
-
-
 }
 
 impl Default for Inline {

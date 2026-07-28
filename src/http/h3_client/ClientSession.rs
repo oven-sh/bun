@@ -47,7 +47,11 @@ pub struct ClientSession {
 impl ClientSession {
     /// `bun.TrivialNew(@This())` — heap-allocate and return raw; pointer is
     /// stashed in the `quic.Socket` ext slot and the `ClientContext` registry.
-    pub(crate) fn new(hostname: Vec<u8>, port: u16, reject_unauthorized: bool) -> *mut ClientSession {
+    pub(crate) fn new(
+        hostname: Vec<u8>,
+        port: u16,
+        reject_unauthorized: bool,
+    ) -> *mut ClientSession {
         bun_core::heap::into_raw(Box::new(ClientSession {
             ref_count: Cell::new(1),
             qsocket: None,

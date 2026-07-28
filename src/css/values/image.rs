@@ -69,7 +69,10 @@ impl Image {
         }
     }
 
-    pub(crate) fn get_necessary_prefixes(&self, targets: &css::targets::Targets) -> css::VendorPrefix {
+    pub(crate) fn get_necessary_prefixes(
+        &self,
+        targets: &css::targets::Targets,
+    ) -> css::VendorPrefix {
         match self {
             Image::Gradient(grad) => grad.get_necessary_prefixes(targets),
             Image::ImageSet(image_set) => image_set.get_necessary_prefixes(targets),
@@ -217,7 +220,10 @@ impl Image {
         }
     }
 
-    pub(crate) fn get_necessary_fallbacks(&self, targets: &css::targets::Targets) -> ColorFallbackKind {
+    pub(crate) fn get_necessary_fallbacks(
+        &self,
+        targets: &css::targets::Targets,
+    ) -> ColorFallbackKind {
         match self {
             Image::Gradient(grad) => grad.get_necessary_fallbacks(targets),
             _ => ColorFallbackKind::empty(),
@@ -354,10 +360,7 @@ impl ImageSet {
     }
 
     /// Returns the vendor prefixes needed for the given browser targets.
-    fn get_necessary_prefixes(
-        &self,
-        targets: &css::targets::Targets,
-    ) -> css::VendorPrefix {
+    fn get_necessary_prefixes(&self, targets: &css::targets::Targets) -> css::VendorPrefix {
         targets.prefixes(self.vendor_prefix, css::prefixes::Feature::ImageSet)
     }
 }

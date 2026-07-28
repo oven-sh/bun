@@ -261,7 +261,12 @@ impl List {
         }
     }
 
-    pub(crate) fn satisfies_pre(&self, version: Version, list_buf: &[u8], version_buf: &[u8]) -> bool {
+    pub(crate) fn satisfies_pre(
+        &self,
+        version: Version,
+        list_buf: &[u8],
+        version_buf: &[u8],
+    ) -> bool {
         debug_assert!(version.tag.has_pre());
 
         // `version` has a prerelease tag:

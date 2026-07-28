@@ -782,7 +782,6 @@ impl String {
         self.0.tag == Tag::Dead
     }
 
-
     /// `bun.String.fromBytes` — borrow `value` without copying or refcounting;
     /// auto-tags UTF-8 if `value` contains any non-ASCII byte.
     #[inline]
@@ -1542,7 +1541,6 @@ impl ZigString {
         self.to_slice().slice() == other.to_slice().slice()
     }
 
-
     /// `ZigString.detectEncoding` — if the (currently-untagged) bytes contain
     /// any non-ASCII, mark the pointer as UTF-16 (assumes the bytes were
     /// sourced from a JS-produced 8-bit string and need re-widening on
@@ -1566,7 +1564,6 @@ impl ZigString {
             self.mark_utf8();
         }
     }
-
 
     /// `ZigString.toSliceFast` — like `to_slice` but skips the Latin-1-to-UTF-8
     /// rescan for 8-bit inputs (caller asserts bytes are already valid UTF-8 /

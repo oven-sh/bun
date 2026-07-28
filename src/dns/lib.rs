@@ -460,7 +460,6 @@ bun_core::comptime_string_map! {
 }
 
 impl Order {
-
     pub fn from_string(order: &[u8]) -> Option<Order> {
         ORDER_MAP.get(order).copied()
     }

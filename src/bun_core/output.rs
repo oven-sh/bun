@@ -196,8 +196,6 @@ pub fn warn(payload: impl PrettyFmtInput) {
     pretty_errorln!("<r><yellow>warn<r><d>:<r> {}", buf);
 }
 
-
-
 /// `Output.prettyErrorln` — function form. Performs `<tag>` → ANSI rewrite on
 /// the rendered payload (using stderr's colour state), writes to stderr, and
 /// appends `\n` if the rendered output does not already end in one. Macro
@@ -210,8 +208,6 @@ pub fn pretty_errorln(payload: impl PrettyFmtInput) {
         write_bytes(Destination::Stderr, b"\n");
     }
 }
-
-
 
 /// `bun.Output.Source.Stdio.restore` — restore terminal to cooked mode on exit.
 /// Thin alias over [`crate::output::stdio::restore`] (the real impl, also in
@@ -249,8 +245,7 @@ static STDOUT_STREAM_SET: AtomicBool = AtomicBool::new(false);
 // the C declaration `int32_t bun_stdio_tty[3]`. Using atomics instead of
 // `RacyCell` makes Rust-side reads/writes fully safe (cell-get reduction).
 #[unsafe(no_mangle)]
-static bun_stdio_tty: [AtomicI32; 3] =
-    [AtomicI32::new(0), AtomicI32::new(0), AtomicI32::new(0)];
+static bun_stdio_tty: [AtomicI32; 3] = [AtomicI32::new(0), AtomicI32::new(0), AtomicI32::new(0)];
 
 /// Read `bun_stdio_tty[idx]`. Written once at startup (in `Source::set_init` /
 /// `bun_initialize_process`) before reader threads spawn, so `Relaxed` suffices.
@@ -551,8 +546,7 @@ pub mod windows_stdio {
     /// snapshot locally and `.set()`s it; `restore()` reads via `.get()`. Both
     /// sides are fully safe (cell-get reduction).
     static CONSOLE_MODE: crate::Once<[Option<u32>; 3]> = crate::Once::new();
-    static CONSOLE_CODEPAGE: core::sync::atomic::AtomicU32 =
-        core::sync::atomic::AtomicU32::new(0);
+    static CONSOLE_CODEPAGE: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
     static CONSOLE_OUTPUT_CODEPAGE: core::sync::atomic::AtomicU32 =
         core::sync::atomic::AtomicU32::new(0);
 
@@ -2628,22 +2622,21 @@ pub fn err_fmt(formatter: impl fmt::Display) {
 // `prompt`/`init`/`publish` callers can read stdin without naming bun_sys.
 // ──────────────────────────────────────────────────────────────────────────
 
-static BUFFERED_STDIN: crate::RacyCell<BufferedStdin> =
-    crate::RacyCell::new(BufferedStdin {
-        fd: {
-            #[cfg(windows)]
-            {
-                Fd::INVALID // set in WindowsStdio.init
-            }
-            #[cfg(not(windows))]
-            {
-                Fd::stdin()
-            }
-        },
-        buf: [0; 4096],
-        start: 0,
-        end: 0,
-    });
+static BUFFERED_STDIN: crate::RacyCell<BufferedStdin> = crate::RacyCell::new(BufferedStdin {
+    fd: {
+        #[cfg(windows)]
+        {
+            Fd::INVALID // set in WindowsStdio.init
+        }
+        #[cfg(not(windows))]
+        {
+            Fd::stdin()
+        }
+    },
+    buf: [0; 4096],
+    start: 0,
+    end: 0,
+});
 
 /// `bun.deprecated.BufferedReader(4096, File.Reader)` over the process stdin.
 /// Layout is local to bun_core; bun_sys never casts into this (it only fills

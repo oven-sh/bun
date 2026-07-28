@@ -248,7 +248,8 @@ pub const NT_UNC_OBJECT_PREFIX: [u16; 8] = [
     b'C' as u16,
     b'\\' as u16,
 ];
-pub(crate) const LONG_PATH_PREFIX: [u16; 4] = [b'\\' as u16, b'\\' as u16, b'?' as u16, b'\\' as u16];
+pub(crate) const LONG_PATH_PREFIX: [u16; 4] =
+    [b'\\' as u16, b'\\' as u16, b'?' as u16, b'\\' as u16];
 
 pub(crate) const NT_OBJECT_PREFIX_U8: [u8; 4] = *b"\\??\\";
 pub const NT_UNC_OBJECT_PREFIX_U8: [u8; 8] = *b"\\??\\UNC\\";

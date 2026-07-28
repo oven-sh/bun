@@ -1880,7 +1880,6 @@ pub struct Ref {
 }
 
 impl Ref {
-
     pub fn unref(&mut self, vm: &mut virtual_machine::VirtualMachine) {
         if !self.has {
             return;

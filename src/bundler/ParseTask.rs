@@ -1820,9 +1820,7 @@ pub mod parse_worker {
         /// `result` must be the `.result` field of a live
         /// `OnBeforeParseResultWrapper`, with provenance covering the wrapper
         /// (derived via `addr_of_mut!(wrapper.result)`).
-        unsafe fn get_wrapper(
-            result: *mut OnBeforeParseResult,
-        ) -> *mut OnBeforeParseResultWrapper {
+        unsafe fn get_wrapper(result: *mut OnBeforeParseResult) -> *mut OnBeforeParseResultWrapper {
             // SAFETY: result points to OnBeforeParseResultWrapper.result (always
             // constructed that way in `OnBeforeParsePlugin::run`).
             let wrapper =

@@ -129,7 +129,10 @@ impl StaticRoute {
         }
     }
 
-    pub(crate) fn clone(&mut self, global_this: &JSGlobalObject) -> Result<*mut StaticRoute, Error> {
+    pub(crate) fn clone(
+        &mut self,
+        global_this: &JSGlobalObject,
+    ) -> Result<*mut StaticRoute, Error> {
         let blob = self.blob.to_blob(global_this);
         let duped = blob.dupe();
         self.blob = AnyBlob::Blob(blob);

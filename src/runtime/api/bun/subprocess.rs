@@ -573,7 +573,6 @@ impl Subprocess<'_> {
         self.update_has_pending_activity();
     }
 
-
     #[bun_jsc::host_fn(getter)]
     pub(crate) fn get_stderr(this: &Self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
         // When terminal is used, stderr goes through the terminal
@@ -785,7 +784,11 @@ impl Subprocess<'_> {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub(crate) fn do_ref(this: &Self, _global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn do_ref(
+        this: &Self,
+        _global: &JSGlobalObject,
+        _frame: &CallFrame,
+    ) -> JsResult<JSValue> {
         this.js_ref();
         Ok(JSValue::UNDEFINED)
     }

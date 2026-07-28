@@ -91,7 +91,6 @@ impl<T> Default for Weak<T> {
 }
 
 impl<T> Weak<T> {
-
     pub fn create(
         value: JSValue,
         global_this: &JSGlobalObject,
@@ -125,7 +124,6 @@ impl<T> Weak<T> {
 
         Some(result)
     }
-
 
     pub fn clear(&mut self) {
         let Some(r#ref) = self.r#ref else {

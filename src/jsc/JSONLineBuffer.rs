@@ -120,7 +120,6 @@ impl JSONLineBuffer {
         }
     }
 
-
     /// Notify the buffer that `nread` bytes were written directly into the
     /// tail of `data` (via `data.uv_alloc_spare_u8()`).
     ///

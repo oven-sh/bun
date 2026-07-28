@@ -5368,11 +5368,7 @@ pub(crate) fn parse_http_date(value: &[u8]) -> Option<u64> {
 /// Declared `extern "Rust"` in `bun_event_loop::MiniEventLoop`; link-time
 /// resolved.
 #[unsafe(no_mangle)]
-fn __bun_stdio_blob_store_new(
-    fd: bun_sys::Fd,
-    is_atty: bool,
-    mode: bun_sys::Mode,
-) -> *mut () {
+fn __bun_stdio_blob_store_new(fd: bun_sys::Fd, is_atty: bool, mode: bun_sys::Mode) -> *mut () {
     use bun_jsc::node_path::PathOrFileDescriptor;
     use bun_jsc::webcore_types::store::{Data, File, Store};
     let store: Box<Store> = Store::new(Store {

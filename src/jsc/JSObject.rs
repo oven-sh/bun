@@ -128,7 +128,6 @@ impl JSObject {
         self.to_js().get(global, prop.as_ref())
     }
 
-
     /// # Safety
     /// `owner` must be a cell-tagged `JSValue` (its payload is a live
     /// `JSCell*`) that remains valid for the duration of the call.
@@ -202,7 +201,10 @@ impl JSObject {
     }
 
     /// This will not call getters or be observable from JavaScript.
-    pub(crate) fn get_code_property_vm_inquiry(&mut self, global: &JSGlobalObject) -> Option<JSValue> {
+    pub(crate) fn get_code_property_vm_inquiry(
+        &mut self,
+        global: &JSGlobalObject,
+    ) -> Option<JSValue> {
         let v = Bun__JSObject__getCodePropertyVMInquiry(global, self);
         if v.is_empty() {
             return None;

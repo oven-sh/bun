@@ -32,8 +32,7 @@ use bun_spawn_sys::posix_spawn::posix_spawn;
 pub use posix_spawn::WaitPidResult;
 #[cfg(windows)]
 #[derive(Clone, Copy)]
-pub struct WaitPidResult {
-}
+pub struct WaitPidResult {}
 
 /// Low-level fd / memfd helpers historically grouped here as `spawn_sys`.
 /// MOVE_DOWN: real impls now live in `bun_sys` (lower crate); re-export so
@@ -205,7 +204,6 @@ pub fn event_loop_handle_to_ctx(handle: EventLoopHandle) -> bun_io::EventLoopCtx
 
 // ─── posix_spawn / FilePoll / uv-backed Process methods ──────────────────────
 impl Process {
-
     #[cfg(unix)]
     pub(crate) fn init_posix(
         posix: &PosixSpawnResult,
@@ -595,7 +593,6 @@ impl Process {
         self.poller.disable_keeping_event_loop_alive(ctx);
     }
 
-
     pub fn enable_keeping_event_loop_alive(&mut self) {
         if self.has_exited() {
             return;
@@ -856,7 +853,6 @@ impl PollerPosix {
             waiter.unref(ctx);
         }
     }
-
 }
 
 #[cfg(unix)]
@@ -899,7 +895,6 @@ impl PollerWindows {
             _ => {}
         }
     }
-
 }
 
 #[cfg(unix)]
@@ -997,7 +992,6 @@ pub mod waiter_thread_posix {
                 T::on_wait_pid_from_waiter_thread(self.subprocess, &self.result, &self.rusage)
             };
         }
-
     }
 
     /// Posted to `MiniEventLoop` from the waiter thread. Self-referential via
@@ -1459,7 +1453,6 @@ impl WindowsSpawnResult {
     pub fn to_process(&mut self, _event_loop: impl Sized) -> *mut Process {
         self.process.take().unwrap()
     }
-
 }
 
 #[cfg(windows)]
@@ -2289,7 +2282,8 @@ mod spawn_process_body {
             pub(crate) pipe: Box<uv::Pipe>,
             pub(crate) err: bun_sys::E,
             pub(crate) context: *mut SyncWindowsProcess,
-            pub(crate) on_done_callback: fn(*mut SyncWindowsProcess, OutFd, Vec<Box<[u8]>>, bun_sys::E),
+            pub(crate) on_done_callback:
+                fn(*mut SyncWindowsProcess, OutFd, Vec<Box<[u8]>>, bun_sys::E),
             pub(crate) tag: OutFd,
         }
 

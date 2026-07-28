@@ -285,8 +285,6 @@ impl Scripts {
             (Self::NAMES[5], &self.postprepare),
         ]
     }
-
-
 }
 
 // `deinit` becomes `Drop` — body only frees owned fields → delete entirely; Vec<Box<[u8]>> drops automatically.
@@ -853,7 +851,11 @@ impl Lockfile {
     }
 
     /// Is this a direct dependency of the workspace the install is taking place in?
-    pub(crate) fn is_root_dependency(&self, manager: &mut PackageManager, id: DependencyID) -> bool {
+    pub(crate) fn is_root_dependency(
+        &self,
+        manager: &mut PackageManager,
+        id: DependencyID,
+    ) -> bool {
         // `RootPackageId::get` caches into `manager`.
         let root_id = manager
             .root_package_id
@@ -2163,7 +2165,10 @@ impl Lockfile {
     /// The string buffer is read from `self`, splitting borrows at the field
     /// level (`package_index` / `packages` / `buffers.string_bytes` are
     /// disjoint).
-    pub(crate) fn append_package_dedupe(&mut self, pkg: &mut Package) -> Result<PackageID, AllocError> {
+    pub(crate) fn append_package_dedupe(
+        &mut self,
+        pkg: &mut Package,
+    ) -> Result<PackageID, AllocError> {
         let entry = self.package_index.get_or_put(pkg.name_hash)?;
 
         if !entry.found_existing {
@@ -2506,7 +2511,6 @@ impl<'a> StringBuilder<'a> {
         }
     }
 
-
     pub(crate) fn clamp(&mut self) {
         debug_assert!(self.cap >= self.len);
         // assert that no other builder was allocated while this builder was being used
@@ -2603,7 +2607,6 @@ pub mod package_index {
 
     // `bun_collections::HashMap` hard-codes an 80% max load factor.
     pub type Map = BunHashMap<PackageNameHash, Entry, IdentityContext<PackageNameHash>>;
-
 
     pub enum Entry {
         Id(PackageID),

@@ -3720,10 +3720,7 @@ impl IgnorePatterns {
     }
 
     /// ignore files are always ignored, don't need to worry about opening or reading twice
-    fn read_from_disk(
-        dir: &Dir,
-        dir_depth: usize,
-    ) -> Result<Option<IgnorePatterns>, AllocError> {
+    fn read_from_disk(dir: &Dir, dir_depth: usize) -> Result<Option<IgnorePatterns>, AllocError> {
         let mut patterns: Vec<Pattern> = Vec::new();
 
         let mut ignore_kind = IgnorePatternsKind::Npmignore;

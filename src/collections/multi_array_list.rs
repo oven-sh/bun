@@ -607,7 +607,6 @@ impl<T> Slice<T> {
         self.len
     }
 
-
     /// Typed column base for field `fi`. Substitutes a properly-aligned
     /// dangling pointer when `F` is a ZST (the computed column offset is not
     /// guaranteed `align_of::<F>()`-aligned for over-aligned ZSTs). For
@@ -857,8 +856,7 @@ impl<T, A: Allocator + Default> Default for MultiArrayList<T, A> {
     }
 }
 
-impl<T> MultiArrayList<T, Global> {
-}
+impl<T> MultiArrayList<T, Global> {}
 
 impl<T, A: Allocator> MultiArrayList<T, A> {
     /// Construct an empty list backed by `alloc`.
@@ -878,7 +876,6 @@ impl<T, A: Allocator> MultiArrayList<T, A> {
     pub fn len(&self) -> usize {
         self.len
     }
-
 
     #[inline]
     pub fn capacity(&self) -> usize {
@@ -973,8 +970,6 @@ impl<T, A: Allocator> MultiArrayList<T, A> {
         let mut s = self.slice();
         s.set(self.len - 1, elem);
     }
-
-
 
     /// Remove and return the last element from the list, or return `None` if list is empty.
     /// Invalidates pointers to fields of the removed element.
@@ -1073,7 +1068,6 @@ impl<T, A: Allocator> MultiArrayList<T, A> {
         }
         self.len = 0;
     }
-
 
     /// Invalidates all element pointers.
     pub fn clear_retaining_capacity(&mut self) {

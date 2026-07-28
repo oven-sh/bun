@@ -120,7 +120,10 @@ pub(crate) static LIVE_COUNT: AtomicI32 = AtomicI32::new(0);
 pub mod testing_apis {
     use super::*;
 
-    pub(crate) fn file_sink_live_count(_global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn file_sink_live_count(
+        _global: &JSGlobalObject,
+        _frame: &CallFrame,
+    ) -> JsResult<JSValue> {
         Ok(JSValue::js_number(LIVE_COUNT.load(Ordering::Relaxed) as f64))
     }
 }
@@ -701,7 +704,6 @@ impl FileSink {
         sys::Result::Ok(())
     }
 
-
     pub(crate) fn event_loop(&self) -> EventLoopHandle {
         self.event_loop_handle
     }
@@ -864,7 +866,11 @@ impl FileSink {
         sys::Result::Ok(())
     }
 
-    pub(crate) fn flush_from_js(&self, global_this: &JSGlobalObject, wait: bool) -> sys::Result<JSValue> {
+    pub(crate) fn flush_from_js(
+        &self,
+        global_this: &JSGlobalObject,
+        wait: bool,
+    ) -> sys::Result<JSValue> {
         let _ = wait;
 
         if self.pending.get().state == streams::PendingState::Pending {
@@ -1000,7 +1006,6 @@ impl FileSink {
         let accepted = self.bytes_accepted(buffered_before, &rc);
         self.to_result(rc, accepted)
     }
-
 
     pub(crate) fn write_latin1(&self, data: &streams::Result) -> streams::Writable {
         if self.done.get() {

@@ -836,9 +836,7 @@ bitflags::bitflags! {
 impl FontProperty {
     const FONT: FontProperty = FontProperty::all();
 
-    fn try_from_property_id(
-        property_id: crate::properties::PropertyIdTag,
-    ) -> Option<FontProperty> {
+    fn try_from_property_id(property_id: crate::properties::PropertyIdTag) -> Option<FontProperty> {
         // Keep in sync when new Font* PropertyIdTag variants are added.
         use crate::properties::PropertyIdTag;
         match property_id {

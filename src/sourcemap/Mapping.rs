@@ -110,10 +110,7 @@ impl ListValue {
         both_lists!(self, |list| list.memory_cost())
     }
 
-    fn ensure_total_capacity(
-        &mut self,
-        count: usize,
-    ) -> Result<(), bun_alloc::AllocError> {
+    fn ensure_total_capacity(&mut self, count: usize) -> Result<(), bun_alloc::AllocError> {
         both_lists!(self, |list| list.ensure_total_capacity(count))
     }
 }
@@ -280,7 +277,10 @@ impl List {
             + (self.names.len() * size_of::<SemverString>())
     }
 
-    pub(crate) fn ensure_total_capacity(&mut self, count: usize) -> Result<(), bun_alloc::AllocError> {
+    pub(crate) fn ensure_total_capacity(
+        &mut self,
+        count: usize,
+    ) -> Result<(), bun_alloc::AllocError> {
         self.r#impl.ensure_total_capacity(count)
     }
 }

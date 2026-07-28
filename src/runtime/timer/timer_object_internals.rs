@@ -899,7 +899,11 @@ impl TimerObjectInternals {
         unsafe { (*self.event_loop_timer()).state = state };
     }
 
-    pub(crate) fn do_ref(&self, _global: &JSGlobalObject, this_value: JSValue) -> JsResult<JSValue> {
+    pub(crate) fn do_ref(
+        &self,
+        _global: &JSGlobalObject,
+        this_value: JSValue,
+    ) -> JsResult<JSValue> {
         this_value.ensure_still_alive();
 
         let did_have_js_ref = self.flags.get().has_js_ref();
@@ -919,7 +923,11 @@ impl TimerObjectInternals {
         Ok(this_value)
     }
 
-    pub(crate) fn do_unref(&self, _global: &JSGlobalObject, this_value: JSValue) -> JsResult<JSValue> {
+    pub(crate) fn do_unref(
+        &self,
+        _global: &JSGlobalObject,
+        this_value: JSValue,
+    ) -> JsResult<JSValue> {
         this_value.ensure_still_alive();
 
         let did_have_js_ref = self.flags.get().has_js_ref();

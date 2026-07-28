@@ -431,7 +431,11 @@ impl HotReloadEvent {
     }
 
     /// Invalidates items in IncrementalGraph, appending all new items to `entry_points`.
-    pub(crate) fn process_file_list(&mut self, dev: &mut DevServer, entry_points: &mut EntryPointList) {
+    pub(crate) fn process_file_list(
+        &mut self,
+        dev: &mut DevServer,
+        entry_points: &mut EntryPointList,
+    ) {
         // RAII: `ThreadLockGuard` stores a raw `*const ThreadLock` and unlocks on
         // drop, so it does not hold a borrow of `dev` for the scope.
         let _g = dev.graph_safety_lock.guard();

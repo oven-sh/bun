@@ -146,11 +146,7 @@ impl Stringifier {
         })
     }
 
-    fn stringify_value(
-        &mut self,
-        global: &JSGlobalObject,
-        value: JSValue,
-    ) -> StringifyResult<()> {
+    fn stringify_value(&mut self, global: &JSGlobalObject, value: JSValue) -> StringifyResult<()> {
         if !self.stack_check.is_safe_to_recurse() {
             return Err(StringifyError::StackOverflow);
         }

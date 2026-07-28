@@ -1346,7 +1346,10 @@ pub mod pattern {
             })
         }
 
-        pub(crate) fn init(input: &[u8], offset_: RoutePathInt) -> Result<Pattern, PatternParseError> {
+        pub(crate) fn init(
+            input: &[u8],
+            offset_: RoutePathInt,
+        ) -> Result<Pattern, PatternParseError> {
             Self::init_maybe_hash::<true>(input, offset_)
         }
 

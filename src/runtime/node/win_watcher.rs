@@ -190,7 +190,6 @@ impl ChangeEvent {
     }
 }
 
-
 impl PathWatcher {
     extern "C" fn uv_event_callback(
         event: *mut uv::uv_fs_event_t,

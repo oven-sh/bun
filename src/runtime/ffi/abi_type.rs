@@ -226,7 +226,10 @@ impl ABIType {
         self.row().c_type
     }
 
-    pub(crate) fn param_typename(self, writer: &mut impl std::io::Write) -> Result<(), crate::Error> {
+    pub(crate) fn param_typename(
+        self,
+        writer: &mut impl std::io::Write,
+    ) -> Result<(), crate::Error> {
         writer.write_all(self.typename_label())?;
         Ok(())
     }

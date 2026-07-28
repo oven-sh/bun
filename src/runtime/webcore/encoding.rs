@@ -147,10 +147,7 @@ unsafe extern "C" fn Bun__encoding__writeUTF16(
 /// # Safety
 /// Caller (C++) must guarantee `input[..len]` is valid for reading.
 #[unsafe(no_mangle)]
-unsafe extern "C" fn Bun__encoding__byteLengthLatin1AsUTF8(
-    input: *const u8,
-    len: usize,
-) -> usize {
+unsafe extern "C" fn Bun__encoding__byteLengthLatin1AsUTF8(input: *const u8, len: usize) -> usize {
     // SAFETY: forwarded from this fn's contract.
     unsafe { byte_length_u8::<{ enc::UTF8 }>(input, len) }
 }
@@ -158,10 +155,7 @@ unsafe extern "C" fn Bun__encoding__byteLengthLatin1AsUTF8(
 /// # Safety
 /// Caller (C++) must guarantee `input[..len]` is valid for reading.
 #[unsafe(no_mangle)]
-unsafe extern "C" fn Bun__encoding__byteLengthUTF16AsUTF8(
-    input: *const u16,
-    len: usize,
-) -> usize {
+unsafe extern "C" fn Bun__encoding__byteLengthUTF16AsUTF8(input: *const u16, len: usize) -> usize {
     // SAFETY: forwarded from this fn's contract.
     let input = unsafe { bun_core::ffi::slice(input, len) };
     strings::element_length_utf16_into_utf8(input)
@@ -727,10 +721,7 @@ pub(crate) unsafe fn write_u16<const ENCODING: u8, const ALLOW_PARTIAL_WRITE: bo
 
 /// # Safety
 /// `input` must be valid for reading `len` bytes.
-unsafe fn construct_from_u8<const ENCODING: u8>(
-    input: *const u8,
-    len: usize,
-) -> Vec<u8> {
+unsafe fn construct_from_u8<const ENCODING: u8>(input: *const u8, len: usize) -> Vec<u8> {
     if len == 0 {
         return Vec::new();
     }
@@ -815,10 +806,7 @@ unsafe fn construct_from_u8<const ENCODING: u8>(
 
 /// # Safety
 /// `input` must be valid for reading `len` `u16`s.
-unsafe fn construct_from_u16<const ENCODING: u8>(
-    input: *const u16,
-    len: usize,
-) -> Vec<u8> {
+unsafe fn construct_from_u16<const ENCODING: u8>(input: *const u16, len: usize) -> Vec<u8> {
     if len == 0 {
         return Vec::new();
     }

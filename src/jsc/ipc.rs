@@ -2042,7 +2042,6 @@ pub mod IPCHandlers {
     pub mod PosixSocket {
         use super::*;
 
-
         pub fn on_close(send_queue: &mut SendQueue, _: Socket, _: c_int, _: Option<*mut c_void>) {
             // uSockets has already freed the underlying socket
             log!("NewSocketIPCHandler#onClose\n");
@@ -2091,7 +2090,6 @@ pub mod IPCHandlers {
             // unref if needed
         }
 
-
         pub fn on_end(send_queue: &mut SendQueue, _: Socket) {
             log!("onEnd");
             send_queue.close_socket(CloseReason::Failure, CloseFrom::User);
@@ -2102,7 +2100,10 @@ pub mod IPCHandlers {
     pub(crate) mod WindowsNamedPipe {
         use super::*;
 
-        pub(crate) fn on_read_alloc(send_queue: &mut SendQueue, suggested_size: usize) -> &mut [u8] {
+        pub(crate) fn on_read_alloc(
+            send_queue: &mut SendQueue,
+            suggested_size: usize,
+        ) -> &mut [u8] {
             log!("NewNamedPipeIPCHandler#onReadAlloc {}", suggested_size);
             match &mut send_queue.incoming {
                 IncomingBuffer::Json(json_buf) => {

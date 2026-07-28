@@ -482,10 +482,7 @@ unsafe extern "C" {
 }
 
 #[unsafe(no_mangle)]
-extern "C" fn napi_get_undefined(
-    env_: napi_env,
-    result_: *mut napi_value,
-) -> napi_status {
+extern "C" fn napi_get_undefined(env_: napi_env, result_: *mut napi_value) -> napi_status {
     bun_output::scoped_log!(napi, "napi_get_undefined");
     let env = get_env!(env_);
     env.check_gc();
@@ -523,10 +520,7 @@ extern "C" fn napi_get_boolean(
 }
 
 #[unsafe(no_mangle)]
-extern "C" fn napi_create_array(
-    env_: napi_env,
-    result_: *mut napi_value,
-) -> napi_status {
+extern "C" fn napi_create_array(env_: napi_env, result_: *mut napi_value) -> napi_status {
     bun_output::scoped_log!(napi, "napi_create_array");
     let env = get_env!(env_);
     env.check_gc();
@@ -943,11 +937,7 @@ unsafe extern "C" {
 }
 
 #[unsafe(no_mangle)]
-extern "C" fn napi_is_array(
-    env_: napi_env,
-    value_: napi_value,
-    result_: *mut bool,
-) -> napi_status {
+extern "C" fn napi_is_array(env_: napi_env, value_: napi_value, result_: *mut bool) -> napi_status {
     bun_output::scoped_log!(napi, "napi_is_array");
     let env = get_env!(env_);
     env.check_gc();
@@ -1152,10 +1142,7 @@ extern "C" fn napi_async_init(
 
 // we don't support async contexts
 #[unsafe(no_mangle)]
-extern "C" fn napi_async_destroy(
-    env_: napi_env,
-    _async_ctx: *mut c_void,
-) -> napi_status {
+extern "C" fn napi_async_destroy(env_: napi_env, _async_ctx: *mut c_void) -> napi_status {
     bun_output::scoped_log!(napi, "napi_async_destroy");
     let env = get_env!(env_);
     env.ok()
@@ -1287,10 +1274,7 @@ extern "C" fn napi_open_callback_scope(
 }
 
 #[unsafe(no_mangle)]
-extern "C" fn napi_close_callback_scope(
-    _env: napi_env,
-    _scope: *mut c_void,
-) -> napi_status {
+extern "C" fn napi_close_callback_scope(_env: napi_env, _scope: *mut c_void) -> napi_status {
     bun_output::scoped_log!(napi, "napi_close_callback_scope");
     NapiStatus::ok as napi_status
 }
@@ -1315,11 +1299,7 @@ unsafe extern "C" {
 }
 
 #[unsafe(no_mangle)]
-extern "C" fn napi_is_error(
-    env_: napi_env,
-    value_: napi_value,
-    result: *mut bool,
-) -> napi_status {
+extern "C" fn napi_is_error(env_: napi_env, value_: napi_value, result: *mut bool) -> napi_status {
     bun_output::scoped_log!(napi, "napi_is_error");
     let env = get_env!(env_);
     env.check_gc();
@@ -1626,11 +1606,7 @@ unsafe extern "C" {
 }
 
 #[unsafe(no_mangle)]
-extern "C" fn napi_create_date(
-    env_: napi_env,
-    time: f64,
-    result_: *mut napi_value,
-) -> napi_status {
+extern "C" fn napi_create_date(env_: napi_env, time: f64, result_: *mut napi_value) -> napi_status {
     bun_output::scoped_log!(napi, "napi_create_date");
     let env = preamble!(env_);
     let result = get_out!(env, result_);
@@ -1642,11 +1618,7 @@ extern "C" fn napi_create_date(
 }
 
 #[unsafe(no_mangle)]
-extern "C" fn napi_is_date(
-    env_: napi_env,
-    value_: napi_value,
-    is_date_: *mut bool,
-) -> napi_status {
+extern "C" fn napi_is_date(env_: napi_env, value_: napi_value, is_date_: *mut bool) -> napi_status {
     bun_output::scoped_log!(napi, "napi_is_date");
     let env = get_env!(env_);
     env.check_gc();
@@ -1956,8 +1928,7 @@ static NAPI_NODE_VERSION_GLOBAL: napi_node_version = napi_node_version {
 
 bun_opaque::opaque_ffi! { pub struct struct_napi_async_cleanup_hook_handle__; }
 type napi_async_cleanup_hook_handle = *mut struct_napi_async_cleanup_hook_handle__;
-type napi_async_cleanup_hook =
-    Option<extern "C" fn(napi_async_cleanup_hook_handle, *mut c_void)>;
+type napi_async_cleanup_hook = Option<extern "C" fn(napi_async_cleanup_hook_handle, *mut c_void)>;
 
 fn napi_span(ptr: *const u8, len: usize) -> &'static [u8] {
     // SAFETY: caller-supplied C string region; lifetime is the duration of the NAPI call.
@@ -2166,10 +2137,7 @@ extern "C" fn napi_create_async_work(
 }
 
 #[unsafe(no_mangle)]
-extern "C" fn napi_delete_async_work(
-    env_: napi_env,
-    work_: *mut napi_async_work,
-) -> napi_status {
+extern "C" fn napi_delete_async_work(env_: napi_env, work_: *mut napi_async_work) -> napi_status {
     bun_output::scoped_log!(napi, "napi_delete_async_work");
     let env = get_env!(env_);
     // SAFETY: `work_` is null or the `napi_async_work` we allocated in `napi_create_async_work`.
@@ -2182,10 +2150,7 @@ extern "C" fn napi_delete_async_work(
 }
 
 #[unsafe(no_mangle)]
-extern "C" fn napi_queue_async_work(
-    env_: napi_env,
-    work_: *mut napi_async_work,
-) -> napi_status {
+extern "C" fn napi_queue_async_work(env_: napi_env, work_: *mut napi_async_work) -> napi_status {
     bun_output::scoped_log!(napi, "napi_queue_async_work");
     let env = get_env!(env_);
     // SAFETY: `work_` is null or the `napi_async_work` we allocated in `napi_create_async_work`.
@@ -2198,10 +2163,7 @@ extern "C" fn napi_queue_async_work(
 }
 
 #[unsafe(no_mangle)]
-extern "C" fn napi_cancel_async_work(
-    env_: napi_env,
-    work_: *mut napi_async_work,
-) -> napi_status {
+extern "C" fn napi_cancel_async_work(env_: napi_env, work_: *mut napi_async_work) -> napi_status {
     bun_output::scoped_log!(napi, "napi_cancel_async_work");
     let env = get_env!(env_);
     // SAFETY: `work_` is null or the `napi_async_work` we allocated in `napi_create_async_work`.
@@ -2234,10 +2196,7 @@ type napi_event_loop = *mut bun_sys::windows::libuv::Loop;
 type napi_event_loop = *mut EventLoop;
 
 #[unsafe(no_mangle)]
-extern "C" fn napi_get_uv_event_loop(
-    env_: napi_env,
-    loop_: *mut napi_event_loop,
-) -> napi_status {
+extern "C" fn napi_get_uv_event_loop(env_: napi_env, loop_: *mut napi_event_loop) -> napi_status {
     bun_output::scoped_log!(napi, "napi_get_uv_event_loop");
     let env = get_env!(env_);
     let loop_out = get_out!(env, loop_);
@@ -3171,9 +3130,7 @@ extern "C" fn napi_call_threadsafe_function(
 }
 
 #[unsafe(no_mangle)]
-extern "C" fn napi_acquire_threadsafe_function(
-    func: napi_threadsafe_function,
-) -> napi_status {
+extern "C" fn napi_acquire_threadsafe_function(func: napi_threadsafe_function) -> napi_status {
     bun_output::scoped_log!(napi, "napi_acquire_threadsafe_function");
     // SAFETY: func is non-null per N-API contract.
     unsafe { &mut *func }.acquire()

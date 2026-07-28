@@ -5,7 +5,7 @@ pub mod crate_error;
 pub mod error;
 pub mod storage_class;
 
-pub use crate_error::{Error, };
+pub use crate_error::Error;
 
 pub mod credentials;
 

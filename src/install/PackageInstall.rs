@@ -566,11 +566,7 @@ impl HardLinkWindowsInstallTask {
         }
     }
 
-    fn init(
-        src: &[OSPathChar],
-        dest: &[OSPathChar],
-        basename: &[OSPathChar],
-    ) -> *mut Self {
+    fn init(src: &[OSPathChar], dest: &[OSPathChar], basename: &[OSPathChar]) -> *mut Self {
         let allocation_size = src.len() + 1 + dest.len() + 1;
 
         let mut combined = vec![0u16; allocation_size].into_boxed_slice();
@@ -2090,7 +2086,11 @@ impl<'a> PackageInstall<'a> {
         }
     }
 
-    pub(crate) fn install_from_link(&mut self, skip_delete: bool, destination_dir: &Dir) -> InstallResult {
+    pub(crate) fn install_from_link(
+        &mut self,
+        skip_delete: bool,
+        destination_dir: &Dir,
+    ) -> InstallResult {
         let dest_path = self.destination_dir_subpath;
         // If this fails, we don't care.
         // we'll catch it the next error

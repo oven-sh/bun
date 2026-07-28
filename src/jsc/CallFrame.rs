@@ -252,7 +252,6 @@ impl<'a> ArgumentsSlice<'a> {
         &self.remaining_buf[self.remaining_start..]
     }
 
-
     pub(crate) fn unprotect(&mut self) {
         let mut iter = self.protected.iterator::<true, true>();
         while let Some(i) = iter.next() {

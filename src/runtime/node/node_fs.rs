@@ -527,7 +527,8 @@ mod _async_tasks {
     pub mod async_ {
         use super::*;
 
-        pub(crate) type Access = AsyncFSTask<ret::Access, args::Access, { NodeFSFunctionEnum::Access }>;
+        pub(crate) type Access =
+            AsyncFSTask<ret::Access, args::Access, { NodeFSFunctionEnum::Access }>;
         pub(crate) type AppendFile =
             AsyncFSTask<ret::AppendFile, args::AppendFile, { NodeFSFunctionEnum::AppendFile }>;
         pub(crate) type Chmod = AsyncFSTask<ret::Chmod, args::Chmod, { NodeFSFunctionEnum::Chmod }>;
@@ -535,9 +536,12 @@ mod _async_tasks {
         pub(crate) type Close = UVFSRequest<ret::Close, args::Close, { NodeFSFunctionEnum::Close }>;
         pub(crate) type CopyFile =
             AsyncFSTask<ret::CopyFile, args::CopyFile, { NodeFSFunctionEnum::CopyFile }>;
-        pub(crate) type Exists = AsyncFSTask<ret::Exists, args::Exists, { NodeFSFunctionEnum::Exists }>;
-        pub(crate) type Fchmod = AsyncFSTask<ret::Fchmod, args::FChmod, { NodeFSFunctionEnum::Fchmod }>;
-        pub(crate) type Fchown = AsyncFSTask<ret::Fchown, args::Fchown, { NodeFSFunctionEnum::Fchown }>;
+        pub(crate) type Exists =
+            AsyncFSTask<ret::Exists, args::Exists, { NodeFSFunctionEnum::Exists }>;
+        pub(crate) type Fchmod =
+            AsyncFSTask<ret::Fchmod, args::FChmod, { NodeFSFunctionEnum::Fchmod }>;
+        pub(crate) type Fchown =
+            AsyncFSTask<ret::Fchown, args::Fchown, { NodeFSFunctionEnum::Fchown }>;
         pub(crate) type Fdatasync =
             AsyncFSTask<ret::Fdatasync, args::FdataSync, { NodeFSFunctionEnum::Fdatasync }>;
         pub(crate) type Fstat = AsyncFSTask<ret::Fstat, args::Fstat, { NodeFSFunctionEnum::Fstat }>;
@@ -546,8 +550,10 @@ mod _async_tasks {
             AsyncFSTask<ret::Ftruncate, args::FTruncate, { NodeFSFunctionEnum::Ftruncate }>;
         pub(crate) type Futimes =
             AsyncFSTask<ret::Futimes, args::Futimes, { NodeFSFunctionEnum::Futimes }>;
-        pub(crate) type Lchmod = AsyncFSTask<ret::Lchmod, args::LCHmod, { NodeFSFunctionEnum::Lchmod }>;
-        pub(crate) type Lchown = AsyncFSTask<ret::Lchown, args::LChown, { NodeFSFunctionEnum::Lchown }>;
+        pub(crate) type Lchmod =
+            AsyncFSTask<ret::Lchmod, args::LCHmod, { NodeFSFunctionEnum::Lchmod }>;
+        pub(crate) type Lchown =
+            AsyncFSTask<ret::Lchown, args::LChown, { NodeFSFunctionEnum::Lchown }>;
         pub(crate) type Link = AsyncFSTask<ret::Link, args::Link, { NodeFSFunctionEnum::Link }>;
         pub(crate) type Lstat = AsyncFSTask<ret::Stat, args::Stat, { NodeFSFunctionEnum::Lstat }>;
         pub(crate) type Lutimes =
@@ -568,7 +574,8 @@ mod _async_tasks {
             AsyncFSTask<ret::Realpath, args::Realpath, { NodeFSFunctionEnum::Realpath }>;
         pub(crate) type RealpathNonNative =
             AsyncFSTask<ret::Realpath, args::Realpath, { NodeFSFunctionEnum::RealpathNonNative }>;
-        pub(crate) type Rename = AsyncFSTask<ret::Rename, args::Rename, { NodeFSFunctionEnum::Rename }>;
+        pub(crate) type Rename =
+            AsyncFSTask<ret::Rename, args::Rename, { NodeFSFunctionEnum::Rename }>;
         pub(crate) type Rm = AsyncFSTask<ret::Rm, args::Rm, { NodeFSFunctionEnum::Rm }>;
         pub(crate) type Rmdir = AsyncFSTask<ret::Rmdir, args::RmDir, { NodeFSFunctionEnum::Rmdir }>;
         pub(crate) type Stat = AsyncFSTask<ret::Stat, args::Stat, { NodeFSFunctionEnum::Stat }>;
@@ -576,13 +583,17 @@ mod _async_tasks {
             AsyncFSTask<ret::Symlink, args::Symlink, { NodeFSFunctionEnum::Symlink }>;
         pub(crate) type Truncate =
             AsyncFSTask<ret::Truncate, args::Truncate, { NodeFSFunctionEnum::Truncate }>;
-        pub(crate) type Unlink = AsyncFSTask<ret::Unlink, args::Unlink, { NodeFSFunctionEnum::Unlink }>;
-        pub(crate) type Utimes = AsyncFSTask<ret::Utimes, args::Utimes, { NodeFSFunctionEnum::Utimes }>;
+        pub(crate) type Unlink =
+            AsyncFSTask<ret::Unlink, args::Unlink, { NodeFSFunctionEnum::Unlink }>;
+        pub(crate) type Utimes =
+            AsyncFSTask<ret::Utimes, args::Utimes, { NodeFSFunctionEnum::Utimes }>;
         pub(crate) type Write = UVFSRequest<ret::Write, args::Write, { NodeFSFunctionEnum::Write }>;
         pub(crate) type WriteFile =
             AsyncFSTask<ret::WriteFile, args::WriteFile, { NodeFSFunctionEnum::WriteFile }>;
-        pub(crate) type Writev = UVFSRequest<ret::Writev, args::Writev, { NodeFSFunctionEnum::Writev }>;
-        pub(crate) type Statfs = UVFSRequest<ret::StatFS, args::StatFS, { NodeFSFunctionEnum::Statfs }>;
+        pub(crate) type Writev =
+            UVFSRequest<ret::Writev, args::Writev, { NodeFSFunctionEnum::Writev }>;
+        pub(crate) type Statfs =
+            UVFSRequest<ret::StatFS, args::StatFS, { NodeFSFunctionEnum::Statfs }>;
 
         const _: () = assert!(ReadFile::HAVE_ABORT_SIGNAL);
         const _: () = assert!(WriteFile::HAVE_ABORT_SIGNAL);
@@ -1537,7 +1548,11 @@ mod _async_tasks {
     }
 
     impl<const IS_SHELL: bool> NewAsyncCpTask<IS_SHELL> {
-        pub(crate) fn on_copy(&self, src: impl AsRef<[OSPathChar]>, dest: impl AsRef<[OSPathChar]>) {
+        pub(crate) fn on_copy(
+            &self,
+            src: impl AsRef<[OSPathChar]>,
+            dest: impl AsRef<[OSPathChar]>,
+        ) {
             if !IS_SHELL {
                 return;
             }
@@ -2381,7 +2396,12 @@ mod _async_tasks {
             promise
         }
 
-        pub(crate) fn perform_work(&mut self, basename: &ZStr, buf: &mut PathBuffer, is_root: bool) {
+        pub(crate) fn perform_work(
+            &mut self,
+            basename: &ZStr,
+            buf: &mut PathBuffer,
+            is_root: bool,
+        ) {
             // SAFETY: `readdir_with_entries_recursive_async` takes `args` and
             // `async_task` separately even though `args == &async_task.args`. The
             // callee never mutates `args` (only `async_task.{root_fd, enqueue}`),
@@ -4759,7 +4779,11 @@ impl NodeFS {
         }
     }
 
-    pub(crate) fn append_file(&mut self, args: &args::AppendFile, _: Flavor) -> Maybe<ret::AppendFile> {
+    pub(crate) fn append_file(
+        &mut self,
+        args: &args::AppendFile,
+        _: Flavor,
+    ) -> Maybe<ret::AppendFile> {
         let mut data = args.data.slice();
         match &args.file {
             PathOrFileDescriptor::Fd(fd) => {
@@ -7073,7 +7097,11 @@ impl NodeFS {
         }
     }
 
-    pub(crate) fn read_file(&mut self, args: &args::ReadFile, flavor: Flavor) -> Maybe<ret::ReadFile> {
+    pub(crate) fn read_file(
+        &mut self,
+        args: &args::ReadFile,
+        flavor: Flavor,
+    ) -> Maybe<ret::ReadFile> {
         let result = self.read_file_with_options(args, flavor, ReadFileStringType::Default);
         match result {
             Err(err) => Err(err),
@@ -7623,7 +7651,11 @@ impl NodeFS {
         Ok(())
     }
 
-    pub(crate) fn write_file(&mut self, args: &args::WriteFile, _: Flavor) -> Maybe<ret::WriteFile> {
+    pub(crate) fn write_file(
+        &mut self,
+        args: &args::WriteFile,
+        _: Flavor,
+    ) -> Maybe<ret::WriteFile> {
         Self::write_file_with_path_buffer(&mut self.sync_error_buf, args)
     }
 
@@ -8154,7 +8186,11 @@ impl NodeFS {
         .unwrap_or(Ok(()))
     }
 
-    pub(crate) fn watch_file(&mut self, args: args::WatchFile, flavor: Flavor) -> Maybe<ret::WatchFile> {
+    pub(crate) fn watch_file(
+        &mut self,
+        args: args::WatchFile,
+        flavor: Flavor,
+    ) -> Maybe<ret::WatchFile> {
         debug_assert!(flavor == Flavor::Sync);
         // `create_stat_watcher` consumes `args` (the `PathLike` is moved into
         // the new `StatWatcher`); capture what the error path needs first.
@@ -8185,7 +8221,11 @@ impl NodeFS {
         }
     }
 
-    pub(crate) fn unwatch_file(&mut self, _: args::UnwatchFile, _: Flavor) -> Maybe<ret::UnwatchFile> {
+    pub(crate) fn unwatch_file(
+        &mut self,
+        _: args::UnwatchFile,
+        _: Flavor,
+    ) -> Maybe<ret::UnwatchFile> {
         Maybe::<ret::UnwatchFile>::todo()
     }
 
@@ -9277,7 +9317,11 @@ impl NodeFS {
 
     #[cfg(windows)]
     #[inline]
-    pub(crate) fn uv_dispatch<R, A, const F: NodeFSFunctionEnum>(&mut self, args: &A, rc: i64) -> Maybe<R>
+    pub(crate) fn uv_dispatch<R, A, const F: NodeFSFunctionEnum>(
+        &mut self,
+        args: &A,
+        rc: i64,
+    ) -> Maybe<R>
     where
         Op<{ F }>: NodeFSDispatch<R, A>,
     {
@@ -9691,7 +9735,10 @@ fn map_rm_errno_narrow(e: E) -> E {
 /// # Safety
 /// `path` must point to a valid NUL-terminated C string.
 #[unsafe(no_mangle)]
-pub(crate) unsafe extern "C" fn Bun__mkdirp(global_this: &JSGlobalObject, path: *const c_char) -> bool {
+pub(crate) unsafe extern "C" fn Bun__mkdirp(
+    global_this: &JSGlobalObject,
+    path: *const c_char,
+) -> bool {
     // SAFETY: caller passes a NUL-terminated C string
     let path_bytes = unsafe { bun_core::ffi::cstr(path) }.to_bytes();
     // SAFETY: `bun_vm()` returns the live VM; `node_fs()` returns its cached

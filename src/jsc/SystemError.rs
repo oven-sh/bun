@@ -64,7 +64,6 @@ impl From<bun_sys::SystemError> for SystemError {
     }
 }
 
-
 // SAFETY (safe fn): `SystemError` is `#[repr(C)]` and read-only on the C++ side;
 // `JSGlobalObject` is an opaque `UnsafeCell`-backed handle, so `&JSGlobalObject`
 // is ABI-identical to a non-null `JSGlobalObject*` with write provenance.
@@ -81,7 +80,6 @@ unsafe extern "C" {
 }
 
 impl SystemError {
-
     /// Converts to a JS `Error`, consuming `self`. C++ only borrows the string
     /// fields; `Drop` releases them when `self` goes out of scope. `.clone()`
     /// first when two `Error`s are genuinely wanted.

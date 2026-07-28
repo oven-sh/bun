@@ -136,7 +136,6 @@ impl<Js: ResumableSinkJs, Context: ResumableSinkContext> ResumableSink<Js, Conte
         Err(global.throw_illegal_constructor())
     }
 
-
     pub(crate) fn init_exact_refs(
         global_this: &JSGlobalObject,
         stream: ReadableStream,

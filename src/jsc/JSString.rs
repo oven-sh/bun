@@ -75,7 +75,6 @@ impl JSString {
     // sentinel. `to_slice()` is not NUL-terminated; passing it to a C API that
     // expects one reads past the buffer end.
 
-
     pub fn iterator(&self, global_object: &JSGlobalObject, iter: &mut Iterator) {
         // SAFETY: `self`/`global_object` are valid opaque GC-cell handles; `iter`
         // is a caller-owned `Iterator` (extern struct) passed through to C++.

@@ -45,11 +45,11 @@ mod darwin_spawn_np {
 // MOVE_DOWN stub from `bun_errno`). Shim the remainder locally so this file
 // is self-contained; delete in favour of `bun_sys::posix::*` once that module
 // widens.
+use self::posix_compat::pid_t;
 #[cfg(unix)]
 use self::posix_compat::{Errno, errno};
 #[cfg(target_os = "macos")]
 use self::posix_compat::{errno_from_posix_spawn, mode_t};
-use self::posix_compat::pid_t;
 #[cfg(unix)]
 use self::posix_compat::{fd_t, to_posix_path};
 
@@ -164,12 +164,24 @@ pub mod bun_spawn {
         // deinit: freed chdir_buf, each action.path, and the actions list — all owned
         // types now, so Drop is automatic.
 
-        pub(crate) fn open(&mut self, fd: Fd, path: &[u8], flags: u32, mode: i32) -> Result<(), Error> {
+        pub(crate) fn open(
+            &mut self,
+            fd: Fd,
+            path: &[u8],
+            flags: u32,
+            mode: i32,
+        ) -> Result<(), Error> {
             let posix_path = to_posix_path(path)?;
             self.open_z(fd, &posix_path, flags, mode)
         }
 
-        pub(crate) fn open_z(&mut self, fd: Fd, path: &CStr, flags: u32, mode: i32) -> Result<(), Error> {
+        pub(crate) fn open_z(
+            &mut self,
+            fd: Fd,
+            path: &CStr,
+            flags: u32,
+            mode: i32,
+        ) -> Result<(), Error> {
             self.paths.push(path.to_owned());
             // SAFETY: CString's heap buffer is stable across Vec<CString> reallocs;
             // pointer outlives this Action because both are owned by `self`.
@@ -393,13 +405,7 @@ pub mod posix_spawn {
             })
         }
 
-        fn open_z(
-            &mut self,
-            fd: Fd,
-            path: &CStr,
-            flags: u32,
-            mode: mode_t,
-        ) -> sys::Result<()> {
+        fn open_z(&mut self, fd: Fd, path: &CStr, flags: u32, mode: mode_t) -> sys::Result<()> {
             let flags_c: c_int = flags as c_int;
             // SAFETY: self.actions is live; path is NUL-terminated
             spawn_errno(errno_from_posix_spawn(unsafe {

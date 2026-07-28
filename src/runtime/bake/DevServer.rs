@@ -347,7 +347,8 @@ pub struct DevServer {
     /// Quickly retrieve a framework route's index from its entry point file. These
     /// are populated as the routes are discovered. The route may not be bundled OR
     /// navigatable, such as the case where a layout's index is looked up.
-    pub(crate) route_lookup: ArrayHashMap<incremental_graph::ServerFileIndex, RouteIndexAndRecurseFlag>,
+    pub(crate) route_lookup:
+        ArrayHashMap<incremental_graph::ServerFileIndex, RouteIndexAndRecurseFlag>,
     /// This acts as a duplicate of the lookup table in uws, but only for HTML routes
     /// Used to identify what route a connected WebSocket is on, so that only
     /// the active pages are notified of a hot updates.
@@ -470,7 +471,11 @@ pub struct DeferredPromise {
 }
 
 impl DeferredPromise {
-    pub(crate) fn set_route_bundle_state(&mut self, dev: &mut DevServer, state: route_bundle::State) {
+    pub(crate) fn set_route_bundle_state(
+        &mut self,
+        dev: &mut DevServer,
+        state: route_bundle::State,
+    ) {
         for route_bundle_index in self.route_bundle_indices.keys() {
             dev.route_bundle_ptr(*route_bundle_index).server_state = state;
         }
@@ -3823,7 +3828,9 @@ pub(crate) struct CachedFileIndex(pub u32);
 impl CachedFileIndex {
     pub(crate) const NONE: Self = Self(u32::MAX);
     #[inline]
-    pub(crate) fn unwrap<const SIDE: bake::Side>(self) -> Option<incremental_graph::FileIndex<SIDE>> {
+    pub(crate) fn unwrap<const SIDE: bake::Side>(
+        self,
+    ) -> Option<incremental_graph::FileIndex<SIDE>> {
         if self.0 == u32::MAX {
             None
         } else {
@@ -5726,7 +5733,10 @@ impl DevServer {
         self.publish(HmrTopic::MemoryVisualizer, &payload, Opcode::BINARY);
     }
 
-    pub(crate) fn write_memory_visualizer_message(&self, payload: &mut Vec<u8>) -> crate::Result<()> {
+    pub(crate) fn write_memory_visualizer_message(
+        &self,
+        payload: &mut Vec<u8>,
+    ) -> crate::Result<()> {
         let cost = self.memory_cost_detailed();
         let system_total = crate::node::os::totalmem();
         // Wire format: 10 contiguous native-endian u32s. `[u32; 10]` has no
@@ -5792,7 +5802,10 @@ bitflags::bitflags! {
 }
 
 impl DevServer {
-    pub(crate) fn route_to_bundle_index_slow(&mut self, pattern: &[u8]) -> Option<route_bundle::Index> {
+    pub(crate) fn route_to_bundle_index_slow(
+        &mut self,
+        pattern: &[u8],
+    ) -> Option<route_bundle::Index> {
         let mut params: framework_router::MatchedParams = Default::default();
         if let Some(route_index) = self.router.match_slow(pattern, &mut params) {
             return Some(
@@ -6384,7 +6397,11 @@ impl EntryPointList {
     }
 
     /// Deduplictes requests to bundle the same file twice.
-    pub(crate) fn append(&mut self, abs_path: &[u8], flags: entry_point_list::Flags) -> crate::Result<()> {
+    pub(crate) fn append(
+        &mut self,
+        abs_path: &[u8],
+        flags: entry_point_list::Flags,
+    ) -> crate::Result<()> {
         let gop = self.set.get_or_put(abs_path)?;
         if gop.found_existing {
             *gop.value_ptr |= flags;

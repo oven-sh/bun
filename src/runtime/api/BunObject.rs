@@ -389,10 +389,7 @@ fn get_cron_object(global_this: &JSGlobalObject, obj: &JSObject) -> JSValue {
 }
 
 #[bun_jsc::host_fn]
-fn shell_escape(
-    global_this: &JSGlobalObject,
-    callframe: &CallFrame,
-) -> JsResult<JSValue> {
+fn shell_escape(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
     use bun_jsc::StringJsc as _;
     let [jsval] = callframe.arguments_as_array::<1>();
     if callframe.arguments_count() < 1 {
@@ -580,10 +577,7 @@ fn which(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValu
 }
 
 #[bun_jsc::host_fn]
-fn inspect_table(
-    global_this: &JSGlobalObject,
-    callframe: &CallFrame,
-) -> JsResult<JSValue> {
+fn inspect_table(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
     let mut args_buf = callframe.arguments_undef::<5>();
     let all_arguments = args_buf.mut_();
     if all_arguments[0].is_undefined_or_null() || !all_arguments[0].is_object() {
@@ -787,10 +781,7 @@ fn get_inspect(global_object: &JSGlobalObject, _: &JSObject) -> JSValue {
 }
 
 #[bun_jsc::host_fn]
-fn register_macro(
-    global_object: &JSGlobalObject,
-    callframe: &CallFrame,
-) -> JsResult<JSValue> {
+fn register_macro(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
     let arguments = callframe.arguments();
     if arguments.len() < 2 || !arguments[0].is_number() {
         return Err(global_object.throw_invalid_arguments(format_args!(
@@ -957,10 +948,7 @@ thread_local! {
 }
 
 #[bun_jsc::host_fn]
-fn open_in_editor(
-    global_this: &JSGlobalObject,
-    callframe: &CallFrame,
-) -> JsResult<JSValue> {
+fn open_in_editor(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
     // SAFETY: bun_vm() returns the live per-thread singleton.
     let vm = global_this.bun_vm();
     let mut arguments = ArgumentsSlice::init(vm, callframe.arguments());
@@ -1061,10 +1049,7 @@ fn open_in_editor(
 }
 
 #[bun_jsc::host_fn]
-fn sleep_sync(
-    global_object: &JSGlobalObject,
-    callframe: &CallFrame,
-) -> JsResult<JSValue> {
+fn sleep_sync(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
     let [arg] = callframe.arguments_as_array::<1>();
 
     // Expect at least one argument.  We allow more than one but ignore them; this
@@ -1224,10 +1209,7 @@ fn do_resolve_with_args<const IS_FILE_PATH: bool>(
 }
 
 #[bun_jsc::host_fn]
-fn resolve_sync(
-    global_object: &JSGlobalObject,
-    callframe: &CallFrame,
-) -> JsResult<JSValue> {
+fn resolve_sync(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
     do_resolve(global_object, callframe.arguments())
 }
 
@@ -1439,10 +1421,7 @@ pub fn bun_resolve_sync_with_source(
 }
 
 #[bun_jsc::host_fn]
-fn index_of_line(
-    global_this: &JSGlobalObject,
-    callframe: &CallFrame,
-) -> JsResult<JSValue> {
+fn index_of_line(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
     let arguments = callframe.arguments();
     if arguments.is_empty() {
         return Ok(JSValue::js_number_from_int32(-1));
@@ -1692,10 +1671,7 @@ fn serve(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSVa
 }
 
 #[bun_jsc::host_fn]
-fn alloc_unsafe(
-    global_this: &JSGlobalObject,
-    callframe: &CallFrame,
-) -> JsResult<JSValue> {
+fn alloc_unsafe(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
     let [size] = callframe.arguments_as_array::<1>();
     if !size.is_uint32_as_any_int() {
         return Err(global_this.throw_invalid_arguments(format_args!("Expected a positive number")));
@@ -2235,10 +2211,7 @@ pub(crate) mod environment_variables {
         bun_core::handle_oom(env_map.put(slot.key, &stored.bytes));
     }
 
-    fn get_env_value(
-        global_object: &JSGlobalObject,
-        name: ZigString,
-    ) -> Option<ZigString> {
+    fn get_env_value(global_object: &JSGlobalObject, name: ZigString) -> Option<ZigString> {
         // SAFETY: bun_vm() returns the live thread-local VM.
         let vm = global_object.bun_vm();
         let sliced = name.to_slice();

@@ -134,8 +134,6 @@ impl Body {
     pub(crate) fn len(&self) -> blob::SizeType {
         self.value_mut().size()
     }
-
-
 }
 
 impl Body {
@@ -1181,7 +1179,6 @@ impl Value {
         }
         Ok(())
     }
-
 
     pub(crate) fn use_(&mut self) -> Blob {
         self.to_blob_if_possible();
@@ -2426,10 +2423,7 @@ impl<'a> ValueBufferer<'a> {
         crate::api::NativePromiseContext::take::<Self>(cell).map(|mut p| unsafe { p.as_mut() })
     }
 
-    fn on_resolve_stream(
-        _global: &JSGlobalObject,
-        callframe: &CallFrame,
-    ) -> JsResult<JSValue> {
+    fn on_resolve_stream(_global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         let args = callframe.arguments();
         let Some(sink) = Self::take_ctx(args[args.len() - 1]) else {
             return Ok(JSValue::UNDEFINED);
@@ -2438,10 +2432,7 @@ impl<'a> ValueBufferer<'a> {
         Ok(JSValue::UNDEFINED)
     }
 
-    fn on_reject_stream(
-        _global: &JSGlobalObject,
-        callframe: &CallFrame,
-    ) -> JsResult<JSValue> {
+    fn on_reject_stream(_global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         let args = callframe.arguments();
         let Some(sink) = Self::take_ctx(args[args.len() - 1]) else {
             return Ok(JSValue::UNDEFINED);

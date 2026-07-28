@@ -39,7 +39,6 @@ impl DecodedJSValue {
     pub fn encode(self) -> JSValue {
         JSValue::from_raw(self.bits())
     }
-
 }
 
 const _: () = assert!(

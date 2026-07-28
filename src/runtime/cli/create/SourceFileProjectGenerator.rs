@@ -945,7 +945,6 @@ pub enum Tag {
 }
 
 impl Tag {
-
     pub(crate) fn label(self) -> &'static [u8] {
         match self {
             Tag::ReactTailwindSpa => b"React + Tailwind",

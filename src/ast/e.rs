@@ -1855,7 +1855,6 @@ impl EString {
         }
     }
 
-
     pub fn javascript_length(&self) -> Option<u32> {
         if self.rope_len > 0 {
             // We only support ascii ropes for now

@@ -363,10 +363,7 @@ impl BrotliEncoder {
             }
         }
 
-        CompressionResult {
-            success,
-            output,
-        }
+        CompressionResult { success, output }
     }
 }
 

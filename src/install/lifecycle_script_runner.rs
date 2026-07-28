@@ -382,7 +382,6 @@ impl<'a> LifecycleScriptSubprocess<'a> {
         unsafe { self.manager.get_mut() }
     }
 
-
     pub(crate) fn script_name(&self) -> &'static [u8] {
         debug_assert!((self.current_script_index as usize) < LockfileScripts::NAMES.len());
         LockfileScripts::NAMES[self.current_script_index as usize].as_bytes()

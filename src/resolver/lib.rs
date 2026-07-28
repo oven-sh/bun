@@ -950,7 +950,10 @@ pub mod fs {
                 .get_or_put(key)
                 .map_err(|_| crate::Error::Alloc(bun_alloc::AllocError))
         }
-        pub(crate) fn at_index(&mut self, index: bun_alloc::IndexType) -> Option<&mut EntriesOption> {
+        pub(crate) fn at_index(
+            &mut self,
+            index: bun_alloc::IndexType,
+        ) -> Option<&mut EntriesOption> {
             self.inner().at_index(index)
         }
         pub(crate) fn put(
@@ -2395,13 +2398,8 @@ pub mod cache {
                 }
                 _ => {
                     let shared = self.shared_buffer();
-                    match fs_mod::read_file_contents(
-                        file_handle,
-                        use_shared_buffer,
-                        shared,
-                        stream,
-                    )
-                    .map(Contents::from)
+                    match fs_mod::read_file_contents(file_handle, use_shared_buffer, shared, stream)
+                        .map(Contents::from)
                     {
                         Ok(c) => c,
                         Err(err) => {

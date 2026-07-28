@@ -1603,11 +1603,7 @@ where
 
     /// # Safety
     /// `this` must be the live `RequestContext` user-data pointer registered with uWS.
-    fn on_writable_bytes(
-        this: *mut Self,
-        write_offset: u64,
-        resp: uws::AnyResponse,
-    ) -> bool {
+    fn on_writable_bytes(this: *mut Self, write_offset: u64, resp: uws::AnyResponse) -> bool {
         ctx_log!("onWritableBytes");
         // SAFETY: caller upholds the fn-level contract — `this` is the live
         // `RequestContext` user-data pointer registered with uWS.
@@ -2328,7 +2324,11 @@ where
         request_object.request_context.detach_request();
     }
 
-    pub(crate) fn to_async(&mut self, req: *mut Req<SSL_ENABLED, HTTP3>, request_object: &mut Request) {
+    pub(crate) fn to_async(
+        &mut self,
+        req: *mut Req<SSL_ENABLED, HTTP3>,
+        request_object: &mut Request,
+    ) {
         ctx_log!("toAsync");
         self.to_async_without_abort_handler(req, request_object);
         if DEBUG_MODE {
@@ -2456,7 +2456,10 @@ where
         Ok(())
     }
 
-    pub(crate) fn on_s3_size_resolved(result: S3::simple_request::S3StatResult<'_>, this: &mut Self) {
+    pub(crate) fn on_s3_size_resolved(
+        result: S3::simple_request::S3StatResult<'_>,
+        this: &mut Self,
+    ) {
         if let Some(resp) = this.resp {
             let size = match result {
                 S3::simple_request::S3StatResult::Failure(_)
@@ -2940,7 +2943,10 @@ where
         req.end_stream(req.should_close_connection());
     }
 
-    pub(crate) fn on_resolve_stream(_global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn on_resolve_stream(
+        _global: &JSGlobalObject,
+        callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
         stream_log!("onResolveStream");
         let args = callframe.arguments();
         let Some(req) = NativePromiseContext::take::<Self>(args[args.len() - 1]) else {

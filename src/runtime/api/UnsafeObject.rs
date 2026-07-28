@@ -37,10 +37,7 @@ fn gc_aggression_level(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<J
 }
 
 #[bun_jsc::host_fn]
-fn array_buffer_to_string(
-    global: &JSGlobalObject,
-    frame: &CallFrame,
-) -> JsResult<JSValue> {
+fn array_buffer_to_string(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     let args = frame.arguments();
     if args.len() < 1 || !args[0].is_cell() || !args[0].js_type().is_typed_array_or_array_buffer() {
         return Err(global.throw_invalid_arguments(format_args!("Expected an ArrayBuffer")));

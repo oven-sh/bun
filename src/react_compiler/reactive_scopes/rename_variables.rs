@@ -203,7 +203,10 @@ impl ReactiveFunctionVisitor for Visitor<'_> {
 /// Renames variables for output — assigns unique names, handles SSA renames.
 /// Returns a Set of all unique variable names used.
 /// TS: `renameVariables`
-pub(crate) fn rename_variables(func: &mut ReactiveFunction, env: &mut Environment) -> HashSet<String> {
+pub(crate) fn rename_variables(
+    func: &mut ReactiveFunction,
+    env: &mut Environment,
+) -> HashSet<String> {
     rename_variables_with_parent(func, env, None)
 }
 

@@ -76,8 +76,12 @@ impl AllocatorVTable {
     /// `alloc` impl that always fails. For vtables that only ever `free` an
     /// externally-produced buffer (mmap region, plugin-owned memory, refcounted
     /// foreign string) and never allocate or grow it.
-    pub(crate) const NO_ALLOC: unsafe fn(*mut core::ffi::c_void, usize, Alignment, usize) -> *mut u8 =
-        |_, _, _, _| core::ptr::null_mut();
+    pub(crate) const NO_ALLOC: unsafe fn(
+        *mut core::ffi::c_void,
+        usize,
+        Alignment,
+        usize,
+    ) -> *mut u8 = |_, _, _, _| core::ptr::null_mut();
     pub(crate) const NO_RESIZE: unsafe fn(
         *mut core::ffi::c_void,
         &mut [u8],
@@ -389,7 +393,11 @@ pub mod default_alloc {
     /// `ptr` must be null or a live allocation from the default allocator with the given `align`.
     #[cfg(not(bun_asan))]
     #[inline]
-    pub(crate) unsafe fn realloc_aligned(ptr: *mut c_void, new_size: usize, align: usize) -> *mut c_void {
+    pub(crate) unsafe fn realloc_aligned(
+        ptr: *mut c_void,
+        new_size: usize,
+        align: usize,
+    ) -> *mut c_void {
         // SAFETY: caller guarantees `ptr` is null or a live mimalloc allocation
         // with alignment `align`.
         unsafe { crate::mimalloc::mi_realloc_aligned(ptr, new_size, align) }
@@ -2195,7 +2203,10 @@ impl<ValueType, const COUNT: usize> OverflowList<ValueType, COUNT> {
     }
 
     #[inline]
-    pub(crate) fn append(&mut self, value: ValueType) -> core::result::Result<&mut ValueType, AllocError> {
+    pub(crate) fn append(
+        &mut self,
+        value: ValueType,
+    ) -> core::result::Result<&mut ValueType, AllocError> {
         let block = self.list.tail()?;
         self.count += 1;
         Ok(block.append(value))

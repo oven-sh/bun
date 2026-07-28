@@ -272,11 +272,13 @@ pub struct NewServer<const SSL: bool, const DEBUG: bool> {
     /// via a callback the body fires) early-return instead of re-running the
     /// downgrade/teardown while the outer frame still holds `&mut self`.
     deinit_running: core::cell::Cell<bool>,
-    pub(crate) request_pool: *mut request_context::RequestContextStackAllocator<Self, SSL, DEBUG, false>,
+    pub(crate) request_pool:
+        *mut request_context::RequestContextStackAllocator<Self, SSL, DEBUG, false>,
     /// Null until the H3 listen path runs (`HAS_H3 && config.http3`); never
     /// allocated when `!SSL`. Kept as a raw nullable pointer rather than a
     /// conditional field so the struct stays uniform across monomorphizations.
-    pub(crate) h3_request_pool: *mut request_context::RequestContextStackAllocator<Self, SSL, DEBUG, true>,
+    pub(crate) h3_request_pool:
+        *mut request_context::RequestContextStackAllocator<Self, SSL, DEBUG, true>,
     /// Authoritative GC root for the `server.stop()` promise. Lazily filled by
     /// `get_all_closed_promise`; read in `deinit_if_we_can` (which can run
     /// after the wrapper is collected, so a wrapper-traced slot would not

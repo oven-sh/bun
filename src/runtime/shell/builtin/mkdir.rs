@@ -158,11 +158,7 @@ impl Mkdir {
 
     /// The caller ([`ShellMkdirTask::run_from_main_thread`]) owns the heap
     /// allocation and drops it after this returns.
-    fn on_shell_mkdir_task_done(
-        interp: &Interpreter,
-        cmd: NodeId,
-        task: &mut ShellMkdirTask,
-    ) {
+    fn on_shell_mkdir_task_done(interp: &Interpreter, cmd: NodeId, task: &mut ShellMkdirTask) {
         let output = core::mem::take(&mut task.created_directories);
         let err = task.err.take();
         if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {

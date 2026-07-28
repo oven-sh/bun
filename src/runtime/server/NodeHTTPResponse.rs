@@ -1457,10 +1457,7 @@ impl NodeHTTPResponse {
 }
 
 #[bun_jsc::host_fn(export = "Bun__NodeHTTPRequest__onResolve")]
-fn node_http_request_on_resolve(
-    global_object: &JSGlobalObject,
-    callframe: &CallFrame,
-) -> JSValue {
+fn node_http_request_on_resolve(global_object: &JSGlobalObject, callframe: &CallFrame) -> JSValue {
     scoped_log!(NodeHTTPResponse, "onResolve");
     let arguments = callframe.arguments_as_array::<2>();
     // arguments[1] is the JSNodeHTTPResponse cell from the resolve callback.
@@ -1504,10 +1501,7 @@ fn node_http_request_on_resolve(
 }
 
 #[bun_jsc::host_fn(export = "Bun__NodeHTTPRequest__onReject")]
-fn node_http_request_on_reject(
-    global_object: &JSGlobalObject,
-    callframe: &CallFrame,
-) -> JSValue {
+fn node_http_request_on_reject(global_object: &JSGlobalObject, callframe: &CallFrame) -> JSValue {
     let arguments = callframe.arguments_as_array::<2>();
     let err = arguments[0];
     // arguments[1] is the JSNodeHTTPResponse cell from the reject callback.

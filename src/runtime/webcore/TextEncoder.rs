@@ -124,11 +124,7 @@ unsafe extern "C" fn TextEncoder__encode16(
 /// # Safety
 /// `ptr` must be valid for reading `len` UTF-16 code units.
 #[unsafe(no_mangle)]
-unsafe extern "C" fn c(
-    global_this: &JSGlobalObject,
-    ptr: *const u16,
-    len: usize,
-) -> JSValue {
+unsafe extern "C" fn c(global_this: &JSGlobalObject, ptr: *const u16, len: usize) -> JSValue {
     // SAFETY: caller guarantees ptr[0..len] is valid UTF-16 data
     let slice = unsafe { core::slice::from_raw_parts(ptr, len) };
     encode16_impl(global_this, slice)
@@ -194,12 +190,7 @@ impl<'a> RopeStringEncoder<'a> {
         it.stop = 1;
     }
 
-    extern "C" fn write8(
-        it: *mut JSStringIterator,
-        ptr: *const u8,
-        len: u32,
-        offset: u32,
-    ) {
+    extern "C" fn write8(it: *mut JSStringIterator, ptr: *const u8, len: u32, offset: u32) {
         let (it, this) = Self::resolve(it);
         // SAFETY: ptr[0..len] is provided by JSC rope iteration
         let src = unsafe { core::slice::from_raw_parts(ptr, len as usize) };

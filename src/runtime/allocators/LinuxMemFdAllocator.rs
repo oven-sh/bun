@@ -19,9 +19,9 @@ use core::ffi::c_void;
 #[cfg(any(target_os = "linux", target_os = "android"))]
 use core::sync::atomic::{AtomicUsize, Ordering};
 
-use bun_alloc::{Alignment, AllocatorVTable};
 #[cfg(any(target_os = "linux", target_os = "android"))]
 use bun_alloc::StdAllocator;
+use bun_alloc::{Alignment, AllocatorVTable};
 use bun_core::Fd;
 // bun_sys (T1) — mmap/munmap/pwrite/ftruncate/memfd_create/Result/Error/E/Tag/can_use_memfd.
 use bun_sys as sys;

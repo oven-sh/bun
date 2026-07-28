@@ -52,7 +52,11 @@ impl PendingConnect {
         unsafe { &mut *self.pc }
     }
 
-    pub(crate) fn register(session: *mut ClientSession, pc: *mut quic::PendingConnect, l: *mut uws::Loop) {
+    pub(crate) fn register(
+        session: *mut ClientSession,
+        pc: *mut quic::PendingConnect,
+        l: *mut uws::Loop,
+    ) {
         // Caller passes a live intrusive-refcounted ClientSession; PendingConnect
         // holds one ref from construction until Drop. `session_mut` centralises
         // the backref upgrade (same invariant as the other call sites below).

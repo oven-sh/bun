@@ -49,7 +49,6 @@ impl<T: Copy> Unaligned<T> {
         self.0
     }
 
-
     #[inline]
     pub fn slice_align_cast_mut(slice: &mut [Unaligned<T>]) -> &mut [T] {
         if slice.is_empty() {
@@ -1180,7 +1179,6 @@ impl Fd {
         self.native()
     }
 
-
     pub fn stdio_tag(self) -> Option<Stdio> {
         #[cfg(not(windows))]
         {
@@ -1945,7 +1943,6 @@ pub struct Version {
 }
 
 impl Version {
-
     /// Parse leading `"MAJOR.MINOR.PATCH"` from a byte slice. Per field:
     /// accumulate ASCII digits (wrapping on overflow), stop at the first
     /// non-digit, then advance past a single `'.'` to the next field; missing
@@ -2474,7 +2471,6 @@ impl<T> Once<T> {
         }
     }
 
-
     /// `OnceLock::get_or_init` equivalent. Hot path is the inlined DONE check;
     /// the init closure runs at most once.
     #[inline(always)]
@@ -2958,7 +2954,6 @@ pub enum EmbedKind {
     Src,
     SrcEager,
 }
-
 
 #[doc(hidden)]
 pub fn __runtime_embed_load(kind: EmbedKind, sub: &'static str) -> String {
@@ -4219,7 +4214,12 @@ pub fn getcwd(buf: &mut PathBuffer) -> crate::CrateResult<&ZStr> {
 /// into `buf`. POSIX semantics; Windows `PATHEXT` handling stays in
 /// `bun_which` (tier-2).
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
-pub(crate) fn which<'a>(buf: &'a mut PathBuffer, path: &[u8], cwd: &[u8], bin: &[u8]) -> Option<&'a ZStr> {
+pub(crate) fn which<'a>(
+    buf: &'a mut PathBuffer,
+    path: &[u8],
+    cwd: &[u8],
+    bin: &[u8],
+) -> Option<&'a ZStr> {
     if bin.is_empty() {
         return None;
     }
@@ -5006,7 +5006,6 @@ impl Timespec {
         t
     }
 
-
     /// `bun.timespec.orderIgnoreEpoch` — EPOCH = "no timeout", treated as +∞.
     pub fn order_ignore_epoch(a: Timespec, b: Timespec) -> core::cmp::Ordering {
         if a == b {
@@ -5377,7 +5376,6 @@ pub mod perf {
             };
         }
     }
-
 }
 
 // ── form_data ─────────────────────────────────────────────────────────────

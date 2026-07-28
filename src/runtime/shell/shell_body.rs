@@ -6,10 +6,10 @@ use core::fmt;
 use std::io::Write as _;
 
 use bun_alloc::Arena as Bump;
-use bun_core::strings;
-use bun_core::{OwnedString, String as BunString};
 #[cfg(windows)]
 use bun_core::ZStr;
+use bun_core::strings;
+use bun_core::{OwnedString, String as BunString};
 use bun_jsc::StringJsc as _;
 use bun_jsc::{
     self as jsc, CallFrame, JSArrayIterator, JSGlobalObject, JSValue, JsResult,
@@ -631,7 +631,10 @@ impl<'a> ShellSrcBuilder<'a> {
         Ok(true)
     }
 
-    pub(crate) fn append_utf8<const ALLOW_ESCAPE: bool>(&mut self, utf8: &[u8]) -> crate::Result<bool> {
+    pub(crate) fn append_utf8<const ALLOW_ESCAPE: bool>(
+        &mut self,
+        utf8: &[u8],
+    ) -> crate::Result<bool> {
         let invalid = simdutf::validate::utf8(utf8);
         // Note: the name `invalid` is misleading — it holds the validity bool.
         if !invalid {
@@ -663,7 +666,10 @@ impl<'a> ShellSrcBuilder<'a> {
         Ok(())
     }
 
-    pub(crate) fn append_latin1_impl(&mut self, latin1: &[u8]) -> Result<(), bun_alloc::AllocError> {
+    pub(crate) fn append_latin1_impl(
+        &mut self,
+        latin1: &[u8],
+    ) -> Result<(), bun_alloc::AllocError> {
         // `allocate_latin1_into_utf8_with_list` appends ALL of `latin1` after `len`,
         // including its leading ASCII run; pre-appending any of it would duplicate it.
         let len = self.outbuf.len();
@@ -672,7 +678,10 @@ impl<'a> ShellSrcBuilder<'a> {
         Ok(())
     }
 
-    pub(crate) fn append_js_str_ref(&mut self, bunstr: BunString) -> Result<(), bun_alloc::AllocError> {
+    pub(crate) fn append_js_str_ref(
+        &mut self,
+        bunstr: BunString,
+    ) -> Result<(), bun_alloc::AllocError> {
         let idx = self.jsstrs_to_escape.len();
         let mut cursor = std::io::Cursor::new(&mut self.jsstr_ref_buf[..]);
         write!(cursor, "{}{}", bstr::BStr::new(LEX_JS_STRING_PREFIX), idx).expect("Impossible");

@@ -269,7 +269,6 @@ impl PathOrFileDescriptorSerializeTag {
 }
 
 impl PathOrFileDescriptor {
-
     #[inline]
     pub fn to_thread_safe(&mut self) {
         if let Self::Path(p) = self {
@@ -336,5 +335,4 @@ impl PathOrFileDescriptor {
             Self::Path(_) => unreachable!("PathOrFileDescriptor::fd() on Path variant"),
         }
     }
-
 }

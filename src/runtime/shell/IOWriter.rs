@@ -1021,7 +1021,12 @@ impl IOWriter {
 
     /// Queue `buf` for writing; when the chunk completes (or errors),
     /// `child`'s `on_io_writer_chunk` fires.
-    pub(crate) fn enqueue(&self, child: ChildPtr, bytelist: Option<*mut Vec<u8>>, buf: &[u8]) -> Yield {
+    pub(crate) fn enqueue(
+        &self,
+        child: ChildPtr,
+        bytelist: Option<*mut Vec<u8>>,
+        buf: &[u8],
+    ) -> Yield {
         if let Some(y) = self.handle_dead_writer(child) {
             return y;
         }

@@ -1,6 +1,5 @@
 #![warn(unused_must_use)]
 
-
 // `ThreadLock` and `thread_id` live in `bun_core` (tier-0) so `bun_ptr` /
 // `bun_threading` can use them without an upward dep. Re-exported here for
 // `bun_safety::*` callers.
@@ -58,5 +57,3 @@ pub fn register_alloc_vtable(vtable: &'static bun_alloc::AllocatorVTable) {
         KNOWN_ALLOC_VTABLES[i].store(p, Ordering::Relaxed);
     }
 }
-
-

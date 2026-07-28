@@ -68,7 +68,6 @@ impl ProgressStrings {
         }
     }
 
-
     #[inline]
     pub(crate) fn install() -> &'static [u8] {
         if Output::enable_ansi_colors_stderr() {

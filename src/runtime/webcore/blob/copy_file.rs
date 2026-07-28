@@ -2,9 +2,9 @@
 
 use crate::node::fs as node_fs;
 use crate::node::types::PathLikeExt as _;
-use crate::webcore::blob::{MAX_SIZE, MkdirpTarget, SizeType, StoreRef, store};
 #[cfg(not(windows))]
 use crate::webcore::blob::{self, Retry};
+use crate::webcore::blob::{MAX_SIZE, MkdirpTarget, SizeType, StoreRef, store};
 use crate::webcore::node_types::PathOrFileDescriptor;
 #[cfg(windows)]
 use bun_io as aio;
@@ -152,7 +152,6 @@ impl<'a> CopyFile<'a> {
             JSValue::js_number_from_uint64(self.read_len as u64),
         )
     }
-
 
     #[cfg(not(windows))]
     pub(crate) fn do_close(&mut self) {
@@ -526,7 +525,9 @@ impl<'a> CopyFile<'a> {
     }
 
     #[cfg(target_os = "macos")]
-    pub(crate) fn do_fcopy_file_with_read_write_loop_fallback(&mut self) -> Result<(), crate::Error> {
+    pub(crate) fn do_fcopy_file_with_read_write_loop_fallback(
+        &mut self,
+    ) -> Result<(), crate::Error> {
         match bun_sys::fcopyfile(
             self.source_fd,
             self.destination_fd,

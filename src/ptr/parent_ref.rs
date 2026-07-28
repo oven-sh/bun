@@ -110,7 +110,6 @@ impl<T: ?Sized> ParentRef<T> {
         unsafe { self.ptr.as_ref() }
     }
 
-
     /// Raw pointer with the provenance the `ParentRef` was constructed with.
     /// Only carries write permission if constructed via
     /// [`from_raw_mut`](Self::from_raw_mut) / [`from_nullable_mut`].

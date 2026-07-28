@@ -448,7 +448,11 @@ impl Image {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub(crate) fn do_resize(&self, global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn do_resize(
+        &self,
+        global: &JSGlobalObject,
+        callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
         let args = callframe.arguments();
         if args.len() < 1 || !args[0].is_number() {
             return Err(
@@ -485,7 +489,11 @@ impl Image {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub(crate) fn do_rotate(&self, global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn do_rotate(
+        &self,
+        global: &JSGlobalObject,
+        callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
         let args = callframe.arguments();
         if args.len() < 1 || !args[0].is_number() {
             return Err(global
@@ -517,7 +525,11 @@ impl Image {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub(crate) fn do_modulate(&self, global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn do_modulate(
+        &self,
+        global: &JSGlobalObject,
+        callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
         let args = callframe.arguments();
         let mut m: Modulate = self.pipeline.get().modulate.unwrap_or_default();
         if args.len() > 0 && args[0].is_object() {
@@ -794,7 +806,11 @@ impl Image {
 // through but `get_backend` ignores.
 
 impl Image {
-    pub(crate) fn get_backend(global: &JSGlobalObject, _: JSValue, _: PropertyName) -> JsResult<JSValue> {
+    pub(crate) fn get_backend(
+        global: &JSGlobalObject,
+        _: JSValue,
+        _: PropertyName,
+    ) -> JsResult<JSValue> {
         // `BACKEND` only ever stores a valid `Backend as u8` discriminant
         // (`set_backend` round-trips through `Backend`); any other value is
         // corruption — trap.
@@ -903,7 +919,11 @@ impl Image {
 
 impl Image {
     #[bun_jsc::host_fn(method)]
-    pub(crate) fn do_metadata(&self, global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn do_metadata(
+        &self,
+        global: &JSGlobalObject,
+        callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
         // Header-only probe is a few dozen byte reads — when the bytes are already
         // in memory it's cheaper to do it inline than to bounce off the WorkPool
         // (~0.4 ms roundtrip). Path-backed sources still go async for the file I/O.
@@ -980,7 +1000,11 @@ impl Image {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub(crate) fn do_to_base64(&self, global: &JSGlobalObject, cf: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn do_to_base64(
+        &self,
+        global: &JSGlobalObject,
+        cf: &CallFrame,
+    ) -> JsResult<JSValue> {
         self.schedule(
             global,
             cf.this(),
@@ -1007,7 +1031,11 @@ impl Image {
     /// pipeline ops (resize/rotate/…) are skipped — a placeholder is OF the
     /// source, not of the output.
     #[bun_jsc::host_fn(method)]
-    pub(crate) fn do_placeholder(&self, global: &JSGlobalObject, cf: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn do_placeholder(
+        &self,
+        global: &JSGlobalObject,
+        cf: &CallFrame,
+    ) -> JsResult<JSValue> {
         let args = cf.arguments();
         // Single positional `"dataurl"` for now — leaves room for `"hash"` /
         // `"color"` without growing methods. Anything else throws so the

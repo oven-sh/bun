@@ -52,10 +52,7 @@ pub mod js_bundler {
     /// Expected format: `Record<string, string | Blob | File | TypedArray | ArrayBuffer>`.
     /// Uses async (`from_js_async`) parsing so the resulting bytes are owned —
     /// the bundler runs on a separate thread and must not borrow JS heap memory.
-    fn file_map_from_js(
-        global_this: &JSGlobalObject,
-        files_value: JSValue,
-    ) -> JsResult<FileMap> {
+    fn file_map_from_js(global_this: &JSGlobalObject, files_value: JSValue) -> JsResult<FileMap> {
         let mut this = FileMap::default();
         // errdefer this.deinit() — `FileMap` (Box<[u8]> values) drops on `?`.
 
@@ -1890,7 +1887,6 @@ fn __bun_blob_from_build_artifact(value: JSValue) -> Option<*mut Blob> {
 }
 
 impl BuildArtifact {
-
     #[bun_jsc::host_fn(method)]
     pub(crate) fn get_text(
         this: &Self,
@@ -1980,7 +1976,10 @@ impl BuildArtifact {
     }
 
     #[bun_jsc::host_fn(getter)]
-    pub(crate) fn get_output_kind(this: &Self, global_object: &JSGlobalObject) -> JsResult<JSValue> {
+    pub(crate) fn get_output_kind(
+        this: &Self,
+        global_object: &JSGlobalObject,
+    ) -> JsResult<JSValue> {
         jsc::bun_string_jsc::create_utf8_for_js(
             global_object,
             <&'static str>::from(this.output_kind).as_bytes(),

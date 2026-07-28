@@ -181,12 +181,7 @@ pub enum Callback {
 }
 
 impl Callback {
-    fn fail(
-        &self,
-        code: &[u8],
-        message: &[u8],
-        context: *mut c_void,
-    ) -> JsTerminatedResult<()> {
+    fn fail(&self, code: &[u8], message: &[u8], context: *mut c_void) -> JsTerminatedResult<()> {
         let err = S3Error { code, message };
         match self {
             Callback::Upload(callback) => callback(S3UploadResult::Failure(err), context)?,
@@ -394,9 +389,7 @@ impl S3HttpSimpleTask {
                 200 | 204 | 206 => {
                     let body = core::mem::take(&mut this.response_buffer);
                     callback(
-                        S3DownloadResult::Success(S3DownloadSuccess {
-                            body,
-                        }),
+                        S3DownloadResult::Success(S3DownloadSuccess { body }),
                         this.callback_context,
                     )?;
                 }

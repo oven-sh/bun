@@ -295,7 +295,6 @@ impl ArrayBuffer {
         resizable: false,
     };
 
-
     // Via `#![feature(adt_const_params)]`: `JSType` derives `ConstParamTy`, so
     // `KIND` is a true const-generic and the `match` const-folds (the
     // unreachable arm becomes a post-mono `panic!`).
@@ -649,7 +648,6 @@ impl Default for ArrayBufferStrong {
 }
 
 impl ArrayBufferStrong {
-
     pub fn slice(&self) -> &[u8] {
         self.array_buffer.slice()
     }

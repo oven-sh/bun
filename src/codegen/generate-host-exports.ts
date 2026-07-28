@@ -509,9 +509,11 @@ const importCandidates: Array<[string, string]> = [
 ];
 const importLines: string[] = [];
 for (const [modPath, name] of importCandidates) {
-  if (new RegExp("\\b" + name + "\\b").test(body)) importLines.push("#[allow(dead_code, unreachable_pub, unused)] use " + modPath + "::" + name + ";");
+  if (new RegExp("\\b" + name + "\\b").test(body))
+    importLines.push("#[allow(dead_code, unreachable_pub, unused)] use " + modPath + "::" + name + ";");
 }
-if (/\bBunString\b/.test(body)) importLines.push("#[allow(dead_code, unreachable_pub, unused)] use bun_core::String as BunString;");
+if (/\bBunString\b/.test(body))
+  importLines.push("#[allow(dead_code, unreachable_pub, unused)] use bun_core::String as BunString;");
 const imports = importLines.join("\n") + "\n\n";
 
 const externAudit =

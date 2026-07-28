@@ -953,7 +953,6 @@ impl DeflateEncoder {
         }
     }
 
-
     #[inline]
     pub fn avail_out(&self) -> u32 {
         self.strm.avail_out as u32
@@ -1029,7 +1028,6 @@ impl InflateDecoder {
             _ => Err(ZlibError::InvalidArgument),
         }
     }
-
 
     #[inline]
     pub fn avail_out(&self) -> u32 {

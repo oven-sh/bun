@@ -786,7 +786,9 @@ impl ServerWebSocket {
         }
     }
 
-    pub(crate) fn behavior<ServerType, const SSL: bool>(opts: &WebSocketBehavior) -> WebSocketBehavior
+    pub(crate) fn behavior<ServerType, const SSL: bool>(
+        opts: &WebSocketBehavior,
+    ) -> WebSocketBehavior
     where
         ServerType: WebSocketUpgradeServer<SSL>,
     {
@@ -1076,7 +1078,11 @@ impl ServerWebSocket {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub(crate) fn send(&self, global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn send(
+        &self,
+        global_this: &JSGlobalObject,
+        callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
         let [message_value, compress_value] = callframe.arguments_as_array::<2>();
 
         if callframe.arguments_count() < 1 {
@@ -1232,12 +1238,20 @@ impl ServerWebSocket {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub(crate) fn ping(&self, global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn ping(
+        &self,
+        global_this: &JSGlobalObject,
+        callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
         self.send_ping(global_this, callframe, "ping", Opcode::Ping)
     }
 
     #[bun_jsc::host_fn(method)]
-    pub(crate) fn pong(&self, global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn pong(
+        &self,
+        global_this: &JSGlobalObject,
+        callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
         self.send_ping(global_this, callframe, "pong", Opcode::Pong)
     }
 
@@ -1319,7 +1333,11 @@ impl ServerWebSocket {
     }
 
     #[bun_jsc::host_fn(setter)]
-    pub(crate) fn set_data(&self, global_object: &JSGlobalObject, value: JSValue) -> JsResult<bool> {
+    pub(crate) fn set_data(
+        &self,
+        global_object: &JSGlobalObject,
+        value: JSValue,
+    ) -> JsResult<bool> {
         bun_output::scoped_log!(WebSocketServer, "setData()");
         if let Some(this_value) = self.this_value.get().try_get() {
             js::data_set_cached(this_value, global_object, value);
@@ -1437,7 +1455,11 @@ impl ServerWebSocket {
     }
 
     #[bun_jsc::host_fn(setter)]
-    pub(crate) fn set_binary_type(&self, global_this: &JSGlobalObject, value: JSValue) -> JsResult<bool> {
+    pub(crate) fn set_binary_type(
+        &self,
+        global_this: &JSGlobalObject,
+        value: JSValue,
+    ) -> JsResult<bool> {
         bun_output::scoped_log!(WebSocketServer, "setBinaryType()");
 
         match BinaryType::from_js_value(global_this, value)? {

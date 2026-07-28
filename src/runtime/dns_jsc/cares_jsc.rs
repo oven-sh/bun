@@ -830,10 +830,7 @@ pub(crate) fn error_to_js_with_syscall_and_hostname(
 // ── canonicalizeIP host fn ─────────────────────────────────────────────────
 // `#[bun_jsc::host_fn(export = ...)]` emits the C-ABI shim under that link name.
 #[bun_jsc::host_fn(export = "Bun__canonicalizeIP")]
-fn bun_canonicalize_ip(
-    global_this: &JSGlobalObject,
-    callframe: &CallFrame,
-) -> JsResult<JSValue> {
+fn bun_canonicalize_ip(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
     bun_jsc::mark_binding!();
 
     let arguments = callframe.arguments();

@@ -38,9 +38,6 @@ impl<T> Node<T> {
         unsafe { (*p).next }
     }
 
-
-
-
     /// Iterate over each next node, returning the count of all nodes except the starting one.
     /// This operation is O(N).
     pub(crate) fn count_children(&self) -> usize {
@@ -202,7 +199,6 @@ pub trait ObjectPoolTrait {
     type Item;
     type Node;
 }
-
 
 impl<T: ObjectPoolType, const TS: bool, const MAX: usize, S> ObjectPoolTrait
     for ObjectPool<T, TS, MAX, S>

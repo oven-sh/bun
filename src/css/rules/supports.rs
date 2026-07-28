@@ -98,7 +98,6 @@ impl SupportsCondition {
 }
 
 impl SupportsCondition {
-
     pub fn eql(&self, other: &SupportsCondition) -> bool {
         // Hand-expanded because `#[derive(CssEql)]` would require
         // `PropertyId: CssEql` (it only provides the custom tag+prefix

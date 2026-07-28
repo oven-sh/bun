@@ -89,7 +89,6 @@ impl From<YamlParseError> for crate::Error {
 // Top-level free functions
 // ───────────────────────────────────────────────────────────────────────────
 
-
 // ───────────────────────────────────────────────────────────────────────────
 // Context
 // ───────────────────────────────────────────────────────────────────────────
@@ -175,7 +174,6 @@ impl Indent {
     pub(crate) fn add(self, n: usize) -> Indent {
         Indent(self.0 + n)
     }
-
 
     pub(crate) fn is_less_than(self, other: Indent) -> bool {
         self.0 < other.0
@@ -298,7 +296,6 @@ impl Pos {
     pub(crate) fn is_less_than(self, other: usize) -> bool {
         self.0 < other
     }
-
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -314,12 +311,9 @@ impl Line {
         Line(line)
     }
 
-
     pub(crate) fn inc(&mut self, n: usize) {
         self.0 += n;
     }
-
-
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -752,15 +746,12 @@ pub enum YamlString<Enc: Encoding> {
 }
 
 impl<Enc: Encoding> YamlString<Enc> {
-
     pub(crate) fn len(&self) -> usize {
         match self {
             YamlString::Range(range) => range.len(),
             YamlString::List(list) => list.len(),
         }
     }
-
-
 }
 
 // Plain-scalar string builder. `whitespace_buf` is taken from the parser by
@@ -884,7 +875,6 @@ impl<'i, Enc: Encoding> StringBuilder<'i, Enc> {
         }
         Ok(())
     }
-
 
     pub(crate) fn len(&self) -> usize {
         self.str.len()
@@ -1992,7 +1982,10 @@ impl ParseResultError {
 }
 
 impl ParseResultError {
-    pub(crate) fn from_parse_error<Enc: Encoding>(err: ParseError, parser: &Parser<'_, Enc>) -> Self {
+    pub(crate) fn from_parse_error<Enc: Encoding>(
+        err: ParseError,
+        parser: &Parser<'_, Enc>,
+    ) -> Self {
         match err {
             ParseError::OutOfMemory => ParseResultError::Oom,
             ParseError::StackOverflow => ParseResultError::StackOverflow,
@@ -3320,8 +3313,7 @@ pub enum Escape {
     UpperU = 8,
 }
 
-impl Escape {
-}
+impl Escape {}
 
 // ───────────────────────────────────────────────────────────────────────────
 // Parser methods (continued)

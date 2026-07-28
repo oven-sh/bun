@@ -62,7 +62,6 @@ pub type ThreadId = usize;
 // ── Atomic wrapper ─────────────────────────────────────────────────────────
 // Width-matched alias so `CriticalSection` can `compare_exchange` on it directly.
 
-
 #[cfg(not(any(
     target_os = "linux",
     target_os = "android",
@@ -80,7 +79,6 @@ pub type ThreadId = usize;
     target_os = "visionos",
 )))]
 pub type AtomicThreadId = core::sync::atomic::AtomicUsize;
-
 
 /// Per-thread cache of [`current()`]. Without it, every call paid a syscall
 /// (`gettid`/`pthread_threadid_np`/`GetCurrentThreadId`). The

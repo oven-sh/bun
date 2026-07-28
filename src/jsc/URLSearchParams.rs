@@ -22,7 +22,6 @@ unsafe extern "C" {
 }
 
 impl URLSearchParams {
-
     // The returned opaque handle is owned by the JS GC heap, not by `value`;
     // callers must keep the JS object alive while using it.
     pub fn from_js(value: JSValue) -> Option<NonNull<URLSearchParams>> {

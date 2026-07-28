@@ -24,8 +24,6 @@ impl MimeTypeList {
         self.0.as_bytes()
     }
 
-
-
     pub(crate) const ALL: &'static [MimeTypeList] = ALL;
 }
 

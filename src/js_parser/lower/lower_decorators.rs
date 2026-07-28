@@ -1064,7 +1064,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
     // ── Public API ───────────────────────────────────────
 
-    pub(crate) fn lower_standard_decorators_stmt(&mut self, stmt: Stmt, out: &mut BumpVec<'a, Stmt>) {
+    pub(crate) fn lower_standard_decorators_stmt(
+        &mut self,
+        stmt: Stmt,
+        out: &mut BumpVec<'a, Stmt>,
+    ) {
         // Every call site is the visitStmt `s_class` branch. `Stmt` and the
         // `StoreRef<S::Class>` payload are both `Copy`, so we can hold a copy
         // of the arena handle while still passing `stmt` by value below.

@@ -157,9 +157,7 @@ pub mod whatwg {
 }
 // Re-export the free helpers at crate root so lower-tier callers can write
 // `bun_url::join(...)` / `bun_url::href_from_string(...)` (install, http, bake, js_parser).
-pub use whatwg::{
-    file_url_from_string, href_from_string, join, origin_from_slice,
-};
+pub use whatwg::{file_url_from_string, href_from_string, join, origin_from_slice};
 
 // URL is a pure view struct — every field is a slice into `href` (or a
 // literal default).
@@ -335,7 +333,6 @@ impl<'a> URL<'a> {
         href.deref();
         Ok(OwnedURL { href: owned })
     }
-
 
     pub fn display_protocol(&self) -> &[u8] {
         if !self.protocol.is_empty() {
@@ -921,9 +918,6 @@ impl QueryStringMap {
         &slice[ptr.offset as usize..ptr.offset as usize + ptr.length as usize]
     }
 
-
-
-
     pub fn init_with_scanner(
         mut scanner: CombinedScanner<'_>,
     ) -> Result<Option<QueryStringMap>, bun_alloc::AllocError> {
@@ -1301,7 +1295,10 @@ impl From<DecodeError> for crate::Error {
 }
 
 impl PercentEncoding {
-    pub(crate) fn decode(writer: &mut impl bun_core::io::Write, input: &[u8]) -> Result<u32, DecodeError> {
+    pub(crate) fn decode(
+        writer: &mut impl bun_core::io::Write,
+        input: &[u8],
+    ) -> Result<u32, DecodeError> {
         Self::decode_fault_tolerant::<_, false>(writer, input, None)
     }
 
@@ -1452,7 +1449,6 @@ impl<'a> CombinedScanner<'a> {
         self.query.reset();
         self.pathname.reset();
     }
-
 }
 
 fn string_pointer_from_strings(parent: &[u8], in_: &[u8]) -> api::StringPointer {

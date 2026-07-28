@@ -161,7 +161,6 @@ const _: () = assert!(core::mem::size_of::<StreamPriority>() == StreamPriority::
 
 impl StreamPriority {
     pub const BYTE_SIZE: usize = 5;
-
 }
 
 /// NOT `#[repr(packed)]` — the `u24` length is widened to a native `u32`

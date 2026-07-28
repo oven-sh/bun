@@ -264,7 +264,10 @@ impl SSABuilder {
 // Public entry point
 // =============================================================================
 
-pub(crate) fn enter_ssa(func: &mut HirFunction, env: &mut Environment) -> Result<(), CompilerDiagnostic> {
+pub(crate) fn enter_ssa(
+    func: &mut HirFunction,
+    env: &mut Environment,
+) -> Result<(), CompilerDiagnostic> {
     let num_blocks = env.next_block_id_counter as usize;
     let mut builder = SSABuilder::new(&func.body.blocks, num_blocks);
     let root_entry = func.body.entry;

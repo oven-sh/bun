@@ -315,11 +315,7 @@ impl Stringifier {
         Ok(())
     }
 
-    fn stringify(
-        &mut self,
-        global: &JSGlobalObject,
-        value: JSValue,
-    ) -> Result<(), StringifyError> {
+    fn stringify(&mut self, global: &JSGlobalObject, value: JSValue) -> Result<(), StringifyError> {
         if !self.stack_check.is_safe_to_recurse() {
             return Err(StringifyError::StackOverflow);
         }
@@ -1145,11 +1141,7 @@ impl<'a> ParserCtx<'a> {
         };
     }
 
-    fn to_js(
-        &mut self,
-        args: &mut MarkedArgumentBuffer,
-        expr: Expr,
-    ) -> Result<JSValue, ToJsError> {
+    fn to_js(&mut self, args: &mut MarkedArgumentBuffer, expr: Expr) -> Result<JSValue, ToJsError> {
         if !self.stack_check.is_safe_to_recurse() {
             return Err(ToJsError::StackOverflow);
         }

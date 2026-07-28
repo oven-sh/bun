@@ -100,10 +100,7 @@ pub(crate) mod js_bindings {
     /// inside bun.exe. Exercises the Windows fault-context unwinder: the walk
     /// must recover the bun frames that called into the DLL.
     #[bun_jsc::host_fn]
-    fn js_segfault_in_dll(
-        _global: &JSGlobalObject,
-        _frame: &CallFrame,
-    ) -> JsResult<JSValue> {
+    fn js_segfault_in_dll(_global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
         crash_handler::suppress_core_dumps_if_necessary();
         #[cfg(windows)]
         {
@@ -190,10 +187,7 @@ pub(crate) mod js_bindings {
     }
 
     #[bun_jsc::host_fn]
-    fn js_out_of_memory(
-        _global: &JSGlobalObject,
-        _frame: &CallFrame,
-    ) -> JsResult<JSValue> {
+    fn js_out_of_memory(_global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
         crash_handler::suppress_core_dumps_if_necessary();
         bun_core::out_of_memory();
     }
@@ -208,10 +202,7 @@ pub(crate) mod js_bindings {
     }
 
     #[bun_jsc::host_fn]
-    fn js_get_features_as_vlq(
-        global: &JSGlobalObject,
-        _frame: &CallFrame,
-    ) -> JsResult<JSValue> {
+    fn js_get_features_as_vlq(global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
         let bits = analytics::packed_features();
         let mut buf = BoundedArray::<u8, 16>::default();
         // PackedFeatures is repr(transparent) u64; `.bits()` exposes the raw value.
@@ -223,10 +214,7 @@ pub(crate) mod js_bindings {
     }
 
     #[bun_jsc::host_fn]
-    fn js_get_feature_data(
-        global: &JSGlobalObject,
-        _frame: &CallFrame,
-    ) -> JsResult<JSValue> {
+    fn js_get_feature_data(global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
         let obj = JSValue::create_empty_object(global, 5);
         let list = analytics::PACKED_FEATURES_LIST;
         let array = JSValue::create_array_from_iter(global, list.iter(), |feature| {

@@ -84,7 +84,11 @@ impl BunFrontendDevServerAgent {
         }
     }
 
-    pub(crate) fn notify_bundle_start(&self, dev_server_id: DebuggerId, trigger_files: &mut [BunString]) {
+    pub(crate) fn notify_bundle_start(
+        &self,
+        dev_server_id: DebuggerId,
+        trigger_files: &mut [BunString],
+    ) {
         if let Some(handle) = self.handle_mut() {
             // SAFETY: `trigger_files` is a valid contiguous slice for the call;
             // `(ptr, len)` pair derived from it.
@@ -146,7 +150,12 @@ impl BunFrontendDevServerAgent {
 
     /// `notifyConsoleLog`. `kind` is `DevServer.ConsoleLogKind as u8` (`b'l'`
     /// / `b'e'`) — caller does `kind as u8`.
-    pub(crate) fn notify_console_log(&self, dev_server_id: DebuggerId, kind: u8, data: &mut BunString) {
+    pub(crate) fn notify_console_log(
+        &self,
+        dev_server_id: DebuggerId,
+        kind: u8,
+        data: &mut BunString,
+    ) {
         if let Some(handle) = self.handle_mut() {
             ffi::InspectorBunFrontendDevServerAgent__notifyConsoleLog(
                 handle,

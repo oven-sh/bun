@@ -314,10 +314,7 @@ pub mod random {
         use bun_jsc::{JSType, StringJsc as _, UUID, UUID7};
 
         #[bun_jsc::host_fn]
-        fn random_int(
-            global: &JSGlobalObject,
-            call_frame: &CallFrame,
-        ) -> JsResult<JSValue> {
+        fn random_int(global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
             let [mut min_value, mut max_value, mut callback] = call_frame.arguments_as_array::<3>();
 
             let mut min_specified = true;
@@ -443,10 +440,7 @@ pub mod random {
         }
 
         #[bun_jsc::host_fn]
-        fn random_uuid(
-            global: &JSGlobalObject,
-            call_frame: &CallFrame,
-        ) -> JsResult<JSValue> {
+        fn random_uuid(global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
             let args = call_frame.arguments();
 
             let mut disable_entropy_cache = false;
@@ -488,10 +482,7 @@ pub mod random {
         }
 
         #[bun_jsc::host_fn]
-        fn random_uuid_v7(
-            global: &JSGlobalObject,
-            call_frame: &CallFrame,
-        ) -> JsResult<JSValue> {
+        fn random_uuid_v7(global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
             let args = call_frame.arguments();
 
             let mut disable_entropy_cache = false;
@@ -607,10 +598,7 @@ pub mod random {
         }
 
         #[bun_jsc::host_fn]
-        fn random_bytes(
-            global: &JSGlobalObject,
-            call_frame: &CallFrame,
-        ) -> JsResult<JSValue> {
+        fn random_bytes(global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
             let [size_value, callback] = call_frame.arguments_as_array::<2>();
 
             let size = assert_size(global, size_value, 1, 0, MAX_POSSIBLE_LENGTH + 1)?;
@@ -640,10 +628,7 @@ pub mod random {
         }
 
         #[bun_jsc::host_fn]
-        fn random_fill_sync(
-            global: &JSGlobalObject,
-            call_frame: &CallFrame,
-        ) -> JsResult<JSValue> {
+        fn random_fill_sync(global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
             let [buf_value, offset_value, size_value] = call_frame.arguments_as_array::<3>();
 
             let Some(mut buf) = buf_value.as_array_buffer(global) else {
@@ -687,10 +672,7 @@ pub mod random {
         }
 
         #[bun_jsc::host_fn]
-        fn random_fill(
-            global: &JSGlobalObject,
-            call_frame: &CallFrame,
-        ) -> JsResult<JSValue> {
+        fn random_fill(global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
             let [buf_value, offset_value, mut size_value, mut callback] =
                 call_frame.arguments_as_array::<4>();
 
@@ -1192,7 +1174,10 @@ mod _impl {
     }
 
     #[bun_jsc::host_fn]
-    pub(crate) fn timing_safe_equal(global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn timing_safe_equal(
+        global: &JSGlobalObject,
+        call_frame: &CallFrame,
+    ) -> JsResult<JSValue> {
         let [l_value, r_value] = call_frame.arguments_as_array::<2>();
 
         let Some(l_buf) = l_value.as_array_buffer(global) else {

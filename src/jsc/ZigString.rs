@@ -56,11 +56,7 @@ pub unsafe fn to_external_u16(ptr: *const u16, len: usize, global: &JSGlobalObje
 /// # Safety
 /// `raw` must point to `len` bytes allocated by the default allocator.
 #[unsafe(no_mangle)]
-unsafe extern "C" fn ZigString__free(
-    raw: *const u8,
-    len: usize,
-    allocator_: *mut c_void,
-) {
+unsafe extern "C" fn ZigString__free(raw: *const u8, len: usize, allocator_: *mut c_void) {
     let Some(allocator_) = core::ptr::NonNull::new(allocator_) else {
         return;
     };

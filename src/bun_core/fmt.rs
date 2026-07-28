@@ -1322,7 +1322,10 @@ pub(crate) fn github_action_writer(writer: &mut impl fmt::Write, self_: &[u8]) -
 /// [`github_action`] (which only escapes the message-class metacharacters), this
 /// escapes the property-class metacharacters per the actions/toolkit spec:
 /// `%`->`%25`, `\r`->`%0D`, `\n`->`%0A`, `:`->`%3A`, `,`->`%2C`.
-pub(crate) fn github_action_property_writer(writer: &mut impl fmt::Write, self_: &[u8]) -> fmt::Result {
+pub(crate) fn github_action_property_writer(
+    writer: &mut impl fmt::Write,
+    self_: &[u8],
+) -> fmt::Result {
     let mut start: usize = 0;
     for (i, &byte) in self_.iter().enumerate() {
         let replacement: &str = match byte {
@@ -2348,8 +2351,7 @@ impl<'a, W: fmt::Write> CountingWriter<'a, W> {
     }
 }
 
-impl CountingWriter<'static, Null> {
-}
+impl CountingWriter<'static, Null> {}
 
 impl<W: fmt::Write> fmt::Write for CountingWriter<'_, W> {
     #[inline]
@@ -2968,9 +2970,7 @@ impl<const PRECISION: usize> Display for TrimmedPrecisionFormatter<PRECISION> {
 pub fn trimmed_precision<const PRECISION: usize>(
     value: f64,
 ) -> TrimmedPrecisionFormatter<PRECISION> {
-    TrimmedPrecisionFormatter {
-        num: value,
-    }
+    TrimmedPrecisionFormatter { num: value }
 }
 
 // ───────────────────────────────────────────────────────────────────────────

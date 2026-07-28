@@ -9136,7 +9136,11 @@ pub(crate) fn move_file_z_slow(
     r
 }
 /// `copyFileZSlowWithHandle` (POSIX read/write fallback arm).
-pub(crate) fn copy_file_z_slow_with_handle(in_handle: Fd, to_dir: Fd, destination: &ZStr) -> Maybe<()> {
+pub(crate) fn copy_file_z_slow_with_handle(
+    in_handle: Fd,
+    to_dir: Fd,
+    destination: &ZStr,
+) -> Maybe<()> {
     #[cfg(unix)]
     let st = fstat(in_handle)?;
     // Unlink dest first — fixes ETXTBUSY on Linux.
@@ -10175,5 +10179,4 @@ mod normalize_path_windows_tests {
             format!("\\\\?\\GLOBALROOT{}", normalize(*child, "..\\x"))
         );
     }
-
 }

@@ -124,7 +124,11 @@ impl ConfigItem {
     }
 
     /// Duplicate the value, decoding it if it is base64 encoded.
-    pub(crate) fn dupe_value_decoded(&self, log: &mut Log, source: &Source) -> OOM<Option<Box<[u8]>>> {
+    pub(crate) fn dupe_value_decoded(
+        &self,
+        log: &mut Log,
+        source: &Source,
+    ) -> OOM<Option<Box<[u8]>>> {
         if self.optname.is_base64_encoded() {
             if self.value.is_empty() {
                 return Ok(Some(Box::default()));
@@ -205,8 +209,8 @@ mod draft {
     use bun_url::URL;
 
     use super::{
-        ConfigItem, ConfigOpt, IniOption, NODE_LINKER_MAP, NodeLinker, is_quoted,
-        next_dot, should_skip_line,
+        ConfigItem, ConfigOpt, IniOption, NODE_LINKER_MAP, NodeLinker, is_quoted, next_dot,
+        should_skip_line,
     };
 
     type OOM<T> = Result<T, AllocError>;

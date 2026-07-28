@@ -44,7 +44,10 @@ pub(crate) fn update_package_json_and_install_catch_error(
     }
 }
 
-pub(crate) fn update_package_json_and_install(ctx: Context, subcommand: Subcommand) -> Result<(), Error> {
+pub(crate) fn update_package_json_and_install(
+    ctx: Context,
+    subcommand: Subcommand,
+) -> Result<(), Error> {
     // Calling with runtime `subcommand` here; if
     // `parse` requires `<const CMD: Subcommand>`, expand to a `match`.
     let mut cli = CommandLineArguments::parse(subcommand)?;

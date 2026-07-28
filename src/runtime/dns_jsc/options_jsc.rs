@@ -74,10 +74,7 @@ pub(crate) fn options_from_js(
     Err(FromJSError::InvalidOptions)
 }
 
-fn family_from_js(
-    value: JSValue,
-    global: &JSGlobalObject,
-) -> Result<Family, FromJSError> {
+fn family_from_js(value: JSValue, global: &JSGlobalObject) -> Result<Family, FromJSError> {
     if value.is_empty_or_undefined_or_null() {
         return Ok(Family::Unspecified);
     }
@@ -109,10 +106,7 @@ fn family_from_js(
     Err(FromJSError::InvalidFamily)
 }
 
-fn socket_type_from_js(
-    value: JSValue,
-    global: &JSGlobalObject,
-) -> Result<SocketType, FromJSError> {
+fn socket_type_from_js(value: JSValue, global: &JSGlobalObject) -> Result<SocketType, FromJSError> {
     if value.is_empty_or_undefined_or_null() {
         // Default to .stream
         return Ok(SocketType::Stream);
@@ -142,10 +136,7 @@ fn socket_type_from_js(
     Err(FromJSError::InvalidSocketType)
 }
 
-fn protocol_from_js(
-    value: JSValue,
-    global: &JSGlobalObject,
-) -> Result<Protocol, FromJSError> {
+fn protocol_from_js(value: JSValue, global: &JSGlobalObject) -> Result<Protocol, FromJSError> {
     if value.is_empty_or_undefined_or_null() {
         return Ok(Protocol::Unspecified);
     }
@@ -175,10 +166,7 @@ fn protocol_from_js(
     Err(FromJSError::InvalidProtocol)
 }
 
-fn backend_from_js(
-    value: JSValue,
-    global: &JSGlobalObject,
-) -> Result<Backend, FromJSError> {
+fn backend_from_js(value: JSValue, global: &JSGlobalObject) -> Result<Backend, FromJSError> {
     if value.is_empty_or_undefined_or_null() {
         return Ok(Backend::default());
     }

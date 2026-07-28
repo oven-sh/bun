@@ -171,7 +171,12 @@ pub mod external_string {
             self.value.fmt(buf)
         }
 
-        pub(crate) fn order(&self, rhs: &ExternalString, lhs_buf: &[u8], rhs_buf: &[u8]) -> Ordering {
+        pub(crate) fn order(
+            &self,
+            rhs: &ExternalString,
+            lhs_buf: &[u8],
+            rhs_buf: &[u8],
+        ) -> Ordering {
             if self.hash == rhs.hash && self.hash > 0 {
                 return Ordering::Equal;
             }
@@ -952,7 +957,11 @@ pub mod semver_string {
         }
 
         // SlicedString is not supported due to inline strings.
-        pub(crate) fn append_without_pool<T: BuilderStringType>(&mut self, slice_: &[u8], hash: u64) -> T {
+        pub(crate) fn append_without_pool<T: BuilderStringType>(
+            &mut self,
+            slice_: &[u8],
+            hash: u64,
+        ) -> T {
             if slice_.len() <= String::MAX_INLINE_LEN {
                 return T::from_init(self.allocated_slice(), slice_, hash);
             }
@@ -975,7 +984,11 @@ pub mod semver_string {
             T::from_init(allocated, final_slice, hash)
         }
 
-        pub(crate) fn append_with_hash<T: BuilderStringType>(&mut self, slice_: &[u8], hash: u64) -> T {
+        pub(crate) fn append_with_hash<T: BuilderStringType>(
+            &mut self,
+            slice_: &[u8],
+            hash: u64,
+        ) -> T {
             if slice_.len() <= String::MAX_INLINE_LEN {
                 return T::from_init(self.allocated_slice(), slice_, hash);
             }

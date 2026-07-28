@@ -110,7 +110,6 @@ pub fn decode_wtf8_rune_t<T: CodePointZero>(p: [u8; 4], len: U3Fast, zero: T) ->
     decode_wtf8_rune_t_multibyte::<T>(p, len, zero)
 }
 
-
 // ───────────────────────────── UTF16 → UTF8 ─────────────────────────────
 //
 // The transcoding suite (`convert_utf16_to_utf8{,_append}`, `to_utf8_alloc{,_z}`,

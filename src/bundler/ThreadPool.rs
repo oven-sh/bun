@@ -734,5 +734,4 @@ impl Worker {
 
         &mut data.transpiler
     }
-
 }

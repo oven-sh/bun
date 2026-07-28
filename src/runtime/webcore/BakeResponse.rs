@@ -120,10 +120,7 @@ bun_jsc::jsc_host_abi! {
     }
 }
 
-fn construct_redirect(
-    global_this: &JSGlobalObject,
-    callframe: &CallFrame,
-) -> JsResult<JSValue> {
+fn construct_redirect(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
     let response = Response::construct_redirect_impl(global_this, callframe)?;
     let response = Box::new(response);
 
@@ -157,10 +154,7 @@ bun_jsc::jsc_host_abi! {
 }
 
 /// This function is only available on JSBakeResponse
-fn construct_render(
-    global_this: &JSGlobalObject,
-    callframe: &CallFrame,
-) -> JsResult<JSValue> {
+fn construct_render(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
     let arguments: [JSValue; 2] = callframe.arguments_as_array::<2>();
     let vm = global_this.bun_vm().as_mut();
 

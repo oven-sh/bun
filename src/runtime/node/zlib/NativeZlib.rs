@@ -61,7 +61,10 @@ mod _impl {
     impl NativeZlib {
         // NB: no `#[bun_jsc::host_fn]` here — the `#[bun_jsc::JsClass]` derive emits
         // the constructor shim that calls `<NativeZlib>::constructor(g, f)` directly.
-        pub(crate) fn constructor(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<Box<Self>> {
+        pub(crate) fn constructor(
+            global: &JSGlobalObject,
+            frame: &CallFrame,
+        ) -> JsResult<Box<Self>> {
             let arguments = frame.arguments_undef::<4>();
 
             let mode = arguments.ptr[0];
@@ -219,7 +222,11 @@ mod _impl {
         }
 
         #[bun_jsc::host_fn(method)]
-        pub(crate) fn params(&self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+        pub(crate) fn params(
+            &self,
+            global: &JSGlobalObject,
+            frame: &CallFrame,
+        ) -> JsResult<JSValue> {
             let arguments = frame.arguments_undef::<2>();
 
             if arguments.len != 2 {

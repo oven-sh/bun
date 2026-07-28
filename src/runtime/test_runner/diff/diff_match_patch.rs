@@ -809,9 +809,7 @@ pub(crate) fn diff_chars_to_lines<Unit: DiffUnit>(
 /// Reorder and merge like edit sections.  Merge equalities.
 /// Any edit section can move as long as it doesn't cross an equality.
 /// @param diffs List of Diff objects.
-fn diff_cleanup_merge<Unit: DiffUnit>(
-    diffs: &mut DiffList<Unit>,
-) -> Result<(), DiffError> {
+fn diff_cleanup_merge<Unit: DiffUnit>(diffs: &mut DiffList<Unit>) -> Result<(), DiffError> {
     // Add a dummy entry at the end.
     diffs.push(Diff {
         operation: Operation::Equal,

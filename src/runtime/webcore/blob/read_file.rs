@@ -521,7 +521,12 @@ impl ReadFile {
 
     /// Never touches `self.buffer`; the caller moves it out for the duration.
     #[cfg(not(windows))]
-    pub(crate) fn do_read(&mut self, buf: &mut [u8], read_len: &mut usize, retry: &mut bool) -> bool {
+    pub(crate) fn do_read(
+        &mut self,
+        buf: &mut [u8],
+        read_len: &mut usize,
+        retry: &mut bool,
+    ) -> bool {
         let result: bun_sys::Result<usize> = 'brk: {
             if bun_sys::S::ISSOCK(self.file_store.mode) {
                 break 'brk bun_sys::recv_non_block(self.opened_fd, buf);
@@ -1447,4 +1452,3 @@ impl<'a> ReadFileUV<'a> {
         this.queue_read();
     }
 }
-

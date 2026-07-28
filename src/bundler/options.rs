@@ -2364,7 +2364,6 @@ impl PathTemplateConst {
             sanitize_parent_dirs,
         )
     }
-
 }
 
 impl core::fmt::Display for PathTemplateConst {

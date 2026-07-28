@@ -133,7 +133,11 @@ pub enum UnixOrHost {
 
 impl Listener {
     #[bun_jsc::host_fn(method)]
-    pub(crate) fn reload(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn reload(
+        this: &Self,
+        global: &JSGlobalObject,
+        frame: &CallFrame,
+    ) -> JsResult<JSValue> {
         let [opts] = frame.arguments_as_array::<1>();
 
         if frame.arguments_count() < 1
@@ -778,13 +782,21 @@ impl Listener {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub(crate) fn dispose(this: &Self, _global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn dispose(
+        this: &Self,
+        _global: &JSGlobalObject,
+        _frame: &CallFrame,
+    ) -> JsResult<JSValue> {
         Self::do_stop(this, true);
         Ok(JSValue::UNDEFINED)
     }
 
     #[bun_jsc::host_fn(method)]
-    pub(crate) fn stop(this: &Self, _global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn stop(
+        this: &Self,
+        _global: &JSGlobalObject,
+        frame: &CallFrame,
+    ) -> JsResult<JSValue> {
         let [arg0] = frame.arguments_as_array::<1>();
         log!("close");
 
@@ -975,12 +987,20 @@ impl Listener {
     /// property). Forward to [`ref_`] so the existing call sites that spell it
     /// with the trailing underscore keep working.
     #[inline]
-    pub(crate) fn r#ref(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn r#ref(
+        this: &Self,
+        global: &JSGlobalObject,
+        frame: &CallFrame,
+    ) -> JsResult<JSValue> {
         Self::ref_(this, global, frame)
     }
 
     #[bun_jsc::host_fn(method)]
-    pub(crate) fn unref(this: &Self, _global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn unref(
+        this: &Self,
+        _global: &JSGlobalObject,
+        _frame: &CallFrame,
+    ) -> JsResult<JSValue> {
         this.poll_ref.with_mut(|p| p.unref(bun_io::js_vm_ctx()));
         if this.handlers.active_connections.get() == 0 {
             this.this_value.with_mut(|r| r.downgrade());

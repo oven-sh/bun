@@ -30,7 +30,6 @@ use bun_jsc::{
 };
 use bun_jsc::{BuildMessage, ResolveMessage};
 
-
 const NAMESPACE_WITH_COLON: &[u8] = b"macro:";
 
 fn is_macro_path(str: &[u8]) -> bool {
@@ -255,9 +254,7 @@ impl MacroContext {
 // ══════════════════════════════════════════════════════════════════════════
 
 #[unsafe(no_mangle)]
-fn __bun_macro_context_init(
-    transpiler: *mut core::ffi::c_void,
-) -> js_parser::Macro::MacroContext {
+fn __bun_macro_context_init(transpiler: *mut core::ffi::c_void) -> js_parser::Macro::MacroContext {
     // SAFETY: every caller of `js_parser::Macro::MacroContext::init<T>` passes a
     // `&mut bun_bundler::Transpiler<'_>`; the lifetime parameter is erased at
     // runtime so reading it as `'static` is layout-identical. The boxed state

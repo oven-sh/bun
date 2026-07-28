@@ -1362,7 +1362,6 @@ impl<'a> SecurityScanSubprocess<'a> {
         self.has_process_exited && self.remaining_fds == 0
     }
 
-
     pub(crate) fn loop_(&mut self) -> *mut AsyncLoop {
         self.manager.event_loop.native_loop()
     }

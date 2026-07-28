@@ -134,7 +134,10 @@ pub(crate) fn set_max_markdown_block_bytes_for_testing(
 /// light?, columns? }`. By default colors are enabled, hyperlinks are
 /// disabled (the caller doesn't know if stdout is a TTY), and columns is 80.
 #[bun_jsc::host_fn]
-pub(crate) fn render_to_ansi(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+pub(crate) fn render_to_ansi(
+    global_this: &JSGlobalObject,
+    callframe: &CallFrame,
+) -> JsResult<JSValue> {
     let [input_value, theme_value] = callframe.arguments_as_array::<2>();
 
     if input_value.is_empty_or_undefined_or_null() {
@@ -202,10 +205,7 @@ pub(crate) fn render_to_ansi(global_this: &JSGlobalObject, callframe: &CallFrame
 }
 
 #[bun_jsc::host_fn]
-fn render_to_html(
-    global_this: &JSGlobalObject,
-    callframe: &CallFrame,
-) -> JsResult<JSValue> {
+fn render_to_html(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
     let [input_value, opts_value] = callframe.arguments_as_array::<2>();
 
     if input_value.is_empty_or_undefined_or_null() {
@@ -358,10 +358,7 @@ fn render(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSVal
 // The closure scopes a MarkedArgumentBuffer around the impl so every JSValue it
 // accumulates stays GC-visible for the duration of the call.
 #[bun_jsc::host_fn]
-fn render_react(
-    global_this: &JSGlobalObject,
-    callframe: &CallFrame,
-) -> JsResult<JSValue> {
+fn render_react(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
     MarkedArgumentBuffer::new(|marked_args| render_react_impl(global_this, callframe, marked_args))
 }
 

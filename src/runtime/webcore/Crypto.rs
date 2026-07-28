@@ -100,7 +100,10 @@ impl Crypto {
     // DOMJIT fast path.
 
     // `#[JsClass]` emits `CryptoClass__construct` calling this.
-    pub(crate) fn constructor(global: &JSGlobalObject, _callframe: &CallFrame) -> JsResult<*mut Crypto> {
+    pub(crate) fn constructor(
+        global: &JSGlobalObject,
+        _callframe: &CallFrame,
+    ) -> JsResult<*mut Crypto> {
         Err(global.throw_illegal_constructor())
     }
 }
@@ -128,10 +131,7 @@ fn random_data(global: &JSGlobalObject, slice: &mut [u8]) {
 // The #[bun_jsc::host_fn] attribute macro emits the `extern "C"` shim with the
 // correct calling convention and `#[unsafe(no_mangle)]` under the exported name.
 #[bun_jsc::host_fn(export = "Bun__randomUUIDv7")]
-fn bun_random_uuid_v7(
-    global: &JSGlobalObject,
-    callframe: &CallFrame,
-) -> JsResult<JSValue> {
+fn bun_random_uuid_v7(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
     let arguments = callframe.arguments_undef::<2>();
 
     let mut encoding_value: JSValue = JSValue::UNDEFINED;
@@ -234,10 +234,7 @@ fn bun_random_uuid_v7(
 }
 
 #[bun_jsc::host_fn(export = "Bun__randomUUIDv5")]
-fn bun_random_uuid_v5(
-    global: &JSGlobalObject,
-    callframe: &CallFrame,
-) -> JsResult<JSValue> {
+fn bun_random_uuid_v5(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
     let arguments = callframe.arguments_undef::<3>();
 
     if arguments.len == 0 || arguments.ptr[0].is_undefined_or_null() {

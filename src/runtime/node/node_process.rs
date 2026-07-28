@@ -163,10 +163,7 @@ mod _impl {
 
     // TODO: https://github.com/nodejs/node/blob/master/deps/uv/src/unix/darwin-proctitle.c
     #[unsafe(export_name = "Bun__Process__setTitle")]
-    extern "C" fn set_title(
-        _global_object: *const JSGlobalObject,
-        newvalue: *mut BunString,
-    ) {
+    extern "C" fn set_title(_global_object: *const JSGlobalObject, newvalue: *mut BunString) {
         // SAFETY: newvalue is a valid pointer from C++; we consume one ref before
         // returning. `String` is `Copy`, so read it out by value and let
         // `OwnedString`'s Drop release the ref.
@@ -185,9 +182,7 @@ mod _impl {
     // (headers.h) declares `EncodedJSValue Bun__Process__createExecArgv(JSGlobalObject*)`,
     // not a `JSHostFunctionType`. Hand-roll the shim instead of `#[bun_jsc::host_fn]`.
     #[unsafe(no_mangle)]
-    extern "C" fn Bun__Process__createExecArgv(
-        global_object: &JSGlobalObject,
-    ) -> JSValue {
+    extern "C" fn Bun__Process__createExecArgv(global_object: &JSGlobalObject) -> JSValue {
         bun_jsc::to_js_host_fn_result(global_object, create_exec_argv(global_object))
     }
 
@@ -428,10 +423,7 @@ mod _impl {
     // `EncodedJSValue Bun__Process__setCwd(JSGlobalObject*, ZigString*)`. Hand-roll
     // the shim; the second arg is the raw `*mut ZigString`, not a CallFrame.
     #[unsafe(no_mangle)]
-    extern "C" fn Bun__Process__setCwd(
-        global_object: &JSGlobalObject,
-        to: &ZigString,
-    ) -> JSValue {
+    extern "C" fn Bun__Process__setCwd(global_object: &JSGlobalObject, to: &ZigString) -> JSValue {
         bun_jsc::to_js_host_fn_result(global_object, set_cwd(global_object, to))
     }
 

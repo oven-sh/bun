@@ -529,7 +529,11 @@ impl HTMLRewriter {
         self.on_document_(global, listener, call_frame)
     }
 
-    pub(crate) fn transform(&self, global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn transform(
+        &self,
+        global: &JSGlobalObject,
+        call_frame: &CallFrame,
+    ) -> JsResult<JSValue> {
         let mut iter = ArgumentsSlice::init(global.bun_vm_ref(), call_frame.arguments());
         let response_value = eat_js_value(&mut iter, global)?;
         self.transform_(global, response_value)
@@ -1499,7 +1503,11 @@ impl TextChunk {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub(crate) fn remove(&self, _global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn remove(
+        &self,
+        _global: &JSGlobalObject,
+        call_frame: &CallFrame,
+    ) -> JsResult<JSValue> {
         let Some(chunk) = cell_get(&self.text_chunk) else {
             return Ok(JSValue::UNDEFINED);
         };
@@ -1589,7 +1597,11 @@ impl DocType {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub(crate) fn remove(&self, _global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn remove(
+        &self,
+        _global: &JSGlobalObject,
+        call_frame: &CallFrame,
+    ) -> JsResult<JSValue> {
         let Some(dt) = cell_get(&self.doctype) else {
             return Ok(JSValue::UNDEFINED);
         };
@@ -1668,7 +1680,11 @@ impl Comment {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub(crate) fn remove(&self, _global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn remove(
+        &self,
+        _global: &JSGlobalObject,
+        call_frame: &CallFrame,
+    ) -> JsResult<JSValue> {
         let Some(comment) = cell_get(&self.comment) else {
             return Ok(JSValue::NULL);
         };
@@ -1767,7 +1783,11 @@ impl EndTag {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub(crate) fn remove(&self, _global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn remove(
+        &self,
+        _global: &JSGlobalObject,
+        call_frame: &CallFrame,
+    ) -> JsResult<JSValue> {
         let Some(end_tag) = cell_get(&self.end_tag) else {
             return Ok(JSValue::UNDEFINED);
         };
@@ -1855,7 +1875,11 @@ impl AttributeIterator {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub(crate) fn next(&self, global_object: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn next(
+        &self,
+        global_object: &JSGlobalObject,
+        _frame: &CallFrame,
+    ) -> JsResult<JSValue> {
         let done_label = bun_core::ZigString::init(b"done");
         let value_label = bun_core::ZigString::init(b"value");
 
@@ -1891,7 +1915,11 @@ impl AttributeIterator {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub(crate) fn get_this(&self, _global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn get_this(
+        &self,
+        _global: &JSGlobalObject,
+        call_frame: &CallFrame,
+    ) -> JsResult<JSValue> {
         Ok(call_frame.this())
     }
 }
@@ -2038,7 +2066,11 @@ impl Element {
     }
 
     /// Returns a boolean indicating whether an attribute exists on the element.
-    pub(crate) fn has_attribute_(&self, global: &JSGlobalObject, name: ZigString) -> JsResult<JSValue> {
+    pub(crate) fn has_attribute_(
+        &self,
+        global: &JSGlobalObject,
+        name: ZigString,
+    ) -> JsResult<JSValue> {
         let Some(el) = cell_get(&self.element) else {
             return Ok(JSValue::FALSE);
         };
@@ -2097,7 +2129,11 @@ impl Element {
 
     // ── instance-method arg-decode wrappers (attribute ops) ──────────────
 
-    pub(crate) fn on_end_tag(&self, global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn on_end_tag(
+        &self,
+        global: &JSGlobalObject,
+        call_frame: &CallFrame,
+    ) -> JsResult<JSValue> {
         let mut iter = ArgumentsSlice::init(global.bun_vm_ref(), call_frame.arguments());
         let function = eat_js_value(&mut iter, global)?;
         self.on_end_tag_(global, function, call_frame)
@@ -2161,7 +2197,11 @@ impl Element {
 
     /// Removes the element with all its content.
     #[bun_jsc::host_fn(method)]
-    pub(crate) fn remove(&self, _global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn remove(
+        &self,
+        _global: &JSGlobalObject,
+        call_frame: &CallFrame,
+    ) -> JsResult<JSValue> {
         let Some(el) = cell_get(&self.element) else {
             return Ok(JSValue::UNDEFINED);
         };

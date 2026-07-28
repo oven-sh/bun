@@ -71,7 +71,10 @@ mod _impl {
     impl NativeZstd {
         // C-ABI shim is emitted by `#[bun_jsc::JsClass]` (calls `<Self>::constructor`);
         // no `#[host_fn]` here — that macro's free-fn arm would emit a bare `constructor(...)` call.
-        pub(crate) fn constructor(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<Box<Self>> {
+        pub(crate) fn constructor(
+            global: &JSGlobalObject,
+            frame: &CallFrame,
+        ) -> JsResult<Box<Self>> {
             let arguments = frame.arguments_as_array::<1>();
 
             let mode = arguments[0];
@@ -274,7 +277,11 @@ mod _impl {
         }
 
         #[bun_jsc::host_fn(method)]
-        pub(crate) fn params(&self, _global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
+        pub(crate) fn params(
+            &self,
+            _global: &JSGlobalObject,
+            _frame: &CallFrame,
+        ) -> JsResult<JSValue> {
             // intentionally left empty
             Ok(JSValue::UNDEFINED)
         }

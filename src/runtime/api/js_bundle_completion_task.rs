@@ -44,9 +44,7 @@ use bun_sys::OpenDirOptions;
 use crate::api::js_bundler::js_bundler::{Config as JSBundlerConfig, Plugin, PluginJscExt};
 use crate::api::output_file_jsc::OutputFileJsc as _;
 use crate::node::fs::{self as node_fs, NodeFS, args as fs_args};
-use crate::node::types::{
-    FileSystemFlags, PathLike, PathOrFileDescriptor, StringOrBuffer,
-};
+use crate::node::types::{FileSystemFlags, PathLike, PathOrFileDescriptor, StringOrBuffer};
 use crate::server::html_bundle;
 
 /// See module doc for the layering rationale.

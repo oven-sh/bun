@@ -586,7 +586,6 @@ impl Kind {
             Kind::Verbose => b"verbose",
         }
     }
-
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -748,7 +747,6 @@ impl Location {
             offset: self.offset,
         }
     }
-
 
     // No Drop impl needed.
 
@@ -946,7 +944,6 @@ impl Data {
             loc.count(builder);
         }
     }
-
 
     pub(crate) fn write_format<const ENABLE_ANSI_COLORS: bool>(
         &self,
@@ -1180,7 +1177,11 @@ impl Msg {
         }
     }
 
-    pub(crate) fn clone_with_builder(&self, notes: &mut [Data], builder: &mut StringBuilder) -> Msg {
+    pub(crate) fn clone_with_builder(
+        &self,
+        notes: &mut [Data],
+        builder: &mut StringBuilder,
+    ) -> Msg {
         Msg {
             kind: self.kind,
             data: self.data.clone_with_builder(builder),
@@ -1198,8 +1199,6 @@ impl Msg {
             redact_sensitive_information: self.redact_sensitive_information,
         }
     }
-
-
 
     // No explicit Drop body needed beyond field drops.
 
@@ -1354,7 +1353,6 @@ impl Range {
         loc: Loc::EMPTY,
         len: 0,
     };
-
 
     pub fn is_empty(self) -> bool {
         self.len == 0 && self.loc.start == Loc::EMPTY.start
@@ -1540,10 +1538,7 @@ impl Log {
             warnings += (msg.kind == Kind::Warn) as u32;
         }
 
-        api::Log {
-            warnings,
-            errors,
-        }
+        api::Log { warnings, errors }
     }
 
     pub fn init() -> Log {
@@ -1560,7 +1555,6 @@ impl Log {
     pub fn new() -> Log {
         Log::init()
     }
-
 
     #[inline]
     pub fn add_debug_fmt(&mut self, source: Option<&Source>, l: Loc, args: fmt::Arguments<'_>) {

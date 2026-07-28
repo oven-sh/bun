@@ -201,7 +201,6 @@ impl IntoParserError for ParserError {
 // no caller ever passes one.
 // `SelectorParseErrorKind` is impl'd in `selectors/parser.rs`.
 
-
 pub type CssResult<T> = Maybe<T, ParseError<ParserError>>;
 
 pub type PrintResult<T> = Maybe<T, PrinterError>;
@@ -3264,7 +3263,10 @@ impl<'a> Parser<'a> {
     /// `Err`, the internal state of the parser is restored to what it was
     /// before the call.
     #[inline]
-    pub(crate) fn try_parse<R>(&mut self, func: impl FnOnce(&mut Parser) -> CssResult<R>) -> CssResult<R> {
+    pub(crate) fn try_parse<R>(
+        &mut self,
+        func: impl FnOnce(&mut Parser) -> CssResult<R>,
+    ) -> CssResult<R> {
         let start = self.state();
         let result = func(self);
         if result.is_err() {
@@ -4202,7 +4204,6 @@ impl<'a> Tokenizer<'a> {
         }
     }
 
-
     #[inline]
     pub(crate) fn is_eof(&self) -> bool {
         self.position >= self.src.len()
@@ -4671,7 +4672,9 @@ impl<'a> Tokenizer<'a> {
         value_bytes.to_slice()
     }
 
-    pub(crate) fn consume_quoted_string<const SINGLE_QUOTE: bool>(&mut self) -> (&'static [u8], bool) {
+    pub(crate) fn consume_quoted_string<const SINGLE_QUOTE: bool>(
+        &mut self,
+    ) -> (&'static [u8], bool) {
         self.advance(1); // Skip the initial quote
         let start_pos = self.position;
         let mut string_bytes: CopyOnWriteStr;
@@ -4901,7 +4904,11 @@ impl<'a> Tokenizer<'a> {
         Token::UnquotedUrl(string_bytes.to_slice())
     }
 
-    pub(crate) fn consume_url_end(&mut self, start_pos: usize, string: CopyOnWriteStr<'a>) -> Token {
+    pub(crate) fn consume_url_end(
+        &mut self,
+        start_pos: usize,
+        string: CopyOnWriteStr<'a>,
+    ) -> Token {
         while !self.is_eof() {
             // todo_stuff.match_byte
             match self.next_byte_unchecked() {
@@ -5266,7 +5273,6 @@ impl Token {
         generic::implement_eql(lhs, rhs)
     }
 
-
     /// Return whether this token represents a parse error.
     pub(crate) fn is_parse_error(&self) -> bool {
         matches!(
@@ -5316,8 +5322,10 @@ impl Token {
         }
     }
 
-
-    pub(crate) fn to_css_generic<W: WriteAll + ?Sized>(&self, writer: &mut W) -> bun_io::Result<()> {
+    pub(crate) fn to_css_generic<W: WriteAll + ?Sized>(
+        &self,
+        writer: &mut W,
+    ) -> bun_io::Result<()> {
         match self {
             Token::Ident(v) => serializer::serialize_identifier(v, writer),
             Token::AtKeyword(v) => {
@@ -5994,7 +6002,10 @@ pub mod serializer {
         Ok(())
     }
 
-    pub(crate) fn hex_escape<W: WriteAll + ?Sized>(ascii_byte: u8, writer: &mut W) -> bun_io::Result<()> {
+    pub(crate) fn hex_escape<W: WriteAll + ?Sized>(
+        ascii_byte: u8,
+        writer: &mut W,
+    ) -> bun_io::Result<()> {
         let bytes: [u8; 4];
         let slice: &[u8] = if ascii_byte > 0x0F {
             let [hi, lo] = bun_core::fmt::hex_byte_lower(ascii_byte);
@@ -6007,7 +6018,10 @@ pub mod serializer {
         writer.write_all(slice)
     }
 
-    pub(crate) fn char_escape<W: WriteAll + ?Sized>(ascii_byte: u8, writer: &mut W) -> bun_io::Result<()> {
+    pub(crate) fn char_escape<W: WriteAll + ?Sized>(
+        ascii_byte: u8,
+        writer: &mut W,
+    ) -> bun_io::Result<()> {
         let bytes = [b'\\', ascii_byte];
         writer.write_all(&bytes)
     }
@@ -6082,8 +6096,10 @@ pub mod parse_utility {
 pub mod to_css {
     use super::*;
 
-
-    pub(crate) fn from_list<T: generic::ToCss>(this: &[T], dest: &mut Printer) -> Result<(), PrintErr> {
+    pub(crate) fn from_list<T: generic::ToCss>(
+        this: &[T],
+        dest: &mut Printer,
+    ) -> Result<(), PrintErr> {
         let len = this.len();
         for (idx, val) in this.iter().enumerate() {
             val.to_css(dest)?;

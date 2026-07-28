@@ -137,7 +137,6 @@ impl FilePoll {
         vm.file_polls_mut().put(this, vm, was_ever_registered);
     }
 
-
     pub(crate) fn deinit_with_vm(&mut self, vm: EventLoopCtx) {
         // `loop_mut()` — crate-private nonnull-asref accessor (single deref in
         // `EventLoopCtx`); the uws loop is a disjoint allocation from `self`.
@@ -156,7 +155,6 @@ impl FilePoll {
 
         vm.loop_add_active(self.flags.contains(Flags::HasIncrementedPollCount) as u32);
     }
-
 
     /// Only intended to be used from EventLoop.Pollable
     pub fn activate(&mut self, loop_: &mut WindowsLoop) {

@@ -859,10 +859,7 @@ pub(crate) fn to_js_unchecked(global: &JSGlobalObject, this: *mut Blob) -> JSVal
     BUN__createJSS3FileUnsafely(global, this.cast::<core::ffi::c_void>())
 }
 
-fn construct_internal(
-    global: &JSGlobalObject,
-    callframe: &CallFrame,
-) -> JsResult<*mut Blob> {
+fn construct_internal(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<*mut Blob> {
     // SAFETY: bun_vm() returns the live VM raw ptr.
     let vm = global.bun_vm();
     let mut args = bun_jsc::call_frame::ArgumentsSlice::init(vm, callframe.arguments());
@@ -909,11 +906,7 @@ pub(crate) mod exports {
     /// *JSGlobalObject, EncodedJSValue) -> bool`).
     #[unsafe(no_mangle)]
     #[bun_jsc::host_call]
-    fn JSS3File__hasInstance(
-        this: JSValue,
-        global: &JSGlobalObject,
-        value: JSValue,
-    ) -> bool {
+    fn JSS3File__hasInstance(this: JSValue, global: &JSGlobalObject, value: JSValue) -> bool {
         super::has_instance(this, global, value)
     }
 

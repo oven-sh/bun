@@ -896,7 +896,6 @@ pub fn implement_hash<T: CssHash>(this: &T, hasher: &mut Wyhash) {
     this.hash(hasher)
 }
 
-
 fn hash_array_list<V: CssHash>(this: &ArrayList<'_, V>, hasher: &mut Wyhash) {
     for item in this.iter() {
         item.hash(hasher);

@@ -95,7 +95,6 @@ impl MemberList {
         }
     }
 
-
     #[inline]
     pub(crate) fn get(&self, i: usize) -> Option<&[u8]> {
         match self {

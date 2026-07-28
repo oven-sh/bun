@@ -13,11 +13,11 @@ use bun_jsc::{self as jsc, JSGlobalObject, JSPromise, JSValue, JsTerminated, Sys
 use bun_sys::{self as sys, Fd};
 use bun_threading::{IntrusiveWorkTask as _, WorkPool, WorkPoolTask};
 
+#[cfg(not(windows))]
+use crate::webcore::blob::ClosingState;
 use crate::webcore::blob::{
     self, Blob, FileCloser, FileOpener, MkdirpTarget, Retry, SizeType, mkdir_if_not_exists,
 };
-#[cfg(not(windows))]
-use crate::webcore::blob::ClosingState;
 use crate::webcore::body;
 
 bun_output::declare_scope!(WriteFile, hidden);
@@ -227,7 +227,6 @@ impl WriteFile {
     #[cfg(not(windows))]
     pub(crate) const IO_TAG: io::Tag = io::Tag::WriteFile;
 
-
     pub fn on_ready(&mut self) {
         bun_output::scoped_log!(WriteFile, "WriteFile.onReady()");
         self.task = WorkPoolTask {
@@ -374,7 +373,10 @@ impl WriteFile {
         true
     }
 
-    pub(crate) fn then(mut this: Box<WriteFile>, _global: &JSGlobalObject) -> Result<(), JsTerminated> {
+    pub(crate) fn then(
+        mut this: Box<WriteFile>,
+        _global: &JSGlobalObject,
+    ) -> Result<(), JsTerminated> {
         let cb = this.on_complete_callback;
         let cb_ctx = this.on_complete_ctx;
         let system_error = this.system_error.take();
@@ -1278,7 +1280,10 @@ pub struct WriteFilePromise {
 }
 
 impl WriteFilePromise {
-    pub(crate) fn run(handler: *mut c_void, count: WriteFileResultType) -> Result<(), JsTerminated> {
+    pub(crate) fn run(
+        handler: *mut c_void,
+        count: WriteFileResultType,
+    ) -> Result<(), JsTerminated> {
         let handler = handler.cast::<Self>();
         // SAFETY: handler is the Box-allocated WriteFilePromise created in
         // Blob.rs (`heap::into_raw(Box::new(WriteFilePromise { .. }))`); consumed here.

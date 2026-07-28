@@ -1511,7 +1511,6 @@ impl CronJob {
 }
 
 impl CronJob {
-
     /// `self`'s address as `*mut Self` for raw-ptr-receiver helpers (e.g.
     /// `self_stop`, `schedule_next`). The callees deref it as `&*` (shared) —
     /// all mutation is `UnsafeCell`-backed — so no write provenance is
@@ -1856,7 +1855,11 @@ impl CronJob {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub(crate) fn do_unref(&self, _global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn do_unref(
+        &self,
+        _global: &JSGlobalObject,
+        frame: &CallFrame,
+    ) -> JsResult<JSValue> {
         self.poll_ref.with_mut(|p| p.unref(bun_io::js_vm_ctx()));
         Ok(frame.this())
     }

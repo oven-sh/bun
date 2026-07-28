@@ -104,7 +104,6 @@ impl ArrayBufferSink {
         streams::result::Writable::Owned(len as u64)
     }
 
-
     pub(crate) fn write_latin1(&mut self, data: &streams::Result) -> streams::result::Writable {
         let len = match self.bytes.write_latin1(data.slice()) {
             Ok(len) => len,
@@ -174,7 +173,10 @@ impl ArrayBufferSink {
         .to_js_unchecked(global_this)
     }
 
-    pub(crate) fn end_from_js(&mut self, _global_this: &JSGlobalObject) -> bun_sys::Result<ArrayBuffer> {
+    pub(crate) fn end_from_js(
+        &mut self,
+        _global_this: &JSGlobalObject,
+    ) -> bun_sys::Result<ArrayBuffer> {
         if self.done {
             return Ok(ArrayBuffer::from_bytes(&mut [], JSType::ArrayBuffer));
         }

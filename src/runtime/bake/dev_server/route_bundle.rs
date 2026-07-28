@@ -84,7 +84,10 @@ impl RouteBundle {
     /// only `dev.source_maps` is touched, and the two keystone
     /// `DevServer` structs (`dev_server::DevServer` / `dev_server_body::DevServer`)
     /// both expose that field but cannot be named here without a cycle.
-    pub(crate) fn invalidate_client_bundle(&mut self, source_maps: &mut source_map_store::SourceMapStore) {
+    pub(crate) fn invalidate_client_bundle(
+        &mut self,
+        source_maps: &mut source_map_store::SourceMapStore,
+    ) {
         if let Some(bundle) = self.client_bundle.take() {
             source_maps.unref(self.source_map_id());
             // SAFETY: `client_bundle` was produced by `StaticRoute::init_*`

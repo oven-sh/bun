@@ -290,7 +290,10 @@ impl SocketAddress {
     /// Returns `true` if `value` is a `SocketAddress`. Subclasses and similarly-shaped
     /// objects are not considered `SocketAddress`s.
     // Note: no `#[bun_jsc::host_fn]` — free-fn arm emits bare ident; see `parse`.
-    pub(crate) fn is_socket_address(_global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn is_socket_address(
+        _global: &JSGlobalObject,
+        callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
         let value = callframe.argument(0);
         Ok(JSValue::from(
             value.is_cell() && SocketAddress::from_js_direct(value).is_some(),
@@ -312,7 +315,10 @@ impl SocketAddress {
     /// ## References
     /// - [Node docs](https://nodejs.org/api/net.html#new-netsocketaddressoptions)
     // Note: no `#[bun_jsc::host_fn]` — free-fn arm emits bare ident; see `parse`.
-    pub(crate) fn constructor(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<Box<SocketAddress>> {
+    pub(crate) fn constructor(
+        global: &JSGlobalObject,
+        frame: &CallFrame,
+    ) -> JsResult<Box<SocketAddress>> {
         let options_obj = frame.argument(0);
         if options_obj.is_undefined() {
             return Ok(SocketAddress::new(SocketAddress {
@@ -371,7 +377,10 @@ impl SocketAddress {
     /// ## Safety
     /// - `options.address` gets moved, much like `adoptRef`. Do not `deref` it
     ///   after passing it in.
-    pub(crate) fn create(global: &JSGlobalObject, options: Options) -> JsResult<Box<SocketAddress>> {
+    pub(crate) fn create(
+        global: &JSGlobalObject,
+        options: Options,
+    ) -> JsResult<Box<SocketAddress>> {
         Ok(Self::new(Self::init_js(global, options)?))
     }
 
@@ -480,7 +489,12 @@ impl SocketAddress {
     ///
     /// Use `0` for `flowinfo` and `scope_id` if you don't know or care about their
     /// values.
-    pub(crate) fn init_ipv6(addr: [u8; 16], port_: u16, flowinfo: u32, scope_id: u32) -> SocketAddress {
+    pub(crate) fn init_ipv6(
+        addr: [u8; 16],
+        port_: u16,
+        flowinfo: u32,
+        scope_id: u32,
+    ) -> SocketAddress {
         SocketAddress {
             _addr: sockaddr::v6(port_.to_be(), addr, flowinfo, scope_id),
             _presentation: Cell::new(BunString::dead()),
@@ -682,7 +696,11 @@ impl SocketAddress {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub(crate) fn to_json(this: &Self, global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn to_json(
+        this: &Self,
+        global: &JSGlobalObject,
+        _frame: &CallFrame,
+    ) -> JsResult<JSValue> {
         // `jsc.JSObject.create` requires a `PojoFields` impl, so use a local
         // struct.
         struct ToJson {

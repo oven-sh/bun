@@ -1359,7 +1359,9 @@ pub(crate) fn parse_lch<T: Colorspace + ColorGamut + Into<OKLCH> + From<OKLCH> +
 /// Parses the hsl() and hwb() functions.
 /// The results of this function are stored as floating point if there are any `none` components.
 /// https://drafts.csswg.org/css-color-4/#the-hsl-notation
-pub(crate) fn parse_hsl_hwb<T: Colorspace + ColorGamut + Into<OKLCH> + From<OKLCH> + Into<OKLAB>>(
+pub(crate) fn parse_hsl_hwb<
+    T: Colorspace + ColorGamut + Into<OKLCH> + From<OKLCH> + Into<OKLAB>,
+>(
     input: &mut css::Parser,
     parser: &mut ComponentParser,
     allows_legacy: bool,
@@ -1406,7 +1408,10 @@ pub(crate) fn parse_hsl_hwb_components<T>(
     Ok((h, a, b, is_legacy_syntax))
 }
 
-pub(crate) fn parse_angle_or_number(input: &mut css::Parser, parser: &ComponentParser) -> CssResult<f32> {
+pub(crate) fn parse_angle_or_number(
+    input: &mut css::Parser,
+    parser: &ComponentParser,
+) -> CssResult<f32> {
     let result = parser.parse_angle_or_number(input)?;
     Ok(match result {
         css::color::AngleOrNumber::Number { value } => value,
@@ -1929,10 +1934,7 @@ impl ComponentParser {
         func(input, self)
     }
 
-    fn parse_number_or_percentage(
-        &self,
-        input: &mut css::Parser,
-    ) -> CssResult<NumberOrPercentage> {
+    fn parse_number_or_percentage(&self, input: &mut css::Parser) -> CssResult<NumberOrPercentage> {
         if let Some(from) = &self.from {
             if let Ok(res) =
                 input.try_parse(|i| RelativeComponentParser::parse_number_or_percentage(i, from))
@@ -2145,10 +2147,7 @@ impl RelativeComponentParser {
         Err(input.new_error_for_next_token())
     }
 
-    fn parse_percentage(
-        input: &mut css::Parser,
-        this: &RelativeComponentParser,
-    ) -> CssResult<f32> {
+    fn parse_percentage(input: &mut css::Parser, this: &RelativeComponentParser) -> CssResult<f32> {
         if let Ok(value) = input
             .try_parse(|i| RelativeComponentParser::parse_ident(i, this, ChannelType::PERCENTAGE))
         {
@@ -2174,10 +2173,7 @@ impl RelativeComponentParser {
         Err(input.new_error_for_next_token())
     }
 
-    fn parse_number(
-        input: &mut css::Parser,
-        this: &RelativeComponentParser,
-    ) -> CssResult<f32> {
+    fn parse_number(input: &mut css::Parser, this: &RelativeComponentParser) -> CssResult<f32> {
         if let Ok(value) =
             input.try_parse(|i| RelativeComponentParser::parse_ident(i, this, ChannelType::NUMBER))
         {
@@ -2633,7 +2629,10 @@ pub(crate) fn write_component(c: f32, dest: &mut Printer) -> Result<(), PrintErr
     }
 }
 
-pub(crate) fn write_predefined(predefined: &PredefinedColor, dest: &mut Printer) -> Result<(), PrintErr> {
+pub(crate) fn write_predefined(
+    predefined: &PredefinedColor,
+    dest: &mut Printer,
+) -> Result<(), PrintErr> {
     let (a, b, c, alpha) = predefined.components();
     let name = predefined.css_name();
 

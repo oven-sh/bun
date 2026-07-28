@@ -297,7 +297,6 @@ pub enum PropertyIdTag {
 }
 
 impl PropertyIdTag {
-
     /// The caniuse `prefixes::Feature` that governs this property's vendor
     /// prefixes, if one exists. Returns `None` for unprefixed properties *and*
     /// for the 23 prefixed-but-unmapped legacy properties (`box-orient`,

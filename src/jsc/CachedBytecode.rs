@@ -96,7 +96,6 @@ impl CachedBytecode {
         None
     }
 
-
     pub(crate) fn generate(
         format: Format,
         input: &[u8],

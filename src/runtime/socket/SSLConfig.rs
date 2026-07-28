@@ -465,9 +465,7 @@ extern "C" fn Bun__WebSocket__parseSSLConfig(
 /// `Bun__WebSocket__parseSSLConfig` whose ownership the caller is transferring
 /// back (i.e. not already freed or handed to an upgrade client).
 #[unsafe(no_mangle)]
-unsafe extern "C" fn Bun__WebSocket__freeSSLConfig(
-    config: *mut bun_http::ssl_config::SSLConfig,
-) {
+unsafe extern "C" fn Bun__WebSocket__freeSSLConfig(config: *mut bun_http::ssl_config::SSLConfig) {
     // SAFETY: caller upholds the `# Safety` contract above — `config` is null
     // or a live pointer from `Bun__WebSocket__parseSSLConfig` whose ownership
     // is being transferred back. `heap::take` handles the null case.

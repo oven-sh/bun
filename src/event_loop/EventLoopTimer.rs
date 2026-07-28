@@ -1,4 +1,3 @@
-
 // LAYERING: re-export `bun_core::Timespec` so every embedder of
 // `EventLoopTimer.next` agrees on the type (was a local stub with the same
 // `{sec,nsec}` layout, which forced higher tiers — `bun_runtime`, `bun_sql_jsc`

@@ -1539,7 +1539,6 @@ impl Diff {
 }
 
 impl Package<u64> {
-
     pub fn parse<R: ResolverContext>(
         &mut self,
         lockfile: &mut Lockfile,

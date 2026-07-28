@@ -1239,7 +1239,6 @@ impl fmt::Display for Tag {
 // ───────────────────────────────────────────────────────────────────────────
 
 impl Expr {
-
     // `assign` lives in the `init`/`allocate` impl block above.
 
     #[inline]

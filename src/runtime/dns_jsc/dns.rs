@@ -9,9 +9,9 @@ use core::sync::atomic::{AtomicUsize, Ordering};
 use bun_collections::{ArrayHashMap, HiveArray};
 #[cfg(not(windows))]
 use bun_core::Output;
-use bun_core::{self as bun, env_var, fmt as bun_fmt};
 #[cfg(target_os = "macos")]
 use bun_core::mach_port;
+use bun_core::{self as bun, env_var, fmt as bun_fmt};
 use bun_core::{ZStr, strings};
 #[cfg(not(windows))]
 use bun_dns::ResultList as GetAddrInfoResultList;
@@ -1970,11 +1970,7 @@ impl DNSLookup {
     }
 
     /// SAFETY: see `on_complete_native`.
-    unsafe fn process_get_addr_info_native(
-        this: *mut Self,
-        status: i32,
-        result: *mut AddrInfo,
-    ) {
+    unsafe fn process_get_addr_info_native(this: *mut Self, status: i32, result: *mut AddrInfo) {
         bun_output::scoped_log!(DNSLookup, "processGetAddrInfoNative: status={}", status);
         // SAFETY: caller contract — `this` is live; JSGlobalObject outlives the request.
         unsafe {
@@ -3270,12 +3266,7 @@ pub mod internal {
     // documented above and on the `bun_dns` extern decl.
     #[allow(clippy::not_unsafe_ptr_arg_deref)]
     #[unsafe(no_mangle)]
-    fn __bun_dns_prefetch(
-        loop_: *mut c_void,
-        hostname: *const u8,
-        len: usize,
-        port: u16,
-    ) {
+    fn __bun_dns_prefetch(loop_: *mut c_void, hostname: *const u8, len: usize, port: u16) {
         let host = if hostname.is_null() || len == 0 {
             None
         } else {
@@ -3376,10 +3367,7 @@ pub mod internal {
 
     // FFI exports.
     #[unsafe(no_mangle)]
-    extern "C" fn Bun__addrinfo_set(
-        request: *mut Request,
-        socket: *mut ConnectingSocket,
-    ) {
+    extern "C" fn Bun__addrinfo_set(request: *mut Request, socket: *mut ConnectingSocket) {
         us_getaddrinfo_set(request, socket)
     }
     #[unsafe(no_mangle)]
@@ -3403,9 +3391,7 @@ pub mod internal {
         freeaddrinfo(req, err)
     }
     #[unsafe(no_mangle)]
-    extern "C" fn Bun__addrinfo_getRequestResult(
-        req: *mut Request,
-    ) -> *mut RequestResult {
+    extern "C" fn Bun__addrinfo_getRequestResult(req: *mut Request) -> *mut RequestResult {
         get_request_result(req)
     }
     /// QUIC analogue of `Bun__addrinfo_set` — link-time export so `bun_http`
@@ -4061,7 +4047,6 @@ impl RecordType {
 }
 
 impl Resolver {
-
     pub(crate) fn vm(&self) -> &VirtualMachine {
         self.vm.get()
     }
@@ -4852,7 +4837,11 @@ impl Resolver {
     // ───────────── poll callbacks ─────────────
 
     #[cfg(windows)]
-    pub(crate) extern "C" fn on_dns_poll_uv(watcher: *mut libuv::uv_poll_t, status: c_int, events: c_int) {
+    pub(crate) extern "C" fn on_dns_poll_uv(
+        watcher: *mut libuv::uv_poll_t,
+        status: c_int,
+        events: c_int,
+    ) {
         let poll = UvDnsPoll::from_poll(watcher);
         // SAFETY: `poll` is the live `UvDnsPoll` recovered from libuv's `watcher`
         // via `from_poll` (libuv guarantees the handle outlives this callback).
@@ -4936,7 +4925,12 @@ impl Resolver {
         }
     }
 
-    pub(crate) fn on_dns_socket_state(&self, fd: c_ares::ares_socket_t, readable: bool, writable: bool) {
+    pub(crate) fn on_dns_socket_state(
+        &self,
+        fd: c_ares::ares_socket_t,
+        readable: bool,
+        writable: bool,
+    ) {
         #[cfg(windows)]
         {
             use libuv as uv;
@@ -5250,7 +5244,10 @@ impl Resolver {
     }
 
     // JSC-ABI shim emitted by `export_host_fn!` at module scope (see `global_resolve`).
-    pub(crate) fn global_lookup(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn global_lookup(
+        global_this: &JSGlobalObject,
+        callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
         let arguments = callframe.arguments_as_array::<2>();
         let arguments_len = callframe.arguments_count() as usize;
         if arguments_len < 1 {
@@ -5992,7 +5989,10 @@ impl Resolver {
     }
 
     // FFI shim emitted by `export_host_fn!` below (JS2Native link name).
-    pub(crate) fn new_resolver(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn new_resolver(
+        global_this: &JSGlobalObject,
+        callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
         // SAFETY: bun_vm() returns a live VM pointer for the duration of the call.
         let resolver = Resolver::init(global_this.bun_vm());
 

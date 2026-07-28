@@ -28,8 +28,6 @@ unsafe extern "C" {
 }
 
 impl URL {
-
-
     pub fn file_url_from_string(str: String) -> String {
         let mut input = str;
         URL__getFileURLString(&mut input)
@@ -86,7 +84,6 @@ impl URL {
     pub fn host(&self) -> String {
         URL__host(self)
     }
-
 
     /// Returns `u32::MAX` if the port is not set. Otherwise, `port`
     /// is guaranteed to be within the `u16` range.

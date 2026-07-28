@@ -49,7 +49,11 @@ impl Clone for LayerName {
 }
 
 impl LayerName {
-    pub(crate) fn clone_with_import_records(&self, bump: &Arena, _: &mut Vec<ImportRecord>) -> Self {
+    pub(crate) fn clone_with_import_records(
+        &self,
+        bump: &Arena,
+        _: &mut Vec<ImportRecord>,
+    ) -> Self {
         // Segments are arena-borrowed, not owned, so this is a shallow
         // `SmallList` copy. No import records to rewrite — layer names
         // contain no URLs.

@@ -128,7 +128,11 @@ impl JSSocketHandlers {
     /// Replaces every callback on a live cell. `JSValue::ZERO` entries clear
     /// the field, so `socket.reload()` also drops callbacks the new options
     /// omit. One write barrier for the whole batch.
-    pub(crate) fn set_callbacks(self, global: &JSGlobalObject, callbacks: &[JSValue; CALLBACK_COUNT]) {
+    pub(crate) fn set_callbacks(
+        self,
+        global: &JSGlobalObject,
+        callbacks: &[JSValue; CALLBACK_COUNT],
+    ) {
         Bun__SocketHandlers__setCallbacks(global, self.0, callbacks.as_ptr());
     }
 

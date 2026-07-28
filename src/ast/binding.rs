@@ -158,7 +158,12 @@ impl ToExprWrapper {
     }
 
     #[inline]
-    pub(crate) fn wrap_identifier(&self, ctx: *mut core::ffi::c_void, loc: crate::Loc, ref_: Ref) -> Expr {
+    pub(crate) fn wrap_identifier(
+        &self,
+        ctx: *mut core::ffi::c_void,
+        loc: crate::Loc,
+        ref_: Ref,
+    ) -> Expr {
         (self.wrap)(ctx, loc, ref_)
     }
 

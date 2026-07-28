@@ -72,8 +72,7 @@ impl Default for Route {
     }
 }
 
-impl Route {
-}
+impl Route {}
 
 impl Drop for Route {
     fn drop(&mut self) {

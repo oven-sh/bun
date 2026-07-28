@@ -198,11 +198,7 @@ impl Ls {
     /// # Safety
     /// `task` must be a live heap allocation produced by
     /// [`ShellLsTask::create`]; ownership is reclaimed here.
-    fn on_shell_ls_task_done(
-        interp: &Interpreter,
-        cmd: NodeId,
-        task: NonNull<ShellLsTask>,
-    ) {
+    fn on_shell_ls_task_done(interp: &Interpreter, cmd: NodeId, task: NonNull<ShellLsTask>) {
         // SAFETY: precondition.
         let mut task = unsafe { bun_core::heap::take(task.as_ptr()) };
         if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {

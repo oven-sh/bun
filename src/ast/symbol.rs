@@ -580,7 +580,6 @@ impl Map {
         self.symbols_for_source.get_mut(src)?.get_mut(idx)
     }
 
-
     pub fn follow_all(&mut self) {
         // The returned `Ctx` is RAII and ends the span on drop.
         let _trace = bun_perf::trace(bun_perf::PerfEvent::SymbolsFollowAll);

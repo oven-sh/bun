@@ -96,7 +96,6 @@ impl Optional {
         Impl::clear(r);
     }
 
-
     pub fn get(&self) -> Option<JSValue> {
         let imp = self.handle?;
         let result = Impl::get(imp);

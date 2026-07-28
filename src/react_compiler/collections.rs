@@ -76,7 +76,6 @@ impl<K, V> IndexMap<K, V> {
         self.0.iterator().map(|e| (&*e.key_ptr, &mut *e.value_ptr))
     }
 
-
     #[inline]
     pub(crate) fn retain<F: FnMut(&K, &mut V) -> bool>(&mut self, f: F) {
         self.0.retain(f);

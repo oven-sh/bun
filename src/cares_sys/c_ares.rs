@@ -979,7 +979,8 @@ fn library_init() {
     }}
 }
 
-pub(crate) type ares_callback = Option<unsafe extern "C" fn(*mut c_void, c_int, c_int, *mut u8, c_int)>;
+pub(crate) type ares_callback =
+    Option<unsafe extern "C" fn(*mut c_void, c_int, c_int, *mut u8, c_int)>;
 pub(crate) type ares_host_callback =
     Option<unsafe extern "C" fn(*mut c_void, c_int, c_int, *mut struct_hostent)>;
 pub(crate) type ares_nameinfo_callback =
@@ -988,7 +989,8 @@ pub(crate) type ares_sock_create_callback =
     Option<unsafe extern "C" fn(ares_socket_t, c_int, *mut c_void) -> c_int>;
 pub(crate) type ares_sock_config_callback =
     Option<unsafe extern "C" fn(ares_socket_t, c_int, *mut c_void) -> c_int>;
-pub(crate) type ares_addrinfo_callback = unsafe extern "C" fn(*mut c_void, c_int, c_int, *mut AddrInfo);
+pub(crate) type ares_addrinfo_callback =
+    unsafe extern "C" fn(*mut c_void, c_int, c_int, *mut AddrInfo);
 
 unsafe extern "C" {
     pub fn ares_library_init(flags: c_int) -> c_int;

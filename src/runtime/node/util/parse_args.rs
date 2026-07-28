@@ -171,10 +171,7 @@ impl OptionToken {
     }
 }
 
-fn find_option_by_long_name(
-    long_name: String,
-    options: &[OptionDefinition],
-) -> Option<usize> {
+fn find_option_by_long_name(long_name: String, options: &[OptionDefinition]) -> Option<usize> {
     for (i, option) in options.iter().enumerate() {
         if long_name.eql(&option.long_name) {
             return Some(i);

@@ -1835,7 +1835,11 @@ impl ShellExecEnv {
     /// with `O_DIRECTORY`, and on success rotates `__cwd`/`__prev_cwd`/`cwd_fd`.
     /// Always writes `PWD` into `export_env`; `OLDPWD` is written only when
     /// `!in_init` (the very first cwd has no meaningful "previous").
-    pub(crate) fn change_cwd_impl(&mut self, new_cwd_: &[u8], in_init: bool) -> bun_sys::Result<()> {
+    pub(crate) fn change_cwd_impl(
+        &mut self,
+        new_cwd_: &[u8],
+        in_init: bool,
+    ) -> bun_sys::Result<()> {
         let is_abs = bun_paths::is_absolute(new_cwd_);
 
         // Bounds-check against a `[4096]u8` buffer on *every* platform. Do NOT

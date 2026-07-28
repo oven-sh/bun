@@ -34,7 +34,6 @@ impl JSMap {
         crate::cpp::JSC__JSMap__get(self, global, key)
     }
 
-
     /// Attempt to remove a key from this JS Map object.
     #[track_caller]
     pub fn remove(&mut self, global: &JSGlobalObject, key: JSValue) -> JsResult<bool> {

@@ -175,7 +175,6 @@ pub struct HiveArray<T, const CAPACITY: usize> {
 }
 
 impl<T, const CAPACITY: usize> HiveArray<T, CAPACITY> {
-
     pub const fn init() -> Self {
         Self {
             buffer: UnsafeCell::new([const { MaybeUninit::uninit() }; CAPACITY]),

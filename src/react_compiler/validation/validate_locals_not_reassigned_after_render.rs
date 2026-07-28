@@ -20,7 +20,10 @@ use crate::hir::{
 /// Validates that local variables cannot be reassigned after render.
 /// This prevents a category of bugs in which a closure captures a
 /// binding from one render but does not update.
-pub(crate) fn validate_locals_not_reassigned_after_render(func: &HirFunction, env: &mut Environment) {
+pub(crate) fn validate_locals_not_reassigned_after_render(
+    func: &HirFunction,
+    env: &mut Environment,
+) {
     let mut context_variables: HashSet<IdentifierId> = HashSet::new();
     let mut diagnostics: Vec<CompilerDiagnostic> = Vec::new();
 

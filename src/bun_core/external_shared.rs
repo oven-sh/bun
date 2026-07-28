@@ -57,7 +57,6 @@ impl<T: ExternalSharedDescriptor> ExternalShared<T> {
             ptr: unsafe { NonNull::new_unchecked(raw) },
         }
     }
-
 }
 
 impl<T: ExternalSharedDescriptor> core::ops::Deref for ExternalShared<T> {
@@ -116,8 +115,6 @@ impl<T: ExternalSharedDescriptor> ExternalSharedOptional<T> {
     pub fn get(&self) -> Option<*mut T> {
         self.ptr.map(|p| p.as_ptr())
     }
-
-
 }
 
 impl<T: ExternalSharedDescriptor> Default for ExternalSharedOptional<T> {

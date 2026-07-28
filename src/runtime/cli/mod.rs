@@ -490,8 +490,7 @@ static CMD: bun_core::RacyCell<Option<command::Tag>> = bun_core::RacyCell::new(N
 pub use bun_install::PRETEND_TO_BE_NODE;
 
 /// This is set `true` during `Command.which()` if argv0 is "bunx"
-static IS_BUNX_EXE: core::sync::atomic::AtomicBool =
-    core::sync::atomic::AtomicBool::new(false);
+static IS_BUNX_EXE: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
 
 bun_core::declare_scope!(CLI, hidden);
 
@@ -629,8 +628,7 @@ pub mod help_command {
     const PACKAGES_TO_X_FILLER: &[&str] = &[
         "bun-repl", "next", "vite", "prisma", "nuxi", "prettier", "eslint",
     ];
-    const PACKAGES_TO_CREATE_FILLER: &[&str] =
-        &["next-app", "vite", "astro", "svelte", "elysia"];
+    const PACKAGES_TO_CREATE_FILLER: &[&str] = &["next-app", "vite", "astro", "svelte", "elysia"];
 
     /// Emits the `pretty!`/`pretty_error!` call directly instead of
     /// expanding to a bare literal — `pretty!` captures its template as

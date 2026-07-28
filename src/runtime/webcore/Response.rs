@@ -12,9 +12,7 @@ use crate::webcore::jsc::{
     JsResult, StringJsc as _,
 };
 use bun_core::Output;
-use bun_core::{
-    OwnedString, String as BunString, WTFStringImplExt as _, ZigStringSlice,
-};
+use bun_core::{OwnedString, String as BunString, WTFStringImplExt as _, ZigStringSlice};
 use bun_http_types::Method::Method;
 
 use super::blob::Internal as InternalBlob;
@@ -71,10 +69,7 @@ impl HeadersRef {
 
     /// `FetchHeaders.createFromJS(global, value)` — may throw, may return null.
     #[inline]
-    fn create_from_js(
-        global: &JSGlobalObject,
-        value: JSValue,
-    ) -> JsResult<Option<Self>> {
+    fn create_from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<Option<Self>> {
         // SAFETY: C++ returns a +1 ref or null.
         Ok(FetchHeaders::create_from_js(global, value)?.map(|p| unsafe { Self::adopt(p) }))
     }
@@ -309,7 +304,12 @@ impl BodyMixin for Response {
 }
 
 impl Response {
-    pub(crate) fn init(response_init: Init, body: Body, url: BunString, redirected: bool) -> Response {
+    pub(crate) fn init(
+        response_init: Init,
+        body: Body,
+        url: BunString,
+        redirected: bool,
+    ) -> Response {
         Response {
             init: JsCell::new(response_init),
             body: JsCell::new(body),
@@ -622,7 +622,6 @@ impl Response {
 
 // ─── getters & header helpers ───────────────────────────────────────────────
 impl Response {
-
     pub(crate) fn is_ok(&self) -> bool {
         let status_code = self.init.get().status_code;
         status_code >= 200 && status_code <= 299
@@ -634,7 +633,10 @@ impl Response {
         this.url.get().to_js(global_this)
     }
 
-    pub(crate) fn get_response_type(this: &Self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
+    pub(crate) fn get_response_type(
+        this: &Self,
+        global_this: &JSGlobalObject,
+    ) -> JsResult<JSValue> {
         if this.init.get().status_code < 200 {
             return Ok(global_this.common_strings().error());
         }
@@ -1389,7 +1391,10 @@ impl Init {
         })
     }
 
-    pub(crate) fn init(global_this: &JSGlobalObject, response_init: JSValue) -> JsResult<Option<Init>> {
+    pub(crate) fn init(
+        global_this: &JSGlobalObject,
+        response_init: JSValue,
+    ) -> JsResult<Option<Init>> {
         let mut result = Init {
             status_code: 200,
             ..Default::default()

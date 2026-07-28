@@ -143,7 +143,10 @@ impl TextDecoder {
     }
 
     #[inline(always)]
-    pub(crate) fn code_unit_from_bytes_utf16<const BIG_ENDIAN: bool>(first: u16, second: u16) -> u16 {
+    pub(crate) fn code_unit_from_bytes_utf16<const BIG_ENDIAN: bool>(
+        first: u16,
+        second: u16,
+    ) -> u16 {
         if BIG_ENDIAN {
             (first << 8) | second
         } else {
@@ -210,7 +213,11 @@ impl TextDecoder {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub(crate) fn decode(&self, global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn decode(
+        &self,
+        global_this: &JSGlobalObject,
+        callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
         let arguments = callframe.arguments();
 
         // Evaluate options.stream before reading the input bytes. Reading `stream`

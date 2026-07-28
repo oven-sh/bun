@@ -164,7 +164,10 @@ pub enum TypeMarker {}
 pub type TypeIndex = bun_core::GenericIndex<u8, TypeMarker>;
 
 impl FrameworkRouter {
-    pub(crate) fn init_empty(root: &[u8], mut types: Box<[Type]>) -> Result<FrameworkRouter, AllocError> {
+    pub(crate) fn init_empty(
+        root: &[u8],
+        mut types: Box<[Type]>,
+    ) -> Result<FrameworkRouter, AllocError> {
         debug_assert!(paths::is_absolute(root));
 
         let mut routes: Vec<Route> = Vec::with_capacity(types.len());
@@ -246,7 +249,10 @@ impl EncodedPattern {
         size
     }
 
-    pub(crate) fn init_from_parts(parts: &[Part], arena: &Arena) -> Result<EncodedPattern, AllocError> {
+    pub(crate) fn init_from_parts(
+        parts: &[Part],
+        arena: &Arena,
+    ) -> Result<EncodedPattern, AllocError> {
         let len = Self::pattern_serialized_length(parts);
         let slice = arena.alloc_slice_fill_default::<u8>(len);
         {
@@ -1885,7 +1891,11 @@ impl JSFrameworkRouter {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub(crate) fn to_json(&self, global: &JSGlobalObject, _callframe: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn to_json(
+        &self,
+        global: &JSGlobalObject,
+        _callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
         self.route_to_json(global, RouteIndex::init(0))
     }
 
@@ -1960,7 +1970,10 @@ impl JSFrameworkRouter {
         // files, router, stored_parse_errors freed by Drop.
     }
 
-    pub(crate) fn parse_route_pattern(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn parse_route_pattern(
+        global: &JSGlobalObject,
+        frame: &CallFrame,
+    ) -> JsResult<JSValue> {
         let arena = Arena::new();
 
         if frame.arguments_count() < 2 {

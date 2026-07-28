@@ -91,7 +91,10 @@ impl SecureContext {
     /// into `{ key, cert, ca? }` PEM strings so the regular key/cert/ca
     /// option plumbing can consume Node's `pfx` option. Same codegen shim
     /// arrangement as `intern` (no `#[host_fn]` attribute here).
-    pub(crate) fn parse_pkcs12(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn parse_pkcs12(
+        global: &JSGlobalObject,
+        callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
         let args = callframe.arguments();
         if args.is_empty() {
             return Err(global.throw(format_args!("PFX certificate argument is mandatory")));
@@ -194,7 +197,10 @@ impl SecureContext {
     /// `addCACert` can never affect another context (or the cached
     /// connect/listen contexts). The internal connect/listen paths keep using
     /// `intern` for the per-digest cache.
-    pub(crate) fn create_private(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn create_private(
+        global: &JSGlobalObject,
+        callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
         let args = callframe.arguments();
         let opts = if args.len() > 0 {
             args[0]
@@ -278,7 +284,10 @@ impl SecureContext {
     /// validation always runs and `verify_error` is populated for the JS-side
     /// `rejectUnauthorized` decision. The trust store is loaded unconditionally in
     /// `us_ssl_ctx_from_options` so that override has roots to validate against.
-    pub(crate) fn create(global: &JSGlobalObject, config: &SSLConfig) -> JsResult<Box<SecureContext>> {
+    pub(crate) fn create(
+        global: &JSGlobalObject,
+        config: &SSLConfig,
+    ) -> JsResult<Box<SecureContext>> {
         let ctx_opts = config.as_usockets();
         Self::create_with_digest(global, &ctx_opts, ctx_opts.digest())
     }

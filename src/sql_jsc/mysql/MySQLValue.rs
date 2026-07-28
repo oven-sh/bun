@@ -617,7 +617,6 @@ impl DateTime {
         }
     }
 
-
     /// `from_unix_timestamp`/`gregorian_date` can only represent
     /// 1970-01-01T00:00:00Z through 9999-12-31T23:59:59Z (the MySQL DATETIME
     /// maximum). Anything outside that window panics on an integer cast, so

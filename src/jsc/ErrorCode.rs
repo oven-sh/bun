@@ -79,7 +79,6 @@ impl ErrorCode {
 }
 
 impl ErrorCode {
-
     /// Node `error.code` string (e.g. `"ERR_INVALID_ARG_TYPE"`).
     #[inline]
     pub(crate) fn code_str(self) -> &'static str {

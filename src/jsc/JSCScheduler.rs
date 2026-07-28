@@ -37,10 +37,7 @@ impl JSCDeferredWorkTask {
 }
 
 #[unsafe(no_mangle)]
-extern "C" fn Bun__eventLoop__incrementRefConcurrently(
-    jsc_vm: &VirtualMachine,
-    delta: c_int,
-) {
+extern "C" fn Bun__eventLoop__incrementRefConcurrently(jsc_vm: &VirtualMachine, delta: c_int) {
     crate::mark_binding!();
     // C++ passes a non-null live `VirtualMachine*`; ABI-compatible with `&T`.
     // `event_loop_shared()` is the safe accessor over the VM-owned EventLoop.

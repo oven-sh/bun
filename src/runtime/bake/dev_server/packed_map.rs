@@ -28,7 +28,10 @@ pub struct PackedMap {
 }
 
 impl PackedMap {
-    pub(crate) fn new_non_empty(chunk: &mut bun_sourcemap::Chunk, escaped_source: Box<[u8]>) -> Rc<Self> {
+    pub(crate) fn new_non_empty(
+        chunk: &mut bun_sourcemap::Chunk,
+        escaped_source: Box<[u8]>,
+    ) -> Rc<Self> {
         let buffer = &mut chunk.buffer;
         debug_assert!(!buffer.is_empty());
         Rc::new(Self {

@@ -1379,7 +1379,6 @@ impl JSGlobalObject {
         }
     }
 
-
     pub(crate) fn create_for_test_isolation(
         old_global: &JSGlobalObject,
         console: *mut c_void,
@@ -1655,7 +1654,6 @@ impl ScriptExecutionContextIdentifier {
         let p = ScriptExecutionContextIdentifier__getGlobalObject(self.0);
         (!p.is_null()).then(|| GlobalRef::from(JSGlobalObject::opaque_ref(p)))
     }
-
 
     pub fn valid(self) -> bool {
         self.global_object().is_some()

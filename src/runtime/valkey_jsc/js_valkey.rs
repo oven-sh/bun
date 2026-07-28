@@ -121,7 +121,10 @@ impl SubscriptionCtx {
     }
 
     /// Get the total number of channels that this subscription context is subscribed to.
-    pub(crate) fn channels_subscribed_to_count(&self, global_object: &JSGlobalObject) -> JsResult<u32> {
+    pub(crate) fn channels_subscribed_to_count(
+        &self,
+        global_object: &JSGlobalObject,
+    ) -> JsResult<u32> {
         let count = self.subscription_callback_map().size(global_object)?;
         Ok(count)
     }
@@ -142,7 +145,10 @@ impl SubscriptionCtx {
         Ok(())
     }
 
-    pub(crate) fn clear_all_receive_handlers(&self, global_object: &JSGlobalObject) -> JsResult<()> {
+    pub(crate) fn clear_all_receive_handlers(
+        &self,
+        global_object: &JSGlobalObject,
+    ) -> JsResult<()> {
         self.subscription_callback_map().clear(global_object)
     }
 
@@ -1091,7 +1097,11 @@ impl JSValkeyClient {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub(crate) fn js_disconnect(&self, _global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn js_disconnect(
+        &self,
+        _global: &JSGlobalObject,
+        _frame: &CallFrame,
+    ) -> JsResult<JSValue> {
         // `disconnect()` -> `close()` can dispatch `on_close` synchronously,
         // which derefs. Hold a ref so `&self` stays live across the call.
         let _guard = self.ref_scope();
@@ -1217,7 +1227,10 @@ impl JSValkeyClient {
     }
 
     // Callback for when Valkey client connects
-    pub(crate) fn on_valkey_connect(&self, value: &mut protocol::RESPValue) -> JsTerminatedResult<()> {
+    pub(crate) fn on_valkey_connect(
+        &self,
+        value: &mut protocol::RESPValue,
+    ) -> JsTerminatedResult<()> {
         debug_assert!(self.client.get().status == valkey::Status::Connected);
         // we should always have a strong reference to the object here
         debug_assert!(self.this_value.get().is_strong());
@@ -1404,7 +1417,11 @@ impl JSValkeyClient {
 
     // Callback for when Valkey client times out
 
-    pub(crate) fn client_fail(&self, message: &[u8], err: protocol::RedisError) -> JsTerminatedResult<()> {
+    pub(crate) fn client_fail(
+        &self,
+        message: &[u8],
+        err: protocol::RedisError,
+    ) -> JsTerminatedResult<()> {
         narrow_terminated(self.client_mut().fail(message, err))
     }
 
@@ -1787,7 +1804,10 @@ impl<const SSL: bool> SocketHandler<SSL> {
         }
     }
 
-    pub(crate) fn on_open(this: &JSValkeyClient, socket: SocketType<SSL>) -> JsTerminatedResult<()> {
+    pub(crate) fn on_open(
+        this: &JSValkeyClient,
+        socket: SocketType<SSL>,
+    ) -> JsTerminatedResult<()> {
         this.client_mut().socket = Self::socket(socket);
         narrow_terminated(this.client_mut().on_open(Self::socket(socket)))
     }
@@ -2012,10 +2032,7 @@ impl<const SSL: bool> SocketHandler<SSL> {
 struct Options;
 
 impl Options {
-    fn from_js(
-        global_object: &JSGlobalObject,
-        options_obj: JSValue,
-    ) -> JsResult<valkey::Options> {
+    fn from_js(global_object: &JSGlobalObject, options_obj: JSValue) -> JsResult<valkey::Options> {
         let mut this = valkey::Options {
             enable_auto_pipelining:
                 !bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_DISABLE_REDIS_AUTO_PIPELINING

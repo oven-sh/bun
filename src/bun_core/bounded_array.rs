@@ -133,9 +133,11 @@ impl<T, const BUFFER_CAPACITY: usize> BoundedArrayAligned<T, BUFFER_CAPACITY> {
         self.const_slice()[i]
     }
 
-
     /// Check that the slice can hold at least `additional_count` items.
-    pub(crate) fn ensure_unused_capacity(&self, additional_count: usize) -> Result<(), OverflowError> {
+    pub(crate) fn ensure_unused_capacity(
+        &self,
+        additional_count: usize,
+    ) -> Result<(), OverflowError> {
         if self.len + additional_count > BUFFER_CAPACITY {
             return Err(OverflowError::Overflow);
         }

@@ -431,7 +431,10 @@ pub(crate) fn basename_posix_t<'a, T: PathCharCwd>(path: &'a [T], suffix: Option
 
 /// Based on Node v21.6.1 path.win32.basename:
 /// https://github.com/nodejs/node/blob/6ae20aa63de78294b18d5015481485b7cd8fbb60/lib/path.js#L753
-pub(crate) fn basename_windows_t<'a, T: PathCharCwd>(path: &'a [T], suffix: Option<&[T]>) -> &'a [T] {
+pub(crate) fn basename_windows_t<'a, T: PathCharCwd>(
+    path: &'a [T],
+    suffix: Option<&[T]>,
+) -> &'a [T] {
     // validateString of `path` is performed in pub fn basename.
     let len = path.len();
     // Exit early for easier number type use.
@@ -1203,11 +1206,7 @@ fn format_js_t<T: PathCharCwd>(
     }
 }
 
-fn format(
-    global_object: &JSGlobalObject,
-    is_windows: bool,
-    args: &[JSValue],
-) -> JsResult<JSValue> {
+fn format(global_object: &JSGlobalObject, is_windows: bool, args: &[JSValue]) -> JsResult<JSValue> {
     let args_len = args.len();
     let path_object_ptr: JSValue = if args_len > 0 {
         args[0]

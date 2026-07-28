@@ -743,7 +743,10 @@ impl Encoding {
         Ok(Self::from(str.to_utf8().slice()))
     }
 
-    pub(crate) fn throw_encoding_error(global_object: &JSGlobalObject, value: JSValue) -> jsc::JsError {
+    pub(crate) fn throw_encoding_error(
+        global_object: &JSGlobalObject,
+        value: JSValue,
+    ) -> jsc::JsError {
         global_object
             .err(
                 jsc::ErrorCode::INVALID_ARG_VALUE,

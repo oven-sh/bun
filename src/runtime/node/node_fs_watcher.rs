@@ -89,7 +89,6 @@ impl FSWatcher {
         unsafe { VirtualMachine::event_loop_ctx(self.ctx) }
     }
 
-
     /// `task` must point to a live heap-allocated `ConcurrentTask` node that
     /// the caller releases ownership of; the concurrent queue takes ownership
     /// and frees it on the JS thread after dispatch.
@@ -153,7 +152,6 @@ pub struct Entry {
 
 #[cfg(not(windows))]
 impl FSWatchTaskPosix {
-
     fn ctx(&self) -> &FSWatcher {
         // BACKREF — `ctx` is the live owning FSWatcher (set right after
         // boxing in `init`); FSWatcher outlives all its tasks.
@@ -575,9 +573,11 @@ impl FSWatcher {
     }
 
     #[cfg(windows)]
-    pub(crate) const ON_PATH_UPDATE: fn(Option<*mut c_void>, Event, bool) = Self::on_path_update_windows;
+    pub(crate) const ON_PATH_UPDATE: fn(Option<*mut c_void>, Event, bool) =
+        Self::on_path_update_windows;
     #[cfg(not(windows))]
-    pub(crate) const ON_PATH_UPDATE: fn(Option<*mut c_void>, Event, bool) = Self::on_path_update_posix;
+    pub(crate) const ON_PATH_UPDATE: fn(Option<*mut c_void>, Event, bool) =
+        Self::on_path_update_posix;
 
     pub(crate) fn on_update_end(ctx: Option<*mut c_void>) {
         let this = Self::from_ctx(ctx);
@@ -922,7 +922,11 @@ impl FSWatcher {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub(crate) fn do_unref(&self, _global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn do_unref(
+        &self,
+        _global: &JSGlobalObject,
+        _frame: &CallFrame,
+    ) -> JsResult<JSValue> {
         if self.persistent.get() {
             self.persistent.set(false);
             let vm_ctx = self.vm_ctx();
@@ -932,7 +936,11 @@ impl FSWatcher {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub(crate) fn has_ref(&self, _global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn has_ref(
+        &self,
+        _global: &JSGlobalObject,
+        _frame: &CallFrame,
+    ) -> JsResult<JSValue> {
         Ok(JSValue::from(self.persistent.get()))
     }
 
@@ -1056,7 +1064,11 @@ impl FSWatcher {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub(crate) fn do_close(&self, _global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn do_close(
+        &self,
+        _global: &JSGlobalObject,
+        _frame: &CallFrame,
+    ) -> JsResult<JSValue> {
         self.close();
         Ok(JSValue::UNDEFINED)
     }

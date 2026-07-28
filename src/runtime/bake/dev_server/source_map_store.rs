@@ -579,7 +579,11 @@ impl SourceMapStore {
 
     /// Returns true if the ref count was incremented (meaning there was a
     /// source map to transfer).
-    pub(crate) fn remove_or_upgrade_weak_ref(&mut self, key: Key, mode: RemoveOrUpgradeMode) -> bool {
+    pub(crate) fn remove_or_upgrade_weak_ref(
+        &mut self,
+        key: Key,
+        mode: RemoveOrUpgradeMode,
+    ) -> bool {
         if self.entries.get(&key).is_none() {
             return false;
         }

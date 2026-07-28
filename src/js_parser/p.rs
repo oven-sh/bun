@@ -918,7 +918,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    pub(crate) fn transpose_known_to_be_if_require(&mut self, arg: Expr, state: &TransposeState) -> Expr {
+    pub(crate) fn transpose_known_to_be_if_require(
+        &mut self,
+        arg: Expr,
+        state: &TransposeState,
+    ) -> Expr {
         // Caller guarantees `arg.data` is `EIf`.
         let js_ast::ExprData::EIf(ex) = arg.data else {
             unreachable!()
@@ -947,7 +951,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    pub(crate) fn transpose_known_to_be_if_require_resolve(&mut self, arg: Expr, state: Expr) -> Expr {
+    pub(crate) fn transpose_known_to_be_if_require_resolve(
+        &mut self,
+        arg: Expr,
+        state: Expr,
+    ) -> Expr {
         // Caller guarantees `arg.data` is `EIf`.
         let js_ast::ExprData::EIf(ex) = arg.data else {
             unreachable!()
@@ -1026,7 +1034,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         )
     }
 
-    pub(crate) fn transpose_require_resolve(&mut self, arg: Expr, require_resolve_ref: Expr) -> Expr {
+    pub(crate) fn transpose_require_resolve(
+        &mut self,
+        arg: Expr,
+        require_resolve_ref: Expr,
+    ) -> Expr {
         // The argument must be a string
         if matches!(arg.data, js_ast::ExprData::EString(_)) {
             return self.transpose_require_resolve_known_string(arg);
@@ -7230,7 +7242,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     }
 
     // One statement could potentially expand to several statements
-    pub(crate) fn stmts_to_single_stmt(&mut self, loc: bun_ast::Loc, stmts: &'a mut [Stmt]) -> Stmt {
+    pub(crate) fn stmts_to_single_stmt(
+        &mut self,
+        loc: bun_ast::Loc,
+        stmts: &'a mut [Stmt],
+    ) -> Stmt {
         if stmts.is_empty() {
             return Stmt {
                 data: js_ast::StmtData::SEmpty(S::Empty {}),
@@ -7252,7 +7268,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         )
     }
 
-    pub(crate) fn find_label_symbol(&mut self, loc: bun_ast::Loc, name: &[u8]) -> FindLabelSymbolResult {
+    pub(crate) fn find_label_symbol(
+        &mut self,
+        loc: bun_ast::Loc,
+        name: &[u8],
+    ) -> FindLabelSymbolResult {
         let mut res = FindLabelSymbolResult {
             r#ref: Ref::NONE,
             is_loop: false,

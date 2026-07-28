@@ -211,9 +211,7 @@ impl<'a> Entry<'a> {
 
     pub(crate) fn parse_npm_alias(version: &[u8]) -> ParsedNpmAlias<'_> {
         if version.len() <= 4 {
-            return ParsedNpmAlias {
-                version: b"*",
-            };
+            return ParsedNpmAlias { version: b"*" };
         }
 
         let npm_part = &version[4..];
@@ -226,9 +224,7 @@ impl<'a> Entry<'a> {
                 },
             };
         }
-        ParsedNpmAlias {
-            version: b"*",
-        }
+        ParsedNpmAlias { version: b"*" }
     }
 
     pub(crate) fn get_package_name_from_resolved_url(url: &[u8]) -> Option<&[u8]> {

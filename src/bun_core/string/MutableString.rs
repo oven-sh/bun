@@ -327,8 +327,6 @@ impl MutableString {
         &mut self.list
     }
 
-
-
     pub fn write_all(&mut self, bytes: &[u8]) -> Result<usize, AllocError> {
         self.list.extend_from_slice(bytes);
         Ok(bytes.len())

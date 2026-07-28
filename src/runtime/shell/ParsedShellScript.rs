@@ -112,7 +112,11 @@ impl ParsedShellScript {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub(crate) fn set_cwd(&self, global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn set_cwd(
+        &self,
+        global: &JSGlobalObject,
+        callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
         // SAFETY: `bun_vm()` is non-null for a Bun-owned global.
         let vm = global.bun_vm();
         let mut arguments = bun_jsc::ArgumentsSlice::init(vm, callframe.arguments());
@@ -128,14 +132,22 @@ impl ParsedShellScript {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub(crate) fn set_quiet(&self, _global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn set_quiet(
+        &self,
+        _global: &JSGlobalObject,
+        callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
         let arg = callframe.argument(0);
         self.quiet.set(arg.to_boolean());
         Ok(JSValue::UNDEFINED)
     }
 
     #[bun_jsc::host_fn(method)]
-    pub(crate) fn set_env(&self, global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn set_env(
+        &self,
+        global: &JSGlobalObject,
+        callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
         let Some(value1) = callframe.argument(0).get_object() else {
             return Err(global.throw_invalid_arguments(format_args!("env must be an object")));
         };

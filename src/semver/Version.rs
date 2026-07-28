@@ -1070,7 +1070,10 @@ impl Tag {
         Self::parse_with_pre_count(sliced_string, 0)
     }
 
-    pub(crate) fn parse_with_pre_count(sliced_string: SlicedString, initial_pre_count: u32) -> TagResult {
+    pub(crate) fn parse_with_pre_count(
+        sliced_string: SlicedString,
+        initial_pre_count: u32,
+    ) -> TagResult {
         let input = sliced_string.slice;
         let mut build_count: u32 = 0;
         let mut pre_count: u32 = initial_pre_count;

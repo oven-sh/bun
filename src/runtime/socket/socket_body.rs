@@ -3101,7 +3101,11 @@ impl<const SSL: bool> NewSocket<SSL> {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub(crate) fn end(this: &Self, global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn end(
+        this: &Self,
+        global: &JSGlobalObject,
+        callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
         jsc::mark_binding!();
 
         let mut args = callframe.arguments_undef::<5>();
@@ -3127,7 +3131,11 @@ impl<const SSL: bool> NewSocket<SSL> {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub(crate) fn js_ref(this: &Self, global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn js_ref(
+        this: &Self,
+        global: &JSGlobalObject,
+        _frame: &CallFrame,
+    ) -> JsResult<JSValue> {
         jsc::mark_binding!();
         if this.socket.get().is_detached() {
             this.ref_pollref_on_connect.set(true);
@@ -3145,7 +3153,11 @@ impl<const SSL: bool> NewSocket<SSL> {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub(crate) fn js_unref(this: &Self, global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn js_unref(
+        this: &Self,
+        global: &JSGlobalObject,
+        _frame: &CallFrame,
+    ) -> JsResult<JSValue> {
         jsc::mark_binding!();
         if this.socket.get().is_detached() {
             this.ref_pollref_on_connect.set(false);
@@ -3695,7 +3707,11 @@ impl<const SSL: bool> NewSocket<SSL> {
         }
     }
     #[bun_jsc::host_fn(method)]
-    pub(crate) fn is_session_reused(this: &Self, g: &JSGlobalObject, f: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn is_session_reused(
+        this: &Self,
+        g: &JSGlobalObject,
+        f: &CallFrame,
+    ) -> JsResult<JSValue> {
         if SSL {
             tls_socket_functions::is_session_reused(Self::as_tls(this), g, f)
         } else {
@@ -3703,7 +3719,11 @@ impl<const SSL: bool> NewSocket<SSL> {
         }
     }
     #[bun_jsc::host_fn(method)]
-    pub(crate) fn set_verify_mode(this: &Self, g: &JSGlobalObject, f: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn set_verify_mode(
+        this: &Self,
+        g: &JSGlobalObject,
+        f: &CallFrame,
+    ) -> JsResult<JSValue> {
         if SSL {
             tls_socket_functions::set_verify_mode(Self::as_tls(this), g, f)
         } else {
@@ -3719,7 +3739,11 @@ impl<const SSL: bool> NewSocket<SSL> {
         }
     }
     #[bun_jsc::host_fn(method)]
-    pub(crate) fn get_tls_ticket(this: &Self, g: &JSGlobalObject, f: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn get_tls_ticket(
+        this: &Self,
+        g: &JSGlobalObject,
+        f: &CallFrame,
+    ) -> JsResult<JSValue> {
         if SSL {
             tls_socket_functions::get_tls_ticket(Self::as_tls(this), g, f)
         } else {
@@ -3751,7 +3775,11 @@ impl<const SSL: bool> NewSocket<SSL> {
         }
     }
     #[bun_jsc::host_fn(method)]
-    pub(crate) fn set_key_cert(this: &Self, g: &JSGlobalObject, f: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn set_key_cert(
+        this: &Self,
+        g: &JSGlobalObject,
+        f: &CallFrame,
+    ) -> JsResult<JSValue> {
         if SSL {
             tls_socket_functions::set_key_cert(Self::as_tls(this), g, f)
         } else {
@@ -3815,7 +3843,11 @@ impl<const SSL: bool> NewSocket<SSL> {
         }
     }
     #[bun_jsc::host_fn(method)]
-    pub(crate) fn get_shared_sigalgs(this: &Self, g: &JSGlobalObject, f: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn get_shared_sigalgs(
+        this: &Self,
+        g: &JSGlobalObject,
+        f: &CallFrame,
+    ) -> JsResult<JSValue> {
         if SSL {
             tls_socket_functions::get_shared_sigalgs(Self::as_tls(this), g, f)
         } else {
@@ -3823,7 +3855,11 @@ impl<const SSL: bool> NewSocket<SSL> {
         }
     }
     #[bun_jsc::host_fn(method)]
-    pub(crate) fn get_tls_version(this: &Self, g: &JSGlobalObject, f: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn get_tls_version(
+        this: &Self,
+        g: &JSGlobalObject,
+        f: &CallFrame,
+    ) -> JsResult<JSValue> {
         if SSL {
             tls_socket_functions::get_tls_version(Self::as_tls(this), g, f)
         } else {
@@ -3855,7 +3891,11 @@ impl<const SSL: bool> NewSocket<SSL> {
         }
     }
     #[bun_jsc::host_fn(method)]
-    pub(crate) fn get_certificate(this: &Self, g: &JSGlobalObject, f: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn get_certificate(
+        this: &Self,
+        g: &JSGlobalObject,
+        f: &CallFrame,
+    ) -> JsResult<JSValue> {
         if SSL {
             tls_socket_functions::get_certificate(Self::as_tls(this), g, f)
         } else {
@@ -3887,7 +3927,11 @@ impl<const SSL: bool> NewSocket<SSL> {
         }
     }
     #[bun_jsc::host_fn(method)]
-    pub(crate) fn get_servername(this: &Self, g: &JSGlobalObject, f: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn get_servername(
+        this: &Self,
+        g: &JSGlobalObject,
+        f: &CallFrame,
+    ) -> JsResult<JSValue> {
         if SSL {
             tls_socket_functions::get_servername(Self::as_tls(this), g, f)
         } else {
@@ -3895,7 +3939,11 @@ impl<const SSL: bool> NewSocket<SSL> {
         }
     }
     #[bun_jsc::host_fn(method)]
-    pub(crate) fn set_servername(this: &Self, g: &JSGlobalObject, f: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn set_servername(
+        this: &Self,
+        g: &JSGlobalObject,
+        f: &CallFrame,
+    ) -> JsResult<JSValue> {
         if SSL {
             tls_socket_functions::set_servername(Self::as_tls(this), g, f)
         } else {
@@ -4877,7 +4925,10 @@ pub mod testing_apis {
     }
 
     #[bun_jsc::host_fn]
-    pub(crate) fn js_set_socket_fault(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn js_set_socket_fault(
+        global: &JSGlobalObject,
+        frame: &CallFrame,
+    ) -> JsResult<JSValue> {
         jsc::mark_binding!();
         #[cfg(not(socket_fault_injection))]
         {

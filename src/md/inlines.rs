@@ -603,7 +603,11 @@ impl Parser<'_> {
         self.renderer.leave_span(span_type)
     }
 
-    pub(crate) fn emit_text(&mut self, text_type: TextType, content: &[u8]) -> crate::types::JsResult<()> {
+    pub(crate) fn emit_text(
+        &mut self,
+        text_type: TextType,
+        content: &[u8],
+    ) -> crate::types::JsResult<()> {
         self.renderer.text(text_type, content)
     }
 
@@ -636,7 +640,12 @@ impl Parser<'_> {
 
     /// Find the matching closing backtick run. Returns end position of content (before closing ticks),
     /// or null if no matching closer found.
-    pub(crate) fn find_code_span_end(&self, content: &[u8], start: usize, count: usize) -> Option<usize> {
+    pub(crate) fn find_code_span_end(
+        &self,
+        content: &[u8],
+        start: usize,
+        count: usize,
+    ) -> Option<usize> {
         let mut pos = start;
         while let Some(backtick_pos) = bun_core::strings::index_of_char_pos(content, b'`', pos) {
             pos = backtick_pos + 1;
@@ -1237,7 +1246,12 @@ pub(crate) fn is_right_flanking(content: &[u8], run_start: usize, run_end: usize
     true
 }
 
-pub(crate) fn can_open_emphasis(emph_char: u8, content: &[u8], run_start: usize, run_end: usize) -> bool {
+pub(crate) fn can_open_emphasis(
+    emph_char: u8,
+    content: &[u8],
+    run_start: usize,
+    run_end: usize,
+) -> bool {
     let lf = is_left_flanking(content, run_start, run_end);
     if !lf {
         return false;
@@ -1253,7 +1267,12 @@ pub(crate) fn can_open_emphasis(emph_char: u8, content: &[u8], run_start: usize,
         ))
 }
 
-pub(crate) fn can_close_emphasis(emph_char: u8, content: &[u8], run_start: usize, run_end: usize) -> bool {
+pub(crate) fn can_close_emphasis(
+    emph_char: u8,
+    content: &[u8],
+    run_start: usize,
+    run_end: usize,
+) -> bool {
     let rf = is_right_flanking(content, run_start, run_end);
     if !rf {
         return false;

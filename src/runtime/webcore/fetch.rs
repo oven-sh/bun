@@ -4,8 +4,7 @@
 
 pub(crate) const FETCH_ERROR_NO_ARGS: &str = "fetch() expects a string but received no arguments.";
 pub(crate) const FETCH_ERROR_BLANK_URL: &str = "fetch() URL must not be a blank string.";
-const FETCH_ERROR_UNEXPECTED_BODY: &str =
-    "fetch() request with GET/HEAD method cannot have body.";
+const FETCH_ERROR_UNEXPECTED_BODY: &str = "fetch() request with GET/HEAD method cannot have body.";
 const FETCH_ERROR_PROXY_UNIX: &str = "fetch() cannot use a proxy with a unix socket.";
 
 pub(crate) fn fetch_type_error_string(value: bun_jsc::JSValue) -> &'static str {
@@ -315,10 +314,7 @@ fn bun_fetch_preconnect(
 struct StringOrURL;
 
 impl StringOrURL {
-    fn from_js(
-        value: JSValue,
-        global_this: &JSGlobalObject,
-    ) -> JsResult<Option<BunString>> {
+    fn from_js(value: JSValue, global_this: &JSGlobalObject) -> JsResult<Option<BunString>> {
         if value.is_string() {
             return Ok(Some(BunString::from_js(value, global_this)?));
         }
@@ -2129,10 +2125,7 @@ struct S3StreamWrapper<'a> {
 }
 
 impl<'a> S3StreamWrapper<'a> {
-    fn resolve(
-        result: s3::S3UploadResult,
-        self_: *mut Self,
-    ) -> Result<(), bun_jsc::JsTerminated> {
+    fn resolve(result: s3::S3UploadResult, self_: *mut Self) -> Result<(), bun_jsc::JsTerminated> {
         // SAFETY: self_ was created via heap::alloc in fetch_impl; we reclaim
         // ownership here exactly once on the resolve callback.
         let mut self_ = unsafe { bun_core::heap::take(self_) };

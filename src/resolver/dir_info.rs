@@ -69,7 +69,6 @@ impl DirInfoRef {
     pub(crate) fn from_slot(slot: &mut DirInfo) -> Self {
         DirInfoRef(bun_ptr::BackRef::new_mut(slot))
     }
-
 }
 
 impl core::ops::Deref for DirInfoRef {
@@ -258,7 +257,10 @@ impl DirInfo {
     /// [`get_entries_ref`](Self::get_entries_ref) for call sites that already
     /// hold `entries_mutex` (the mutex is non-recursive); see
     /// [`RealFS::entries_at_locked`](fs::RealFS::entries_at_locked).
-    pub(crate) fn get_entries_ref_locked(&self, generation: Generation) -> Option<&'static fs::DirEntry> {
+    pub(crate) fn get_entries_ref_locked(
+        &self,
+        generation: Generation,
+    ) -> Option<&'static fs::DirEntry> {
         let entries_ptr = fs::FileSystem::instance()
             .fs
             .entries_at_locked(self.entries, generation)?;

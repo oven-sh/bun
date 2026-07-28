@@ -477,7 +477,6 @@ impl WritablePending {
 }
 
 impl Writable {
-
     pub(crate) fn fulfill_promise(
         result: Writable,
         promise: &mut JSPromise,
@@ -853,7 +852,6 @@ impl Signal {
             vtable: SignalVTable::wrap::<T>(),
         }
     }
-
 
     pub fn close(&mut self, err: Option<SysError>) {
         if self.is_dead() {
@@ -1310,7 +1308,11 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
         &self.buffer[self.offset as usize..]
     }
 
-    pub(crate) fn on_writable(&mut self, write_offset: u64, _res: *mut UwsResponse<SSL, HTTP3>) -> bool {
+    pub(crate) fn on_writable(
+        &mut self,
+        write_offset: u64,
+        _res: *mut UwsResponse<SSL, HTTP3>,
+    ) -> bool {
         // write_offset is the amount of data that was written not how much we need to write
         bun_core::scoped_log!(HTTPServerWritableLog, "onWritable ({})", write_offset);
         // onWritable reset backpressure state to allow flushing
@@ -1586,7 +1588,6 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
 
         self.writable_result(len)
     }
-
 
     pub(crate) fn write_latin1(&mut self, data: &StreamResult) -> Writable {
         if self.done || self.requested_end {
@@ -2210,7 +2211,6 @@ impl NetworkSink {
         Writable::Owned(len)
     }
 
-
     pub(crate) fn write_latin1(&mut self, data: &StreamResult) -> Writable {
         if self.ended {
             return Writable::Owned(0);
@@ -2260,7 +2260,10 @@ impl NetworkSink {
         bun_sys::Result::Ok(())
     }
 
-    pub(crate) fn end_from_js(&mut self, _global_this: &JSGlobalObject) -> bun_sys::Result<JSValue> {
+    pub(crate) fn end_from_js(
+        &mut self,
+        _global_this: &JSGlobalObject,
+    ) -> bun_sys::Result<JSValue> {
         let _ = self.end(None);
         if self.end_promise.has_value() {
             // we are already waiting for the end
@@ -2398,7 +2401,6 @@ impl BufferAction {
         // S008: `JSPromise` is an `opaque_ffi!` ZST — safe `*mut → &mut` deref.
         JSPromise::opaque_mut(self.swap()).reject(global, Ok(err.to_js(global)))
     }
-
 
     pub fn value(&self) -> JSValue {
         self.promise.value()

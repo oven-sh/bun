@@ -21,8 +21,6 @@ impl JSUint8Array {
         }
     }
 
-
-
     /// `bytes` must come from `bun.default_allocator` (the global mimalloc allocator);
     /// ownership is transferred to the returned JS Uint8Array.
     // The global allocator IS mimalloc, so `Box<[u8]>` encodes that ownership.

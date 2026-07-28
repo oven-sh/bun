@@ -989,7 +989,6 @@ impl WindowsNamedPipe {
         None
     }
 
-
     pub(crate) fn start(&mut self, is_client: bool) -> bool {
         self.flags.set_is_client(is_client);
         #[cfg(windows)]
@@ -1046,7 +1045,6 @@ impl WindowsNamedPipe {
     pub(crate) fn is_tls(&self) -> bool {
         self.flags.is_ssl()
     }
-
 
     #[bun_uws::uws_callback(export = "WindowsNamedPipe__encode_and_write")]
     pub fn encode_and_write(&mut self, data: &[u8]) -> i32 {

@@ -1694,7 +1694,11 @@ impl UDPSocket {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub(crate) fn unref(this: &Self, global_this: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn unref(
+        this: &Self,
+        global_this: &JSGlobalObject,
+        _: &CallFrame,
+    ) -> JsResult<JSValue> {
         let _ = global_this;
         this.poll_ref.with_mut(|p| p.unref(bun_io::js_vm_ctx()));
 
@@ -1868,7 +1872,10 @@ impl UDPSocket {
     // No `#[bun_jsc::host_fn]` — the macro's free-fn shim emits a
     // bare `js_connect(..)` call which doesn't resolve inside an `impl` block.
     // The codegen `JsClass` derive owns the link name, so the shim isn't needed.
-    pub(crate) fn js_connect(global_this: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn js_connect(
+        global_this: &JSGlobalObject,
+        call_frame: &CallFrame,
+    ) -> JsResult<JSValue> {
         let args = call_frame.arguments_as_array::<2>();
 
         // `as_class_ref` is the safe `&T` downcast (encapsulates `&*from_js`);
@@ -1999,7 +2006,10 @@ impl UDPSocket {
     /// Underlying socket descriptor as a number, or -1 once closed. Backs
     /// node:dgram's handle.fd.
     // See `js_connect` — codegen `JsClass` derive owns the link name.
-    pub(crate) fn js_get_fd(global_this: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn js_get_fd(
+        global_this: &JSGlobalObject,
+        call_frame: &CallFrame,
+    ) -> JsResult<JSValue> {
         // `as_class_ref` is the safe `&T` downcast (encapsulates `&*from_js`);
         // mutation goes through `Cell`, so a shared borrow suffices (R-2).
         let Some(this) = call_frame.this().as_class_ref::<UDPSocket>() else {
@@ -2178,7 +2188,10 @@ fn dgram_not_supported(global: &JSGlobalObject) -> bun_jsc::JsError {
 /// node:dgram's synchronous EEXIST check on `bind({ fd })` so it does not have
 /// to keep a second, per-VM copy of DGRAM_FDS.
 #[bun_jsc::host_fn]
-pub(crate) fn js_dgram_is_fd_adopted(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+pub(crate) fn js_dgram_is_fd_adopted(
+    global: &JSGlobalObject,
+    frame: &CallFrame,
+) -> JsResult<JSValue> {
     #[cfg(not(windows))]
     {
         let fd = frame.argument(0).coerce_to_i32(global)?;
@@ -2200,7 +2213,10 @@ pub(crate) fn js_dgram_is_fd_adopted(global: &JSGlobalObject, frame: &CallFrame)
 /// descriptor (CLOEXEC + non-blocking + SO_NOSIGPIPE), created through
 /// bsd_create_socket so this doesn't fork its platform gate/EINTR loop.
 #[bun_jsc::host_fn]
-pub(crate) fn js_dgram_new_socket_fd(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+pub(crate) fn js_dgram_new_socket_fd(
+    global: &JSGlobalObject,
+    frame: &CallFrame,
+) -> JsResult<JSValue> {
     #[cfg(not(windows))]
     {
         let is_v6 = frame.argument(0).to_boolean();
@@ -2346,7 +2362,10 @@ pub(crate) fn js_dgram_bind_fd(global: &JSGlobalObject, frame: &CallFrame) -> Js
 /// `(fd)` → `{ address, port, family }` of an owned raw descriptor's local
 /// address.
 #[bun_jsc::host_fn]
-pub(crate) fn js_dgram_get_sock_name_fd(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+pub(crate) fn js_dgram_get_sock_name_fd(
+    global: &JSGlobalObject,
+    frame: &CallFrame,
+) -> JsResult<JSValue> {
     #[cfg(not(windows))]
     {
         let fd = dgram_known_fd_arg(global, frame.argument(0))?;
@@ -2399,7 +2418,10 @@ pub(crate) fn js_dgram_get_sock_name_fd(global: &JSGlobalObject, frame: &CallFra
 /// `(fd)` → "UDP" | "TCP" | "PIPE" | "TTY" | "FILE" | "UNKNOWN", like Node's
 /// `guessHandleType`. Never throws.
 #[bun_jsc::host_fn]
-pub(crate) fn js_dgram_guess_handle_type(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+pub(crate) fn js_dgram_guess_handle_type(
+    global: &JSGlobalObject,
+    frame: &CallFrame,
+) -> JsResult<JSValue> {
     #[cfg(windows)]
     let kind: &'static str = {
         let _ = frame;

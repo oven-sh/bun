@@ -134,7 +134,9 @@ impl<C: CompletionStruct> BundleThread<C> {
     /// accesses it). After this returns the bundle thread concurrently accesses
     /// `*instance`; callers must only touch it via the raw-pointer methods on this
     /// impl (e.g. `enqueue`) and never materialize a `&mut Self`.
-    pub(crate) unsafe fn spawn(instance: *mut Self) -> std::io::Result<std::thread::JoinHandle<()>> {
+    pub(crate) unsafe fn spawn(
+        instance: *mut Self,
+    ) -> std::io::Result<std::thread::JoinHandle<()>> {
         // `std::thread::Builder` (not `std::thread::spawn`) so the spawn error
         // is surfaced to the caller.
         struct SendPtr<T>(*mut T);

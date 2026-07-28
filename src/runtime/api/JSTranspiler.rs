@@ -1385,7 +1385,11 @@ impl JSTranspiler {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub(crate) fn transform(&self, global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn transform(
+        &self,
+        global: &JSGlobalObject,
+        callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
         jsc::mark_binding();
         // SAFETY: bun_vm() returns the live VM singleton on this thread.
         let vm = global.bun_vm();

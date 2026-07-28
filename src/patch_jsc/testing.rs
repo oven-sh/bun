@@ -109,7 +109,10 @@ impl TestingAPIs {
         Ok(js)
     }
 
-    pub(crate) fn parse_apply_args(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<ApplyArgs> {
+    pub(crate) fn parse_apply_args(
+        global: &JSGlobalObject,
+        frame: &CallFrame,
+    ) -> JsResult<ApplyArgs> {
         // SAFETY: `bun_vm()` never returns null for a Bun-owned global; the VM
         // outlives this call frame.
         let mut arguments = ArgumentsSlice::init(global.bun_vm(), frame.arguments());

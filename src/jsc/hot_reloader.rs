@@ -690,7 +690,6 @@ where
     Ctx: HotReloaderCtx<EventLoop = EventLoopType>,
     EventLoopType: HotReloaderEventLoop,
 {
-
     fn debug(args: core::fmt::Arguments<'_>) {
         bun_core::pretty_errorln!("<cyan>watcher<r><d>:<r> {}", args);
     }

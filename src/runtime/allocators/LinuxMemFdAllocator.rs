@@ -21,9 +21,9 @@ use core::ffi::c_void;
 use core::sync::atomic::{AtomicUsize, Ordering};
 
 #[cfg(any(target_os = "linux", target_os = "android"))]
-use bun_alloc::{Alignment, AllocatorVTable};
-#[cfg(any(target_os = "linux", target_os = "android"))]
 use bun_alloc::StdAllocator;
+#[cfg(any(target_os = "linux", target_os = "android"))]
+use bun_alloc::{Alignment, AllocatorVTable};
 use bun_core::Fd;
 // bun_sys (T1) — mmap/munmap/pwrite/ftruncate/memfd_create/Result/Error/E/Tag/can_use_memfd.
 #[cfg(any(target_os = "linux", target_os = "android"))]
@@ -348,4 +348,3 @@ mod allocator_interface {
     /// Own static — address is the identity tag for `is_instance`.
     pub(super) static VTABLE: &AllocatorVTable = &AllocatorVTable::free_only(free);
 }
-

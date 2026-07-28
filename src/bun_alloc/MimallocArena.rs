@@ -679,7 +679,6 @@ static GLOBAL_MIMALLOC_VTABLE: crate::AllocatorVTable = crate::AllocatorVTable {
     free: crate::basic::default_allocator_free,
 };
 
-
 // ── ArenaVec helpers ─────────────────────────────────────────────────────
 
 /// `bumpalo::collections::String` parity — a UTF-8 buffer backed by the arena.

@@ -17,7 +17,3 @@ pub use bun_core::{ThreadLock, ThreadLockGuard};
 // does a plain pointer-equality scan (vtable identity), with the *data* moved
 // down rather than the *code* called up.
 // ──────────────────────────────────────────────────────────────────────────
-
-
-
-

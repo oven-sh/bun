@@ -4109,11 +4109,9 @@ impl Resolver {
             let state = crate::jsc_hooks::runtime_state();
             // SAFETY: `state` is the boxed per-thread `RuntimeState`; single-threaded JS heap.
             unsafe { (*state).timer.increment_timer_ref(-1, uws_loop) };
-            // SAFETY: `deref_this` is the heap allocation from `init`. This releases the
-            // ref taken by `add_timer` (no local `ref_()` pairing). When the
-            // post-`ares_process_fd` re-check below called `remove_timer()`
-            // this may be the final release; nothing dereferences `*self` after
-            // this point (same shape as `on_dns_poll`'s `ref_scope` guard).
+            // SAFETY: `deref_this` is the heap allocation from `init`; releases
+            // `add_timer`'s ref. May be the final release; nothing touches
+            // `*self` after this point.
             unsafe { Self::deref(deref_this) };
         }
 
@@ -4129,9 +4127,8 @@ impl Resolver {
                     c_ares::ARES_SOCKET_BAD,
                 );
                 // c-ares detaches a query only after its callback returns, so
-                // `request_completed` (run inside the callback above) may have
-                // re-armed the timer against a still-counted query. Re-check
-                // now that `ares_process_fd` has returned; mirrors `on_dns_poll`.
+                // `request_completed` may have re-armed against a still-counted
+                // query; re-check now (mirrors `on_dns_poll`).
                 if self.any_requests_pending() {
                     let _ = self.add_timer(Some(&now));
                 } else {

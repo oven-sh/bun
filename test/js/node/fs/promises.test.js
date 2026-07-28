@@ -1,4 +1,4 @@
-import { tempDir, tempDirWithFiles } from "harness";
+import { tempDir, tempDirWithFiles, isLinux } from "harness";
 import { join } from "path";
 const assert = require("assert");
 const os = require("os");
@@ -466,6 +466,42 @@ describe("AbortSignal rejections use node's AbortError shape", () => {
       await promise;
     } catch (err) {
       expectNodeAbortError(err, ac.signal.reason);
+    }
+  });
+
+  // Aborting while a large regular file is being read must stop the read loop
+  // mid-stream. Node checks the signal between 512 KiB chunks (kReadFileBufferLength);
+  // a single read() that returns the whole file before the signal is consulted means
+  // the abort bounds neither latency nor IO. /proc/self/fdinfo/<fd> gives the file
+  // position the worker has advanced to, so this test is Linux-only.
+  test.skipIf(!isLinux)("readFile aborted mid-read stops before the full file is read", async () => {
+    await using dir = tempDir("fs-abort-readfile-midread", {});
+    const big = join(String(dir), "big.bin");
+    const SIZE = 128 * 1024 * 1024;
+    fs.writeFileSync(big, Buffer.alloc(SIZE, 1));
+    const fd = fs.openSync(big, "r");
+    try {
+      const pos = () => Number(/pos:\t(\d+)/.exec(fs.readFileSync(`/proc/self/fdinfo/${fd}`, "utf8"))[1]);
+      // The read runs on a thread-pool worker; busy-poll the fd's kernel file
+      // position until it has advanced past the 256 KiB pre-stat read, then abort.
+      // f_pos is updated when each read() returns, so a loop that reads in bounded
+      // chunks crosses this threshold at ~768 KiB while a single whole-file read()
+      // jumps straight from 256 KiB to SIZE.
+      const ac = new AbortController();
+      const promise = fsPromises.readFile(fd, { signal: ac.signal });
+      while (pos() <= 256 * 1024);
+      ac.abort();
+      let rejected;
+      try {
+        await promise;
+      } catch (err) {
+        rejected = err;
+      }
+      const read = pos();
+      expect({ name: rejected?.name, code: rejected?.code }).toEqual({ name: "AbortError", code: "ABORT_ERR" });
+      expect(read).toBeLessThan(SIZE);
+    } finally {
+      fs.closeSync(fd);
     }
   });
 

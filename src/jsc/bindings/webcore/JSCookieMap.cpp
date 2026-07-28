@@ -448,9 +448,12 @@ static inline JSC::EncodedJSValue jsCookieMapPrototypeFunction_deleteBody(JSC::J
     } else {
         nameArg = arg0;
         if (callFrame->argumentCount() >= 2) {
-            optionsArg = callFrame->uncheckedArgument(1);
-            if (!optionsArg.isObject()) {
-                return throwVMError(lexicalGlobalObject, throwScope, createTypeError(lexicalGlobalObject, "Options must be an object"_s));
+            JSValue arg1 = callFrame->uncheckedArgument(1);
+            if (!arg1.isUndefinedOrNull()) {
+                if (!arg1.isObject()) {
+                    return throwVMError(lexicalGlobalObject, throwScope, createTypeError(lexicalGlobalObject, "Options must be an object"_s));
+                }
+                optionsArg = arg1;
             }
         }
     }
@@ -487,17 +490,12 @@ static inline JSC::EncodedJSValue jsCookieMapPrototypeFunction_deleteBody(JSC::J
         }
     }
 
-    if (nameValue && nameValue.isString()) {
-        RETURN_IF_EXCEPTION(throwScope, {});
-
-        if (!nameValue.isUndefined() && !nameValue.isNull()) {
-            deleteOptions.name = convert<IDLUSVString>(*lexicalGlobalObject, nameValue);
-        }
-
-        RETURN_IF_EXCEPTION(throwScope, {});
-    } else {
+    if (!nameValue || nameValue.isUndefinedOrNull()) {
         return throwVMError(lexicalGlobalObject, throwScope, createTypeError(lexicalGlobalObject, "Cookie name is required"_s));
     }
+
+    deleteOptions.name = convert<IDLUSVString>(*lexicalGlobalObject, nameValue);
+    RETURN_IF_EXCEPTION(throwScope, {});
 
     WebCore::propagateException(*lexicalGlobalObject, throwScope, impl.remove(deleteOptions));
     RETURN_IF_EXCEPTION(throwScope, {});

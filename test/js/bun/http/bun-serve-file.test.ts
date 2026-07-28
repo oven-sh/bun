@@ -2,7 +2,7 @@ import type { Server } from "bun";
 import { afterAll, beforeAll, describe, expect, it, mock, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isWindows, rmScope, tempDir, tempDirWithFiles } from "harness";
 import { mkfifo } from "mkfifo";
-import { unlinkSync } from "node:fs";
+import { closeSync, openSync, unlinkSync, writeSync } from "node:fs";
 import { join } from "node:path";
 
 const LARGE_SIZE = 1024 * 1024 * 8;
@@ -1068,6 +1068,93 @@ process.exit(0);
   },
   30_000,
 );
+
+// A FIFO's stat size is 0, but the body length is unknown until EOF. Writing
+// Content-Length from the stat size and then streaming the pipe to EOF puts
+// body bytes on the wire past the declared length; on a keep-alive connection
+// those bytes land where the client parses the next response's status line
+// (RFC 9112 6.3). The response must be chunk-framed instead.
+test.skipIf(isWindows)("Response(Bun.file(FIFO)) frames the body as chunked, not Content-Length: 0", async () => {
+  using dir = tempDir("serve-fifo-framing", {
+    "plain.txt": "SECOND-RESPONSE",
+  });
+  const fifoPath = join(String(dir), "body.fifo");
+  mkfifo(fifoPath);
+
+  // Hold the FIFO open read+write for the whole test so the server's
+  // O_RDONLY|O_NONBLOCK open always finds a writer: its reads then EAGAIN
+  // instead of reporting EOF before we have written the payload.
+  const writerFd = openSync(fifoPath, "r+");
+
+  await using server = Bun.serve({
+    port: 0,
+    hostname: "127.0.0.1",
+    fetch(req) {
+      return new URL(req.url).pathname === "/fifo"
+        ? new Response(Bun.file(fifoPath))
+        : new Response(Bun.file(join(String(dir), "plain.txt")));
+    },
+  });
+
+  const { promise: wireDone, resolve: resolveWire } = Promise.withResolvers<string>();
+  let wire = "";
+  const client = await Bun.connect({
+    hostname: "127.0.0.1",
+    port: server.port,
+    socket: {
+      open(s) {
+        s.write("GET /fifo HTTP/1.1\r\nHost: x\r\n\r\n");
+      },
+      data(_s, d) {
+        wire += Buffer.from(d).toString("latin1");
+        if (wire.includes("SECOND-RESPONSE")) resolveWire(wire);
+      },
+      close() {
+        resolveWire(wire);
+      },
+      error() {
+        resolveWire(wire);
+      },
+    },
+  });
+
+  // The payload sits in the FIFO buffer (kept alive by writerFd) until the
+  // server opens its read end; then the server's first body write flushes it
+  // to the wire, which proves the server's fd is open and we can close ours
+  // to signal EOF.
+  writeSync(writerFd, "PIPEBYTES!");
+  while (!wire.includes("PIPEBYTES!")) await Bun.sleep(0);
+  closeSync(writerFd);
+
+  // Second request on the same keep-alive connection. With correct framing
+  // the two responses are independently delimited; the broken build wrote the
+  // pipe bytes raw after a Content-Length: 0 head, so they abut the next
+  // status line.
+  client.write("GET /plain HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n");
+
+  const captured = await wireDone;
+  client.end();
+
+  const head1 = captured.split("\r\n\r\n")[0];
+  expect({
+    firstStatus: head1.split("\r\n")[0],
+    firstHasContentLength: /^content-length:/im.test(head1),
+    firstIsChunked: /^transfer-encoding:\s*chunked/im.test(head1),
+    bodyDelivered: captured.includes("PIPEBYTES!"),
+    // The broken build put the pipe bytes immediately before the next status
+    // line with at most a stray CRLF between them; with chunked framing the
+    // terminator (0\r\n\r\n) separates them.
+    gluedToNextStatusLine: /PIPEBYTES!(?:\r\n)?HTTP\/1\.1/.test(captured),
+    secondBody: captured.includes("SECOND-RESPONSE"),
+  }).toEqual({
+    firstStatus: "HTTP/1.1 200 OK",
+    firstHasContentLength: false,
+    firstIsChunked: true,
+    bodyDelivered: true,
+    gluedToNextStatusLine: false,
+    secondBody: true,
+  });
+});
 
 // A request that declares a body arms the request-body (onData) callback on
 // the uWS response before the fetch handler runs. uWS keeps a single shared

@@ -480,6 +480,40 @@ describe("Bun.serve() directory routes", () => {
     expect(results.every(r => r === "hot")).toBe(true);
   });
 
+  it("cannot bypass a more-specific overlapping route via path manipulation", async () => {
+    using dir = tempDir("serve-dir-bypass", {
+      "public/admin/secret.txt": "SECRET",
+      "public/ok.txt": "ok",
+    });
+
+    server = serve({
+      port: 0,
+      routes: {
+        "/static/admin/*": () => new Response("auth", { status: 401 }),
+        "/static/*": { dir: join(String(dir), "public") },
+      },
+    });
+
+    // Canonical path hits the inner route.
+    expect((await fetch(`${server.url}static/admin/secret.txt`)).status).toBe(401);
+
+    // Non-canonical forms that uWS routes to the outer wildcard must not
+    // reach public/admin/secret.txt via the directory route.
+    for (const p of [
+      "/static//admin/secret.txt",
+      "/static/./admin/secret.txt",
+      "/static/x/../admin/secret.txt",
+      "/static/admin%2Fsecret.txt",
+    ]) {
+      const r = await raw(p);
+      expect(r.body).not.toContain("SECRET");
+      expect([401, 404]).toContain(r.status);
+    }
+
+    // Canonical paths under the outer route still work.
+    expect(await (await fetch(`${server.url}static/ok.txt`)).text()).toBe("ok");
+  });
+
   it("yields to more-specific overlapping routes", async () => {
     using dir = tempDir("serve-dir-precedence", {
       "public/file.txt": "from-dir",
@@ -538,20 +572,20 @@ describe("Bun.serve() directory routes", () => {
       fetch: () => new Response("fallback", { status: 404 }),
     });
 
-    // Deep `..` chain that cancels out stays inside the root.
-    const deep = await raw("/static/a/b/c/d/e/f/g/h/../../../../../../../../a/b/c/d/e/f/g/h/target.txt");
-    expect(deep.status).toBe(200);
-    expect(deep.body).toContain("deep");
-
-    // Deep `..` chain that escapes is rejected.
-    const escape = await raw("/static/a/b/c/d/e/f/g/h/../../../../../../../../../secret.txt");
-    expect(escape.body).not.toContain("SECRET");
-    expect(escape.status).toBe(404);
-
-    // Many consecutive slashes collapse.
-    const slashes = await raw("/static////////ok.txt");
-    expect(slashes.status).toBe(200);
-    expect(slashes.body).toContain("ok");
+    // `..`, `.`, empty segments, and encoded `/` are rejected outright so the
+    // served path matches what uWS routed on (route-precedence parity).
+    for (const p of [
+      "/static/a/b/c/d/e/f/g/h/../../../../../../../../a/b/c/d/e/f/g/h/target.txt",
+      "/static/a/b/c/d/e/f/g/h/../../../../../../../../../secret.txt",
+      "/static////////ok.txt",
+      "/static/./ok.txt",
+      "/static/a/../ok.txt",
+      "/static/a%2Fb%2Fok.txt",
+    ]) {
+      const r = await raw(p);
+      expect(r.body).not.toContain("SECRET");
+      expect(r.status).toBe(404);
+    }
 
     // Absolute-form request-target (RFC 9112 §3.2.2).
     const abs = await raw("http://x/static/ok.txt");

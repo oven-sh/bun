@@ -436,40 +436,51 @@ fn resolve_subpath(
         return None;
     };
 
-    if after_prefix.len() >= scratch.len() {
+    // Leave room for the NUL `z()` appends and for `"/index.html"` when the
+    // resolved path turns out to be a directory.
+    if after_prefix.len() >= out.len().saturating_sub(b"/index.html\0".len()) {
         return None;
     }
 
+    let raw_slashes = after_prefix.iter().filter(|&&b| b == b'/').count();
     let decoded_len =
         bun_url::PercentEncoding::decode_into(&mut scratch[..after_prefix.len()], after_prefix)
             .ok()? as usize;
+    let decoded = &scratch[..decoded_len];
 
-    let mut start = 0;
-    while start < decoded_len && scratch[start] == b'/' {
-        start += 1;
-    }
-    let decoded = &scratch[start..decoded_len];
-    for &b in decoded {
-        // NUL truncates C strings; `\` and `:` are Windows separators / drive
-        // prefixes / ADS markers that `openat` on Windows treats as absolute.
-        if b == 0 || b == b'\\' || b == b':' {
-            return None;
-        }
-    }
-    if decoded.is_empty() {
-        return Some(0);
-    }
-
-    // Leave room for the NUL `z()` appends and for `"/index.html"` when the
-    // resolved path turns out to be a directory.
-    let max_norm = out.len().saturating_sub(b"/index.html\0".len());
-    let norm = resolve_path::normalize_string_buf::<true, resolve_path::platform::Posix, false>(
-        decoded, out,
-    );
-    if norm == b".." || strings::starts_with(norm, b"../") || norm.len() > max_norm {
+    // uWS routed on the raw URL split on literal `/` with no decode and no
+    // normalization. Any transformation we apply that uWS did not creates a
+    // path uWS never matched, which can bypass a more-specific overlapping
+    // route. So: reject if percent-decoding introduced a `/` (encoded %2F),
+    // and require the decoded path to already be in canonical form (no empty,
+    // `.`, or `..` segments). A single trailing `/` is allowed and stripped.
+    if decoded.iter().filter(|&&b| b == b'/').count() != raw_slashes {
         return None;
     }
-    Some(norm.len())
+    let mut end = decoded_len;
+    if end > 0 && decoded[end - 1] == b'/' {
+        end -= 1;
+    }
+    let mut seg_start = 0;
+    let mut i = 0;
+    while i <= end {
+        if i == end || decoded[i] == b'/' {
+            let seg = &decoded[seg_start..i];
+            if seg.is_empty() || seg == b"." || seg == b".." {
+                if i == 0 && end == 0 {
+                    return Some(0);
+                }
+                return None;
+            }
+            seg_start = i + 1;
+        } else if decoded[i] == 0 || decoded[i] == b'\\' || decoded[i] == b':' {
+            return None;
+        }
+        i += 1;
+    }
+
+    out[..end].copy_from_slice(&decoded[..end]);
+    Some(end)
 }
 
 /// `W/"<size-hex>-<mtime-sec-hex>"` (nginx/send scheme).
@@ -538,6 +549,12 @@ mod tests {
     }
 
     #[test]
+    fn resolve_trailing_slash() {
+        assert_eq!(resolve(b"/static/a/", b"/static/").as_deref(), Some(&b"a"[..]));
+        assert_eq!(resolve(b"/static/a/b/", b"/static/").as_deref(), Some(&b"a/b"[..]));
+    }
+
+    #[test]
     fn resolve_traversal() {
         assert_eq!(resolve(b"/static/../etc/passwd", b"/static/"), None);
         assert_eq!(resolve(b"/static/..%2Fetc", b"/static/"), None);
@@ -545,15 +562,28 @@ mod tests {
         assert_eq!(resolve(b"/static/a/../../etc", b"/static/"), None);
         assert_eq!(resolve(b"/static/c:/windows", b"/static/"), None);
         assert_eq!(resolve(b"/static/file::$DATA", b"/static/"), None);
-        assert_eq!(
-            resolve(b"/static/a/../b.txt", b"/static/").as_deref(),
-            Some(&b"b.txt"[..])
-        );
-        assert_eq!(
-            resolve(b"/static/a//b.txt", b"/static/").as_deref(),
-            Some(&b"a/b.txt"[..])
-        );
         assert_eq!(resolve(b"/static/a%00.txt", b"/static/"), None);
         assert_eq!(resolve(b"/static/a%5Cb.txt", b"/static/"), None);
+    }
+
+    #[test]
+    fn resolve_route_precedence_parity() {
+        // These all route to the outer wildcard in uWS (which matches on raw
+        // segments) but would reach a file under an inner prefix if we
+        // normalized or decoded `/`. Reject so the served path equals the
+        // routed path.
+        assert_eq!(resolve(b"/static/a%2Fb.txt", b"/static/"), None);
+        assert_eq!(resolve(b"/static/a%2fb.txt", b"/static/"), None);
+        assert_eq!(resolve(b"/static//a/b.txt", b"/static/"), None);
+        assert_eq!(resolve(b"/static/a//b.txt", b"/static/"), None);
+        assert_eq!(resolve(b"/static/./a.txt", b"/static/"), None);
+        assert_eq!(resolve(b"/static/a/./b.txt", b"/static/"), None);
+        assert_eq!(resolve(b"/static/a/../b.txt", b"/static/"), None);
+        assert_eq!(resolve(b"/static/a/..", b"/static/"), None);
+        // Legitimate percent-encoding (not `/`) still works.
+        assert_eq!(
+            resolve(b"/static/hello%20world.txt", b"/static/").as_deref(),
+            Some(&b"hello world.txt"[..])
+        );
     }
 }

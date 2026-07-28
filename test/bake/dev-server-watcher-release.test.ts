@@ -5,8 +5,8 @@
 // with a tight `fs.inotify.max_user_instances` budget this surfaced as
 // `EMFILE while initializing file watcher for development server`.
 
-import { test, expect } from "bun:test";
-import { bunEnv, bunExe, tempDir, isLinux } from "harness";
+import { expect, test } from "bun:test";
+import { bunEnv, bunExe, isLinux, tempDir } from "harness";
 
 // The `/proc/self/{fd,status}` probes are Linux-specific; on macOS the kqueue
 // leak is silent (no observable assertion here) and on Windows `wake()` is an

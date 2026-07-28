@@ -692,12 +692,13 @@ JSC_DEFINE_HOST_FUNCTION(functionFulfillModuleSync,
     JSC::JSValue keyAny = callFrame->argument(0);
     JSC::JSString* moduleKeyString = keyAny.toString(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
-    auto moduleKey = moduleKeyString->value(globalObject);
+    // Plain String, not GCOwnedDataScope: fetchESMSourceCodeSync may transpile
+    // synchronously and spin the event loop for an async macro, during which
+    // IncrementalSweeper asserts no GCOwnedDataScope is live with entryScope null.
+    WTF::String moduleKey = moduleKeyString->value(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
 
-    RETURN_IF_EXCEPTION(scope, {});
-
-    if (moduleKey->endsWith(".node"_s)) {
+    if (moduleKey.endsWith(".node"_s)) {
         throwException(globalObject, scope, createTypeError(globalObject, "To load Node-API modules, use require() or process.dlopen instead of importSync."_s));
         return {};
     }
@@ -3675,7 +3676,10 @@ JSC::JSPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* jsGlobalO
 
     JSC::Identifier resolvedIdentifier;
 
-    auto moduleName = moduleNameValue->value(globalObject);
+    // Plain String, not GCOwnedDataScope: JSC::importModule below may drive
+    // moduleLoaderFetch synchronously and reach the same event-loop spin as
+    // that function (see its comment).
+    WTF::String moduleName = moduleNameValue->value(globalObject);
     RETURN_IF_EXCEPTION(scope, nullptr);
 
     auto sourceURL = sourceOrigin.url();
@@ -3715,7 +3719,7 @@ JSC::JSPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* jsGlobalO
 
         BunString moduleNameZ;
         String moduleStringHolder;
-        if (moduleName->startsWith("file://"_s)) {
+        if (moduleName.startsWith("file://"_s)) {
             auto url = WTF::URL(moduleName);
             if (url.isValid() && !url.isEmpty()) {
                 moduleStringHolder = url.fileSystemPath();
@@ -3796,11 +3800,15 @@ JSC::JSPromise* GlobalObject::moduleLoaderFetch(JSGlobalObject* globalObject,
 
     auto moduleKeyJS = key.toString(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
-    auto moduleKey = moduleKeyJS->value(globalObject);
+    // Plain String, not GCOwnedDataScope: fetchESMSourceCode may transpile the
+    // main entry synchronously and spin the event loop for an async macro,
+    // during which IncrementalSweeper asserts no GCOwnedDataScope is live with
+    // entryScope null.
+    WTF::String moduleKey = moduleKeyJS->value(globalObject);
     if (scope.exception()) [[unlikely]]
         return rejectedInternalPromise(globalObject, scope.exception()->value());
 
-    if (moduleKey->endsWith(".node"_s)) {
+    if (moduleKey.endsWith(".node"_s)) {
         return rejectedInternalPromise(globalObject, createTypeError(globalObject, "To load Node-API modules, use require() or process.dlopen instead of import."_s));
     }
 

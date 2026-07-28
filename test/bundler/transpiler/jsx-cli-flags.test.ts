@@ -23,12 +23,7 @@ describe.concurrent("jsx: --jsx-* CLI flags preserve development runtime", () =>
     "a.jsx": "console.log(JSON.stringify(<div/>));",
   };
 
-  type Case = [
-    extraArgs: string[],
-    nodeEnv: string | undefined,
-    bunfig: string | undefined,
-    expected: "DEV" | "PROD",
-  ];
+  type Case = [extraArgs: string[], nodeEnv: string | undefined, bunfig: string | undefined, expected: "DEV" | "PROD"];
   const cases: Case[] = [
     // Baselines (no --jsx-* flags): dev by default, prod only when NODE_ENV=production.
     [[], undefined, undefined, "DEV"],
@@ -54,8 +49,7 @@ describe.concurrent("jsx: --jsx-* CLI flags preserve development runtime", () =>
   ];
 
   for (const [extraArgs, nodeEnv, bunfig, expected] of cases) {
-    const bunfigLabel =
-      bunfig === undefined ? "no bunfig" : bunfig === "" ? "empty bunfig" : `bunfig ${bunfig.trim()}`;
+    const bunfigLabel = bunfig === undefined ? "no bunfig" : bunfig === "" ? "empty bunfig" : `bunfig ${bunfig.trim()}`;
     const label = `bun ${extraArgs.join(" ") || "(no flags)"} NODE_ENV=${nodeEnv ?? "<unset>"} [${bunfigLabel}] -> ${expected}`;
     test(label, async () => {
       const files: Record<string, string> = { ...shimFiles };

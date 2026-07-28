@@ -24,6 +24,7 @@ use bun_core::{MutableString, String as BunString, ZigString};
 use bun_core::{WTFStringImpl, WTFStringImplExt as _, WTFStringImplStruct};
 use bun_jsc::ZigStringJsc as _;
 use bun_jsc::{JsCell, StringJsc as _};
+use bun_simdutf_sys::simdutf;
 
 /// Deref the `Value::WTFStringImpl` / `AnyBlob::WTFStringImpl` payload.
 /// Centralises the per-site `(**s)` raw deref at the dozen `match` arms below
@@ -951,6 +952,26 @@ impl Value {
             }
 
             debug_assert!(str.tag() == bun_core::Tag::WTFStringImpl);
+
+            // A string body's bytes are its UTF-8 encoding (fetch "extract a
+            // body", USVString), and text()/json() are "UTF-8 decode" of those
+            // bytes, which strips a leading BOM and cannot yield lone
+            // surrogates. Only keep the zero-copy WTFStringImpl fast path when
+            // the string already equals that round trip; otherwise store the
+            // encoded bytes so text()/json()/arrayBuffer()/bytes() all agree.
+            // 8-bit Latin-1 cannot hold U+FEFF or surrogates, so only 16-bit
+            // storage needs checking.
+            if str.is_utf16() {
+                let utf16 = str.utf16();
+                if utf16[0] == 0xFEFF || !simdutf::validate::utf16le(utf16) {
+                    let bytes = bun_core::strings::to_utf8_alloc(utf16);
+                    str.deref();
+                    return Ok(Value::InternalBlob(InternalBlob {
+                        bytes,
+                        was_string: true,
+                    }));
+                }
+            }
 
             // `leak_wtf_impl()` transfers the +1 ref out of the bun_core::String wrapper.
             return Ok(Value::WTFStringImpl(str.leak_wtf_impl()));

@@ -26,7 +26,7 @@ use crate::{
     LOC_MODULE_SCOPE as loc_module_scope, LocList, MacroState, ParseStatementOptions, ParsedPath,
     PrependTempRefsOpts, ReactRefresh, Ref, RefMap, RefRefMap, RuntimeImports, ScopeOrder,
     ScopeOrderList, StrictModeFeature, StringBoolMap, Substitution, TempRef, ThenCatchChain,
-    TransposeState, WrapMode, fs, is_eval_or_arguments, options, statement_cares_about_scope,
+    TransposeState, WrapMode, fs, options, statement_cares_about_scope,
 };
 use bun_ast as js_ast;
 use bun_ast::DeclaredSymbol;
@@ -220,6 +220,7 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     pub has_import_meta: bool,
     pub has_es_module_syntax: bool,
     pub top_level_await_keyword: bun_ast::Range,
+    pub top_level_await_identifier_range: bun_ast::Range,
     pub fn_or_arrow_data_parse: FnOrArrowDataParse,
     pub fn_or_arrow_data_visit: FnOrArrowDataVisit,
     pub fn_only_data_visit: FnOnlyDataVisit<'a>,
@@ -2803,6 +2804,30 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         } else if self.top_level_await_keyword.len > 0 {
             self.module_scope_mut()
                 .recursive_set_strict_mode(js_ast::StrictModeKind::ImplicitStrictModeTopLevelAwait);
+        } else if self.options.module_type == options::ModuleType::Esm {
+            self.module_scope_mut()
+                .recursive_set_strict_mode(js_ast::StrictModeKind::ImplicitStrictModeModuleType);
+        }
+
+        let is_module_goal =
+            self.has_es_module_syntax || self.options.module_type == options::ModuleType::Esm;
+        if is_module_goal {
+            for r in &self.lexer.legacy_html_comment_ranges {
+                self.log().add_range_error(
+                    Some(self.source),
+                    *r,
+                    b"Legacy HTML single-line comments are not allowed in ECMAScript modules",
+                );
+            }
+        }
+        if (is_module_goal || self.is_strict_mode_output_format())
+            && self.top_level_await_identifier_range.len > 0
+        {
+            self.log().add_range_error(
+                Some(self.source),
+                self.top_level_await_identifier_range,
+                b"Cannot use \"await\" as an identifier in an ECMAScript module",
+            );
         }
 
         self.hoist_symbols(self.module_scope_ref());
@@ -4304,7 +4329,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         r: bun_ast::Range,
         detail: &[u8],
     ) -> Result<(), crate::Error> {
-        let can_be_transformed = feature == StrictModeFeature::ForInVarInit;
+        let can_be_transformed = matches!(
+            feature,
+            StrictModeFeature::ForInVarInit | StrictModeFeature::LegacyOctalEscape
+        );
         let text: &'a [u8] = match feature {
             StrictModeFeature::WithStatement => b"With statements",
             StrictModeFeature::DeleteBareName => b"\"delete\" of a bare identifier",
@@ -4312,6 +4340,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             StrictModeFeature::EvalOrArguments => bun_alloc::arena_format!(
                 in self.arena,
                 "Declarations with the name \"{}\"",
+                bstr::BStr::new(detail)
+            )
+            .into_bump_str()
+            .as_bytes(),
+            StrictModeFeature::AssignToEvalOrArguments => bun_alloc::arena_format!(
+                in self.arena,
+                "Assigning to \"{}\"",
                 bstr::BStr::new(detail)
             )
             .into_bump_str()
@@ -4346,9 +4381,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     why = b"All code inside a class is implicitly in strict mode";
                     where_ = self.enclosing_class_keyword;
                 }
+                js_ast::StrictModeKind::ImplicitStrictModeModuleType => {
+                    why = b"This file is an ECMAScript module because of its extension or package.json";
+                }
                 _ => {}
             }
-            if why.is_empty() {
+            if why.is_empty() && where_.len > 0 {
                 why = bun_alloc::arena_format!(
                     in self.arena,
                     "This file is implicitly in strict mode because of the \"{}\" keyword here",
@@ -4358,8 +4396,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 .as_bytes();
             }
             // bun_ast::Data is !Copy (Cow) — build the notes Box directly.
-            let notes: Box<[bun_ast::Data]> =
-                Box::new([bun_ast::range_data(Some(self.source), where_, why.to_vec())]);
+            let notes: Box<[bun_ast::Data]> = if why.is_empty() {
+                Box::new([])
+            } else {
+                Box::new([bun_ast::range_data(Some(self.source), where_, why.to_vec())])
+            };
             self.log().add_range_error_fmt_with_notes(
                 Some(self.source),
                 r,
@@ -4377,6 +4418,24 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             );
         }
         Ok(())
+    }
+
+    /// At top level the goal symbol is unknown; record the range for a deferred ESM check.
+    pub fn is_await_identifier_rejected(&mut self, range: bun_ast::Range) -> bool {
+        match self.fn_or_arrow_data_parse.allow_await {
+            crate::AwaitOrYield::AllowIdent => false,
+            crate::AwaitOrYield::ForbidAll => true,
+            crate::AwaitOrYield::AllowExpr => {
+                if self.fn_or_arrow_data_parse.is_top_level {
+                    if self.top_level_await_identifier_range.len == 0 {
+                        self.top_level_await_identifier_range = range;
+                    }
+                    false
+                } else {
+                    true
+                }
+            }
+        }
     }
 
     #[inline]
@@ -5297,9 +5356,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     // the full union. The only caller (`visit_expr_in_out`) already holds `&mut Expr`.
     pub fn is_valid_assignment_target(&self, expr: &Expr) -> bool {
         match &expr.data {
-            js_ast::ExprData::EIdentifier(ident) => {
-                !is_eval_or_arguments(self.load_name_from_ref(ident.ref_))
-            }
+            // eval/arguments is a strict-mode error, reported by the EIdentifier visitor.
+            js_ast::ExprData::EIdentifier(_) => true,
             js_ast::ExprData::EDot(e) => e.optional_chain.is_none(),
             js_ast::ExprData::EIndex(e) => e.optional_chain.is_none(),
             js_ast::ExprData::EArray(e) => !e.is_parenthesized,
@@ -8204,6 +8262,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     remaining_stmts[0] = self.s(
                         S::Directive {
                             value: b"use strict".into(),
+                            legacy_octal_loc: bun_ast::Loc::EMPTY,
                         },
                         self.module_scope_directive_loc,
                     );
@@ -8725,6 +8784,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             has_import_meta: false,
             has_es_module_syntax: false,
             top_level_await_keyword: bun_ast::Range::NONE,
+            top_level_await_identifier_range: bun_ast::Range::NONE,
             fn_or_arrow_data_parse,
             fn_or_arrow_data_visit: FnOrArrowDataVisit::default(),
             fn_only_data_visit: FnOnlyDataVisit::default(),

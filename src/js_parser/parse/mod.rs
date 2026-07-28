@@ -298,7 +298,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             p.lexer.rescan_close_brace_as_template_token()?;
 
             let tail: E::TemplateContents = if !include_raw {
-                E::TemplateContents::Cooked(p.lexer.to_e_string()?)
+                let cooked = p.lexer.to_e_string()?;
+                p.reject_template_octal_escape(cooked.legacy_octal_loc);
+                E::TemplateContents::Cooked(cooked)
             } else {
                 E::TemplateContents::Raw(p.lexer.raw_template_contents().into())
             };
@@ -329,10 +331,34 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let loc = p.lexer.loc();
         let mut str_ = p.lexer.to_e_string()?;
         str_.prefer_template = p.lexer.token == T::TNoSubstitutionTemplateLiteral;
+        if str_.prefer_template {
+            p.reject_template_octal_escape(str_.legacy_octal_loc);
+        }
 
         let expr = p.new_expr(str_, loc);
         p.lexer.next()?;
         Ok(expr)
+    }
+
+    pub fn reject_template_octal_escape(&mut self, loc: bun_ast::Loc) {
+        if loc.start >= 0 {
+            self.log().add_range_error(
+                Some(self.source),
+                bun_ast::Range { loc, len: 2 },
+                b"Octal escape sequences are not allowed in template literals",
+            );
+        }
+    }
+
+    /// ESM-only string positions (import specifier, clause alias, attribute) are always strict.
+    pub fn reject_strict_octal_escape(&mut self, loc: bun_ast::Loc) {
+        if loc.start >= 0 {
+            self.log().add_range_error(
+                Some(self.source),
+                bun_ast::Range { loc, len: 2 },
+                b"Legacy octal escape sequences cannot be used in strict mode",
+            );
+        }
     }
 
     pub fn parse_call_args(&mut self) -> Result<ExprListLoc, Error> {
@@ -667,6 +693,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 && (!Self::IS_TYPESCRIPT_ENABLED || p.lexer.identifier != b"implements"))
         {
             let name_loc = p.lexer.loc();
+            let name_range = p.lexer.range();
             let name_text = p.lexer.identifier;
             p.lexer.expect(T::TIdentifier)?;
 
@@ -678,12 +705,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 return Err(crate::Error::SyntaxError);
             }
 
-            if p.fn_or_arrow_data_parse.allow_await != AwaitOrYield::AllowIdent
-                && name_text == b"await"
-            {
+            if name_text == b"await" && p.is_await_identifier_rejected(name_range) {
                 p.log().add_range_error(
                     Some(p.source),
-                    p.lexer.range(),
+                    name_range,
                     b"Cannot use \"await\" as an identifier here",
                 );
             }
@@ -748,6 +773,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // The alias may now be a utf-16 (not wtf-16) string (see https://github.com/tc39/ecma262/pull/2154)
         if p.lexer.token == T::TStringLiteral {
             let estr = p.lexer.to_e_string()?;
+            p.reject_strict_octal_escape(estr.legacy_octal_loc);
             if estr.is_utf8() {
                 // SAFETY: E::String slices are arena-owned for 'a.
                 return Ok(unsafe { bun_collections::detach_lifetime(estr.slice8()) });
@@ -977,8 +1003,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         match p.lexer.token {
             T::TIdentifier => {
                 let name = p.lexer.identifier;
-                if (p.fn_or_arrow_data_parse.allow_await != AwaitOrYield::AllowIdent
-                    && name == b"await")
+                if (name == b"await" && p.is_await_identifier_rejected(p.lexer.range()))
                     || (p.fn_or_arrow_data_parse.allow_yield != AwaitOrYield::AllowIdent
                         && name == b"yield")
                 {
@@ -1312,6 +1337,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     pub fn parse_path(&mut self) -> Result<ParsedPath<'a>, Error> {
         let p = self;
         let path_text = p.lexer.to_utf8_e_string()?;
+        p.reject_strict_octal_escape(path_text.legacy_octal_loc);
         let mut path = ParsedPath {
             loc: p.lexer.loc(),
             // SAFETY: E::String slice8() is arena-owned for 'a.
@@ -1364,6 +1390,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         }
                     } else if p.lexer.token == T::TStringLiteral {
                         let estr = p.lexer.to_utf8_e_string()?;
+                        p.reject_strict_octal_escape(estr.legacy_octal_loc);
                         let string_literal_text = estr.slice8();
                         if string_literal_text == b"type" {
                             break 'brk Some(SupportedAttribute::Type);
@@ -1386,6 +1413,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                 p.lexer.expect(T::TStringLiteral)?;
                 let estr = p.lexer.to_utf8_e_string()?;
+                p.reject_strict_octal_escape(estr.legacy_octal_loc);
                 let string_literal_text = estr.slice8();
                 if let Some(attr) = supported_attribute {
                     match attr {
@@ -1483,8 +1511,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             if str_.eql_comptime(b"use strict") {
                                 skip = true;
                                 // Track "use strict" directives
-                                p.current_scope_mut().strict_mode =
-                                    StrictModeKind::ExplicitStrictMode;
+                                let scope = p.current_scope_mut();
+                                scope.strict_mode = StrictModeKind::ExplicitStrictMode;
+                                // A body directive makes the parameter list strict too.
+                                if let Some(mut parent) = scope.parent
+                                    && parent.kind == js_ast::scope::Kind::FunctionArgs
+                                {
+                                    parent.recursive_set_strict_mode(
+                                        StrictModeKind::ExplicitStrictMode,
+                                    );
+                                }
                                 if p.current_scope == p.module_scope {
                                     p.module_scope_directive_loc = stmt.loc;
                                 }
@@ -1493,9 +1529,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 stmt.data = js_ast::stmt::Data::SEmpty(S::Empty {});
                             } else {
                                 let bytes = str_.string(p.arena).expect("OOM");
+                                let legacy_octal_loc = str_.legacy_octal_loc;
                                 stmt = Stmt::alloc(
                                     S::Directive {
                                         value: bun_ast::StoreStr::new(bytes),
+                                        legacy_octal_loc,
                                     },
                                     stmt.loc,
                                 );

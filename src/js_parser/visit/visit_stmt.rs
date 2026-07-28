@@ -68,7 +68,20 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // points into the arena, not into `*stmt`.
         let data_copy = stmt.data;
         match data_copy {
-            StmtData::SDirective(_) | StmtData::SComment(_) | StmtData::SEmpty(_) => {
+            StmtData::SDirective(dir) => {
+                if dir.legacy_octal_loc.start >= 0 {
+                    let r = bun_ast::Range {
+                        loc: dir.legacy_octal_loc,
+                        len: 2,
+                    };
+                    p.mark_strict_mode_feature(crate::StrictModeFeature::LegacyOctalEscape, r, b"")
+                        .expect("unreachable");
+                }
+                p.cur_scope().is_after_const_local_prefix = was_after_after_const_local_prefix;
+                stmts.push(*stmt);
+                Ok(())
+            }
+            StmtData::SComment(_) | StmtData::SEmpty(_) => {
                 p.cur_scope().is_after_const_local_prefix = was_after_after_const_local_prefix;
                 stmts.push(*stmt);
                 Ok(())

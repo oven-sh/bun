@@ -1177,6 +1177,7 @@ pub enum StrictModeFeature {
     DeleteBareName,
     ForInVarInit,
     EvalOrArguments,
+    AssignToEvalOrArguments,
     ReservedWord,
     LegacyOctalLiteral,
     LegacyOctalEscape,

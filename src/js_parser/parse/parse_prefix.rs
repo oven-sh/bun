@@ -281,6 +281,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     fn pfx_t_template_head(p: &mut Self) -> PResult<Expr> {
         let loc = p.lexer.loc();
         let head = p.lexer.to_e_string()?;
+        p.reject_template_octal_escape(head.legacy_octal_loc);
 
         let (parts, _tail_loc) = p.parse_template_parts(false)?;
 
@@ -547,9 +548,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if p.lexer.token == T::TIdentifier {
             let name_text = p.lexer.identifier;
             if !Self::IS_TYPESCRIPT_ENABLED || name_text != b"implements" {
-                if p.fn_or_arrow_data_parse.allow_await != AwaitOrYield::AllowIdent
-                    && name_text == b"await"
-                {
+                if name_text == b"await" && p.is_await_identifier_rejected(p.lexer.range()) {
                     p.log().add_range_error(
                         Some(p.source),
                         p.lexer.range(),
@@ -610,9 +609,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if p.lexer.token == T::TIdentifier {
             let name_text = p.lexer.identifier;
             if !Self::IS_TYPESCRIPT_ENABLED || name_text != b"implements" {
-                if p.fn_or_arrow_data_parse.allow_await != AwaitOrYield::AllowIdent
-                    && name_text == b"await"
-                {
+                if name_text == b"await" && p.is_await_identifier_rejected(p.lexer.range()) {
                     p.log().add_range_error(
                         Some(p.source),
                         p.lexer.range(),

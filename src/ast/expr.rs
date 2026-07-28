@@ -2171,6 +2171,7 @@ impl Data {
                     next: el.next,
                     end: el.end,
                     rope_len: el.rope_len,
+                    legacy_octal_loc: el.legacy_octal_loc,
                     is_utf16: el.is_utf16,
                 });
                 Ok(Data::EString(StoreRef::from_bump(item)))

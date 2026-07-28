@@ -1,0 +1,342 @@
+// Valid sloppy-mode (Annex B / non-strict) constructs that Node accepts but
+// Bun's transpiler used to hard-reject. A bare `.js` entry with no CJS/ESM
+// markers is evaluated by Bun as a module (strict), so these tests force
+// CommonJS via a `module.exports` marker, matching the real-world case of a
+// legacy npm package loaded via `require`.
+import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, tempDir } from "harness";
+
+async function run(body: string, cjs = true, ext = "js") {
+  const source = cjs ? body + "\nmodule.exports = {};\n" : body;
+  const name = `x.${ext}`;
+  using dir = tempDir("sloppy-mode", { [name]: source });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "run", name],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  return { stdout, stderr, exitCode };
+}
+
+async function build(files: Record<string, string>, entry: string, ...flags: string[]) {
+  using dir = tempDir("sloppy-build", files);
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "build", entry, ...flags],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const result = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  return result;
+}
+
+describe.concurrent("sloppy-mode constructs the transpiler must accept", () => {
+  test("duplicate parameter names in a plain function declaration", async () => {
+    const { stdout, stderr, exitCode } = await run(`function f(a, a) { return a }\nconsole.log(f(1, 2));`);
+    expect(stderr).not.toContain("cannot be bound multiple times");
+    expect(stdout.trim()).toBe("2");
+    expect(exitCode).toBe(0);
+  });
+
+  test("duplicate parameter names in a plain function expression", async () => {
+    const { stdout, stderr, exitCode } = await run(`var e = function(b, b) { return b };\nconsole.log(e(1, 2));`);
+    expect(stderr).not.toContain("cannot be bound multiple times");
+    expect(stdout.trim()).toBe("2");
+    expect(exitCode).toBe(0);
+  });
+
+  test("nested function with duplicate parameter names", async () => {
+    const { stdout, exitCode } = await run(
+      `function outer() { function f(a, a) { return a } return f(3, 4) }\nconsole.log(outer());`,
+    );
+    expect(stdout.trim()).toBe("4");
+    expect(exitCode).toBe(0);
+  });
+
+  test("assignment to eval and arguments", async () => {
+    const { stdout, stderr, exitCode } = await run(`eval = 2; arguments = 3; eval++;\nconsole.log(eval, arguments);`);
+    expect(stderr).not.toContain("Invalid assignment target");
+    expect(stdout.trim()).toBe("3 3");
+    expect(exitCode).toBe(0);
+  });
+
+  test("var await as a top-level binding in a Script", async () => {
+    const { stdout, stderr, exitCode } = await run(
+      `var await = 42;\nfunction g() { return await; }\nconsole.log(g());`,
+    );
+    expect(stderr).not.toContain(`Cannot use "yield" or "await" here`);
+    expect(stdout.trim()).toBe("42");
+    expect(exitCode).toBe(0);
+  });
+
+  test("await as a top-level class name in a Script", async () => {
+    const { stdout, stderr, exitCode } = await run(
+      `class await {}\nfunction g() { return await.name; }\nconsole.log(g());`,
+    );
+    expect(stderr).not.toContain(`Cannot use "await" as an identifier`);
+    expect(stdout.trim()).toBe("await");
+    expect(exitCode).toBe(0);
+  });
+
+  test("await as a shorthand property name at top level", async () => {
+    const { stdout, stderr, exitCode } = await run(`var await = 7;\nvar o = { await };\nconsole.log(o.await);`);
+    expect(stderr).not.toContain(`Cannot use "await"`);
+    expect(stdout.trim()).toBe("7");
+    expect(exitCode).toBe(0);
+  });
+
+  test("legacy octal escape at end of string (1 digit)", async () => {
+    const { stdout, stderr, exitCode } = await run(`console.log("x\\7".charCodeAt(1));`);
+    expect(stderr).not.toContain("Syntax Error");
+    expect(stdout.trim()).toBe("7");
+    expect(exitCode).toBe(0);
+  });
+
+  test("legacy octal escape at end of string (2 digits)", async () => {
+    const { stdout, exitCode } = await run(`console.log("x\\77".charCodeAt(1));`);
+    expect(stdout.trim()).toBe("63");
+    expect(exitCode).toBe(0);
+  });
+
+  test("legacy octal escape followed by 8/9", async () => {
+    const { stdout, stderr, exitCode } = await run(
+      `var a = "\\1".charCodeAt(0);\n` +
+        `var b = "ab\\5".charCodeAt(2);\n` +
+        `var c = "\\018x";\n` +
+        `var d = "\\09x";\n` +
+        `console.log(JSON.stringify([a, b, c.length, c.charCodeAt(0), c.charCodeAt(1), d.length, d.charCodeAt(0), d.charCodeAt(1)]));`,
+    );
+    expect(stderr).not.toContain("error");
+    expect(stdout.trim()).toBe("[1,5,3,1,56,3,0,57]");
+    expect(exitCode).toBe(0);
+  });
+
+  test("\\8 and \\9 are literal 8/9 in sloppy mode", async () => {
+    const { stdout, exitCode } = await run(`console.log("\\8" + "\\9");`);
+    expect(stdout.trim()).toBe("89");
+    expect(exitCode).toBe(0);
+  });
+
+  test("legacy octal escapes that already worked keep working", async () => {
+    const { stdout, exitCode } = await run(
+      `console.log(JSON.stringify(["\\010".charCodeAt(0), "\\101", "\\377".charCodeAt(0), "\\7x".charCodeAt(0)]));`,
+    );
+    expect(stdout.trim()).toBe(`[8,"A",255,7]`);
+    expect(exitCode).toBe(0);
+  });
+
+  test("<!-- HTML open comment is a line comment", async () => {
+    const { stdout, stderr, exitCode } = await run(`var h = 1 <!-- comment\nconsole.log("ok", h);`);
+    expect(stderr).not.toContain("Legacy HTML comments");
+    expect(stdout.trim()).toBe("ok 1");
+    expect(exitCode).toBe(0);
+  });
+
+  test("<!-- at start of line", async () => {
+    const { stdout, exitCode } = await run(`<!-- this is ignored\nconsole.log("ok");`);
+    expect(stdout.trim()).toBe("ok");
+    expect(exitCode).toBe(0);
+  });
+});
+
+describe.concurrent("strict-mode / unique-formal-parameter rejections still fire", () => {
+  test("duplicate parameters in a method", async () => {
+    const { exitCode, stderr } = await run(`({ m(a, a) { return a } });`);
+    expect(stderr).toContain("cannot be bound multiple times");
+    expect(exitCode).not.toBe(0);
+  });
+
+  test("duplicate parameters in an arrow function", async () => {
+    const { exitCode, stderr } = await run(`var f = (a, a) => a;`);
+    expect(stderr).toContain("cannot be bound multiple times");
+    expect(exitCode).not.toBe(0);
+  });
+
+  test('duplicate parameters under "use strict"', async () => {
+    const { exitCode, stderr } = await run(`"use strict";\nfunction f(a, a) { return a }\nvoid f;`);
+    expect(stderr).toContain("cannot be bound multiple times");
+    expect(exitCode).not.toBe(0);
+  });
+
+  test('duplicate parameters with "use strict" in the function body', async () => {
+    const { exitCode, stderr } = await run(`function f(a, a) { "use strict"; return a }\nvoid f;`);
+    expect(stderr).toContain("cannot be bound multiple times");
+    expect(exitCode).not.toBe(0);
+  });
+
+  test("duplicate parameters with non-simple parameter list", async () => {
+    const { exitCode, stderr } = await run(`function f(a, a = 1) { return a }\nvoid f;`);
+    expect(stderr).toContain("cannot be bound multiple times");
+    expect(exitCode).not.toBe(0);
+  });
+
+  test("var await inside async function still rejected", async () => {
+    const { exitCode, stderr } = await run(`async function f() { var await = 1; }\nf();`);
+    expect(stderr).toMatch(/await/);
+    expect(exitCode).not.toBe(0);
+  });
+
+  test("class await inside async function still rejected", async () => {
+    const { exitCode, stderr } = await run(`async function f() { class await {} }\nf();`);
+    expect(stderr).toContain(`Cannot use "await" as an identifier here`);
+    expect(exitCode).not.toBe(0);
+  });
+
+  test("assignment to eval in an ESM file still rejected", async () => {
+    const { exitCode, stderr } = await run(`export {};\neval = 1;`, false);
+    expect(stderr).toContain(`Assigning to "eval"`);
+    expect(exitCode).not.toBe(0);
+  });
+
+  test('legacy octal escape under "use strict" still rejected', async () => {
+    const { exitCode, stderr } = await run(`"use strict";\nvar s = "x\\7";`);
+    expect(stderr).toContain("Legacy octal escape sequences cannot be used in strict mode");
+    expect(exitCode).not.toBe(0);
+  });
+
+  test("legacy octal escape in an ESM file still rejected", async () => {
+    const { exitCode, stderr } = await run(`var s = "x\\7";\nexport {};`, false);
+    expect(stderr).toContain("Legacy octal escape sequences cannot be used in strict mode");
+    expect(exitCode).not.toBe(0);
+  });
+
+  test("\\8 / \\9 under strict mode still rejected", async () => {
+    const { exitCode, stderr } = await run(`"use strict";\nvar s = "\\8";`);
+    expect(stderr).toContain("Legacy octal escape sequences cannot be used in strict mode");
+    expect(exitCode).not.toBe(0);
+  });
+
+  test("\\0 alone under strict mode is fine", async () => {
+    const { stdout, exitCode } = await run(`"use strict";\nconsole.log("\\0".charCodeAt(0));`);
+    expect(stdout.trim()).toBe("0");
+    expect(exitCode).toBe(0);
+  });
+
+  test("octal escape in a template literal is always rejected", async () => {
+    const { exitCode, stderr } = await run("var s = `x\\7`;");
+    expect(stderr).toContain("Octal escape sequences are not allowed in template literals");
+    expect(exitCode).not.toBe(0);
+  });
+
+  test("octal escape in a template literal with substitution is rejected", async () => {
+    const { exitCode, stderr } = await run("var s = `\\7${1}\\7`;");
+    expect(stderr).toContain("Octal escape sequences are not allowed in template literals");
+    expect(exitCode).not.toBe(0);
+  });
+
+  test("\\0 alone in a template literal is fine", async () => {
+    const { stdout, exitCode } = await run("console.log(`\\0`.charCodeAt(0));");
+    expect(stdout.trim()).toBe("0");
+    expect(exitCode).toBe(0);
+  });
+
+  test("HTML comment in an ESM file is rejected", async () => {
+    const { exitCode, stderr } = await run(`var h = 1 <!-- comment\nexport {};`, false);
+    expect(stderr).toContain("Legacy HTML single-line comments are not allowed in ECMAScript modules");
+    expect(exitCode).not.toBe(0);
+  });
+
+  test("--> HTML close comment in an ESM file is rejected", async () => {
+    const { exitCode, stderr } = await run(`var h = 1\n--> comment\nexport {};`, false);
+    expect(stderr).toContain("Legacy HTML single-line comments are not allowed in ECMAScript modules");
+    expect(exitCode).not.toBe(0);
+  });
+
+  test("HTML comment in a .mjs file without ESM syntax is rejected", async () => {
+    const { exitCode, stderr } = await run(`var h = 1 <!-- comment\nconsole.log(h);`, false, "mjs");
+    expect(stderr).toContain("Legacy HTML single-line comments are not allowed in ECMAScript modules");
+    expect(exitCode).not.toBe(0);
+  });
+
+  test("var await in a .mjs file without ESM syntax is rejected", async () => {
+    const { exitCode, stderr } = await run(`var await = 1;\nconsole.log("x");`, false, "mjs");
+    expect(stderr).toContain(`Cannot use "await" as an identifier in an ECMAScript module`);
+    expect(exitCode).not.toBe(0);
+  });
+
+  test("legacy octal escape in a .mjs file without ESM syntax is rejected", async () => {
+    const { exitCode, stderr } = await run(`var s = "x\\7";\nconsole.log(s);`, false, "mjs");
+    expect(stderr).toContain("Legacy octal escape sequences");
+    expect(exitCode).not.toBe(0);
+  });
+
+  test("legacy octal escape in an import specifier is rejected", async () => {
+    const { exitCode, stderr } = await run(`import "\\7";`, false);
+    expect(stderr).toContain("Legacy octal escape sequences");
+    expect(exitCode).not.toBe(0);
+  });
+
+  test("legacy octal escape in a directive prologue of an ESM file is rejected", async () => {
+    const { exitCode, stderr } = await run(`"\\1"; export {};`, false);
+    expect(stderr).toContain("Legacy octal escape sequences");
+    expect(exitCode).not.toBe(0);
+  });
+
+  test('legacy octal escape in a directive prologue before "use strict" is rejected', async () => {
+    const { exitCode, stderr } = await run(`function f() { "\\1"; "use strict"; }\nvoid f;`);
+    expect(stderr).toContain("Legacy octal escape sequences");
+    expect(exitCode).not.toBe(0);
+  });
+
+  test("var await in an ESM file is rejected by the parser", async () => {
+    const { exitCode, stderr } = await run(`var await = 1;\nexport {};`, false);
+    expect(stderr).toContain(`Cannot use "await" as an identifier in an ECMAScript module`);
+    expect(exitCode).not.toBe(0);
+  });
+
+  test("var await in a .cjs file bundled to ESM is rejected", async () => {
+    const [, stderr, exitCode] = await build({ "x.cjs": `var await = 1;\nmodule.exports = {};\n` }, "x.cjs");
+    expect(stderr).toContain(`Cannot use "await" as an identifier in an ECMAScript module`);
+    expect(exitCode).not.toBe(0);
+  });
+
+  test("duplicate parameters in a .cjs file bundled to ESM are rejected", async () => {
+    const [, stderr, exitCode] = await build(
+      { "x.cjs": `function f(a, a) { return a }\nmodule.exports = f;\n` },
+      "x.cjs",
+    );
+    expect(stderr).toContain("cannot be bound multiple times");
+    expect(exitCode).not.toBe(0);
+  });
+
+  test("var await in an ESM file is rejected when bundling", async () => {
+    const [, stderr, exitCode] = await build({ "x.js": `export var await = 1;\n` }, "x.js");
+    expect(stderr).toContain(`Cannot use "await" as an identifier in an ECMAScript module`);
+    expect(exitCode).not.toBe(0);
+  });
+});
+
+describe.concurrent("bun build accepts sloppy CommonJS", () => {
+  test("duplicate params survive bundling to CJS", async () => {
+    const [stdout, stderr, exitCode] = await build(
+      { "x.js": `function f(a, a) { return a }\nmodule.exports = f(1, 2);\n` },
+      "x.js",
+      "--format=cjs",
+    );
+    expect(stderr).not.toContain("cannot be bound multiple times");
+    expect(stdout).toContain("function f(a, a)");
+    expect(exitCode).toBe(0);
+  });
+
+  test("legacy octal escape in a sloppy CJS file bundles to ESM", async () => {
+    const [stdout, stderr, exitCode] = await build({ "x.cjs": `var s = "a\\7b";\nmodule.exports = s;\n` }, "x.cjs");
+    expect(stderr).not.toContain("Legacy octal escape sequences");
+    expect(stdout).toContain("\\x07");
+    expect(exitCode).toBe(0);
+  });
+
+  test("var await in a sloppy CJS file bundles to CJS", async () => {
+    const [stdout, stderr, exitCode] = await build(
+      { "x.cjs": `var await = 1;\nmodule.exports = { await };\n` },
+      "x.cjs",
+      "--format=cjs",
+    );
+    expect(stderr).not.toContain(`Cannot use "await"`);
+    expect(stdout).toContain("var await = 1");
+    expect(exitCode).toBe(0);
+  });
+});

@@ -117,7 +117,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             &VisitArgsOpts {
                 has_rest_arg: func.flags.contains(flags::Function::HasRestArg),
                 body: body_stmts,
-                is_unique_formal_parameters: true,
+                is_unique_formal_parameters: func
+                    .flags
+                    .contains(flags::Function::IsUniqueFormalParameters),
             },
         );
 
@@ -216,6 +218,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             || strict_loc.is_some()
             || !has_simple_args
             || self.is_strict_mode()
+            || self.is_strict_mode_output_format()
         {
             duplicate_args_check = Some(StringVoidMap::get());
         }

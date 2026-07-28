@@ -556,8 +556,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         && js_lexer::keyword(name).is_none();
 
                     if is_shorthand_property {
-                        if (p.fn_or_arrow_data_parse.allow_await != AwaitOrYield::AllowIdent
-                            && name == b"await")
+                        if (name == b"await" && p.is_await_identifier_rejected(name_range))
                             || (p.fn_or_arrow_data_parse.allow_yield != AwaitOrYield::AllowIdent
                                 && name == b"yield")
                         {

@@ -205,12 +205,14 @@ pub struct LexerSnapshot<'a> {
     pub string_literal_raw_content: &'a [u8],
     pub string_literal_start: usize,
     pub string_literal_raw_format: StringLiteralRawFormat,
+    pub string_literal_legacy_octal_loc: Loc,
     pub is_ascii_only: bool,
     pub track_comments: bool,
     pub track_react_suppressions: bool,
     // Vec buffer lengths — restore() truncates back to these.
     pub all_comments_len: usize,
     pub comments_to_preserve_before_len: usize,
+    pub legacy_html_comment_ranges_len: usize,
 }
 
 /// The lexer struct produced by `NewLexer_`.
@@ -289,6 +291,7 @@ pub struct LexerType<
     pub string_literal_raw_content: &'a [u8],
     pub string_literal_start: usize,
     pub string_literal_raw_format: StringLiteralRawFormat,
+    pub string_literal_legacy_octal_loc: Loc,
     pub temp_buffer_u16: Vec<u16>,
 
     /// Only used for JSON stringification when bundling.
@@ -296,6 +299,7 @@ pub struct LexerType<
     pub track_comments: bool,
     pub track_react_suppressions: bool,
     pub all_comments: Vec<Range>,
+    pub legacy_html_comment_ranges: Vec<Range>,
 }
 
 // Note: Rust macros must emit complete items; the macro now wraps the
@@ -457,11 +461,13 @@ lexer_impl_header! {
             string_literal_raw_content: self.string_literal_raw_content,
             string_literal_start: self.string_literal_start,
             string_literal_raw_format: self.string_literal_raw_format,
+            string_literal_legacy_octal_loc: self.string_literal_legacy_octal_loc,
             is_ascii_only: self.is_ascii_only,
             track_comments: self.track_comments,
             track_react_suppressions: self.track_react_suppressions,
             all_comments_len: self.all_comments.len(),
             comments_to_preserve_before_len: self.comments_to_preserve_before.len(),
+            legacy_html_comment_ranges_len: self.legacy_html_comment_ranges.len(),
         }
     }
 
@@ -497,6 +503,7 @@ lexer_impl_header! {
         self.string_literal_raw_content = original.string_literal_raw_content;
         self.string_literal_start = original.string_literal_start;
         self.string_literal_raw_format = original.string_literal_raw_format;
+        self.string_literal_legacy_octal_loc = original.string_literal_legacy_octal_loc;
         self.is_ascii_only = original.is_ascii_only;
         self.track_comments = original.track_comments;
         self.track_react_suppressions = original.track_react_suppressions;
@@ -511,6 +518,8 @@ lexer_impl_header! {
         self.all_comments.truncate(original.all_comments_len);
         self.comments_to_preserve_before
             .truncate(original.comments_to_preserve_before_len);
+        self.legacy_html_comment_ranges
+            .truncate(original.legacy_html_comment_ranges_len);
     }
 
     /// Look ahead at the next n codepoints without advancing the iterator.
@@ -536,6 +545,7 @@ lexer_impl_header! {
         if IS_JSON {
             self.is_ascii_only = false;
         }
+        self.string_literal_legacy_octal_loc = Loc::EMPTY;
 
         let iterator = CodepointIterator::init(text);
         let mut iter = strings::Cursor::default();
@@ -599,25 +609,27 @@ lexer_impl_header! {
 
                         // legacy octal literals
                         0x30..=0x37 => {
-                            let octal_start =
-                                (iter.i as usize + width2 as usize).saturating_sub(2);
                             if IS_JSON {
                                 self.end = (start + iter.i as usize)
                                     .saturating_sub(width2 as usize);
                                 self.syntax_error()?;
                             }
 
-                            // 1-3 digit octal
-                            let mut is_bad = false;
+                            let octal_loc = Loc {
+                                start: (start + iter.i as usize)
+                                    .saturating_sub(width2 as usize + 1)
+                                    as i32,
+                            };
+                            // 1-3 digit octal (Annex B LegacyOctalEscapeSequence).
                             let mut value: i64 = (c2 - 0x30) as i64;
+                            let mut restricted = c2 != 0x30;
                             let mut prev = iter;
 
                             if !iterator.next(&mut iter) {
-                                if value == 0 {
-                                    buf.push(0);
-                                    return Ok(());
+                                if restricted {
+                                    self.string_literal_legacy_octal_loc = octal_loc;
                                 }
-                                self.syntax_error()?;
+                                buf.push(value as u16);
                                 return Ok(());
                             }
 
@@ -625,10 +637,14 @@ lexer_impl_header! {
 
                             match c3 {
                                 0x30..=0x37 => {
+                                    restricted = true;
                                     value = value * 8 + (c3 - 0x30) as i64;
                                     prev = iter;
                                     if !iterator.next(&mut iter) {
-                                        return self.syntax_error();
+                                        self.string_literal_legacy_octal_loc =
+                                            octal_loc;
+                                        buf.push(value as u16);
+                                        return Ok(());
                                     }
 
                                     let c4 = iter.c;
@@ -642,44 +658,31 @@ lexer_impl_header! {
                                                 iter = prev;
                                             }
                                         }
-                                        0x38 | 0x39 => {
-                                            is_bad = true;
-                                        }
                                         _ => {
                                             iter = prev;
                                         }
                                     }
                                 }
                                 0x38 | 0x39 => {
-                                    is_bad = true;
+                                    restricted = true;
+                                    iter = prev;
                                 }
                                 _ => {
                                     iter = prev;
                                 }
                             }
 
-                            iter.c = i32::try_from(value).expect("int cast");
-                            if is_bad {
-                                // `octal_start` is text-relative like `iter.i`;
-                                // map back to absolute source position the same
-                                // way every sibling error path does (e.g.
-                                // `start + hex_start` in the `\u{}` branch).
-                                self.add_range_error(
-                                    Range {
-                                        loc: Loc {
-                                            start: i32::try_from(start + octal_start).expect("int cast"),
-                                        },
-                                        len: i32::try_from(
-                                            iter.i as usize - octal_start,
-                                        )
-                                        .unwrap(),
-                                    },
-                                    format_args!("Invalid legacy octal literal"),
-                                )
-                                .expect("unreachable");
+                            if restricted {
+                                self.string_literal_legacy_octal_loc = octal_loc;
                             }
+                            iter.c = i32::try_from(value).expect("int cast");
                         }
                         0x38 | 0x39 => {
+                            self.string_literal_legacy_octal_loc = Loc {
+                                start: (start + iter.i as usize)
+                                    .saturating_sub(width2 as usize + 1)
+                                    as i32,
+                            };
                             iter.c = c2;
                         }
                         // 2-digit hexadecimal
@@ -1911,10 +1914,8 @@ lexer_impl_header! {
                         // Handle legacy HTML-style comments
                         0x21 => {
                             if self.peek("--".len()) == b"--" {
-                                self.add_unsupported_syntax_error(
-                                    b"Legacy HTML comments not implemented yet!",
-                                )?;
-                                return Ok(());
+                                self.scan_legacy_html_open_comment();
+                                continue;
                             }
 
                             self.token = T::TLessThan;
@@ -2340,6 +2341,30 @@ lexer_impl_header! {
         }
     }
 
+    /// Annex B `<!--` single-line comment. Entered with `self.code_point` on `!`.
+    #[cold]
+    #[inline(never)]
+    fn scan_legacy_html_open_comment(&mut self) {
+        // Consume `!`, `-`, `-`.
+        self.step();
+        self.step();
+        self.step();
+        self.legacy_html_comment_ranges.push(self.range());
+        self.log().add_range_warning(
+            Some(self.source),
+            self.range(),
+            b"Treating \"<!--\" as the start of a legacy HTML single-line comment",
+        );
+
+        loop {
+            match self.code_point {
+                0x0D | 0x0A | 0x2028 | 0x2029 | -1 => break,
+                _ => {}
+            }
+            self.step();
+        }
+    }
+
     /// Handles the legacy `-->` HTML single-line close comment: emits the
     /// warning and consumes the rest of the line. Entered with `self.code_point`
     /// on the `>` of `-->`.
@@ -2351,6 +2376,7 @@ lexer_impl_header! {
     fn scan_legacy_html_close_comment(&mut self) {
         // Consume the `>` of `-->`.
         self.step();
+        self.legacy_html_comment_ranges.push(self.range());
         self.log().add_range_warning(
             Some(self.source),
             self.range(),
@@ -2591,11 +2617,13 @@ lexer_impl_header! {
             string_literal_raw_content: b"",
             string_literal_start: 0,
             string_literal_raw_format: StringLiteralRawFormat::Ascii,
+            string_literal_legacy_octal_loc: Loc::EMPTY,
             temp_buffer_u16: Vec::new(),
             is_ascii_only: IS_JSON,
             track_comments: false,
             track_react_suppressions: false,
             all_comments: Vec::new(),
+            legacy_html_comment_ranges: Vec::new(),
         }
     }
 
@@ -2646,7 +2674,7 @@ lexer_impl_header! {
                 }
                 let first_non_ascii = strings::first_non_ascii16(&tmp);
                 // prefer to store an ascii e.string rather than a utf-16 one. ascii takes less memory, and `+` folding is not yet supported on utf-16.
-                let out = if first_non_ascii.is_some() {
+                let mut out = if first_non_ascii.is_some() {
                     let dup = self.arena.alloc_slice_copy(&tmp);
                     js_ast::E::String::init_utf16(dup)
                 } else {
@@ -2655,6 +2683,7 @@ lexer_impl_header! {
                     strings::copy_utf16_into_utf8(result, &tmp);
                     js_ast::E::String::init(result)
                 };
+                out.legacy_octal_loc = self.string_literal_legacy_octal_loc;
                 tmp.clear();
                 self.temp_buffer_u16 = tmp;
                 Ok(out)

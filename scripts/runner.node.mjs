@@ -1033,13 +1033,32 @@ async function runTests() {
 
       // The junit is the record of the batch: per-file failures and wall
       // clock. Publish it as this shard's artifact for the durations job.
-      const suites = new Map(); // repo-relative path -> { failures, seconds }
+      const suites = new Map(); // repo-relative path -> { failures, seconds, cases: [{name, message}] }
+      const unescapeXml = str =>
+        str
+          .replace(/&#10;/g, "\n")
+          .replace(/&quot;/g, '"')
+          .replace(/&lt;/g, "<")
+          .replace(/&gt;/g, ">")
+          .replace(/&amp;/g, "&");
       try {
-        for (const [, attrs] of readFileSync(junitPath, "utf-8").matchAll(/<testsuite\b([^>]*)>/g)) {
-          const file = /\bfile="([^"]+)"/.exec(attrs)?.[1]?.replace(/&amp;/g, "&");
+        const xml = readFileSync(junitPath, "utf-8");
+        for (const [, attrs] of xml.matchAll(/<testsuite\b([^>]*)>/g)) {
+          const file = /\bfile="([^"]+)"/.exec(attrs)?.[1];
           const failures = Number(/\bfailures="(\d+)"/.exec(attrs)?.[1] ?? 0);
           const seconds = Number(/\btime="([\d.]+)"/.exec(attrs)?.[1] ?? 0);
-          if (file) suites.set(file.replaceAll("\\", "/"), { failures, seconds });
+          if (file) suites.set(unescapeXml(file).replaceAll("\\", "/"), { failures, seconds, cases: [] });
+        }
+        // Failing testcases carry their file and the assertion message; hang
+        // them on their file's entry (this is the batch's failure record).
+        for (const [, caseAttrs, failureAttrs] of xml.matchAll(/<testcase\b([^>]*)>\s*<failure\b([^>]*)>/g)) {
+          const file = /\bfile="([^"]+)"/.exec(caseAttrs)?.[1];
+          const entry = file && suites.get(unescapeXml(file).replaceAll("\\", "/"));
+          if (!entry) continue;
+          entry.cases.push({
+            name: unescapeXml(/\bname="([^"]*)"/.exec(caseAttrs)?.[1] ?? "(unnamed)"),
+            message: unescapeXml(/\bmessage="([^"]*)"/.exec(failureAttrs)?.[1] ?? ""),
+          });
         }
       } catch {}
       if (suites.size && isBuildkite) uploadArtifactsToBuildKite(junitPath);
@@ -1083,14 +1102,17 @@ async function runTests() {
       const rerun = !ok && !evidence ? [...bucketFiles] : [...failed, ...incomplete];
       const rerunSet = new Set(rerun);
 
-      // Files the batch passed: account them and emit one synthetic group
-      // each, in file order, with the junit's wall clock in the title.
+      // Files the batch passed: account them and print one label line each
+      // (bare, like the parallel-safe phase — no empty group), in file
+      // order, carrying the junit's wall clock; the durations job reads the
+      // time from the title. A file that failed gets a real group, with its
+      // output, from its solo re-run below.
       for (const t of bucketFiles) {
         if (rerunSet.has(t)) continue;
         const title = join("test", t).replaceAll("\\", "/");
         const seconds = suites.get(title)?.seconds;
         const timing = seconds === undefined ? "" : ` ${getAnsi("gray")}(${seconds.toFixed(2)}s)${getAnsi("reset")}`;
-        startGroup(`${getAnsi("gray")}[${++i}/${total}]${getAnsi("reset")} ${title}${timing}`, () => {});
+        console.log(`${getAnsi("gray")}[${++i}/${total}]${getAnsi("reset")} ${title}${timing}`);
         okResults.push({
           testPath: title,
           ok: true,
@@ -1101,57 +1123,49 @@ async function runTests() {
           stdoutPreview: "",
         });
       }
+      // A file that failed in the batch gets a real group whose body is its
+      // junit failures — the batch's own record — before its solo re-run
+      // (which owns the numbered [i/N] entry) settles pass-vs-flaky.
+      for (const t of bucketFiles) {
+        if (!failed.has(t)) continue;
+        const title = join("test", t).replaceAll("\\", "/");
+        const suite = suites.get(title);
+        if (!suite?.cases.length) continue;
+        startGroup(
+          `${title} - ${suite.failures} failing in the parallel batch ${getAnsi("gray")}(${suite.seconds.toFixed(2)}s)${getAnsi("reset")}`,
+          () => {
+            for (const { name, message } of suite.cases) {
+              console.log(`${getAnsi("red")}✗${getAnsi("reset")} ${name}`);
+              if (message) console.log(message.replace(/^/gm, "    "));
+            }
+          },
+        );
+      }
       if (rerun.length) {
         console.log(
           `${getAnsi("yellow")}parallel bucket: ${evidence ? `retrying ${failed.size} failed and ${incomplete.size} unfinished file(s)${suites.size ? "" : " (from streamed output; no junit)"}` : `no junit and no streamed evidence, re-running all ${rerun.length} file(s)`} one at a time${getAnsi("reset")}`,
         );
-        // A failing file's output sits under the `path:` header the reporter
-        // printed for it in the stream; slice those blocks out so a flaky
-        // annotation carries the failure itself.
-        const blocks = new Map();
-        {
-          let file = null;
-          let lines = [];
-          for (const line of stdout.split(/\r?\n/)) {
-            const header = /^(test[\\/]\S+\.[a-z]{2,3}):$/.exec(stripAnsi(line).trim());
-            if (header) {
-              if (file) blocks.set(file, lines.join("\n"));
-              file = norm(header[1]) ?? null;
-              lines = [];
-            } else if (file) {
-              lines.push(line);
-            }
-          }
-          if (file) blocks.set(file, lines.join("\n"));
-        }
         for (const testPath of rerun) {
           const result = await runOneTest(testPath, false);
           // Only a file the bucket ran and failed that then passes alone is a
           // parallel-mode flake; unfinished files just run.
           if (result?.ok && failed.has(testPath) && isBuildkite) {
             const title = join("test", testPath).replaceAll("\\", "/");
-            const output = blocks.get(testPath)?.trim();
+            const cases = suites.get(title)?.cases ?? [];
             // Lead with the failure itself, like a serial failure's title.
-            const firstError = output
-              ? (stripAnsi(output)
-                  .split(/\r?\n/)
-                  .map(line => line.trim())
-                  .find(
-                    line =>
-                      /^(?:error|\d+ \| .*error|✗|TypeError|RangeError|Error|AssertionError|SyntaxError):?\b/i.test(
-                        line,
-                      ) || /\btimed out\b|\(worker crashed/.test(line),
-                  ) ?? "")
-              : "";
+            const first = cases[0];
+            const firstError = first ? `${first.name} — ${first.message.split("\n")[0]}` : "";
             const reason = firstError
               ? escapeHtml(firstError.length > 100 ? `${firstError.slice(0, 97)}…` : firstError)
-              : "failed in the parallel bucket";
-            const detail = output ? `\n\n\`\`\`terminal\n${escapeCodeBlock(output)}\n\`\`\`\n\n` : "";
+              : "failed in the parallel batch";
+            const detail = cases.length
+              ? `\n\n\`\`\`terminal\n${cases.map(({ name, message }) => `✗ ${name}\n${message}`).join("\n\n")}\n\`\`\`\n\n`
+              : "";
             reportAnnotationToBuildKite({
               context: "flaky",
               label: title,
               style: "warning",
-              content: `<details><summary><a href="${getFileUrl(title)}"><code>${title}</code></a> - ${reason} <i>(in the parallel bucket on ${getBuildLabel()}; passed alone)</i></summary>${detail}</details>`,
+              content: `<details><summary><a href="${getFileUrl(title)}"><code>${title}</code></a> - ${reason} <i>(in the parallel batch on ${getBuildLabel()}; passed alone)</i></summary>${detail}</details>`,
             });
           }
         }
@@ -1710,7 +1724,17 @@ async function spawnSafe(options) {
     // nearest `error:` line above it.
     const lines = stripAnsi(buffer).split(/\r?\n/);
     const failAt = lines.findIndex(line => /^\(fail\) /.test(line.trim()));
-    if (failAt !== -1) {
+    if (failAt === -1) {
+      // Not a bun:test (fail) — e.g. a node-style script that threw. The
+      // error message is the line an `at …` stack frame follows.
+      const at = lines.findIndex(
+        (line, k) => k > 0 && /^\s+at /.test(line) && lines[k - 1].trim() && !/^\s+at /.test(lines[k - 1]),
+      );
+      if (at !== -1) {
+        const message = lines[at - 1].trim();
+        error += `: ${message.length > 100 ? `${message.slice(0, 97)}…` : message}`;
+      }
+    } else {
       const name = lines[failAt]
         .trim()
         .replace(/^\(fail\) /, "")

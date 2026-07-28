@@ -19,7 +19,7 @@
  *   - `revision`     — git sha (cfg.revision)
  *   - `generated_at` — wall clock, same as the runtime path
  *
- * test/internal/macos-cross-config.test.ts pins the parser against the real
+ * test/internal/features-json.test.ts pins the parser against the real
  * `crash_handler.getFeatureData()` output of a debug build from the same
  * source tree, so a refactor of the macro that breaks the parser fails CI
  * rather than silently shipping a wrong feature table.

@@ -56,7 +56,6 @@ pub use bun_sourcemap_jsc::internal_jsc::testing_find as sourcemap_internal_sour
 pub use bun_sourcemap_jsc::internal_jsc::testing_from_vlq as sourcemap_internal_source_map_testing_ap_is_from_vlq;
 pub use bun_sourcemap_jsc::internal_jsc::testing_to_vlq as sourcemap_internal_source_map_testing_ap_is_to_vlq;
 
-pub use bun_sys_jsc::error_jsc::TestingAPIs::sigaction_layout as sys_sys_testing_ap_is_sigaction_layout;
 pub use bun_sys_jsc::error_jsc::TestingAPIs::sys_error_name_from_libuv as sys_error_testing_ap_is_sys_error_name_from_libuv;
 pub use bun_sys_jsc::error_jsc::TestingAPIs::translate_nt_status_to_e as sys_sys_testing_ap_is_translate_nt_status_to_e;
 pub use bun_sys_jsc::error_jsc::TestingAPIs::translate_uv_error_to_e as sys_sys_testing_ap_is_translate_uv_error_to_e;
@@ -91,10 +90,5 @@ pub use css::minify_test_with_options as css_jsc_css_internals_minify_test_with_
 pub use css::prefix_test as css_jsc_css_internals_prefix_test;
 pub use css::prefix_test_with_options as css_jsc_css_internals_prefix_test_with_options;
 pub use css::test_with_options as css_jsc_css_internals_test_with_options;
-
-// `LinearFifo` has no JSC consumer of its own; this `bun:internal-for-testing`
-// probe lives in `bun_runtime` (which depends on both `bun_collections` and
-// `bun_jsc`) rather than inventing a JSC edge into the collections crate.
-pub use crate::linear_fifo_testing::ordered_remove_probe as collections_linear_fifo_testing_ap_is_ordered_remove_probe;
 
 // ported from: generated_js2native.rs

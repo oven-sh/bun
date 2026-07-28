@@ -4,34 +4,32 @@ permissions:
   contents: read
 
 # Source-tree lints and build-script unit tests from test/internal/source-lints/.
-# These never touch the built bun binary (no bun:internal-for-testing, no
-# bunExe() spawns), so they can run against a released bun immediately on push
-# instead of waiting for build-bun in every Buildkite test lane.
+# These never exercise behavior compiled into the bun binary, so they can run
+# against a released bun immediately on push instead of waiting for build-bun
+# in every Buildkite test lane.
 on:
   workflow_dispatch:
   push:
     branches: [main]
     paths:
-      - "src/**/*.rs"
-      - "src/jsc/bindings/**"
-      - "scripts/build/**"
-      - "scripts/glob-sources.ts"
+      - "src/**"
+      - "scripts/**"
       - "test/harness.ts"
       - "test/tsconfig.json"
       - "test/_util/**"
       - "test/internal/source-lints/**"
+      - "test/expected-durations.json"
       - ".github/workflows/source-lints.yml"
       - ".github/actions/setup-bun/**"
   pull_request:
     paths:
-      - "src/**/*.rs"
-      - "src/jsc/bindings/**"
-      - "scripts/build/**"
-      - "scripts/glob-sources.ts"
+      - "src/**"
+      - "scripts/**"
       - "test/harness.ts"
       - "test/tsconfig.json"
       - "test/_util/**"
       - "test/internal/source-lints/**"
+      - "test/expected-durations.json"
       - ".github/workflows/source-lints.yml"
       - ".github/actions/setup-bun/**"
   merge_group:
@@ -56,8 +54,8 @@ jobs:
         uses: ./.github/actions/setup-bun
         with:
           bun-version: ${{ env.BUN_VERSION }}
-      # No `bun install`: every test here imports only built-ins, relative
-      # paths, or `harness` (resolved via test/tsconfig.json `paths`), so a
-      # bare checkout is sufficient.
+      - name: Setup Dependencies
+        # oxlint-plugin-bun.test.ts needs node_modules/oxlint from devDependencies.
+        run: bun install --frozen-lockfile
       - name: Run source lints
         run: bun test test/internal/source-lints/

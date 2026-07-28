@@ -15,9 +15,9 @@ import { describe, expect, test } from "bun:test";
 import { isMacOS, tempDir } from "harness";
 import { join, resolve } from "node:path";
 
-import { emitPostLink } from "../../scripts/build/bun.ts";
-import { resolveConfig, type Config, type PartialConfig, type Toolchain } from "../../scripts/build/config.ts";
-import { Ninja } from "../../scripts/build/ninja.ts";
+import { emitPostLink } from "../../../scripts/build/bun.ts";
+import { resolveConfig, type Config, type PartialConfig, type Toolchain } from "../../../scripts/build/config.ts";
+import { Ninja } from "../../../scripts/build/ninja.ts";
 
 /** A fully-populated fake toolchain; resolveConfig never spawns any of these. */
 function mockToolchain(overrides: Partial<Toolchain> = {}): Toolchain {

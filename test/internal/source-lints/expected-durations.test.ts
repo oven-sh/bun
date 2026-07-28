@@ -4,7 +4,7 @@ import { join } from "node:path";
 
 // Guards the checked-in table that drives LPT shard bin-packing in
 // scripts/runner.node.mjs. Regenerate via scripts/update-test-durations.mjs.
-const table = JSON.parse(readFileSync(join(import.meta.dir, "..", "expected-durations.json"), "utf8"));
+const table = JSON.parse(readFileSync(join(import.meta.dir, "..", "..", "expected-durations.json"), "utf8"));
 const entries = Object.entries(table).filter(([k]) => k !== "_meta") as [string, Record<string, number>][];
 
 describe("test/expected-durations.json", () => {

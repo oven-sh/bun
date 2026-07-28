@@ -7441,8 +7441,8 @@ impl NodeFS {
         let mut written: usize = 0;
         let has_signal = args.signal.is_some();
 
-        // Attempt to pre-allocate large files (worthwhile after 6 MB on ext4).
-        // Skipped under a signal: an abort would leave a fallocate-zeroed tail.
+        // Attempt to pre-allocate large files
+        // Worthwhile after 6 MB at least on ext4 linux
         if PREALLOCATE_SUPPORTED && !has_signal && buf.len() >= PREALLOCATE_LENGTH {
             'preallocate: {
                 let is_path = matches!(args.file, PathOrFileDescriptor::Path(_));

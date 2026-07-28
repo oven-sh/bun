@@ -12,8 +12,8 @@ Bun stores every package downloaded from the registry in a global cache at `~/.b
 # the directory to use for the cache
 dir = "~/.bun/install/cache"
 
-# when true, don't load from the global cache.
-# Bun may still write to node_modules/.cache
+# when true, disable both the global cache and the npm manifest cache
+# (same as `install.cache = false`)
 disable = false
 
 # when true, always resolve the latest versions from the registry

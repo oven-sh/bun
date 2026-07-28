@@ -410,8 +410,6 @@ impl JunitReporter {
         }
     }
 
-    /// Fallback when `record_failure` is never called (e.g. `BuildMessage` /
-    /// `ResolveMessage`, which bypass the `ZigException` formatter).
     pub fn record_failure_text(&mut self, name: &[u8], message: &[u8]) {
         let failure = self.last_failure.get_or_insert_default();
         if failure.name.is_empty() {
@@ -851,11 +849,8 @@ impl JunitReporter {
         Ok(())
     }
 
-    /// Emit a synthetic `<testcase>` carrying an `<error>` for an exception that
-    /// was not attributable to any test entry (file failed to load, top-level
-    /// throw, throwing `describe` body, rejection between tests). Consumes
-    /// `last_failure` for the error details. `file` may be absolute; it is
-    /// relativized here the same way `maybe_print_junit_line` does.
+    /// Emit a synthetic `<testcase><error>` for an exception not attributable
+    /// to any test entry. Consumes `last_failure` for the error details.
     pub fn write_unhandled_error(&mut self, file: &[u8]) -> crate::Result<()> {
         let top = FileSystem::instance().top_level_dir;
         let filename: &[u8] = if strings::has_prefix(file, top) {

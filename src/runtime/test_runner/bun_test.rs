@@ -1329,9 +1329,6 @@ impl BunTest {
             HandleUncaughtExceptionResult::ShowUnhandledErrorBetweenTests
                 | HandleUncaughtExceptionResult::ShowUnhandledErrorInDescribe
         );
-        // For unhandled errors we consume `last_failure` ourselves below; stash
-        // any pending handled-error state so it still reaches its test's
-        // `write_test_case`.
         let saved_failure = if is_unhandled && !junit_ctx.is_null() {
             // SAFETY: `junit_ctx` is `&mut JunitReporter`; see the derivation above.
             unsafe {
@@ -1385,10 +1382,8 @@ impl BunTest {
                 let junit = unsafe {
                     &mut *junit_ctx.cast::<crate::cli::test_command::JunitReporter>()
                 };
-                // `run_error_handler` short-circuits before populating a
-                // `ZigException` for `BuildMessage`/`ResolveMessage` (and for an
-                // `AggregateError` wrapping them), so pull their text directly
-                // when the callback never fired.
+                // BuildMessage/ResolveMessage/AggregateError never reach the
+                // ZigException callback; pull their text directly.
                 if junit.last_failure.is_none() {
                     if let Some(m) = exception.as_class_ref::<crate::api::BuildMessage>() {
                         junit.record_failure_text(b"BuildMessage", m.msg.data.text.as_ref());

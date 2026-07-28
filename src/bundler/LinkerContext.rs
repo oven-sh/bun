@@ -398,8 +398,7 @@ impl<'a> LinkerContext<'a> {
         // or promoted via dynamic_import_entry_points) becomes a runtime `import()`
         // of that entry's chunk. This includes a file dynamically importing itself:
         // excluding that case leaves the record pointing at an unwrapped file, and
-        // the printer then emits a call to a wrapper that was never generated
-        // (issue #6621).
+        // the printer then emits a call to a wrapper that was never generated.
         self.graph.code_splitting
             && record.kind == ImportKind::Dynamic
             && self.graph.files.items_entry_point_kind()[record.source_index.get() as usize]

@@ -290,7 +290,6 @@ describe("bundler", () => {
     },
   });
 
-  // https://github.com/oven-sh/bun/issues/6621
   // A file that dynamically imports itself must resolve to its own chunk, not
   // to an unwrapped `require_<name>()` call that was never emitted.
   itBundled("splitting/EntryDynamicImportsItself", {

@@ -430,8 +430,15 @@ impl FileRoute {
         };
 
         let etag = this.headers.get(b"etag").filter(|v| !v.is_empty());
-        let Ok(last_modified_ms) = this.last_modified_date() else {
-            return;
+        let last_modified_ms = if req.header(b"if-modified-since").is_some()
+            || req.header(b"if-unmodified-since").is_some()
+        {
+            let Ok(lmd) = this.last_modified_date() else {
+                return;
+            };
+            lmd
+        } else {
+            None
         };
         let status_code = status_for_preconditions(
             &req,

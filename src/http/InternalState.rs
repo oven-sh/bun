@@ -234,6 +234,14 @@ impl<'a> InternalState<'a> {
         self.flags.received_last_chunk
     }
 
+    /// Compressed bytes received from the wire but not yet fed through the
+    /// decoder. Non-empty when `process_body_buffer` stopped at
+    /// `max_output`; the next drain/`on_data` picks up where it left off.
+    #[inline]
+    pub fn has_pending_compressed(&self) -> bool {
+        self.encoding.is_compressed() && !self.compressed_body.list.is_empty()
+    }
+
     /// True when a socket close during `in_progress` completes the body rather
     /// than failing it: chunked decoder already in the trailers state, or a
     /// close-delimited response (no Content-Length, no Transfer-Encoding).
@@ -254,7 +262,8 @@ impl<'a> InternalState<'a> {
     pub fn finalize_body_on_eof(&mut self) -> Result<(), Error> {
         self.flags.received_last_chunk = true;
         let buffer_snap = core::mem::take(&mut self.get_body_buffer().list);
-        self.process_body_buffer(buffer_snap, true).map(drop)
+        self.process_body_buffer(buffer_snap, true, usize::MAX)
+            .map(drop)
     }
 
     pub fn decompress_bytes(
@@ -262,20 +271,22 @@ impl<'a> InternalState<'a> {
         buffer: &[u8],
         body_out_str: &mut MutableString,
         is_final_chunk: bool,
-    ) -> Result<(), Error> {
+        max_output: usize,
+    ) -> Result<usize, Error> {
         // A response that declared a Content-Encoding but sent zero body bytes
         // (e.g. an empty chunked gzip response) has nothing to decompress.
         // Running the decompressor anyway makes it report a truncated stream
         // (ZlibError); Node treats this as an empty body.
         if buffer.is_empty() && self.total_body_received == 0 {
             self.compressed_body.reset();
-            return Ok(());
+            return Ok(0);
         }
 
         // `self.compressed_body.reset()` must run on every exit. scopeguard would
         // hold &mut self.compressed_body across the body and conflict with &mut self.decompressor,
         // so each early-return below calls it explicitly.
         let mut still_needs_to_decompress = true;
+        let mut consumed = buffer.len();
 
         if bun_core::feature_flags::is_libdeflate_enabled() {
             // Fast-path: use libdeflate
@@ -379,24 +390,30 @@ impl<'a> InternalState<'a> {
             }
 
             let is_done = self.is_done();
-            if let Err(err) =
-                self.decompressor
-                    .decompress_chunk(self.encoding, buffer, body_out_str, is_done)
-            {
-                if is_done || err != crate::Error::ShortRead {
-                    bun_core::pretty_errorln!(
-                        "<r><red>Decompression error: {}<r>",
-                        bstr::BStr::new(err.name()),
-                    );
-                    Output::flush();
-                    self.compressed_body.reset();
-                    return Err(err);
+            match self.decompressor.decompress_chunk(
+                self.encoding,
+                buffer,
+                body_out_str,
+                max_output,
+                is_done,
+            ) {
+                Ok(n) => consumed = n,
+                Err(err) => {
+                    if is_done || err != crate::Error::ShortRead {
+                        bun_core::pretty_errorln!(
+                            "<r><red>Decompression error: {}<r>",
+                            bstr::BStr::new(err.name()),
+                        );
+                        Output::flush();
+                        self.compressed_body.reset();
+                        return Err(err);
+                    }
                 }
             }
         }
 
         self.compressed_body.reset();
-        Ok(())
+        Ok(consumed)
     }
 
     // `buffer` is always the current body buffer's bytes. To avoid aliased &mut/& under
@@ -407,6 +424,7 @@ impl<'a> InternalState<'a> {
         &mut self,
         mut buffer: Vec<u8>,
         is_final_chunk: bool,
+        max_output: usize,
     ) -> Result<bool, Error> {
         if self.flags.is_redirect_pending {
             // Caller moved the bytes out of the body buffer; put them back so the
@@ -431,10 +449,16 @@ impl<'a> InternalState<'a> {
 
         match self.encoding {
             Encoding::Brotli | Encoding::Gzip | Encoding::Deflate | Encoding::Zstd => {
-                self.decompress_bytes(&buffer, body_out_str, is_final_chunk)?;
-                // Retain capacity by
-                // returning the (cleared) allocation to compressed_body instead of dropping it.
-                buffer.clear();
+                let consumed =
+                    self.decompress_bytes(&buffer, body_out_str, is_final_chunk, max_output)?;
+                if consumed < buffer.len() {
+                    // Output budget reached: keep unconsumed compressed input
+                    // for the next drain/on_data cycle.
+                    buffer.drain(..consumed);
+                } else {
+                    // Retain capacity by returning the (cleared) allocation.
+                    buffer.clear();
+                }
                 self.compressed_body.list = buffer;
             }
             _ => {

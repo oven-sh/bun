@@ -1,13 +1,14 @@
 // Receive-side backpressure: a stalled `res.body.getReader()` must stop the
 // HTTP thread from buffering the entire response in memory.
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows, tls } from "harness";
+import { bunEnv, bunExe, isASAN, isWindows, tls } from "harness";
 import { randomBytes } from "node:crypto";
 import { once } from "node:events";
 import { createServer } from "node:http";
 import { createSecureServer } from "node:http2";
 import { createServer as createHttpsServer } from "node:https";
-import { gzipSync } from "node:zlib";
+import net from "node:net";
+import { brotliCompressSync, gzipSync, zstdCompressSync } from "node:zlib";
 
 const CHUNK = 64 * 1024;
 const COUNT = 256; // 16 MiB
@@ -257,6 +258,100 @@ for (const kind of ["h1", "h1-chunked", "h1-gzip", "h1-tls", "h2", "h3"] as Kind
 // h2 advertises a 16 MiB initial per-stream window (LOCAL_INITIAL_WINDOW_SIZE),
 // so withholding WINDOW_UPDATE only takes effect past that. Asserting a tight
 // RSS bound for h2 needs that window lowered, which is a separate change.
+
+describe("fetch() receive backpressure — compressed body inflates on demand", () => {
+  // One socket read (<= 512 KB) of a high-ratio compressed body must not be
+  // inflated in full ahead of the reader. Without the output cap, a single read
+  // here decompresses to ~128 MB while the consumer holds one chunk.
+  const DECOMPRESSED = 128 * 1024 * 1024;
+  // Unfixed grows RSS by ~DECOMPRESSED; fixed stays within a few MB. ASAN
+  // quarantine inflates allocations, so keep the bound generous but well
+  // below the unfixed behavior.
+  const PEAK_LIMIT = (isASAN ? 64 : 48) * 1024 * 1024;
+
+  let zeros: Buffer;
+  const bombs: { [k: string]: Buffer } = {};
+  function bombFor(encoding: "gzip" | "br" | "zstd") {
+    zeros ??= Buffer.alloc(DECOMPRESSED);
+    return (bombs[encoding] ??=
+      encoding === "gzip"
+        ? gzipSync(zeros, { level: 1 })
+        : encoding === "br"
+          ? brotliCompressSync(zeros, { params: { [require("node:zlib").constants.BROTLI_PARAM_QUALITY]: 0 } })
+          : zstdCompressSync(zeros, { level: 1 }));
+  }
+
+  async function serveBomb(encoding: "gzip" | "br" | "zstd", chunked: boolean) {
+    const bomb = bombFor(encoding);
+    const head = chunked
+      ? `HTTP/1.1 200 OK\r\nContent-Encoding: ${encoding}\r\nTransfer-Encoding: chunked\r\n\r\n` +
+        `${bomb.length.toString(16)}\r\n`
+      : `HTTP/1.1 200 OK\r\nContent-Encoding: ${encoding}\r\nContent-Length: ${bomb.length}\r\nConnection: keep-alive\r\n\r\n`;
+    const tail = chunked ? "\r\n0\r\n\r\n" : "";
+    const srv = net.createServer(s => {
+      s.on("error", () => {});
+      s.once("data", () => {
+        s.write(head);
+        s.write(bomb);
+        s.write(tail);
+      });
+    });
+    srv.listen(0, "127.0.0.1");
+    await once(srv, "listening");
+    const { port } = srv.address() as net.AddressInfo;
+    return {
+      url: `http://127.0.0.1:${port}/`,
+      wire: bomb.length,
+      [Symbol.asyncDispose]: () => new Promise<void>(r => srv.close(() => r())),
+    };
+  }
+
+  const STALL_AND_DRAIN = /* js */ `
+    const base = process.memoryUsage.rss();
+    const res = await fetch(url, opts);
+    const reader = res.body.getReader();
+    const first = await reader.read();
+    let peak = process.memoryUsage.rss() - base;
+    let last = 0, stable = 0;
+    while (stable < 3) {
+      await Bun.sleep(20);
+      const now = process.memoryUsage.rss() - base;
+      peak = Math.max(peak, now);
+      stable = Math.abs(now - last) < (1 << 20) ? stable + 1 : 0;
+      last = now;
+    }
+    let total = first.value.byteLength;
+    for (let r; !(r = await reader.read()).done; ) total += r.value.byteLength;
+    process.stdout.write(JSON.stringify({ peak, total, firstLen: first.value.byteLength }));
+  `;
+
+  for (const [encoding, chunked] of [
+    ["gzip", false],
+    ["gzip", true],
+    ["br", false],
+    ["zstd", false],
+  ] as const) {
+    test(
+      `${encoding}${chunked ? " chunked" : ""}: one read() does not inflate the whole body`,
+      async () => {
+        await using server = await serveBomb(encoding, chunked);
+        const { peak, total, firstLen, exitCode } = await spawnClient(server.url, "h1", STALL_AND_DRAIN);
+        expect({
+          total,
+          firstLenAtMost2MB: firstLen <= 2 * 1024 * 1024,
+          peakUnder: peak < PEAK_LIMIT || { peak, limit: PEAK_LIMIT, wire: server.wire },
+        }).toEqual({
+          total: DECOMPRESSED,
+          firstLenAtMost2MB: true,
+          peakUnder: true,
+        });
+        expect(exitCode).toBe(0);
+      },
+      60_000,
+    );
+  }
+});
+
 
 describe.concurrent("fetch() receive backpressure — buffered consumers are not throttled", () => {
   const cases = [

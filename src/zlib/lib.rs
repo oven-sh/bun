@@ -1152,9 +1152,13 @@ impl InflateDecoder {
         step(&mut self.strm, input, out, reserve, flush, inflate)
     }
 
-    /// Consume all of `input`, appending decompressed output to `out`
-    /// (growing by 4096-byte steps, capped at `max_output_size`). Returns
-    /// `ShortRead` when more input is required and `is_done` is false.
+    /// Consume `input`, appending decompressed output to `out` (growing by
+    /// 4096-byte steps). Stops early once `out.len()` reaches `max_output`
+    /// and returns the number of input bytes consumed so the caller can
+    /// retain the remainder for the next call. The separate
+    /// [`max_output_size`](Self::max_output_size) field is the hard bomb
+    /// guard (exceeding it is an error). Returns `ShortRead` when all input
+    /// was consumed but more is required and `is_done` is false.
     ///
     /// The stream state persists across calls so this can be driven one
     /// body chunk at a time.
@@ -1162,10 +1166,12 @@ impl InflateDecoder {
         &mut self,
         mut input: &[u8],
         out: &mut Vec<u8>,
+        max_output: usize,
         is_done: bool,
-    ) -> Result<(), ZlibError> {
+    ) -> Result<usize, ZlibError> {
+        let input_len = input.len();
         if matches!(self.state, State::Error) {
-            return Ok(());
+            return Ok(input_len);
         }
         if matches!(self.state, State::End) {
             // A prior call completed a gzip member at the chunk boundary.
@@ -1178,10 +1184,13 @@ impl InflateDecoder {
                     return Err(ZlibError::ZlibError);
                 }
             } else {
-                return Ok(());
+                return Ok(input_len);
             }
         }
         loop {
+            if out.len() >= max_output {
+                return Ok(input_len - input.len());
+            }
             let remaining = self.max_output_size.saturating_sub(out.len());
             if remaining == 0 {
                 self.state = State::Error;
@@ -1209,7 +1218,9 @@ impl InflateDecoder {
                         }
                         continue;
                     }
-                    return Ok(());
+                    // Trailing non-member bytes are tolerated garbage; report
+                    // them consumed so the caller does not re-feed them.
+                    return Ok(input_len);
                 }
                 ReturnCode::MemError => {
                     self.state = State::Error;

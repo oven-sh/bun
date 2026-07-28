@@ -50,26 +50,32 @@ impl Decompressor {
 
     /// Feed one body chunk `buffer` through the decoder, appending the
     /// decompressed output to `body_out_str`. Creates the decoder on first
-    /// call. Returns `ShortRead` when more input is needed and the stream is
-    /// not yet done.
+    /// call. Decoding stops once `body_out_str` reaches `max_output` bytes;
+    /// the returned `Ok(n)` is the number of input bytes consumed so the
+    /// caller can retain `buffer[n..]` for the next call. Returns
+    /// `ShortRead` when all input was consumed but more is needed and the
+    /// stream is not yet done.
     pub fn decompress_chunk(
         &mut self,
         encoding: Encoding,
         buffer: &[u8],
         body_out_str: &mut MutableString,
+        max_output: usize,
         is_done: bool,
-    ) -> crate::Result<()> {
+    ) -> crate::Result<usize> {
         if !encoding.is_compressed() {
-            return Ok(());
+            return Ok(buffer.len());
         }
         if matches!(self, Decompressor::None) {
             self.init(encoding, buffer)?;
         }
         let out = &mut body_out_str.list;
         match self {
-            Decompressor::Zlib(reader) => Ok(reader.decompress(buffer, out, is_done)?),
-            Decompressor::Brotli(reader) => Ok(reader.decompress(buffer, out, is_done)?),
-            Decompressor::Zstd(reader) => Ok(reader.decompress(buffer, out, is_done)?),
+            Decompressor::Zlib(reader) => Ok(reader.decompress(buffer, out, max_output, is_done)?),
+            Decompressor::Brotli(reader) => {
+                Ok(reader.decompress(buffer, out, max_output, is_done)?)
+            }
+            Decompressor::Zstd(reader) => Ok(reader.decompress(buffer, out, max_output, is_done)?),
             Decompressor::None => {
                 unreachable!("Invalid encoding. This code should not be reachable")
             }

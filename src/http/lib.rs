@@ -4012,6 +4012,22 @@ impl<'a> HTTPClient<'a> {
         socket.set_timeout(self.effective_idle_timeout_seconds());
     }
 
+    /// Decompressed-output budget per `process_body_buffer` call. Capped
+    /// only while a streaming reader is attached (`AutoPause`/`Paused`):
+    /// the reader's pull cadence drives the decode, so one socket read
+    /// cannot inflate a high-ratio compressed chunk into hundreds of MB
+    /// ahead of demand. `BufferAll`/`Ignore` and unwired callers decode
+    /// unbounded as before.
+    #[inline]
+    fn decompress_output_cap(&self) -> usize {
+        const STREAMING_DECOMPRESS_MAX_OUTPUT: usize = 1024 * 1024;
+        if self.signals.is_auto_pause() {
+            STREAMING_DECOMPRESS_MAX_OUTPUT
+        } else {
+            usize::MAX
+        }
+    }
+
     fn maybe_pause_receive<const IS_SSL: bool>(&mut self, socket: HttpSocket<IS_SSL>) {
         if self.state.flags.receive_paused
             || self.proxy_tunnel.is_some()
@@ -4062,6 +4078,22 @@ impl<'a> HTTPClient<'a> {
         // from that.
         if self.state.flags.is_redirect_pending {
             return;
+        }
+
+        // Compressed bytes left over from a previous `process_body_buffer`
+        // that stopped at the output cap: decode the next bounded chunk now
+        // so the JS reader's pull drives the inflate.
+        if self.state.has_pending_compressed() {
+            let max_output = self.decompress_output_cap();
+            let is_final = self.state.is_done();
+            let buffer_snap = core::mem::take(&mut self.state.compressed_body.list);
+            if let Err(err) = self
+                .state
+                .process_body_buffer(buffer_snap, is_final, max_output)
+            {
+                self.close_and_fail::<IS_SSL>(err, socket);
+                return;
+            }
         }
 
         let Some(body_out_str) = self.body_out_str() else {
@@ -4439,7 +4471,8 @@ impl<'a> HTTPClient<'a> {
                     fail: self.state.fail,
                     dns_error: self.state.dns_error,
                     dns_hostname: self.state.dns_hostname.take(),
-                    has_more: self.state.fail.is_none() && !self.state.is_done(),
+                    has_more: self.state.fail.is_none()
+                        && (!self.state.is_done() || self.state.has_pending_compressed()),
                     body_size,
                     certificate_info: None,
                     can_stream: (self.state.request_stage == RequestStage::Body
@@ -4458,7 +4491,8 @@ impl<'a> HTTPClient<'a> {
             dns_hostname: self.state.dns_hostname.take(),
             // check if we are reporting cert errors, do not have a fail state and we are not done
             has_more: certificate_info.is_some()
-                || (self.state.fail.is_none() && !self.state.is_done()),
+                || (self.state.fail.is_none()
+                    && (!self.state.is_done() || self.state.has_pending_compressed())),
             body_size,
             certificate_info,
             // we can stream the request_body at this stage
@@ -4485,6 +4519,10 @@ impl<'a> HTTPClient<'a> {
         if is_only_buffer
             && let Some(len) = content_length
             && incoming_data.len() >= len
+            // A compressed body that fits in one packet would otherwise be
+            // inflated in full here; route streaming readers through the
+            // multiple-packets path so the output cap applies.
+            && !(self.state.encoding.is_compressed() && self.signals.is_auto_pause())
         {
             self.handle_response_body_from_single_packet(&incoming_data[0..len])?;
             Ok(true)
@@ -4509,8 +4547,12 @@ impl<'a> HTTPClient<'a> {
         if !self.state.flags.is_redirect_pending {
             if self.state.encoding.is_compressed() {
                 if let Some(body_out) = self.state.body_out_str {
-                    self.state
-                        .decompress_bytes(incoming_data, body_out::as_mut(body_out), true)?;
+                    self.state.decompress_bytes(
+                        incoming_data,
+                        body_out::as_mut(body_out),
+                        true,
+                        usize::MAX,
+                    )?;
                 }
             } else {
                 self.state
@@ -4567,13 +4609,14 @@ impl<'a> HTTPClient<'a> {
             || self.signals.body_receive_mode.is_some();
         if is_done || is_streaming || content_length.is_none() {
             let is_final_chunk = is_done;
+            let max_output = self.decompress_output_cap();
             // Move the body buffer's bytes out — process_body_buffer takes `&mut self.state`
             // and may mutate `compressed_body` (via decompress_bytes' reset) or `body_out_str`,
             // so any `&` into `self.state` held across the call would be aliased UB.
             let buffer_snap = core::mem::take(&mut self.state.get_body_buffer().list);
             let processed = self
                 .state
-                .process_body_buffer(buffer_snap, is_final_chunk)?;
+                .process_body_buffer(buffer_snap, is_final_chunk, max_output)?;
 
             // We can only use the libdeflate fast path when we are not streaming
             // If we ever call processBodyBuffer again, it cannot go through the fast path.
@@ -4657,10 +4700,13 @@ impl<'a> HTTPClient<'a> {
                 {
                     // If we're streaming, we cannot use the libdeflate fast path
                     self.state.flags.is_libdeflate_fast_path_disabled = true;
+                    let max_output = self.decompress_output_cap();
                     // Move the
                     // bytes out so no `&` into self.state aliases the `&mut self.state` call.
                     let buffer_snap = core::mem::take(&mut self.state.get_body_buffer().list);
-                    return self.state.process_body_buffer(buffer_snap, false);
+                    return self
+                        .state
+                        .process_body_buffer(buffer_snap, false, max_output);
                 }
 
                 return Ok(false);
@@ -4668,10 +4714,13 @@ impl<'a> HTTPClient<'a> {
             // Done
             _ => {
                 self.state.flags.received_last_chunk = true;
+                let max_output = self.decompress_output_cap();
                 // Move the
                 // bytes out so no `&` into self.state aliases the `&mut self.state` call.
                 let buffer_snap = core::mem::take(&mut self.state.get_body_buffer().list);
-                let _ = self.state.process_body_buffer(buffer_snap, true)?;
+                let _ = self
+                    .state
+                    .process_body_buffer(buffer_snap, true, max_output)?;
 
                 self.report_progress(buffer_len);
 
@@ -4734,11 +4783,14 @@ impl<'a> HTTPClient<'a> {
                     // If we're streaming, we cannot use the libdeflate fast path
                     self.state.flags.is_libdeflate_fast_path_disabled = true;
 
+                    let max_output = self.decompress_output_cap();
                     // Move
                     // the bytes out so no `&` into self.state aliases the `&mut self.state`
                     // taken by process_body_buffer (which mutates compressed_body/body_out_str).
                     let buffer_snap = core::mem::take(&mut self.state.get_body_buffer().list);
-                    return self.state.process_body_buffer(buffer_snap, false);
+                    return self
+                        .state
+                        .process_body_buffer(buffer_snap, false, max_output);
                 }
 
                 Ok(false)

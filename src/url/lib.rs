@@ -22,20 +22,29 @@ use bun_core::io::Write as _;
 
 // ── route_param (moved from bun_router) ───────────────────────────────────
 pub mod route_param {
-    // name/value borrow from the route template + the live request
-    // path; lifetime-generic so `bun_router` (the only producer) can fill them
-    // from non-'static buffers. Downstream that only stores literals can use
-    // `Param<'static>`.
+    /// A matched dynamic-route parameter.
+    ///
+    /// `name` slices the route template (resolver-interned, process lifetime);
+    /// `value` slices the live request path.
     #[derive(Clone, Copy)]
     pub struct Param<'a> {
-        pub name: &'a [u8],
+        pub name: &'static [u8],
         pub value: &'a [u8],
     }
     // SoA (`MultiArrayList`) layout would be a perf optimization only; a plain
     // Vec is semantically identical.
     pub type List<'a> = Vec<Param<'a>>;
+
+    /// Owned-storage form of [`Param`]: `value` is an offset range into the
+    /// owner's pathname buffer instead of a borrowed slice, so a container can
+    /// hold params without borrowing itself.
+    #[derive(Clone, Copy)]
+    pub struct StoredParam {
+        pub name: &'static [u8],
+        /// Offset range into the owner's pathname buffer.
+        pub value: crate::api::StringPointer,
+    }
 }
-pub use route_param::List as ParamsList;
 
 // ── whatwg (WTF::URL FFI shim, MOVE_DOWN from bun_jsc) ────────────────────
 // The JS-value entry points (`hrefFromJS`, `fromJS`)
@@ -1478,7 +1487,7 @@ impl<'a> CombinedScanner<'a> {
         query_string: &'a [u8],
         pathname: &'a [u8],
         routename: &'a [u8],
-        url_params: &'a ParamsList<'a>,
+        url_params: &'a [route_param::StoredParam],
     ) -> CombinedScanner<'a> {
         CombinedScanner {
             query: Scanner::init(query_string),
@@ -1518,7 +1527,7 @@ fn string_pointer_from_strings(parent: &[u8], in_: &[u8]) -> api::StringPointer 
 }
 
 pub struct PathnameScanner<'a> {
-    pub params: &'a ParamsList<'a>,
+    pub params: &'a [route_param::StoredParam],
     pub pathname: &'a [u8],
     pub routename: &'a [u8],
     pub i: usize,
@@ -1537,7 +1546,7 @@ impl<'a> PathnameScanner<'a> {
     pub fn init(
         pathname: &'a [u8],
         routename: &'a [u8],
-        params: &'a ParamsList<'a>,
+        params: &'a [route_param::StoredParam],
     ) -> PathnameScanner<'a> {
         PathnameScanner {
             pathname,
@@ -1556,11 +1565,9 @@ impl<'a> PathnameScanner<'a> {
         self.i += 1;
 
         Some(ScannerResult {
-            // TODO: fix this technical debt
             name: string_pointer_from_strings(self.routename, param.name),
             name_needs_decoding: false,
-            // TODO: fix this technical debt
-            value: string_pointer_from_strings(self.pathname, param.value),
+            value: param.value,
             value_needs_decoding: false,
         })
     }

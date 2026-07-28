@@ -3540,7 +3540,7 @@ pub mod bv2_impl {
             let contents: &'static [u8] = unsafe { interned_slice(stored.contents()) };
             // Compute borrow-heavy fields up front so the `&self` borrow taken by
             // `arena()` doesn't overlap `&mut self` uses inside the literal.
-            let jsx = if known_target == Target::ServerComponentsSsr
+            let jsx_transpiler = if known_target == Target::ServerComponentsSsr
                 && !self
                     .framework
                     .as_ref()
@@ -3550,10 +3550,18 @@ pub mod bv2_impl {
                     .unwrap()
                     .separate_ssr_graph
             {
-                self.transpiler.options.jsx.clone()
+                &*self.transpiler
             } else {
-                self.transpiler_for_target(known_target).options.jsx.clone()
+                &*self.transpiler_for_target(known_target)
             };
+            let mut jsx = jsx_transpiler.options.jsx.clone();
+            if let Some(dev) = jsx_transpiler
+                .options
+                .force_node_env
+                .jsx_development_override()
+            {
+                jsx.development = dev;
+            }
             let tree_shaking = self.linker.options.tree_shaking;
             // SAFETY: arena (`self.graph.heap`) outlives the bundle pass; coerce the
             // `&mut ParseTask` to `*mut` immediately so the `&self` borrow from

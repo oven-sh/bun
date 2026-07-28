@@ -404,9 +404,9 @@ fn resolve_subpath(
     // absolute-form scheme+authority (RFC 9112 §3.2.2) and the query string,
     // mirroring what uWS `getUrlForRouting()` did to dispatch to this handler.
     let url = if !url.is_empty() && url[0] != b'/' {
-        let skip = if strings::has_prefix_comptime(url, b"http://") {
+        let skip = if strings::has_prefix_case_insensitive(url, b"http://") {
             7
-        } else if strings::has_prefix_comptime(url, b"https://") {
+        } else if strings::has_prefix_case_insensitive(url, b"https://") {
             8
         } else {
             0
@@ -518,6 +518,10 @@ mod tests {
         );
         assert_eq!(
             resolve(b"http://x/static/a.txt", b"/static/").as_deref(),
+            Some(&b"a.txt"[..])
+        );
+        assert_eq!(
+            resolve(b"HTTP://x/static/a.txt", b"/static/").as_deref(),
             Some(&b"a.txt"[..])
         );
         assert_eq!(

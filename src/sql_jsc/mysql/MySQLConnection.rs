@@ -69,7 +69,6 @@ pub struct MySQLConnection {
     status_flags: StatusFlags,
 
     auth_plugin: Option<AuthMethod>,
-    _auth_state: AuthState,
     auth_switch_count: u8,
     full_auth_requested: bool,
 
@@ -109,7 +108,6 @@ impl Default for MySQLConnection {
             character_set: CharacterSet::default(),
             status_flags: StatusFlags::default(),
             auth_plugin: None,
-            _auth_state: AuthState::Pending,
             auth_switch_count: 0,
             full_auth_requested: false,
             auth_data: Vec::new(),
@@ -1563,19 +1561,6 @@ impl MySQLConnection {
         }
         Ok(())
     }
-}
-
-pub enum AuthState {
-    Pending,
-    NativePassword,
-    CachingSha2(CachingSha2),
-    Ok,
-}
-
-pub enum CachingSha2 {
-    FastAuth,
-    FullAuth,
-    WaitingKey,
 }
 
 #[derive(strum::IntoStaticStr, Debug)]

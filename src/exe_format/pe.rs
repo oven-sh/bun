@@ -43,7 +43,6 @@ pub enum Error {
 // Enums for strip modes and options
 #[derive(Copy, Clone, Eq, PartialEq)]
 pub enum StripMode {
-    None,
     StripIfSigned,
     StripAlways,
 }

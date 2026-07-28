@@ -26,7 +26,6 @@ pub enum State {
         had_not_found: bool,
         waiting_write: bool,
     },
-    Done,
 }
 
 impl Which {

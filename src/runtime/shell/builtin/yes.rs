@@ -15,7 +15,6 @@ pub enum State {
     WaitingWriteErr,
     WaitingIo,
     Err,
-    Done,
 }
 
 #[derive(Default)]

@@ -2461,7 +2461,6 @@ lexer_impl_header! {
 
         if strings::has_prefix_with_word_boundary(chunk, b"jsx") {
             if let Some(span) = PragmaArg::scan(
-                PragmaArg::SkipSpaceFirst,
                 self.start + offset_for_errors,
                 b"jsx",
                 chunk,
@@ -2477,7 +2476,6 @@ lexer_impl_header! {
             }
         } else if strings::has_prefix_with_word_boundary(chunk, b"jsxFrag") {
             if let Some(span) = PragmaArg::scan(
-                PragmaArg::SkipSpaceFirst,
                 self.start + offset_for_errors,
                 b"jsxFrag",
                 chunk,
@@ -2493,7 +2491,6 @@ lexer_impl_header! {
             }
         } else if strings::has_prefix_with_word_boundary(chunk, b"jsxRuntime") {
             if let Some(span) = PragmaArg::scan(
-                PragmaArg::SkipSpaceFirst,
                 self.start + offset_for_errors,
                 b"jsxRuntime",
                 chunk,
@@ -2509,7 +2506,6 @@ lexer_impl_header! {
             }
         } else if strings::has_prefix_with_word_boundary(chunk, b"jsxImportSource") {
             if let Some(span) = PragmaArg::scan(
-                PragmaArg::SkipSpaceFirst,
                 self.start + offset_for_errors,
                 b"jsxImportSource",
                 chunk,
@@ -3860,11 +3856,7 @@ pub(crate) fn latin1_identifier_continue_length_scalar(name: &[u8]) -> usize {
     name.len()
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub enum PragmaArg {
-    NoSpaceFirst,
-    SkipSpaceFirst,
-}
+pub struct PragmaArg;
 
 impl PragmaArg {
     pub(crate) fn is_newline(c: CodePoint) -> bool {
@@ -3918,7 +3910,6 @@ impl PragmaArg {
     }
 
     pub(crate) fn scan(
-        kind: PragmaArg,
         offset_: usize,
         pragma: &[u8],
         text_: &[u8],
@@ -3932,25 +3923,21 @@ impl PragmaArg {
             return None;
         }
 
-        let mut start: u32 = 0;
-
         // One or more whitespace characters
-        if kind == PragmaArg::SkipSpaceFirst {
-            if !is_whitespace(cursor.c) {
-                return None;
-            }
-
-            while is_whitespace(cursor.c) {
-                if !iter.next(&mut cursor) {
-                    break;
-                }
-            }
-            start = cursor.i;
-            text = &text[cursor.i as usize..];
-            cursor = strings::Cursor::default();
-            iter = CodepointIterator::init(text);
-            let _ = iter.next(&mut cursor);
+        if !is_whitespace(cursor.c) {
+            return None;
         }
+
+        while is_whitespace(cursor.c) {
+            if !iter.next(&mut cursor) {
+                break;
+            }
+        }
+        let start: u32 = cursor.i;
+        text = &text[cursor.i as usize..];
+        cursor = strings::Cursor::default();
+        iter = CodepointIterator::init(text);
+        let _ = iter.next(&mut cursor);
 
         let mut i: usize = 0;
         while !is_whitespace(cursor.c) && (!allow_newline || !Self::is_newline(cursor.c)) {

@@ -108,9 +108,8 @@ unsafe impl bun_threading::Linked for NetworkTask {
     }
 }
 
-/// Variants mirror `crate::package_manager_task::Tag`
-/// in the same order. Nothing transmutes between the two (all consumers
-/// `match` on this enum), so the ordering is documentation, not an invariant.
+/// The network-backed subset of `crate::package_manager_task::Tag` (git
+/// clone/checkout run as thread-pool tasks, never as network tasks).
 pub enum Callback {
     PackageManifest {
         loaded_manifest: Option<PackageManifest>,
@@ -118,8 +117,6 @@ pub enum Callback {
         is_extended_manifest: bool,
     },
     Extract(ExtractTarball),
-    GitClone,
-    GitCheckout,
     LocalTarball,
 }
 

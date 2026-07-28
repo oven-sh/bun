@@ -146,8 +146,7 @@ impl BodyAbortListener {
         // guard keeps it there so a re-entrant unref cannot free the Response
         // until we return.
         Response::ref_(response.as_mut_ptr());
-        let _keepalive =
-            scopeguard::guard((), move |()| Response::unref(response.as_mut_ptr()));
+        let _keepalive = scopeguard::guard((), move |()| Response::unref(response.as_mut_ptr()));
         // R-2: re-derive `get_body_value()` per statement; the calls between
         // project their own `&mut BodyValue` / run JS.
         if !matches!(

@@ -953,9 +953,7 @@ impl Value {
 
             debug_assert!(str.tag() == bun_core::Tag::WTFStringImpl);
 
-            // Keep the zero-copy WTFStringImpl only when text()'s "UTF-8
-            // decode" of the encoded bytes would return it unchanged: no
-            // leading BOM, no lone surrogates (neither fits in 8-bit Latin-1).
+            // text() is "UTF-8 decode" of the encoded bytes: no leading BOM, no lone surrogates.
             if str.is_utf16() {
                 let utf16 = str.utf16();
                 if utf16[0] == 0xFEFF || !simdutf::validate::utf16le(utf16) {

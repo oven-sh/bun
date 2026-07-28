@@ -127,6 +127,15 @@ function forwardConnect(sock: net.Socket, leg: Leg, rest: Buffer) {
   sock.on("close", () => upstream.end());
 }
 
+function forwardAbsolute(sock: net.Socket, leg: Leg) {
+  const url = new URL(leg.path);
+  const upstream = net.connect(Number(url.port), url.hostname, () => {
+    upstream.write(`GET ${url.pathname} HTTP/1.1\r\nHost: ${url.host}\r\nConnection: close\r\n\r\n`);
+    upstream.pipe(sock);
+  });
+  upstream.on("error", () => sock.end());
+}
+
 describe.skipIf(!isWindows)("proxy NTLM/Negotiate via SSPI", () => {
   test("CONNECT tunnel to https target", async () => {
     await using target = Bun.serve({
@@ -255,17 +264,7 @@ describe.skipIf(!isWindows)("proxy NTLM/Negotiate via SSPI", () => {
       fetch: req => new Response(`got ${new URL(req.url).pathname}`),
     });
 
-    using proxy = await ntlmProxy({
-      bodyLen: 1500,
-      forward(sock, leg) {
-        const url = new URL(leg.path);
-        const upstream = net.connect(Number(url.port), url.hostname, () => {
-          upstream.write(`GET ${url.pathname} HTTP/1.1\r\nHost: ${url.host}\r\nConnection: close\r\n\r\n`);
-          upstream.pipe(sock);
-        });
-        upstream.on("error", () => sock.end());
-      },
-    });
+    using proxy = await ntlmProxy({ bodyLen: 1500, forward: forwardAbsolute });
 
     const res = await fetch(`http://127.0.0.1:${target.port}/hello`, {
       proxy: proxy.url,
@@ -304,16 +303,7 @@ describe.skipIf(!isWindows)("proxy NTLM/Negotiate via SSPI", () => {
       },
     });
 
-    using proxy = await ntlmProxy({
-      forward(sock, leg) {
-        const url = new URL(leg.path);
-        const upstream = net.connect(Number(url.port), url.hostname, () => {
-          upstream.write(`GET ${url.pathname} HTTP/1.1\r\nHost: ${url.host}\r\nConnection: close\r\n\r\n`);
-          upstream.pipe(sock);
-        });
-        upstream.on("error", () => sock.end());
-      },
-    });
+    using proxy = await ntlmProxy({ forward: forwardAbsolute });
 
     await using proc = Bun.spawn({
       cmd: [bunExe(), "pm", "view", "proxy-sspi-pkg", "--registry", `http://127.0.0.1:${registry.port}/`],

@@ -526,7 +526,10 @@ mod tests {
             resolve(b"HTTP://x/static/a.txt", b"/static/").as_deref(),
             Some(&b"a.txt"[..])
         );
-        assert_eq!(resolve(b"http://x?q/admin/secret", b"/").as_deref(), Some(&b""[..]));
+        assert_eq!(
+            resolve(b"http://x?q/admin/secret", b"/").as_deref(),
+            Some(&b""[..])
+        );
         assert_eq!(resolve(b"http://x", b"/").as_deref(), Some(&b""[..]));
         assert_eq!(
             resolve(b"https://x:8080/static/a.txt?v=1", b"/static/").as_deref(),

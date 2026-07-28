@@ -2168,24 +2168,16 @@ impl BlobExt for Blob {
     }
 
     fn get_size_for_bindings(&self) -> u64 {
+        if self.is_bun_file() {
+            let live = self.view_size();
+            return if live == MAX_SIZE { u64::MAX } else { live };
+        }
         if self.size.get() == MAX_SIZE {
             self.resolve_size();
         }
-
-        // If the file doesn't exist or is not seekable
-        // signal that the size is unknown.
-        if let Some(store) = self.store.get() {
-            if let store::Data::File(file) = &store.data {
-                if !file.seekable.unwrap_or(false) {
-                    return u64::MAX;
-                }
-            }
-        }
-
         if self.size.get() == MAX_SIZE {
             return u64::MAX;
         }
-
         self.size.get()
     }
     fn get_stat(&self, global_this: &JSGlobalObject, callback: &CallFrame) -> JsResult<JSValue> {

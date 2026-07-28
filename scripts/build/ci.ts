@@ -19,6 +19,7 @@ import type { Config } from "./config.ts";
 import { BuildError } from "./error.ts";
 import { crossFeaturesJson } from "./features-json.ts";
 import { orderFilePath, usesOrderFile } from "./flags.ts";
+import { depBuildDir } from "./source.ts";
 
 /** True if running under any CI (env: CI, BUILDKITE, or GITHUB_ACTIONS). */
 export const isCI: boolean = utils.isCI;
@@ -323,6 +324,7 @@ function upload(paths: string[], cwd: string): void {
 //   ${bunTriplet}-profile.zip   (plain release)
 //     └── ${bunTriplet}-profile/
 //           ├── bun-profile[.exe]
+//           ├── testFFI[.exe]            (WebKit FFI test binary, when shipped)
 //           ├── features.json
 //           ├── bun-profile.linker-map   (linux/mac non-asan)
 //           ├── bun-profile.pdb          (windows)
@@ -405,6 +407,7 @@ export function packageAndUpload(cfg: Config, output: BunOutput): void {
   // Result: bun-linux-x64-profile, bun-linux-x64-asan, etc.
   const bunPath = exeName.replace(/^bun/, bunTriplet);
   const files: string[] = [basename(exe), "features.json"];
+  files.push(resolve(depBuildDir(cfg, "WebKit"), "bin", cfg.windows ? "testFFI.exe" : "testFFI"));
   // Debug symbols / linker map — platform-specific extras.
   if (cfg.windows) {
     files.push(`${exeName}.pdb`);

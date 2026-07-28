@@ -124,10 +124,10 @@ it.skipIf(isWindows).concurrent(
   "process.cwd() re-queries the kernel after chdir when the directory is renamed",
   async () => {
     const src = `
-    const { mkdtempSync, renameSync, rmSync } = require("node:fs");
+    const { mkdtempSync, renameSync, rmSync, realpathSync } = require("node:fs");
     const { tmpdir } = require("node:os");
     const { join } = require("node:path");
-    const a = mkdtempSync(join(tmpdir(), "cwdstale-"));
+    const a = realpathSync(mkdtempSync(join(tmpdir(), "cwdstale-")));
     const b = a + "-RENAMED";
     process.chdir(a);
     renameSync(a, b);
@@ -148,10 +148,10 @@ it.skipIf(isWindows).concurrent(
 
 it.skipIf(isWindows).concurrent("process.cwd() throws ENOENT once the current directory has been removed", async () => {
   const src = `
-    const { mkdtempSync, rmdirSync } = require("node:fs");
+    const { mkdtempSync, rmdirSync, realpathSync } = require("node:fs");
     const { tmpdir } = require("node:os");
     const { join } = require("node:path");
-    const a = mkdtempSync(join(tmpdir(), "cwddel-"));
+    const a = realpathSync(mkdtempSync(join(tmpdir(), "cwddel-")));
     process.chdir(a);
     rmdirSync(a);
     try {

@@ -247,7 +247,10 @@ fn blob_scheme_fetch(
     }
 
     let Some(mut blob) = ObjectURLRegistry::singleton().resolve_and_dupe(path) else {
-        return reject(format_args!("Failed to resolve blob:{}", bstr::BStr::new(path)));
+        return reject(format_args!(
+            "Failed to resolve blob:{}",
+            bstr::BStr::new(path)
+        ));
     };
 
     let full_length = blob.size.get();
@@ -282,7 +285,8 @@ fn blob_scheme_fetch(
 
     let mut response_headers = response::HeadersRef::create_empty();
     let mut len_buf = [0u8; 20];
-    let len_str = bun_core::fmt::buf_print_infallible(&mut len_buf, format_args!("{}", blob.size.get()));
+    let len_str =
+        bun_core::fmt::buf_print_infallible(&mut len_buf, format_args!("{}", blob.size.get()));
     response_headers.put(
         HTTPHeaderName::ContentLength,
         &BunString::borrow_utf8(len_str),

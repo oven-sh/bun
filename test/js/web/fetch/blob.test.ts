@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, tempDir } from "harness";
 import type { BlobOptions } from "node:buffer";
 import type { BinaryLike } from "node:crypto";
@@ -180,6 +180,70 @@ test("blob: fetch with a fragment resolves from the store; any other blob: URL r
   } finally {
     URL.revokeObjectURL(url);
   }
+});
+
+// https://fetch.spec.whatwg.org/#scheme-fetch, blob scheme
+describe("blob: scheme fetch", () => {
+  const body = "hello-7420";
+  let url: string;
+  beforeAll(() => {
+    url = URL.createObjectURL(new Blob([body], { type: "video/mp4" }));
+  });
+  afterAll(() => URL.revokeObjectURL(url));
+
+  test("sets Content-Length and Content-Type", async () => {
+    const r = await fetch(url);
+    expect({
+      status: r.status,
+      statusText: r.statusText,
+      contentLength: r.headers.get("Content-Length"),
+      contentType: r.headers.get("Content-Type"),
+    }).toEqual({
+      status: 200,
+      statusText: "OK",
+      contentLength: String(body.length),
+      contentType: "video/mp4",
+    });
+    expect(await r.text()).toBe(body);
+  });
+
+  test("rejects any method other than GET", async () => {
+    for (const method of ["POST", "PUT", "DELETE", "HEAD", "PATCH", "OPTIONS"]) {
+      expect(async () => await fetch(url, { method })).toThrow(TypeError);
+    }
+  });
+
+  test.each([
+    ["bytes=2-5", 206, "bytes 2-5/10", "llo-"],
+    ["bytes=2-", 206, "bytes 2-9/10", "llo-7420"],
+    ["bytes=-3", 206, "bytes 7-9/10", "420"],
+    ["bytes=0-0", 206, "bytes 0-0/10", "h"],
+    ["bytes=2-999", 206, "bytes 2-9/10", "llo-7420"],
+    ["bytes=0-9", 206, "bytes 0-9/10", body],
+  ])("Range: %s", async (header, status, contentRange, expectedBody) => {
+    const r = await fetch(url, { headers: { Range: header } });
+    expect({
+      status: r.status,
+      statusText: r.statusText,
+      contentRange: r.headers.get("Content-Range"),
+      contentLength: r.headers.get("Content-Length"),
+      contentType: r.headers.get("Content-Type"),
+    }).toEqual({
+      status,
+      statusText: "Partial Content",
+      contentRange,
+      contentLength: String(expectedBody.length),
+      contentType: "video/mp4",
+    });
+    expect(await r.text()).toBe(expectedBody);
+  });
+
+  test.each(["bytes=999-", "garbage", "bytes=5-2", "bytes=1-3, 5-7", "bytes=-0"])(
+    "rejects invalid/unsatisfiable Range: %s",
+    async header => {
+      expect(async () => await fetch(url, { headers: { Range: header } })).toThrow(TypeError);
+    },
+  );
 });
 
 test("blob: URL has Content-Type", async () => {

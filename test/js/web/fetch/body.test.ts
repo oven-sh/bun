@@ -608,10 +608,15 @@ for (const { body, fn } of bodyTypes) {
           // The native-handle buffered fast path must not bypass the decode.
           expect(await res.textStream().text()).toBe("a\ufffdb");
         });
-        // When a multi-byte character is split so that two (or more) consecutive
-        // native pulls each decode to the empty string, the adapter must keep
-        // pulling rather than stall with a read request still pending.
+        // A native pull whose bytes all decode to the empty string (held back
+        // as an incomplete UTF-8 sequence or a BOM prefix) must keep the pull
+        // loop going. Each non-empty enqueue (and the initial read) banks one
+        // re-pull via m_pullAgain, so the stall appears once two consecutive
+        // pulls decode to nothing.
         test.each([
+          ["leading 4-byte char split 2-way", [[0xf0, 0x9f], [0xab, 0xa0], [0x42]], "🫠B"],
+          ["leading 4-byte char split 3-way", [[0xf0], [0x9f, 0xab], [0xa0], [0x42]], "🫠B"],
+          ["leading 3-byte char split 2-way", [[0xe4], [0xb8, 0xad], [0x42]], "中B"],
           ["4-byte char as [lead][cont][cont cont]", [[0x41], [0xf0], [0x9f], [0xab, 0xa0], [0x42]], "A🫠B"],
           ["4-byte char byte-at-a-time", [[0x41], [0xf0], [0x9f], [0xab], [0xa0], [0x42]], "A🫠B"],
           ["3-byte char byte-at-a-time", [[0x41], [0xe4], [0xb8], [0xad], [0x42]], "A中B"],

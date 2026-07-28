@@ -25,16 +25,31 @@ test("webcrypto dead functions do not reappear", () => {
     // the base platformSign/platformVerify (which read the hash off the key) are the
     // only path SubtleCrypto uses.
     ["src/jsc/bindings/webcrypto/CryptoAlgorithmHMAC.h", /platformSignWithAlgorithm|platformVerifyWithAlgorithm/],
-    ["src/jsc/bindings/webcrypto/CryptoAlgorithmHMACOpenSSL.cpp", /platformSignWithAlgorithm|platformVerifyWithAlgorithm/],
-    ["src/jsc/bindings/webcrypto/CryptoAlgorithmRSASSA_PKCS1_v1_5.h", /platformSignWithAlgorithm|platformVerifyWithAlgorithm|platformSignNoAlgorithm|platformVerifyRecover/],
-    ["src/jsc/bindings/webcrypto/CryptoAlgorithmRSASSA_PKCS1_v1_5OpenSSL.cpp", /platformSignWithAlgorithm|platformVerifyWithAlgorithm|platformSignNoAlgorithm|platformVerifyRecover/],
+    [
+      "src/jsc/bindings/webcrypto/CryptoAlgorithmHMACOpenSSL.cpp",
+      /platformSignWithAlgorithm|platformVerifyWithAlgorithm/,
+    ],
+    [
+      "src/jsc/bindings/webcrypto/CryptoAlgorithmRSASSA_PKCS1_v1_5.h",
+      /platformSignWithAlgorithm|platformVerifyWithAlgorithm|platformSignNoAlgorithm|platformVerifyRecover/,
+    ],
+    [
+      "src/jsc/bindings/webcrypto/CryptoAlgorithmRSASSA_PKCS1_v1_5OpenSSL.cpp",
+      /platformSignWithAlgorithm|platformVerifyWithAlgorithm|platformSignNoAlgorithm|platformVerifyRecover/,
+    ],
     ["src/jsc/bindings/webcrypto/CryptoAlgorithmRSA_PSS.h", /platformSignWithAlgorithm|platformVerifyWithAlgorithm/],
-    ["src/jsc/bindings/webcrypto/CryptoAlgorithmRSA_PSSOpenSSL.cpp", /platformSignWithAlgorithm|platformVerifyWithAlgorithm/],
+    [
+      "src/jsc/bindings/webcrypto/CryptoAlgorithmRSA_PSSOpenSSL.cpp",
+      /platformSignWithAlgorithm|platformVerifyWithAlgorithm/,
+    ],
     // CryptoKeyHMAC::generateFromBytes: never called, generate() is the only entry.
     ["src/jsc/bindings/webcrypto/CryptoKeyHMAC.h", /generateFromBytes/],
     ["src/jsc/bindings/webcrypto/CryptoKeyHMAC.cpp", /generateFromBytes/],
     // CryptoKeyOKP helpers with no callers (the EC flavour of namedCurveString is live).
-    ["src/jsc/bindings/webcrypto/CryptoKeyOKP.h", /importPublicJwk|isEd25519PrivateKey|exportKeySizeInBits\b|namedCurveString/],
+    [
+      "src/jsc/bindings/webcrypto/CryptoKeyOKP.h",
+      /importPublicJwk|isEd25519PrivateKey|exportKeySizeInBits\b|namedCurveString/,
+    ],
     ["src/jsc/bindings/webcrypto/CryptoKeyOKP.cpp", /importPublicJwk|::namedCurveString/],
     // CryptoKeyEC::keySizeInBytes: every caller computes (keySizeInBits()+7)/8 locally.
     ["src/jsc/bindings/webcrypto/CryptoKeyEC.h", /size_t keySizeInBytes\(/],
@@ -53,21 +68,39 @@ test("webcrypto dead functions do not reappear", () => {
     ["src/jsc/bindings/webcrypto/JSCryptoHmacKeyAlgorithm.h", /template<> CryptoHmacKeyAlgorithm convertDictionary</],
     ["src/jsc/bindings/webcrypto/JSCryptoRsaKeyAlgorithm.cpp", /template<> CryptoRsaKeyAlgorithm convertDictionary</],
     ["src/jsc/bindings/webcrypto/JSCryptoRsaKeyAlgorithm.h", /template<> CryptoRsaKeyAlgorithm convertDictionary</],
-    ["src/jsc/bindings/webcrypto/JSCryptoRsaHashedKeyAlgorithm.cpp", /template<> CryptoRsaHashedKeyAlgorithm convertDictionary</],
-    ["src/jsc/bindings/webcrypto/JSCryptoRsaHashedKeyAlgorithm.h", /template<> CryptoRsaHashedKeyAlgorithm convertDictionary</],
+    [
+      "src/jsc/bindings/webcrypto/JSCryptoRsaHashedKeyAlgorithm.cpp",
+      /template<> CryptoRsaHashedKeyAlgorithm convertDictionary</,
+    ],
+    [
+      "src/jsc/bindings/webcrypto/JSCryptoRsaHashedKeyAlgorithm.h",
+      /template<> CryptoRsaHashedKeyAlgorithm convertDictionary</,
+    ],
     ["src/jsc/bindings/webcrypto/JSCryptoKeyAlgorithm.cpp", /template<> CryptoKeyAlgorithm convertDictionary</],
     ["src/jsc/bindings/webcrypto/JSCryptoKeyAlgorithm.h", /template<> CryptoKeyAlgorithm convertDictionary</],
     // parseEnumeration<CryptoKey::Type>: only toJS<IDLEnumeration<CryptoKey::Type>> is
     // reached; no convert<> path instantiates the parse direction.
-    ["src/jsc/bindings/webcrypto/JSCryptoKey.cpp", /parseEnumeration<CryptoKey::Type>|expectedEnumerationValues<CryptoKey::Type>/],
-    ["src/jsc/bindings/webcrypto/JSCryptoKey.h", /parseEnumeration<CryptoKey::Type>|expectedEnumerationValues<CryptoKey::Type>/],
+    [
+      "src/jsc/bindings/webcrypto/JSCryptoKey.cpp",
+      /parseEnumeration<CryptoKey::Type>|expectedEnumerationValues<CryptoKey::Type>/,
+    ],
+    [
+      "src/jsc/bindings/webcrypto/JSCryptoKey.h",
+      /parseEnumeration<CryptoKey::Type>|expectedEnumerationValues<CryptoKey::Type>/,
+    ],
     // KeyFormat is input-only; nothing serializes it back to JS.
     ["src/jsc/bindings/webcrypto/JSSubtleCrypto.cpp", /convertEnumerationToString\(SubtleCrypto::KeyFormat/],
-    ["src/jsc/bindings/webcrypto/JSSubtleCrypto.h", /convertEnumerationToString\(SubtleCrypto::KeyFormat|convertEnumerationToJS\(JSC::JSGlobalObject&, SubtleCrypto::KeyFormat/],
+    [
+      "src/jsc/bindings/webcrypto/JSSubtleCrypto.h",
+      /convertEnumerationToString\(SubtleCrypto::KeyFormat|convertEnumerationToJS\(JSC::JSGlobalObject&, SubtleCrypto::KeyFormat/,
+    ],
     // Misc single-line dead decls.
     ["src/jsc/bindings/webcrypto/CryptoDigest.h", /String toHexString\(\);/],
     ["src/jsc/bindings/webcrypto/SubtleCrypto.h", /static SubtleCrypto\* createPtr/],
-    ["src/jsc/bindings/webcrypto/CommonCryptoDERUtilities.h", /bytesNeededForEncodedLength|IntegerMark|unsigned char Version\[\]/],
+    [
+      "src/jsc/bindings/webcrypto/CommonCryptoDERUtilities.h",
+      /bytesNeededForEncodedLength|IntegerMark|unsigned char Version\[\]/,
+    ],
     ["src/jsc/bindings/webcrypto/CommonCryptoDERUtilities.cpp", /bytesNeededForEncodedLength/],
   ];
   const resurrected = checks.filter(([file, re]) => re.test(src(file))).map(([file, re]) => `${file}: ${re.source}`);
@@ -84,7 +117,10 @@ test("SerializedCryptoKeyWrap files are removed", () => {
 test("sqlite dead declarations do not reappear", () => {
   const checks: Array<[string, RegExp]> = [
     // Orphan forward declaration with no definition since 2022.
-    ["src/jsc/bindings/sqlite/JSSQLStatement.cpp", /JSC_DECLARE_HOST_FUNCTION\(jsSQLStatementExecuteStatementFunction\);/],
+    [
+      "src/jsc/bindings/sqlite/JSSQLStatement.cpp",
+      /JSC_DECLARE_HOST_FUNCTION\(jsSQLStatementExecuteStatementFunction\);/,
+    ],
     // Typedef + inline ptr with no #define alias, no dlsym load, no callers.
     ["src/jsc/bindings/sqlite/lazy_sqlite3.h", /lazy_sqlite3_column_bytes16/],
   ];

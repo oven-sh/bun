@@ -815,6 +815,7 @@ impl ReadFile {
                     let mut read_amount: usize = 0;
                     let mut retry = false;
                     let continue_reading = self.do_read(buf, &mut read_amount, &mut retry);
+                    self.read_off += read_amount as SizeType;
 
                     // We might read into the stack buffer, so we need to copy it into the heap.
                     if use_stack {

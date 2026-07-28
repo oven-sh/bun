@@ -547,8 +547,10 @@ fn on_stream_error(ctx: *mut c_void, resp: AnyResponse, _err: bun_sys::Error) {
 }
 
 /// RFC 9110 §13.2.2 precondition evaluation for a GET/HEAD file response.
-/// Returns the status the response should carry after applying If-Match /
-/// If-Unmodified-Since / If-None-Match / If-Modified-Since / Range.
+/// Order: (1) If-Match, else (2) If-Unmodified-Since; then (3) If-None-Match,
+/// else (4) If-Modified-Since. Steps 1/2 yield 412 on failure and must run
+/// before steps 3/4 can yield 304. Preconditions only apply when the selected
+/// representation would otherwise be 200 (§13.1.1).
 pub(crate) fn status_for_preconditions(
     req: &AnyRequest,
     method: Method,
@@ -576,15 +578,20 @@ pub(crate) fn status_for_preconditions(
         if let Some(inm) = req.header(b"if-none-match").filter(|v| !v.is_empty()) {
             let matched = match etag {
                 Some(etag) => ETag::if_none_match(etag, inm),
+                // No stored ETag: only `*` can match (§13.1.2).
                 None => strings::trim(inm, b" \t") == b"*",
             };
             if matched {
                 return 304;
             }
+            // Did not match: fall through to Range/200 without consulting IMS.
         } else if let Some(ims) = req
             .header(b"if-modified-since")
             .and_then(crate::jsc_hooks::parse_http_date)
         {
+            // Compare at second precision: the Last-Modified we emit is
+            // second-granular (HTTP-date), so a sub-second mtime would never
+            // satisfy `<=` against the client's echoed value otherwise.
             if let Some(lm) = last_modified_ms {
                 if lm / 1000 <= ims / 1000 {
                     return 304;

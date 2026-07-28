@@ -1956,7 +1956,16 @@ struct ParsedRedirect<'bump> {
 /// `{`/`}` arrive as `BraceBegin`/`BraceEnd` tokens and are checked on that
 /// path; `in` is omitted because it is only reserved inside `for`/`case`.
 const UNSUPPORTED_RESERVED_WORDS: &[&[u8]] = &[
-    b"!", b"while", b"until", b"for", b"do", b"done", b"case", b"esac", b"select", b"function",
+    b"!",
+    b"while",
+    b"until",
+    b"for",
+    b"do",
+    b"done",
+    b"case",
+    b"esac",
+    b"select",
+    b"function",
 ];
 
 pub fn is_unsupported_reserved_word(txt: &[u8]) -> bool {

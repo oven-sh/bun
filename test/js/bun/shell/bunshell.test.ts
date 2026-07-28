@@ -2377,9 +2377,7 @@ done`
     .error(msg("for"))
     .runAsTest("for-in body does not run with empty loop var");
 
-  TestBuilder.command`until true; do echo body; done`
-    .error(msg("until"))
-    .runAsTest("until loop is rejected");
+  TestBuilder.command`until true; do echo body; done`.error(msg("until")).runAsTest("until loop is rejected");
 
   TestBuilder.command`! echo hi`.error(msg("!")).runAsTest("pipeline negation is rejected");
 
@@ -2397,7 +2395,9 @@ done`
     .error(msg("while"))
     .runAsTest("reserved word inside if-else body is rejected");
 
-  TestBuilder.command`echo whilex`.stdout("whilex\n").runAsTest("reserved-word prefix of a longer word is not reserved");
+  TestBuilder.command`echo whilex`
+    .stdout("whilex\n")
+    .runAsTest("reserved-word prefix of a longer word is not reserved");
 
   TestBuilder.command`echo while${"x"}`
     .stdout("whilex\n")

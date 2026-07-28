@@ -355,9 +355,6 @@ function execFile(file, args, options, callback) {
       return;
     }
     child_buffer.on("data", function onData(chunk) {
-      // A chunk that was already queued in the pipe may be delivered after
-      // kill()/destroy(). Once the limit has tripped, drop late chunks so the
-      // callback's stdout/stderr never exceeds maxBuffer and kill() runs once.
       if (maxBufferTripped) return;
       const encoding = child_buffer.readableEncoding;
       if (encoding) {

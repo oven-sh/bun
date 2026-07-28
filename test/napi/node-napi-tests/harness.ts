@@ -1,8 +1,8 @@
 import { spawn, spawnSync } from "bun";
 import { existsSync, renameSync } from "node:fs";
-import { mkdir } from "node:fs/promises";
+import { mkdir, rm } from "node:fs/promises";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { join, sep } from "node:path";
 import { bunExe, bunEnv, isCI, isMusl } from "../../harness";
 
 // Tests that intentionally abort and should not generate core dumps when they abort
@@ -57,11 +57,15 @@ function parseSimpleBindingGyp(text: string): GypTarget[] | null {
 
 // Read-only lookup of the header tree node-gyp itself installs. Never downloads or
 // mutates the cache; if it isn't complete we fall back to node-gyp (which fills it).
-function findNodeHeaders(): string | null {
+// On Windows the import library lives next to the headers and is required for linking,
+// so we return it too; POSIX just leaves `lib` undefined.
+function findNodeHeaders(): { include: string; lib?: string } | null {
   const candidates: string[] = [];
   if (process.env.npm_config_devdir) candidates.push(process.env.npm_config_devdir);
   if (process.platform === "darwin") {
     candidates.push(join(homedir(), "Library", "Caches", "node-gyp"));
+  } else if (process.platform === "win32") {
+    if (process.env.LOCALAPPDATA) candidates.push(join(process.env.LOCALAPPDATA, "node-gyp", "Cache"));
   } else {
     if (process.env.XDG_CACHE_HOME) candidates.push(join(process.env.XDG_CACHE_HOME, "node-gyp"));
     candidates.push(join(homedir(), ".cache", "node-gyp"));
@@ -70,9 +74,11 @@ function findNodeHeaders(): string | null {
     const base = join(devDir, NODE_HEADERS_VERSION);
     const include = join(base, "include", "node");
     // node-gyp writes `installVersion` last, only after the headers finish extracting.
-    if (existsSync(join(base, "installVersion")) && existsSync(join(include, "node_api.h"))) {
-      return include;
-    }
+    if (!(existsSync(join(base, "installVersion")) && existsSync(join(include, "node_api.h")))) continue;
+    if (process.platform !== "win32") return { include };
+    // node-gyp lays the import library out as `<cache>/<version>/<arch>/node.lib`.
+    const lib = join(base, process.arch, "node.lib");
+    if (existsSync(lib)) return { include, lib };
   }
   return null;
 }
@@ -83,66 +89,130 @@ function compilerFor(cxx: boolean): string {
   return process.env.CC || "cc";
 }
 
-// node-gyp's fixed per-addon bootstrap (bun x + python gyp configure + make) costs several
-// seconds per directory. When binding.gyp is the trivial shape used by every addon in this
-// suite and the node headers are already cached, one direct compiler invocation produces
-// the same build/Debug/<target>.node in well under a second. Returns false to fall back.
+function posixCompileArgs(target: GypTarget, include: string, out: string): string[] {
+  const cxx = target.sources[0].endsWith(".cc");
+  return [
+    compilerFor(cxx),
+    ...(cxx ? ["-std=gnu++20"] : []),
+    "-shared",
+    "-fPIC",
+    "-g",
+    "-O0",
+    ...(process.platform === "darwin" ? ["-undefined", "dynamic_lookup"] : []),
+    `-I${include}`,
+    `-DNODE_GYP_MODULE_NAME=${target.target_name}`,
+    "-DBUILDING_NODE_EXTENSION",
+    "-DDEBUG",
+    "-D_DEBUG",
+    ...(target.defines ?? []).map(define => `-D${define}`),
+    ...target.sources,
+    "-o",
+    out,
+  ];
+}
+
+// clang-cl is on PATH on every Windows CI/dev image (scoop llvm) and auto-detects the
+// MSVC toolchain + Windows SDK, so unlike cl.exe it works without a Developer Command
+// Prompt. This mirrors the node-gyp-generated MSBuild invocation for the addons here:
+// one translation unit per source, win_delay_load_hook.cc linked in, /DELAYLOAD:node.exe
+// so the hook can redirect the import to the host process at load time. Every output
+// (objects, /OUT, /PDB) lands in the per-target scratch dir; tryBuildFast promotes the
+// .node and .pdb into build/Debug only after the link exits cleanly.
+function windowsCompileArgs(target: GypTarget, include: string, lib: string, scratch: string): string[] {
+  return [
+    "clang-cl",
+    "/nologo",
+    ...(target.sources[0].endsWith(".cc") ? ["/std:c++20", "/EHsc"] : []),
+    "/MTd",
+    "/Od",
+    "/Z7",
+    `/I${include}`,
+    `/DNODE_GYP_MODULE_NAME=${target.target_name}`,
+    "/DBUILDING_NODE_EXTENSION",
+    "/DDEBUG",
+    "/D_DEBUG",
+    '/DHOST_BINARY="node.exe"',
+    ...(target.defines ?? []).map(define => `/D${define}`),
+    ...target.sources,
+    join(import.meta.dir, "win_delay_load_hook.cc"),
+    `/Fo${scratch}${sep}`,
+    "/link",
+    "/DLL",
+    "/DEBUG",
+    `/OUT:${join(scratch, `${target.target_name}.node`)}`,
+    `/PDB:${join(scratch, `${target.target_name}.pdb`)}`,
+    lib,
+    "delayimp.lib",
+    "/DELAYLOAD:node.exe",
+  ];
+}
+
+// node-gyp's fixed per-addon bootstrap (bun x + python gyp configure + make/MSBuild) costs
+// several seconds per directory. When binding.gyp is the trivial shape used by every addon
+// in this suite and the node headers are already cached, one direct compiler invocation
+// produces the same build/Debug/<target>.node in well under a second. Returns false to
+// fall back.
 async function tryBuildFast(dir: string): Promise<boolean> {
-  if (process.platform === "win32") return false;
   const gypPath = join(dir, "binding.gyp");
   if (!existsSync(gypPath)) return false;
   const targets = parseSimpleBindingGyp(await Bun.file(gypPath).text());
   if (targets === null) return false;
-  const nodeInclude = findNodeHeaders();
-  if (nodeInclude === null) return false;
+  const headers = findNodeHeaders();
+  if (headers === null) return false;
+  if (process.platform === "win32" && Bun.which("clang-cl") === null) return false;
 
   const outDir = join(dir, "build", "Debug");
   await mkdir(outDir, { recursive: true });
 
   const results = await Promise.all(
     targets.map(async target => {
-      const cxx = target.sources[0].endsWith(".cc");
       // Compile to a temporary name and rename so a partial artifact is never loadable.
       const output = join(outDir, `${target.target_name}.node`);
-      const tmpOutput = join(outDir, `.${target.target_name}.${process.pid}.tmp.node`);
+      // Windows: clang-cl scatters per-source .obj files next to the .node, so give each
+      // target its own scratch dir and let /Fo + /OUT place the final artifact there.
+      // POSIX: the driver writes only the final shared object, so a temp filename suffices.
+      const tmp =
+        process.platform === "win32"
+          ? join(outDir, `.${target.target_name}.${process.pid}.tmp`)
+          : join(outDir, `.${target.target_name}.${process.pid}.tmp.node`);
       try {
+        if (process.platform === "win32") await mkdir(tmp, { recursive: true });
         const child = spawn({
-          cmd: [
-            compilerFor(cxx),
-            ...(cxx ? ["-std=gnu++20"] : []),
-            "-shared",
-            "-fPIC",
-            "-g",
-            "-O0",
-            ...(process.platform === "darwin" ? ["-undefined", "dynamic_lookup"] : []),
-            `-I${nodeInclude}`,
-            `-DNODE_GYP_MODULE_NAME=${target.target_name}`,
-            "-DBUILDING_NODE_EXTENSION",
-            "-DDEBUG",
-            "-D_DEBUG",
-            ...(target.defines ?? []).map(define => `-D${define}`),
-            ...target.sources,
-            "-o",
-            tmpOutput,
-          ],
+          cmd:
+            process.platform === "win32"
+              ? windowsCompileArgs(target, headers.include, headers.lib!, tmp)
+              : posixCompileArgs(target, headers.include, tmp),
           cwd: dir,
           stderr: "pipe",
-          stdout: "ignore",
+          stdout: "pipe",
           stdin: "ignore",
           env: bunEnv,
         });
-        const [stderr, exitCode] = await Promise.all([new Response(child.stderr).text(), child.exited]);
+        const [stderr, stdout, exitCode] = await Promise.all([
+          new Response(child.stderr).text(),
+          new Response(child.stdout).text(),
+          child.exited,
+        ]);
         if (exitCode !== 0) {
           console.warn(
-            `direct compile of ${target.target_name} in ${dir} failed, falling back to node-gyp:\n${stderr}`,
+            `direct compile of ${target.target_name} in ${dir} failed, falling back to node-gyp:\n${stdout}${stderr}`,
           );
           return false;
         }
-        renameSync(tmpOutput, output);
+        if (process.platform === "win32") {
+          renameSync(join(tmp, `${target.target_name}.node`), output);
+          renameSync(join(tmp, `${target.target_name}.pdb`), join(outDir, `${target.target_name}.pdb`));
+        } else {
+          renameSync(tmp, output);
+        }
         return true;
       } catch (error) {
         console.warn(`direct compile of ${target.target_name} in ${dir} failed, falling back to node-gyp: ${error}`);
         return false;
+      } finally {
+        // Best-effort: a transient EBUSY/EPERM here must not override the return value and
+        // turn a successful fast-path build (or a clean fallback) into a hard test failure.
+        if (process.platform === "win32") await rm(tmp, { recursive: true, force: true }).catch(() => {});
       }
     }),
   );

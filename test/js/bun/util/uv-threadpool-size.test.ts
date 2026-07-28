@@ -25,7 +25,7 @@ describe.skipIf(!isLinux)("UV_THREADPOOL_SIZE", () => {
         } catch {}
       return n;
     };
-    let last = -1, stable = 0;
+    let last = -1, stable = 0, ticks = 0;
     const iv = setInterval(() => {
       const n = count();
       if (n === last && n > 0) stable++;
@@ -34,6 +34,14 @@ describe.skipIf(!isLinux)("UV_THREADPOOL_SIZE", () => {
         clearInterval(iv);
         console.log(n);
         process.exit(0);
+      }
+      if (++ticks > 200) {
+        clearInterval(iv);
+        const names = fs.readdirSync("/proc/self/task").map(t => {
+          try { return fs.readFileSync("/proc/self/task/" + t + "/comm", "utf8").trim(); } catch { return "?"; }
+        });
+        console.error("pool never stabilized; threads:", JSON.stringify(names));
+        process.exit(1);
       }
     }, 20);
   `;

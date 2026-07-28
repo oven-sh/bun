@@ -2,10 +2,7 @@ import * as internalForTesting from "bun:internal-for-testing";
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 
-const {
-  highlightJavaScript: highlighter,
-  highlightJavaScriptRedacted: highlighterRedacted,
-} = internalForTesting;
+const { highlightJavaScript: highlighter, highlightJavaScriptRedacted: highlighterRedacted } = internalForTesting;
 
 test("highlighter", () => {
   expect(highlighter("`can do ${123} ${'123'} ${`123`}`").length).toBeLessThan(150);

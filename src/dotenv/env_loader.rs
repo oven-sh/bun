@@ -1206,7 +1206,10 @@ impl<'a> Parser<'a> {
                 };
                 changed = true;
                 let inner = &value[inner_start..close];
-                let key_end = inner.iter().position(|&c| !is_ident(c)).unwrap_or(inner.len());
+                let key_end = inner
+                    .iter()
+                    .position(|&c| !is_ident(c))
+                    .unwrap_or(inner.len());
                 let key = &inner[..key_end];
                 let rest = &inner[key_end..];
                 if rest.is_empty() {

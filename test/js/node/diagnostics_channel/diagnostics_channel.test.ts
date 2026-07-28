@@ -469,6 +469,28 @@ describe.concurrent("built-in console.* channels", () => {
     expect(exitCode).toBe(0);
   });
 
+  test("replacing globalThis.console with a Console instance before subscribing publishes once", async () => {
+    const script = `
+      globalThis.console = new console.Console(process.stdout, process.stderr);
+      const dc = require("node:diagnostics_channel");
+      let n = 0;
+      dc.subscribe("console.log", () => n++);
+      console.log("x");
+      process.stdout.write("RESULT " + n + "\\n");
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stdout).toContain("RESULT 1\n");
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
+
   test("materializing the console.log channel does not affect other console methods", async () => {
     const script = `
       const dc = require("node:diagnostics_channel");

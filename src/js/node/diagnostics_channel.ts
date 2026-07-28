@@ -229,15 +229,18 @@ const consoleChannelMethods = {
   "console.error": "error",
 };
 const wrappedConsoleMethods = { __proto__: null };
+const nativeConsole = globalThis.console;
 
 function wrapConsoleMethodForChannel(ch, method) {
   if (wrappedConsoleMethods[method]) return;
-  const console = globalThis.console;
-  const orig = console[method];
+  // A replaced global console either already publishes (new console.Console, via
+  // Console.prototype.<method>) or is user-owned; wrapping it would double-publish.
+  if (globalThis.console !== nativeConsole) return;
+  const orig = nativeConsole[method];
   if (typeof orig !== "function") return;
   wrappedConsoleMethods[method] = true;
   // Shorthand method: non-constructible and .name === method, like the native fn.
-  console[method] = {
+  nativeConsole[method] = {
     [method](...args) {
       if (ch.hasSubscribers) ch.publish(args);
       return orig.$apply(this, args);

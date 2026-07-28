@@ -1,9 +1,9 @@
-// sql.array(values, type) must serialize TypedArray elements to the same
-// array literal as the equivalent Buffer or number[] input. Before the fix
-// every non-Buffer ArrayBufferView was treated as a nested dimension and its
-// per-element string serializations were written back INTO the typed array
-// via TypedArray.prototype.map, so a Uint8Array([1,2,44]) bytea element went
-// on the wire as {{0,0,0}} ('"1"' → NaN → 0) instead of {"\x01022c"}.
+// sql.array(values, type) must hex-encode any ArrayBufferView element (Buffer,
+// Uint8Array, DataView, ...) in a BYTEA or JSON array and reject one anywhere
+// else. Before the fix every non-Buffer view was treated as a nested dimension
+// and its per-element string serializations were written back INTO the typed
+// array via TypedArray.prototype.map, so a Uint8Array([1,2,44]) bytea element
+// went on the wire as {{0,0,0}} ('"1"' → NaN → 0) instead of {"\x01022c"}.
 //
 // The serialization happens entirely on the client before Bind, so a scripted
 // v3 backend that records the first Bind parameter is sufficient.
@@ -125,23 +125,34 @@ test("byte-view elements honour byteOffset / byteLength", async () => {
   expect({ fromDataView, fromSubarray }).toEqual({ fromDataView: '{"\\xcafe"}', fromSubarray: '{"\\xcafe"}' });
 });
 
-test("Uint8Array element in a non-BYTEA array follows the Buffer hex path", async () => {
-  const fromBuffer = await bindLiteral(sql => sql.array([Buffer.from([65, 66])], "TEXT"));
-  const fromUint8 = await bindLiteral(sql => sql.array([new Uint8Array([65, 66])], "TEXT"));
-  expect({ fromBuffer, fromUint8 }).toEqual({ fromBuffer: '{"4142"}', fromUint8: '{"4142"}' });
+test("ArrayBufferView element in a JSON array is hex-encoded like Buffer", async () => {
+  const fromBuffer = await bindLiteral(sql => sql.array([Buffer.from([65, 66])], "JSON"));
+  const fromUint8 = await bindLiteral(sql => sql.array([new Uint8Array([65, 66])], "JSON"));
+  expect({ fromBuffer, fromUint8 }).toEqual({ fromBuffer: '{"\\"4142\\""}', fromUint8: '{"\\"4142\\""}' });
 });
 
-test("numeric TypedArray element becomes a nested dimension without coercion loss", async () => {
-  expect(await bindLiteral(sql => sql.array([new Float32Array([1.5, -2.25])], "DOUBLE PRECISION"))).toBe(
-    "{{1.5,-2.25}}",
-  );
-  expect(await bindLiteral(sql => sql.array([new BigInt64Array([1n, -2n])], "BIGINT"))).toBe("{{1,-2}}");
-  // Int16Array with a non-numeric element type: the quoted per-element strings
-  // previously coerced to NaN → 0 inside TypedArray.prototype.map.
-  expect(await bindLiteral(sql => sql.array([new Int16Array([7, 8])], "TEXT"))).toBe('{{"7","8"}}');
+test("ArrayBufferView element in a non-BYTEA non-JSON array is rejected", () => {
+  // sql.array() serializes eagerly, so the error surfaces before any I/O.
+  const sql = new SQL({ adapter: "postgres", hostname: "127.0.0.1", port: 1, database: "d", max: 1 });
+  for (const element of [new Uint8Array([65, 66]), Buffer.from([65, 66]), new Float32Array([1.5, 2.5])]) {
+    for (const type of ["TEXT", "INT", "REAL"]) {
+      const err = (() => {
+        try {
+          sql.array([element], type);
+        } catch (e) {
+          return e as Error;
+        }
+        throw new Error(`expected sql.array([${element.constructor.name}], ${JSON.stringify(type)}) to throw`);
+      })();
+      expect(err.code).toBe("ERR_INVALID_ARG_VALUE");
+      expect(err.message).toContain("BYTEA or JSON");
+    }
+  }
 });
 
-test("top-level Int16Array with a non-numeric element type is serialized without coercion", async () => {
-  const got = await bindLiteral(sql => sql.array(new Int16Array([7, 8, 9]), "TEXT"));
-  expect(got).toBe('{"7","8","9"}');
+test("top-level TypedArray with a non-numeric element type is serialized without coercion", async () => {
+  // serializeArray must not use TypedArray.prototype.map, which would coerce the
+  // per-element '"7"' strings back to NaN → 0.
+  expect(await bindLiteral(sql => sql.array(new Int16Array([7, 8, 9]), "TEXT"))).toBe('{"7","8","9"}');
+  expect(await bindLiteral(sql => sql.array(new Float32Array([1.5, -2.25]), "TEXT"))).toBe('{"1.5","-2.25"}');
 });

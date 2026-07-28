@@ -342,7 +342,11 @@ scanner = "${scannerPath}"`,
     expect(errAndOut).toContain("Security scanner installed successfully");
   }
 
-  if (scannerType === "npm.bunfigonly") {
+  // In the PTY path this case exits before the "Continue anyway?" prompt
+  // ever appears, so there is no data-callback synchronization point and the
+  // final lines can lose the race with proc.exited. The non-TTY path reads
+  // stdout/stderr to EOF before the assertion runs, so it is reliable there.
+  if (scannerType === "npm.bunfigonly" && !hasTTY) {
     expect(errAndOut).toContain(
       "Security scanner 'test-security-scanner' is configured in bunfig.toml but is not installed.",
     );

@@ -953,14 +953,9 @@ impl Value {
 
             debug_assert!(str.tag() == bun_core::Tag::WTFStringImpl);
 
-            // A string body's bytes are its UTF-8 encoding (fetch "extract a
-            // body", USVString), and text()/json() are "UTF-8 decode" of those
-            // bytes, which strips a leading BOM and cannot yield lone
-            // surrogates. Only keep the zero-copy WTFStringImpl fast path when
-            // the string already equals that round trip; otherwise store the
-            // encoded bytes so text()/json()/arrayBuffer()/bytes() all agree.
-            // 8-bit Latin-1 cannot hold U+FEFF or surrogates, so only 16-bit
-            // storage needs checking.
+            // Keep the zero-copy WTFStringImpl only when text()'s "UTF-8
+            // decode" of the encoded bytes would return it unchanged: no
+            // leading BOM, no lone surrogates (neither fits in 8-bit Latin-1).
             if str.is_utf16() {
                 let utf16 = str.utf16();
                 if utf16[0] == 0xFEFF || !simdutf::validate::utf16le(utf16) {

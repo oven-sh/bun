@@ -455,6 +455,18 @@ static struct lsxpack_header *us_quic_hsi_prepare(void *hset_p, struct lsxpack_h
 static int us_quic_hsi_process(void *hset_p, struct lsxpack_header *hdr) {
     struct us_quic_hset *h = (struct us_quic_hset *) hset_p;
     if (hdr == NULL) return 0; /* end of headers */
+    {
+        const char *name = lsxpack_header_get_name(hdr);
+        const char *val = lsxpack_header_get_value(hdr);
+        for (unsigned int i = 0; i < hdr->name_len; i++) {
+            unsigned char c = (unsigned char) name[i];
+            if (c == '\0' || c == '\r' || c == '\n') return -1;
+        }
+        for (unsigned int i = 0; i < hdr->val_len; i++) {
+            unsigned char c = (unsigned char) val[i];
+            if (c == '\0' || c == '\r' || c == '\n') return -1;
+        }
+    }
     if (h->count == h->hcap) {
         unsigned int ncap = h->hcap ? h->hcap * 2 : 16;
         struct us_quic_header_t *nh = (struct us_quic_header_t *)

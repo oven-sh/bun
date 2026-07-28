@@ -717,6 +717,7 @@ impl AsyncModule {
         let jsc_vm = VirtualMachine::get().as_mut();
         jsc_vm.modules.scheduled -= 1;
         if jsc_vm.modules.scheduled == 0 {
+            let _guard = bun_resolver::auto_install_lock();
             jsc_vm.package_manager().end_progress_bar();
         }
         let mut log = bun_ast::Log::init();

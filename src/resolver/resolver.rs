@@ -459,27 +459,27 @@ pub fn auto_install_lock() -> AutoInstallGuard {
         d.set(v + 1);
         v
     });
-    let acquired = depth == 0;
-    if acquired {
+    if depth == 0 {
         AUTO_INSTALL_LOCK.lock();
     }
     AutoInstallGuard {
-        acquired,
         _not_send: core::marker::PhantomData,
     }
 }
 
 pub struct AutoInstallGuard {
-    acquired: bool,
     _not_send: core::marker::PhantomData<*const ()>,
 }
 
 impl Drop for AutoInstallGuard {
     fn drop(&mut self) {
-        AUTO_INSTALL_LOCK_DEPTH.with(|d| d.set(d.get() - 1));
-        if self.acquired {
-            AUTO_INSTALL_LOCK.unlock();
-        }
+        AUTO_INSTALL_LOCK_DEPTH.with(|d| {
+            let v = d.get() - 1;
+            d.set(v);
+            if v == 0 {
+                AUTO_INSTALL_LOCK.unlock();
+            }
+        });
     }
 }
 

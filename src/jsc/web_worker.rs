@@ -1243,7 +1243,6 @@ impl WebWorker {
             // SAFETY: vm_ptr valid; unpublished above under vm_lock, so no
             // other thread can dereference it now — `&mut` is exclusive.
             let vm = unsafe { &mut *vm_ptr };
-            vm.transpiler.resolver.remove_package_manager_wake();
             // terminate() set the JSC termination flag to interrupt running JS;
             // clear it so process.on('exit') handlers can run. teardownJSCVM
             // re-sets it for the JSC VM teardown.
@@ -1289,6 +1288,7 @@ impl WebWorker {
             if let Some(hooks) = runtime_hooks() {
                 (hooks.close_dns_for_terminate)();
             }
+            vm.transpiler.resolver.remove_package_manager_wake();
             // Stop cross-thread posters first: markTerminating() serializes
             // with postTaskTo() on the contexts-map lock, so after this call
             // every task another thread has already enqueued is visible to the

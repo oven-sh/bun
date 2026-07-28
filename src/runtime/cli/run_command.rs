@@ -3288,8 +3288,9 @@ impl RunCommand {
             b"private",
         ];
         !LOCAL_ONLY_SUFFIXES.iter().any(|suffix| {
-            hostname.len() > suffix.len()
-                && hostname[hostname.len() - suffix.len() - 1] == b'.'
+            (hostname.len() == suffix.len()
+                || (hostname.len() > suffix.len()
+                    && hostname[hostname.len() - suffix.len() - 1] == b'.'))
                 && strings::eql_case_insensitive_ascii(
                     &hostname[hostname.len() - suffix.len()..],
                     suffix,
@@ -4246,6 +4247,7 @@ mod remote_image_prefetch_tests {
         assert!(!allowed("https://printer.local/img.png"));
         assert!(!allowed("https://metadata.google.internal/img.png"));
         assert!(!allowed("https://nas.home.arpa/img.png"));
+        assert!(!allowed("https://home.arpa/img.png"));
         assert!(!allowed("https://dev.corp/img.png"));
         assert!(!allowed("https://box.lan/img.png"));
     }

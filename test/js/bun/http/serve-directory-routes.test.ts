@@ -394,6 +394,143 @@ describe("Bun.serve() directory routes", () => {
     ).toThrow(expect.objectContaining({ code: "ENOENT" }));
   });
 
+  it("serves correctly with more unique paths than stat-cache slots", async () => {
+    const N = 1500;
+    const files: Record<string, string> = {};
+    for (let i = 0; i < N; i++) files[`public/f${i}.txt`] = `v${i}`;
+    using dir = tempDir("serve-dir-exhaust", files);
+
+    server = serve({
+      port: 0,
+      routes: { "/*": { dir: join(String(dir), "public") } },
+    });
+
+    // Walk the full set twice so every slot is guaranteed to have been
+    // evicted and reused between the two visits to any given path.
+    for (let pass = 0; pass < 2; pass++) {
+      const batch = 64;
+      for (let base = 0; base < N; base += batch) {
+        const chunk = Array.from({ length: Math.min(batch, N - base) }, (_, j) => base + j);
+        const bodies = await Promise.all(chunk.map(i => fetch(`${server!.url}f${i}.txt`).then(r => r.text())));
+        expect(bodies).toEqual(chunk.map(i => `v${i}`));
+      }
+    }
+
+    // After eviction churn, conditionals on a hot path still work.
+    const first = await fetch(`${server.url}f0.txt`);
+    const lm = first.headers.get("last-modified")!;
+    const etag = first.headers.get("etag")!;
+    expect((await fetch(`${server.url}f0.txt`, { headers: { "if-modified-since": lm } })).status).toBe(304);
+    expect((await fetch(`${server.url}f0.txt`, { headers: { "if-none-match": etag } })).status).toBe(304);
+  }, 30_000);
+
+  describe.each([true, false])("statCache: %p", statCache => {
+    it("serves and honors conditionals", async () => {
+      using dir = tempDir(`serve-dir-cache-${statCache}`, {
+        "public/a.txt": "a",
+      });
+      server = serve({
+        port: 0,
+        routes: { "/*": { dir: join(String(dir), "public"), statCache } },
+      });
+
+      const res = await fetch(`${server.url}a.txt`);
+      expect(res.status).toBe(200);
+      expect(await res.text()).toBe("a");
+      const lm = res.headers.get("last-modified")!;
+      expect(lm).toBeTruthy();
+      expect(res.headers.get("etag")).toMatch(/^W\/"/);
+
+      const cond = await fetch(`${server.url}a.txt`, { headers: { "if-modified-since": lm } });
+      expect(cond.status).toBe(304);
+    });
+  });
+
+  it("handles a concurrent burst on one file", async () => {
+    using dir = tempDir("serve-dir-burst", {
+      "public/hot.txt": "hot",
+    });
+    server = serve({
+      port: 0,
+      routes: { "/*": { dir: join(String(dir), "public") } },
+    });
+
+    const results = await Promise.all(
+      Array.from({ length: 128 }, () => fetch(`${server!.url}hot.txt`).then(r => r.text())),
+    );
+    expect(results.every(r => r === "hot")).toBe(true);
+  });
+
+  it("rejects adversarial inputs", async () => {
+    using dir = tempDir("serve-dir-adversarial", {
+      "secret.txt": "SECRET",
+      "public/ok.txt": "ok",
+      "public/a/b/c/d/e/f/g/h/target.txt": "deep",
+      "public/\u00e9.txt": "utf8",
+    });
+
+    server = serve({
+      port: 0,
+      routes: { "/static/*": { dir: join(String(dir), "public") } },
+      fetch: () => new Response("fallback", { status: 404 }),
+    });
+
+    async function raw(path: string): Promise<{ status: number; body: string }> {
+      const { promise, resolve } = Promise.withResolvers<string>();
+      let buf = "";
+      const sock = await Bun.connect({
+        hostname: "127.0.0.1",
+        port: server!.port,
+        socket: {
+          data(_s, chunk) {
+            buf += chunk.toString("latin1");
+          },
+          close() {
+            resolve(buf);
+          },
+          error() {
+            resolve(buf);
+          },
+        },
+      });
+      sock.write(`GET ${path} HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n`);
+      const full = await promise;
+      const status = parseInt(full.slice(9, 12), 10);
+      const body = full.split("\r\n\r\n").slice(1).join("\r\n\r\n");
+      return { status, body };
+    }
+
+    // Deep `..` chain that cancels out stays inside the root.
+    const deep = await raw("/static/a/b/c/d/e/f/g/h/../../../../../../../../a/b/c/d/e/f/g/h/target.txt");
+    expect(deep.status).toBe(200);
+    expect(deep.body).toContain("deep");
+
+    // Deep `..` chain that escapes is rejected.
+    const escape = await raw("/static/a/b/c/d/e/f/g/h/../../../../../../../../../secret.txt");
+    expect(escape.body).not.toContain("SECRET");
+    expect(escape.status).toBe(404);
+
+    // Many consecutive slashes collapse.
+    const slashes = await raw("/static////////ok.txt");
+    expect(slashes.status).toBe(200);
+    expect(slashes.body).toContain("ok");
+
+    // Percent-encoded UTF-8 filename.
+    const utf8 = await fetch(`${server.url}static/%C3%A9.txt`);
+    expect(utf8.status).toBe(200);
+    expect(await utf8.text()).toBe("utf8");
+
+    // Very long path (yields, does not crash).
+    const long = await raw("/static/" + Buffer.alloc(8000, "a").toString());
+    expect([404, 400, 414]).toContain(long.status);
+
+    // Oversized Range start must not overflow.
+    const hugeRange = await fetch(`${server.url}static/ok.txt`, {
+      headers: { range: "bytes=999999999999999999999999-" },
+    });
+    expect([200, 416]).toContain(hugeRange.status);
+  });
+
   it("is reflected in server.routes", async () => {
     // Ensure DirectoryRoute is wired through AnyRoute introspection without
     // crashing (guards the match arms added for the new variant).

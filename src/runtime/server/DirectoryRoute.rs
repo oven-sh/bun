@@ -65,6 +65,7 @@ impl DirectoryRoute {
         global: &JSGlobalObject,
         root: &[u8],
         url_prefix: &[u8],
+        enable_stat_cache: bool,
     ) -> JsResult<*mut DirectoryRoute> {
         debug_assert!(url_prefix.last() == Some(&b'/'));
 
@@ -80,8 +81,9 @@ impl DirectoryRoute {
             }
         };
 
-        let mut stat_cache = Vec::with_capacity(STAT_CACHE_SLOTS);
-        for _ in 0..STAT_CACHE_SLOTS {
+        let slots = if enable_stat_cache { STAT_CACHE_SLOTS } else { 0 };
+        let mut stat_cache = Vec::with_capacity(slots);
+        for _ in 0..slots {
             stat_cache.push(Cell::new(StatCacheEntry::default()));
         }
 
@@ -298,8 +300,18 @@ impl DirectoryRoute {
     }
 
     fn stat_cache_lookup(&self, rel: &[u8], stat: &bun_sys::Stat) -> (u64, [u8; 32], usize) {
+        let mut buf = [0u8; 32];
+        if self.stat_cache.is_empty() {
+            let mut sh = StatHash::default();
+            sh.hash(stat, rel);
+            let len = sh.last_modified().map(|s| {
+                buf[..s.len()].copy_from_slice(s);
+                s.len()
+            });
+            return (sh.last_modified_u64, buf, len.unwrap_or(0));
+        }
         let path_hash = bun_wyhash::hash(rel);
-        let slot = &self.stat_cache[(path_hash as usize) % STAT_CACHE_SLOTS];
+        let slot = &self.stat_cache[(path_hash as usize) % self.stat_cache.len()];
         let mut entry = slot.replace(StatCacheEntry::default());
         if entry.path_hash != path_hash {
             entry = StatCacheEntry::default();
@@ -307,7 +319,6 @@ impl DirectoryRoute {
         }
         entry.stat_hash.hash(stat, rel);
         let ms = entry.stat_hash.last_modified_u64;
-        let mut buf = [0u8; 32];
         let len = entry
             .stat_hash
             .last_modified()

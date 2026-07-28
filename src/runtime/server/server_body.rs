@@ -787,7 +787,15 @@ impl AnyRoute {
                     } else {
                         &path[..path.len() - 1]
                     };
-                    let route = super::DirectoryRoute::create(global, relative_root, url_prefix)?;
+                    let stat_cache = argument
+                        .get_boolean_loose(global, b"statCache")?
+                        .unwrap_or(true);
+                    let route = super::DirectoryRoute::create(
+                        global,
+                        relative_root,
+                        url_prefix,
+                        stat_cache,
+                    )?;
                     return Ok(Some(AnyRoute::Directory(NonNull::new(route).expect(
                         "DirectoryRoute::create returns a fresh heap allocation",
                     ))));

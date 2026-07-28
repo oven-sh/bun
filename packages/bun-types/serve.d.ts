@@ -606,6 +606,12 @@ declare module "bun" {
     interface DirectoryRouteOptions {
       /** Path to the directory to serve. */
       dir: string;
+      /**
+       * Cache formatted `Last-Modified` strings per path so repeated requests
+       * for an unchanged file skip the date formatter. Uses ~60KB per route.
+       * @default true
+       */
+      statCache?: boolean;
     }
 
     type BaseRouteValue = Response | false | HTMLBundle | BunFile | DirectoryRouteOptions;

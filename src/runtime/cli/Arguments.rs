@@ -665,7 +665,9 @@ pub(crate) static BASE_RUNTIME_TRANSPILER_TABLE: &clap::ConvertedTable =
 pub(crate) fn tag_table(cmd: CommandTag) -> &'static clap::ConvertedTable {
     match cmd {
         CommandTag::AutoCommand => AUTO_TABLE,
-        CommandTag::RunCommand | CommandTag::RunAsNodeCommand | CommandTag::ReplCommand => RUN_TABLE,
+        CommandTag::RunCommand | CommandTag::RunAsNodeCommand | CommandTag::ReplCommand => {
+            RUN_TABLE
+        }
         CommandTag::BuildCommand => BUILD_TABLE,
         CommandTag::TestCommand => TEST_TABLE,
         CommandTag::BunxCommand => RUN_TABLE,

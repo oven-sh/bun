@@ -1316,6 +1316,9 @@ pub struct H2FrameParser {
     /// Drained into Connection::close_stream on the next rewrite_read batch.
     pending_engine_stream_closes: JsCell<Vec<u32>>,
     dispatch_depth: Cell<u32>,
+    /// Engine signalled RST_STREAM sits right after this stream's opening HEADERS in the same read
+    /// (see on_rst_after_headers). request() drops the response for it; on_stream_reset clears it.
+    rst_after_headers: Cell<u32>,
     max_rejected_streams: Cell<u32>,
     max_session_invalid_frames: Cell<u32>,
     stream_reset_burst: Cell<u32>,
@@ -6188,6 +6191,14 @@ impl crate::api::h2::connection::Sink for H2FrameParser {
         let _ = self.handle_received_stream_id(stream_id);
     }
 
+    fn on_rst_after_headers(&self, stream_id: u32) {
+        // The peer's RST_STREAM for this id is the very next frame: remember it so request()
+        // (called from the handler that on_headers_complete is about to fire) short-circuits
+        // without HPACK-encoding or writing. Not reflected in the legacy stream state, which
+        // on_stream_end reads to decide whether the stream is fully closed.
+        self.rst_after_headers.set(stream_id);
+    }
+
     fn on_header(&self, _stream_id: u32, name: &[u8], value: &[u8], never_index: bool) {
         // Accumulate raw bytes; the whole block is materialized into JS values in one
         // native call at on_headers_complete (see H2HeadersMaterializer.cpp).
@@ -6343,6 +6354,9 @@ impl crate::api::h2::connection::Sink for H2FrameParser {
         self.hdr_meta.with_mut(|m| m.clear());
         if self.rewrite_pending_push.get() == stream_id && stream_id != 0 {
             self.rewrite_pending_push.set(0);
+        }
+        if self.rst_after_headers.get() == stream_id {
+            self.rst_after_headers.set(0);
         }
         // Bridge: mark the legacy stream closed with the rst code (capturing the prior state for
         // the aborted dispatch below).
@@ -8205,7 +8219,7 @@ impl H2FrameParser {
         // Coercing `data_arg` (a String subclass's toString) can run user JS while `stream`
         // is borrowed.
         let mut stream = this.enter_stream_dispatch(stream_ptr);
-        if !stream.can_send_data() {
+        if !stream.can_send_data() || this.rst_after_headers.get() == stream_id {
             this.dispatch_write_callback(callback_arg);
             return Ok(JSValue::FALSE);
         }
@@ -8773,12 +8787,18 @@ impl H2FrameParser {
             return Ok(JSValue::js_number(-1.0));
         }
 
-        // Server response on a stream the peer already reset: skip HPACK + write (the DATA
-        // counterpart lives in writeStream via can_send_data()).
+        // Server response on a stream the peer already reset: skip HPACK + write (writeStream
+        // already guards DATA via can_send_data()). rst_after_headers covers a handler that fired
+        // before its own pipelined RST_STREAM was parsed.
         if this.is_server.get()
-            && let Some(existing) = this.streams.get().get(&stream_id).copied()
-            // SAFETY: *mut Stream from self.streams; valid while the map entry exists.
-            && !unsafe { &*existing }.can_send_data()
+            && (this.rst_after_headers.get() == stream_id
+                || this
+                    .streams
+                    .get()
+                    .get(&stream_id)
+                    .copied()
+                    // SAFETY: *mut Stream from self.streams; valid while the map entry exists.
+                    .is_some_and(|s| !unsafe { &*s }.can_send_data()))
         {
             return Ok(JSValue::js_number(stream_id as f64));
         }
@@ -9776,6 +9796,7 @@ impl H2FrameParser {
             pending_engine_stream_closes: JsCell::new(Vec::new()),
             dispatch_depth: Cell::new(0),
             pending_settings_window_submissions: JsCell::new(Vec::new()),
+            rst_after_headers: Cell::new(0),
             max_rejected_streams: Cell::new(100),
             max_session_invalid_frames: Cell::new(1000),
             stream_reset_burst: Cell::new(crate::api::h2::connection::DEFAULT_STREAM_RESET_BURST),
@@ -9924,19 +9945,19 @@ impl H2FrameParser {
                             .set(max_session_invalid_frames.to_uint64_no_truncate() as u32);
                     }
                 }
-                if let Some(reset_burst) = settings_js.get(global_object, "streamResetBurst")? {
-                    if reset_burst.is_number() {
-                        this_ref
-                            .stream_reset_burst
-                            .set(reset_burst.to_uint64_no_truncate() as u32);
-                    }
-                }
-                if let Some(reset_rate) = settings_js.get(global_object, "streamResetRate")? {
-                    if reset_rate.is_number() {
-                        this_ref
-                            .stream_reset_rate
-                            .set(reset_rate.to_uint64_no_truncate() as u32);
-                    }
+                // node's updateOptionsBuffer: streamResetBurst / streamResetRate only take effect
+                // when both are numbers; either one alone is a no-op.
+                if let Some(reset_burst) = settings_js.get(global_object, "streamResetBurst")?
+                    && let Some(reset_rate) = settings_js.get(global_object, "streamResetRate")?
+                    && reset_burst.is_number()
+                    && reset_rate.is_number()
+                {
+                    this_ref
+                        .stream_reset_burst
+                        .set(reset_burst.to_uint64_no_truncate() as u32);
+                    this_ref
+                        .stream_reset_rate
+                        .set(reset_rate.to_uint64_no_truncate() as u32);
                 }
                 if let Some(max_outstanding_settings) =
                     settings_js.get(global_object, "maxOutstandingSettings")?

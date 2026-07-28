@@ -150,6 +150,11 @@ pub trait Sink {
     fn on_header(&self, _stream_id: u32, _name: &[u8], _value: &[u8], _never_index: bool) {}
     /// The header block for `stream_id` is complete. `end_stream` = the HEADERS carried END_STREAM.
     fn on_headers_complete(&self, _stream_id: u32, _end_stream: bool, _flags: u8) {}
+    /// The peer's RST_STREAM for this id sits immediately after its opening HEADERS in the same
+    /// read (rapid-reset). Fires before on_headers_complete so the embedder can mark the stream
+    /// closed before the user handler runs; on_headers_complete still fires (node's
+    /// test-http2-client-rststream-before-connect expects the server 'stream' handler to run).
+    fn on_rst_after_headers(&self, _stream_id: u32) {}
     /// A DATA payload (padding already stripped).
     fn on_data(&self, _stream_id: u32, _data: &[u8]) {}
     /// The stream half/fully closed; `state` is the `stream::State` integer.
@@ -249,7 +254,7 @@ pub struct Connection {
     /// the stream id whose header block is mid-flight and which the next frame MUST continue.
     continuation_stream: u32,
     /// Set by receive() when the frame right after an inbound HEADERS is RST_STREAM for the same
-    /// id (CVE-2023-44487). finish_header_block skips on_headers_complete for that stream.
+    /// id (CVE-2023-44487). finish_header_block surfaces it via on_rst_after_headers.
     rst_after_headers: u32,
     header_block: Vec<u8>,
     /// In-progress partial DATA frame streamed incrementally. nghttp2 delivers DATA in
@@ -335,7 +340,8 @@ impl Connection {
             obq_ack_pending: 0,
             stream_reset_burst: DEFAULT_STREAM_RESET_BURST,
             stream_reset_rate: DEFAULT_STREAM_RESET_RATE,
-            reset_tokens: DEFAULT_STREAM_RESET_BURST,
+            // Start full: note_peer_reset clamps to whatever burst the embedder synced.
+            reset_tokens: u32::MAX,
             reset_last_refill: std::time::Instant::now(),
             enc_buf: Vec::new(),
             replenish_buf: Vec::new(),
@@ -807,11 +813,14 @@ impl Connection {
             .saturating_duration_since(self.reset_last_refill)
             .as_secs();
         if elapsed > 0 {
-            let gain = (elapsed as u32)
+            let gain = u32::try_from(elapsed)
+                .unwrap_or(u32::MAX)
                 .checked_mul(self.stream_reset_rate)
                 .unwrap_or(u32::MAX);
             self.reset_tokens = self.reset_tokens.saturating_add(gain);
-            self.reset_last_refill = now;
+            // Advance by the whole seconds credited so the sub-second remainder carries over
+            // (nghttp2_ratelim_update compares integer-seconds timestamps).
+            self.reset_last_refill += std::time::Duration::from_secs(elapsed);
         }
         // burst is synced after Connection::new, so clamp every time (not only on refill).
         self.reset_tokens = self.reset_tokens.min(self.stream_reset_burst);
@@ -1348,10 +1357,8 @@ impl Connection {
         {
             s.recv_final_headers = true;
         }
-        // The peer already cancelled this request in the very next frame (rapid-reset): the RST
-        // runs next and tears it down, so skip dispatch. Trailer blocks are left alone.
         if is_request && self.rst_after_headers == target {
-            return false;
+            sink.on_rst_after_headers(target);
         }
         sink.on_headers_complete(target, end_stream, self.header_flags);
         if end_stream {

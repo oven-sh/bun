@@ -1672,8 +1672,6 @@ describe("RST_STREAM flood (CVE-2023-44487 rapid-reset)", () => {
         f => f.type === FrameType.GOAWAY || (f.type === FrameType.HEADERS && f.streamId === followUpId),
         10_000,
       );
-      // Response HEADERS are only written for a stream the peer has not already reset, so the
-      // count of outbound HEADERS frames is independent of whether the JS handler fired.
       const responseHeaders = c.frames.filter(f => f.type === FrameType.HEADERS).length;
       return { c, frame, handlers, responses, sessionErrorCode, responseHeaders };
     } finally {
@@ -1682,22 +1680,28 @@ describe("RST_STREAM flood (CVE-2023-44487 rapid-reset)", () => {
     }
   }
 
-  test("an RST_STREAM flood is answered with GOAWAY(ENHANCE_YOUR_CALM) and the handler is never reached", async () => {
+  test("an RST_STREAM flood is answered with GOAWAY(ENHANCE_YOUR_CALM) and no response is written for a reset stream", async () => {
     const { frame, handlers, sessionErrorCode, responseHeaders } = await floodRapidReset({ count: 1200 });
     expect(frame.type).toBe(FrameType.GOAWAY);
     expect(goawayErrorCode(frame)).toBe(ErrorCode.ENHANCE_YOUR_CALM);
     expect(Buffer.from(frame.payload.subarray(8)).toString()).toBe("too many RST_STREAM frames");
-    // 'stream' is deferred to nextTick and skipped once the stream's own RST (parsed later in the
-    // same read batch) has marked it aborted, so a pair that arrives in one read never reaches the
-    // handler. A pair split across two reads can dispatch once, so allow a small nonzero count
-    // while still asserting the work is tightly bounded.
-    expect(handlers).toBeLessThan(50);
-    expect(responseHeaders).toBe(0);
+    // The handler fires for every stream whose RST_STREAM has not yet emptied the token bucket
+    // (node parity: test-http2-client-rststream-before-connect expects 'stream' to fire even when
+    // the client immediately resets). The default burst is 1000; refill at 33/s may add a few.
+    expect(handlers).toBeGreaterThan(900);
+    expect(handlers).toBeLessThan(1100);
+    // The engine sees each RST_STREAM right after its HEADERS in the same buffer, so request()
+    // and writeStream() short-circuit and nothing is written on the reset stream's behalf. A pair
+    // split across two socket reads misses the lookahead and can write once, so allow a small
+    // nonzero count rather than asserting exactly 0.
+    expect(responseHeaders).toBeLessThan(50);
     expect(sessionErrorCode).toBe("ERR_HTTP2_ERROR");
   });
 
   test("streamResetBurst lowers the threshold at which the flood is detected", async () => {
-    const { frame } = await floodRapidReset({ serverOptions: { streamResetBurst: 50 } as any, count: 60 });
+    // node's updateOptionsBuffer only applies the pair when both are provided.
+    const serverOptions = { streamResetBurst: 50, streamResetRate: 33 } as any;
+    const { frame } = await floodRapidReset({ serverOptions, count: 60 });
     expect(frame.type).toBe(FrameType.GOAWAY);
     expect(goawayErrorCode(frame)).toBe(ErrorCode.ENHANCE_YOUR_CALM);
     // Last-stream-id in the GOAWAY reflects where the bucket emptied: burst 50 drains on the 51st
@@ -1713,9 +1717,9 @@ describe("RST_STREAM flood (CVE-2023-44487 rapid-reset)", () => {
     expect(frame.type).toBe(FrameType.HEADERS);
     expect(frame.streamId).toBe(1001);
     expect(c.frames.find(f => f.type === FrameType.GOAWAY)).toBeUndefined();
-    // Only the follow-up request (id 1001) actually had a response encoded: every reset stream was
-    // either skipped at 'stream' dispatch or dropped in native request() because it was already
-    // CLOSED, so nothing was written on its behalf.
-    expect(responseHeaders).toBe(1);
+    // The follow-up response plus at most a handful of pairs whose RST_STREAM was split across a
+    // socket-read boundary (missing the lookahead) is all that reaches the wire.
+    expect(responseHeaders).toBeGreaterThanOrEqual(1);
+    expect(responseHeaders).toBeLessThan(50);
   });
 });

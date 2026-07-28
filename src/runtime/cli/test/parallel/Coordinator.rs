@@ -56,7 +56,6 @@ pub struct Coordinator<'a> {
     pub spawned_count: u32,
     pub live_workers: u32,
     pub crashed_files: Vec<u32>,
-    pub aborted_files: Vec<u32>,
     pub aborted: Option<u32>,
     pub bailed: bool,
     pub last_printed_dot: bool,
@@ -153,6 +152,12 @@ impl<'a> Coordinator<'a> {
             .iter()
             .filter_map(|w| w.inflight.map(|idx| (idx, now - w.dispatched_at)))
             .collect();
+        for (idx, _) in &running {
+            self.reporter.summary().fail += 1;
+            self.reporter.summary().files += 1;
+            self.crashed_files.push(*idx);
+            self.files_done += 1;
+        }
         if !running.is_empty() {
             bun_core::pretty_errorln!("<r>\n<red>Interrupted<r> while still running:");
             for (idx, running_ms) in &running {
@@ -527,10 +532,14 @@ impl<'a> Coordinator<'a> {
             // the exit status reflects the crash. SIGKILL is treated as a
             // regular failure (commonly the OOM killer or the user).
             let panicked = is_panic_status(status);
-            self.account_crash(idx, status);
+            if self.bailed {
+                self.account_unfinished(idx, b"aborted: sibling worker panicked");
+            } else {
+                self.account_crash(idx, status);
+            }
             Output::flush();
             w.inflight = None;
-            if panicked {
+            if panicked && !self.bailed {
                 self.abort_on_worker_panic(idx, status);
             }
         }
@@ -572,6 +581,18 @@ impl<'a> Coordinator<'a> {
             w.err = WorkerPipe::new(PipeRole::Stderr, core::ptr::null());
             let _ = core::mem::take(&mut w.captured);
         }
+    }
+
+    fn account_unfinished(&mut self, file_idx: u32, reason: &[u8]) {
+        self.break_dots();
+        bun_core::pretty_error!(
+            "<r><red>✗<r> <b>{}<r> <d>({})<r>\n",
+            bstr::BStr::new(self.rel_path(file_idx)),
+            bstr::BStr::new(reason),
+        );
+        self.reporter.summary().fail += 1;
+        self.reporter.summary().files += 1;
+        self.files_done += 1;
     }
 
     fn account_crash(&mut self, file_idx: u32, status: &SpawnStatus) {
@@ -682,7 +703,8 @@ impl<'a> Coordinator<'a> {
                     )),
                     bstr::BStr::new(reason),
                 );
-                self.aborted_files.push(idx);
+                self.reporter.summary().fail += 1;
+                self.reporter.summary().files += 1;
                 self.files_done += 1;
             }
         }

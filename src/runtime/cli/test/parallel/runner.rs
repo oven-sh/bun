@@ -165,7 +165,6 @@ pub fn run_as_coordinator(
         spawned_count: 0,
         live_workers: 0,
         crashed_files: Vec::new(),
-        aborted_files: Vec::new(),
         aborted: None,
         bailed: false,
         last_printed_dot: false,

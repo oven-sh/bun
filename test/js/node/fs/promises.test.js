@@ -521,11 +521,10 @@ describe("AbortSignal rejections use node's AbortError shape", () => {
         const buf = Buffer.alloc(SIZE, 7);
         for (let attempt = 0; attempt < 20; attempt++) {
           const p = require("node:path").join(${JSON.stringify(String(dir))}, "big-" + attempt + ".bin");
-          fs.writeFileSync(p, "");
           const ac = new AbortController();
           const promise = fsp[${JSON.stringify(method)}](p, buf, { signal: ac.signal });
-          for (let i = 0; fs.statSync(p).size === 0; i++) {
-            if (i > 1_000_000) { console.log(JSON.stringify({ err: "worker never started" })); process.exit(1); }
+          for (let i = 0; !fs.existsSync(p); i++) {
+            if (i > 1_000_000) { console.log(JSON.stringify({ err: "worker never opened" })); process.exit(1); }
           }
           ac.abort();
           let name, code;

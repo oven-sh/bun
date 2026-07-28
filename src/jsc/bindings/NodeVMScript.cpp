@@ -174,7 +174,7 @@ constructScript(JSGlobalObject* globalObject, CallFrame* callFrame, JSValue newT
         ASSERT(executable);
 
         JSC::UnlinkedProgramCodeBlock* unlinkedBlock = nullptr;
-        if (RefPtr<JSC::CachedBytecode> cachedBytecode = unwrapCachedData(std::span(cachedData))) {
+        if (RefPtr<JSC::CachedBytecode> cachedBytecode = unwrapCachedData(script->source(), std::span(cachedData))) {
             JSC::LexicallyScopedFeatures lexicallyScopedFeatures = globalObject->globalScopeExtension() ? JSC::TaintedByWithScopeLexicallyScopedFeature : JSC::NoLexicallyScopedFeatures;
             JSC::SourceCodeKey key(script->source(), {}, JSC::SourceCodeType::ProgramType, lexicallyScopedFeatures, JSC::JSParserScriptMode::Classic, JSC::DerivedContextType::None, JSC::EvalContextType::None, false, {}, std::nullopt);
             unlinkedBlock = JSC::decodeCodeBlock<UnlinkedProgramCodeBlock>(vm, key, cachedBytecode.releaseNonNull());
@@ -200,8 +200,6 @@ constructScript(JSGlobalObject* globalObject, CallFrame* callFrame, JSValue newT
             }
         }
     } else if (produceCachedData) {
-        // cacheBytecode records whether production actually succeeded; it fails
-        // for source that does not parse as a program.
         script->cacheBytecode();
     }
 
@@ -246,13 +244,11 @@ JSC::JSUint8Array* NodeVMScript::getBytecodeBuffer()
             cacheBytecode();
         }
 
-        // Bytecode production fails without throwing when the source does not
-        // parse as a program; there is no cachedData to expose in that case.
         if (!m_cachedBytecode) [[unlikely]] {
             return nullptr;
         }
 
-        m_cachedBytecodeBuffer.set(vm(), this, createCachedDataBuffer(globalObject(), m_cachedBytecode->span()));
+        m_cachedBytecodeBuffer.set(vm(), this, createCachedDataBuffer(globalObject(), m_source, m_cachedBytecode->span()));
         if (!m_cachedBytecodeBuffer) {
             return nullptr;
         }

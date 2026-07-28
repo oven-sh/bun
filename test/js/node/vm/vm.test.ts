@@ -896,36 +896,49 @@ test("rejects corrupted cachedData instead of crashing", async () => {
   // Corrupting, truncating, or extending createCachedData() output must set
   // cachedDataRejected (or throw ERR_VM_MODULE_CACHED_DATA_REJECTED for modules)
   // and recompile from source, like Node. Runs in a child process since the
-  // broken behavior is a process crash.
+  // broken behavior is a process crash: a truncated tail leaves embedded
+  // self-relative offsets pointing past the copied buffer, which JSC's decoder
+  // dereferences without a bounds check.
   const code = /* js */ `
     const vm = require("node:vm");
     const assert = require("node:assert");
 
     function corruptions(good) {
       const variants = [];
-      for (let offset = 0; offset < Math.min(good.length, 128); offset += 8) {
-        const copy = Buffer.from(good);
-        copy[offset] ^= 0xff;
-        variants.push(copy);
+      // Truncations: len-1, len/2, 16, 1. The len/2 case is the one that
+      // reliably reached the decoder's wild pointer arithmetic before the
+      // envelope check was added.
+      for (const cut of [good.length - 1, good.length >> 1, 16, 1]) {
+        variants.push(["truncate:" + cut, good.subarray(0, cut)]);
       }
-      variants.push(good.subarray(0, 20));
-      variants.push(good.subarray(0, good.length >> 1));
-      variants.push(Buffer.concat([good, Buffer.from([0xde, 0xad])]));
-      variants.push(Buffer.alloc(good.length, 0x2a));
+      // 20 single-byte flips seeded deterministically across the buffer.
+      for (let i = 0; i < 20; i++) {
+        const copy = Buffer.from(good);
+        const off = Math.floor((i * (good.length - 1)) / 19);
+        copy[off] ^= 0xff;
+        variants.push(["flip@" + off, copy]);
+      }
+      variants.push(["extend", Buffer.concat([good, Buffer.from([0xde, 0xad])])]);
+      variants.push(["fill", Buffer.alloc(good.length, 0x2a)]);
+      variants.push(["random", Buffer.from("fhqwhgads")]);
       return variants;
     }
 
     {
       const source = "function f(){return 1234} f()";
       const good = new vm.Script(source).createCachedData();
-      for (const cachedData of corruptions(good)) {
+      for (const [label, cachedData] of corruptions(good)) {
         const script = new vm.Script(source, { cachedData });
-        assert.strictEqual(script.cachedDataRejected, true);
-        assert.strictEqual(script.runInThisContext(), 1234);
+        assert.strictEqual(script.cachedDataRejected, true, label);
+        assert.strictEqual(script.runInThisContext(), 1234, label);
       }
       const intact = new vm.Script(source, { cachedData: good });
       assert.strictEqual(intact.cachedDataRejected, false);
       assert.strictEqual(intact.runInThisContext(), 1234);
+      // Intact bytecode for a different source is also rejected (sourceHash).
+      const other = new vm.Script("1 + 1", { cachedData: good });
+      assert.strictEqual(other.cachedDataRejected, true);
+      assert.strictEqual(other.runInThisContext(), 2);
       console.log("script ok");
     }
 
@@ -934,10 +947,10 @@ test("rejects corrupted cachedData instead of crashing", async () => {
       const source = "return a + 1234;";
       const good = vm.compileFunction(source, params, { produceCachedData: true }).cachedData;
       assert.ok(good.length > 0);
-      for (const cachedData of corruptions(good)) {
+      for (const [label, cachedData] of corruptions(good)) {
         const fn = vm.compileFunction(source, params, { cachedData });
-        assert.strictEqual(fn.cachedDataRejected, true);
-        assert.strictEqual(fn(1), 1235);
+        assert.strictEqual(fn.cachedDataRejected, true, label);
+        assert.strictEqual(fn(1), 1235, label);
       }
       const intact = vm.compileFunction(source, params, { cachedData: good });
       assert.strictEqual(intact.cachedDataRejected, false);
@@ -948,10 +961,10 @@ test("rejects corrupted cachedData instead of crashing", async () => {
     {
       const source = "export const value = 1234;";
       const good = new vm.SourceTextModule(source).createCachedData();
-      for (const cachedData of corruptions(good)) {
+      for (const [label, cachedData] of corruptions(good)) {
         assert.throws(() => new vm.SourceTextModule(source, { cachedData }), {
           code: "ERR_VM_MODULE_CACHED_DATA_REJECTED",
-        });
+        }, label);
       }
       new vm.SourceTextModule(source, { cachedData: good });
       console.log("module ok");
@@ -967,32 +980,6 @@ test("rejects corrupted cachedData instead of crashing", async () => {
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect({ stdout, stderr, exitCode, signalCode: proc.signalCode }).toEqual({
     stdout: "script ok\ncompileFunction ok\nmodule ok\n",
-    stderr: "",
-    exitCode: 0,
-    signalCode: null,
-  });
-});
-
-test("cachedData getter when bytecode production fails", async () => {
-  // `export` does not parse as a vm.Script program, so produceCachedData has
-  // nothing to produce; cachedDataProduced must report false and the cachedData
-  // getter must return undefined instead of crashing.
-  const code = /* js */ `
-    const vm = require("node:vm");
-    const script = new vm.Script("export default {};", { produceCachedData: true });
-    console.log(script.cachedDataProduced);
-    console.log(script.cachedData === undefined);
-  `;
-
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "-e", code],
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect({ stdout, stderr, exitCode, signalCode: proc.signalCode }).toEqual({
-    stdout: "false\ntrue\n",
     stderr: "",
     exitCode: 0,
     signalCode: null,

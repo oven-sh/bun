@@ -125,7 +125,7 @@ NodeVMSourceTextModule* NodeVMSourceTextModule::create(VM& vm, JSGlobalObject* g
 
     ptr->m_cachedExecutable.set(vm, ptr, executable);
     UnlinkedModuleProgramCodeBlock* unlinkedBlock = nullptr;
-    if (RefPtr<CachedBytecode> cachedBytecode = unwrapCachedData(std::span(cachedData))) {
+    if (RefPtr<CachedBytecode> cachedBytecode = unwrapCachedData(ptr->sourceCode(), std::span(cachedData))) {
         LexicallyScopedFeatures lexicallyScopedFeatures = globalObject->globalScopeExtension() ? TaintedByWithScopeLexicallyScopedFeature : NoLexicallyScopedFeatures;
         SourceCodeKey key(ptr->sourceCode(), {}, SourceCodeType::ProgramType, lexicallyScopedFeatures, JSParserScriptMode::Classic, DerivedContextType::None, EvalContextType::None, false, {}, std::nullopt);
         unlinkedBlock = decodeCodeBlock<UnlinkedModuleProgramCodeBlock>(vm, key, cachedBytecode.releaseNonNull());
@@ -523,7 +523,7 @@ JSUint8Array* NodeVMSourceTextModule::cachedData(JSGlobalObject* globalObject)
             throwVMError(globalObject, scope, "createCachedData failed"_s);
             return nullptr;
         }
-        JSUint8Array* buffer = createCachedDataBuffer(globalObject, cachedBytecode->span());
+        JSUint8Array* buffer = createCachedDataBuffer(globalObject, m_sourceCode, cachedBytecode->span());
         RETURN_IF_EXCEPTION(scope, nullptr);
         m_cachedBytecodeBuffer.set(vm, this, buffer);
     }

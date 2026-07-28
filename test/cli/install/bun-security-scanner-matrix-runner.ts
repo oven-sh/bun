@@ -512,7 +512,13 @@ scanner = "${scannerPath}"`,
   }
 }
 
-function writeExpected() {
+async function writeExpected(ownedKey: "with" | "without") {
+  const path = join(import.meta.dirname, "bun-security-scanner-matrix-expected.json");
+  // Re-read from disk so regenerating one file does not clobber the sibling
+  // section if the other file was regenerated after this process started.
+  const onDisk: typeof expectedRequests = JSON.parse(await Bun.file(path).text());
+  onDisk[ownedKey] = expectedRequests[ownedKey];
+
   const emit = (obj: Record<string, { packages: string[]; tarballs: string[] }>) => {
     const keys = Object.keys(obj).sort();
     return keys.map((k, i) => `    ${JSON.stringify(k)}: ${JSON.stringify(obj[k])}${i < keys.length - 1 ? "," : ""}`);
@@ -520,18 +526,14 @@ function writeExpected() {
   const lines = [
     "{",
     '  "with": {',
-    ...emit(expectedRequests.with),
+    ...emit(onDisk.with),
     "  },",
     '  "without": {',
-    ...emit(expectedRequests.without),
+    ...emit(onDisk.without),
     "  }",
     "}",
   ];
-  return writeFile(
-    join(import.meta.dirname, "bun-security-scanner-matrix-expected.json"),
-    lines.join("\n") + "\n",
-    "utf8",
-  );
+  await writeFile(path, lines.join("\n") + "\n", "utf8");
 }
 
 export function runSecurityScannerTests(selfModuleName: string, hasExistingNodeModules: boolean) {
@@ -545,7 +547,7 @@ export function runSecurityScannerTests(selfModuleName: string, hasExistingNodeM
 
   afterAll(async () => {
     stopRegistry();
-    if (UPDATE_EXPECTED) await writeExpected();
+    if (UPDATE_EXPECTED) await writeExpected(hasExistingNodeModules ? "with" : "without");
   });
 
   const ttyConfigs = [

@@ -109,6 +109,7 @@ if (process.platform === "win32") {
     "ntdll.dll",
     "ole32.dll",
     "oleaut32.dll",
+    "secur32.dll",
     "shell32.dll",
     "user32.dll",
     "userenv.dll",

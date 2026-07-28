@@ -397,14 +397,20 @@ describe.concurrent("built-in console.* channels", () => {
     expect(exitCode).toBe(0);
   });
 
-  test("no publish when diagnostics_channel was never required", async () => {
-    // Publishing is gated on node:diagnostics_channel having been loaded; when
-    // it is required only after the console calls, those earlier calls must not
-    // have published (and must not have thrown).
+  test("global console stays native until a console channel has a subscriber", async () => {
+    // Wrapping happens at subscribe time, so neither requiring the module nor
+    // materializing the channel (nor reading console.Console, which does both
+    // internally) may replace the native global console methods.
     const script = `
+      const origLog = console.log;
       console.log("before-1");
       console.error("before-2");
       const dc = require("node:diagnostics_channel");
+      if (console.log !== origLog) throw new Error("mutated by require");
+      dc.channel("console.log");
+      if (console.log !== origLog) throw new Error("mutated by channel()");
+      void console.Console;
+      if (console.log !== origLog) throw new Error("mutated by console.Console");
       let count = 0;
       dc.subscribe("console.log", () => count++);
       console.log("after");

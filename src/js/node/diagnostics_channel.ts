@@ -62,6 +62,9 @@ function markActive(channel) {
   ObjectSetPrototypeOf.$call(null, channel, ActiveChannel.prototype);
   channel._subscribers = [];
   channel._stores = new SafeMap();
+
+  const consoleMethod = typeof channel.name === "string" ? consoleChannelMethods[channel.name] : undefined;
+  if (consoleMethod !== undefined) wrapConsoleMethodForChannel(channel, consoleMethod);
 }
 
 function maybeMarkInactive(channel) {
@@ -215,7 +218,8 @@ class Channel {
 const channels = new WeakRefMap();
 
 // Bun's global console methods are native; wrap one to publish the first time its
-// channel is materialized. The closure pins the Channel so it is never re-wrapped.
+// channel becomes active. The closure pins the Channel, so later channel(name)
+// lookups return the same instance and we never re-wrap.
 const consoleChannelMethods = {
   __proto__: null,
   "console.log": "log",
@@ -224,17 +228,21 @@ const consoleChannelMethods = {
   "console.warn": "warn",
   "console.error": "error",
 };
+const wrappedConsoleMethods = { __proto__: null };
 
 function wrapConsoleMethodForChannel(ch, method) {
+  if (wrappedConsoleMethods[method]) return;
   const console = globalThis.console;
   const orig = console[method];
   if (typeof orig !== "function") return;
-  const wrapped = function (...args) {
-    if (ch.hasSubscribers) ch.publish(args);
-    return orig.$apply(this, args);
-  };
-  Object.defineProperty(wrapped, "name", { value: method, configurable: true });
-  console[method] = wrapped;
+  wrappedConsoleMethods[method] = true;
+  // Shorthand method: non-constructible and .name === method, like the native fn.
+  console[method] = {
+    [method](...args) {
+      if (ch.hasSubscribers) ch.publish(args);
+      return orig.$apply(this, args);
+    },
+  }[method];
 }
 
 function channel(name) {
@@ -245,12 +253,7 @@ function channel(name) {
     throw $ERR_INVALID_ARG_TYPE("channel", "string or symbol", name);
   }
 
-  const ch = new Channel(name);
-  const consoleMethod = typeof name === "string" ? consoleChannelMethods[name] : undefined;
-  if (consoleMethod !== undefined) {
-    wrapConsoleMethodForChannel(ch, consoleMethod);
-  }
-  return ch;
+  return new Channel(name);
 }
 
 function subscribe(name, subscription) {

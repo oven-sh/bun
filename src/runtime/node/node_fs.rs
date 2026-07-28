@@ -4218,10 +4218,9 @@ pub mod args {
                 ..Default::default()
             })
         }
-        /// Polled off-thread against a non-atomic flag; the fence keeps the
-        /// load observable under LTO and weak memory ordering.
         pub fn aborted(&self) -> bool {
             if let Some(signal) = &self.signal {
+                // Off-thread poll of a non-atomic flag: fence for LTO + weak ordering.
                 core::sync::atomic::fence(core::sync::atomic::Ordering::SeqCst);
                 return signal.aborted();
             }
@@ -4341,10 +4340,9 @@ pub mod args {
                 flush,
             })
         }
-        /// Polled off-thread against a non-atomic flag; the fence keeps the
-        /// load observable under LTO and weak memory ordering.
         pub fn aborted(&self) -> bool {
             if let Some(signal) = &self.signal {
+                // Off-thread poll of a non-atomic flag: fence for LTO + weak ordering.
                 core::sync::atomic::fence(core::sync::atomic::Ordering::SeqCst);
                 return signal.aborted();
             }

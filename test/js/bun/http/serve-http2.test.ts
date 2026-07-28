@@ -655,9 +655,7 @@ describe.concurrent("Bun.serve http2: true", () => {
       // Stream 3 on the same connection must still succeed.
       h2.request(3, "GET", "/hello", true);
 
-      const rst = await h2.waitFor(
-        f => f.type === 0x03 && f.sid === 1 && f.payload.readUInt32BE(0) === 5,
-      );
+      const rst = await h2.waitFor(f => f.type === 0x03 && f.sid === 1 && f.payload.readUInt32BE(0) === 5);
       expect(rst.payload.readUInt32BE(0)).toBe(5); // STREAM_CLOSED
       expect(h2.frames.some(f => f.type === 0x07)).toBe(false); // no GOAWAY
 

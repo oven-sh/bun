@@ -129,12 +129,9 @@ bool extractCachedData(JSValue cachedDataValue, WTF::Vector<uint8_t>& outCachedD
     return false;
 }
 
-// JSC's bytecode decoder follows offsets embedded in the payload and is only
-// safe on an intact copy of its own serializer's output. cachedData therefore
-// carries this header, and a buffer that does not round-trip it byte for byte
-// is rejected up front instead of handed to the decoder. This mirrors V8's
-// SerializedCodeData header (magic + version + source hash + payload checksum),
-// which is what Node relies on for cachedDataRejected.
+// JSC's bytecode decoder trusts embedded offsets without bounds-checking, so
+// cachedData carries this header (the same shape as V8's SerializedCodeData)
+// and anything that fails it is rejected before reaching the decoder.
 struct CachedDataHeader {
     uint32_t magic;
     uint32_t payloadLength;

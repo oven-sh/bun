@@ -29,7 +29,8 @@ beforeAll(() => {
               version: "2.0.0",
               dist: {
                 tarball: `http://localhost:${registry.port}/no-deps/-/no-deps-2.0.0.tgz`,
-                integrity: "sha512-W3duJKZPcMIG5rA1io5cSK/bhW9rWFz+jFxZsKS/3suK4qHDkQNxUTEXee9/hTaAoDCeHWQqogukWYKzfr6X4g==",
+                integrity:
+                  "sha512-W3duJKZPcMIG5rA1io5cSK/bhW9rWFz+jFxZsKS/3suK4qHDkQNxUTEXee9/hTaAoDCeHWQqogukWYKzfr6X4g==",
                 shasum: "8d304fcfc3c743ed39a8afbaefa03f5cd2a42c98",
               },
             },

@@ -4843,6 +4843,28 @@ it.skipIf(isWindows)("BigIntStats *Ns fields are negative for pre-epoch timestam
   expect(st2.atimeNs / 1_000_000n).toBe(st2.atimeMs);
 });
 
+it.skipIf(isWindows)("BigIntStats *Ns does not clamp for post-2262 timestamps", () => {
+  using dir = tempDir("bigintstats-far-future", { "f.txt": "x" });
+  const f = join(String(dir), "f.txt");
+
+  // sec = 13_569_465_600 (> i64::MAX / 1e9); ext4/btrfs/XFS-bigtime store this exactly.
+  const far = new Date("2400-01-01T00:00:00.000Z");
+  fs.utimesSync(f, far, far);
+  const st = statSync(f, { bigint: true });
+
+  // The invariant must hold regardless of what the filesystem stored.
+  expect(st.mtimeNs / 1_000_000n).toBe(st.mtimeMs);
+  expect(st.atimeNs / 1_000_000n).toBe(st.atimeMs);
+
+  // Only assert exact values if the filesystem round-tripped the timestamp.
+  if (st.mtimeMs === BigInt(far.getTime())) {
+    expect({ mtimeNs: st.mtimeNs, atimeNs: st.atimeNs }).toEqual({
+      mtimeNs: 13_569_465_600_000_000_000n,
+      atimeNs: 13_569_465_600_000_000_000n,
+    });
+  }
+});
+
 it("test syscall errno, issue#4198", () => {
   const path = `${tmpdir()}/non-existent-${Date.now()}.txt`;
   expect(() => openSync(path, "r")).toThrow("no such file or directory");

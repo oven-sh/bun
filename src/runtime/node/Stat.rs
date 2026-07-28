@@ -8,15 +8,7 @@ use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 // libc-stat → uv_stat_t field copy on both POSIX and Windows there.
 pub use bun_sys::PosixStat;
 
-const NS_PER_MS: i64 = bun_core::time::NS_PER_MS as i64;
-const NS_PER_S: i64 = bun_core::time::NS_PER_S as i64;
-
-/// Stats and BigIntStats classes from node:fs
-// `BIG` selects the BigIntStats (i64) vs Stats (f64) flavour. A
-// const-generic-dependent type alias (`if BIG { i64 } else { f64 }`) is not
-// expressible in stable Rust, so `to_time_ms` is split into
-// `to_time_ms_i64` / `to_time_ms_f64` and called from the appropriate
-// branch in `stat_to_js`.
+/// Stats and BigIntStats classes from node:fs. `BIG` selects BigIntStats vs Stats.
 pub struct StatType<const BIG: bool> {
     pub value: PosixStat,
 }
@@ -42,17 +34,6 @@ impl<const BIG: bool> StatType<BIG> {
         );
         #[cfg(not(windows))]
         (ts.sec, ts.nsec)
-    }
-
-    #[inline]
-    fn to_nanoseconds(ts: StatTimespec) -> i64 {
-        let (sec, nsec) = Self::timespec_parts(ts);
-        sec.saturating_mul(NS_PER_S).saturating_add(nsec)
-    }
-
-    fn to_time_ms_i64(ts: StatTimespec) -> i64 {
-        // Node computes BigIntStats *Ms as `*Ns / 1_000_000n`.
-        Self::to_nanoseconds(ts) / NS_PER_MS
     }
 
     fn to_time_ms_f64(ts: StatTimespec) -> f64 {
@@ -84,10 +65,10 @@ impl<const BIG: bool> StatType<BIG> {
         let b_time = Self::get_birthtime(stat_);
 
         if BIG {
-            let atime_ms: i64 = Self::to_time_ms_i64(a_time);
-            let mtime_ms: i64 = Self::to_time_ms_i64(m_time);
-            let ctime_ms: i64 = Self::to_time_ms_i64(c_time);
-            let birthtime_ms: i64 = Self::to_time_ms_i64(b_time);
+            let (a_sec, a_nsec) = Self::timespec_parts(a_time);
+            let (m_sec, m_nsec) = Self::timespec_parts(m_time);
+            let (c_sec, c_nsec) = Self::timespec_parts(c_time);
+            let (b_sec, b_nsec) = Self::timespec_parts(b_time);
 
             return bun_jsc::from_js_host_call(global, || {
                 Bun__createJSBigIntStatsObject(
@@ -102,14 +83,14 @@ impl<const BIG: bool> StatType<BIG> {
                     stat_.size,
                     stat_.blksize,
                     stat_.blocks,
-                    atime_ms,
-                    mtime_ms,
-                    ctime_ms,
-                    birthtime_ms,
-                    Self::to_nanoseconds(a_time),
-                    Self::to_nanoseconds(m_time),
-                    Self::to_nanoseconds(c_time),
-                    Self::to_nanoseconds(b_time),
+                    a_sec,
+                    a_nsec,
+                    m_sec,
+                    m_nsec,
+                    c_sec,
+                    c_nsec,
+                    b_sec,
+                    b_nsec,
                 )
             });
         }
@@ -173,14 +154,14 @@ unsafe extern "C" {
         size: u64,
         blksize: u64,
         blocks: u64,
-        atime_ms: i64,
-        mtime_ms: i64,
-        ctime_ms: i64,
-        birthtime_ms: i64,
-        atime_ns: i64,
-        mtime_ns: i64,
-        ctime_ns: i64,
-        birthtime_ns: i64,
+        atime_sec: i64,
+        atime_nsec: i64,
+        mtime_sec: i64,
+        mtime_nsec: i64,
+        ctime_sec: i64,
+        ctime_nsec: i64,
+        birthtime_sec: i64,
+        birthtime_nsec: i64,
     ) -> JSValue;
 }
 

@@ -34,9 +34,6 @@ pub enum Encoding {
     Crypt,
 }
 
-/// callers compare against `crate::Error::PasswordVerificationFailed` etc.
-pub type PwhashError = Error;
-
 pub mod argon2 {
     use super::{Encoding, Error};
 
@@ -84,12 +81,6 @@ pub mod argon2 {
         /// Interactive argon2id preset: `t=2`, `m=67108864/1024` KiB.
         pub const INTERACTIVE_2ID_T: u32 = 2;
         pub const INTERACTIVE_2ID_M: u32 = 67_108_864 / 1024;
-
-        pub const INTERACTIVE_2ID: Params = Params {
-            t: Self::INTERACTIVE_2ID_T,
-            m: Self::INTERACTIVE_2ID_M,
-            p: 1,
-        };
     }
 
     /// Options for `str_hash`.

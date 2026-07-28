@@ -262,16 +262,6 @@ impl Source {
         }
     }
 
-    pub fn get_handle(&mut self) -> *mut uv::Handle {
-        match self {
-            // SAFETY: uv::Pipe / uv::uv_tty_t embed uv_handle_t as their first member.
-            // `&mut self` so the returned `*mut` carries write provenance.
-            Source::Pipe(pipe) => core::ptr::from_mut::<Pipe>(pipe.as_mut()).cast(),
-            Source::Tty(tty) => tty.as_ptr().cast(),
-            Source::SyncFile(_) | Source::File(_) => unreachable!(),
-        }
-    }
-
     pub fn to_stream(&mut self) -> *mut uv::uv_stream_t {
         match self {
             // SAFETY: uv::Pipe / uv::uv_tty_t embed uv_stream_t as their first member.
@@ -301,14 +291,6 @@ impl Source {
         }
     }
 
-    pub fn get_data(&self) -> *mut c_void {
-        match self {
-            Source::Pipe(pipe) => pipe.data,
-            Source::Tty(tty) => tty.data,
-            Source::SyncFile(file) | Source::File(file) => file.fs.data,
-        }
-    }
-
     pub fn ref_(&mut self) {
         match self {
             Source::Pipe(pipe) => pipe.ref_(),
@@ -322,14 +304,6 @@ impl Source {
             Source::Pipe(pipe) => pipe.unref(),
             Source::Tty(tty) => Self::tty_mut(tty).unref(),
             Source::SyncFile(_) | Source::File(_) => {}
-        }
-    }
-
-    pub fn has_ref(&self) -> bool {
-        match self {
-            Source::Pipe(pipe) => pipe.has_ref(),
-            Source::Tty(tty) => tty.has_ref(),
-            Source::SyncFile(_) | Source::File(_) => false,
         }
     }
 

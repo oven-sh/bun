@@ -203,9 +203,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
         // — reclaim ownership exactly once here so the `Box` drops at end of
         // iteration on every path.
         let mut ptask = unsafe { bun_core::heap::take(ptask_ptr) };
-        if cfg!(debug_assertions) {
-            debug_assert!(manager.pending_task_count() > 0);
-        }
+        debug_assert!(manager.pending_task_count() > 0);
         manager.decrement_pending_tasks();
         ptask.run_from_main_thread(manager, log_level)?;
         if let PatchTaskCallback::Apply(apply) = &mut ptask.callback {
@@ -335,9 +333,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
         }
         // SAFETY: `next()` returned non-null; node is exclusively owned by this batch.
         let task = unsafe { &mut *task_ptr };
-        if cfg!(debug_assertions) {
-            debug_assert!(manager.pending_task_count() > 0);
-        }
+        debug_assert!(manager.pending_task_count() > 0);
         manager.decrement_pending_tasks();
         // We cannot free the network task at the end of this scope.
         // It may continue to be referenced in a future task.
@@ -706,20 +702,16 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                         .map(crate::Error::from)
                         .unwrap_or(crate::Error::TarballFailedToDownload);
 
-                    // The download will not be retried for this task_id, so
-                    // drop the dedupe state before dispatching the error.
-                    // Otherwise a later `enqueuePackageForDownload` for the
-                    // same package sees `found_existing`, never schedules a
-                    // network task, and waits forever for a callback that
-                    // will not arrive. `Store.Installer.onPackageDownloadError`
-                    // drains `task_queue` itself but does not touch
-                    // `network_dedupe_map`, so this must run on the callback
-                    // path too. Capture `is_required` first —
-                    // `isNetworkTaskRequired` reads the map and returns `true`
-                    // when the entry is gone, which would upgrade optional-dep
-                    // warnings to errors on the void-callback fallback below.
+                    // The download will not be retried for this task_id. Mark
+                    // the dedupe entry as failed so a later
+                    // `enqueuePackageForDownload` for the same package observes
+                    // the failure and fails fast instead of either waiting
+                    // forever on a callback that never arrives (entry kept) or
+                    // re-running the entire download+retry cycle (entry removed).
+                    // Runs before the callback branch so `Store.Installer`
+                    // (which `continue`s from the callback) is covered too.
                     let is_required = manager.is_network_task_required(task.task_id);
-                    let _ = manager.network_dedupe_map.remove(&task.task_id);
+                    manager.mark_network_task_failed(task.task_id);
 
                     if C::HAS_ON_PACKAGE_DOWNLOAD_ERROR {
                         if C::IS_STORE_INSTALLER {
@@ -792,15 +784,13 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                 let response = &metadata.response;
 
                 if response.status_code > 399 {
-                    // Non-retryable HTTP error: drop dedupe state so a later
-                    // enqueue for this task_id schedules a fresh network task
-                    // instead of waiting on this failed one. Runs before the
-                    // callback branch so `Store.Installer` (which `continue`s
-                    // from the callback) is covered too. Capture
-                    // `is_required` first — `isNetworkTaskRequired` reads the
-                    // map and returns `true` when the entry is gone.
+                    // Non-retryable HTTP error: mark the dedupe entry as failed
+                    // so a later enqueue for this task_id fails fast instead of
+                    // waiting on this failed one or re-downloading it. Runs
+                    // before the callback branch so `Store.Installer` (which
+                    // `continue`s from the callback) is covered too.
                     let is_required = manager.is_network_task_required(task.task_id);
-                    let _ = manager.network_dedupe_map.remove(&task.task_id);
+                    manager.mark_network_task_failed(task.task_id);
 
                     if C::HAS_ON_PACKAGE_DOWNLOAD_ERROR {
                         let err = match response.status_code {
@@ -917,9 +907,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
         if task_ptr.is_null() {
             break;
         }
-        if cfg!(debug_assertions) {
-            debug_assert!(manager.pending_task_count() > 0);
-        }
+        debug_assert!(manager.pending_task_count() > 0);
         // raw-ptr capture — borrowck would reject overlapping `&mut`
         // with the loop body. Guard runs on every `continue`/`?`/fallthrough.
         // Phase B: have the iterator yield a pool guard that puts back on Drop.
@@ -1080,14 +1068,14 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                     let err = task.err.unwrap_or(crate::Error::TarballFailedToExtract);
 
                     // Extract-task failure (integrity check, libarchive error, etc.)
-                    // is symmetric with the HTTP 4xx/5xx branch above: drop the
-                    // dedupe state so a later `enqueuePackageForDownload` for this
-                    // `task_id` schedules a fresh network task instead of waiting
-                    // on this failed one forever. Runs before the callback branch
-                    // so `Store.Installer` (which `continue`s from the callback)
-                    // is covered too. `network_dedupe_map.remove` is a no-op for
+                    // is symmetric with the HTTP 4xx/5xx branch above: mark the
+                    // dedupe entry as failed so a later `enqueuePackageForDownload`
+                    // for this `task_id` fails fast instead of waiting on this
+                    // failed one forever or re-downloading it. Runs before the
+                    // callback branch so `Store.Installer` (which `continue`s from
+                    // the callback) is covered too. The mark is a no-op for
                     // `local_tarball` tasks (they never populate the map).
-                    let _ = manager.network_dedupe_map.remove(&task.id);
+                    manager.mark_network_task_failed(task.id);
 
                     if C::HAS_ON_PACKAGE_DOWNLOAD_ERROR {
                         // SAFETY: `task.tag` selects the active `task.request` union arm.
@@ -1754,6 +1742,18 @@ pub fn is_network_task_required(this: &PackageManager, task_id: Task::Id) -> boo
     }
 }
 
+pub fn mark_network_task_failed(this: &mut PackageManager, task_id: Task::Id) {
+    if let Some(entry) = this.network_dedupe_map.get_mut(&task_id) {
+        entry.failed = true;
+    }
+}
+
+pub fn network_task_has_failed(this: &PackageManager, task_id: Task::Id) -> bool {
+    this.network_dedupe_map
+        .get(&task_id)
+        .is_some_and(|e| e.failed)
+}
+
 pub fn generate_network_task_for_tarball<'a>(
     this: &'a mut PackageManager,
     task_id: Task::Id,
@@ -1907,10 +1907,6 @@ impl PackageManager {
         drain_dependency_list(self)
     }
     #[inline]
-    pub fn flush_dependency_queue(&mut self) {
-        flush_dependency_queue(self)
-    }
-    #[inline]
     pub fn flush_network_queue(&mut self) {
         flush_network_queue(self)
     }
@@ -1929,6 +1925,14 @@ impl PackageManager {
     #[inline]
     pub fn is_network_task_required(&self, task_id: Task::Id) -> bool {
         is_network_task_required(self, task_id)
+    }
+    #[inline]
+    pub fn mark_network_task_failed(&mut self, task_id: Task::Id) {
+        mark_network_task_failed(self, task_id)
+    }
+    #[inline]
+    pub fn network_task_has_failed(&self, task_id: Task::Id) -> bool {
+        network_task_has_failed(self, task_id)
     }
     #[inline]
     pub fn get_network_task(&mut self) -> *mut NetworkTask {

@@ -24,6 +24,12 @@ public:
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForNapiPrototype;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForJSSQLStatement;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForJSSQLStatementConstructor;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForNodeSqliteDatabaseSync;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForNodeSqliteStatementSync;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForNodeSqliteStatementSyncIterator;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForNodeSqliteSession;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForNodeSqliteLimits;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForNodeSqliteTagStore;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForJSSinkConstructor;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForJSSinkController;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForJSSink;

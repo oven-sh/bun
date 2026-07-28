@@ -130,7 +130,8 @@ impl<'a> Coordinator<'a> {
                 };
                 // SAFETY: event_loop()/usockets_loop() return live pointers for the VM lifetime.
                 unsafe {
-                    (*(*self.vm.event_loop()).usockets_loop()).tick_with_timeout(Some(&ts));
+                    (*(*self.vm.event_loop()).usockets_loop())
+                        .tick_with_timeout(Some(&ts), bun_uws::NOW_NS_UNKNOWN);
                 }
             } else {
                 self.vm.event_loop_ref().auto_tick();
@@ -339,10 +340,10 @@ impl<'a> Coordinator<'a> {
         match kind {
             frame::Kind::Ready => self.assign_work_or_retry(w),
             frame::Kind::FileStart => {
-                let _ = rd.u32_();
+                let _ = rd.u32();
             }
             frame::Kind::TestDone => {
-                let idx = rd.u32_();
+                let idx = rd.u32();
                 let formatted = rd.str();
                 if w.inflight != Some(idx) {
                     return;
@@ -365,7 +366,7 @@ impl<'a> Coordinator<'a> {
             frame::Kind::FileDone => {
                 let mut nums = [0u32; 9];
                 for n in nums.iter_mut() {
-                    *n = rd.u32_();
+                    *n = rd.u32();
                 }
                 let [
                     idx,

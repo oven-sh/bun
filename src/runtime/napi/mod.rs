@@ -22,4 +22,3 @@ bun_opaque::opaque_ffi! {
 // TODO(blocked): bun_jsc::EventLoop (method surface)
 // TODO(blocked): bun_collections::LinearFifo
 // TODO(blocked): bun_threading::Condvar
-pub struct ThreadsafeFunction(());

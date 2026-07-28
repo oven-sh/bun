@@ -64,7 +64,6 @@ pub struct NetworkTask {
     // into `callback`; owning avoids that at the cost of one copy per tarball download.
     pub url_buf: Box<[u8]>,
     pub retried: u16,
-    pub request_buffer: MutableString,
     pub response_buffer: MutableString,
     // BACKREF: PackageManager owns this task via `preallocated_network_tasks`.
     // ParentRef constructed via `from_raw_mut` so `assume_mut` retains write
@@ -127,6 +126,10 @@ pub enum Callback {
 #[derive(Default, Clone, Copy)]
 pub struct DedupeMapEntry {
     pub is_required: bool,
+    /// Set once the download/extract for this task id has terminally failed so a
+    /// later `enqueue_*_for_download` can observe the failure instead of
+    /// re-scheduling the entire network task (and its retry cycle) a second time.
+    pub failed: bool,
 }
 /// `Id` is already a wyhash output, so identity hashing
 /// (hash = value bits) avoids re-hashing.
@@ -669,7 +672,6 @@ impl NetworkTask {
         };
 
         if PackageManager::verbose_install() {
-            self.http_mut().verbose = HTTPVerboseLevel::Headers;
             self.http_mut().client.verbose = HTTPVerboseLevel::Headers;
         }
 
@@ -709,6 +711,11 @@ pub enum ForTarballError {
     OutOfMemory,
     #[error("InvalidURL")]
     InvalidURL,
+    /// Returned by `enqueue_*_for_download` when the dedupe map already records
+    /// a terminal failure for this task id. Callers handle it silently (the
+    /// original failure was already reported) and advance their own bookkeeping.
+    #[error("TarballFailedToDownload")]
+    AlreadyFailed,
 }
 bun_core::oom_from_alloc!(ForTarballError);
 impl From<ForTarballError> for crate::Error {
@@ -716,6 +723,7 @@ impl From<ForTarballError> for crate::Error {
         match e {
             ForTarballError::OutOfMemory => crate::Error::Alloc(bun_alloc::AllocError),
             ForTarballError::InvalidURL => crate::Error::InvalidURL,
+            ForTarballError::AlreadyFailed => crate::Error::TarballFailedToDownload,
         }
     }
 }
@@ -935,7 +943,7 @@ impl NetworkTask {
     /// value — the slot is freshly poisoned/uninit from `get()`.
     ///
     /// Caller-initialized fields (`unsafe_http_client`, `callback`,
-    /// `request_buffer`, `response_buffer`) are written here with drop-safe
+    /// `response_buffer`) are written here with drop-safe
     /// placeholders so subsequent `=` assignments in `for_manifest`/
     /// `for_tarball` do not drop uninitialized memory. `unsafe_http_client`
     /// stays bitwise-untouched (it is `MaybeUninit`, so leaving it uninit is
@@ -976,7 +984,6 @@ impl NetworkTask {
             // Caller-initialized fields: write drop-safe placeholders so the
             // plain `=` in `for_manifest`/`for_tarball` drops a valid value.
             // (`unsafe_http_client` is `MaybeUninit` — left uninitialized.)
-            addr_of_mut!((*slot).request_buffer).write(MutableString::init_empty());
             addr_of_mut!((*slot).response_buffer).write(MutableString::init_empty());
             addr_of_mut!((*slot).callback).write(Callback::LocalTarball);
         }

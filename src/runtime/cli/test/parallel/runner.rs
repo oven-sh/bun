@@ -22,10 +22,6 @@ use super::file_range::FileRange;
 use super::frame::{self, Frame};
 use super::worker::{PipeRole, Worker, WorkerPipe};
 use crate::Command;
-#[cfg(unix)]
-use crate::api::bun::process::PosixStdio as Stdio;
-#[cfg(not(unix))]
-use crate::api::bun::process::WindowsStdio as Stdio;
 use crate::test_command::{self, CommandLineReporter, TestCommand};
 use crate::test_runner::bun_test::FirstLast;
 use bun_options_types::code_coverage_options::CodeCoverageOptions;
@@ -187,7 +183,6 @@ pub fn run_as_coordinator(
             captured: Vec::new(),
             alive: false,
             exit_status: None,
-            extra_fd_stdio: [Stdio::Ignore],
         });
         let w: *mut Worker = workers.last_mut().unwrap();
         // SAFETY: w points into workers; Vec will not reallocate (capacity == k)
@@ -541,7 +536,7 @@ impl ChannelOwner for WorkerCommands {
     fn on_channel_frame(&mut self, kind: frame::Kind, rd: &mut frame::Reader<'_>) {
         match kind {
             frame::Kind::Run => {
-                self.pending_idx = Some(rd.u32_());
+                self.pending_idx = Some(rd.u32());
                 self.pending_path.clear();
                 self.pending_path.extend_from_slice(rd.str());
             }
@@ -596,7 +591,7 @@ impl<'a> WorkerLoop<'a> {
 
             self.reporter.worker_ipc_file_idx = Some(idx);
             wf.begin(frame::Kind::FileStart);
-            wf.u32_(idx);
+            wf.u32(idx);
             self.cmds.send(wf.finish());
 
             let before = *self.reporter.summary();
@@ -636,7 +631,7 @@ impl<'a> WorkerLoop<'a> {
                 after.files - before.files,
                 self.reporter.jest.unhandled_errors_between_tests - before_unhandled,
             ] {
-                wf.u32_(v);
+                wf.u32(v);
             }
             self.cmds.send(wf.finish());
         }
@@ -821,7 +816,7 @@ pub fn worker_emit_test_done(file_idx: u32, formatted_line: &[u8]) {
     // SAFETY: single-threaded worker; WORKER_FRAME is a process-global scratch buffer.
     let wf = unsafe { &mut *WORKER_FRAME.get() };
     wf.begin(frame::Kind::TestDone);
-    wf.u32_(file_idx);
+    wf.u32(file_idx);
     wf.str(formatted_line);
     cmds.send(wf.finish());
 }

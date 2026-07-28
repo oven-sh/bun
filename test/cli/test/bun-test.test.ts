@@ -1325,7 +1325,7 @@ describe("bun test", () => {
   });
 
   test("--tsconfig-override works", () => {
-    const dir = tempDirWithFiles("test-tsconfig-override", {
+    using dir = tempDir("test-tsconfig-override", {
       "math.test.ts": `
         import { describe, test, expect } from "bun:test";
         import { add } from "@utils/math";
@@ -1391,7 +1391,7 @@ describe("bun test", () => {
   });
 
   test("--tsconfig-override works with monorepo spec tsconfig", () => {
-    const dir = tempDirWithFiles("test-tsconfig-monorepo", {
+    using dir = tempDir("test-tsconfig-monorepo", {
       "packages/app/src/index.ts": `
         export function getMessage() {
           return "Hello from app";
@@ -1455,6 +1455,51 @@ describe("bun test", () => {
     const output = stdout + stderr;
     expect(output).toContain("1 pass");
     expect(output).toContain("app message");
+  });
+
+  test("runs process.on('exit') handlers", async () => {
+    using dir = tempDir("bun-test-exit-handler", {
+      "exit.test.ts": `
+        import { test } from "bun:test";
+        process.on("exit", () => console.log("exit handler ran"));
+        test("a test", () => {});
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "exit.test.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toContain("exit handler ran");
+    expect(stderr).toContain("1 pass");
+    expect(exitCode).toBe(0);
+  });
+
+  test("an exit handler can fail the run, like node's common.mustCall()", async () => {
+    using dir = tempDir("bun-test-exit-handler-code", {
+      "exit-code.test.ts": `
+        import { test } from "bun:test";
+        process.on("exit", () => process.exit(1));
+        test("a passing test", () => {});
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "exit-code.test.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // Windows prints the banner to stdout; only assert nothing test-shaped leaks.
+    expect(stdout).not.toContain("pass");
+    expect(stderr).toContain("1 pass");
+    expect(exitCode).toBe(1);
   });
 });
 

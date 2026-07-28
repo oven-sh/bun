@@ -169,7 +169,6 @@ impl<'a> Writable<'a> {
         process.on_stdin_destroyed();
     }
     pub fn on_ready(&mut self, _: Option<BlobSizeType>, _: Option<BlobSizeType>) {}
-    pub fn on_start(&mut self) {}
 
     pub fn init(
         stdio: &mut Stdio,

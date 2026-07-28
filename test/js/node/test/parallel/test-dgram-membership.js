@@ -16,7 +16,7 @@ const setup = dgram.createSocket.bind(dgram, { type: 'udp4', reuseAddr: true });
     }, {
       code: 'ERR_SOCKET_DGRAM_NOT_RUNNING',
       name: 'Error',
-      message: /not running/i
+      message: /^Not running$/
     });
   }));
 }
@@ -30,7 +30,7 @@ const setup = dgram.createSocket.bind(dgram, { type: 'udp4', reuseAddr: true });
     }, {
       code: 'ERR_SOCKET_DGRAM_NOT_RUNNING',
       name: 'Error',
-      message: /not running/i
+      message: /^Not running$/
     });
   }));
 }

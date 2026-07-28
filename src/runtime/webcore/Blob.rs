@@ -24,7 +24,7 @@ use bun_jsc::StringJsc as _;
 use bun_sys::{self, Fd};
 
 use crate::webcore::node_types::{PathOrBlob, PathOrFileDescriptor};
-use crate::webcore::s3_stub as S3;
+use crate::webcore::s3 as S3;
 use crate::webcore::{self, Lifetime, ReadableStream, Request, Response, streams};
 
 bun_core::define_scoped_log!(debug, Blob, visible);
@@ -108,13 +108,13 @@ pub use bun_jsc::webcore_types::{
     Blob, Blob__deref, Blob__ref, BlobContentType, ClosingState, MAX_SIZE, SizeType,
 };
 
-pub type Ref = bun_ptr::ExternalShared<Blob>;
-
 /// 1: Initial
 /// 2: Added byte for whether it's a dom file, length and bytes for `stored_name`,
 ///    and f64 for `last_modified`.
 /// 3: Added File name serialization for File objects (when is_jsdom_file is true)
-const SERIALIZATION_VERSION: u8 = 3;
+/// 4: Added the blob's `size` to file-backed stores so a sliced Bun.file()
+///    keeps its window's end across structuredClone/postMessage
+const SERIALIZATION_VERSION: u8 = 4;
 
 pub use bun_jsc::generated::JSBlob as js;
 
@@ -212,16 +212,8 @@ pub trait BlobExt {
     ) -> JsResult<JSValue>;
     fn get_text(&self, global_this: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue>;
     fn get_text_clone(&self, global_object: &JSGlobalObject) -> Result<JSValue, jsc::JsTerminated>;
-    fn get_text_transfer(
-        &self,
-        global_object: &JSGlobalObject,
-    ) -> Result<JSValue, jsc::JsTerminated>;
     fn get_json(&self, global_this: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue>;
     fn get_json_share(&self, global_object: &JSGlobalObject) -> Result<JSValue, jsc::JsTerminated>;
-    fn get_array_buffer_transfer(
-        &self,
-        global_this: &JSGlobalObject,
-    ) -> Result<JSValue, jsc::JsTerminated>;
     fn get_array_buffer_clone(
         &self,
         global_this: &JSGlobalObject,
@@ -229,10 +221,6 @@ pub trait BlobExt {
     fn get_array_buffer(&self, global_this: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue>;
     fn get_bytes_clone(&self, global_this: &JSGlobalObject) -> Result<JSValue, jsc::JsTerminated>;
     fn get_bytes(&self, global_this: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue>;
-    fn get_bytes_transfer(
-        &self,
-        global_this: &JSGlobalObject,
-    ) -> Result<JSValue, jsc::JsTerminated>;
     fn get_form_data(&self, global_this: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue>;
     fn get_exists_sync(&self) -> JSValue;
     fn do_write(&self, global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue>;
@@ -397,7 +385,6 @@ pub trait BlobExt {
     where
         Self: Sized;
     fn is_all_ascii(&self) -> Option<bool>;
-    fn take_ownership(&mut self) -> Blob;
 }
 
 /// C-ABI trampoline for `Blob::shared_view` so C++ (`ZigGeneratedClasses`)
@@ -596,12 +583,13 @@ impl BlobExt for Blob {
                             // `t`, so build the SystemError (cloning the path
                             // out of `t.blob.store`) before the call.
                             let err = bun_jsc::SystemError {
-                                code: BunString::clone_utf8(e.code),
-                                message: BunString::clone_utf8(e.message),
+                                code: BunString::clone_utf8(e.code).into(),
+                                message: BunString::clone_utf8(e.message).into(),
                                 path: BunString::clone_utf8(
                                     t.blob.store().and_then(|s| s.get_path()).unwrap_or(b""),
-                                ),
-                                syscall: BunString::static_("fetch"),
+                                )
+                                .into(),
+                                syscall: BunString::static_("fetch").into(),
                                 ..Default::default()
                             };
                             t.done(ReadBytesResult::Err(Box::new(err)));
@@ -767,6 +755,10 @@ impl BlobExt for Blob {
                 writer.write_int_le::<u32>(stored_name.len() as u32)?;
                 writer.write_all(stored_name)?;
             } else {
+                // Version 4: a file-backed slice's window end. Written before
+                // resolve_size() so an unresolved blob stays MAX_SIZE (unknown)
+                // on the wire and the receiver stats it locally, like v3.
+                writer.write_int_le::<u64>(self.size.get())?;
                 self.resolve_size();
                 store.serialize(writer)?;
             }
@@ -829,7 +821,7 @@ impl BlobExt for Blob {
         let mut buffer_stream =
             bun_io::FixedBufferStream::new(unsafe { bun_core::ffi::slice(*cursor, total_length) });
 
-        let result = match _on_structured_clone_deserialize(global_this, &mut buffer_stream) {
+        let result = match on_structured_clone_deserialize(global_this, &mut buffer_stream) {
             Ok(v) => v,
             Err(e) if e.name() == "OutOfMemory" => {
                 return Err(global_this.throw_out_of_memory());
@@ -1235,14 +1227,6 @@ impl BlobExt for Blob {
         JSPromise::wrap(global_object, |g| self.to_string(g, Lifetime::Clone))
     }
 
-    fn get_text_transfer(
-        &self,
-        global_object: &JSGlobalObject,
-    ) -> Result<JSValue, jsc::JsTerminated> {
-        let _store = self.store.get().clone();
-        JSPromise::wrap(global_object, |g| self.to_string(g, Lifetime::Transfer))
-    }
-
     fn get_json(&self, global_this: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
         Ok(self.get_json_share(global_this)?)
     }
@@ -1250,14 +1234,6 @@ impl BlobExt for Blob {
     fn get_json_share(&self, global_object: &JSGlobalObject) -> Result<JSValue, jsc::JsTerminated> {
         let _store = self.store.get().clone();
         JSPromise::wrap(global_object, |g| self.to_json(g, Lifetime::Share))
-    }
-
-    fn get_array_buffer_transfer(
-        &self,
-        global_this: &JSGlobalObject,
-    ) -> Result<JSValue, jsc::JsTerminated> {
-        let _store = self.store.get().clone();
-        JSPromise::wrap(global_this, |g| self.to_array_buffer(g, Lifetime::Transfer))
     }
 
     fn get_array_buffer_clone(
@@ -1279,14 +1255,6 @@ impl BlobExt for Blob {
 
     fn get_bytes(&self, global_this: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
         Ok(self.get_bytes_clone(global_this)?)
-    }
-
-    fn get_bytes_transfer(
-        &self,
-        global_this: &JSGlobalObject,
-    ) -> Result<JSValue, jsc::JsTerminated> {
-        let _store = self.store.get().clone();
-        JSPromise::wrap(global_this, |g| self.to_uint8_array(g, Lifetime::Transfer))
     }
 
     fn get_form_data(&self, global_this: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
@@ -1319,9 +1287,8 @@ impl BlobExt for Blob {
         JSValue::from(bun_sys::S::ISREG(file.mode) || bun_sys::S::ISFIFO(file.mode))
     }
     fn do_write(&self, global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-        let arguments = callframe.arguments_old::<3>();
         // SAFETY: bun_vm() never returns null for a Bun-owned global.
-        let mut args = jsc::ArgumentsSlice::init(global_this.bun_vm(), arguments.slice());
+        let mut args = jsc::ArgumentsSlice::init(global_this.bun_vm(), callframe.arguments());
 
         validate_writable_blob(global_this, self)?;
 
@@ -1392,9 +1359,8 @@ impl BlobExt for Blob {
     }
 
     fn do_unlink(&self, global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-        let arguments = callframe.arguments_old::<1>();
         // SAFETY: bun_vm() never returns null for a Bun-owned global.
-        let mut args = jsc::ArgumentsSlice::init(global_this.bun_vm(), arguments.slice());
+        let mut args = jsc::ArgumentsSlice::init(global_this.bun_vm(), callframe.arguments());
 
         validate_writable_blob(global_this, self)?;
 
@@ -1737,12 +1703,8 @@ impl BlobExt for Blob {
     }
 
     fn get_writer(&self, global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-        let arguments_ = callframe.arguments_old::<1>();
-        // Index the fixed-size buffer (`arguments.ptr[0]`), not the
-        // len-bounded view, so the slot reads `.zero` when no arg was passed
-        // instead of panicking on `arguments[0]`.
-        let arg0 = arguments_.ptr[0];
-        let has_args = arguments_.len > 0;
+        let [arg0] = callframe.arguments_as_array::<1>();
+        let has_args = callframe.arguments_count() > 0;
 
         if !arg0.is_empty_or_undefined_or_null() && !arg0.is_object() {
             return Err(global_this
@@ -2031,9 +1993,9 @@ impl BlobExt for Blob {
 
     /// https://w3c.github.io/FileAPI/#slice-method-algo
     fn get_slice(&self, global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-        let mut arguments_ = callframe.arguments_old::<3>();
+        let mut arguments_ = callframe.arguments_as_array::<3>();
         // index the full fixed-3 array (args[2] is written below regardless of len).
-        let args = &mut arguments_.ptr[..];
+        let args = &mut arguments_[..];
 
         if self.size.get() == 0 {
             let ptr = Blob::new(Blob::init_empty(global_this));
@@ -2057,7 +2019,7 @@ impl BlobExt for Blob {
             args[1] = JSValue::ZERO;
         }
 
-        let mut args_iter = jsc::ArgumentsSlice::init(global_this.bun_vm(), &arguments_.ptr[..3]);
+        let mut args_iter = jsc::ArgumentsSlice::init(global_this.bun_vm(), &arguments_[..3]);
         if let Some(start_) = args_iter.next_eat() {
             if start_.is_number() {
                 let start = start_.to_int64();
@@ -2202,12 +2164,14 @@ impl BlobExt for Blob {
                     resolve_file_stat(store);
                 }
                 // Fresh borrow after possible mutation by `resolve_file_stat`.
-                return JSValue::js_number(store.data_mut().as_file().last_modified as f64);
+                return JSValue::js_number(JSValue::purify_nan(
+                    store.data_mut().as_file().last_modified as f64,
+                ));
             }
         }
 
         if self.is_jsdom_file.get() {
-            return JSValue::js_number(self.last_modified.get());
+            return JSValue::js_number(JSValue::purify_nan(self.last_modified.get()));
         }
 
         JSValue::js_number(jsc::INIT_TIMESTAMP as f64)
@@ -2338,15 +2302,7 @@ impl BlobExt for Blob {
                 if store_size != MAX_SIZE {
                     self.offset.set(store_size.min(offset));
                     let available = store_size - self.offset.get();
-                    // Only resolve an unknown size. A slice already has a concrete
-                    // `size`; overwriting it with `store_size - offset` would widen
-                    // the view to the end of the backing store. Clamp a known size
-                    // to `available` so a bogus size can't report past the store end.
-                    if self.size.get() == MAX_SIZE {
-                        self.size.set(available);
-                    } else {
-                        self.size.set(self.size.get().min(available));
-                    }
+                    self.size.set(window_size(self.size.get(), available));
                 }
             }
             store::DataTag::File => {
@@ -2360,7 +2316,8 @@ impl BlobExt for Blob {
                     let store_size = file.max_size;
                     let offset = self.offset.get();
                     self.offset.set(store_size.min(offset));
-                    self.size.set(store_size.saturating_sub(offset));
+                    let available = store_size - self.offset.get();
+                    self.size.set(window_size(self.size.get(), available));
                     return;
                 }
 
@@ -2394,16 +2351,7 @@ impl BlobExt for Blob {
                 if store_size != MAX_SIZE {
                     let offset = store_size.min(offset);
                     let available = store_size - offset;
-                    // Matches `resolve_size`: a known size (e.g. a slice) is
-                    // authoritative; only an unknown size falls back to the
-                    // remainder of the backing store. Clamp to `available` so a
-                    // bogus size can't report past the store end.
-                    let size = if self.size.get() == MAX_SIZE {
-                        available
-                    } else {
-                        self.size.get().min(available)
-                    };
-                    return (offset, size);
+                    return (offset, window_size(self.size.get(), available));
                 }
                 (self.offset.get(), self.size.get())
             }
@@ -2415,8 +2363,9 @@ impl BlobExt for Blob {
                 let file = store.data_mut().as_file();
                 if file.seekable.is_some() && file.max_size != MAX_SIZE {
                     let store_size = file.max_size;
-                    let offset = self.offset.get();
-                    return (store_size.min(offset), store_size.saturating_sub(offset));
+                    let offset = store_size.min(self.offset.get());
+                    let available = store_size - offset;
+                    return (offset, window_size(self.size.get(), available));
                 }
                 if file.seekable == Some(false) {
                     return (self.offset.get(), self.size.get());
@@ -2428,8 +2377,7 @@ impl BlobExt for Blob {
     }
     fn constructor(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<*mut Blob> {
         let blob: Blob;
-        let arguments = callframe.arguments_old::<2>();
-        let args = arguments.slice();
+        let args = callframe.arguments();
 
         match args.len() {
             0 => {
@@ -3840,13 +3788,6 @@ impl BlobExt for Blob {
             strings::AsciiStatus::NonAscii => Some(false),
         }
     }
-
-    /// Takes ownership of `self` by value. Invalidates `self`.
-    fn take_ownership(&mut self) -> Blob {
-        let mut result = std::mem::take(self);
-        result.set_not_heap_allocated();
-        result
-    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -4177,7 +4118,7 @@ fn read_slice<B: AsRef<[u8]>>(
     Ok(slice)
 }
 
-fn _on_structured_clone_deserialize<B: AsRef<[u8]>>(
+fn on_structured_clone_deserialize<B: AsRef<[u8]>>(
     global_this: &JSGlobalObject,
     reader: &mut bun_io::FixedBufferStream<B>,
 ) -> crate::Result<JSValue> {
@@ -4191,6 +4132,10 @@ fn _on_structured_clone_deserialize<B: AsRef<[u8]>>(
 
     let store_tag = store::SerializeTag::from_raw(reader.read_int_le::<u8>()?)
         .ok_or(crate::Error::InvalidValue)?;
+
+    // Version 4: file-backed records carry the blob's own size so a sliced
+    // Bun.file() keeps its window's end. MAX_SIZE means unknown.
+    let mut file_size: Option<u64> = None;
 
     let blob: *mut Blob = match store_tag {
         store::SerializeTag::Bytes => 'bytes: {
@@ -4231,6 +4176,9 @@ fn _on_structured_clone_deserialize<B: AsRef<[u8]>>(
         }
         store::SerializeTag::File => 'file: {
             use crate::node::types::PathOrFileDescriptorSerializeTag;
+            if version >= 4 {
+                file_size = Some(reader.read_int_le::<u64>()?);
+            }
             let pathlike_tag =
                 PathOrFileDescriptorSerializeTag::from_raw(reader.read_int_le::<u8>()?)
                     .ok_or(crate::Error::InvalidValue)?;
@@ -4319,6 +4267,12 @@ fn _on_structured_clone_deserialize<B: AsRef<[u8]>>(
     // `offset` comes from untrusted bytes. Clamp it so a crafted payload cannot
     // make shared_view() slice past the end of the backing store (OOB heap read).
     blob.offset.set(offset as SizeType); // intentional truncate
+    if let Some(size) = file_size {
+        // resolve_size() clamps this to the actual file size on first use.
+        if size != MAX_SIZE {
+            blob.size.set(size as SizeType);
+        }
+    }
     if let Some(store) = blob.store.get() {
         let store_size = store.size();
         if store_size != MAX_SIZE {
@@ -4728,12 +4682,10 @@ pub fn write_file_with_source_destination(
     let destination_type = destination_store.data.tag();
 
     // TODO: make sure this invariant isn't being broken elsewhere, then upgrade to allow_assert
-    if cfg!(debug_assertions) {
-        debug_assert!(
-            destination_type != store::DataTag::Bytes,
-            "Cannot write to a Blob backed by a Buffer or TypedArray. This is a bug in the caller."
-        );
-    }
+    debug_assert!(
+        destination_type != store::DataTag::Bytes,
+        "Cannot write to a Blob backed by a Buffer or TypedArray. This is a bug in the caller."
+    );
 
     let Some(source_store) = source_blob.store.get().clone() else {
         return write_file_with_empty_source_to_destination(ctx, destination_blob, options);
@@ -5292,6 +5244,11 @@ pub fn write_file_internal(
                         let BodyValue::Locked(locked) = (unsafe { &mut *body_value }) else {
                             unreachable!()
                         };
+                        if let (Some(on_start_buffering), Some(orig_task)) =
+                            (locked.on_start_buffering.take(), locked.task)
+                        {
+                            on_start_buffering(orig_task);
+                        }
                         locked.task = Some(task.cast::<c_void>());
                         locked.on_receive_value = Some(WriteFileWaitFromLockedValueTask::then_wrap);
                         // SAFETY: `task` was just heap-allocated; consumed in `then_wrap`.
@@ -5608,8 +5565,8 @@ bun_jsc::jsc_host_abi! {
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> Option<NonNull<Blob>> {
-        match jsdom_file_construct_(global_this, callframe) {
-            Ok(b) => Some(NonNull::new(b).expect("jsdom_file_construct_ returns Blob::new (heap::alloc)")),
+        match jsdom_file_construct(global_this, callframe) {
+            Ok(b) => Some(NonNull::new(b).expect("jsdom_file_construct returns Blob::new (heap::alloc)")),
             Err(jsc::JsError::Thrown) => None,
             Err(jsc::JsError::OutOfMemory) => {
                 let _ = global_this.throw_out_of_memory();
@@ -5620,14 +5577,13 @@ bun_jsc::jsc_host_abi! {
     }
 }
 
-pub fn jsdom_file_construct_(
+pub fn jsdom_file_construct(
     global_this: &JSGlobalObject,
     callframe: &CallFrame,
 ) -> JsResult<*mut Blob> {
     jsc::mark_binding();
     let blob: Blob;
-    let arguments = callframe.arguments_old::<3>();
-    let args = arguments.slice();
+    let args = callframe.arguments();
 
     if args.len() < 2 {
         return Err(global_this.throw_invalid_arguments(format_args!(
@@ -5735,8 +5691,7 @@ pub fn construct_bun_file(
 ) -> JsResult<JSValue> {
     // SAFETY: bun_vm() never returns null for a Bun-owned global.
     let vm = global_object.bun_vm();
-    let arguments = callframe.arguments_old::<2>();
-    let arguments_slice = arguments.slice();
+    let arguments_slice = callframe.arguments();
     let mut args = jsc::ArgumentsSlice::init(vm, arguments_slice);
 
     let Some(mut path) = PathOrFileDescriptor::from_js(global_object, &mut args)? else {
@@ -5802,22 +5757,6 @@ pub fn construct_bun_file(
 // ──────────────────────────────────────────────────────────────────────────
 // getStream / toStreamWithOffset / lifetimeWrap / accessor host fns
 // ──────────────────────────────────────────────────────────────────────────
-
-pub fn to_stream_with_offset(
-    global_this: &JSGlobalObject,
-    callframe: &CallFrame,
-) -> JsResult<JSValue> {
-    let this = callframe
-        .this()
-        .as_class_ref::<Blob>()
-        .unwrap_or_else(|| panic!("this is not a Blob"));
-    let args = callframe.arguments_old::<1>();
-    ReadableStream::from_file_blob_with_offset(
-        global_this,
-        this,
-        usize::try_from(args.slice()[0].to_int64()).expect("int cast"),
-    )
-}
 
 // The `Lifetime` collapses to a
 // captured constant inside `JSPromise::wrap`'s `FnOnce(&JSGlobalObject)`, so
@@ -6018,10 +5957,10 @@ pub fn on_file_stream_resolve_request_stream(
     global_this: &JSGlobalObject,
     callframe: &CallFrame,
 ) -> JsResult<JSValue> {
-    let args = callframe.arguments_old::<2>();
+    let args = callframe.arguments();
     // SAFETY: last arg is a promise-ptr created by FileStreamWrapper::new in pipe_readable_stream_to_blob.
     let mut this: Box<FileStreamWrapper> = unsafe {
-        bun_core::heap::take(args.ptr[args.len - 1].as_number() as usize as *mut FileStreamWrapper)
+        bun_core::heap::take(args[args.len() - 1].as_number() as usize as *mut FileStreamWrapper)
     };
     let strong = core::mem::take(&mut this.readable_stream_ref);
     if let Some(stream) = strong.get(global_this) {
@@ -6035,15 +5974,15 @@ pub fn on_file_stream_reject_request_stream(
     global_this: &JSGlobalObject,
     callframe: &CallFrame,
 ) -> JsResult<JSValue> {
-    let args = callframe.arguments_old::<2>();
+    let args = callframe.arguments();
     // Take ownership via Box so Drop runs `sink.deref()`
     // and frees the wrapper.
     // SAFETY: the trailing argument is the `FileStreamWrapper*` boxed and passed
     // through `then()` from the resolve path; we are the sole consumer here.
     let mut this: Box<FileStreamWrapper> = unsafe {
-        bun_core::heap::take(args.ptr[args.len - 1].as_number() as usize as *mut FileStreamWrapper)
+        bun_core::heap::take(args[args.len() - 1].as_number() as usize as *mut FileStreamWrapper)
     };
-    let err = args.ptr[0];
+    let err = args[0];
 
     let strong = core::mem::take(&mut this.readable_stream_ref);
 
@@ -6227,6 +6166,18 @@ fn stat_to_js_mtime(stat: &bun_sys::Stat) -> jsc::JSTimeType {
     }
 }
 
+/// Window clamp shared by the `resolve_size`/`resolved_size` arms: only an
+/// unknown (`MAX_SIZE`) size resolves to the store's remainder; a concrete
+/// size (a slice's window) is authoritative, clamped so a bogus or stale
+/// value can't report past the end of the backing store.
+fn window_size(current: SizeType, available: SizeType) -> SizeType {
+    if current == MAX_SIZE {
+        available
+    } else {
+        current.min(available)
+    }
+}
+
 /// resolve file stat like size, last_modified
 fn resolve_file_stat(store: &StoreRef) {
     // `StoreRef::data_mut` encapsulates the raw-pointer deref under the
@@ -6266,12 +6217,6 @@ fn resolve_file_stat(store: &StoreRef) {
         },
     }
 }
-
-// ──────────────────────────────────────────────────────────────────────────
-// constructor / finalize / init* / dupe / toJS / deinit / sharedView
-// ──────────────────────────────────────────────────────────────────────────
-
-pub use crate::webcore::Lifetime as BlobLifetime;
 
 // ──────────────────────────────────────────────────────────────────────────
 // `ZigString` JSC methods (`to_js`, `to_external_value`, `external`,
@@ -6464,13 +6409,6 @@ impl Any {
             }
             Any::InternalBlob(ib) => ib.memory_cost(),
         }
-    }
-
-    pub fn has_one_ref(&self) -> bool {
-        if let Some(s) = self.store() {
-            return s.has_one_ref();
-        }
-        false
     }
 
     pub fn get_file_name(&self) -> Option<&[u8]> {
@@ -6935,8 +6873,6 @@ pub struct Inline {
     pub was_string: bool,
 }
 
-pub type InlineIntSize = u8;
-
 impl Inline {
     const REAL_BLOB_SIZE: usize = core::mem::size_of::<Blob>();
     // Inherent assoc types are nightly-only;
@@ -6979,26 +6915,6 @@ impl Inline {
         Self::internal_init(data, false)
     }
 
-    pub fn init_string(data: &[u8]) -> Inline {
-        Self::internal_init(data, true)
-    }
-
-    pub fn to_string_owned(&mut self, global_this: &JSGlobalObject) -> JSValue {
-        if self.len == 0 {
-            return ZigString::EMPTY.to_js(global_this);
-        }
-
-        let mut str = ZigString::init(self.slice_const());
-        if !strings::is_all_ascii(self.slice_const()) {
-            str.mark_utf8();
-        }
-
-        let out = str.to_js(global_this);
-        out.ensure_still_alive();
-        self.len = 0;
-        out
-    }
-
     pub fn content_type(&self) -> &'static [u8] {
         // see Internal::content_type — MimeType consts are `const`, not `static`.
         if self.was_string {
@@ -7015,18 +6931,6 @@ impl Inline {
         let len = self.len as usize;
         &mut self.bytes[..len]
     }
-
-    #[inline]
-    pub fn slice_const(&self) -> &[u8] {
-        let len = self.len as usize;
-        &self.bytes[..len]
-    }
-
-    pub fn to_owned_slice(&mut self) -> &mut [u8] {
-        self.slice()
-    }
-
-    pub fn clear_and_free(&mut self) {}
 }
 
 impl Default for Inline {
@@ -7251,7 +7155,6 @@ pub trait FileCloser: Sized {
     fn opened_fd(&self) -> Fd;
     fn set_opened_fd(&mut self, fd: Fd);
     fn close_after_io(&self) -> bool;
-    fn set_close_after_io(&mut self, v: bool);
     fn state(&self) -> &core::sync::atomic::AtomicU8;
     fn io_request(&mut self) -> Option<&mut bun_io::Request>;
     fn io_poll(&mut self) -> &mut bun_io::Poll;
@@ -7323,17 +7226,3 @@ pub trait FileCloser: Sized {
         false
     }
 }
-
-// ──────────────────────────────────────────────────────────────────────────
-// isAllASCII / takeOwnership / heap-alloc helpers / external_shared_descriptor
-// ──────────────────────────────────────────────────────────────────────────
-
-pub mod external_shared_descriptor {
-    pub use bun_jsc::webcore_types::Blob__deref as deref;
-    pub use bun_jsc::webcore_types::Blob__ref as ref_;
-}
-
-/// Bindgen adapter for `Blob`. The cycle was broken by hoisting the `Blob`
-/// struct into `bun_jsc::webcore_types`, so the canonical alias lives in
-/// `bun_jsc::bindgen`; re-export it here for `bun_runtime` callers.
-pub use bun_jsc::bindgen::BindgenBlob;

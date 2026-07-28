@@ -52,169 +52,9 @@ impl<E> Swallow for Result<(), E> {
     }
 }
 
-/// A trait with default no-op methods that each owner type overrides for the
-/// events it actually handles. The `<const SSL: bool>` parameter lets a type
-/// opt into different behaviour per transport (and so `NewSocketHandler<SSL>`
-/// is nameable in signatures).
-///
-/// All methods default to `Ok(())`; `swallow` collapses both `()` and
-/// `Result<(), _>` so consumer impls may return either — but to avoid
-/// associated-type contortions every default returns `bun_jsc::JsResult<()>`
-/// and plain-`void` consumers just `Ok(())`.
-pub trait SocketEvents<const SSL: bool> {
-    fn on_open(&mut self, _s: NewSocketHandler<SSL>) -> bun_jsc::JsResult<()> {
-        Ok(())
-    }
-    fn on_data(&mut self, _s: NewSocketHandler<SSL>, _data: &[u8]) -> bun_jsc::JsResult<()> {
-        Ok(())
-    }
-    fn on_writable(&mut self, _s: NewSocketHandler<SSL>) -> bun_jsc::JsResult<()> {
-        Ok(())
-    }
-    fn on_close(
-        &mut self,
-        _s: NewSocketHandler<SSL>,
-        _code: i32,
-        _reason: Option<*mut c_void>,
-    ) -> bun_jsc::JsResult<()> {
-        Ok(())
-    }
-    fn on_timeout(&mut self, _s: NewSocketHandler<SSL>) -> bun_jsc::JsResult<()> {
-        Ok(())
-    }
-    fn on_long_timeout(&mut self, _s: NewSocketHandler<SSL>) -> bun_jsc::JsResult<()> {
-        Ok(())
-    }
-    fn on_end(&mut self, _s: NewSocketHandler<SSL>) -> bun_jsc::JsResult<()> {
-        Ok(())
-    }
-    fn on_connect_error(&mut self, _s: NewSocketHandler<SSL>, _code: i32) -> bun_jsc::JsResult<()> {
-        Ok(())
-    }
-    fn on_handshake(
-        &mut self,
-        _s: NewSocketHandler<SSL>,
-        _ok: i32,
-        _err: us_bun_verify_error_t,
-    ) -> bun_jsc::JsResult<()> {
-        Ok(())
-    }
-    fn on_fd(&mut self, _s: NewSocketHandler<SSL>, _fd: c_int) -> bun_jsc::JsResult<()> {
-        Ok(())
-    }
-}
-
-/// `Ext = *?*T`: the socket ext stores a single pointer to the heap-allocated
-/// owner (matching the old `socket.ext(**anyopaque).* = this` pattern). It is
-/// optional because a connect/accept can fail and dispatch `on_close` /
-/// `on_connect_error` BEFORE the caller has had a chance to stash `this` in the
-/// freshly-calloc'd ext slot — pretending it's `**T` there is a NULL deref the
-/// type system can't see.
-pub struct PtrHandler<T, const SSL: bool>(core::marker::PhantomData<T>);
-
 #[inline(always)]
 fn wrap<const SSL: bool>(s: *mut us_socket_t) -> NewSocketHandler<SSL> {
     NewSocketHandler::<SSL>::from(s)
-}
-
-impl<T, const SSL: bool> VHandler for PtrHandler<T, SSL>
-where
-    T: SocketEvents<SSL> + 'static,
-{
-    /// `?*T` — the slot lives in C-allocated (`calloc`) memory; the trampoline
-    /// hands it to us by `&mut`. `ExtSlot<T>` (vs. raw `Option<NonNull<T>>`)
-    /// encodes the non-re-entrancy contract so `owner_mut()` is a safe call.
-    type Ext = ExtSlot<T>;
-
-    const HAS_ON_OPEN: bool = true;
-    const HAS_ON_DATA: bool = true;
-    const HAS_ON_WRITABLE: bool = true;
-    const HAS_ON_CLOSE: bool = true;
-    const HAS_ON_TIMEOUT: bool = true;
-    const HAS_ON_LONG_TIMEOUT: bool = true;
-    const HAS_ON_END: bool = true;
-    const HAS_ON_CONNECT_ERROR: bool = true;
-    const HAS_ON_CONNECTING_ERROR: bool = true;
-    const HAS_ON_HANDSHAKE: bool = true;
-    const HAS_ON_FD: bool = true;
-
-    fn on_open(ext: &mut Self::Ext, s: *mut us_socket_t, _is_client: bool, _ip: &[u8]) {
-        let Some(this) = ext.owner_mut() else { return };
-        swallow(this.on_open(wrap::<SSL>(s)));
-    }
-    fn on_data(ext: &mut Self::Ext, s: *mut us_socket_t, data: &[u8]) {
-        let Some(this) = ext.owner_mut() else { return };
-        swallow(this.on_data(wrap::<SSL>(s), data));
-    }
-    fn on_writable(ext: &mut Self::Ext, s: *mut us_socket_t) {
-        let Some(this) = ext.owner_mut() else { return };
-        swallow(this.on_writable(wrap::<SSL>(s)));
-    }
-    fn on_close(ext: &mut Self::Ext, s: *mut us_socket_t, code: i32, reason: Option<*mut c_void>) {
-        let Some(this) = ext.owner_mut() else { return };
-        swallow(this.on_close(wrap::<SSL>(s), code, reason));
-    }
-    fn on_timeout(ext: &mut Self::Ext, s: *mut us_socket_t) {
-        let Some(this) = ext.owner_mut() else { return };
-        swallow(this.on_timeout(wrap::<SSL>(s)));
-    }
-    fn on_long_timeout(ext: &mut Self::Ext, s: *mut us_socket_t) {
-        let Some(this) = ext.owner_mut() else { return };
-        swallow(this.on_long_timeout(wrap::<SSL>(s)));
-    }
-    fn on_end(ext: &mut Self::Ext, s: *mut us_socket_t) {
-        let Some(this) = ext.owner_mut() else { return };
-        swallow(this.on_end(wrap::<SSL>(s)));
-    }
-    fn on_connect_error(ext: &mut Self::Ext, s: *mut us_socket_t, code: i32) {
-        // Close FIRST, then notify — same order `main`'s `configure()`
-        // trampoline used. The handler may re-enter `connectInner`
-        // synchronously (node:net `autoSelectFamily` falls back to the
-        // next address from inside the JS `connectError` callback); on
-        // Windows/libuv, starting the next attempt's `uv_poll_t` while
-        // this half-open one is still active and then closing it
-        // *afterwards* leaves the second poll never delivering
-        // writable/error → process hang (Win11-aarch64
-        // double-connect.test, test-net-server-close).
-        //
-        // Safe for TLS too: `us_internal_ssl_close` short-circuits
-        // SEMI_SOCKET straight to `close_raw`, and `close_raw` skips
-        // dispatch for SEMI_SOCKET, so no `on_handshake`/`on_close` lands
-        // in JS before we read `ext`/`this`.
-        let this = ext.get();
-        // `us_socket_t` is an `opaque_ffi!` ZST — `opaque_mut` is the safe
-        // deref (`s` is a live socket passed by the trampoline).
-        us_socket_t::opaque_mut(s).close(CloseCode::failure);
-        // SAFETY: snapshot of the ext slot taken before close; unique heap
-        // owner, single-threaded dispatch (same contract as `ExtSlot::owner_mut`,
-        // but the slot storage may have been freed by `close` so we deref the
-        // snapshot rather than re-borrowing `ext`).
-        if let Some(t) = unsafe { thunk::ext_owner(&this) } {
-            swallow(t.on_connect_error(wrap::<SSL>(s), code));
-        }
-    }
-    fn on_connecting_error(c: *mut ConnectingSocket, code: i32) {
-        let Some(this) = ConnectingSocket::opaque_mut(c)
-            .ext::<ExtSlot<T>>()
-            .owner_mut()
-        else {
-            return;
-        };
-        swallow(this.on_connect_error(NewSocketHandler::<SSL>::from_connecting(c), code));
-    }
-    fn on_handshake(
-        ext: &mut Self::Ext,
-        s: *mut us_socket_t,
-        ok: bool,
-        err: us_bun_verify_error_t,
-    ) {
-        let Some(this) = ext.owner_mut() else { return };
-        swallow(this.on_handshake(wrap::<SSL>(s), ok as i32, err));
-    }
-    fn on_fd(ext: &mut Self::Ext, s: *mut us_socket_t, fd: c_int) {
-        let Some(this) = ext.owner_mut() else { return };
-        swallow(this.on_fd(wrap::<SSL>(s), fd));
-    }
 }
 
 // ── RawSocketEvents / RawPtrHandler ─────────────────────────────────────────
@@ -301,7 +141,20 @@ where
         T::on_end(this, wrap::<SSL>(s));
     }
     fn on_connect_error(ext: &mut Self::Ext, s: *mut us_socket_t, code: i32) {
-        // Close first, then notify — see `PtrHandler::on_connect_error`.
+        // Close FIRST, then notify — same order `main`'s `configure()`
+        // trampoline used. The handler may re-enter `connectInner`
+        // synchronously (node:net `autoSelectFamily` falls back to the
+        // next address from inside the JS `connectError` callback); on
+        // Windows/libuv, starting the next attempt's `uv_poll_t` while
+        // this half-open one is still active and then closing it
+        // *afterwards* leaves the second poll never delivering
+        // writable/error → process hang (Win11-aarch64
+        // double-connect.test, test-net-server-close).
+        //
+        // Safe for TLS too: `us_internal_ssl_close` short-circuits
+        // SEMI_SOCKET straight to `close_raw`, and `close_raw` skips
+        // dispatch for SEMI_SOCKET, so no `on_handshake`/`on_close` lands
+        // in JS before we read `ext`/`this`.
         let this = *ext;
         // `us_socket_t` is an `opaque_ffi!` ZST — `opaque_mut` is the safe
         // deref (`s` is a live socket passed by the trampoline).
@@ -405,7 +258,7 @@ impl<const SSL: bool> RawSocketEvents<SSL> for websocket_client::WebSocket<SSL> 
     }
 }
 
-// ── SocketEvents / NsSocketEvents impls ─────────────────────────────────────
+// ── NsSocketEvents impls ────────────────────────────────────────────────────
 //
 // A trait with default
 // no-ops; each consumer type opts in with an `impl` that overrides only the
@@ -496,12 +349,12 @@ impl_ns_socket_events_forward!(
 impl_ns_socket_events_forward!(js_valkey::JSValkeyClient, js_valkey::SocketHandler<SSL>);
 
 // ── Bun.connect / Bun.listen ────────────────────────────────────────────────
-// Noalias re-entrancy: routed through `RawPtrHandler`, not
-// `PtrHandler`. `NewSocket::on_*` re-enter JS (`socket.write/end/reload`) which
-// re-derives `&mut NewSocket` via the wrapper's `m_ptr`; a `&mut NewSocket`
-// argument formed by `PtrHandler` and protected through the dispatch frame
-// would alias that re-entrant borrow (Stacked-Borrows UB + `noalias`
-// dead-store of the re-entrant write). `RawPtrHandler` passes `ThisPtr<Self>`.
+// Noalias re-entrancy: routed through `RawPtrHandler`. `NewSocket::on_*`
+// re-enter JS (`socket.write/end/reload`) which re-derives `&mut NewSocket`
+// via the wrapper's `m_ptr`; a `&mut NewSocket` argument protected through
+// the dispatch frame would alias that re-entrant borrow (Stacked-Borrows UB +
+// `noalias` dead-store of the re-entrant write). `RawPtrHandler` passes
+// `ThisPtr<Self>`.
 pub type BunSocket<const SSL: bool> = RawPtrHandler<api::NewSocket<SSL>, SSL>;
 
 /// Listener accept path: the ext is uninitialised at on_open time (the C accept
@@ -593,10 +446,11 @@ where
     }
 }
 
-/// Like `PtrHandler` but the callbacks live on a separate namespace `H` (the
-/// driver's pre-existing `SocketHandler(ssl)` adapter) rather than as methods
-/// on the owner type itself. Ext stores `*Owner` (optional for the same reason
-/// as `PtrHandler`).
+/// The callbacks live on a separate namespace `H` (the driver's pre-existing
+/// `SocketHandler(ssl)` adapter) rather than as methods on the owner type
+/// itself. Ext stores `*Owner`; it is optional because a connect/accept can
+/// fail and dispatch `on_close` / `on_connect_error` BEFORE the caller has
+/// had a chance to stash `this` in the freshly-calloc'd ext slot.
 ///
 /// In Rust the "separate namespace" becomes a trait `NsSocketEvents` whose
 /// methods take `&mut Owner` as the first parameter; each driver's
@@ -699,7 +553,7 @@ where
         swallow(H::on_end(this, wrap::<SSL>(s)));
     }
     fn on_connect_error(ext: &mut Self::Ext, s: *mut us_socket_t, code: i32) {
-        // Close before notify — see PtrHandler::on_connect_error.
+        // Close before notify — see RawPtrHandler::on_connect_error.
         let this = ext.get();
         // `us_socket_t` is an `opaque_ffi!` ZST — `opaque_mut` is the safe
         // deref (`s` is a live socket passed by the trampoline).
@@ -794,7 +648,7 @@ impl<const SSL: bool> VHandler for HTTPClient<SSL> {
         HttpH::<SSL>::on_end(owner.as_ptr(), wrap::<SSL>(s));
     }
     fn on_connect_error(ext: &mut Self::Ext, s: *mut us_socket_t, code: i32) {
-        // Close before notify — see PtrHandler::on_connect_error. SEMI_SOCKET
+        // Close before notify — see RawPtrHandler::on_connect_error. SEMI_SOCKET
         // close skips dispatch, so the tagged owner survives the close.
         let owner = *ext;
         // `us_socket_t` is an `opaque_ffi!` ZST — `opaque_mut` is the safe
@@ -846,7 +700,7 @@ pub type Valkey<const SSL: bool> =
 // ── Bun.spawn IPC / process.send() ──────────────────────────────────────────
 // Ext is `*IPC.SendQueue` for both child-side `process.send` and parent-side
 // `Bun.spawn({ipc})`. The IPC handlers are free functions, not
-// methods on SendQueue, so we adapt manually instead of via PtrHandler.
+// methods on SendQueue, so we adapt manually here.
 pub struct SpawnIPC;
 
 use IPC::IPCHandlers::PosixSocket as IpcH;

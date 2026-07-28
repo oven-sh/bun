@@ -1,8 +1,9 @@
+import { exposedInternals } from "bun:internal-for-testing";
 import { describe, expect, it, jest } from "bun:test";
 import { bunEnv, bunExe, isGlibcVersionAtLeast, isMacOS, tmpdirSync } from "harness";
 import { createReadStream, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { Duplex, finished, PassThrough, Readable, Stream, Transform, Writable } from "node:stream";
+import { Duplex, duplexPair, finished, PassThrough, Readable, Stream, Transform, Writable } from "node:stream";
 import { finished as finishedP } from "node:stream/promises";
 import { join } from "path";
 
@@ -512,6 +513,82 @@ it("Readable.fromWeb destroyed before the first read cancels the web stream", as
   expect(r.destroyed).toBe(true);
 });
 
+it("Readable.fromWeb: breaking out of for-await cancels the web source with ABORT_ERR", async () => {
+  let cancelReason;
+  const web = new ReadableStream({
+    start(c) {
+      for (let i = 0; i < 6; i++) c.enqueue(new Uint8Array(64).fill(i));
+      c.close();
+    },
+    cancel(reason) {
+      cancelReason = reason;
+    },
+  });
+  const r = Readable.fromWeb(web);
+  r.on("error", () => {});
+  const closed = new Promise(resolve => r.once("close", resolve));
+  let seen = 0;
+  for await (const chunk of r) {
+    seen++;
+    break;
+    void chunk;
+  }
+  await closed;
+  expect(seen).toBe(1);
+  expect({ code: cancelReason?.code, name: cancelReason?.name }).toEqual({ code: "ABORT_ERR", name: "AbortError" });
+});
+
+it("Readable.fromWeb: destroy(err) after consuming a chunk cancels the web source with that error", async () => {
+  let cancelReason;
+  const web = new ReadableStream({
+    start(c) {
+      for (let i = 0; i < 6; i++) c.enqueue(new Uint8Array(64).fill(i));
+      c.close();
+    },
+    cancel(reason) {
+      cancelReason = reason;
+    },
+  });
+  const r = Readable.fromWeb(web);
+  r.on("error", () => {});
+  const closed = new Promise(resolve => r.once("close", resolve));
+  const gotData = new Promise(resolve => r.once("data", resolve));
+  const first = await gotData;
+  expect(first.length).toBe(64);
+  r.destroy(new RangeError("consumer-gone"));
+  await closed;
+  expect({ name: cancelReason?.name, message: cancelReason?.message }).toEqual({
+    name: "RangeError",
+    message: "consumer-gone",
+  });
+});
+
+it("Readable.toWeb(Readable.fromWeb(rs)).cancel(reason) propagates to the web source", async () => {
+  let cancelReason;
+  const web = new ReadableStream({
+    start(c) {
+      for (let i = 0; i < 6; i++) c.enqueue(new Uint8Array(64).fill(i));
+      c.close();
+    },
+    cancel(reason) {
+      cancelReason = reason;
+    },
+  });
+  const inner = Readable.fromWeb(web);
+  inner.on("error", () => {});
+  const innerClosed = new Promise(resolve => inner.once("close", resolve));
+  const outer = Readable.toWeb(inner);
+  const reader = outer.getReader();
+  const first = await reader.read();
+  expect(first.done).toBe(false);
+  await reader.cancel(new RangeError("consumer-gone")).catch(() => {});
+  await innerClosed;
+  expect({ name: cancelReason?.name, message: cancelReason?.message }).toEqual({
+    name: "RangeError",
+    message: "consumer-gone",
+  });
+});
+
 it("#9242.5 Stream has constructor", () => {
   const s = new Stream({});
   expect(s.constructor).toBe(Stream);
@@ -694,6 +771,69 @@ describe("webstreams adapters (Node v26 sync)", () => {
     await writer.write(new Uint8Array([4, 5, 6]));
   });
 
+  // Upstream: nodejs/node#62986 (fixes nodejs/node#56269, oven-sh/bun#34588) —
+  // non-object-mode Writable.toWeb must size chunks in bytes so desiredSize
+  // reflects the byte-based highWaterMark.
+  it("Writable.toWeb desiredSize is byte-based for non-object-mode writables", () => {
+    const writable = new Writable({
+      highWaterMark: 1024,
+      write(chunk, encoding, callback) {
+        // hold the write in flight so the chunk stays queued
+      },
+    });
+
+    const writer = Writable.toWeb(writable).getWriter();
+    expect(writer.desiredSize).toBe(1024);
+    void writer.write(new Uint8Array(64 * 1024));
+    // 1024 - 65536; without byte sizing this would be 1023.
+    expect(writer.desiredSize).toBe(1024 - 64 * 1024);
+  });
+
+  it("pipeTo into Writable.toWeb applies backpressure instead of buffering the whole source (#34588)", async () => {
+    const TOTAL = 20;
+    let writes = 0;
+    let writeArrived = Promise.withResolvers();
+    const writable = new Writable({
+      highWaterMark: 1024,
+      write(chunk, encoding, callback) {
+        writes++;
+        writeArrived.resolve(callback);
+      },
+    });
+
+    let pulled = 0;
+    const chunk = new Uint8Array(64 * 1024);
+    const source = new ReadableStream(
+      {
+        pull(controller) {
+          pulled++;
+          if (pulled > TOTAL) return controller.close();
+          controller.enqueue(chunk.slice());
+        },
+      },
+      { highWaterMark: 1, size: c => c.byteLength },
+    );
+
+    const pipe = source.pipeTo(Writable.toWeb(writable));
+
+    // Hold the first write in flight and let pending microtasks drain; with
+    // backpressure the source is only a few chunks ahead, without it the
+    // whole source (TOTAL + 1 pulls) is buffered while the sink is blocked.
+    const firstCallback = await writeArrived.promise;
+    await new Promise(resolve => setImmediate(resolve));
+    expect(pulled).toBeLessThanOrEqual(4);
+
+    writeArrived = Promise.withResolvers();
+    firstCallback();
+    while (writes < TOTAL) {
+      const callback = await writeArrived.promise;
+      writeArrived = Promise.withResolvers();
+      callback();
+    }
+    await pipe;
+    expect(writes).toBe(TOTAL);
+  });
+
   // Upstream: v26 newStreamWritableFromWritableStream writev done() shape —
   // a rejected chunk write during a corked writev must error the stream with
   // the original error and must not produce an unhandled rejection.
@@ -855,9 +995,6 @@ describe("webstreams adapters (Node v26 sync)", () => {
     duplex.destroy();
   });
 
-  // Readable.fromWeb()'s pump pushes several chunks per _read(), and Readable
-  // calls _read() again as soon as push() is called. Two pumps racing on one
-  // reader used to hand back the chunks out of order.
   it("Readable.fromWeb(Readable.toWeb()) preserves chunk order", async () => {
     const src = Readable.from(["A", "B", "C", "D", "E", "F"]);
     const chunks = [];
@@ -1527,4 +1664,47 @@ describe("stream operators argument validation (nodejs/node#59529)", () => {
       r.destroy();
     }
   });
+});
+
+describe("duplexPair teardown (test-duplex-error.js)", () => {
+  const once = (emitter, event) => new Promise(resolve => emitter.once(event, resolve));
+
+  it("destroying one side with an error destroys the peer without re-emitting the error", async () => {
+    const [a, b] = duplexPair();
+    const aError = jest.fn();
+    const bError = jest.fn();
+    a.on("error", aError);
+    b.on("error", bError);
+    const bClosed = once(b, "close");
+    a.resume();
+    b.resume();
+    a.destroy(new Error("boom"));
+    await bClosed;
+    expect({ a: a.destroyed, b: b.destroyed }).toEqual({ a: true, b: true });
+    expect(aError).toHaveBeenCalledTimes(1);
+    expect(aError.mock.calls[0][0].message).toBe("boom");
+    expect(bError).not.toHaveBeenCalled();
+  });
+
+  it("destroying one side without an error ends the peer's readable", async () => {
+    const [a, b] = duplexPair();
+    const bEnded = once(b, "end");
+    b.resume();
+    a.destroy();
+    await bEnded;
+    expect(a.destroyed).toBe(true);
+  });
+});
+
+it("internal FixedQueue backing list is not holey (test-fixed-queue.js)", () => {
+  // Reachable via exposedInternals["internal/fixed_queue"]; without the src/
+  // change that entry (and the .fill()) is absent, so this test fails either way.
+  const FixedQueue = exposedInternals["internal/fixed_queue"];
+  expect(typeof FixedQueue).toBe("function");
+  const q = new FixedQueue();
+  const list = q.head.list;
+  expect(list.length).toBeGreaterThan(0);
+  let holes = 0;
+  for (let i = 0; i < list.length; i++) if (!(i in list)) holes++;
+  expect(holes).toBe(0);
 });

@@ -1,17 +1,12 @@
-#[cfg(debug_assertions)]
-use core::sync::atomic::{AtomicUsize, Ordering};
-
 use crate::expr::{self, Expr};
 use crate::s as S;
-use crate::{DebugOnlyDisabler, NewBatcher, StoreRef};
+use crate::{DebugOnlyDisabler, StoreRef};
 
 #[derive(Clone, Copy)]
 pub struct Stmt {
     pub loc: crate::Loc,
     pub data: Data,
 }
-
-pub type Batcher = NewBatcher<Stmt>;
 
 impl Stmt {
     /// Associated wrapper so downstream crates can call
@@ -29,13 +24,6 @@ impl Stmt {
         data::Store::create();
     }
 
-    /// Debug-only "Store must be init'd" guard. The re-entrancy `Disabler`
-    /// check lives in `Store::append`.
-    #[inline]
-    pub fn data_store_assert() {
-        data::Store::assert();
-    }
-
     pub fn assign(a: Expr, b: Expr) -> Stmt {
         Stmt::alloc(
             S::SExpr {
@@ -48,10 +36,6 @@ impl Stmt {
 }
 
 impl Stmt {
-    pub fn is_type_script(&self) -> bool {
-        matches!(self.data, Data::STypeScript(_))
-    }
-
     pub fn is_super_call(self) -> bool {
         if let Data::SExpr(s_expr) = self.data {
             if let expr::Data::ECall(e_call) = s_expr.value.data {
@@ -97,11 +81,6 @@ impl Default for Stmt {
 
 const NONE: S::Empty = S::Empty {};
 
-// Debug-only so release doesn't pay a contended `lock xadd` per Stmt across
-// the bundler worker pool.
-#[cfg(debug_assertions)]
-pub static ICOUNT: AtomicUsize = AtomicUsize::new(0);
-
 /// Each `S::*` payload type implements this to map itself onto the
 /// corresponding `Data` variant; the arm list is the `impl_statement_data!`
 /// invocation below.
@@ -117,8 +96,6 @@ pub trait StatementData: Sized {
 impl Stmt {
     #[inline]
     pub fn init<T: StatementData>(orig_data: StoreRef<T>, loc: crate::Loc) -> Stmt {
-        #[cfg(debug_assertions)]
-        ICOUNT.fetch_add(1, Ordering::Relaxed);
         Stmt {
             loc,
             data: T::wrap_ref(orig_data),
@@ -147,8 +124,6 @@ impl Stmt {
     #[inline]
     pub fn alloc<T: StatementData>(orig_data: T, loc: crate::Loc) -> Stmt {
         data::Store::assert();
-        #[cfg(debug_assertions)]
-        ICOUNT.fetch_add(1, Ordering::Relaxed);
         Stmt::comptime_alloc(orig_data, loc)
     }
 }
@@ -165,8 +140,6 @@ impl Stmt {
         loc: crate::Loc,
     ) -> Stmt {
         data::Store::assert();
-        #[cfg(debug_assertions)]
-        ICOUNT.fetch_add(1, Ordering::Relaxed);
         Stmt::allocate_data(bump, orig_data, loc)
     }
 
@@ -425,38 +398,6 @@ impl Eq for Data {}
 impl Data {
     // ── StoreRef<S::*> field-style accessors ────────────────────────────
     #[inline]
-    pub fn s_block(&self) -> Option<StoreRef<S::Block>> {
-        if let Data::SBlock(v) = *self {
-            Some(v)
-        } else {
-            None
-        }
-    }
-    #[inline]
-    pub fn s_block_mut(&mut self) -> Option<&mut S::Block> {
-        if let Data::SBlock(v) = self {
-            Some(&mut **v)
-        } else {
-            None
-        }
-    }
-    #[inline]
-    pub fn s_break(&self) -> Option<StoreRef<S::Break>> {
-        if let Data::SBreak(v) = *self {
-            Some(v)
-        } else {
-            None
-        }
-    }
-    #[inline]
-    pub fn s_break_mut(&mut self) -> Option<&mut S::Break> {
-        if let Data::SBreak(v) = self {
-            Some(&mut **v)
-        } else {
-            None
-        }
-    }
-    #[inline]
     pub fn s_class(&self) -> Option<StoreRef<S::Class>> {
         if let Data::SClass(v) = *self {
             Some(v)
@@ -467,166 +408,6 @@ impl Data {
     #[inline]
     pub fn s_class_mut(&mut self) -> Option<&mut S::Class> {
         if let Data::SClass(v) = self {
-            Some(&mut **v)
-        } else {
-            None
-        }
-    }
-    #[inline]
-    pub fn s_comment(&self) -> Option<StoreRef<S::Comment>> {
-        if let Data::SComment(v) = *self {
-            Some(v)
-        } else {
-            None
-        }
-    }
-    #[inline]
-    pub fn s_comment_mut(&mut self) -> Option<&mut S::Comment> {
-        if let Data::SComment(v) = self {
-            Some(&mut **v)
-        } else {
-            None
-        }
-    }
-    #[inline]
-    pub fn s_continue(&self) -> Option<StoreRef<S::Continue>> {
-        if let Data::SContinue(v) = *self {
-            Some(v)
-        } else {
-            None
-        }
-    }
-    #[inline]
-    pub fn s_continue_mut(&mut self) -> Option<&mut S::Continue> {
-        if let Data::SContinue(v) = self {
-            Some(&mut **v)
-        } else {
-            None
-        }
-    }
-    #[inline]
-    pub fn s_directive(&self) -> Option<StoreRef<S::Directive>> {
-        if let Data::SDirective(v) = *self {
-            Some(v)
-        } else {
-            None
-        }
-    }
-    #[inline]
-    pub fn s_directive_mut(&mut self) -> Option<&mut S::Directive> {
-        if let Data::SDirective(v) = self {
-            Some(&mut **v)
-        } else {
-            None
-        }
-    }
-    #[inline]
-    pub fn s_do_while(&self) -> Option<StoreRef<S::DoWhile>> {
-        if let Data::SDoWhile(v) = *self {
-            Some(v)
-        } else {
-            None
-        }
-    }
-    #[inline]
-    pub fn s_do_while_mut(&mut self) -> Option<&mut S::DoWhile> {
-        if let Data::SDoWhile(v) = self {
-            Some(&mut **v)
-        } else {
-            None
-        }
-    }
-    #[inline]
-    pub fn s_enum(&self) -> Option<StoreRef<S::Enum>> {
-        if let Data::SEnum(v) = *self {
-            Some(v)
-        } else {
-            None
-        }
-    }
-    #[inline]
-    pub fn s_enum_mut(&mut self) -> Option<&mut S::Enum> {
-        if let Data::SEnum(v) = self {
-            Some(&mut **v)
-        } else {
-            None
-        }
-    }
-    #[inline]
-    pub fn s_export_clause(&self) -> Option<StoreRef<S::ExportClause>> {
-        if let Data::SExportClause(v) = *self {
-            Some(v)
-        } else {
-            None
-        }
-    }
-    #[inline]
-    pub fn s_export_clause_mut(&mut self) -> Option<&mut S::ExportClause> {
-        if let Data::SExportClause(v) = self {
-            Some(&mut **v)
-        } else {
-            None
-        }
-    }
-    #[inline]
-    pub fn s_export_default(&self) -> Option<StoreRef<S::ExportDefault>> {
-        if let Data::SExportDefault(v) = *self {
-            Some(v)
-        } else {
-            None
-        }
-    }
-    #[inline]
-    pub fn s_export_default_mut(&mut self) -> Option<&mut S::ExportDefault> {
-        if let Data::SExportDefault(v) = self {
-            Some(&mut **v)
-        } else {
-            None
-        }
-    }
-    #[inline]
-    pub fn s_export_equals(&self) -> Option<StoreRef<S::ExportEquals>> {
-        if let Data::SExportEquals(v) = *self {
-            Some(v)
-        } else {
-            None
-        }
-    }
-    #[inline]
-    pub fn s_export_equals_mut(&mut self) -> Option<&mut S::ExportEquals> {
-        if let Data::SExportEquals(v) = self {
-            Some(&mut **v)
-        } else {
-            None
-        }
-    }
-    #[inline]
-    pub fn s_export_from(&self) -> Option<StoreRef<S::ExportFrom>> {
-        if let Data::SExportFrom(v) = *self {
-            Some(v)
-        } else {
-            None
-        }
-    }
-    #[inline]
-    pub fn s_export_from_mut(&mut self) -> Option<&mut S::ExportFrom> {
-        if let Data::SExportFrom(v) = self {
-            Some(&mut **v)
-        } else {
-            None
-        }
-    }
-    #[inline]
-    pub fn s_export_star(&self) -> Option<StoreRef<S::ExportStar>> {
-        if let Data::SExportStar(v) = *self {
-            Some(v)
-        } else {
-            None
-        }
-    }
-    #[inline]
-    pub fn s_export_star_mut(&mut self) -> Option<&mut S::ExportStar> {
-        if let Data::SExportStar(v) = self {
             Some(&mut **v)
         } else {
             None
@@ -649,54 +430,6 @@ impl Data {
         }
     }
     #[inline]
-    pub fn s_for_in(&self) -> Option<StoreRef<S::ForIn>> {
-        if let Data::SForIn(v) = *self {
-            Some(v)
-        } else {
-            None
-        }
-    }
-    #[inline]
-    pub fn s_for_in_mut(&mut self) -> Option<&mut S::ForIn> {
-        if let Data::SForIn(v) = self {
-            Some(&mut **v)
-        } else {
-            None
-        }
-    }
-    #[inline]
-    pub fn s_for_of(&self) -> Option<StoreRef<S::ForOf>> {
-        if let Data::SForOf(v) = *self {
-            Some(v)
-        } else {
-            None
-        }
-    }
-    #[inline]
-    pub fn s_for_of_mut(&mut self) -> Option<&mut S::ForOf> {
-        if let Data::SForOf(v) = self {
-            Some(&mut **v)
-        } else {
-            None
-        }
-    }
-    #[inline]
-    pub fn s_for(&self) -> Option<StoreRef<S::For>> {
-        if let Data::SFor(v) = *self {
-            Some(v)
-        } else {
-            None
-        }
-    }
-    #[inline]
-    pub fn s_for_mut(&mut self) -> Option<&mut S::For> {
-        if let Data::SFor(v) = self {
-            Some(&mut **v)
-        } else {
-            None
-        }
-    }
-    #[inline]
     pub fn s_function(&self) -> Option<StoreRef<S::Function>> {
         if let Data::SFunction(v) = *self {
             Some(v)
@@ -713,56 +446,8 @@ impl Data {
         }
     }
     #[inline]
-    pub fn s_if(&self) -> Option<StoreRef<S::If>> {
-        if let Data::SIf(v) = *self {
-            Some(v)
-        } else {
-            None
-        }
-    }
-    #[inline]
-    pub fn s_if_mut(&mut self) -> Option<&mut S::If> {
-        if let Data::SIf(v) = self {
-            Some(&mut **v)
-        } else {
-            None
-        }
-    }
-    #[inline]
     pub fn s_import(&self) -> Option<StoreRef<S::Import>> {
         if let Data::SImport(v) = *self {
-            Some(v)
-        } else {
-            None
-        }
-    }
-    #[inline]
-    pub fn s_import_mut(&mut self) -> Option<&mut S::Import> {
-        if let Data::SImport(v) = self {
-            Some(&mut **v)
-        } else {
-            None
-        }
-    }
-    #[inline]
-    pub fn s_label(&self) -> Option<StoreRef<S::Label>> {
-        if let Data::SLabel(v) = *self {
-            Some(v)
-        } else {
-            None
-        }
-    }
-    #[inline]
-    pub fn s_label_mut(&mut self) -> Option<&mut S::Label> {
-        if let Data::SLabel(v) = self {
-            Some(&mut **v)
-        } else {
-            None
-        }
-    }
-    #[inline]
-    pub fn s_local(&self) -> Option<StoreRef<S::Local>> {
-        if let Data::SLocal(v) = *self {
             Some(v)
         } else {
             None
@@ -777,129 +462,9 @@ impl Data {
         }
     }
     #[inline]
-    pub fn s_namespace(&self) -> Option<StoreRef<S::Namespace>> {
-        if let Data::SNamespace(v) = *self {
-            Some(v)
-        } else {
-            None
-        }
-    }
-    #[inline]
-    pub fn s_namespace_mut(&mut self) -> Option<&mut S::Namespace> {
-        if let Data::SNamespace(v) = self {
-            Some(&mut **v)
-        } else {
-            None
-        }
-    }
-    #[inline]
-    pub fn s_return(&self) -> Option<StoreRef<S::Return>> {
-        if let Data::SReturn(v) = *self {
-            Some(v)
-        } else {
-            None
-        }
-    }
-    #[inline]
-    pub fn s_return_mut(&mut self) -> Option<&mut S::Return> {
-        if let Data::SReturn(v) = self {
-            Some(&mut **v)
-        } else {
-            None
-        }
-    }
-    #[inline]
-    pub fn s_switch(&self) -> Option<StoreRef<S::Switch>> {
-        if let Data::SSwitch(v) = *self {
-            Some(v)
-        } else {
-            None
-        }
-    }
-    #[inline]
-    pub fn s_switch_mut(&mut self) -> Option<&mut S::Switch> {
-        if let Data::SSwitch(v) = self {
-            Some(&mut **v)
-        } else {
-            None
-        }
-    }
-    #[inline]
-    pub fn s_throw(&self) -> Option<StoreRef<S::Throw>> {
-        if let Data::SThrow(v) = *self {
-            Some(v)
-        } else {
-            None
-        }
-    }
-    #[inline]
-    pub fn s_throw_mut(&mut self) -> Option<&mut S::Throw> {
-        if let Data::SThrow(v) = self {
-            Some(&mut **v)
-        } else {
-            None
-        }
-    }
-    #[inline]
-    pub fn s_try(&self) -> Option<StoreRef<S::Try>> {
-        if let Data::STry(v) = *self {
-            Some(v)
-        } else {
-            None
-        }
-    }
-    #[inline]
-    pub fn s_try_mut(&mut self) -> Option<&mut S::Try> {
-        if let Data::STry(v) = self {
-            Some(&mut **v)
-        } else {
-            None
-        }
-    }
-    #[inline]
-    pub fn s_while(&self) -> Option<StoreRef<S::While>> {
-        if let Data::SWhile(v) = *self {
-            Some(v)
-        } else {
-            None
-        }
-    }
-    #[inline]
-    pub fn s_while_mut(&mut self) -> Option<&mut S::While> {
-        if let Data::SWhile(v) = self {
-            Some(&mut **v)
-        } else {
-            None
-        }
-    }
-    #[inline]
-    pub fn s_with(&self) -> Option<StoreRef<S::With>> {
-        if let Data::SWith(v) = *self {
-            Some(v)
-        } else {
-            None
-        }
-    }
-    #[inline]
-    pub fn s_with_mut(&mut self) -> Option<&mut S::With> {
-        if let Data::SWith(v) = self {
-            Some(&mut **v)
-        } else {
-            None
-        }
-    }
-    #[inline]
     pub fn s_lazy_export(&self) -> Option<StoreRef<expr::Data>> {
         if let Data::SLazyExport(v) = *self {
             Some(v)
-        } else {
-            None
-        }
-    }
-    #[inline]
-    pub fn s_lazy_export_mut(&mut self) -> Option<&mut expr::Data> {
-        if let Data::SLazyExport(v) = self {
-            Some(&mut **v)
         } else {
             None
         }
@@ -909,30 +474,6 @@ impl Data {
     // These variants store the payload directly (no `StoreRef`); all are
     // zero-sized `Copy` types. Returned by value for symmetry with
     // `expr::Data::e_boolean()` etc.
-    #[inline]
-    pub fn s_type_script(&self) -> Option<S::TypeScript> {
-        if let Data::STypeScript(v) = *self {
-            Some(v)
-        } else {
-            None
-        }
-    }
-    #[inline]
-    pub fn s_empty(&self) -> Option<S::Empty> {
-        if let Data::SEmpty(v) = *self {
-            Some(v)
-        } else {
-            None
-        }
-    }
-    #[inline]
-    pub fn s_debugger(&self) -> Option<S::Debugger> {
-        if let Data::SDebugger(v) = *self {
-            Some(v)
-        } else {
-            None
-        }
-    }
 }
 
 // `new_store!` emits `pub mod stmt_store { pub struct Store; ... }` with
@@ -976,33 +517,4 @@ crate::new_store!(
 pub mod data {
     use super::*;
     crate::thread_local_ast_store!(stmt_store::Store, "Stmt");
-}
-
-impl Stmt {
-    pub fn cares_about_scope(&self) -> bool {
-        match &self.data {
-            Data::SBlock(_)
-            | Data::SEmpty(_)
-            | Data::SDebugger(_)
-            | Data::SExpr(_)
-            | Data::SIf(_)
-            | Data::SFor(_)
-            | Data::SForIn(_)
-            | Data::SForOf(_)
-            | Data::SDoWhile(_)
-            | Data::SWhile(_)
-            | Data::SWith(_)
-            | Data::STry(_)
-            | Data::SSwitch(_)
-            | Data::SReturn(_)
-            | Data::SThrow(_)
-            | Data::SBreak(_)
-            | Data::SContinue(_)
-            | Data::SDirective(_) => false,
-
-            Data::SLocal(local) => local.kind != S::Kind::KVar,
-
-            _ => true,
-        }
-    }
 }

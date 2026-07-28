@@ -18,17 +18,10 @@ impl CommandComplete {
         &mut self,
         mut reader: NewReader<Container>,
     ) -> crate::Result<()> {
-        reader.length()?;
+        let remaining = reader.body_length()?;
 
-        let tag = reader.read_z()?;
+        let (tag, _) = reader.string_within(remaining)?;
         *self = Self { command_tag: tag };
         Ok(())
-    }
-
-    pub fn decode<Container: super::new_reader::ReaderContext>(
-        &mut self,
-        context: Container,
-    ) -> crate::Result<()> {
-        self.decode_internal(NewReader { wrapped: context })
     }
 }

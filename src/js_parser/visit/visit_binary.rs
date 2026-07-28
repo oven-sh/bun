@@ -101,9 +101,6 @@ pub struct BinaryExpressionVisitor {
 
     /// Input for visiting the left child
     pub left_in: ExprIn,
-
-    /// "Local variables" passed from "checkAndPrepare" to "visitRightAndFinish"
-    pub is_stmt_expr: bool, // = false (set by caller / Default)
 }
 
 impl BinaryExpressionVisitor {
@@ -781,8 +778,6 @@ impl BinaryExpressionVisitor {
             }
             _ => {}
         }
-
-        v.is_stmt_expr = matches!(p.stmt_expr_value, ExprData::EBinary(ptr) if core::ptr::eq(ptr.as_ptr(), std::ptr::from_mut(e_)));
 
         v.left_in = ExprIn {
             assign_target: Op::Code::binary_assign_target(e_.op),

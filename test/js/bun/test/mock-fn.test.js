@@ -780,6 +780,15 @@ describe("mock()", () => {
     expect(fn).not.toHaveBeenNthCalledWith(5, 1);
   });
 
+  test("toHaveBeenCalledTimes with calls.length > i32 max", () => {
+    const fn = jest.fn();
+    // Array length can be up to 2^32-1; the matcher must not panic on the narrowed count.
+    fn.mock.calls.length = 3_000_000_000;
+    expect(fn).not.toHaveBeenCalledTimes(5);
+    expect(fn).toHaveBeenCalledTimes(3_000_000_000);
+    expect(() => expect(fn).toHaveBeenCalledTimes(5)).toThrow();
+  });
+
   it("no segmentation fault when passing jest.fn into another jest.fn, issue#5900", () => {
     function foo() {
       return true;

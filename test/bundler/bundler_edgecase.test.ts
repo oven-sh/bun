@@ -1,6 +1,6 @@
-import { describe, expect } from "bun:test";
-import { isBroken, isWindows } from "harness";
-import { readdirSync } from "node:fs";
+import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, isBroken, isWindows, tempDir } from "harness";
+import { readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { decodeSourceMappingsLine, itBundled } from "./expectBundled";
 
@@ -2744,6 +2744,93 @@ describe("bundler", () => {
       expect(out).not.toContain("na_ve");
     },
   });
+  // The bundler's per-edge graph walks (reachable files, tree-shaking /
+  // code-splitting liveness, chunk part ordering, CSS discovery, TLA
+  // validation, async propagation, dependency wrapping) used to recurse once
+  // per import-graph edge, overflowing the stack on long linear chains. 7000
+  // reliably crashed the old recursive form under debug+ASAN.
+  const deepChainDepth = 7000;
+  const deepChainFiles = {
+    ...Object.fromEntries(
+      Array.from({ length: deepChainDepth - 1 }, (_, i) => [
+        `/m${i}.js`,
+        `import { v${i + 1} } from "./m${i + 1}.js"; export const v${i} = v${i + 1} + 1;`,
+      ]),
+    ),
+    [`/m${deepChainDepth - 1}.js`]: `export const v${deepChainDepth - 1} = 1;`,
+  };
+  itBundled("edgecase/DeepImportChain", {
+    files: {
+      "/entry.js": `import { v0 } from "./m0.js"; console.log(v0);`,
+      ...deepChainFiles,
+    },
+    backend: "cli",
+    run: { stdout: String(deepChainDepth) },
+  });
+  // Top-level await in the entry makes `validate_tla` / `propagate_async` walk
+  // the chain; `await import()` of an ESM head without splitting wraps the
+  // whole chain, driving `DependencyWrapper::wrap` through it. The wrapped
+  // output initializes module N by calling module N+1's init, so running it
+  // would recurse at runtime; checking for the deepest wrapper is enough.
+  itBundled("edgecase/DeepImportChainWrappedTLA", {
+    files: {
+      "/entry.js": `await 0; const { v0 } = await import("./m0.js"); console.log(v0);`,
+      ...deepChainFiles,
+    },
+    backend: "cli",
+    onAfterBundle(api) {
+      const out = api.readFile("out.js");
+      expect(out).toContain(`init_m${deepChainDepth - 2}`);
+    },
+  });
+  // Diamond-shaped DAG (half the modules have two importers). The code-
+  // splitting reachability pass tracks min distance-from-entry for each file;
+  // a LIFO walk with distance relaxation does O(V*E) re-visits here, so this
+  // guards that the pass stays O(V+E). Plain fs writes because itBundled's
+  // fixture pipeline is too slow at this scale under debug+ASAN.
+  test.concurrent(
+    "edgecase/DeepImportDiamondDAG",
+    async () => {
+      const N = 20000;
+      using dir = tempDir("deep-import-dag", {});
+      const root = String(dir);
+      for (let i = 0; i < N; i++) {
+        const deps: number[] = [];
+        if (i + 1 < N) deps.push(i + 1);
+        if (2 * i + 3 < N) deps.push(2 * i + 3);
+        writeFileSync(
+          join(root, `m${i}.js`),
+          deps.map(d => `import { v as v${d} } from "./m${d}.js";`).join("\n") +
+            `\nexport const v = ${i}${deps.map(d => ` + v${d}`).join("")};\n`,
+        );
+      }
+      writeFileSync(join(root, "entry.js"), `import { v } from "./m0.js"; console.log(typeof v);\n`);
+
+      await using build = Bun.spawn({
+        cmd: [bunExe(), "build", "entry.js", "--outfile=out.js"],
+        cwd: root,
+        env: bunEnv,
+        stdio: ["ignore", "pipe", "pipe"],
+        timeout: 60_000,
+      });
+      const [, stderr, exitCode] = await Promise.all([build.stdout.text(), build.stderr.text(), build.exited]);
+      expect({ stderr, exitCode, signalCode: build.signalCode }).toEqual({ stderr: "", exitCode: 0, signalCode: null });
+
+      await using run = Bun.spawn({
+        cmd: [bunExe(), "out.js"],
+        cwd: root,
+        env: bunEnv,
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+      const [stdout, runStderr, runExit] = await Promise.all([run.stdout.text(), run.stderr.text(), run.exited]);
+      expect({ stdout, stderr: runStderr, exitCode: runExit }).toEqual({
+        stdout: "number\n",
+        stderr: "",
+        exitCode: 0,
+      });
+    },
+    120_000,
+  );
   itBundled("edgecase/NonAsciiPathDerivedWrapperName", {
     files: {
       "/entry.ts": /* js */ `

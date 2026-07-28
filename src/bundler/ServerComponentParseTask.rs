@@ -24,11 +24,6 @@ use crate::cache::ExternalFreeFunction;
 use crate::options::{Loader, Target};
 use crate::parse_task::{self, ResultValue, Success, WatcherData, on_complete};
 
-pub use crate::ThreadPool;
-
-pub use crate::DeferredBatchTask::DeferredBatchTask;
-pub use crate::parse_task::ParseTask;
-
 pub(crate) struct ServerComponentParseTask {
     pub task: ThreadPoolTask,
     pub data: Data,

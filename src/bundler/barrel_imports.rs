@@ -146,12 +146,11 @@ fn apply_barrel_optimization_impl(
     // files parsed before this barrel. scheduleBarrelDeferredImports records
     // requests eagerly as each file is processed, so we don't need to scan
     // the graph.
-    if let Some(existing) = RequestedExports::lookup(&this.requested_exports, source_index) {
-        match existing {
-            RequestedExports::All => return Ok(()), // import * already seen — load everything
-            RequestedExports::Partial(_) => {}
-        }
-    }
+    let requested = match RequestedExports::lookup(&this.requested_exports, source_index) {
+        Some(RequestedExports::All) => return Ok(()), // import * already seen — load everything
+        Some(RequestedExports::Partial(partial)) => Some(partial),
+        None => None,
+    };
 
     // Build the set of needed import_record_indices from already-requested
     // export names. Export * records are always needed.
@@ -161,17 +160,12 @@ fn apply_barrel_optimization_impl(
         needed_records.put(*record_idx, ())?;
     }
 
-    if let Some(existing) = RequestedExports::lookup(&this.requested_exports, source_index) {
-        match existing {
-            RequestedExports::All => unreachable!(), // handled above
-            RequestedExports::Partial(partial) => {
-                for key in partial.keys() {
-                    if let Some(resolution) =
-                        resolve_barrel_export(key, &ast.named_exports, &ast.named_imports)
-                    {
-                        needed_records.put(resolution.import_record_index, ())?;
-                    }
-                }
+    if let Some(partial) = requested {
+        for key in partial.keys() {
+            if let Some(resolution) =
+                resolve_barrel_export(key, &ast.named_exports, &ast.named_imports)
+            {
+                needed_records.put(resolution.import_record_index, ())?;
             }
         }
     }

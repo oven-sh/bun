@@ -26,13 +26,6 @@ pub mod options {
     use super::*;
 
     #[derive(PartialEq, Eq, Clone, Copy, Debug)]
-    pub enum Unit {
-        U8,
-        U16,
-        Os,
-    }
-
-    #[derive(PartialEq, Eq, Clone, Copy, Debug)]
     pub enum Kind {
         Abs,
         Rel,
@@ -75,7 +68,6 @@ pub mod options {
         pub const ANY: u8 = 0;
         pub const AUTO: u8 = 1;
         pub const POSIX: u8 = 2;
-        pub const WINDOWS: u8 = 3;
         #[inline(always)]
         pub const fn from_u8(v: u8) -> Self {
             match v {
@@ -644,9 +636,9 @@ impl<U: PathUnit, const KIND: u8, const SEP_OPT: u8, const CHECK: u8>
         };
 
         let mut this = Self::init();
-        // top_level_dir is &[u8]; `_buf_append_input` routes it through
+        // top_level_dir is &[u8]; `buf_append_input` routes it through
         // `append_other` (transcoding) when U == u16.
-        this._buf_append_input(trimmed, false);
+        this.buf_append_input(trimmed, false);
         this
     }
 
@@ -667,10 +659,10 @@ impl<U: PathUnit, const KIND: u8, const SEP_OPT: u8, const CHECK: u8>
 
         #[cfg(windows)]
         {
-            this._buf_append_input(crate::windows::long_path_prefix_for::<U>(), false);
+            this.buf_append_input(crate::windows::long_path_prefix_for::<U>(), false);
         }
 
-        this._buf_append_input(trimmed, false);
+        this.buf_append_input(trimmed, false);
 
         this
     }
@@ -785,10 +777,10 @@ impl<U: PathUnit, const KIND: u8, const SEP_OPT: u8, const CHECK: u8>
         let mut this = Self::init();
         #[cfg(windows)]
         {
-            this._buf_append_input(crate::windows::long_path_prefix_for::<U>(), false);
+            this.buf_append_input(crate::windows::long_path_prefix_for::<U>(), false);
         }
 
-        this._buf_append_input(trimmed, false);
+        this.buf_append_input(trimmed, false);
         Ok(this)
     }
 
@@ -819,7 +811,7 @@ impl<U: PathUnit, const KIND: u8, const SEP_OPT: u8, const CHECK: u8>
         }
 
         let mut this = Self::init();
-        this._buf_append_input(trimmed, false);
+        this.buf_append_input(trimmed, false);
         Ok(this)
     }
 
@@ -835,19 +827,6 @@ impl<U: PathUnit, const KIND: u8, const SEP_OPT: u8, const CHECK: u8>
 
     pub fn basename(&self) -> &[U] {
         basename_generic(self.slice())
-    }
-
-    pub fn basename_z(&mut self) -> &U::ZSlice {
-        let len = self._buf.len;
-        let buf = U::buffer_as_mut_slice(&mut self._buf.pooled);
-        buf[len] = U::from_u8(0);
-        let base_len = basename_generic(&buf[..len]).len();
-        // Index from the END of `buf[..len]`, not from `base.as_ptr()`, so that
-        // when `base_len == 0` the result points at `buf[len]` (the NUL just
-        // written) and the sentinel invariant holds.
-        // SAFETY: `base_len <= len`, `buf[len] == 0`, and `buf` outlives the
-        // returned borrow.
-        unsafe { U::zslice_from_raw(buf.as_ptr().add(len - base_len), base_len) }
     }
 
     pub fn dirname(&self) -> Option<&[U]> {
@@ -983,7 +962,7 @@ impl<U: PathUnit, const KIND: u8, const SEP_OPT: u8, const CHECK: u8>
                     }
                 }
 
-                self._buf_append_input(trimmed, needs_sep);
+                self.buf_append_input(trimmed, needs_sep);
             }
             Kind::Rel => {
                 debug_assert!(!is_input_absolute(input));
@@ -1000,7 +979,7 @@ impl<U: PathUnit, const KIND: u8, const SEP_OPT: u8, const CHECK: u8>
                     }
                 }
 
-                self._buf_append_input(trimmed, needs_sep);
+                self.buf_append_input(trimmed, needs_sep);
             }
             Kind::Any => {
                 let input_is_absolute = is_input_absolute(input);
@@ -1035,7 +1014,7 @@ impl<U: PathUnit, const KIND: u8, const SEP_OPT: u8, const CHECK: u8>
                     }
                 }
 
-                self._buf_append_input(trimmed, needs_sep);
+                self.buf_append_input(trimmed, needs_sep);
             }
         }
         Ok(())
@@ -1262,7 +1241,7 @@ impl<U: PathUnit, const KIND: u8, const SEP_OPT: u8, const CHECK: u8>
 
     /// Dispatch `Buf::append` / `Buf::append_other` based on whether the input
     /// element type matches `U`.
-    fn _buf_append_input<C: PathUnit>(&mut self, characters: &[C], add_separator: bool) {
+    fn buf_append_input<C: PathUnit>(&mut self, characters: &[C], add_separator: bool) {
         use core::any::TypeId;
         // Route via concrete `u8`/`u16` using the safe trait-dispatched
         // identity casts (`id_u8`/`id_from_u8` etc.) — each is the literal
@@ -1307,11 +1286,6 @@ pub struct ResetScope<'a, U: PathUnit, const KIND: u8, const SEP_OPT: u8, const 
     // LIFETIMES.tsv: BORROW_PARAM → &'a mut Path
     path: &'a mut Path<U, KIND, SEP_OPT, CHECK>,
     saved_len: usize,
-}
-
-impl<'a, U: PathUnit, const KIND: u8, const SEP_OPT: u8, const CHECK: u8>
-    ResetScope<'a, U, KIND, SEP_OPT, CHECK>
-{
 }
 
 impl<'a, U: PathUnit, const KIND: u8, const SEP_OPT: u8, const CHECK: u8> core::ops::Deref

@@ -24,7 +24,6 @@ pub mod shared {
     pub use connection_flags::ConnectionFlags;
     pub use data::Data;
     pub use sql_query_result_mode::SQLQueryResultMode;
-    pub use stack_reader::StackReader;
 }
 
 pub mod mysql {
@@ -91,8 +90,6 @@ pub mod mysql {
         pub mod ok_packet;
         #[path = "PreparedStatement.rs"]
         pub mod prepared_statement;
-        #[path = "Query.rs"]
-        pub mod query;
         #[path = "ResultSetHeader.rs"]
         pub mod result_set_header;
         #[path = "SSLRequest.rs"]
@@ -105,37 +102,18 @@ pub mod mysql {
         // ── flat re-exports for `bun_sql_jsc` ──────────────────────────────
         // sql_jsc names most of these via `bun_sql::mysql::protocol::Foo`,
         // so surface them here as well as via their leaf modules.
-        pub use any_mysql_error::{AnyMySQLError, Error};
-        pub use auth_switch_request::AuthSwitchRequest;
-        pub use auth_switch_response::AuthSwitchResponse;
-        pub use column_definition41::{ColumnDefinition41, ColumnFlags};
-        pub use eof_packet::EOFPacket;
-        pub use error_packet::{ErrorPacket, MySQLErrorOptions};
-        pub use handshake_response41::HandshakeResponse41;
-        pub use handshake_v10::HandshakeV10;
-        pub use local_infile_request::LocalInfileRequest;
-        pub use new_reader::{Decode, NewReader, ReadableInt, ReaderContext};
-        pub use new_writer::{NewWriter, NewWriterWrap, Packet, WriterContext, write_wrap};
-        pub use ok_packet::OKPacket;
-        pub use packet_header::PacketHeader;
-        pub use packet_type::PacketType;
+        pub use any_mysql_error::Error;
+        pub use column_definition41::ColumnDefinition41;
+        pub use new_reader::ReaderContext;
         pub use result_set_header::ResultSetHeader;
-        pub use ssl_request::SSLRequest;
-        pub use stack_reader::StackReader;
-        pub use stmt_prepare_ok_packet::StmtPrepareOKPacket;
         // `protocol::FieldType` (re-export of mysql_types.FieldType).
         pub use crate::mysql::mysql_types::FieldType;
     }
 
     pub use crate::shared::query_status;
-    pub use crate::shared::query_status::Status as QueryStatus;
-    pub use auth_method::AuthMethod;
     pub use capabilities::Capabilities;
-    pub use connection_state::ConnectionState;
     pub use mysql_query_result::MySQLQueryResult;
-    pub use ssl_mode::SSLMode;
-    pub use status_flags::{StatusFlag, StatusFlags};
-    pub use tls_status::TLSStatus;
+    pub use status_flags::StatusFlags;
 }
 
 pub mod postgres {
@@ -173,24 +151,14 @@ pub mod postgres {
         #[path = "zHelpers.rs"]
         pub mod z_helpers;
 
-        #[path = "ArrayList.rs"]
-        pub mod array_list;
         #[path = "Authentication.rs"]
         pub mod authentication;
         #[path = "BackendKeyData.rs"]
         pub mod backend_key_data;
-        #[path = "Close.rs"]
-        pub mod close;
         #[path = "CommandComplete.rs"]
         pub mod command_complete;
         #[path = "CopyData.rs"]
         pub mod copy_data;
-        #[path = "CopyFail.rs"]
-        pub mod copy_fail;
-        #[path = "CopyInResponse.rs"]
-        pub mod copy_in_response;
-        #[path = "CopyOutResponse.rs"]
-        pub mod copy_out_response;
         #[path = "DataRow.rs"]
         pub mod data_row;
         #[path = "Describe.rs"]
@@ -203,8 +171,6 @@ pub mod postgres {
         pub mod field_description;
         #[path = "FieldMessage.rs"]
         pub mod field_message;
-        #[path = "NegotiateProtocolVersion.rs"]
-        pub mod negotiate_protocol_version;
         #[path = "NewReader.rs"]
         pub mod new_reader;
         #[path = "NewWriter.rs"]
@@ -238,8 +204,8 @@ pub mod postgres {
         pub mod startup_message;
 
         // ── flat re-exports for `bun_sql_jsc` (Decode/Write trait surface) ──
-        pub use new_reader::{NewReader, NewReaderWrap, ProtocolInt, ReaderContext};
-        pub use new_writer::{LengthWriter, NewWriter, WriterContext, new_writer};
+        pub use new_reader::ReaderContext;
+        pub use new_writer::WriterContext;
     }
 
     pub use any_postgres_error::{AnyPostgresError, PostgresErrorOptions};
@@ -247,7 +213,6 @@ pub mod postgres {
     pub use ssl_mode::SSLMode;
     pub use status::Status;
     pub use tls_status::TLSStatus;
-    pub use types::tag::Tag;
 
     // PascalCase module aliases — sql_jsc names these as `PostgresProtocol.Foo` /
     // `PostgresTypes.Int4` / `SocketMonitor.write`.
@@ -255,6 +220,3 @@ pub mod postgres {
     pub use postgres_types as PostgresTypes;
     pub use socket_monitor as SocketMonitor;
 }
-
-// Top-level convenience re-export (sql_jsc::jsc references `bun_sql::FieldMessage`).
-pub use postgres::protocol::field_message::FieldMessage;

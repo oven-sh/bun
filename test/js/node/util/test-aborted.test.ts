@@ -15,6 +15,18 @@ test("aborted works when provided a resource that was already aborted", () => {
   return expect(abortedPromise).resolves.toBeUndefined();
 });
 
+test("aborted resolves even when another listener stopped propagation", async () => {
+  const ac = new AbortController();
+  ac.signal.addEventListener("abort", e => e.stopImmediatePropagation());
+  const abortedPromise = aborted(ac.signal, {});
+  ac.abort();
+
+  // aborted() resolves from a `once: true` listener, synchronously inside abort(),
+  // so by now it has been consumed and only the listener that stopped propagation is left.
+  expect(getEventListeners(ac.signal, "abort")).toHaveLength(1);
+  await expect(abortedPromise).resolves.toBeUndefined();
+});
+
 test("aborted works when provided a resource that was not already aborted", async () => {
   const ac = new AbortController();
   var strong = {};

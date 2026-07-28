@@ -46,7 +46,6 @@ mod _impl {
         pub this_value: JsCell<StrongOptional>, // jsc.Strong.Optional
         pub write_in_progress: Cell<bool>,
         pub pending_close: Cell<bool>,
-        pub pending_reset: Cell<bool>,
         pub closed: Cell<bool>,
         pub task: JsCell<WorkPoolTask>,
         /// External-allocation footprint reported to the GC, fixed at
@@ -111,7 +110,6 @@ mod _impl {
                 this_value: JsCell::new(StrongOptional::empty()),
                 write_in_progress: Cell::new(false),
                 pending_close: Cell::new(false),
-                pending_reset: Cell::new(false),
                 closed: Cell::new(false),
                 // WorkPoolTask { callback: undefined } — callback is overwritten by
                 // CompressionStream::write before scheduling; placeholder here.
@@ -140,14 +138,14 @@ mod _impl {
 
         #[bun_jsc::host_fn(method)]
         pub fn init(&self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-            let arguments = frame.arguments_as_array::<4>();
+            let arguments = frame.arguments_as_array::<5>();
             let this_value = frame.this();
-            if frame.arguments_count() != 4 {
+            if frame.arguments_count() != 4 && frame.arguments_count() != 5 {
                 return Err(global
                     .err(
                         jsc::ErrorCode::MISSING_ARGS,
                         format_args!(
-                            "init(initParamsArray, pledgedSrcSize, writeState, processCallback)"
+                            "init(initParamsArray, pledgedSrcSize, writeState, processCallback[, dictionary])"
                         ),
                     )
                     .throw());
@@ -207,7 +205,29 @@ mod _impl {
                 )?);
             }
 
-            let err = self.stream.with_mut(|s| s.init(pledged_src_size));
+            // Bind the ArrayBuffer view to a local so the borrowed byte_slice()
+            // outlives the `stream.init` call below (E0716 otherwise).
+            let dictionary_buf;
+            let dictionary = if arguments[4].is_undefined() {
+                None
+            } else {
+                let dictionary_value = arguments[4];
+                dictionary_buf = match dictionary_value.as_array_buffer(global) {
+                    Some(buf) => buf,
+                    None => {
+                        return Err(global.throw_invalid_argument_type_value(
+                            "dictionary",
+                            "Buffer, TypedArray, or DataView",
+                            dictionary_value,
+                        ));
+                    }
+                };
+                Some(dictionary_buf.byte_slice())
+            };
+
+            let err = self
+                .stream
+                .with_mut(|s| s.init(pledged_src_size, dictionary));
             if err.is_error() {
                 CompressionStream::<Self>::emit_error(self, global, this_value, err);
                 return Ok(JSValue::FALSE);
@@ -306,7 +326,32 @@ mod _impl {
     }
 
     impl Context {
-        pub fn init(&mut self, pledged_src_size: u64) -> Error {
+        /// zstd copies the dictionary into the context, so `dictionary` does not
+        /// need to outlive this call (unlike brotli's attach APIs).
+        fn load_dictionary(
+            dictionary: Option<&[u8]>,
+            load: impl FnOnce(*const c_void, usize) -> usize,
+        ) -> Error {
+            let Some(dict) = dictionary.filter(|d| !d.is_empty()) else {
+                return Error::OK;
+            };
+            let result = load(dict.as_ptr().cast(), dict.len());
+            if c::ZSTD_isError(result) > 0 {
+                return Error::init(
+                    c"Failed to load zstd dictionary".as_ptr(),
+                    -1,
+                    c"ERR_ZLIB_DICTIONARY_LOAD_FAILED".as_ptr(),
+                );
+            }
+            Error::OK
+        }
+
+        pub fn init(&mut self, pledged_src_size: u64, dictionary: Option<&[u8]>) -> Error {
+            // Mirrors node's `state_.reset(ZSTD_createCCtx())`: free the previous
+            // context first. `init` is JS-reachable twice on one handle.
+            if self.state.is_some() {
+                self.deinit_state();
+            }
             match self.mode {
                 NodeMode::ZSTD_COMPRESS => {
                     self.pledged_src_size = pledged_src_size;
@@ -319,6 +364,17 @@ mod _impl {
                         );
                     }
                     self.state = Some(state.cast());
+                    // Node loads the dictionary before setting the pledged size.
+                    // SAFETY: FFI — state is a valid CCtx allocated above.
+                    let err = Self::load_dictionary(dictionary, |d, n| unsafe {
+                        c::ZSTD_CCtx_loadDictionary(state, d, n)
+                    });
+                    if err.is_error() {
+                        // SAFETY: state is a valid CCtx allocated above.
+                        let _ = unsafe { c::ZSTD_freeCCtx(state) };
+                        self.state = None;
+                        return err;
+                    }
                     // SAFETY: state is non-null (checked above).
                     let result =
                         unsafe { c::ZSTD_CCtx_setPledgedSrcSize(state, pledged_src_size as _) };
@@ -344,6 +400,16 @@ mod _impl {
                         );
                     }
                     self.state = Some(state.cast());
+                    // SAFETY: FFI — state is a valid DCtx allocated above.
+                    let err = Self::load_dictionary(dictionary, |d, n| unsafe {
+                        c::ZSTD_DCtx_loadDictionary(state, d, n)
+                    });
+                    if err.is_error() {
+                        // SAFETY: state is a valid DCtx allocated above.
+                        let _ = unsafe { c::ZSTD_freeDCtx(state) };
+                        self.state = None;
+                        return err;
+                    }
                     Error::OK
                 }
                 _ => unreachable!(),
@@ -385,10 +451,10 @@ mod _impl {
         }
 
         pub fn reset(&mut self) -> Error {
-            if self.state.is_some() {
-                self.deinit_state();
-            }
-            self.init(self.pledged_src_size)
+            // Matches node's `ZstdContext::ResetStream()`, which calls `Init()`
+            // with its default (empty) dictionary — a reset drops the dictionary.
+            // `init` frees the previous context itself.
+            self.init(self.pledged_src_size, None)
         }
 
         /// Frees the Zstd encoder/decoder state without changing mode.
@@ -425,6 +491,29 @@ mod _impl {
             self.flush = flush;
         }
 
+        const ZSTD_MAGICNUMBER: [u8; 4] = 0xFD2FB528u32.to_le_bytes();
+        const ZSTD_MAGIC_SKIPPABLE: [u8; 4] = 0x184D2A50u32.to_le_bytes();
+
+        /// True when the unconsumed input begins a zstd/skippable frame magic (or a prefix of one).
+        fn next_input_is_frame(&self) -> bool {
+            let n = (self.input.size - self.input.pos).min(4);
+            if n == 0 {
+                return false;
+            }
+            let mut head = [0u8; 4];
+            // SAFETY: input.src[pos..pos+n] lies within the slice installed by set_buffers.
+            unsafe {
+                ptr::copy_nonoverlapping(
+                    self.input.src.cast::<u8>().add(self.input.pos),
+                    head.as_mut_ptr(),
+                    n,
+                );
+            }
+            head[..n] == Self::ZSTD_MAGICNUMBER[..n]
+                || (head[0] & 0xF0 == Self::ZSTD_MAGIC_SKIPPABLE[0]
+                    && head[1..n] == Self::ZSTD_MAGIC_SKIPPABLE[1..n])
+        }
+
         pub fn do_work(&mut self) {
             // A handle driven before `init()` has no CCtx/DCtx; zstd
             // dereferences the context pointer unconditionally.
@@ -442,14 +531,31 @@ mod _impl {
                         self.flush as c_uint,
                     )
                 },
-                // SAFETY: state is a valid DCtx.
-                NodeMode::ZSTD_DECOMPRESS => unsafe {
-                    c::ZSTD_decompressStream(
-                        self.state_ptr().cast(),
-                        &raw mut self.output,
-                        &raw mut self.input,
-                    )
-                },
+                NodeMode::ZSTD_DECOMPRESS => {
+                    // SAFETY: state is a valid DCtx.
+                    let mut ret = unsafe {
+                        c::ZSTD_decompressStream(
+                            self.state_ptr().cast(),
+                            &raw mut self.output,
+                            &raw mut self.input,
+                        )
+                    };
+                    // ret == 0 is frame-complete; mirrors NativeZlib::do_work_inflate's GUNZIP loop.
+                    while ret == 0
+                        && self.output.pos < self.output.size
+                        && self.next_input_is_frame()
+                    {
+                        // SAFETY: state is a valid DCtx; input/output point to caller-kept-alive buffers.
+                        ret = unsafe {
+                            c::ZSTD_decompressStream(
+                                self.state_ptr().cast(),
+                                &raw mut self.output,
+                                &raw mut self.input,
+                            )
+                        };
+                    }
+                    ret
+                }
                 _ => unreachable!(),
             } as u64;
         }

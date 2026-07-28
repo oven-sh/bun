@@ -9,7 +9,7 @@
 //! of the bundler type — the bundler depends on this crate and re-exports them.
 
 pub use crate::tsconfig_json::options::jsx;
-pub(crate) use bun_ast::{Loader, Target};
+pub(crate) use bun_ast::Target;
 pub use bun_options_types::bundle_enums::ModuleType;
 
 #[derive(Clone, Copy, PartialEq, Eq, Default)]
@@ -163,7 +163,6 @@ impl BundleOptions {
 }
 
 pub mod bundle_options {
-    pub use super::ForceNodeEnv;
     pub mod defaults {
         pub const CSS_EXTENSION_ORDER: &[&[u8]] = &[b".css"];
         // Mirrors `bun_bundler::options::bundle_options_defaults::EXTENSION_ORDER`
@@ -189,8 +188,8 @@ pub mod bundle_options {
 
 // B-3 UNIFIED: FORWARD_DECL dropped — canonical type moved down to
 // `bun_options_types::bundle_enums::ForceNodeEnv`. Re-exported so the
-// `options::ForceNodeEnv` / `bundle_options::ForceNodeEnv` paths and the
-// field on the local `BundleOptions` subset stay source-compatible.
+// `options::ForceNodeEnv` path and the field on the local `BundleOptions`
+// subset stay source-compatible.
 pub use ::bun_options_types::ForceNodeEnv;
 
 /// Bake `Framework` — only the

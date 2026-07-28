@@ -416,7 +416,3 @@ pub unsafe fn rename_symbols_in_chunk(
 
     Ok(ChunkRenamer::Number(r))
 }
-
-pub use crate::DeferredBatchTask;
-pub use crate::ParseTask;
-pub use crate::ThreadPool;

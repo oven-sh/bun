@@ -1,6 +1,7 @@
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 
 use super::mock;
+use super::throw;
 use super::Expect;
 
 #[derive(PartialEq, Eq, Clone, Copy)]
@@ -83,28 +84,25 @@ fn to_have_returned_times_fn(
     }
 
     let signature = Expect::get_signature(mode.tag_name(), "<green>expected<r>", not);
-    // `throw` runs pretty_fmt over the *rendered* string, so `<`/`>` in these
-    // operands must be backslash-escaped to survive the tag pass.
     let (str_, spc): (&'static str, &'static str) = match mode {
         Mode::ToHaveReturned => match not {
-            false => ("\\>= ", "   "),
-            true => ("\\< ", "  "),
+            false => (">= ", "   "),
+            true => ("< ", "  "),
         },
         Mode::ToHaveReturnedTimes => match not {
             false => ("== ", "   "),
             true => ("!= ", "   "),
         },
     };
-    this.throw(
+    throw!(
+        this,
         global,
         signature,
-        format_args!(
-            "\n\n\
-             Expected number of succesful returns: {}<green>{}<r>\n\
-             Received number of succesful returns: {}<red>{}<r>\n\
-             Received number of calls:             {}<red>{}<r>\n",
-            str_, expected_success_count, spc, actual_success_count, spc, total_call_count,
-        ),
+        "\n\n\
+         Expected number of succesful returns: {}<green>{}<r>\n\
+         Received number of succesful returns: {}<red>{}<r>\n\
+         Received number of calls:             {}<red>{}<r>\n",
+        str_, expected_success_count, spc, actual_success_count, spc, total_call_count,
     )
 }
 

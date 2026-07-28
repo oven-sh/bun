@@ -5,7 +5,6 @@
 //!
 //! - `const fn new(T)` — usable in `static`.
 //! - `.read()` / `.write()` return guards with `Deref` / `DerefMut`.
-//! - `.try_read()` / `.try_write()` return `Option<guard>`.
 //! - No poisoning (matches `parking_lot`).
 //!
 //! Writer-preferring: a pending writer blocks new readers from acquiring on
@@ -57,20 +56,6 @@ impl RawRwLock {
         }
     }
 
-    fn try_lock(&self) -> bool {
-        if self.mutex.try_lock() {
-            let state = self.state.load(Ordering::SeqCst);
-            if state & READER_MASK == 0 {
-                let _ = self.state.fetch_or(IS_WRITING, Ordering::SeqCst);
-                return true;
-            }
-
-            self.mutex.unlock();
-        }
-
-        false
-    }
-
     fn lock(&self) {
         let _ = self.state.fetch_add(WRITER, Ordering::SeqCst);
         self.mutex.lock();
@@ -88,27 +73,6 @@ impl RawRwLock {
     fn unlock(&self) {
         let _ = self.state.fetch_and(!IS_WRITING, Ordering::SeqCst);
         self.mutex.unlock();
-    }
-
-    fn try_lock_shared(&self) -> bool {
-        let state = self.state.load(Ordering::SeqCst);
-        if state & (IS_WRITING | WRITER_MASK) == 0 {
-            if self
-                .state
-                .compare_exchange(state, state + READER, Ordering::SeqCst, Ordering::SeqCst)
-                .is_ok()
-            {
-                return true;
-            }
-        }
-
-        if self.mutex.try_lock() {
-            let _ = self.state.fetch_add(READER, Ordering::SeqCst);
-            self.mutex.unlock();
-            return true;
-        }
-
-        false
     }
 
     fn lock_shared(&self) {
@@ -193,45 +157,6 @@ impl<T> RwLock<T> {
             _not_send: PhantomData,
         }
     }
-
-    /// Non-blocking [`read`](Self::read).
-    #[inline]
-    pub fn try_read(&self) -> Option<RwLockReadGuard<'_, T>> {
-        if self.raw.try_lock_shared() {
-            Some(RwLockReadGuard {
-                lock: self,
-                _not_send: PhantomData,
-            })
-        } else {
-            None
-        }
-    }
-
-    /// Non-blocking [`write`](Self::write).
-    #[inline]
-    pub fn try_write(&self) -> Option<RwLockWriteGuard<'_, T>> {
-        if self.raw.try_lock() {
-            Some(RwLockWriteGuard {
-                lock: self,
-                _not_send: PhantomData,
-            })
-        } else {
-            None
-        }
-    }
-
-    /// Lock-free mutable access via `&mut self` (exclusive borrow proves no
-    /// other thread holds the lock). Parity with `parking_lot::RwLock::get_mut`.
-    #[inline]
-    pub fn get_mut(&mut self) -> &mut T {
-        self.value.get_mut()
-    }
-
-    /// Consume the lock, returning the inner value.
-    #[inline]
-    pub fn into_inner(self) -> T {
-        self.value.into_inner()
-    }
 }
 
 /// RAII shared-read guard. `Deref<Target = T>` only.
@@ -303,31 +228,14 @@ mod tests {
 
         {
             let mut w = rwl.write();
-            assert!(rwl.try_write().is_none());
-            assert!(rwl.try_read().is_none());
             *w = 1;
         }
 
         {
-            let w = rwl.try_write().unwrap();
-            assert!(rwl.try_write().is_none());
-            assert!(rwl.try_read().is_none());
-            drop(w);
-        }
-
-        {
             let r1 = rwl.read();
-            assert!(rwl.try_write().is_none());
-            let r2 = rwl.try_read().unwrap();
+            let r2 = rwl.read();
             assert_eq!(*r1, 1);
             assert_eq!(*r2, 1);
-        }
-
-        {
-            let r1 = rwl.try_read().unwrap();
-            assert!(rwl.try_write().is_none());
-            let r2 = rwl.try_read().unwrap();
-            drop((r1, r2));
         }
 
         let _w = rwl.write();

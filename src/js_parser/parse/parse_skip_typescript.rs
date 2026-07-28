@@ -354,8 +354,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     self.lexer.next()?;
 
                     // "[import: number]"
+                    // "[import?: number]"
                     if opts.contains(SkipTypeOptions::AllowTupleLabels)
-                        && self.lexer.token == T::TColon
+                        && (self.lexer.token == T::TColon || self.lexer.token == T::TQuestion)
                     {
                         return Ok(());
                     }
@@ -384,8 +385,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     self.lexer.next()?;
 
                     // "[new: number]"
+                    // "[new?: number]"
                     if opts.contains(SkipTypeOptions::AllowTupleLabels)
-                        && self.lexer.token == T::TColon
+                        && (self.lexer.token == T::TColon || self.lexer.token == T::TQuestion)
                     {
                         return Ok(());
                     }
@@ -418,13 +420,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                             // Valid:
                             //   "[keyof: string]"
+                            //   "[keyof?: string]"
                             //   "{[keyof: string]: number}"
                             //   "{[keyof in string]: number}"
                             //
                             // Invalid:
                             //   "A extends B ? keyof : string"
                             //
-                            if (self.lexer.token != T::TColon && self.lexer.token != T::TIn)
+                            if (self.lexer.token != T::TColon
+                                && self.lexer.token != T::TQuestion
+                                && self.lexer.token != T::TIn)
                                 || (!opts.contains(SkipTypeOptions::IsIndexSignature)
                                     && !opts.contains(SkipTypeOptions::AllowTupleLabels))
                             {
@@ -443,7 +448,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         TsIdentKind::PrefixReadonly => {
                             self.lexer.next()?;
 
-                            if (self.lexer.token != T::TColon && self.lexer.token != T::TIn)
+                            if (self.lexer.token != T::TColon
+                                && self.lexer.token != T::TQuestion
+                                && self.lexer.token != T::TIn)
                                 || (!opts.contains(SkipTypeOptions::IsIndexSignature)
                                     && !opts.contains(SkipTypeOptions::AllowTupleLabels))
                             {
@@ -467,7 +474,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             // "type Foo = Bar extends [infer T extends string] ? T : null"
                             // "type Foo = Bar extends [infer T extends string ? infer T : never] ? T : null"
                             // "type Foo = { [infer in Bar]: number }"
-                            if (self.lexer.token != T::TColon && self.lexer.token != T::TIn)
+                            // "type Foo = [infer?: number]"
+                            if (self.lexer.token != T::TColon
+                                && self.lexer.token != T::TQuestion
+                                && self.lexer.token != T::TIn)
                                 || (!opts.contains(SkipTypeOptions::IsIndexSignature)
                                     && !opts.contains(SkipTypeOptions::AllowTupleLabels))
                             {
@@ -635,15 +645,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                     // "let foo: any \n <number>foo" must not become a single type
                     if check_type_parameters && !self.lexer.has_newline_before {
-                        let _ = self.skip_type_script_type_arguments::<false>()?;
+                        let _ = self.skip_type_script_type_arguments::<false, false>()?;
                     }
                 }
                 T::TTypeof => {
                     self.lexer.next()?;
 
                     // "[typeof: number]"
+                    // "[typeof?: number]"
                     if opts.contains(SkipTypeOptions::AllowTupleLabels)
-                        && self.lexer.token == T::TColon
+                        && (self.lexer.token == T::TColon || self.lexer.token == T::TQuestion)
                     {
                         return Ok(());
                     }
@@ -679,7 +690,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         }
 
                         if !self.lexer.has_newline_before {
-                            let _ = self.skip_type_script_type_arguments::<false>()?;
+                            let _ = self.skip_type_script_type_arguments::<false, false>()?;
                         }
                     }
                 }
@@ -754,7 +765,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         }
                         self.lexer.next()?;
 
-                        if self.lexer.token != T::TColon {
+                        if self.lexer.token != T::TColon && self.lexer.token != T::TQuestion {
                             self.lexer.expect(T::TColon)?;
                         }
 
@@ -908,7 +919,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                     // "{ <A extends B>(): c.d \n <E extends F>(): g.h }" must not become a single type
                     if !self.lexer.has_newline_before {
-                        let _ = self.skip_type_script_type_arguments::<false>()?;
+                        let _ = self.skip_type_script_type_arguments::<false, false>()?;
                     }
                 }
                 T::TOpenBracket => {
@@ -1372,7 +1383,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(())
     }
 
-    pub fn skip_type_script_type_arguments<const IS_INSIDE_JSX_ELEMENT: bool>(
+    pub fn skip_type_script_type_arguments<
+        const IS_INSIDE_JSX_ELEMENT: bool,
+        const IS_PARSE_TYPE_ARGUMENTS_IN_EXPRESSION: bool,
+    >(
         &mut self,
     ) -> Result<bool, Error> {
         self.mark_type_script_only();
@@ -1397,7 +1411,24 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
 
         // This type argument list must end with a ">"
-        self.lexer.expect_greater_than::<IS_INSIDE_JSX_ELEMENT>()?;
+        if !IS_PARSE_TYPE_ARGUMENTS_IN_EXPRESSION {
+            // Normally TypeScript allows any token starting with ">". For example,
+            // "Array<Array<number>>()" is a type argument list even though there's
+            // a ">>" token, because ">>" starts with ">".
+            self.lexer.expect_greater_than::<IS_INSIDE_JSX_ELEMENT>()?;
+        } else {
+            // However, when emulating the TypeScript compiler's
+            // "parseTypeArgumentsInExpression" function, only the ">" token
+            // itself is allowed. For example, "x < y >= z" is not a type argument
+            // list. Nested type arguments ("Array<Array<number>>()") still work
+            // because the inner list is in a type context and already stripped one
+            // ">" from the ">>" before we see the outer closer here.
+            if IS_INSIDE_JSX_ELEMENT {
+                self.lexer.expect_inside_jsx_element(T::TGreaterThan)?;
+            } else {
+                self.lexer.expect(T::TGreaterThan)?;
+            }
+        }
         Ok(true)
     }
 
@@ -1501,7 +1532,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     }
 
     pub fn skip_type_script_type_arguments_with_backtracking(&mut self) -> Result<bool, Error> {
-        if self.skip_type_script_type_arguments::<false>()? {
+        if self.skip_type_script_type_arguments::<false, true>()? {
             // Check the token after this and backtrack if it's the wrong one
             if !self.can_follow_type_arguments_in_expression() {
                 return Err(crate::Error::Backtrack);

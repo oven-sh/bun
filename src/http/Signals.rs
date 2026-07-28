@@ -9,7 +9,6 @@ pub struct Signals {
     pub response_body_streaming: Option<NonNull<AtomicBool>>,
     pub aborted: Option<NonNull<AtomicBool>>,
     pub cert_errors: Option<NonNull<AtomicBool>>,
-    pub upgraded: Option<NonNull<AtomicBool>>,
     pub body_receive_mode: Option<NonNull<AtomicU8>>,
 }
 
@@ -58,7 +57,6 @@ impl Signals {
             Field::ResponseBodyStreaming => self.response_body_streaming,
             Field::Aborted => self.aborted,
             Field::CertErrors => self.cert_errors,
-            Field::Upgraded => self.upgraded,
         }?;
         Some(bun_ptr::BackRef::from(ptr))
     }
@@ -88,7 +86,6 @@ pub struct Store {
     pub response_body_streaming: AtomicBool,
     pub aborted: AtomicBool,
     pub cert_errors: AtomicBool,
-    pub upgraded: AtomicBool,
     pub body_receive_mode: AtomicU8,
 }
 
@@ -99,7 +96,6 @@ impl Default for Store {
             response_body_streaming: AtomicBool::new(false),
             aborted: AtomicBool::new(false),
             cert_errors: AtomicBool::new(false),
-            upgraded: AtomicBool::new(false),
             body_receive_mode: AtomicU8::new(BodyReceiveMode::AutoPause as u8),
         }
     }
@@ -112,7 +108,6 @@ impl Store {
             response_body_streaming: Some(NonNull::from(&self.response_body_streaming)),
             aborted: Some(NonNull::from(&self.aborted)),
             cert_errors: Some(NonNull::from(&self.cert_errors)),
-            upgraded: Some(NonNull::from(&self.upgraded)),
             body_receive_mode: None,
         }
     }
@@ -155,5 +150,4 @@ pub enum Field {
     ResponseBodyStreaming,
     Aborted,
     CertErrors,
-    Upgraded,
 }

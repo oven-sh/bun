@@ -68,15 +68,7 @@ impl<C: WriterContext> NewWriter<C> {
         self.write(&value.to_be_bytes())
     }
 
-    pub fn sint4(self, value: i32) -> Result<(), AnyPostgresError> {
-        self.write(&value.to_be_bytes())
-    }
-
     pub fn f64(self, value: f64) -> Result<(), AnyPostgresError> {
-        self.write(&value.to_bits().to_be_bytes())
-    }
-
-    pub fn f32(self, value: f32) -> Result<(), AnyPostgresError> {
         self.write(&value.to_bits().to_be_bytes())
     }
 
@@ -98,22 +90,6 @@ impl<C: WriterContext> NewWriter<C> {
         Ok(())
     }
 
-    pub fn bytes(self, value: &[u8]) -> Result<(), AnyPostgresError> {
-        self.write(value)?;
-        if value.is_empty() || value[value.len() - 1] != 0 {
-            self.write(&[0u8])?;
-        }
-        Ok(())
-    }
-
-    pub fn r#bool(self, value: bool) -> Result<(), AnyPostgresError> {
-        self.write(if value { b"t" } else { b"f" })
-    }
-
-    pub fn null(self) -> Result<(), AnyPostgresError> {
-        self.int4(PostgresInt32::MAX)
-    }
-
     // Named `bun_string` (not `string`) to avoid colliding with `string(&[u8])` above.
     pub fn bun_string(self, value: &bun_core::String) -> Result<(), AnyPostgresError> {
         if value.is_empty() {
@@ -130,10 +106,4 @@ impl<C: WriterContext> NewWriter<C> {
         }
         Ok(())
     }
-}
-
-// Constructor helper for callsite convenience.
-#[inline]
-pub fn new_writer<C: WriterContext>(ctx: C) -> NewWriter<C> {
-    NewWriter { wrapped: ctx }
 }

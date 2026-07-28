@@ -70,7 +70,7 @@ bun_opaque::opaque_ffi! {
 unsafe extern "C" {
     fn NapiEnv__globalObject(env: *mut NapiEnv) -> *mut JSGlobalObject;
     fn NapiEnv__getAndClearPendingException(env: *mut NapiEnv, out: *mut JSValue) -> bool;
-    fn napi_internal_get_version(env: *mut NapiEnv) -> u32;
+    fn NapiEnv__hasPendingException(env: *mut NapiEnv) -> bool;
     fn NapiEnv__deref(env: *mut NapiEnv);
     fn NapiEnv__ref(env: *mut NapiEnv);
     fn napi_set_last_error(env: napi_env, status: NapiStatus) -> napi_status;
@@ -109,16 +109,21 @@ impl NapiEnv {
         Self::set_last_error(Some(self), NapiStatus::generic_failure)
     }
 
+    pub fn pending_exception(&self) -> napi_status {
+        Self::set_last_error(Some(self), NapiStatus::pending_exception)
+    }
+
+    /// Checks both `env->m_pendingException` (set by `napi_throw*`) and the JSC
+    /// VM exception slot. This is the gate Node.js's `NAPI_PREAMBLE` enforces.
+    pub fn has_pending_exception(&self) -> bool {
+        // SAFETY: env is non-null; C++ side is read-only here.
+        unsafe { NapiEnv__hasPendingException(self.as_mut_ptr()) }
+    }
+
     /// Assert that we're not currently performing garbage collection
     pub fn check_gc(&self) {
         // SAFETY: env is non-null; C++ side is read-only here.
         unsafe { napi_internal_check_gc(self.as_mut_ptr()) };
-    }
-
-    /// Return the Node-API version number declared by the module we are running code from
-    pub fn get_version(&self) -> u32 {
-        // SAFETY: env is non-null; C++ side is read-only here.
-        unsafe { napi_internal_get_version(self.as_mut_ptr()) }
     }
 
     pub fn get_and_clear_pending_exception(&self) -> Option<JSValue> {
@@ -193,12 +198,6 @@ unsafe extern "C" {
 pub enum EscapeError {
     #[error("escape called twice")]
     EscapeCalledTwice,
-}
-
-impl From<EscapeError> for crate::Error {
-    fn from(_: EscapeError) -> Self {
-        crate::Error::EscapeCalledTwice
-    }
 }
 
 impl NapiHandleScope {
@@ -316,6 +315,7 @@ pub(super) enum napi_typedarray_type {
     float64_array = 8,
     bigint64_array = 9,
     biguint64_array = 10,
+    float16_array = 11,
 }
 
 impl napi_typedarray_type {
@@ -334,6 +334,7 @@ impl napi_typedarray_type {
             jsc::JSType::Float64Array => napi_typedarray_type::float64_array,
             jsc::JSType::BigInt64Array => napi_typedarray_type::bigint64_array,
             jsc::JSType::BigUint64Array => napi_typedarray_type::biguint64_array,
+            jsc::JSType::Float16Array => napi_typedarray_type::float16_array,
             _ => return None,
         })
     }
@@ -419,6 +420,19 @@ macro_rules! get_env {
             None => return env_is_null(),
         }
     };
+}
+
+/// Like `get_env!` but also returns `napi_pending_exception` if a JS exception
+/// is pending on the env (mirrors Node's `NAPI_PREAMBLE`). Use this for napi
+/// entry points that can execute JS or have observable side effects.
+macro_rules! preamble {
+    ($env:expr) => {{
+        let env = get_env!($env);
+        if env.has_pending_exception() {
+            return env.pending_exception();
+        }
+        env
+    }};
 }
 
 macro_rules! get_out {
@@ -867,13 +881,18 @@ pub(super) extern "C" fn napi_get_prototype(
     result_: *mut napi_value,
 ) -> napi_status {
     bun_output::scoped_log!(napi, "napi_get_prototype");
-    let env = get_env!(env_);
+    let env = preamble!(env_);
     let result = get_out!(env, result_);
     let object = object_.get();
     if object.is_empty() {
         return env.invalid_arg();
     }
-    if !object.is_object() {
+    // Node's CHECK_TO_OBJECT: ToObject throws on null/undefined; leave the
+    // TypeError pending and return napi_object_expected. Other primitives are
+    // coerced, so `get_prototype` (which synthesizes the prototype for
+    // non-object values) handles them without an allocation.
+    if object.is_undefined_or_null() {
+        let _ = object.to_object(env.to_js());
         return NapiEnv::set_last_error(Some(env), NapiStatus::object_expected);
     }
 
@@ -934,6 +953,9 @@ pub(super) extern "C" fn napi_is_array(
     env.check_gc();
     let result = get_out!(env, result_);
     let value = value_.get();
+    if value.is_empty() {
+        return env.invalid_arg();
+    }
     *result = value.js_type().is_array();
     env.ok()
 }
@@ -945,9 +967,12 @@ pub(super) extern "C" fn napi_get_array_length(
     result_: *mut u32,
 ) -> napi_status {
     bun_output::scoped_log!(napi, "napi_get_array_length");
-    let env = get_env!(env_);
+    let env = preamble!(env_);
     let result = get_out!(env, result_);
     let value = value_.get();
+    if value.is_empty() {
+        return env.invalid_arg();
+    }
 
     if !value.js_type().is_array() {
         return NapiEnv::set_last_error(Some(env), NapiStatus::array_expected);
@@ -968,9 +993,12 @@ pub(super) extern "C" fn napi_strict_equals(
     result_: *mut bool,
 ) -> napi_status {
     bun_output::scoped_log!(napi, "napi_strict_equals");
-    let env = get_env!(env_);
+    let env = preamble!(env_);
     let result = get_out!(env, result_);
     let (lhs, rhs) = (lhs_.get(), rhs_.get());
+    if lhs.is_empty() || rhs.is_empty() {
+        return env.invalid_arg();
+    }
     *result = match lhs.is_strict_equal(rhs, env.to_js()) {
         Ok(b) => b,
         Err(_) => return NapiEnv::set_last_error(Some(env), NapiStatus::pending_exception),
@@ -1145,7 +1173,7 @@ pub(super) extern "C" fn napi_make_callback(
     maybe_result: *mut napi_value,
 ) -> napi_status {
     bun_output::scoped_log!(napi, "napi_make_callback");
-    let env = get_env!(env_);
+    let env = preamble!(env_);
     let (recv, func) = (recv_.get(), func_.get());
     if func.is_empty_or_undefined_or_null()
         || (!func.is_callable() && !func.is_async_context_frame())
@@ -1166,20 +1194,18 @@ pub(super) extern "C" fn napi_make_callback(
         &[]
     };
 
+    // Node.js returns napi_pending_exception iff the callback threw, leaves the
+    // exception pending for napi_is_exception_pending / napi_get_and_clear_last_exception,
+    // and does not write *result in that case. A callback that *returns* an Error
+    // without throwing is napi_ok.
     let res = match func.call(env.to_js(), this_value, args_slice) {
         Ok(v) => v,
-        // TODO: handle errors correctly
-        Err(err) => env.to_js().take_exception(err),
+        Err(_) => return env.pending_exception(),
     };
 
     // SAFETY: `maybe_result` is null or a valid exclusive out-param per N-API contract.
     if let Some(result) = unsafe { maybe_result.as_mut() } {
         result.set(env, res);
-    }
-
-    // TODO: this is likely incorrect
-    if res.is_any_error() {
-        return NapiEnv::set_last_error(Some(env), NapiStatus::pending_exception);
     }
 
     env.ok()
@@ -1298,6 +1324,9 @@ pub(super) extern "C" fn napi_is_error(
     let env = get_env!(env_);
     env.check_gc();
     let value = value_.get();
+    if value.is_empty() {
+        return env.invalid_arg();
+    }
     // SAFETY: result is a valid out-pointer per N-API contract.
     unsafe { *result = value.is_any_error() };
     env.ok()
@@ -1322,6 +1351,9 @@ pub(super) extern "C" fn napi_is_arraybuffer(
     env.check_gc();
     let result = get_out!(env, result_);
     let value = value_.get();
+    if value.is_empty() {
+        return env.invalid_arg();
+    }
     // A SharedArrayBuffer shares the `ArrayBuffer` cell type with a plain
     // ArrayBuffer in JSC, so `js_type` alone can't tell them apart. Node's
     // `napi_is_arraybuffer` maps to V8's `IsArrayBuffer()`, which is false for
@@ -1452,6 +1484,9 @@ pub(super) extern "C" fn napi_is_dataview(
     let env = get_env!(env_);
     let result = get_out!(env, result_);
     let value = value_.get();
+    if value.is_empty() {
+        return env.invalid_arg();
+    }
     *result =
         !value.is_empty_or_undefined_or_null() && value.js_type_loose() == jsc::JSType::DataView;
     env.ok()
@@ -1470,6 +1505,9 @@ pub(super) extern "C" fn napi_get_dataview_info(
     let env = get_env!(env_);
     env.check_gc();
     let dataview = dataview_.get();
+    if dataview.is_empty() {
+        return env.invalid_arg();
+    }
     let Some(array_buffer) = dataview.as_array_buffer(env.to_js()) else {
         return NapiEnv::set_last_error(Some(env), NapiStatus::object_expected);
     };
@@ -1493,7 +1531,8 @@ pub(super) extern "C" fn napi_get_version(env_: napi_env, result_: *mut u32) -> 
     let env = get_env!(env_);
     let result = get_out!(env, result_);
     // The result is supposed to be the highest NAPI version Bun supports, rather than the version reported by a NAPI module.
-    *result = 9;
+    // Keep this in sync with process.versions.napi in BunProcess.cpp.
+    *result = 10;
     env.ok()
 }
 
@@ -1504,7 +1543,7 @@ pub(super) extern "C" fn napi_create_promise(
     promise_: *mut napi_value,
 ) -> napi_status {
     bun_output::scoped_log!(napi, "napi_create_promise");
-    let env = get_env!(env_);
+    let env = preamble!(env_);
     let deferred = get_out!(env, deferred_);
     let promise = get_out!(env, promise_);
     let strong = Box::new(JSPromiseStrong::init(env.to_js()));
@@ -1523,7 +1562,7 @@ pub(super) extern "C" fn napi_resolve_deferred(
     resolution_: napi_value,
 ) -> napi_status {
     bun_output::scoped_log!(napi, "napi_resolve_deferred");
-    let env = get_env!(env_);
+    let env = preamble!(env_);
     // SAFETY: deferred was created by heap::alloc in napi_create_promise.
     let deferred_box = unsafe { bun_core::heap::take(deferred) };
     // `deferred_box` drops at scope exit (deinit + free).
@@ -1542,7 +1581,7 @@ pub(super) extern "C" fn napi_reject_deferred(
     rejection_: napi_value,
 ) -> napi_status {
     bun_output::scoped_log!(napi, "napi_reject_deferred");
-    let env = get_env!(env_);
+    let env = preamble!(env_);
     // SAFETY: deferred was created by heap::alloc in napi_create_promise.
     let deferred_box = unsafe { bun_core::heap::take(deferred) };
     let rejection = rejection_.get();
@@ -1593,7 +1632,7 @@ pub(super) extern "C" fn napi_create_date(
     result_: *mut napi_value,
 ) -> napi_status {
     bun_output::scoped_log!(napi, "napi_create_date");
-    let env = get_env!(env_);
+    let env = preamble!(env_);
     let result = get_out!(env, result_);
     result.set(
         env,
@@ -1613,6 +1652,9 @@ pub(super) extern "C" fn napi_is_date(
     env.check_gc();
     let is_date = get_out!(env, is_date_);
     let value = value_.get();
+    if value.is_empty() {
+        return env.invalid_arg();
+    }
     *is_date = value.js_type_loose() == jsc::JSType::JSDate;
     env.ok()
 }
@@ -1985,7 +2027,7 @@ pub(super) extern "C" fn napi_create_buffer_copy(
     result_: *mut napi_value,
 ) -> napi_status {
     bun_output::scoped_log!(napi, "napi_create_buffer_copy: {}", length);
-    let env = get_env!(env_);
+    let env = preamble!(env_);
     let result = get_out!(env, result_);
     let buffer: JSValue = match JSValue::create_buffer_from_length(env.to_js(), length) {
         Ok(b) => b,
@@ -2072,6 +2114,34 @@ unsafe extern "C" {
         result: *mut JSValue,
         copied: *mut bool,
     ) -> napi_status;
+    fn node_api_set_prototype(env: napi_env, object: napi_value, value: napi_value) -> napi_status;
+    fn node_api_create_object_with_properties(
+        env: napi_env,
+        prototype_or_null: napi_value,
+        property_names: *const napi_value,
+        property_values: *const napi_value,
+        property_count: usize,
+        result: *mut napi_value,
+    ) -> napi_status;
+    fn node_api_create_sharedarraybuffer(
+        env: napi_env,
+        byte_length: usize,
+        data: *mut *mut c_void,
+        result: *mut napi_value,
+    ) -> napi_status;
+    fn node_api_create_external_sharedarraybuffer(
+        env: napi_env,
+        external_data: *mut c_void,
+        byte_length: usize,
+        finalize_cb: Option<unsafe extern "C" fn(*mut c_void, *mut c_void)>,
+        finalize_hint: *mut c_void,
+        result: *mut napi_value,
+    ) -> napi_status;
+    fn node_api_is_sharedarraybuffer(
+        env: napi_env,
+        value: napi_value,
+        result: *mut bool,
+    ) -> napi_status;
 }
 
 #[unsafe(no_mangle)]
@@ -2106,9 +2176,7 @@ pub(super) extern "C" fn napi_delete_async_work(
     let Some(work) = (unsafe { work_.as_mut() }) else {
         return env.invalid_arg();
     };
-    if cfg!(debug_assertions) {
-        debug_assert!(core::ptr::eq(env.to_js(), work.global.as_ptr()));
-    }
+    debug_assert!(core::ptr::eq(env.to_js(), work.global.as_ptr()));
     napi_async_work::destroy(work_);
     env.ok()
 }
@@ -2124,9 +2192,7 @@ pub(super) extern "C" fn napi_queue_async_work(
     let Some(work) = (unsafe { work_.as_mut() }) else {
         return env.invalid_arg();
     };
-    if cfg!(debug_assertions) {
-        debug_assert!(core::ptr::eq(env.to_js(), work.global.as_ptr()));
-    }
+    debug_assert!(core::ptr::eq(env.to_js(), work.global.as_ptr()));
     work.schedule();
     env.ok()
 }
@@ -2142,9 +2208,7 @@ pub(super) extern "C" fn napi_cancel_async_work(
     let Some(work) = (unsafe { work_.as_mut() }) else {
         return env.invalid_arg();
     };
-    if cfg!(debug_assertions) {
-        debug_assert!(core::ptr::eq(env.to_js(), work.global.as_ptr()));
-    }
+    debug_assert!(core::ptr::eq(env.to_js(), work.global.as_ptr()));
     if work.cancel() {
         return env.ok();
     }
@@ -2387,7 +2451,6 @@ pub struct ThreadSafeFunction {
     pub dispatch_state: AtomicU8, // DispatchState
     pub blocking_condvar: Condvar,
     pub closing: AtomicU8, // ClosingState
-    pub aborted: AtomicBool,
     /// Written under `lock` by `env_teardown` on the JS thread. Every path
     /// that would reach `event_loop` from another thread reads it under the
     /// same lock, so teardown cannot land between the check and the enqueue.
@@ -2808,6 +2871,7 @@ impl ThreadSafeFunction {
     /// SAFETY: `this` is a live allocation from `new`, the caller holds no
     /// lock on it, and no other thread holds a reference.
     unsafe fn free_orphaned(this: *mut ThreadSafeFunction) {
+        // SAFETY: per this function's contract, `this` is a live allocation from `new`.
         drop(unsafe { bun_core::heap::take(this) });
     }
 
@@ -2956,7 +3020,6 @@ impl ThreadSafeFunction {
                 if mode == napi_threadsafe_function_release_mode::abort {
                     self.closing
                         .store(ClosingState::Closing as u8, Ordering::SeqCst);
-                    self.aborted.store(true, Ordering::SeqCst);
                     if self.queue.max_queue_size > 0 {
                         // Wake all producers blocked in enqueue()'s bounded
                         // queue wait so they observe is_closing and release.
@@ -3054,7 +3117,6 @@ pub(super) extern "C" fn napi_create_threadsafe_function(
         dispatch_state: AtomicU8::new(DispatchState::Idle as u8),
         blocking_condvar: Condvar::default(),
         closing: AtomicU8::new(ClosingState::NotClosing as u8),
-        aborted: AtomicBool::new(true),
         env_dead: AtomicBool::new(false),
         env_teardown_done: AtomicBool::new(false),
     });
@@ -3987,6 +4049,11 @@ pub fn fix_dead_code_elimination() {
         node_api_throw_syntax_error,
         node_api_create_external_string_latin1,
         node_api_create_external_string_utf16,
+        node_api_set_prototype,
+        node_api_create_object_with_properties,
+        node_api_create_sharedarraybuffer,
+        node_api_create_external_sharedarraybuffer,
+        node_api_is_sharedarraybuffer,
     );
 
     // uv_functions_to_export

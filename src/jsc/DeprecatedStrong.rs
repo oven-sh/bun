@@ -43,11 +43,6 @@ struct SafetyData {
     ref_count: u32,
 }
 
-#[cfg(debug_assertions)]
-const SAFETY_NONE: Safety = None;
-#[cfg(not(debug_assertions))]
-const SAFETY_NONE: Safety = ();
-
 pub struct DeprecatedStrong {
     // Bare JSValue field is intentional — this *is* the GC-root
     // wrapper (uses JSValueProtect/Unprotect), so the §JSC "never store bare
@@ -57,14 +52,6 @@ pub struct DeprecatedStrong {
 }
 
 impl DeprecatedStrong {
-    pub fn init_non_cell(non_cell: JSValue) -> DeprecatedStrong {
-        debug_assert!(!non_cell.is_cell());
-        DeprecatedStrong {
-            raw: non_cell,
-            _safety: SAFETY_NONE,
-        }
-    }
-
     pub fn init(value: JSValue) -> DeprecatedStrong {
         value.protect();
         #[cfg(debug_assertions)]
@@ -88,25 +75,6 @@ impl DeprecatedStrong {
 
     pub fn get(&self) -> JSValue {
         self.raw
-    }
-
-    pub fn swap(&mut self, next: JSValue) -> JSValue {
-        let prev = self.raw;
-        // `*self = ...` drops the old value in place (runs Drop).
-        *self = Self::init(next);
-        prev
-    }
-
-    pub fn dupe(&self) -> DeprecatedStrong {
-        Self::init(self.get())
-    }
-
-    pub fn r#ref(&mut self) {
-        self.raw.protect();
-        #[cfg(debug_assertions)]
-        if let Some(_safety) = &mut self._safety {
-            _safety.ref_count += 1;
-        }
     }
 
     pub fn unref(&mut self) {
@@ -156,70 +124,6 @@ impl Drop for DeprecatedStrong {
                 ));
             }
         }
-    }
-}
-
-pub struct Optional {
-    backing: DeprecatedStrong,
-}
-
-impl Optional {
-    // Inlined as a struct literal so it can be `const` (init_non_cell
-    // debug_asserts, which is non-const).
-    pub const EMPTY: Optional = Optional {
-        backing: DeprecatedStrong {
-            raw: JSValue::ZERO,
-            _safety: SAFETY_NONE,
-        },
-    };
-
-    pub fn init_non_cell(non_cell: Option<JSValue>) -> Optional {
-        Optional {
-            backing: DeprecatedStrong::init_non_cell(non_cell.unwrap_or(JSValue::ZERO)),
-        }
-    }
-
-    pub fn init(value: Option<JSValue>) -> Optional {
-        Optional {
-            backing: DeprecatedStrong::init(value.unwrap_or(JSValue::ZERO)),
-        }
-    }
-
-    // No explicit teardown — `backing: DeprecatedStrong` is dropped
-    // automatically (its Drop impl runs `unprotect` + canary free).
-
-    pub fn get(&self) -> Option<JSValue> {
-        let result = self.backing.get();
-        if result.is_empty() {
-            return None;
-        }
-        Some(result)
-    }
-
-    pub fn swap(&mut self, next: Option<JSValue>) -> Option<JSValue> {
-        let result = self.backing.swap(next.unwrap_or(JSValue::ZERO));
-        if result.is_empty() {
-            return None;
-        }
-        Some(result)
-    }
-
-    pub fn dupe(&self) -> Optional {
-        Optional {
-            backing: self.backing.dupe(),
-        }
-    }
-
-    pub fn has(&self) -> bool {
-        !self.backing.get().is_empty()
-    }
-
-    pub fn r#ref(&mut self) {
-        self.backing.r#ref();
-    }
-
-    pub fn unref(&mut self) {
-        self.backing.unref();
     }
 }
 

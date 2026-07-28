@@ -300,6 +300,45 @@ describe("FormData", () => {
     }
   });
 
+  // RFC 2183 §2: the disposition type is a case-insensitive token.
+  // RFC 9112 §5.6.3: OWS = *( SP / HTAB ), so HTAB is valid after the colon.
+  describe("Content-Disposition: form-data token + OWS", () => {
+    const boundary = "BX7";
+    const mk = (hdr: string) => `--${boundary}\r\n${hdr}\r\n\r\nv\r\n--${boundary}--\r\n`;
+    const headers = { "Content-Type": `multipart/form-data; boundary=${boundary}` };
+
+    for (const C of [Response, Request] as const) {
+      const make = (body: string) =>
+        C === Response ? new Response(body, { headers }) : new Request("http://x/", { method: "POST", body, headers });
+
+      it.each([
+        ["lowercase", `Content-Disposition: form-data; name="k"`],
+        ["Form-Data", `Content-Disposition: Form-Data; name="k"`],
+        ["FORM-DATA", `Content-Disposition: FORM-DATA; name="k"`],
+        ["mixed case header + token", `CONTENT-DISPOSITION: Form-Data; NAME="k"`],
+        ["HTAB after colon", `Content-Disposition:\tform-data; name="k"`],
+        ["SP + HTAB after colon", `Content-Disposition: \t form-data; name="k"`],
+        ["HTAB after semicolon", `Content-Disposition: form-data;\tname="k"`],
+      ])(`${C.name}: %s`, async (_label, hdr) => {
+        const fd = await make(mk(hdr)).formData();
+        expect([...fd.entries()]).toEqual([["k", "v"]]);
+      });
+
+      it(`${C.name}: file part with Form-Data + HTAB OWS`, async () => {
+        const body =
+          `--${boundary}\r\n` +
+          `Content-Disposition:\tForm-Data; name="f"; filename="a.txt"\r\n` +
+          `Content-Type: text/plain\r\n\r\n` +
+          `hello\r\n--${boundary}--\r\n`;
+        const fd = await make(body).formData();
+        const file = fd.get("f") as File;
+        expect(file).toBeInstanceOf(File);
+        expect(file.name).toBe("a.txt");
+        expect(await file.text()).toBe("hello");
+      });
+    }
+  });
+
   test("FormData.from (URLSearchParams)", () => {
     expect(
       // @ts-expect-error

@@ -39,42 +39,42 @@ impl ResourceUsage {
 
     #[bun_jsc::host_fn(getter)]
     pub fn get_max_rss(this: &Self, _global: &JSGlobalObject) -> JSValue {
-        JSValue::js_number(this.rusage.maxrss_())
+        JSValue::js_number(this.rusage.maxrss())
     }
 
     #[bun_jsc::host_fn(getter)]
     pub fn get_shared_memory_size(this: &Self, _global: &JSGlobalObject) -> JSValue {
-        JSValue::js_number(this.rusage.ixrss_())
+        JSValue::js_number(this.rusage.ixrss())
     }
 
     #[bun_jsc::host_fn(getter)]
     pub fn get_swap_count(this: &Self, _global: &JSGlobalObject) -> JSValue {
-        JSValue::js_number(this.rusage.nswap_())
+        JSValue::js_number(this.rusage.nswap())
     }
 
     #[bun_jsc::host_fn(getter)]
     pub fn get_ops(this: &Self, global: &JSGlobalObject) -> JSValue {
         let ops = JSValue::create_empty_object_with_null_prototype(global);
-        ops.put(global, b"in", JSValue::js_number(this.rusage.inblock_()));
-        ops.put(global, b"out", JSValue::js_number(this.rusage.oublock_()));
+        ops.put(global, b"in", JSValue::js_number(this.rusage.inblock()));
+        ops.put(global, b"out", JSValue::js_number(this.rusage.oublock()));
         ops
     }
 
     #[bun_jsc::host_fn(getter)]
     pub fn get_messages(this: &Self, global: &JSGlobalObject) -> JSValue {
         let msgs = JSValue::create_empty_object_with_null_prototype(global);
-        msgs.put(global, b"sent", JSValue::js_number(this.rusage.msgsnd_()));
+        msgs.put(global, b"sent", JSValue::js_number(this.rusage.msgsnd()));
         msgs.put(
             global,
             b"received",
-            JSValue::js_number(this.rusage.msgrcv_()),
+            JSValue::js_number(this.rusage.msgrcv()),
         );
         msgs
     }
 
     #[bun_jsc::host_fn(getter)]
     pub fn get_signal_count(this: &Self, _global: &JSGlobalObject) -> JSValue {
-        JSValue::js_number(this.rusage.nsignals_())
+        JSValue::js_number(this.rusage.nsignals())
     }
 
     #[bun_jsc::host_fn(getter)]
@@ -83,12 +83,12 @@ impl ResourceUsage {
         ctx.put(
             global,
             b"voluntary",
-            JSValue::js_number(this.rusage.nvcsw_()),
+            JSValue::js_number(this.rusage.nvcsw()),
         );
         ctx.put(
             global,
             b"involuntary",
-            JSValue::js_number(this.rusage.nivcsw_()),
+            JSValue::js_number(this.rusage.nivcsw()),
         );
         ctx
     }

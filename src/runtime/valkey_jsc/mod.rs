@@ -22,9 +22,6 @@ pub mod js_valkey_functions; // 200+ prototype methods (get/set/hget/…)
 #[path = "ValkeyCommand.rs"]
 pub mod valkey_command_body; // Command::serialize, Promise::resolve/reject
 
-#[path = "ValkeyContext.rs"]
-pub mod valkey_context;
-
 #[path = "protocol_jsc.rs"]
 pub mod protocol_jsc; // RESPValue → JSValue, RedisError → JS Error
 
@@ -33,10 +30,8 @@ pub mod index;
 
 // ─── back-compat aliases ─────────────────────────────────────────────────────
 // Sibling files were written against `*_body` module names (`valkey.rs`
-// imports `super::js_valkey_body`, `js_valkey.rs` imports
-// `super::valkey_command_body`); keep the aliases so they don't need to churn.
+// imports `super::js_valkey_body`); keep the alias so it doesn't need to churn.
 pub use self::js_valkey as js_valkey_body;
-pub use self::valkey as valkey_body;
 
 // ─── public re-exports ───────────────────────────────────────────────────────
 pub use js_valkey::JSValkeyClient;
@@ -44,7 +39,6 @@ pub use protocol_jsc::{
     ToJSOptions, resp_value_to_js, resp_value_to_js_with_options, valkey_error_to_js,
 };
 pub use valkey::{Options, Protocol, Status, ValkeyClient};
-pub use valkey_context::ValkeyContext;
 
 // ── ValkeyCommand ────────────────────────────────────────────────────────────
 // `ValkeyCommand` is both a namespace

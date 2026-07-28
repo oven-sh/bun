@@ -169,7 +169,7 @@ impl<'a> Row<'a> {
                 // BIT(1) is a special case, it's a boolean
                 if column.column_length == 1 {
                     let slice = value.slice();
-                    *cell = SQLDataCell::bool_(!slice.is_empty() && slice[0] == 1);
+                    *cell = SQLDataCell::bool(!slice.is_empty() && slice[0] == 1);
                 } else {
                     *cell = SQLDataCell::raw(value);
                 }
@@ -282,7 +282,14 @@ impl<'a> Row<'a> {
                     column.flags.contains(ColumnFlags::BINARY),
                     column.character_set,
                     reader,
-                )?;
+                )
+                .map_err(|e| match e {
+                    crate::Error::MySqlProtocol(e) => e,
+                    other => other
+                        .name()
+                        .parse()
+                        .unwrap_or(AnyMySQLError::InvalidBinaryValue),
+                })?;
             }
             value.index = match column.name_or_index {
                 // The indexed columns can be out of order.

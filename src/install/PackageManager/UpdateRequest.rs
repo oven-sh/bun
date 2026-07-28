@@ -147,7 +147,7 @@ impl UpdateRequest {
         update_requests: &'a mut Array,
         subcommand: Subcommand,
         fatal: bool,
-    ) -> Result<&'a mut [UpdateRequest], bun_core::Error> {
+    ) -> crate::Result<&'a mut [UpdateRequest]> {
         // first one is always either:
         // add
         // remove
@@ -229,7 +229,7 @@ impl UpdateRequest {
                     );
                 }
 
-                return Err(bun_core::err!("UnrecognizedDependencyFormat"));
+                return Err(crate::Error::UnrecognizedDependencyFormat);
             };
             if alias.is_some() && version.tag == dependency::version::Tag::Git {
                 if let Some(ver) = Dependency::parse_with_optional_tag(
@@ -268,7 +268,7 @@ impl UpdateRequest {
                     );
                 }
 
-                return Err(bun_core::err!("UnrecognizedDependencyFormat"));
+                return Err(crate::Error::UnrecognizedDependencyFormat);
             }
 
             let mut request = UpdateRequest {

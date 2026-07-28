@@ -47,11 +47,10 @@ pub(crate) fn get_default_auto_select_family(global: &JSGlobalObject) -> JSValue
 pub(crate) fn set_default_auto_select_family(global: &JSGlobalObject) -> JSValue {
     #[bun_jsc::host_fn(export = "Bun__NodeNet__setDefaultAutoSelectFamily")]
     fn setter(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-        let arguments = frame.arguments_old::<1>();
-        if arguments.len < 1 {
+        let [arg] = frame.arguments_as_array::<1>();
+        if frame.arguments_count() < 1 {
             return Err(global.throw(format_args!("missing argument")));
         }
-        let arg = arguments.slice()[0];
         if !arg.is_boolean() {
             return Err(global.throw_invalid_arguments(format_args!("autoSelectFamilyDefault")));
         }
@@ -87,11 +86,10 @@ pub(crate) fn get_default_auto_select_family_attempt_timeout(global: &JSGlobalOb
 pub(crate) fn set_default_auto_select_family_attempt_timeout(global: &JSGlobalObject) -> JSValue {
     #[bun_jsc::host_fn(export = "Bun__NodeNet__setDefaultAutoSelectFamilyAttemptTimeout")]
     fn setter(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-        let arguments = frame.arguments_old::<1>();
-        if arguments.len < 1 {
+        let [arg] = frame.arguments_as_array::<1>();
+        if frame.arguments_count() < 1 {
             return Err(global.throw(format_args!("missing argument")));
         }
-        let arg = arguments.slice()[0];
         let mut value =
             validators::validate_int32(global, arg, format_args!("value"), Some(1), None)?;
         if value < 10 {
@@ -140,11 +138,13 @@ pub(crate) fn new_detached_socket(global: &JSGlobalObject, frame: &CallFrame) ->
             socket: Cell::new(uws::NewSocketHandler::<SSL>::DETACHED),
             ref_count: bun_ptr::RefCount::init(),
             protos: JsCell::new(None),
-            handlers: Cell::new(None),
+            handlers: JsCell::new(None),
             local_binding: JsCell::new(None),
             // — defaults —
             owned_ssl_ctx: Cell::new(None),
-            flags: Cell::new(SocketFlags::default()),
+            // node:net/node:tls own server-identity (`checkServerIdentity`)
+            // policy in JS, so a hostname mismatch is never enforced natively.
+            flags: Cell::new(SocketFlags::default() | SocketFlags::DEFERS_SERVER_IDENTITY),
             this_value: JsCell::new(jsc::JsRef::empty()),
             poll_ref: JsCell::new(KeepAlive::init()),
             ref_pollref_on_connect: Cell::new(true),
@@ -154,9 +154,9 @@ pub(crate) fn new_detached_socket(global: &JSGlobalObject, frame: &CallFrame) ->
             bytes_written: Cell::new(0),
             native_callback: JsCell::new(NativeCallbacks::None),
             twin: JsCell::new(None),
+            verify_error: JsCell::new(None),
         });
-        // SAFETY: `NewSocket::new` returns a live heap pointer (`heap::alloc`).
-        unsafe { (*socket).get_this_value(global) }
+        socket.get_this_value(global)
     }
 
     Ok(if !is_ssl {

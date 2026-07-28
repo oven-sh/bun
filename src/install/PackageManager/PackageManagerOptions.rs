@@ -284,20 +284,22 @@ pub struct Update {
 }
 
 // mkdir -p + open the dir. Callers store the raw `Fd` (`options.global_bin_dir: Fd`).
-pub fn open_global_dir(explicit_global_dir: &[u8]) -> Result<bun_sys::Fd, bun_core::Error> {
+pub fn open_global_dir(explicit_global_dir: &[u8]) -> crate::Result<bun_sys::Fd> {
     use bun_paths::{platform, resolve_path::join_abs_string_buf};
     use bun_sys::{Dir, OpenDirOptions};
 
     if let Some(home_dir) = env_var::BUN_INSTALL_GLOBAL_DIR.get() {
         return Dir::cwd()
             .make_open_path(home_dir, OpenDirOptions::default())
-            .map(|d| d.into_raw());
+            .map(|d| d.into_raw())
+            .map_err(Into::into);
     }
 
     if !explicit_global_dir.is_empty() {
         return Dir::cwd()
             .make_open_path(explicit_global_dir, OpenDirOptions::default())
-            .map(|d| d.into_raw());
+            .map(|d| d.into_raw())
+            .map_err(Into::into);
     }
 
     if let Some(home_dir) = env_var::BUN_INSTALL.get() {
@@ -306,7 +308,8 @@ pub fn open_global_dir(explicit_global_dir: &[u8]) -> Result<bun_sys::Fd, bun_co
         let path = join_abs_string_buf::<platform::Auto>(home_dir, &mut buf.0, &parts);
         return Dir::cwd()
             .make_open_path(path, OpenDirOptions::default())
-            .map(|d| d.into_raw());
+            .map(|d| d.into_raw())
+            .map_err(Into::into);
     }
 
     if let Some(home_dir) = env_var::XDG_CACHE_HOME
@@ -318,22 +321,22 @@ pub fn open_global_dir(explicit_global_dir: &[u8]) -> Result<bun_sys::Fd, bun_co
         let path = join_abs_string_buf::<platform::Auto>(home_dir, &mut buf.0, &parts);
         return Dir::cwd()
             .make_open_path(path, OpenDirOptions::default())
-            .map(|d| d.into_raw());
+            .map(|d| d.into_raw())
+            .map_err(Into::into);
     }
 
-    Err(bun_core::err!("No global directory found"))
+    Err(crate::Error::NoGlobalDirectoryFound)
 }
 
-pub(crate) fn open_global_bin_dir(
-    opts_: Option<&Api::BunInstall>,
-) -> Result<bun_sys::Fd, bun_core::Error> {
+pub(crate) fn open_global_bin_dir(opts_: Option<&Api::BunInstall>) -> crate::Result<bun_sys::Fd> {
     use bun_paths::{platform, resolve_path::join_abs_string_buf};
     use bun_sys::{Dir, OpenDirOptions};
 
     if let Some(home_dir) = env_var::BUN_INSTALL_BIN.get() {
         return Dir::cwd()
             .make_open_path(home_dir, OpenDirOptions::default())
-            .map(|d| d.into_raw());
+            .map(|d| d.into_raw())
+            .map_err(Into::into);
     }
 
     if let Some(opts) = opts_ {
@@ -341,7 +344,8 @@ pub(crate) fn open_global_bin_dir(
             if !home_dir.is_empty() {
                 return Dir::cwd()
                     .make_open_path(home_dir, OpenDirOptions::default())
-                    .map(|d| d.into_raw());
+                    .map(|d| d.into_raw())
+                    .map_err(Into::into);
             }
         }
     }
@@ -352,7 +356,8 @@ pub(crate) fn open_global_bin_dir(
         let path = join_abs_string_buf::<platform::Auto>(home_dir, &mut buf.0, &parts);
         return Dir::cwd()
             .make_open_path(path, OpenDirOptions::default())
-            .map(|d| d.into_raw());
+            .map(|d| d.into_raw())
+            .map_err(Into::into);
     }
 
     if let Some(home_dir) = env_var::XDG_CACHE_HOME
@@ -364,12 +369,11 @@ pub(crate) fn open_global_bin_dir(
         let path = join_abs_string_buf::<platform::Auto>(home_dir, &mut buf.0, &parts);
         return Dir::cwd()
             .make_open_path(path, OpenDirOptions::default())
-            .map(|d| d.into_raw());
+            .map(|d| d.into_raw())
+            .map_err(Into::into);
     }
 
-    Err(bun_core::err!(
-        "Missing global bin directory: try setting $BUN_INSTALL"
-    ))
+    Err(crate::Error::MissingGlobalBinDirectoryTrySettingBUNINSTALL)
 }
 
 // `BunInstall` owns `Box<[u8]>`; Options stores `&'static [u8]`
@@ -572,43 +576,37 @@ impl Options {
         };
 
         // technically, npm_config is case in-sensitive
-        // load_registry:
         {
             const REGISTRY_KEYS: [&[u8]; 3] = [
                 b"BUN_CONFIG_REGISTRY",
                 b"NPM_CONFIG_REGISTRY",
                 b"npm_config_registry",
             ];
-            let mut did_set = false;
 
-            // was `inline for`; homogeneous elements → plain for.
             for registry_key in REGISTRY_KEYS {
-                if !did_set {
-                    if let Some(registry_) = env.get(registry_key) {
-                        if !registry_.is_empty()
-                            && (registry_.starts_with(b"https://")
-                                || registry_.starts_with(b"http://"))
+                if let Some(registry_) = env.get(registry_key) {
+                    if !registry_.is_empty()
+                        && (registry_.starts_with(b"https://") || registry_.starts_with(b"http://"))
+                    {
+                        let prev_scope = self.scope.clone();
+                        let prev_url = prev_scope.url.url();
+                        let new_url = bun_url::URL::parse(registry_);
+                        let token = if bun_core::without_trailing_slash(new_url.host)
+                            == bun_core::without_trailing_slash(prev_url.host)
+                            && (new_url.is_https() || !prev_url.is_https())
                         {
-                            let prev_scope = self.scope.clone();
-                            let prev_url = prev_scope.url.url();
-                            let new_url = bun_url::URL::parse(registry_);
-                            let token = if bun_core::without_trailing_slash(new_url.host)
-                                == bun_core::without_trailing_slash(prev_url.host)
-                                && (new_url.is_https() || !prev_url.is_https())
-                            {
-                                prev_scope.token
-                            } else {
-                                Box::default()
-                            };
-                            // Default (empty strings) is the zero value for Api::NpmRegistry.
-                            let api_registry = Api::NpmRegistry {
-                                url: registry_.into(),
-                                token,
-                                ..Default::default()
-                            };
-                            self.scope = Npm::registry::Scope::from_api(b"", api_registry, env)?;
-                            did_set = true;
-                        }
+                            prev_scope.token
+                        } else {
+                            Box::default()
+                        };
+                        // Default (empty strings) is the zero value for Api::NpmRegistry.
+                        let api_registry = Api::NpmRegistry {
+                            url: registry_.into(),
+                            token,
+                            ..Default::default()
+                        };
+                        self.scope = Npm::registry::Scope::from_api(b"", api_registry, env)?;
+                        break;
                     }
                 }
             }
@@ -620,18 +618,12 @@ impl Options {
                 b"NPM_CONFIG_TOKEN",
                 b"npm_config_token",
             ];
-            let mut did_set = false;
 
-            // was `inline for`; homogeneous elements → plain for.
-            for registry_key in TOKEN_KEYS {
-                if !did_set {
-                    if let Some(registry_) = env.get(registry_key) {
-                        if !registry_.is_empty() {
-                            self.scope.token = registry_.into();
-                            did_set = true;
-                            // stage1 bug: break inside inline is broken
-                            // break :load_registry;
-                        }
+            for token_key in TOKEN_KEYS {
+                if let Some(token) = env.get(token_key) {
+                    if !token.is_empty() {
+                        self.scope.token = token.into();
+                        break;
                     }
                 }
             }
@@ -980,112 +972,40 @@ impl Do {
         self.contains(Do::SAVE_LOCKFILE)
     }
     #[inline]
-    pub fn set_save_lockfile(&mut self, v: bool) {
-        self.set(Do::SAVE_LOCKFILE, v);
-    }
-    #[inline]
     pub fn load_lockfile(self) -> bool {
         self.contains(Do::LOAD_LOCKFILE)
-    }
-    #[inline]
-    pub fn set_load_lockfile(&mut self, v: bool) {
-        self.set(Do::LOAD_LOCKFILE, v);
     }
     #[inline]
     pub fn install_packages(self) -> bool {
         self.contains(Do::INSTALL_PACKAGES)
     }
     #[inline]
-    pub fn set_install_packages(&mut self, v: bool) {
-        self.set(Do::INSTALL_PACKAGES, v);
-    }
-    #[inline]
-    pub fn write_package_json(self) -> bool {
-        self.contains(Do::WRITE_PACKAGE_JSON)
-    }
-    #[inline]
-    pub fn set_write_package_json(&mut self, v: bool) {
-        self.set(Do::WRITE_PACKAGE_JSON, v);
-    }
-    #[inline]
     pub fn run_scripts(self) -> bool {
         self.contains(Do::RUN_SCRIPTS)
-    }
-    #[inline]
-    pub fn set_run_scripts(&mut self, v: bool) {
-        self.set(Do::RUN_SCRIPTS, v);
     }
     #[inline]
     pub fn save_yarn_lock(self) -> bool {
         self.contains(Do::SAVE_YARN_LOCK)
     }
     #[inline]
-    pub fn set_save_yarn_lock(&mut self, v: bool) {
-        self.set(Do::SAVE_YARN_LOCK, v);
-    }
-    #[inline]
     pub fn print_meta_hash_string(self) -> bool {
         self.contains(Do::PRINT_META_HASH_STRING)
-    }
-    #[inline]
-    pub fn set_print_meta_hash_string(&mut self, v: bool) {
-        self.set(Do::PRINT_META_HASH_STRING, v);
-    }
-    #[inline]
-    pub fn verify_integrity(self) -> bool {
-        self.contains(Do::VERIFY_INTEGRITY)
-    }
-    #[inline]
-    pub fn set_verify_integrity(&mut self, v: bool) {
-        self.set(Do::VERIFY_INTEGRITY, v);
     }
     #[inline]
     pub fn summary(self) -> bool {
         self.contains(Do::SUMMARY)
     }
     #[inline]
-    pub fn set_summary(&mut self, v: bool) {
-        self.set(Do::SUMMARY, v);
-    }
-    #[inline]
     pub fn trust_dependencies_from_args(self) -> bool {
         self.contains(Do::TRUST_DEPENDENCIES_FROM_ARGS)
-    }
-    #[inline]
-    pub fn set_trust_dependencies_from_args(&mut self, v: bool) {
-        self.set(Do::TRUST_DEPENDENCIES_FROM_ARGS, v);
     }
     #[inline]
     pub fn update_to_latest(self) -> bool {
         self.contains(Do::UPDATE_TO_LATEST)
     }
     #[inline]
-    pub fn set_update_to_latest(&mut self, v: bool) {
-        self.set(Do::UPDATE_TO_LATEST, v);
-    }
-    #[inline]
-    pub fn analyze(self) -> bool {
-        self.contains(Do::ANALYZE)
-    }
-    #[inline]
-    pub fn set_analyze(&mut self, v: bool) {
-        self.set(Do::ANALYZE, v);
-    }
-    #[inline]
     pub fn recursive(self) -> bool {
         self.contains(Do::RECURSIVE)
-    }
-    #[inline]
-    pub fn set_recursive(&mut self, v: bool) {
-        self.set(Do::RECURSIVE, v);
-    }
-    #[inline]
-    pub fn prefetch_resolved_tarballs(self) -> bool {
-        self.contains(Do::PREFETCH_RESOLVED_TARBALLS)
-    }
-    #[inline]
-    pub fn set_prefetch_resolved_tarballs(&mut self, v: bool) {
-        self.set(Do::PREFETCH_RESOLVED_TARBALLS, v);
     }
 }
 
@@ -1096,10 +1016,6 @@ impl Enable {
     #[inline]
     pub fn cache(self) -> bool {
         self.contains(Enable::CACHE)
-    }
-    #[inline]
-    pub fn set_cache(&mut self, v: bool) {
-        self.set(Enable::CACHE, v);
     }
     #[inline]
     pub fn manifest_cache(self) -> bool {

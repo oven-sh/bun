@@ -16,7 +16,7 @@ import jsclasses from "./../jsc/bindings/js_classes";
 import { sliceSourceCode } from "./builtin-parser";
 import { createAssertClientJS, createLogClientJS } from "./client-js";
 import { getJS2NativeCPP, getJS2NativeRust } from "./generate-js2native";
-import { cap, declareASCIILiteral, writeIfNotChanged } from "./helpers";
+import { cap, checkAscii, writeIfNotChanged, writeIfNotChangedBinary } from "./helpers";
 import { createInternalModuleRegistry } from "./internal-module-registry-scanner";
 import { define } from "./replacements";
 
@@ -141,6 +141,15 @@ for (let i = 0; i < nativeStartIndex; i++) {
       true,
       x => requireTransformer(x, moduleList[i]),
     );
+    // Guard rail: builtin-parser.ts's regex-position heuristic only recognises
+    // `/` as regex-start after `[(,=;:{]|return|=>`; a regex whose body has `)`
+    // or `}` in any other position silently truncates. Fail loudly here.
+    if (processed.rest.trim() !== "") {
+      throw new Error(
+        `sliceSourceCode truncated ${moduleList[i]} — likely a regex literal in a position builtin-parser.ts doesn't recognise. ` +
+          `Leftover starts: ${processed.rest.slice(0, 80)}`,
+      );
+    }
     let fileToTranspile = `// GENERATED TEMP FILE - DO NOT EDIT
 // Sourced from src/js/${moduleList[i]}
 ${importStatements.join("\n")}
@@ -278,6 +287,63 @@ for (const entrypoint of bundledEntryPoints) {
 
 mark("Postprocesss modules");
 
+/**
+ * Physical layout order for the module-source blob: DFS post-order over the
+ * static require() graph, so each module sits contiguous with its transitive
+ * dependencies. Loading any builtin then reads one contiguous run of pages
+ * instead of touching sources scattered across the blob. Roots are visited in
+ * a fixed order (the popular entry modules first) so the layout is
+ * deterministic; the graph over-approximates lazy requires, which only makes
+ * neighbours of things that *might* co-load — free for layout.
+ */
+function layoutOrder(modules: string[], outputs: Map<string, string>): string[] {
+  // The bundled sources already have require() rewritten to registry lookups,
+  // `internalModuleRegistry, <index>` — the index is the position in
+  // `modules`, which makes the edge list unambiguous.
+  const requireRe = /internalModuleRegistry, ?(\d+)/g;
+  const deps = new Map<string, string[]>();
+  for (const id of modules) {
+    const src = outputs.get(id.slice(0, -3).replaceAll("/", path.sep)) ?? "";
+    const edges = new Set<string>();
+    for (const m of src.matchAll(requireRe)) {
+      const dep = modules[Number(m[1])];
+      if (dep && dep !== id) edges.add(dep);
+    }
+    deps.set(id, [...edges]);
+  }
+  const hotRoots = [
+    "node/fs.ts",
+    "node/path.ts",
+    "node/os.ts",
+    "node/util.ts",
+    "node/events.ts",
+    "node/stream.ts",
+    "node/child_process.ts",
+    "node/crypto.ts",
+    "node/http.ts",
+    "node/https.ts",
+    "node/net.ts",
+    "node/url.ts",
+    "node/buffer.ts",
+    "node/tty.ts",
+    "node/worker_threads.ts",
+    "node/zlib.ts",
+    "node/assert.ts",
+    "node/timers.ts",
+  ];
+  const roots = [...hotRoots.filter(r => deps.has(r)), ...modules];
+  const emitted = new Set<string>();
+  const order: string[] = [];
+  const visit = (id: string) => {
+    if (emitted.has(id)) return;
+    emitted.add(id);
+    for (const dep of deps.get(id) ?? []) visit(dep);
+    order.push(id);
+  };
+  for (const root of roots) visit(root);
+  return order;
+}
+
 function idToEnumName(id: string) {
   return id
     .replace(/\.[mc]?[tj]s$/, "")
@@ -302,7 +368,7 @@ function idToPublicSpecifierOrEnumName(id: string) {
   return idToEnumName(id);
 }
 
-await bundleBuiltinFunctions({
+const { combinedSourceCode: functionsSource } = await bundleBuiltinFunctions({
   requireTransformer,
 });
 
@@ -330,6 +396,94 @@ writeIfNotChanged(
 `,
 );
 
+// The bundled JS sources (builtin functions + internal modules) are linked into
+// the executable as one contiguous read-only blob via `.incbin` in the generated
+// `.S` below and addressed by {offset, length}. Emitting them as C++
+// `static constexpr const char[]` byte-array initializers instead costs clang's
+// frontend ~15s on the release build — millions of integer tokens to parse for
+// ~2 MB of payload.
+//
+// Layout: [builtin functions combined source][\0][module 0][\n\0][module 1][\n\0]...
+// WebCoreJSBuiltins.cpp's internalCombinedSource is the span at offset 0; the
+// internal modules follow at known offsets.
+//
+// In debug builds the module sources are read from disk (BUN_DYNAMIC_JS_LOAD_PATH),
+// so every module offset/length is 0. The functions span is still real in debug.
+const moduleSpans: { enumName: string; offset: number; length: number }[] = [];
+let blob: Buffer;
+{
+  const chunks: Buffer[] = [Buffer.from(functionsSource + "\0", "latin1")];
+  let offset = chunks[0].length;
+  for (const id of layoutOrder(moduleList.slice(0, nativeStartIndex), outputs)) {
+    const enumName = idToEnumName(id);
+    if (debug) {
+      moduleSpans.push({ enumName, offset: 0, length: 0 });
+      continue;
+    }
+    const out = outputs.get(id.slice(0, -3).replaceAll("/", path.sep));
+    if (!out) throw new Error(`Missing output for ${id}`);
+    checkAscii(out);
+    // Trailing "\n\0": the NUL keeps each entry a valid C string should anything
+    // downstream ever strlen into the blob.
+    const bytes = Buffer.from(out + "\n\0", "latin1");
+    chunks.push(bytes);
+    moduleSpans.push({ enumName, offset, length: bytes.length - 1 });
+    offset += bytes.length;
+  }
+  blob = Buffer.concat(chunks);
+}
+
+writeIfNotChangedBinary(path.join(CODEGEN_DIR, "InternalModuleRegistryConstants.bin"), blob);
+
+writeIfNotChanged(
+  path.join(CODEGEN_DIR, "InternalModuleRegistryConstants.S"),
+  `// Generated by src/codegen/bundle-modules.ts
+#if defined(__APPLE__)
+.section __TEXT,__const
+#define BUN_SYM(x) _##x
+#elif defined(_WIN32)
+.section .rdata,"dr"
+#define BUN_SYM(x) x
+#else
+.pushsection .note.GNU-stack, "", %progbits
+.popsection
+.section .rodata
+#define BUN_SYM(x) x
+#endif
+
+.globl BUN_SYM(bun_internal_modules_data)
+.p2align 4
+BUN_SYM(bun_internal_modules_data):
+.incbin "InternalModuleRegistryConstants.bin"
+`,
+);
+
+// Offset/length table. Included only by InternalModuleRegistry.cpp.
+writeIfNotChanged(
+  path.join(CODEGEN_DIR, "InternalModuleRegistryConstants.h"),
+  `// clang-format off
+// Generated by src/codegen/bundle-modules.ts
+#pragma once
+#include <cstdint>
+
+extern "C" const char bun_internal_modules_data[];
+
+namespace Bun {
+namespace InternalModuleRegistryConstants {
+
+${moduleSpans
+  .map(
+    ({ enumName, offset, length }) =>
+      `static constexpr uint32_t ${enumName}CodeOffset = ${offset};\n` +
+      `static constexpr uint32_t ${enumName}CodeLength = ${length};`,
+  )
+  .join("\n")}
+
+} // namespace InternalModuleRegistryConstants
+} // namespace Bun
+`,
+);
+
 // This code slice is used in InternalModuleRegistry.cpp. It defines the loading function for modules.
 writeIfNotChanged(
   path.join(CODEGEN_DIR, "InternalModuleRegistry+createInternalModuleById.h"),
@@ -346,7 +500,9 @@ JSValue InternalModuleRegistry::createInternalModuleById(JSGlobalObject* globalO
         const inner =
           n >= nativeStartIndex
             ? `return generateNativeModule(globalObject, vm, generateNativeModule_${nativeModuleEnums[id]});`
-            : `INTERNAL_MODULE_REGISTRY_GENERATE(globalObject, vm, "${moduleName}"_s, ${fileBase}_s, InternalModuleRegistryConstants::${idToEnumName(id)}Code, "${urlString}"_s);`;
+            : `INTERNAL_MODULE_REGISTRY_GENERATE(globalObject, vm, "${moduleName}"_s, ${fileBase}_s, ` +
+              `InternalModuleRegistryConstants::${idToEnumName(id)}CodeOffset, ` +
+              `InternalModuleRegistryConstants::${idToEnumName(id)}CodeLength, "${urlString}"_s);`;
         return `case Field::${idToEnumName(id)}: {
       ${inner}
     }`;
@@ -360,50 +516,6 @@ JSValue InternalModuleRegistry::createInternalModuleById(JSGlobalObject* globalO
 }
 `,
 );
-
-// This header is used by InternalModuleRegistry.cpp, and should only be included in that file.
-// It inlines all the strings for the module IDs.
-//
-// We cannot use ASCIILiteral's `_s` operator for the module source code because for long
-// strings it fails a constexpr assert. Instead, we do that assert in JS before we format the string
-if (!debug) {
-  writeIfNotChanged(
-    path.join(CODEGEN_DIR, "InternalModuleRegistryConstants.h"),
-    `// clang-format off
-#pragma once
-
-namespace Bun {
-namespace InternalModuleRegistryConstants {
-  ${moduleList
-    .slice(0, nativeStartIndex)
-    .map((id, n) => {
-      const out = outputs.get(id.slice(0, -3).replaceAll("/", path.sep));
-      if (!out) {
-        throw new Error(`Missing output for ${id}`);
-      }
-      return declareASCIILiteral(`${idToEnumName(id)}Code`, out);
-    })
-    .join("\n")}
-}
-}`,
-  );
-} else {
-  // In debug builds, we write empty strings to prevent recompilation. These are loaded from disk instead.
-  writeIfNotChanged(
-    path.join(CODEGEN_DIR, "InternalModuleRegistryConstants.h"),
-    `// clang-format off
-#pragma once
-
-namespace Bun {
-namespace InternalModuleRegistryConstants {
-  ${moduleList
-    .slice(0, nativeStartIndex)
-    .map((id, n) => `${declareASCIILiteral(`${idToEnumName(id)}Code`, "")}`)
-    .join("\n")}
-}
-}`,
-  );
-}
 
 // This is a generated map for rust code (included by the `resolved_source_tag` module in
 // src/jsc/lib.rs). Keys are the canonical builtin specifier strings fed to

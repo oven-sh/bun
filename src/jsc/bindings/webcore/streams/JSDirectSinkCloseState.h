@@ -25,6 +25,7 @@ public:
     // m_closePromise. (An unvisited m_closePromise is a premature collection of the
     // promise handed to Rust.)
     DECLARE_VISIT_CHILDREN;
+    static void analyzeHeap(JSCell*, JSC::HeapAnalyzer&);
 
     template<typename, JSC::SubspaceAccess mode>
     static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)

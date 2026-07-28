@@ -46,8 +46,8 @@ impl JsonCache {
             &bun_ast::Source,
             &mut bun_ast::Log,
             &bun_alloc::Arena,
-        ) -> Result<bun_ast::Expr, bun_core::Error>,
-    ) -> Result<Option<bun_ast::Expr>, bun_core::Error> {
+        ) -> Result<bun_ast::Expr, bun_parsers::Error>,
+    ) -> Result<Option<bun_ast::Expr>, crate::Error> {
         let mut temp_log = bun_ast::Log::init();
         let bump = self.bump.get_or_insert_with(bun_alloc::Arena::new);
         let result = func(source, &mut temp_log, bump).ok();
@@ -63,8 +63,8 @@ impl JsonCache {
         func: fn(
             &bun_ast::Source,
             &mut bun_ast::Log,
-        ) -> Result<json_parser::ParsedJson, bun_core::Error>,
-    ) -> Result<Option<json_parser::ParsedJson>, bun_core::Error> {
+        ) -> Result<json_parser::ParsedJson, bun_parsers::Error>,
+    ) -> Result<Option<json_parser::ParsedJson>, crate::Error> {
         let mut temp_log = bun_ast::Log::init();
         let result = func(source, &mut temp_log).ok();
         let _ = temp_log.append_to_maybe_recycled(log, source);
@@ -77,7 +77,7 @@ impl JsonCache {
         &mut self,
         log: &mut bun_ast::Log,
         source: &bun_ast::Source,
-    ) -> Result<Option<json_parser::ParsedJson>, bun_core::Error> {
+    ) -> Result<Option<json_parser::ParsedJson>, crate::Error> {
         self.parse_rows(log, source, json_parser::ParsedJson::parse_jsonc)
     }
 
@@ -87,7 +87,7 @@ impl JsonCache {
         &mut self,
         log: &mut bun_ast::Log,
         source: &bun_ast::Source,
-    ) -> Result<Option<json_parser::ParsedJson>, bun_core::Error> {
+    ) -> Result<Option<json_parser::ParsedJson>, crate::Error> {
         self.parse_rows(log, source, json_parser::ParsedJson::parse_package_json)
     }
 
@@ -99,7 +99,7 @@ impl JsonCache {
         log: &mut bun_ast::Log,
         source: &bun_ast::Source,
         mode: JsonMode,
-    ) -> Result<Option<bun_ast::Expr>, bun_core::Error> {
+    ) -> Result<Option<bun_ast::Expr>, crate::Error> {
         // tsconfig.* and jsconfig.* files are JSON files, but they are not valid JSON files.
         // They are JSON files with comments and trailing commas.
         // Sometimes tooling expects this to work.
@@ -157,8 +157,6 @@ pub struct TSConfigJSON {
     pub jsx: options::jsx::Pragma,
     pub jsx_flags: JsxFieldSet,
 
-    pub use_define_for_class_fields: Option<bool>,
-
     pub preserve_imports_not_used_as_values: Option<bool>,
 
     pub emit_decorator_metadata: bool,
@@ -175,7 +173,6 @@ impl Default for TSConfigJSON {
             paths: PathsMap::default(),
             jsx: options::jsx::Pragma::default(),
             jsx_flags: JsxFieldSet::empty(),
-            use_define_for_class_fields: None,
             preserve_imports_not_used_as_values: Some(false),
             emit_decorator_metadata: false,
             experimental_decorators: false,
@@ -311,7 +308,7 @@ impl TSConfigJSON {
         log: &mut bun_ast::Log,
         source: &bun_ast::Source,
         json_cache: &mut JsonCache,
-    ) -> Result<Option<Box<TSConfigJSON>>, bun_core::Error> {
+    ) -> Result<Option<Box<TSConfigJSON>>, crate::Error> {
         // Unfortunately "tsconfig.json" isn't actually JSON. It's some other
         // format that appears to be defined by the implementation details of the
         // TypeScript compiler.
@@ -378,7 +375,6 @@ impl TSConfigJSON {
             let mut jsx_fragment_factory_v: Option<(&bun_ast::E::JsonValue, bun_ast::Loc)> = None;
             let mut jsx_v: Option<&bun_ast::E::JsonValue> = None;
             let mut jsx_import_source_v: Option<&bun_ast::E::JsonValue> = None;
-            let mut use_define_v: Option<&bun_ast::E::JsonValue> = None;
             let mut imports_not_used_v: Option<(&bun_ast::E::JsonValue, bun_ast::Loc)> = None;
             let mut module_suffixes_v: Option<(&bun_ast::E::JsonValue, bun_ast::Loc)> = None;
             let mut paths_v: Option<&bun_ast::E::JsonValue> = None;
@@ -404,9 +400,6 @@ impl TSConfigJSON {
                         b"jsx" if jsx_v.is_none() => jsx_v = Some(value),
                         b"jsxImportSource" if jsx_import_source_v.is_none() => {
                             jsx_import_source_v = Some(value)
-                        }
-                        b"useDefineForClassFields" if use_define_v.is_none() => {
-                            use_define_v = Some(value)
                         }
                         b"importsNotUsedAsValues" if imports_not_used_v.is_none() => {
                             imports_not_used_v = Some((value, loc))
@@ -496,11 +489,6 @@ impl TSConfigJSON {
                     result.jsx.set_import_source();
                     result.jsx_flags.insert(JsxField::ImportSource);
                 }
-            }
-
-            // Parse "useDefineForClassFields"
-            if let Some(&bun_ast::E::JsonValue::Boolean(val)) = use_define_v {
-                result.use_define_for_class_fields = Some(val);
             }
 
             // Parse "importsNotUsedAsValues"
@@ -702,7 +690,7 @@ impl TSConfigJSON {
         source: &bun_ast::Source,
         loc: bun_ast::Loc,
         text: &[u8],
-    ) -> Result<Box<[Box<[u8]>]>, bun_core::Error> {
+    ) -> Result<Box<[Box<[u8]>]>, crate::Error> {
         if text.is_empty() {
             return Ok(Box::default());
         }

@@ -1,10 +1,10 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import path from "node:path";
 
 describe("bun run --tsconfig-override", () => {
   test("should use custom tsconfig for path resolution", async () => {
-    const dir = tempDirWithFiles("run-tsconfig-override", {
+    await using dir = tempDir("run-tsconfig-override", {
       "index.ts": `
         import { helper } from '@helpers/math';
         console.log(helper());
@@ -70,7 +70,7 @@ describe("bun run --tsconfig-override", () => {
   });
 
   test("should work with relative tsconfig path", async () => {
-    const dir = tempDirWithFiles("run-tsconfig-relative", {
+    await using dir = tempDir("run-tsconfig-relative", {
       "src/main.ts": `
         import { lib } from '@lib/util';
         console.log(lib());
@@ -111,7 +111,7 @@ describe("bun run --tsconfig-override", () => {
   });
 
   test("should work with monorepo-style paths", async () => {
-    const dir = tempDirWithFiles("run-tsconfig-monorepo", {
+    await using dir = tempDir("run-tsconfig-monorepo", {
       "apps/web/src/index.ts": `
         import { Button } from '@ui/components';
         import { config } from '@shared/config';
@@ -158,7 +158,7 @@ describe("bun run --tsconfig-override", () => {
   });
 
   test("should work with nested directories and complex paths", async () => {
-    const dir = tempDirWithFiles("run-tsconfig-nested", {
+    await using dir = tempDir("run-tsconfig-nested", {
       "frontend/src/pages/home.ts": `
         import { api } from '~/api/client';
         import { utils } from '#/utils/helpers';
@@ -207,7 +207,7 @@ describe("bun run --tsconfig-override", () => {
   });
 
   test("should handle extending tsconfig with overrides", async () => {
-    const dir = tempDirWithFiles("run-tsconfig-extends", {
+    await using dir = tempDir("run-tsconfig-extends", {
       "src/app.ts": `
         import { core } from '@core/main';
         import { feature } from '@features/auth';
@@ -263,7 +263,7 @@ describe("bun run --tsconfig-override", () => {
   });
 
   test("should work from different working directories", async () => {
-    const dir = tempDirWithFiles("run-tsconfig-cwd", {
+    await using dir = tempDir("run-tsconfig-cwd", {
       "project/src/main.ts": `
         import { helper } from '@utils/math';
         console.log('Result:', helper(5, 3));

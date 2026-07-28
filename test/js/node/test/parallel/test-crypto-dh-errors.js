@@ -33,16 +33,16 @@ for (const bits of [-1, 0, 1]) {
     });
   } else {
     assert.throws(() => crypto.createDiffieHellman(bits), {
-      code: /ERR_OSSL_BN_BITS_TOO_SMALL|ERR_OSSL_MODULUS_TOO_LARGE/,
+      code: 'ERR_OSSL_BN_BITS_TOO_SMALL',
       name: 'Error',
-      message: /bits too small|MODULUS_TOO_LARGE/,
+      message: /bits[\s_]too[\s_]small/i,
     });
   }
 }
 
 for (const g of [-1, 1]) {
   const ex = {
-    code: /ERR_OSSL_(DH_)?BAD_GENERATOR/,
+    code: 'ERR_OSSL_DH_BAD_GENERATOR',
     name: 'Error',
     message: /(?:bad[_ ]generator)/i,
   };
@@ -54,7 +54,7 @@ for (const g of [Buffer.from([]),
                  Buffer.from([0]),
                  Buffer.from([1])]) {
   const ex = {
-    code: /ERR_OSSL_(DH_)?BAD_GENERATOR/,
+    code: 'ERR_OSSL_DH_BAD_GENERATOR',
     name: 'Error',
     message: /(?:bad[_ ]generator)/i,
   };

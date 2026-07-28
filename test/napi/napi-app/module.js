@@ -77,6 +77,45 @@ nativeTests.test_promise_with_threadsafe_function = async () => {
   return await nativeTests.create_promise_with_threadsafe_function(() => 1234);
 };
 
+nativeTests.test_threadsafe_function_abort_then_last_release = async (_, queued = 0) => {
+  // create (thread_count=1), acquire (=2), optionally queue items, abort (=1, closing)
+  nativeTests.test_napi_threadsafe_function_abort_then_last_release(queued);
+  // let the abort's scheduled dispatch run first
+  await new Promise(resolve => setImmediate(resolve));
+  // release the last reference of the already-closing tsfn (=0)
+  nativeTests.test_napi_threadsafe_function_abort_then_last_release_drop();
+  // wait for the finalizer (bounded poll, not a timed sleep)
+  for (let i = 0; i < 1000; i++) {
+    if (nativeTests.test_napi_threadsafe_function_abort_then_last_release_finalized()) break;
+    await new Promise(resolve => setImmediate(resolve));
+  }
+  console.log("finalized:", nativeTests.test_napi_threadsafe_function_abort_then_last_release_finalized());
+  // the process must exit on its own after this returns; a leaked event-loop
+  // keepalive would hang it forever
+};
+
+nativeTests.test_threadsafe_function_abort_full_queue = async () => {
+  // abort a tsfn whose bounded queue is full, then call it without blocking:
+  // napi_closing (16), not napi_queue_full (17), and it must still finalize
+  console.log("call after abort:", nativeTests.test_napi_threadsafe_function_abort_full_queue());
+  for (let i = 0; i < 1000; i++) {
+    if (nativeTests.test_napi_threadsafe_function_abort_full_queue_finalized()) break;
+    await new Promise(resolve => setImmediate(resolve));
+  }
+  console.log("finalized:", nativeTests.test_napi_threadsafe_function_abort_full_queue_finalized());
+};
+
+nativeTests.test_threadsafe_function_abort_blocked_producers = async () => {
+  // create (max_queue_size=1, thread_count=3), fill the queue, spawn two
+  // producers that block on the condvar, then abort
+  nativeTests.test_napi_threadsafe_function_abort_blocked_producers();
+  for (let i = 0; i < 1000; i++) {
+    if (nativeTests.test_napi_threadsafe_function_abort_blocked_producers_finalized()) break;
+    await new Promise(resolve => setImmediate(resolve));
+  }
+  console.log("finalized:", nativeTests.test_napi_threadsafe_function_abort_blocked_producers_finalized());
+};
+
 nativeTests.test_get_exception = (_, value) => {
   function thrower() {
     throw value;
@@ -143,6 +182,134 @@ nativeTests.test_get_property = () => {
   }
 };
 
+nativeTests.test_get_all_property_names_accessor = () => {
+  // napi_key_filter values
+  const napi_key_writable = 1;
+  const napi_key_configurable = 1 << 2;
+  // napi_key_collection_mode values
+  const napi_key_include_prototypes = 0;
+  const napi_key_own_only = 1;
+  // napi_key_conversion values
+  const napi_key_keep_numbers = 0;
+
+  const filterStrings = keys => keys.filter(k => typeof k === "string").sort();
+
+  // own_only: object with an own accessor property alongside data properties
+  const ownAccessor = { data: 1 };
+  Object.defineProperty(ownAccessor, "acc_rw", {
+    get() {
+      return 1;
+    },
+    set(v) {},
+    configurable: true,
+  });
+  Object.defineProperty(ownAccessor, "acc_ro", {
+    get() {
+      return 1;
+    },
+    configurable: true,
+  });
+  Object.defineProperty(ownAccessor, "data_ro", { value: 2, writable: false, configurable: true });
+  for (const filter of [napi_key_writable, napi_key_configurable, napi_key_writable | napi_key_configurable]) {
+    const { status, keys } = nativeTests.get_all_property_names(
+      ownAccessor,
+      napi_key_own_only,
+      filter,
+      napi_key_keep_numbers,
+    );
+    console.log(`own_only filter=${filter}: status=${status}`, JSON.stringify(filterStrings(keys)));
+  }
+
+  // include_prototypes: a plain object reaches Object.prototype.__proto__ (an accessor)
+  const plain = { a: 1 };
+  for (const filter of [napi_key_writable, napi_key_configurable]) {
+    const { status, keys } = nativeTests.get_all_property_names(
+      plain,
+      napi_key_include_prototypes,
+      filter,
+      napi_key_keep_numbers,
+    );
+    console.log(`include_prototypes filter=${filter}: status=${status}`, JSON.stringify(filterStrings(keys)));
+  }
+};
+
+nativeTests.test_get_all_property_names_proxy_and_string_wrapper = () => {
+  const napi_key_include_prototypes = 0;
+  const napi_key_own_only = 1;
+  const napi_key_writable = 1;
+  const napi_key_enumerable = 1 << 1;
+  const napi_key_configurable = 1 << 2;
+  const napi_key_keep_numbers = 0;
+
+  const apn = (obj, filter, mode = napi_key_own_only) =>
+    nativeTests.get_all_property_names(obj, mode, filter, napi_key_keep_numbers);
+  const show = (label, r) => console.log(label, "status=" + r.status, "keys=" + JSON.stringify(r.keys));
+  const dropBuiltinProto = r => ({
+    status: r.status,
+    keys: r.keys
+      .filter(k => typeof k !== "symbol" && !Object.prototype.hasOwnProperty(k) && !String.prototype.hasOwnProperty(k))
+      .sort(),
+  });
+
+  // V8's FilterProxyKeys only applies ONLY_ENUMERABLE; writable/configurable
+  // filters pass every proxy key regardless of the reported descriptor.
+  const proxy = new Proxy(
+    { a: 1 },
+    {
+      ownKeys: () => ["x", "y"],
+      getOwnPropertyDescriptor: () => ({ value: 1, writable: false, enumerable: true, configurable: true }),
+    },
+  );
+  for (const [name, f] of [
+    ["writable", napi_key_writable],
+    ["configurable", napi_key_configurable],
+    ["enumerable", napi_key_enumerable],
+  ]) {
+    show(`proxy own_only ${name}:`, apn(proxy, f));
+  }
+
+  // A proxy with no traps still takes V8's proxy path: writable/configurable
+  // do not filter even when the target's descriptors say otherwise.
+  const target = {};
+  Object.defineProperty(target, "ro", { value: 1, writable: false, enumerable: true, configurable: true });
+  Object.defineProperty(target, "rw", { value: 2, writable: true, enumerable: true, configurable: true });
+  show("proxy(no traps) writable:", apn(new Proxy(target, {}), napi_key_writable));
+
+  // V8 adds a String wrapper's character indices without consulting the
+  // attribute filter; only the ordinary own property `length` is filtered.
+  const str = new String("ab");
+  for (const [name, f] of [
+    ["writable", napi_key_writable],
+    ["configurable", napi_key_configurable],
+    ["enumerable", napi_key_enumerable],
+  ]) {
+    show(`string own_only ${name}:`, apn(str, f));
+  }
+  class DerivedString extends String {}
+  show("derived string writable:", apn(new DerivedString("xy"), napi_key_writable));
+
+  // include_prototypes: the exemption applies at whatever prototype level owns
+  // the key, matching V8's per-level KeyAccumulator dispatch. Built-in
+  // prototype keys are dropped so engine ordering differences don't leak in.
+  show(
+    "proxy-proto include_prototypes writable:",
+    dropBuiltinProto(apn(Object.create(proxy), napi_key_writable, napi_key_include_prototypes)),
+  );
+  show(
+    "string-proto include_prototypes configurable:",
+    dropBuiltinProto(apn(Object.create(str), napi_key_configurable, napi_key_include_prototypes)),
+  );
+
+  // Attribute filtering must still apply to ordinary objects.
+  const plain = {};
+  Object.defineProperty(plain, "w", { value: 1, writable: true, enumerable: true, configurable: true });
+  Object.defineProperty(plain, "ro", { value: 2, writable: false, enumerable: true, configurable: true });
+  Object.defineProperty(plain, "nc", { value: 3, writable: true, enumerable: true, configurable: false });
+  show("plain writable:", apn(plain, napi_key_writable));
+  show("plain configurable:", apn(plain, napi_key_configurable));
+  show("frozen writable:", apn(Object.freeze({ a: 1, b: 2 }), napi_key_writable));
+};
+
 nativeTests.test_set_property = () => {
   const objects = [
     {},
@@ -195,6 +362,160 @@ nativeTests.test_set_property = () => {
       }
     }
   }
+};
+
+nativeTests.test_define_properties = () => {
+  const statusNames = [
+    "napi_ok",
+    "napi_invalid_arg",
+    "napi_object_expected",
+    "napi_string_expected",
+    "napi_name_expected",
+    "napi_function_expected",
+    "napi_number_expected",
+    "napi_boolean_expected",
+    "napi_array_expected",
+    "napi_generic_failure",
+    "napi_pending_exception",
+  ];
+  const fmtStatus = s => statusNames[s] ?? String(s);
+  const fmtDesc = d =>
+    d === undefined
+      ? "undefined"
+      : JSON.stringify({
+          value: d.value,
+          get: typeof d.get,
+          set: typeof d.set,
+          writable: d.writable,
+          enumerable: d.enumerable,
+          configurable: d.configurable,
+        });
+
+  const run = (label, target, kind, name, inspectKey) => {
+    const { status, pending } = nativeTests.define_properties(target, kind, name);
+    let descText = "";
+    if (inspectKey !== null) {
+      descText = " desc=" + fmtDesc(Object.getOwnPropertyDescriptor(target, inspectKey));
+    }
+    console.log(`${label}: status=${fmtStatus(status)} pending=${pending}${descText}`);
+  };
+
+  for (const kind of ["value", "getter", "setter", "accessor", "method"]) {
+    // frozen target: [[DefineOwnProperty]] must fail
+    run(`frozen ${kind}`, Object.freeze({}), kind, undefined, "k");
+
+    // proxy whose defineProperty trap records calls and forwards
+    let trapCalls = 0;
+    const proxTarget = {};
+    const prox = new Proxy(proxTarget, {
+      defineProperty(t, k, d) {
+        trapCalls++;
+        return Reflect.defineProperty(t, k, d);
+      },
+    });
+    run(`proxy ${kind}`, prox, kind, undefined, null);
+    console.log(
+      `proxy ${kind}: trapCalls=${trapCalls} targetDesc=${fmtDesc(Object.getOwnPropertyDescriptor(proxTarget, "k"))}`,
+    );
+
+    // proxy with throwing trap
+    const throwing = new Proxy(
+      {},
+      {
+        defineProperty() {
+          throw new TypeError("boom");
+        },
+      },
+    );
+    run(`throwing-proxy ${kind}`, throwing, kind, undefined, "k");
+
+    // plain object: check descriptor shape (no synthetic getter for setter-only)
+    run(`plain ${kind}`, {}, kind, undefined, "k");
+  }
+
+  // setter-only/getter-only over an existing accessor: a missing side must
+  // leave that slot ABSENT in the descriptor (preserving the existing value),
+  // not present-undefined.
+  for (const kind of ["getter", "setter"]) {
+    const existing = {};
+    Object.defineProperty(existing, "k", {
+      get: () => 1,
+      set: () => {},
+      configurable: true,
+    });
+    run(`redefine ${kind}`, existing, kind, undefined, "k");
+
+    let trapDesc;
+    const prox = new Proxy(
+      {},
+      {
+        defineProperty(t, k, d) {
+          trapDesc = { hasGet: "get" in d, hasSet: "set" in d };
+          return Reflect.defineProperty(t, k, d);
+        },
+      },
+    );
+    nativeTests.define_properties(prox, kind, undefined);
+    console.log(`proxy-shape ${kind}:`, JSON.stringify(trapDesc));
+  }
+
+  // name as a napi_value string
+  run("name=string", {}, "value", "k", "k");
+  // name as a napi_value symbol
+  const sym = Symbol("s");
+  run("name=symbol", {}, "value", sym, sym);
+  // name as a napi_value number (not a valid property name)
+  run("name=number", {}, "value", 5, "5");
+  // name as a napi_value object (not a valid property name)
+  run("name=object", {}, "value", { toString: () => "x" }, "x");
+  // utf8name with invalid bytes: decoded with U+FFFD replacement
+  run("utf8name=invalid", {}, "value", null, "\ufffd");
+
+  // napi_define_class should also reject non-string/symbol property names
+  for (const [label, name] of [
+    ["string", "k"],
+    ["number", 5],
+  ]) {
+    const { status, pending } = nativeTests.define_properties({}, "method", name, true);
+    console.log(`define_class name=${label}: status=${fmtStatus(status)} pending=${pending}`);
+  }
+};
+
+nativeTests.test_property_names_cache_poisoning = () => {
+  // napi_key_include_prototypes = 0, napi_key_own_only = 1
+  // napi_key_all_properties = 0, napi_key_skip_symbols = 16
+  // napi_key_keep_numbers = 0
+  const mkA = () => ({ a: 1, b: 2 });
+  for (let i = 0; i < 20; i++) nativeTests.get_all_property_names(mkA(), 0, 0, 0);
+  console.log("Reflect.ownKeys after get_all_property_names(include_prototypes):", Reflect.ownKeys(mkA()).join(","));
+  console.log("Object.keys after get_all_property_names(include_prototypes):", Object.keys(mkA()).join(","));
+
+  const proto = { pEnum: 9 };
+  const mkB = () => {
+    const o = Object.create(proto);
+    o.w1 = 1;
+    o.w2 = 2;
+    return o;
+  };
+  for (let i = 0; i < 20; i++) nativeTests.get_property_names(mkB());
+  console.log("Object.keys after get_property_names:", Object.keys(mkB()).join(","));
+  console.log("Reflect.ownKeys after get_property_names:", Reflect.ownKeys(mkB()).join(","));
+
+  const mkC = () => ({ c: 1, d: 2 });
+  for (let i = 0; i < 20; i++) nativeTests.get_all_property_names(mkC(), 0, 16, 0);
+  console.log("Object.getOwnPropertyNames after skip_symbols chain walk:", Object.getOwnPropertyNames(mkC()).join(","));
+
+  // Own-only mode must still return only own keys and not poison anything.
+  const mkD = () => ({ e: 1, f: 2 });
+  for (let i = 0; i < 20; i++) nativeTests.get_all_property_names(mkD(), 1, 0, 0);
+  console.log("Reflect.ownKeys after get_all_property_names(own_only):", Reflect.ownKeys(mkD()).join(","));
+
+  // The napi result itself should still include inherited keys.
+  const apnResult = nativeTests.get_all_property_names(mkA(), 0, 0, 0).keys;
+  console.log("napi include_prototypes result has own a,b:", apnResult.includes("a") && apnResult.includes("b"));
+  console.log("napi include_prototypes result has inherited toString:", apnResult.includes("toString"));
+  const gpnResult = nativeTests.get_property_names(mkB());
+  console.log("napi get_property_names result:", gpnResult.join(","));
 };
 
 nativeTests.test_number_integer_conversions_from_js = () => {
@@ -745,6 +1066,37 @@ nativeTests.test_create_bigint_words = () => {
   console.log(nativeTests.create_weird_bigints());
 };
 
+nativeTests.test_get_all_property_names_own_only = () => {
+  // napi_key_collection_mode
+  const napi_key_own_only = 1;
+  // napi_key_filter
+  const napi_key_all_properties = 0;
+  const napi_key_enumerable = 1 << 1;
+  const napi_key_skip_strings = 1 << 3;
+  const napi_key_skip_symbols = 1 << 4;
+  // napi_key_conversion
+  const napi_key_keep_numbers = 0;
+
+  const sym = Symbol("s");
+  const neSym = Symbol("nes");
+  const o = { x: 1, [sym]: 2 };
+  Object.defineProperty(o, "ne", { value: 3, enumerable: false, configurable: true, writable: true });
+  Object.defineProperty(o, neSym, { value: 4, enumerable: false, configurable: true, writable: true });
+
+  const describe = keys => keys.map(k => (typeof k === "symbol" ? k.toString() : JSON.stringify(k)));
+
+  for (const [label, filter] of [
+    ["skip_symbols", napi_key_skip_symbols],
+    ["skip_strings", napi_key_skip_strings],
+    ["all_properties", napi_key_all_properties],
+    ["skip_symbols|enumerable", napi_key_skip_symbols | napi_key_enumerable],
+    ["skip_strings|enumerable", napi_key_skip_strings | napi_key_enumerable],
+  ]) {
+    const { status, keys } = nativeTests.get_all_property_names(o, napi_key_own_only, filter, napi_key_keep_numbers);
+    console.log(`own_only + ${label}: status=${status} keys=[${describe(keys).join(", ")}]`);
+  }
+};
+
 nativeTests.test_bigint_word_count = () => {
   // Test with a 2-word BigInt
   const bigint = 0x123456789abcdef0123456789abcdefn;
@@ -782,6 +1134,52 @@ nativeTests.test_ref_unref_underflow = () => {
       `❌ FAIL: Expected firstUnrefCount=0, secondUnrefStatus=1, got ${result.firstUnrefCount}, ${result.secondUnrefStatus}`,
     );
   }
+};
+
+nativeTests.test_napi_instanceof = () => {
+  function dump(label, r) {
+    const errName = r.exception && r.exception.constructor ? r.exception.constructor.name : undefined;
+    const errCode = r.exception ? r.exception.code : undefined;
+    console.log(
+      `${label}: status=${r.status} result=${r.result} pending=${r.pending} errName=${errName} errCode=${errCode}`,
+    );
+  }
+
+  class Base {}
+  const instance = new Base();
+  dump("class/instance", nativeTests.perform_instanceof(instance, Base));
+  dump("class/plain-obj", nativeTests.perform_instanceof({}, Base));
+
+  const arrow = () => 1;
+  Object.defineProperty(arrow, Symbol.hasInstance, { value: () => true });
+  dump("arrow+hasInstance", nativeTests.perform_instanceof({}, arrow));
+
+  const bound = function () {}.bind(null);
+  Object.defineProperty(bound, Symbol.hasInstance, { value: () => true });
+  dump("bound+hasInstance", nativeTests.perform_instanceof({}, bound));
+
+  const bareArrow = () => 1;
+  dump("bare-arrow ctor", nativeTests.perform_instanceof({}, bareArrow));
+
+  class Throws {
+    static [Symbol.hasInstance]() {
+      throw new RangeError("boom");
+    }
+  }
+  dump("hasInstance throws", nativeTests.perform_instanceof({}, Throws));
+
+  const proxy = new Proxy(Base, {
+    get(t, k) {
+      if (k === Symbol.hasInstance) throw new RangeError("proxy");
+      return Reflect.get(t, k);
+    },
+  });
+  dump("proxy get throws", nativeTests.perform_instanceof({}, proxy));
+
+  dump("number ctor", nativeTests.perform_instanceof({}, 5));
+  dump("plain-obj ctor", nativeTests.perform_instanceof({}, { x: 1 }));
+  dump("null ctor", nativeTests.perform_instanceof({}, null));
+  dump("undefined ctor", nativeTests.perform_instanceof({}, undefined));
 };
 
 nativeTests.test_get_value_string = () => {
@@ -957,6 +1355,55 @@ nativeTests.test_create_tsfn_with_async_context = async () => {
       setTimeout(resolve, 100);
     });
   });
+};
+
+// An addon's own threads outlive the worker that created the threadsafe
+// functions (next-swc's tokio pool does this): the last call and the last
+// release land after the worker's VM, and the event loop they point at, are
+// gone.
+async function runOrphanWorker(workerData) {
+  const { Worker } = require("node:worker_threads");
+  const path = require("node:path");
+  const worker = new Worker(path.join(__dirname, "tsfn-orphan-worker.js"), { workerData });
+  const code = await new Promise((resolve, reject) => {
+    worker.on("error", reject);
+    worker.on("exit", resolve);
+  });
+  return code;
+}
+
+nativeTests.test_threadsafe_function_orphaned_by_worker = async () => {
+  console.log("worker exited with", await runOrphanWorker());
+  console.log(nativeTests.use_orphaned_threadsafe_functions());
+};
+
+// Bun-only: an orphaned threadsafe function is freed by whichever thread drops
+// its last reference, including a call that reports napi_closing. Every
+// iteration must end with as many live threadsafe functions as it started with.
+nativeTests.test_threadsafe_function_orphan_leak = async () => {
+  const { napiThreadsafeFunctionLiveCount } = require("bun:internal-for-testing");
+  const before = napiThreadsafeFunctionLiveCount();
+  for (let i = 0; i < 5; i++) {
+    const code = await runOrphanWorker({ leak: 5 });
+    if (code !== 0) throw new Error(`worker exited with ${code}`);
+    const orphaned = napiThreadsafeFunctionLiveCount() - before;
+    const closing = nativeTests.call_leaked_threadsafe_functions();
+    console.log(`orphaned=${orphaned} closing=${closing} leaked=${napiThreadsafeFunctionLiveCount() - before}`);
+  }
+};
+
+// Microtasks queued by one threadsafe-function callback must be drained before
+// the next callback in the same dispatch, and not before the first one.
+nativeTests.test_threadsafe_function_microtask_order = async () => {
+  let n = 0;
+  nativeTests.test_napi_threadsafe_function_microtask_order(null, () => {
+    const i = ++n;
+    console.log("callback", i);
+    Promise.resolve().then(() => console.log("microtask", i));
+  });
+  for (let i = 0; i < 1000 && n < 3; i++) {
+    await new Promise(resolve => setImmediate(resolve));
+  }
 };
 
 module.exports = nativeTests;

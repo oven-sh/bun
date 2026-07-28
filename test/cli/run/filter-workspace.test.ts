@@ -1,6 +1,6 @@
 import { spawnSync } from "bun";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, tempDir, tempDirWithFiles } from "harness";
 import { symlinkSync } from "node:fs";
 import { join } from "path";
 
@@ -249,7 +249,7 @@ describe("bun", () => {
   });
 
   test("run pre and post scripts, in order", () => {
-    const dir = tempDirWithFiles("testworkspace", {
+    using dir = tempDir("testworkspace", {
       dep0: {
         "write.js": "await Bun.write('out.txt', 'success')",
         "readwrite.js": "console.log(await Bun.file('out.txt').text()); await Bun.write('post.txt', 'great success')",
@@ -274,7 +274,7 @@ describe("bun", () => {
   });
 
   test("respect dependency order", () => {
-    const dir = tempDirWithFiles("testworkspace", {
+    using dir = tempDir("testworkspace", {
       dep0: {
         "index.js": [
           "await new Promise((resolve) => setTimeout(resolve, 100))",
@@ -324,7 +324,7 @@ describe("bun", () => {
         },
       }),
     };
-    const dir = tempDirWithFiles("testworkspace", {
+    using dir = tempDir("testworkspace", {
       main: {
         "index.js": `console.log(await Bun.file("../${largeNamePkgName}/out.txt").text())`,
         "package.json": JSON.stringify({
@@ -348,7 +348,7 @@ describe("bun", () => {
   });
 
   test("ignore dependency order on cycle, preserving pre and post script order", () => {
-    const dir = tempDirWithFiles("testworkspace", {
+    using dir = tempDir("testworkspace", {
       dep0: {
         "write.js": "await Bun.write('out.txt', 'success')",
         "readwrite.js":
@@ -389,7 +389,7 @@ describe("bun", () => {
   });
 
   test("detect cycle of length > 2", () => {
-    const dir = tempDirWithFiles("testworkspace", {
+    using dir = tempDir("testworkspace", {
       dep0: {
         "package.json": JSON.stringify({
           name: "dep0",
@@ -440,7 +440,7 @@ describe("bun", () => {
     runInCwdFailure(cwd_root, "*", "x", /Failed to read .*malformed2.*package\.json/);
   });
   test("nonzero exit code on failure", () => {
-    const dir = tempDirWithFiles("testworkspace", {
+    using dir = tempDir("testworkspace", {
       dep0: {
         "package.json": JSON.stringify({
           name: "dep0",
@@ -562,7 +562,7 @@ describe("bun", () => {
   });
 
   test("--elide-lines is a no-op (not an error) when stdout is not a terminal", () => {
-    const dir = tempDirWithFiles("testworkspace", {
+    using dir = tempDir("testworkspace", {
       packages: {
         dep0: {
           "index.js": Array(20).fill("console.log('log_line');").join("\n"),
@@ -593,7 +593,7 @@ describe("bun", () => {
   });
 
   test("self-referential directory symlink in a workspace does not loop", () => {
-    const dir = tempDirWithFiles("filter-symlink-loop", {
+    using dir = tempDir("filter-symlink-loop", {
       packages: {
         pkga: {
           "package.json": JSON.stringify({ name: "pkga", scripts: { present: "echo scripta" } }),
@@ -633,7 +633,7 @@ describe("bun", () => {
   });
 
   test("warning names which package.json failed to parse", async () => {
-    const dir = tempDirWithFiles("filter-bad-pkgjson", {
+    await using dir = tempDir("filter-bad-pkgjson", {
       packages: {
         good: {
           "package.json": JSON.stringify({ name: "good", scripts: { go: "echo ok" } }),

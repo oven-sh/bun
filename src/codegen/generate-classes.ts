@@ -1303,6 +1303,10 @@ function allCachedValues(obj: ClassDefinition) {
     }
   }
 
+  for (const name in obj.callbacks ?? {}) {
+    values.push([name, `m_callback_${name}`]);
+  }
+
   return values;
 }
 
@@ -1538,19 +1542,21 @@ function generateClassImpl(typeName, obj: ClassDefinition) {
   } = obj;
   const name = className(typeName);
 
+  // analyzeHeap reports these as named property edges (see allCachedValues); appendHidden
+  // marks for GC without emitting a duplicate anonymous internal edge. klass caches are
+  // marked but never reported, which is moot: no setter is generated, so they stay empty.
   let DEFINE_VISIT_CHILDREN_LIST = [...Object.entries(fields), ...Object.entries(proto)]
     .filter(([name, { cache = false }]) => cache === true)
-    .map(([name]) => `visitor.append(thisObject->m_${name});`)
+    .map(([name]) => `visitor.appendHidden(thisObject->m_${name});`)
     .join("\n");
 
   for (const name in callbacks) {
-    // Use appendHidden so it doesn't show up in the heap snapshot twice.
     DEFINE_VISIT_CHILDREN_LIST += "\n" + `    visitor.appendHidden(thisObject->m_callback_${name});`;
   }
 
   const values = (obj.values || [])
     .map(val => {
-      return `visitor.append(thisObject->m_${val});`;
+      return `visitor.appendHidden(thisObject->m_${val});`;
     })
     .join("\n");
   var DEFINE_VISIT_CHILDREN = "";
@@ -2510,8 +2516,12 @@ function generateRust(
     use super::*;
     bun_jsc::jsc_abi_extern! {
         safe fn ${symbolName(typeName, "fromJS")}(value: JSValue) -> *mut ${typeName};
-        safe fn ${symbolName(typeName, "fromJSDirect")}(value: JSValue) -> *mut ${typeName};
-        safe fn ${symbolName(typeName, "getConstructor")}(global: *mut JSGlobalObject) -> JSValue;
+        safe fn ${symbolName(typeName, "fromJSDirect")}(value: JSValue) -> *mut ${typeName};${
+          !noConstructor
+            ? `
+        safe fn ${symbolName(typeName, "getConstructor")}(global: *mut JSGlobalObject) -> JSValue;`
+            : ""
+        }
         safe fn ${symbolName(typeName, "create")}(global: *mut JSGlobalObject, ptr: *mut ${typeName}) -> JSValue;
         safe fn ${symbolName(typeName, "dangerouslySetPtr")}(value: JSValue, ptr: *mut ${typeName}) -> bool;
 ${cachedExterns}

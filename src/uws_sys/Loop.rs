@@ -8,6 +8,10 @@ use bun_libuv_sys as uv;
 
 bun_core::declare_scope!(Loop, visible);
 
+/// A `now_ns` the caller has no reading to share for. The JS park hook takes its own only if
+/// it reaches the idle sweep, so passing this costs nothing on the paths that never park.
+pub const NOW_NS_UNKNOWN: u64 = 0;
+
 // ───────────────────────────── PosixLoop ─────────────────────────────
 
 // Mirrors C `struct us_loop_t` (packages/bun-usockets/src/internal/eventing/
@@ -218,6 +222,11 @@ impl PosixLoop {
     /// process_conns. Early-returns when nothing wrote, so safe to call
     /// from drainMicrotasks without per-iteration cost.
     pub fn drain_quic_if_necessary(&mut self) {
+        if !self.internal_loop_data.nq_head.is_null() {
+            // Full pass with close dispatch deferred to the next loop point.
+            // SAFETY: self is a valid loop pointer
+            unsafe { c::us_nq_loop_drain(self) };
+        }
         if self.internal_loop_data.quic_head.is_null() {
             return;
         }
@@ -246,19 +255,26 @@ impl PosixLoop {
 
     pub fn tick(&mut self) {
         // SAFETY: self is a valid loop pointer
-        unsafe { c::us_loop_run_bun_tick(self, core::ptr::null()) };
+        unsafe { c::us_loop_run_bun_tick(self, core::ptr::null(), NOW_NS_UNKNOWN) };
     }
 
     pub fn tick_without_idle(&mut self) {
         let timespec = Timespec { sec: 0, nsec: 0 };
         // SAFETY: self is a valid loop pointer; &timespec lives for the call
-        unsafe { c::us_loop_run_bun_tick(self, &raw const timespec) };
+        unsafe { c::us_loop_run_bun_tick(self, &raw const timespec, NOW_NS_UNKNOWN) };
     }
 
-    pub fn tick_with_timeout(&mut self, timespec: Option<&Timespec>) {
+    /// `now_ns` is the CLOCK_MONOTONIC reading the caller took to pick `timespec` (see
+    /// `timer::All::get_timeout`), reused by the JS park hook's idle-sweep rate limit rather
+    /// than read again. `NOW_NS_UNKNOWN` if the caller has none to share.
+    pub fn tick_with_timeout(&mut self, timespec: Option<&Timespec>, now_ns: u64) {
         // SAFETY: self is a valid loop pointer
         unsafe {
-            c::us_loop_run_bun_tick(self, timespec.map_or(core::ptr::null(), std::ptr::from_ref))
+            c::us_loop_run_bun_tick(
+                self,
+                timespec.map_or(core::ptr::null(), std::ptr::from_ref),
+                now_ns,
+            )
         };
     }
 
@@ -309,11 +325,7 @@ impl PosixLoop {
     ) -> Handler {
         // SAFETY: `this` is the live C-allocated loop pointer per fn contract.
         unsafe { c::uws_loop_addPostHandler(this, ctx, callback) };
-        Handler {
-            loop_: this,
-            ctx,
-            callback,
-        }
+        Handler { loop_: this }
     }
 
     /// # Safety
@@ -326,11 +338,7 @@ impl PosixLoop {
     ) -> Handler {
         // SAFETY: `this` is the live C-allocated loop pointer per fn contract.
         unsafe { c::uws_loop_addPreHandler(this, ctx, callback) };
-        Handler {
-            loop_: this,
-            ctx,
-            callback,
-        }
+        Handler { loop_: this }
     }
 
     pub fn run(&mut self) {
@@ -362,26 +370,6 @@ impl PosixLoop {
 /// shared `&Loop` would make the `*const → *mut` cast UB when written through.
 pub struct Handler {
     pub loop_: *mut Loop,
-    ctx: *mut c_void,
-    callback: unsafe extern "C" fn(*mut c_void, *mut Loop),
-}
-
-impl Handler {
-    pub fn remove_post(&self) {
-        // SAFETY: `loop_` is the original C-allocated raw pointer (from
-        // `us_create_loop`/`uws_get_loop`) stored by `add_*_handler`, with provenance
-        // that outlives this Handler and permits mutation; callback was previously registered.
-        unsafe { c::uws_loop_removePostHandler(self.loop_, self.ctx, self.callback) };
-    }
-
-    pub fn remove_pre(&self) {
-        // Intentionally calls `uws_loop_removePostHandler` here (likely an
-        // upstream bug); preserving longstanding behavior verbatim.
-        // SAFETY: `loop_` is the original C-allocated raw pointer (from
-        // `us_create_loop`/`uws_get_loop`) stored by `add_*_handler`, with provenance
-        // that outlives this Handler and permits mutation; callback was previously registered.
-        unsafe { c::uws_loop_removePostHandler(self.loop_, self.ctx, self.callback) };
-    }
 }
 
 // ───────────────────────────── WindowsLoop ─────────────────────────────
@@ -466,7 +454,10 @@ impl WindowsLoop {
         self.wakeup();
     }
 
-    pub fn tick_with_timeout(&mut self, _: Option<&Timespec>) {
+    /// Signature matches the POSIX impl so callers need no `cfg`. `now_ns` is unused here: on
+    /// Windows the park hook is driven from `us_loop_run` (libuv.c), which reads libuv's
+    /// already-refreshed clock via `uv_now` rather than taking one of its own.
+    pub fn tick_with_timeout(&mut self, _: Option<&Timespec>, _now_ns: u64) {
         // SAFETY: self is a valid loop pointer
         unsafe { c::us_loop_run(self) };
     }
@@ -477,6 +468,11 @@ impl WindowsLoop {
     }
 
     pub fn drain_quic_if_necessary(&mut self) {
+        if !self.internal_loop_data.nq_head.is_null() {
+            // Full pass with close dispatch deferred to the next loop point.
+            // SAFETY: self is a valid loop pointer
+            unsafe { c::us_nq_loop_drain(self) };
+        }
         if self.internal_loop_data.quic_head.is_null() {
             return;
         }
@@ -573,11 +569,7 @@ impl WindowsLoop {
     ) -> Handler {
         // SAFETY: `this` is the live C-allocated loop pointer per fn contract.
         unsafe { c::uws_loop_addPostHandler(this, ctx, callback) };
-        Handler {
-            loop_: this,
-            ctx,
-            callback,
-        }
+        Handler { loop_: this }
     }
 
     /// # Safety
@@ -590,11 +582,7 @@ impl WindowsLoop {
     ) -> Handler {
         // SAFETY: `this` is the live C-allocated loop pointer per fn contract.
         unsafe { c::uws_loop_addPreHandler(this, ctx, callback) };
-        Handler {
-            loop_: this,
-            ctx,
-            callback,
-        }
+        Handler { loop_: this }
     }
 }
 
@@ -631,15 +619,19 @@ mod c {
         ) -> *mut Loop;
         pub(super) fn us_loop_free(loop_: *mut Loop);
         pub(super) fn us_quic_loop_flush_if_pending(loop_: *mut Loop);
+        pub(super) fn us_nq_loop_drain(loop_: *mut Loop);
         pub fn us_loop_run(loop_: *mut Loop);
         #[cfg(windows)]
         pub(super) fn us_loop_pump(loop_: *mut Loop);
         pub fn us_wakeup_loop(loop_: *mut Loop);
         pub(super) fn uws_loop_addPostHandler(loop_: *mut Loop, ctx: *mut c_void, cb: LoopCtxCb);
-        pub(super) fn uws_loop_removePostHandler(loop_: *mut Loop, ctx: *mut c_void, cb: LoopCtxCb);
         pub(super) fn uws_loop_addPreHandler(loop_: *mut Loop, ctx: *mut c_void, cb: LoopCtxCb);
         #[cfg(not(windows))]
-        pub(super) fn us_loop_run_bun_tick(loop_: *mut Loop, timeout_ms: *const Timespec);
+        pub(super) fn us_loop_run_bun_tick(
+            loop_: *mut Loop,
+            timeout_ms: *const Timespec,
+            now_ns: u64,
+        );
         pub(super) fn us_internal_free_closed_sockets(loop_: *mut Loop);
         pub(super) fn us_loop_close_all_groups(loop_: *mut Loop) -> c_int;
         #[cfg(not(windows))]

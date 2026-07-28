@@ -162,16 +162,16 @@ pub trait RusageFields {
     fn utime_usec(&self) -> i64;
     fn stime_sec(&self) -> i64;
     fn stime_usec(&self) -> i64;
-    fn maxrss_(&self) -> f64;
-    fn ixrss_(&self) -> f64;
-    fn nswap_(&self) -> f64;
-    fn inblock_(&self) -> f64;
-    fn oublock_(&self) -> f64;
-    fn msgsnd_(&self) -> f64;
-    fn msgrcv_(&self) -> f64;
-    fn nsignals_(&self) -> f64;
-    fn nvcsw_(&self) -> f64;
-    fn nivcsw_(&self) -> f64;
+    fn maxrss(&self) -> f64;
+    fn ixrss(&self) -> f64;
+    fn nswap(&self) -> f64;
+    fn inblock(&self) -> f64;
+    fn oublock(&self) -> f64;
+    fn msgsnd(&self) -> f64;
+    fn msgrcv(&self) -> f64;
+    fn nsignals(&self) -> f64;
+    fn nvcsw(&self) -> f64;
+    fn nivcsw(&self) -> f64;
 }
 
 #[cfg(unix)]
@@ -195,43 +195,43 @@ impl RusageFields for libc::rusage {
         self.ru_stime.tv_usec as i64
     }
     #[inline]
-    fn maxrss_(&self) -> f64 {
+    fn maxrss(&self) -> f64 {
         self.ru_maxrss as f64
     }
     #[inline]
-    fn ixrss_(&self) -> f64 {
+    fn ixrss(&self) -> f64 {
         self.ru_ixrss as f64
     }
     #[inline]
-    fn nswap_(&self) -> f64 {
+    fn nswap(&self) -> f64 {
         self.ru_nswap as f64
     }
     #[inline]
-    fn inblock_(&self) -> f64 {
+    fn inblock(&self) -> f64 {
         self.ru_inblock as f64
     }
     #[inline]
-    fn oublock_(&self) -> f64 {
+    fn oublock(&self) -> f64 {
         self.ru_oublock as f64
     }
     #[inline]
-    fn msgsnd_(&self) -> f64 {
+    fn msgsnd(&self) -> f64 {
         self.ru_msgsnd as f64
     }
     #[inline]
-    fn msgrcv_(&self) -> f64 {
+    fn msgrcv(&self) -> f64 {
         self.ru_msgrcv as f64
     }
     #[inline]
-    fn nsignals_(&self) -> f64 {
+    fn nsignals(&self) -> f64 {
         self.ru_nsignals as f64
     }
     #[inline]
-    fn nvcsw_(&self) -> f64 {
+    fn nvcsw(&self) -> f64 {
         self.ru_nvcsw as f64
     }
     #[inline]
-    fn nivcsw_(&self) -> f64 {
+    fn nivcsw(&self) -> f64 {
         self.ru_nivcsw as f64
     }
 }
@@ -254,44 +254,44 @@ impl RusageFields for WinRusage {
         self.stime.usec
     }
     #[inline]
-    fn maxrss_(&self) -> f64 {
+    fn maxrss(&self) -> f64 {
         self.maxrss as f64
     }
     // These counters do not exist on Windows — always zero.
     #[inline]
-    fn ixrss_(&self) -> f64 {
+    fn ixrss(&self) -> f64 {
         0.0
     }
     #[inline]
-    fn nswap_(&self) -> f64 {
+    fn nswap(&self) -> f64 {
         0.0
     }
     #[inline]
-    fn inblock_(&self) -> f64 {
+    fn inblock(&self) -> f64 {
         self.inblock as f64
     }
     #[inline]
-    fn oublock_(&self) -> f64 {
+    fn oublock(&self) -> f64 {
         self.oublock as f64
     }
     #[inline]
-    fn msgsnd_(&self) -> f64 {
+    fn msgsnd(&self) -> f64 {
         0.0
     }
     #[inline]
-    fn msgrcv_(&self) -> f64 {
+    fn msgrcv(&self) -> f64 {
         0.0
     }
     #[inline]
-    fn nsignals_(&self) -> f64 {
+    fn nsignals(&self) -> f64 {
         0.0
     }
     #[inline]
-    fn nvcsw_(&self) -> f64 {
+    fn nvcsw(&self) -> f64 {
         0.0
     }
     #[inline]
-    fn nivcsw_(&self) -> f64 {
+    fn nivcsw(&self) -> f64 {
         0.0
     }
 }
@@ -461,8 +461,9 @@ pub struct PosixSpawnResult {
 
 /// Entry in `extra_pipes` for a stdio slot at index >= 3.
 pub enum ExtraPipe {
-    /// We created this fd (e.g. socketpair for `"pipe"`); expose it via
-    /// `Subprocess.stdio[N]` and close it in `finalizeStreams`.
+    /// We created this fd (e.g. socketpair for `"pipe"`); `finalizeStreams`
+    /// closes it. Downgraded to `UnownedFd` once `.stdio` is read (the caller
+    /// then owns the raw number and is responsible for closing it).
     OwnedFd(Fd),
     /// The caller supplied this fd in the stdio array; expose it via
     /// `Subprocess.stdio[N]` but never close it — the caller retains ownership.
@@ -637,7 +638,7 @@ pub unsafe fn spawn_process_posix(
     options: &PosixSpawnOptions,
     argv: Argv,
     envp: Envp,
-) -> Result<bun_sys::Result<PosixSpawnResult>, bun_core::Error> {
+) -> crate::Result<bun_sys::Result<PosixSpawnResult>> {
     bun_analytics::features::spawn.fetch_add(1, Ordering::Relaxed);
     let mut actions = PosixSpawnActions::init()?;
     // defer actions.deinit() — Drop

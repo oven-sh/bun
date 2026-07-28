@@ -1,4 +1,4 @@
-import { describe, expect, it, spyOn } from "bun:test";
+import { beforeAll, describe, expect, it, spyOn } from "bun:test";
 import {
   bunEnv,
   bunExe,
@@ -14,7 +14,6 @@ import {
   tempDirWithFiles,
   tmpdirSync,
 } from "harness";
-import { isAscii } from "node:buffer";
 import fs, {
   closeSync,
   constants,
@@ -88,7 +87,10 @@ function tmpdirTestMkdir(): string {
   if (!res?.includes(now)) {
     expect(res).toInclude("fs.test.ts");
   }
-  expect(res).not.toInclude("1234");
+  // res is the first directory created (the ${now} segment). Check the last
+  // path segment rather than a "1234" substring, which can occur in Date.now().
+  expect(path.basename(res!)).not.toBe("1234");
+  expect(path.basename(res!)).not.toBe("hi");
   expect(existsSync(tempdir)).toBe(true);
   return tempdir;
 }
@@ -290,7 +292,7 @@ it("fs.readv returns object", async done => {
 });
 
 it("fs.writev returns object", async done => {
-  const outpath = tempDirWithFiles("fswritevtest", { "a.txt": "b" });
+  await using outpath = tempDir("fswritevtest", { "a.txt": "b" });
   const fd = await promisify(fs.open)(join(outpath, "b.txt"), "w");
   const buffers = [Buffer.alloc(10), Buffer.alloc(10)];
   fs.writev(fd, buffers, 0, (err, bytesWritten, output) => {
@@ -428,6 +430,78 @@ describe("FileHandle", () => {
 
     expect(readFileSync(path, "utf8")).toBe("Test file written successfully");
   });
+
+  // Node.js closes a FileHandle's fd in its native finalizer and raises
+  // ERR_INVALID_STATE (DEP0137 end-of-life) when the handle is collected
+  // without close(). Bun must reclaim the fd and surface the same diagnostic.
+  it.concurrent.skipIf(isWindows)(
+    "FileHandle collected without close() closes the fd and raises ERR_INVALID_STATE",
+    async () => {
+      const fixture = /* js */ `
+        const fsp = require("node:fs/promises");
+        const fs = require("node:fs");
+        const os = require("node:os");
+        const path = require("node:path");
+        const fdDir = process.platform === "darwin" ? "/dev/fd" : "/proc/self/fd";
+        const nfds = () => fs.readdirSync(fdDir).length;
+        const dir = fs.mkdtempSync(path.join(os.tmpdir(), "fh-gc-"));
+        const N = 50;
+        const diags = [];
+        process.on("uncaughtException", e => diags.push({ code: e.code, message: e.message }));
+
+        (async () => {
+          const before = nfds();
+          await (async () => {
+            for (let i = 0; i < N; i++) await fsp.open(path.join(dir, "f" + i), "w");
+          })();
+          // force GC until every leaked fd is reclaimed and every diagnostic lands
+          for (let i = 0; i < 40 && (nfds() - before > 0 || diags.length < N); i++) {
+            Bun.gc(true);
+            await new Promise(r => setTimeout(r, 25));
+          }
+          const afterGC = nfds();
+          const sample = diags[0] ?? {};
+
+          // properly closed handles must not trip the finalizer
+          const marker = diags.length;
+          await (async () => {
+            for (let i = 0; i < N; i++) await (await fsp.open(path.join(dir, "g" + i), "w")).close();
+          })();
+          for (let i = 0; i < 10; i++) {
+            Bun.gc(true);
+            await new Promise(r => setTimeout(r, 25));
+          }
+
+          console.log(JSON.stringify({
+            leakedAfterGC: afterGC - before,
+            diagCount: diags.length,
+            sampleCode: sample.code,
+            sampleHasFd: typeof sample.message === "string" && sample.message.includes("File descriptor: "),
+            falsePositives: diags.length - marker,
+          }));
+          fs.rmSync(dir, { recursive: true, force: true });
+        })();
+      `;
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", fixture],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ result: JSON.parse(stdout.trim()), stderr, exitCode }).toEqual({
+        result: {
+          leakedAfterGC: 0,
+          diagCount: 50,
+          sampleCode: "ERR_INVALID_STATE",
+          sampleHasFd: true,
+          falsePositives: 0,
+        },
+        stderr: expect.not.stringContaining("error"),
+        exitCode: 0,
+      });
+    },
+  );
 });
 
 it("fdatasyncSync", () => {
@@ -500,6 +574,52 @@ it("writeFileSync NOT in append SHOULD truncate the file", () => {
       writeFileSync(path, line, options);
       expect(readFileSync(path, "utf8")).toBe(str);
     }
+  }
+});
+
+// On Windows `fs.writeFileSync(path, ...)` opens via bun_sys::openat
+// (NtCreateFile), so this exercises the O_CREAT/O_EXCL/O_TRUNC -> create
+// disposition mapping in openat_windows_impl directly. On POSIX it is the
+// plain openat(2) flag behavior. Every row matches Node.
+describe("writeFileSync numeric open-flag matrix", () => {
+  const { O_WRONLY, O_RDWR, O_CREAT, O_EXCL, O_TRUNC, O_APPEND } = constants;
+
+  type Outcome = "ZZ23456789" | "ZZ" | "0123456789ZZ" | "ENOENT" | "EEXIST";
+  const cases: [number, string, { exists: Outcome; missing: Outcome }][] = [
+    // access | disposition flags ...           label                          over existing   over missing
+    [O_WRONLY, "WRONLY", { exists: "ZZ23456789", missing: "ENOENT" }],
+    [O_WRONLY | O_CREAT, "WRONLY|CREAT", { exists: "ZZ23456789", missing: "ZZ" }],
+    [O_WRONLY | O_TRUNC, "WRONLY|TRUNC", { exists: "ZZ", missing: "ENOENT" }],
+    [O_WRONLY | O_CREAT | O_TRUNC, "WRONLY|CREAT|TRUNC", { exists: "ZZ", missing: "ZZ" }],
+    [O_WRONLY | O_CREAT | O_EXCL, "WRONLY|CREAT|EXCL", { exists: "EEXIST", missing: "ZZ" }],
+    [O_WRONLY | O_CREAT | O_EXCL | O_TRUNC, "WRONLY|CREAT|EXCL|TRUNC", { exists: "EEXIST", missing: "ZZ" }],
+    [O_RDWR, "RDWR", { exists: "ZZ23456789", missing: "ENOENT" }],
+    [O_RDWR | O_CREAT, "RDWR|CREAT", { exists: "ZZ23456789", missing: "ZZ" }],
+    [O_RDWR | O_TRUNC, "RDWR|TRUNC", { exists: "ZZ", missing: "ENOENT" }],
+    [O_RDWR | O_CREAT | O_TRUNC, "RDWR|CREAT|TRUNC", { exists: "ZZ", missing: "ZZ" }],
+    [O_RDWR | O_CREAT | O_EXCL, "RDWR|CREAT|EXCL", { exists: "EEXIST", missing: "ZZ" }],
+    [O_RDWR | O_CREAT | O_EXCL | O_TRUNC, "RDWR|CREAT|EXCL|TRUNC", { exists: "EEXIST", missing: "ZZ" }],
+    [O_WRONLY | O_APPEND, "WRONLY|APPEND", { exists: "0123456789ZZ", missing: "ENOENT" }],
+    [O_WRONLY | O_CREAT | O_APPEND, "WRONLY|CREAT|APPEND", { exists: "0123456789ZZ", missing: "ZZ" }],
+    [O_WRONLY | O_APPEND | O_TRUNC, "WRONLY|APPEND|TRUNC", { exists: "ZZ", missing: "ENOENT" }],
+    [O_WRONLY | O_CREAT | O_APPEND | O_TRUNC, "WRONLY|CREAT|APPEND|TRUNC", { exists: "ZZ", missing: "ZZ" }],
+  ];
+
+  function probe(flag: number, seeded: boolean): string {
+    using dir = tempDir("wf-flag-matrix", seeded ? { "f.txt": "0123456789" } : {});
+    const p = join(String(dir), "f.txt");
+    try {
+      writeFileSync(p, "ZZ", { flag });
+      return readFileSync(p, "utf8");
+    } catch (e: any) {
+      return e.code;
+    }
+  }
+
+  for (const [flag, name, expected] of cases) {
+    it(`${name} (O_${name.replace(/\|/g, " | O_")})`, () => {
+      expect({ exists: probe(flag, true), missing: probe(flag, false) }).toEqual(expected);
+    });
   }
 });
 
@@ -586,19 +706,6 @@ describe("writeFile with a non-truncating flag", () => {
     const path = join(tmpdirSync(), "truncating.txt");
     writeFileSync(path, "0123456789");
     writeFileSync(path, "ZZ", { flag });
-    expect(readFileSync(path, "utf8")).toBe("ZZ");
-  });
-
-  // O_APPEND writes land at the end of the file, so O_TRUNC has to empty it at
-  // open rather than afterwards. Skipped on Windows: openat() there picks its
-  // NtCreateFile disposition from O_WRONLY and ignores O_TRUNC, so this already
-  // yields "0123456789ZZ" on main. Separate bug, separate fix.
-  it.skipIf(isWindows)("writeFileSync with a numeric O_APPEND|O_TRUNC flag empties the file first", () => {
-    const path = join(tmpdirSync(), "append-truncating.txt");
-    writeFileSync(path, "0123456789");
-    writeFileSync(path, "ZZ", {
-      flag: constants.O_WRONLY | constants.O_CREAT | constants.O_APPEND | constants.O_TRUNC,
-    });
     expect(readFileSync(path, "utf8")).toBe("ZZ");
   });
 });
@@ -929,7 +1036,7 @@ it("promises.readFile", async () => {
       expect(e).toBeInstanceOf(Error);
       expect(e.message).toBe("ENOENT: no such file or directory, open '/i-dont-exist'");
       expect(e.code).toBe("ENOENT");
-      expect(e.errno).toBe(-2);
+      expect(e.errno).toBe(process.binding("uv").UV_ENOENT);
       expect(e.path).toBe("/i-dont-exist");
     }
   }
@@ -1091,6 +1198,51 @@ describe("promises.readFile", async () => {
       "out": "asci",
     },
     {
+      "encoding": "base64",
+      "text": "utf16 🍇 🍈 🍉 🍊 🍋",
+      "correct": {
+        "type": "Buffer",
+        "data": [186, 215, 245, 232, 97, 200, 36],
+      },
+      "out": "utf16GHIJA==",
+    },
+    {
+      "encoding": "base64",
+      "text": "👍",
+      "correct": {
+        "type": "Buffer",
+        "data": [],
+      },
+      "out": "",
+    },
+    {
+      "encoding": "base64url",
+      "text": "ascii",
+      "correct": {
+        "type": "Buffer",
+        "data": [106, 199, 34],
+      },
+      "out": "asci",
+    },
+    {
+      "encoding": "base64url",
+      "text": "utf16 🍇 🍈 🍉 🍊 🍋",
+      "correct": {
+        "type": "Buffer",
+        "data": [186, 215, 245, 232, 97, 200, 36],
+      },
+      "out": "utf16GHIJA",
+    },
+    {
+      "encoding": "base64url",
+      "text": "👍",
+      "correct": {
+        "type": "Buffer",
+        "data": [],
+      },
+      "out": "",
+    },
+    {
       "encoding": "hex",
       "text": "ascii",
       "correct": {
@@ -1121,19 +1273,8 @@ describe("promises.readFile", async () => {
 
   it("& fs.promises.writefile encodes & decodes", async () => {
     const results = [];
-    for (let encoding of [
-      "utf8",
-      "utf-8",
-      "utf16le",
-      "latin1",
-      "binary",
-      "base64",
-      /* TODO: "base64url", */ "hex",
-    ] as const) {
+    for (let encoding of ["utf8", "utf-8", "utf16le", "latin1", "binary", "base64", "base64url", "hex"] as const) {
       for (let text of ["ascii", "utf16 🍇 🍈 🍉 🍊 🍋", "👍"]) {
-        if (encoding === "base64" && !isAscii(Buffer.from(text)))
-          // TODO: output does not match Node.js, and it's not a problem with readFile specifically.
-          continue;
         const correct = Buffer.from(text, encoding);
         const outfile = join(
           tmpdir(),
@@ -1320,7 +1461,7 @@ it("mkdtempSync() non-exist dir #2568", () => {
   try {
     expect(mkdtempSync(path)).toBeFalsy();
   } catch (err: any) {
-    expect(err?.errno).toBe(-2);
+    expect(err?.errno).toBe(process.binding("uv").UV_ENOENT);
   }
 });
 
@@ -1328,12 +1469,69 @@ it("mkdtemp() non-exist dir #2568", done => {
   const path = join(tmpdirSync(), "does", "not", "exist");
   mkdtemp(path, (err, folder) => {
     try {
-      expect(err?.errno).toBe(-2);
+      expect(err?.errno).toBe(process.binding("uv").UV_ENOENT);
       expect(folder).toBeUndefined();
       done();
     } catch (e) {
       done(e);
     }
+  });
+});
+
+describe("mkdtemp encoding option", () => {
+  const base = tmpdirSync();
+  const prefix = join(base, "mkenc-dé-");
+  const prefixBytes = Buffer.from(prefix, "utf8");
+
+  it("sync: 'buffer' returns a Buffer of the path bytes", () => {
+    const result = mkdtempSync(prefix, { encoding: "buffer" });
+    expect(Buffer.isBuffer(result)).toBe(true);
+    expect(result.subarray(0, prefixBytes.length).equals(prefixBytes)).toBe(true);
+    expect(result.length).toBe(prefixBytes.length + 6);
+    expect(existsSync(result)).toBe(true);
+  });
+
+  it("sync: string shorthand 'buffer'", () => {
+    const result = mkdtempSync(prefix, "buffer");
+    expect(Buffer.isBuffer(result)).toBe(true);
+  });
+
+  it.each(["hex", "base64", "base64url", "latin1"] as const)("sync: '%s' re-encodes the path", encoding => {
+    const result = mkdtempSync(prefix, { encoding });
+    expect(typeof result).toBe("string");
+    const decoded = Buffer.from(result, encoding);
+    expect(decoded.subarray(0, prefixBytes.length).equals(prefixBytes)).toBe(true);
+    expect(decoded.length).toBe(prefixBytes.length + 6);
+    expect(existsSync(decoded)).toBe(true);
+  });
+
+  it("sync: default utf8 still returns a string", () => {
+    const result = mkdtempSync(prefix);
+    expect(typeof result).toBe("string");
+    expect(result.startsWith(prefix)).toBe(true);
+    expect(existsSync(result)).toBe(true);
+  });
+
+  it("callback: 'buffer' returns a Buffer", async () => {
+    const { promise, resolve, reject } = Promise.withResolvers();
+    mkdtemp(prefix, { encoding: "buffer" }, (err, folder) => (err ? reject(err) : resolve(folder)));
+    const result = await promise;
+    expect(Buffer.isBuffer(result)).toBe(true);
+    expect(existsSync(result)).toBe(true);
+  });
+
+  it("promises: 'hex' re-encodes the path", async () => {
+    const result = await promises.mkdtemp(prefix, "hex");
+    expect(typeof result).toBe("string");
+    const decoded = Buffer.from(result, "hex");
+    expect(decoded.subarray(0, prefixBytes.length).equals(prefixBytes)).toBe(true);
+    expect(existsSync(decoded)).toBe(true);
+  });
+
+  it("promises: 'buffer' returns a Buffer", async () => {
+    const result = await promises.mkdtemp(prefix, { encoding: "buffer" });
+    expect(Buffer.isBuffer(result)).toBe(true);
+    expect(existsSync(result)).toBe(true);
   });
 });
 
@@ -1680,6 +1878,117 @@ it("preadv", () => {
   expect(buffers[2]).toEqual(new Uint8Array([10, 11, 12]));
 });
 
+describe.concurrent("writev/readv with more than IOV_MAX buffers", () => {
+  // IOV_MAX is 1024 on Linux and macOS. Node's libuv loops writev in
+  // IOV_MAX-sized batches and caps readv at IOV_MAX; Bun previously passed
+  // the whole array to one syscall and got EINVAL for any count > 1024.
+  const n = 2000;
+  const makeWriteBufs = () => Array.from({ length: n }, (_, i) => Buffer.from([i & 0xff]));
+  const expectedBytes = Buffer.from(Array.from({ length: n }, (_, i) => i & 0xff));
+  // libuv caps readv at IOV_MAX on POSIX; Windows libuv reads every buffer.
+  const readvCap = isWindows ? n : 1024;
+
+  it("writevSync writes every buffer", () => {
+    using dir = tempDir("writev-iovmax-sync", {});
+    const file = join(String(dir), "out");
+    const fd = openSync(file, "w");
+    try {
+      expect(writevSync(fd, makeWriteBufs())).toBe(n);
+    } finally {
+      closeSync(fd);
+    }
+    expect(readFileSync(file).equals(expectedBytes)).toBe(true);
+  });
+
+  it("writevSync with position writes every buffer", () => {
+    using dir = tempDir("pwritev-iovmax-sync", {});
+    const file = join(String(dir), "out");
+    const fd = openSync(file, "w");
+    try {
+      writeSync(fd, Buffer.from("head"), 0, 4, 0);
+      expect(writevSync(fd, makeWriteBufs(), 4)).toBe(n);
+    } finally {
+      closeSync(fd);
+    }
+    const out = readFileSync(file);
+    expect(out.subarray(0, 4).toString()).toBe("head");
+    expect(out.subarray(4).equals(expectedBytes)).toBe(true);
+  });
+
+  it("fs.writev (callback) writes every buffer", async () => {
+    using dir = tempDir("writev-iovmax-cb", {});
+    const file = join(String(dir), "out");
+    const fd = openSync(file, "w");
+    try {
+      const { promise, resolve, reject } = Promise.withResolvers<number>();
+      fs.writev(fd, makeWriteBufs(), (err, written) => (err ? reject(err) : resolve(written)));
+      expect(await promise).toBe(n);
+    } finally {
+      closeSync(fd);
+    }
+    expect(readFileSync(file).equals(expectedBytes)).toBe(true);
+  });
+
+  it("FileHandle.writev writes every buffer", async () => {
+    using dir = tempDir("writev-iovmax-fh", {});
+    const file = join(String(dir), "out");
+    const fh = await _promises.open(file, "w");
+    try {
+      const { bytesWritten } = await fh.writev(makeWriteBufs());
+      expect(bytesWritten).toBe(n);
+    } finally {
+      await fh.close();
+    }
+    expect(readFileSync(file).equals(expectedBytes)).toBe(true);
+  });
+
+  it("readvSync caps at IOV_MAX instead of failing", () => {
+    using dir = tempDir("readv-iovmax-sync", {});
+    const file = join(String(dir), "in");
+    writeFileSync(file, Buffer.alloc(n, 7));
+    const fd = openSync(file, "r");
+    try {
+      const buffers = Array.from({ length: n }, () => Buffer.alloc(1));
+      expect(readvSync(fd, buffers)).toBe(readvCap);
+      expect(buffers[0][0]).toBe(7);
+      expect(buffers[readvCap - 1][0]).toBe(7);
+    } finally {
+      closeSync(fd);
+    }
+  });
+
+  it("readvSync with position caps at IOV_MAX instead of failing", () => {
+    using dir = tempDir("preadv-iovmax-sync", {});
+    const file = join(String(dir), "in");
+    writeFileSync(file, Buffer.concat([Buffer.from("xxx"), Buffer.alloc(n, 7)]));
+    const fd = openSync(file, "r");
+    try {
+      const buffers = Array.from({ length: n }, () => Buffer.alloc(1));
+      expect(readvSync(fd, buffers, 3)).toBe(readvCap);
+      expect(buffers[0][0]).toBe(7);
+      expect(buffers[readvCap - 1][0]).toBe(7);
+    } finally {
+      closeSync(fd);
+    }
+  });
+
+  it("FileHandle.readv caps at IOV_MAX instead of failing", async () => {
+    using dir = tempDir("readv-iovmax-fh", {});
+    const file = join(String(dir), "in");
+    writeFileSync(file, Buffer.alloc(n, 7));
+    const fh = await _promises.open(file, "r");
+    try {
+      const buffers = Array.from({ length: n }, () => Buffer.alloc(1));
+      const { bytesRead } = await fh.readv(buffers, 0);
+      expect(bytesRead).toBe(readvCap);
+      expect(buffers[0][0]).toBe(7);
+      expect(buffers[readvCap - 1][0]).toBe(7);
+    } finally {
+      await fh.close();
+    }
+  });
+});
+
 describe("writeSync", () => {
   it("works with bigint", () => {
     const dest = join(tmpdir(), "writeSync-large-file-bigint.txt");
@@ -1846,7 +2155,7 @@ describe("readFile", () => {
   });
 
   it("works with flags", async () => {
-    const mydir = tempDirWithFiles("fs-read", {});
+    await using mydir = tempDir("fs-read", {});
     console.log(mydir);
 
     for (const [flag, code] of [
@@ -1989,6 +2298,11 @@ describe("open flag string validation matches node", () => {
     "xyz",
     "",
     true,
+    // Node has no options-object form for open(): the second argument is always
+    // the flags, so an object is just an invalid flags value. Only `{}` is listed
+    // here because a populated object is rendered multi-line by the native error
+    // inspector, where node (and util.inspect) render it on one line.
+    {},
   ];
 
   it.each(invalidFlags)("openSync rejects flag %p with ERR_INVALID_ARG_VALUE", flag => {
@@ -2028,6 +2342,26 @@ describe("open flag string validation matches node", () => {
       code: "ERR_INVALID_ARG_VALUE",
     });
     expect(existsSync(file)).toBe(false);
+  });
+
+  it("rejects an options object as the flags argument across open, openSync and promises.open", async () => {
+    // Only the code is asserted: a populated object is rendered multi-line by the
+    // native error inspector, where node renders it on one line.
+    using dir = tempDir("fs-flags-object", { "existing.txt": "x" });
+    const file = join(String(dir), "existing.txt");
+    for (const flags of [{}, { flags: "r" }, { flags: "w", mode: 0o666 }]) {
+      // @ts-expect-error intentionally passing a bad flag type
+      expect(() => openSync(file, flags)).toThrowWithCode(TypeError, "ERR_INVALID_ARG_VALUE");
+      // @ts-expect-error intentionally passing a bad flag type
+      expect(() => fs.open(file, flags, () => {})).toThrowWithCode(TypeError, "ERR_INVALID_ARG_VALUE");
+      // @ts-expect-error intentionally passing a bad flag type
+      await expect(promises.open(file, flags)).rejects.toMatchObject({
+        name: "TypeError",
+        code: "ERR_INVALID_ARG_VALUE",
+      });
+    }
+    // The file must be untouched: the old behavior silently opened it.
+    expect(readFileSync(file, "utf8")).toBe("x");
   });
 
   it("readFileSync and writeFileSync reject uppercase flag option", () => {
@@ -2291,6 +2625,33 @@ it("readlink", () => {
   symlinkSync(import.meta.path, actual);
 
   expect(readlinkSync(actual)).toBe(realpathSync(import.meta.path));
+});
+
+describe("readlink encoding option", () => {
+  const base = tmpdirSync();
+  const link = join(base, "lnk");
+  let targetBytes: Buffer;
+  beforeAll(() => {
+    symlinkSync(join(base, "tgt-dé"), link);
+    targetBytes = readlinkSync(link, { encoding: "buffer" }) as Buffer;
+  });
+
+  it("'buffer' returns a Buffer", () => {
+    expect(Buffer.isBuffer(targetBytes)).toBe(true);
+    expect(targetBytes.includes(Buffer.from("tgt-dé", "utf8"))).toBe(true);
+  });
+
+  it.each(["hex", "base64", "base64url", "latin1"] as const)("'%s' re-encodes the target", encoding => {
+    const result = readlinkSync(link, { encoding });
+    expect(typeof result).toBe("string");
+    expect(result).toBe(targetBytes.toString(encoding));
+  });
+
+  it("default utf8 still returns a string", () => {
+    const result = readlinkSync(link);
+    expect(typeof result).toBe("string");
+    expect(result).toBe(targetBytes.toString("utf8"));
+  });
 });
 
 // On FUSE / some network filesystems a symlink target can exceed PATH_MAX,
@@ -2816,6 +3177,41 @@ describe("createReadStream", () => {
     },
     { timeout: 100 },
   );
+
+  // https://github.com/oven-sh/bun/issues/30919
+  it("async iterator rejects with ERR_STREAM_PREMATURE_CLOSE when destroy() is called during iteration", async () => {
+    const stream = createReadStream(join(import.meta.dir, "readFileSync.txt"));
+
+    let chunks = 0;
+    let caught: any = undefined;
+    try {
+      for await (const _ of stream) {
+        chunks++;
+        stream.destroy();
+      }
+    } catch (err) {
+      caught = err;
+    }
+
+    expect(chunks).toBe(1);
+    expect(caught).toBeDefined();
+    expect(caught?.code).toBe("ERR_STREAM_PREMATURE_CLOSE");
+  });
+
+  // https://github.com/oven-sh/bun/pull/30920
+  it("emits 'close' and releases fd with { start: 0, autoClose: true }", async () => {
+    const stream = createReadStream(join(import.meta.dir, "readFileSync.txt"), { start: 0, autoClose: true });
+    const { promise, resolve, reject } = Promise.withResolvers<void>();
+
+    stream.on("data", () => {});
+    stream.on("error", reject);
+    stream.on("close", () => resolve());
+
+    await promise;
+    expect(stream.destroyed).toBe(true);
+    expect(stream.closed).toBe(true);
+    expect(stream.fd).toBeNull();
+  });
 });
 
 describe("fs.WriteStream", () => {
@@ -2907,6 +3303,145 @@ describe("fs.WriteStream", () => {
     // @ts-ignore-next-line
     expect(ws.fd).toBe(2);
     expect(existsSync(path)).toBe(false);
+  });
+
+  // Node.js defers closing the fd until in-flight IO completes (kIsPerformingIO / kIoDone).
+  it("_destroy waits for in-flight _write before closing fd", async () => {
+    const pathToDir = `${tmpdir()}/${Date.now()}`;
+    mkdirForce(pathToDir);
+    const events: string[] = [];
+    let finishWrite!: () => void;
+    const writeStarted = Promise.withResolvers<void>();
+
+    const customFs = {
+      open: fs.open,
+      write(fd: number, buf: Buffer, off: number, len: number, pos: number, cb: Function) {
+        events.push("write-start");
+        writeStarted.resolve();
+        finishWrite = () => {
+          events.push("write-cb");
+          cb(null, len, buf);
+        };
+      },
+      close(fd: number, cb: Function) {
+        events.push("close");
+        fs.close(fd, cb as any);
+      },
+    };
+
+    // @ts-ignore
+    const stream = fs.createWriteStream(join(pathToDir, "out.txt"), { fs: customFs });
+    stream.on("error", (e: any) => events.push("error:" + e.code));
+    const closed = Promise.withResolvers<void>();
+    stream.on("close", () => {
+      events.push("close-event");
+      closed.resolve();
+    });
+
+    stream.write(Buffer.from("hello"));
+    await writeStarted.promise;
+    stream.destroy();
+    await new Promise<void>(r => setImmediate(() => setImmediate(r)));
+    finishWrite();
+    await closed.promise;
+
+    expect(events).toEqual(["write-start", "write-cb", "close", "error:ERR_STREAM_DESTROYED", "close-event"]);
+  });
+
+  it("_destroy waits for in-flight _writev before closing fd", async () => {
+    const pathToDir = `${tmpdir()}/${Date.now()}`;
+    mkdirForce(pathToDir);
+    const events: string[] = [];
+    let finishWritev!: () => void;
+    const writevStarted = Promise.withResolvers<void>();
+
+    const customFs = {
+      open: fs.open,
+      write: fs.write,
+      writev(fd: number, buffers: Buffer[], pos: number, cb: Function) {
+        events.push("writev-start");
+        writevStarted.resolve();
+        let total = 0;
+        for (const b of buffers) total += b.length;
+        finishWritev = () => {
+          events.push("writev-cb");
+          cb(null, total, buffers);
+        };
+      },
+      close(fd: number, cb: Function) {
+        events.push("close");
+        fs.close(fd, cb as any);
+      },
+    };
+
+    // @ts-ignore
+    const stream = fs.createWriteStream(join(pathToDir, "out.txt"), { fs: customFs });
+    stream.on("error", (e: any) => events.push("error:" + e.code));
+    await new Promise<void>(r => stream.on("ready", () => r()));
+    const closed = Promise.withResolvers<void>();
+    stream.on("close", () => {
+      events.push("close-event");
+      closed.resolve();
+    });
+
+    stream.cork();
+    stream.write(Buffer.from("aa"));
+    stream.write(Buffer.from("bb"));
+    stream.uncork();
+    await writevStarted.promise;
+    stream.destroy();
+    await new Promise<void>(r => setImmediate(() => setImmediate(r)));
+    finishWritev();
+    await closed.promise;
+
+    expect(events).toEqual(["writev-start", "writev-cb", "close", "error:ERR_STREAM_DESTROYED", "close-event"]);
+  });
+
+  // options.fs with write but no writev: corked writes must fall back to _write,
+  // not sync-throw inside _writev and strand kIsPerformingIO (hanging destroy()).
+  it("options.fs without writev falls back to _write for corked writes and destroy() closes", async () => {
+    const pathToDir = `${tmpdir()}/${Date.now()}`;
+    mkdirForce(pathToDir);
+    const events: string[] = [];
+    const writeDone = Promise.withResolvers<void>();
+    let pending = 2;
+
+    const customFs = {
+      open: fs.open,
+      write(fd: number, buf: Buffer, off: number, len: number, pos: number, cb: Function) {
+        events.push("write");
+        fs.write(fd, buf, off, len, pos, (...a: any[]) => {
+          cb(...a);
+          if (--pending === 0) writeDone.resolve();
+        });
+      },
+      close(fd: number, cb: Function) {
+        events.push("close");
+        fs.close(fd, cb as any);
+      },
+    };
+
+    // @ts-ignore
+    const stream = fs.createWriteStream(join(pathToDir, "out.txt"), { fs: customFs });
+    stream.on("error", (e: any) => events.push("error:" + e.code));
+    expect(stream._writev).toBeNull();
+    await new Promise<void>(r => stream.on("ready", () => r()));
+    const closed = Promise.withResolvers<void>();
+    stream.on("close", () => {
+      events.push("close-event");
+      closed.resolve();
+    });
+
+    stream.cork();
+    stream.write(Buffer.from("aa"));
+    stream.write(Buffer.from("bb"));
+    stream.uncork();
+    await writeDone.promise;
+    stream.destroy();
+    await closed.promise;
+
+    expect(events).toEqual(["write", "write", "close", "close-event"]);
+    expect(readFileSync(join(pathToDir, "out.txt"), "utf8")).toBe("aabb");
   });
 });
 
@@ -3848,6 +4383,39 @@ describe("utimesSync", () => {
 
     expect(finalStats.mtime).toEqual(prevModifiedTime);
     expect(finalStats.atime).toEqual(prevAccessTime);
+  });
+
+  // Windows wraps pre-epoch times through u32, matching Node (see Stat.rs)
+  it.skipIf(isWindows)("sets pre-epoch times from negative fractional string timestamps", () => {
+    const tmp = join(tmpdir(), "utimesSync-test-file-" + Math.random().toString(36).slice(2));
+    writeFileSync(tmp, "test");
+
+    fs.utimesSync(tmp, "-1.5", "-1.5");
+
+    const stats = fs.statSync(tmp);
+    expect(stats.atime.getTime()).toBe(-1500);
+    expect(stats.mtime.getTime()).toBe(-1500);
+
+    // rem_euclid rounds to exactly 1.0 here; must not produce tv_nsec == 1e9 (EINVAL)
+    fs.utimesSync(tmp, "-1e-17", "-1e-17");
+    expect(fs.statSync(tmp).mtime.getTime()).toBe(0);
+  });
+
+  it("treats negative number timestamps as the current time", () => {
+    const tmp = join(tmpdir(), "utimesSync-test-file-" + Math.random().toString(36).slice(2));
+    writeFileSync(tmp, "test");
+
+    // known-old precondition so the assertion below proves the call did something
+    fs.utimesSync(tmp, 0, 0);
+    expect(fs.statSync(tmp).mtime.getTime()).toBe(0);
+
+    // fs timestamp granularity can be coarser than Date.now()
+    const before = Date.now() - 1000;
+    fs.utimesSync(tmp, -1.5, -1.5);
+
+    const stats = fs.statSync(tmp);
+    expect(stats.mtime.getTime()).toBeGreaterThanOrEqual(before);
+    expect(stats.atime.getTime()).toBeGreaterThanOrEqual(before);
   });
 
   it("works with whole numbers", () => {
@@ -5172,4 +5740,62 @@ it("fs.promises.writeFile keeps a buffer path argument attached while options ar
 
   expect(detachedDuringOptions).toBe(false);
   expect(readFileSync(file, "utf8")).toBe("hello world");
+});
+
+describe("fs.close on stdio descriptors", () => {
+  it.skipIf(isWindows)("closeSync(2) actually closes fd 2 and allows redirect", async () => {
+    using dir = tempDir("fs-close-stdio", {
+      "redirect-fixture.mjs": `
+        import fs from "node:fs";
+        fs.writeSync(2, "PRE.");
+        fs.closeSync(2);
+        const fd = fs.openSync(process.argv[2], "w");
+        // On POSIX, open() returns the lowest free descriptor. fd 2 was just
+        // closed, so reopening must hand it back.
+        process.stdout.write(String(fd));
+        fs.writeSync(2, "POST.");
+      `,
+    });
+    const redirected = path.join(String(dir), "redirected.txt");
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), path.join(String(dir), "redirect-fixture.mjs"), redirected],
+      env: bunEnv,
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stdout).toBe("2");
+    // Writes after the reopen land in the new file; the original stderr pipe
+    // only keeps the byte written before the close.
+    expect(stderr).toBe("PRE.");
+    expect(readFileSync(redirected, "utf8")).toBe("POST.");
+    expect(exitCode).toBe(0);
+  });
+
+  // On Windows, libuv's fs__close no-ops for fd <= 2 (as does Node), so the
+  // descriptor is never really closed and the second close cannot raise EBADF.
+  it.skipIf(isWindows)("closeSync throws EBADF on a double close of fd 2", async () => {
+    using dir = tempDir("fs-close-stdio-dbl", {
+      "double-close-fixture.mjs": `
+        import fs from "node:fs";
+        fs.closeSync(2);
+        try {
+          fs.closeSync(2);
+          console.log("no-throw");
+        } catch (e) {
+          console.log(e.code);
+        }
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), path.join(String(dir), "double-close-fixture.mjs")],
+      env: bunEnv,
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout.trim()).toBe("EBADF");
+    expect(exitCode).toBe(0);
+  });
 });

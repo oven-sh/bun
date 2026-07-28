@@ -12,7 +12,7 @@ use bun_core::perf;
 pub fn find_all_imported_parts_in_js_order(
     this: &mut LinkerContext,
     chunks: &mut [Chunk],
-) -> Result<(), bun_core::Error> {
+) -> Result<(), crate::Error> {
     let _trace = perf::trace("Bundler.findAllImportedPartsInJSOrder");
 
     let mut part_ranges_shared: Vec<PartRange> = Vec::new();
@@ -44,7 +44,7 @@ pub fn find_imported_parts_in_js_order(
     part_ranges_shared: &mut Vec<PartRange>,
     parts_prefix_shared: &mut Vec<PartRange>,
     chunk_index: u32,
-) -> Result<(), bun_core::Error> {
+) -> Result<(), crate::Error> {
     let mut chunk_order_array: Vec<Order> =
         Vec::with_capacity(chunk.files_with_parts_in_chunk.count());
     {
@@ -92,6 +92,7 @@ pub fn find_imported_parts_in_js_order(
             entry_point: chunk.entry_point,
             chunk_index,
             entry_point_chunk_indices,
+            stack: Vec::new(),
         };
 
         match (with_code_splitting, with_scb) {
@@ -153,6 +154,24 @@ pub struct FindImportedPartsVisitor<'a, 'ctx> {
     /// Raw column pointer into `c.graph.files` for the single mutable write in
     /// `visit` (see the raw-pointer note above).
     entry_point_chunk_indices: *mut [u32],
+    stack: Vec<PartsFrame>,
+}
+
+#[derive(Copy, Clone)]
+enum PartsFrame {
+    Enter(IndexInt),
+    /// Per-part post action: append this part's range after its imports.
+    Part {
+        source_index: IndexInt,
+        part_index: IndexInt,
+        can_be_split: bool,
+    },
+    /// Per-file post action: record the file after all of its parts.
+    File {
+        source_index: IndexInt,
+        is_file_in_chunk: bool,
+        can_be_split: bool,
+    },
 }
 
 impl<'a, 'ctx> FindImportedPartsVisitor<'a, 'ctx> {
@@ -179,106 +198,146 @@ impl<'a, 'ctx> FindImportedPartsVisitor<'a, 'ctx> {
 
     // Traverse the graph using this stable order and linearize the files with
     // dependencies before dependents
+    //
+    // Explicit-stack DFS (was per-edge recursive). `Enter` expands a file,
+    // queuing its imports interleaved with per-part `Part` markers and a
+    // trailing `File` marker, then reverses the tail so LIFO pop reproduces
+    // the original recursion order exactly.
     pub fn visit<const WITH_CODE_SPLITTING: bool, const WITH_SCB: bool>(
         &mut self,
         source_index: IndexInt,
     ) {
-        if source_index == Index::INVALID.value() {
-            return;
-        }
-        let visited_entry = bun_core::handle_oom(self.visited.get_or_put(source_index));
-        if visited_entry.found_existing {
-            return;
-        }
+        debug_assert!(self.stack.is_empty());
+        self.stack.push(PartsFrame::Enter(source_index));
 
-        let mut is_file_in_chunk = if WITH_CODE_SPLITTING
-            && self.c.graph.ast.items_css()[source_index as usize].is_none()
-        {
-            // when code splitting, include the file in the chunk if ALL of the entry points overlap
-            self.entry_bits
-                .eql(&self.c.graph.files.items_entry_bits()[source_index as usize])
-        } else {
-            // when NOT code splitting, include the file in the chunk if ANY of the entry points overlap
-            self.entry_bits
-                .has_intersection(&self.c.graph.files.items_entry_bits()[source_index as usize])
-        };
+        while let Some(frame) = self.stack.pop() {
+            match frame {
+                PartsFrame::Part {
+                    source_index,
+                    part_index,
+                    can_be_split,
+                } => {
+                    let part = &self.parts[source_index as usize].as_slice()[part_index as usize];
+                    if can_be_split
+                        && part_index != bun_ast::NAMESPACE_EXPORT_PART_INDEX
+                        && self.c.should_include_part(source_index, part)
+                    {
+                        let js_parts = if source_index == Index::RUNTIME.value() {
+                            &mut self.parts_prefix
+                        } else {
+                            &mut self.part_ranges
+                        };
+                        Self::append_or_extend_range(js_parts, source_index, part_index);
+                    }
+                    continue;
+                }
+                PartsFrame::File {
+                    source_index,
+                    is_file_in_chunk,
+                    can_be_split,
+                } => {
+                    if is_file_in_chunk {
+                        if WITH_SCB && self.c.graph.is_scb_bitset.is_set(source_index as usize) {
+                            // SAFETY: `entry_point_chunk_indices` is the raw column pointer
+                            // for `entry_point_chunk_index` (distinct from every
+                            // column read through `self.c` / `self.flags` / `self.parts`),
+                            // valid for `graph.files.len()` writes for the duration of the
+                            // link step. No `&` to this column is live here.
+                            unsafe {
+                                (*self.entry_point_chunk_indices)[source_index as usize] =
+                                    self.chunk_index;
+                            }
+                        }
 
-        // Wrapped files can't be split because they are all inside the wrapper
-        let can_be_split = self.flags[source_index as usize].wrap == Wrap::None;
+                        self.files.push(source_index);
 
-        let parts = self.parts[source_index as usize].as_slice();
-        let parts_live = &self.c.graph.parts_live[source_index as usize];
-        if can_be_split
-            && is_file_in_chunk
-            && parts_live.is_set(bun_ast::NAMESPACE_EXPORT_PART_INDEX as usize)
-        {
-            Self::append_or_extend_range(
-                &mut self.part_ranges,
-                source_index,
-                bun_ast::NAMESPACE_EXPORT_PART_INDEX,
-            );
-        }
-
-        let records = self.import_records[source_index as usize].as_slice();
-
-        for part_index_ in 0..parts.len() {
-            let part = &parts[part_index_];
-            let part_index = part_index_ as u32;
-            let is_part_in_this_chunk = is_file_in_chunk && parts_live.is_set(part_index_);
-            for &record_id in part.import_record_indices.slice() {
-                let record: &ImportRecord = &records[record_id as usize];
-                if record.source_index.is_valid()
-                    && (record.kind == ImportKind::Stmt || is_part_in_this_chunk)
-                {
-                    if self.c.is_external_dynamic_import(record, source_index) {
-                        // Don't follow import() dependencies
+                        // CommonJS files are all-or-nothing so all parts must be contiguous
+                        if !can_be_split {
+                            self.parts_prefix.push(PartRange {
+                                source_index: Index::init(source_index),
+                                part_index_begin: 0,
+                                part_index_end: self.parts[source_index as usize].len() as u32,
+                            });
+                        }
+                    }
+                    continue;
+                }
+                PartsFrame::Enter(source_index) => {
+                    if source_index == Index::INVALID.value() {
+                        continue;
+                    }
+                    let visited_entry = bun_core::handle_oom(self.visited.get_or_put(source_index));
+                    if visited_entry.found_existing {
                         continue;
                     }
 
-                    self.visit::<WITH_CODE_SPLITTING, WITH_SCB>(record.source_index.get());
-                }
-            }
-
-            // Then include this part after the files it imports
-            if is_part_in_this_chunk {
-                is_file_in_chunk = true;
-
-                if can_be_split
-                    && part_index != bun_ast::NAMESPACE_EXPORT_PART_INDEX
-                    && self.c.should_include_part(source_index, part)
-                {
-                    let js_parts = if source_index == Index::RUNTIME.value() {
-                        &mut self.parts_prefix
+                    let is_file_in_chunk = if WITH_CODE_SPLITTING
+                        && self.c.graph.ast.items_css()[source_index as usize].is_none()
+                    {
+                        // when code splitting, include the file in the chunk if ALL of the entry points overlap
+                        self.entry_bits
+                            .eql(&self.c.graph.files.items_entry_bits()[source_index as usize])
                     } else {
-                        &mut self.part_ranges
+                        // when NOT code splitting, include the file in the chunk if ANY of the entry points overlap
+                        self.entry_bits.has_intersection(
+                            &self.c.graph.files.items_entry_bits()[source_index as usize],
+                        )
                     };
 
-                    Self::append_or_extend_range(js_parts, source_index, part_index);
+                    // Wrapped files can't be split because they are all inside the wrapper
+                    let can_be_split = self.flags[source_index as usize].wrap == Wrap::None;
+
+                    let parts = self.parts[source_index as usize].as_slice();
+                    let parts_live = &self.c.graph.parts_live[source_index as usize];
+                    if can_be_split
+                        && is_file_in_chunk
+                        && parts_live.is_set(bun_ast::NAMESPACE_EXPORT_PART_INDEX as usize)
+                    {
+                        Self::append_or_extend_range(
+                            &mut self.part_ranges,
+                            source_index,
+                            bun_ast::NAMESPACE_EXPORT_PART_INDEX,
+                        );
+                    }
+
+                    let records = self.import_records[source_index as usize].as_slice();
+
+                    let mark = self.stack.len();
+                    for part_index_ in 0..parts.len() {
+                        let part = &parts[part_index_];
+                        let part_index = part_index_ as u32;
+                        let is_part_in_this_chunk =
+                            is_file_in_chunk && parts_live.is_set(part_index_);
+                        for &record_id in part.import_record_indices.slice() {
+                            let record: &ImportRecord = &records[record_id as usize];
+                            if record.source_index.is_valid()
+                                && (record.kind == ImportKind::Stmt || is_part_in_this_chunk)
+                            {
+                                if self.c.is_external_dynamic_import(record, source_index) {
+                                    // Don't follow import() dependencies
+                                    continue;
+                                }
+                                self.stack
+                                    .push(PartsFrame::Enter(record.source_index.get()));
+                            }
+                        }
+
+                        // Then include this part after the files it imports
+                        if is_part_in_this_chunk {
+                            self.stack.push(PartsFrame::Part {
+                                source_index,
+                                part_index,
+                                can_be_split,
+                            });
+                        }
+                    }
+                    self.stack.push(PartsFrame::File {
+                        source_index,
+                        is_file_in_chunk,
+                        can_be_split,
+                    });
+                    self.stack[mark..].reverse();
                 }
-            }
-        }
-
-        if is_file_in_chunk {
-            if WITH_SCB && self.c.graph.is_scb_bitset.is_set(source_index as usize) {
-                // SAFETY: `entry_point_chunk_indices` is the raw column pointer
-                // for `entry_point_chunk_index` (distinct from every
-                // column read through `self.c` / `self.flags` / `self.parts`),
-                // valid for `graph.files.len()` writes for the duration of the
-                // link step. No `&` to this column is live here.
-                unsafe {
-                    (*self.entry_point_chunk_indices)[source_index as usize] = self.chunk_index;
-                }
-            }
-
-            self.files.push(source_index);
-
-            // CommonJS files are all-or-nothing so all parts must be contiguous
-            if !can_be_split {
-                self.parts_prefix.push(PartRange {
-                    source_index: Index::init(source_index),
-                    part_index_begin: 0,
-                    part_index_end: parts.len() as u32,
-                });
             }
         }
     }

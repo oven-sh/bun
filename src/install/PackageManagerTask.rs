@@ -13,8 +13,8 @@ use bun_wyhash::Wyhash11;
 
 use crate::npm;
 use crate::{
-    DependencyID, ExtractData, ExtractTarball, NetworkTask, PackageID, PackageManager, PatchTask,
-    Repository, RepositoryExt as _, Resolution,
+    DependencyID, ExtractData, ExtractTarball, NetworkTask, PackageManager, PatchTask, Repository,
+    RepositoryExt as _, Resolution,
 };
 
 use bun_dotenv as dot_env;
@@ -34,7 +34,7 @@ pub struct Task<'a> {
     pub log: Log,
     pub id: Id,
     /// default: `None`
-    pub err: Option<bun_core::Error>,
+    pub err: Option<crate::Error>,
     /// BACKREF — owned by `PackageManager.preallocated_resolve_tasks`.
     /// `None` only in `uninit()`; every scheduled task overwrites it.
     pub package_manager: Option<bun_ptr::ParentRef<PackageManager>>,
@@ -120,15 +120,6 @@ impl Id {
         Id(hasher.final_())
     }
 
-    pub fn for_bin_link(package_id: PackageID) -> Id {
-        let mut hasher = Wyhash11::init(0);
-        hasher.update(b"bin-link:");
-        // `PackageID` is `u32`: `bytemuck::bytes_of` gives the
-        // native-endian byte view.
-        hasher.update(bytemuck::bytes_of(&package_id));
-        Id(hasher.final_())
-    }
-
     pub fn for_manifest(name: &[u8]) -> Id {
         let mut hasher = Wyhash11::init(0);
         hasher.update(b"manifest:");
@@ -189,12 +180,6 @@ impl<'a> Task<'a> {
         debug_assert!(self.tag == Tag::Extract || self.tag == Tag::LocalTarball);
         // SAFETY: tag-guarded; `ManuallyDrop` deref.
         unsafe { &*self.data.extract }
-    }
-    #[inline]
-    pub fn data_extract_mut(&mut self) -> &mut ExtractData {
-        debug_assert!(self.tag == Tag::Extract || self.tag == Tag::LocalTarball);
-        // SAFETY: tag-guarded; `&mut self` exclusive.
-        unsafe { &mut *self.data.extract }
     }
     #[inline]
     pub fn data_git_clone(&self) -> Fd {
@@ -277,7 +262,8 @@ impl<'a> Task<'a> {
                         let err = network
                             .response
                             .fail
-                            .unwrap_or_else(|| bun_core::err!("HTTPError"));
+                            .map(crate::Error::from)
+                            .unwrap_or(crate::Error::HTTPError);
                         this.log.add_error_fmt(
                             None,
                             Loc::EMPTY,
@@ -328,7 +314,7 @@ impl<'a> Task<'a> {
                         manifest.name.slice(),
                         loaded_manifest,
                         // SAFETY: see `manager` decl — short-lived `&mut` at call
-                        // boundary only (callee touches `cache_directory_` /
+                        // boundary only (callee touches `cache_directory` /
                         // `temporary_directory` lazily).
                         unsafe { &mut *manager },
                         is_extended_manifest,
@@ -428,7 +414,7 @@ impl<'a> Task<'a> {
                                 Err(err) => {
                                     // Exit early if git checked and could
                                     // not find the repository, skip ssh
-                                    if err == bun_core::err!("RepositoryNotFound") {
+                                    if err == crate::Error::RepositoryNotFound {
                                         this.err = Some(err);
                                         this.status = Status::Fail;
                                         this.data = Data {
@@ -592,7 +578,7 @@ fn read_and_extract(
     tarball_path: &[u8],
     normalize: bool,
     log: &mut Log,
-) -> Result<ExtractData, bun_core::Error> {
+) -> crate::Result<ExtractData> {
     let bytes = if normalize {
         // Resolves
         // a user-provided relative path against `bun.fs.FileSystem.instance.top_level_dir`

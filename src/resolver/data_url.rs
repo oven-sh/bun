@@ -3,21 +3,12 @@ use bun_core::strings;
 pub(crate) struct PercentEncoding;
 
 /// possible errors for decode and encode
-#[derive(thiserror::Error, strum::IntoStaticStr, Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(thiserror::Error, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EncodeError {
     #[error("InvalidCharacter")]
     InvalidCharacter,
     #[error("OutOfMemory")]
     OutOfMemory,
-}
-
-bun_core::named_error_set!(EncodeError);
-
-impl EncodeError {
-    /// Returns the error name string.
-    pub fn name(self) -> &'static str {
-        self.into()
-    }
 }
 
 /// Error set of [`DataURL::parse`] / [`DataURL::parse_without_check`].
@@ -26,8 +17,6 @@ pub enum ParseDataURLError {
     #[error("InvalidDataURL")]
     InvalidDataURL,
 }
-
-bun_core::named_error_set!(ParseDataURLError);
 
 impl ParseDataURLError {
     /// Returns the error name string.
@@ -46,8 +35,6 @@ pub enum DecodeDataError {
     #[error("Base64DecodeError")]
     Base64DecodeError,
 }
-
-bun_core::named_error_set!(DecodeDataError);
 
 impl DecodeDataError {
     /// Returns the error name string.
@@ -68,9 +55,7 @@ impl From<EncodeError> for DecodeDataError {
 impl PercentEncoding {
     /// returns true if str starts with a valid path character or a percent encoded octet
     pub(crate) fn is_pchar(str: &[u8]) -> bool {
-        if cfg!(debug_assertions) {
-            debug_assert!(!str.is_empty());
-        }
+        debug_assert!(!str.is_empty());
         match str[0] {
             b'a'..=b'z'
             | b'A'..=b'Z'
@@ -99,10 +84,10 @@ impl PercentEncoding {
 
     /// Replaces percent encoded entities within `path` without throwing an error if other URL unsafe characters are present
     pub(crate) fn decode_unstrict(path: &[u8]) -> Result<Option<Vec<u8>>, EncodeError> {
-        Self::_decode(path, false)
+        Self::decode(path, false)
     }
 
-    fn _decode(path: &[u8], strict: bool) -> Result<Option<Vec<u8>>, EncodeError> {
+    fn decode(path: &[u8], strict: bool) -> Result<Option<Vec<u8>>, EncodeError> {
         let mut ret: Option<Vec<u8>> = None;
         // errdefer: `ret` is a Vec — drops automatically on `?` error path
         let mut ret_index: usize = 0;

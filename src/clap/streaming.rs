@@ -36,8 +36,6 @@ pub(crate) enum ArgError {
     InvalidArgument,
 }
 
-bun_core::named_error_set!(ArgError);
-
 #[derive(Copy, Clone, PartialEq, Eq)]
 enum ArgKind {
     Long,

@@ -2,6 +2,7 @@
 
 use core::ffi::c_char;
 
+use bun_core::env_var;
 use bun_core::env_var::feature_flag;
 use bun_core::{self, Environment, Global};
 use bun_jsc::zig_string::ZigString;
@@ -81,7 +82,7 @@ pub extern "C" fn exit(global_object: &JSGlobalObject, code: u8) {
 
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn Bun__NODE_NO_WARNINGS() -> bool {
-    feature_flag::NODE_NO_WARNINGS.get().unwrap_or(false)
+    env_var::NODE_NO_WARNINGS.get() == Some(b"1")
 }
 
 #[unsafe(no_mangle)]
@@ -144,8 +145,7 @@ mod _impl {
     use bun_jsc::{
         JSGlobalObject, JSValue, JsResult, StringJsc, SysErrorJsc, WebWorker, ZigStringJsc as _,
     };
-    use bun_paths::{PathBuffer, SEP};
-    use bun_sys as Syscall;
+    use bun_paths::PathBuffer;
 
     #[cfg(windows)]
     unsafe extern "C" {
@@ -404,8 +404,19 @@ mod _impl {
     pub(super) extern "C" fn get_eval(global_object: &JSGlobalObject) -> JSValue {
         // SAFETY: `bun_vm()` returns the live per-thread VM for this global.
         let vm = global_object.bun_vm();
+        // `--interactive` boots the bootstrap through `eval_source`, so read
+        // the user's real `-e` bytes from `interactive_eval_script` instead
+        // (`undefined` when empty, matching `node -i` without `-e`).
+        if let Some(script) = vm.module_loader.interactive_eval_script.as_deref() {
+            if script.is_empty() {
+                return JSValue::UNDEFINED;
+            }
+            return ZigString::init(script).with_encoding().to_js(global_object);
+        }
         if let Some(source) = vm.module_loader.eval_source.as_deref() {
-            return ZigString::init(source.contents()).to_js(global_object);
+            return ZigString::init(source.contents())
+                .with_encoding()
+                .to_js(global_object);
         }
         JSValue::UNDEFINED
     }
@@ -445,7 +456,7 @@ mod _impl {
                 .throw_invalid_arguments(format_args!("Expected path to be a non-empty string")));
         }
         // SAFETY: `bun_vm()` returns the live per-thread VM for this global.
-        let vm = global_object.bun_vm();
+        let vm = global_object.bun_vm().as_mut();
         // `Transpiler::fs_mut()` is the audited safe `&mut FileSystem` accessor for
         // the process-lifetime singleton (centralised single-unsafe deref).
         let fs = vm.transpiler.fs_mut();
@@ -458,48 +469,13 @@ mod _impl {
         // path=cwd, dest=target so the
         // resulting Node SystemError carries `path: cwd`, `dest: target` and the
         // `chdir '<cwd>' -> '<target>'` message format (test-process-chdir-errormessage).
-        let top_level_dir: &[u8] = fs.top_level_dir;
-        match Syscall::chdir(slice) {
+        let prev_cwd: Box<[u8]> = Box::from(fs.top_level_dir);
+        match vm.set_process_cwd(slice) {
             bun_sys::Result::Ok(()) => {
-                // When we update the cwd from JS, we have to update the bundler's version as well
-                // However, this might be called many times in a row, so we use a pre-allocated buffer
-                // that way we don't have to worry about garbage collector
-                let into_cwd_len = match Syscall::getcwd(&mut buf[..]) {
-                    bun_sys::Result::Ok(r) => r,
-                    bun_sys::Result::Err(err) => {
-                        // roll back to the previous top_level_dir
-                        let mut rollback = PathBuffer::uninit();
-                        let _ = Syscall::chdir(bun_paths::resolve_path::z(
-                            fs.top_level_dir,
-                            &mut rollback,
-                        ));
-                        return Err(global_object.throw_value(err.to_js(global_object)));
-                    }
-                };
-                fs.top_level_dir_buf[..into_cwd_len].copy_from_slice(&buf[..into_cwd_len]);
-                fs.top_level_dir_buf[into_cwd_len] = 0;
-                // SAFETY: `top_level_dir_buf` is a process-lifetime field of
-                // the FileSystem singleton, so the detached borrow never
-                // outlives its backing storage.
-                fs.top_level_dir =
-                    unsafe { bun_ptr::detach_lifetime(&fs.top_level_dir_buf[..into_cwd_len]) };
-
-                let len = fs.top_level_dir.len();
-                // Ensure the path ends with a slash
-                if fs.top_level_dir_buf[len - 1] != SEP {
-                    fs.top_level_dir_buf[len] = SEP;
-                    fs.top_level_dir_buf[len + 1] = 0;
-                    // SAFETY: see above.
-                    fs.top_level_dir =
-                        unsafe { bun_ptr::detach_lifetime(&fs.top_level_dir_buf[..len + 1]) };
-                }
-                // The cwd is stored both in the resolver's
-                // `FileSystem.top_level_dir` (written above) and in
-                // `bun_core::TOP_LEVEL_DIR` (read by `bun_paths::fs::
-                // FileSystem::top_level_dir()` → `GlobWalker::init`). Keep them
-                // in sync so a `process.chdir()` before `new Glob(...).scan()`
-                // is observed.
-                bun_core::set_top_level_dir(fs.top_level_dir);
+                vm.test_isolation_scope(|state| {
+                    state.saved_cwd.get_or_insert(prev_cwd);
+                });
+                let fs = vm.transpiler.fs_mut();
                 #[cfg(windows)]
                 let without_trailing_slash =
                     bun_paths::string_paths::without_trailing_slash_windows_path;
@@ -509,7 +485,7 @@ mod _impl {
                 str_.transfer_to_js(global_object)
             }
             bun_sys::Result::Err(e) => {
-                let e = e.with_path_dest(top_level_dir, slice.as_bytes());
+                let e = e.with_path_dest(&prev_cwd, slice.as_bytes());
                 Err(global_object.throw_value(e.to_js(global_object)))
             }
         }

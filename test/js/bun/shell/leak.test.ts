@@ -1,7 +1,7 @@
 import { $ } from "bun";
 import { heapStats } from "bun:jsc";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, isASAN, isPosix, tempDir, tempDirWithFiles } from "harness";
+import { bunEnv, isASAN, isPosix, tempDir } from "harness";
 import { join } from "path";
 import { bunExe } from "./test_builder";
 import { createTestBuilder } from "./util";
@@ -132,7 +132,6 @@ describe.concurrent("fd leak", () => {
                 Bun.gc(true);
 
                 const objectTypeCounts = heapStats().objectTypeCounts;
-                heapStats().objectTypeCounts.ParsedShellScript
                 if (objectTypeCounts.ParsedShellScript > 3 || objectTypeCounts.ShellInterpreter > 3) {
                   console.error('TOO many ParsedShellScript or ShellInterpreter objects', objectTypeCounts.ParsedShellScript, objectTypeCounts.ShellInterpreter)
                   process.exit(1);
@@ -143,8 +142,9 @@ describe.concurrent("fd leak", () => {
                   prev = val;
                   prevprev = val;
                 } else {
-                  // console.error('Prev', prev, 'Val', val, 'Diff', Math.abs(prev - val), 'Threshold', threshold);
-                  if (!(Math.abs(prev - val) < threshold)) process.exit(1);
+                  // Growth from the baseline is a leak; a drop is the allocator
+                  // handing memory back (the idle sweep does this on purpose).
+                  if (!(val - prev < threshold)) process.exit(1);
                 }
               }
             `;
@@ -404,7 +404,7 @@ describe.concurrent("fd leak", () => {
   describe.serial("#11816", async () => {
     function doit(builtin: boolean) {
       test(builtin ? "builtin" : "external", async () => {
-        const files = tempDirWithFiles("hi", {
+        await using files = tempDir("hi", {
           "input.txt": Array(2048).fill("a").join(""),
         });
         for (let j = 0; j < 10; j++) {
@@ -423,6 +423,14 @@ describe.concurrent("fd leak", () => {
           Bun.gc(true);
         }
 
+        // Same GC-settle window as the sibling test below: a dead interpreter can
+        // stay visible to heapStats for a tick; a real leak stays high forever.
+        for (let k = 0; k < 50; k++) {
+          const c = heapStats().objectTypeCounts;
+          if ((c.ShellInterpreter ?? 0) <= 3 && (c.ParsedShellScript ?? 0) <= 3) break;
+          await Bun.sleep(20);
+          Bun.gc(true);
+        }
         const { ShellInterpreter, ParsedShellScript } = heapStats().objectTypeCounts;
         if (ShellInterpreter > 3 || ParsedShellScript > 3) {
           console.error("TOO many ParsedShellScript or ShellInterpreter objects", ParsedShellScript, ShellInterpreter);
@@ -437,7 +445,7 @@ describe.concurrent("fd leak", () => {
   describe.serial("not leaking ParsedShellScript when ShellInterpreter never runs", () => {
     function doit(builtin: boolean) {
       test(builtin ? "builtin" : "external", async () => {
-        const files = tempDirWithFiles("hi", {
+        await using files = tempDir("hi", {
           "input.txt": Array(2048).fill("a").join(""),
         });
         // wrapping in a function

@@ -741,6 +741,52 @@ describe("spawn stdin ReadableStream", () => {
     expect(await proc.exited).toBe(0);
   });
 
+  // The native-sink pump's finally step clears the consumed tee branch's controller slot;
+  // a tee reaction queued for the source's later error/close must skip that branch instead
+  // of RELEASE_ASSERT'ing on the mismatched controller kind.
+  test.each([
+    { streamType: "bytes", finish: "error", result: "rejected upstream failed" },
+    { streamType: "bytes", finish: "close", result: "resolved done=true" },
+    { streamType: "default", finish: "error", result: "rejected upstream failed" },
+  ] as const)(
+    "tee()d $streamType stream: source $finish after stdin consumer exits does not crash",
+    async ({ streamType, finish, result }) => {
+      const script = `
+        let ctrl;
+        const src = new ReadableStream({
+          ${streamType === "bytes" ? 'type: "bytes",' : ""}
+          start(c) { ctrl = c; },
+        });
+        const [a, b] = src.tee();
+        const bRead = b.getReader().read();
+        bRead.catch(() => {});
+        const child = Bun.spawn({ cmd: [process.execPath, "-e", ""], stdin: a, stdout: "ignore", stderr: "ignore" });
+        await child.exited;
+        ${finish === "error" ? 'ctrl.error(new Error("upstream failed"));' : "ctrl.close();"}
+        const settled = await bRead.then(
+          v => "resolved done=" + v.done,
+          e => "rejected " + e.message,
+        );
+        console.log("SURVIVED", ${JSON.stringify(streamType)}, ${JSON.stringify(finish)}, settled);
+      `;
+
+      await using proc = spawn({
+        cmd: [bunExe(), "-e", script],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect({ stdout: stdout.trim(), stderr, exitCode, signalCode: proc.signalCode }).toEqual({
+        stdout: `SURVIVED ${streamType} ${finish} ${result}`,
+        stderr: "",
+        exitCode: 0,
+        signalCode: null,
+      });
+    },
+  );
+
   test("ReadableStream object type count", async () => {
     const iterations = isASAN
       ? // With ASAN, entire process gets killed. Likely an OOM or out of file

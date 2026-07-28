@@ -13,7 +13,7 @@ const server = Bun.serve({
   async fetch(req) {
     const path = new URL(req.url).pathname;
 
-    // respond with text/html
+    // respond with text/plain
     if (path === "/") return new Response("Welcome to Bun!");
 
     // redirect

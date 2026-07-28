@@ -10,7 +10,7 @@ When you spawn a child process with [`Bun.spawn()`](/runtime/child-process), `pr
 const proc = Bun.spawn(["echo", "hello"]);
 
 const output = await proc.stdout.text();
-output; // => "hello"
+output; // => "hello\n"
 ```
 
 ---

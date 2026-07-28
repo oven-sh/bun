@@ -383,6 +383,21 @@ impl TokenList {
                                 !has_whitespace && (*d == b'/' as u32 || *d == b'*' as u32);
                             debug_assert!(*d <= 0x7F);
                             dest.delim(*d as u8, ws_before)?;
+                            // `delim()` emits no surrounding whitespace when minifying, so
+                            // consecutive `/` and `*` delims would be printed adjacently and
+                            // form a `/*` or `*/` comment delimiter. Emit a real space when
+                            // the next token is the other half of that pair.
+                            if dest.minify && (*d == b'/' as u32 || *d == b'*' as u32) {
+                                if let Some(TokenOrValue::Token(Token::Delim(next))) =
+                                    self.v.get(i + 1)
+                                {
+                                    if (*d == b'/' as u32 && *next == b'*' as u32)
+                                        || (*d == b'*' as u32 && *next == b'/' as u32)
+                                    {
+                                        dest.write_char(b' ')?;
+                                    }
+                                }
+                            }
                         }
                         has_whitespace = true;
                     }
@@ -440,24 +455,18 @@ impl TokenList {
     }
 
     pub fn parse(input: &mut Parser, options: &ParserOptions, depth: usize) -> Result<TokenList> {
-        let mut tokens: Vec<TokenOrValue> = Vec::new(); // PERF: deinit on error
+        let mut tokens: Vec<TokenOrValue> = Vec::new();
         TokenListFns::parse_into(input, &mut tokens, options, depth)?;
 
         // Slice off leading and trailing whitespace if there are at least two tokens.
         // If there is only one token, we must preserve it. e.g. `--foo: ;` is valid.
-        // PERF(alloc): this feels like a common codepath, idk how I feel about reallocating a new array just to slice off whitespace.
         if tokens.len() >= 2 {
-            let mut start = 0;
-            let mut end = tokens.len();
-            if tokens[0].is_whitespace() {
-                start = 1;
-            }
             if tokens[tokens.len() - 1].is_whitespace() {
-                end -= 1;
+                tokens.pop();
             }
-            // `drain` moves the elements out without deep-cloning.
-            let newlist: Vec<TokenOrValue> = tokens.drain(start..end).collect();
-            return Ok(TokenList { v: newlist });
+            if tokens[0].is_whitespace() {
+                tokens.remove(0);
+            }
         }
 
         Ok(TokenList { v: tokens })

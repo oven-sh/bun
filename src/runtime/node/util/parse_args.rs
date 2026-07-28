@@ -853,11 +853,6 @@ impl<'a> ParseArgsState<'a> {
                 Token::Option(token) => {
                     obj.put(
                         global,
-                        ZigString::static_("index"),
-                        JSValue::js_number(token.index as f64),
-                    );
-                    obj.put(
-                        global,
                         ZigString::static_("name"),
                         token.name.as_js_value(global)?,
                     );
@@ -865,6 +860,11 @@ impl<'a> ParseArgsState<'a> {
                         global,
                         ZigString::static_("rawName"),
                         token.make_raw_name_js_value(global)?,
+                    );
+                    obj.put(
+                        global,
+                        ZigString::static_("index"),
+                        JSValue::js_number(token.index as f64),
                     );
 
                     // value exists only for string options, otherwise the property exists with "undefined" as value
@@ -948,28 +948,32 @@ fn parse_args_impl(
 
     // Phase 0.B: Parse and validate config
 
+    // Node coalesces each top-level flag with `?? default`, so an explicit `null`
+    // behaves like an absent key. Apply the default before `validate_boolean`.
     let config_strict: JSValue = match config {
         Some(c) => c.get_own(global, &String::static_("strict"))?,
         None => None,
     }
+    .filter(|v| !v.is_undefined_or_null())
     .unwrap_or(JSValue::TRUE);
-    let mut config_allow_positionals: JSValue = match config {
-        Some(c) => c
-            .get_own(global, &String::static_("allowPositionals"))?
-            .unwrap_or_else(|| JSValue::from(!config_strict.to_boolean())),
-        None => JSValue::from(!config_strict.to_boolean()),
-    };
+    let config_allow_positionals: JSValue = match config {
+        Some(c) => c.get_own(global, &String::static_("allowPositionals"))?,
+        None => None,
+    }
+    .filter(|v| !v.is_undefined_or_null())
+    .unwrap_or_else(|| JSValue::from(!config_strict.to_boolean()));
     let config_return_tokens: JSValue = match config {
         Some(c) => c.get_own(global, &String::static_("tokens"))?,
         None => None,
     }
+    .filter(|v| !v.is_undefined_or_null())
     .unwrap_or(JSValue::FALSE);
     let config_allow_negative: JSValue = match config {
-        Some(c) => c
-            .get_own(global, &String::static_("allowNegative"))?
-            .unwrap_or(JSValue::FALSE),
-        None => JSValue::FALSE,
-    };
+        Some(c) => c.get_own(global, &String::static_("allowNegative"))?,
+        None => None,
+    }
+    .filter(|v| !v.is_undefined_or_null())
+    .unwrap_or(JSValue::FALSE);
     let config_options: JSValue = match config {
         Some(c) => c
             .get_own(global, &String::static_("options"))?
@@ -978,14 +982,8 @@ fn parse_args_impl(
     };
 
     let strict = validators::validate_boolean(global, config_strict, "strict")?;
-
-    if config_allow_positionals.is_undefined_or_null() {
-        config_allow_positionals = JSValue::from(!strict);
-    }
-
     let allow_positionals =
         validators::validate_boolean(global, config_allow_positionals, "allowPositionals")?;
-
     let return_tokens = validators::validate_boolean(global, config_return_tokens, "tokens")?;
     let allow_negative =
         validators::validate_boolean(global, config_allow_negative, "allowNegative")?;
@@ -1063,10 +1061,10 @@ fn parse_args_impl(
     bun_output::scoped_log!(parseArgs, "Phase 4: Build result object");
 
     let result = JSValue::create_empty_object(global, if return_tokens { 3 } else { 2 });
+    result.put(global, ZigString::static_("values"), state.values);
+    result.put(global, ZigString::static_("positionals"), state.positionals);
     if return_tokens {
         result.put(global, ZigString::static_("tokens"), state.tokens);
     }
-    result.put(global, ZigString::static_("values"), state.values);
-    result.put(global, ZigString::static_("positionals"), state.positionals);
     Ok(result)
 }

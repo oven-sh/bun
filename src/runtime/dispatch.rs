@@ -88,13 +88,13 @@ use crate::shell::builtins::{
     mv::{ShellMvBatchedTask, ShellMvCheckTargetTask},
     rm::ShellRmTask,
     touch::ShellTouchTask,
+    yes::YesTask as ShellYesTask,
 };
 use crate::shell::dispatch_tasks::{
     AsyncDeinitReader as ShellIOReaderAsyncDeinit, AsyncDeinitWriter as ShellIOWriterAsyncDeinit,
     ShellAsyncSubprocessDone, ShellCondExprStatTask, ShellGlobTask, ShellRmDirTask,
 };
 use crate::shell::interpreter::ShellTask;
-use crate::shell::io_writer::IOWriter as ShellIOWriter;
 #[cfg(not(windows))]
 use crate::shell::io_writer::Poll as ShellBufferedWriterPoll;
 use crate::shell::states::r#async::Async as ShellAsync;
@@ -164,6 +164,7 @@ use bun_sql_jsc::postgres::PostgresSQLConnection;
 use crate::test_runner::bun_test::{BunTest, BunTestPtr};
 use crate::timer::{DateHeaderTimer, EventLoopDelayMonitor};
 use bun_jsc::abort_signal::Timeout as AbortSignalTimeout;
+use bun_jsc::garbage_collection_controller::GarbageCollectionController;
 
 #[cfg(not(windows))]
 use bun_io::pipe_writer::PosixPipeWriter; // brings `on_poll` into scope for FileSinkPoll/StaticPipeWriterPoll/etc.
@@ -291,7 +292,6 @@ pub fn run_task(
         task_tag::ShellAsync
         | task_tag::ShellAsyncSubprocessDone
         | task_tag::ShellIOWriterAsyncDeinit
-        | task_tag::ShellIOWriter
         | task_tag::ShellIOReaderAsyncDeinit
         | task_tag::ShellCondExprStatTask
         | task_tag::ShellCpTask
@@ -542,10 +542,6 @@ fn run_task_cold(task: Task) {
             let t = cast_ptr!(ShellIOWriterAsyncDeinit);
             ShellIOWriterAsyncDeinit::run_from_main_thread(t);
         }
-        task_tag::ShellIOWriter => {
-            let t = cast_ptr!(ShellIOWriter);
-            ShellIOWriter::run_from_main_thread(t);
-        }
         task_tag::ShellIOReaderAsyncDeinit => {
             let t = cast_ptr!(ShellIOReaderAsyncDeinit);
             ShellIOReaderAsyncDeinit::run_from_main_thread(t);
@@ -565,6 +561,12 @@ fn run_task_cold(task: Task) {
             ShellRmDirTask::run_from_main_thread(t);
         }
         task_tag::ShellGlobTask => shell_dispatch!(ShellGlobTask),
+        task_tag::ShellYesTask => {
+            // SAFETY: §Dispatch — tag identifies pointee; enqueued by
+            // `YesTask::enqueue`, storage lives inside `Box<Yes>` in the
+            // interpreter arena and is stable until the builtin deinits.
+            ShellYesTask::run_from_main_thread(unsafe { &*cast_ptr!(ShellYesTask) });
+        }
 
         // ── bake dev-server ──────────────────────────────────────────────
         task_tag::BakeHotReloadEvent => {
@@ -575,7 +577,7 @@ fn run_task_cold(task: Task) {
             unsafe { BakeHotReloadEvent::run(cast_ptr!(BakeHotReloadEvent)) };
         }
 
-        // ShellYesTask + any tag the hot path mis-routed: producer bug.
+        // Any tag the hot path mis-routed: producer bug.
         _ => panic!("Unexpected Task tag: {}", task.tag.0),
     }
 }
@@ -583,7 +585,7 @@ fn run_task_cold(task: Task) {
 /// Compile-time guard that the arm count above tracks
 /// `bun_event_loop::task_tag::COUNT`. Bump when adding a variant.
 const _: () = assert!(
-    task_tag::COUNT == 97,
+    task_tag::COUNT == 96,
     "dispatch::run_task arm count out of sync with bun_event_loop::task_tag",
 );
 
@@ -975,6 +977,18 @@ pub unsafe fn __bun_fire_timer(t: *mut EventLoopTimer, now: *const ElTimespec, v
                 AbortSignalTimeout::run(c, vm)
             })
         }
+        EventLoopTimerTag::GcOneShot => {
+            timer_arm!(GarbageCollectionController, gc_timer, |c, _now, _vm| {
+                GarbageCollectionController::on_gc_timer(c)
+            })
+        }
+        EventLoopTimerTag::GcRepeating => {
+            timer_arm!(
+                GarbageCollectionController,
+                gc_repeating_timer,
+                |c, _now, vm| GarbageCollectionController::on_gc_repeating_timer(c, vm)
+            )
+        }
         EventLoopTimerTag::DateHeaderTimer => {
             timer_arm!(DateHeaderTimer, event_loop_timer, |c, _now, vm| (*c)
                 .run(&mut *vm))
@@ -1090,6 +1104,11 @@ pub unsafe fn __bun_fire_timer(t: *mut EventLoopTimer, now: *const ElTimespec, v
             let c: *mut CronJob = owner!(CronJob, event_loop_timer);
             CronJob::on_timer_fire(c, VirtualMachine::get());
         }
+        EventLoopTimerTag::QuicEndpoint => {
+            let c: *mut crate::node::quic::QuicEndpoint =
+                owner!(crate::node::quic::QuicEndpoint, event_loop_timer);
+            crate::node::quic::QuicEndpoint::on_timer_fire(c);
+        }
     }
 }
 
@@ -1183,6 +1202,35 @@ pub(crate) fn __bun_release_task_at_shutdown(task: bun_event_loop::Task) -> bool
                 }};
             }
             for_each_fs_async_op!(__fs_destroy);
+            true
+        }
+        // A cross-thread Atomics.notify (or Wasm/FinalizationRegistry
+        // completion) enqueued this after the event loop's last tick. The
+        // dispatch arm above would have `delete`d it; mirror that here so the
+        // re-queue path doesn't keep it alive past worker VM dealloc. Runs
+        // before JSC teardown, so ~Ref<Ticket> is safe.
+        task_tag::JSCDeferredWorkTask => {
+            unsafe extern "C" {
+                fn Bun__deleteDeferredWorkTask(task: *mut JSCDeferredWorkTask);
+            }
+            // SAFETY: every JSCDeferredWorkTask payload is heap-allocated by
+            // `new JSCDeferredWorkTask` in JSCTaskScheduler::onScheduleWorkSoon;
+            // we own it once popped.
+            unsafe { Bun__deleteDeferredWorkTask(task.ptr.cast::<JSCDeferredWorkTask>()) };
+            true
+        }
+        // Same reclaim `drop_concurrent_cpp_tasks` performs, but for tasks
+        // that were already batch-moved into `self.tasks`. Must run before
+        // JSC teardown: a Worker `dispatchExit` lambda's `~Ref<Worker>` walks
+        // `~JSEventListener` Weak<> handles. Worker `shutdown()` calls
+        // `release_queued_tasks_for_shutdown` for the same reason.
+        task_tag::CppTask => {
+            unsafe extern "C" {
+                fn Bun__deleteEventLoopTask(task: *mut CppTask);
+            }
+            // SAFETY: every CppTask payload is a heap `WebCore::EventLoopTask*`;
+            // we own it once popped.
+            unsafe { Bun__deleteEventLoopTask(task.ptr.cast::<CppTask>()) };
             true
         }
         // Re-queued by the caller; the box stays reachable from the

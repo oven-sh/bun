@@ -1,7 +1,6 @@
 use core::ffi::c_void;
 use core::ptr::NonNull;
 
-use bun_core::{self, err};
 use bun_jsc::{JSGlobalObject, JSValue, event_loop::EventLoop};
 use bun_ptr::RefPtr;
 use bun_sys::{self, Fd, FdExt};
@@ -170,7 +169,6 @@ impl<'a> Writable<'a> {
         process.on_stdin_destroyed();
     }
     pub fn on_ready(&mut self, _: Option<BlobSizeType>, _: Option<BlobSizeType>) {}
-    pub fn on_start(&mut self) {}
 
     pub fn init(
         stdio: &mut Stdio,
@@ -178,7 +176,7 @@ impl<'a> Writable<'a> {
         subprocess: &mut Subprocess<'a>,
         result: StdioResult,
         promise_for_stream: &mut JSValue,
-    ) -> Result<Writable<'a>, bun_core::Error> {
+    ) -> crate::Result<Writable<'a>> {
         super::assert_stdio_result!(result);
 
         let global = event_loop.global_ref();
@@ -216,7 +214,7 @@ impl<'a> Writable<'a> {
                                 if let Stdio::ReadableStream(rs) = stdio {
                                     rs.cancel(global);
                                 }
-                                return Err(err!("UnexpectedCreatingStdin"));
+                                return Err(crate::Error::UnexpectedCreatingStdin);
                             }
                         }
                         pipe.writer.with_mut(|w| w.set_parent(pipe_ptr));
@@ -237,7 +235,7 @@ impl<'a> Writable<'a> {
                                 Self::pipe_release(pipe_nn);
                                 subprocess.deref();
                                 let _ = global.throw_value(err_val);
-                                return Err(err!(JSError));
+                                return Err(crate::Error::JSError);
                             }
                             *promise_for_stream = assign_result;
                         }
@@ -316,7 +314,7 @@ impl<'a> Writable<'a> {
                             rs.cancel(global);
                         }
 
-                        return Err(err!("UnexpectedCreatingStdin"));
+                        return Err(crate::Error::UnexpectedCreatingStdin);
                     }
                 }
 
@@ -343,7 +341,7 @@ impl<'a> Writable<'a> {
                         Self::pipe_release(pipe_nn);
                         subprocess.deref();
                         let _ = global.throw_value(err_val);
-                        return Err(err!(JSError));
+                        return Err(crate::Error::JSError);
                     }
                     *promise_for_stream = assign_result;
                 }

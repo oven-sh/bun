@@ -1,7 +1,3 @@
-/*
-Skipped test
-https://github.com/electron/electron/blob/5680c628b6718385bbd975b51ec2640aa7df226b/script/node-disabled-tests.json#L15
-
 'use strict';
 const common = require('../common');
 if (!common.hasCrypto)
@@ -10,6 +6,11 @@ if (!common.hasCrypto)
 const assert = require('assert');
 const crypto = require('crypto');
 const { modp2buf } = require('../common/crypto');
+
+if (process.features.openssl_is_boringssl) {
+  common.skip('Skipping unsupported Diffie-Hellman tests');
+}
+
 const modp2 = crypto.createDiffieHellmanGroup('modp2');
 
 {
@@ -45,5 +46,3 @@ const modp2 = crypto.createDiffieHellmanGroup('modp2');
       .toString('hex');
   assert.strictEqual(modp2Secret, exmodp2Secret);
 }
-
-*/

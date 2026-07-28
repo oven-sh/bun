@@ -1436,6 +1436,9 @@ BUN_DEFINE_HOST_FUNCTION(JSMock__jsNow, (JSC::JSGlobalObject * globalObject, JSC
 {
     return JSValue::encode(jsNumber(globalObject->jsDateNow()));
 }
+
+extern "C" void Bun__FakeTimers__setSystemTime(double ms);
+
 BUN_DEFINE_HOST_FUNCTION(JSMock__jsSetSystemTime, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callframe))
 {
     JSValue argument0 = callframe->argument(0);
@@ -1443,11 +1446,16 @@ BUN_DEFINE_HOST_FUNCTION(JSMock__jsSetSystemTime, (JSC::JSGlobalObject * globalO
     // JSGlobalObject::overridenDateNow's "no override" sentinel is NaN (see
     // JSGlobalObject::jsDateNow()), so every real timestamp, including 0 and
     // pre-epoch negatives, overrides; an omitted arg, NaN, or invalid Date resets.
+    double ms;
     if (auto* dateInstance = dynamicDowncast<DateInstance>(argument0)) {
-        globalObject->overridenDateNow = dateInstance->internalNumber();
-        return JSValue::encode(callframe->thisValue());
+        ms = dateInstance->internalNumber();
+    } else {
+        ms = argument0.isNumber() ? argument0.asNumber() : PNaN;
     }
-    globalObject->overridenDateNow = argument0.isNumber() ? argument0.asNumber() : PNaN;
+    globalObject->overridenDateNow = ms;
+    // Rebase the Rust-side fake-timers offset so advanceTimersByTime ticks
+    // from this value instead of the activation-time clock.
+    Bun__FakeTimers__setSystemTime(ms);
 
     return JSValue::encode(callframe->thisValue());
 }

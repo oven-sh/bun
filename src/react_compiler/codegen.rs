@@ -68,15 +68,6 @@ pub struct CodegenFunction {
     pub outlined: Vec<OutlinedFunction>,
 }
 
-impl CodegenFunction {
-    pub fn into_fn_body(self) -> G::FnBody {
-        G::FnBody {
-            loc: convert_loc(self.loc),
-            stmts: leak_stmts(self.body),
-        }
-    }
-}
-
 impl std::fmt::Debug for CodegenFunction {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("CodegenFunction")
@@ -343,7 +334,7 @@ pub fn codegen_function(
             );
             let instrument_call = Stmt::alloc(
                 S::If {
-                    test_: if_test,
+                    test: if_test,
                     yes: expr_stmt(call, Loc::EMPTY),
                     no: None,
                 },
@@ -838,7 +829,7 @@ fn codegen_reactive_scope(
 
     let memo_stmt = Stmt::alloc(
         S::If {
-            test_: test_condition,
+            test: test_condition,
             yes,
             no,
         },
@@ -861,7 +852,7 @@ fn codegen_reactive_scope(
         let name_expr = Expr::init_identifier(cx.ref_for_id(early_return.value)?, loc);
         statements.push(Stmt::alloc(
             S::If {
-                test_: Expr::init(
+                test: Expr::init(
                     E::Binary {
                         op: OpCode::BinStrictNe,
                         left: name_expr,
@@ -972,7 +963,7 @@ fn codegen_terminal(
             };
             Ok(Some(Stmt::alloc(
                 S::If {
-                    test_: test_expr,
+                    test: test_expr,
                     yes: body_stmt(consequent_block, stmt_loc),
                     no: alternate_stmt,
                 },
@@ -1009,7 +1000,7 @@ fn codegen_terminal(
             }
             Ok(Some(Stmt::alloc(
                 S::Switch {
-                    test_: test_expr,
+                    test: test_expr,
                     body_loc: stmt_loc,
                     cases: StoreSlice::new_mut(switch_cases.leak()),
                 },
@@ -1028,7 +1019,7 @@ fn codegen_terminal(
             Ok(Some(Stmt::alloc(
                 S::DoWhile {
                     body: body_stmt(body, stmt_loc),
-                    test_: test_expr,
+                    test: test_expr,
                 },
                 stmt_loc,
             )))
@@ -1044,7 +1035,7 @@ fn codegen_terminal(
             let body = codegen_block(cx, loop_block)?;
             Ok(Some(Stmt::alloc(
                 S::While {
-                    test_: test_expr,
+                    test: test_expr,
                     body: body_stmt(body, stmt_loc),
                 },
                 stmt_loc,
@@ -1069,7 +1060,7 @@ fn codegen_terminal(
             Ok(Some(Stmt::alloc(
                 S::For {
                     init: init_val,
-                    test_: Some(test_expr),
+                    test: Some(test_expr),
                     update: update_expr,
                     body: body_stmt(body, stmt_loc),
                 },
@@ -1116,7 +1107,7 @@ fn codegen_terminal(
                 S::Try {
                     body_loc: stmt_loc,
                     body: leak_stmts(try_block),
-                    catch_: Some(Catch {
+                    catch: Some(Catch {
                         loc: stmt_loc,
                         binding: catch_param,
                         body: leak_stmts(handler_block),
@@ -1731,7 +1722,7 @@ fn codegen_instruction_value(
             let alt_expr = codegen_instruction_value_to_expression(cx, alternate)?;
             Ok(Expr::init(
                 E::If {
-                    test_: test_expr,
+                    test: test_expr,
                     yes: cons_expr,
                     no: alt_expr,
                 },
@@ -3503,7 +3494,7 @@ fn wrap_hook_call_with_guard(guard_ref: Ref, call_expr: Expr, before: u32, after
                     loc,
                 ),
             ]),
-            catch_: None,
+            catch: None,
             finally: Some(Finally {
                 loc,
                 stmts: leak_stmts(vec![guard_call(after)]),
@@ -3563,7 +3554,7 @@ fn create_function_body_hook_guard(
         S::Try {
             body_loc: loc,
             body: leak_stmts(try_body),
-            catch_: None,
+            catch: None,
             finally: Some(Finally {
                 loc,
                 stmts: leak_stmts(vec![guard_call(after)]),

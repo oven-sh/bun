@@ -91,25 +91,6 @@ impl CatalogMap {
         Ok(entry.value_ptr)
     }
 
-    pub fn get_group(
-        &mut self,
-        map_buf: &[u8],
-        catalog_name: String,
-        catalog_name_buf: &[u8],
-    ) -> Option<&mut Map> {
-        if catalog_name.is_empty() {
-            return Some(&mut self.default);
-        }
-
-        self.groups.get_ptr_adapted(
-            &catalog_name,
-            &ArrayHashContext {
-                arg_buf: catalog_name_buf,
-                existing_buf: map_buf,
-            },
-        )
-    }
-
     // Deliberately takes no `Lockfile` param so `lockfile.catalogs.parse_count`
     // call sites avoid the `&mut self` vs `&mut Lockfile` self-alias.
     pub fn parse_count(&mut self, expr: Expr, builder: &mut StringBuilder) {
@@ -316,7 +297,7 @@ impl CatalogMap {
         pm: &mut PM,
         old_buf: &[u8],
         builder: &mut StringBuilder,
-    ) -> Result<CatalogMap, bun_core::Error> {
+    ) -> Result<CatalogMap, crate::Error> {
         let mut new_catalog = CatalogMap::default();
 
         new_catalog
@@ -381,8 +362,6 @@ pub enum FromPnpmLockfileError {
 }
 
 bun_core::oom_from_alloc!(FromPnpmLockfileError);
-
-bun_core::named_error_set!(FromPnpmLockfileError);
 
 fn put_entries_from_pnpm_lockfile(
     catalog_map: &mut Map,

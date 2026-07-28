@@ -11,8 +11,6 @@ use crate::{
 pub struct Chunk {
     pub buffer: MutableString,
 
-    pub mappings_count: usize,
-
     /// This end state will be used to rewrite the start of the following source
     /// map chunk so that the delta-encoded VLQ numbers are preserved.
     pub end_state: SourceMapState,
@@ -36,7 +34,6 @@ impl Chunk {
     pub fn init_empty() -> Chunk {
         Chunk {
             buffer: MutableString::init_empty(),
-            mappings_count: 0,
             end_state: SourceMapState::default(),
             final_generated_column: 0,
             should_ignore: true,
@@ -55,20 +52,6 @@ impl Chunk {
         unsafe { core::ptr::read(self) }
     }
 
-    pub fn print_source_map_contents<const ASCII_ONLY: bool>(
-        &self,
-        source: &Source,
-        mutable: &mut MutableString,
-        include_sources_contents: bool,
-    ) -> Result<(), bun_core::Error> {
-        print_source_map_contents_json::<ASCII_ONLY>(
-            source,
-            mutable,
-            include_sources_contents,
-            self.buffer.list.as_slice(),
-        )
-    }
-
     /// `chunk.buffer` holds an InternalSourceMap blob (the runtime path). Re-encode
     /// to a standard VLQ "mappings" string before emitting JSON.
     pub fn print_source_map_contents_from_internal<const ASCII_ONLY: bool>(
@@ -76,7 +59,7 @@ impl Chunk {
         source: &Source,
         mutable: &mut MutableString,
         include_sources_contents: bool,
-    ) -> Result<(), bun_core::Error> {
+    ) -> Result<(), crate::Error> {
         let ism = InternalSourceMap {
             data: self.buffer.list.as_ptr(),
         };
@@ -96,7 +79,7 @@ fn print_source_map_contents_json<const ASCII_ONLY: bool>(
     mutable: &mut MutableString,
     include_sources_contents: bool,
     mappings: &[u8],
-) -> Result<(), bun_core::Error> {
+) -> Result<(), crate::Error> {
     let mut filename_buf = PathBuffer::uninit();
     let mut filename: &[u8] = source.path.text;
     let top_level_dir: &[u8] = FileSystem::instance().top_level_dir();
@@ -143,12 +126,12 @@ fn print_source_map_contents_json<const ASCII_ONLY: bool>(
 /// Trait capturing the methods `SourceMapFormat<T>` forwards to its `ctx`.
 pub trait SourceMapFormatCtx: Sized {
     fn init(prepend_count: bool) -> Self;
-    fn append_line_separator(&mut self) -> Result<(), bun_core::Error>;
+    fn append_line_separator(&mut self) -> Result<(), crate::Error>;
     fn append(
         &mut self,
         current_state: SourceMapState,
         prev_state: SourceMapState,
-    ) -> Result<(), bun_core::Error>;
+    ) -> Result<(), crate::Error>;
     fn should_ignore(&self) -> bool;
     fn get_buffer(&mut self) -> &mut MutableString;
     fn take_buffer(&mut self) -> MutableString;
@@ -167,7 +150,7 @@ impl<T: SourceMapFormatCtx> SourceMapFormat<T> {
     }
 
     #[inline(always)]
-    pub fn append_line_separator(&mut self) -> Result<(), bun_core::Error> {
+    pub fn append_line_separator(&mut self) -> Result<(), crate::Error> {
         self.ctx.append_line_separator()
     }
 
@@ -176,7 +159,7 @@ impl<T: SourceMapFormatCtx> SourceMapFormat<T> {
         &mut self,
         current_state: SourceMapState,
         prev_state: SourceMapState,
-    ) -> Result<(), bun_core::Error> {
+    ) -> Result<(), crate::Error> {
         self.ctx.append(current_state, prev_state)
     }
 
@@ -208,7 +191,6 @@ pub struct VLQSourceMap {
     pub internal: Option<internal_source_map::Builder>,
     pub count: usize,
     pub offset: usize,
-    pub approximate_input_line_count: usize,
 }
 
 impl Default for VLQSourceMap {
@@ -218,7 +200,6 @@ impl Default for VLQSourceMap {
             internal: None,
             count: 0,
             offset: 0,
-            approximate_input_line_count: 0,
         }
     }
 }
@@ -244,7 +225,7 @@ impl SourceMapFormatCtx for VLQSourceMap {
     // 11.77% of `append` samples on the `push %rbp` prologue). Forcing it
     // leaves only the 64-mapping `flush_window` out-of-line.
     #[inline(always)]
-    fn append_line_separator(&mut self) -> Result<(), bun_core::Error> {
+    fn append_line_separator(&mut self) -> Result<(), crate::Error> {
         if let Some(b) = &mut self.internal {
             b.append_line_separator();
             return Ok(());
@@ -258,7 +239,7 @@ impl SourceMapFormatCtx for VLQSourceMap {
         &mut self,
         current_state: SourceMapState,
         prev_state: SourceMapState,
-    ) -> Result<(), bun_core::Error> {
+    ) -> Result<(), crate::Error> {
         if let Some(b) = &mut self.internal {
             b.append_mapping(&current_state);
             self.count += 1;
@@ -306,9 +287,9 @@ pub struct NewBuilder<T: SourceMapFormatCtx> {
     pub source_map: SourceMapFormat<T>,
     /// `ManuallyDrop` because in the bundler `printWithWriter` path this is a
     /// shallow bitwise copy of `LinkerGraph.files[i].line_offset_table` and
-    /// must not be dropped here. The runtime/transpiler `printAst`/`printCommonJS`
-    /// paths now defer table construction (see `lazy_line_offset_tables`), so
-    /// this is left `EMPTY` there.
+    /// must not be dropped here. The runtime/transpiler `printAst` path defers
+    /// table construction (see `lazy_line_offset_tables`), so this is left
+    /// `EMPTY` there.
     pub line_offset_tables: core::mem::ManuallyDrop<line_offset_table::List<bun_alloc::AstAlloc>>,
 
     /// Lazily-generated, *owned* line-offset table for the runtime/transpiler
@@ -409,8 +390,8 @@ impl<T: SourceMapFormatCtx + Default> Default for NewBuilder<T> {
 /// `MultiArrayList::Drop` is **slab-only** — it frees the SoA buffer but never
 /// runs column destructors (a bitwise `clone` can alias two lists onto the same
 /// column heap pointers; see its docs). The bundler's eager
-/// `print_ast`/`print_common_js` paths now use `List<AstAlloc>` (bulk-freed
-/// with the per-worker AST heap) and leave `Builder.line_offset_tables` empty,
+/// `print_ast` path now uses `List<AstAlloc>` (bulk-freed
+/// with the per-worker AST heap) and leaves `Builder.line_offset_tables` empty,
 /// so they no longer need a guard. The lazily-built table here is `List<Global>`
 /// and still needs the per-row drain, so wrap it in a type that does it
 /// automatically. (A `Drop` impl on `NewBuilder` itself would forbid the
@@ -425,8 +406,6 @@ impl Drop for OwnedLineOffsetTables {
         self.0.drop_elements();
     }
 }
-
-pub type SourceMapper<T> = SourceMapFormat<T>;
 
 // PERF(codegen): the hot-path methods below are implemented on the *concrete*
 // `NewBuilder<VLQSourceMap>` (the only instantiation — see `Builder` alias
@@ -474,7 +453,6 @@ impl NewBuilder<VLQSourceMap> {
         }
         Chunk {
             buffer: self.source_map.take_buffer(),
-            mappings_count: self.source_map.get_count(),
             end_state: self.prev_state,
             final_generated_column: self.generated_column,
             should_ignore: self.source_map.should_ignore(),

@@ -26,6 +26,11 @@ pub fn is_shutting_down(this: &VirtualMachine) -> bool {
     this.is_shutting_down()
 }
 
+// HOST_EXPORT(Bun__VM__scriptExecutionStatus, c)
+pub fn script_execution_status(this: &VirtualMachine) -> i32 {
+    this.script_execution_status() as i32
+}
+
 // HOST_EXPORT(Bun__getVM, c)
 pub fn get_vm() -> *mut VirtualMachine {
     VirtualMachine::get_mut_ptr()
@@ -318,23 +323,23 @@ pub fn Bun__setSyntheticAllocationLimitForTesting(
     global: &JSGlobalObject,
     frame: &CallFrame,
 ) -> JsResult<JSValue> {
-    let args = frame.arguments_old::<1>();
-    if args.len < 1 {
+    let [arg] = frame.arguments_as_array::<1>();
+    if frame.arguments_count() < 1 {
         return Err(global.throw_not_enough_arguments(
             "setSyntheticAllocationLimitForTesting",
             1,
-            args.len,
+            frame.arguments_count() as usize,
         ));
     }
 
-    if !args.ptr[0].is_number() {
+    if !arg.is_number() {
         return Err(global.throw_invalid_arguments(format_args!(
             "setSyntheticAllocationLimitForTesting expects a number"
         )));
     }
 
     let limit: usize =
-        usize::try_from(args.ptr[0].coerce_to_int64(global)?.max(1024 * 1024)).expect("int cast");
+        usize::try_from(arg.coerce_to_int64(global)?.max(1024 * 1024)).expect("int cast");
     let prev = crate::virtual_machine::SYNTHETIC_ALLOCATION_LIMIT
         .swap(limit, core::sync::atomic::Ordering::Relaxed);
     crate::virtual_machine::STRING_ALLOCATION_LIMIT

@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+import { bunEnv, bunExe } from "harness";
 
 // `Bun.connect` to a hostname that fails to resolve must surface the resolver
 // error (code `ENOTFOUND`, `syscall: "getaddrinfo"`, `hostname`), matching
@@ -60,6 +61,44 @@ test("Bun.connect rejects the promise with the resolver error when connectError 
     (e: Error) => e,
   );
   expect(pick(error)).toEqual(EXPECTED);
+});
+
+test("a resolver error delivered to both connectError() and the promise is not released twice", async () => {
+  // The resolver error owns heap-allocated strings (hostname, message). When a
+  // `connectError` handler is present AND the connect promise is still pending,
+  // the error is turned into a JS Error twice — once for the callback, once for
+  // the rejection. Each conversion used to release the strings, so the second
+  // JS Error's strings were freed while it still referenced them: a double-free
+  // that surfaced as a use-after-free in the next JSString sweep.
+  //
+  // A subprocess so the GC that sweeps both Errors is ours to force.
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+      const host = Buffer.alloc(64, "a").toString() + ".com";
+      for (let i = 0; i < 5; i++) {
+        await Bun.connect({
+          hostname: host,
+          port: 80,
+          // Returns undefined, so the promise is rejected too.
+          socket: { open() {}, data() {}, connectError() {} },
+        }).then(() => { throw new Error("expected a rejection"); }, () => {});
+      }
+      // Sweep the Errors from both paths, destroying every JSString they hold.
+      for (let i = 0; i < 10; i++) Bun.gc(true);
+      console.log("ok");
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, exitCode }).toEqual({ stdout: "ok\n", exitCode: 0 });
+  void stderr;
 });
 
 test("consecutive Bun.connect calls to the same unresolvable hostname all get the resolver error", async () => {

@@ -150,11 +150,6 @@ function arrayValueSerializer(type: ArrayType, is_numeric: boolean, is_json: boo
     return `{${value.map(arrayValueSerializer.bind(this, type, is_numeric, is_json)).join(delimiter)}}`;
   }
   if (ArrayBuffer.isView(value)) {
-    // Uint8Array / Uint8ClampedArray / DataView (and Buffer, a Uint8Array
-    // subclass) are a single binary element, so they follow the Buffer hex
-    // path. Every other typed array is a nested dimension of numbers; build
-    // the per-element strings into a plain Array because
-    // TypedArray.prototype.map would coerce them back to numbers.
     if (isByteView(value)) {
       const buf = Buffer.isBuffer(value) ? value : Buffer.from(value.buffer, value.byteOffset, value.byteLength);
       const hexValue = buf.toString("hex");
@@ -168,6 +163,7 @@ function arrayValueSerializer(type: ArrayType, is_numeric: boolean, is_json: boo
     }
     if (!value.length) return "{}";
     const delimiter = type === "BOX" ? ";" : ",";
+    // Array.from, not value.map: TypedArray.prototype.map would coerce the strings back to numbers.
     return `{${Array.from(value, arrayValueSerializer.bind(this, type, is_numeric, is_json)).join(delimiter)}}`;
   }
 
@@ -247,8 +243,7 @@ function serializeArray(values: any[], type: ArrayType) {
   const delimiter = type === "BOX" ? ";" : ",";
 
   const serialize = arrayValueSerializer.bind(this, type, isPostgresNumericType(type), isPostgresJsonType(type));
-  // TypedArray.prototype.map returns the same typed array species, which would
-  // coerce the serialized strings back to numbers; build a plain Array instead.
+  // Array.from for TypedArrays: their .map would coerce the strings back to numbers.
   const parts = isArray ? values.map(serialize) : Array.from(values as ArrayLike<unknown>, serialize);
   return `{${parts.join(delimiter)}}`;
 }

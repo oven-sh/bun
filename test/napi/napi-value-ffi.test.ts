@@ -73,7 +73,7 @@ beforeAll(() => {
 });
 
 describe.skipIf(isFFIUnavailable)("cc() bundled N-API headers", () => {
-  it.todoIf(isWindows || isASAN)("resolves <node/node_api.h> without any -I flag", () => {
+  it.todoIf(isWindows || isASAN)("resolves <node_api.h> without any -I flag", () => {
     const { symbols } = cc({
       source: join(__dirname, "napi-app/bundled_napi_headers.c"),
       symbols: { passthrough: { args: ["napi_env", "napi_value"], returns: "napi_value" } },

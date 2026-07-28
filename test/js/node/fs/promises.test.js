@@ -495,7 +495,10 @@ describe("AbortSignal rejections use node's AbortError shape", () => {
   // Node checks the signal between 512 KiB chunks (kWriteFileMaxChunkSize); a
   // one-shot write that commits the whole buffer and only then rejects tells the
   // caller the operation failed while leaving the full payload on disk.
-  test("writeFile aborted mid-write stops before the full buffer is committed", async () => {
+  test.each([
+    ["writeFile", fsPromises.writeFile],
+    ["appendFile", fsPromises.appendFile],
+  ])("%s aborted mid-write stops before the full buffer is committed", async (_, writeFn) => {
     await using dir = tempDir("fs-abort-writefile-midwrite", {});
     const SIZE = 128 * 1024 * 1024;
     const buf = Buffer.alloc(SIZE, 7);
@@ -504,13 +507,12 @@ describe("AbortSignal rejections use node's AbortError shape", () => {
       const p = join(String(dir), `big-${attempt}.bin`);
       fs.writeFileSync(p, "");
       const ac = new AbortController();
-      const promise = fsPromises.writeFile(p, buf, { signal: ac.signal });
+      const promise = writeFn(p, buf, { signal: ac.signal });
       // The write runs on a thread-pool worker; busy-poll from the JS thread
       // until bytes have landed so abort() fires while the write loop is live.
       for (let i = 0; fs.statSync(p).size === 0; i++) {
         if (i > 1_000_000) throw new Error("worker never started writing");
       }
-      const sizeAtAbort = fs.statSync(p).size;
       ac.abort();
       let rejected;
       try {
@@ -521,10 +523,11 @@ describe("AbortSignal rejections use node's AbortError shape", () => {
       const size = fs.statSync(p).size;
       fs.unlinkSync(p);
       result = { name: rejected?.name, code: rejected?.code, size };
-      // Only assert on an attempt that observably caught the worker mid-write;
-      // an attempt where the write raced to completion before abort() proves
-      // nothing either way.
-      if (sizeAtAbort < SIZE) break;
+      // A full-size result means abort() landed after the worker had finished
+      // (scheduler preemption between the poll and abort()); that attempt
+      // proves nothing either way, so retry. A one-shot write with no
+      // mid-loop abort check never produces size < SIZE here.
+      if (size < SIZE) break;
     }
     expect({ name: result.name, code: result.code }).toEqual({ name: "AbortError", code: "ABORT_ERR" });
     expect(result.size).toBeLessThan(SIZE);

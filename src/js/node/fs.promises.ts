@@ -456,17 +456,19 @@ function asyncWrap(fn: any, name: string) {
       throwEBADFIfNecessary("writeFile", fd);
       let encoding = "utf8";
       let flush = false;
+      let signal;
       if (options == null || typeof options === "function") {
       } else if (typeof options === "string") {
         encoding = options;
       } else {
         encoding = options?.encoding ?? encoding;
         flush = options?.flush ?? flush;
+        signal = options?.signal ?? undefined;
       }
 
       try {
         this[kRef]();
-        return await writeFile(fd, data, { encoding, flush, flag: this[kFlag] });
+        return await writeFile(fd, data, { encoding, flush, signal, flag: this[kFlag] });
       } finally {
         this[kUnref]();
       }

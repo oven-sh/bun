@@ -4705,10 +4705,7 @@ fn get_content_type(headers: Option<&mut FetchHeaders>, blob: &AnyBlob) -> (Mime
             }
         }
 
-        // No Content-Type header on the Response. Per Fetch "extract a body",
-        // only a string body and a Blob with a non-empty `type` contribute a
-        // Content-Type; BufferSource and empty-type Blob/File yield none.
-        // Bun.file()/S3 carry their extension-derived mime on the Blob itself.
+        // Fetch "extract a body": BufferSource and empty-type Blob yield no type.
         match blob {
             AnyBlob::WTFStringImpl(_) => bun_http_types::MimeType::TEXT,
             AnyBlob::InternalBlob(ib) if ib.was_string => bun_http_types::MimeType::TEXT,

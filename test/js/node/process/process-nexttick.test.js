@@ -1087,6 +1087,24 @@ describe.concurrent("process.nextTick interleaving with the microtask queue", ()
     });
   });
 
+  // Same rule when the microtasks being waited on were queued by the same microtask that queued
+  // the nextTick, after it. The microtask queue is empty going into m1 and m1's own
+  // queueMicrotask/then calls supply the pending work the handoff must wait for.
+  it.each(entryKinds)("waits for microtasks queued by the same microtask after the nextTick (%s)", async kind => {
+    const result = await runFresh(
+      kind,
+      `Promise.resolve().then(() => {
+         const L = [];
+         process.nextTick(() => L.push("nt1"));
+         queueMicrotask(() => { L.push("qm"); process.nextTick(() => L.push("nt-from-qm")); });
+         process.nextTick(() => L.push("nt2"));
+         Promise.resolve().then(() => L.push("pt"));
+         setImmediate(() => console.log(JSON.stringify(L)));
+       });`,
+    );
+    expect(result).toEqual({ order: ["qm", "pt", "nt1", "nt2", "nt-from-qm"], stderr: "", exitCode: 0 });
+  });
+
   // The script's own top-level code is a nextTick checkpoint boundary: nextTicks it queues run
   // before the promise jobs it queues. Matches a Node CommonJS entry point.
   it.each(entryKinds)("queued from the script's top-level code runs before its promise jobs (%s)", async kind => {

@@ -2160,9 +2160,7 @@ where
         let signal = upgrader.signal.take();
         upgrader.resp = None;
 
-        // Snapshot the lazily-read url/headers onto the Request before
-        // detaching its context (same as to_async_without_abort_handler), so
-        // req.url / req.headers remain readable after server.upgrade() returns.
+        // Snapshot lazy url/headers before detaching (mirrors to_async_without_abort_handler).
         if request.ensure_url().is_err() {
             request.url.set(BunString::empty());
         }

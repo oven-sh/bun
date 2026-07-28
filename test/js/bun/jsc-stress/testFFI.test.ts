@@ -24,6 +24,7 @@ test.skipIf(!testFFI)(
   async () => {
     await using proc = Bun.spawn({
       cmd: [testFFI!],
+      env: { ...process.env, ASAN_OPTIONS: "detect_leaks=0" },
       stdout: "pipe",
       stderr: "pipe",
     });

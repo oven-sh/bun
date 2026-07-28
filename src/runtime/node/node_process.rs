@@ -60,7 +60,9 @@ pub extern "C" fn exit(global_object: &JSGlobalObject, code: u8) {
     } else if vm.watch_exit_keepalive {
         // `bun run --watch`: a real exit would kill the in-process watcher.
         // Unwind the run via a JSC termination instead, like a thrown error
-        // does. (`exit` handlers already ran in `Process_functionExit`.)
+        // does. JS `process.exit()` already ran `exit` handlers in
+        // `Process_functionExit`; the internal error-exit callers skip them
+        // here, matching an uncaught error under `--watch`.
         vm.watch_exit_requested = true;
         // The main thread builds the termination-exception singleton lazily
         // (workers build it at startup), so create it before firing the trap.

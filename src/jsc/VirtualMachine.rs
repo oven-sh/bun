@@ -1431,9 +1431,10 @@ impl VirtualMachine {
             // worker falls through and exits 1 below (e.g. a beforeExit throw).
             if self.exit_on_uncaught_exception && self.is_main_thread() {
                 self.run_error_handler(err, None);
-                // `process_exit` emits `exit`, re-entering here if a listener
-                // throws. No handler is running, so drop the recursion guard or
-                // that re-entry exits 7 ("handler threw") instead of 1.
+                // Outside `--watch`, `process_exit` emits `exit`, re-entering
+                // here if a listener throws. No handler is running, so drop
+                // the recursion guard or that re-entry exits 7 ("handler
+                // threw") instead of 1.
                 self.is_handling_uncaught_exception = false;
                 // SAFETY: see above.
                 unsafe { (hooks.process_exit)(global_object.as_ptr(), 1) };

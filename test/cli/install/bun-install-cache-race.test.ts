@@ -8,7 +8,7 @@
 // An LD_PRELOAD shim makes RENAME_EXCHANGE fail with EOPNOTSUPP the way NFS
 // does; everything else runs against the real (local) filesystem.
 import { afterAll, beforeAll, expect, setDefaultTimeout, test } from "bun:test";
-import { bunEnv, bunExe, isLinux, tempDir } from "harness";
+import { bunEnv, bunExe, isLinux, isMusl, tempDir } from "harness";
 import { createHash } from "node:crypto";
 import { join } from "node:path";
 import { gzipSync } from "node:zlib";
@@ -16,6 +16,9 @@ import { gzipSync } from "node:zlib";
 setDefaultTimeout(1000 * 60 * 5);
 
 const cc = Bun.which("cc") || Bun.which("gcc") || Bun.which("clang");
+
+// bun-musl is statically linked, so LD_PRELOAD cannot load the shim.
+const canShim = isLinux && !isMusl && !!cc;
 
 // BUN_TEST_FAIL_RENAME_EXCHANGE=1: renameat2 with RENAME_EXCHANGE fails with
 // EOPNOTSUPP (NFS behavior). Covers both the glibc wrapper and the raw
@@ -157,7 +160,7 @@ let shimPath: string;
 let shimDir: ReturnType<typeof tempDir> | undefined;
 
 beforeAll(async () => {
-  if (!isLinux || !cc) return;
+  if (!canShim) return;
   shimDir = tempDir("cache-race-shim", { "shim.c": SHIM_C });
   shimPath = join(String(shimDir), "shim.so");
   await using ccProc = Bun.spawn({
@@ -176,7 +179,7 @@ afterAll(() => {
   shimDir?.[Symbol.dispose]();
 });
 
-test.skipIf(!isLinux || !cc)(
+test.skipIf(!canShim)(
   "concurrent installs sharing a cache survive a filesystem without RENAME_EXCHANGE",
   async () => {
     const { tgz, shasum, integrity } = buildTarball();

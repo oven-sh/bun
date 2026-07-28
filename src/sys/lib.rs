@@ -9314,12 +9314,16 @@ pub fn renameat_concurrently_without_fallback(
 
 /// Builds `{to}.{16 random hex chars}.tmp\0` into `buf` for the rename-aside
 /// fallback in [`renameat_concurrently_without_fallback`]. Returns `None`
-/// when the result would not fit.
+/// when the result would not fit in the buffer or would push the filename
+/// component past NAME_MAX.
 fn rename_aside_name<'a>(to: &ZStr, buf: &'a mut bun_paths::PathBuffer) -> Option<&'a ZStr> {
     const HEX: &[u8; 16] = b"0123456789abcdef";
+    const SUFFIX_LEN: usize = 21; // "." + 16 hex + ".tmp"
+    const NAME_MAX: usize = 255;
     let to_bytes = to.as_bytes();
-    // "." + 16 hex + ".tmp" + NUL
-    if to_bytes.len() + 22 > buf.0.len() {
+    if to_bytes.len() + SUFFIX_LEN + 1 > buf.0.len()
+        || bun_paths::resolve_path::basename(to_bytes).len() + SUFFIX_LEN > NAME_MAX
+    {
         return None;
     }
     buf.0[..to_bytes.len()].copy_from_slice(to_bytes);

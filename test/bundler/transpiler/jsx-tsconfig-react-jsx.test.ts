@@ -132,4 +132,44 @@ describe("tsconfig compilerOptions.jsx", () => {
       expect(exitCode).toBe(0);
     });
   });
+
+  // An explicit jsx.development / jsx.runtime value passed to Bun.build must win
+  // over a conflicting tsconfig "jsx" setting, same as it did before the per-file
+  // merge became load-bearing.
+  describe("Bun.build: explicit jsx.development overrides tsconfig", () => {
+    for (const [opt, tsjsx, want] of [
+      [{ development: false }, "react-jsxdev", "shim/jsx-runtime"],
+      [{ development: true }, "react-jsx", "shim/jsx-dev-runtime"],
+      [{ runtime: "react-jsx" }, "react-jsxdev", "shim/jsx-runtime"],
+      [{ runtime: "react-jsxdev" }, "react-jsx", "shim/jsx-dev-runtime"],
+      [{ runtime: "automatic" }, "react-jsx", "shim/jsx-runtime"],
+      [{ runtime: "automatic" }, "react-jsxdev", "shim/jsx-dev-runtime"],
+    ] as const) {
+      test(`jsx: ${JSON.stringify(opt)} vs tsconfig "${tsjsx}" -> ${want}`, async () => {
+        using dir = tempDir("jsx-api-override", {
+          ...shimFiles,
+          "tsconfig.json": JSON.stringify({ compilerOptions: { jsx: tsjsx, jsxImportSource: "shim" } }),
+        });
+        await using proc = Bun.spawn({
+          cmd: [
+            bunExe(),
+            "-e",
+            `const r = await Bun.build({ entrypoints: ["m.jsx"], external: ["shim*"], jsx: ${JSON.stringify(opt)} });
+             if (!r.success) { console.error(r.logs.join("\\n")); process.exit(1); }
+             process.stdout.write(await r.outputs[0].text());`,
+          ],
+          env: { ...bunEnv, NODE_ENV: undefined, BUN_ENV: undefined },
+          cwd: String(dir),
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect(stderr).toBe("");
+        const unwanted = want === "shim/jsx-runtime" ? "shim/jsx-dev-runtime" : "shim/jsx-runtime";
+        expect(stdout).toContain(`"${want}"`);
+        expect(stdout).not.toContain(`"${unwanted}"`);
+        expect(exitCode).toBe(0);
+      });
+    }
+  });
 });

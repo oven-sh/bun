@@ -334,7 +334,7 @@ describe("execArgv option", async () => {
   it("inherits the parent's execArgv when falsy or unspecified", async () => {
     await run("null", '["--smol"]\n');
     await run("0", '["--smol"]\n');
-  }, 20_000);
+  });
   it("provides empty execArgv when passed an empty array", async () => {
     // empty array should result in empty execArgv, not inherited from parent thread
     await run("[]", "[]\n");
@@ -569,7 +569,7 @@ describe("environmentData", () => {
     expect(proc.exitCode).toBe(0);
     const out = await proc.stdout.text();
     expect(out).toBe("foo\n".repeat(5));
-  }, 30_000);
+  });
 
   test("can be used if parent thread had not imported worker_threads", async () => {
     const proc = Bun.spawn({
@@ -981,7 +981,7 @@ describe("getHeapSnapshot", () => {
       code: "ERR_WORKER_NOT_RUNNING",
       message: "Worker instance not running",
     });
-  }, 20_000);
+  });
 
   test("resolves to a Stream.Readable with JSON text in V8 format", async () => {
     const worker = new Worker(
@@ -1016,7 +1016,7 @@ describe("getHeapSnapshot", () => {
       "trace_tree",
     ]);
     worker.postMessage(0);
-  }, 20_000);
+  });
 });
 
 test("failed Worker construction restores transferred FileHandles", async () => {
@@ -1743,7 +1743,7 @@ describe("env: SHARE_ENV shares the spawning thread's env, not a process-wide on
       main_sees_FROM_B: null,
       main_sees_FROM_C: "c",
     });
-  }, 20_000);
+  });
 
   // Founding a store must not adopt another tree's value for a key the founding
   // thread already has.
@@ -1754,7 +1754,7 @@ describe("env: SHARE_ENV shares the spawning thread's env, not a process-wide on
       B_sees_SHARED_KEY: "from-A",
       main_SHARED_KEY: "from-main",
     });
-  }, 20_000);
+  });
 
   // An accessor installed via defineProperty lands on the base object, but reads hit
   // the store first — so the store entry must go, or the getter is shadowed. (Node
@@ -1846,7 +1846,7 @@ describe("env: SHARE_ENV shares the spawning thread's env, not a process-wide on
       main_sees_FROM_S1: "s1",
       main_sees_TO_DELETE: null,
     });
-  }, 20_000);
+  });
 
   // Founding a tree replaces process.env; Bun.env is reified from the same object
   // at startup and must not be left observing the orphaned pre-swap env.

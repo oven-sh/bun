@@ -413,7 +413,9 @@ fn resolve_subpath(
     }
     let decoded = &scratch[start..decoded_len];
     for &b in decoded {
-        if b == 0 || b == b'\\' {
+        // NUL truncates C strings; `\` and `:` are Windows separators / drive
+        // prefixes / ADS markers that `openat` on Windows treats as absolute.
+        if b == 0 || b == b'\\' || b == b':' {
             return None;
         }
     }
@@ -421,11 +423,13 @@ fn resolve_subpath(
         return Some(0);
     }
 
-    let out_len = out.len();
+    // Leave room for the NUL `z()` appends and for `"/index.html"` when the
+    // resolved path turns out to be a directory.
+    let max_norm = out.len().saturating_sub(b"/index.html\0".len());
     let norm = resolve_path::normalize_string_buf::<true, resolve_path::platform::Posix, false>(
         decoded, out,
     );
-    if norm == b".." || strings::starts_with(norm, b"../") || norm.len() >= out_len {
+    if norm == b".." || strings::starts_with(norm, b"../") || norm.len() > max_norm {
         return None;
     }
     Some(norm.len())
@@ -485,6 +489,8 @@ mod tests {
         assert_eq!(resolve(b"/static/..%2Fetc", b"/static/"), None);
         assert_eq!(resolve(b"/static/%2e%2e/etc", b"/static/"), None);
         assert_eq!(resolve(b"/static/a/../../etc", b"/static/"), None);
+        assert_eq!(resolve(b"/static/c:/windows", b"/static/"), None);
+        assert_eq!(resolve(b"/static/file::$DATA", b"/static/"), None);
         assert_eq!(
             resolve(b"/static/a/../b.txt", b"/static/").as_deref(),
             Some(&b"b.txt"[..])

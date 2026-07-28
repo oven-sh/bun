@@ -1947,7 +1947,7 @@ mod posix_impl {
         if !UNAVAILABLE.load(Ordering::Relaxed) {
             match super::linux_syscall::openat2_in_root(dir, path, flags, mode) {
                 Ok(fd) => return Ok(fd),
-                Err(e) if matches!(e, libc::ENOSYS | libc::EPERM | libc::EINVAL | libc::E2BIG) => {
+                Err(libc::ENOSYS | libc::EPERM | libc::EINVAL | libc::E2BIG) => {
                     UNAVAILABLE.store(true, Ordering::Relaxed);
                 }
                 Err(e) => {

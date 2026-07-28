@@ -282,6 +282,9 @@ describe("Bun.serve() directory routes", () => {
       "/static/ok.txt/../../secret.txt",
       "/static/a%00.txt",
       "/static/a%5Cb.txt",
+      "/static/c:/windows/win.ini",
+      "/static/c%3A/windows/win.ini",
+      "/static/ok.txt::$DATA",
     ]) {
       const { status, body } = await raw(p);
       expect(body).not.toContain("SECRET");
@@ -560,10 +563,8 @@ describe("Bun.serve() directory routes", () => {
     expect([200, 416]).toContain(hugeRange.status);
   });
 
-  it("is reflected in server.routes", async () => {
-    // Ensure DirectoryRoute is wired through AnyRoute introspection without
-    // crashing (guards the match arms added for the new variant).
-    using dir = tempDir("serve-dir-introspect", { "public/x.txt": "x" });
+  it("survives server.reload()", async () => {
+    using dir = tempDir("serve-dir-reload", { "public/x.txt": "x" });
     server = serve({
       port: 0,
       routes: { "/static/*": { dir: join(String(dir), "public") } },

@@ -256,6 +256,13 @@ impl FileRoute {
                 }
                 // tag == .H3 → no alt-svc header
             }
+            AnyResponse::H2(s) => {
+                let s = bun_opaque::opaque_deref_mut(s);
+                for (name, value) in names.iter().zip(values) {
+                    s.write_header(sp_slice(*name, buf), sp_slice(*value, buf));
+                }
+                // tag == .H2 → no alt-svc header
+            }
         }
 
         if !self.has_last_modified_header {
@@ -281,6 +288,12 @@ impl FileRoute {
                 let mut b = bun_core::fmt::ItoaBuf::new();
                 let s = bun_core::fmt::itoa(&mut b, status);
                 // S008: `h3::Response` is an `opaque_ffi!` ZST — safe deref.
+                bun_opaque::opaque_deref_mut(r).write_status(s);
+            }
+            AnyResponse::H2(r) => {
+                let mut b = bun_core::fmt::ItoaBuf::new();
+                let s = bun_core::fmt::itoa(&mut b, status);
+                // S008: `h2::Response` is an `opaque_ffi!` ZST — safe deref.
                 bun_opaque::opaque_deref_mut(r).write_status(s);
             }
         }

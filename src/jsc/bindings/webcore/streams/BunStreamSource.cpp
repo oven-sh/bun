@@ -363,6 +363,7 @@ static void startJSSinkController(JSC::VM& vm, JSGlobalObject* globalObject, JSO
     BUN_START_JSSINK_CONTROLLER(JSReadableHTTPResponseSinkController)
     BUN_START_JSSINK_CONTROLLER(JSReadableHTTPSResponseSinkController)
     BUN_START_JSSINK_CONTROLLER(JSReadableH3ResponseSinkController)
+    BUN_START_JSSINK_CONTROLLER(JSReadableH2ResponseSinkController)
     BUN_START_JSSINK_CONTROLLER(JSReadableNetworkSinkController)
 #undef BUN_START_JSSINK_CONTROLLER
     throwTypeError(globalObject, scope, "Unknown direct controller. This is a bug in Bun."_s);

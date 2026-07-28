@@ -31,7 +31,7 @@ pub use bun_uws_sys::{
 /// hook, so no `catch_unwind` wrapper is emitted.
 pub use bun_jsc_macros::uws_callback;
 pub use bun_uws_sys::response::State;
-pub use bun_uws_sys::{h3 as H3, quic, udp, vtable};
+pub use bun_uws_sys::{h2 as H2, h3 as H3, quic, udp, vtable};
 pub type Socket = us_socket_t;
 
 /// Bare BoringSSL `SSL_CTX`. `SSL_CTX_up_ref`/`SSL_CTX_free` is the refcount;
@@ -47,6 +47,13 @@ pub type SslCtx = bun_boringssl::c::SSL_CTX;
 /// (`bun_runtime::server`, `bake::dev_server`) all name the *same* opaque.
 pub use bun_uws_sys::WebSocketUpgradeContext;
 
+/// Multiplexing selector for the `const MUX: u8` generic on request/response
+/// contexts. `MUX_H1` covers both plain TCP and TLS HTTP/1.1 (SSL is a
+/// separate const); `MUX_H2`/`MUX_H3` are always TLS.
+pub const MUX_H1: u8 = 0;
+pub const MUX_H2: u8 = 1;
+pub const MUX_H3: u8 = 2;
+
 /// Recovers the concrete uWS response type from `*mut c_void` across the
 /// Rust→C++ boundary. Mirrors `UWSResponseKind` in headers-handwritten.h.
 #[repr(i32)]
@@ -55,16 +62,21 @@ pub enum ResponseKind {
     Tcp = 0,
     Ssl = 1,
     H3 = 2,
+    H2 = 3,
 }
 
 impl ResponseKind {
-    pub const fn from(ssl: bool, http3: bool) -> ResponseKind {
-        if http3 {
-            ResponseKind::H3
-        } else if ssl {
-            ResponseKind::Ssl
-        } else {
-            ResponseKind::Tcp
+    pub const fn from(ssl: bool, mux: u8) -> ResponseKind {
+        match mux {
+            MUX_H3 => ResponseKind::H3,
+            MUX_H2 => ResponseKind::H2,
+            _ => {
+                if ssl {
+                    ResponseKind::Ssl
+                } else {
+                    ResponseKind::Tcp
+                }
+            }
         }
     }
 }

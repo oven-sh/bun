@@ -64,35 +64,49 @@ pub(super) use super::static_route::StaticRoute;
 // ─── RequestCtx trait ────────────────────────────────────────────────────────
 // NOTE: Stable Rust has no inherent
 // associated types, so the per-monomorphization handle types are surfaced via
-// this local trait. Only `IS_H3` is consumed for control flow; `Req`/`Resp`
-// are erased to `c_void` to match `super::request_context::{Req, Resp}`.
+// this local trait. `MUX` selects the transport; `IS_MUX` (= H2∨H3) gates every
+// stream-multiplexed semantic branch, `IS_H2`/`IS_H3` gate only concrete-type
+// picks. `Req`/`Resp` are erased to `c_void` to match
+// `super::request_context::{Req, Resp}`.
 pub(super) trait RequestCtx: super::any_request_context::CtxKind {
     type Req: ReqLike;
     type Resp: RespLike;
-    const IS_H3: bool;
+    const MUX: u8;
+    const IS_H2: bool = Self::MUX == uws::MUX_H2;
+    const IS_H3: bool = Self::MUX == uws::MUX_H3;
+    const IS_MUX: bool = Self::MUX != uws::MUX_H1;
 }
 impl<ThisServer, const SSL: bool, const DBG: bool> RequestCtx
-    for NewRequestContext<ThisServer, SSL, DBG, false>
+    for NewRequestContext<ThisServer, SSL, DBG, { uws::MUX_H1 }>
 where
-    NewRequestContext<ThisServer, SSL, DBG, false>: super::any_request_context::CtxKind,
+    NewRequestContext<ThisServer, SSL, DBG, { uws::MUX_H1 }>: super::any_request_context::CtxKind,
 {
     type Req = uws_sys::Request;
     type Resp = uws_sys::NewAppResponse<SSL>;
-    const IS_H3: bool = false;
+    const MUX: u8 = uws::MUX_H1;
 }
 impl<ThisServer, const SSL: bool, const DBG: bool> RequestCtx
-    for NewRequestContext<ThisServer, SSL, DBG, true>
+    for NewRequestContext<ThisServer, SSL, DBG, { uws::MUX_H2 }>
 where
-    NewRequestContext<ThisServer, SSL, DBG, true>: super::any_request_context::CtxKind,
+    NewRequestContext<ThisServer, SSL, DBG, { uws::MUX_H2 }>: super::any_request_context::CtxKind,
+{
+    type Req = uws_sys::h2::Request;
+    type Resp = uws_sys::h2::Response;
+    const MUX: u8 = uws::MUX_H2;
+}
+impl<ThisServer, const SSL: bool, const DBG: bool> RequestCtx
+    for NewRequestContext<ThisServer, SSL, DBG, { uws::MUX_H3 }>
+where
+    NewRequestContext<ThisServer, SSL, DBG, { uws::MUX_H3 }>: super::any_request_context::CtxKind,
 {
     type Req = uws_sys::h3::Request;
     type Resp = uws_sys::h3::Response;
-    const IS_H3: bool = true;
+    const MUX: u8 = uws::MUX_H3;
 }
 
 /// Field/method surface needed on the generic `Ctx` so the bodies of
 /// `handle_request_for` / `prepare_js_request_context_for` / `on_saved_request`
-/// can be written without naming the concrete `RequestContext<_, SSL, DBG, H3>`
+/// can be written without naming the concrete `RequestContext<_, SSL, DBG, MUX>`
 /// type. Implemented via blanket impl below for every `NewRequestContext<..>`.
 #[allow(clippy::too_many_arguments)]
 pub(super) trait RequestCtxOps: RequestCtx {
@@ -139,8 +153,8 @@ pub(super) trait RequestCtxOps: RequestCtx {
     fn on_request_body_stream_drained_callback(this: Option<*mut c_void>);
 }
 
-impl<ThisServer, const SSL: bool, const DBG: bool, const H3: bool> RequestCtxOps
-    for NewRequestContext<ThisServer, SSL, DBG, H3>
+impl<ThisServer, const SSL: bool, const DBG: bool, const MUX: u8> RequestCtxOps
+    for NewRequestContext<ThisServer, SSL, DBG, MUX>
 where
     Self: RequestCtx,
     ThisServer: super::ServerLike + 'static,
@@ -245,18 +259,18 @@ where
     #[inline]
     fn arm_on_data(&mut self, resp: &mut Self::Resp) {
         // NOTE: route via the type-erased `AnyResponse::on_data` so the
-        // body stays generic over `Ctx::Resp` (H1 SSL/TCP/H3).
-        fn handler<S, const SSL_: bool, const DBG_: bool, const H3_: bool>(
-            ctx: *mut NewRequestContext<S, SSL_, DBG_, H3_>,
+        // body stays generic over `Ctx::Resp` (H1 SSL/TCP/H2/H3).
+        fn handler<S, const SSL_: bool, const DBG_: bool, const MUX_: u8>(
+            ctx: *mut NewRequestContext<S, SSL_, DBG_, MUX_>,
             chunk: &[u8],
             last: bool,
         ) where
             S: super::ServerLike + 'static,
         {
-            NewRequestContext::<S, SSL_, DBG_, H3_>::on_buffered_body_chunk(ctx, chunk, last);
+            NewRequestContext::<S, SSL_, DBG_, MUX_>::on_buffered_body_chunk(ctx, chunk, last);
         }
         RespLike::to_any_response(resp).on_data(
-            handler::<ThisServer, SSL, DBG, H3>,
+            handler::<ThisServer, SSL, DBG, MUX>,
             std::ptr::from_mut::<Self>(self),
         );
     }
@@ -310,6 +324,24 @@ impl ReqLike for uws_sys::Request {
         uws_sys::Request::set_yield(self, y)
     }
 }
+impl ReqLike for uws_sys::h2::Request {
+    #[inline]
+    fn header(&mut self, name: &[u8]) -> Option<&[u8]> {
+        uws_sys::h2::Request::header(self, name)
+    }
+    #[inline]
+    fn method(&mut self) -> &[u8] {
+        uws_sys::h2::Request::method(self)
+    }
+    #[inline]
+    fn url(&mut self) -> &[u8] {
+        uws_sys::h2::Request::url(self)
+    }
+    #[inline]
+    fn set_yield(&mut self, y: bool) {
+        uws_sys::h2::Request::set_yield(self, y)
+    }
+}
 impl ReqLike for uws_sys::h3::Request {
     #[inline]
     fn header(&mut self, name: &[u8]) -> Option<&[u8]> {
@@ -330,7 +362,7 @@ impl ReqLike for uws_sys::h3::Request {
 }
 
 pub(super) trait RespLike {
-    const IS_H3: bool;
+    const IS_MUX: bool;
     fn write_status(&mut self, status: &[u8]);
     fn end_without_body(&mut self, close_connection: bool);
     fn timeout(&mut self, seconds: u8);
@@ -338,7 +370,7 @@ pub(super) trait RespLike {
     fn to_any_response(&mut self) -> uws::AnyResponse;
 }
 impl<const SSL: bool> RespLike for uws_sys::NewAppResponse<SSL> {
-    const IS_H3: bool = false;
+    const IS_MUX: bool = false;
     #[inline]
     fn write_status(&mut self, s: &[u8]) {
         uws_sys::NewAppResponse::<SSL>::write_status(self, s)
@@ -377,8 +409,35 @@ impl<const SSL: bool> RespLike for uws_sys::NewAppResponse<SSL> {
         }
     }
 }
+impl RespLike for uws_sys::h2::Response {
+    const IS_MUX: bool = true;
+    #[inline]
+    fn write_status(&mut self, s: &[u8]) {
+        uws_sys::h2::Response::write_status(self, s)
+    }
+    #[inline]
+    fn end_without_body(&mut self, c: bool) {
+        uws_sys::h2::Response::end_without_body(self, c)
+    }
+    #[inline]
+    fn timeout(&mut self, s: u8) {
+        uws_sys::h2::Response::timeout(self, s)
+    }
+    #[inline]
+    fn on_timeout_warn(&mut self, ud: *mut c_void) {
+        uws_sys::h2::Response::on_timeout(
+            self,
+            |_: &mut c_void, _: &mut uws_sys::h2::Response| on_timeout_for_idle_warn(),
+            ud,
+        );
+    }
+    #[inline]
+    fn to_any_response(&mut self) -> uws::AnyResponse {
+        uws::AnyResponse::from(std::ptr::from_mut::<Self>(self))
+    }
+}
 impl RespLike for uws_sys::h3::Response {
-    const IS_H3: bool = true;
+    const IS_MUX: bool = true;
     #[inline]
     fn write_status(&mut self, s: &[u8]) {
         uws_sys::h3::Response::write_status(self, s)
@@ -410,14 +469,14 @@ impl RespLike for uws_sys::h3::Response {
 /// `pending_requests`, so `self` can outlive the wrapper between the
 /// finalizer and the next-tick `schedule_deinit`). 503 instead of
 /// dispatching into a dead handler shadow. One helper so every dispatch
-/// trampoline gets the same guard. H1 closes the connection; H3 ends only
-/// this stream (`!R::IS_H3`) so sibling streams on the same QUIC connection
+/// trampoline gets the same guard. H1 closes the connection; H2/H3 end only
+/// this stream (`!R::IS_MUX`) so sibling streams on the same connection
 /// survive — same per-protocol close treatment as the other reject fast
 /// paths.
 #[inline]
 pub(super) fn respond_stopped_503<R: RespLike + ?Sized>(resp: &mut R) {
     resp.write_status(b"503 Service Unavailable");
-    resp.end_without_body(!R::IS_H3);
+    resp.end_without_body(!R::IS_MUX);
 }
 
 /// RFC 6455 §4.1: |Sec-WebSocket-Key| is the base64 encoding of a 16-byte
@@ -433,9 +492,11 @@ fn is_valid_sec_websocket_key(key: &[u8]) -> bool {
 }
 
 pub(super) type ServerRequestContext<const SSL: bool, const DEBUG: bool> =
-    NewRequestContext<NewServer<SSL, DEBUG>, SSL, DEBUG, false>;
+    NewRequestContext<NewServer<SSL, DEBUG>, SSL, DEBUG, { uws::MUX_H1 }>;
+pub(super) type ServerH2RequestContext<const SSL: bool, const DEBUG: bool> =
+    NewRequestContext<NewServer<SSL, DEBUG>, SSL, DEBUG, { uws::MUX_H2 }>;
 pub(super) type ServerH3RequestContext<const SSL: bool, const DEBUG: bool> =
-    NewRequestContext<NewServer<SSL, DEBUG>, SSL, DEBUG, true>;
+    NewRequestContext<NewServer<SSL, DEBUG>, SSL, DEBUG, { uws::MUX_H3 }>;
 
 // ─── BunInfo (moved from bun_core::Global) ───────────────────────────────────
 // `generate()` builds the JSON AST by hand: an `E.Object` with
@@ -1300,8 +1361,12 @@ impl<const SSL: bool, const DEBUG: bool> uws_sys::web_socket::WebSocketUpgradeSe
 where
     // NOTE: see the bounded `impl NewServer` below for why these are
     // spelled out — `on_web_socket_upgrade` lives in that impl.
-    NewRequestContext<Self, SSL, DEBUG, false>: super::request_context::RequestContextHostFns,
-    NewRequestContext<Self, SSL, DEBUG, true>: super::request_context::RequestContextHostFns,
+    NewRequestContext<Self, SSL, DEBUG, { uws::MUX_H1 }>:
+        super::request_context::RequestContextHostFns,
+    NewRequestContext<Self, SSL, DEBUG, { uws::MUX_H2 }>:
+        super::request_context::RequestContextHostFns,
+    NewRequestContext<Self, SSL, DEBUG, { uws::MUX_H3 }>:
+        super::request_context::RequestContextHostFns,
 {
     unsafe fn on_websocket_upgrade(
         this: *mut Self,
@@ -1384,12 +1449,16 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
 impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG>
 where
     // NOTE (const-generic dispatch): `RequestContextHostFns` (the host-fn
-    // export table) is blanket-impl'd per (SSL,DBG,H3) tuple in
+    // export table) is blanket-impl'd per (SSL,DBG,MUX) tuple in
     // `RequestContext.rs` for `ThisServer: ServerLike`; restating it here lets
     // method bodies name `<NewRequestContext<..> as RequestContextHostFns>::ON_*`
     // without each method repeating the bound.
-    NewRequestContext<Self, SSL, DEBUG, false>: super::request_context::RequestContextHostFns,
-    NewRequestContext<Self, SSL, DEBUG, true>: super::request_context::RequestContextHostFns,
+    NewRequestContext<Self, SSL, DEBUG, { uws::MUX_H1 }>:
+        super::request_context::RequestContextHostFns,
+    NewRequestContext<Self, SSL, DEBUG, { uws::MUX_H2 }>:
+        super::request_context::RequestContextHostFns,
+    NewRequestContext<Self, SSL, DEBUG, { uws::MUX_H3 }>:
+        super::request_context::RequestContextHostFns,
 {
     // NOTE: there is no `getPluginsAsync` method or `AnyServer` dispatcher;
     // the live HTMLBundle path goes through `get_or_load_plugins`.
@@ -1872,7 +1941,7 @@ where
                             // we must write the status first so that 200 OK isn't written
                             raw_response.write_status(b"101 Switching Protocols");
                             fetch_headers_to_use.to_uws_response(
-                                ResponseKind::from(SSL, false),
+                                ResponseKind::from(SSL, uws::MUX_H1),
                                 raw_response.socket().cast::<c_void>(),
                             );
                         }
@@ -2141,14 +2210,14 @@ where
             if let Some(h) = fetch_headers_to_use {
                 // S008: `FetchHeaders` is an `opaque_ffi!` ZST — safe deref.
                 bun_opaque::opaque_deref_mut(h).to_uws_response(
-                    ResponseKind::from(SSL, false),
+                    ResponseKind::from(SSL, uws::MUX_H1),
                     resp.socket().cast::<c_void>(),
                 );
             }
             if let Some(c) = cookies_to_write.as_mut() {
                 c.write(
                     global,
-                    ResponseKind::from(SSL, false),
+                    ResponseKind::from(SSL, uws::MUX_H1),
                     resp.socket().cast::<c_void>(),
                 )?;
             }
@@ -2209,6 +2278,11 @@ where
         // SAFETY: `on_reload` is only reachable while the server is running
         // (`self.app` set in `listen()`).
         self.app_mut().clear_routes();
+        if Self::HAS_H2 {
+            if let Some(h2a) = self.h2_app {
+                bun_opaque::opaque_deref_mut(h2a).clear_routes();
+            }
+        }
         if Self::HAS_H3 {
             if let Some(h3a) = self.h3_app {
                 bun_opaque::opaque_deref_mut(h3a).clear_routes();
@@ -2317,6 +2391,11 @@ where
         }
         self.config = self.config.clone_for_reloading_static_routes()?;
         self.app_mut().clear_routes();
+        if Self::HAS_H2 {
+            if let Some(h2a) = self.h2_app {
+                bun_opaque::opaque_deref_mut(h2a).clear_routes();
+            }
+        }
         if Self::HAS_H3 {
             if let Some(h3a) = self.h3_app {
                 bun_opaque::opaque_deref_mut(h3a).clear_routes();
@@ -2768,6 +2847,37 @@ where
     // `notify_inspector_server_stopped` lives in the unbounded impl block
     // above so the unbounded `deinit()` (mod.rs) can call it.
 
+    pub fn on_h2_request(&mut self, req: &mut uws::H2::Request, resp: &mut uws::H2::Response) {
+        if !Self::HAS_H2 {
+            unreachable!();
+        }
+        if self.config.on_request.is_empty() {
+            return Self::on_h2_404(self, req, resp);
+        }
+        self.on_request_for::<ServerH2RequestContext<SSL, DEBUG>>(req, resp);
+    }
+
+    pub fn on_h2_user_route_request(
+        user_route: &mut UserRoute<SSL, DEBUG>,
+        req: &mut uws::H2::Request,
+        resp: &mut uws::H2::Response,
+    ) {
+        if !Self::HAS_H2 {
+            unreachable!();
+        }
+        Self::on_user_route_request_for::<ServerH2RequestContext<SSL, DEBUG>>(
+            user_route, req, resp,
+        );
+    }
+
+    pub fn on_h2_404(_this: &mut Self, _req: &mut uws::H2::Request, resp: &mut uws::H2::Response) {
+        if !Self::HAS_H2 {
+            unreachable!();
+        }
+        resp.write_status(b"404 Not Found");
+        resp.end(b"", false);
+    }
+
     pub fn on_h3_request(&mut self, req: &mut uws::H3::Request, resp: &mut uws::H3::Response) {
         if !Self::HAS_H3 {
             unreachable!();
@@ -2894,6 +3004,8 @@ where
         let server_request_list = Self::js_route_list_get_cached(server_js).unwrap();
         let call_route = if Ctx::IS_H3 {
             Bun__ServerRouteList__callRouteH3
+        } else if Ctx::IS_H2 {
+            Bun__ServerRouteList__callRouteH2
         } else {
             Bun__ServerRouteList__callRoute
         };
@@ -3004,9 +3116,9 @@ where
         //
         // We first validate the self-reported request body length so that
         // we avoid needing to worry as much about what memory to free.
-        // RFC 9114 §4.2: an HTTP/3 message containing a transfer-encoding
-        // header field is malformed.
-        if Ctx::IS_H3 {
+        // RFC 9113 §8.2.2 / RFC 9114 §4.2: an HTTP/2 or HTTP/3 message
+        // containing a transfer-encoding header field is malformed.
+        if Ctx::IS_MUX {
             if ReqLike::header(req, b"transfer-encoding").is_some() {
                 RespLike::write_status(resp, b"400 Bad Request");
                 RespLike::end_without_body(resp, false);
@@ -3027,12 +3139,13 @@ where
                     0
                 };
 
-                // Abort the request very early. For H3 a per-request error
-                // is a stream error (RFC 9114 §4.1.2); close_connection
-                // would CONNECTION_CLOSE every sibling stream on the conn.
+                // Abort the request very early. For H2/H3 a per-request error
+                // is a stream error (RFC 9113 §8 / RFC 9114 §4.1.2);
+                // close_connection would tear down every sibling stream on
+                // the connection.
                 if len > self.config.max_request_body_size {
                     RespLike::write_status(resp, b"413 Request Entity Too Large");
-                    RespLike::end_without_body(resp, !Ctx::IS_H3);
+                    RespLike::end_without_body(resp, !Ctx::IS_MUX);
                     return None;
                 }
 
@@ -3080,6 +3193,22 @@ where
                     "H3 request dispatched but h3_request_pool was never allocated (listen() H3 path not taken)"
                 );
                 let slot = (*self.h3_request_pool).claim();
+                Ctx::create_in(
+                    slot.addr().as_ptr().cast(),
+                    self_ptr,
+                    req,
+                    resp,
+                    should_deinit_context,
+                    method,
+                );
+                // SAFETY: `create_in` fully initialized the slot via `MaybeUninit::write`.
+                slot.assume_init().as_ptr().cast()
+            } else if Ctx::IS_H2 {
+                debug_assert!(
+                    !self.h2_request_pool.is_null(),
+                    "H2 request dispatched but h2_request_pool was never allocated (listen() H2 path not taken)"
+                );
+                let slot = (*self.h2_request_pool).claim();
                 Ctx::create_in(
                     slot.addr().as_ptr().cast(),
                     self_ptr,
@@ -3144,15 +3273,17 @@ where
         let request_object: &mut Request = unsafe { &mut *request_object_ptr };
 
         // The lazy `getRequest()` path that backs Request.url / .headers
-        // is `*uws.Request`-typed; for HTTP/3 we populate both eagerly so
-        // the rest of the pipeline never needs to know which transport
-        // delivered the bytes.
-        if Ctx::IS_H3 {
-            // SAFETY: create_from_h3 returns a +1-ref FetchHeaders; adopt into RAII wrapper.
+        // is `*uws.Request`-typed; for HTTP/2 and HTTP/3 we populate both
+        // eagerly so the rest of the pipeline never needs to know which
+        // transport delivered the bytes.
+        if Ctx::IS_MUX {
+            // SAFETY: create_from_h2/h3 return a +1-ref FetchHeaders; adopt into RAII wrapper.
             request_object.set_fetch_headers(Some(unsafe {
-                crate::webcore::response::HeadersRef::adopt(FetchHeaders::create_from_h3(
-                    std::ptr::from_mut(req).cast::<c_void>(),
-                ))
+                crate::webcore::response::HeadersRef::adopt(if Ctx::IS_H2 {
+                    FetchHeaders::create_from_h2(std::ptr::from_mut(req).cast::<c_void>())
+                } else {
+                    FetchHeaders::create_from_h3(std::ptr::from_mut(req).cast::<c_void>())
+                })
             }));
             // NOTE: `ReqLike::{url,header}` both borrow `&mut req`; the
             // returned slices alias the same uWS-owned header buffer. Format
@@ -3197,10 +3328,11 @@ where
             ctx.set_request_body_content_len(req_len);
             let is_te = ReqLike::header(req, b"transfer-encoding").is_some();
             ctx.set_is_transfer_encoding(is_te);
-            // HTTP/3 (RFC 9114 §4.2.2): Content-Length is optional and
-            // Transfer-Encoding is forbidden; the body is terminated by
-            // the QUIC stream FIN, so always arm onData for body methods.
-            if req_len > 0 || is_te || Ctx::IS_H3 {
+            // HTTP/2 (RFC 9113) / HTTP/3 (RFC 9114 §4.2.2): Content-Length is
+            // optional and Transfer-Encoding is forbidden; the body is
+            // terminated by the stream END_STREAM/FIN, so always arm onData
+            // for body methods.
+            if req_len > 0 || is_te || Ctx::IS_MUX {
                 // we defer pre-allocating the body until we receive the first chunk
                 // that way if the client is lying about how big the body is or the client aborts
                 // we don't waste memory
@@ -4004,6 +4136,16 @@ unsafe extern "C" {
         route_list_object: JSValue,
         request_object: &mut JSValue,
         req: *mut c_void, // *uws.Request
+    ) -> JSValue;
+
+    safe fn Bun__ServerRouteList__callRouteH2(
+        global: &JSGlobalObject,
+        index: u32,
+        request_ptr: *mut Request,
+        server_object: JSValue,
+        route_list_object: JSValue,
+        request_object: &mut JSValue,
+        req: *mut c_void,
     ) -> JSValue;
 
     safe fn Bun__ServerRouteList__callRouteH3(

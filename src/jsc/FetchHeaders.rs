@@ -94,6 +94,7 @@ unsafe extern "C" {
         arg2: *mut c_void,
     );
     safe fn WebCore__FetchHeaders__createFromH3(arg0: *mut c_void) -> *mut FetchHeaders;
+    safe fn WebCore__FetchHeaders__createFromH2(arg0: *mut c_void) -> *mut FetchHeaders;
 
     safe fn WebCore__FetchHeaders__createFromJS(
         arg0: &JSGlobalObject,
@@ -188,6 +189,11 @@ impl FetchHeaders {
     pub fn create_from_h3(h3_request: *mut c_void) -> NonNull<FetchHeaders> {
         NonNull::new(WebCore__FetchHeaders__createFromH3(h3_request))
             .expect("WebCore__FetchHeaders__createFromH3 returned null")
+    }
+
+    pub fn create_from_h2(h2_request: *mut c_void) -> NonNull<FetchHeaders> {
+        NonNull::new(WebCore__FetchHeaders__createFromH2(h2_request))
+            .expect("WebCore__FetchHeaders__createFromH2 returned null")
     }
 
     pub fn to_uws_response(&mut self, kind: ResponseKind, uws_response: *mut c_void) {

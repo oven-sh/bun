@@ -96,6 +96,11 @@ pub use node_http_response::NodeHTTPResponse;
 #[path = "RequestContext.rs"]
 pub mod request_context;
 pub use request_context::RequestContext as NewRequestContext;
+// Transport discriminant for the `const MUX: u8` generic on
+// `RequestContext`/pools/sinks. H2 and H3 share every stream-multiplexed
+// semantic branch (`MUX != MUX_H1`); only concrete response/request type
+// selection branches on H2 vs H3.
+pub use request_context::{MUX_H1, MUX_H2, MUX_H3};
 
 #[path = "AnyRequestContext.rs"]
 pub mod any_request_context;
@@ -224,6 +229,9 @@ pub struct NewServer<const SSL: bool, const DEBUG: bool> {
     // Never set when !SSL.
     pub h3_app: Option<*mut uws_sys::h3::App>,
     pub h3_listener: Option<*mut uws_sys::h3::ListenSocket>,
+    // Never set when !SSL. H2 adopts sockets from `app` via ALPN — no
+    // `h2_listener` (it shares the TCP/TLS listen socket).
+    pub h2_app: Option<*mut uws_sys::h2::App>,
     /// Cached `h3=":<port>"; ma=86400` for Alt-Svc on H1 responses; formatted
     /// once in onH3Listen so renderMetadata doesn't reformat per-request.
     pub h3_alt_svc: Box<[u8]>,
@@ -262,11 +270,17 @@ pub struct NewServer<const SSL: bool, const DEBUG: bool> {
     /// via a callback the body fires) early-return instead of re-running the
     /// downgrade/teardown while the outer frame still holds `&mut self`.
     deinit_running: core::cell::Cell<bool>,
-    pub request_pool: *mut request_context::RequestContextStackAllocator<Self, SSL, DEBUG, false>,
+    pub request_pool:
+        *mut request_context::RequestContextStackAllocator<Self, SSL, DEBUG, { MUX_H1 }>,
     /// Null until the H3 listen path runs (`HAS_H3 && config.http3`); never
     /// allocated when `!SSL`. Kept as a raw nullable pointer rather than a
     /// conditional field so the struct stays uniform across monomorphizations.
-    pub h3_request_pool: *mut request_context::RequestContextStackAllocator<Self, SSL, DEBUG, true>,
+    pub h3_request_pool:
+        *mut request_context::RequestContextStackAllocator<Self, SSL, DEBUG, { MUX_H3 }>,
+    /// Null until the H2 listen path runs (`HAS_H2 && config.http2`); never
+    /// allocated when `!SSL`.
+    pub h2_request_pool:
+        *mut request_context::RequestContextStackAllocator<Self, SSL, DEBUG, { MUX_H2 }>,
     /// Authoritative GC root for the `server.stop()` promise. Lazily filled by
     /// `get_all_closed_promise`; read in `deinit_if_we_can` (which can run
     /// after the wrapper is collected, so a wrapper-traced slot would not
@@ -340,7 +354,7 @@ fn any_response_from<const SSL: bool>(resp: *mut uws_sys::NewAppResponse<SSL>) -
 
 /// HTTP/1 `RequestContext` for a given server monomorphization.
 pub type ServerRequestContext<const SSL: bool, const DEBUG: bool> =
-    request_context::RequestContext<NewServer<SSL, DEBUG>, SSL, DEBUG, false>;
+    request_context::RequestContext<NewServer<SSL, DEBUG>, SSL, DEBUG, { MUX_H1 }>;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum CreateJsRequest {
@@ -419,6 +433,7 @@ impl Drop for DetachRequestOnDrop {
 
 impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     pub const HAS_H3: bool = SSL;
+    pub const HAS_H2: bool = SSL;
 
     // ── raw-field accessors ──────────────────────────────────────────────────
 
@@ -1584,6 +1599,16 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             }
         }
 
+        if Self::HAS_H2 && self.listener.is_some() {
+            if let Some(h2a) = self.h2_app {
+                // S008: `h2::App` is an `opaque_ffi!` ZST — safe deref.
+                // GOAWAY on live H2 connections; the shared TCP listener is
+                // closed by the H1 path below. Gated on `listener` so a second
+                // stop() doesn't re-walk sockets (H3 uses h3_listener.take()).
+                bun_opaque::opaque_deref_mut(h2a).close();
+            }
+        }
+
         let Some(listener) = self.listener.take() else {
             if Self::HAS_H3 && self.h3_app.is_some() {
                 self.unref();
@@ -1971,6 +1996,12 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 unsafe { uws_sys::h3::App::destroy(h3a) };
             }
         }
+        if Self::HAS_H2 {
+            if let Some(h2a) = this_ref.h2_app.take() {
+                // SAFETY: live H2::App handle owned by this server.
+                unsafe { uws_sys::h2::App::destroy(h2a) };
+            }
+        }
         if let Some(app) = this_ref.app.take() {
             // SAFETY: live uws App handle owned by this server.
             unsafe { uws_sys::NewApp::<SSL>::destroy(app) };
@@ -2012,6 +2043,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             listener: None,
             h3_app: None,
             h3_listener: None,
+            h2_app: None,
             h3_alt_svc: Box::<[u8]>::default(),
             js_value: jsc::JsRef::empty(),
             pending_requests: 0,
@@ -2022,6 +2054,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             // the H3-listen path (`listen()` below) so HTTPS servers that
             // don't enable `config.http3` don't pay either.
             h3_request_pool: core::ptr::null_mut(),
+            h2_request_pool: core::ptr::null_mut(),
             all_closed_promise: jsc::JSPromiseStrong::default(),
             poll_ref: KeepAlive::default(),
             flags: ServerFlags::default(),
@@ -2207,6 +2240,16 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                             );
                         }
                     }
+                    if Self::HAS_H2 {
+                        if let Some(h2_app) = self.h2_app {
+                            // S008: `h2::App` is an `opaque_ffi!` ZST — safe deref.
+                            bun_opaque::opaque_deref_mut(h2_app).any(
+                                path,
+                                ud.cast::<UserRoute<SSL, DEBUG>>(),
+                                Self::on_h2_user_route_request,
+                            );
+                        }
+                    }
                     if is_star_path {
                         star_methods_covered_by_user = http_method::Set::all();
                     }
@@ -2237,6 +2280,17 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                                 path,
                                 ud.cast::<UserRoute<SSL, DEBUG>>(),
                                 Self::on_h3_user_route_request,
+                            );
+                        }
+                    }
+                    if Self::HAS_H2 {
+                        if let Some(h2_app) = self.h2_app {
+                            // S008: `h2::App` is an `opaque_ffi!` ZST — safe deref.
+                            bun_opaque::opaque_deref_mut(h2_app).method(
+                                method_val,
+                                path,
+                                ud.cast::<UserRoute<SSL, DEBUG>>(),
+                                Self::on_h2_user_route_request,
                             );
                         }
                     }
@@ -2280,6 +2334,14 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                     let h3_app = bun_opaque::opaque_deref_mut(h3_app);
                     h3_app.head(p, self_ptr, Self::on_h3_request);
                     h3_app.any(p, self_ptr, Self::on_h3_request);
+                }
+            }
+            if Self::HAS_H2 {
+                if let Some(h2_app) = self.h2_app {
+                    // S008: `h2::App` is an `opaque_ffi!` ZST — safe deref.
+                    let h2_app = bun_opaque::opaque_deref_mut(h2_app);
+                    h2_app.head(p, self_ptr, Self::on_h2_request);
+                    h2_app.any(p, self_ptr, Self::on_h2_request);
                 }
             }
         }
@@ -2346,6 +2408,19 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                             );
                         }
                     }
+                    if Self::HAS_H2 {
+                        if let Some(h2_app) = self.h2_app {
+                            server_config::apply_static_route_h2::<StaticRoute>(
+                                any_server,
+                                // S008: `h2::App` is an `opaque_ffi!` ZST — safe deref.
+                                bun_opaque::opaque_deref_mut(h2_app),
+                                p.as_ptr(),
+                                &entry.path,
+                                entry.method,
+                                path_has_user_head_route,
+                            );
+                        }
+                    }
                 }
                 AnyRoute::File(p) => {
                     server_config::apply_static_route::<SSL, FileRoute>(
@@ -2369,6 +2444,19 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                             );
                         }
                     }
+                    if Self::HAS_H2 {
+                        if let Some(h2_app) = self.h2_app {
+                            server_config::apply_static_route_h2::<FileRoute>(
+                                any_server,
+                                // S008: `h2::App` is an `opaque_ffi!` ZST — safe deref.
+                                bun_opaque::opaque_deref_mut(h2_app),
+                                p.as_ptr(),
+                                &entry.path,
+                                entry.method,
+                                path_has_user_head_route,
+                            );
+                        }
+                    }
                 }
                 AnyRoute::Html(r) => {
                     server_config::apply_static_route::<SSL, html_bundle::Route>(
@@ -2385,6 +2473,19 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                                 any_server,
                                 // S008: `h3::App` is an `opaque_ffi!` ZST — safe deref.
                                 bun_opaque::opaque_deref_mut(h3_app),
+                                r.as_ptr(),
+                                &entry.path,
+                                entry.method,
+                                path_has_user_head_route,
+                            );
+                        }
+                    }
+                    if Self::HAS_H2 {
+                        if let Some(h2_app) = self.h2_app {
+                            server_config::apply_static_route_h2::<html_bundle::Route>(
+                                any_server,
+                                // S008: `h2::App` is an `opaque_ffi!` ZST — safe deref.
+                                bun_opaque::opaque_deref_mut(h2_app),
                                 r.as_ptr(),
                                 &entry.path,
                                 entry.method,
@@ -2439,8 +2540,8 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         }
 
         // Snapshot "/*" coverage from user/static routes before DevServer
-        // (which is H1-only and not mirrored to the H3 router) marks it full.
-        let h3_star_covered = star_methods_covered_by_user;
+        // (which is H1-only and not mirrored to the H2/H3 routers) marks it full.
+        let mux_star_covered = star_methods_covered_by_user;
 
         // --- 8. Handle DevServer routes & track "/*" coverage ---
         let mut has_dev_server_for_star_path = false;
@@ -2526,10 +2627,10 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             if let Some(h3_app) = self.h3_app {
                 // S008: `h3::App` is an `opaque_ffi!` ZST — safe deref.
                 let h3_app = bun_opaque::opaque_deref_mut(h3_app);
-                if h3_star_covered == http_method::Set::all() {
+                if mux_star_covered == http_method::Set::all() {
                     // user/static "/*" already covers every method
                 } else if has_any_user_route_for_star_path || has_static_route_for_star_path {
-                    for m in !h3_star_covered {
+                    for m in !mux_star_covered {
                         if has_on_request {
                             h3_app.method(m, b"/*", self_ptr, Self::on_h3_request);
                         } else {
@@ -2540,6 +2641,29 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                     h3_app.any(b"/*", self_ptr, Self::on_h3_request);
                 } else {
                     h3_app.any(b"/*", self_ptr, Self::on_h3_404);
+                }
+            }
+        }
+
+        // H2 fallback — identical ladder to H3 above.
+        if Self::HAS_H2 {
+            if let Some(h2_app) = self.h2_app {
+                // S008: `h2::App` is an `opaque_ffi!` ZST — safe deref.
+                let h2_app = bun_opaque::opaque_deref_mut(h2_app);
+                if mux_star_covered == http_method::Set::all() {
+                    // user/static "/*" already covers every method
+                } else if has_any_user_route_for_star_path || has_static_route_for_star_path {
+                    for m in !mux_star_covered {
+                        if has_on_request {
+                            h2_app.method(m, b"/*", self_ptr, Self::on_h2_request);
+                        } else {
+                            h2_app.method(m, b"/*", self_ptr, Self::on_h2_404);
+                        }
+                    }
+                } else if has_on_request {
+                    h2_app.any(b"/*", self_ptr, Self::on_h2_request);
+                } else {
+                    h2_app.any(b"/*", self_ptr, Self::on_h2_404);
                 }
             }
         }
@@ -2629,6 +2753,28 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             };
             // SAFETY: `this` is the live boxed server from `init()`; no other borrow is live.
             unsafe { (*this).app = Some(app) };
+
+            if Self::HAS_H2 && this_ref.config.http2 {
+                let idle_timeout = this_ref.config.idle_timeout as u32;
+                // H2 attaches to the parent SSLApp's SSL_CTX (installs the ALPN
+                // select cb) — must run before the listen socket accepts so the
+                // first handshake sees it.
+                let h2 =
+                    uws_sys::h2::App::create(app.cast::<uws_sys::NewApp<true>>(), idle_timeout);
+                if h2.is_none() {
+                    if !global.has_exception() {
+                        let _ = global.throw(format_args!("Failed to create HTTP/2 server"));
+                    }
+                    // SAFETY: caller contract — `this` is the live boxed server from `init()`.
+                    Self::deinit(this);
+                    return JSValue::ZERO;
+                }
+                // SAFETY: `this` is the live boxed server; uniquely owned here.
+                unsafe {
+                    (*this).h2_app = h2;
+                    (*this).h2_request_pool = <Self as ServerPools<SSL, DEBUG>>::h2_request_pool();
+                }
+            }
 
             if Self::HAS_H3 && this_ref.config.http3 {
                 let idle_timeout = this_ref.config.idle_timeout as u32;
@@ -3227,7 +3373,7 @@ mod trampoline {
 
 // ─── per-monomorphization request pools ──────────────────────────────────────
 // Rust generics cannot own statics, so
-// declare one `thread_local!` per concrete (SSL, DEBUG, H3) combo via macro and
+// declare one `thread_local!` per concrete (SSL, DEBUG, MUX) combo via macro and
 // hand the leaked pointer back through a trait.
 //
 // THREAD-SAFETY: this MUST be thread-local, not process-global. `hive_array::
@@ -3235,16 +3381,19 @@ mod trampoline {
 // a process-static would race when two `Bun.serve` instances run on distinct
 // Worker threads (each Worker has its own event loop and may host a server).
 pub trait ServerPools<const SSL: bool, const DEBUG: bool>: Sized {
-    fn request_pool() -> *mut request_context::RequestContextStackAllocator<Self, SSL, DEBUG, false>;
+    fn request_pool()
+    -> *mut request_context::RequestContextStackAllocator<Self, SSL, DEBUG, { MUX_H1 }>;
     fn h3_request_pool()
-    -> *mut request_context::RequestContextStackAllocator<Self, SSL, DEBUG, true>;
+    -> *mut request_context::RequestContextStackAllocator<Self, SSL, DEBUG, { MUX_H3 }>;
+    fn h2_request_pool()
+    -> *mut request_context::RequestContextStackAllocator<Self, SSL, DEBUG, { MUX_H2 }>;
 }
 
 macro_rules! impl_server_pools {
     ($(($ssl:literal, $debug:literal)),* $(,)?) => {$(
         impl ServerPools<$ssl, $debug> for NewServer<$ssl, $debug> {
-            fn request_pool() -> *mut request_context::RequestContextStackAllocator<Self, $ssl, $debug, false> {
-                type Pool = request_context::RequestContextStackAllocator<NewServer<$ssl, $debug>, $ssl, $debug, false>;
+            fn request_pool() -> *mut request_context::RequestContextStackAllocator<Self, $ssl, $debug, { MUX_H1 }> {
+                type Pool = request_context::RequestContextStackAllocator<NewServer<$ssl, $debug>, $ssl, $debug, { MUX_H1 }>;
                 thread_local! {
                     static POOL: core::cell::Cell<*mut Pool> =
                         const { core::cell::Cell::new(core::ptr::null_mut()) };
@@ -3261,8 +3410,23 @@ macro_rules! impl_server_pools {
                     p
                 })
             }
-            fn h3_request_pool() -> *mut request_context::RequestContextStackAllocator<Self, $ssl, $debug, true> {
-                type Pool = request_context::RequestContextStackAllocator<NewServer<$ssl, $debug>, $ssl, $debug, true>;
+            fn h3_request_pool() -> *mut request_context::RequestContextStackAllocator<Self, $ssl, $debug, { MUX_H3 }> {
+                type Pool = request_context::RequestContextStackAllocator<NewServer<$ssl, $debug>, $ssl, $debug, { MUX_H3 }>;
+                thread_local! {
+                    static POOL: core::cell::Cell<*mut Pool> =
+                        const { core::cell::Cell::new(core::ptr::null_mut()) };
+                }
+                POOL.with(|cell| {
+                    let mut p = cell.get();
+                    if p.is_null() {
+                        p = Pool::new_boxed().as_ptr();
+                        cell.set(p);
+                    }
+                    p
+                })
+            }
+            fn h2_request_pool() -> *mut request_context::RequestContextStackAllocator<Self, $ssl, $debug, { MUX_H2 }> {
+                type Pool = request_context::RequestContextStackAllocator<NewServer<$ssl, $debug>, $ssl, $debug, { MUX_H2 }>;
                 thread_local! {
                     static POOL: core::cell::Cell<*mut Pool> =
                         const { core::cell::Cell::new(core::ptr::null_mut()) };
@@ -3369,7 +3533,7 @@ pub trait ServerLike {
     /// Erased to `*mut c_void` so the trait stays object-safe and doesn't need
     /// to name `RequestContext<Self, ..>` (which would re-introduce the
     /// generic-parameter cycle this trait exists to break).
-    fn release_request_context(&self, ctx: *mut c_void, is_h3: bool);
+    fn release_request_context(&self, ctx: *mut c_void, mux: u8);
 }
 
 impl<const SSL: bool, const DEBUG: bool> ServerLike for NewServer<SSL, DEBUG> {
@@ -3416,24 +3580,33 @@ impl<const SSL: bool, const DEBUG: bool> ServerLike for NewServer<SSL, DEBUG> {
     fn terminated(&self) -> bool {
         self.flags.contains(ServerFlags::TERMINATED)
     }
-    fn release_request_context(&self, ctx: *mut c_void, is_h3: bool) {
+    fn release_request_context(&self, ctx: *mut c_void, mux: u8) {
         // SAFETY: ctx was allocated from this exact pool by `prepare_js_request_context`;
-        // it is `RequestContext<Self, SSL, DEBUG, is_h3>` by construction.
+        // it is `RequestContext<Self, SSL, DEBUG, mux>` by construction.
         unsafe {
-            if is_h3 {
-                (*self.h3_request_pool).put(&raw mut *ctx.cast::<request_context::RequestContext<
-                    Self,
-                    SSL,
-                    DEBUG,
-                    true,
-                >>());
-            } else {
-                (*self.request_pool).put(&raw mut *ctx.cast::<request_context::RequestContext<
-                    Self,
-                    SSL,
-                    DEBUG,
-                    false,
-                >>());
+            match mux {
+                MUX_H3 => {
+                    (*self.h3_request_pool).put(
+                        &raw mut *ctx
+                            .cast::<request_context::RequestContext<Self, SSL, DEBUG, { MUX_H3 }>>(
+                            ),
+                    );
+                }
+                MUX_H2 => {
+                    (*self.h2_request_pool).put(
+                        &raw mut *ctx
+                            .cast::<request_context::RequestContext<Self, SSL, DEBUG, { MUX_H2 }>>(
+                            ),
+                    );
+                }
+                _ => {
+                    (*self.request_pool).put(&raw mut *ctx.cast::<request_context::RequestContext<
+                        Self,
+                        SSL,
+                        DEBUG,
+                        { MUX_H1 },
+                    >>());
+                }
             }
         }
     }

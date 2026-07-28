@@ -10,14 +10,19 @@ use crate::webcore::CookieMap;
 pub use super::request_context::AdditionalOnAbortCallback;
 use super::request_context::RequestContext;
 use super::{DebugHTTPSServer, DebugHTTPServer, HTTPSServer, HTTPServer};
+use super::{MUX_H1, MUX_H2, MUX_H3};
 
-// The six monomorphizations of `NewRequestContext` (ssl × debug × h3).
-type HttpCtx = RequestContext<HTTPServer, false, false, false>;
-type HttpsCtx = RequestContext<HTTPSServer, true, false, false>;
-type DebugHttpCtx = RequestContext<DebugHTTPServer, false, true, false>;
-type DebugHttpsCtx = RequestContext<DebugHTTPSServer, true, true, false>;
-type HttpsH3Ctx = RequestContext<HTTPSServer, true, false, true>;
-type DebugHttpsH3Ctx = RequestContext<DebugHTTPSServer, true, true, true>;
+// The eight monomorphizations of `NewRequestContext` (ssl × debug × mux).
+// H2/H3 are TLS-only, so the non-SSL × {H2,H3} combinations are never
+// instantiated and map to `CtxTag::None`.
+type HttpCtx = RequestContext<HTTPServer, false, false, { MUX_H1 }>;
+type HttpsCtx = RequestContext<HTTPSServer, true, false, { MUX_H1 }>;
+type DebugHttpCtx = RequestContext<DebugHTTPServer, false, true, { MUX_H1 }>;
+type DebugHttpsCtx = RequestContext<DebugHTTPSServer, true, true, { MUX_H1 }>;
+type HttpsH2Ctx = RequestContext<HTTPSServer, true, false, { MUX_H2 }>;
+type DebugHttpsH2Ctx = RequestContext<DebugHTTPSServer, true, true, { MUX_H2 }>;
+type HttpsH3Ctx = RequestContext<HTTPSServer, true, false, { MUX_H3 }>;
+type DebugHttpsH3Ctx = RequestContext<DebugHTTPSServer, true, true, { MUX_H3 }>;
 
 // The `bun_ptr::impl_tagged_ptr_union!` macro hits the orphan rule from
 // outside `bun_ptr`, so store `(tag: u8, ptr: *mut ())` as two fields.
@@ -35,6 +40,8 @@ pub enum CtxTag {
     DebugHttps,
     HttpsH3,
     DebugHttpsH3,
+    HttpsH2,
+    DebugHttpsH2,
 }
 
 #[derive(Copy, Clone)]
@@ -56,27 +63,30 @@ pub trait CtxKind {
     const TAG: CtxTag;
 }
 
-const fn ctx_tag_for(ssl: bool, dbg: bool, h3: bool) -> CtxTag {
-    match (ssl, dbg, h3) {
-        (false, false, false) => CtxTag::Http,
-        (true, false, false) => CtxTag::Https,
-        (false, true, false) => CtxTag::DebugHttp,
-        (true, true, false) => CtxTag::DebugHttps,
-        (true, false, true) => CtxTag::HttpsH3,
-        (true, true, true) => CtxTag::DebugHttpsH3,
-        // H3 requires TLS; (false, _, true) is never instantiated. Map to
-        // None so a stray dispatch is a no-op rather than a wild cast.
-        (false, _, true) => CtxTag::None,
+const fn ctx_tag_for(ssl: bool, dbg: bool, mux: u8) -> CtxTag {
+    match (ssl, dbg, mux) {
+        (false, false, MUX_H1) => CtxTag::Http,
+        (true, false, MUX_H1) => CtxTag::Https,
+        (false, true, MUX_H1) => CtxTag::DebugHttp,
+        (true, true, MUX_H1) => CtxTag::DebugHttps,
+        (true, false, MUX_H2) => CtxTag::HttpsH2,
+        (true, true, MUX_H2) => CtxTag::DebugHttpsH2,
+        (true, false, MUX_H3) => CtxTag::HttpsH3,
+        (true, true, MUX_H3) => CtxTag::DebugHttpsH3,
+        // H2/H3 require TLS; (false, _, MUX_H2|MUX_H3) is never instantiated.
+        // Map to None so a stray dispatch is a no-op rather than a wild cast.
+        (false, _, _) => CtxTag::None,
+        (true, _, _) => CtxTag::None,
     }
 }
 
 // Blanket impl over the const-generic params so any `Ctx: RequestCtx` (which
-// is always a `RequestContext<_, SSL, DBG, H3>`) also satisfies `CtxKind`
-// without callers having to spell the six concrete types.
-impl<ThisServer, const SSL: bool, const DBG: bool, const H3: bool> CtxKind
-    for RequestContext<ThisServer, SSL, DBG, H3>
+// is always a `RequestContext<_, SSL, DBG, MUX>`) also satisfies `CtxKind`
+// without callers having to spell the concrete types.
+impl<ThisServer, const SSL: bool, const DBG: bool, const MUX: u8> CtxKind
+    for RequestContext<ThisServer, SSL, DBG, MUX>
 {
-    const TAG: CtxTag = ctx_tag_for(SSL, DBG, H3);
+    const TAG: CtxTag = ctx_tag_for(SSL, DBG, MUX);
 }
 
 impl AnyRequestContext {
@@ -90,8 +100,8 @@ impl AnyRequestContext {
 
 /// Dispatch `$body` to the concrete RequestContext type behind the tagged
 /// pointer. The pointer types only differ in their const-generic parameters
-/// (ssl/debug/http3), so every method body is identical — this collapses what
-/// used to be six hand-written switch arms per accessor.
+/// (ssl/debug/mux), so every method body is identical — this collapses what
+/// would otherwise be eight hand-written switch arms per accessor.
 ///
 /// Rust closures cannot be generic over
 /// `T`, so a macro is the closest structural equivalent.
@@ -119,6 +129,8 @@ macro_rules! dispatch {
             CtxTag::DebugHttps => arm!(DebugHttpsCtx),
             CtxTag::HttpsH3 => arm!(HttpsH3Ctx),
             CtxTag::DebugHttpsH3 => arm!(DebugHttpsH3Ctx),
+            CtxTag::HttpsH2 => arm!(HttpsH2Ctx),
+            CtxTag::DebugHttpsH2 => arm!(DebugHttpsH2Ctx),
         }
     }};
 }
@@ -168,12 +180,12 @@ impl AnyRequestContext {
     /// Wont actually set anything if `self` is `.none`
     pub fn set_request(self, req: *mut uws::Request) {
         dispatch!(self, (), |T, ctx| {
-            if T::IS_H3 {
-                // H3 populates url/headers eagerly
+            if T::IS_MUX {
+                // H2/H3 populate url/headers eagerly
                 return;
             }
-            // `ctx.req` is `Option<*mut Req<SSL,H3>>` where
-            // `Req<_,_> = c_void` (erased handle). For non-H3 the underlying
+            // `ctx.req` is `Option<*mut Req<SSL,MUX>>` where
+            // `Req<_,_> = c_void` (erased handle). For H1 the underlying
             // type is always `uws::Request`, so the cast is purely nominal.
             ctx.req = Some(req.cast::<c_void>());
         })
@@ -181,7 +193,7 @@ impl AnyRequestContext {
 
     pub fn get_request(self) -> Option<*mut uws::Request> {
         dispatch!(self, None, |T, ctx| {
-            if T::IS_H3 {
+            if T::IS_MUX {
                 // url/headers already on the Request
                 return None;
             }

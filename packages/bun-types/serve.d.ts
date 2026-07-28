@@ -798,6 +798,18 @@ declare module "bun" {
       http3?: boolean;
 
       /**
+       * Also accept HTTP/2 on the TLS listener. Requires {@link tls}.
+       *
+       * HTTP/2 is negotiated via ALPN on the same port as HTTP/1.1 — there is
+       * no separate listener. Because the socket is adopted from the HTTP/1.1
+       * TLS context after the handshake, {@link http1} must remain enabled.
+       *
+       * @default false
+       * @experimental
+       */
+      http2?: boolean;
+
+      /**
        * Listen for HTTP/1.1 over TCP. Set to `false` together with
        * `http3: true` to serve HTTP/3 only.
        * @default true

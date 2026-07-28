@@ -208,9 +208,7 @@ impl HasAutoFlusher for file_sink::FileSink {
     }
 }
 
-impl<const SSL: bool, const HTTP3: bool> HasAutoFlusher
-    for streams::HTTPServerWritable<SSL, HTTP3>
-{
+impl<const SSL: bool, const MUX: u8> HasAutoFlusher for streams::HTTPServerWritable<SSL, MUX> {
     #[inline]
     fn auto_flusher(&self) -> &AutoFlusher {
         &self.auto_flusher

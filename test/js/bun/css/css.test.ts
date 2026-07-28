@@ -7859,6 +7859,101 @@ describe("css tests", () => {
       `,
     );
 
+    describe("@keyframes minify", () => {
+      // Per-keyframe declaration minify: the property handlers fold adjacent
+      // longhands into a shorthand inside a keyframe block just like they do
+      // in a style rule.
+      minify_test(
+        "@keyframes foo{0%{padding-top:1px;padding-right:1px;padding-bottom:1px;padding-left:1px}}",
+        "@keyframes foo{0%{padding:1px}}",
+      );
+
+      // Same-name merge: a later `@keyframes` with the same name and the same
+      // vendor prefix replaces the earlier one.
+      minify_test(
+        "@keyframes foo{0%{color:red}}@keyframes foo{0%{color:#00f}}",
+        "@keyframes foo{0%{color:#00f}}",
+      );
+
+      // Same-name merge across vendor prefixes: identical keyframe bodies
+      // under different prefixes collapse into a single rule that emits both
+      // prefixed forms.
+      minify_test(
+        "@-webkit-keyframes foo{0%{color:red}}@keyframes foo{0%{color:red}}",
+        "@-webkit-keyframes foo{0%{color:red}}@keyframes foo{0%{color:red}}",
+      );
+      // Same name but different prefixes and different bodies stay separate.
+      minify_test(
+        "@-webkit-keyframes foo{0%{color:red}}@keyframes foo{0%{color:#00f}}",
+        "@-webkit-keyframes foo{0%{color:red}}@keyframes foo{0%{color:#00f}}",
+      );
+
+      // Different names are untouched.
+      minify_test(
+        "@keyframes foo{0%{color:red}}@keyframes bar{0%{color:#00f}}",
+        "@keyframes foo{0%{color:red}}@keyframes bar{0%{color:#00f}}",
+      );
+
+      // Vendor-prefix downlevel: targeting a browser that only supports
+      // `@-webkit-keyframes` emits the prefixed rule alongside the unprefixed
+      // one.
+      prefix_test(
+        "@keyframes foo{from{opacity:0}to{opacity:1}}",
+        indoc`
+          @-webkit-keyframes foo {
+            from {
+              opacity: 0;
+            }
+
+            to {
+              opacity: 1;
+            }
+          }
+
+          @keyframes foo {
+            from {
+              opacity: 0;
+            }
+
+            to {
+              opacity: 1;
+            }
+          }
+        `,
+        { safari: 4 << 16 },
+      );
+
+      // Authored `@-webkit-keyframes` alone stays prefixed; no unprefixed
+      // variant is synthesized.
+      minify_test(
+        "@-webkit-keyframes foo{0%{opacity:0}}",
+        "@-webkit-keyframes foo{0%{opacity:0}}",
+      );
+
+      // Color fallback: a wide-gamut color in a `var()` fallback inside a
+      // keyframe emits an `@supports`-guarded copy and rewrites the original
+      // to the RGB fallback.
+      prefix_test(
+        "@keyframes foo{0%{--a:lab(40% 56.6 39)}}",
+        indoc`
+          @keyframes foo {
+            0% {
+              --a: #b32323;
+            }
+          }
+
+          @supports (color: lab(0% 0 0)) {
+            @keyframes foo {
+              0% {
+                --a: lab(40% 56.6 39);
+              }
+            }
+          }
+        `,
+        { chrome: 90 << 16 },
+      );
+    });
+
     // Unicode and escape sequence edge cases
     describe("unicode edge cases", async () => {
       const input = await Bun.file(join(__dirname, "unicode.css")).text();

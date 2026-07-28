@@ -498,6 +498,7 @@ impl<R> CssRuleList<R> {
     where
         R: for<'b> css::generics::DeepClone<'b>,
     {
+        let mut keyframe_rules = bun_collections::HashMap::<keyframes::KeyframesName, usize>::new();
         let mut style_rules = StyleRuleKeyMap::default();
         let mut merge_state = StyleRuleMergeState::default();
         let mut rules: Vec<CssRule<R>> = Vec::new();
@@ -509,10 +510,66 @@ impl<R> CssRuleList<R> {
 
             'arm: {
                 match rule {
-                    CssRule::Keyframes(_keyframez) => {
-                        // KeyframesRule minify (unused-symbol drop + same-name
-                        // merge + vendor-prefix downlevel + fallbacks) is
-                        // not implemented; fall through.
+                    CssRule::Keyframes(keyframez) => {
+                        if context.unused_symbols.count() > 0
+                            && context
+                                .unused_symbols
+                                .contains_adapted(keyframez.name.as_bytes(), &SliceAdapter)
+                        {
+                            break 'arm;
+                        }
+
+                        keyframez.minify(context);
+
+                        // Merge @keyframes rules with the same name.
+                        if let Some(existing_idx) = keyframe_rules.get(&keyframez.name).copied()
+                            && let Some(CssRule::Keyframes(existing)) = rules.get_mut(existing_idx)
+                        {
+                            // If the existing rule has the same vendor
+                            // prefixes, replace it with this rule.
+                            if existing.vendor_prefix == keyframez.vendor_prefix {
+                                *existing = core::mem::replace(
+                                    keyframez,
+                                    keyframes::KeyframesRule {
+                                        name: keyframez.name,
+                                        keyframes: ArrayList::new(),
+                                        vendor_prefix: keyframez.vendor_prefix,
+                                        loc: keyframez.loc,
+                                    },
+                                );
+                                break 'arm;
+                            }
+                            // Otherwise, if the keyframes are identical, merge
+                            // the prefixes.
+                            if existing.keyframes_eql(keyframez) {
+                                existing.vendor_prefix |= keyframez.vendor_prefix;
+                                existing.vendor_prefix = context.targets.prefixes(
+                                    existing.vendor_prefix,
+                                    css::prefixes::Feature::AtKeyframes,
+                                );
+                                break 'arm;
+                            }
+                        }
+
+                        keyframez.vendor_prefix = context
+                            .targets
+                            .prefixes(keyframez.vendor_prefix, css::prefixes::Feature::AtKeyframes);
+
+                        let name = keyframez.name;
+                        let fallbacks = keyframez.get_fallbacks::<R>(context.arena, context.targets);
+
+                        // Appending a non-style rule ends the current
+                        // style-rule merge run; mirror the fall-through path
+                        // at the bottom of the loop. The flush can shrink
+                        // `rules`, so record the keyframes index after it.
+                        flush_pending_style_merge(&mut rules, &mut merge_state, context);
+                        merge_state.last_compat = None;
+                        keyframe_rules.insert(name, rules.len());
+                        rules.push(core::mem::replace(rule, CssRule::Ignored));
+                        moved_rule = true;
+                        rules.extend(fallbacks);
+                        style_rules.clear();
+                        break 'arm;
                     }
                     CssRule::CustomMedia(_) => {
                         if context.custom_media.is_some() {
@@ -1256,4 +1313,21 @@ pub struct MinifyContext<'a, 'bump> {
     /// Running total of selectors that compiling nested rules for the targets
     /// will expand to, checked against [`MAX_SELECTOR_EXPANSION`].
     pub selector_expansion_total: u32,
+}
+
+/// Borrowed-`[u8]` lookup against `MinifyContext::unused_symbols`'s owned
+/// `Box<[u8]>` keys.
+pub(crate) struct SliceAdapter;
+impl bun_collections::array_hash_map::ArrayHashAdapter<[u8], Box<[u8]>> for SliceAdapter {
+    #[inline]
+    fn hash(&self, key: &[u8]) -> u32 {
+        use core::hash::{Hash, Hasher};
+        let mut h = bun_wyhash::Wyhash11::init(0);
+        key.hash(&mut h);
+        h.finish() as u32
+    }
+    #[inline]
+    fn eql(&self, a: &[u8], b: &Box<[u8]>, _: usize) -> bool {
+        a == &**b
+    }
 }

@@ -1,7 +1,8 @@
 use core::hash::{Hash, Hasher};
 
 use crate as css;
-use crate::css_rules::Location;
+use crate::context::DeclarationContext;
+use crate::css_rules::{Location, MinifyContext};
 use crate::css_values::ident::{CustomIdent, is_reserved_custom_ident};
 use crate::css_values::percentage::Percentage;
 use crate::{DeclarationBlock, PrintErr, Printer, VendorPrefix};
@@ -16,11 +17,23 @@ use super::ArrayList;
 // Stores `&'static [u8]` per the rules/mod.rs `CssRule<R>` lifetime-erasure
 // note (mod.rs:37-41).
 // TODO(refactor): re-thread `'bump` here.
+#[derive(Clone, Copy)]
 pub enum KeyframesName {
     /// `<custom-ident>` of a `@keyframes` name.
     Ident(CustomIdent),
     /// `<string>` of a `@keyframes` name.
     Custom(&'static [u8]),
+}
+
+impl KeyframesName {
+    /// The name bytes, regardless of whether it was written as an ident or a
+    /// string. Used for the unused-symbol lookup.
+    pub(crate) fn as_bytes(&self) -> &[u8] {
+        match self {
+            KeyframesName::Ident(ident) => ident.v(),
+            KeyframesName::Custom(s) => s,
+        }
+    }
 }
 
 // A generic type alias keyed by `KeyframesName` with the custom hash/eq below.
@@ -170,6 +183,14 @@ impl KeyframeSelector {
             Self::To => Self::To,
         }
     }
+
+    pub(crate) fn eql(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::Percentage(a), Self::Percentage(b)) => a.eql(*b),
+            (Self::From, Self::From) | (Self::To, Self::To) => true,
+            _ => false,
+        }
+    }
 }
 
 // ─── KeyframeSelector parse ───────────────────────────────────────────────
@@ -221,6 +242,16 @@ impl Keyframe {
             selectors: self.selectors.iter().map(|s| s.deep_clone(bump)).collect(),
             declarations: super::dc::decl_block_static(&self.declarations, bump),
         }
+    }
+
+    pub(crate) fn eql(&self, other: &Self) -> bool {
+        self.selectors.len() == other.selectors.len()
+            && self
+                .selectors
+                .iter()
+                .zip(other.selectors.iter())
+                .all(|(a, b)| a.eql(b))
+            && self.declarations.eql(&other.declarations)
     }
 }
 
@@ -307,6 +338,144 @@ impl KeyframesRule {
             vendor_prefix: self.vendor_prefix,
             loc: self.loc,
         }
+    }
+
+    /// Run the property handlers over every keyframe's declarations so they
+    /// fold shorthands / emit prefix fallbacks exactly like style-rule bodies.
+    pub(crate) fn minify(&mut self, context: &mut MinifyContext<'_, '_>) {
+        context.handler_context.context = DeclarationContext::Keyframes;
+
+        for keyframe in self.keyframes.iter_mut() {
+            keyframe.declarations.minify(
+                super::dc::decl_handler_static(&mut *context.handler),
+                super::dc::decl_handler_static(&mut *context.important_handler),
+                &mut context.handler_context,
+            );
+        }
+
+        // Property handlers for logical properties stage `ltr`/`rtl` entries
+        // regardless of the declaration context; keyframe blocks have no
+        // `:dir()` wrapper to emit them into, so drop whatever was staged.
+        context.handler_context.reset();
+        context.handler_context.context = DeclarationContext::None;
+    }
+
+    pub(crate) fn keyframes_eql(&self, other: &Self) -> bool {
+        self.keyframes.len() == other.keyframes.len()
+            && self
+                .keyframes
+                .iter()
+                .zip(other.keyframes.iter())
+                .all(|(a, b)| a.eql(b))
+    }
+
+    /// Compute color-gamut fallback `@supports` rules for wide-gamut colors in
+    /// custom / unparsed property values, and rewrite those values in `self`
+    /// to the lowest common fallback. Only custom and unparsed values are
+    /// inspected because typed color properties have already been lowered by
+    /// the property handlers in [`minify`](Self::minify).
+    pub(crate) fn get_fallbacks<R>(
+        &mut self,
+        arena: &bun_alloc::Arena,
+        targets: &css::targets::Targets,
+    ) -> Vec<super::CssRule<R>> {
+        use css::css_properties::Property;
+        use css::css_properties::custom::{CustomProperty, UnparsedProperty};
+        use css::css_values::color::ColorFallbackKind;
+
+        let mut fallbacks = ColorFallbackKind::empty();
+        for keyframe in &self.keyframes {
+            for property in keyframe.declarations.declarations.iter() {
+                match property {
+                    Property::Custom(CustomProperty { value, .. })
+                    | Property::Unparsed(UnparsedProperty { value, .. }) => {
+                        fallbacks |= value.get_necessary_fallbacks(targets);
+                    }
+                    _ => {}
+                }
+            }
+        }
+
+        let mut res = Vec::new();
+        let lowest_fallback = fallbacks.lowest();
+        fallbacks.remove(lowest_fallback);
+
+        if fallbacks.contains(ColorFallbackKind::P3) {
+            res.push(self.get_fallback(arena, ColorFallbackKind::P3));
+        }
+
+        if fallbacks.contains(ColorFallbackKind::LAB)
+            || (!lowest_fallback.is_empty() && lowest_fallback != ColorFallbackKind::LAB)
+        {
+            res.push(self.get_fallback(arena, ColorFallbackKind::LAB));
+        }
+
+        if !lowest_fallback.is_empty() {
+            for keyframe in &mut self.keyframes {
+                for property in keyframe.declarations.declarations.iter_mut() {
+                    match property {
+                        Property::Custom(CustomProperty { value, .. })
+                        | Property::Unparsed(UnparsedProperty { value, .. }) => {
+                            *value = value.get_fallback(arena, lowest_fallback);
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        }
+
+        res
+    }
+
+    fn get_fallback<R>(
+        &self,
+        arena: &bun_alloc::Arena,
+        kind: css::css_values::color::ColorFallbackKind,
+    ) -> super::CssRule<R> {
+        use css::css_properties::Property;
+        use css::css_properties::custom::{CustomProperty, UnparsedProperty};
+
+        let keyframes = self
+            .keyframes
+            .iter()
+            .map(|keyframe| {
+                let mut declarations = super::dc::decl_block_empty_static(arena);
+                for property in keyframe.declarations.declarations.iter() {
+                    declarations.declarations.push(match property {
+                        Property::Custom(custom) => Property::Custom(CustomProperty {
+                            name: custom.name,
+                            value: custom.value.get_fallback(arena, kind),
+                        }),
+                        Property::Unparsed(unparsed) => Property::Unparsed(UnparsedProperty {
+                            property_id: unparsed.property_id.deep_clone(arena),
+                            value: unparsed.value.get_fallback(arena, kind),
+                        }),
+                        _ => property.deep_clone(arena),
+                    });
+                }
+                Keyframe {
+                    selectors: keyframe
+                        .selectors
+                        .iter()
+                        .map(|s| s.deep_clone(arena))
+                        .collect(),
+                    declarations,
+                }
+            })
+            .collect();
+
+        super::CssRule::Supports(super::supports::SupportsRule {
+            condition: kind.supports_condition(),
+            rules: super::CssRuleList {
+                v: vec![super::CssRule::Keyframes(KeyframesRule {
+                    name: self.name,
+                    keyframes,
+                    vendor_prefix: self.vendor_prefix,
+                    loc: self.loc,
+                })],
+            },
+            loc: self.loc,
+        })
     }
 }
 

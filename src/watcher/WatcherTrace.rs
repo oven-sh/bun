@@ -172,10 +172,3 @@ pub fn write_events(
         return;
     }
 }
-
-/// Close the trace file if open
-// free-function `deinit` (no `self`), so this stays a plain fn
-// rather than `impl Drop`.
-pub(crate) fn deinit() {
-    let _ = TRACE_FILE.lock().take();
-}

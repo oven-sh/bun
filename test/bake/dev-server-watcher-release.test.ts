@@ -5,20 +5,18 @@
 // with a tight `fs.inotify.max_user_instances` budget this surfaced as
 // `EMFILE while initializing file watcher for development server`.
 
-import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isLinux, isWindows, tempDir } from "harness";
+import { test, expect } from "bun:test";
+import { bunEnv, bunExe, tempDir, isLinux } from "harness";
 
-// Windows watcher `wake()` is intentionally a no-op (see
-// `src/watcher/WindowsWatcher.rs`), so the thread/handle are held until
-// process exit there; the inotify-instance budget problem this test covers
-// is POSIX-specific.
-test.skipIf(isWindows)("dev server releases its file watcher on stop()", async () => {
+// The `/proc/self/{fd,status}` probes are Linux-specific; on macOS the kqueue
+// leak is silent (no observable assertion here) and on Windows `wake()` is an
+// intentional no-op (see `src/watcher/WindowsWatcher.rs`).
+test.skipIf(!isLinux)("dev server releases its file watcher on stop()", async () => {
   const fixture = /* ts */ `
     import { readdirSync, readlinkSync, readFileSync } from "node:fs";
     import html from "./index.html";
 
     function scan() {
-      if (process.platform !== "linux") return { inotify: 0, threads: 0 };
       let inotify = 0;
       for (const name of readdirSync("/proc/self/fd")) {
         try {
@@ -51,11 +49,10 @@ test.skipIf(isWindows)("dev server releases its file watcher on stop()", async (
       s.stop(true);
     }
 
-    // poll until watcher threads have observed running=false and exited
-    for (let i = 0; i < 40; i++) {
+    // poll until the watcher threads have closed their inotify instances
+    // (Threads: is not a reliable gate; JSC may spawn a collector thread)
+    for (let i = 0; i < 40 && scan().inotify > before.inotify; i++) {
       Bun.gc(true);
-      const now = scan();
-      if (now.inotify <= before.inotify && now.threads <= before.threads) break;
       await Bun.sleep(50);
     }
 
@@ -91,13 +88,12 @@ test.skipIf(isWindows)("dev server releases its file watcher on stop()", async (
   const { iterations, inotifyDelta, threadDelta } = JSON.parse(line);
 
   expect(stderr).not.toContain("error:");
-  expect(exitCode).toBe(0);
 
-  if (isLinux) {
-    // Without the fix every iteration leaks one inotify instance
-    // (inotifyDelta == iterations). With the fix all of them are released.
-    expect(inotifyDelta).toBeLessThanOrEqual(1);
-    expect(inotifyDelta).toBeLessThan(iterations);
-    expect(threadDelta).toBeLessThan(iterations);
-  }
+  // Without the fix every iteration leaks one inotify instance
+  // (inotifyDelta == iterations). With the fix all of them are released.
+  expect(inotifyDelta).toBeLessThanOrEqual(1);
+  expect(inotifyDelta).toBeLessThan(iterations);
+  expect(threadDelta).toBeLessThan(iterations);
+
+  expect(exitCode).toBe(0);
 });

@@ -38,10 +38,8 @@ pub(crate) type Platform = INotifyWatcher;
 
 pub struct INotifyWatcher {
     pub fd: Fd,
-    /// eventfd used by `wake()` to unblock the watcher thread's `ppoll()` so
-    /// it can observe `Watcher.running == false` and exit. Without this the
-    /// thread is parked in a blocking `read()` on `fd` and holds the inotify
-    /// instance (and its kernel `max_user_instances` slot) until process exit.
+    /// eventfd written by `wake()`; `read()` ppolls on `[fd, wake_fd]` so
+    /// `Watcher::shutdown` can unpark the thread.
     pub wake_fd: Fd,
     pub loaded: bool,
 
@@ -225,12 +223,9 @@ impl INotifyWatcher {
             ptr.len as usize
         } else {
             'outer: loop {
-                // Block until either the inotify fd has events or `wake()` has
-                // signalled the eventfd. With no watches registered the inotify
-                // fd simply never becomes readable, so this replaces the
-                // previous `Futex::wait_forever(&watch_count, 0)` and also lets
-                // `Watcher::shutdown` unpark the thread while it is waiting for
-                // a filesystem event.
+                // Block until the inotify fd has events or `wake()` has
+                // signalled the eventfd; an inotify fd with no watches never
+                // becomes readable, so `wake_fd` is the only way out then.
                 let mut fds = [
                     system::pollfd {
                         fd: self.fd.native(),
@@ -265,9 +260,7 @@ impl INotifyWatcher {
                     });
                 }
                 if fds[1].revents != 0 {
-                    // `wake()` fired. Yield an empty batch so `watch_loop` can
-                    // re-check `running` and exit; the eventfd is closed by
-                    // `stop()` on the way out.
+                    // `wake()` fired: let `watch_loop` re-check `running`.
                     return Ok(&[]);
                 }
                 if fds[0].revents & libc::POLLIN == 0 {
@@ -416,9 +409,8 @@ impl INotifyWatcher {
         }
     }
 
-    /// Unblock the watcher thread's `ppoll()` in `read()` so it can observe
-    /// `Watcher.running == false` and exit. Called from `Watcher::shutdown`
-    /// on the main thread while holding `Watcher.mutex`.
+    /// Unblock the watcher thread's `ppoll()` so it re-checks `running`.
+    /// Called from `Watcher::shutdown` under `Watcher.mutex`.
     pub(crate) fn wake(&self) {
         if self.wake_fd == Fd::INVALID {
             return;

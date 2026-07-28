@@ -1423,9 +1423,6 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         return Ok(JSValue::ZERO);
     }
 
-    // Scheme fetch for blob: and file:. blob: follows the fetch spec (method
-    // gate, Content-Length, Range). file: remains Bun-specific: method and
-    // request headers are ignored.
     if url_type != URLType::Remote {
         // `defer unix_socket_path.deinit()` → Drop on scope exit.
         let mut path_buf = PathBuffer::uninit();
@@ -1447,13 +1444,9 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         };
         let url_path_decoded = &path_buf2[0..decoded_len as usize];
 
-        // Carries a +1 WTFStringImpl ref on both assignment arms (`create_format`
-        // for blob:, `file_url_from_string` → `Bun::toStringRef` for file:).
-        // `Response::init` wraps it in `OwnedString` and adopts that +1, so it
-        // is passed by value below without an extra `.clone()`.
+        // +1 WTFStringImpl ref; `Response::init` wraps it in `OwnedString` and adopts it.
         let url_string: BunString;
 
-        // This can be a blob: url or a file: url.
         let blob_to_use: Blob = 'blob: {
             // https://fetch.spec.whatwg.org/#concept-scheme-fetch "blob"
             if url_type == URLType::Blob {
@@ -1472,8 +1465,6 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                     }};
                 }
 
-                // 2. If request's method is not `GET` or blobURLEntry is null,
-                //    then return a network error.
                 if method != Method::GET {
                     reject!("fetch failed: only GET is allowed for blob: URLs");
                 }
@@ -1490,7 +1481,6 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                     bstr::BStr::new(url_path_decoded)
                 ));
 
-                // 5. Let fullLength be blob's size.
                 blob.resolve_size();
                 let full_length = blob.size.get();
                 let blob_type = blob.content_type_slice();
@@ -1502,15 +1492,11 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
 
                 if let Some(range_header) = &range {
                     use crate::server::RangeRequest;
-                    // 9.4. If rangeValue is failure, then return a network error.
                     let (start, end) = match RangeRequest::parse_raw(range_header.as_bytes()) {
                         RangeRequest::Raw::None => {
                             reject!("fetch failed: invalid Range header")
                         }
                         RangeRequest::Raw::Suffix(n) => {
-                            // 9.6. If rangeStart is null:
-                            //   1. Set rangeStart to fullLength − rangeEnd.
-                            //   2. Set rangeEnd to rangeStart + rangeEnd − 1.
                             if full_length == 0 {
                                 reject!("fetch failed: Range is unsatisfiable for an empty blob")
                             }
@@ -1520,18 +1506,13 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                             if matches!(end, Some(e) if e < start) {
                                 reject!("fetch failed: invalid Range header")
                             }
-                            // 9.7.1. If rangeStart is greater than or equal to
-                            //        fullLength, then return a network error.
                             if start >= full_length {
                                 reject!("fetch failed: Range start is greater than the blob's size")
                             }
-                            // 9.7.2. If rangeEnd is null or rangeEnd is greater than or
-                            //        equal to fullLength, set rangeEnd to fullLength − 1.
                             (start, end.unwrap_or(full_length - 1).min(full_length - 1))
                         }
                     };
-                    // 9.8. Let slicedBlob be the result of invoking slice blob
-                    //      given blob, rangeStart, rangeEnd + 1, and type.
+                    // slice is [start, end+1); offset is relative to the dupe's existing window
                     blob.offset.set(blob.offset.get().saturating_add(start));
                     length = end - start + 1;
                     blob.size.set(length);
@@ -1579,8 +1560,6 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                     false,
                 )));
 
-                // Ownership of the boxed Response transfers to the JS GC; see
-                // `data_url_response` for the rationale.
                 return Ok(JSPromise::resolved_promise_value(
                     global_this,
                     Response::make_maybe_pooled(global_this, response),

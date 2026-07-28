@@ -3226,10 +3226,59 @@ impl RunCommand {
         let _ = sys::unlink(z);
     }
 
+    /// Whether an image URL from a rendered document is fetched
+    /// automatically for inline display: `https:` targets whose host is
+    /// either a dotted DNS name with a non-numeric final label (not
+    /// `*.localhost`) or a bracketed IPv6 literal outside the loopback,
+    /// unspecified, link-local, and unique-local ranges. Anything else
+    /// renders as its alt text / link.
+    fn remote_image_prefetch_allowed(url: &[u8]) -> bool {
+        if !url.starts_with(b"https://") {
+            return false;
+        }
+        let parsed = bun_url::URL::parse(url);
+        let hostname: &[u8] = parsed.hostname;
+        if hostname.first() == Some(&b'[') && hostname.last() == Some(&b']') {
+            let Ok(v6) = ::core::str::from_utf8(&hostname[1..hostname.len() - 1])
+                .map_err(|_| ())
+                .and_then(|s| s.parse::<::core::net::Ipv6Addr>().map_err(|_| ()))
+            else {
+                return false;
+            };
+            if let Some(v4) = v6.to_ipv4_mapped() {
+                return !(v4.is_loopback()
+                    || v4.is_unspecified()
+                    || v4.is_private()
+                    || v4.is_link_local()
+                    || v4.is_broadcast());
+            }
+            return !(v6.is_loopback()
+                || v6.is_unspecified()
+                || v6.is_unicast_link_local()
+                || v6.is_unique_local());
+        }
+        let hostname = hostname.strip_suffix(b".").unwrap_or(hostname);
+        let Some(last_dot) = strings::last_index_of_char(hostname, b'.') else {
+            return false;
+        };
+        let last_label = &hostname[last_dot + 1..];
+        if last_label.is_empty() || last_label[0].is_ascii_digit() {
+            return false;
+        }
+        let localhost = b"localhost";
+        !(hostname.len() > localhost.len()
+            && hostname[hostname.len() - localhost.len() - 1] == b'.'
+            && strings::eql_case_insensitive_ascii(
+                &hostname[hostname.len() - localhost.len()..],
+                localhost,
+                true,
+            ))
+    }
+
     /// Parse `contents` once with an ImageUrlCollector, download every
-    /// http(s) image URL it finds to a temp file, and populate `out_map`
-    /// with url → temp-path entries. Failures are silent — an image that
-    /// can't be downloaded just falls back to alt-text rendering.
+    /// allowed remote image URL it finds to a temp file, and populate
+    /// `out_map` with url → temp-path entries. Failures are silent — an
+    /// image that can't be downloaded just falls back to alt-text rendering.
     fn prefetch_remote_images(
         contents: &[u8],
         md_opts: md::Options,
@@ -3244,13 +3293,13 @@ impl RunCommand {
         }
 
         // Walk the collected URLs once, deduping and picking out the
-        // http(s) ones. If there are no remote URLs we never spawn the
-        // HTTP worker or allocate any Download structs.
+        // allowed remote ones. If there are none we never spawn the HTTP
+        // worker or allocate any Download structs.
         let mut seen: StringHashMap<()> = StringHashMap::default();
         let mut remote_urls: Vec<Box<[u8]>> = Vec::new();
         for u in collector.urls.iter() {
             let u: &[u8] = u.as_ref();
-            if !u.starts_with(b"http://") && !u.starts_with(b"https://") {
+            if !Self::remote_image_prefetch_allowed(u) {
                 continue;
             }
             let Ok(gop) = seen.get_or_put(u) else {
@@ -3323,7 +3372,7 @@ impl RunCommand {
                     d_ptr,
                     RemoteImageDownload::on_done,
                 ),
-                bun_http::FetchRedirect::Follow,
+                bun_http::FetchRedirect::Manual,
                 Default::default(),
             );
             // SAFETY: last field — all four fields are now initialized.
@@ -4120,5 +4169,52 @@ impl BunXFastPath {
             );
             Global::exit(1);
         }
+    }
+}
+
+#[cfg(test)]
+mod remote_image_prefetch_tests {
+    use super::RunCommand;
+
+    fn allowed(url: &str) -> bool {
+        RunCommand::remote_image_prefetch_allowed(url.as_bytes())
+    }
+
+    #[test]
+    fn allows_public_https() {
+        assert!(allowed("https://example.com/img.png"));
+        assert!(allowed("https://example.com:8443/img.png"));
+        assert!(allowed("https://cdn.example.co.uk/a/b.gif"));
+        assert!(allowed("https://[2606:4700:4700::1111]/img.png"));
+    }
+
+    #[test]
+    fn rejects_non_https() {
+        assert!(!allowed("http://example.com/img.png"));
+        assert!(!allowed("file:///img.png"));
+        assert!(!allowed("ftp://example.com/img.png"));
+    }
+
+    #[test]
+    fn rejects_local_and_reserved_hosts() {
+        assert!(!allowed("https://localhost/img.png"));
+        assert!(!allowed("https://LOCALHOST:8080/img.png"));
+        assert!(!allowed("https://foo.localhost/img.png"));
+        assert!(!allowed("https://foo.localhost./img.png"));
+        assert!(!allowed("https://intranet/img.png"));
+        assert!(!allowed("https://127.0.0.1/img.png"));
+        assert!(!allowed("https://127.0.0.1./img.png"));
+        assert!(!allowed("https://127.1/img.png"));
+        assert!(!allowed("https://2130706433/img.png"));
+        assert!(!allowed("https://0x7f000001/img.png"));
+        assert!(!allowed("https://0.0.0.0/img.png"));
+        assert!(!allowed("https://10.1.2.3/img.png"));
+        assert!(!allowed("https://172.16.0.5/img.png"));
+        assert!(!allowed("https://192.168.1.1/img.png"));
+        assert!(!allowed("https://169.254.169.254/latest/img.png"));
+        assert!(!allowed("https://[::1]/img.png"));
+        assert!(!allowed("https://[fe80::1]/img.png"));
+        assert!(!allowed("https://[fd00::1]/img.png"));
+        assert!(!allowed("https://[::ffff:127.0.0.1]/img.png"));
     }
 }

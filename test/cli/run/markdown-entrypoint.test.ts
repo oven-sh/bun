@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 
 // Tracks exit code from the last runMd() call so individual tests can
 // assert it after snapshotting stdout (giving a readable diff on failure).
@@ -110,6 +110,63 @@ describe("bun <file.md>", () => {
 
   test("renders images as alt text with link", async () => {
     expect(await runMd("![an image](https://bun.com/logo.png)\n")).toMatchSnapshot();
+  });
+
+  // Inline image prefetch only reaches out to https targets on public
+  // DNS names; plain-http and loopback / local-address image URLs render
+  // as alt text without a request. Driven through a POSIX pseudo-terminal
+  // so the renderer takes the inline-image (Kitty graphics) path where
+  // prefetching happens.
+  test.skipIf(isWindows)("does not prefetch images from loopback or non-https URLs", async () => {
+    let requests = 0;
+    await using server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch() {
+        requests++;
+        return new Response("PNG", { headers: { "content-type": "image/png" } });
+      },
+    });
+    const port = server.port;
+    const source = [
+      "# images",
+      "",
+      `![a](http://127.0.0.1:${port}/a.png)`,
+      "",
+      `![b](https://127.0.0.1:${port}/b.png)`,
+      "",
+      `![c](https://localhost:${port}/c.png)`,
+      "",
+      `![d](https://[::1]:${port}/d.png)`,
+      "",
+      "end-of-doc",
+      "",
+    ].join("\n");
+    using dir = tempDir("md-entry-", { "doc.md": source });
+    const chunks: Uint8Array[] = [];
+    const rendered = Promise.withResolvers<void>();
+    let output = "";
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "./doc.md"],
+      env: { ...bunEnv, FORCE_COLOR: "1", TERM: "xterm-kitty", COLUMNS: "80" },
+      cwd: String(dir),
+      terminal: {
+        cols: 80,
+        rows: 24,
+        data(_t, chunk) {
+          chunks.push(new Uint8Array(chunk));
+          output = Buffer.concat(chunks).toString("utf8");
+          if (output.includes("end-of-doc")) rendered.resolve();
+        },
+      },
+    });
+    await Promise.race([rendered.promise, proc.exited]);
+    const exitCode = await proc.exited;
+    proc.terminal?.close();
+    // Every image falls back to its alt-text marker; none is fetched.
+    expect(output.split("📷 ").length - 1).toBe(4);
+    expect(requests).toBe(0);
+    expect(exitCode).toBe(0);
   });
 
   test("renders wikilinks", async () => {

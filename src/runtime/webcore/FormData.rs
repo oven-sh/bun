@@ -200,24 +200,16 @@ pub fn to_js_from_multipart_data(
                     blob.content_type
                         .set(crate::webcore::blob::BlobContentType::Owned(ct.into()));
                     blob.content_type_was_set.set(true);
-                } else {
-                    let mime = 'brk: {
-                        if !filename_str.is_empty() {
-                            let extension = bun_paths::extension(filename_str);
-                            if !extension.is_empty() {
-                                if let Some(m) =
-                                    bun_http::MimeType::by_extension_no_default(&extension[1..])
-                                {
-                                    break 'brk Some(m);
-                                }
-                            }
+                } else if !filename_str.is_empty() {
+                    let extension = bun_paths::extension(filename_str);
+                    if !extension.is_empty() {
+                        if let Some(mime) =
+                            bun_http::MimeType::by_extension_no_default(&extension[1..])
+                        {
+                            blob.content_type
+                                .set(crate::webcore::blob::BlobContentType::from(mime));
+                            blob.content_type_was_set.set(false);
                         }
-                        bun_http::MimeType::sniff(value_str)
-                    };
-                    if let Some(mime) = mime {
-                        blob.content_type
-                            .set(crate::webcore::blob::BlobContentType::from(mime));
-                        blob.content_type_was_set.set(false);
                     }
                 }
 

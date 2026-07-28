@@ -2079,6 +2079,14 @@ describe("response Content-Type is only sent when the body contributes one", () 
     "typeless-blob-string": [() => new Response(new Blob(["<html><b>x</b></html>"])), null],
     "typeless-file": [() => new Response(new File([bin], "upload")), null],
     "typeless-blob-empty": [() => new Response(new Blob([])), null],
+    // Text whose leading bytes collide with an image magic number must not be
+    // content-sniffed into an image/* type (previously: image/bmp, image/gif, image/png).
+    "typeless-blob-bmp-prefix-prose": [() => new Response(new Blob(["BMW rocks, and other prose"])), null],
+    "typeless-blob-gif-prefix-prose": [() => new Response(new Blob(["GIF89a; not an image, just text"])), null],
+    "typeless-file-png-magic-as-txt": [
+      () => new Response(new File([new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 9, 9])], "readme.txt")),
+      null,
+    ],
     // body kinds that do carry a type must keep sending it:
     string: [() => new Response("<html><b>x</b></html>"), "text/plain;charset=utf-8"],
     "typed-blob": [() => new Response(new Blob([bin], { type: "image/png" })), "image/png"],

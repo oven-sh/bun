@@ -935,8 +935,7 @@ public:
     inline void* const& dataPtr() const { return m_dataPtr; }
     inline napi_env env() const { return m_env; }
 
-    // Set for napi_define_class instance methods; the call thunk rejects any
-    // |this| not constructed by this prototype (Node.js v8::Signature parity).
+    // v8::Signature-style receiver check for napi_define_class instance methods.
     inline NapiPrototype* signaturePrototype() const { return m_signaturePrototype.get(); }
     inline void setSignaturePrototype(VM& vm, NapiPrototype* prototype);
 
@@ -999,8 +998,7 @@ public:
         return NapiPrototype::create(vm, structure);
     }
 
-    // The napi_define_class prototype that constructed this instance, compared
-    // against a method's signaturePrototype() before the native callback runs.
+    // napi_define_class prototype that constructed this instance; see NapiClass::signaturePrototype().
     inline NapiPrototype* constructedBy() const { return m_constructedBy.get(); }
     inline void setConstructedBy(VM& vm, NapiPrototype* prototype)
     {

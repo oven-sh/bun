@@ -79,8 +79,7 @@ JSC_HOST_CALL_ATTRIBUTES JSC::EncodedJSValue NapiClass_ConstructorFunction(JSC::
         }
         callFrame->setThisValue(thisValue);
     } else if (NapiPrototype* signaturePrototype = napi->signaturePrototype()) {
-        // Node.js puts napi_define_class instance methods behind a v8::Signature
-        // so a foreign receiver never reaches the native callback. Match that.
+        // v8::Signature parity: reject a foreign |this| before the native callback runs.
         JSValue thisValue = callFrame->thisValue();
         NapiPrototype* instance = thisValue.isCell() ? dynamicDowncast<NapiPrototype>(thisValue.asCell()) : nullptr;
         if (!instance || instance->constructedBy() != signaturePrototype) [[unlikely]] {

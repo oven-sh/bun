@@ -479,7 +479,10 @@ test.concurrent(
 
     const { growthMB, trafficMB } = JSON.parse(stdout.trim());
     expect(trafficMB).toBeGreaterThan(70);
-    expect(growthMB).toBeLessThan(trafficMB * 0.85);
+    // ASAN's allocator keeps freed pages resident, so the child's RSS tracks
+    // peak allocation there rather than retention; the tight ratio is
+    // enforced on non-sanitized lanes.
+    expect(growthMB).toBeLessThan(trafficMB * (isASAN ? 1.5 : 0.85));
     expect(proc.signalCode).toBeNull();
     expect(exitCode).toBe(0);
   },

@@ -224,18 +224,66 @@ fn unfqdn(name: &[u8]) -> &[u8] {
     name.strip_suffix(b".").unwrap_or(name)
 }
 
+#[inline]
+fn eq_nocase(a: &[u8], b: &[u8]) -> bool {
+    strings::eql_case_insensitive_ascii(a, b, true)
+}
+
+#[inline]
+fn contains_nocase(haystack: &[u8], needle: &'static [u8]) -> bool {
+    haystack.len() >= needle.len()
+        && haystack
+            .windows(needle.len())
+            .any(|w| strings::eql_case_insensitive_ascii(w, needle, false))
+}
+
+/// Wildcard interpretation for [`match_hostname`]'s left-most label.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum Wildcards {
+    /// No wildcard expansion: a `*` is matched literally.
+    None,
+    /// Full-label `*` only (OpenSSL `X509_CHECK_FLAG_NO_PARTIAL_WILDCARDS`).
+    FullLabel,
+    /// `*` at the start or end of the label (OpenSSL default).
+    EdgePartial,
+    /// `*` anywhere in the label (Node.js lib/tls.js `check()` default).
+    Anywhere,
+}
+
+/// Options for [`match_hostname`]. Each defaults to the stricter setting so
+/// callers opt in explicitly.
+#[derive(Clone, Copy)]
+pub struct MatchOpts {
+    pub wildcards: Wildcards,
+    /// A full-label `*` may span multiple host labels
+    /// (OpenSSL `X509_CHECK_FLAG_MULTI_LABEL_WILDCARDS`).
+    pub multi_label_wildcards: bool,
+    /// Strip one trailing `.` from both the pattern and the host before
+    /// matching (Node.js `checkServerIdentity`).
+    pub strip_trailing_dot: bool,
+}
+
+impl MatchOpts {
+    /// Node.js lib/tls.js `check()` — the matcher behind `tls.connect`,
+    /// `https`, and undici `fetch`.
+    pub const TLS_CHECK: Self = Self {
+        wildcards: Wildcards::Anywhere,
+        multi_label_wildcards: false,
+        strip_trailing_dot: true,
+    };
+}
+
 /// Matches one DNS name from a certificate (possibly containing a single `*`
-/// wildcard in its left-most label) against `hostname`.
-///
-/// This is a line-for-line port of Node.js `check()` in lib/tls.js so that the
-/// native hostname verification used by `fetch()`, `WebSocket`, `Bun.connect`
-/// and the SQL clients agrees with `tls.checkServerIdentity()` (and therefore
-/// `tls.connect`). In particular Node permits RFC 6125 §6.4.3 partial
-/// wildcards (`f*.example.com`, `*b.example.com`, `a*b.example.com`), which
-/// the previous implementation rejected.
-fn match_dns_name(pattern: &[u8], hostname: &[u8]) -> bool {
-    let pattern = unfqdn(pattern);
-    let hostname = unfqdn(hostname);
+/// wildcard in its left-most label) against `hostname`. This is the ONE
+/// hostname matcher every native TLS client and `X509Certificate#checkHost`
+/// share; [`MatchOpts`] selects between Node.js lib/tls.js `check()` semantics
+/// and OpenSSL `X509_check_host` semantics where they differ.
+pub fn match_hostname(pattern: &[u8], hostname: &[u8], opts: MatchOpts) -> bool {
+    let (pattern, hostname) = if opts.strip_trailing_dot {
+        (unfqdn(pattern), unfqdn(hostname))
+    } else {
+        (pattern, hostname)
+    };
     if pattern.is_empty() {
         return false;
     }
@@ -260,66 +308,76 @@ fn match_dns_name(pattern: &[u8], hostname: &[u8]) -> bool {
         return false;
     }
 
-    // The pattern's left-most label is the only label Node inspects for a
-    // wildcard; every subsequent label is compared literally.
+    // Wildcards are only recognised in the pattern's left-most label; every
+    // subsequent label is compared literally.
     let pat_first_end = strings::index_of_char(pattern, b'.')
         .map(|i| i as usize)
         .unwrap_or(pattern.len());
     let pat_first = &pattern[..pat_first_end];
     let pat_rest = pattern.get(pat_first_end + 1..).unwrap_or(b"");
 
-    let host_first_end = strings::index_of_char(hostname, b'.')
-        .map(|i| i as usize)
-        .unwrap_or(hostname.len());
-    let host_first = &hostname[..host_first_end];
-    let host_rest = hostname.get(host_first_end + 1..).unwrap_or(b"");
+    let star = match strings::index_of_char(pat_first, b'*') {
+        Some(i) if opts.wildcards != Wildcards::None => i as usize,
+        _ => return eq_nocase(pattern, hostname),
+    };
+    let prefix = &pat_first[..star];
+    let suffix = &pat_first[star + 1..];
+    let is_full_label = prefix.is_empty() && suffix.is_empty();
 
-    // Node compares every non-first label for equality after lowercasing; a
-    // case-insensitive byte comparison of the joined remainder is equivalent
-    // because the label count only matches when both remainders are identical.
-    if !strings::eql_case_insensitive_ascii(pat_rest, host_rest, true) {
+    // A second `*`, an IDNA A-label, fewer than three labels, or a partial
+    // wildcard the caller's mode does not permit all reduce to a literal
+    // comparison (the `*` can never appear in a real hostname, so this is a
+    // rejection in practice).
+    if strings::index_of_char(suffix, b'*').is_some()
+        || contains_nocase(pat_first, b"xn--")
+        || strings::index_of_char(pat_rest, b'.').is_none()
+        || (matches!(opts.wildcards, Wildcards::FullLabel) && !is_full_label)
+        || (matches!(opts.wildcards, Wildcards::EdgePartial)
+            && !prefix.is_empty()
+            && !suffix.is_empty())
+    {
+        return eq_nocase(pattern, hostname);
+    }
+
+    // The host's left-most "label" covers everything up to the pattern's
+    // remaining labels; for a full-label `*` with multi-label enabled that may
+    // include dots.
+    let host_first = if opts.multi_label_wildcards && is_full_label {
+        let need = pat_rest.len() + 1;
+        match hostname.len().checked_sub(need) {
+            Some(cut) if hostname[cut] == b'.' && eq_nocase(&hostname[cut + 1..], pat_rest) => {
+                &hostname[..cut]
+            }
+            _ => return false,
+        }
+    } else {
+        let end = strings::index_of_char(hostname, b'.')
+            .map(|i| i as usize)
+            .unwrap_or(hostname.len());
+        if !eq_nocase(hostname.get(end + 1..).unwrap_or(b""), pat_rest) {
+            return false;
+        }
+        &hostname[..end]
+    };
+
+    if prefix.len() + suffix.len() > host_first.len() {
         return false;
     }
+    eq_nocase(prefix, &host_first[..prefix.len()])
+        && eq_nocase(suffix, &host_first[host_first.len() - suffix.len()..])
+}
 
-    let star = strings::index_of_char(pat_first, b'*').map(|i| i as usize);
-
-    // Node never expands a wildcard inside an IDNA A-label (`xn--`); `splitHost`
-    // has already lowercased the pattern, so the JS `includes("xn--")` is an
-    // ASCII-case-insensitive substring test on the raw certificate bytes.
-    let is_idna = pat_first.len() >= 4
-        && pat_first
-            .windows(4)
-            .any(|w| strings::eql_case_insensitive_ascii(w, b"xn--", false));
-
-    match star {
-        None => strings::eql_case_insensitive_ascii(pat_first, host_first, true),
-        Some(_) if is_idna => strings::eql_case_insensitive_ascii(pat_first, host_first, true),
-        Some(star) => {
-            let prefix = &pat_first[..star];
-            let suffix = &pat_first[star + 1..];
-            // At most one `*`; at least three labels overall.
-            if strings::index_of_char(suffix, b'*').is_some() {
-                return false;
-            }
-            if strings::index_of_char(pat_rest, b'.').is_none() {
-                return false;
-            }
-            if prefix.len() + suffix.len() > host_first.len() {
-                return false;
-            }
-            strings::eql_case_insensitive_ascii(prefix, &host_first[..prefix.len()], true)
-                && strings::eql_case_insensitive_ascii(
-                    suffix,
-                    &host_first[host_first.len() - suffix.len()..],
-                    true,
-                )
-        }
-    }
+/// Node.js lib/tls.js `check()` — the matcher `tls.checkServerIdentity` applies
+/// to every DNS SAN and CN. Used by every native TLS client below.
+#[inline]
+fn match_dns_name(pattern: &[u8], hostname: &[u8]) -> bool {
+    match_hostname(pattern, hostname, MatchOpts::TLS_CHECK)
 }
 
 pub fn check_x509_server_identity(x509: &mut boring::X509, hostname: &[u8]) -> bool {
+    let hostname = unfqdn(hostname);
     let host_is_ip = strings::is_ip_address(hostname);
-    let mut has_identifier_san = false;
+    let mut has_dns_san = false;
 
     match x509.subject_alt_names() {
         boring::SanLookup::Invalid => return false,
@@ -333,9 +391,9 @@ pub fn check_x509_server_identity(x509: &mut boring::X509, hostname: &[u8]) -> b
             };
             let mut cert_ip_buf = [0u8; INET6_ADDRSTRLEN + 1];
             for entry in names.subject_alt_names() {
-                has_identifier_san = true;
                 match entry {
                     boring::SubjectAltName::Dns(name) => {
+                        has_dns_san = true;
                         if !host_is_ip && match_dns_name(name, hostname) {
                             return true;
                         }
@@ -355,12 +413,151 @@ pub fn check_x509_server_identity(x509: &mut boring::X509, hostname: &[u8]) -> b
         }
     }
 
-    // Node.js: the Subject CN is consulted only when the certificate carries
-    // no DNS / IP / URI subjectAltName entries, and never for IP hosts.
-    if !host_is_ip && !has_identifier_san {
+    // Node.js `checkServerIdentity` (lib/tls.js, post CVE-2021-44531): the
+    // Subject CN is consulted only when the certificate carries no dNSName
+    // SAN, and never for IP hosts. Non-DNS SANs (email / IP / URI) do not
+    // suppress the fallback.
+    if !host_is_ip && !has_dns_san {
         return x509.common_names().any(|cn| match_dns_name(cn, hostname));
     }
     false
+}
+
+/// OpenSSL `X509_CHECK_FLAG_*` values. BoringSSL defines four of these as `0`
+/// (the behaviour was removed), so `X509Certificate#checkHost` keeps its own
+/// copy and calls [`Bun__X509__checkHost`] instead of `X509_check_host`.
+pub mod host_check {
+    pub const ALWAYS_CHECK_SUBJECT: u32 = 0x01;
+    pub const NO_WILDCARDS: u32 = 0x02;
+    pub const NO_PARTIAL_WILDCARDS: u32 = 0x04;
+    pub const MULTI_LABEL_WILDCARDS: u32 = 0x08;
+    pub const SINGLE_LABEL_SUBDOMAINS: u32 = 0x10;
+    pub const NEVER_CHECK_SUBJECT: u32 = 0x20;
+}
+
+/// OpenSSL: a `host` starting with `.` matches any certificate name that ends
+/// with that suffix; `SINGLE_LABEL_SUBDOMAINS` restricts the stripped prefix to
+/// a single label.
+fn match_dot_subdomain(pattern: &[u8], host: &[u8], single_label: bool) -> bool {
+    if pattern.len() < host.len()
+        || strings::index_of_char(pattern, 0).is_some()
+        || !pattern.iter().all(|b| (0x21..=0x7f).contains(b))
+    {
+        return false;
+    }
+    let skip = &pattern[..pattern.len() - host.len()];
+    if single_label && strings::index_of_char(skip, b'.').is_some() {
+        return false;
+    }
+    eq_nocase(&pattern[skip.len()..], host)
+}
+
+fn alloc_peer(name: &[u8], out_ptr: *mut *mut u8, out_len: *mut usize) {
+    if out_ptr.is_null() || out_len.is_null() {
+        return;
+    }
+    let buf = OPENSSL_memory_alloc(name.len() + 1).cast::<u8>();
+    if buf.is_null() {
+        return;
+    }
+    // SAFETY: `buf` is a fresh allocation of `name.len() + 1` bytes.
+    unsafe {
+        ptr::copy_nonoverlapping(name.as_ptr(), buf, name.len());
+        *buf.add(name.len()) = 0;
+        *out_ptr = buf;
+        *out_len = name.len();
+    }
+}
+
+/// Node.js-compatible `X509Certificate#checkHost`. BoringSSL's
+/// `X509_check_host` hard-codes `NO_PARTIAL_WILDCARDS` and only falls back to
+/// the Subject CN when the SAN extension is absent, so `ncrypto`'s
+/// `X509View::checkHost` calls this instead and passes OpenSSL's real flag
+/// values.
+///
+/// Returns `1` (match), `0` (no match) or `-2` (invalid `host`). On match,
+/// `*out_peer` receives the matched certificate name as a NUL-terminated
+/// OPENSSL_malloc'd buffer the caller owns.
+///
+/// # Safety
+/// `x509` must be a live BoringSSL certificate, `host_ptr[..host_len]` must be
+/// readable, and `out_peer` / `out_len` must be null or writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn Bun__X509__checkHost(
+    x509: *mut boring::X509,
+    host_ptr: *const u8,
+    host_len: usize,
+    flags: u32,
+    out_peer: *mut *mut u8,
+    out_len: *mut usize,
+) -> c_int {
+    // SAFETY: caller contract — `x509` is null or a live BoringSSL certificate.
+    let Some(x509) = (unsafe { x509.as_mut() }) else {
+        return 0;
+    };
+    if host_ptr.is_null() {
+        return -2;
+    }
+    // SAFETY: caller contract — `host_ptr[..host_len]` is readable.
+    let host = unsafe { core::slice::from_raw_parts(host_ptr, host_len) };
+    if host.is_empty() || strings::index_of_char(host, 0).is_some() {
+        return -2;
+    }
+
+    let opts = MatchOpts {
+        wildcards: if flags & host_check::NO_WILDCARDS != 0 {
+            Wildcards::None
+        } else if flags & host_check::NO_PARTIAL_WILDCARDS != 0 {
+            Wildcards::FullLabel
+        } else {
+            Wildcards::EdgePartial
+        },
+        multi_label_wildcards: flags & host_check::MULTI_LABEL_WILDCARDS != 0,
+        strip_trailing_dot: false,
+    };
+    let dot_host = host.len() > 1 && host[0] == b'.';
+    let single_label = flags & host_check::SINGLE_LABEL_SUBDOMAINS != 0;
+
+    let matches = |name: &[u8]| {
+        if dot_host {
+            match_dot_subdomain(name, host, single_label)
+        } else {
+            match_hostname(name, host, opts)
+        }
+    };
+
+    let mut has_dns_san = false;
+    match x509.subject_alt_names() {
+        boring::SanLookup::Invalid => return 0,
+        boring::SanLookup::Absent => {}
+        boring::SanLookup::Names(names) => {
+            for entry in names.subject_alt_names() {
+                if let boring::SubjectAltName::Dns(name) = entry {
+                    has_dns_san = true;
+                    if matches(name) {
+                        alloc_peer(name, out_peer, out_len);
+                        return 1;
+                    }
+                }
+            }
+        }
+    }
+
+    // OpenSSL falls back to the Subject CN when no dNSName SAN was present,
+    // or unconditionally with ALWAYS_CHECK_SUBJECT, unless NEVER_CHECK_SUBJECT.
+    if flags & host_check::NEVER_CHECK_SUBJECT != 0 {
+        return 0;
+    }
+    if has_dns_san && flags & host_check::ALWAYS_CHECK_SUBJECT == 0 {
+        return 0;
+    }
+    for cn in x509.common_names() {
+        if matches(cn) {
+            alloc_peer(cn, out_peer, out_len);
+            return 1;
+        }
+    }
+    0
 }
 
 /// Certificate name bytes (IA5 / Latin-1) for error messages.
@@ -464,6 +661,7 @@ pub fn write_server_identity_mismatch_reason(
     out: &mut dyn core::fmt::Write,
 ) -> core::fmt::Result {
     const NO_DNS: &str = "Cert does not contain a DNS name";
+    let hostname = unfqdn(hostname);
     let host = NameBytes(hostname);
     let host_is_ip = strings::is_ip_address(hostname);
 
@@ -483,22 +681,15 @@ pub fn write_server_identity_mismatch_reason(
         );
     }
     if let Some(names) = &names {
-        let mut has_dns = false;
-        let mut has_identifier = false;
-        for entry in names.subject_alt_names() {
-            has_identifier = true;
-            has_dns |= matches!(entry, boring::SubjectAltName::Dns(_));
-        }
-        if has_identifier {
-            return if has_dns {
-                write!(
-                    out,
-                    "Host: {host}. is not in the cert's altnames: {}",
-                    AltNameList(names)
-                )
-            } else {
-                out.write_str(NO_DNS)
-            };
+        if names
+            .subject_alt_names()
+            .any(|e| matches!(e, boring::SubjectAltName::Dns(_)))
+        {
+            return write!(
+                out,
+                "Host: {host}. is not in the cert's altnames: {}",
+                AltNameList(names)
+            );
         }
     }
     match x509.common_names().next() {

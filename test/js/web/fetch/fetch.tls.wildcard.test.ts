@@ -302,11 +302,13 @@ describe.concurrent("TLS wildcard hostname verification", () => {
   });
 });
 
-// fetch() uses a native Rust port of Node's lib/tls.js check() for certificate
-// name matching; tls.connect() defaults to the JS tls.checkServerIdentity().
-// These must agree for every certificate Node accepts, including RFC 6125
-// §6.4.3 partial-wildcard SAN entries (f*.example.com / *b.example.com).
-describe("fetch() and tls.checkServerIdentity() agree on certificate SAN wildcards", () => {
+// Bun exposes three certificate-name matchers that must agree with Node.js:
+//   - tls.checkServerIdentity()  -> JS port of Node lib/tls.js check()
+//   - fetch() / WebSocket / Bun.connect / SQL -> native Rust port of check()
+//   - X509Certificate#checkHost  -> native port of OpenSSL X509_check_host
+// The first two share semantics; checkHost follows OpenSSL where Node does.
+// Every expected value below was taken from Node.js v26.3.0.
+describe("TLS certificate name matching: fetch() / checkServerIdentity / checkHost agree", () => {
   // Minimal DER encoder sufficient to build a self-signed EC certificate with
   // an arbitrary subjectAltName. Real CAs don't issue partial-wildcard SANs,
   // so the test has to mint its own.
@@ -325,10 +327,20 @@ describe("fetch() and tls.checkServerIdentity() agree on certificate SAN wildcar
   const ecdsaWithSha256 = seq(oid("2a8648ce3d040302"));
   const dn = (cn: string) => seq(set(seq(oid("550403"), tlv(0x0c, Buffer.from(cn)))));
 
-  function makeCert(sanDns: string[]) {
+  type San = ["dns" | "ip" | "email" | "uri", string];
+  function makeCert(cn: string, sans: San[]) {
     const { privateKey, publicKey } = crypto.generateKeyPairSync("ec", { namedCurve: "prime256v1" });
-    const subject = dn("cn-not-in-san.test");
-    const exts = tlv(0xa3, seq(seq(oid("551d11"), tlv(0x04, seq(...sanDns.map(d => tlv(0x82, Buffer.from(d))))))));
+    const subject = dn(cn);
+    let exts = Buffer.alloc(0);
+    if (sans.length) {
+      const enc: Record<San[0], (v: string) => Buffer> = {
+        dns: v => tlv(0x82, Buffer.from(v)),
+        ip: v => tlv(0x87, Buffer.from(v.split(".").map(Number))),
+        email: v => tlv(0x81, Buffer.from(v)),
+        uri: v => tlv(0x86, Buffer.from(v)),
+      };
+      exts = tlv(0xa3, seq(seq(oid("551d11"), tlv(0x04, seq(...sans.map(([t, v]) => enc[t](v)))))));
+    }
     const tbs = seq(
       tlv(0xa0, tlv(0x02, Buffer.from([2]))),
       tlv(0x02, Buffer.from([9])),
@@ -351,94 +363,159 @@ describe("fetch() and tls.checkServerIdentity() agree on certificate SAN wildcar
         .match(/.{1,64}/g)!
         .join("\n") +
       "\n-----END CERTIFICATE-----\n";
-    return { cert, key: privateKey.export({ type: "pkcs8", format: "pem" }) as string };
+    const key = privateKey.export({ type: "pkcs8", format: "pem" }) as string;
+    return { cert, key, x509: new crypto.X509Certificate(cert) };
   }
 
-  const sans = ["*.wild.test", "f*.partial.test", "*b.partial2.test", "a*c.mid.test"];
-  const material = makeCert(sans);
-  const x509 = new crypto.X509Certificate(material.cert);
-  const legacy = x509.toLegacyObject();
-
-  // Expected values were taken from Node.js v26.3.0.
-  const cases: Array<[host: string, ok: boolean]> = [
-    ["foo.wild.test", true],
-    ["a.b.wild.test", false],
-    ["wild.test", false],
-    ["foo.partial.test", true],
-    ["f.partial.test", true],
-    ["FOO.partial.test", true],
-    ["bar.partial.test", false],
-    ["foo.bar.partial.test", false],
-    ["foob.partial2.test", true],
-    ["b.partial2.test", true],
-    ["fooc.partial2.test", false],
-    ["abc.mid.test", true],
-    ["ac.mid.test", true],
-    ["xbc.mid.test", false],
-    ["cn-not-in-san.test", false],
-  ];
-
-  let server: ReturnType<typeof Bun.serve>;
-  it("server starts", () => {
-    server = Bun.serve({
-      port: 0,
-      tls: material,
-      fetch: () => new Response("ok"),
-    });
-  });
-
-  it.each(cases)("tls.checkServerIdentity(%j) === fetch()", async (host, ok) => {
-    // JS matcher (the same one tls.connect defaults to).
-    const jsErr = tls.checkServerIdentity(host, legacy);
-    expect(jsErr === undefined).toBe(ok);
-
-    // Native matcher via fetch().
-    let fetchOk: boolean;
-    let fetchCode: string | undefined;
+  function csi(x509: crypto.X509Certificate, host: string) {
+    return tls.checkServerIdentity(host, x509.toLegacyObject()) === undefined;
+  }
+  function checkHost(x509: crypto.X509Certificate, host: string, opts?: object) {
+    return x509.checkHost(host, opts);
+  }
+  async function fetchOk(material: { cert: string; key: string }, host: string) {
+    await using s = Bun.serve({ port: 0, tls: material, fetch: () => new Response("ok") });
     try {
-      const res = await fetch(`https://127.0.0.1:${server.port}/`, {
+      const r = await fetch(`https://127.0.0.1:${s.port}/`, {
         // @ts-expect-error Bun extension
         tls: { ca: material.cert, serverName: host },
         keepalive: false,
       });
-      await res.text();
-      fetchOk = res.ok;
+      await r.text();
+      return { ok: true };
     } catch (e: any) {
-      fetchOk = false;
-      fetchCode = e.code;
+      return { ok: false, code: e.code };
     }
-    if (ok) {
-      expect({ fetchOk, fetchCode }).toEqual({ fetchOk: true, fetchCode: undefined });
-    } else {
-      expect({ fetchOk, fetchCode }).toEqual({ fetchOk: false, fetchCode: "ERR_TLS_CERT_ALTNAME_INVALID" });
-    }
+  }
+
+  // Wildcard-SAN certificate shared by the csi==fetch rows.
+  const wild = makeCert("cn-not-in-san.test", [
+    ["dns", "*.wild.test"],
+    ["dns", "f*.partial.test"],
+    ["dns", "*b.partial2.test"],
+    ["dns", "w*w.mid.test"],
+    ["dns", "exact.test"],
+  ]);
+
+  // tls.checkServerIdentity and fetch() share Node's lib/tls.js check()
+  // semantics: partial wildcards anywhere in the left-most label, trailing dot
+  // stripped, at least three labels, IDNA A-labels literal. The checkHost
+  // column is recorded alongside for documentation; where Node's own checkHost
+  // disagrees with checkServerIdentity (mid-label wildcard, trailing dot) the
+  // expected value follows Node's checkHost.
+  const csiRows: Array<[host: string, csi: boolean, checkHost: string | undefined]> = [
+    ["foo.wild.test", true, "*.wild.test"],
+    ["FOO.WILD.TEST", true, "*.wild.test"],
+    ["foo.wild.test.", true, undefined],
+    ["a.b.wild.test", false, undefined],
+    ["wild.test", false, undefined],
+    ["exact.test", true, "exact.test"],
+    ["foo.partial.test", true, "f*.partial.test"],
+    ["f.partial.test", true, "f*.partial.test"],
+    ["bar.partial.test", false, undefined],
+    ["foo.bar.partial.test", false, undefined],
+    ["foob.partial2.test", true, "*b.partial2.test"],
+    ["b.partial2.test", true, "*b.partial2.test"],
+    ["fooc.partial2.test", false, undefined],
+    ["wow.mid.test", true, undefined],
+    ["ww.mid.test", true, undefined],
+    ["abc.mid.test", false, undefined],
+    ["cn-not-in-san.test", false, undefined],
+  ];
+
+  describe.concurrent("checkServerIdentity == fetch", () => {
+    it.each(csiRows)("%j", async (host, match, checkHostResult) => {
+      expect({
+        csi: csi(wild.x509, host),
+        checkHost: checkHost(wild.x509, host),
+        fetch: await fetchOk(wild, host),
+      }).toEqual({
+        csi: match,
+        checkHost: checkHostResult,
+        fetch: match ? { ok: true } : { ok: false, code: "ERR_TLS_CERT_ALTNAME_INVALID" },
+      });
+    });
   });
 
-  it("server stops", () => {
-    server?.stop(true);
-  });
-
-  // The native matcher must not be more permissive than Node on the rejections
-  // Node's lib/tls.js check() applies to the pattern's left-most label.
-  const nativeRejects: Array<[san: string, host: string]> = [
+  // Rejections Node's check() applies to the pattern that the native matcher
+  // must not relax.
+  const rejectSans: Array<[san: string, host: string]> = [
     ["f**.partial.test", "foo.partial.test"],
     ["*.test", "foo.test"],
     ["xn--f*.partial.test", "xn--foo.partial.test"],
     ["a..b.test", "a..b.test"],
   ];
-  it.each(nativeRejects)("SAN %j must not match %j", async (san, host) => {
-    const m = makeCert([san]);
-    expect(tls.checkServerIdentity(host, new crypto.X509Certificate(m.cert).toLegacyObject())).toBeInstanceOf(Error);
+  describe.concurrent("pattern rejections", () => {
+    it.each(rejectSans)("SAN %j must not match %j", async (san, host) => {
+      const m = makeCert("x", [["dns", san]]);
+      expect({
+        csi: csi(m.x509, host),
+        checkHost: checkHost(m.x509, host),
+        fetch: await fetchOk(m, host),
+      }).toEqual({
+        csi: false,
+        checkHost: undefined,
+        fetch: { ok: false, code: "ERR_TLS_CERT_ALTNAME_INVALID" },
+      });
+    });
+  });
 
-    await using s = Bun.serve({ port: 0, tls: m, fetch: () => new Response("ok") });
-    const err = await fetch(`https://127.0.0.1:${s.port}/`, {
-      // @ts-expect-error Bun extension
-      tls: { ca: m.cert, serverName: host },
-      keepalive: false,
-    }).then(
-      () => undefined,
-      e => e,
-    );
-    expect(err?.code).toBe("ERR_TLS_CERT_ALTNAME_INVALID");
+  // CN fallback: Node's checkServerIdentity and OpenSSL's default checkHost
+  // both fall back to the Subject CN when the certificate carries no dNSName
+  // SAN; non-DNS SANs (email / IP / URI) must not suppress that.
+  const cnRows: Array<[label: string, cn: string, sans: San[], host: string, csi: boolean, checkHost: boolean]> = [
+    ["no SAN", "nosan.a.test", [], "nosan.a.test", true, true],
+    ["email-only SAN", "emailcn.a.test", [["email", "a@x.test"]], "emailcn.a.test", true, true],
+    ["IP-only SAN", "ipcn.a.test", [["ip", "10.0.0.1"]], "ipcn.a.test", true, true],
+    ["URI-only SAN", "uricn.a.test", [["uri", "https://x.test/"]], "uricn.a.test", true, true],
+    ["DNS SAN present", "dnscn.a.test", [["dns", "other.a.test"]], "dnscn.a.test", false, false],
+  ];
+  describe.concurrent("CN fallback", () => {
+    it.each(cnRows)("%s -> %j", async (_label, cn, sans, host, csiMatch, checkHostMatch) => {
+      const m = makeCert(cn, sans);
+      expect({
+        csi: csi(m.x509, host),
+        checkHost: checkHost(m.x509, host) === cn,
+        fetch: await fetchOk(m, host),
+      }).toEqual({
+        csi: csiMatch,
+        checkHost: checkHostMatch,
+        fetch: csiMatch ? { ok: true } : { ok: false, code: "ERR_TLS_CERT_ALTNAME_INVALID" },
+      });
+    });
+  });
+
+  // X509Certificate#checkHost options. Every expected value was taken from
+  // Node.js v26.3.0 (OpenSSL X509_check_host semantics).
+  describe("checkHost options", () => {
+    const W = makeCert("cn.a.test", [
+      ["dns", "*.wild.test"],
+      ["dns", "exact.test"],
+    ]);
+    const P = makeCert("x", [["dns", "f*.partial.test"]]);
+    const Sub = makeCert("x", [["dns", "a.b.wild.test"]]);
+    const NoSan = makeCert("nosan.a.test", []);
+    const certs = { W, P, Sub, NoSan };
+
+    it.each([
+      // [cert, host, opts, expected]
+      ["W", "foo.wild.test", { wildcards: false }, undefined],
+      ["W", "exact.test", { wildcards: false }, "exact.test"],
+      ["P", "foo.partial.test", { partialWildcards: false }, undefined],
+      ["P", "foo.partial.test", { partialWildcards: true }, "f*.partial.test"],
+      ["W", "a.b.wild.test", { multiLabelWildcards: true }, "*.wild.test"],
+      ["W", "a.b.wild.test", { multiLabelWildcards: false }, undefined],
+      ["P", "foo.bar.partial.test", { multiLabelWildcards: true }, undefined],
+      ["W", "cn.a.test", { subject: "always" }, "cn.a.test"],
+      ["W", "cn.a.test", { subject: "default" }, undefined],
+      ["W", "cn.a.test", { subject: "never" }, undefined],
+      ["NoSan", "nosan.a.test", { subject: "never" }, undefined],
+      ["Sub", ".wild.test", undefined, "a.b.wild.test"],
+      ["Sub", ".wild.test", { singleLabelSubdomains: true }, undefined],
+      ["Sub", ".b.wild.test", { singleLabelSubdomains: true }, "a.b.wild.test"],
+      ["W", "foo.wild.test", {}, "*.wild.test"],
+    ] as const)("%s checkHost(%j, %o) -> %j", (name, host, opts, expected) => {
+      expect(checkHost(certs[name].x509, host, opts)).toBe(expected);
+    });
   });
 });

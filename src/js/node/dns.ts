@@ -97,9 +97,6 @@ function getDefaultResultOrder() {
   return defaultResultOrder();
 }
 
-// Node's reverse() gates on uv_inet_pton (strict dotted quad / IPv6) and fails
-// with UV_EINVAL before anything hits the resolver. c-ares' ares_inet_pton is
-// looser and zero-fills short forms like "1.2.3", so we gate with isIP() here.
 function reverseInvalidIPError(ip) {
   const err = new Error(ip ? `getHostByAddr EINVAL ${ip}` : "getHostByAddr EINVAL");
   err.errno = -22;

@@ -117,7 +117,12 @@ impl DirectoryRoute {
     // ctx userdata; `on_stream_complete` may drop the last ref after a reload,
     // and `Box::from_raw` on a `&self`-derived pointer is UB under Stacked
     // Borrows. See src/CLAUDE.md §Pointer provenance at FFI boundaries.
-    fn on(this_ptr: NonNull<DirectoryRoute>, mut req: AnyRequest, resp: AnyResponse, method: Method) {
+    fn on(
+        this_ptr: NonNull<DirectoryRoute>,
+        mut req: AnyRequest,
+        resp: AnyResponse,
+        method: Method,
+    ) {
         let this = bun_ptr::BackRef::from(this_ptr);
         debug_assert!(this.server.get().is_some());
         this.ref_();

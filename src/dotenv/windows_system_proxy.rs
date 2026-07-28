@@ -87,16 +87,19 @@ pub fn is_implicit_bypass(hostname: &[u8]) -> bool {
     {
         return true;
     }
-    if strings::has_prefix_comptime(h, b"127.") || strings::has_prefix_comptime(h, b"169.254.") {
-        return true;
+    if let Some(rest) = h.strip_prefix(b"127.").or_else(|| h.strip_prefix(b"169.254.")) {
+        if !rest.is_empty() && rest.iter().all(|&b| b.is_ascii_digit() || b == b'.') {
+            return true;
+        }
     }
     if h == b"::1" {
         return true;
     }
-    h.len() >= 6 && strings::eql_case_insensitive_ascii(&h[..2], b"fe", true) && {
-        let c = h[2].to_ascii_lowercase();
-        (c == b'8' || c == b'9' || c == b'a' || c == b'b') && h[3] == b':'
-    }
+    h.len() >= 5
+        && strings::eql_case_insensitive_ascii(&h[..2], b"fe", true)
+        && matches!(h[2].to_ascii_lowercase(), b'8' | b'9' | b'a' | b'b')
+        && h[3].is_ascii_hexdigit()
+        && h[4] == b':'
 }
 
 #[inline]

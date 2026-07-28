@@ -288,7 +288,7 @@ describe("Bun.serve() directory routes", () => {
     expect(dbl.body).not.toContain("SECRET");
   });
 
-  it.skipIf(!isLinux)("rejects symlink escapes on Linux via RESOLVE_BENEATH", async () => {
+  it.skipIf(!isLinux)("rejects symlink escapes on Linux via RESOLVE_IN_ROOT", async () => {
     using dir = tempDir("serve-dir-symlink", {
       "secret.txt": "SECRET",
       "public/ok.txt": "ok",
@@ -296,9 +296,11 @@ describe("Bun.serve() directory routes", () => {
     });
 
     const root = String(dir);
-    symlinkSync(join(root, "secret.txt"), join(root, "public", "escape"));
-    // RESOLVE_BENEATH rejects absolute symlink targets (they resolve from `/`,
-    // which is outside the root); an in-root symlink must be relative.
+    // Absolute target: IN_ROOT resolves it against dirfd, so this looks for
+    // public/<abs path> which doesn't exist.
+    symlinkSync(join(root, "secret.txt"), join(root, "public", "escape-abs"));
+    // Relative target climbing out: `..` is clamped at the root.
+    symlinkSync("../secret.txt", join(root, "public", "escape-rel"));
     symlinkSync("inside.txt", join(root, "public", "alias"));
 
     server = serve({
@@ -312,10 +314,12 @@ describe("Bun.serve() directory routes", () => {
     expect(inside.status).toBe(200);
     expect(await inside.text()).toBe("inside");
 
-    // Symlink that escapes the root is rejected by the kernel.
-    const escape = await fetch(`${server.url}static/escape`);
-    expect(await escape.text()).not.toContain("SECRET");
-    expect(escape.status).toBe(404);
+    // Symlinks that escape the root are clamped by the kernel.
+    for (const name of ["escape-abs", "escape-rel"]) {
+      const res = await fetch(`${server.url}static/${name}`);
+      expect(await res.text()).not.toContain("SECRET");
+      expect(res.status).toBe(404);
+    }
   });
 
   it("percent-decodes file names", async () => {
@@ -331,6 +335,26 @@ describe("Bun.serve() directory routes", () => {
     const res = await fetch(`${server.url}hello%20world.txt`);
     expect(res.status).toBe(200);
     expect(await res.text()).toBe("hi");
+  });
+
+  it("ignores the query string", async () => {
+    using dir = tempDir("serve-dir-query", {
+      "public/app.js": "ok",
+      "public/index.html": "root",
+    });
+
+    server = serve({
+      port: 0,
+      routes: { "/*": { dir: join(String(dir), "public") } },
+    });
+
+    const res = await fetch(`${server.url}app.js?v=abc123`);
+    expect(res.status).toBe(200);
+    expect(await res.text()).toBe("ok");
+
+    const root = await fetch(`${server.url}?foo=bar`);
+    expect(root.status).toBe(200);
+    expect(await root.text()).toBe("root");
   });
 
   it("supports multiple directory routes", async () => {
@@ -367,7 +391,7 @@ describe("Bun.serve() directory routes", () => {
         port: 0,
         routes: { "/static/*": { dir: "/nonexistent/path/that/does/not/exist" } },
       }),
-    ).toThrow();
+    ).toThrow(expect.objectContaining({ code: "ENOENT" }));
   });
 
   it("is reflected in server.routes", async () => {

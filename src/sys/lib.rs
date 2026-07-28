@@ -1935,6 +1935,33 @@ mod posix_impl {
         super::linux_syscall::openat2_beneath(dir, path, flags, mode)
             .map_err(|e| Error::from_code_int(e, Tag::open).with_path(path.as_bytes()))
     }
+    /// `openat2(RESOLVE_IN_ROOT | RESOLVE_NO_MAGICLINKS)`: resolves `path` as
+    /// if `dir` were `/`. Falls back to plain `openat` on kernels without
+    /// `openat2` (or when seccomp blocks it), caching the unavailability.
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    pub fn openat2_in_root(dir: impl AsFd, path: &ZStr, flags: i32, mode: Mode) -> Maybe<Fd> {
+        use core::sync::atomic::{AtomicBool, Ordering};
+        static UNAVAILABLE: AtomicBool = AtomicBool::new(false);
+
+        let dir = dir.as_fd();
+        if !UNAVAILABLE.load(Ordering::Relaxed) {
+            match super::linux_syscall::openat2_in_root(dir, path, flags, mode) {
+                Ok(fd) => return Ok(fd),
+                Err(e)
+                    if matches!(
+                        e,
+                        libc::ENOSYS | libc::EPERM | libc::EINVAL | libc::E2BIG
+                    ) =>
+                {
+                    UNAVAILABLE.store(true, Ordering::Relaxed);
+                }
+                Err(e) => {
+                    return Err(Error::from_code_int(e, Tag::open).with_path(path.as_bytes()));
+                }
+            }
+        }
+        openat(dir, path, flags, mode)
+    }
     pub fn close(fd: Fd) -> Maybe<()> {
         // Call close ONCE; never retry on EINTR (Linux may have already
         // released the fd, retrying would close someone else's). Only EBADF surfaces.

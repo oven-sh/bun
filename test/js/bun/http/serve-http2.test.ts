@@ -665,6 +665,37 @@ describe.concurrent("Bun.serve http2: true", () => {
     });
   });
 
+  test("HEADERS→RST_STREAM flood is bounded per-connection (CVE-2023-44487)", async () => {
+    // Rapid Reset: MAX_CONCURRENT_STREAMS bounds c->streams.size(),
+    // which stays ~0 when each HEADERS is immediately followed by
+    // RST_STREAM. The server bounds cumulative client resets and
+    // GOAWAYs with ENHANCE_YOUR_CALM once the threshold is crossed.
+    await withServer(async port => {
+      using h2 = await rawH2(port);
+      h2.sock.on("error", () => {}); // RST after GOAWAY is expected
+      const authority = `127.0.0.1:${port}`;
+      const hdrs = Buffer.concat([
+        Buffer.from([0x82, 0x87]), // :method GET, :scheme https
+        Buffer.from([0x44, "/hold".length]),
+        Buffer.from("/hold"),
+        Buffer.from([0x41, authority.length]),
+        Buffer.from(authority),
+      ]);
+      const rst = Buffer.alloc(4); // CANCEL = 8
+      rst.writeUInt32BE(8, 0);
+      // 1200 HEADERS+RST pairs; threshold is 1000.
+      const frames: Buffer[] = [];
+      for (let i = 0; i < 1200; i++) {
+        const sid = 2 * i + 1;
+        frames.push(h2.frame(0x01, 0x04 | 0x01, sid, hdrs));
+        frames.push(h2.frame(0x03, 0x00, sid, rst));
+      }
+      h2.sock.write(Buffer.concat(frames));
+      const goaway = await h2.waitFor(f => f.type === 0x07);
+      expect(goaway.payload.readUInt32BE(4)).toBe(0x0b); // ENHANCE_YOUR_CALM
+    });
+  });
+
   test("server.stop(true) force-closes live H2 connections", async () => {
     // H2 sockets are adopted out of the H1 context into a child context
     // via us_socket_context_adopt_socket, so closing the H1 context

@@ -48,6 +48,7 @@ namespace h2 {
     static constexpr size_t FRAME_HEADER_SIZE = 9;
     static constexpr uint32_t MAX_HEADER_LIST = 64 * 1024;
     static constexpr uint32_t MAX_STREAMS     = 128;
+    static constexpr uint32_t MAX_RESETS      = 1000;
     /* Advertise a generous per-stream window so downloads aren't throttled
      * by the spec default. Connection window is also bumped on open. */
     static constexpr int32_t LOCAL_INIT_WINDOW = 1024 * 1024;
@@ -109,6 +110,9 @@ struct Http2Connection : AsyncSocketData<true> {
 
     /* Highest client stream ID seen; used for GOAWAY. */
     uint32_t lastStreamId = 0;
+    /* Client RST_STREAMs since open; caps the HEADERS→RST flood
+     * (CVE-2023-44487) that MAX_STREAMS can't see. */
+    uint32_t resetCount = 0;
 
     /* Live streams, keyed by client-initiated odd IDs. std::map over
      * HashMap for ordered iteration (drain fairness) and stable pointers
@@ -760,6 +764,8 @@ struct Http2Context {
         if (pad > len) return protocolError(s, h2::ERR_PROTOCOL);
         len -= pad;
 
+        if (len > h2::MAX_HEADER_LIST)
+            return protocolError(s, h2::ERR_ENHANCE_YOUR_CALM);
         c->headerBlock.assign(p, len);
         c->continuationEndStream = (flags & h2::END_STREAM) != 0;
         if (!(flags & h2::END_HEADERS)) {
@@ -924,9 +930,11 @@ struct Http2Context {
                 return false;
             }
             size_t nlen = xh.name_len, vlen = xh.val_len;
-            /* §8.2.1: field names MUST NOT contain uppercase and MUST be
-             * valid tokens (RFC 9110 §5.6.2 tchar, lowercase-only); field
-             * values MUST NOT contain NUL, CR or LF. Flag via `malformed`
+            /* §8.2.1: field names MUST NOT contain bytes in 0x00-0x20,
+             * 0x41-0x5a (uppercase), 0x7f-0xff, or a non-leading colon;
+             * field values MUST NOT contain NUL, CR or LF. (The RFC 9110
+             * tchar delimiter set is a §8.2.1 SHOULD, deferred alongside
+             * §8.2.2/§8.3.1 in the file header.) Flag via `malformed`
              * — the caller RSTs the stream — and keep decoding so the
              * connection-scoped HPACK state stays valid for sibling
              * streams. Runs regardless of `out` so trailer blocks
@@ -1081,6 +1089,11 @@ struct Http2Context {
             if (stream > c->lastStreamId) return protocolError(s, h2::ERR_PROTOCOL);
             return;
         }
+        /* CVE-2023-44487: a HEADERS→RST flood keeps c->streams.size()
+         * near 0 so MAX_STREAMS never trips. Bound the cumulative
+         * client resets per connection like nginx/Go/nghttp2 do. */
+        if (++c->resetCount > h2::MAX_RESETS)
+            return protocolError(s, h2::ERR_ENHANCE_YOUR_CALM);
         Http2Response *r = it->second;
         Http2ResponseData *d = r->getHttpResponseData();
         c->streams.erase(it);

@@ -130,35 +130,41 @@ test("blob: can be fetched", async () => {
 // below fell through to the remote path and attempted a DNS lookup for host
 // "blob" (getaddrinfo ENOTFOUND blob).
 test("blob: fetch with a fragment resolves from the store; any other blob: URL rejects without touching the network", async () => {
+  // Sentinel proxy: if fetch ever hands a blob: URL to the HTTP client, the
+  // request lands here. The test asserts this stays at zero.
+  let proxyHits = 0;
+  using sentinel = Bun.serve({
+    port: 0,
+    fetch() {
+      proxyHits++;
+      return new Response("leaked to network");
+    },
+  });
+  const proxy = sentinel.url.href;
+
   const blob = new Blob(["payload"], { type: "video/mp4" });
   const url = URL.createObjectURL(blob);
   try {
     // Fragment is excluded from the store lookup.
-    const withFragment = await fetch(url + "#t=10");
+    const withFragment = await fetch(url + "#t=10", { proxy });
     expect(withFragment.headers.get("Content-Type")).toBe("video/mp4");
     expect(withFragment.url).toBe(url);
     expect(await withFragment.text()).toBe("payload");
 
-    const emptyFragment = await fetch(url + "#");
+    const emptyFragment = await fetch(url + "#", { proxy });
     expect(emptyFragment.url).toBe(url);
     expect(await emptyFragment.text()).toBe("payload");
 
     // Blob URL store misses: reject with TypeError (as Node does), and never
-    // fall through to the HTTP client. With http_proxy set (as in CI) the
-    // remote path would succeed against the proxy, so assert on the error
-    // shape rather than just "rejects".
+    // fall through to the HTTP client.
     const assertStoreMiss = async (u: string) => {
       let err: unknown;
       try {
-        await fetch(u);
+        await fetch(u, { proxy });
       } catch (e) {
         err = e;
       }
       expect(err).toBeInstanceOf(TypeError);
-      // When the blob: URL leaks to the HTTP client, the error is a DNS
-      // failure for host "blob" (or, with a proxy, no error at all).
-      expect((err as any)?.code).not.toBe("ENOTFOUND");
-      expect(String((err as Error)?.message)).not.toContain("getaddrinfo");
     };
 
     // Query is part of the serialization (not excluded), so this is a miss.
@@ -169,6 +175,8 @@ test("blob: fetch with a fragment resolves from the store; any other blob: URL r
     // Not a UUID at all.
     await assertStoreMiss("blob:not-a-uuid");
     await assertStoreMiss("blob:http://example.com/whatever");
+
+    expect(proxyHits).toBe(0);
   } finally {
     URL.revokeObjectURL(url);
   }

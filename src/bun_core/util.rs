@@ -2860,34 +2860,23 @@ pub fn get_thread_count() -> u16 {
     *CELL.get_or_init(|| {
         const MAX: u16 = 1024;
         const MIN: u16 = 2;
-        // Set var is always honoured (libuv semantics): junk/0/1/negative → MIN, overflow → MAX.
-        let parse = |v: &[u8]| -> u16 {
-            use crate::fmt::ParseIntError;
-            let v = v.trim_ascii();
-            if v.first() == Some(&b'-') {
-                return MIN;
-            }
-            match crate::fmt::parse_int::<u32>(v, 10) {
-                Ok(n) => n.clamp(u32::from(MIN), u32::from(MAX)) as u16,
-                Err(ParseIntError::Overflow) => MAX,
-                Err(ParseIntError::InvalidCharacter) => MIN,
-            }
-        };
         let from_env = || -> Option<u16> {
             for key in [
                 crate::zstr!("UV_THREADPOOL_SIZE"),
                 crate::zstr!("GOMAXPROCS"),
             ] {
+                // Set var is always honoured (libuv semantics): junk/0/1/negative → MIN, overflow → MAX.
                 if let Some(v) = getenv_z(key) {
-                    return Some(parse(v));
-                }
-                // Windows: `getenv_z` is a no-op there (no narrow C environ).
-                #[cfg(windows)]
-                if let Ok(s) = std::env::var(
-                    // SAFETY: keys above are ASCII literals.
-                    unsafe { core::str::from_utf8_unchecked(key.as_bytes()) },
-                ) {
-                    return Some(parse(s.as_bytes()));
+                    use crate::fmt::ParseIntError;
+                    let v = v.trim_ascii();
+                    if v.first() == Some(&b'-') {
+                        return Some(MIN);
+                    }
+                    return Some(match crate::fmt::parse_int::<u32>(v, 10) {
+                        Ok(n) => n.clamp(u32::from(MIN), u32::from(MAX)) as u16,
+                        Err(ParseIntError::Overflow) => MAX,
+                        Err(ParseIntError::InvalidCharacter) => MIN,
+                    });
                 }
             }
             None

@@ -12,10 +12,13 @@
  * Public surface (Http2App/Response/Request) mirrors Http3* so Zig's
  * AnyResponse/AnyRequest `inline else` dispatch works unchanged.
  *
- * RFC 9113 (framing, flow control, §6.*), RFC 7541/lshpack (HPACK). Minimal
- * but conformant: SETTINGS/PING/WINDOW_UPDATE handled, PRIORITY and
- * PUSH_PROMISE are acknowledged-and-ignored (server push disabled), HPACK
- * errors and framing violations tear the connection down with GOAWAY. */
+ * RFC 9113 (framing, flow control, §6.*), RFC 7541/lshpack (HPACK). Minimal:
+ * SETTINGS/PING/WINDOW_UPDATE handled, PRIORITY and PUSH_PROMISE are
+ * acknowledged-and-ignored (server push disabled), HPACK errors and
+ * framing violations tear the connection down with GOAWAY. §8.2.1
+ * field-name/value bytes are validated; §8.2.2 connection-specific
+ * headers and the §8.3.1 pseudo-header ordering/dup rules are not yet
+ * enforced (h2spec 8.1.2.* gaps). */
 
 #include "Loop.h"
 #include "AsyncSocket.h"
@@ -200,8 +203,19 @@ struct Http2Context {
         for (auto &kv : c->streams) live.append(kv.second);
         for (auto *r : live) {
             if (r->dead) continue;
+            /* Same dead=true + copy-and-null shape as abortStream()/
+             * handleRstStream(): onAborted re-enters JS and a future
+             * registrant that called end()/close() on `r` before
+             * detaching would otherwise reach maybeDestroy() with
+             * dead=false and fire onAborted a second time. */
+            r->dead = true;
             Http2ResponseData *d = r->getHttpResponseData();
-            if (d->onAborted) d->onAborted(r, d->userData);
+            d->remoteClosed = true;
+            if (d->onAborted) {
+                auto cb = d->onAborted;
+                d->onAborted = nullptr;
+                cb(r, d->userData);
+            }
         }
         c->~Http2Connection();
         return s;
@@ -801,9 +815,12 @@ struct Http2Context {
             } else {
                 /* §8.1: a second HEADERS that doesn't terminate the
                  * stream is a malformed request (trailers MUST carry
-                 * END_STREAM). */
-                writeRstStream(s, stream, h2::ERR_PROTOCOL);
-                deliverFin(s, r);
+                 * END_STREAM). Tear down locally like the
+                 * remoteClosed branch above — writeRstStream alone
+                 * would leave the stream in c->streams and the async
+                 * handler's later end() would emit frames after our
+                 * RST (§6.4 MUST NOT). */
+                abortStream(s, stream, h2::ERR_PROTOCOL);
             }
             return;
         }
@@ -899,11 +916,12 @@ struct Http2Context {
             }
             size_t nlen = xh.name_len, vlen = xh.val_len;
             /* §8.2.1: field names MUST NOT contain uppercase and MUST be
-             * valid tokens (RFC 9110 §5.6.2 tchar, lowercase-only). Flag
-             * via `malformed` — the caller RSTs the stream — and keep
-             * decoding so the connection-scoped HPACK state stays valid
-             * for sibling streams. Runs regardless of `out` so trailer
-             * blocks (decoded state-only) are checked too. */
+             * valid tokens (RFC 9110 §5.6.2 tchar, lowercase-only); field
+             * values MUST NOT contain NUL, CR or LF. Flag via `malformed`
+             * — the caller RSTs the stream — and keep decoding so the
+             * connection-scoped HPACK state stays valid for sibling
+             * streams. Runs regardless of `out` so trailer blocks
+             * (decoded state-only) are checked too. */
             if (malformed && !*malformed) {
                 const char *np = hpackBuf + xh.name_offset;
                 if (nlen == 0) *malformed = true;
@@ -914,6 +932,11 @@ struct Http2Context {
                         *malformed = true;
                         break;
                     }
+                }
+                const char *vp = hpackBuf + xh.val_offset;
+                for (size_t j = 0; !*malformed && j < vlen; j++) {
+                    unsigned char b = (unsigned char) vp[j];
+                    if (b == 0 || b == '\r' || b == '\n') *malformed = true;
                 }
             }
             if (!out || (malformed && *malformed)) continue;

@@ -46,9 +46,7 @@ impl AdditionalOnAbortCallback {
 // enum over the concrete handles) and dispatches at runtime — same shape
 // as `AnyRequestContext` / `AnyServer`. The const params still pick which
 // variant `create()` constructs and gate multiplexed-transport code paths.
-pub const MUX_H1: u8 = 0;
-pub const MUX_H2: u8 = 1;
-pub const MUX_H3: u8 = 2;
+pub use uws::{MUX_H1, MUX_H2, MUX_H3};
 
 pub type Req<const SSL_ENABLED: bool, const MUX: u8> = c_void;
 

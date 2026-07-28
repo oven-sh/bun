@@ -438,6 +438,39 @@ describe("Bun.serve http2: true", () => {
     });
   });
 
+  test("a field value containing NUL/CR/LF resets only its stream (§8.2.1); siblings continue", async () => {
+    // §8.2.1: "A field value MUST NOT contain the zero value (ASCII NUL,
+    // 0x00), line feed (ASCII LF, 0x0a), or carriage return (ASCII CR,
+    // 0x0d) at any position." These are the bytes a downstream H1 hop
+    // would mis-parse as framing. Stream 1 carries a value with an
+    // embedded LF; stream 3 on the same connection must still succeed.
+    await withServer(async port => {
+      using h2 = await rawH2(port);
+      const authority = `127.0.0.1:${port}`;
+      const bad = Buffer.concat([
+        Buffer.from([0x82, 0x87]), // :method GET, :scheme https
+        Buffer.from([0x44, "/hello".length]),
+        Buffer.from("/hello"),
+        Buffer.from([0x41, authority.length]),
+        Buffer.from(authority),
+        Buffer.from([0x00, "x-bad".length]),
+        Buffer.from("x-bad"),
+        Buffer.from([3]),
+        Buffer.from("a\nb"),
+      ]);
+      h2.sock.write(h2.frame(0x01, 0x04 | 0x01, 1, bad));
+      h2.request(3, "GET", "/hello", true);
+
+      const rst = await h2.waitFor(f => f.type === 0x03 && f.sid === 1);
+      expect(rst.payload.readUInt32BE(0)).toBe(1); // PROTOCOL_ERROR
+      expect(h2.frames.some(f => f.type === 0x07)).toBe(false); // no GOAWAY
+
+      await h2.waitFor(f => f.type === 0x00 && f.sid === 3 && !!(f.flags & 0x01));
+      const body = Buffer.concat(h2.frames.filter(f => f.type === 0x00 && f.sid === 3).map(f => f.payload));
+      expect(body.toString()).toBe("hello over h2");
+    });
+  });
+
   test("a malformed trailer field name resets only its stream; siblings continue", async () => {
     // §8.2.1 applies to trailer sections too. Stream 1: valid HEADERS,
     // DATA, then a trailer HEADERS carrying an uppercase name. Stream 3:

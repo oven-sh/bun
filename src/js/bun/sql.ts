@@ -237,6 +237,27 @@ const SQL: typeof Bun.SQL = function SQL(
     }
   }
 
+  const validateChannel = (channel: string) => {
+    if (typeof channel !== "string" || !channel) {
+      throw $ERR_INVALID_ARG_VALUE("channel", channel, "must be a non-empty string");
+    }
+    if (channel.indexOf("\0") !== -1) {
+      throw $ERR_INVALID_ARG_VALUE("channel", channel, "must not contain null bytes");
+    }
+  };
+  // Validates and returns the normalized payload. Bare `NOTIFY channel` (no
+  // payload) is valid PostgreSQL and a common signal-only pattern, so an
+  // omitted payload becomes the empty string; a present non-string (including
+  // null) is still rejected rather than coerced.
+  const validateNotifyArgs = (channel: string, payload?: string): string => {
+    validateChannel(channel);
+    if (payload === undefined) return "";
+    if (typeof payload !== "string") {
+      throw $ERR_INVALID_ARG_TYPE("payload", "string", payload);
+    }
+    return payload;
+  };
+
   function onReserveConnected(this: Query<any, any>, err: Error | null, pooledConnection) {
     const { resolve, reject } = this;
 
@@ -317,6 +338,20 @@ const SQL: typeof Bun.SQL = function SQL(
     // this matchs the behavior of the postgres package
     reserved_sql.reserve = () => sql.reserve();
     reserved_sql.array = sql.array;
+    // listen/unlisten share the adapter-wide dedicated listen connection
+    // regardless of caller; NOTIFY runs on this reserved connection so it
+    // joins any transaction the user opened on it. Non-Postgres adapters get
+    // the same stubs as the top-level sql.
+    reserved_sql.listen = sql.listen;
+    reserved_sql.unlisten = sql.unlisten;
+    reserved_sql.notify = pool.listen
+      ? (channel: string, payload?: string) => {
+          payload = validateNotifyArgs(channel, payload);
+          // .execute() starts the query eagerly: notify() must send even when
+          // the caller fires and forgets instead of awaiting the lazy Query.
+          return reserved_sql.unsafe("SELECT pg_notify($1, $2)", [channel, payload]).execute();
+        }
+      : sql.notify;
     function onTransactionFinished(transaction_promise: Promise<any>) {
       reservedTransaction.delete(transaction_promise);
     }
@@ -592,6 +627,20 @@ const SQL: typeof Bun.SQL = function SQL(
     // this matchs the behavior of the postgres package
     transaction_sql.reserve = () => sql.reserve();
     transaction_sql.array = sql.array;
+    // listen/unlisten share the adapter-wide dedicated listen connection;
+    // NOTIFY must run on this connection so it participates in the
+    // transaction (PostgreSQL queues it and delivers it only on COMMIT).
+    // Non-Postgres adapters get the same stubs as the top-level sql.
+    transaction_sql.listen = sql.listen;
+    transaction_sql.unlisten = sql.unlisten;
+    transaction_sql.notify = pool.listen
+      ? (channel: string, payload?: string) => {
+          payload = validateNotifyArgs(channel, payload);
+          // .execute() starts the query eagerly: notify() must send even when
+          // the caller fires and forgets instead of awaiting the lazy Query.
+          return transaction_sql.unsafe("SELECT pg_notify($1, $2)", [channel, payload]).execute();
+        }
+      : sql.notify;
 
     transaction_sql.connect = () => {
       if (state.connectionState & ReservedConnectionState.closed) {
@@ -938,6 +987,46 @@ const SQL: typeof Bun.SQL = function SQL(
   sql.transaction = sql.begin;
   sql.distributed = sql.beginDistributed;
   sql.end = sql.close;
+
+  if (pool.listen) {
+    sql.listen = (channel, onnotify, onlisten?) => pool.listen(channel, onnotify, onlisten);
+    sql.unlisten = (channel, onnotify?) => pool.unlisten(channel, onnotify);
+    // notify uses a regular pool connection via parameterized query — no dedicated listen connection
+    sql.notify = (channel, payload?) => {
+      payload = validateNotifyArgs(channel, payload);
+      // .execute() starts the query eagerly: notify() must send even when the
+      // caller fires and forgets instead of awaiting the lazy Query.
+      return sql.unsafe("SELECT pg_notify($1, $2)", [channel, payload]).execute();
+    };
+  } else {
+    // Stubs for adapters without LISTEN/NOTIFY — keep the API shape uniform
+    // and surface a clear error instead of "sql.listen is not a function".
+    const unsupported = () =>
+      Promise.$reject(new Error("LISTEN/NOTIFY is not supported by this adapter (PostgreSQL only)"));
+    // async so validation throws become rejected Promises, matching the
+    // Postgres adapter path (its listen/unlisten are async methods) and the
+    // d.ts Promise return type.
+    sql.listen = async (channel, onnotify, onlisten?) => {
+      validateChannel(channel);
+      if (!$isCallable(onnotify)) throw $ERR_INVALID_ARG_TYPE("onnotify", "function", onnotify);
+      if (onlisten !== undefined && !$isCallable(onlisten)) {
+        throw $ERR_INVALID_ARG_TYPE("onlisten", "function", onlisten);
+      }
+      return unsupported();
+    };
+    sql.unlisten = async (channel, onnotify?) => {
+      validateChannel(channel);
+      if (onnotify !== undefined && !$isCallable(onnotify)) {
+        throw $ERR_INVALID_ARG_TYPE("onnotify", "function", onnotify);
+      }
+      return unsupported();
+    };
+    sql.notify = (channel, payload?) => {
+      validateNotifyArgs(channel, payload);
+      return unsupported();
+    };
+  }
+
   return sql;
 };
 
@@ -1016,6 +1105,18 @@ defaultSQLObject.end = defaultSQLObject.close = (...args: Parameters<typeof lazy
 defaultSQLObject.flush = (...args: Parameters<typeof lazyDefaultSQL.flush>) => {
   ensureDefaultSQL();
   return lazyDefaultSQL.flush(...args);
+};
+defaultSQLObject.listen = (...args) => {
+  ensureDefaultSQL();
+  return lazyDefaultSQL.listen(...args);
+};
+defaultSQLObject.unlisten = (...args) => {
+  ensureDefaultSQL();
+  return lazyDefaultSQL.unlisten(...args);
+};
+defaultSQLObject.notify = (...args) => {
+  ensureDefaultSQL();
+  return lazyDefaultSQL.notify(...args);
 };
 //define lazy properties
 defineProperties(defaultSQLObject, {

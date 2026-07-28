@@ -344,8 +344,6 @@ unsafe fn ensure_cache_directory(this: *mut PackageManager) -> Dir {
                 // SAFETY: narrow `&mut enable` projection; disjoint from
                 // any `&options.{registries,scope}` the caller may hold.
                 unsafe { (*this).options.enable.set(Enable::CACHE, false) };
-                // SAFETY: see fn safety contract.
-                unsafe { (*this).cache_directory_path = ZBox::from_bytes(b"") };
             }
         }
     }

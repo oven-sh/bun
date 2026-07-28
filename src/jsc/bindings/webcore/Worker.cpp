@@ -532,32 +532,24 @@ void Worker::dispatchErrorWithMessage(WTF::String message)
 bool Worker::dispatchErrorWithValue(Zig::GlobalObject* workerGlobalObject, JSValue value)
 {
     auto& vm = JSC::getVM(workerGlobalObject);
-    // A concurrent terminate() can arm the TerminationException at any
-    // safepoint; ErrorInstance::getOwnPropertySlot (reached from the Error
-    // clone path inside SerializedScriptValue::create) does not check after
-    // materializeErrorInfoIfNeeded, so entering it mid-termination trips
-    // getOwnPropertyDescriptor's post-call assert. Bail to the string
-    // fallback before doing any JS-entering work once termination is armed.
+    // ErrorInstance::getOwnPropertySlot (reached via SerializedScriptValue's
+    // Error clone path) does not check after materializeErrorInfoIfNeeded, so
+    // bail to the string fallback once termination is armed.
     if (vm.hasTerminationRequest()) [[unlikely]]
         return false;
     auto scope = DECLARE_THROW_SCOPE(vm);
-    // The caller's dispatchEvent(error) on globalThis (WebWorker__dispatchError)
-    // runs user JS and can leave a pending exception.
+    // The caller's globalThis dispatchEvent(error) runs user JS first.
     if (scope.exception()) [[unlikely]] {
         if (!scope.tryClearException())
             return false;
     }
 
-    // Structured clone of an Error only carries name/message/stack and JSC's
-    // own line/column/sourceURL. Node preserves the own enumerable properties
-    // (code, errno, and anything user-added), so serialize them alongside the
-    // error and reattach them on the parent side.
+    // Structured clone of an Error only carries name/message/stack; carry own
+    // enumerable properties (code, errno, user fields) alongside it like Node.
     JSValue ownProps = jsUndefined();
-    // Node's internal/error_serdes.js also walks the prototype chain and
-    // materializes what it finds there (`name` from Error.prototype, a `code`
-    // defined on a subclass prototype) as own properties on the receiving
-    // side. Inherited properties that were non-enumerable at their defining
-    // level travel in this second bag and are reattached non-enumerably.
+    // Node's internal/error_serdes.js materializes prototype-chain properties
+    // too (name, a subclass code). Those that were non-enumerable at their
+    // defining level go in this second bag and stay non-enumerable.
     JSValue protoDontEnumProps = jsUndefined();
     if (auto* errorObject = dynamicDowncast<ErrorInstance>(value)) {
         errorObject->materializeErrorInfoIfNeeded(vm);
@@ -679,12 +671,9 @@ bool Worker::dispatchErrorWithValue(Zig::GlobalObject* workerGlobalObject, JSVal
             return false;
     }
     if (!serialized && !ownProps.isUndefined()) {
-        // A non-cloneable own property (WeakMap, Promise, nested function)
-        // sank the pair; retry without the extras so the error itself is
-        // still delivered as an Error instance rather than a bare string.
-        // Keep an (empty) object in the props slot: its presence is how the
-        // parent knows the value was an Error and must have its JSC-internal
-        // line/column/sourceURL own properties stripped.
+        // A non-cloneable own property sank the pair; retry without the extras
+        // so the error itself still arrives as an Error instance. Keep an
+        // empty props slot: its presence is what gates parent-side rehydration.
         JSValue emptyProps = JSC::constructEmptyObject(workerGlobalObject);
         if (scope.exception()) [[unlikely]] {
             if (!scope.tryClearException())

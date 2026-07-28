@@ -868,6 +868,9 @@ it.skipIf(!isLinux)(
       await reloaded;
     }
     const before = countProjectFds();
+    // Guard against a vacuous pass (empty `before` would trivially equal `after`).
+    expect(before[join(dirReal, "sub")]).toBeGreaterThan(0);
+    expect(before[join(dirReal, "entry.ts")]).toBeGreaterThan(0);
 
     const reloads = 20;
     for (let i = 2; i <= reloads + 1; i++) {

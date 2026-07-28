@@ -4126,9 +4126,7 @@ impl Resolver {
                     c_ares::ARES_SOCKET_BAD,
                     c_ares::ARES_SOCKET_BAD,
                 );
-                // c-ares detaches a query only after its callback returns, so
-                // `request_completed` may have re-armed against a still-counted
-                // query; re-check now (mirrors `on_dns_poll`).
+                // See `on_dns_poll` — c-ares detaches post-callback, so re-check.
                 if self.any_requests_pending() {
                     let _ = self.add_timer(Some(&now));
                 } else {

@@ -119,6 +119,17 @@ impl AnyEventLoop {
     /// per-iteration *after* `is_done` returns, so no `&mut Self` is live
     /// while the callback runs.
     ///
+    /// The `Js` arm parks on the uws loop only; it does NOT drain JS tasks,
+    /// microtasks, or timers. Every caller is `PackageManager` waiting on its
+    /// own lock-free task queues (drained by `is_done` → `run_tasks`), which
+    /// the HTTP/threadpool completions post to directly and then
+    /// `us_wakeup_loop`. Running `owner.tick()/auto_tick()` here instead made
+    /// the resolver's synchronous auto-install wait re-enter the JS event loop
+    /// from inside `HostLoadImportedModule`, mutating `[[LoadedModules]]`
+    /// mid-walk in JSC's `innerModuleLoading` and tripping its
+    /// `needsErrorReaction` assertion. Socket IO dispatch still happens inside
+    /// `us_loop_run_bun_tick`, same as before.
+    ///
     /// # Safety
     /// `this` must be valid for `&mut` access for the duration of the call,
     /// *except* while `is_done` is executing (when the callback may hold a
@@ -136,8 +147,16 @@ impl AnyEventLoop {
             // the next `is_done` call.
             match unsafe { &mut *this } {
                 AnyEventLoop::Js { owner } => {
-                    owner.tick();
-                    owner.auto_tick();
+                    let loop_ = owner.uws_loop();
+                    // SAFETY: `loop_` is the live per-thread uws loop (see
+                    // `JsEventLoop::uws_loop`). `inc`/`dec` bracket the poll so
+                    // `us_loop_run_bun_tick`'s `num_polls == 0` early-return
+                    // cannot busy-spin us.
+                    unsafe {
+                        (*loop_).inc();
+                        (*loop_).tick();
+                        (*loop_).dec();
+                    }
                 }
                 AnyEventLoop::Mini(mini) => {
                     // One iteration only — we cannot call the *looping*

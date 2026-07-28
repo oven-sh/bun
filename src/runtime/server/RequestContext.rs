@@ -1797,11 +1797,8 @@ where
             });
         }
 
-        // Non-regular files (FIFOs, character devices, sockets) have no
-        // meaningful stat size. Writing Content-Length from it and then
-        // streaming the fd to EOF puts body bytes on the wire past the
-        // declared length, which desyncs the next response on a keep-alive
-        // connection. Leave the header unset so uWS chunk-frames the body.
+        // Non-regular files (FIFO/chardev/socket) have no meaningful stat
+        // size; leave Content-Length unset so uWS chunk-frames the body.
         self.flags.set_needs_content_length(is_regular);
         let blob_offset = match &self.blob {
             AnyBlob::Blob(b) => b.offset.get(),

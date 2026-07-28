@@ -1097,10 +1097,7 @@ impl VirtualMachine {
         bun_core::Global::mimalloc_cleanup(false);
         let vm = self.global().vm();
         if sync {
-            let size = vm.run_gc(true);
-            // The sync scan is conservative over the calling JS stack and can pin values left in stale slots by earlier task-dispatch frames (Windows: libuv timer and `tick_immediate_tasks` live at different depths, so neither overwrites the other's slots); request a follow-up so the next `stopIfNecessary()` at `Bun__JSC_onBeforeWait` (shallow stack) can reclaim them.
-            vm.collect_async();
-            return size;
+            return vm.run_gc(true);
         }
         vm.collect_async();
         vm.heap_size()

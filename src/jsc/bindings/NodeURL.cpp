@@ -51,8 +51,6 @@ JSC_DEFINE_HOST_FUNCTION(jsDomainToASCII, (JSC::JSGlobalObject * globalObject, J
     )
         return JSC::JSValue::encode(jsEmptyString(vm));
 
-    // An "xn--" (ACE) label must decode to a valid IDNA label, so it cannot
-    // take the ASCII fast path: https://url.spec.whatwg.org/#concept-domain-to-ascii
     if (domain.containsOnlyASCII() && !domainHasACELabel(domain))
         return JSC::JSValue::encode(arg0);
 

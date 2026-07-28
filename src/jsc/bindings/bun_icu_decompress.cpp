@@ -46,16 +46,12 @@ extern "C" __attribute__((weak)) const unsigned int bun_icu_zstd_dict_size;
 
 namespace Bun {
 
-// Replacement uts46.nrm carrying the Unicode 16.0 IdnaMappingTable (UTS #46
-// rev. 33) in Nrm2 format version 4, readable by the ICU 73/75 the prebuilts
-// bundle. Regenerate via scripts/regenerate-uts46-override.sh.
+// Unicode 16.0 uts46.nrm in Nrm2 format v4; regenerate via scripts/regenerate-uts46-override.sh.
 alignas(16) static constexpr uint8_t s_uts46Override[] = {
 #embed "icu_uts46_override.nrm"
 };
 
-// The bundled prebuilts' uts46.nrm predates Unicode 16.0, which reclassified
-// U+04C0, U+10A0..10C5, U+2132, U+2183 et al. from "disallowed" to "mapped".
-// Match by 48-byte prefix (DataHeader + first four Nrm2 indexes, unique per *.nrm).
+// Swap the bundled pre-Unicode-16.0 uts46.nrm for s_uts46Override, matched by its 48-byte DataHeader+indexes prefix.
 static const void* maybeOverrideUTS46(const void* p, int32_t* length)
 {
     // clang-format off

@@ -56,9 +56,6 @@ static inline String redact(const String& input)
     return makeString('"', input, '"');
 }
 
-// WTF::URLParser skips UTS-46 validation for all-ASCII hosts, so "xn--"
-// (Punycode) labels that are not valid IDNA parse successfully; the URL
-// Standard's host parser requires them to fail. Re-check them here.
 static bool isValidCompleteURL(const URL& url)
 {
     return url.isValid() && Bun::urlHostIsValidIDNA(url);

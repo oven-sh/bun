@@ -129,8 +129,16 @@ impl INotifyWatcher {
         use bun_sys::linux::IN;
         debug_assert!(self.loaded);
         let old_count = self.watch_count.fetch_add(1, Ordering::Release);
-        let watch_file_mask =
-            IN::EXCL_UNLINK | IN::MOVE_SELF | IN::DELETE_SELF | IN::MOVED_TO | IN::MODIFY;
+        // IN_ATTRIB is the only event delivered when a held-open watched inode
+        // is unlinked by a rename-over (IN_DELETE_SELF waits for the last
+        // close). The hot-reloader's File arm fstats the pinned fd on
+        // METADATA and evicts when st_nlink == 0.
+        let watch_file_mask = IN::EXCL_UNLINK
+            | IN::MOVE_SELF
+            | IN::DELETE_SELF
+            | IN::MOVED_TO
+            | IN::MODIFY
+            | IN::ATTRIB;
         // SAFETY: fd is a valid inotify fd (loaded == true), pathname is NUL-terminated.
         let rc = unsafe {
             bun_sys::linux::inotify_add_watch(self.fd.native(), pathname.as_ptr(), watch_file_mask)
@@ -537,6 +545,9 @@ pub(crate) fn watch_event_from_inotify_event(event: &Event, index: WatchItemInde
     }
     if (event.mask & IN::MODIFY) > 0 {
         op |= Op::WRITE;
+    }
+    if (event.mask & IN::ATTRIB) > 0 {
+        op |= Op::METADATA;
     }
     if (event.mask & IN::CREATE) > 0 {
         op |= Op::CREATE;

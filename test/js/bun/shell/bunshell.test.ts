@@ -2420,12 +2420,14 @@ done`
     .error(msg("while"))
     .runAsTest("reserved word inside if-else body is rejected");
 
-  TestBuilder.command`echo whilex`
-    .stdout("whilex\n")
+  TestBuilder.command`whilex`
+    .stderr("bun: command not found: whilex\n")
+    .exitCode(1)
     .runAsTest("reserved-word prefix of a longer word is not reserved");
 
-  TestBuilder.command`echo while${"x"}`
-    .stdout("whilex\n")
+  TestBuilder.command`while${"x"}`
+    .stderr("bun: command not found: whilex\n")
+    .exitCode(1)
     .runAsTest("reserved word glued to an interpolated suffix is not reserved");
 });
 

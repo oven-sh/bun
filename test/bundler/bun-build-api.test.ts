@@ -1513,3 +1513,40 @@ test("Bun.build can be called thousands of times in one process without crashing
   expect(stdout.trim()).toBe("OK 400");
   expect(exitCode).toBe(0);
 }, 180_000);
+
+// #36242 / #22941: `bun test`'s file scanner caches directory entries in the
+// global fs cache with their open fds stored, cursor at EOF. When a later
+// Bun.build in the same process re-read one of those directories (its cached
+// generation being older than the bundle thread's), it iterated the stored fd
+// without rewinding, saw zero entries, cached the directory as empty, and
+// failed with "Could not resolve" on any import needing that listing. The
+// child must be spawned as bare `bun test` (no file argument) so the scanner
+// walks and caches the directory tree; the first build bumps the bundler
+// generation so the second one deterministically takes the stale re-read path.
+test.concurrent("Bun.build inside bun test resolves imports through scanner-cached directories", async () => {
+  using dir = tempDir("bun-build-in-bun-test", {
+    "package.json": `{ "name": "repro", "private": true }`,
+    "index.ts": `import { nestedFn } from "./top/nested/nested-module";\nconsole.log(nestedFn(42));`,
+    "top/top-module.ts": `export function topFn(value: number) { return value; }`,
+    "top/nested/nested-module.ts": `import { topFn } from "../top-module";\nexport function nestedFn(value: number) { return topFn(value); }`,
+    "build.test.ts": `
+      import { expect, test } from "bun:test";
+      test("Bun.build resolves relative imports", async () => {
+        for (let i = 0; i < 2; i++) {
+          const result = await Bun.build({ entrypoints: [import.meta.dir + "/index.ts"] });
+          expect(result.outputs.length).toBe(1);
+        }
+      });
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+  expect(stderr).not.toContain("Could not resolve");
+  expect(exitCode).toBe(0);
+});

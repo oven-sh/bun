@@ -1945,9 +1945,7 @@ struct ParsedRedirect<'bump> {
     redirect: Option<ast::Redirect<'bump>>,
 }
 
-/// Reserved words `parse_compound_cmd` rejects so they are not dispatched as
-/// external commands. `{`/`}` lex as `BraceBegin`/`BraceEnd` and are handled
-/// there; `in` is only reserved inside `for`/`case` so it is omitted.
+/// Reserved words `parse_compound_cmd` rejects instead of dispatching as commands.
 const UNSUPPORTED_RESERVED_WORDS: &[&[u8]] = &[
     b"!",
     b"while",
@@ -4161,9 +4159,6 @@ pub fn is_if_clause_keyword_bunstr(bunstr: BunString) -> bool {
         .any(|&kw| bunstr.eql_comptime(<&'static str>::from(kw)))
 }
 
-/// `if`-clause keywords plus `UNSUPPORTED_RESERVED_WORDS`: every word
-/// `parse_compound_cmd` treats as syntax when it appears bare in command
-/// position.
 pub fn is_reserved_word_text(txt: &[u8]) -> bool {
     IfClauseTok::from_text(txt).is_some() || is_unsupported_reserved_word(txt)
 }

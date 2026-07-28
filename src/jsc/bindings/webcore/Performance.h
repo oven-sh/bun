@@ -116,6 +116,7 @@ public:
     void removeAllObservers();
     void registerPerformanceObserver(PerformanceObserver&);
     void unregisterPerformanceObserver(PerformanceObserver&);
+    void scheduleTaskIfNeeded();
 
     static void allowHighPrecisionTime();
     static Seconds timeResolution();
@@ -151,7 +152,6 @@ private:
     // void resourceTimingBufferFullTimerFired();
 
     void queueEntry(PerformanceEntry&);
-    void scheduleTaskIfNeeded();
 
     // mutable RefPtr<PerformanceNavigation> m_navigation;
     mutable RefPtr<PerformanceTiming> m_timing;

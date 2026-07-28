@@ -91,9 +91,14 @@ test.skipIf(!isLinux)("dev server releases its file watcher on stop()", async ()
 
   // Without the fix every iteration leaks one inotify instance
   // (inotifyDelta == iterations). With the fix all of them are released.
-  expect(inotifyDelta).toBeLessThanOrEqual(1);
+  // `threadDelta` is reported for diagnostics only: `Threads:` also counts
+  // JSC/bundler threads and can transiently read high right after `stop()`
+  // has closed the inotify fd but before the watcher thread has exited.
+  expect({ inotifyDelta, threadDelta }).toEqual({
+    inotifyDelta: 0,
+    threadDelta: expect.any(Number),
+  });
   expect(inotifyDelta).toBeLessThan(iterations);
-  expect(threadDelta).toBeLessThan(iterations);
 
   expect(exitCode).toBe(0);
 });

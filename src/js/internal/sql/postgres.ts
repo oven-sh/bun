@@ -145,9 +145,7 @@ function arrayValueSerializer(type: ArrayType, is_numeric: boolean, is_json: boo
     const buf = Buffer.isBuffer(value) ? value : Buffer.from(value.buffer, value.byteOffset, value.byteLength);
     const hexValue = buf.toString("hex");
     if (type === "BYTEA") {
-      // The array-literal parser consumes one level of backslash escaping, so
-      // the \x that reaches bytea_in must be written as \\x here.
-      return `"\\\\x${hexValue}"`;
+      return `"${arrayEscape("\\x" + hexValue)}"`;
     }
     if (is_json) {
       return `"${arrayEscape(JSON.stringify(hexValue))}"`;

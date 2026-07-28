@@ -6044,7 +6044,9 @@ impl DevServer {
                     if !evict && event.op.contains(bun_watcher::Op::METADATA) {
                         let fd = slice.items_fd()[event.index as usize];
                         evict = fd.is_valid()
-                            && bun_sys::fstat(fd).map(|st| st.st_nlink == 0).unwrap_or(false);
+                            && bun_sys::fstat(fd)
+                                .map(|st| st.st_nlink == 0)
+                                .unwrap_or(false);
                     }
                     if evict {
                         // TODO: audit this line heavily

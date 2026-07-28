@@ -108,11 +108,9 @@ const BASE_PARAMS_: &[ParamType] = concat_params!(
     &[parse_param!("<POS>...")],
 );
 
-const DEBUG_PARAMS: &[ParamType] = &[
-    parse_param!(
-        "--breakpoint-resolve <STR>...     DEBUG MODE: breakpoint when resolving something that includes this string"
-    ),
-];
+const DEBUG_PARAMS: &[ParamType] = &[parse_param!(
+    "--breakpoint-resolve <STR>...     DEBUG MODE: breakpoint when resolving something that includes this string"
+)];
 
 const TRANSPILER_PARAMS_: &[ParamType] = &[
     parse_param!(

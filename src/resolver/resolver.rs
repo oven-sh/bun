@@ -1068,8 +1068,7 @@ impl<'a> Resolver<'a> {
         // Only setting 'current_action' in debug mode because module resolution
         // is done very often, and has a very low crash rate.
         #[cfg(debug_assertions)]
-        let _crash_guard =
-            ::bun_crash_handler::set_current_action_resolver();
+        let _crash_guard = ::bun_crash_handler::set_current_action_resolver();
 
         #[cfg(debug_assertions)]
         if bun_core::debug_flags::has_resolve_breakpoint(import_path) {

@@ -792,7 +792,10 @@ impl Value {
     /// content, decoded directly from the body's backing bytes without
     /// materializing a separate byte `ReadableStream` for native-backed bodies.
     /// Returns `NULL` for `Null` (caller substitutes an empty stream).
-    pub(crate) fn to_text_readable_stream(&mut self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
+    pub(crate) fn to_text_readable_stream(
+        &mut self,
+        global_this: &JSGlobalObject,
+    ) -> JsResult<JSValue> {
         jsc::mark_binding();
 
         match self {

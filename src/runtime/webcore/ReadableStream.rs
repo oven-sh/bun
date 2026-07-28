@@ -328,7 +328,10 @@ impl ReadableStream {
 
     /// Same as [`from_native`] but the native source adapter UTF-8-decodes each
     /// chunk to a string before enqueue (Body.textStream()).
-    pub(crate) fn from_native_text(global_this: &JSGlobalObject, native: JSValue) -> JsResult<JSValue> {
+    pub(crate) fn from_native_text(
+        global_this: &JSGlobalObject,
+        native: JSValue,
+    ) -> JsResult<JSValue> {
         bun_jsc::from_js_host_call(global_this, || {
             ZigGlobalObject__createNativeTextReadableStream(global_this, native)
         })
@@ -336,7 +339,10 @@ impl ReadableStream {
 
     /// A closed stream with `string` (a JS string) as its only chunk. An empty
     /// string produces an empty closed stream.
-    pub(crate) fn from_decoded_text(global_this: &JSGlobalObject, string: JSValue) -> JsResult<JSValue> {
+    pub(crate) fn from_decoded_text(
+        global_this: &JSGlobalObject,
+        string: JSValue,
+    ) -> JsResult<JSValue> {
         bun_jsc::from_js_host_call(global_this, || {
             ReadableStream__fromDecodedText(global_this, string)
         })
@@ -344,7 +350,10 @@ impl ReadableStream {
 
     /// Locks a default reader on `source` and returns a stream that
     /// UTF-8-decodes each chunk from it to a string.
-    pub(crate) fn text_decode_from(global_this: &JSGlobalObject, source: JSValue) -> JsResult<JSValue> {
+    pub(crate) fn text_decode_from(
+        global_this: &JSGlobalObject,
+        source: JSValue,
+    ) -> JsResult<JSValue> {
         bun_jsc::from_js_host_call(global_this, || {
             ReadableStream__textDecodeFrom(global_this, source)
         })
@@ -1018,7 +1027,10 @@ impl<C: SourceContext> NewSource<C> {
         self.to_readable_stream_with(global_this, ReadableStream::from_native)
     }
 
-    pub(crate) fn to_text_readable_stream(&mut self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
+    pub(crate) fn to_text_readable_stream(
+        &mut self,
+        global_this: &JSGlobalObject,
+    ) -> JsResult<JSValue> {
         self.to_readable_stream_with(global_this, ReadableStream::from_native_text)
     }
 

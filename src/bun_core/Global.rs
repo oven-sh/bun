@@ -394,7 +394,11 @@ pub mod debug_flags {
 
     #[inline]
     pub fn has_resolve_breakpoint(str_: &[u8]) -> bool {
-        for bp in RESOLVE_BREAKPOINTS.get().map(|v| v.as_slice()).unwrap_or(&[]) {
+        for bp in RESOLVE_BREAKPOINTS
+            .get()
+            .map(|v| v.as_slice())
+            .unwrap_or(&[])
+        {
             if crate::strings::includes(str_, bp) {
                 return true;
             }

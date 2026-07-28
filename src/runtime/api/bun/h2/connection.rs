@@ -556,7 +556,10 @@ impl Connection {
             // request()/writeStream() drop the response (the 'stream' handler still runs).
             self.rst_after_headers = 0;
             if self.is_server
-                && matches!(hdr.typ(), Some(FrameType::Headers))
+                && matches!(
+                    hdr.typ(),
+                    Some(FrameType::Headers | FrameType::Continuation)
+                )
                 && wire::flags::has(hdr.flags, wire::flags::END_HEADERS)
                 && remaining.len() >= total + wire::FRAME_HEADER_SIZE
             {

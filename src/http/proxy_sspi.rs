@@ -1,21 +1,8 @@
-//! SSPI (Windows) `Negotiate` / `NTLM` proxy authentication.
-//!
-//! When a proxy answers `407` with `Proxy-Authenticate: Negotiate` or
-//! `Proxy-Authenticate: NTLM`, [`ProxySSPIAuth`] drives the multi-leg SSPI
-//! handshake using the current user's logon credentials (no username/password
-//! in the proxy URL). Each leg produces a `Proxy-Authorization: <scheme>
-//! <base64>` header for [`write_proxy_auth_and_headers`], and the request is
-//! re-sent on the *same* TCP connection — NTLM authenticates the connection,
-//! so a reconnect between legs would invalidate the server's challenge.
-//!
-//! On non-Windows targets this module compiles to inert stubs so the call
-//! sites in `lib.rs` stay `cfg`-free.
+//! Windows SSPI `Negotiate`/`NTLM` proxy auth; inert stub on other targets.
 
 use bun_core::strings;
 
-/// Hard cap on the number of 407→retry round-trips attempted for one
-/// connection. Kerberos is usually 1 leg, NTLM is 2; a proxy that keeps
-/// returning 407 past this is misbehaving.
+/// 407→retry cap per connection (Kerberos ≈1 leg, NTLM = 2).
 pub const MAX_LEGS: u8 = 6;
 
 #[derive(Copy, Clone, PartialEq, Eq)]
@@ -33,14 +20,7 @@ impl Scheme {
     }
 }
 
-/// Parse a `407` response's `Proxy-Authenticate` headers. Returns the scheme
-/// to use (preferring `Negotiate`) and any base64 challenge token that
-/// accompanied it. A bare `Proxy-Authenticate: Negotiate` yields `(scheme,
-/// None)`; `Proxy-Authenticate: Negotiate <b64>` yields `(scheme, Some(..))`.
-///
-/// `want` restricts the match to a scheme already negotiated on this
-/// connection: once leg 1 picked NTLM, leg 2 must not switch to Negotiate
-/// even if the proxy offers both.
+/// Pick Negotiate-over-NTLM from `Proxy-Authenticate`, decoding any challenge; `want` pins later legs.
 pub fn select_scheme(
     response: &bun_picohttp::Response<'_>,
     want: Option<Scheme>,
@@ -51,8 +31,6 @@ pub fn select_scheme(
             continue;
         }
         let value = header.value();
-        // RFC 7235: scheme is the first token; challenge data (if any) follows
-        // after whitespace. SPNEGO/NTLM put a single base64 blob there.
         let (scheme_tok, rest) = match value.iter().position(|&b| b == b' ' || b == b'\t') {
             Some(i) => (&value[..i], strings::trim(&value[i..], b" \t")),
             None => (value, &b""[..]),
@@ -70,7 +48,6 @@ pub fn select_scheme(
             }
         }
         match (scheme, pick) {
-            // Prefer Negotiate (wraps Kerberos; falls back to NTLM itself).
             (Scheme::Negotiate, _) => pick = Some((scheme, rest)),
             (Scheme::Ntlm, None) => pick = Some((scheme, rest)),
             (Scheme::Ntlm, Some(_)) => {}
@@ -96,8 +73,6 @@ mod windows {
 
     bun_core::declare_scope!(proxy_sspi, visible);
 
-    /// UTF-16LE, NUL-terminated. Proxy hostnames are ASCII in practice; a
-    /// non-ASCII byte is rejected rather than mis-encoded.
     fn ascii_to_wide(s: &[u8]) -> Option<Vec<u16>> {
         let mut out = Vec::with_capacity(s.len() + 1);
         for &b in s {
@@ -145,8 +120,6 @@ mod windows {
             self.complete
         }
 
-        /// Acquire default (current-user) outbound credentials for `scheme` and
-        /// size the output buffer from `QuerySecurityPackageInfoW`.
         pub fn new(scheme: Scheme, proxy_host: &[u8]) -> Option<Box<Self>> {
             let pkg_name: &[u16] = match scheme {
                 Scheme::Negotiate => &NEGOTIATE_W,
@@ -209,7 +182,6 @@ mod windows {
                 return None;
             }
 
-            // Kerberos needs an SPN; NTLM ignores it. curl passes "" for NTLM.
             let spn = match scheme {
                 Scheme::Negotiate => {
                     let host = crate::strip_port_from_host(proxy_host);
@@ -244,9 +216,7 @@ mod windows {
             }))
         }
 
-        /// Feed an optional server challenge and return the next outbound
-        /// token. Returns `None` on any SSPI failure, in which case the caller
-        /// should fall through to surfacing the proxy's 407 unchanged.
+        /// Feed the server challenge, return the next token; `None` on SSPI failure.
         pub fn step(&mut self, challenge: Option<&[u8]>) -> Option<&[u8]> {
             let mut in_buf;
             let mut in_desc;
@@ -369,9 +339,7 @@ pub use fallback::ProxySSPIAuth;
 mod fallback {
     use super::Scheme;
 
-    /// Uninhabited on non-Windows: `Option<Box<ProxySSPIAuth>>` is a ZST and
-    /// every method body is statically unreachable, so the integration sites in
-    /// `lib.rs` compile away.
+    /// Uninhabited: `Option<Box<Self>>` is a ZST so call sites compile away.
     pub enum ProxySSPIAuth {}
 
     impl ProxySSPIAuth {

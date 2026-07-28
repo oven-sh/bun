@@ -343,8 +343,7 @@ pub fn strip_port_from_host(host: &[u8]) -> &[u8] {
 pub enum ShouldContinue {
     ContinueStreaming,
     Finished,
-    /// Windows SSPI proxy auth produced a new `Proxy-Authorization` token: the
-    /// 407 body must be drained and the request re-sent on this same socket.
+    /// SSPI produced a token: drain the 407 body and re-send on this socket.
     ProxyAuthRetry,
 }
 
@@ -783,23 +782,13 @@ pub struct HTTPClient<'a> {
     pub proxy_settings: Option<Box<ProxySettings>>,
     pub proxy_headers: Option<Headers>,
     pub proxy_authorization: Option<Vec<u8>>,
-    /// Windows SSPI handshake state for `Negotiate`/`NTLM` proxy auth. `None`
-    /// until a 407 with a matching `Proxy-Authenticate` is seen. Not part of
-    /// [`proxy_auth_hash`]: the token is per-connection ephemera, while the
-    /// pool key must match between a fresh request (which has not stepped
-    /// SSPI yet) and an already-authenticated socket.
+    /// Windows Negotiate/NTLM state; excluded from [`proxy_auth_hash`] so pool keys stay stable.
     pub proxy_sspi: Option<Box<proxy_sspi::ProxySSPIAuth>>,
-    /// `Proxy-Authorization` value produced by SSPI for the current leg.
-    /// Emitted by [`write_proxy_auth_and_headers`] in place of
-    /// `proxy_authorization` / user-supplied headers; excluded from
-    /// [`proxy_auth_hash`].
+    /// Per-leg SSPI `Proxy-Authorization` value; supersedes `proxy_authorization` when set.
     pub proxy_sspi_header: Option<Vec<u8>>,
-    /// Count of 407→retry legs attempted on this connection; capped at
-    /// [`proxy_sspi::MAX_LEGS`].
+    /// 407→retry legs on this connection, capped at [`proxy_sspi::MAX_LEGS`].
     pub proxy_sspi_legs: u8,
-    /// Bytes of the current 407 body still to discard before the SSPI retry
-    /// can be written. Set when the body is content-length framed and spans
-    /// past the headers packet; see `handle_on_data_headers`.
+    /// 407 body bytes still to discard before the SSPI retry can be written.
     pub proxy_sspi_drain_remaining: usize,
     /// Set while this request is tunneling through an HTTP proxy (CONNECT).
     /// Holds one owned strong ref on the intrusive-refcounted `ProxyTunnel`
@@ -1261,10 +1250,8 @@ fn write_proxy_auth_and_headers(writer: &mut Vec<u8>, client: &HTTPClient) {
         .map(|hdrs| hdrs.get(b"proxy-authorization").is_some())
         .unwrap_or(false);
 
-    // An in-progress SSPI handshake supersedes Basic / user-supplied
-    // Proxy-Authorization: the proxy already rejected those with 407 and
-    // requested Negotiate/NTLM.
     if let Some(sspi_auth) = &client.proxy_sspi_header {
+        // SSPI supersedes Basic/user Proxy-Authorization (proxy already 407'd those).
         writer.extend_from_slice(b"Proxy-Authorization: ");
         writer.extend_from_slice(sspi_auth);
         writer.extend_from_slice(b"\r\n");
@@ -2294,12 +2281,7 @@ impl<'a> HTTPClient<'a> {
         if any { combined } else { 0 }
     }
 
-    /// Invoked from `handle_response_metadata` on a 407 from the proxy. On
-    /// Windows, if the proxy offers `Negotiate` or `NTLM` and the request
-    /// body is replayable, step the SSPI handshake and stage the resulting
-    /// `Proxy-Authorization` header for a same-socket retry. Returns `true`
-    /// when the caller should return `ShouldContinue::ProxyAuthRetry`;
-    /// `false` lets the 407 surface unchanged.
+    /// On a 407 offering Negotiate/NTLM, step SSPI and stage `proxy_sspi_header`; `false` surfaces the 407.
     fn try_sspi_proxy_auth(&mut self, response: &picohttp::Response<'_>) -> bool {
         if !cfg!(windows) {
             return false;
@@ -2307,17 +2289,13 @@ impl<'a> HTTPClient<'a> {
         if self.proxy_sspi_legs >= proxy_sspi::MAX_LEGS {
             return false;
         }
-        // The same-socket retry replays `original_request_body`; a consumed
-        // ReadableStream can't be rewound.
         if !matches!(self.state.original_request_body, HTTPRequestBody::Bytes(_)) {
+            // Retry replays `original_request_body`; a consumed ReadableStream can't be rewound.
             return false;
         }
-        // Draining a chunked or close-delimited 407 body over the state
-        // machine costs more complexity than it saves; corporate proxies in
-        // practice send content-length framed (often 0-length) bodies for
-        // the auth challenge. Give up and surface the 407 otherwise.
         if self.state.transfer_encoding == Encoding::Chunked || self.state.content_length.is_none()
         {
+            // Only content-length 407 bodies are drained; chunked/close-delimited surface as-is.
             return false;
         }
         let Some(proxy) = self.http_proxy.as_ref() else {
@@ -2327,14 +2305,13 @@ impl<'a> HTTPClient<'a> {
         let Some((scheme, challenge)) = proxy_sspi::select_scheme(response, want) else {
             return false;
         };
-        // A second 407 after SSPI reported completion means the credentials
-        // were rejected; another leg would loop forever.
         if self
             .proxy_sspi
             .as_ref()
             .map(|s| s.is_complete())
             .unwrap_or(false)
         {
+            // Another 407 after SSPI completion = credentials rejected; stop.
             self.proxy_sspi = None;
             self.proxy_sspi_header = None;
             return false;
@@ -2364,9 +2341,7 @@ impl<'a> HTTPClient<'a> {
         true
     }
 
-    /// Rewind per-attempt state so the next `on_writable` re-enters
-    /// `send_initial_request_payload` on the live socket. The socket, proxy
-    /// URL, SSPI state and `original_request_body` are preserved.
+    /// Rewind per-attempt state so `on_writable` re-enters `send_initial_request_payload` on the live socket.
     fn reset_for_proxy_auth_retry(&mut self) {
         self.state.request_stage = RequestStage::Pending;
         self.state.response_stage = ResponseStage::Pending;
@@ -2380,8 +2355,6 @@ impl<'a> HTTPClient<'a> {
         self.state.request_body = bun_ptr::RawSlice::new(self.state.original_request_body.slice());
         self.compressed_request_body.clear();
         self.compressed_body_len = 0;
-        // `send_initial_request_payload` re-evaluates `http_proxy`/`url` and
-        // re-sets this; the CONNECT branch cleared it when the 407 arrived.
         self.flags.proxy_tunneling = false;
         self.proxy_sspi_drain_remaining = 0;
     }
@@ -2820,9 +2793,7 @@ impl<'a> HTTPClient<'a> {
     pub fn start(&mut self, body: HTTPRequestBody<'a>, body_out_str: &mut MutableString) {
         body_out_str.reset();
 
-        // SSPI Negotiate/NTLM authenticates a connection, not a request: a
-        // fresh connect (initial, redirect, or pooled-socket retry) must
-        // restart the handshake from scratch.
+        // NTLM authenticates the connection: any fresh connect restarts from leg 0.
         self.proxy_sspi = None;
         self.proxy_sspi_header = None;
         self.proxy_sspi_legs = 0;
@@ -3871,10 +3842,6 @@ impl<'a> HTTPClient<'a> {
         }
 
         if should_continue == ShouldContinue::ProxyAuthRetry {
-            // `try_sspi_proxy_auth` only returns true for content-length
-            // framed 407 bodies. Discard whatever arrived with the headers
-            // and either retry now or park in `ProxyAuthDrain` until the
-            // body is fully read off the socket.
             let body_len = self.state.content_length.unwrap_or(0);
             if to_read.len() >= body_len {
                 self.reset_for_proxy_auth_retry();
@@ -3882,9 +3849,7 @@ impl<'a> HTTPClient<'a> {
             } else {
                 self.proxy_sspi_drain_remaining = body_len - to_read.len();
                 self.state.response_stage = ResponseStage::ProxyAuthDrain;
-                // Stop the Body arm of on_writable from pushing more of the
-                // original request body into a socket whose response has
-                // already been read as 407.
+                // Stop on_writable's Body arm from writing into a socket that already answered 407.
                 self.state.request_stage = RequestStage::Done;
                 self.set_timeout(&socket);
             }

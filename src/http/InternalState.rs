@@ -476,8 +476,7 @@ pub enum HTTPStage {
     ProxyHandshake,
     ProxyHeaders,
     ProxyBody,
-    /// Discarding a 407 response body before re-sending the request on the
-    /// same socket with a fresh SSPI `Proxy-Authorization` token.
+    /// Discarding a 407 body before the same-socket SSPI retry is written.
     ProxyAuthDrain,
 }
 

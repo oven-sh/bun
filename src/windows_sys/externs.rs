@@ -2053,10 +2053,7 @@ unsafe extern "C" {
     pub fn windows_enable_stdio_inheritance();
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// SSPI (`sspi.h` / `security.h`) — secur32.dll
-// ──────────────────────────────────────────────────────────────────────────
-
+/// SSPI (`sspi.h` / `security.h`) — secur32.dll.
 pub mod sspi {
     use core::ffi::{c_long, c_ulong, c_ushort, c_void};
 

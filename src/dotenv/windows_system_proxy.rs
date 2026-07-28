@@ -87,7 +87,10 @@ pub fn is_implicit_bypass(hostname: &[u8]) -> bool {
     {
         return true;
     }
-    if let Some(rest) = h.strip_prefix(b"127.").or_else(|| h.strip_prefix(b"169.254.")) {
+    if let Some(rest) = h
+        .strip_prefix(b"127.")
+        .or_else(|| h.strip_prefix(b"169.254."))
+    {
         if !rest.is_empty() && rest.iter().all(|&b| b.is_ascii_digit() || b == b'.') {
             return true;
         }

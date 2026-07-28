@@ -4855,9 +4855,11 @@ it.skipIf(isWindows)("BigIntStats *Ns does not clamp for post-2262 timestamps", 
   // The invariant must hold regardless of what the filesystem stored.
   expect(st.mtimeNs / 1_000_000n).toBe(st.mtimeMs);
   expect(st.atimeNs / 1_000_000n).toBe(st.atimeMs);
+  // i64::MAX: a saturating 64-bit intermediate would produce exactly this.
+  expect(st.mtimeNs).not.toBe(9_223_372_036_854_775_807n);
 
-  // Only assert exact values if the filesystem round-tripped the timestamp.
-  if (st.mtimeMs === BigInt(far.getTime())) {
+  // Round-trip check via the independent non-bigint (f64) path.
+  if (statSync(f).mtimeMs === far.getTime()) {
     expect({ mtimeNs: st.mtimeNs, atimeNs: st.atimeNs }).toEqual({
       mtimeNs: 13_569_465_600_000_000_000n,
       atimeNs: 13_569_465_600_000_000_000n,

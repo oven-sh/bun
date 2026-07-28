@@ -77,14 +77,20 @@ impl DotEnvBehavior {
             Ok((Self::disable, None))
         } else if let Some(asterisk) = s.iter().position(|&b| b == b'*') {
             if asterisk + 1 != s.len() {
-                Err("'*' in an env pattern must be the final character; suffix and infix patterns are not supported")
+                Err(
+                    "'*' in an env pattern must be the final character; suffix and infix patterns are not supported",
+                )
             } else if asterisk == 0 {
-                Err("env pattern \"*\" has no prefix; use \"inline\" to inline every environment variable")
+                Err(
+                    "env pattern \"*\" has no prefix; use \"inline\" to inline every environment variable",
+                )
             } else {
                 Ok((Self::prefix, Some(&s[..asterisk])))
             }
         } else {
-            Err("expected \"inline\", \"disable\", or a prefix pattern ending in '*' (e.g. \"PUBLIC_*\")")
+            Err(
+                "expected \"inline\", \"disable\", or a prefix pattern ending in '*' (e.g. \"PUBLIC_*\")",
+            )
         }
     }
 }

@@ -144,11 +144,7 @@ describe("env/invalid-pattern", () => {
         stdout: "pipe",
         stderr: "pipe",
       });
-      const [stdout, stderr, exitCode] = await Promise.all([
-        proc.stdout.text(),
-        proc.stderr.text(),
-        proc.exited,
-      ]);
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       expect(stderr).toContain(fragment);
       expect(stdout).not.toContain("sec");
       expect(exitCode).not.toBe(0);
@@ -167,11 +163,7 @@ describe("env/invalid-pattern", () => {
         stdout: "pipe",
         stderr: "pipe",
       });
-      const [stdout, stderr, exitCode] = await Promise.all([
-        proc.stdout.text(),
-        proc.stderr.text(),
-        proc.exited,
-      ]);
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       expect(stderr).toContain(fragment);
       expect(stdout).not.toContain("built");
       expect(exitCode).not.toBe(0);
@@ -191,11 +183,7 @@ describe("env/invalid-pattern", () => {
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [stdout, stderr, exitCode] = await Promise.all([
-      proc.stdout.text(),
-      proc.stderr.text(),
-      proc.exited,
-    ]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
     expect(stdout).toContain(`"ab"`);
     expect(stdout).toContain("process.env.SECRET_ZZ");

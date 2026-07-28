@@ -679,8 +679,9 @@ pub mod js_bundler {
                                 }
                             }
                             Err(msg) => {
-                                return Err(global_this
-                                    .throw_invalid_arguments(format_args!("env: {msg}")));
+                                return Err(
+                                    global_this.throw_invalid_arguments(format_args!("env: {msg}"))
+                                );
                             }
                         }
                         drop(slice);

@@ -161,7 +161,7 @@ pub fn run_as_coordinator(
         },
         bail: ctx.test_options.bail,
         dots: ctx.test_options.reporters.dots,
-        junit_chunks: Vec::new(),
+        junit_chunks: (0..n).map(|_| None).collect(),
         junit_totals: Default::default(),
         coverage_chunks: Vec::new(),
         last_header_idx: None,

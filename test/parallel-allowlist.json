@@ -11,8 +11,8 @@
     "rule": "a directory is listed when >= 67% of its bun test files are <= 15000ms (median, default lane of expected-durations.json) with zero flaky/failed annotations in the scanned builds; its other files are listed in excludeFiles; docker-service and stress-named tests never qualify",
     "stats": {
       "dirs": 283,
-      "files": 1643,
-      "excluded": 152
+      "files": 1642,
+      "excluded": 153
     }
   },
   "dirs": [
@@ -411,6 +411,7 @@
     "js/node/tls/node-tls-connect.test.ts",
     "js/node/tls/node-tls-getpeercert-leak.test.ts",
     "js/node/tls/node-tls-server.test.ts",
+    "js/node/vm/sourcetextmodule-leak.test.ts",
     "js/node/worker_threads/worker-transfer-terminate-stress.test.ts",
     "js/node/worker_threads/worker_heap_snapshot_gc.test.ts",
     "js/node/worker_threads/worker_threads.test.ts",

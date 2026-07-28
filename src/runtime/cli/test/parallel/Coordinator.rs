@@ -40,12 +40,12 @@ pub struct Coordinator<'a> {
     pub envps: Vec<bun_dotenv::NullDelimitedEnvMap>,
 
     pub workers: &'a mut [Worker],
-    /// Merged junit: each worker streams a file's completed <testsuite> as a
-    /// JunitChunk right after that file, so a crashed worker's finished
-    /// files are already here. Filed by file index and written in that
-    /// order, so the report is deterministic regardless of scheduling. Only
-    /// the coordinator writes it.
-    pub junit_chunks: Vec<(u32, Box<[u8]>)>,
+    /// Merged junit, index-parallel to `files`: each worker streams a
+    /// file's completed <testsuite> as a JunitChunk right after that file
+    /// (so a crashed worker's finished files are already here) and it lands
+    /// in its file's slot. Written in file order, so the report is
+    /// deterministic regardless of scheduling; only the coordinator writes it.
+    pub junit_chunks: Vec<Option<Box<[u8]>>>,
     pub junit_totals: super::aggregate::JunitTotals,
     /// Each worker's LCOV bytes (CoverageChunk at worker exit).
     pub coverage_chunks: Vec<Box<[u8]>>,
@@ -485,11 +485,13 @@ impl<'a> Coordinator<'a> {
                     .extend_from_slice(rd.str());
             }
             frame::Kind::JunitChunk => {
-                let idx = rd.u32();
+                let idx = rd.u32() as usize;
                 let chunk = rd.str();
                 if !chunk.is_empty() {
                     super::aggregate::add_junit_chunk_totals(&mut self.junit_totals, chunk);
-                    self.junit_chunks.push((idx, Box::<[u8]>::from(chunk)));
+                    if let Some(slot) = self.junit_chunks.get_mut(idx) {
+                        *slot = Some(Box::<[u8]>::from(chunk));
+                    }
                 }
             }
             frame::Kind::CoverageChunk => {

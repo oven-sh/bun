@@ -97,6 +97,16 @@ function parseLog(raw) {
       // Retry/error headers (`... - code 1`, `... [attempt #2]`) are not file
       // paths; treat them as a delimiter so the preceding span closes cleanly.
       const title = hdr[2].trim();
+      // A parallel-bucket file's synthetic group carries its junit wall clock
+      // in the title (`test/... (1.23s)`); take that, not a timestamp gap —
+      // its group is printed after the fact and spans no real time.
+      const timed = /^(.+\.(?:[cm]?[jt]sx?|json)) \((\d+(?:\.\d+)?)s\)$/.exec(title);
+      if (timed) {
+        out.push([timed[1], Math.round(parseFloat(timed[2]) * 1000)]);
+        path = start = null;
+        concurrent = false;
+        continue;
+      }
       const isPath = /\.(?:[cm]?[jt]sx?|json)$/.test(title);
       path = isPath ? title : null;
       start = isPath ? ts : null;

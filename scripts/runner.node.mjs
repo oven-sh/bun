@@ -966,15 +966,31 @@ async function runTests() {
      * falls back to its own runOneTest; a file the bucket passed never re-runs.
      * @param {string[]} bucketFiles
      */
+    /**
+     * Run allowlisted files as one `bun test --parallel` invocation. Output
+     * streams raw (the reporter re-prints a file's `path:` header above any
+     * failure, so errors stay labeled mid-stream); the per-file result comes
+     * from the junit the coordinator writes: failures count and wall clock
+     * per file, a file with no <testsuite> having not finished. Afterwards each
+     * file that passed gets a synthetic `[i/N] <path> (T.TTs)` group so the log
+     * reads like a regular run and the durations job takes the time from the
+     * title; files that failed or never finished re-run alone and get real
+     * groups from that. A file the batch passed is never re-run; only a batch
+     * that left neither junit nor streamed evidence re-runs whole.
+     * @param {string[]} bucketFiles
+     */
     const runParallelBucket = async bucketFiles => {
       for (const t of bucketFiles) await awaitNapiPrebuild(t);
       const width = parallelSafeWidth;
-      const label = `test/ (parallel bucket: ${bucketFiles.length} files, ${width}-wide)`;
+      const label = `${bucketFiles.length} files in parallel (${width}×)`;
       const range = `${getAnsi("gray")}[${i + 1}-${i + bucketFiles.length}/${total}]${getAnsi("reset")}`;
-      const junitPath = join(tmpdir(), `bun-parallel-bucket-${process.pid}.xml`);
+      const junitPath = join(
+        cwd,
+        `parallel-bucket-junit-${(options["step"] || getOs()).replace(/[^a-zA-Z0-9._-]/g, "_")}-shard${options["shard"] ?? 0}.xml`,
+      );
       const isAsan = basename(execPath).includes("asan");
       const perTestTimeout = Math.ceil(testTimeout / 2) * (isAsan ? 3 : 1);
-      const env = { GITHUB_ACTIONS: "true" };
+      const env = {};
       if (validationApplies) {
         env.BUN_JSC_validateExceptionChecks = "1";
         env.BUN_JSC_dumpSimulatedThrows = "1";
@@ -984,50 +1000,23 @@ async function runTests() {
       }
       if (isAsan) env.BUN_FEATURE_FLAG_NO_ORPHANS = "1";
 
-      // Render each file's `::group::<path>:` from the coordinator as the
-      // runner's own `[i/N] <path>` group, so a bucketed file reads like any
-      // other test in the log and the durations job times it header-to-header
-      // as usual. `filesSeen` are those that got a group (i.e. produced
-      // output); `i` advances once per file, in whatever order they surface.
       const byPath = new Map(bucketFiles.map(t => [join("test", t).replaceAll("\\", "/"), t]));
       const norm = p =>
         byPath.get(
           p
             .trim()
+            .replace(/:$/, "")
             .replace(/ \(\d+s\)$/, "")
             .replaceAll("\\", "/"),
         );
-      const filesSeen = new Set();
-      const makePipe = io => {
-        let partial = "";
-        return chunk => {
-          const lines = (partial + chunk).split(/\r?\n/);
-          partial = lines.pop();
-          let plain = "";
-          for (const line of lines) {
-            const group = /^::group::(.+):$/.exec(stripAnsi(line));
-            const testPath = group && norm(group[1]);
-            if (testPath) {
-              if (plain) pipeTestStdout(io, plain);
-              plain = "";
-              filesSeen.add(testPath);
-              const index = ++i;
-              startGroup(
-                `${getAnsi("gray")}[${index}/${total}]${getAnsi("reset")} ${join("test", testPath).replaceAll("\\", "/")}`,
-              );
-            } else {
-              plain += line + "\n";
-            }
-          }
-          if (plain) pipeTestStdout(io, plain);
-        };
-      };
+
       const { ok, error, stdout, crashes } = await startGroup(`${range} ${label}`, () =>
         spawnBun(execPath, {
           args: [
             "test",
             `--parallel=${width}`,
             `--timeout=${perTestTimeout}`,
+            "--dots",
             "--reporter=junit",
             `--reporter-outfile=${junitPath}`,
             ...bucketFiles.map(t => join(testsPath, t)),
@@ -1036,42 +1025,39 @@ async function runTests() {
           timeout: Math.max(10 * 60_000, bucketFiles.length * 5_000),
           gracefulTimeout: true,
           env,
-          stdout: makePipe(process.stdout),
-          stderr: makePipe(process.stderr),
+          stdout: chunk => pipeTestStdout(process.stdout, chunk),
+          stderr: chunk => pipeTestStdout(process.stderr, chunk),
         }),
       );
       if (crashes) process.stderr.write(crashes);
 
-      // Per-file outcome. The junit is authoritative when it exists (a
-      // finished coordinator writes it: failures count and wall clock per
-      // file; no suite ⇒ the file didn't finish). It only appears at the
-      // end, so if the coordinator died mid-run the streamed output is what
-      // we have: `::error file=…` per failure, `✗ <path> (worker crashed …)`,
-      // and the interrupt report's still-running / not-started lists. A file
-      // that passed either way is never re-run; only a run that left neither
-      // junit nor streamed evidence re-runs the whole batch.
-      const suites = new Map(); // repo-relative path -> failures count
+      // The junit is the record of the batch: per-file failures and wall
+      // clock. Publish it as this shard's artifact for the durations job.
+      const suites = new Map(); // repo-relative path -> { failures, seconds }
       try {
         for (const [, attrs] of readFileSync(junitPath, "utf-8").matchAll(/<testsuite\b([^>]*)>/g)) {
           const file = /\bfile="([^"]+)"/.exec(attrs)?.[1]?.replace(/&amp;/g, "&");
           const failures = Number(/\bfailures="(\d+)"/.exec(attrs)?.[1] ?? 0);
-          if (file) suites.set(file.replaceAll("\\", "/"), failures);
+          const seconds = Number(/\btime="([\d.]+)"/.exec(attrs)?.[1] ?? 0);
+          if (file) suites.set(file.replaceAll("\\", "/"), { failures, seconds });
         }
       } catch {}
-      rmSync(junitPath, { force: true });
+      if (suites.size && isBuildkite) uploadArtifactsToBuildKite(junitPath);
+      else rmSync(junitPath, { force: true });
 
       const failed = new Set(); // ran and failed (or hung) — a solo pass is a parallel-mode flake
       const incomplete = new Set(); // never finished/started — re-run quietly
       let evidence = suites.size > 0;
       if (!ok && suites.size) {
         for (const t of bucketFiles) {
-          const failures = suites.get(join("test", t).replaceAll("\\", "/"));
-          if (failures === undefined) incomplete.add(t);
-          else if (failures > 0) failed.add(t);
+          const suite = suites.get(join("test", t).replaceAll("\\", "/"));
+          if (suite === undefined) incomplete.add(t);
+          else if (suite.failures > 0) failed.add(t);
         }
       } else if (!ok) {
-        // No junit: the coordinator didn't finish. Read what streamed.
-        let currentFile = null;
+        // No junit: the coordinator didn't finish. Read what streamed — the
+        // worker-crash lines and, if the runner stopped it, its interrupt
+        // report naming what was still running / never started.
         let list = null; // "running" | "not-started" while inside an interrupt report list
         for (const line of stripAnsi(stdout).split(/\r?\n/)) {
           if (line.startsWith("Interrupted while still running:")) {
@@ -1088,28 +1074,25 @@ async function runTests() {
             continue;
           }
           list = null;
-          const group = /^::group::(.+):$/.exec(line);
-          if (group) {
-            currentFile = norm(group[1]) ?? null;
-            continue;
-          }
-          if (line.startsWith("::endgroup")) {
-            currentFile = null;
-            continue;
-          }
-          const named = /^::error file=([^,]+),/.exec(line)?.[1] ?? /^✗ (.+?) \(worker crashed/.exec(line)?.[1];
-          const testPath = (named && norm(named)) || (line.startsWith("::error") && currentFile);
+          const crashed = /^✗ (.+?) \(worker crashed/.exec(line)?.[1];
+          const testPath = crashed && norm(crashed);
           if (testPath) failed.add(testPath);
         }
         evidence = failed.size + incomplete.size > 0;
       }
       const rerun = !ok && !evidence ? [...bucketFiles] : [...failed, ...incomplete];
       const rerunSet = new Set(rerun);
+
+      // Files the batch passed: account them and emit one synthetic group
+      // each, in file order, with the junit's wall clock in the title.
       for (const t of bucketFiles) {
         if (rerunSet.has(t)) continue;
-        if (!filesSeen.has(t)) i++;
+        const title = join("test", t).replaceAll("\\", "/");
+        const seconds = suites.get(title)?.seconds;
+        const timing = seconds === undefined ? "" : ` ${getAnsi("gray")}(${seconds.toFixed(2)}s)${getAnsi("reset")}`;
+        startGroup(`${getAnsi("gray")}[${++i}/${total}]${getAnsi("reset")} ${title}${timing}`, () => {});
         okResults.push({
-          testPath: join("test", t).replaceAll("\\", "/"),
+          testPath: title,
           ok: true,
           status: "pass",
           tests: [],
@@ -1122,23 +1105,20 @@ async function runTests() {
         console.log(
           `${getAnsi("yellow")}parallel bucket: ${evidence ? `retrying ${failed.size} failed and ${incomplete.size} unfinished file(s)${suites.size ? "" : " (from streamed output; no junit)"}` : `no junit and no streamed evidence, re-running all ${rerun.length} file(s)`} one at a time${getAnsi("reset")}`,
         );
-        // Each file's output lives in its own GA group in the bucket log;
-        // slice those out so a flaky annotation carries the failure itself.
+        // A failing file's output sits under the `path:` header the reporter
+        // printed for it in the stream; slice those blocks out so a flaky
+        // annotation carries the failure itself.
         const blocks = new Map();
         {
           let file = null;
           let lines = [];
           for (const line of stdout.split(/\r?\n/)) {
-            const group = /^::group::(.+):$/.exec(stripAnsi(line));
-            if (group) {
+            const header = /^(test[\\/]\S+\.[a-z]{2,3}):$/.exec(stripAnsi(line).trim());
+            if (header) {
               if (file) blocks.set(file, lines.join("\n"));
-              file = norm(group[1]) ?? null;
+              file = norm(header[1]) ?? null;
               lines = [];
-            } else if (line.startsWith("::endgroup")) {
-              if (file) blocks.set(file, lines.join("\n"));
-              file = null;
-              lines = [];
-            } else if (file && !line.startsWith("::")) {
+            } else if (file) {
               lines.push(line);
             }
           }
@@ -1725,6 +1705,26 @@ async function spawnSafe(options) {
       error = `${match[1]} failing`;
     } else {
       error = "code 1";
+    }
+    // Say which test failed and how: the first `(fail) <name>` and the
+    // nearest `error:` line above it.
+    const lines = stripAnsi(buffer).split(/\r?\n/);
+    const failAt = lines.findIndex(line => /^\(fail\) /.test(line.trim()));
+    if (failAt !== -1) {
+      const name = lines[failAt]
+        .trim()
+        .replace(/^\(fail\) /, "")
+        .replace(/ \[[\d.]+m?s\]$/, "");
+      let reason = "";
+      for (let k = failAt - 1; k >= Math.max(0, failAt - 40); k--) {
+        const m = /^\s*error: (.+)$/.exec(lines[k]);
+        if (m) {
+          reason = m[1].trim();
+          break;
+        }
+      }
+      const first = reason ? `${name} — ${reason}` : name;
+      error += `: ${first.length > 100 ? `${first.slice(0, 97)}…` : first}`;
     }
   } else if (exitCode === undefined) {
     error = "timeout";

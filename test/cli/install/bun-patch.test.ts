@@ -1,7 +1,7 @@
 import { $, ShellOutput } from "bun";
 import { describe, expect, setDefaultTimeout, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, tempDirWithFiles } from "harness";
-import { join } from "path";
+import { isAbsolute, join, sep } from "path";
 
 const expectNoError = (o: ShellOutput) => expect(o.stderr.toString()).not.toContain("error");
 // const platformPath = (path: string) => (process.platform === "win32" ? path.replaceAll("/", sep) : path);
@@ -297,6 +297,55 @@ describe("bun patch <pkg>", async () => {
           ).toEqual("patches/@types%2Fws@8.5.4.patch");
         });
       }
+    });
+
+    // https://github.com/oven-sh/bun/issues/12882
+    test("inside workspace package with the absolute path from the patch suggestion", async () => {
+      const tempdir = tempDirWithFiles("patch-ws-abs", {
+        "package.json": JSON.stringify({
+          name: "root",
+          private: true,
+          workspaces: ["packages/*"],
+        }),
+        packages: {
+          frontend: {
+            "package.json": JSON.stringify({
+              name: "frontend",
+              version: "1.0.0",
+              dependencies: { "is-even": "1.0.0" },
+            }),
+          },
+        },
+      });
+
+      const subdir = join(tempdir, "packages", "frontend");
+
+      await $`${bunExe()} i`.env(bunEnv).cwd(subdir);
+
+      const prep = await $`${bunExe()} patch is-even`.env(bunEnv).cwd(subdir);
+      expect(prep.stderr.toString()).not.toContain("error");
+
+      const suggested = prep.stdout.toString().match(/bun patch --commit '([^']+)'/);
+      expect(suggested).not.toBeNull();
+      const absPath = suggested![1];
+      expect(absPath).toContain("node_modules");
+      expect(isAbsolute(absPath.replace(/\//g, sep))).toBe(true);
+
+      await Bun.write(
+        join(tempdir, "node_modules", "is-even", "index.js"),
+        "module.exports = function () { return 'patched'; };\n",
+      );
+
+      const commit = await $`${bunExe()} patch --commit ${absPath}`.env(bunEnv).cwd(subdir).throws(false);
+      expect(commit.stderr.toString()).not.toContain("ENOENT");
+      expect(commit.stderr.toString()).not.toContain("error");
+      expect(commit.exitCode).toBe(0);
+
+      expect((await $`cat package.json`.cwd(tempdir).env(bunEnv).json()).patchedDependencies["is-even@1.0.0"]).toEqual(
+        "patches/is-even@1.0.0.patch",
+      );
+      const patch = await Bun.file(join(tempdir, "patches", "is-even@1.0.0.patch")).text();
+      expect(patch).toContain("patched");
     });
 
     describe("inside ROOT workspace package", async () => {

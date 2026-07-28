@@ -1228,7 +1228,7 @@ it.each(["TLSv1.3", "TLSv1.2"] as const)(
       minVersion: version,
       maxVersion: version,
     });
-      first.on("session", s => (ticket = s));
+    first.on("session", s => (ticket = s));
     first.on("data", () => {});
     first.on("error", () => {});
     await once(first, "close");

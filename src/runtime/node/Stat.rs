@@ -8,7 +8,6 @@ use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 // libc-stat → uv_stat_t field copy on both POSIX and Windows there.
 pub use bun_sys::PosixStat;
 
-const MS_PER_S: i64 = bun_core::time::MS_PER_S as i64;
 const NS_PER_MS: i64 = bun_core::time::NS_PER_MS as i64;
 const NS_PER_S: i64 = bun_core::time::NS_PER_S as i64;
 
@@ -52,9 +51,8 @@ impl<const BIG: bool> StatType<BIG> {
     }
 
     fn to_time_ms_i64(ts: StatTimespec) -> i64 {
-        let (sec, nsec) = Self::timespec_parts(ts);
-        sec.saturating_mul(MS_PER_S)
-            .saturating_add(nsec / NS_PER_MS)
+        // Node computes BigIntStats *Ms as `*Ns / 1_000_000n`.
+        Self::to_nanoseconds(ts) / NS_PER_MS
     }
 
     fn to_time_ms_f64(ts: StatTimespec) -> f64 {

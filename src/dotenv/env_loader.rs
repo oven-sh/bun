@@ -1145,12 +1145,9 @@ impl<'a> Parser<'a> {
     }
 
     /// Left-to-right expansion of `$NAME` / `${NAME}` / `${NAME:-default}`.
-    /// `${...}` finds its closing brace by depth counting (`${` opens, `}`
-    /// closes, `\x` is skipped), so a nested `${A:-${B}}` pairs correctly and
-    /// no slice index can invert. Malformed references (unterminated `${`,
-    /// junk after the key) are emitted literally; the loader never aborts on
-    /// input shape. The `:-` default clause is itself expanded via a bounded
-    /// recursive call so `${A:-${B:-c}}` composes.
+    /// `${...}` locates its matching `}` by depth (`${` opens, `}` closes,
+    /// `\x` skipped); malformed forms fall through as literal text. The `:-`
+    /// default clause is expanded recursively.
     fn expand_into(map: &Map, value: &[u8], out: &mut Vec<u8>, depth: u8) -> bool {
         #[inline]
         fn is_ident(b: u8) -> bool {

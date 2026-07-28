@@ -2868,7 +2868,7 @@ pub fn get_thread_count() -> u16 {
                 // Set var is always honoured (libuv semantics): junk/0/1 → MIN, overflow → MAX.
                 if let Some(v) = getenv_z(key) {
                     use crate::fmt::ParseIntError;
-                    return Some(match crate::fmt::parse_int::<u32>(v.trim_ascii(), 10) {
+                    return Some(match crate::fmt::parse_unsigned::<u32>(v.trim_ascii(), 10) {
                         Ok(n) => n.clamp(u32::from(MIN), u32::from(MAX)) as u16,
                         Err(ParseIntError::Overflow) => MAX,
                         Err(ParseIntError::InvalidCharacter) => MIN,

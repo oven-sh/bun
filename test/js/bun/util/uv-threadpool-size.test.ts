@@ -63,6 +63,10 @@ describe.skipIf(!isLinux)("UV_THREADPOOL_SIZE", () => {
     expect(await poolThreads({ UV_THREADPOOL_SIZE: "abc" })).toBe(2);
   });
 
+  test.concurrent("negative clamps to floor (2)", async () => {
+    expect(await poolThreads({ UV_THREADPOOL_SIZE: "-3" })).toBe(2);
+  });
+
   test.concurrent("=4 is honoured exactly", async () => {
     expect(await poolThreads({ UV_THREADPOOL_SIZE: "4" })).toBe(4);
   });

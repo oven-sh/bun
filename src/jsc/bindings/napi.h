@@ -935,11 +935,8 @@ public:
     inline void* const& dataPtr() const { return m_dataPtr; }
     inline napi_env env() const { return m_env; }
 
-    // When this function is a prototype method defined via napi_define_class,
-    // this points at the class's prototype object. A normal (non-construct)
-    // call then validates that |this| was constructed by that class and throws
-    // "Illegal invocation" otherwise, matching V8's FunctionTemplate signature
-    // check that Node.js applies to instance methods.
+    // Set for napi_define_class instance methods; the call thunk rejects any
+    // |this| not constructed by this prototype (Node.js v8::Signature parity).
     inline NapiPrototype* signaturePrototype() const { return m_signaturePrototype.get(); }
     inline void setSignaturePrototype(VM& vm, NapiPrototype* prototype);
 
@@ -1002,9 +999,8 @@ public:
         return NapiPrototype::create(vm, structure);
     }
 
-    // Set on instances created via a NapiClass [[Construct]] to record which
-    // napi_define_class prototype produced them. Prototype methods compare this
-    // against their own signature prototype before invoking the native callback.
+    // The napi_define_class prototype that constructed this instance, compared
+    // against a method's signaturePrototype() before the native callback runs.
     inline NapiPrototype* constructedBy() const { return m_constructedBy.get(); }
     inline void setConstructedBy(VM& vm, NapiPrototype* prototype)
     {

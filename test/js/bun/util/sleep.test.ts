@@ -76,6 +76,3 @@ test("sleep should keep the event loop alive", async () => {
   expect(proc.exitCode).toBe(0);
   expect(await proc.stdout.text()).toContain("event loop was not killed");
 });
-
-import { test as __t, expect as __e } from "bun:test";
-__t("injected failure", () => { __e(1).toBe(2); });

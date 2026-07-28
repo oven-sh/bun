@@ -258,3 +258,56 @@ test("server-side TLS upgrade does not re-inject buffered ClientHello (initialDa
     server.close();
   }
 });
+
+test("tls.connect({ socket }) does not retain post-upgrade ciphertext in the original socket's readable buffer #32239", async () => {
+  // Second failure mode of the same bug: with no data listener on the original
+  // socket and the stream non-flowing (the postgres.js pattern, which calls
+  // removeAllListeners() before upgrading), the re-emitted ciphertext does not
+  // re-enter a handler; it silently accumulates in _readableState.buffer, one
+  // retained byte per transferred byte for the life of the connection.
+  const TOTAL = 4 * 1024 * 1024;
+  const CHUNK = Buffer.alloc(256 * 1024, 0x61);
+
+  const server = tls.createServer({ key: certs.key, cert: certs.cert }, s => {
+    s.on("error", () => {});
+    let sent = 0;
+    const pump = () => {
+      while (sent < TOTAL) {
+        sent += CHUNK.length;
+        if (!s.write(CHUNK)) return s.once("drain", pump);
+      }
+      s.end();
+    };
+    pump();
+  });
+
+  await once(server.listen(0, "127.0.0.1"), "listening");
+  const { port } = server.address() as net.AddressInfo;
+
+  const socket = net.connect(port, "127.0.0.1");
+  try {
+    socket.on("error", () => {});
+    await once(socket, "connect");
+
+    // Mirror a driver that negotiated in plaintext, then detached everything
+    // and left the socket non-flowing before handing it to tls.connect.
+    socket.on("data", () => {});
+    socket.removeAllListeners("data");
+    socket.pause();
+
+    const tlsSocket = tls.connect({ socket, ca: certs.cert, servername: "localhost" });
+    tlsSocket.on("error", () => {});
+
+    let received = 0;
+    tlsSocket.on("data", d => (received += d.length));
+    await once(tlsSocket, "end");
+
+    expect(received).toBe(TOTAL);
+    // Pre-fix this retained >= TOTAL bytes of ciphertext.
+    expect(socket.readableLength).toBe(0);
+    tlsSocket.destroy();
+  } finally {
+    socket.destroy();
+    server.close();
+  }
+});

@@ -1990,20 +1990,19 @@ describe.concurrent("writev/readv with more than IOV_MAX buffers", () => {
 });
 
 describe("writeSync", () => {
-  it("works with bigint", () => {
-    const dest = join(tmpdir(), "writeSync-large-file-bigint.txt");
+  it("treats a bigint position as the current offset", () => {
+    // Node's fs.write does `if (typeof position !== 'number') position = null`
+    // for the buffer overload; GetOffset then returns -1. fs.read accepts
+    // bigint positions, but fs.write does not.
+    const dest = join(tmpdir(), "writeSync-bigint-position.txt");
     rmSync(dest, { force: true });
 
     const writefd = openSync(dest, "w");
+    writeSync(writefd, Buffer.from("AAAA"));
     writeSync(writefd, Buffer.from([0x10]), 0, 1, 400n as any);
     closeSync(writefd);
 
-    const fd = openSync(dest, "r");
-    const out = Buffer.alloc(1);
-    const bytes = readSync(fd, out, 0, 1, 400 as any);
-    expect(bytes).toBe(1);
-    expect(out[0]).toBe(0x10);
-    closeSync(fd);
+    expect(readFileSync(dest, "latin1")).toBe("AAAA\x10");
     rmSync(dest, { force: true });
   });
 
@@ -2070,9 +2069,16 @@ describe("writeSync", () => {
 // position must not become offset 0: that is what caused createWriteStream's
 // short-write retry loop (pos = undefined + n -> NaN) to overwrite the head of
 // the file on a partial write.
-describe.each([NaN, Infinity, -Infinity, 1.5, Number.MAX_SAFE_INTEGER + 1] as const)(
-  "fs.write with position=%p uses the current file offset",
-  position => {
+describe.each([
+  ["NaN", NaN],
+  ["Infinity", Infinity],
+  ["-Infinity", -Infinity],
+  ["1.5", 1.5],
+  ["MAX_SAFE_INTEGER+1", Number.MAX_SAFE_INTEGER + 1],
+  ["5n", 5n],
+] as [string, any][])(
+  "fs.write with position=%s uses the current file offset",
+  (_label, position) => {
     it("writeSync(fd, buffer, offset, length, position)", () => {
       using dir = tempDir("fs-write-pos-buf", {});
       const p = join(String(dir), "out.txt");
@@ -2138,6 +2144,34 @@ describe.each([NaN, Infinity, -Infinity, 1.5, Number.MAX_SAFE_INTEGER + 1] as co
       } finally {
         closeSync(fd);
       }
+    });
+
+    it("FileHandle.write(buffer, offset, length, position)", async () => {
+      using dir = tempDir("fs-fh-write-pos", {});
+      const p = join(String(dir), "out.txt");
+      writeFileSync(p, "AAAAAAAAAA");
+      const fh = await promises.open(p, "r+");
+      try {
+        await fh.read(Buffer.alloc(10), 0, 10, null);
+        await fh.write(Buffer.from("WW"), 0, 2, position);
+      } finally {
+        await fh.close();
+      }
+      expect(readFileSync(p, "utf8")).toBe("AAAAAAAAAAWW");
+    });
+
+    it("FileHandle.writev(buffers, position)", async () => {
+      using dir = tempDir("fs-fh-writev-pos", {});
+      const p = join(String(dir), "out.txt");
+      writeFileSync(p, "AAAAAAAAAA");
+      const fh = await promises.open(p, "r+");
+      try {
+        await fh.read(Buffer.alloc(10), 0, 10, null);
+        await fh.writev([Buffer.from("QQ")], position);
+      } finally {
+        await fh.close();
+      }
+      expect(readFileSync(p, "utf8")).toBe("AAAAAAAAAAQQ");
     });
   },
 );

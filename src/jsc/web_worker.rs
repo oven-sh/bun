@@ -1594,7 +1594,7 @@ fn maybe_build_error_to_worker_error(
         if errors.is_array() {
             let len = errors.get_length(global)? as u32;
             if len > 0 {
-                let mut msgs: Vec<bun_ast::Msg> = Vec::with_capacity(len as usize);
+                let mut msgs: Vec<bun_ast::Msg> = Vec::with_capacity((len as usize).min(16));
                 for i in 0..len {
                     let entry = errors.get_index(global, i)?;
                     match extract_build_msg(entry) {

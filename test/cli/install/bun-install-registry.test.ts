@@ -15,7 +15,7 @@ import {
   runBunInstall,
   runBunUpdate,
   stderrForInstall,
-  tempDirWithFiles,
+  tempDir,
   tls,
   tmpdirSync,
   toBeValidBin,
@@ -6538,7 +6538,7 @@ describe("semver", () => {
 });
 
 test("doesn't error when the migration is out of sync", async () => {
-  const cwd = tempDirWithFiles("out-of-sync-1", {
+  await using cwd = tempDir("out-of-sync-1", {
     "package.json": JSON.stringify({
       "devDependencies": {
         "no-deps": "1.0.0",
@@ -9098,4 +9098,98 @@ registry = { url = "https://127.0.0.1:${otherRegistry.port}/", token = "${token}
     expect(received.filter(r => r.authorization !== null)).toEqual([]);
     expect(await exited).not.toBe(0);
   }
+});
+
+describe("registry/token env var priority", () => {
+  // BUN_CONFIG_* takes precedence over NPM_CONFIG_*, which takes precedence
+  // over npm_config_*. An empty value falls through to the next candidate.
+  async function installAndCaptureAuth(extraEnv: Record<string, string>) {
+    const received: (string | null)[] = [];
+    await using server = Bun.serve({
+      port: 0,
+      fetch(req) {
+        received.push(req.headers.get("authorization"));
+        return new Response("not found", { status: 404 });
+      },
+    });
+
+    await Promise.all([
+      write(
+        join(packageDir, "bunfig.toml"),
+        `[install]\ncache = false\nregistry = "http://localhost:${server.port}/"\n`,
+      ),
+      write(packageJson, JSON.stringify({ name: "foo", version: "1.0.0", dependencies: { "no-deps": "1.0.0" } })),
+    ]);
+
+    const { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: packageDir,
+      stdout: "pipe",
+      stderr: "pipe",
+      env: { ...env, ...extraEnv },
+    });
+    await Promise.all([stdout.text(), stderr.text(), exited]);
+    return received;
+  }
+
+  test("BUN_CONFIG_TOKEN wins over NPM_CONFIG_TOKEN and npm_config_token", async () => {
+    const received = await installAndCaptureAuth({
+      BUN_CONFIG_TOKEN: "from-bun",
+      NPM_CONFIG_TOKEN: "from-npm-upper",
+      npm_config_token: "from-npm-lower",
+    });
+    expect(received.length).toBeGreaterThan(0);
+    expect(received[0]).toBe("Bearer from-bun");
+  });
+
+  test("empty BUN_CONFIG_TOKEN falls through to NPM_CONFIG_TOKEN", async () => {
+    // npm_config_token is intentionally omitted: on Windows env vars are
+    // case-insensitive, so NPM_CONFIG_TOKEN and npm_config_token are the
+    // same key in the child and their relative priority is unobservable.
+    const received = await installAndCaptureAuth({
+      BUN_CONFIG_TOKEN: "",
+      NPM_CONFIG_TOKEN: "from-npm",
+    });
+    expect(received.length).toBeGreaterThan(0);
+    expect(received[0]).toBe("Bearer from-npm");
+  });
+
+  test("BUN_CONFIG_REGISTRY wins over NPM_CONFIG_REGISTRY", async () => {
+    const hits = { preferred: 0, other: 0 };
+    await using preferred = Bun.serve({
+      port: 0,
+      fetch() {
+        hits.preferred++;
+        return new Response("not found", { status: 404 });
+      },
+    });
+    await using other = Bun.serve({
+      port: 0,
+      fetch() {
+        hits.other++;
+        return new Response("not found", { status: 404 });
+      },
+    });
+
+    await Promise.all([
+      write(join(packageDir, "bunfig.toml"), `[install]\ncache = false\n`),
+      write(packageJson, JSON.stringify({ name: "foo", version: "1.0.0", dependencies: { "no-deps": "1.0.0" } })),
+    ]);
+
+    const { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: packageDir,
+      stdout: "pipe",
+      stderr: "pipe",
+      env: {
+        ...env,
+        BUN_CONFIG_REGISTRY: `http://localhost:${preferred.port}/`,
+        NPM_CONFIG_REGISTRY: `http://localhost:${other.port}/`,
+        npm_config_registry: `http://localhost:${other.port}/`,
+      },
+    });
+    await Promise.all([stdout.text(), stderr.text(), exited]);
+
+    expect(hits).toEqual({ preferred: 1, other: 0 });
+  });
 });

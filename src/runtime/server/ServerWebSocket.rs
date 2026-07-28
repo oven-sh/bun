@@ -14,6 +14,7 @@ use crate::server::jsc::{
     JSType, JSValue, JsError, JsRef, JsResult, ZigStringSlice,
 };
 use crate::server::web_socket_server_context::HandlerFlags;
+use crate::webcore::Blob;
 
 bun_output::declare_scope!(WebSocketServer, visible);
 
@@ -195,6 +196,23 @@ pub(super) fn send_status_to_js(
     }
 }
 
+#[inline]
+pub(super) fn blob_payload<'a>(
+    global_this: &JSGlobalObject,
+    fn_name: &'static str,
+    value: JSValue,
+) -> JsResult<Option<&'a [u8]>> {
+    let Some(blob) = value.as_class_ref::<Blob>() else {
+        return Ok(None);
+    };
+    if blob.needs_to_read_file() || blob.is_s3() {
+        return Err(global_this.throw(format_args!(
+            "{fn_name} cannot send a file- or S3-backed Blob synchronously; await blob.bytes() first"
+        )));
+    }
+    Ok(Some(blob.shared_view()))
+}
+
 impl ServerWebSocket {
     #[inline]
     fn websocket(&self) -> AnyWebSocket {
@@ -296,34 +314,29 @@ impl ServerWebSocket {
     /// Shared body for `subscribe` / `unsubscribe` / `isSubscribed`: identical
     /// arg-count guard, closed short-circuit, string-type guard, UTF-8 slice,
     /// non-empty guard, then dispatch to the uWS topic op. Only the JS-visible
-    /// name, the closed-socket return value, and the terminal op differ.
+    /// name and the terminal op differ.
     #[inline]
     fn topic_dispatch(
         &self,
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
         fn_name: &'static str,
-        closed_ret: JSValue,
         op: impl FnOnce(AnyWebSocket, &[u8]) -> bool,
     ) -> JsResult<JSValue> {
-        let args = callframe.arguments_old::<1>();
-        if args.len < 1 {
+        let args = callframe.arguments_as_array::<1>();
+        if callframe.arguments_count() < 1 {
             return Err(global_this.throw(format_args!("{fn_name} requires at least 1 argument")));
         }
 
         if self.is_closed() {
-            return Ok(closed_ret);
+            return Ok(JSValue::FALSE);
         }
 
-        if !args.ptr[0].is_string() {
-            return Err(global_this.throw_invalid_argument_type_value(
-                b"topic",
-                b"string",
-                args.ptr[0],
-            ));
+        if !args[0].is_string() {
+            return Err(global_this.throw_invalid_argument_type_value(b"topic", b"string", args[0]));
         }
 
-        let topic = args.ptr[0].to_slice(global_this)?;
+        let topic = args[0].to_slice(global_this)?;
 
         if topic.slice().is_empty() {
             return Err(
@@ -814,8 +827,8 @@ impl ServerWebSocket {
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        let args = callframe.arguments_old::<4>();
-        if args.len < 1 {
+        let [topic_value, message_value, compress_value] = callframe.arguments_as_array::<3>();
+        if callframe.arguments_count() < 1 {
             bun_output::scoped_log!(WebSocketServer, "publish()");
             return Err(global_this.throw(format_args!("publish requires at least 1 argument")));
         }
@@ -824,10 +837,6 @@ impl ServerWebSocket {
             bun_output::scoped_log!(WebSocketServer, "publish() closed");
             return Ok(JSValue::js_number(0.0));
         };
-
-        let topic_value = args.ptr[0];
-        let message_value = args.ptr[1];
-        let compress_value = args.ptr[2];
 
         if topic_value.is_empty_or_undefined_or_null() || !topic_value.is_string() {
             bun_output::scoped_log!(WebSocketServer, "publish() topic invalid");
@@ -839,7 +848,12 @@ impl ServerWebSocket {
             return Err(global_this.throw(format_args!("publish requires a non-empty topic")));
         }
 
-        let compress = Self::parse_compress_arg(global_this, "publish", compress_value, args.len)?;
+        let compress = Self::parse_compress_arg(
+            global_this,
+            "publish",
+            compress_value,
+            callframe.arguments_count() as usize,
+        )?;
 
         if message_value.is_empty_or_undefined_or_null() {
             return Err(global_this.throw(format_args!("publish requires a non-empty message")));
@@ -856,6 +870,20 @@ impl ServerWebSocket {
                 Opcode::Binary,
                 compress,
             ));
+        }
+
+        if let Some(slice) = blob_payload(global_this, "publish", message_value)? {
+            let ret = self.do_publish(
+                ssl,
+                app,
+                publish_to_self,
+                topic_slice.slice(),
+                slice,
+                Opcode::Binary,
+                compress,
+            );
+            message_value.ensure_still_alive();
+            return Ok(ret);
         }
 
         {
@@ -883,9 +911,9 @@ impl ServerWebSocket {
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        let args = callframe.arguments_old::<4>();
+        let [topic_value, message_value, compress_value] = callframe.arguments_as_array::<3>();
 
-        if args.len < 1 {
+        if callframe.arguments_count() < 1 {
             bun_output::scoped_log!(WebSocketServer, "publish()");
             return Err(global_this.throw(format_args!("publish requires at least 1 argument")));
         }
@@ -895,10 +923,6 @@ impl ServerWebSocket {
             return Ok(JSValue::js_number(0.0));
         };
 
-        let topic_value = args.ptr[0];
-        let message_value = args.ptr[1];
-        let compress_value = args.ptr[2];
-
         if topic_value.is_empty_or_undefined_or_null() || !topic_value.is_string() {
             bun_output::scoped_log!(WebSocketServer, "publish() topic invalid");
             return Err(global_this.throw(format_args!("publishText requires a topic string")));
@@ -906,8 +930,12 @@ impl ServerWebSocket {
 
         let topic_slice = topic_value.to_slice(global_this)?;
 
-        let compress =
-            Self::parse_compress_arg(global_this, "publishText", compress_value, args.len)?;
+        let compress = Self::parse_compress_arg(
+            global_this,
+            "publishText",
+            compress_value,
+            callframe.arguments_count() as usize,
+        )?;
 
         if message_value.is_empty_or_undefined_or_null() || !message_value.is_string() {
             return Err(global_this.throw(format_args!("publishText requires a non-empty message")));
@@ -936,9 +964,9 @@ impl ServerWebSocket {
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        let args = callframe.arguments_old::<4>();
+        let [topic_value, message_value, compress_value] = callframe.arguments_as_array::<3>();
 
-        if args.len < 1 {
+        if callframe.arguments_count() < 1 {
             bun_output::scoped_log!(WebSocketServer, "publishBinary()");
             return Err(
                 global_this.throw(format_args!("publishBinary requires at least 1 argument"))
@@ -949,9 +977,6 @@ impl ServerWebSocket {
             bun_output::scoped_log!(WebSocketServer, "publish() closed");
             return Ok(JSValue::js_number(0.0));
         };
-        let topic_value = args.ptr[0];
-        let message_value = args.ptr[1];
-        let compress_value = args.ptr[2];
 
         if topic_value.is_empty_or_undefined_or_null() || !topic_value.is_string() {
             bun_output::scoped_log!(WebSocketServer, "publishBinary() topic invalid");
@@ -963,8 +988,12 @@ impl ServerWebSocket {
             return Err(global_this.throw(format_args!("publishBinary requires a non-empty topic")));
         }
 
-        let compress =
-            Self::parse_compress_arg(global_this, "publishBinary", compress_value, args.len)?;
+        let compress = Self::parse_compress_arg(
+            global_this,
+            "publishBinary",
+            compress_value,
+            callframe.arguments_count() as usize,
+        )?;
 
         if message_value.is_empty_or_undefined_or_null() {
             return Err(
@@ -972,19 +1001,33 @@ impl ServerWebSocket {
             );
         }
 
-        let Some(array_buffer) = message_value.as_array_buffer(global_this) else {
-            return Err(global_this.throw(format_args!("publishBinary expects an ArrayBufferView")));
-        };
+        if let Some(array_buffer) = message_value.as_array_buffer(global_this) {
+            return Ok(self.do_publish(
+                ssl,
+                app,
+                publish_to_self,
+                topic_slice.slice(),
+                array_buffer.slice(),
+                Opcode::Binary,
+                compress,
+            ));
+        }
 
-        Ok(self.do_publish(
-            ssl,
-            app,
-            publish_to_self,
-            topic_slice.slice(),
-            array_buffer.slice(),
-            Opcode::Binary,
-            compress,
-        ))
+        if let Some(slice) = blob_payload(global_this, "publishBinary", message_value)? {
+            let ret = self.do_publish(
+                ssl,
+                app,
+                publish_to_self,
+                topic_slice.slice(),
+                slice,
+                Opcode::Binary,
+                compress,
+            );
+            message_value.ensure_still_alive();
+            return Ok(ret);
+        }
+
+        Err(global_this.throw(format_args!("publishBinary expects a Blob or BufferSource")))
     }
 
     // `passThis: true` in server.classes.ts — wrapper is emitted by
@@ -996,13 +1039,12 @@ impl ServerWebSocket {
         callframe: &CallFrame,
         this_value: JSValue,
     ) -> JsResult<JSValue> {
-        let args = callframe.arguments_old::<1>();
+        let [callback] = callframe.arguments_as_array::<1>();
 
-        if args.len < 1 {
+        if callframe.arguments_count() < 1 {
             return Err(global_this.throw_not_enough_arguments("cork", 1, 0));
         }
 
-        let callback = args.ptr[0];
         if callback.is_empty_or_undefined_or_null() || !callback.is_callable() {
             return Err(global_this.throw_invalid_argument_type_value(
                 b"cork",
@@ -1035,9 +1077,9 @@ impl ServerWebSocket {
 
     #[bun_jsc::host_fn(method)]
     pub fn send(&self, global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-        let args = callframe.arguments_old::<2>();
+        let [message_value, compress_value] = callframe.arguments_as_array::<2>();
 
-        if args.len < 1 {
+        if callframe.arguments_count() < 1 {
             bun_output::scoped_log!(WebSocketServer, "send()");
             return Err(global_this.throw(format_args!("send requires at least 1 argument")));
         }
@@ -1047,10 +1089,12 @@ impl ServerWebSocket {
             return Ok(JSValue::js_number(0.0));
         }
 
-        let message_value = args.ptr[0];
-        let compress_value = args.ptr[1];
-
-        let compress = Self::parse_compress_arg(global_this, "send", compress_value, args.len)?;
+        let compress = Self::parse_compress_arg(
+            global_this,
+            "send",
+            compress_value,
+            callframe.arguments_count() as usize,
+        )?;
 
         if message_value.is_empty_or_undefined_or_null() {
             return Err(global_this.throw(format_args!("send requires a non-empty message")));
@@ -1064,6 +1108,17 @@ impl ServerWebSocket {
                 "send",
                 "bytes",
             ));
+        }
+
+        if let Some(slice) = blob_payload(global_this, "send", message_value)? {
+            let ret = send_status_to_js(
+                self.websocket().send(slice, Opcode::Binary, compress, true),
+                slice.len(),
+                "send",
+                "bytes",
+            );
+            message_value.ensure_still_alive();
+            return Ok(ret);
         }
 
         {
@@ -1089,9 +1144,9 @@ impl ServerWebSocket {
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        let args = callframe.arguments_old::<2>();
+        let [message_value, compress_value] = callframe.arguments_as_array::<2>();
 
-        if args.len < 1 {
+        if callframe.arguments_count() < 1 {
             bun_output::scoped_log!(WebSocketServer, "sendText()");
             return Err(global_this.throw(format_args!("sendText requires at least 1 argument")));
         }
@@ -1101,10 +1156,12 @@ impl ServerWebSocket {
             return Ok(JSValue::js_number(0.0));
         }
 
-        let message_value = args.ptr[0];
-        let compress_value = args.ptr[1];
-
-        let compress = Self::parse_compress_arg(global_this, "sendText", compress_value, args.len)?;
+        let compress = Self::parse_compress_arg(
+            global_this,
+            "sendText",
+            compress_value,
+            callframe.arguments_count() as usize,
+        )?;
 
         if message_value.is_empty_or_undefined_or_null() || !message_value.is_string() {
             return Err(global_this.throw(format_args!("sendText expects a string")));
@@ -1131,9 +1188,9 @@ impl ServerWebSocket {
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        let args = callframe.arguments_old::<2>();
+        let [message_value, compress_value] = callframe.arguments_as_array::<2>();
 
-        if args.len < 1 {
+        if callframe.arguments_count() < 1 {
             bun_output::scoped_log!(WebSocketServer, "sendBinary()");
             return Err(global_this.throw(format_args!("sendBinary requires at least 1 argument")));
         }
@@ -1143,23 +1200,35 @@ impl ServerWebSocket {
             return Ok(JSValue::js_number(0.0));
         }
 
-        let message_value = args.ptr[0];
-        let compress_value = args.ptr[1];
-
-        let compress =
-            Self::parse_compress_arg(global_this, "sendBinary", compress_value, args.len)?;
-
-        let Some(buffer) = message_value.as_array_buffer(global_this) else {
-            return Err(global_this.throw(format_args!("sendBinary requires an ArrayBufferView")));
-        };
-
-        let slice = buffer.slice();
-        Ok(send_status_to_js(
-            self.websocket().send(slice, Opcode::Binary, compress, true),
-            slice.len(),
+        let compress = Self::parse_compress_arg(
+            global_this,
             "sendBinary",
-            "bytes",
-        ))
+            compress_value,
+            callframe.arguments_count() as usize,
+        )?;
+
+        if let Some(buffer) = message_value.as_array_buffer(global_this) {
+            let slice = buffer.slice();
+            return Ok(send_status_to_js(
+                self.websocket().send(slice, Opcode::Binary, compress, true),
+                slice.len(),
+                "sendBinary",
+                "bytes",
+            ));
+        }
+
+        if let Some(slice) = blob_payload(global_this, "sendBinary", message_value)? {
+            let ret = send_status_to_js(
+                self.websocket().send(slice, Opcode::Binary, compress, true),
+                slice.len(),
+                "sendBinary",
+                "bytes",
+            );
+            message_value.ensure_still_alive();
+            return Ok(ret);
+        }
+
+        Err(global_this.throw(format_args!("sendBinary requires a Blob or BufferSource")))
     }
 
     #[bun_jsc::host_fn(method)]
@@ -1180,14 +1249,12 @@ impl ServerWebSocket {
         name: &'static str,
         opcode: Opcode,
     ) -> JsResult<JSValue> {
-        let args = callframe.arguments_old::<2>();
-
         if self.is_closed() {
             return Ok(JSValue::js_number(0.0));
         }
 
-        if args.len > 0 {
-            let value = args.ptr[0];
+        if callframe.arguments_count() > 0 {
+            let value = callframe.argument(0);
             if !value.is_empty_or_undefined_or_null() {
                 if let Some(data) = value.as_array_buffer(global_this) {
                     let buffer = data.slice();
@@ -1200,6 +1267,18 @@ impl ServerWebSocket {
                         name,
                         "bytes",
                     ));
+                } else if let Some(buffer) = blob_payload(global_this, name, value)? {
+                    if buffer.len() > MAX_CONTROL_FRAME_PAYLOAD {
+                        return Err(throw_control_frame_too_large(global_this, buffer.len()));
+                    }
+                    let ret = send_status_to_js(
+                        self.websocket().send(buffer, opcode, false, true),
+                        buffer.len(),
+                        name,
+                        "bytes",
+                    );
+                    value.ensure_still_alive();
+                    return Ok(ret);
                 } else if value.is_string() {
                     // SAFETY: to_js_string returns a non-null *mut JSString on the Ok path.
                     let string_value = value.to_js_string(global_this)?.to_slice(global_this);
@@ -1214,8 +1293,10 @@ impl ServerWebSocket {
                         "bytes",
                     ));
                 } else {
-                    return Err(global_this
-                        .throw(format_args!("{} requires a string or BufferSource", name)));
+                    return Err(global_this.throw(format_args!(
+                        "{} requires a string, Blob, or BufferSource",
+                        name
+                    )));
                 }
             }
         }
@@ -1267,7 +1348,7 @@ impl ServerWebSocket {
         // Since close() can lead to the close() callback being called, let's always ensure the `this` value is up to date.
         _this_value: JSValue,
     ) -> JsResult<JSValue> {
-        let args = callframe.arguments_old::<2>();
+        let args = callframe.arguments_as_array::<2>();
         bun_output::scoped_log!(WebSocketServer, "close()");
 
         if self.is_closed() {
@@ -1275,25 +1356,25 @@ impl ServerWebSocket {
         }
 
         let code: i32 = 'brk: {
-            if args.ptr[0].is_empty() || args.ptr[0].is_undefined() {
+            if args[0].is_undefined() {
                 // default exception code
                 break 'brk 1000;
             }
 
-            if !args.ptr[0].is_number() {
+            if !args[0].is_number() {
                 return Err(global_this.throw_invalid_arguments(format_args!(
                     "close requires a numeric code or undefined"
                 )));
             }
 
-            break 'brk args.ptr[0].coerce_to_i32(global_this)?;
+            break 'brk args[0].coerce_to_i32(global_this)?;
         };
 
         let message_value: ZigStringSlice = 'brk: {
-            if args.ptr[1].is_empty() || args.ptr[1].is_undefined() {
+            if args[1].is_undefined() {
                 break 'brk ZigStringSlice::empty();
             }
-            break 'brk args.ptr[1].to_slice_or_null(global_this)?;
+            break 'brk args[1].to_slice_or_null(global_this)?;
         };
 
         // `to_slice_or_null` can run user `toString()`, which may re-entrantly
@@ -1394,13 +1475,7 @@ impl ServerWebSocket {
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        self.topic_dispatch(
-            global_this,
-            callframe,
-            "subscribe",
-            JSValue::TRUE,
-            AnyWebSocket::subscribe,
-        )
+        self.topic_dispatch(global_this, callframe, "subscribe", AnyWebSocket::subscribe)
     }
 
     #[bun_jsc::host_fn(method)]
@@ -1413,7 +1488,6 @@ impl ServerWebSocket {
             global_this,
             callframe,
             "unsubscribe",
-            JSValue::TRUE,
             AnyWebSocket::unsubscribe,
         )
     }
@@ -1428,7 +1502,6 @@ impl ServerWebSocket {
             global_this,
             callframe,
             "isSubscribed",
-            JSValue::FALSE,
             AnyWebSocket::is_subscribed,
         )
     }

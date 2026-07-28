@@ -176,6 +176,9 @@ pub(crate) const RUNTIME_PARAMS_: &[ParamType] = &[
         "--smol                            Use less memory, but run garbage collection more often"
     ),
     parse_param!(
+        "--interactive                     Start a Node.js-compatible REPL, like node --interactive"
+    ),
+    parse_param!(
         "-r, --preload <STR>...            Import a module before other modules are loaded"
     ),
     parse_param!("--require <STR>...                Alias of --preload, for Node.js compatibility"),
@@ -267,6 +270,12 @@ pub(crate) const RUNTIME_PARAMS_: &[ParamType] = &[
     ),
     parse_param!("--use-openssl-ca                  Use OpenSSL's default CA store"),
     parse_param!("--use-bundled-ca                  Use bundled CA store"),
+    parse_param!("--tls-min-v1.0                    Set the default TLS minimum to TLSv1.0"),
+    parse_param!("--tls-min-v1.1                    Set the default TLS minimum to TLSv1.1"),
+    parse_param!("--tls-min-v1.2                    Set the default TLS minimum to TLSv1.2"),
+    parse_param!("--tls-min-v1.3                    Set the default TLS minimum to TLSv1.3"),
+    parse_param!("--tls-max-v1.2                    Set the default TLS maximum to TLSv1.2"),
+    parse_param!("--tls-max-v1.3                    Set the default TLS maximum to TLSv1.3"),
     parse_param!("--redis-preconnect                Preconnect to $REDIS_URL at startup"),
     parse_param!("--sql-preconnect                  Preconnect to PostgreSQL at startup"),
     parse_param!(
@@ -1056,7 +1065,9 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::TransformO
 
         if args.flag(b"--no-install") {
             ctx.debug.global_cache = options::GlobalCache::disable;
-        } else if args.flag(b"-i") {
+        } else if args.flag(b"-i") && cmd != CommandTag::RunAsNodeCommand {
+            // Under node emulation `-i` is node's --interactive alias, not
+            // --install=fallback (auto-install is meaningless there).
             ctx.debug.global_cache = options::GlobalCache::fallback;
         } else if let Some(enum_value) = args.option(b"--install") {
             // -i=auto --install=force, --install=disable
@@ -1082,6 +1093,9 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::TransformO
         }
         ctx.runtime_options.if_present = args.flag(b"--if-present");
         ctx.runtime_options.smol = args.flag(b"--smol");
+        // node's `-i` is an alias for --interactive; elsewhere `-i` is --install=fallback.
+        ctx.runtime_options.interactive = args.flag(b"--interactive")
+            || (cmd == CommandTag::RunAsNodeCommand && args.flag(b"-i"));
         ctx.runtime_options.preconnect = slice_to_owned(args.options(b"--fetch-preconnect"));
         ctx.runtime_options.experimental_http2_fetch = args.flag(b"--experimental-http2-fetch");
         ctx.runtime_options.experimental_http3_fetch = args.flag(b"--experimental-http3-fetch");
@@ -1093,6 +1107,7 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::TransformO
             // builds. Debug builds always allow them.
             bun_jsc::module_loader::IS_ALLOWED_TO_USE_INTERNAL_TESTING_APIS
                 .store(true, core::sync::atomic::Ordering::Relaxed);
+            bun_resolve_builtins::set_expose_internals_enabled(true);
         }
 
         if let Some(depth_str) = args.option(b"--console-depth") {
@@ -1310,6 +1325,13 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::TransformO
             // `Bun__Node__UseSystemCA` is written unconditionally,
             // even when no CA flag/env was supplied (default bundled ⇒ false).
             Bun__Node__UseSystemCA.store(false, core::sync::atomic::Ordering::Relaxed);
+        }
+
+        if args.flag(b"--tls-min-v1.3") && args.flag(b"--tls-max-v1.2") {
+            bun_core::pretty_errorln!(
+                "<r><red>error<r>: --tls-min-v1.3 sets default TLS minimum to TLSv1.3 and is not compatible with --tls-max-v1.2, which sets default TLS maximum to TLSv1.2; use one or the other, not both"
+            );
+            Global::exit(1);
         }
     }
 

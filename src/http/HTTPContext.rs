@@ -490,7 +490,12 @@ impl<const SSL: bool> HTTPContext<SSL> {
                     uws::create_bun_socket_error_t::load_ca_file => InitError::LoadCAFile,
                     uws::create_bun_socket_error_t::invalid_ca_file => InitError::InvalidCAFile,
                     uws::create_bun_socket_error_t::invalid_ca => InitError::InvalidCA,
-                    _ => InitError::FailedToOpenSocket,
+                    uws::create_bun_socket_error_t::invalid_crl => InitError::InvalidCRL,
+                    uws::create_bun_socket_error_t::none
+                    | uws::create_bun_socket_error_t::invalid_ciphers
+                    | uws::create_bun_socket_error_t::invalid_ecdh_curve => {
+                        InitError::FailedToOpenSocket
+                    }
                 });
             }
         };

@@ -313,11 +313,15 @@ fn parse_array(
                         continue;
                     }
                     if array_type == types::Tag::date_array {
-                        let mut str = BunString::init(element);
-                        array.push(SQLDataCell::date(
-                            crate::jsc::bun_string_jsc::parse_date(&mut str, global_object)
-                                .map_err(crate::jsc::js_error_to_postgres)?,
-                        ));
+                        let ms = match crate::postgres::types::date::parse_infinity(element) {
+                            Some(inf) => inf,
+                            None => {
+                                let mut str = BunString::init(element);
+                                crate::jsc::bun_string_jsc::parse_date(&mut str, global_object)
+                                    .map_err(crate::jsc::js_error_to_postgres)?
+                            }
+                        };
+                        array.push(SQLDataCell::date(ms));
                     } else {
                         // the only escape sequency possible here is \b
                         if element == b"\\b" {
@@ -358,13 +362,13 @@ fn parse_array(
                                     return Err(AnyPostgresError::UnsupportedArrayFormat);
                                 }
                                 if &slice[0..5] == b"false" {
-                                    array.push(SQLDataCell::bool_(false));
+                                    array.push(SQLDataCell::bool(false));
                                     slice = try_slice(slice, 5);
                                     continue;
                                 }
                                 return Err(AnyPostgresError::UnsupportedArrayFormat);
                             } else {
-                                array.push(SQLDataCell::bool_(false));
+                                array.push(SQLDataCell::bool(false));
                                 slice = try_slice(slice, 1);
                                 continue;
                             }
@@ -376,13 +380,13 @@ fn parse_array(
                                     return Err(AnyPostgresError::UnsupportedArrayFormat);
                                 }
                                 if &slice[0..4] == b"true" {
-                                    array.push(SQLDataCell::bool_(true));
+                                    array.push(SQLDataCell::bool(true));
                                     slice = try_slice(slice, 4);
                                     continue;
                                 }
                                 return Err(AnyPostgresError::UnsupportedArrayFormat);
                             } else {
-                                array.push(SQLDataCell::bool_(true));
+                                array.push(SQLDataCell::bool(true));
                                 slice = try_slice(slice, 1);
                                 continue;
                             }
@@ -805,9 +809,9 @@ pub(crate) fn from_bytes(
         T::jsonb | T::json => Ok(SQLDataCell::json(bytes)),
         T::bool => {
             if binary {
-                Ok(SQLDataCell::bool_(!bytes.is_empty() && bytes[0] == 1))
+                Ok(SQLDataCell::bool(!bytes.is_empty() && bytes[0] == 1))
             } else {
-                Ok(SQLDataCell::bool_(!bytes.is_empty() && bytes[0] == b't'))
+                Ok(SQLDataCell::bool(!bytes.is_empty() && bytes[0] == b't'))
             }
         }
         tag @ (T::date | T::timestamp | T::timestamptz) => {
@@ -828,10 +832,16 @@ pub(crate) fn from_bytes(
                 if bun_core::strings::eql_case_insensitive_ascii(bytes, b"NULL", true) {
                     return Ok(SQLDataCell::null());
                 }
-                // `timestamp` (without time zone) text carries no offset, so
-                // decode its components as UTC to match the binary path. `date`
-                // (UTC midnight) and `timestamptz` (explicit offset) already
-                // parse correctly via Date.parse, so only redirect `timestamp`.
+                if let Some(inf) = crate::postgres::types::date::parse_infinity(bytes) {
+                    return Ok(SQLDataCell::date(inf));
+                }
+                // DateStyle is pinned to ISO in the startup packet, so the
+                // server always emits `YYYY-MM-DD[...]` here regardless of
+                // postgresql.conf / ALTER DATABASE / ALTER ROLE defaults.
+                // `timestamp` (no offset) is decoded as UTC components to
+                // agree with the binary path; `date` (UTC midnight) and
+                // `timestamptz` (explicit offset) go through Date.parse,
+                // which handles the ISO form unambiguously.
                 let date = match tag {
                     T::timestamp => crate::postgres::types::date::timestamp_text_to_ms_utc(global_object, bytes),
                     _ => None,

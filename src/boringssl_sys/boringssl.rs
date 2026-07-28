@@ -5,7 +5,7 @@
 //! **not** a full bindgen dump. When the bindgen pipeline lands this module
 //! is replaced wholesale.
 
-use core::ffi::{c_char, c_int, c_long, c_uint, c_void};
+use core::ffi::{c_char, c_int, c_long, c_uint, c_ulong, c_void};
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Opaque-type helper — thin sugar over the canonical
@@ -685,6 +685,35 @@ unsafe extern "C" {
 // symbol — they bottom out on the untyped `sk_*` ABI above.
 // ═══════════════════════════════════════════════════════════════════════════
 
+pub const SSL_GROUP_SECP256R1: u16 = 23;
+pub const SSL_GROUP_SECP384R1: u16 = 24;
+pub const SSL_GROUP_SECP521R1: u16 = 25;
+pub const SSL_GROUP_X25519: u16 = 29;
+pub const SSL_GROUP_X448: u16 = 30;
+
+/// `sk_X509_pop_free(sk, X509_free)` — release a `STACK_OF(X509)` and every
+/// element on it.
+#[inline]
+pub unsafe fn sk_X509_pop_free(sk: *mut struct_stack_st_X509) {
+    unsafe extern "C" fn call(f: OPENSSL_sk_free_func, e: *mut c_void) {
+        // SAFETY: BoringSSL only invokes this with the `free_func` we passed
+        // and a live element pointer.
+        unsafe { (f.unwrap())(e) }
+    }
+    // SAFETY: caller-guaranteed live X509 stack; `X509_free` is
+    // `extern "C" fn(*mut X509)`, ABI-compatible with `fn(*mut c_void)`.
+    unsafe {
+        sk_pop_free_ex(
+            sk.cast(),
+            Some(call),
+            Some(core::mem::transmute::<
+                unsafe extern "C" fn(*mut X509),
+                unsafe extern "C" fn(*mut c_void),
+            >(X509_free)),
+        );
+    }
+}
+
 #[inline]
 pub unsafe fn sk_X509_value(sk: *const struct_stack_st_X509, i: usize) -> *mut X509 {
     // SAFETY: Two independent type casts, not a const→mut provenance laundering:
@@ -799,6 +828,10 @@ opaque!(
     X509_STORE_CTX
 );
 opaque!(
+    /// `struct X509_crl_st` (`typedef ... X509_CRL`).
+    X509_CRL
+);
+opaque!(
     /// `struct rsa_st` (`typedef ... RSA`).
     RSA
 );
@@ -831,6 +864,9 @@ unsafe extern "C" {
     pub fn SSL_CTX_get_ex_data(ctx: *const SSL_CTX, idx: c_int) -> *mut c_void;
     pub fn SSL_CTX_set0_buffer_pool(ctx: *mut SSL_CTX, pool: *mut CRYPTO_BUFFER_POOL);
     pub fn SSL_CTX_set_cipher_list(ctx: *mut SSL_CTX, str_: *const c_char) -> c_int;
+    pub fn SSL_CTX_set1_groups_list(ctx: *mut SSL_CTX, groups: *const c_char) -> c_int;
+    /// `enum ssl_compliance_policy_t` (int-sized via BORINGSSL_ENUM_INT).
+    pub fn SSL_CTX_set_compliance_policy(ctx: *mut SSL_CTX, policy: c_int) -> c_int;
 
     // ── CRYPTO_BUFFER_POOL ───────────────────────────────────────────────
     pub fn CRYPTO_BUFFER_POOL_new() -> *mut CRYPTO_BUFFER_POOL;
@@ -856,6 +892,35 @@ unsafe extern "C" {
     pub fn SSL_set_renegotiate_mode(ssl: *mut SSL, mode: ssl_renegotiate_mode_t);
     pub fn SSL_renegotiate(ssl: *mut SSL) -> c_int;
     pub fn SSL_get_servername(ssl: *const SSL, ty: c_int) -> *const c_char;
+    pub fn SSL_CTX_set_default_verify_paths(ctx: *mut SSL_CTX) -> c_int;
+    pub fn SSL_CTX_set_alpn_protos(
+        ctx: *mut SSL_CTX,
+        protos: *const u8,
+        protos_len: usize,
+    ) -> c_int;
+    pub fn SSL_CTX_get_cert_store(ctx: *const SSL_CTX) -> *mut X509_STORE;
+    pub fn SSL_CTX_add0_chain_cert(ctx: *mut SSL_CTX, x509: *mut X509) -> c_int;
+    pub fn SSL_CTX_clear_chain_certs(ctx: *mut SSL_CTX) -> c_int;
+    pub fn PEM_read_bio_X509_AUX(
+        bp: *mut BIO,
+        x: *mut *mut X509,
+        cb: Option<pem_password_cb>,
+        u: *mut c_void,
+    ) -> *mut X509;
+    pub fn OPENSSL_free(ptr: *mut c_void);
+    pub fn SSL_CTX_get0_param(ctx: *mut SSL_CTX) -> *mut c_void;
+    pub fn SSL_get_group_id(ssl: *const SSL) -> u16;
+    pub fn SSL_get_group_name(group_id: u16) -> *const c_char;
+    pub fn X509_VERIFY_PARAM_set1_host(
+        param: *mut c_void,
+        name: *const c_char,
+        namelen: usize,
+    ) -> c_int;
+    pub fn SSL_CTX_set_keylog_callback(
+        ctx: *mut SSL_CTX,
+        cb: Option<unsafe extern "C" fn(ssl: *const SSL, line: *const c_char)>,
+    );
+    pub fn SSL_CTX_set_early_data_enabled(ctx: *mut SSL_CTX, enabled: c_int);
     pub fn SSL_get_SSL_CTX(ssl: *const SSL) -> *mut SSL_CTX;
     pub fn SSL_get_ex_data(ssl: *const SSL, idx: c_int) -> *mut c_void;
     pub fn SSL_set_ex_data(ssl: *mut SSL, idx: c_int, data: *mut c_void) -> c_int;
@@ -992,4 +1057,87 @@ unsafe extern "C" {
         cb: Option<pem_password_cb>,
         u: *mut c_void,
     ) -> *mut RSA;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Extern functions — TLS context/session setup for QUIC (node:quic)
+// ═══════════════════════════════════════════════════════════════════════════
+
+opaque!(
+    /// `struct evp_pkey_st` (`typedef ... EVP_PKEY`).
+    EVP_PKEY
+);
+opaque!(
+    /// `struct ssl_cipher_st` (`typedef ... SSL_CIPHER`).
+    SSL_CIPHER
+);
+opaque!(
+    /// `struct ssl_session_st` (`typedef ... SSL_SESSION`).
+    SSL_SESSION
+);
+
+/// `TLS1_3_VERSION` (`openssl/tls1.h`).
+pub const TLS1_3_VERSION: u16 = 0x0304;
+/// `X509_V_OK` (`openssl/x509.h`).
+pub const X509_V_OK: c_long = 0;
+/// `SSL_SESS_CACHE_CLIENT` (`openssl/ssl.h`).
+pub const SSL_SESS_CACHE_CLIENT: c_int = 1;
+
+unsafe extern "C" {
+    pub safe fn TLS_method() -> *const SSL_METHOD;
+
+    pub fn SSL_CTX_set_min_proto_version(ctx: *mut SSL_CTX, version: u16) -> c_int;
+    pub fn SSL_CTX_set_max_proto_version(ctx: *mut SSL_CTX, version: u16) -> c_int;
+    pub fn SSL_CTX_set_verify(ctx: *mut SSL_CTX, mode: c_int, callback: SSL_verify_cb);
+    pub fn SSL_CTX_use_certificate(ctx: *mut SSL_CTX, x509: *mut X509) -> c_int;
+    pub fn SSL_CTX_use_PrivateKey(ctx: *mut SSL_CTX, pkey: *mut EVP_PKEY) -> c_int;
+
+    pub fn SSL_get_verify_result(ssl: *const SSL) -> c_long;
+    pub fn SSL_get_current_cipher(ssl: *const SSL) -> *const SSL_CIPHER;
+    pub fn SSL_CIPHER_standard_name(cipher: *const SSL_CIPHER) -> *const c_char;
+    pub fn SSL_CIPHER_get_name(cipher: *const SSL_CIPHER) -> *const c_char;
+    pub fn SSL_get_version(ssl: *const SSL) -> *const c_char;
+
+    pub fn PEM_read_bio_X509(
+        bp: *mut BIO,
+        x: *mut *mut X509,
+        cb: Option<pem_password_cb>,
+        u: *mut c_void,
+    ) -> *mut X509;
+    pub fn PEM_read_bio_PrivateKey(
+        bp: *mut BIO,
+        x: *mut *mut EVP_PKEY,
+        cb: Option<pem_password_cb>,
+        u: *mut c_void,
+    ) -> *mut EVP_PKEY;
+    pub fn EVP_PKEY_free(pkey: *mut EVP_PKEY);
+
+    pub fn X509_verify_cert_error_string(err: c_long) -> *const c_char;
+
+    pub fn X509_STORE_free(store: *mut X509_STORE);
+    pub fn X509_STORE_add_cert(store: *mut X509_STORE, x509: *mut X509) -> c_int;
+    pub fn X509_STORE_add_crl(store: *mut X509_STORE, crl: *mut X509_CRL) -> c_int;
+    pub fn X509_STORE_set_flags(store: *mut X509_STORE, flags: c_ulong) -> c_int;
+    pub fn X509_CRL_free(crl: *mut X509_CRL);
+    pub fn PEM_read_bio_X509_CRL(
+        bp: *mut BIO,
+        x: *mut *mut X509_CRL,
+        cb: Option<pem_password_cb>,
+        u: *mut c_void,
+    ) -> *mut X509_CRL;
+
+    /// Returns a NEW reference (caller frees) or null when the peer sent no
+    /// certificate.
+    pub fn SSL_get_peer_certificate(ssl: *const SSL) -> *mut X509;
+    /// Returns a BORROWED reference to the local certificate, or null.
+    pub fn SSL_get_certificate(ssl: *const SSL) -> *mut X509;
+
+    pub fn i2d_SSL_SESSION(session: *mut SSL_SESSION, pp: *mut *mut u8) -> c_int;
+    pub fn d2i_SSL_SESSION(
+        a: *mut *mut SSL_SESSION,
+        pp: *mut *const u8,
+        length: c_long,
+    ) -> *mut SSL_SESSION;
+    pub fn SSL_set_session(ssl: *mut SSL, session: *mut SSL_SESSION) -> c_int;
+    pub fn SSL_SESSION_free(session: *mut SSL_SESSION);
 }

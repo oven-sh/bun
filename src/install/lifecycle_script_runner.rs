@@ -383,7 +383,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
         unsafe { self.manager.get_mut() }
     }
 
-    pub fn event_loop(&self) -> &AnyEventLoop<'static> {
+    pub fn event_loop(&self) -> &AnyEventLoop {
         &self.manager().event_loop
     }
 

@@ -171,7 +171,7 @@ impl<const SSL: bool> Response<SSL> {
         c::uws_res_pause(Self::ssl_flag(), self.as_raw())
     }
 
-    pub fn resume_(&mut self) {
+    pub fn resume(&mut self) {
         c::uws_res_resume(Self::ssl_flag(), self.as_raw())
     }
 
@@ -826,8 +826,8 @@ impl AnyResponse {
         any_dispatch!(self, |r| r.pause())
     }
 
-    pub fn resume_(self) {
-        any_dispatch!(self, |r| r.resume_())
+    pub fn resume(self) {
+        any_dispatch!(self, |r| r.resume())
     }
 
     pub fn write_header_int(self, key: &[u8], value: u64) {
@@ -1005,6 +1005,7 @@ bitflags::bitflags! {
         const HTTP_RESPONSE_PENDING            = 8;
         const HTTP_CONNECTION_CLOSE            = 16;
         const HTTP_WROTE_CONTENT_LENGTH_HEADER = 32;
+        const HTTP_NODE_RECEIVED_FIN           = 1 << 15;
     }
 }
 
@@ -1037,6 +1038,11 @@ impl State {
     #[inline]
     pub fn is_http_connection_close(self) -> bool {
         self.bits() & State::HTTP_CONNECTION_CLOSE.bits() != 0
+    }
+
+    #[inline]
+    pub fn is_node_received_fin(self) -> bool {
+        self.bits() & State::HTTP_NODE_RECEIVED_FIN.bits() != 0
     }
 }
 

@@ -566,6 +566,12 @@ describe("zlib.zstd", () => {
     expect(roundtrip.toString()).toEqual(inputString);
   });
 
+  it("zstdDecompressSync decodes concatenated frames", () => {
+    const f1 = zlib.zstdCompressSync(Buffer.from("first\n"));
+    const f2 = zlib.zstdCompressSync(Buffer.from("second\n"));
+    expect(zlib.zstdDecompressSync(Buffer.concat([f1, f2])).toString()).toBe("first\nsecond\n");
+  });
+
   it("can compress streaming", async () => {
     const encoder = zlib.createZstdCompress();
     for (const chunk of window(inputString, 55)) {
@@ -764,5 +770,14 @@ describe("crc32", () => {
     expect(() => zlib.crc32(new String("abc"))).toThrow(TypeError);
     expect(() => zlib.crc32(String.prototype)).toThrow(TypeError);
     expect(zlib.crc32("abc")).toBe(891568578);
+  });
+
+  it("handles missing and undefined arguments", () => {
+    // No data argument: ERR_INVALID_ARG_TYPE (not a crash, not a different error).
+    expect(() => zlib.crc32()).toThrow(expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }));
+    // Explicit undefined behaves the same as no argument.
+    expect(() => zlib.crc32(undefined)).toThrow(expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }));
+    // Omitted second arg defaults to value=0.
+    expect(zlib.crc32("hello")).toBe(zlib.crc32("hello", 0));
   });
 });

@@ -390,8 +390,19 @@ mod _impl {
     pub(super) extern "C" fn get_eval(global_object: &JSGlobalObject) -> JSValue {
         // SAFETY: `bun_vm()` returns the live per-thread VM for this global.
         let vm = global_object.bun_vm();
+        // `--interactive` boots the bootstrap through `eval_source`, so read
+        // the user's real `-e` bytes from `interactive_eval_script` instead
+        // (`undefined` when empty, matching `node -i` without `-e`).
+        if let Some(script) = vm.module_loader.interactive_eval_script.as_deref() {
+            if script.is_empty() {
+                return JSValue::UNDEFINED;
+            }
+            return ZigString::init(script).with_encoding().to_js(global_object);
+        }
         if let Some(source) = vm.module_loader.eval_source.as_deref() {
-            return ZigString::init(source.contents()).to_js(global_object);
+            return ZigString::init(source.contents())
+                .with_encoding()
+                .to_js(global_object);
         }
         JSValue::UNDEFINED
     }

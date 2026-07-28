@@ -715,8 +715,7 @@ pub(crate) fn js_password_object_hash(
     global_object: &JSGlobalObject,
     callframe: &CallFrame,
 ) -> JsResult<JSValue> {
-    let arguments_ = callframe.arguments_old::<2>();
-    let arguments = &arguments_.ptr[..arguments_.len];
+    let arguments = callframe.arguments();
 
     if arguments.len() < 1 {
         return Err(global_object.throw_not_enough_arguments("hash", 1, 0));
@@ -755,8 +754,7 @@ pub(crate) fn js_password_object_hash_sync(
     global_object: &JSGlobalObject,
     callframe: &CallFrame,
 ) -> JsResult<JSValue> {
-    let arguments_ = callframe.arguments_old::<2>();
-    let arguments = &arguments_.ptr[..arguments_.len];
+    let arguments = callframe.arguments();
 
     if arguments.len() < 1 {
         return Err(global_object.throw_not_enough_arguments("hash", 1, 0));
@@ -800,8 +798,7 @@ pub(crate) fn js_password_object_verify(
     global_object: &JSGlobalObject,
     callframe: &CallFrame,
 ) -> JsResult<JSValue> {
-    let arguments_ = callframe.arguments_old::<3>();
-    let arguments = &arguments_.ptr[..arguments_.len];
+    let arguments = callframe.arguments();
 
     if arguments.len() < 2 {
         return Err(global_object.throw_not_enough_arguments("verify", 2, 0));
@@ -881,8 +878,7 @@ pub(crate) fn js_password_object_verify_sync(
     global_object: &JSGlobalObject,
     callframe: &CallFrame,
 ) -> JsResult<JSValue> {
-    let arguments_ = callframe.arguments_old::<3>();
-    let arguments = &arguments_.ptr[..arguments_.len];
+    let arguments = callframe.arguments();
 
     if arguments.len() < 2 {
         return Err(global_object.throw_not_enough_arguments("verify", 2, 0));

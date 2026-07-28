@@ -136,6 +136,7 @@ pub(super) trait RequestCtxOps: RequestCtx {
         global_this: &JSGlobalObject,
         readable: WebCore::ReadableStream,
     );
+    fn on_request_body_stream_drained_callback(this: Option<*mut c_void>);
 }
 
 impl<ThisServer, const SSL: bool, const DBG: bool, const H3: bool> RequestCtxOps
@@ -275,6 +276,10 @@ where
     ) {
         Self::on_request_body_readable_stream_available(this, global_this, readable)
     }
+    #[inline]
+    fn on_request_body_stream_drained_callback(this: Option<*mut c_void>) {
+        Self::on_request_body_stream_drained_callback(this)
+    }
 }
 
 // NOTE: local request/response trait so generic `Ctx::Req` / `Ctx::Resp`
@@ -413,6 +418,18 @@ impl RespLike for uws_sys::h3::Response {
 pub(super) fn respond_stopped_503<R: RespLike + ?Sized>(resp: &mut R) {
     resp.write_status(b"503 Service Unavailable");
     resp.end_without_body(!R::IS_H3);
+}
+
+/// RFC 6455 §4.1: |Sec-WebSocket-Key| is the base64 encoding of a 16-byte
+/// value, i.e. 22 base64 characters followed by `==`.
+#[inline]
+fn is_valid_sec_websocket_key(key: &[u8]) -> bool {
+    key.len() == 24
+        && key[22] == b'='
+        && key[23] == b'='
+        && key[..22]
+            .iter()
+            .all(|&c| c.is_ascii_alphanumeric() || c == b'+' || c == b'/')
 }
 
 pub(super) type ServerRequestContext<const SSL: bool, const DEBUG: bool> =
@@ -1417,18 +1434,18 @@ where
         global: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        let arguments = callframe.arguments_old::<1>();
-        if arguments.len < 1 {
+        let [topic_value] = callframe.arguments_as_array::<1>();
+        if callframe.arguments_count() < 1 {
             return Err(global.throw_not_enough_arguments("subscriberCount", 1, 0));
         }
 
-        if arguments.ptr[0].is_empty_or_undefined_or_null() {
+        if topic_value.is_empty_or_undefined_or_null() {
             return Err(global.throw_invalid_arguments(format_args!(
                 "subscriberCount requires a topic name as a string"
             )));
         }
 
-        let topic = arguments.ptr[0].to_slice(global)?;
+        let topic = topic_value.to_slice(global)?;
 
         if topic.slice().is_empty() {
             return Ok(JSValue::js_number(0.0));
@@ -1449,8 +1466,7 @@ where
     /// `pub const doStop = host_fn.wrapInstanceMethod(ThisServer, "stopFromJS", false)`
     #[bun_jsc::host_fn(method)]
     pub fn do_stop(&mut self, global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-        let args = callframe.arguments_old::<2>();
-        let mut iter = jsc::ArgumentsSlice::init(global.bun_vm_ref(), args.slice());
+        let mut iter = jsc::ArgumentsSlice::init(global.bun_vm_ref(), callframe.arguments());
         // ?jsc.JSValue
         let abruptly = iter.next_eat();
         Ok(self.stop_from_js(abruptly))
@@ -1473,8 +1489,7 @@ where
         global: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        let args = callframe.arguments_old::<4>();
-        let mut iter = jsc::ArgumentsSlice::init(global.bun_vm_ref(), args.slice());
+        let mut iter = jsc::ArgumentsSlice::init(global.bun_vm_ref(), callframe.arguments());
         // jsc.JSValue
         let object = iter
             .next_eat()
@@ -1491,8 +1506,7 @@ where
         global: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        let args = callframe.arguments_old::<5>();
-        let mut iter = jsc::ArgumentsSlice::init(global.bun_vm_ref(), args.slice());
+        let mut iter = jsc::ArgumentsSlice::init(global.bun_vm_ref(), callframe.arguments());
         let topic_value = iter
             .next_eat()
             .ok_or_else(|| global.throw_invalid_arguments(format_args!("Missing argument")))?;
@@ -1516,8 +1530,7 @@ where
         global: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        let args = callframe.arguments_old::<2>();
-        let mut iter = jsc::ArgumentsSlice::init(global.bun_vm_ref(), args.slice());
+        let mut iter = jsc::ArgumentsSlice::init(global.bun_vm_ref(), callframe.arguments());
         // *jsc.WebCore.Request
         let arg = iter.next_eat().ok_or_else(|| {
             global.throw_invalid_arguments(format_args!("Missing Request object"))
@@ -1575,8 +1588,7 @@ where
 
     #[bun_jsc::host_fn(method)]
     pub fn timeout(&mut self, global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-        let arguments_buf = callframe.arguments_old::<2>();
-        let arguments = arguments_buf.slice();
+        let arguments = callframe.arguments();
         if arguments.len() < 2 || arguments[0].is_empty_or_undefined_or_null() {
             return Err(global.throw_not_enough_arguments("timeout", 2, arguments.len()));
         }
@@ -1652,6 +1664,27 @@ where
                 "publish",
                 "bytes",
             ));
+        }
+
+        if let Some(slice) =
+            super::server_web_socket::blob_payload(global, "publish", message_value)?
+        {
+            let status = AnyWebSocket::publish_with_options(
+                SSL,
+                app,
+                topic_slice.slice(),
+                slice,
+                uws_sys::Opcode::Binary,
+                compress,
+            );
+            let result = super::server_web_socket::send_status_to_js(
+                status,
+                slice.len(),
+                "publish",
+                "bytes",
+            );
+            message_value.ensure_still_alive();
+            return Ok(result);
         }
 
         {
@@ -1900,12 +1933,16 @@ where
         let mut sec_websocket_key_str = ZigString::EMPTY;
         let mut sec_websocket_protocol = ZigString::EMPTY;
         let mut sec_websocket_extensions = ZigString::EMPTY;
+        let mut sec_websocket_version = ZigString::EMPTY;
+        let mut upgrade_header = ZigString::EMPTY;
 
         // Owned backing storage for sec_websocket_*.
         // `ZigStringSlice` impls `Drop`; reassignment drops the previous value.
         let mut _sec_websocket_key_owned = bun_core::ZigStringSlice::empty();
         let mut _sec_websocket_protocol_owned = bun_core::ZigStringSlice::empty();
         let mut _sec_websocket_extensions_owned = bun_core::ZigStringSlice::empty();
+        let mut _sec_websocket_version_owned = bun_core::ZigStringSlice::empty();
+        let mut _upgrade_header_owned = bun_core::ZigStringSlice::empty();
 
         // NOTE: `FetchHeaders::fast_get` takes `&mut self` (FFI signature
         // is `*mut`), so go through the `BodyMixin` accessor which yields a
@@ -1927,6 +1964,14 @@ where
             if let Some(ext) = head.fast_get(HTTPHeaderName::SecWebSocketExtensions) {
                 _sec_websocket_extensions_owned = ext.to_slice_clone();
                 sec_websocket_extensions = ZigString::init(_sec_websocket_extensions_owned.slice());
+            }
+            if let Some(ver) = head.fast_get(HTTPHeaderName::SecWebSocketVersion) {
+                _sec_websocket_version_owned = ver.to_slice_clone();
+                sec_websocket_version = ZigString::init(_sec_websocket_version_owned.slice());
+            }
+            if let Some(up) = head.fast_get(HTTPHeaderName::Upgrade) {
+                _upgrade_header_owned = up.to_slice_clone();
+                upgrade_header = ZigString::init(_upgrade_header_owned.slice());
             }
         }
 
@@ -1953,9 +1998,39 @@ where
                 sec_websocket_extensions =
                     ZigString::init(r.header(b"sec-websocket-extensions").unwrap_or(b""));
             }
+            if sec_websocket_version.len == 0 {
+                sec_websocket_version =
+                    ZigString::init(r.header(b"sec-websocket-version").unwrap_or(b""));
+            }
+            if upgrade_header.len == 0 {
+                upgrade_header = ZigString::init(r.header(b"upgrade").unwrap_or(b""));
+            }
         }
 
-        if sec_websocket_key_str.len != 24 {
+        // RFC 6455 §4.2.1: validate the client's opening handshake.
+        // A request that does not name "websocket" in its |Upgrade| token list,
+        // or whose |Sec-WebSocket-Key| is not base64 of 16 bytes, is not a
+        // WebSocket handshake; fall through so the caller's fetch() can respond.
+        if !upgrade_header
+            .slice()
+            .split(|&c| c == b',')
+            .any(|t| strings::eql_case_insensitive_ascii(t.trim_ascii(), b"websocket", true))
+        {
+            return Ok(JSValue::FALSE);
+        }
+        if !is_valid_sec_websocket_key(sec_websocket_key_str.slice()) {
+            return Ok(JSValue::FALSE);
+        }
+        // RFC 6455 §4.4: an unsupported |Sec-WebSocket-Version| MUST be
+        // answered with an HTTP error and a |Sec-WebSocket-Version| header
+        // listing the versions the server understands.
+        if sec_websocket_version.slice() != b"13" {
+            resp.write_status(b"426 Upgrade Required");
+            resp.write_header(b"Sec-WebSocket-Version", b"13");
+            // SAFETY: upgrader_ptr is live (ref_() above)
+            let upgrader = unsafe { &mut *upgrader_ptr };
+            upgrader.flags.set_has_written_status(true);
+            upgrader.end_without_body(true);
             return Ok(JSValue::FALSE);
         }
         if sec_websocket_protocol.len > 0 {
@@ -2308,8 +2383,7 @@ where
             );
         }
 
-        let arguments_buf = callframe.arguments_old::<2>();
-        let arguments = arguments_buf.slice();
+        let arguments = callframe.arguments();
         if arguments.is_empty() {
             let fetch_error = Fetch::FETCH_ERROR_NO_ARGS;
             return Ok(
@@ -2514,28 +2588,26 @@ where
 
     #[bun_jsc::host_fn(getter)]
     pub fn get_port(&self, _: &JSGlobalObject) -> JSValue {
-        if matches!(self.config.address, server_config::Address::Unix(_)) {
-            return JSValue::UNDEFINED;
-        }
+        let config_port = match &self.config.address {
+            server_config::Address::Unix(_) => return JSValue::UNDEFINED,
+            server_config::Address::Tcp { port, .. } => *port,
+        };
 
         if let Some(listener) = self.listener {
             // S008: `app::ListenSocket<SSL>` is a ZST opaque — safe deref.
-            return JSValue::js_number(
-                bun_opaque::opaque_deref_mut(listener).get_local_port() as f64
-            );
+            if let Some(p) = bun_opaque::opaque_deref_mut(listener).get_local_port() {
+                return JSValue::js_number(p as f64);
+            }
         }
         if Self::HAS_H3 {
             if let Some(h3l) = self.h3_listener {
                 // S008: `h3::ListenSocket` is an `opaque_ffi!` ZST — safe deref.
-                return JSValue::js_number(
-                    bun_opaque::opaque_deref_mut(h3l).get_local_port() as f64
-                );
+                if let Some(p) = bun_opaque::opaque_deref_mut(h3l).get_local_port() {
+                    return JSValue::js_number(p as f64);
+                }
             }
         }
-        match &self.config.address {
-            server_config::Address::Tcp { port, .. } => JSValue::js_number(*port as f64),
-            server_config::Address::Unix(_) => unreachable!(),
-        }
+        JSValue::js_number(config_port as f64)
     }
 
     #[bun_jsc::host_fn(getter)]
@@ -2569,7 +2641,7 @@ where
                 if let Some(listener) = self.listener {
                     // S008: `app::ListenSocket<SSL>` is a ZST opaque — safe deref.
                     let listener = bun_opaque::opaque_deref_mut(listener);
-                    port = u16::try_from(listener.get_local_port()).expect("int cast");
+                    port = listener.get_local_port().unwrap_or(port);
 
                     let mut buf = [0u8; 64];
                     let Some(address_bytes) = listener.socket().local_address(&mut buf) else {
@@ -2588,7 +2660,7 @@ where
                     if let Some(h3l) = self.h3_listener {
                         // S008: `h3::ListenSocket` is an `opaque_ffi!` ZST — safe deref.
                         let h3l = bun_opaque::opaque_deref_mut(h3l);
-                        port = u16::try_from(h3l.get_local_port()).expect("int cast");
+                        port = h3l.get_local_port().unwrap_or(port);
                         let mut buf = [0u8; 64];
                         let Some(address_bytes) = h3l.get_local_address(&mut buf) else {
                             return Ok(JSValue::NULL);
@@ -3141,6 +3213,7 @@ where
                         on_readable_stream_available: Some(
                             Ctx::on_request_body_readable_stream_available,
                         ),
+                        on_stream_drained: Some(Ctx::on_request_body_stream_drained_callback),
                         ..Default::default()
                     });
                 }
@@ -3574,7 +3647,7 @@ pub(super) extern "C" fn Server__setIdleTimeout(
     seconds: JSValue,
     global: &JSGlobalObject,
 ) {
-    match server_set_idle_timeout_(server, seconds, global) {
+    match server_set_idle_timeout(server, seconds, global) {
         Ok(()) => {}
         Err(JsError::Thrown) => {}
         Err(JsError::OutOfMemory) => {
@@ -3584,7 +3657,7 @@ pub(super) extern "C" fn Server__setIdleTimeout(
     }
 }
 
-pub(super) fn server_set_idle_timeout_(
+pub(super) fn server_set_idle_timeout(
     server: JSValue,
     seconds: JSValue,
     global: &JSGlobalObject,
@@ -3621,7 +3694,7 @@ pub(super) fn server_set_idle_timeout_(
     Ok(())
 }
 
-pub(super) fn server_set_on_client_error_(
+pub(super) fn server_set_on_client_error(
     global: &JSGlobalObject,
     server: JSValue,
     callback: JSValue,
@@ -3689,7 +3762,7 @@ pub(super) fn server_set_on_client_error_(
     Ok(JSValue::UNDEFINED)
 }
 
-pub(super) fn server_set_on_connection_(
+pub(super) fn server_set_on_connection(
     global: &JSGlobalObject,
     server: JSValue,
     callback: JSValue,
@@ -3751,7 +3824,7 @@ pub(super) fn server_set_on_connection_(
     Ok(JSValue::UNDEFINED)
 }
 
-pub(super) fn server_set_app_flags_(
+pub(super) fn server_set_app_flags(
     global: &JSGlobalObject,
     server: JSValue,
     require_host_header: bool,
@@ -3805,7 +3878,7 @@ pub(super) fn server_set_app_flags_(
     Ok(JSValue::UNDEFINED)
 }
 
-pub(super) fn server_set_max_http_header_size_(
+pub(super) fn server_set_max_http_header_size(
     global: &JSGlobalObject,
     server: JSValue,
     max_header_size: u64,
@@ -3857,7 +3930,7 @@ extern "C" fn server_set_app_flags_shim(
 ) -> JSValue {
     host_fn::to_js_host_fn_result(
         global,
-        server_set_app_flags_(
+        server_set_app_flags(
             global,
             server,
             require_host_header,
@@ -3874,10 +3947,7 @@ extern "C" fn server_set_on_client_error_shim(
     server: JSValue,
     callback: JSValue,
 ) -> JSValue {
-    host_fn::to_js_host_fn_result(
-        global,
-        server_set_on_client_error_(global, server, callback),
-    )
+    host_fn::to_js_host_fn_result(global, server_set_on_client_error(global, server, callback))
 }
 
 #[unsafe(export_name = "Server__setOnConnection")]
@@ -3886,7 +3956,7 @@ extern "C" fn server_set_on_connection_shim(
     server: JSValue,
     callback: JSValue,
 ) -> JSValue {
-    host_fn::to_js_host_fn_result(global, server_set_on_connection_(global, server, callback))
+    host_fn::to_js_host_fn_result(global, server_set_on_connection(global, server, callback))
 }
 
 #[unsafe(export_name = "Server__setMaxHTTPHeaderSize")]
@@ -3897,7 +3967,7 @@ extern "C" fn server_set_max_http_header_size_shim(
 ) -> JSValue {
     host_fn::to_js_host_fn_result(
         global,
-        server_set_max_http_header_size_(global, server, max_header_size),
+        server_set_max_http_header_size(global, server, max_header_size),
     )
 }
 

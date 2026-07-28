@@ -29,11 +29,7 @@ pub(crate) fn view(
         // Extremely best effort.
         if spec_ == b"." || spec_ == b"" {
             if strings::is_npm_package_name(&manager.root_package_json_name_at_time_of_init) {
-                // Note: reshaped for borrowck — copy into the function-scope
-                // bump so `name` doesn't keep `manager` borrowed across the
-                // `&mut self` calls (`http_proxy`, `tls_reject_unauthorized`) below.
-                break 'brk &*bump
-                    .alloc_slice_copy(&manager.root_package_json_name_at_time_of_init);
+                break 'brk &manager.root_package_json_name_at_time_of_init;
             }
 
             // Try our best to get the package.json name they meant
@@ -72,10 +68,7 @@ pub(crate) fn view(
         break 'brk spec_;
     });
 
-    // Note: reshaped for borrowck — clone the registry scope so it doesn't
-    // keep `manager` borrowed across `http_proxy` / `tls_reject_unauthorized`
-    // (`&mut self`) below; matches `outdated_command` / `update_interactive_command`.
-    let scope = manager.scope_for_package_name(name).clone();
+    let scope = manager.scope_for_package_name(name);
 
     let mut url_buf = PathBuffer::uninit();
     let encoded_name = buf_print(
@@ -161,7 +154,7 @@ pub(crate) fn view(
 
     // Parse the existing JSON response into a PackageManifest using the now-public parse function
     let parsed_manifest = match PackageManifest::parse(
-        &scope,
+        scope,
         &mut log,
         response_buf.list.as_slice(),
         name,

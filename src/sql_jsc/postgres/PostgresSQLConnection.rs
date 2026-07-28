@@ -469,7 +469,9 @@ impl PostgresSQLConnection {
             bun_uws::SocketKind::PostgresTls,
             ssl_ctx,
             sni,
-            true, // is_client
+            true,  // is_client
+            false, // request_cert (server-only)
+            false, // reject_unauthorized (server-only)
             ext_size,
             ext_size,
         ) else {
@@ -1300,7 +1302,7 @@ pub struct SocketHandler<const SSL: bool>;
 pub type SocketType<const SSL: bool> = uws::NewSocketHandler<SSL>;
 
 impl<const SSL: bool> SocketHandler<SSL> {
-    fn _socket(s: SocketType<SSL>) -> Socket {
+    fn socket(s: SocketType<SSL>) -> Socket {
         // `NewSocketHandler<SSL>` has identical layout for any `SSL`; rebuild the
         // monomorphic variant from the inner `InternalSocket`.
         if SSL {
@@ -1324,10 +1326,10 @@ impl<const SSL: bool> SocketHandler<SSL> {
     }
 
     pub fn on_open(this: &PostgresSQLConnection, socket: SocketType<SSL>) {
-        Self::guarded(this, |t| t.on_open(Self::_socket(socket)));
+        Self::guarded(this, |t| t.on_open(Self::socket(socket)));
     }
 
-    fn on_handshake_(
+    fn on_handshake(
         this: &PostgresSQLConnection,
         _: SocketType<SSL>,
         success: i32,
@@ -1336,10 +1338,9 @@ impl<const SSL: bool> SocketHandler<SSL> {
         Self::guarded(this, |t| t.on_handshake(success, ssl_error));
     }
 
-    // pub const onHandshake = if (ssl) onHandshake_ else null;
     pub const ON_HANDSHAKE: Option<
         fn(&PostgresSQLConnection, SocketType<SSL>, i32, uws::us_bun_verify_error_t),
-    > = if SSL { Some(Self::on_handshake_) } else { None };
+    > = if SSL { Some(Self::on_handshake) } else { None };
 
     pub fn on_close(
         this: &PostgresSQLConnection,

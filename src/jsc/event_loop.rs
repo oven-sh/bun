@@ -915,10 +915,9 @@ impl EventLoop {
             }
         }
         // Note: `EventLoopHandle` lives in `bun_event_loop` (lower tier),
-        // which cannot name `jsc::EventLoop`, so it stores `*mut ()`. The
-        // typed `set_parent_event_loop` extension trait in `bun_uws` expects
-        // a `ParentEventLoopHandle` impl, but `EventLoopHandle` already
-        // exposes `into_tag_ptr()` — go straight to the sys-level setter.
+        // which cannot name `jsc::EventLoop`, so it stores `*mut ()`.
+        // `EventLoopHandle` already exposes `into_tag_ptr()` — go straight to
+        // the sys-level setter.
         // `self` is the live per-thread `jsc::EventLoop` (mut ref) — non-null.
         let self_ptr = core::ptr::from_mut(self).cast::<()>();
         let (tag, ptr) = EventLoopHandle::init(self_ptr).into_tag_ptr();
@@ -1301,13 +1300,13 @@ bun_event_loop::link_impl_JsEventLoop! {
         // code paths. Route through `usockets_loop()`.
         iteration_number() => (&*(*this).usockets_loop()).iteration_number(),
         // Return raw to avoid asserting uniqueness — multiple handles may name the
-        // same VM (see `EventLoopHandle::file_polls` doc).
+        // same VM.
         file_polls() => core::ptr::from_mut(
             (*this)
                 .vm_ref()
                 .as_mut()
                 .rare_data()
-                .file_polls_
+                .file_polls
                 .get_or_insert_with(|| Box::new(Async::file_poll::Store::init()))
                 .as_mut(),
         ),
@@ -1320,7 +1319,7 @@ bun_event_loop::link_impl_JsEventLoop! {
                     .vm_ref()
                     .as_mut()
                     .rare_data()
-                    .file_polls_
+                    .file_polls
                     .get_or_insert_with(|| Box::new(Async::file_poll::Store::init()))
                     .as_mut(),
             );

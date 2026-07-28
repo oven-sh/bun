@@ -342,30 +342,10 @@ pub(crate) fn to_bun_string_from_owned_slice(input: Vec<u8>, encoding: Encoding)
             str
         }
 
-        // TODO: this is not right. There is an issue here. But it needs to
-        // be addressed separately because constructFromU8's base64url also
-        // appears inconsistent with Node.js.
-        Encoding::Base64url => {
-            // input dropped at end of scope
-            let out_len = bun_base64::url_safe_encode_len(&input);
-            let (out, chars) = BunString::create_uninitialized_latin1(out_len);
-            if !out.is_dead() {
-                let _ = bun_base64::encode_url_safe(chars, &input);
-            }
-            out
-        }
-
-        Encoding::Base64 => {
-            // input dropped at end of scope
-            let to_len = bun_base64::encode_len(&input);
-            let (str, chars) = BunString::create_uninitialized_latin1(to_len);
-            if str.is_dead() {
-                return str;
-            }
-            let wrote = bun_base64::encode(chars, &input);
-            debug_assert_eq!(wrote, to_len);
-            str
-        }
+        // The output is strictly larger than the input, so the owned
+        // allocation cannot be reused; drop it at end of scope.
+        Encoding::Base64url => encode_base64_to_bun_string(&input, true),
+        Encoding::Base64 => encode_base64_to_bun_string(&input, false),
     }
 }
 

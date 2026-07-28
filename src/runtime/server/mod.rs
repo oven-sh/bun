@@ -293,11 +293,11 @@ pub struct NewServer<const SSL: bool, const DEBUG: bool> {
     pub user_routes: Vec<UserRoute<SSL, DEBUG>>,
 
     /// Raw shadow of the wrapper's `m_onClientError` WriteBarrier slot.
-    /// `JSValue::ZERO` when unset; written by `server_set_on_client_error_`.
+    /// `JSValue::ZERO` when unset; written by `server_set_on_client_error`.
     pub on_clienterror: JSValue,
 
     /// Raw shadow of the wrapper's `m_onConnection` WriteBarrier slot.
-    /// `JSValue::ZERO` when unset; written by `server_set_on_connection_`.
+    /// `JSValue::ZERO` when unset; written by `server_set_on_connection`.
     pub on_connection: JSValue,
 
     pub inspector_server_id: jsc::DebuggerId,
@@ -505,11 +505,15 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 let mut port = *port;
                 if let Some(listener) = self.listener {
                     // S012: `app::ListenSocket<SSL>` is a ZST opaque — safe deref.
-                    port = bun_opaque::opaque_deref_mut(listener).get_local_port() as u16;
+                    port = bun_opaque::opaque_deref_mut(listener)
+                        .get_local_port()
+                        .unwrap_or(port);
                 } else if Self::HAS_H3 {
                     if let Some(h3l) = self.h3_listener {
                         // S012: `h3::ListenSocket` is an `opaque_ffi!` ZST — safe deref.
-                        port = bun_opaque::opaque_deref_mut(h3l).get_local_port() as u16;
+                        port = bun_opaque::opaque_deref_mut(h3l)
+                            .get_local_port()
+                            .unwrap_or(port);
                     }
                 }
                 URLFormatter {
@@ -813,6 +817,9 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                             ),
                             on_readable_stream_available: Some(
                                 ServerRequestContext::<SSL, DEBUG>::on_request_body_readable_stream_available,
+                            ),
+                            on_stream_drained: Some(
+                                ServerRequestContext::<SSL, DEBUG>::on_request_body_stream_drained_callback,
                             ),
                             ..Default::default()
                         });
@@ -1853,9 +1860,10 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                                 "permission denied {}:{}",
                                 bstr::BStr::new(host),
                                 port
-                            )),
-                            code: bun_core::String::static_("EACCES"),
-                            syscall: bun_core::String::static_("listen"),
+                            ))
+                            .into(),
+                            code: bun_core::String::static_("EACCES").into(),
+                            syscall: bun_core::String::static_("listen").into(),
                             ..Default::default()
                         };
                         let _ = global.throw_value(err.to_error_instance(global));
@@ -1877,9 +1885,10 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                     message: bun_core::String::create_format(format_args!(
                         "Failed to start server. Is port {} in use?",
                         port
-                    )),
-                    code: bun_core::String::static_("EADDRINUSE"),
-                    syscall: bun_core::String::static_("listen"),
+                    ))
+                    .into(),
+                    code: bun_core::String::static_("EADDRINUSE").into(),
+                    syscall: bun_core::String::static_("listen").into(),
                     ..Default::default()
                 }
                 .to_error_instance(global)
@@ -1891,9 +1900,10 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                         message: bun_core::String::create_format(format_args!(
                             "Failed to listen on unix socket {}",
                             bun_core::fmt::QuotedFormatter { text: unix }
-                        )),
-                        code: bun_core::String::static_("EADDRINUSE"),
-                        syscall: bun_core::String::static_("listen"),
+                        ))
+                        .into(),
+                        code: bun_core::String::static_("EADDRINUSE").into(),
+                        syscall: bun_core::String::static_("listen").into(),
                         ..Default::default()
                     }
                     .to_error_instance(global),
@@ -1919,9 +1929,11 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         // S008: `h3::ListenSocket` is an `opaque_ffi!` ZST — safe deref.
         let port = bun_opaque::opaque_deref_mut(socket).get_local_port();
         self.h3_listener = Some(socket);
-        self.h3_alt_svc = format!("h3=\":{port}\"; ma=86400")
-            .into_bytes()
-            .into_boxed_slice();
+        if let Some(port) = port {
+            self.h3_alt_svc = format!("h3=\":{port}\"; ma=86400")
+                .into_bytes()
+                .into_boxed_slice();
+        }
         // An `http3_server` feature counter is not (yet) declared in
         // `bun_analytics`. No-op until it is.
     }
@@ -2872,9 +2884,9 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                             let h3_port: u16 = match this_ref.listener {
                                 // SAFETY: ls is a live uws ListenSocket FFI handle
                                 // (just set by on_listen).
-                                Some(ls) => {
-                                    bun_opaque::opaque_deref_mut(ls).get_local_port() as u16
-                                }
+                                Some(ls) => bun_opaque::opaque_deref_mut(ls)
+                                    .get_local_port()
+                                    .unwrap_or(port),
                                 None => port,
                             };
                             // S008: `h3::App` is an `opaque_ffi!` ZST — safe deref.

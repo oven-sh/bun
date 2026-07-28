@@ -11,7 +11,7 @@ import {
   isMusl,
   isWindows,
   nodeExeMatchingAbi,
-  tempDirWithFiles,
+  tempDir,
 } from "harness";
 import { join } from "path";
 
@@ -73,7 +73,7 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
   describe.each(["esm", "cjs"])("bundle .node files to %s via", format => {
     describe.each(["node", "bun"])("target %s", target => {
       it("Bun.build", async () => {
-        const dir = tempDirWithFiles("node-file-cli", {
+        await using dir = tempDir("node-file-cli", {
           "package.json": JSON.stringify({
             name: "napi-app",
             version: "1.0.0",
@@ -116,7 +116,7 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
         it(
           "should work with --compile",
           async () => {
-            const dir = tempDirWithFiles("napi-app-compile-" + format, {
+            await using dir = tempDir("napi-app-compile-" + format, {
               "package.json": JSON.stringify({
                 name: "napi-app",
                 version: "1.0.0",
@@ -140,7 +140,7 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
               stderr: "inherit",
             });
             expect(build.success).toBeTrue();
-            const tmpdir = tempDirWithFiles("should-be-empty-except", {});
+            await using tmpdir = tempDir("should-be-empty-except", {});
             const result = spawnSync({
               cmd: [exe, "self"],
               env: { ...bunEnv, BUN_TMPDIR: tmpdir },
@@ -166,7 +166,7 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
       }
 
       it("`bun build`", async () => {
-        const dir = tempDirWithFiles("node-file-build", {
+        await using dir = tempDir("node-file-build", {
           "package.json": JSON.stringify({
             name: "napi-app",
             version: "1.0.0",
@@ -1466,6 +1466,19 @@ describe.skipIf(!canBuildNodeAddons())("cleanup hooks", () => {
       // as js_callback and passes it to napi_make_callback, it should succeed.
       const output = await checkSameOutput("test_make_callback_with_async_context", []);
       expect(output).toContain("PASS: napi_make_callback succeeded");
+    });
+
+    it("derives napi_make_callback status from pending exception, not return value", async () => {
+      // Returning an Error is napi_ok; throwing (any value) is napi_pending_exception
+      // and leaves the exception observable to napi_is_exception_pending.
+      const output = await checkSameOutput(
+        "test_napi_make_callback_status",
+        "[() => 42, () => new Error('returned'), () => { throw new Error('thrown'); }, () => { throw 'string'; }]",
+      );
+      expect(output).toContain("cb 1: status=0 pending=0 wrote_result=1 result_is_error=0");
+      expect(output).toContain("cb 2: status=0 pending=0 wrote_result=1 result_is_error=1");
+      expect(output).toContain("cb 3: status=10 pending=1 wrote_result=0 result_is_error=0");
+      expect(output).toContain("cb 4: status=10 pending=1 wrote_result=0 result_is_error=0");
     });
 
     it("should accept AsyncContextFrame in napi_create_threadsafe_function with null call_js_cb", async () => {

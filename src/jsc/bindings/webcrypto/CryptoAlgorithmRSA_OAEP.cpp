@@ -86,8 +86,8 @@ void CryptoAlgorithmRSA_OAEP::generateKey(const CryptoAlgorithmParameters& param
 {
     const auto& rsaParameters = downcast<CryptoAlgorithmRsaHashedKeyGenParams>(parameters);
 
-    if (usages & (CryptoKeyUsageSign | CryptoKeyUsageVerify | CryptoKeyUsageDeriveKey | CryptoKeyUsageDeriveBits)) {
-        exceptionCallback(SyntaxError, ""_s);
+    if (usages & (CryptoKeyUsageSign | CryptoKeyUsageVerify | CryptoKeyUsageDeriveKey | CryptoKeyUsageDeriveBits | CryptoKeyUsageKemMask)) {
+        exceptionCallback(SyntaxError, "Unsupported key usage for a RSA key"_s);
         return;
     }
 
@@ -187,7 +187,9 @@ void CryptoAlgorithmRSA_OAEP::importKey(CryptoKeyFormat format, KeyData&& data, 
         break;
     }
     default:
-        exceptionCallback(NotSupportedError, ""_s);
+        // Only raw reaches here: raw-secret/raw-public alias to raw and
+        // raw-seed is rejected by aliasImportKeyFormat before dispatch.
+        exceptionCallback(NotSupportedError, "Unable to import RSA-OAEP using raw format"_s);
         return;
     }
     if (!result) {

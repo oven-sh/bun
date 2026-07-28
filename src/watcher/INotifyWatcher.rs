@@ -181,17 +181,8 @@ impl INotifyWatcher {
         result
     }
 
-    // kept as in-place &mut self init (not `-> Result<Self, _>`) because
-    // INotifyWatcher is embedded as `Watcher.platform` with field defaults already set.
-    pub(crate) fn init(&mut self, _root: &[u8]) -> Result<(), crate::Error> {
+    pub(crate) fn new(_root: &[u8]) -> crate::Result<Self> {
         use bun_sys::linux::IN;
-        debug_assert!(!self.loaded);
-        self.loaded = true;
-
-        self.coalesce_interval = env_var::BUN_INOTIFY_COALESCE_INTERVAL
-            .get()
-            .and_then(|v| isize::try_from(v).ok())
-            .unwrap_or(100_000);
 
         let raw = bun_sys::linux::inotify_init1(IN::CLOEXEC);
         let errno = bun_sys::get_errno(raw);
@@ -200,9 +191,17 @@ impl INotifyWatcher {
             // init-failed tag.
             return Err(crate::Error::Sys(errno));
         }
-        self.fd = Fd::from_native(raw);
-        bun_core::scoped_log!(watcher, "{} init", self.fd);
-        Ok(())
+        let fd = Fd::from_native(raw);
+        bun_core::scoped_log!(watcher, "{} init", fd);
+        Ok(Self {
+            fd,
+            loaded: true,
+            coalesce_interval: env_var::BUN_INOTIFY_COALESCE_INTERVAL
+                .get()
+                .and_then(|v| isize::try_from(v).ok())
+                .unwrap_or(100_000),
+            ..Self::default()
+        })
     }
 
     pub(crate) fn read(&mut self) -> bun_sys::Result<&[*const Event]> {
@@ -385,10 +384,6 @@ pub(crate) fn watch_loop_cycle(this: &mut Watcher) -> bun_sys::Result<()> {
     events_buf[..events_len].copy_from_slice(events);
     let events = &events_buf[..events_len];
 
-    // reshaped for borrowck — copy the (small) column to a local Vec
-    // so the borrow of `this.watchlist` ends before we mutably borrow other
-    // `this` fields inside the batching loop below.
-    //
     // The snapshot is taken locked. `on_file_update` may evict watchlist entries via
     // `remove_at_index` + `flush_evictions` (the dir-event path appends *and*
     // evicts the matched file watch). The enqueued reload then re-imports the
@@ -399,10 +394,12 @@ pub(crate) fn watch_loop_cycle(this: &mut Watcher) -> bun_sys::Result<()> {
     // 128 `max_count` batch size, so the dir-event-only batch is common) the
     // unlocked read raced the realloc and the process occasionally died with
     // a non-zero exit code. Snapshot under the same mutex `add_file` takes.
-    let eventlist_index: Vec<EventListIndex> = {
+    {
         let _guard = this.mutex.lock_guard();
-        this.watchlist.items_eventlist_index().to_vec()
-    };
+        this.eventlist_index_scratch.clear();
+        this.eventlist_index_scratch
+            .extend_from_slice(this.watchlist.items_eventlist_index());
+    }
 
     let mut event_id: usize = 0;
     let mut events_processed: usize = 0;
@@ -442,7 +439,8 @@ pub(crate) fn watch_loop_cycle(this: &mut Watcher) -> bun_sys::Result<()> {
                 }
             }
 
-            let idx = match eventlist_index
+            let idx = match this
+                .eventlist_index_scratch
                 .iter()
                 .position(|&x| x == event.watch_descriptor)
             {
@@ -519,22 +517,9 @@ fn process_inotify_event_batch(
     if watch_events.is_empty() {
         return Ok(());
     }
-    // End the &mut borrow of `this` via `watch_events` before re-borrowing other
-    // fields below; we re-slice `this.watch_events` directly after the lock.
-    let _ = watch_events;
 
-    let _guard = this.mutex.lock_guard();
-    if this.running.load() {
-        // watch_events.len == 0 is checked above, so last_event_index + 1 is safe.
-        // reshaped for borrowck — split disjoint field borrows so we can
-        // pass `&mut watch_events[..]` in place
-        // without a gratuitous `.to_vec()`/`.clone()`.
-        let deduped = &mut this.watch_events[..last_event_index + 1];
-        let changed = &this.changed_filepaths[..name_off as usize];
-        crate::watcher_trace::write_events(&this.watchlist, deduped, changed);
-        (this.on_file_update)(this.ctx, deduped, changed, &this.watchlist);
-    }
-
+    // watch_events.len == 0 is checked above, so last_event_index + 1 is safe.
+    this.dispatch_file_updates(last_event_index + 1, name_off as usize);
     Ok(())
 }
 

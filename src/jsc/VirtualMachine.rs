@@ -93,7 +93,7 @@ pub struct InitOptions {
     /// Forwarded to
     /// `RuntimeHooks::init_runtime_state` so the high-tier `Transpiler::init`
     /// reuses the caller's env loader.
-    pub env_loader: Option<NonNull<bun_dotenv::Loader<'static>>>,
+    pub env_loader: Option<NonNull<bun_dotenv::Loader>>,
     pub graph: Option<&'static dyn bun_resolver::StandaloneModuleGraph>,
     /// Must be applied to
     /// `transpiler.resolver.store_fd` BEFORE `configure_linker()` reads
@@ -292,6 +292,13 @@ pub struct VirtualMachine {
     pub on_unhandled_rejection_ctx: Option<*mut c_void>,
     pub on_unhandled_rejection_exception_list: Option<NonNull<ExceptionList>>,
     pub unhandled_error_counter: usize,
+    /// When set, `print_error_instance_body` calls this with the remapped
+    /// `ZigException` (same lifecycle as the GitHub Actions annotation hook),
+    /// so observers can read name/message/stack without re-running the
+    /// formatter. Installed by `bun test --reporter=junit` around
+    /// `run_error_handler`.
+    pub on_print_error_zig_exception: Option<fn(*mut c_void, &ZigException)>,
+    pub on_print_error_zig_exception_ctx: *mut c_void,
     pub is_handling_uncaught_exception: bool,
     pub exit_on_uncaught_exception: bool,
 
@@ -801,7 +808,7 @@ impl VirtualMachine {
     /// (`vm.transpiler.env`). The loader is allocated once during VM init and
     /// never freed; callers previously open-coded `unsafe { &*vm.transpiler.env }`.
     #[inline]
-    pub fn env_loader(&self) -> &'static bun_dotenv::Loader<'static> {
+    pub fn env_loader(&self) -> &'static bun_dotenv::Loader {
         self.env_loader_opt()
             .expect("transpiler.env set during Transpiler::init")
     }
@@ -810,7 +817,7 @@ impl VirtualMachine {
     /// `Transpiler::init` has not yet run (e.g. `GarbageCollectionController::init`
     /// is reached from `JSGlobalObject::create` before `init_runtime_state`).
     #[inline]
-    pub fn env_loader_opt(&self) -> Option<&'static bun_dotenv::Loader<'static>> {
+    pub fn env_loader_opt(&self) -> Option<&'static bun_dotenv::Loader> {
         // SAFETY: when non-null, `transpiler.env` is set during `Transpiler::init`
         // to a process-lifetime allocation; never freed while a VM is installed.
         unsafe { self.transpiler.env.as_ref() }
@@ -1586,6 +1593,10 @@ impl VirtualMachine {
             // JSC `Strong`/`Weak` handles against a live HandleSet.
             self.event_loop_mut().release_queued_tasks_for_shutdown();
 
+            if let Some(rare) = self.rare_data.as_deref_mut() {
+                rare.release_js_handles();
+            }
+
             Zig__GlobalObject__destructOnExit(self.global());
 
             // lastChanceToFinalize() above runs Listener/Server finalize →
@@ -1831,7 +1842,7 @@ bun_io::link_impl_EventLoopCtx! {
         platform_event_loop_ptr() => vm_from_owner(this.cast()).uws_loop(),
         file_polls_ptr() => {
             let rare = vm_from_owner(this.cast()).rare_data();
-            &raw mut **rare.file_polls_.get_or_insert_with(|| Box::new(bun_io::Store::init()))
+            &raw mut **rare.file_polls.get_or_insert_with(|| Box::new(bun_io::Store::init()))
         },
         // CROSS-THREAD: reached via `KeepAlive::unref_on_next_tick_concurrently`.
         // Do NOT route through `vm_from_owner()` — that mints `&mut VM`, which
@@ -2692,7 +2703,7 @@ impl<'a> bun_js_printer::OnSourceMapChunk for SourceMapHandlerGetter<'a> {
         // SAFETY: `printer` is the raw `*mut BufferPrinter` passed in by the
         // caller (jsc_hooks.rs), with the SAME provenance as the `writer` arg
         // to `print_with_source_map`. By the time `on_source_map_chunk` runs
-        // (js_printer/lib.rs `print_ast` / `print_common_js` tail), the writer
+        // (js_printer/lib.rs `print_ast` tail), the writer
         // has emitted its last byte; we reborrow from the raw pointer here
         // rather than from a stashed `&'a mut` so no Unique tag is held across
         // the writer's lifetime. The caller MUST rederive its own
@@ -2751,7 +2762,7 @@ pub struct Options {
     pub log: Option<NonNull<bun_ast::Log>>,
     // BORROW_PARAM (`&'a mut bun_dotenv::Loader`) — caller-owned; the loader
     // outlives the VM, so the inner lifetime is erased to `'static`.
-    pub env_loader: Option<NonNull<bun_dotenv::Loader<'static>>>,
+    pub env_loader: Option<NonNull<bun_dotenv::Loader>>,
     pub store_fd: bool,
     pub smol: bool,
     // LAYERING: real type is `bun_runtime::api::dns::Resolver::Order` (forward
@@ -3184,7 +3195,7 @@ impl VirtualMachine {
         // `&'static mut Loader` is independent of `&self`, so `map` may be held
         // across the `&mut self` writes below.
         let env = self.transpiler.env_mut();
-        let map = &mut *env.map;
+        let map = &mut env.map;
 
         ensure_source_code_printer();
         // The runtime VM owns the printer from here on — even if a macro had
@@ -3241,6 +3252,7 @@ impl VirtualMachine {
             // Only allowed for testing
             if map.get(b"BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING").is_some() {
                 ModuleLoader::set_is_allowed_to_use_internal_testing_apis(true);
+                bun_resolve_builtins::set_expose_internals_enabled(true);
             }
             if gc_level == b"1" {
                 self.aggressive_garbage_collection = GCLevel::Mild;
@@ -4255,6 +4267,12 @@ impl VirtualMachine {
             return Ok(());
         }
 
+        // Node's `--expose-internals`.
+        if ModuleLoader::exposed_internal_tag(specifier_utf8.slice()).is_some() {
+            *res = ErrorableString::ok(specifier.dupe_ref());
+            return Ok(());
+        }
+
         // Swap in a fresh log so resolver errors don't pollute the VM's main log.
         // `vm.log` is set unconditionally in `init` and never cleared,
         // so the `Option` is purely a
@@ -4656,6 +4674,11 @@ impl VirtualMachine {
         }
         if let Some(rare) = self.rare_data.as_deref_mut() {
             rare.listening_sockets_for_watch_mode.lock().clear();
+            // `setCallbacks` is once-only (node/src/quic/bindingdata.cc
+            // `BindingData::SetCallbacks`), so a holder left by the outgoing
+            // global makes the next file's call a no-op and dispatches
+            // node:quic events into the dead realm.
+            rare.node_quic_callbacks.deinit();
         }
         let _ = self.event_loop_mut().drain_microtasks();
 
@@ -5602,6 +5625,9 @@ impl VirtualMachine {
             if let Some(debugger) = self.debugger.as_deref_mut() {
                 debugger.lifecycle_reporter_agent.report_error(exception);
             }
+            if let Some(cb) = self.on_print_error_zig_exception {
+                cb(self.on_print_error_zig_exception_ctx, exception);
+            }
         }
 
         // Defer the GitHub-annotation print to scope exit.
@@ -6364,21 +6390,10 @@ impl VirtualMachine {
 
         self.event_loop_mut().ensure_waker();
 
-        // Note: reshaped for borrowck — `rare_data()` borrows `self` and
-        // `spawn_ipc_group` then needs `&mut VirtualMachine`. Split via raw
-        // pointers (disjoint fields) per the existing `Bun__RareData__*`
-        // accessors in virtual_machine_exports.rs.
-        #[cfg(not(windows))]
-        let this: *mut VirtualMachine = self;
-
         #[cfg(not(windows))]
         let instance: *mut IPCInstance = {
-            // SAFETY: disjoint borrow — `spawn_ipc_group` only touches the
-            // embedded `SocketGroup` field + `vm.uws_loop()`.
-            let group: *mut uws::SocketGroup = unsafe {
-                let rare = std::ptr::from_mut::<RareData>((*this).rare_data());
-                (*rare).spawn_ipc_group(&*this)
-            };
+            let loop_ = self.uws_loop();
+            let group: *mut uws::SocketGroup = self.rare_data().spawn_ipc_group(loop_);
 
             // Box the instance first so `data.owner` can name its final
             // address.

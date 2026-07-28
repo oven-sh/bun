@@ -320,7 +320,6 @@ pub use patch_install::PatchTask;
 // PackageManager + its associated types — re-exported from the file-backed
 // `package_manager_real` so `crate::PackageManager` and
 // `package_manager_real::PackageManager` are the SAME type.
-pub use package_manager_real::package_manager_directories::CacheDirAndSubpath;
 pub use package_manager_real::{
     AsyncNetworkTaskQueue, CommandLineArguments, PackageManager, PatchTaskQueue, RootPackageId,
     Subcommand,
@@ -802,7 +801,7 @@ impl RunCommand {
     pub fn configure_env_for_run(
         ctx: &mut bun_options_types::context::ContextData,
         this_transpiler: &mut ::core::mem::MaybeUninit<bun_transpiler::Transpiler<'static>>,
-        env: Option<*mut bun_dotenv::Loader<'static>>,
+        env: Option<*mut bun_dotenv::Loader>,
         _log_errors: bool,
         store_root_fd: bool,
     ) -> Result<*mut (), crate::Error> {

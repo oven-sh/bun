@@ -58,10 +58,12 @@ describe("maxBuffer caps the buffer while the child is still writing", () => {
   // is the same bound Node gives spawnSync.
   const bound = maxBuffer + 64 * 1024;
 
-  // `killSignal: 0` sends no signal at all, so the child outlives the kill and
-  // keeps writing for as long as Bun keeps reading. A child that merely
-  // installs a SIGTERM handler, or is slow to die, behaves the same way.
+  // The child traps SIGTERM so it outlives the maxBuffer kill and keeps
+  // writing for as long as Bun keeps reading. On Windows SIGTERM maps to
+  // TerminateProcess (untrappable), so the child dies; the cap assertion still
+  // holds, it just doesn't exercise the "writer survives" path there.
   const firehose = `
+    process.on("SIGTERM", () => {});
     const { writeSync } = require("fs");
     const chunk = Buffer.alloc(1024 * 1024, 97);
     for (let i = 0; i < 8; i++) {
@@ -73,7 +75,6 @@ describe("maxBuffer caps the buffer while the child is still writing", () => {
   test.concurrent("Bun.spawnSync", () => {
     const proc = Bun.spawnSync([bunExe(), "-e", firehose], {
       maxBuffer,
-      killSignal: 0,
       stdio: ["ignore", "pipe", "pipe"],
     });
     expect(proc.exitedDueToMaxBuffer).toBe(true);
@@ -86,7 +87,6 @@ describe("maxBuffer caps the buffer while the child is still writing", () => {
   test.concurrent("Bun.spawn", async () => {
     await using proc = Bun.spawn([bunExe(), "-e", firehose], {
       maxBuffer,
-      killSignal: 0,
       stdio: ["ignore", "pipe", "pipe"],
     });
     await proc.exited;

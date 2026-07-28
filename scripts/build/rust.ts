@@ -66,7 +66,7 @@ export function rustTarget(cfg: Config): string {
  * cargo's stock release already keeps debuginfo (`debug = 1` is the workspace
  * default), and we don't ship a `MinSizeRel` Rust path yet.
  */
-function cargoProfile(cfg: Config): { name: string; subdir: string } {
+export function cargoProfile(cfg: Config): { name: string; subdir: string } {
   return cfg.buildType === "Debug" ? { name: "dev", subdir: "debug" } : { name: "release", subdir: "release" };
 }
 
@@ -309,24 +309,32 @@ export interface RustBuildInputs {
 }
 
 /**
- * Emit the cargo build step. Returns the output staticlib path as a
- * one-element array so the link step can spread it alongside the C++
- * object list.
+ * The exact `cargo build` invocation the Rust step uses.
+ *
+ * Extracted so tooling (`scripts/rust-timings.ts`) can run cargo with the same
+ * args/rustflags/env that `emitRust()` puts into the ninja edge, without
+ * re-deriving any of it. `emitRust()` is the only build-graph caller.
  */
-export function emitRust(n: Ninja, cfg: Config, inputs: RustBuildInputs): string[] {
-  assert(cfg.cargo !== undefined, "building bun's Rust crates requires cargo but no rust toolchain was found", {
-    hint: "Install rust: curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh",
-  });
+export interface CargoInvocation {
+  /** `cargo build <args>` — everything after `build`. */
+  args: string[];
+  /** Env vars the cargo process runs under. `CARGO_ENCODED_RUSTFLAGS` included. */
+  env: Record<string, string>;
+  /** `--target-dir` absolute path (also present in `args`). */
+  targetDir: string;
+  /** `--target` triple (also present in `args`). */
+  triple: string;
+}
 
-  n.comment("─── Rust ───");
-  n.blank();
-
-  const hostWin = cfg.host.os === "windows";
+/**
+ * Compute the cargo command line + environment for `cargo build -p bun_bin`.
+ * Pure function of `cfg`; does no I/O.
+ */
+export function cargoBuildInvocation(cfg: Config): CargoInvocation {
   const targetDir = rustTargetDir(cfg);
   const triple = rustTarget(cfg);
   const tier3 = rustTargetIsTier3(triple);
   const profile = cargoProfile(cfg);
-  const lib = rustLibPath(cfg);
 
   // ─── Build args ───
   const args: string[] = [
@@ -691,6 +699,27 @@ export function emitRust(n: Ninja, cfg: Config, inputs: RustBuildInputs): string
     env.CARGO_PROFILE_RELEASE_DEBUG_ASSERTIONS = "true";
   }
   if (rustflags.length > 0) env.CARGO_ENCODED_RUSTFLAGS = rustflags.join("\x1f");
+
+  return { args, env, targetDir, triple };
+}
+
+/**
+ * Emit the cargo build step. Returns the output staticlib path as a
+ * one-element array so the link step can spread it alongside the C++
+ * object list.
+ */
+export function emitRust(n: Ninja, cfg: Config, inputs: RustBuildInputs): string[] {
+  assert(cfg.cargo !== undefined, "building bun's Rust crates requires cargo but no rust toolchain was found", {
+    hint: "Install rust: curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh",
+  });
+
+  n.comment("─── Rust ───");
+  n.blank();
+
+  const hostWin = cfg.host.os === "windows";
+  const lib = rustLibPath(cfg);
+  const tier3 = rustTargetIsTier3(rustTarget(cfg));
+  const { args, env, targetDir, triple } = cargoBuildInvocation(cfg);
 
   // ─── Windows .bin/ shim PE ───
   // Builds `src/install/windows-shim/bun_shim_impl.rs` as a freestanding release PE and wires the artifact into `include_bytes!`. Without this step `include_bytes!` embeds the

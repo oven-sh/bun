@@ -424,9 +424,11 @@ export function packageAndUpload(cfg: Config, output: BunOutput): void {
   zipPaths.push(makeZip(cfg, bunPath, files));
 
   // Also upload it standalone, so the next build inherits it with a small
-  // download instead of pulling the whole profile zip. Named per target.
-  // Relative, like makeZip's return — upload() runs with cwd = buildDir.
-  if (hasOrderFile) {
+  // download instead of pulling the whole profile zip. Only when this lane
+  // traced the file itself — a cross-compiled lane's fresh trace comes from the
+  // sibling trace-order step (.buildkite/ci.mjs), and re-uploading the inherited
+  // copy would give inheritOrderFile() two same-named artifacts to race over.
+  if (hasOrderFile && canTraceOrderFile(cfg)) {
     const artifact = orderFileArtifact(cfg);
     cpSync(orderFilePath(cfg), resolve(buildDir, artifact));
     zipPaths.push(artifact);
@@ -677,7 +679,6 @@ export interface OrderFileContext {
   buildUrl: string | undefined;
   branch: string | undefined;
   buildNumber: number | undefined;
-  stepKey: string | undefined;
   commitMessage: string;
   pullRequest: boolean;
 }
@@ -690,7 +691,6 @@ export function orderFileContext(): OrderFileContext {
     buildUrl: process.env.BUILDKITE_BUILD_URL,
     branch: process.env.BUILDKITE_BRANCH,
     buildNumber: Number(process.env.BUILDKITE_BUILD_NUMBER) || undefined,
-    stepKey: process.env.BUILDKITE_STEP_KEY,
     commitMessage: process.env.BUILDKITE_MESSAGE ?? "",
     pullRequest: pr !== undefined && pr !== "" && pr !== "false",
   };
@@ -709,13 +709,17 @@ export function canTraceOrderFile(cfg: Config): boolean {
 
 /**
  * An eligible lane that cannot trace (cross-compiled) and inherited nothing is
- * shipping unordered with no way to recover on this host. Annotate so it is
- * visible; the fix is tracing under qemu-user or on a native-arch step.
+ * shipping unordered. A sibling `-trace-order` step on a native-arch host seeds
+ * the chain (see getTraceOrderStep in .buildkite/ci.mjs), so this fires once on
+ * the first build and then the next build inherits that trace. If it persists,
+ * the trace step is failing or missing for this target.
  */
 export function reportOrderFileCannotTrace(cfg: Config): void {
   const msg =
     `${orderFileArtifact(cfg)}: nothing to inherit and this lane cross-compiles ` +
-    `(target ${cfg.crossTarget}), so the binary cannot be traced here. Shipping unordered.`;
+    `(target ${cfg.crossTarget}), so the binary cannot be traced here. Shipping unordered. ` +
+    `Expected once while the native-arch trace-order step seeds the chain; if this ` +
+    `appears on every build, that step is failing or missing.`;
   console.log(`~ symbol order: ${msg}`);
   if (!isBuildkite) return;
   utils.reportAnnotationToBuildKite({
@@ -833,22 +837,20 @@ export async function inheritOrderFile(cfg: Config, ctx: OrderFileContext): Prom
   const start = Date.now();
   const artifact = orderFileArtifact(cfg);
 
-  if (!ctx.stepKey) {
-    console.log("~ symbol order: BUILDKITE_STEP_KEY unset — linking unordered");
-    return false;
-  }
-
   console.log(`Looking for ${artifact} published by an earlier build on ${ctx.branch}...`);
   const downloaded = resolve(cfg.buildDir, artifact);
   let tried = 0;
 
   for await (const build of candidateBuilds(ctx)) {
     if (++tried > PREVIOUS_BUILDS_TO_TRY) break;
-    const result = spawnSync(
-      "buildkite-agent",
-      ["artifact", "download", artifact, ".", "--step", ctx.stepKey, "--build", build.id],
-      { cwd: cfg.buildDir, stdio: "ignore", timeout: ARTIFACT_DOWNLOAD_TIMEOUT_MS },
-    );
+    // No --step: exactly one step per build publishes the target-unique name —
+    // packageAndUpload() for a lane that traced its own binary, the sibling
+    // trace-order step (.buildkite/ci.mjs) for a cross-compiled one.
+    const result = spawnSync("buildkite-agent", ["artifact", "download", artifact, ".", "--build", build.id], {
+      cwd: cfg.buildDir,
+      stdio: "ignore",
+      timeout: ARTIFACT_DOWNLOAD_TIMEOUT_MS,
+    });
     if (result.status !== 0 || !existsSync(downloaded)) {
       console.log(`  #${build.number ?? "?"}: no ${artifact} (cancelled, failed, or too old) — looking further back`);
       continue;
@@ -889,7 +891,7 @@ export function regenerateOrderFile(cfg: Config, ctx: OrderFileContext): void {
       ? "[generate symbol order] in the commit message"
       : "nothing to inherit";
   console.log(`Tracing ${exeName} to build a fresh order file (${why})`);
-  console.log("Each workload runs under an LD_PRELOAD page-fault tracer, so it is slower than a normal run.\n");
+  console.log("Each workload runs under an injected function-entry tracer, so it is slower than a normal run.\n");
 
   const { count } = generateOrderFile({ buildDir: cfg.buildDir, exeName, verbose: true });
 
@@ -1028,7 +1030,9 @@ export function verifyOrderFileApplied(cfg: Config, ctx: OrderFileContext, exe: 
   if (control > 0 && hot > control * MAX_FRACTION_OF_CONTROL) {
     fail(
       `the order file had no effect: hot functions sit at ${mb(hot)}, a typical one at ${mb(control)}`,
-      "lld ignored it — check --symbol-ordering-file and that -ffunction-sections survived",
+      cfg.darwin
+        ? "Apple ld ignored it — check -order_file and that the names match nm's"
+        : "lld ignored it — check --symbol-ordering-file and that -ffunction-sections survived",
     );
     return;
   }

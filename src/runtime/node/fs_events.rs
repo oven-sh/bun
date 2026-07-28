@@ -524,7 +524,7 @@ impl FSEventsLoop {
     // Runs in CF thread, when there're events in FSEventStream. Body discharges
     // its own preconditions; safe `extern "C" fn` coerces to the
     // `FSEventStreamCallback` pointer type.
-    extern "C" fn _events_cb(
+    extern "C" fn events_cb(
         _: FSEventStreamRef,
         info: *mut c_void,
         num_events: usize,
@@ -535,7 +535,7 @@ impl FSEventsLoop {
         let paths_ptr = event_paths as *const *const c_char;
         // SAFETY: event_paths is a `char **` of length num_events per FSEvents API
         let paths = unsafe { bun_core::ffi::slice(paths_ptr, num_events) };
-        // SAFETY: `info` is the leaked `&'static FSEventsLoop` set as `ctx.info` in `_schedule()`.
+        // SAFETY: `info` is the leaked `&'static FSEventsLoop` set as `ctx.info` in `schedule()`.
         let loop_: &FSEventsLoop = unsafe { &*info.cast::<FSEventsLoop>() };
         // SAFETY: event_flags is an array of length num_events per FSEvents API
         let event_flags = unsafe { bun_core::ffi::slice(event_flags.cast_const(), num_events) };
@@ -620,7 +620,7 @@ impl FSEventsLoop {
     }
 
     // Runs on CF Thread
-    fn _schedule(&self) {
+    fn schedule(&self) {
         let _guard = self.mutex.lock_guard();
         // SAFETY: holding `mutex` — see `FSEventsLoop::state`.
         let state = unsafe { self.state() };
@@ -717,7 +717,7 @@ impl FSEventsLoop {
             //
             let r#ref = (cs.fs_event_stream_create)(
                 ptr::null_mut(),
-                Self::_events_cb,
+                Self::events_cb,
                 &raw mut ctx,
                 cf_paths,
                 cs.k_fs_event_stream_event_id_since_now,
@@ -783,7 +783,7 @@ impl FSEventsLoop {
         } else {
             return;
         }
-        self.enqueue_task_concurrent(Task::new(self, FSEventsLoop::_schedule));
+        self.enqueue_task_concurrent(Task::new(self, FSEventsLoop::schedule));
     }
 
     fn unregister_watcher(&'static self, watcher: *mut FSEventsWatcher) {
@@ -808,18 +808,18 @@ impl FSEventsLoop {
         // Rebuild the FSEventStream on the CF thread so it stops firing for
         // the path we just removed. Without this the stream keeps delivering
         // events for freed paths until another register happens to
-        // reschedule. `_events_cb` tolerates the interim (it sees `null` and
+        // reschedule. `events_cb` tolerates the interim (it sees `null` and
         // skips) because both sides hold `this.mutex`.
         if !state.has_scheduled_watchers {
             state.has_scheduled_watchers = true;
         } else {
             return;
         }
-        self.enqueue_task_concurrent(Task::new(self, FSEventsLoop::_schedule));
+        self.enqueue_task_concurrent(Task::new(self, FSEventsLoop::schedule));
     }
 
     // Runs on CF loop to close the loop
-    fn _stop(&self) {
+    fn stop(&self) {
         let cf = CoreFoundation::get();
         // SAFETY: runs on the CF thread — this is our own run loop.
         unsafe { (cf.run_loop_stop)(self.loop_.load(Ordering::Relaxed)) };
@@ -832,7 +832,7 @@ impl FSEventsLoop {
             return; // already shut down
         };
         // signal close and wait
-        self.enqueue_task_concurrent(Task::new(self, FSEventsLoop::_stop));
+        self.enqueue_task_concurrent(Task::new(self, FSEventsLoop::stop));
         let _ = thread.join();
 
         let cf = CoreFoundation::get();
@@ -866,7 +866,7 @@ pub struct FSEventsWatcher {
     /// Borrowed from the owning `PathWatcher`. The
     /// PathWatcher heap-allocates this watcher and only frees it after `Drop`
     /// (→ `unregister_watcher`) has run, so the bytes outlive every read in
-    /// `_events_cb` / `_schedule` — `RawSlice` invariant. The backing buffer is
+    /// `events_cb` / `schedule` — `RawSlice` invariant. The backing buffer is
     /// a `ZBox`, so `path.slice().as_ptr()` is NUL-terminated (required by
     /// `CFStringCreateWithFileSystemRepresentation`).
     pub path: bun_ptr::RawSlice<u8>,

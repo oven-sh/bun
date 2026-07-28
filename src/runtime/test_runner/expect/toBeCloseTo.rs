@@ -14,8 +14,7 @@ impl Expect {
         let this = self.post_match_guard(global);
 
         let this_value = call_frame.this();
-        let this_arguments = call_frame.arguments_old::<2>();
-        let arguments = this_arguments.slice();
+        let arguments = call_frame.arguments();
 
         this.increment_expect_call_counter();
 

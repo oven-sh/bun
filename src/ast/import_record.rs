@@ -2,8 +2,6 @@
 //!
 //! Lives in `bun_ast` so `Ast` (which holds `Vec<ImportRecord>`) is
 //! self-contained and `bun_js_printer` can drop its `bun_js_parser` dep.
-//! `ImportKind::to_api()` lives in `bun_ast::ImportKindExt` (would
-//! back-edge into the schema crate).
 
 use crate::Range;
 use bun_paths::fs::Path;

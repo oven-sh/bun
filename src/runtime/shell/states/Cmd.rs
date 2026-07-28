@@ -332,9 +332,7 @@ impl Cmd {
             };
             interp.deinit_node(child);
             if let Some(err) = err {
-                let y = Builtin::cmd_write_failing_error(interp, this, format_args!("{}\n", err));
-                err.deinit();
-                return y;
+                return Builtin::cmd_write_failing_error(interp, this, format_args!("{}\n", err));
             }
             let me = interp.as_cmd_mut(this);
             me.exit_code = Some(1);

@@ -331,17 +331,6 @@ pub(crate) const fn validate_feature_name(name: &[u8]) -> bool {
 
 // ──────────────────────────────────────────────────────────────────────────
 
-#[repr(u8)]
-#[derive(Copy, Clone, PartialEq, Eq, strum::IntoStaticStr)]
-#[allow(non_camel_case_types)]
-pub enum EventName {
-    bundle_success,
-    bundle_fail,
-    bundle_start,
-    http_start,
-    http_build,
-}
-
 const PLATFORM_ARCH: analytics::Architecture = {
     #[cfg(target_arch = "aarch64")]
     {
@@ -603,7 +592,3 @@ pub mod generate_header {
 pub use generate_header as GenerateHeader;
 
 pub mod schema;
-pub use schema::{BufReader, Reader, SchemaInt};
-
-pub mod error;
-pub use error::{Error, Result};

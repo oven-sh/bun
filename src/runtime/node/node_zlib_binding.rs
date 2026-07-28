@@ -107,12 +107,12 @@ impl CountedKeepAlive {
 
 #[bun_jsc::host_fn]
 pub(crate) fn crc32(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-    let arguments = callframe.arguments_old::<2>().ptr;
+    let arguments = callframe.arguments_as_array::<2>();
 
     let data: ZigStringSlice = 'blk: {
         let data: JSValue = arguments[0];
 
-        if data.is_empty() {
+        if callframe.arguments_count() < 1 {
             return Err(global_this.throw_invalid_argument_type_value(
                 b"data",
                 b"string or an instance of Buffer, TypedArray, or DataView",
@@ -144,7 +144,7 @@ pub(crate) fn crc32(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsRe
 
     let value: u32 = 'blk: {
         let value: JSValue = arguments[1];
-        if value.is_empty() {
+        if callframe.arguments_count() < 2 {
             break 'blk 0;
         }
         if !value.is_number() {

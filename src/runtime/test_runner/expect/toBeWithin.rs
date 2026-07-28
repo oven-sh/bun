@@ -16,8 +16,7 @@ impl Expect {
             "<green>start<r><d>, <r><green>end<r>",
         )?;
 
-        let _arguments = frame.arguments_old::<2>();
-        let arguments = _arguments.slice();
+        let arguments = frame.arguments();
 
         if arguments.len() < 1 {
             return Err(global.throw_invalid_arguments(format_args!(

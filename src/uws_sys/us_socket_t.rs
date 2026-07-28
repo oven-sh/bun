@@ -122,12 +122,14 @@ impl us_socket_t {
         c::us_socket_is_shut_down(self) > 0
     }
 
-    pub fn local_port(&self) -> i32 {
-        c::us_socket_local_port(self)
+    /// `None` when `getsockname()` fails or the address family has no port.
+    pub fn local_port(&self) -> Option<u16> {
+        u16::try_from(c::us_socket_local_port(self)).ok()
     }
 
-    pub fn remote_port(&self) -> i32 {
-        c::us_socket_remote_port(self)
+    /// `None` when `getpeername()` fails or the address family has no port.
+    pub fn remote_port(&self) -> Option<u16> {
+        u16::try_from(c::us_socket_remote_port(self)).ok()
     }
 
     /// Returned slice is a view into `buf`.
@@ -200,6 +202,16 @@ impl us_socket_t {
         c::us_socket_sni_resolve(self, ctx, error as c_int);
     }
 
+    /// Install a socket-level SNI resolver on an already-adopted server-side
+    /// TLS socket (there is no listen socket to hang it off). Must run before
+    /// the handshake is driven.
+    pub fn on_server_name(
+        &mut self,
+        cb: extern "C" fn(*mut us_socket_t, *const core::ffi::c_char, *mut c_int) -> *mut SslCtx,
+    ) {
+        c::us_socket_on_server_name(self, cb);
+    }
+
     /// Node-compat `_handle` shape: `SSL*` for TLS sockets, fd-as-pointer for
     /// plain TCP. Consumers that want one or the other should call `ssl()` /
     /// `get_fd()` directly; this is the round-trip-to-JS form.
@@ -257,6 +269,8 @@ impl us_socket_t {
         ssl_ctx: &mut SslCtx,
         sni: Option<&core::ffi::CStr>,
         is_client: bool,
+        request_cert: bool,
+        reject_unauthorized: bool,
         old_ext: i32,
         new_ext: i32,
     ) -> Option<NonNull<us_socket_t>> {
@@ -270,6 +284,8 @@ impl us_socket_t {
                 ssl_ctx,
                 sni.map_or(ptr::null(), |s| s.as_ptr()),
                 is_client as i32,
+                request_cert as i32,
+                reject_unauthorized as i32,
                 old_ext,
                 new_ext,
             ))
@@ -480,6 +496,14 @@ mod c {
             ctx: *mut SslCtx,
             error: c_int,
         );
+        pub(super) safe fn us_socket_on_server_name(
+            s: &mut us_socket_t,
+            cb: extern "C" fn(
+                *mut us_socket_t,
+                *const core::ffi::c_char,
+                *mut c_int,
+            ) -> *mut SslCtx,
+        );
         pub(super) safe fn us_socket_keepalive(
             s: &mut us_socket_t,
             enable: c_int,
@@ -553,6 +577,8 @@ mod c {
             ssl_ctx: *mut SslCtx,
             sni: *const c_char,
             is_client: i32,
+            request_cert: i32,
+            reject_unauthorized: i32,
             old_ext_size: i32,
             ext_size: i32,
         ) -> *mut us_socket_t;

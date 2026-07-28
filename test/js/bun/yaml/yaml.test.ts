@@ -1305,6 +1305,36 @@ folded: >
           // ScanOptions.tag doesn't affect their resolution anyway.
           expect(YAML.parse('a: !!str\n"b": c\n')).toEqual({ a: "", b: "c" });
           expect(YAML.parse("a: !!str\n'b': c\n")).toEqual({ a: "", b: "c" });
+          // Same for a seq entry; the tag resolves e-scalar and the quoted
+          // sibling is not re-scanned.
+          expect(YAML.parse('- !!str\n- "123"\n')).toEqual(["", "123"]);
+          expect(YAML.parse("- !!str\n- '123'\n")).toEqual(["", "123"]);
+          // A quoted scalar that *is* content (indent > n) takes the tag as-is.
+          expect(YAML.parse('a:\n  !!str\n  "0xFF"\n')).toEqual({ a: "0xFF" });
+          expect(YAML.parse("a:\n  !!str\n  '0xFF'\n")).toEqual({ a: "0xFF" });
+          // Block scalar at parent indent after a tag: tag resolves e-scalar
+          // (`|` at indent 0 cannot be [197] flow-in-block content for `a:`).
+          expect(() => YAML.parse("a: !!str\n|\n text\n")).toThrow("Unexpected token");
+        });
+
+        test("multi-line quoted scalars fold line breaks per [120]/[109]", () => {
+          // Line folding: a single break becomes a space, an extra break
+          // becomes a literal newline, and `\\<break>` in double-quoted is a
+          // line continuation (no space). These are the inputs the old
+          // `multiline` computation keyed on; the resolved value is the only
+          // observable.
+          expect(YAML.parse('a: "one\n  two"\n')).toEqual({ a: "one two" });
+          expect(YAML.parse("a: 'one\n  two'\n")).toEqual({ a: "one two" });
+          expect(YAML.parse('a: "one\n\n  two"\n')).toEqual({ a: "one\ntwo" });
+          expect(YAML.parse('a: "one\\\n  two"\n')).toEqual({ a: "onetwo" });
+          expect(YAML.parse('a:\n  "one\n   two"\nb: y\n')).toEqual({ a: "one two", b: "y" });
+          expect(YAML.parse("a:\n  'one\n   two'\nb: y\n")).toEqual({ a: "one two", b: "y" });
+          // Same folding applies in flow context.
+          expect(YAML.parse('["a\n b", c]\n')).toEqual(["a b", "c"]);
+          expect(YAML.parse('{"a\n b": 1}\n')).toEqual({ "a b": 1 });
+          // A multi-line quoted scalar used as an implicit block-map key is
+          // still a [154] violation, regardless of how the value folds.
+          expect(() => YAML.parse('a: !!str\n"b\n c": x\n')).toThrow("Multiline implicit key");
         });
 
         test("tag does not leak to abandoned sibling key", () => {

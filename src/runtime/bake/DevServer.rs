@@ -3282,7 +3282,7 @@ impl DevServer {
         let ast_scope = unsafe { &mut *ast_memory_store }.enter();
 
         // The bundler stores
-        // `Option<NonNull<AnyEventLoop<'static>>>`. Park the value in `heap`
+        // `Option<NonNull<AnyEventLoop>>`. Park the value in `heap`
         // — bumpalo chunks are heap-allocated, so the address is stable across
         // the move of `heap` into `bv2.graph.heap` and lives exactly as long
         // as `bv2`.

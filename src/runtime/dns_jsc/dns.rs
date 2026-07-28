@@ -4155,6 +4155,15 @@ impl Resolver {
             pending_addr_cache_cares,
             pending_nameinfo_cache_cares
         );
+        // The 32-slot caches overflow to `LookupCacheHit::Disabled`; c-ares' own
+        // queue length covers those too. Its channel lock is recursive, so this
+        // is safe from inside a completion callback.
+        if let Some(channel) = self.channel.get() {
+            // SAFETY: `channel` is the live c-ares channel owned by `self`.
+            if c_ares::ares_queue_active_queries(unsafe { &*channel }) != 0 {
+                return true;
+            }
+        }
         false
     }
 
@@ -4208,12 +4217,11 @@ impl Resolver {
         // Normally checkTimeouts does this, so we have to be sure to do it ourself if we cancel the timer
         let this = self.as_ctx_ptr();
         scopeguard::defer! {
-            // SAFETY: `this` is the heap allocation from `init`. This releases the
-            // ref taken by `add_timer`. Callers via `request_completed` hold an
-            // `IntrusiveRc<Resolver>`; the `close_channel_for_terminate` caller is
-            // the global resolver, which carries a permanent +1 pin from
-            // `global_resolver()`. Either way the timer ref is never the last and
-            // this `deref` cannot reach 0 while `&self` is live.
+            // SAFETY: `this` is the heap allocation from `init`. This releases
+            // the ref taken by `add_timer`. Every caller holds at least one
+            // other ref for the duration of this call (an `IntrusiveRc`, a
+            // `ref_scope` guard, or the global-resolver permanent pin), so this
+            // `deref` cannot reach 0 while `&self` is live.
             unsafe {
                 let uws_loop = (*this).vm().uws_loop();
                 let state = crate::jsc_hooks::runtime_state();
@@ -4746,13 +4754,9 @@ impl Resolver {
             ChannelResult::Err(err) => {
                 let system_error = SystemError {
                     errno: -1,
-                    code: bun_core::String::static_(err.code()),
-                    message: bun_core::String::static_(err.label()),
-                    path: bun_core::String::default(),
-                    syscall: bun_core::String::default(),
-                    hostname: bun_core::String::default(),
-                    fd: -1,
-                    dest: bun_core::String::default(),
+                    code: bun_core::String::static_(err.code()).into(),
+                    message: bun_core::String::static_(err.label()).into(),
+                    ..Default::default()
                 };
                 Err(global_this.throw_value(system_error.to_error_instance(global_this)))
             }
@@ -4782,13 +4786,18 @@ impl Resolver {
                 // an error occurred. just pretend that the socket is both readable and writable.
                 // https://github.com/nodejs/node/blob/8a41d9b636be86350cd32847c3f89d327c4f6ff7/src/cares_wrap.cc#L93
                 (*channel).process((*poll).socket, true, true);
-                return;
+            } else {
+                (*channel).process(
+                    (*poll).socket,
+                    events & libuv::UV_READABLE != 0,
+                    events & libuv::UV_WRITABLE != 0,
+                );
             }
-            (*channel).process(
-                (*poll).socket,
-                events & libuv::UV_READABLE != 0,
-                events & libuv::UV_WRITABLE != 0,
-            );
+
+            // See `on_dns_poll` for why this re-check follows `ares_process_fd`.
+            if !(*parent).any_requests_pending() {
+                (*parent).remove_timer();
+            }
         }
     }
 
@@ -4832,6 +4841,12 @@ impl Resolver {
         // UnsafeCell-backed).
         unsafe {
             (*channel).process(poll.fd.native(), poll.is_readable(), poll.is_writable());
+        }
+
+        // c-ares detaches a query only *after* its callback returns, so
+        // `request_completed` may have seen it still counted; re-check now.
+        if !self.any_requests_pending() {
+            self.remove_timer();
         }
     }
 
@@ -4991,16 +5006,17 @@ impl Resolver {
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        let arguments = callframe.arguments_old::<3>();
-        if arguments.len < 1 {
-            return Err(global_this.throw_not_enough_arguments("resolve", 3, arguments.len));
+        let arguments = callframe.arguments_as_array::<3>();
+        let arguments_len = callframe.arguments_count() as usize;
+        if arguments_len < 1 {
+            return Err(global_this.throw_not_enough_arguments("resolve", 3, arguments_len));
         }
 
-        let record_type: RecordType = if arguments.len <= 1 {
+        let record_type: RecordType = if arguments_len <= 1 {
             RecordType::DEFAULT
         } else {
             'brk: {
-                let record_type_value = arguments.ptr[1];
+                let record_type_value = arguments[1];
                 if record_type_value.is_empty_or_undefined_or_null()
                     || !record_type_value.is_string()
                 {
@@ -5024,7 +5040,7 @@ impl Resolver {
             }
         };
 
-        let name_value = arguments.ptr[0];
+        let name_value = arguments[0];
         if name_value.is_empty_or_undefined_or_null() || !name_value.is_string() {
             return Err(global_this.throw_invalid_argument_type("resolve", "name", "string"));
         }
@@ -5082,12 +5098,13 @@ impl Resolver {
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        let arguments = callframe.arguments_old::<2>();
-        if arguments.len < 1 {
-            return Err(global_this.throw_not_enough_arguments("reverse", 1, arguments.len));
+        let arguments = callframe.arguments_as_array::<2>();
+        let arguments_len = callframe.arguments_count() as usize;
+        if arguments_len < 1 {
+            return Err(global_this.throw_not_enough_arguments("reverse", 1, arguments_len));
         }
 
-        let ip_value = arguments.ptr[0];
+        let ip_value = arguments[0];
         if ip_value.is_empty_or_undefined_or_null() || !ip_value.is_string() {
             return Err(global_this.throw_invalid_argument_type("reverse", "ip", "string"));
         }
@@ -5148,12 +5165,13 @@ impl Resolver {
 
     // JSC-ABI shim emitted by `export_host_fn!` at module scope (see `global_resolve`).
     pub fn global_lookup(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-        let arguments = callframe.arguments_old::<2>();
-        if arguments.len < 1 {
-            return Err(global_this.throw_not_enough_arguments("lookup", 2, arguments.len));
+        let arguments = callframe.arguments_as_array::<2>();
+        let arguments_len = callframe.arguments_count() as usize;
+        if arguments_len < 1 {
+            return Err(global_this.throw_not_enough_arguments("lookup", 2, arguments_len));
         }
 
-        let name_value = arguments.ptr[0];
+        let name_value = arguments[0];
         if name_value.is_empty_or_undefined_or_null() || !name_value.is_string() {
             return Err(global_this.throw_invalid_argument_type("lookup", "hostname", "string"));
         }
@@ -5170,8 +5188,8 @@ impl Resolver {
         let mut options = GetAddrInfoOptions::default();
         let mut port: u16 = 0;
 
-        if arguments.len > 1 && arguments.ptr[1].is_object() {
-            let options_object = arguments.ptr[1];
+        if arguments_len > 1 && arguments[1].is_object() {
+            let options_object = arguments[1];
 
             if let Some(port_value) = options_object.get_truthy(global_this, "port")? {
                 port = port_value.to_port_number(global_this)?;
@@ -5287,11 +5305,12 @@ macro_rules! resolve_record_fn {
             global_this: &JSGlobalObject,
             callframe: &CallFrame,
         ) -> JsResult<JSValue> {
-            let arguments = callframe.arguments_old::<2>();
-            if arguments.len < 1 {
-                return Err(global_this.throw_not_enough_arguments($jsname, 1, arguments.len));
+            let arguments = callframe.arguments_as_array::<2>();
+            let arguments_len = callframe.arguments_count() as usize;
+            if arguments_len < 1 {
+                return Err(global_this.throw_not_enough_arguments($jsname, 1, arguments_len));
             }
-            let name_value = arguments.ptr[0];
+            let name_value = arguments[0];
             if name_value.is_empty_or_undefined_or_null() || !name_value.is_string() {
                 return Err(global_this.throw_invalid_argument_type($jsname, "hostname", "string"));
             }
@@ -5453,17 +5472,12 @@ impl Resolver {
             ChannelResult::Result(res) => res,
             ChannelResult::Err(err) => {
                 let syscall = bun_core::String::create_atom(&query.name);
-                // SystemError has no Default impl upstream; spell out
-                // the field defaults (empty strings, fd = c_int::MIN).
                 let system_error = SystemError {
                     errno: -1,
-                    code: bun_core::String::static_(err.code()),
-                    message: bun_core::String::static_(err.label()),
-                    path: bun_core::String::empty(),
-                    syscall,
-                    hostname: bun_core::String::empty(),
-                    fd: c_int::MIN,
-                    dest: bun_core::String::empty(),
+                    code: bun_core::String::static_(err.code()).into(),
+                    message: bun_core::String::static_(err.label()).into(),
+                    syscall: syscall.into(),
+                    ..Default::default()
                 };
                 return Err(global_this.throw_value(system_error.to_error_instance(global_this)));
             }
@@ -5937,12 +5951,13 @@ impl Resolver {
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        let arguments = callframe.arguments_old::<2>();
-        if arguments.len < 2 {
-            return Err(global_this.throw_not_enough_arguments("lookupService", 2, arguments.len));
+        let arguments = callframe.arguments_as_array::<2>();
+        let arguments_len = callframe.arguments_count() as usize;
+        if arguments_len < 2 {
+            return Err(global_this.throw_not_enough_arguments("lookupService", 2, arguments_len));
         }
 
-        let addr_value = arguments.ptr[0];
+        let addr_value = arguments[0];
         if addr_value.is_empty_or_undefined_or_null() || !addr_value.is_string() {
             return Err(global_this.throw_invalid_argument_type(
                 "lookupService",
@@ -5961,7 +5976,7 @@ impl Resolver {
         let addr_slice = addr_str.to_slice(global_this);
         let addr_s = addr_slice.slice();
 
-        let port_value = arguments.ptr[1];
+        let port_value = arguments[1];
         let port: u16 = port_value.to_port_number(global_this)?;
 
         let mut sa: SockaddrStorage = bun_core::ffi::zeroed();

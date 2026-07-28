@@ -1587,7 +1587,7 @@ impl CapturedWriter {
         self.written += amount;
         if let Some(e) = err {
             log!(
-                "CapturedWriter(0x{:x}, {}) onWrite errno={} errmsg={} errfd={} syscall={}",
+                "CapturedWriter(0x{:x}, {}) onWrite errno={} errmsg={} errfd={:?} syscall={}",
                 std::ptr::from_mut(self) as usize,
                 out_kind_str(self.parent().out_type),
                 e.errno,
@@ -1607,14 +1607,6 @@ impl CapturedWriter {
             return unsafe { PipeReader::try_signal_done_to_cmd(self.parent_mut()) };
         }
         Yield::Suspended
-    }
-}
-
-impl Drop for CapturedWriter {
-    fn drop(&mut self) {
-        // `bun_sys::SystemError` strings drop themselves.
-        let _ = self.err.take();
-        // self.writer Arc drops automatically.
     }
 }
 

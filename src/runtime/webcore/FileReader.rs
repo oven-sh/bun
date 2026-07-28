@@ -402,9 +402,23 @@ impl FileReader {
         }
 
         if was_lazy {
-            // SAFETY: see `parent()`.
-            unsafe { (*self.parent()).increment_count() };
-            self.waiting_for_on_reader_done.set(true);
+            // The across-read ref roots the JS wrapper (`increment_count`
+            // upgrades `this_jsvalue` to Strong) so an event-loop callback
+            // firing with no JS on the stack never lands on a freed box. For a
+            // POSIX non-pollable regular file every read is synchronous
+            // (`read_file` → `sys::pread`), so there is no such callback —
+            // holding the Strong there would root an abandoned reader forever
+            // and leak its fd. Windows file reads are async via libuv even for
+            // regular files, so the ref is always taken there.
+            #[cfg(unix)]
+            let need_io_ref = pollable;
+            #[cfg(windows)]
+            let need_io_ref = true;
+            if need_io_ref {
+                // SAFETY: see `parent()`.
+                unsafe { (*self.parent()).increment_count() };
+                self.waiting_for_on_reader_done.set(true);
+            }
             let start_result = if let Some(offset) = self.start_offset {
                 self.reader()
                     .start_file_offset(self.fd.get(), pollable, offset)
@@ -412,10 +426,12 @@ impl FileReader {
                 self.reader().start(self.fd.get(), pollable)
             };
             if let Err(e) = start_result {
-                self.waiting_for_on_reader_done.set(false);
-                let parent = self.parent();
-                // SAFETY: see `parent()`; JS finalizer still holds a ref so this cannot free it.
-                let _ = unsafe { Source::decrement_count(parent) };
+                if need_io_ref {
+                    self.waiting_for_on_reader_done.set(false);
+                    let parent = self.parent();
+                    // SAFETY: see `parent()`; JS finalizer still holds a ref so this cannot free it.
+                    let _ = unsafe { Source::decrement_count(parent) };
+                }
                 return streams::Start::Err(e);
             }
         } else {
@@ -545,22 +561,6 @@ impl FileReader {
         self.waiting_for_on_reader_done.set(false);
         self.done.set(true);
         true
-    }
-
-    #[inline]
-    fn reader_is_pollable(&self) -> bool {
-        #[cfg(unix)]
-        {
-            self.reader()
-                .flags
-                .contains(bun_io::pipe_reader::PosixFlags::POLLABLE)
-        }
-        #[cfg(windows)]
-        {
-            self.reader()
-                .flags
-                .contains(bun_io::pipe_reader::WindowsFlags::POLLABLE)
-        }
     }
 
     pub fn on_read_chunk(&self, init_buf: &[u8], state: ReadState) -> bool {
@@ -793,14 +793,15 @@ impl FileReader {
             }
         }
 
-        // For pipes, we have to keep pulling or the other process will block.
+        // No JS read is waiting; stop at the highwater mark. onPull restarts.
         // SAFETY: see `reader_buffer` decl.
         let reader_buffer_len = unsafe { (*reader_buffer).len() };
-        let ret = !matches!(
-            self.read_inside_on_pull.get(),
-            ReadDuringJSOnPullResult::Temporary(_)
-        ) && !(self.buffered.get().len() + reader_buffer_len >= self.highwater_mark
-            && !self.reader_is_pollable());
+        let ret = self.flowing.get()
+            && !matches!(
+                self.read_inside_on_pull.get(),
+                ReadDuringJSOnPullResult::Temporary(_)
+            )
+            && self.buffered.get().len() + reader_buffer_len < self.highwater_mark;
         close_if_needed!();
         ret
     }
@@ -948,6 +949,12 @@ impl FileReader {
         let global = self.parent_global();
         self.pending_value.with_mut(|p| p.set(&global, array));
         self.pending_view.set(buffer);
+
+        // `has_pending_read()` tracks the registration flag, not the kernel
+        // arm state: the highwater backstop leaves the one-shot poll disarmed.
+        if self.flowing.get() {
+            self.reader().watch();
+        }
 
         bun_core::scoped_log!(FileReader, "onPull({}) = pending", buffer_len);
 

@@ -131,9 +131,6 @@ impl ImportKind {
             || self == Self::Url
             || self == Self::Composes
     }
-
-    // `to_api()` lives in `bun_ast::ImportKindExt` — depends on
-    // `schema::api::ImportKind` which sits in a higher-tier crate.
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -2775,12 +2772,9 @@ impl Source {
 
     pub fn range_of_operator_before(&self, loc: Loc, op: &[u8]) -> Range {
         let text = &self.contents[0..loc.i()];
-        let index = bun_core::strings::index(text, op);
-        if index >= 0 {
+        if let Some(index) = bun_core::strings::last_index_of(text, op) {
             return Range {
-                loc: Loc {
-                    start: loc.start + index,
-                },
+                loc: usize2loc(index),
                 len: i32::try_from(op.len()).expect("int cast"),
             };
         }
@@ -2987,7 +2981,7 @@ pub use ast_result::{
     TopLevelSymbolToParts, TsEnumsMap,
 };
 pub use import_record::{Flags as ImportRecordFlags, ImportRecord, Tag as ImportRecordTag};
-pub use loader::{Loader, LoaderHashTable, LoaderOptional, SideEffects};
+pub use loader::{Loader, LoaderHashTable, SideEffects};
 pub use target::Target;
 pub mod transpiler_cache;
 // Glob re-export: `link_interface!` emits `#[doc(hidden)]` type aliases that

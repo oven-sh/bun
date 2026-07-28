@@ -29,7 +29,6 @@ pub struct Scanner<'a> {
     pub test_files: Vec<Interned>,
     pub fs: *mut FileSystem,
     pub open_dir_buf: PathBuffer,
-    pub scan_dir_buf: PathBuffer,
     pub options: &'a BundleOptions<'a>,
     pub has_iterated: bool,
     pub search_count: usize,
@@ -90,7 +89,6 @@ impl<'a> Scanner<'a> {
             fs: transpiler.fs,
             test_files: results,
             open_dir_buf: PathBuffer::uninit(),
-            scan_dir_buf: PathBuffer::uninit(),
             has_iterated: false,
             search_count: 0,
         })
@@ -130,16 +128,9 @@ impl<'a> Scanner<'a> {
     }
 
     pub fn scan(&mut self, path_literal: &[u8]) -> Result<(), ScanError> {
-        let parts: [&[u8]; 2] = [self.fs().top_level_dir, path_literal];
-        // reshaped for borrowck — abs_buf's return keeps a &mut borrow
-        // of scan_dir_buf alive across the &mut self calls below. Capture only the
-        // length, then reconstruct a detached slice from the raw buffer pointer.
-        let path_len = self.fs().abs_buf(&parts, &mut self.scan_dir_buf).len();
-        // SAFETY: scan_dir_buf is not written again for the remainder of this
-        // function — read_dir_with_name/next() only touch open_dir_buf — so the
-        // bytes at [0, path_len) remain valid while `path` is live.
-        let path: &[u8] =
-            unsafe { core::slice::from_raw_parts(self.scan_dir_buf.0.as_ptr(), path_len) };
+        let mut scan_dir_buf = PathBuffer::uninit();
+        let parts: [&[u8]; 2] = [self.top_level_dir(), path_literal];
+        let path: &[u8] = Self::abs_buf_projected(self.top_level_dir(), &parts, &mut scan_dir_buf);
 
         let root = self
             .read_dir_with_name(path, None)

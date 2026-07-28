@@ -535,8 +535,6 @@ pub mod defines {
                 }
                 parts.push(Box::from(tail));
 
-                let mut initial_values: &[DotDefine] = &[];
-                // Note: reshaped for borrowck — getOrPut split into get/insert.
                 if let Some(existing) = self.dots.get_mut(tail) {
                     for part in existing.iter_mut() {
                         if are_parts_equal(&part.parts, &parts) {
@@ -544,15 +542,12 @@ pub mod defines {
                             return Ok(());
                         }
                     }
-                    initial_values = existing.as_slice();
+                    existing.push(DotDefine { data: value, parts });
+                    return Ok(());
                 }
 
-                let mut list: Vec<DotDefine> = Vec::with_capacity(initial_values.len() + 1);
-                if !initial_values.is_empty() {
-                    list.extend_from_slice(initial_values);
-                }
-                list.push(DotDefine { data: value, parts });
-                self.dots.put_assume_capacity(tail, list);
+                self.dots
+                    .put_assume_capacity(tail, vec![DotDefine { data: value, parts }]);
             } else {
                 // e.g. IS_BROWSER
                 self.identifiers.put_assume_capacity(key, value);

@@ -15,7 +15,7 @@ pub(crate) fn to_match_inline_snapshot(
     let this = scopeguard::guard(this, |this| this.post_match(global));
 
     let this_value = frame.this();
-    let arguments_ = frame.arguments_old::<2>(); let arguments: &[JSValue] = arguments_.slice();
+    let arguments: &[JSValue] = frame.arguments();
 
     this.increment_expect_call_counter();
 

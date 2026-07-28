@@ -1514,21 +1514,12 @@ impl JSValkeyClient {
         let socket_ref = self.ref_scope();
 
         let is_tls = self.client.get().tls != valkey::TLS::None;
-        // `vm.rare_data()` needs `&mut VirtualMachine`; `client.vm`
-        // is `&'static`. Cast through raw — the per-thread VM is single-owner
-        // on the JS thread, and `valkey_group` only touches the embedded
-        // `SocketGroup` field + `vm.uws_loop()` (disjoint from anything we
-        // hold). Same pattern as `Bun__RareData__postgresGroup`.
-        let vm_ptr = std::ptr::from_ref::<VirtualMachine>(self.client.get().vm).cast_mut();
-        // SAFETY: per-thread VM, accessed from the JS thread; `rare_data()`
-        // lazy-inits the box.
-        let group: *mut uws::SocketGroup = unsafe {
-            let rare = std::ptr::from_mut::<jsc::rare_data::RareData>((*vm_ptr).rare_data());
-            if is_tls {
-                (*rare).valkey_group::<true>(&*vm_ptr)
-            } else {
-                (*rare).valkey_group::<false>(&*vm_ptr)
-            }
+        let vm = self.client.get().vm.as_mut();
+        let loop_ = vm.uws_loop();
+        let group: *mut uws::SocketGroup = if is_tls {
+            vm.rare_data().valkey_group::<true>(loop_)
+        } else {
+            vm.rare_data().valkey_group::<false>(loop_)
         };
 
         // Populate `_secure` first, then handle the failure branch outside the
@@ -1568,8 +1559,8 @@ impl JSValkeyClient {
         let ssl_ctx: Option<*mut uws::SslCtx> = match &self.client.get().tls {
             valkey::TLS::None => None,
             valkey::TLS::Enabled => {
-                // SAFETY: `vm_ptr` is the live per-thread VM (see above).
-                Some(unsafe { crate::jsc_hooks::default_client_ssl_ctx(vm_ptr) })
+                // SAFETY: `vm` is the live per-thread VM (see above).
+                Some(unsafe { crate::jsc_hooks::default_client_ssl_ctx(vm) })
             }
             valkey::TLS::Custom(_) => Some(self._secure.get().unwrap()),
         };
@@ -1785,7 +1776,7 @@ pub struct SocketHandler<const SSL: bool>;
 type SocketType<const SSL: bool> = uws::NewSocketHandler<SSL>;
 
 impl<const SSL: bool> SocketHandler<SSL> {
-    fn _socket(s: SocketType<SSL>) -> Socket {
+    fn socket(s: SocketType<SSL>) -> Socket {
         // `NewSocketHandler<SSL>` only differs by const generic; the
         // `socket` field is identical. Re-wrap the inner `InternalSocket` into
         // the right `AnySocket` variant.
@@ -1797,11 +1788,11 @@ impl<const SSL: bool> SocketHandler<SSL> {
     }
 
     pub fn on_open(this: &JSValkeyClient, socket: SocketType<SSL>) -> JsTerminatedResult<()> {
-        this.client_mut().socket = Self::_socket(socket);
-        narrow_terminated(this.client_mut().on_open(Self::_socket(socket)))
+        this.client_mut().socket = Self::socket(socket);
+        narrow_terminated(this.client_mut().on_open(Self::socket(socket)))
     }
 
-    pub fn on_handshake_(
+    pub fn on_handshake(
         this: &JSValkeyClient,
         _socket: SocketType<SSL>,
         success: i32,
@@ -1937,7 +1928,6 @@ impl<const SSL: bool> SocketHandler<SSL> {
         )
     }
 
-    // `pub const onHandshake = if (ssl) onHandshake_ else null;`
     pub const ON_HANDSHAKE: Option<
         fn(
             &JSValkeyClient,
@@ -1945,7 +1935,7 @@ impl<const SSL: bool> SocketHandler<SSL> {
             i32,
             uws::us_bun_verify_error_t,
         ) -> JsTerminatedResult<()>,
-    > = if SSL { Some(Self::on_handshake_) } else { None };
+    > = if SSL { Some(Self::on_handshake) } else { None };
 
     pub fn on_close(
         this: &JSValkeyClient,
@@ -1993,13 +1983,13 @@ impl<const SSL: bool> SocketHandler<SSL> {
     pub fn on_timeout(this: &JSValkeyClient, socket: SocketType<SSL>) {
         debug!("Socket timed out.");
 
-        this.client_mut().socket = Self::_socket(socket);
+        this.client_mut().socket = Self::socket(socket);
         // Handle socket timeout
     }
 
     pub fn on_data(this: &JSValkeyClient, socket: SocketType<SSL>, data: &[u8]) {
         // Ensure the socket pointer is updated.
-        this.client_mut().socket = Self::_socket(socket);
+        this.client_mut().socket = Self::socket(socket);
 
         let _guard = this.ref_scope();
         let _ = this.client_mut().on_data(data); // TODO: properly propagate exception upwards
@@ -2007,7 +1997,7 @@ impl<const SSL: bool> SocketHandler<SSL> {
     }
 
     pub fn on_writable(this: &JSValkeyClient, socket: SocketType<SSL>) {
-        this.client_mut().socket = Self::_socket(socket);
+        this.client_mut().socket = Self::socket(socket);
         let _guard = this.ref_scope();
         this.client_mut().on_writable();
         this.update_poll_ref();

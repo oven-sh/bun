@@ -285,8 +285,7 @@ impl Mv {
     ) -> Yield {
         match Self::state_mut(interp, cmd).state {
             MvState::WaitingWriteErr { exit_code } => {
-                if let Some(err) = e {
-                    err.deref();
+                if let Some(_err) = e {
                     Self::state_mut(interp, cmd).state = MvState::Err;
                     return Self::next(interp, cmd);
                 }

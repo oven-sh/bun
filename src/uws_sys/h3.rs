@@ -20,8 +20,8 @@ impl ListenSocket {
     pub fn close(&mut self) {
         c::uws_h3_listen_socket_close(self)
     }
-    pub fn get_local_port(&mut self) -> i32 {
-        c::uws_h3_listen_socket_port(self)
+    pub fn get_local_port(&mut self) -> Option<u16> {
+        u16::try_from(c::uws_h3_listen_socket_port(self)).ok()
     }
     pub fn get_local_address<'a>(&mut self, buf: &'a mut [u8]) -> Option<&'a [u8]> {
         // SAFETY: self is a live FFI handle; buf ptr/len valid for write
@@ -157,7 +157,7 @@ impl Response {
     pub fn pause(&mut self) {
         c::uws_h3_res_pause(self)
     }
-    pub fn resume_(&mut self) {
+    pub fn resume(&mut self) {
         c::uws_h3_res_resume(self)
     }
     pub fn timeout(&mut self, seconds: u8) {

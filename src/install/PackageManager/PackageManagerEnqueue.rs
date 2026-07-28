@@ -98,40 +98,10 @@ pub fn enqueue_dependency_list(
     this.task_queue
         .ensure_unused_capacity(dependencies_list.len as usize)
         .expect("unreachable");
-    let lockfile = &mut *this.lockfile;
 
     // Step 1. Go through main dependencies
-    let mut begin = dependencies_list.off;
     let end = dependencies_list.off.saturating_add(dependencies_list.len);
-
-    // if dependency is peer and is going to be installed
-    // through "dependencies", skip it
-    if end - begin > 1 && lockfile.buffers.dependencies[0].behavior.is_peer() {
-        let mut peer_i: usize = 0;
-        // reshaped for borrowck — index into the slice instead of holding &mut across loop
-        while lockfile.buffers.dependencies[peer_i].behavior.is_peer() {
-            let mut dep_i: usize = (end - 1) as usize;
-            let mut dep = lockfile.buffers.dependencies[dep_i].clone();
-            while !dep.behavior.is_peer() {
-                if !dep.behavior.is_dev() {
-                    if lockfile.buffers.dependencies[peer_i].name_hash == dep.name_hash {
-                        lockfile.buffers.dependencies[peer_i] =
-                            lockfile.buffers.dependencies[begin as usize].clone();
-                        begin += 1;
-                        break;
-                    }
-                }
-                dep_i -= 1;
-                dep = lockfile.buffers.dependencies[dep_i].clone();
-            }
-            peer_i += 1;
-            if peer_i == end as usize {
-                break;
-            }
-        }
-    }
-
-    let mut i = begin;
+    let mut i = dependencies_list.off;
 
     // we have to be very careful with pointers here
     while i < end {

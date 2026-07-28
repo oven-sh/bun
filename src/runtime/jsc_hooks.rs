@@ -17,7 +17,7 @@
 //!      / `load_preloads` / `ensure_debugger` / `auto_tick`.
 //!   3. `__BUN_LOADER_HOOKS` — `transpile_source_code` /
 //!      `fetch_builtin_module` / `transpile_file`.
-//!   4. `__bun_get_vm_ctx` / `__bun_js_vm_get` / `__bun_stdio_blob_store_new` /
+//!   4. `__bun_get_vm_ctx` / `__bun_stdio_blob_store_new` /
 //!      `__bun_http_sync_download_*` — low-tier extern impls.
 
 use bun_core::WTFStringImplExt as _;
@@ -3390,6 +3390,20 @@ fn transpile_source_code_inner(
             // SAFETY: null-checked above; `global_object` is the live per-thread
             // `JSGlobalObject` for the FFI call.
             let global = unsafe { &*global_object };
+            // The bundler emits `{}` as the JS stub for a plain CSS import
+            // (esbuild parity); match that here instead of leaking the file path
+            // as the default export. `.module.css` still diverges: the bundler
+            // emits a class-name map there, runtime CSS-module scoping is not
+            // implemented.
+            if matches!(loader, L::Css) {
+                return Ok(OwnedResolvedSource::from(ResolvedSource {
+                    jsvalue_for_export: JSValue::create_empty_object(global, 0),
+                    specifier: input_specifier.dupe_ref(),
+                    source_url: create_if_different(input_specifier, path.text),
+                    tag: ResolvedSourceTag::ExportDefaultObject,
+                    ..Default::default()
+                }));
+            }
             // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
             let value = if !unsafe { &*jsc_vm }.origin.is_empty() {
                 // Rewrite `specifier` against `vm.origin` so
@@ -3579,7 +3593,11 @@ fn get_hardcoded_module(
             }
             Some(js_synthetic_module(b"node:zlib/iter", specifier))
         }
-        HardcodedModule::BunInternalForTesting => {
+        HardcodedModule::BunInternalForTesting
+        | HardcodedModule::NodeInternalRepl
+        | HardcodedModule::NodeInternalReplAwait
+        | HardcodedModule::NodeInternalReplHistory
+        | HardcodedModule::NodeInternalUtilInspect => {
             // Gated behind `--expose-internals` (release) / always-on (debug).
             if !bun_core::env::IS_DEBUG {
                 let allowed = bun_jsc::module_loader::IS_ALLOWED_TO_USE_INTERNAL_TESTING_APIS
@@ -3588,7 +3606,8 @@ fn get_hardcoded_module(
                     return None;
                 }
             }
-            Some(js_synthetic_module(b"bun:internal-for-testing", specifier))
+            let name: &'static str = hardcoded.into();
+            Some(js_synthetic_module(name.as_bytes(), specifier))
         }
         HardcodedModule::InternalTestBinding => {
             // Gated behind `--expose-internals` (release) / always-on (debug),
@@ -3655,6 +3674,20 @@ unsafe fn fetch_builtin_module(
             // to filesystem resolution.
             None => FetchBuiltinResult::NotFound,
         };
+    }
+
+    if let Some((name, tag)) = bun_jsc::module_loader::exposed_internal_tag(spec) {
+        let resolved = ResolvedSource {
+            source_code: bun_core::String::empty(),
+            specifier: *specifier,
+            source_url: bun_core::String::clone_utf8(&name),
+            tag,
+            source_code_needs_deref: false,
+            ..ResolvedSource::default()
+        };
+        // SAFETY: per fn contract — `out` is a valid out-param.
+        unsafe { *out = ErrorableResolvedSource::ok(resolved) };
+        return FetchBuiltinResult::Found;
     }
 
     // ── `macro:` namespace ──────────────────────────────────────────────
@@ -4782,7 +4815,7 @@ unsafe fn resolve_embedded_node_file_hook(
 // ════════════════════════════════════════════════════════════════════════════
 
 /// Path-separator-adjusted literal suffixes. Only the two
-/// `_resolve` callers need them (the `[eval]` / `[stdin]` suffix checks), so
+/// `resolve` callers need them (the `[eval]` / `[stdin]` suffix checks), so
 /// inline the per-platform constants.
 #[cfg(windows)]
 const EVAL_SUFFIX: &[u8] = b"\\[eval]";
@@ -4827,7 +4860,7 @@ fn normalize_source(source: &[u8]) -> &[u8] {
 /// `vm` is the live per-thread VM. `specifier` / `source` borrow the caller's
 /// `to_utf8()` buffers and must outlive the returned slices (which the caller
 /// immediately `cloneUTF8`s).
-unsafe fn _resolve<'a>(
+unsafe fn resolve<'a>(
     vm: *mut VirtualMachine,
     specifier: &'a [u8],
     source: &'a [u8],
@@ -4879,6 +4912,11 @@ unsafe fn _resolve<'a>(
     // Hardcoded builtin alias (`node:fs` etc.).
     if let Some(alias) = Alias::get(specifier, Target::Bun, AliasCfg::default()) {
         *ret_path = alias.path.as_bytes();
+        return Ok(());
+    }
+
+    if bun_jsc::module_loader::exposed_internal_tag(specifier).is_some() {
+        *ret_path = specifier;
         return Ok(());
     }
 
@@ -5128,6 +5166,12 @@ unsafe fn resolve_hook(
         return true;
     }
 
+    if bun_jsc::module_loader::exposed_internal_tag(specifier_utf8.slice()).is_some() {
+        // SAFETY: per fn contract.
+        unsafe { *res = ErrorableString::ok(specifier.dupe_ref()) };
+        return true;
+    }
+
     // Swap `vm.log` (and resolver/linker/pm logs) to a fresh
     // local Log so resolver diagnostics don't leak into the VM log. Note:
     // `Resolver.log` is `NonNull<Log>` and `Linker.log` is `*mut Log` (see
@@ -5154,7 +5198,7 @@ unsafe fn resolve_hook(
         // SAFETY: `vm` is the live per-thread VM; restoring the log pointers
         // swapped just above so early-return paths don't leave a dangling
         // stack pointer. The PM may have been lazily created inside
-        // `_resolve` with `pm.log = resolver.log` (our stack `log`), so
+        // `resolve` with `pm.log = resolver.log` (our stack `log`), so
         // restore it even if it was `None` at swap time.
         unsafe {
             (*vm).log = Some(old_log);
@@ -5171,7 +5215,7 @@ unsafe fn resolve_hook(
     // SAFETY: `vm` is the live per-thread VM; the slices borrow
     // `specifier_utf8`/`source_utf8` which outlive this call.
     if let Err(err) = unsafe {
-        _resolve(
+        resolve(
             vm,
             specifier_utf8.slice(),
             normalize_source(source_utf8.slice()),
@@ -5321,18 +5365,9 @@ pub fn parse_http_date(value: &[u8]) -> Option<u64> {
     }
 }
 
-/// `bun_event_loop::__bun_js_vm_get` body — erased `VirtualMachine::get()` for
-/// `AbstractVM::JsKind`'s `get_vm()`.
-/// Declared `extern "Rust"` in `bun_event_loop::MiniEventLoop`; link-time
-/// resolved.
-#[unsafe(no_mangle)]
-pub(crate) fn __bun_js_vm_get() -> *mut () {
-    bun_jsc::virtual_machine::VirtualMachine::get_mut_ptr().cast()
-}
-
 /// `bun_event_loop::__bun_stdio_blob_store_new` body.
 /// Returns an erased `*mut webcore::blob::Store` with intrusive `ref_count = 2`
-/// (one for `RareData`/`MiniEventLoop`, one for the eventual `Blob` consumer).
+/// (one for `RareData`, one for the eventual `Blob` consumer).
 /// Declared `extern "Rust"` in `bun_event_loop::MiniEventLoop`; link-time
 /// resolved.
 #[unsafe(no_mangle)]

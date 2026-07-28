@@ -1367,8 +1367,7 @@ pub mod js_bundler {
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        let arguments = callframe.arguments_old::<1>();
-        build(global_this, arguments.slice())
+        build(global_this, callframe.arguments())
     }
 
     // NOTE: `Resolve`/`Load`/`MiniImportRecord`/etc. are owned by

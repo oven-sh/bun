@@ -28,7 +28,7 @@ use super::{Command, Options, PackageManager, ProgressStrings, Subcommand};
 
 impl PackageManager {
     /// Borrowed view of the cached cache-directory fd. Returns `Fd` (not `Dir`)
-    /// because the descriptor is owned by `self.cache_directory_` — handing out
+    /// because the descriptor is owned by `self.cache_directory` — handing out
     /// an owning `Dir` would close the cached fd when the caller drops it.
     /// Callers that need `Dir` methods should use `Dir::borrow(&fd)`.
     #[inline]
@@ -68,7 +68,7 @@ impl PackageManager {
 // ───────────────────────────── cache directory ────────────────────────────────
 
 /// Returns a borrowed view (`Fd`) of the lazily-opened cache directory. The
-/// descriptor is owned by `PackageManager::cache_directory_` (closed only if
+/// descriptor is owned by `PackageManager::cache_directory` (closed only if
 /// the singleton is ever dropped). Callers must not close the returned `Fd`;
 /// use `Dir::borrow(&fd)` to call `&self` `Dir` methods on it.
 #[inline]
@@ -81,7 +81,7 @@ pub fn get_cache_directory(this: &mut PackageManager) -> Fd {
 /// Raw-pointer entry for callers that hold a disjoint `&mut this.manifests`
 /// borrow (see `PackageManifestMap::by_name_hash_allow_expired`). Never
 /// materializes a `&mut PackageManager` covering the whole struct — only the
-/// disjoint `cache_directory_`, `cache_directory_path`, `options.enable`, and
+/// disjoint `cache_directory`, `cache_directory_path`, `options.enable`, and
 /// `env` fields are projected, so an outstanding `&mut manifests` derived
 /// from the same provenance root stays valid under Stacked Borrows.
 ///
@@ -90,9 +90,9 @@ pub fn get_cache_directory(this: &mut PackageManager) -> Fd {
 /// caller must hold no live borrow that overlaps the fields listed above.
 #[inline]
 pub unsafe fn get_cache_directory_raw(this: *mut PackageManager) -> Fd {
-    // SAFETY: caller contract — `cache_directory_` is disjoint from any
+    // SAFETY: caller contract — `cache_directory` is disjoint from any
     // borrow the caller holds.
-    if let Some(d) = unsafe { (*this).cache_directory_.as_ref() } {
+    if let Some(d) = unsafe { (*this).cache_directory.as_ref() } {
         return d.fd();
     }
     // SAFETY: caller contract — `this` is valid and no live borrow overlaps
@@ -100,7 +100,7 @@ pub unsafe fn get_cache_directory_raw(this: *mut PackageManager) -> Fd {
     let d = unsafe { ensure_cache_directory(this) };
     let fd = d.fd();
     // SAFETY: as above; single writer.
-    unsafe { (*this).cache_directory_ = Some(d) };
+    unsafe { (*this).cache_directory = Some(d) };
     fd
 }
 
@@ -116,9 +116,7 @@ pub fn get_cache_directory_and_abs_path(this: &mut PackageManager) -> (Fd, AbsPa
 
 #[inline]
 pub fn get_temporary_directory(this: &mut PackageManager) -> &'static TemporaryDirectory {
-    // `bun_core::Once<T, fn(A)->T>` can't
-    // accept a non-`'static` `&mut PackageManager` argument, so use `OnceLock`
-    // directly and split get/set so the closure doesn't need to capture `this`.
+    // Split get/set so the closure doesn't need to capture `this`.
     if let Some(td) = GET_TEMPORARY_DIRECTORY_ONCE.get() {
         return td;
     }

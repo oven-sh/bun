@@ -170,8 +170,7 @@ impl Async {
             }
             EventLoopHandle::Mini(_) => {
                 // The payload embeds only the JS-arm `ConcurrentTask`, so the
-                // mini arm heap-allocates an auto-deinit wrapper per bounce
-                // (same shape as `GlobalMini::enqueue_task_concurrent_wait_pid`).
+                // mini arm heap-allocates an auto-deinit wrapper per bounce.
                 let any = bun_jsc::AnyTaskWithExtraContext::AnyTaskWithExtraContext::from_callback_auto_deinit(
                     task,
                     run_from_main_thread_mini,

@@ -76,7 +76,7 @@ declare module "bun" {
      * ws.send(new Uint8Array([1, 2, 3, 4]));
      * ```
      */
-    send(data: string | BufferSource, compress?: boolean): ServerWebSocketSendStatus;
+    send(data: string | BufferSource | Blob, compress?: boolean): ServerWebSocketSendStatus;
 
     /**
      * Sends a text message to the client.
@@ -102,7 +102,7 @@ declare module "bun" {
      * ws.send(new Uint8Array([1, 2, 3, 4]), true);
      * ```
      */
-    sendBinary(data: BufferSource, compress?: boolean): ServerWebSocketSendStatus;
+    sendBinary(data: BufferSource | Blob, compress?: boolean): ServerWebSocketSendStatus;
 
     /**
      * Closes the connection.
@@ -134,14 +134,14 @@ declare module "bun" {
      *
      * @param data The data to send
      */
-    ping(data?: string | BufferSource): ServerWebSocketSendStatus;
+    ping(data?: string | BufferSource | Blob): ServerWebSocketSendStatus;
 
     /**
      * Sends a pong.
      *
      * @param data The data to send
      */
-    pong(data?: string | BufferSource): ServerWebSocketSendStatus;
+    pong(data?: string | BufferSource | Blob): ServerWebSocketSendStatus;
 
     /**
      * Sends a message to subscribers of the topic.
@@ -156,7 +156,7 @@ declare module "bun" {
      * ws.publish("chat", new Uint8Array([1, 2, 3, 4]));
      * ```
      */
-    publish(topic: string, data: string | BufferSource, compress?: boolean): ServerWebSocketSendStatus;
+    publish(topic: string, data: string | BufferSource | Blob, compress?: boolean): ServerWebSocketSendStatus;
 
     /**
      * Sends a text message to subscribers of the topic.
@@ -184,29 +184,32 @@ declare module "bun" {
      * ws.publish("chat", new Uint8Array([1, 2, 3, 4]), true);
      * ```
      */
-    publishBinary(topic: string, data: BufferSource, compress?: boolean): ServerWebSocketSendStatus;
+    publishBinary(topic: string, data: BufferSource | Blob, compress?: boolean): ServerWebSocketSendStatus;
 
     /**
      * Subscribes a client to the topic.
      *
      * @param topic The topic name.
+     * @returns `true` if the client is now subscribed, `false` if the socket is closed.
      * @example
      * ```ts
      * ws.subscribe("chat");
      * ```
      */
-    subscribe(topic: string): void;
+    subscribe(topic: string): boolean;
 
     /**
      * Unsubscribes a client from the topic.
      *
      * @param topic The topic name.
+     * @returns `true` if the client was subscribed and is now unsubscribed,
+     * `false` if the socket is closed or the client was not subscribed to the topic.
      * @example
      * ```ts
      * ws.unsubscribe("chat");
      * ```
      */
-    unsubscribe(topic: string): void;
+    unsubscribe(topic: string): boolean;
 
     /**
      * Returns whether the client is subscribed to the topic.
@@ -1026,7 +1029,7 @@ declare module "bun" {
      */
     publish(
       topic: string,
-      data: string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer,
+      data: string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer | Blob,
       compress?: boolean,
     ): ServerWebSocketSendStatus;
 

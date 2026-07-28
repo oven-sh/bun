@@ -1194,20 +1194,18 @@ pub(super) extern "C" fn napi_make_callback(
         &[]
     };
 
+    // Node.js returns napi_pending_exception iff the callback threw, leaves the
+    // exception pending for napi_is_exception_pending / napi_get_and_clear_last_exception,
+    // and does not write *result in that case. A callback that *returns* an Error
+    // without throwing is napi_ok.
     let res = match func.call(env.to_js(), this_value, args_slice) {
         Ok(v) => v,
-        // TODO: handle errors correctly
-        Err(err) => env.to_js().take_exception(err),
+        Err(_) => return env.pending_exception(),
     };
 
     // SAFETY: `maybe_result` is null or a valid exclusive out-param per N-API contract.
     if let Some(result) = unsafe { maybe_result.as_mut() } {
         result.set(env, res);
-    }
-
-    // TODO: this is likely incorrect
-    if res.is_any_error() {
-        return NapiEnv::set_last_error(Some(env), NapiStatus::pending_exception);
     }
 
     env.ok()

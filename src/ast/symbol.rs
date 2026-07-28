@@ -102,16 +102,13 @@ pub struct Symbol {
     /// undefined, which this status is also used for.
     pub import_item_status: ImportItemStatus,
 
-    /// Packed boolean state — see [`SymbolFlags`]. Six former `bool` fields
-    /// collapsed into one byte.
+    /// Packed boolean state — see [`SymbolFlags`].
     pub flags: SymbolFlags,
 }
 
 bitflags::bitflags! {
     #[derive(Copy, Clone, Eq, PartialEq, Default, Debug)]
     pub struct SymbolFlags: u8 {
-        const DID_KEEP_NAME = 1 << 0;
-
         const MUST_START_WITH_CAPITAL_LETTER_FOR_JSX = 1 << 1;
 
         /// Certain symbols must not be renamed or minified. For example, the
@@ -167,7 +164,7 @@ impl Default for Symbol {
             nested_scope_slot: INVALID_NESTED_SCOPE_SLOT,
             kind: Kind::Other,
             import_item_status: ImportItemStatus::None,
-            flags: SymbolFlags::DID_KEEP_NAME,
+            flags: SymbolFlags::empty(),
         }
     }
 }

@@ -317,7 +317,7 @@ impl HotReloaderEventLoop for EventLoop {
 /// With `RELOAD_IMMEDIATELY = true`, `Task::enqueue` diverges via
 /// `bun_core::reload_process()` before any concurrent task is enqueued, so
 /// this is never reached.
-impl HotReloaderEventLoop for bun_event_loop::AnyEventLoop<'static> {
+impl HotReloaderEventLoop for bun_event_loop::AnyEventLoop {
     fn enqueue_task_concurrent(_this: &Self, _task: core::ptr::NonNull<ConcurrentTask>) {
         unreachable!()
     }
@@ -798,8 +798,9 @@ where
         );
 
         // SAFETY: `watcher_ptr` was just installed into `ctx` and is live.
-        if unsafe { (*watcher_ptr).start() }.is_err() {
-            panic!("Failed to start File Watcher");
+        if let Err(err) = unsafe { (*watcher_ptr).start() } {
+            bun_core::handle_error_return_trace(&err);
+            Output::panic(format_args!("Failed to start File Watcher: {}", err.name()));
         }
     }
 
@@ -1315,7 +1316,7 @@ where
 // in via the `#[no_mangle]` hook below.
 
 impl<'a> HotReloaderCtx for bun_bundler::BundleV2<'a> {
-    type EventLoop = bun_event_loop::AnyEventLoop<'static>;
+    type EventLoop = bun_event_loop::AnyEventLoop;
 
     fn event_loop(&self) -> *mut Self::EventLoop {
         // With RELOAD_IMMEDIATELY=true the only caller
@@ -1390,7 +1391,7 @@ impl<'a> HotReloaderCtx for bun_bundler::BundleV2<'a> {
 /// `'static` because the only caller (`bun build --watch`)
 /// allocates the transpiler from the process-lifetime CLI arena.
 type BundlerWatcher =
-    NewHotReloader<bun_bundler::BundleV2<'static>, bun_event_loop::AnyEventLoop<'static>, true>;
+    NewHotReloader<bun_bundler::BundleV2<'static>, bun_event_loop::AnyEventLoop, true>;
 
 /// CYCLEBREAK extern hook: called from `BundleV2::init` (T5) when
 /// `cli_watch_flag` is set. Defined here (not in

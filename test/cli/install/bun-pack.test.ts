@@ -1707,6 +1707,30 @@ describe("entry points", () => {
     ]);
   });
 
+  test('"main" that names a directory is skipped', async () => {
+    await Promise.all([
+      write(
+        join(packageDir, "package.json"),
+        JSON.stringify({
+          name: "pack-entry-dir",
+          version: "1.0.0",
+          main: "./lib",
+          files: ["dist"],
+        }),
+      ),
+      write(join(packageDir, "dist", "bundle.js"), "exports.b=1"),
+      write(join(packageDir, "lib", "index.js"), "module.exports=1"),
+    ]);
+
+    await pack(packageDir, bunEnv);
+
+    const tarball = readTarball(join(packageDir, "pack-entry-dir-1.0.0.tgz"));
+    expect(tarball.entries).toMatchObject([
+      { pathname: "package/package.json" },
+      { pathname: "package/dist/bundle.js" },
+    ]);
+  });
+
   test('"browser" object map is not force-included', async () => {
     await Promise.all([
       write(

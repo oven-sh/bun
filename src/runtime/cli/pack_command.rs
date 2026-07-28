@@ -2743,6 +2743,20 @@ pub(crate) fn pack<const FOR_PUBLISH: bool>(
                 }
             };
 
+            // `main` / `browser` / `bin` may name a directory (or other
+            // non-regular file). `openat` succeeds on a directory on POSIX,
+            // so the ENOENT skip above is bypassed; archiving it as a regular
+            // file would crash on EISDIR from `read()`.
+            if item.optional && !bun_core::S::ISREG(stat.st_mode as bun_sys::Mode) {
+                ctx.stats.total_files -= 1;
+                if log_level.show_progress() {
+                    node.as_mut()
+                        .expect("infallible: progress active")
+                        .complete_one();
+                }
+                continue;
+            }
+
             pack_list.push(PackListEntry {
                 subpath: ZBox::from_bytes(item.path.as_bytes()),
                 size: usize::try_from(stat.st_size).expect("int cast"),
@@ -3955,6 +3969,11 @@ fn print_archived_files_and_packages<const IS_DRY_RUN: bool>(
                     Global::crash();
                 }
             };
+
+            if item.optional && !bun_core::S::ISREG(stat.st_mode as bun_sys::Mode) {
+                ctx.stats.total_files -= 1;
+                continue;
+            }
 
             ctx.stats.unpacked_size += usize::try_from(stat.st_size).expect("int cast");
 

@@ -288,9 +288,7 @@ impl ReadableStream {
         ReadableStream__is(value)
     }
 
-    /// When the stream's state is errored, returns its `storedError`
-    /// (`undefined` when the stream errored without a stored value). Returns
-    /// `None` for every other state.
+    /// `[[storedError]]` when `[[state]]` is "errored"; `None` otherwise.
     pub fn stored_error(&self, global_object: &JSGlobalObject) -> Option<JSValue> {
         let err = ReadableStream__getStoredError(self.value, global_object);
         if err.is_empty() { None } else { Some(err) }

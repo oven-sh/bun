@@ -1477,8 +1477,6 @@ impl BlobExt for Blob {
                         | bun_sys::O::NONBLOCK;
                     let open_mode = mode.unwrap_or(WRITE_PERMISSIONS);
                     let mut opened = bun_sys::open(path, open_flags, open_mode);
-                    // `Bun.write`'s `createPath` (default true): create the
-                    // parent directories and retry the open once.
                     if let bun_sys::Result::Err(ref err) = opened {
                         if err.get_errno() == bun_sys::E::ENOENT && mkdirp_if_not_exists {
                             match mkdirp_parent_of(path.as_bytes()) {
@@ -1486,9 +1484,7 @@ impl BlobExt for Blob {
                                     opened = bun_sys::open(path, open_flags, open_mode);
                                 }
                                 MkdirpParentResult::Failed(mkdir_err) => {
-                                    // Reject with mkdir's own error (it carries
-                                    // the directory path); `with_path` below
-                                    // would mislabel it with the file path.
+                                    // mkdir_err carries the directory path; don't relabel it.
                                     return Ok(JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
                                         global_this,
                                         mkdir_err.to_js(global_this),
@@ -1605,7 +1601,6 @@ impl BlobExt for Blob {
                 let stream_start = streams::Start::FileSink(streams::FileSinkOptions {
                     input_path,
                     chunk_size: 0,
-                    // `Bun.write` replaces the destination's contents.
                     truncate: true,
                     mode: mode.unwrap_or(WRITE_PERMISSIONS),
                     ..Default::default()
@@ -1613,8 +1608,6 @@ impl BlobExt for Blob {
 
                 // SAFETY: `init` returns a freshly-allocated +1 *mut FileSink.
                 let mut started = unsafe { (*sink).start(&stream_start) };
-                // `Bun.write`'s `createPath` (default true): create the parent
-                // directories and retry the start (which re-opens) once.
                 if let bun_sys::Result::Err(ref err) = started {
                     if err.get_errno() == bun_sys::E::ENOENT && mkdirp_if_not_exists {
                         if let PathOrFileDescriptor::Path(p) = &store.data.as_file().pathlike {
@@ -1727,8 +1720,6 @@ impl BlobExt for Blob {
                         // SAFETY: release our +1 ref on the sink.
                         unsafe { webcore::FileSink::deref(file_sink) };
                         readable_stream.cancel(global_this);
-                        // The rejection is forwarded to the promise returned
-                        // below; don't also report it as unhandled.
                         promise.set_handled(global_this.vm());
                         return Ok(JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
                             global_this,
@@ -4483,18 +4474,12 @@ pub fn mkdir_if_not_exists<T: MkdirpTarget>(
 }
 
 pub enum MkdirpParentResult {
-    /// Parent directories exist now; retry the open.
     Created,
-    /// `mkdir -p` itself failed; surface this error instead of the open's.
     Failed(bun_sys::Error),
-    /// Nothing to create (no parent component); keep the open's error.
     NoParent,
 }
 
-/// `mkdir -p` the parent directory of `dest_path` on the JS thread. Mirrors
-/// the ENOENT retry in `mkdir_if_not_exists` for
-/// `pipe_readable_stream_to_blob`, whose open does not go through the
-/// write-file task machinery.
+/// `mkdir -p` the parent of `dest_path`; the ENOENT retry for `pipe_readable_stream_to_blob`'s open.
 fn mkdirp_parent_of(dest_path: &[u8]) -> MkdirpParentResult {
     let Some(dirname) = bun_core::dirname(dest_path) else {
         return MkdirpParentResult::NoParent;
@@ -5374,9 +5359,6 @@ pub fn write_file_internal(
             break 'brk Blob::init_with_store(archive.store_ref().clone(), global_this);
         }
 
-        // Pipe a ReadableStream (or async iterable) into the destination
-        // instead of letting `Blob::get` stringify it to
-        // "[object ReadableStream]".
         if let Some(stream) = ReadableStream::from_js(data, global_this)? {
             if stream.is_disturbed(global_this) {
                 destination_blob.detach();
@@ -5384,17 +5366,13 @@ pub fn write_file_internal(
                     "ReadableStream has already been used"
                 )));
             }
-            // Reject locked streams before the pipe truncates the destination;
-            // the pipe's `getReader()` would fail anyway, but only after the
-            // destination file had been opened with `O_TRUNC`.
+            // Preflight locked/errored so the pipe's `O_TRUNC` open doesn't run first.
             if stream.is_locked(global_this) {
                 destination_blob.detach();
                 return Err(
                     global_this.throw_invalid_arguments(format_args!("ReadableStream is locked"))
                 );
             }
-            // A stream that is already errored can never produce bytes; reject
-            // with its stored error before the pipe truncates the destination.
             if let Some(stored_error) = stream.stored_error(global_this) {
                 destination_blob.detach();
                 return Ok(

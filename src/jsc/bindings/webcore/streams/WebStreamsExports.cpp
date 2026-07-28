@@ -125,8 +125,7 @@ extern "C" bool ReadableStream__isLocked(JSC::EncodedJSValue possibleReadableStr
     return stream && isReadableStreamLocked(stream);
 }
 
-// Returns [[storedError]] when [[state]] is "errored", and an empty JSValue otherwise
-// (including when the value is not a ReadableStream).
+// [[storedError]] when [[state]] is "errored"; empty JSValue otherwise.
 extern "C" JSC::EncodedJSValue ReadableStream__getStoredError(JSC::EncodedJSValue possibleReadableStream, Zig::GlobalObject*)
 {
     auto* stream = dynamicDowncast<JSReadableStream>(JSValue::decode(possibleReadableStream));

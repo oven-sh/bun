@@ -40,12 +40,7 @@ pub struct FileSink {
     pub writer: JsCell<IOWriter>,
     pub event_loop_handle: EventLoopHandle,
     pub written: Cell<usize>,
-    /// Total bytes accepted by `write`/`write_latin1`/`write_utf16` (UTF-8
-    /// re-encoded length for string chunks). Unlike `written` — which mixes
-    /// "buffered" and "flushed" reports and can count the same bytes twice —
-    /// every accepted byte is counted here exactly once, so
-    /// `Blob::pipe_readable_stream_to_blob` can report how many bytes a piped
-    /// `ReadableStream` wrote.
+    /// Cumulative bytes the `write*` entry points accepted; counted once per chunk.
     pub received_bytes: Cell<u64>,
     pub pending: JsCell<streams::WritablePending>,
     pub signal: JsCell<streams::Signal>,
@@ -199,9 +194,7 @@ bun_io::impl_streaming_writer_parent! {
 pub struct Options {
     pub chunk_size: webcore::BlobSizeType,
     pub input_path: PathOrFileDescriptor,
-    /// Truncate the destination on open. Defaults to `false`:
-    /// `Bun.file(path).writer()` has always overwritten in place. Replace-style
-    /// writers (`Blob::pipe_readable_stream_to_blob`, i.e. `Bun.write`) opt in.
+    /// `O_TRUNC` on open. Default `false` preserves `Bun.file().writer()`'s overwrite-in-place.
     pub truncate: bool,
     pub close: bool,
     pub mode: bun_sys::Mode,
@@ -1015,14 +1008,9 @@ impl FileSink {
         this
     }
 
-    /// Count the bytes the writer accepted from a single `write*` call into
-    /// `received_bytes`. `Wrote`/`Pending` buffer whatever was not written
-    /// immediately, so the whole chunk was accepted. `Done` means the writer
-    /// stopped accepting; its amount comes from draining the *combined*
-    /// outgoing buffer (which may include already-counted bytes from earlier
-    /// chunks), so credit nothing — in practice it is always `Done(0)` here.
     fn count_received(&self, rc: &WriteResult, chunk_len: usize) {
         let accepted = match *rc {
+            // `Done(n)` is a final drain of the combined buffer, not this chunk.
             WriteResult::Err(_) | WriteResult::Done(_) => 0,
             WriteResult::Wrote(_) | WriteResult::Pending(_) => chunk_len,
         };
@@ -1030,11 +1018,7 @@ impl FileSink {
             .set(self.received_bytes.get() + accepted as u64);
     }
 
-    /// UTF-8 byte length the writer emits for `utf16`, matching
-    /// `convert_utf16_to_utf8_append`: well-formed input encodes as-is and an
-    /// unpaired surrogate becomes U+FFFD (3 bytes) via the WTF fallback.
-    /// `simdutf::length::utf8::from::utf16` is non-validating and counts an
-    /// unpaired surrogate as 2 bytes, so it cannot be used here.
+    /// UTF-8 length matching `convert_utf16_to_utf8_append`: unpaired surrogates become U+FFFD (3 bytes).
     fn utf8_len_from_utf16_lossy(utf16: &[u16]) -> usize {
         let mut len = 0usize;
         let mut i = 0usize;

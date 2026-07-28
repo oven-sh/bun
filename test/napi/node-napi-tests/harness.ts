@@ -116,13 +116,14 @@ function posixCompileArgs(target: GypTarget, include: string, out: string): stri
 // Prompt. This mirrors the node-gyp-generated MSBuild invocation for the addons here:
 // one translation unit per source, win_delay_load_hook.cc linked in, /DELAYLOAD:node.exe
 // so the hook can redirect the import to the host process at load time.
-function windowsCompileArgs(target: GypTarget, include: string, lib: string, out: string): string[] {
+function windowsCompileArgs(target: GypTarget, include: string, lib: string, scratch: string, out: string): string[] {
   return [
     "clang-cl",
     "/nologo",
     ...(target.sources[0].endsWith(".cc") ? ["/std:c++20", "/EHsc"] : []),
     "/MTd",
     "/Od",
+    "/Z7",
     `/I${include}`,
     `/DNODE_GYP_MODULE_NAME=${target.target_name}`,
     "/DBUILDING_NODE_EXTENSION",
@@ -132,10 +133,12 @@ function windowsCompileArgs(target: GypTarget, include: string, lib: string, out
     ...(target.defines ?? []).map(define => `/D${define}`),
     ...target.sources,
     join(import.meta.dir, "win_delay_load_hook.cc"),
-    `/Fo${out}${sep}`,
+    `/Fo${scratch}${sep}`,
     "/link",
     "/DLL",
-    `/OUT:${join(out, `${target.target_name}.node`)}`,
+    "/DEBUG",
+    `/OUT:${join(scratch, `${target.target_name}.node`)}`,
+    `/PDB:${join(out, `${target.target_name}.pdb`)}`,
     lib,
     "delayimp.lib",
     "/DELAYLOAD:node.exe",
@@ -175,7 +178,7 @@ async function tryBuildFast(dir: string): Promise<boolean> {
         const child = spawn({
           cmd:
             process.platform === "win32"
-              ? windowsCompileArgs(target, headers.include, headers.lib!, tmp)
+              ? windowsCompileArgs(target, headers.include, headers.lib!, tmp, outDir)
               : posixCompileArgs(target, headers.include, tmp),
           cwd: dir,
           stderr: "pipe",
@@ -200,7 +203,9 @@ async function tryBuildFast(dir: string): Promise<boolean> {
         console.warn(`direct compile of ${target.target_name} in ${dir} failed, falling back to node-gyp: ${error}`);
         return false;
       } finally {
-        if (process.platform === "win32") await rm(tmp, { recursive: true, force: true });
+        // Best-effort: a transient EBUSY/EPERM here must not override the return value and
+        // turn a successful fast-path build (or a clean fallback) into a hard test failure.
+        if (process.platform === "win32") await rm(tmp, { recursive: true, force: true }).catch(() => {});
       }
     }),
   );

@@ -1545,8 +1545,18 @@ impl<const SSL: bool> NewSocket<SSL> {
             // pending JS write the same way on_writable's tail does, otherwise
             // the do_socket_write backpressure arms the normal writable
             // subscription.
-            let _ = this.internal_flush();
-            if this.buffered_data_for_node_net.get().len() == 0 {
+            let flushed = this.internal_flush();
+            // A fatal send empties the buffer by *dropping* it, so an empty
+            // buffer no longer means everything was written. Dispatching the
+            // drain here would complete the pending JS write callback with
+            // success for bytes that were discarded (measured: 'drain' arrived
+            // before the 'error', so the callback saw null where Node reports
+            // EPIPE). Leave the latched errno for on_writable, whose fatal
+            // path fails that same callback with the error.
+            if flushed == 0
+                && this.pending_fatal_send_errno.get() == 0
+                && this.buffered_data_for_node_net.get().len() == 0
+            {
                 let drain_callback = handlers.on_writable();
                 if !drain_callback.is_empty() {
                     if let Err(err) = drain_callback.call(&global, this_value, &[this_value]) {

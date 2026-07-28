@@ -20,12 +20,17 @@ test("dns.resolveTlsa is exposed everywhere node:dns exposes it", () => {
 
 test("resolver.resolve accepts 'TLSA' as an rrtype", () => {
   const resolver = new dns.promises.Resolver({ timeout: 500, tries: 1 });
-  // Must not throw ERR_INVALID_ARG_VALUE synchronously.
-  const p = resolver.resolve("tlsa.invalid", "TLSA");
-  expect(p).toBeInstanceOf(Promise);
-  // Swallow the eventual rejection so the test doesn't leave an unhandled rejection.
-  p.catch(() => {});
-  resolver.cancel();
+  // Point at an unreachable local address so no real network traffic is sent.
+  resolver.setServers(["127.0.0.1:1"]);
+  try {
+    // Must not throw ERR_INVALID_ARG_VALUE synchronously.
+    const p = resolver.resolve("tlsa.invalid", "TLSA");
+    expect(p).toBeInstanceOf(Promise);
+    // Swallow the eventual rejection so the test doesn't leave an unhandled rejection.
+    p.catch(() => {});
+  } finally {
+    resolver.cancel();
+  }
 });
 
 describe("dns.resolveTlsa against a local mock server", () => {

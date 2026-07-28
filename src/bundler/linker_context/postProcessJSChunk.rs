@@ -1,4 +1,3 @@
-use crate::DeclInfoKind;
 use crate::LinkerContext;
 use crate::analyze_transpiled_module::{self, ModuleInfo};
 use crate::bundle_v2::bake_types::{HmrRuntimeSide, get_hmr_runtime};
@@ -223,24 +222,6 @@ pub fn post_process_js_chunk(
     // Populate ModuleInfo with declarations collected during parallel printing,
     // external import records from the original AST, and wrapper refs.
     if let Some(mi) = module_info.as_deref_mut() {
-        // 1. Add declarations collected by DeclCollector during parallel part printing.
-        // These come from the CONVERTED statements (after convertStmtsForChunk transforms
-        // export default → var, strips exports, etc.), so they match what's actually printed.
-        for cr in chunk.compile_results_for_chunk.iter() {
-            let decls = match cr {
-                CompileResult::Javascript { decls, .. } => decls,
-                _ => continue,
-            };
-            for decl in decls.iter() {
-                let var_kind: analyze_transpiled_module::VarKind = match decl.kind {
-                    DeclInfoKind::Declared => analyze_transpiled_module::VarKind::Declared,
-                    DeclInfoKind::Lexical => analyze_transpiled_module::VarKind::Lexical,
-                };
-                let string_id = mi.str(&decl.name);
-                mi.add_var(string_id, var_kind);
-            }
-        }
-
         // 1b. Check if any source in this chunk uses import.meta. The per-part
         // parallel printer does not have module_info, so the printer cannot set
         // this flag during per-part printing. We derive it from the AST instead.
@@ -338,10 +319,6 @@ pub fn post_process_js_chunk(
                                         let local_name = chunk.renamer.name_for_symbol(name_ref);
                                         mi.str(local_name)
                                     };
-                                    mi.add_var(
-                                        local_name_id,
-                                        analyze_transpiled_module::VarKind::Lexical,
-                                    );
                                     let default_id = mi.str(b"default");
                                     mi.add_import_info_single(
                                         irp_id,
@@ -359,10 +336,6 @@ pub fn post_process_js_chunk(
                                         let local_name = chunk.renamer.name_for_symbol(name_ref);
                                         mi.str(local_name)
                                     };
-                                    mi.add_var(
-                                        local_name_id,
-                                        analyze_transpiled_module::VarKind::Lexical,
-                                    );
                                     // SAFETY: ClauseItem.alias is an arena `*const [u8]`; never null.
                                     let alias_id = mi.str(item.alias.slice());
                                     mi.add_import_info_single(
@@ -382,10 +355,6 @@ pub fn post_process_js_chunk(
                                     let local_name = chunk.renamer.name_for_symbol(s.namespace_ref);
                                     mi.str(local_name)
                                 };
-                                mi.add_var(
-                                    local_name_id,
-                                    analyze_transpiled_module::VarKind::Lexical,
-                                );
                                 mi.add_import_info_namespace(irp_id, local_name_id);
                             }
                         }
@@ -398,23 +367,6 @@ pub fn post_process_js_chunk(
 
         // 3. Add wrapper-generated declarations (init_xxx, require_xxx) that are
         // not in any part statement.
-        let all_wrapper_refs = c.graph.ast.items_wrapper_ref();
-        for part_range in chunk.content.javascript().parts_in_chunk_in_order.iter() {
-            let source_index = part_range.source_index.get() as usize;
-            if all_flags[source_index].wrap != crate::WrapKind::None {
-                let wrapper_ref = all_wrapper_refs[source_index];
-                if !wrapper_ref.is_empty() {
-                    let string_id = {
-                        let name = chunk.renamer.name_for_symbol(wrapper_ref);
-                        if name.is_empty() {
-                            continue;
-                        }
-                        mi.str(name)
-                    };
-                    mi.add_var(string_id, analyze_transpiled_module::VarKind::Declared);
-                }
-            }
-        }
     }
 
     // Generate the exports for the entry point, if there are any.
@@ -879,34 +831,6 @@ pub fn post_process_js_chunk(
 
 /// Recursively walk a binding and add all declared names to `ModuleInfo`.
 /// Handles `b_identifier`, `b_array`, `b_object`, and `b_missing`.
-fn add_binding_vars_to_module_info(
-    mi: &mut ModuleInfo,
-    binding: Binding,
-    var_kind: analyze_transpiled_module::VarKind,
-    r: &mut js_printer::renamer::Renamer<'_, '_>,
-    symbols: &bun_ast::symbol::Map,
-) {
-    match binding.data {
-        B::B::BIdentifier(b) => {
-            let name = r.name_for_symbol(symbols.follow(b.r#ref));
-            if !name.is_empty() {
-                let str_id = mi.str(name);
-                mi.add_var(str_id, var_kind);
-            }
-        }
-        B::B::BArray(b) => {
-            for item in b.items() {
-                add_binding_vars_to_module_info(mi, item.binding, var_kind, r, symbols);
-            }
-        }
-        B::B::BObject(b) => {
-            for prop in b.properties() {
-                add_binding_vars_to_module_info(mi, prop.value, var_kind, r, symbols);
-            }
-        }
-        B::B::BMissing(_) => {}
-    }
-}
 
 // `js_printer::print` ties bump/Options/import_records/renamer to a
 // single `'a`, and `Renamer<'r, 'src>` is invariant in `'src` — so the caller's
@@ -919,8 +843,8 @@ pub fn generate_entry_point_tail_js<'a>(
     source_index: IndexInt,
     arena: &'a Arena,
     temp_arena: &Arena,
-    mut r: js_printer::renamer::Renamer<'a, 'a>,
-    mut module_info: Option<&'a mut ModuleInfo>,
+    r: js_printer::renamer::Renamer<'a, 'a>,
+    module_info: Option<&'a mut ModuleInfo>,
 ) -> CompileResult {
     let flags: crate::js_meta::Flags = c.graph.meta.items_flags()[source_index as usize];
     let mut stmts: Vec<Stmt> = Vec::new();
@@ -1303,35 +1227,6 @@ pub fn generate_entry_point_tail_js<'a>(
             // of this parser, which the node project uses to detect named exports in
             // CommonJS files: https://github.com/guybedford/cjs-module-lexer. Think of
             // this code as an annotation for that parser.
-        }
-    }
-
-    // Add generated local declarations from entry point tail to module_info.
-    // This captures vars like `var export_foo = cjs.foo` for CJS export copies.
-    // Reshaped for borrowck — reborrow via as_deref_mut so module_info
-    // remains usable for print_options below.
-    if let Some(mi) = module_info.as_mut() {
-        let mi: &mut ModuleInfo = &mut **mi;
-        for stmt in stmts.iter() {
-            match &stmt.data {
-                StmtData::SLocal(s) => {
-                    let var_kind: analyze_transpiled_module::VarKind = if s.kind == S::Kind::KVar {
-                        analyze_transpiled_module::VarKind::Declared
-                    } else {
-                        analyze_transpiled_module::VarKind::Lexical
-                    };
-                    for decl in s.decls.slice() {
-                        add_binding_vars_to_module_info(
-                            mi,
-                            decl.binding,
-                            var_kind,
-                            &mut r,
-                            &c.graph.symbols,
-                        );
-                    }
-                }
-                _ => {}
-            }
         }
     }
 

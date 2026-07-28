@@ -78,10 +78,6 @@ pub mod analyze_transpiled_module {
     #[repr(u8)]
     #[derive(Clone, Copy, PartialEq, Eq)]
     pub enum RecordKind {
-        /// var_name
-        DeclaredVariable,
-        /// let_name
-        LexicalVariable,
         /// module_name, import_name, local_name
         ImportInfoSingle,
         /// module_name, import_name, local_name
@@ -106,7 +102,6 @@ pub mod analyze_transpiled_module {
     impl RecordKind {
         pub fn len(self) -> usize {
             match self {
-                Self::DeclaredVariable | Self::LexicalVariable => 1,
                 Self::ImportInfoSingle => 3,
                 Self::ImportInfoSingleTypeScript => 3,
                 Self::ImportInfoNamespace => 3,
@@ -170,12 +165,6 @@ pub mod analyze_transpiled_module {
         pub fn host_defined(value: StringID) -> Self {
             Self(value.0)
         }
-    }
-
-    #[derive(Clone, Copy, PartialEq, Eq)]
-    pub enum VarKind {
-        Declared,
-        Lexical,
     }
 
     /// `AbstractModuleRecord::ModulePhase` — only `Evaluation` and `Defer`
@@ -351,24 +340,11 @@ pub mod analyze_transpiled_module {
             }
         }
 
-        pub fn add_var(&mut self, name: StringID, kind: VarKind) {
-            match kind {
-                VarKind::Declared => self.add_declared_variable(name),
-                VarKind::Lexical => self.add_lexical_variable(name),
-            }
-        }
-
         fn add_record(&mut self, kind: RecordKind, data: &[StringID]) {
             debug_assert!(!self.finalized);
             debug_assert_eq!(data.len(), kind.len());
             self.record_kinds.push(kind);
             self.buffer.extend_from_slice(data);
-        }
-        pub fn add_declared_variable(&mut self, id: StringID) {
-            self.add_record(RecordKind::DeclaredVariable, &[id]);
-        }
-        pub fn add_lexical_variable(&mut self, id: StringID) {
-            self.add_record(RecordKind::LexicalVariable, &[id]);
         }
         pub fn add_import_info_single(
             &mut self,
@@ -1298,7 +1274,6 @@ pub enum IsTopLevel {
 #[derive(Clone, Copy, Default)]
 pub struct TopLevelAndIsExport {
     pub is_export: bool,
-    pub is_top_level: Option<analyze_transpiled_module::VarKind>,
 }
 
 #[derive(Clone, Copy)]
@@ -1826,26 +1801,7 @@ pub mod __gated_printer {
             // Record var declarations for module_info. printGlobalBunImportStatement
             // bypasses printDeclStmt/printBinding, so we must record vars explicitly.
             // reshaped for borrowck — compute names before borrowing module_info.
-            if Self::MAY_HAVE_MODULE_INFO && self.module_info.is_some() {
-                if !import.star_name_loc.is_empty() {
-                    let name = self.name_for_symbol(import.namespace_ref);
-                    let mi = self.module_info().expect("infallible: module_info enabled");
-                    let id = mi.str(name);
-                    mi.add_var(id, analyze_transpiled_module::VarKind::Declared);
-                }
-                if let Some(default) = &import.default_name {
-                    let name = self.name_for_symbol(default.ref_);
-                    let mi = self.module_info().expect("infallible: module_info enabled");
-                    let id = mi.str(name);
-                    mi.add_var(id, analyze_transpiled_module::VarKind::Declared);
-                }
-                for item in slice_of(import.items).iter() {
-                    let name = self.name_for_symbol(item.name.ref_);
-                    let mi = self.module_info().expect("infallible: module_info enabled");
-                    let id = mi.str(name);
-                    mi.add_var(id, analyze_transpiled_module::VarKind::Declared);
-                }
-            }
+            if Self::MAY_HAVE_MODULE_INFO && self.module_info.is_some() {}
         }
 
         #[inline]
@@ -4746,9 +4702,6 @@ pub mod __gated_printer {
                         let local_name = self.name_for_symbol(b.r#ref);
                         if let Some(mi) = self.module_info() {
                             let name_id = mi.str(local_name);
-                            if let Some(vk) = tlm.is_top_level {
-                                mi.add_var(name_id, vk);
-                            }
                             if tlm.is_export {
                                 mi.add_export_info_local(name_id, name_id);
                             }
@@ -4864,9 +4817,6 @@ pub mod __gated_printer {
                                                         if Self::MAY_HAVE_MODULE_INFO {
                                                             if let Some(mi) = self.module_info() {
                                                                 let name_id = mi.str(str.slice8());
-                                                                if let Some(vk) = tlm.is_top_level {
-                                                                    mi.add_var(name_id, vk);
-                                                                }
                                                                 if tlm.is_export {
                                                                     mi.add_export_info_local(
                                                                         name_id, name_id,
@@ -4902,9 +4852,6 @@ pub mod __gated_printer {
                                                         let str8 = str.slice(self.bump);
                                                         if let Some(mi) = self.module_info() {
                                                             let name_id = mi.str(str8);
-                                                            if let Some(vk) = tlm.is_top_level {
-                                                                mi.add_var(name_id, vk);
-                                                            }
                                                             if tlm.is_export {
                                                                 mi.add_export_info_local(
                                                                     name_id, name_id,
@@ -5016,11 +4963,6 @@ pub mod __gated_printer {
                     if Self::MAY_HAVE_MODULE_INFO {
                         if let Some(mi) = self.module_info() {
                             let name_id = mi.str(local_name);
-                            // function declarations are lexical (block-scoped in modules);
-                            // only record at true top-level, not inside blocks.
-                            if tlmtlo.is_top_level == IsTopLevel::Yes {
-                                mi.add_var(name_id, analyze_transpiled_module::VarKind::Lexical);
-                            }
                             if s.func.flags.contains(G::FnFlags::IsExport) {
                                 mi.add_export_info_local(name_id, name_id);
                             }
@@ -5052,9 +4994,6 @@ pub mod __gated_printer {
                     if Self::MAY_HAVE_MODULE_INFO {
                         if let Some(mi) = self.module_info() {
                             let name_id = mi.str(name_str);
-                            if tlmtlo.is_top_level == IsTopLevel::Yes {
-                                mi.add_var(name_id, analyze_transpiled_module::VarKind::Lexical);
-                            }
                             if s.is_export {
                                 mi.add_export_info_local(name_id, name_id);
                             }
@@ -5092,10 +5031,6 @@ pub mod __gated_printer {
                                     mi.add_export_info_local(
                                         default_id,
                                         analyze_transpiled_module::StringID::STAR_DEFAULT,
-                                    );
-                                    mi.add_var(
-                                        analyze_transpiled_module::StringID::STAR_DEFAULT,
-                                        analyze_transpiled_module::VarKind::Lexical,
                                     );
                                 }
                             }
@@ -5138,10 +5073,6 @@ pub mod __gated_printer {
                                         };
                                             let default_id = mi.str(b"default");
                                             mi.add_export_info_local(default_id, local_name);
-                                            mi.add_var(
-                                                local_name,
-                                                analyze_transpiled_module::VarKind::Lexical,
-                                            );
                                         }
                                     }
 
@@ -5173,10 +5104,6 @@ pub mod __gated_printer {
                                         };
                                             let default_id = mi.str(b"default");
                                             mi.add_export_info_local(default_id, local_name);
-                                            mi.add_var(
-                                                local_name,
-                                                analyze_transpiled_module::VarKind::Lexical,
-                                            );
                                         }
                                     }
 
@@ -5419,23 +5346,16 @@ pub mod __gated_printer {
                     self.add_source_mapping(stmt.loc);
                     match s.kind {
                         S::Kind::KConst => {
-                            self.print_decl_stmt(s.is_export, b"const", s.decls.slice(), tlmtlo)
+                            self.print_decl_stmt(s.is_export, b"const", s.decls.slice())
                         }
-                        S::Kind::KLet => {
-                            self.print_decl_stmt(s.is_export, b"let", s.decls.slice(), tlmtlo)
-                        }
-                        S::Kind::KVar => {
-                            self.print_decl_stmt(s.is_export, b"var", s.decls.slice(), tlmtlo)
-                        }
+                        S::Kind::KLet => self.print_decl_stmt(s.is_export, b"let", s.decls.slice()),
+                        S::Kind::KVar => self.print_decl_stmt(s.is_export, b"var", s.decls.slice()),
                         S::Kind::KUsing => {
-                            self.print_decl_stmt(s.is_export, b"using", s.decls.slice(), tlmtlo)
+                            self.print_decl_stmt(s.is_export, b"using", s.decls.slice())
                         }
-                        S::Kind::KAwaitUsing => self.print_decl_stmt(
-                            s.is_export,
-                            b"await using",
-                            s.decls.slice(),
-                            tlmtlo,
-                        ),
+                        S::Kind::KAwaitUsing => {
+                            self.print_decl_stmt(s.is_export, b"await using", s.decls.slice())
+                        }
                     }
                 }
                 StmtData::SIf(s) => {
@@ -5969,7 +5889,6 @@ pub mod __gated_printer {
                             let local_name = self.name_for_symbol(name.ref_);
                             let mi = self.module_info().expect("infallible: module_info enabled");
                             let local_name_id = mi.str(local_name);
-                            mi.add_var(local_name_id, analyze_transpiled_module::VarKind::Lexical);
                             let default_id = mi.str(b"default");
                             mi.add_import_info_single(irp_id, default_id, local_name_id, false);
                         }
@@ -5978,7 +5897,6 @@ pub mod __gated_printer {
                             let local_name = self.name_for_symbol(item.name.ref_);
                             let mi = self.module_info().expect("infallible: module_info enabled");
                             let local_name_id = mi.str(local_name);
-                            mi.add_var(local_name_id, analyze_transpiled_module::VarKind::Lexical);
                             let alias_id = mi.str(item.alias.slice());
                             mi.add_import_info_single(irp_id, alias_id, local_name_id, false);
                         }
@@ -5990,7 +5908,6 @@ pub mod __gated_printer {
                             let local_name = self.name_for_symbol(s.namespace_ref);
                             let mi = self.module_info().expect("infallible: module_info enabled");
                             let local_name_id = mi.str(local_name);
-                            mi.add_var(local_name_id, analyze_transpiled_module::VarKind::Lexical);
                             if phase_defer {
                                 mi.add_import_info_namespace_defer(irp_id, local_name_id);
                             } else {
@@ -6331,30 +6248,12 @@ pub mod __gated_printer {
             is_export: bool,
             keyword: &'static [u8],
             decls: &[G::Decl],
-            tlmtlo: TopLevel,
         ) {
             if is_export {
                 self.print(b"export ");
             }
             let tlm: TopLevelAndIsExport = if Self::MAY_HAVE_MODULE_INFO {
-                TopLevelAndIsExport {
-                    is_export,
-                    is_top_level: if keyword == b"var" {
-                        if tlmtlo.is_top_level() {
-                            Some(analyze_transpiled_module::VarKind::Declared)
-                        } else {
-                            None
-                        }
-                    } else {
-                        // let/const are block-scoped: only record at true top-level,
-                        // not inside blocks where subVar() downgrades to .var_only.
-                        if tlmtlo.is_top_level == IsTopLevel::Yes {
-                            Some(analyze_transpiled_module::VarKind::Lexical)
-                        } else {
-                            None
-                        }
-                    },
-                }
+                TopLevelAndIsExport { is_export }
             } else {
                 TopLevelAndIsExport::default()
             };
@@ -7519,8 +7418,6 @@ pub fn print_ast<'a, W: WriterTrait, const ASCII_ONLY: bool, const GENERATE_SOUR
         if PrinterType::<W, ASCII_ONLY, GENERATE_SOURCE_MAP>::MAY_HAVE_MODULE_INFO {
             if let Some(mi) = printer.module_info.as_deref_mut() {
                 mi.flags.contains_import_meta = true;
-                let s = mi.str(b"require");
-                mi.add_var(s, analyze_transpiled_module::VarKind::Declared);
             }
         }
     }

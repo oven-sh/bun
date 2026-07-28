@@ -18,18 +18,12 @@ describe("css_modules handle_composes", () => {
   });
 
   test("global composes builds a Global reference", () => {
-    const result = cssModulesTest(
-      `.alpha { composes: globalName from global; color: red; }`,
-    );
-    expect(result.exports.alpha.composes).toEqual([
-      { type: "global", name: "globalName" },
-    ]);
+    const result = cssModulesTest(`.alpha { composes: globalName from global; color: red; }`);
+    expect(result.exports.alpha.composes).toEqual([{ type: "global", name: "globalName" }]);
   });
 
   test("composes from file builds a Dependency reference", () => {
-    const result = cssModulesTest(
-      `.alpha { composes: other from "./other.module.css"; color: red; }`,
-    );
+    const result = cssModulesTest(`.alpha { composes: other from "./other.module.css"; color: red; }`);
     expect(result.exports.alpha.composes).toEqual([
       { type: "dependency", name: "other", specifier: "./other.module.css" },
     ]);
@@ -48,8 +42,6 @@ describe("css_modules handle_composes", () => {
   });
 
   test("invalid selector still errors", () => {
-    expect(() =>
-      cssModulesTest(`.a .b { composes: x; color: red; }`),
-    ).toThrow(/composes.*class selector/i);
+    expect(() => cssModulesTest(`.a .b { composes: x; color: red; }`)).toThrow(/composes.*class selector/i);
   });
 });

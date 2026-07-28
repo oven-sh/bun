@@ -33,9 +33,7 @@ impl<const BIG: bool> StatType<BIG> {
         Self { value: *stat_ }
     }
 
-    /// Node.js reinterprets stat times via `static_cast<unsigned long>`, which
-    /// on win32 is 32-bit (libuv's Y2038 wrap); on other platforms the cast is
-    /// a 64-bit bit-pattern round-trip, so negative values survive as pre-epoch.
+    /// Matches Node's `static_cast<unsigned long>` of stat times: 32-bit wrap on win32, signed-preserving elsewhere.
     #[inline]
     fn timespec_parts(ts: StatTimespec) -> (i64, i64) {
         #[cfg(windows)]
@@ -53,8 +51,6 @@ impl<const BIG: bool> StatType<BIG> {
         sec.saturating_mul(NS_PER_S).saturating_add(nsec)
     }
 
-    // Split into i64/f64 variants for const-generic type selection — see the
-    // struct-level note.
     fn to_time_ms_i64(ts: StatTimespec) -> i64 {
         let (sec, nsec) = Self::timespec_parts(ts);
         (sec * MS_PER_S).saturating_add(nsec / NS_PER_MS)

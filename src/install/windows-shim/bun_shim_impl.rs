@@ -7,12 +7,10 @@
 //! This also solves the 'Terminate batch job (Y/N)' problem you see when using NPM/Yarn,
 //! which is a HUGE dx win for developers.
 //!
-//! The metadata (target path + parsed shebang) lives in a `:bunx` NTFS
-//! alternate data stream on the launcher exe itself. On volumes that lack
-//! named-stream support (exFAT, some network shares) the installer writes a
-//! sibling `.bunx` file instead, so we probe the stream first and fall back
-//! to the sidecar. See `BinLinkingShim.rs` for the encoding; we read it here
-//! and call NtCreateProcess to spawn the correct child process.
+//! The metadata (target path + parsed shebang; encoded by `BinLinkingShim.rs`)
+//! lives in a `:bunx` NTFS stream on the launcher exe, or a sibling `.bunx`
+//! file when the volume lacks named streams. We probe the stream first, fall
+//! back to the sidecar, then NtCreateProcess the decoded target.
 //!
 //! Every attempt possible to make this file as minimal as possible has been made.
 //! Which has unfortunatly made is difficult to read. To make up for this, every
@@ -588,9 +586,7 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
             );
         }
     }
-    // In standalone mode we keep the full `.exe` suffix so we can first probe
-    // the `:bunx` alternate data stream on the image itself; the `.bunx`
-    // sidecar path is derived from the same buffer on fallback.
+    // Standalone keeps `.exe` so `:bunx` can be appended for the stream probe.
     let image_path_to_copy_b_len = if IS_STANDALONE {
         image_path_b_len
     } else {
@@ -609,8 +605,6 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
     let mut metadata_handle: HANDLE = core::ptr::null_mut();
     let mut io: IO_STATUS_BLOCK = bun_core::ffi::zeroed();
     if IS_STANDALONE {
-        // Opens `path_len_bytes` of buf1 via NtCreateFile. Factored so the
-        // ADS probe and the sidecar fallback share one call site.
         let open_metadata = |path_len_bytes: u16,
                              out_handle: &mut HANDLE,
                              io: &mut IO_STATUS_BLOCK|
@@ -625,8 +619,7 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
                     "NtCreateFile({})",
                     fmt16(unsafe { unicode_string_to_u16(&nt_name) })
                 );
-                // NtCreateFile will fail for absolute paths if we do not pass an OBJECT name
-                // so we need the prefix here. This is an extra sanity check.
+                // NtCreateFile requires the `\??\` object prefix for absolute paths.
                 debug_assert!(
                     unsafe { unicode_string_to_u16(&nt_name) }.starts_with(&NT_OBJECT_PREFIX)
                 );

@@ -4041,10 +4041,8 @@ impl BunXFastPath {
             ..Default::default()
         };
 
-        // Prefer the `:bunx` alternate data stream on the exe. Callers built
-        // `<...>.bunx` at `[..path_len]`; rewrite the tail to `<...>.exe:bunx`
-        // (+4 u16s) for the probe, then restore `.bunx` so the buffer handed to
-        // the launcher (which walks it to find `node_modules`) is unchanged.
+        // Probe `<...>.exe:bunx` first, fall back to `<...>.bunx`; restore the
+        // `.bunx` tail afterwards since the launcher walks that shape.
         let ads_suffix = bun_core::w!(".exe:bunx");
         let ads_len = path_len - b".bunx".len() + ads_suffix.len();
         direct_launch_buffer[ads_len - ads_suffix.len()..ads_len].copy_from_slice(ads_suffix);

@@ -1194,9 +1194,7 @@ impl<'a> Linker<'a> {
             return;
         }
 
-        // Write the stub executable before the metadata so the NTFS alternate
-        // data stream we prefer for the metadata (`<name>.exe:bunx`) has a
-        // host file to attach to.
+        // Exe first so the `:bunx` stream below has a host file.
         let exe_suffix = w!(".exe\x00");
         dest_buf[abs_dest_w_len..abs_dest_w_len + exe_suffix.len()].copy_from_slice(exe_suffix);
         // SAFETY: dest_buf[abs_dest_w_len + ".exe".len()] == 0 written above
@@ -1212,8 +1210,7 @@ impl<'a> Linker<'a> {
                 let err: crate::Error = err.into();
                 match err {
                     crate::Error::Sys(bun_errno::SystemErrno::EBUSY) => {
-                        // exe is most likely running. Metadata is written to a
-                        // separate stream/file below, so continue.
+                        // exe is running; metadata goes to a separate stream/file below.
                     }
                     crate::Error::Sys(bun_errno::SystemErrno::ENOENT) if !global => {
                         let node_modules_path_save = self.node_modules_path.len();
@@ -1238,10 +1235,8 @@ impl<'a> Linker<'a> {
             }
         }
 
-        // Prefer an NTFS alternate data stream on the exe (`<name>.exe:bunx`)
-        // so `.bin` holds one file per bin. Volumes without named-stream
-        // support (exFAT, some network shares) reject this path; on any error
-        // fall back to the sibling `<name>.bunx` file.
+        // Prefer the `:bunx` alternate data stream; fall back to a `<name>.bunx`
+        // sidecar on any error (exFAT, some network shares lack named streams).
         let ads_suffix = w!(".exe:bunx\x00");
         dest_buf[abs_dest_w_len..abs_dest_w_len + ads_suffix.len()].copy_from_slice(ads_suffix);
         // SAFETY: dest_buf[abs_dest_w_len + ".exe:bunx".len()] == 0 written above
@@ -1258,8 +1253,7 @@ impl<'a> Linker<'a> {
                 self.err = Some(err.into());
                 return;
             }
-            // Remove any sibling `.bunx` left by a previous two-file install so
-            // readers do not see a stale sidecar alongside the stream.
+            // Drop any stale `.bunx` sidecar from the old two-file layout.
             let bunx_suffix = w!(".bunx\x00");
             dest_buf[abs_dest_w_len..abs_dest_w_len + bunx_suffix.len()]
                 .copy_from_slice(bunx_suffix);

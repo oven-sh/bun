@@ -403,10 +403,7 @@ static void nativeStorePendingView(JSC::VM& vm, JSNativeStreamSourceAdapter* ada
 }
 
 // Text mode: decode `bytes` against `state` and enqueue the resulting string
-// (empty strings are skipped). A non-flush chunk that decodes to nothing arms
-// m_pullAgain via callPullIfNeeded so the pull loop keeps going while the held-
-// back bytes wait for the rest of the sequence (same contract as
-// textDecodeReadRequestChunkSteps).
+// (empty strings are skipped; an empty non-flush decode re-arms the pull loop).
 static void nativeEnqueueTextChunk(JSGlobalObject* globalObject, JSReadableStreamDefaultController* controller, StreamingUTF8DecodeState& state, std::span<const uint8_t> bytes, bool flush)
 {
     auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));

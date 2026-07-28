@@ -1,4 +1,4 @@
-import { tempDir, tempDirWithFiles, isLinux } from "harness";
+import { isLinux, tempDir, tempDirWithFiles } from "harness";
 import { join } from "path";
 const assert = require("assert");
 const os = require("os");

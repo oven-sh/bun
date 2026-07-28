@@ -119,7 +119,9 @@ test("unsupported formData 1", async () => {
     res.end();
   }).listen(0);
   await once(server, "listening");
-  expect(fetch(`http://localhost:${server.address().port}`).then(res => res.formData())).rejects.toThrow(TypeError);
+  await expect(fetch(`http://localhost:${server.address().port}`).then(res => res.formData())).rejects.toThrow(
+    TypeError,
+  );
 });
 
 test("multipart formdata not base64", async () => {
@@ -508,7 +510,7 @@ test("error on redirect", async () => {
   }).listen(0);
   await once(server, "listening");
 
-  expect(
+  await expect(
     fetch(`http://localhost:${server.address().port}`, {
       redirect: "error",
     }),
@@ -556,7 +558,9 @@ test("fetching with Request object - issue #1527", async () => {
       body,
     });
 
-    expect(await fetch(request)).resolves.pass();
+    const res = await fetch(request);
+    expect(res.status).toBe(200);
+    expect(await res.text()).toBe("");
   } finally {
     server.closeAllConnections();
   }

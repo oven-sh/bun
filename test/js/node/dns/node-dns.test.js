@@ -447,7 +447,10 @@ describe("dns.reverse rejects invalid IP strings with EINVAL", () => {
       wire.push(labels.join("."));
       const q = m.subarray(12, o + 4);
       const enc = n =>
-        Buffer.concat([...n.split(".").map(p => Buffer.concat([Buffer.from([p.length]), Buffer.from(p)])), Buffer.from([0])]);
+        Buffer.concat([
+          ...n.split(".").map(p => Buffer.concat([Buffer.from([p.length]), Buffer.from(p)])),
+          Buffer.from([0]),
+        ]);
       const rd = enc("host.example");
       const a = Buffer.concat([Buffer.from([0xc0, 12, 0, 12, 0, 1, 0, 0, 0, 60, 0, rd.length]), rd]);
       const h = Buffer.alloc(12);

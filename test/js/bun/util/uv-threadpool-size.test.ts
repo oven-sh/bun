@@ -1,4 +1,4 @@
-import { describe, test, expect } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isLinux } from "harness";
 
 // UV_THREADPOOL_SIZE / GOMAXPROCS controls the worker pool size (clamped to
@@ -45,11 +45,7 @@ describe.skipIf(!isLinux)("UV_THREADPOOL_SIZE", () => {
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [stdout, stderr, exitCode] = await Promise.all([
-      proc.stdout.text(),
-      proc.stderr.text(),
-      proc.exited,
-    ]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
     expect(exitCode).toBe(0);
     return Number(stdout.trim());

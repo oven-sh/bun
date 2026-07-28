@@ -2006,9 +2006,8 @@ impl BlobExt for Blob {
 
         let this_size_i64 = i64::try_from(self.size.get()).expect("int cast");
         let mut neg_base: Option<i64> = None;
-        let mut resolve_neg = || {
-            *neg_base.get_or_insert_with(|| i64::try_from(self.view_size()).expect("int cast"))
-        };
+        let mut resolve_neg =
+            || *neg_base.get_or_insert_with(|| i64::try_from(self.view_size()).expect("int cast"));
 
         // If the optional start parameter is not used as a parameter, let relativeStart be 0.
         let mut relative_start: i64 = 0;

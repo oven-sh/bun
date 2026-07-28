@@ -270,12 +270,15 @@ describe("url", () => {
       "sub.xn--a-ecp.example",
       "XN--A-ECP.example",
       "xn--a-ecp.xn--fiqs8s",
+      // decodes to U+200D ZWJ: ICU UIDNA_ERROR_CONTEXTJ
+      "xn--0ug",
       // not decodable as Punycode at all
       "xn--pokxncvks",
       // empty ACE label
       "xn--",
       // percent-encoded "x": takes URLParser's percent-decoding slow path
       "%78n--a-ecp.example",
+      "%78n--0ug",
     ] as const;
 
     for (const scheme of ["http", "https", "ws", "wss", "ftp", "file"] as const) {

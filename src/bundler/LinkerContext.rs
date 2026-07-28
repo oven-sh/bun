@@ -394,8 +394,6 @@ impl<'a> LinkerContext<'a> {
 
     pub fn is_external_dynamic_import(&self, record: &ImportRecord) -> bool {
         use crate::linker_graph::FileColumns as _;
-        // Self-imports count too: every dynamic-import target is an entry point,
-        // and splitting never wraps it, so the record must become a chunk import.
         self.graph.code_splitting
             && record.kind == ImportKind::Dynamic
             && self.graph.files.items_entry_point_kind()[record.source_index.get() as usize]

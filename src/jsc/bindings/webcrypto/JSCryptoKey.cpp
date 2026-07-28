@@ -60,7 +60,6 @@
 #include <variant>
 #include <wtf/GetPtr.h>
 #include <wtf/PointerPreparations.h>
-#include <wtf/SortedArrayMap.h>
 #include <wtf/URL.h>
 
 namespace WebCore {

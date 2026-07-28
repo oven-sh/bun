@@ -1465,7 +1465,10 @@ pub mod package_manifest {
                 let bin_tag_at =
                     core::mem::offset_of!(PackageVersion, bin) + core::mem::offset_of!(Bin, tag);
                 let install_script_at = core::mem::offset_of!(PackageVersion, has_install_script);
-                for raw_pkg in raw.as_chunks::<{ core::mem::size_of::<PackageVersion>() }>().0 {
+                for raw_pkg in raw
+                    .as_chunks::<{ core::mem::size_of::<PackageVersion>() }>()
+                    .0
+                {
                     if !matches!(raw_pkg[bin_tag_at], 0..=4)
                         || !matches!(raw_pkg[install_script_at], 0 | 1)
                     {

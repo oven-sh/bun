@@ -254,10 +254,7 @@ impl ReadableStream {
         self.cancel(global_this);
     }
 
-    /// Transition the stream to the `errored` state (rejecting every pending
-    /// and future read request with `reason`) and release the native source.
-    /// Unlike [`Self::cancel`], pending reads reject instead of resolving
-    /// `{ done: true }`.
+    /// Like [`Self::cancel`] but pending reads reject with `reason` instead of resolving `{done: true}`.
     pub fn error(&self, global_this: &JSGlobalObject, reason: JSValue) {
         ReadableStream__error(self.value, global_this, reason);
         self.done(global_this);

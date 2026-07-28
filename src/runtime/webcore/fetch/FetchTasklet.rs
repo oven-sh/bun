@@ -752,14 +752,11 @@ impl FetchTasklet {
                 }
             }
 
-            // `body` (&mut response.body.value) and `get_fetch_headers()`
-            // (&response.init.headers) are disjoint fields, but borrowck can't see
-            // through the accessor methods. Hold `body` as a raw ptr.
+            // raw ptr: `body` and `get_fetch_headers()` are disjoint fields but borrowck can't see through the accessors.
             let body: *mut BodyValue = response.get_body_value();
-            // `BodyAbortListener::on_abort` may have already transitioned the
-            // body to `Error` while this callback was queued; don't clobber a
-            // terminal state with the late-arriving bytes. Checked before
-            // `buffer_reset.set(false)` so the defer still drops them.
+            // `BodyAbortListener::on_abort` may have set `Error` while this
+            // callback was queued; checked before `buffer_reset.set(false)` so
+            // the defer still drops the bytes.
             // SAFETY: just obtained from live `response`.
             if !matches!(unsafe { &*body }, BodyValue::Locked(_)) {
                 return Ok(());
@@ -1867,9 +1864,7 @@ impl FetchTasklet {
         // SAFETY: `response` is the live heap allocation owned by JSC after
         // `make_maybe_pooled`; `ref_` bumps the intrusive refcount.
         self.native_response = Some(Response::ref_(response));
-        // This tasklet's own abort listener is detached once the body is fully
-        // received; give the Response its own so aborting after that still
-        // errors the body (Fetch spec "abort a fetch" step 4).
+        // Response-owned listener so abort still errors the body after this tasklet detaches its own.
         if let Some(signal) = self.abort_signal() {
             // SAFETY: `response` is the live heap allocation owned by JSC.
             unsafe { Response::attach_abort_signal(response, &global_this, signal) };

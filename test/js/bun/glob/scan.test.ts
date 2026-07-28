@@ -1162,9 +1162,9 @@ describe.skipIf(!canCreateDirSymlink)("literal path segment through a symlinked 
     expect(scan("*/cyc1", { onlyFiles: true })).toEqual([]);
 
     // throwErrorOnBrokenSymlink still surfaces the failure.
-    expect(() => [...new Glob("dangling").scanSync({ cwd, onlyFiles: false, throwErrorOnBrokenSymlink: true })]).toThrow(
-      /ENOENT/,
-    );
+    expect(() => [
+      ...new Glob("dangling").scanSync({ cwd, onlyFiles: false, throwErrorOnBrokenSymlink: true }),
+    ]).toThrow(/ENOENT/);
   });
 });
 

@@ -75,9 +75,10 @@ impl DotEnvBehavior {
                 "pattern \"*\" has no prefix; use \"inline\" to inline every environment variable",
             ),
             1 if *s.last().unwrap() == b'*' => Ok((Self::prefix, Some(&s[..s.len() - 1]))),
-            1 => Err(
+            1 if s[0] == b'*' => Err(
                 "pattern must end with '*' (e.g. \"PUBLIC_*\"); a leading '*' would inline every variable including secrets",
             ),
+            1 => Err("pattern must end with '*' (e.g. \"PUBLIC_*\")"),
             _ => Err("pattern may contain only one '*'"),
         }
     }

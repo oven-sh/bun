@@ -10,6 +10,7 @@
 import { afterAll, beforeAll, expect, setDefaultTimeout, test } from "bun:test";
 import { bunEnv, bunExe, isLinux, isMusl, tempDir } from "harness";
 import { createHash } from "node:crypto";
+import { existsSync, readdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { gzipSync } from "node:zlib";
 
@@ -229,4 +230,55 @@ test.skipIf(!canShim)("concurrent installs sharing a cache survive a filesystem 
       expect(exitCode).toBe(0);
     }
   }
+});
+
+// An entry without package.json is incomplete and must be replaced by a fresh
+// extraction (exercising the rename-aside fallback, since EXCHANGE fails under
+// the shim), not kept as an equivalent existing entry.
+test.skipIf(!canShim)("repairs an incomplete cache entry instead of keeping it", async () => {
+  const { tgz, shasum, integrity } = buildTarball();
+  await using registry = makeRegistry(tgz, shasum, integrity);
+
+  using dir = tempDir("cache-repair", {
+    "proj/package.json": JSON.stringify({
+      name: "proj",
+      version: "1.0.0",
+      dependencies: { [PKG_NAME]: "1.0.0" },
+    }),
+    "proj/bunfig.toml": `[install]\nregistry = "${registry.url}"\n`,
+  });
+  const cacheDir = join(String(dir), ".cache");
+  const existingPreload = bunEnv.LD_PRELOAD;
+
+  const run = async () => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "install", "--backend=copyfile", "--linker=hoisted", "--no-progress"],
+      cwd: join(String(dir), "proj"),
+      env: {
+        ...bunEnv,
+        BUN_INSTALL_CACHE_DIR: cacheDir,
+        LD_PRELOAD: existingPreload ? `${shimPath}:${existingPreload}` : shimPath,
+        BUN_TEST_FAIL_RENAME_EXCHANGE: "1",
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  };
+
+  const first = await run();
+  expect(`${first.stdout}\n${first.stderr}`).not.toContain("error:");
+  expect(first.exitCode).toBe(0);
+
+  const entry = readdirSync(cacheDir).find(name => name.startsWith(`${PKG_NAME}@`));
+  expect(entry).toBeDefined();
+  rmSync(join(cacheDir, entry!, "package.json"));
+  rmSync(join(String(dir), "proj", "node_modules"), { recursive: true, force: true });
+
+  const second = await run();
+  expect(`${second.stdout}\n${second.stderr}`).not.toContain("error:");
+  expect(second.exitCode).toBe(0);
+  expect(existsSync(join(cacheDir, entry!, "package.json"))).toBe(true);
+  expect(existsSync(join(String(dir), "proj", "node_modules", PKG_NAME, "package.json"))).toBe(true);
 });

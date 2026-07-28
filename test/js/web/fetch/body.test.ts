@@ -1,6 +1,6 @@
 import { file, spawn, version } from "bun";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, exampleSite } from "harness";
+import { bunEnv, bunExe, exampleSite, tempDir } from "harness";
 
 const exampleServer = exampleSite("http");
 
@@ -769,5 +769,68 @@ describe("constructing a body from an unusable ReadableStream", () => {
     rs.getReader();
     expect(() => new Response(rs)).toThrow(TypeError);
     expect(() => new Request("http://example.com/", { method: "POST", body: rs, duplex: "half" })).toThrow(TypeError);
+  });
+});
+
+describe(".json() rejects with the same SyntaxError as JSON.parse", () => {
+  const jsonParseMessage = (input: string) => {
+    try {
+      JSON.parse(input);
+    } catch (e: any) {
+      return e.message;
+    }
+    throw new Error("unreachable");
+  };
+
+  const reject = (p: Promise<unknown>) =>
+    p.then(
+      v => ({ resolved: v }),
+      e => ({ name: e.name, message: e.message }),
+    );
+
+  const inputs = ['{"a": 1, oops}', "[1, 2,", "not json", '{"a":1,}', ""];
+
+  for (const body of inputs) {
+    const label = body || "<empty>";
+    const expected = { name: "SyntaxError", message: jsonParseMessage(body) };
+
+    test(`Response ${label}`, async () => {
+      expect(await reject(new Response(body).json())).toEqual(expected);
+    });
+    test(`Request ${label}`, async () => {
+      expect(await reject(new Request("http://x/", { method: "POST", body }).json())).toEqual(expected);
+    });
+    test(`Blob ${label}`, async () => {
+      expect(await reject(new Blob([body]).json())).toEqual(expected);
+    });
+    test(`ReadableStream body ${label}`, async () => {
+      const rs = new ReadableStream({
+        start(c) {
+          if (body.length) c.enqueue(new TextEncoder().encode(body));
+          c.close();
+        },
+      });
+      expect(await reject(new Response(rs).json())).toEqual(expected);
+    });
+  }
+
+  test("Bun.file()", async () => {
+    using dir = tempDir("body-json-error", { "bad.json": '{"a": 1, oops}' });
+    const expected = { name: "SyntaxError", message: jsonParseMessage('{"a": 1, oops}') };
+    expect(await reject(Bun.file(`${dir}/bad.json`).json())).toEqual(expected);
+  });
+
+  test("fetch response with invalid JSON body", async () => {
+    await using server = Bun.serve({ port: 0, fetch: () => new Response('{"a": 1, oops}') });
+    const res = await fetch(server.url);
+    const expected = { name: "SyntaxError", message: jsonParseMessage('{"a": 1, oops}') };
+    expect(await reject(res.json())).toEqual(expected);
+  });
+
+  test("fetch response with empty body rejects (does not resolve null)", async () => {
+    await using server = Bun.serve({ port: 0, fetch: () => new Response("") });
+    const res = await fetch(server.url);
+    const expected = { name: "SyntaxError", message: jsonParseMessage("") };
+    expect(await reject(res.json())).toEqual(expected);
   });
 });

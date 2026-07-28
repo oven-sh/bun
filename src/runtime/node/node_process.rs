@@ -58,18 +58,12 @@ pub extern "C" fn exit(global_object: &JSGlobalObject, code: u8) {
         // instead to terminate the worker sooner
         worker.exit();
     } else if vm.watch_exit_keepalive {
-        // In `bun run --watch` the watcher runs in the same process, so a real
-        // exit would kill it. Instead, stop the current run the same way a
-        // thrown error does (raise a JSC termination exception to unwind) and
-        // keep the watcher alive to reload on the next file change. `exit` is
-        // dispatched in `Process_functionExit` before this call, so handlers
-        // have already run. Only `--watch` opts in via `watch_exit_keepalive`
-        // (see its field doc); `--hot` and `bun test --watch` leave it unset
-        // and exit the process normally here.
+        // `bun run --watch`: a real exit would kill the in-process watcher.
+        // Unwind the run via a JSC termination instead, like a thrown error
+        // does. (`exit` handlers already ran in `Process_functionExit`.)
         vm.watch_exit_requested = true;
-        // The main thread doesn't build the termination-exception singleton at
-        // startup (only workers do), so create it here before firing the trap;
-        // otherwise `throwTerminationException` would hit a null singleton.
+        // The main thread builds the termination-exception singleton lazily
+        // (workers build it at startup), so create it before firing the trap.
         global_object.request_termination();
         vm.jsc_vm().notify_need_termination();
     } else {

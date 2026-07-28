@@ -112,7 +112,9 @@ test("Uint8Array element in a BYTEA array is hex-encoded like Buffer", async () 
 });
 
 test("DataView element in a BYTEA array is hex-encoded like Buffer", async () => {
-  const fromDataView = await bindLiteral(sql => sql.array([new DataView(new Uint8Array([0xca, 0xfe]).buffer)], "BYTEA"));
+  const fromDataView = await bindLiteral(sql =>
+    sql.array([new DataView(new Uint8Array([0xca, 0xfe]).buffer)], "BYTEA"),
+  );
   expect(fromDataView).toBe('{"\\xcafe"}');
 });
 

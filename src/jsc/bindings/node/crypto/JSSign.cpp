@@ -471,9 +471,6 @@ JSC_DEFINE_HOST_FUNCTION(jsSignProtoFuncSign, (JSC::JSGlobalObject * lexicalGlob
     EXCEPTION_ASSERT(!!signature == !scope.exception());
     RETURN_IF_EXCEPTION(scope, {});
 
-    // Node applies the output encoding via ret.toString(encoding) after the
-    // native sign succeeds, so key/padding/sign errors take precedence over
-    // ERR_UNKNOWN_ENCODING.
     JSValue outputEncodingValue = callFrame->argument(1);
     BufferEncodingType outputEncoding = BufferEncodingType::buffer;
     if (outputEncodingValue.toBoolean(lexicalGlobalObject)) {

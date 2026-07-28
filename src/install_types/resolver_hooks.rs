@@ -1321,7 +1321,7 @@ pub struct TaskCallbackContext {
 }
 
 /// Opaque
-/// (ctx-ptr + 2 fn-ptrs) handle the runtime installs to nudge the JS event
+/// (ctx-ptr + fn-ptr) handle the runtime installs to nudge the JS event
 /// loop when a network task completes. The resolver only stores and forwards
 /// it; the fields are `Option` so `Default` is all-None.
 ///
@@ -1329,7 +1329,7 @@ pub struct TaskCallbackContext {
 /// `*mut c_void` because that concrete type lives in `bun_install` (a higher
 /// tier); `bun_install::PackageManager::wake` casts at the call site.
 // Clone: bitwise OK — `context` is a non-owning opaque backref the runtime
-// installed; the handler fn-ptrs are POD.
+// installed; the handler fn-ptr is POD.
 #[derive(Default, Copy, Clone)]
 pub struct WakeHandler {
     pub context: Option<NonNull<c_void>>,

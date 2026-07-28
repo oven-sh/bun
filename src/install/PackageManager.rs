@@ -879,8 +879,8 @@ impl PackageManager {
     /// Raw-pointer wake for concurrent task-thread callers (see
     /// `isolated_install::Installer::Task::callback`). Never materializes
     /// `&mut PackageManager`, so two task threads finishing simultaneously do
-    /// not hold aliased exclusive borrows. `on_wake` is read-only; the handler
-    /// receives the raw `*mut`;
+    /// not hold aliased exclusive borrows. `on_wake` is serialized under its
+    /// own mutex; each handler receives the raw `*mut`;
     /// `event_loop.wakeup()` is the cross-thread signal and is
     /// internally synchronized — we reach it via `addr_of_mut!` so the `&mut`
     /// covers only the event-loop field, never the whole `PackageManager`.

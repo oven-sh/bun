@@ -1233,7 +1233,6 @@ impl AsyncModule {
             (*jsc_vm).transpiler.linker.log = log_ptr;
             (*jsc_vm).transpiler.log = log_ptr;
             (*jsc_vm).transpiler.resolver.log = log_nn;
-            (*jsc_vm).package_manager().log = log_ptr;
         }
         let _restore = scopeguard::guard((jsc_vm, old_log), |(jsc_vm, old_log)| {
             // SAFETY: same per-thread VM; restoring the original log pointers
@@ -1243,7 +1242,6 @@ impl AsyncModule {
                 (*jsc_vm).transpiler.linker.log = old_log_ptr;
                 (*jsc_vm).transpiler.log = old_log_ptr;
                 (*jsc_vm).transpiler.resolver.log = old_log;
-                (*jsc_vm).package_manager().log = old_log_ptr;
             }
         });
 

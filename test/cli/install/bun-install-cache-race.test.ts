@@ -28,9 +28,11 @@ const SHIM_C = /* c */ `
 #define _GNU_SOURCE
 #include <dlfcn.h>
 #include <errno.h>
+#include <fcntl.h>
 #include <stdarg.h>
 #include <stdlib.h>
 #include <sys/syscall.h>
+#include <unistd.h>
 
 #define RENAME_EXCHANGE_FLAG (1 << 1)
 
@@ -40,6 +42,16 @@ static int fail_exchange = -1;
 static int should_fail(void) {
   if (fail_exchange < 0) fail_exchange = getenv("BUN_TEST_FAIL_RENAME_EXCHANGE") != NULL;
   return fail_exchange;
+}
+
+// Touches BUN_TEST_RENAME_EXCHANGE_MARKER so the test can prove an
+// EOPNOTSUPP was actually injected (i.e. the shim loaded).
+static void mark_injected(void) {
+  const char *path = getenv("BUN_TEST_RENAME_EXCHANGE_MARKER");
+  if (path) {
+    int fd = open(path, O_CREAT | O_WRONLY | O_CLOEXEC, 0644);
+    if (fd >= 0) close(fd);
+  }
 }
 
 long syscall(long number, ...) {
@@ -54,6 +66,7 @@ long syscall(long number, ...) {
   long f = va_arg(ap, long);
   va_end(ap);
   if (number == SYS_renameat2 && (e & RENAME_EXCHANGE_FLAG) && should_fail()) {
+    mark_injected();
     errno = EOPNOTSUPP;
     return -1;
   }
@@ -62,6 +75,7 @@ long syscall(long number, ...) {
 
 int renameat2(int olddirfd, const char *oldpath, int newdirfd, const char *newpath, unsigned int flags) {
   if ((flags & RENAME_EXCHANGE_FLAG) && should_fail()) {
+    mark_injected();
     errno = EOPNOTSUPP;
     return -1;
   }
@@ -248,6 +262,7 @@ test.skipIf(!canShim)("repairs an incomplete cache entry instead of keeping it",
     "proj/bunfig.toml": `[install]\nregistry = "${registry.url}"\n`,
   });
   const cacheDir = join(String(dir), ".cache");
+  const markerPath = join(String(dir), "exchange-injected");
   const existingPreload = bunEnv.LD_PRELOAD;
 
   const run = async () => {
@@ -259,6 +274,7 @@ test.skipIf(!canShim)("repairs an incomplete cache entry instead of keeping it",
         BUN_INSTALL_CACHE_DIR: cacheDir,
         LD_PRELOAD: existingPreload ? `${shimPath}:${existingPreload}` : shimPath,
         BUN_TEST_FAIL_RENAME_EXCHANGE: "1",
+        BUN_TEST_RENAME_EXCHANGE_MARKER: markerPath,
       },
       stdout: "pipe",
       stderr: "pipe",
@@ -281,4 +297,7 @@ test.skipIf(!canShim)("repairs an incomplete cache entry instead of keeping it",
   expect(second.exitCode).toBe(0);
   expect(existsSync(join(cacheDir, entry!, "package.json"))).toBe(true);
   expect(existsSync(join(String(dir), "proj", "node_modules", PKG_NAME, "package.json"))).toBe(true);
+  // The repair rename attempted RENAME_EXCHANGE and the shim injected
+  // EOPNOTSUPP, proving the shim loaded and the fallback path ran.
+  expect(existsSync(markerPath)).toBe(true);
 });

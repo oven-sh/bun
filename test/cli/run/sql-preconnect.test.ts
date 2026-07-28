@@ -4,7 +4,7 @@ import { bunEnv, bunExe, tempDir } from "harness";
 describe("--sql-preconnect", () => {
   test("should attempt to preconnect to PostgreSQL on startup", async () => {
     let connectionAttempts = 0;
-    const { promise, resolve } = Promise.withResolvers<void>();
+    const { promise, resolve, reject } = Promise.withResolvers<void>();
 
     await using server = Bun.listen({
       port: 0,
@@ -26,7 +26,7 @@ describe("--sql-preconnect", () => {
       "index.js": `console.log("Script executed");`,
     });
 
-    const proc = Bun.spawn({
+    await using proc = Bun.spawn({
       cmd: [bunExe(), "--sql-preconnect", "index.js"],
       env: {
         ...bunEnv,
@@ -35,6 +35,7 @@ describe("--sql-preconnect", () => {
       cwd: testDir,
     });
 
+    proc.exited.then(code => reject(new Error(`child exited (${code}) before preconnecting`)));
     await promise;
     proc.kill();
     await proc.exited;

@@ -2655,25 +2655,16 @@ console.log(<div {...obj} key="after" />);`),
         "async function outer() { (function() { function await() {} })() }",
         "async function outer() {\n  (function() {\n    function await() {}\n  })();\n}",
       );
-      expectPrinted_(
-        "function outer() { function* yield() {} }",
-        "function outer() {\n  function* yield() {}\n}",
-      );
+      expectPrinted_("function outer() { function* yield() {} }", "function outer() {\n  function* yield() {}\n}");
 
       // Inside an async function, "await" cannot name a nested function declaration.
       expectParseError(
         "async function outer() { async function await() {} }",
         'Cannot use "await" as an identifier here',
       );
-      expectParseError(
-        "async function outer() { function await() {} }",
-        'Cannot use "await" as an identifier here',
-      );
+      expectParseError("async function outer() { function await() {} }", 'Cannot use "await" as an identifier here');
       // Inside a generator, "yield" cannot name a nested function declaration.
-      expectParseError(
-        "function* outer() { function* yield() {} }",
-        'Cannot use "yield" as an identifier here',
-      );
+      expectParseError("function* outer() { function* yield() {} }", 'Cannot use "yield" as an identifier here');
       expectParseError("function* outer() { function yield() {} }", 'Cannot use "yield" as an identifier here');
 
       // Function expression names bind inside the function itself.

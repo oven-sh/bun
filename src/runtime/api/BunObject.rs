@@ -2237,10 +2237,7 @@ pub mod environment_variables {
         bun_core::handle_oom(env_map.put(slot.key, &stored.bytes));
     }
 
-    /// `delete process.env.HTTP_PROXY` (and variants) lands here via
-    /// `JSProcessEnv::deleteProperty` so fetch()'s `getHttpProxyFor()` stops
-    /// seeing the removed value. Mirrors `Bun__setEnvValue`'s locking so the
-    /// slot drop + map removal stays atomic w.r.t. a worker's `cloneFrom`.
+    /// `delete process.env.HTTP_PROXY` write-back; locking mirrors `Bun__setEnvValue`.
     #[unsafe(no_mangle)]
     pub(crate) extern "C" fn Bun__deleteEnvValue(
         global_object: &JSGlobalObject,

@@ -130,8 +130,7 @@ JSC_DEFINE_CUSTOM_SETTER(jsSetterProxyEnvironmentVariable, (JSGlobalObject * glo
     unsigned attributes;
     JSValue existing = object->getDirect(vm, propertyName, attributes);
     if (existing && (attributes & JSC::PropertyAttribute::DontEnum)) {
-        // putDirectCustomAccessor asserts NewProperty; static delete so
-        // JSProcessEnv::deleteProperty does not reinstall it mid-setter.
+        // Static delete: the method-table one would re-enter JSProcessEnv::deleteProperty.
         DeletePropertySlot deleteSlot;
         if (JSObject::deleteProperty(object, globalObject, propertyName, deleteSlot)) {
             object->putDirectCustomAccessor(vm, propertyName, existing,
@@ -788,8 +787,7 @@ static void reinstallSideEffectingEnvAccessor(VM& vm, JSGlobalObject* globalObje
         privateName = BUN_CONFIG_VERBOSE_FETCH_PRIVATE_PROPERTY(vm);
         applyVerboseFetchFromString(globalObject, String());
     } else {
-        // Proxy vars are backed by the native env map; drop the entry and
-        // re-install the accessor so later assignments still write through.
+        // Proxy vars back onto the native env map; no private-name sentinel.
         for (auto proxyName : kProxyEnvVarNames) {
             if (key == proxyName) {
                 BunString name = Bun::toString(key);

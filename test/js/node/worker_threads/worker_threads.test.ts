@@ -1,5 +1,5 @@
 import { describe, expect, it, setDefaultTimeout, test } from "bun:test";
-import { bunEnv, bunExe, isDebug, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isDebug, tempDir, tmpdirSync } from "harness";
 import { once } from "node:events";
 import fs from "node:fs";
 import { join, relative, resolve } from "node:path";
@@ -789,6 +789,68 @@ describe("error event", () => {
     const worker = new Worker(`throw [1, "two", { three: 3 }];`, { eval: true });
     const [err] = await once(worker, "error");
     expect(err).toEqual([1, "two", { three: 3 }]);
+  });
+
+  // A worker module that fails to parse rejects worker-side with a BuildMessage
+  // (one error) or an AggregateError of them (several). Neither survives
+  // structured clone, so the parent used to see a bare
+  // Error("N errors building ...") with every diagnostic gone. Node delivers a
+  // SyntaxError naming the first diagnostic; Bun now delivers a SyntaxError
+  // whose message joins every diagnostic with its file:line:col and carries a
+  // structured-clone-safe `errors` array.
+  describe("module parse errors", () => {
+    test("surface as a SyntaxError with every diagnostic and location, not a bare summary", async () => {
+      using dir = tempDir("worker-parse-err", {
+        "w.mjs": "let x = 1; let x = 2;\nconst y = ;\n",
+      });
+      const file = join(String(dir), "w.mjs");
+      const worker = new Worker(file);
+      const [err] = await once(worker, "error");
+
+      expect(err).toBeInstanceOf(SyntaxError);
+      expect(err.name).toBe("SyntaxError");
+      expect(err.message).not.toMatch(/^\d+ errors building/);
+      expect(err.message).toContain("already been declared");
+      expect(err.message).toContain("Unexpected");
+      // Each diagnostic carries file:line:col in the joined message.
+      expect(err.message).toContain(`${file}:1:`);
+      expect(err.message).toContain(`${file}:2:`);
+      // The per-diagnostic data is exposed as a cloneable array so the parent
+      // can act on each diagnostic programmatically (text + position).
+      expect(err.errors).toHaveLength(2);
+      expect(err.errors[0]).toEqual({
+        message: expect.stringContaining("already been declared"),
+        position: expect.objectContaining({ file, line: 1 }),
+      });
+      expect(err.errors[1]).toEqual({
+        message: expect.stringContaining("Unexpected"),
+        position: expect.objectContaining({ file, line: 2 }),
+      });
+    });
+
+    test("single parse error also surfaces as a located SyntaxError", async () => {
+      using dir = tempDir("worker-parse-err-1", {
+        "w.mjs": "const y = ;\n",
+      });
+      const file = join(String(dir), "w.mjs");
+      const worker = new Worker(file);
+      const [err] = await once(worker, "error");
+
+      expect(err).toBeInstanceOf(SyntaxError);
+      expect(err.message).toContain("Unexpected");
+      expect(err.message).toContain(`${file}:1:`);
+      expect(err.errors).toHaveLength(1);
+      expect(err.errors[0].position).toEqual(expect.objectContaining({ file, line: 1 }));
+    });
+
+    test("the same shape reaches the parent for an eval worker", async () => {
+      const worker = new Worker("let x = 1; let x = 2; const y = ;", { eval: true });
+      const [err] = await once(worker, "error");
+      expect(err).toBeInstanceOf(SyntaxError);
+      expect(err.message).not.toMatch(/^\d+ errors building/);
+      expect(err.errors).toHaveLength(2);
+      expect(err.errors[0].message).toContain("already been declared");
+    });
   });
 });
 

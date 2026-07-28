@@ -9946,7 +9946,7 @@ impl H2FrameParser {
                     }
                 }
                 // node's updateOptionsBuffer: streamResetBurst / streamResetRate only take effect
-                // when both are numbers; either one alone is a no-op.
+                // when both are numbers (either one alone is a no-op) and are floored to 1.
                 if let Some(reset_burst) = settings_js.get(global_object, "streamResetBurst")?
                     && let Some(reset_rate) = settings_js.get(global_object, "streamResetRate")?
                     && reset_burst.is_number()
@@ -9954,10 +9954,10 @@ impl H2FrameParser {
                 {
                     this_ref
                         .stream_reset_burst
-                        .set(reset_burst.to_uint64_no_truncate() as u32);
+                        .set((reset_burst.to_uint64_no_truncate() as u32).max(1));
                     this_ref
                         .stream_reset_rate
-                        .set(reset_rate.to_uint64_no_truncate() as u32);
+                        .set((reset_rate.to_uint64_no_truncate() as u32).max(1));
                 }
                 if let Some(max_outstanding_settings) =
                     settings_js.get(global_object, "maxOutstandingSettings")?

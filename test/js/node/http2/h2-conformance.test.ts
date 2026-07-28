@@ -1636,7 +1636,6 @@ describe("RST_STREAM flood (CVE-2023-44487 rapid-reset)", () => {
     followUp?: boolean;
   }) {
     let handlers = 0;
-    let responses = 0;
     let sessionErrorCode: string | undefined;
     const server = http2.createServer(opts.serverOptions || {});
     server.on("sessionError", (e: any) => (sessionErrorCode = e?.code));
@@ -1647,7 +1646,6 @@ describe("RST_STREAM flood (CVE-2023-44487 rapid-reset)", () => {
       try {
         stream.respond({ ":status": 200 });
         stream.end("x");
-        responses++;
       } catch {}
     });
     server.listen(0);
@@ -1673,7 +1671,7 @@ describe("RST_STREAM flood (CVE-2023-44487 rapid-reset)", () => {
         10_000,
       );
       const responseHeaders = c.frames.filter(f => f.type === FrameType.HEADERS).length;
-      return { c, frame, handlers, responses, sessionErrorCode, responseHeaders };
+      return { c, frame, handlers, sessionErrorCode, responseHeaders };
     } finally {
       c.destroy();
       server.close();
@@ -1701,15 +1699,18 @@ describe("RST_STREAM flood (CVE-2023-44487 rapid-reset)", () => {
   });
 
   test("streamResetBurst lowers the threshold at which the flood is detected", async () => {
-    // node's updateOptionsBuffer only applies the pair when both are provided. rate 0 makes the
-    // trip point wall-clock-independent so the last-stream-id assertion below is exact.
-    const serverOptions = { streamResetBurst: 50, streamResetRate: 0 } as any;
-    const { frame } = await floodRapidReset({ serverOptions, count: 60 });
+    // node's updateOptionsBuffer only applies the pair when both are provided (and floors each to
+    // 1). rate 1 keeps refill negligible so the burst alone decides where the bucket empties.
+    const serverOptions = { streamResetBurst: 50, streamResetRate: 1 } as any;
+    const { frame } = await floodRapidReset({ serverOptions, count: 200 });
     expect(frame.type).toBe(FrameType.GOAWAY);
     expect(goawayErrorCode(frame)).toBe(ErrorCode.ENHANCE_YOUR_CALM);
     // Last-stream-id in the GOAWAY reflects where the bucket emptied: burst 50 drains on the 51st
-    // RST_STREAM, whose stream id is 1 + 2*50 = 101.
-    expect(frame.payload.readUInt32BE(0)).toBe(101);
+    // RST_STREAM (stream id 101). rate 1 may add a token per elapsed second on a slow lane; with
+    // the default burst of 1000 still in effect the id would be >= 2001, so this proves the
+    // option took hold without depending on wall-clock.
+    expect(frame.payload.readUInt32BE(0)).toBeGreaterThanOrEqual(101);
+    expect(frame.payload.readUInt32BE(0)).toBeLessThan(200);
   });
 
   test("fewer than the burst threshold of resets does not tear the session down", async () => {

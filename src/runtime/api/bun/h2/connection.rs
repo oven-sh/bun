@@ -551,8 +551,9 @@ impl Connection {
                 break;
             }
             let payload = &remaining[wire::FRAME_HEADER_SIZE..total];
-            // CVE-2023-44487: peek at the next frame header. If this HEADERS is immediately
-            // followed by RST_STREAM for the same id, finish_header_block will skip dispatch.
+            // CVE-2023-44487: if this HEADERS is immediately followed by RST_STREAM for the same
+            // id, finish_header_block fires on_rst_after_headers before on_headers_complete so
+            // request()/writeStream() drop the response (the 'stream' handler still runs).
             self.rst_after_headers = 0;
             if self.is_server
                 && matches!(hdr.typ(), Some(FrameType::Headers))
@@ -1680,7 +1681,8 @@ impl Connection {
             && (hdr.stream_id <= self.last_stream_id
                 || hdr.stream_id <= sink.highest_started_stream_id())
         {
-            return false;
+            // nghttp2 charges stream_reset_ratelim regardless of stream lookup.
+            return self.note_peer_reset(sink);
         }
         if on_idle {
             self.send_go_away(sink, ErrorCode::ProtocolError, b"RST_STREAM on idle stream");

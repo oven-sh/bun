@@ -3,16 +3,8 @@ import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { symlinkSync } from "node:fs";
 import { join } from "node:path";
 
-// A dangling symlink (link itself exists, target does not) makes the
-// recursive cache-dir creation loop oscillate: mkdir(link/child) → ENOENT,
-// mkdir(link) → EEXIST, repeat. The process spun forever at ~50k mkdirat/s
-// with no output. With the fix, the cache-dir open fails and install falls
-// back to node_modules/.cache.
-//
-// Windows is skipped: symlink creation needs Developer Mode / admin, and the
-// fix is in the shared path walk so POSIX coverage is sufficient.
 describe.skipIf(isWindows)("BUN_INSTALL_CACHE_DIR inside a dangling symlink", () => {
-  test("bun install exits instead of spinning in mkdirat", { timeout: 60_000 }, async () => {
+  test("bun install exits instead of spinning in mkdirat", async () => {
     using dir = tempDir("cache-dir-dangling", {
       "proj/package.json": JSON.stringify({
         name: "x",
@@ -37,8 +29,6 @@ describe.skipIf(isWindows)("BUN_INSTALL_CACHE_DIR inside a dangling symlink", ()
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    // On hang, Bun.spawn's timeout fires and the child is killed with a
-    // signal. With the fix, bun exits on its own (registry is unreachable).
     expect({ signalCode: proc.signalCode, stdout, stderr }).toMatchObject({
       signalCode: null,
     });

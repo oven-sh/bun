@@ -207,13 +207,9 @@ pub enum MakePathStep<E> {
 /// `previous()` (returning `Err(e)` when there is none — i.e. the very first
 /// component's parent does not exist).
 ///
-/// Once the walk has advanced forward at all, a subsequent `NotFound` is
-/// terminal: the parent was just confirmed `Created`/`Exists`, so stepping
-/// back would only bounce between the two forever. This is exactly what
-/// happens when a component is a dangling symlink (the link itself is
-/// `EEXIST` but any child is `ENOENT`) or a procfs-like path that cannot host
-/// children. `node_fs::mkdir_recursive_os_path_impl` encodes the same rule by
-/// running a distinct forward pass where `ENOENT` is fatal.
+/// Once the walk has advanced forward, a subsequent `NotFound` is terminal:
+/// the parent was just confirmed to exist, so stepping back would oscillate
+/// (e.g. a dangling symlink is `EEXIST` itself but `ENOENT` for any child).
 ///
 /// `mkdir` is invoked with `component.path`: a borrowed prefix slice into the
 /// original input, never NUL-terminated. Callers that need a sentinel must
@@ -403,9 +399,7 @@ mod tests {
 
     #[test]
     fn make_path_terminates_when_parent_exists_but_child_is_enoent() {
-        // Model a dangling symlink at `/a/b`: mkdir `/a/b` → EEXIST (the link
-        // itself exists) but mkdir `/a/b/c` → ENOENT (the link target does
-        // not). Without the forward-pass termination this loops forever.
+        // `/a/b` is a dangling symlink: EEXIST itself, ENOENT for any child.
         let it = ComponentIterator::init(&b"/a/b/c"[..], PathFormat::Posix).unwrap();
         let mut calls = 0u32;
         let r = make_path_with(it, |p| {

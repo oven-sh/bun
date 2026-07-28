@@ -7,7 +7,8 @@
 // child process consumed very little CPU time while paused.
 
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, tempDir } from "harness";
+import { isASAN, tempDir } from "harness";
+import { enableAndWaitForDebuggerPause, spawnInspectorWS } from "../../../cli/inspect/inspector-ws-helper";
 
 // The WebSocket inspector transport is known to be unreliable under the CI
 // ASAN build (see test/expectations.txt: `cli/inspect/inspect.test.ts`), so
@@ -32,125 +33,11 @@ test.skipIf(isASAN)(
     `,
     });
 
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "--inspect-wait=ws://127.0.0.1:0/bun21654", "index.js"],
-      env: bunEnv,
-      cwd: String(dir),
-      stdout: "pipe",
-      stderr: "pipe",
-    });
+    await using session = await spawnInspectorWS({ args: ["index.js"], cwd: String(dir), urlPath: "/bun21654" });
+    const { send, proc, stderr } = session;
 
-    // Drain stderr in the background so it never back-pressures the child, and
-    // pull the WebSocket URL from the inspector banner. Only scan complete
-    // (newline-terminated) lines so a chunk boundary can't yield a truncated
-    // URL.
-    let stderrBuf = "";
-    let stderrLineBuf = "";
-    const { promise: urlPromise, resolve: urlResolve, reject: urlReject } = Promise.withResolvers<URL>();
-    let urlFound = false;
-    (async () => {
-      const decoder = new TextDecoder();
-      for await (const chunk of proc.stderr as ReadableStream<Uint8Array>) {
-        const text = decoder.decode(chunk);
-        stderrBuf += text;
-        if (!urlFound) {
-          stderrLineBuf += text;
-          const lines = stderrLineBuf.split("\n");
-          stderrLineBuf = lines.pop() ?? "";
-          for (const line of lines) {
-            const trimmed = line.trim();
-            if (!trimmed) continue;
-            try {
-              const u = new URL(trimmed);
-              if (u.protocol === "ws:" || u.protocol === "wss:") {
-                urlFound = true;
-                urlResolve(u);
-                break;
-              }
-            } catch {}
-          }
-        }
-      }
-      if (!urlFound) {
-        urlReject(new Error(`Inspector URL not found before child stderr closed: ${JSON.stringify(stderrBuf)}`));
-      }
-    })().catch(err => {
-      if (!urlFound) urlReject(err);
-    });
-
-    const url = await urlPromise;
-
-    const ws = new WebSocket(url);
     try {
-      await new Promise<void>((resolve, reject) => {
-        ws.addEventListener("open", () => resolve(), { once: true });
-        ws.addEventListener("error", e => reject(new Error("WebSocket error", { cause: e })), { once: true });
-        ws.addEventListener("close", e => reject(new Error("WebSocket closed", { cause: e })), { once: true });
-      });
-
-      let nextId = 1;
-      type Waiter = { resolve: (value: any) => void; reject: (error: Error) => void };
-      const pending = new Map<number, Waiter>();
-      const eventWaiters = new Map<string, Waiter>();
-      let closeError: Error | undefined;
-
-      const failAll = (error: Error) => {
-        if (closeError) return;
-        closeError = error;
-        for (const w of pending.values()) w.reject(error);
-        pending.clear();
-        for (const w of eventWaiters.values()) w.reject(error);
-        eventWaiters.clear();
-      };
-      ws.addEventListener("error", e => failAll(new Error("WebSocket error", { cause: e })));
-      ws.addEventListener("close", e => failAll(new Error(`WebSocket closed (${e.code})`, { cause: e })));
-
-      ws.addEventListener("message", ev => {
-        const msg = JSON.parse(String(ev.data));
-        if (typeof msg.id === "number") {
-          const w = pending.get(msg.id);
-          if (w) {
-            pending.delete(msg.id);
-            w.resolve(msg);
-          }
-        } else if (typeof msg.method === "string") {
-          const w = eventWaiters.get(msg.method);
-          if (w) {
-            eventWaiters.delete(msg.method);
-            w.resolve(msg.params);
-          }
-        }
-      });
-
-      const send = (method: string, params: Record<string, unknown> = {}) =>
-        new Promise<any>((resolve, reject) => {
-          if (closeError) return reject(closeError);
-          const id = nextId++;
-          pending.set(id, { resolve, reject });
-          ws.send(JSON.stringify({ id, method, params }));
-        });
-
-      const waitForEvent = (method: string) =>
-        new Promise<any>((resolve, reject) => {
-          if (closeError) return reject(closeError);
-          eventWaiters.set(method, { resolve, reject });
-        });
-
-      // Enable the debugger and opt into pausing on `debugger;` statements.
-      // Wait for the responses so we know the JS thread has fully processed
-      // them before we send `Inspector.initialized`, which releases
-      // --inspect-wait and lets the script begin executing.
-      await Promise.all([
-        send("Inspector.enable"),
-        send("Debugger.enable"),
-        send("Debugger.setBreakpointsActive", { active: true }),
-        send("Debugger.setPauseOnDebuggerStatements", { enabled: true }),
-      ]);
-
-      const pausedPromise = waitForEvent("Debugger.paused");
-      send("Inspector.initialized").catch(() => {});
-
-      const paused = await pausedPromise;
+      const paused = await enableAndWaitForDebuggerPause(session);
       expect(paused.reason).toBe("DebuggerStatement");
 
       // Stay paused. In the buggy implementation this busy-loops at 100% CPU.
@@ -162,7 +49,7 @@ test.skipIf(isASAN)(
       const rtStart = performance.now();
       const evalResult = await send("Runtime.evaluate", { expression: "1 + 1" });
       const roundTripMs = performance.now() - rtStart;
-      expect(evalResult?.result?.result?.value).toBe(2);
+      expect(evalResult?.result?.value).toBe(2);
 
       await send("Debugger.resume");
 
@@ -174,7 +61,7 @@ test.skipIf(isASAN)(
         .find(l => l.startsWith("{"));
       if (!line) {
         throw new Error(
-          `No JSON output from child; stdout=${JSON.stringify(stdout)} stderr=${JSON.stringify(stderrBuf)}`,
+          `No JSON output from child; stdout=${JSON.stringify(stdout)} stderr=${JSON.stringify(stderr())}`,
         );
       }
 
@@ -205,13 +92,9 @@ test.skipIf(isASAN)(
       throw new Error(
         `${err instanceof Error ? err.message : String(err)}\n` +
           `  child exit: ${exitCode}\n` +
-          `  child stderr: ${JSON.stringify(stderrBuf)}`,
+          `  child stderr: ${JSON.stringify(stderr())}`,
         { cause: err },
       );
-    } finally {
-      try {
-        ws.close();
-      } catch {}
     }
   },
   30000,

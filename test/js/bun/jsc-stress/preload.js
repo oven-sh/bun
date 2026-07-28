@@ -31,5 +31,4 @@ globalThis.gc = () => Bun.gc(true);
 globalThis.fullGC = jsc.fullGC;
 globalThis.edenGC = jsc.edenGC;
 globalThis.numberOfDFGCompiles = jsc.numberOfDFGCompiles;
-// noDFG: hints JSC to keep a function out of the DFG. No-op in Bun, like noInline.
-globalThis.noDFG = jsc.noInline;
+globalThis.noDFG = jsc.noFTL;

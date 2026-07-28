@@ -258,6 +258,7 @@ pub trait BlobExt {
     fn get_stat(&self, global_this: &JSGlobalObject, callback: &CallFrame) -> JsResult<JSValue>;
     fn get_size(&self, _: &JSGlobalObject) -> JSValue;
     fn view_size(&self) -> SizeType;
+    fn stat_file_size(&self, store: &StoreRef) -> Option<SizeType>;
     fn resolve_size(&self);
     fn resolved_size(&self) -> (SizeType, SizeType);
     fn constructor(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<*mut Blob>
@@ -2170,21 +2171,10 @@ impl BlobExt for Blob {
     fn get_size_for_bindings(&self) -> u64 {
         if let Some(store) = self.store.get() {
             if matches!(store.data, store::Data::File(_)) {
-                resolve_file_stat(store);
-                let file = store.data_mut().as_file();
-                if file.seekable.is_some() && file.max_size != MAX_SIZE {
-                    let offset = file.max_size.min(self.offset.get());
-                    let available = file.max_size - offset;
-                    return if self.size_is_explicit.get() {
-                        available.min(self.size.get())
-                    } else {
-                        available
-                    };
-                }
-                return if self.size_is_explicit.get() {
-                    self.size.get()
-                } else {
-                    u64::MAX
+                return match self.stat_file_size(store) {
+                    Some(s) => s,
+                    None if self.size_is_explicit.get() => self.size.get(),
+                    None => u64::MAX,
                 };
             }
         }
@@ -2261,23 +2251,12 @@ impl BlobExt for Blob {
     fn get_size(&self, _: &JSGlobalObject) -> JSValue {
         if let Some(store) = self.store.get() {
             if matches!(store.data, store::Data::File(_)) {
-                resolve_file_stat(store);
-                let file = store.data_mut().as_file();
-                if file.seekable.is_some() && file.max_size != MAX_SIZE {
-                    let offset = file.max_size.min(self.offset.get());
-                    let available = file.max_size - offset;
-                    if self.size_is_explicit.get() {
-                        return JSValue::js_number(available.min(self.size.get()) as f64);
-                    }
-                    return JSValue::js_number(available as f64);
-                }
-                if self.size_is_explicit.get() {
-                    return JSValue::js_number(self.size.get() as f64);
-                }
-                if file.seekable == Some(false) {
-                    return JSValue::js_number(f64::INFINITY);
-                }
-                return JSValue::js_number(0.0);
+                return JSValue::js_number(match self.stat_file_size(store) {
+                    Some(s) => s as f64,
+                    None if self.size_is_explicit.get() => self.size.get() as f64,
+                    None if store.data_mut().as_file().seekable == Some(false) => f64::INFINITY,
+                    None => 0.0,
+                });
             }
         }
         if self.size.get() == MAX_SIZE {
@@ -2296,16 +2275,27 @@ impl BlobExt for Blob {
     fn view_size(&self) -> SizeType {
         if let Some(store) = self.store.get() {
             if matches!(store.data, store::Data::File(_)) && !self.size_is_explicit.get() {
-                resolve_file_stat(store);
-                let file = store.data_mut().as_file();
-                if file.seekable.is_some() && file.max_size != MAX_SIZE {
-                    let offset = file.max_size.min(self.offset.get());
-                    return file.max_size - offset;
-                }
-                return MAX_SIZE;
+                return self.stat_file_size(store).unwrap_or(MAX_SIZE);
             }
         }
         self.size.get()
+    }
+
+    /// Re-stat `store` and return bytes available past `self.offset`, clamped
+    /// by an explicit slice bound. `None` when non-seekable or stat failed.
+    fn stat_file_size(&self, store: &StoreRef) -> Option<SizeType> {
+        resolve_file_stat(store);
+        let file = store.data_mut().as_file();
+        if file.seekable.is_some() && file.max_size != MAX_SIZE {
+            let offset = file.max_size.min(self.offset.get());
+            let available = file.max_size - offset;
+            return Some(if self.size_is_explicit.get() {
+                available.min(self.size.get())
+            } else {
+                available
+            });
+        }
+        None
     }
 
     fn resolve_size(&self) {

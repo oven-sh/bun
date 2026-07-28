@@ -1185,13 +1185,6 @@ pub fn concat_buf_t<'a, T: Copy>(out: &'a mut [T], strs: &[&[T]]) -> Result<&'a 
     Ok(&mut out[0..off])
 }
 
-pub fn index(self_: &[u8], str: &[u8]) -> i32 {
-    match index_of(self_, str) {
-        Some(i) => i32::try_from(i).expect("int cast"),
-        None => -1,
-    }
-}
-
 /// Returns a substring starting at `start` up to the end of the string.
 /// If `start` is greater than the string's length, returns an empty string.
 pub fn substring(self_: &[u8], start: Option<usize>, stop: Option<usize>) -> &[u8] {

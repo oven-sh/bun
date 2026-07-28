@@ -2516,7 +2516,7 @@ impl<'a> StringBuilder<'a> {
         if SemverString::can_inline(slice) {
             return;
         }
-        self._count_with_hash(slice, SemverStringBuilder::string_hash(slice));
+        self.count_with_hash(slice, SemverStringBuilder::string_hash(slice));
     }
 
     #[inline]
@@ -2531,7 +2531,7 @@ impl<'a> StringBuilder<'a> {
     }
 
     #[inline]
-    fn _count_with_hash(&mut self, slice: &[u8], hash: u64) {
+    fn count_with_hash(&mut self, slice: &[u8], hash: u64) {
         self.assert_not_allocated();
 
         if !self.string_pool.contains(hash) {

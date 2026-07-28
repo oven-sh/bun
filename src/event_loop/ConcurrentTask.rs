@@ -137,7 +137,6 @@ pub mod task_tag {
         ShellGlobTask,
         ShellIOReaderAsyncDeinit,
         ShellIOWriterAsyncDeinit,
-        ShellIOWriter,
         ShellLsTask,
         ShellMkdirTask,
         ShellMvBatchedTask,

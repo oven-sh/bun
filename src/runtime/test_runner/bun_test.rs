@@ -969,8 +969,8 @@ impl BunTest {
                     min_timeout = min_timeout.min_ignore_epoch(timeout);
                 }
                 StepResult::Complete => {
-                    // SAFETY: short-lived reborrow; `_advance` does not re-enter `.get()`.
-                    if unsafe { (*this)._advance(global_this)? } == Advance::Exit {
+                    // SAFETY: short-lived reborrow; `advance` does not re-enter `.get()`.
+                    if unsafe { (*this).advance(global_this)? } == Advance::Exit {
                         return Ok(());
                     }
                     // SAFETY: `UnsafeCell`-derived `*mut`; sole `&mut` for this enqueue.
@@ -1017,7 +1017,7 @@ impl BunTest {
         }
     }
 
-    fn _advance(&mut self, _global_this: &JSGlobalObject) -> JsResult<Advance> {
+    fn advance(&mut self, _global_this: &JSGlobalObject) -> JsResult<Advance> {
         let _g = group_begin!();
         bun_core::scoped_log!(bun_test_group, "advance from {}", <&'static str>::from(self.phase));
         // capture `self.phase` by raw ptr so the deferred log doesn't

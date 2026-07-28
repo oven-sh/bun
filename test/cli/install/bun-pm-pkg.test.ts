@@ -1,7 +1,7 @@
 import { spawn } from "bun";
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { mkdirSync, rmSync, writeFileSync } from "fs";
-import { bunEnv, bunExe, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, tempDir, tempDirWithFiles } from "harness";
 import { join } from "path";
 
 async function runPmPkg(args: string[], cwd: string, expectSuccess = true) {
@@ -200,7 +200,7 @@ describe("bun pm pkg", () => {
     });
 
     it("should fail gracefully when no package.json found", async () => {
-      const emptyDir = tempDirWithFiles("empty-test", {});
+      await using emptyDir = tempDir("empty-test", {});
 
       const { error, code } = await runPmPkg(["get", "name"], emptyDir, false);
       expect(code).toBe(1);
@@ -338,7 +338,7 @@ describe("bun pm pkg", () => {
     it("should write literal keys when setting with bracket notation", async () => {
       // Key-path segments parsed from a bracket path must stay alive until
       // the file is written; otherwise the printer serializes freed bytes.
-      const bracketDir = tempDirWithFiles("pm-pkg-bracket-set", {
+      await using bracketDir = tempDir("pm-pkg-bracket-set", {
         "package.json": JSON.stringify({ name: "x", version: "1.0.0" }, null, 2),
       });
 
@@ -482,7 +482,7 @@ describe("bun pm pkg", () => {
 
   describe("workspace compatibility", () => {
     it("should work in workspace root", async () => {
-      const workspaceDir = tempDirWithFiles("workspace-test", {
+      await using workspaceDir = tempDir("workspace-test", {
         "package.json": JSON.stringify({
           name: "workspace-root",
           version: "1.0.0",
@@ -502,7 +502,7 @@ describe("bun pm pkg", () => {
     });
 
     it("should work in workspace package directory", async () => {
-      const workspaceDir = tempDirWithFiles("workspace-test", {
+      await using workspaceDir = tempDir("workspace-test", {
         "package.json": JSON.stringify({
           name: "workspace-root",
           workspaces: ["packages/*"],
@@ -522,7 +522,7 @@ describe("bun pm pkg", () => {
     });
 
     it("should modify workspace package.json without affecting root", async () => {
-      const workspaceDir = tempDirWithFiles("workspace-test", {
+      await using workspaceDir = tempDir("workspace-test", {
         "package.json": JSON.stringify({
           name: "workspace-root",
           version: "1.0.0",
@@ -551,7 +551,7 @@ describe("bun pm pkg", () => {
     });
 
     it("should modify root without affecting workspace packages", async () => {
-      const workspaceDir = tempDirWithFiles("workspace-test", {
+      await using workspaceDir = tempDir("workspace-test", {
         "package.json": JSON.stringify({
           name: "workspace-root",
           version: "1.0.0",
@@ -860,7 +860,7 @@ describe("bun pm pkg", () => {
 
     it("should verify npm compatibility with real-world patterns", async () => {
       // Create a package.json structure similar to real projects
-      const realWorldDir = tempDirWithFiles("real-world-test", {
+      await using realWorldDir = tempDir("real-world-test", {
         "package.json": JSON.stringify(
           {
             name: "my-project",
@@ -956,7 +956,7 @@ describe("bun pm pkg", () => {
 
     it("should not modify package.json if no fixes are needed", async () => {
       // First, create a package.json that doesn't need fixing
-      const goodDir = tempDirWithFiles("good-package", {
+      await using goodDir = tempDir("good-package", {
         "package.json": JSON.stringify(
           {
             name: "good-package",
@@ -982,7 +982,7 @@ describe("bun pm pkg", () => {
 
     it("should handle package.json with existing bin files", async () => {
       // Create a package with an actual bin file
-      const binDir = tempDirWithFiles("bin-test", {
+      await using binDir = tempDir("bin-test", {
         "package.json": JSON.stringify(
           {
             name: "BIN-PACKAGE",
@@ -1030,7 +1030,7 @@ describe("bun pm pkg", () => {
     });
 
     it("should handle malformed package.json gracefully", async () => {
-      const malformedDir = tempDirWithFiles("malformed-test", {
+      await using malformedDir = tempDir("malformed-test", {
         "package.json": '{"name": "test", invalid}',
       });
 
@@ -1044,7 +1044,7 @@ describe("bun pm pkg", () => {
     });
 
     it("should handle non-object package.json", async () => {
-      const nonObjectDir = tempDirWithFiles("non-object-test", {
+      await using nonObjectDir = tempDir("non-object-test", {
         "package.json": '"this is not an object"',
       });
 
@@ -1058,7 +1058,7 @@ describe("bun pm pkg", () => {
     });
 
     it("should fix multiple issues in one run", async () => {
-      const multiIssueDir = tempDirWithFiles("multi-issue-test", {
+      await using multiIssueDir = tempDir("multi-issue-test", {
         "package.json": JSON.stringify(
           {
             name: "MULTIPLE-ISSUES-PACKAGE",
@@ -1090,7 +1090,7 @@ describe("bun pm pkg", () => {
     });
 
     it("should not crash on empty bin object", async () => {
-      const emptyBinDir = tempDirWithFiles("empty-bin-test", {
+      await using emptyBinDir = tempDir("empty-bin-test", {
         "package.json": JSON.stringify(
           {
             name: "EMPTY-BIN-PACKAGE",
@@ -1114,7 +1114,7 @@ describe("bun pm pkg", () => {
     });
 
     it("should handle missing package.json file", async () => {
-      const emptyDir = tempDirWithFiles("empty-test", {});
+      await using emptyDir = tempDir("empty-test", {});
 
       try {
         const { code, error } = await runPmPkg(["fix"], emptyDir, false);

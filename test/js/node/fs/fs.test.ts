@@ -292,7 +292,7 @@ it("fs.readv returns object", async done => {
 });
 
 it("fs.writev returns object", async done => {
-  const outpath = tempDirWithFiles("fswritevtest", { "a.txt": "b" });
+  await using outpath = tempDir("fswritevtest", { "a.txt": "b" });
   const fd = await promisify(fs.open)(join(outpath, "b.txt"), "w");
   const buffers = [Buffer.alloc(10), Buffer.alloc(10)];
   fs.writev(fd, buffers, 0, (err, bytesWritten, output) => {
@@ -2155,7 +2155,7 @@ describe("readFile", () => {
   });
 
   it("works with flags", async () => {
-    const mydir = tempDirWithFiles("fs-read", {});
+    await using mydir = tempDir("fs-read", {});
     console.log(mydir);
 
     for (const [flag, code] of [

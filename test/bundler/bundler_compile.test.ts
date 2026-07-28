@@ -1,7 +1,7 @@
 import { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
 import { rmSync } from "fs";
-import { bunEnv, bunExe, isWindows, tempDir, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "path";
 import { BundlerTestInput, itBundled as itBundledBase } from "./expectBundled";
 
@@ -957,7 +957,7 @@ error: Hello World`,
   });
 
   test("does not crash", async () => {
-    const dir = tempDirWithFiles("bundler-compile-shadcn", {
+    await using dir = tempDir("bundler-compile-shadcn", {
       "frontend.tsx": `console.log("Hello, world!");`,
       "index.html": `<!doctype html>
 <html lang="en">
@@ -1072,7 +1072,7 @@ const server = serve({
 
   // When compiling with 8+ entry points, the main entry point should still run correctly.
   test("compile with 8+ entry points runs main entry correctly", async () => {
-    const dir = tempDirWithFiles("compile-many-entries", {
+    await using dir = tempDir("compile-many-entries", {
       "app.js": `console.log("IT WORKS");`,
       "assets/file-1": "",
       "assets/file-2": "",

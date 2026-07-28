@@ -298,7 +298,7 @@ bun_output::declare_scope!(PackageManager, hidden);
 // ──────────────────────────────────────────────────────────────────────────
 
 pub struct PackageManager {
-    pub cache_directory_: Option<bun_sys::Dir>,
+    pub cache_directory: Option<bun_sys::Dir>,
     pub cache_directory_path: ZBox, // owned; process lifetime via the leaked singleton
     pub root_dir: &'static mut fs::DirEntry,
     // allocator dropped per §Allocators (was `bun.default_allocator`). For the
@@ -1855,7 +1855,7 @@ pub fn init(
             (*p).preallocated_resolve_tasks
         ));
 
-        wr!(cache_directory_, None);
+        wr!(cache_directory, None);
         wr!(cache_directory_path, ZBox::from_bytes(b""));
         wr!(options, options);
         wr!(
@@ -2281,7 +2281,7 @@ pub(crate) fn init_with_runtime_once(
             (*p).preallocated_resolve_tasks
         ));
 
-        wr!(cache_directory_, None);
+        wr!(cache_directory, None);
         wr!(cache_directory_path, ZBox::from_bytes(b""));
         wr!(
             options,

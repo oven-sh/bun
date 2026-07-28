@@ -220,7 +220,7 @@ pub struct RareData {
     // This does not handle ShadowRealm correctly!
     pub cleanup_hooks: Vec<CleanupHook>,
 
-    pub file_polls_: Option<Box<FilePollStore>>,
+    pub file_polls: Option<Box<FilePollStore>>,
 
     /// Embedded socket groups for kinds that aren't tied to a Listener / server.
     /// Lazily linked into the loop on first socket; never separately allocated.
@@ -308,7 +308,7 @@ impl Default for RareData {
             hot_map: None,
             cron_jobs: Vec::new(),
             cleanup_hooks: Vec::new(),
-            file_polls_: None,
+            file_polls: None,
             spawn_ipc_group: SocketGroup::default(),
             test_parallel_ipc_group: SocketGroup::default(),
             bun_connect_group_tcp: SocketGroup::default(),

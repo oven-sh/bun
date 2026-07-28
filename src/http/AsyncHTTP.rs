@@ -108,10 +108,10 @@ fn http_thread_timer_read() -> u64 {
     crate::http_thread().timer.elapsed().as_nanos() as u64
 }
 
-/// Build the `Proxy-Authorization: Basic <b64(user[:pass])>` header value.
+/// Build the `Proxy-Authorization: Basic <b64(user:pass)>` header value.
 /// Returns `None` (and logs) if percent-decoding fails.
 pub(crate) fn build_proxy_authorization(proxy: &URL<'_>) -> Option<Vec<u8>> {
-    if proxy.username.is_empty() {
+    if proxy.username.is_empty() && proxy.password.is_empty() {
         return None;
     }
 
@@ -123,24 +123,17 @@ pub(crate) fn build_proxy_authorization(proxy: &URL<'_>) -> Option<Vec<u8>> {
         }
     };
 
-    let auth: Vec<u8> = if !proxy.password.is_empty() {
-        let password = match PercentEncoding::decode_alloc(proxy.password) {
-            Ok(p) => p,
-            Err(err) => {
-                bun_core::scoped_log!(AsyncHTTP, "failed to decode proxy password: {:?}", err);
-                return None;
-            }
-        };
-        // concat user and password
-        let mut auth: Vec<u8> = Vec::with_capacity(username.len() + 1 + password.len());
-        auth.extend_from_slice(&username);
-        auth.push(b':');
-        auth.extend_from_slice(&password);
-        auth
-    } else {
-        // only use user
-        username.into_vec()
+    let password = match PercentEncoding::decode_alloc(proxy.password) {
+        Ok(p) => p,
+        Err(err) => {
+            bun_core::scoped_log!(AsyncHTTP, "failed to decode proxy password: {:?}", err);
+            return None;
+        }
     };
+    let mut auth: Vec<u8> = Vec::with_capacity(username.len() + 1 + password.len());
+    auth.extend_from_slice(&username);
+    auth.push(b':');
+    auth.extend_from_slice(&password);
 
     let size = bun_base64::encode_len_from_size(auth.len());
     let mut buf = vec![0u8; size + b"Basic ".len()];

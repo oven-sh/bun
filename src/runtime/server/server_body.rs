@@ -136,6 +136,7 @@ pub(super) trait RequestCtxOps: RequestCtx {
         global_this: &JSGlobalObject,
         readable: WebCore::ReadableStream,
     );
+    fn on_request_body_stream_drained_callback(this: Option<*mut c_void>);
 }
 
 impl<ThisServer, const SSL: bool, const DBG: bool, const H3: bool> RequestCtxOps
@@ -274,6 +275,10 @@ where
         readable: WebCore::ReadableStream,
     ) {
         Self::on_request_body_readable_stream_available(this, global_this, readable)
+    }
+    #[inline]
+    fn on_request_body_stream_drained_callback(this: Option<*mut c_void>) {
+        Self::on_request_body_stream_drained_callback(this)
     }
 }
 
@@ -1659,6 +1664,27 @@ where
                 "publish",
                 "bytes",
             ));
+        }
+
+        if let Some(slice) =
+            super::server_web_socket::blob_payload(global, "publish", message_value)?
+        {
+            let status = AnyWebSocket::publish_with_options(
+                SSL,
+                app,
+                topic_slice.slice(),
+                slice,
+                uws_sys::Opcode::Binary,
+                compress,
+            );
+            let result = super::server_web_socket::send_status_to_js(
+                status,
+                slice.len(),
+                "publish",
+                "bytes",
+            );
+            message_value.ensure_still_alive();
+            return Ok(result);
         }
 
         {
@@ -3187,6 +3213,7 @@ where
                         on_readable_stream_available: Some(
                             Ctx::on_request_body_readable_stream_available,
                         ),
+                        on_stream_drained: Some(Ctx::on_request_body_stream_drained_callback),
                         ..Default::default()
                     });
                 }
@@ -3620,7 +3647,7 @@ pub(super) extern "C" fn Server__setIdleTimeout(
     seconds: JSValue,
     global: &JSGlobalObject,
 ) {
-    match server_set_idle_timeout_(server, seconds, global) {
+    match server_set_idle_timeout(server, seconds, global) {
         Ok(()) => {}
         Err(JsError::Thrown) => {}
         Err(JsError::OutOfMemory) => {
@@ -3630,7 +3657,7 @@ pub(super) extern "C" fn Server__setIdleTimeout(
     }
 }
 
-pub(super) fn server_set_idle_timeout_(
+pub(super) fn server_set_idle_timeout(
     server: JSValue,
     seconds: JSValue,
     global: &JSGlobalObject,
@@ -3667,7 +3694,7 @@ pub(super) fn server_set_idle_timeout_(
     Ok(())
 }
 
-pub(super) fn server_set_on_client_error_(
+pub(super) fn server_set_on_client_error(
     global: &JSGlobalObject,
     server: JSValue,
     callback: JSValue,
@@ -3735,7 +3762,7 @@ pub(super) fn server_set_on_client_error_(
     Ok(JSValue::UNDEFINED)
 }
 
-pub(super) fn server_set_on_connection_(
+pub(super) fn server_set_on_connection(
     global: &JSGlobalObject,
     server: JSValue,
     callback: JSValue,
@@ -3797,7 +3824,7 @@ pub(super) fn server_set_on_connection_(
     Ok(JSValue::UNDEFINED)
 }
 
-pub(super) fn server_set_app_flags_(
+pub(super) fn server_set_app_flags(
     global: &JSGlobalObject,
     server: JSValue,
     require_host_header: bool,
@@ -3851,7 +3878,7 @@ pub(super) fn server_set_app_flags_(
     Ok(JSValue::UNDEFINED)
 }
 
-pub(super) fn server_set_max_http_header_size_(
+pub(super) fn server_set_max_http_header_size(
     global: &JSGlobalObject,
     server: JSValue,
     max_header_size: u64,
@@ -3903,7 +3930,7 @@ extern "C" fn server_set_app_flags_shim(
 ) -> JSValue {
     host_fn::to_js_host_fn_result(
         global,
-        server_set_app_flags_(
+        server_set_app_flags(
             global,
             server,
             require_host_header,
@@ -3920,10 +3947,7 @@ extern "C" fn server_set_on_client_error_shim(
     server: JSValue,
     callback: JSValue,
 ) -> JSValue {
-    host_fn::to_js_host_fn_result(
-        global,
-        server_set_on_client_error_(global, server, callback),
-    )
+    host_fn::to_js_host_fn_result(global, server_set_on_client_error(global, server, callback))
 }
 
 #[unsafe(export_name = "Server__setOnConnection")]
@@ -3932,7 +3956,7 @@ extern "C" fn server_set_on_connection_shim(
     server: JSValue,
     callback: JSValue,
 ) -> JSValue {
-    host_fn::to_js_host_fn_result(global, server_set_on_connection_(global, server, callback))
+    host_fn::to_js_host_fn_result(global, server_set_on_connection(global, server, callback))
 }
 
 #[unsafe(export_name = "Server__setMaxHTTPHeaderSize")]
@@ -3943,7 +3967,7 @@ extern "C" fn server_set_max_http_header_size_shim(
 ) -> JSValue {
     host_fn::to_js_host_fn_result(
         global,
-        server_set_max_http_header_size_(global, server, max_header_size),
+        server_set_max_http_header_size(global, server, max_header_size),
     )
 }
 

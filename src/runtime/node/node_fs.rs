@@ -1506,7 +1506,7 @@ mod _async_tasks {
             let mut node_fs = NodeFS::default();
 
             let args = &parent.args;
-            let result = node_fs._copy_single_file_sync(
+            let result = node_fs.copy_single_file_sync(
                 self.src(),
                 self.dest(),
                 constants::Copyfile::from_raw(if args.flags.error_on_exist || !args.flags.force {
@@ -1820,7 +1820,7 @@ mod _async_tasks {
         }
 
         /// Directory scanning + clonefile will block this thread, then each individual file copy (what the sync version
-        /// calls "_copySingleFileSync") will be dispatched as a separate task.
+        /// calls "copy_single_file_sync") will be dispatched as a separate task.
         pub fn cp_async(nodefs: &mut NodeFS, this: *mut Self) {
             // The directory-scan task holds one reference in `subtask_count`
             // (initialized to 1 in create*). Drop it on return. `runFromJSThread`
@@ -1830,7 +1830,7 @@ mod _async_tasks {
             // once every reference (including this one) has been dropped.
             let _done = scopeguard::guard(this, Self::on_subtask_done);
             // SAFETY: same pointer as above; valid for the duration of this fn.
-            // Shared borrow only — once `_cp_async_directory` spawns `CpSingleTask`s,
+            // Shared borrow only — once `cp_async_directory` spawns `CpSingleTask`s,
             // other workpool threads concurrently hold `&Self` to this same allocation.
             let this = unsafe { &**_done };
 
@@ -1874,13 +1874,13 @@ mod _async_tasks {
                 let file_or_symlink = (attributes & bun_sys::c::FILE_ATTRIBUTE_DIRECTORY) == 0
                     || (attributes & bun_sys::c::FILE_ATTRIBUTE_REPARSE_POINT) != 0;
                 if file_or_symlink {
-                    let r = nodefs._copy_single_file_sync(
+                    let r = nodefs.copy_single_file_sync(
                         src,
                         dest,
                         if IS_SHELL {
                             // Shell always forces copy (overwrite allowed).
                             // `Copyfile::force` is `COPYFILE_FICLONE_FORCE`, and
-                            // `_copy_single_file_sync` has an ENOSYS guard for
+                            // `copy_single_file_sync` has an ENOSYS guard for
                             // `is_force_clone()` on Windows (see the comment at
                             // the top of that branch), so passing `FORCE` would
                             // make every shell `cp file dest` fail with ENOSYS.
@@ -1926,7 +1926,7 @@ mod _async_tasks {
 
                 if !sys::S::ISDIR(stat_.st_mode as _) {
                     // This is the only file, there is no point in dispatching subtasks
-                    let r = nodefs._copy_single_file_sync(
+                    let r = nodefs.copy_single_file_sync(
                         src,
                         dest,
                         constants::Copyfile::from_raw(
@@ -1965,7 +1965,7 @@ mod _async_tasks {
             // are slices into `src_buf`/`dest_buf` and must end their borrow first.
             let src_len = PathInt::try_from(src.len()).expect("int cast");
             let dest_len = PathInt::try_from(dest.len()).expect("int cast");
-            let _ = Self::_cp_async_directory(
+            let _ = Self::cp_async_directory(
                 nodefs,
                 args.flags,
                 // Pass the raw `*mut Self` (Box::leak provenance) so spawned
@@ -1980,7 +1980,7 @@ mod _async_tasks {
         }
 
         // returns boolean `should_continue`
-        pub(super) fn _cp_async_directory(
+        pub(super) fn cp_async_directory(
             nodefs: &mut NodeFS,
             args: args::CpFlags,
             this: *mut Self,
@@ -2124,7 +2124,7 @@ mod _async_tasks {
                         dest_buf[dd] = paths::SEP as OSPathChar;
                         dest_buf[dd + 1 + cname.len()] = 0;
 
-                        let should_continue = Self::_cp_async_directory(
+                        let should_continue = Self::cp_async_directory(
                             nodefs,
                             args,
                             this,
@@ -8279,7 +8279,7 @@ impl NodeFS {
             if attributes & sys::c::FILE_ATTRIBUTE_DIRECTORY == 0
                 || attributes & sys::c::FILE_ATTRIBUTE_REPARSE_POINT != 0
             {
-                let r = self._copy_single_file_sync(
+                let r = self.copy_single_file_sync(
                     src,
                     dest,
                     constants::Copyfile::from_raw(if cp_flags.error_on_exist || !cp_flags.force {
@@ -8308,7 +8308,7 @@ impl NodeFS {
                 }
             };
             if !sys::S::ISDIR(stat_.st_mode as _) {
-                let r = self._copy_single_file_sync(
+                let r = self.copy_single_file_sync(
                     src,
                     dest,
                     constants::Copyfile::from_raw(if cp_flags.error_on_exist || !cp_flags.force {
@@ -8434,7 +8434,7 @@ impl NodeFS {
                     // NUL written at [len] above; `from_buf` debug-asserts it.
                     let src_z = OSPathSliceZ::from_buf(&src_buf[..], sd + 1 + name_slice.len());
                     let dest_z = OSPathSliceZ::from_buf(&dest_buf[..], dd + 1 + name_slice.len());
-                    let r = self._copy_single_file_sync(
+                    let r = self.copy_single_file_sync(
                         src_z,
                         dest_z,
                         constants::Copyfile::from_raw(
@@ -8493,7 +8493,8 @@ impl NodeFS {
         result
     }
 
-    fn _cp_symlink(&mut self, src: &ZStr, dest: &ZStr) -> Maybe<ret::CopyFile> {
+    #[cfg_attr(any(windows, target_os = "macos"), allow(dead_code))]
+    fn cp_symlink(&mut self, src: &ZStr, dest: &ZStr) -> Maybe<ret::CopyFile> {
         let mut target_buf = PathBuffer::uninit();
         // `bun_sys::readlink` returns the byte length on every
         // platform (the `Syscall` alias = `sys_uv` on Windows would return the
@@ -8543,7 +8544,7 @@ impl NodeFS {
     }
 
     /// This is `copyFile`, but it copies symlinks as-is
-    pub fn _copy_single_file_sync(
+    pub fn copy_single_file_sync(
         &mut self,
         src: &OSPathSliceZ,
         dest: &OSPathSliceZ,
@@ -8636,7 +8637,7 @@ impl NodeFS {
                 }
 
                 let dest_fd =
-                    Self::_cp_open_dest_with_mkdir(self, dest, flags, stat_.st_mode as Mode)?;
+                    Self::cp_open_dest_with_mkdir(self, dest, flags, stat_.st_mode as Mode)?;
                 let _close_dest =
                     scopeguard::guard((dest_fd, stat_.st_mode, &wrote), |(fd, m, wrote)| {
                         let _ = Syscall::ftruncate(fd, (wrote.get() & ((1u64 << 63) - 1)) as i64);
@@ -8703,7 +8704,7 @@ impl NodeFS {
                     if err.get_errno() == E::ELOOP {
                         // ELOOP is returned when you open a symlink with NOFOLLOW.
                         // as in, it does not actually let you open it.
-                        return self._cp_symlink(src, dest);
+                        return self.cp_symlink(src, dest);
                     }
                     return Err(err);
                 }
@@ -8729,7 +8730,7 @@ impl NodeFS {
                 flags |= sys::O::EXCL;
             }
 
-            let dest_fd = Self::_cp_open_dest_with_mkdir(self, dest, flags, stat_.st_mode as Mode)?;
+            let dest_fd = Self::cp_open_dest_with_mkdir(self, dest, flags, stat_.st_mode as Mode)?;
 
             let mut size: usize = stat_.st_size.max(0) as usize;
 
@@ -8875,7 +8876,7 @@ impl NodeFS {
                     // open(2) returns EMLINK for this case, though POSIX
                     // specifies ELOOP; accept either.
                     if matches!(err.get_errno(), E::EMLINK | E::ELOOP) {
-                        return self._cp_symlink(src, dest);
+                        return self.cp_symlink(src, dest);
                     }
                     return Err(err);
                 }
@@ -8901,7 +8902,7 @@ impl NodeFS {
             }
 
             let dest_fd =
-                match Self::_cp_open_dest_with_mkdir(self, dest, flags, stat_.st_mode as Mode) {
+                match Self::cp_open_dest_with_mkdir(self, dest, flags, stat_.st_mode as Mode) {
                     Ok(fd) => fd,
                     Err(e) => return Err(e),
                 };
@@ -9142,12 +9143,13 @@ impl NodeFS {
     }
 
     /// Shared `dest_fd:` block from the mac/linux/freebsd branches of
-    /// `_copy_single_file_sync`.
+    /// `copy_single_file_sync`.
     /// Tries `open(dest, flags, mode)`; on ENOENT creates the
     /// parent directory and retries once. Any other error is annotated with
     /// `dest` copied into `sync_error_buf`.
-    fn _cp_open_dest_with_mkdir(&mut self, dest: &ZStr, flags: i32, mode: Mode) -> Maybe<FD> {
-        // PORT: extracted from the mac/linux/freebsd arms of `_copySingleFileSync`
+    #[cfg_attr(windows, allow(dead_code))]
+    fn cp_open_dest_with_mkdir(&mut self, dest: &ZStr, flags: i32, mode: Mode) -> Maybe<FD> {
+        // PORT: extracted from the mac/linux/freebsd arms of `copy_single_file_sync`
         // only — there `OSPathSliceZ == ZStr`. Taking `&ZStr` keeps the body
         // monomorphic (and lets it type-check on Windows where it's dead code).
         match Syscall::open(dest, flags, mode) {
@@ -9177,27 +9179,6 @@ impl NodeFS {
                 Err(err.with_path(&self.sync_error_buf[..dest.len()]))
             }
         }
-    }
-
-    // returns boolean `should_continue`
-    fn _cp_async_directory(
-        &mut self,
-        args: args::CpFlags,
-        task: *mut AsyncCpTask,
-        src_buf: &mut OSPathBuffer,
-        src_dir_len: PathInt,
-        dest_buf: &mut OSPathBuffer,
-        dest_dir_len: PathInt,
-    ) -> bool {
-        AsyncCpTask::_cp_async_directory(
-            self,
-            args,
-            task,
-            src_buf,
-            src_dir_len,
-            dest_buf,
-            dest_dir_len,
-        )
     }
 
     /// Const-generic dispatch from `NodeFSFunctionEnum` to the matching

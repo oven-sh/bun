@@ -88,13 +88,13 @@ use crate::shell::builtins::{
     mv::{ShellMvBatchedTask, ShellMvCheckTargetTask},
     rm::ShellRmTask,
     touch::ShellTouchTask,
+    yes::YesTask as ShellYesTask,
 };
 use crate::shell::dispatch_tasks::{
     AsyncDeinitReader as ShellIOReaderAsyncDeinit, AsyncDeinitWriter as ShellIOWriterAsyncDeinit,
     ShellAsyncSubprocessDone, ShellCondExprStatTask, ShellGlobTask, ShellRmDirTask,
 };
 use crate::shell::interpreter::ShellTask;
-use crate::shell::io_writer::IOWriter as ShellIOWriter;
 #[cfg(not(windows))]
 use crate::shell::io_writer::Poll as ShellBufferedWriterPoll;
 use crate::shell::states::r#async::Async as ShellAsync;
@@ -292,7 +292,6 @@ pub fn run_task(
         task_tag::ShellAsync
         | task_tag::ShellAsyncSubprocessDone
         | task_tag::ShellIOWriterAsyncDeinit
-        | task_tag::ShellIOWriter
         | task_tag::ShellIOReaderAsyncDeinit
         | task_tag::ShellCondExprStatTask
         | task_tag::ShellCpTask
@@ -551,10 +550,6 @@ fn run_task_cold(task: Task) {
             let t = cast_ptr!(ShellIOWriterAsyncDeinit);
             ShellIOWriterAsyncDeinit::run_from_main_thread(t);
         }
-        task_tag::ShellIOWriter => {
-            let t = cast_ptr!(ShellIOWriter);
-            ShellIOWriter::run_from_main_thread(t);
-        }
         task_tag::ShellIOReaderAsyncDeinit => {
             let t = cast_ptr!(ShellIOReaderAsyncDeinit);
             ShellIOReaderAsyncDeinit::run_from_main_thread(t);
@@ -574,6 +569,12 @@ fn run_task_cold(task: Task) {
             ShellRmDirTask::run_from_main_thread(t);
         }
         task_tag::ShellGlobTask => shell_dispatch!(ShellGlobTask),
+        task_tag::ShellYesTask => {
+            // SAFETY: §Dispatch — tag identifies pointee; enqueued by
+            // `YesTask::enqueue`, storage lives inside `Box<Yes>` in the
+            // interpreter arena and is stable until the builtin deinits.
+            ShellYesTask::run_from_main_thread(unsafe { &*cast_ptr!(ShellYesTask) });
+        }
 
         // ── bake dev-server ──────────────────────────────────────────────
         task_tag::BakeHotReloadEvent => {
@@ -584,7 +585,7 @@ fn run_task_cold(task: Task) {
             unsafe { BakeHotReloadEvent::run(cast_ptr!(BakeHotReloadEvent)) };
         }
 
-        // ShellYesTask + any tag the hot path mis-routed: producer bug.
+        // Any tag the hot path mis-routed: producer bug.
         _ => panic!("Unexpected Task tag: {}", task.tag.0),
     }
 }
@@ -592,7 +593,7 @@ fn run_task_cold(task: Task) {
 /// Compile-time guard that the arm count above tracks
 /// `bun_event_loop::task_tag::COUNT`. Bump when adding a variant.
 const _: () = assert!(
-    task_tag::COUNT == 98,
+    task_tag::COUNT == 97,
     "dispatch::run_task arm count out of sync with bun_event_loop::task_tag",
 );
 

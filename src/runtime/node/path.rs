@@ -1054,7 +1054,7 @@ pub(crate) fn extname(
 
 /// Based on Node v21.6.1 private helper _format:
 /// https://github.com/nodejs/node/blob/6ae20aa63de78294b18d5015481485b7cd8fbb60/lib/path.js#L145
-fn _format_t<'a, T: PathCharCwd>(
+fn format_t<'a, T: PathCharCwd>(
     path_object: &PathParsed<'a, T>,
     sep: T,
     buf: &'a mut [T],
@@ -1156,7 +1156,7 @@ pub(crate) fn format_posix_js_t<T: PathCharCwd>(
 ) -> JsResult<JSValue> {
     create_js_string_t::<T>(
         global_object,
-        _format_t(path_object, T::from_u8(CHAR_FORWARD_SLASH), buf),
+        format_t(path_object, T::from_u8(CHAR_FORWARD_SLASH), buf),
     )
 }
 
@@ -1167,7 +1167,7 @@ pub(crate) fn format_windows_js_t<T: PathCharCwd>(
 ) -> JsResult<JSValue> {
     create_js_string_t::<T>(
         global_object,
-        _format_t(path_object, T::from_u8(CHAR_BACKWARD_SLASH), buf),
+        format_t(path_object, T::from_u8(CHAR_BACKWARD_SLASH), buf),
     )
 }
 

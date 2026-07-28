@@ -1375,7 +1375,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             if let Some(hostname_) = headers_ref.fast_get(HTTPHeaderName::Host) {
                 hostname = Some(hostname_.to_owned_slice().into_boxed_slice());
             }
-            if url.is_s3() {
+            if url.is_s3() || url_type == URLType::Blob {
                 if let Some(range_) = headers_ref.fast_get(HTTPHeaderName::Range) {
                     range = Some(range_.to_owned_slice_z());
                 }
@@ -1423,9 +1423,9 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         return Ok(JSValue::ZERO);
     }
 
-    // This is not 100% correct.
-    // We don't pass along headers, we ignore method, we ignore status code...
-    // But it's better than status quo.
+    // Scheme fetch for blob: and file:. blob: follows the fetch spec (method
+    // gate, Content-Length, Range). file: remains Bun-specific: method and
+    // request headers are ignored.
     if url_type != URLType::Remote {
         // `defer unix_socket_path.deinit()` → Drop on scope exit.
         let mut path_buf = PathBuffer::uninit();
@@ -1455,32 +1455,136 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
 
         // This can be a blob: url or a file: url.
         let blob_to_use: Blob = 'blob: {
-            // Support blob: urls
+            // https://fetch.spec.whatwg.org/#concept-scheme-fetch "blob"
             if url_type == URLType::Blob {
-                if let Some(blob) =
-                    ObjectURLRegistry::singleton().resolve_and_dupe(url_path_decoded)
-                {
-                    url_string = BunString::create_format(format_args!(
-                        "blob:{}",
-                        bstr::BStr::new(url_path_decoded)
-                    ));
-                    break 'blob blob;
-                } else {
-                    // Consistent with what Node.js does - it rejects, not a 404.
-                    let err = global_this.to_type_error(
-                        jsc::ErrorCode::INVALID_ARG_VALUE,
-                        format_args!(
-                            "Failed to resolve blob:{}",
-                            bstr::BStr::new(url_path_decoded)
-                        ),
-                    );
-                    return Ok(
-                        JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
-                            global_this,
-                            err,
-                        ),
-                    );
+                macro_rules! reject {
+                    ($($args:tt)*) => {{
+                        let err = global_this.to_type_error(
+                            jsc::ErrorCode::INVALID_ARG_VALUE,
+                            format_args!($($args)*),
+                        );
+                        return Ok(
+                            JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
+                                global_this,
+                                err,
+                            ),
+                        );
+                    }};
                 }
+
+                // 2. If request's method is not `GET` or blobURLEntry is null,
+                //    then return a network error.
+                if method != Method::GET {
+                    reject!("fetch failed: only GET is allowed for blob: URLs");
+                }
+                let Some(blob) =
+                    ObjectURLRegistry::singleton().resolve_and_dupe(url_path_decoded)
+                else {
+                    reject!("Failed to resolve blob:{}", bstr::BStr::new(url_path_decoded));
+                };
+
+                let url_string = BunString::create_format(format_args!(
+                    "blob:{}",
+                    bstr::BStr::new(url_path_decoded)
+                ));
+
+                // 5. Let fullLength be blob's size.
+                blob.resolve_size();
+                let full_length = blob.size.get();
+                let blob_type = blob.content_type_slice();
+
+                let mut status_code: u16 = 200;
+                let mut status_text: &[u8] = b"OK";
+                let mut length = full_length;
+                let mut content_range: Option<(u64, u64)> = None;
+
+                if let Some(range_header) = &range {
+                    use crate::server::RangeRequest;
+                    // 9.4. If rangeValue is failure, then return a network error.
+                    let (start, end) = match RangeRequest::parse_raw(range_header.as_bytes()) {
+                        RangeRequest::Raw::None => {
+                            reject!("fetch failed: invalid Range header")
+                        }
+                        RangeRequest::Raw::Suffix(n) => {
+                            // 9.6. If rangeStart is null:
+                            //   1. Set rangeStart to fullLength − rangeEnd.
+                            //   2. Set rangeEnd to rangeStart + rangeEnd − 1.
+                            if full_length == 0 {
+                                reject!("fetch failed: Range is unsatisfiable for an empty blob")
+                            }
+                            (full_length.saturating_sub(n), full_length - 1)
+                        }
+                        RangeRequest::Raw::Bounded { start, end } => {
+                            if matches!(end, Some(e) if e < start) {
+                                reject!("fetch failed: invalid Range header")
+                            }
+                            // 9.7.1. If rangeStart is greater than or equal to
+                            //        fullLength, then return a network error.
+                            if start >= full_length {
+                                reject!(
+                                    "fetch failed: Range start is greater than the blob's size"
+                                )
+                            }
+                            // 9.7.2. If rangeEnd is null or rangeEnd is greater than or
+                            //        equal to fullLength, set rangeEnd to fullLength − 1.
+                            (start, end.unwrap_or(full_length - 1).min(full_length - 1))
+                        }
+                    };
+                    // 9.8. Let slicedBlob be the result of invoking slice blob
+                    //      given blob, rangeStart, rangeEnd + 1, and type.
+                    blob.offset.set(blob.offset.get().saturating_add(start));
+                    length = end - start + 1;
+                    blob.size.set(length);
+                    status_code = 206;
+                    status_text = b"Partial Content";
+                    content_range = Some((start, end));
+                }
+
+                let mut response_headers = response::HeadersRef::create_empty();
+                let mut len_buf = [0u8; 20];
+                response_headers.put(
+                    HTTPHeaderName::ContentLength,
+                    &BunString::ascii(bun_core::fmt::buf_print_infallible(
+                        &mut len_buf,
+                        format_args!("{}", length),
+                    )),
+                    global_this,
+                )?;
+                response_headers.put(
+                    HTTPHeaderName::ContentType,
+                    &BunString::ascii(blob_type),
+                    global_this,
+                )?;
+                if let Some((start, end)) = content_range {
+                    let mut cr_buf = [0u8; crate::server::RangeRequest::CONTENT_RANGE_BUF];
+                    response_headers.put(
+                        HTTPHeaderName::ContentRange,
+                        &BunString::ascii(bun_core::fmt::buf_print_infallible(
+                            &mut cr_buf,
+                            format_args!("bytes {}-{}/{}", start, end, full_length),
+                        )),
+                        global_this,
+                    )?;
+                }
+
+                let response = bun_core::heap::into_raw(Box::new(Response::init(
+                    response::Init {
+                        status_code,
+                        status_text: BunString::create_atom(status_text).into(),
+                        headers: Some(response_headers),
+                        ..Default::default()
+                    },
+                    Body::new(BodyValue::Blob(blob)),
+                    url_string,
+                    false,
+                )));
+
+                // Ownership of the boxed Response transfers to the JS GC; see
+                // `data_url_response` for the rationale.
+                return Ok(JSPromise::resolved_promise_value(
+                    global_this,
+                    Response::make_maybe_pooled(global_this, response),
+                ));
             }
 
             let temp_file_path: &[u8] = 'brk: {

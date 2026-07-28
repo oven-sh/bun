@@ -576,6 +576,12 @@ for (const { body, fn } of bodyTypes) {
         expect((await p2).done).toBe(true);
         expect(source.locked).toBe(false);
       });
+      const writeChunk = async (sock: net.Socket, bytes: number[]) => {
+        sock.write(bytes.length.toString(16) + "\r\n");
+        sock.write(Uint8Array.from(bytes));
+        sock.write("\r\n");
+        await new Promise(r => setImmediate(r));
+      };
       if (body === Response) {
         test("streams a fetch response body", async () => {
           await using server = Bun.serve({
@@ -628,12 +634,6 @@ for (const { body, fn } of bodyTypes) {
             port: (server.address() as net.AddressInfo).port,
             [Symbol.asyncDispose]: () => new Promise<void>(r => server.close(() => r())),
           };
-        };
-        const writeChunk = async (sock: net.Socket, bytes: number[]) => {
-          sock.write(bytes.length.toString(16) + "\r\n");
-          sock.write(Uint8Array.from(bytes));
-          sock.write("\r\n");
-          await new Promise(r => setImmediate(r));
         };
         test.each([
           ["leading 4-byte char split 2-way", [[0xf0, 0x9f], [0xab, 0xa0], [0x42]], "🫠B"],
@@ -736,16 +736,14 @@ for (const { body, fn } of bodyTypes) {
           const sock = net.connect(server.port, "127.0.0.1", () => connected.resolve());
           sock.on("error", () => {});
           await connected.promise;
-          sock.write("POST / HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n");
-          for (const p of [[0x41], [0xf0], [0x9f], [0xab, 0xa0], [0x42]]) {
-            sock.write(p.length.toString(16) + "\r\n");
-            sock.write(Uint8Array.from(p));
-            sock.write("\r\n");
-            await new Promise(r => setImmediate(r));
+          try {
+            sock.write("POST / HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n");
+            for (const p of [[0x41], [0xf0], [0x9f], [0xab, 0xa0], [0x42]]) await writeChunk(sock, p);
+            sock.write("0\r\n\r\n");
+            expect(await done.promise).toBe("A🫠B");
+          } finally {
+            sock.end();
           }
-          sock.write("0\r\n\r\n");
-          expect(await done.promise).toBe("A🫠B");
-          sock.end();
         });
         test("rejects when the client aborts mid-upload server-side", async () => {
           const firstChunk = Promise.withResolvers<void>();

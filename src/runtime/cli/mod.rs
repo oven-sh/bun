@@ -1544,9 +1544,6 @@ pub mod command {
     #[cold]
     #[inline(never)]
     fn exec_repl(log: &mut bun_ast::Log) -> CmdResult {
-        // Repl reuses run's param table (see `arguments::tag_table`), but
-        // inits with its own tag so `arguments::parse`'s `--help` and
-        // parse-error paths print repl's help, not `bun run`'s.
         let ctx = init(Tag::ReplCommand, log)?;
         super::repl_command::ReplCommand::exec(ctx)
     }

@@ -2239,10 +2239,7 @@ pub mod environment_variables {
 
     /// `delete process.env.HTTP_PROXY` write-back; locking mirrors `Bun__setEnvValue`.
     #[unsafe(no_mangle)]
-    pub(crate) extern "C" fn Bun__deleteEnvValue(
-        global_object: &JSGlobalObject,
-        name: &BunString,
-    ) {
+    pub(crate) extern "C" fn Bun__deleteEnvValue(global_object: &JSGlobalObject, name: &BunString) {
         let vm = global_object.bun_vm().as_mut();
         let name_slice = name.to_utf8();
 

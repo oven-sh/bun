@@ -174,10 +174,6 @@ static void applyTZFromString(JSGlobalObject*, const String&);
 static void applyTLSRejectFromString(JSGlobalObject*, const String&);
 static void applyVerboseFetchFromString(JSGlobalObject*, const String&);
 
-// When one of the side-effecting env vars is assigned, drop DontEnum on its
-// accessor so {...process.env} / Object.keys pick it up. Calls the static
-// JSObject::deleteProperty to avoid re-entering JSProcessEnv::deleteProperty,
-// which would reinstall the accessor as DontEnum mid-setter.
 static void promoteSideEffectingAccessorToEnumerable(VM& vm, JSGlobalObject* globalObject, JSObject* object, PropertyName propertyName)
 {
     unsigned attributes = 0;
@@ -185,6 +181,7 @@ static void promoteSideEffectingAccessorToEnumerable(VM& vm, JSGlobalObject* glo
     if (!existing || !(attributes & JSC::PropertyAttribute::DontEnum))
         return;
     DeletePropertySlot deleteSlot;
+    // Static dispatch: the method-table path would re-enter JSProcessEnv::deleteProperty.
     if (!JSObject::deleteProperty(object, globalObject, propertyName, deleteSlot))
         return;
     object->putDirectCustomAccessor(vm, propertyName, existing,
@@ -495,10 +492,7 @@ static constexpr ASCIILiteral kProxyEnvVarNames[] = {
 // side-effecting var need only be added in one place.
 static void applyTZFromString(JSGlobalObject* globalObject, const String& value)
 {
-    // Node resets V8's date cache on every TZ write, valid or not, so an
-    // unresolvable name reverts to the host zone instead of leaving the
-    // previous override in force. Mirror that: on ICU rejection, clear the
-    // override and re-detect rather than silently keeping the old zone.
+    // Node resets the date cache on every TZ write; on ICU rejection clear the override.
     if (!WTF::setTimeZoneOverride(value))
         WTF::setTimeZoneOverride({});
     WTF::timeZoneDidChange();
@@ -764,9 +758,6 @@ RefPtr<SharedEnvStore> ensureSharedEnvStoreForWorker(Zig::GlobalObject* globalOb
     return store;
 }
 
-// Re-install a side-effecting env var's CustomAccessor after delete so later
-// assignments still reach the setter. Leaves the object in its startup state
-// (accessor present, DontEnum, no backing private value).
 static void reinstallSideEffectingEnvAccessor(VM& vm, JSGlobalObject* globalObject, JSObject* object, const String& key)
 {
     CustomGetterSetter* accessor = nullptr;
@@ -786,18 +777,14 @@ static void reinstallSideEffectingEnvAccessor(VM& vm, JSGlobalObject* globalObje
     } else {
         return;
     }
-    // Sentinel so the getter returns undefined instead of re-reading the OS
-    // env map (which bun does not unsetenv on POSIX).
+    // jsUndefined sentinel: the getter must not fall through to the OS env map.
     object->putDirect(vm, privateName, jsUndefined(), 0);
     object->putDirectCustomAccessor(vm, Identifier::fromString(vm, key), accessor,
         JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DontEnum);
 }
 
-// process.env on the main thread. A plain JSObject almost works, but `delete`
-// on a CustomAccessor property removes it without any hook, which leaves the
-// TZ override (and the other side-effecting vars) stuck at their last value
-// and makes later assignments plain data writes. Overriding deleteProperty is
-// the only way to observe it.
+// process.env: overrides deleteProperty so the TZ/TLS/verbose accessors survive
+// `delete` and later assignments still reach the setter.
 class JSProcessEnv final : public JSC::JSNonFinalObject {
 public:
     using Base = JSC::JSNonFinalObject;
@@ -850,8 +837,7 @@ private:
     }
 };
 
-// "Object"_s so Bun.inspect / console.log don't prefix process.env as
-// "ProcessEnv { ... }" (matches NapiPrototype::s_info for the same reason).
+// "Object"_s keeps Bun.inspect from prefixing process.env (same as NapiPrototype).
 const JSC::ClassInfo JSProcessEnv::s_info = { "Object"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSProcessEnv) };
 
 bool isProcessEnvClassInfo(const JSC::ClassInfo* info)
@@ -988,10 +974,7 @@ JSValue createEnvironmentVariablesMap(Zig::GlobalObject* globalObject)
         Identifier::fromString(vm, BUN_CONFIG_VERBOSE_FETCH), JSC::CustomGetterSetter::create(vm, jsBunConfigVerboseFetchGetter, jsBunConfigVerboseFetchSetter), BUN_CONFIG_VERBOSE_FETCH_Attrs);
 
     for (size_t j = 0; j < proxyVarCount; j++) {
-        // Known limitation: `delete process.env.NO_PROXY` leaves the native env
-        // map stale. JSProcessEnv::deleteProperty reinstalls TZ / TLS / verbose
-        // accessors but there is no unset for the Zig env map, so proxy vars are
-        // not covered. Use `process.env.NO_PROXY = ""` to unset.
+        // delete leaves the Zig env map stale (no unset FFI); assign "" to clear.
         unsigned attrs = JSC::PropertyAttribute::CustomAccessor | 0;
         if (!hasProxyVar[j]) {
             attrs |= JSC::PropertyAttribute::DontEnum;

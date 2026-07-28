@@ -2880,8 +2880,7 @@ SerializationReturnCode CloneSerializer::serialize(JSValue in)
             // like a plain object from JS's perspective (matches Node.js).
             // ObjectPrototype is allowed because %Object.prototype% is an immutable
             // prototype exotic object that the spec carves out of this rejection.
-            // process.env backs itself with JSProcessEnv / JSSharedEnvMap to hook
-            // deleteProperty; Node clones process.env as a plain object.
+            // process.env (JSProcessEnv / JSSharedEnvMap) clones as a plain object.
             if (inObject->classInfo() != JSFinalObject::info() && inObject->classInfo() != Zig::NapiPrototype::info() && inObject->classInfo() != JSC::ObjectPrototype::info() && !Bun::isProcessEnvClassInfo(inObject->classInfo()))
                 return SerializationReturnCode::DataCloneError;
             inputObjectStack.append(inObject);

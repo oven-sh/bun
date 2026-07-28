@@ -14,8 +14,7 @@ namespace Bun {
 
 JSC::JSValue createEnvironmentVariablesMap(Zig::GlobalObject* globalObject);
 
-// True when `info` is one of the process.env backing classes (JSProcessEnv or
-// JSSharedEnvMap). Structured clone treats them as plain objects.
+// JSProcessEnv / JSSharedEnvMap; structured clone treats them as plain objects.
 bool isProcessEnvClassInfo(const JSC::ClassInfo* info);
 
 // worker_threads SHARE_ENV: a `process.env` whose reads/writes/enumeration go

@@ -81,7 +81,11 @@ impl DirectoryRoute {
             }
         };
 
-        let slots = if enable_stat_cache { STAT_CACHE_SLOTS } else { 0 };
+        let slots = if enable_stat_cache {
+            STAT_CACHE_SLOTS
+        } else {
+            0
+        };
         let mut stat_cache = Vec::with_capacity(slots);
         for _ in 0..slots {
             stat_cache.push(Cell::new(StatCacheEntry::default()));

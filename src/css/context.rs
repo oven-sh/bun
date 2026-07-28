@@ -81,8 +81,7 @@ impl<'a> PropertyHandlerContext<'a> {
     }
 
     pub fn should_compile_logical(&self, feature: css::compat::Feature) -> bool {
-        // Don't convert logical properties in style attributes or keyframes
-        // because our fallbacks rely on extra rules to define --ltr and --rtl.
+        // Fallbacks rely on extra `:dir()` rules; these contexts can't host them.
         if matches!(
             self.context,
             DeclarationContext::StyleAttribute | DeclarationContext::Keyframes

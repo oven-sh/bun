@@ -369,6 +369,8 @@ impl WindowsNamedPipeContext {
                     Self::run_event(ctx.cast::<WindowsNamedPipeContext>());
                     Ok(())
                 },
+                // Owned by the pipe context, not the queue.
+                dispose: None,
             };
 
             // SAFETY: `this` is freshly allocated uninit storage exclusively owned here; we write

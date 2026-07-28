@@ -1456,20 +1456,37 @@ impl JSValkeyClient {
                 // self_ dropped here (Box freed).
             }
         }
+        impl Holder {
+            fn run_task(this: *mut Holder) -> bun_jsc::AnyTask::JsResult<()> {
+                Holder::run(this);
+                Ok(())
+            }
+
+            /// Reclaimed unrun by the terminate drain: release the ref
+            /// without `close()` (close can run JS handlers, forbidden
+            /// mid-drain; the uws loop closes the socket at teardown).
+            fn release_unrun(this: *mut Holder) {
+                // SAFETY: queue-owned box popped by the drain (sole owner);
+                // the deref releases the intrusive ref taken before the
+                // enqueue.
+                unsafe {
+                    let holder = bun_core::heap::take(this);
+                    JSValkeyClient::deref(holder.ctx.cast_mut());
+                }
+            }
+        }
+
         let holder = bun_core::heap::into_raw(Box::new(Holder {
             ctx: self.as_ctx_ptr(),
             task: jsc::AnyTask::AnyTask::default(), // overwritten below
         }));
-        // SAFETY: holder just allocated; closure captures nothing so it coerces
-        // to `fn(*mut c_void) -> JsResult<()>`.
+        // SAFETY: holder just allocated; exclusively owned until enqueued.
         unsafe {
-            (*holder).task = jsc::AnyTask::AnyTask {
-                ctx: Some(core::ptr::NonNull::new_unchecked(holder.cast::<c_void>())),
-                callback: |p: *mut c_void| {
-                    Holder::run(p.cast::<Holder>());
-                    Ok(())
-                },
-            };
+            (*holder).task = jsc::AnyTask::AnyTask::from_typed_with_dispose(
+                holder,
+                Holder::run_task,
+                Holder::release_unrun,
+            );
         }
 
         // SAFETY: VM-owned event loop pointer; uniquely accessed on the JS thread.

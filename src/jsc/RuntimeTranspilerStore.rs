@@ -321,6 +321,7 @@ impl RuntimeTranspilerStore {
                 global_this: BackRef::new(global_object),
                 non_threadsafe_referrer: OwnedString::new(referrer),
                 vm,
+                vm_pin: None,
                 log: bun_ast::Log::init(),
                 loader,
                 promise: StrongOptional::create(JSValue::from_cell(promise), global_object),
@@ -377,6 +378,10 @@ pub struct TranspilerJob {
     // raw pointers/BackRefs are used (BACKREF — VM owns the
     // store and outlives every job).
     pub vm: *mut VirtualMachine,
+    /// Holds the VM's shutdown gate open from `schedule` until the
+    /// completion is enqueued (dropped on the pool thread) — worker
+    /// terminate waits for in-flight transpiles instead of racing them.
+    pub vm_pin: Option<bun_threading::GateGuest>,
     pub global_this: BackRef<JSGlobalObject>,
     pub fetcher: Fetcher,
     pub poll_ref: KeepAlive,
@@ -486,16 +491,19 @@ impl TranspilerJob {
 
     pub(crate) fn dispatch_to_main_thread(&mut self) {
         let vm = self.vm;
-        // SAFETY: vm outlives the job (BACKREF — VM owns the store).
+        // Take the pin (held since `schedule`) into a local first — another
+        // thread may free `self` the moment the push below publishes it.
+        let pin = self.vm_pin.take();
+        // SAFETY: `vm` is kept alive by `pin` (BACKREF — VM owns the store).
         let transpiler_store: *mut RuntimeTranspilerStore =
             unsafe { ptr::addr_of_mut!((*vm).transpiler_store) };
         let job = NonNull::from(&mut *self);
         // SAFETY: queue is concurrent-safe (UnboundedQueue uses atomics).
         unsafe { (*transpiler_store).queue.push(job) };
-        // Another thread may free `self` at any time after .push, so we cannot use it any more.
-        // SAFETY: vm outlives the job; event_loop() returns the live self-pointer.
+        // SAFETY: vm is kept alive by `pin`; event_loop() returns the live self-pointer.
         unsafe { &*(*vm).event_loop() }
             .enqueue_task_concurrent(ConcurrentTask::create_from(transpiler_store));
+        drop(pin);
     }
 
     pub(crate) fn run_from_js_thread(&mut self) -> JsResult<()> {
@@ -559,6 +567,9 @@ impl TranspilerJob {
         // `EventLoopCtx` vtable; resolve it via the `get_vm_ctx` hook (registered by
         // `bun_runtime::init`).
         self.poll_ref.ref_(get_vm_ctx(AllocatorType::Js));
+        // Terminate blocks until this transpile's completion is enqueued.
+        // SAFETY: `vm` is the live per-thread VM (schedule runs on it).
+        self.vm_pin = Some(unsafe { (*self.vm).pin() });
         WorkPool::schedule(&raw mut self.work_task);
     }
 

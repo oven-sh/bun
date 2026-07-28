@@ -65,7 +65,16 @@ pub trait CompletionStruct: Node + Send + 'static {
         transpiler: &mut Transpiler<'a>,
         bump: &'a Arena,
     ) -> Result<(), crate::Error>;
+    /// Enqueues the finished completion to the owning JS thread and releases
+    /// the VM pin taken at creation (worker terminate waits for it, so the
+    /// enqueue lands on a live VM). Plugin builds run unpinned — see
+    /// `begin_run` — and may lose the completion at terminate.
     fn complete_on_bundle_thread(&mut self);
+    /// Called before the run starts. Plugin builds drop their VM pin here:
+    /// they round-trip through the owning JS thread mid-bundle, and holding
+    /// the pin across that would deadlock worker terminate. FIXME: give
+    /// plugin builds a cancel signal instead.
+    fn begin_run(&mut self);
     fn set_result(&mut self, result: BundleV2Result);
     fn set_log(&mut self, log: bun_ast::Log);
     fn set_transpiler(&mut self, this: *mut BundleV2<'_>);
@@ -75,7 +84,7 @@ pub trait CompletionStruct: Node + Send + 'static {
     fn file_map(&mut self) -> Option<NonNull<FileMap>>;
     /// Returns a §Dispatch handle (erased owner + `&'static` vtable) the impl
     /// provides, so the bundler can read `result == .err` /
-    /// `jsc_event_loop.enqueueTaskConcurrent` without naming the concrete
+    /// `vm.enqueue_task_concurrent` without naming the concrete
     /// struct.
     fn as_js_bundle_completion_task(&mut self) -> dispatch::CompletionHandle;
 
@@ -226,6 +235,7 @@ impl<C: CompletionStruct> BundleThread<C> {
                 // `panic = "abort"` → a Rust panic on this thread enters the
                 // crash-handler hook and aborts the whole process.
                 // No `catch_unwind` — there is nothing to catch.
+                completion.begin_run();
                 match Self::generate_in_new_thread(completion, generation) {
                     Ok(()) => {}
                     Err(err) => {

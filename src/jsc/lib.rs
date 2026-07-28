@@ -80,6 +80,7 @@ pub mod script_execution_status;
 pub mod sizes;
 #[path = "SourceProvider.rs"]
 pub mod source_provider;
+pub mod terminate_abort;
 #[path = "TextCodec.rs"]
 pub mod text_codec;
 #[path = "URLSearchParams.rs"]

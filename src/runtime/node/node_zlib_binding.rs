@@ -210,6 +210,9 @@ pub(crate) trait CompressionStreamImpl: Sized + Taskable + 'static {
     /// Implementations store a `BackRef<JSGlobalObject>`; the single unsafe
     /// deref lives in `BackRef::get`, so callers and impls are safe.
     fn global_this(&self) -> &JSGlobalObject;
+    /// Per-write shutdown-gate pin: set on the JS thread in `write()`,
+    /// dropped on the pool thread right after the completion enqueue.
+    fn vm_pin(&self) -> &JsCell<Option<bun_threading::GateGuest>>;
     fn stream(&self) -> &JsCell<Self::Stream>;
 
     /// Write `(avail_out, avail_in)` into the JS-owned 2-element `Uint32Array`
@@ -449,6 +452,10 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
             callback: Self::async_job_run_task,
         });
         this.poll_ref().with_mut(|p| p.ref_(vm));
+        // Terminate blocks until this write's completion is enqueued.
+        // SAFETY: `bun_vm()` never returns null for a Bun-owned global.
+        let pin = this.global_this().bun_vm().pin();
+        this.vm_pin().with_mut(|slot| *slot = Some(pin));
         WorkPool::schedule(this.task().as_ptr());
 
         Ok(JSValue::UNDEFINED)
@@ -483,14 +490,19 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
 
         this_ref.stream().with_mut(|s| s.do_work());
 
-        // SAFETY: `event_loop()` is a self-pointer into a live VM; the
-        // `enqueue_task_concurrent` body only touches the lock-free
-        // `concurrent_tasks` queue (thread-safe). `this` is the heap-allocated
-        // `m_ctx` payload — the matching `ref()` in `write()` keeps it alive
-        // until `run_from_js_thread` runs and calls `deref()`.
+        // Take the write's pin into a local first — the enqueue hands the
+        // completion to the JS thread, which may deref `this` before we
+        // return.
+        let pin = this_ref.vm_pin().with_mut(Option::take);
+        // SAFETY: `event_loop()` is a self-pointer into the VM kept alive by
+        // `pin`; the `enqueue_task_concurrent` body only touches the
+        // lock-free `concurrent_tasks` queue (thread-safe). `this` is the
+        // heap-allocated `m_ctx` payload — the matching `ref()` in `write()`
+        // keeps it alive until `run_from_js_thread` runs and calls `deref()`.
         unsafe {
             (*vm.event_loop()).enqueue_task_concurrent(ConcurrentTask::create(Task::init(this)));
         }
+        drop(pin);
     }
 
     /// Dispatched from `dispatch.rs` when the worker-thread `do_work()` posts
@@ -998,6 +1010,7 @@ macro_rules! __impl_compression_stream {
             type Stream = $ctx;
 
             #[inline] fn global_this(&self) -> &::bun_jsc::JSGlobalObject { self.global_this.get() }
+            #[inline] fn vm_pin(&self) -> &JsCell<Option<::bun_threading::GateGuest>> { &self.vm_pin }
             #[inline] fn stream(&self) -> &::bun_jsc::JsCell<Self::Stream> { &self.stream }
             #[inline] fn poll_ref(&self) -> &::bun_jsc::JsCell<$crate::node::node_zlib_binding::CountedKeepAlive> { &self.poll_ref }
             #[inline] fn this_value(&self) -> &::bun_jsc::JsCell<::bun_jsc::StrongOptional> { &self.this_value }

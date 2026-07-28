@@ -682,7 +682,12 @@ pub trait TaskContext: Send {
 pub struct AsyncTask<C: TaskContext> {
     ctx: C,
     promise: JSPromiseStrong,
+    /// JSC_BORROW: kept alive across the job by `vm_pin` below (worker
+    /// terminate waits for the pin).
     vm: *mut VirtualMachine,
+    /// Holds the worker's shutdown gate open until the completion is
+    /// enqueued (dropped on the pool thread).
+    vm_pin: Option<bun_threading::GateGuest>,
     task: WorkPoolTask,
     concurrent_task: ConcurrentTask,
     keep_alive: KeepAlive,
@@ -694,15 +699,14 @@ impl<C: TaskContext> Taskable for AsyncTask<C> {
 
 impl<C: TaskContext> AsyncTask<C> {
     fn create(global: &JSGlobalObject, ctx: C) -> Result<*mut Self, bun_alloc::AllocError> {
-        // `bun_vm_ptr()` returns `*mut VirtualMachine` with write provenance; valid for
-        // process lifetime. Do NOT launder `bun_vm()` (a `&VirtualMachine`) through
-        // `*const _ as *mut _` — that derives a writeable pointer from a shared
-        // reference and is UB under Stacked Borrows.
         let vm: *mut VirtualMachine = global.bun_vm_ptr();
+        // SAFETY: `bun_vm_ptr` returns the live per-thread VM.
+        let vm_pin = Some(unsafe { (*vm).pin() });
         let this = Box::new(AsyncTask {
             ctx,
             promise: JSPromiseStrong::init(global),
             vm,
+            vm_pin,
             task: WorkPoolTask {
                 callback: Self::run_callback,
                 node: Default::default(),
@@ -746,13 +750,29 @@ impl<C: TaskContext> AsyncTask<C> {
         let this: *mut Self = unsafe { bun_core::from_field_ptr!(Self, task, work_task) };
         // SAFETY: thread-pool has exclusive access to ctx until it enqueues the concurrent task.
         unsafe { (*this).ctx.run() };
-        // SAFETY: vm points to the live owning VM; concurrent_task is intrusive on the same allocation.
+        // SAFETY: `this` is the live heap task; `vm` stays alive because the
+        // pin (held since `create`) blocks terminate until dropped below.
         unsafe {
+            // Take the pin into a local first — the enqueue hands the task
+            // to the JS thread, which may free it before this thread returns.
+            let pin = (*this).vm_pin.take();
             let ct = core::ptr::NonNull::from(
                 (*this).concurrent_task.from(this, AutoDeinit::ManualDeinit),
             );
             (*(*this).vm).enqueue_task_concurrent(ct);
+            drop(pin);
         }
+    }
+
+    /// Reclaim a queued-but-unrun completion during the terminate drain
+    /// (JS thread, VM alive): plain drop releases everything.
+    ///
+    /// # Safety
+    /// `this` is the queue-owned heap task popped by the drain.
+    pub unsafe fn release_unrun(this: *mut Self) {
+        // SAFETY: caller contract.
+        let mut owned = unsafe { bun_core::heap::take(this) };
+        owned.keep_alive.unref(bun_io::js_vm_ctx());
     }
 
     /// # Safety

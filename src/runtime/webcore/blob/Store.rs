@@ -356,6 +356,7 @@ impl S3Ext for S3 {
                 global: bun_ptr::BackRef::new(global_this),
             }))
             .cast::<c_void>(),
+            crate::webcore::s3::simple_request::ContextRelease::drop_box::<Wrapper>(),
             proxy,
             aws_options.request_payer,
         )?;
@@ -462,6 +463,7 @@ impl S3Ext for S3 {
             unsafe { &(*wrapper).resolved_list_options },
             Wrapper::resolve,
             wrapper.cast::<c_void>(),
+            crate::webcore::s3::simple_request::ContextRelease::drop_box::<Wrapper>(),
             proxy,
         )?;
 

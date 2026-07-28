@@ -54,7 +54,7 @@ int us_udp_socket_send(struct us_udp_socket_t *s, void** payloads, size_t* lengt
     struct udp_sendbuf *buf = (struct udp_sendbuf *)s->loop->data.send_buf;
 
     int total_sent = 0;
-#ifndef _WIN32
+#ifdef __linux__
     int stale_icmp_retried = 0;
 #endif
     while (num > 0) {
@@ -69,7 +69,7 @@ int us_udp_socket_send(struct us_udp_socket_t *s, void** payloads, size_t* lengt
                 us_poll_change((struct us_poll_t *) s, s->loop, LIBUS_SOCKET_READABLE | LIBUS_SOCKET_WRITABLE);
                 return total_sent;
             }
-#ifndef _WIN32
+#ifdef __linux__
             /* On an unconnected socket with IP_RECVERR armed, an ICMP for a
              * previous datagram (to a different peer) is mirrored into sk_err
              * and consumed by THIS sendmsg as ECONNREFUSED/E*UNREACH, failing
@@ -82,7 +82,14 @@ int us_udp_socket_send(struct us_udp_socket_t *s, void** payloads, size_t* lengt
                 continue;
             }
 #endif
-            return total_sent > 0 ? total_sent : sent;
+            /* Earlier iterations sent something: keep the short-count contract
+             * (re-arm writable so on_drain drives the retry, where the caller
+             * sees this errno thrown). */
+            if (total_sent > 0) {
+                us_poll_change((struct us_poll_t *) s, s->loop, LIBUS_SOCKET_READABLE | LIBUS_SOCKET_WRITABLE);
+                return total_sent;
+            }
+            return sent;
         }
         total_sent += sent;
         payloads += sent;
@@ -90,12 +97,13 @@ int us_udp_socket_send(struct us_udp_socket_t *s, void** payloads, size_t* lengt
         addresses += sent;
         num -= sent;
         if (sent < count) {
-#ifndef _WIN32
+#ifdef __linux__
             /* Partial batch on an unconnected socket: Linux sendmmsg returns a
              * short count without setting errno, so a stale sk_err consumed
              * mid-batch is indistinguishable from a full send buffer here.
              * Resume at the failed index; the next iteration tells them apart
-             * (EAGAIN re-arms above, cleared sk_err succeeds). sent > 0
+             * (EAGAIN re-arms above, cleared sk_err succeeds, a hard per-msg
+             * error re-arms via the total_sent fallthrough). sent > 0
              * guarantees forward progress so this cannot spin. */
             if (sent > 0 && !s->connected) {
                 stale_icmp_retried = 0;
@@ -107,7 +115,7 @@ int us_udp_socket_send(struct us_udp_socket_t *s, void** payloads, size_t* lengt
             us_poll_change((struct us_poll_t *) s, s->loop, LIBUS_SOCKET_READABLE | LIBUS_SOCKET_WRITABLE);
             return total_sent;
         }
-#ifndef _WIN32
+#ifdef __linux__
         stale_icmp_retried = 0;
 #endif
     }

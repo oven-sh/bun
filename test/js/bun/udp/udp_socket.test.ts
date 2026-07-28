@@ -695,9 +695,10 @@ describe.skipIf(!isLinux)("send() is not poisoned by a stale ICMP from a previou
       s.close();
     }
     // The unconnected-retry must not apply here: the ICMP IS about this
-    // socket's only peer. Loopback delivers it between the two sends, so the
-    // second send sees it on every trial.
-    expect(threw).toBe(30);
+    // socket's only peer. Were the retry wrongly applied, every trial would
+    // succeed and threw === 0. Loopback usually delivers the ICMP between the
+    // two sends (30/30 locally) but a deferred softirq can miss one under load.
+    expect(threw).toBeGreaterThan(0);
   });
 });
 

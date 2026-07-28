@@ -129,7 +129,7 @@ JSC_DEFINE_CUSTOM_SETTER(jsSetterProxyEnvironmentVariable, (JSGlobalObject * glo
     // (the spread skips non-enumerable properties).
     unsigned attributes;
     JSValue existing = object->getDirect(vm, propertyName, attributes);
-    if (existing && (attributes & JSC::PropertyAttribute::DontEnum)) {
+    if (existing && (attributes & JSC::PropertyAttribute::DontEnum) && (attributes & JSC::PropertyAttribute::CustomAccessor)) {
         // Static delete: the method-table one would re-enter JSProcessEnv::deleteProperty.
         DeletePropertySlot deleteSlot;
         if (JSObject::deleteProperty(object, globalObject, propertyName, deleteSlot)) {
@@ -181,7 +181,7 @@ static void promoteSideEffectingAccessorToEnumerable(VM& vm, JSGlobalObject* glo
 {
     unsigned attributes = 0;
     JSValue existing = object->getDirect(vm, propertyName, attributes);
-    if (!existing || !(attributes & JSC::PropertyAttribute::DontEnum))
+    if (!existing || !(attributes & JSC::PropertyAttribute::DontEnum) || !(attributes & JSC::PropertyAttribute::CustomAccessor))
         return;
     DeletePropertySlot deleteSlot;
     // Static dispatch: the method-table path would re-enter JSProcessEnv::deleteProperty.

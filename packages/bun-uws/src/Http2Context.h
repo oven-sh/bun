@@ -816,7 +816,16 @@ struct Http2Context {
 
         WTF::Vector<Http2Header, 32> hdrs;
         std::string store;
-        if (!decodeHeaderBlock(s, &hdrs, &store)) return;
+        bool malformed = false;
+        if (!decodeHeaderBlock(s, &hdrs, &store, &malformed)) return;
+        if (malformed) {
+            /* §8.1.1: a malformed request MUST be a stream
+             * PROTOCOL_ERROR. The HPACK decoder state was advanced
+             * above, so the connection (and sibling streams) stay
+             * healthy. */
+            writeRstStream(s, stream, h2::ERR_PROTOCOL);
+            return;
+        }
 
         auto *res = new Http2Response(s, stream, c->remoteInitialWindow, h2::LOCAL_INIT_WINDOW);
         res->getHttpResponseData()->reset();
@@ -854,10 +863,13 @@ struct Http2Context {
     }
 
     /* Decode the accumulated header block into `out` (name/value views into
-     * `store`). Returns false on HPACK error (connection already torn down).
-     * When out==nullptr only the decoder state is advanced. */
+     * `store`). Returns false on HPACK/size error (connection already torn
+     * down). When out==nullptr only the decoder state is advanced. A
+     * non-null `malformed` out-param receives §8.2.1 per-stream malformed
+     * findings; HPACK state stays consistent so the caller can RST the
+     * stream without tearing down the connection. */
     bool decodeHeaderBlock(us_socket_t *s, WTF::Vector<Http2Header, 32> *out,
-                           std::string *store = nullptr) {
+                           std::string *store = nullptr, bool *malformed = nullptr) {
         /* Decode scratch. Decoded bytes are copied into `store` before the
          * next loop iteration and never read after return; lshpack is pure
          * C so there's no JS re-entry mid-decode. Same lifetime as
@@ -877,25 +889,28 @@ struct Http2Context {
                 protocolError(s, h2::ERR_COMPRESSION);
                 return false;
             }
-            if (!out) continue;
+            if (!out || (malformed && *malformed)) continue;
             size_t nlen = xh.name_len, vlen = xh.val_len;
             if (used + nlen + vlen > h2::MAX_HEADER_LIST) {
                 protocolError(s, h2::ERR_ENHANCE_YOUR_CALM);
                 return false;
             }
             /* §8.2.1: field names MUST NOT contain uppercase and MUST be
-             * valid tokens. A malformed name is a PROTOCOL_ERROR on the
-             * connection (the HPACK decoder state is already advanced). */
+             * valid tokens (RFC 9110 §5.6.2 tchar, lowercase-only). Flag
+             * via `malformed` — the caller RSTs the stream — and keep
+             * decoding so the connection-scoped HPACK state stays valid
+             * for sibling streams. */
             const char *np = hpackBuf + xh.name_offset;
-            if (nlen == 0) { protocolError(s, h2::ERR_PROTOCOL); return false; }
+            if (nlen == 0) { if (malformed) *malformed = true; continue; }
             for (size_t j = 0; j < nlen; j++) {
                 unsigned char b = (unsigned char) np[j];
-                if ((unsigned)(b - 'A') < 26u || b == 0 || b == '\r' ||
-                    b == '\n' || b == ' ' || b == '\t') {
-                    protocolError(s, h2::ERR_PROTOCOL);
-                    return false;
+                if (b < 0x21 || b >= 0x7f || (unsigned)(b - 'A') < 26u ||
+                    (b == ':' && j != 0)) {
+                    if (malformed) *malformed = true;
+                    break;
                 }
             }
+            if (malformed && *malformed) continue;
             store->append(hpackBuf + xh.name_offset, nlen);
             store->append(hpackBuf + xh.val_offset, vlen);
             out->append({(const char *)(uintptr_t) used, (unsigned) nlen,

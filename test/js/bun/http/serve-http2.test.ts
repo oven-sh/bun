@@ -400,6 +400,44 @@ describe("Bun.serve http2: true", () => {
     });
   });
 
+  test("a malformed field name resets only its stream (§8.1.1); siblings continue", async () => {
+    // §8.2.1: field names MUST be lowercase tokens; a request carrying
+    // an invalid name is malformed, and §8.1.1 says that MUST be a
+    // stream error (not a connection error). Stream 1 carries an
+    // uppercase header name; stream 3 is a valid GET /hello on the
+    // same connection and must still succeed.
+    await withServer(async port => {
+      using h2 = await rawH2(port);
+      const authority = `127.0.0.1:${port}`;
+      // Stream 1: valid pseudo-headers + one literal header with an
+      // uppercase name. HPACK literal-without-indexing, new name:
+      // 0x00, name-len, name, value-len, value.
+      const bad = Buffer.concat([
+        Buffer.from([0x82, 0x87]), // :method GET, :scheme https
+        Buffer.from([0x44, "/hello".length]),
+        Buffer.from("/hello"),
+        Buffer.from([0x41, authority.length]),
+        Buffer.from(authority),
+        Buffer.from([0x00, "X-Bad".length]),
+        Buffer.from("X-Bad"),
+        Buffer.from([1]),
+        Buffer.from("v"),
+      ]);
+      h2.sock.write(h2.frame(0x01, 0x04 | 0x01, 1, bad));
+      // Stream 3: ordinary valid request.
+      h2.request(3, "GET", "/hello", true);
+
+      const rst = await h2.waitFor(f => f.type === 0x03 && f.sid === 1);
+      expect(rst.payload.readUInt32BE(0)).toBe(1); // PROTOCOL_ERROR
+      // No GOAWAY: the connection stays up for sibling streams.
+      expect(h2.frames.some(f => f.type === 0x07)).toBe(false);
+
+      await h2.waitFor(f => f.type === 0x00 && f.sid === 3 && !!(f.flags & 0x01));
+      const body = Buffer.concat(h2.frames.filter(f => f.type === 0x00 && f.sid === 3).map(f => f.payload));
+      expect(body.toString()).toBe("hello over h2");
+    });
+  });
+
   test("SETTINGS_ENABLE_PUSH value other than 0/1 → GOAWAY(PROTOCOL_ERROR)", async () => {
     // RFC 9113 §6.5.2: "Any value other than 0 or 1 MUST be treated as a
     // connection error of type PROTOCOL_ERROR." ENABLE_PUSH is a *defined*

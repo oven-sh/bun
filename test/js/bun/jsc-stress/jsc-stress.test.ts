@@ -187,7 +187,6 @@ const ffiFixtures = [
   "ffi-view-args.js",
 ];
 
-
 const preloadPath = path.join(import.meta.dir, "preload.js");
 
 // Under ASAN, JSC disables the wasm fault signal handler (and therefore wasm
@@ -275,7 +274,11 @@ describe.concurrent("JSC JIT Stress Tests", () => {
   describe("FFI (bun:ffi engine)", () => {
     const probeEnv = { ...bunEnv, BUN_JSC_useDollarVM: "1" };
     const probe = Bun.spawnSync({
-      cmd: [bunExe(), "-e", 'process.stdout.write(typeof globalThis.$vm === "object" && typeof $vm.ffiFunction === "function" ? "1" : "0")'],
+      cmd: [
+        bunExe(),
+        "-e",
+        'process.stdout.write(typeof globalThis.$vm === "object" && typeof $vm.ffiFunction === "function" ? "1" : "0")',
+      ],
       env: probeEnv,
       stdout: "pipe",
     });

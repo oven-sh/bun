@@ -29,21 +29,25 @@ function findTestFFI(): string | null {
 
 const testFFI = findTestFFI();
 
-test.skipIf(!testFFI)("testFFI (JavaScriptCore FFI C++/ABI checks)", async () => {
-  await using proc = Bun.spawn({
-    cmd: [testFFI!],
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([
-    new Response(proc.stdout).text(),
-    new Response(proc.stderr).text(),
-    proc.exited,
-  ]);
-  const output = stdout + stderr;
-  if (exitCode !== 0 || !/OK: \d+ checks passed, 0 failed\./.test(output)) {
-    console.log(output);
-  }
-  expect(exitCode).toBe(0);
-  expect(output).toMatch(/OK: \d+ checks passed, 0 failed\./);
-}, 300_000);
+test.skipIf(!testFFI)(
+  "testFFI (JavaScriptCore FFI C++/ABI checks)",
+  async () => {
+    await using proc = Bun.spawn({
+      cmd: [testFFI!],
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([
+      new Response(proc.stdout).text(),
+      new Response(proc.stderr).text(),
+      proc.exited,
+    ]);
+    const output = stdout + stderr;
+    if (exitCode !== 0 || !/OK: \d+ checks passed, 0 failed\./.test(output)) {
+      console.log(output);
+    }
+    expect(exitCode).toBe(0);
+    expect(output).toMatch(/OK: \d+ checks passed, 0 failed\./);
+  },
+  300_000,
+);

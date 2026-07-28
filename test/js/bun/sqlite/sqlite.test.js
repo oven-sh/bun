@@ -2295,3 +2295,39 @@ it("exec/run with an embedded NUL byte in the SQL string does not hang", async (
     exitCode: 0,
   });
 });
+
+// The multi-statement exec loop passed the full remaining byte count as nByte
+// to sqlite3_prepare_v3 without a NUL inside that range, so SQLite duplicated
+// the entire remaining tail on every statement: O(bytes * statements).
+it("exec with many statements in one SQL string scales linearly", async () => {
+  const src = `
+    const { Database } = require("bun:sqlite");
+    const n = 100_000;
+    const stmt = "insert into t values(0);";
+    const sql = "begin;" + Buffer.alloc(n * stmt.length, stmt).toString() + "commit;";
+    const db = new Database(":memory:");
+    db.exec("create table t(v)");
+    db.exec(sql);
+    console.log(db.query("select count(*) as c from t").get().c);
+    db.close();
+  `;
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", src],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+    // Kill switch: quadratic prepare took minutes at this size.
+    timeout: 15_000,
+    killSignal: "SIGKILL",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect({ stdout: stdout.trim(), stderr, signalCode: proc.signalCode, exitCode }).toEqual({
+    stdout: "100000",
+    stderr: "",
+    signalCode: null,
+    exitCode: 0,
+  });
+});

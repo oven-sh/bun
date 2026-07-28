@@ -15,14 +15,23 @@ test("20100", async () => {
   expect(exitCode).toBe(0);
   expect(normalizeBunSnapshot(stdout)).toMatchInlineSnapshot(`
     "bun test <version> (<revision>)
+    stdout | test/regression/issue/20100.fixture.ts
     <top-level>
+    stdout | test/regression/issue/20100.fixture.ts > top level test
       <top-level-test> { unpredictableVar: "top level" } </top-level-test>
+    stdout | test/regression/issue/20100.fixture.ts > describe 1
       <describe-1>
+    stdout | test/regression/issue/20100.fixture.ts > describe 1 > describe 1 - test
         <describe-1-test> { unpredictableVar: "describe 1" } </describe-1-test>
+    stdout | test/regression/issue/20100.fixture.ts > describe 1
       </describe-1>
+    stdout | test/regression/issue/20100.fixture.ts > describe 2 
       <describe-2>
+    stdout | test/regression/issue/20100.fixture.ts > describe 2  > describe 2 - test
         <describe-2-test> { unpredictableVar: "describe 2" } </describe-2-test>
+    stdout | test/regression/issue/20100.fixture.ts > describe 2 
       </describe-2>
+    stdout | test/regression/issue/20100.fixture.ts
     </top-level>"
   `);
 });

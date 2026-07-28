@@ -10,11 +10,13 @@ pub enum Kind {
     Ready,
     /// u32 file_idx
     FileStart,
-    /// u32 file_idx, str formatted_line (ANSI included; printed verbatim)
+    /// u32 file_idx, str scope_path (`\x1f`-separated describe names, outermost
+    /// first), u32 basic_status, str formatted_line (ANSI included; printed
+    /// verbatim). The coordinator buffers these into the file's block.
     TestDone,
     /// 9 × u32: file_idx, pass, fail, skip, todo, expectations, skipped_label, files, unhandled
     FileDone,
-    /// 3 × str: failures, skips, todos (verbatim repeat-buffer bytes)
+    /// 2 × str: skips, todos (verbatim repeat-buffer bytes)
     RepeatBufs,
     /// str path
     JunitFile,
@@ -25,6 +27,11 @@ pub enum Kind {
     Run,
     /// (empty)
     Shutdown,
+    // worker → coordinator
+    /// u32 file_idx, str entry (rendered `(fail) file:line > scope > name`
+    /// header plus the diagnostic, ANSI included; appended verbatim to the
+    /// coordinator's report)
+    FailureDiagnostic,
 }
 
 impl TryFrom<u8> for Kind {
@@ -41,6 +48,7 @@ impl TryFrom<u8> for Kind {
             6 => Kind::CoverageFile,
             7 => Kind::Run,
             8 => Kind::Shutdown,
+            9 => Kind::FailureDiagnostic,
             _ => return Err(()),
         })
     }

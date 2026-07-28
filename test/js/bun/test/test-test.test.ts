@@ -303,9 +303,7 @@ it("should return non-zero exit code for invalid syntax", async () => {
     expect(err.replaceAll(test_dir.replaceAll("\\", "/"), "<dir>").replaceAll(/\[(.*)\ms\]/g, "[xx ms]"))
       .toMatchInlineSnapshot(`
       "
-      bad.test.js:
-
-      # Unhandled error between tests
+      # Unhandled error between tests in bad.test.js
       -------------------------------
       1 | !!!
             ^
@@ -313,6 +311,8 @@ it("should return non-zero exit code for invalid syntax", async () => {
           at <dir>/bad.test.js:1:3
       -------------------------------
 
+
+      bad.test.js:
 
        0 pass
        1 fail
@@ -603,10 +603,13 @@ it("test --preload supports global lifecycle hooks", () => {
   expect(stdout.toString().trim()).toBe(
     `
 bun test ${Bun.version_with_sha}
+stdout | test-fixture-preload-global-lifecycle-hook-test.test.js
 beforeAll: #1
 beforeAll: #2
 beforeAll: TEST-FILE
+stdout | test-fixture-preload-global-lifecycle-hook-test.test.js > one describe scope
 beforeAll: one describe scope
+stdout | test-fixture-preload-global-lifecycle-hook-test.test.js > one describe scope > inside one describe scope
 beforeEach: #1
 beforeEach: #2
 beforeEach: TEST-FILE
@@ -616,7 +619,9 @@ afterEach: one describe scope
 afterEach: TEST-FILE
 afterEach: #1
 afterEach: #2
+stdout | test-fixture-preload-global-lifecycle-hook-test.test.js > one describe scope
 afterAll: one describe scope
+stdout | test-fixture-preload-global-lifecycle-hook-test.test.js > the top-level test
 beforeEach: #1
 beforeEach: #2
 beforeEach: TEST-FILE
@@ -624,6 +629,7 @@ beforeEach: TEST-FILE
 afterEach: TEST-FILE
 afterEach: #1
 afterEach: #2
+stdout | test-fixture-preload-global-lifecycle-hook-test.test.js
 afterAll: TEST-FILE
 afterAll: #1
 afterAll: #2
@@ -682,9 +688,12 @@ describe("empty", () => {
     const out = await stdout.text();
     expect(out.split(/\r?\n/)).toEqual([
       `bun test ${Bun.version_with_sha}`,
+      "stdout | empty.test.js",
       "before all",
+      "stdout | empty.test.js > empty",
       "before all scoped",
       "after all scoped",
+      "stdout | empty.test.js",
       "after all",
       "",
     ]);

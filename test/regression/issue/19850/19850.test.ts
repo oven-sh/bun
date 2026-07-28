@@ -20,15 +20,13 @@ describe("when beforeEach callback throws", () => {
       .replaceAll(/ \[[\d\.]+ms\]/g, "")
       .replaceAll("\\", "/");
     expect(err).toBe(`
-err-in-hook-and-multiple-tests.ts:
-1 | import { beforeEach, test } from "bun:test";
-2 | 
-3 | beforeEach(() => {
-4 |   throw new Error("beforeEach");
-                                  ^
-error: beforeEach
-      at <anonymous> (/err-in-hook-and-multiple-tests.ts:4:31)
+(fail) err-in-hook-and-multiple-tests.ts:
 (fail) test 0
+(fail) test 1
+
+2 tests failed:
+
+(fail) err-in-hook-and-multiple-tests.ts:4 > test 0
 1 | import { beforeEach, test } from "bun:test";
 2 | 
 3 | beforeEach(() => {
@@ -36,7 +34,15 @@ error: beforeEach
                                   ^
 error: beforeEach
       at <anonymous> (/err-in-hook-and-multiple-tests.ts:4:31)
-(fail) test 1
+
+(fail) err-in-hook-and-multiple-tests.ts:4 > test 1
+1 | import { beforeEach, test } from "bun:test";
+2 | 
+3 | beforeEach(() => {
+4 |   throw new Error("beforeEach");
+                                  ^
+error: beforeEach
+      at <anonymous> (/err-in-hook-and-multiple-tests.ts:4:31)
 
  0 pass
  2 fail

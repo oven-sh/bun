@@ -14,12 +14,15 @@ test("concurrent immediate", async () => {
   expect(exitCode).toBe(0);
   expect(normalizeBunSnapshot(stdout)).toMatchInlineSnapshot(`
     "bun test <version> (<revision>)
+    stdout | test/js/bun/test/concurrent_immediate.fixture.ts > test 1
     beforeEach
     start test 1
     afterEach
+    stdout | test/js/bun/test/concurrent_immediate.fixture.ts > test 2
     beforeEach
     start test 2
     afterEach
+    stdout | test/js/bun/test/concurrent_immediate.fixture.ts > test 3
     beforeEach
     start test 3
     afterEach"
@@ -35,7 +38,7 @@ test("concurrent immediate", async () => {
   const stdout2 = await result2.stdout.text();
   const stderr2 = await result2.stderr.text();
   expect(exitCode2).toBe(0);
-  expect(normalizeBunSnapshot(stdout2)).toBe(normalizeBunSnapshot(stdout));
+  expect(normalizeBunSnapshot(stdout2).replaceAll("_promise.", ".")).toBe(normalizeBunSnapshot(stdout));
   expect(normalizeBunSnapshot(stderr2).replaceAll("_promise.", ".")).toBe(normalizeBunSnapshot(stderr));
 });
 
@@ -58,10 +61,12 @@ test("concurrent immediate error", async () => {
   const stderr = await result.stderr.text();
   expect(exitCode).toBe(1);
   expect(filterImportantLines(stderr)).toMatchInlineSnapshot(`
-    "(pass) test 1
-    error: test 2 error
+    "(fail) test/js/bun/test/concurrent_immediate_error.fixture.ts:
+    (pass) test 1
     (fail) test 2
-    (pass) test 3"
+    (pass) test 3
+    (fail) test/js/bun/test/concurrent_immediate_error.fixture.ts:11 > test 2
+    error: test 2 error"
   `);
 
   const result2 = await Bun.spawn({
@@ -73,5 +78,7 @@ test("concurrent immediate error", async () => {
   const exitCode2 = await result2.exited;
   const stdout2 = await result2.stdout.text();
   const stderr2 = await result2.stderr.text();
-  expect(filterImportantLines(stderr2)).toBe(filterImportantLines(stderr));
+  // The file header line now carries an aggregate status, so it is part of the
+  // filtered output and must be normalized like the snapshot above.
+  expect(filterImportantLines(stderr2).replaceAll("_promise.", ".")).toBe(filterImportantLines(stderr));
 });

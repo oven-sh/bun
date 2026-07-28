@@ -32,6 +32,8 @@ pub struct CurrentFile {
     prefix: Box<[u8]>,
     repeat_info: RepeatInfo,
     has_printed_filename: bool,
+    /// Nested output owes this file a `path:` header, printed with the block.
+    header_pending: bool,
 }
 
 impl CurrentFile {
@@ -43,46 +45,63 @@ impl CurrentFile {
         repeat_index: u32,
         reporter: &mut CommandLineReporter,
     ) {
+        self.header_pending = false;
+        // Assigning into the Box<[u8]> fields drops the previous values.
+        self.title = Box::<[u8]>::from(title);
+        self.prefix = Box::<[u8]>::from(prefix);
+        self.repeat_info.count = repeat_count;
+        self.repeat_info.index = repeat_index;
+
         if reporter.worker_ipc_file_idx.is_some() {
             // Coordinator owns the terminal and prints its own per-test file
-            // context; the worker should not emit a header to stderr.
+            // context; the worker should not emit a header to stderr. The path
+            // is still recorded — console attribution and failure headers are
+            // rendered worker-side and relayed verbatim.
             self.has_printed_filename = true;
             return;
         }
-        if reporter.reporters.dots || reporter.reporters.only_failures {
-            // Assigning into the Box<[u8]> fields below drops the previous values.
-            self.title = Box::<[u8]>::from(title);
-            self.prefix = Box::<[u8]>::from(prefix);
-            self.repeat_info.count = repeat_count;
-            self.repeat_info.index = repeat_index;
+        if reporter.reporters.dots {
             self.has_printed_filename = false;
             return;
         }
 
+        // Nested output buffers the whole file, so the header waits until the
+        // block is flushed and can carry the file's aggregate glyph. Marked
+        // printed so `print_if_needed` (console output, error blocks) doesn't
+        // emit a second, glyph-less copy above it.
         self.has_printed_filename = true;
-        Self::print(title, prefix, repeat_count, repeat_index);
+        self.header_pending = true;
     }
 
     fn print(title: &[u8], prefix: &[u8], repeat_count: u32, repeat_index: u32) {
+        Self::print_with_leader(b"", title, prefix, repeat_count, repeat_index);
+    }
+
+    /// `<glyph> path:` — `glyph` is empty on the streaming (`--dots`) path.
+    fn print_with_leader(
+        glyph: &[u8],
+        title: &[u8],
+        prefix: &[u8],
+        repeat_count: u32,
+        repeat_index: u32,
+    ) {
         let _enable_buffering = Output::enable_buffering_scope();
 
         bun_core::pretty_error!("<r>\n");
 
-        if repeat_count > 0 {
-            if repeat_count > 1 {
-                bun_core::pretty_errorln!(
-                    "{}{}: <d>(run #{})<r>\n",
-                    bstr::BStr::new(prefix),
-                    bstr::BStr::new(title),
-                    repeat_index + 1
-                );
-            } else {
-                bun_core::pretty_errorln!(
-                    "{}{}:\n",
-                    bstr::BStr::new(prefix),
-                    bstr::BStr::new(title)
-                );
-            }
+        if !glyph.is_empty() {
+            let writer = Output::error_writer_buffered();
+            let _ = writer.write_all(glyph);
+            let _ = writer.write_all(b" ");
+        }
+
+        if repeat_count > 1 {
+            bun_core::pretty_errorln!(
+                "{}{}: <d>(run #{})<r>\n",
+                bstr::BStr::new(prefix),
+                bstr::BStr::new(title),
+                repeat_index + 1
+            );
         } else {
             bun_core::pretty_errorln!(
                 "{}{}:\n",
@@ -92,6 +111,22 @@ impl CurrentFile {
         }
 
         Output::flush();
+    }
+
+    /// Header for a buffered block, prefixed with the file's aggregate glyph.
+    pub(crate) fn print_with_glyph(&mut self, glyph: &[u8]) {
+        if !self.header_pending {
+            return;
+        }
+        self.header_pending = false;
+        self.has_printed_filename = true;
+        Self::print_with_leader(
+            glyph,
+            &self.title,
+            &self.prefix,
+            self.repeat_info.count,
+            self.repeat_info.index,
+        );
     }
 
     pub(crate) fn print_if_needed(&mut self) {
@@ -106,6 +141,12 @@ impl CurrentFile {
             self.repeat_info.count,
             self.repeat_info.index,
         );
+    }
+
+    /// The file's display path, without `prefix` — that carries the GitHub
+    /// Actions `::group::` marker, which must appear exactly once per file.
+    pub(crate) fn write_path(&self, out: &mut Vec<u8>) {
+        out.extend_from_slice(&self.title);
     }
 }
 

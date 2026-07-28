@@ -29,7 +29,9 @@ test("21177", async () => {
 
   expect(normalizeBunSnapshot(stdout)).toMatchInlineSnapshot(`
     "bun test <version> (<revision>)
+    stdout | test/regression/issue/21177.fixture-2.ts > Outer describe
     Running beforeAll in Outer describe
+    stdout | test/regression/issue/21177.fixture-2.ts > Outer describe > Middle describe
     Running beforeAll in Middle describe"
   `);
   expect(exitCode).toBe(0);

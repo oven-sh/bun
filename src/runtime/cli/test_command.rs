@@ -26,6 +26,8 @@ use bun_sys::{self, Fd, File};
 
 // Debug log scope for test-runner entrypoint loading.
 bun_output::declare_scope!(bun_test, hidden);
+// `BUN_DEBUG_testreporter=1` — buffered-block high-water marks.
+bun_output::declare_scope!(testreporter, hidden);
 
 // ─── coverage façade ────────────────────────────────────────────────────────
 // Thin adapter over `bun_sourcemap_jsc::code_coverage` that preserves the
@@ -209,6 +211,341 @@ fn fmt_status_text_line(
 // `Output::error_writer()` / `Output::writer()` already return an unbounded
 // `&mut io::Writer`; the previous local `err_w`/`out_w` wrappers were no-op
 // reborrows. Call sites use the `Output` accessors directly.
+
+/// Separator between describe-scope names in a serialized scope path. A describe
+/// name containing `\x1f` only causes cosmetic misgrouping.
+const SCOPE_PATH_SEP: u8 = 0x1f;
+
+const INDENT_SPACES: [u8; 64] = [b' '; 64];
+
+/// Segments of a `\x1f`-separated scope path, outermost first.
+fn scope_segments(path: &[u8]) -> impl Iterator<Item = &[u8]> {
+    let inner = if path.is_empty() {
+        None
+    } else {
+        Some(path.split(|&b| b == SCOPE_PATH_SEP))
+    };
+    inner.into_iter().flatten()
+}
+
+#[derive(Copy, Clone, PartialEq, Eq)]
+enum Layout {
+    /// `<describe> > <describe> > <name>` on one line. Used for the end-of-run
+    /// skip/todo/failure recap and for `--dots`, where no headers precede it.
+    Flat,
+    /// `<name>` only, indented beneath the headers `FileBlock` renders.
+    Nested,
+}
+
+/// One buffered result line, held until its file's block is rendered.
+pub struct TestRow {
+    status: bun_test::BasicResult,
+    /// Glyph + name + counters + elapsed + trailing detail lines, already
+    /// indented for the row's depth.
+    body: Vec<u8>,
+}
+
+/// Worst-case rollup of the results beneath a describe scope or file.
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
+pub struct Agg {
+    fail: bool,
+    pass: bool,
+    skip: bool,
+    todo: bool,
+}
+
+impl Agg {
+    fn of(status: bun_test::BasicResult) -> Self {
+        let mut a = Self::default();
+        match status {
+            bun_test::BasicResult::Fail => a.fail = true,
+            bun_test::BasicResult::Pass => a.pass = true,
+            bun_test::BasicResult::Todo => a.todo = true,
+            bun_test::BasicResult::Skip | bun_test::BasicResult::Pending => a.skip = true,
+        }
+        a
+    }
+
+    fn merge(self, o: Self) -> Self {
+        Self {
+            fail: self.fail | o.fail,
+            pass: self.pass | o.pass,
+            skip: self.skip | o.skip,
+            todo: self.todo | o.todo,
+        }
+    }
+
+    /// any fail → `✗`; else any pass → `✓`; else any todo → `✎`; else `»`.
+    fn worst(self) -> bun_test::Execution::Result {
+        use bun_test::Execution::Result as R;
+        if self.fail {
+            R::Fail
+        } else if self.pass {
+            R::Pass
+        } else if self.todo {
+            R::Todo
+        } else {
+            R::Skip
+        }
+    }
+}
+
+enum GroupItem {
+    Row(u32),
+    Group(u32),
+}
+
+#[derive(Default)]
+struct GroupNode {
+    name: Vec<u8>,
+    /// Tests and sub-describes in first-appearance order, so a group's output
+    /// is contiguous no matter what order its tests finish in.
+    items: Vec<GroupItem>,
+}
+
+/// Buffered output for the file currently being reported: the result lines plus
+/// the describe tree they hang off. Rendered as one block when the file
+/// finishes, which is what lets a describe group stay contiguous under
+/// `test.concurrent` and `--parallel`, and what makes the aggregate status
+/// glyphs on the file and describe lines knowable at print time.
+#[derive(Default)]
+pub struct FileBlock {
+    rows: Vec<TestRow>,
+    /// Node 0 is the file root; children always have a higher index than their
+    /// parent, which `aggregate` relies on.
+    nodes: Vec<GroupNode>,
+    /// Body bytes currently buffered.
+    bytes: usize,
+    /// High-water marks, reported by `BUN_DEBUG_TESTREPORTER`.
+    peak_bytes: usize,
+    peak_rows: usize,
+}
+
+impl FileBlock {
+    pub fn is_empty(&self) -> bool {
+        self.rows.is_empty()
+    }
+
+    pub fn push(&mut self, scope_path: &[u8], status: bun_test::BasicResult, body: Vec<u8>) {
+        if self.nodes.is_empty() {
+            self.nodes.push(GroupNode::default());
+        }
+        let row = self.rows.len() as u32;
+
+        let mut cur = 0usize;
+        for seg in scope_segments(scope_path) {
+            let existing = self.nodes[cur].items.iter().find_map(|it| match *it {
+                GroupItem::Group(g) if self.nodes[g as usize].name == seg => Some(g as usize),
+                _ => None,
+            });
+            cur = match existing {
+                Some(g) => g,
+                None => {
+                    let g = self.nodes.len();
+                    self.nodes.push(GroupNode {
+                        name: seg.to_vec(),
+                        items: Vec::new(),
+                    });
+                    self.nodes[cur].items.push(GroupItem::Group(g as u32));
+                    g
+                }
+            };
+        }
+        self.nodes[cur].items.push(GroupItem::Row(row));
+
+        self.bytes += body.len();
+        self.rows.push(TestRow { status, body });
+        // Tracked here, not in `clear`: callers log the peak before clearing,
+        // and the coordinator drops its block without clearing at all.
+        self.peak_bytes = self.peak_bytes.max(self.bytes);
+        self.peak_rows = self.peak_rows.max(self.rows.len());
+    }
+
+    /// Rollup per node, bottom-up. Children always sit at a higher index than
+    /// their parent, so one reverse pass suffices.
+    fn aggregate(&self) -> Vec<Agg> {
+        let mut aggs = vec![Agg::default(); self.nodes.len()];
+        for i in (0..self.nodes.len()).rev() {
+            let mut a = Agg::default();
+            for item in &self.nodes[i].items {
+                a = a.merge(match *item {
+                    GroupItem::Row(r) => Agg::of(self.rows[r as usize].status),
+                    GroupItem::Group(g) => aggs[g as usize],
+                });
+            }
+            aggs[i] = a;
+        }
+        aggs
+    }
+
+    /// Worst-case status of the whole file. Only valid while the block is
+    /// non-empty.
+    pub fn file_status(&self) -> bun_test::Execution::Result {
+        self.aggregate()
+            .first()
+            .copied()
+            .unwrap_or_default()
+            .worst()
+    }
+
+    pub fn render(&self, writer: &mut impl bun_io::Write) {
+        if self.nodes.is_empty() {
+            return;
+        }
+        let aggs = self.aggregate();
+        let colors = Output::enable_ansi_colors_stderr();
+        self.render_node(0, 0, &aggs, colors, writer);
+    }
+
+    fn render_node(
+        &self,
+        node: usize,
+        depth: usize,
+        aggs: &[Agg],
+        colors: bool,
+        writer: &mut impl bun_io::Write,
+    ) {
+        for item in &self.nodes[node].items {
+            match *item {
+                GroupItem::Row(r) => {
+                    let _ = writer.write_all(&self.rows[r as usize].body);
+                }
+                GroupItem::Group(g) => {
+                    let g = g as usize;
+                    let glyph = fmt_status_text_line(aggs[g].worst(), colors);
+                    CommandLineReporter::write_scope_header(
+                        &self.nodes[g].name,
+                        depth,
+                        &glyph,
+                        colors,
+                        writer,
+                    );
+                    self.render_node(g, depth + 1, aggs, colors, writer);
+                }
+            }
+        }
+    }
+
+    pub fn clear(&mut self) {
+        self.bytes = 0;
+        self.rows.clear();
+        self.nodes.clear();
+    }
+
+    pub fn log_peak(&self) {
+        if self.peak_rows == 0 {
+            return;
+        }
+        bun_output::scoped_log!(
+            testreporter,
+            "peak buffered block: {} bytes across {} rows",
+            self.peak_bytes,
+            self.peak_rows
+        );
+    }
+}
+
+/// Cap on the batched failure-diagnostics buffer. Past this, failures print
+/// inline as they happen — still attributed — rather than being dropped.
+const FAILURE_REPORT_MAX_BYTES: usize = 32 * 1024 * 1024;
+
+/// Failure diagnostics captured during the run and held until it ends, so each
+/// one can print under a header naming the file and test that produced it.
+///
+/// Without this the diagnostics land wherever the failure happened, which — now
+/// that results are buffered per file — is above the block that would identify
+/// them, with nothing tying the two together in a multi-file run.
+#[derive(Default)]
+pub struct FailureReport {
+    /// Rendered `<header><diagnostic>` entries in completion order.
+    buf: Vec<u8>,
+    entries: u32,
+    /// Set once the cap is hit; later failures stream inline instead.
+    overflowed: bool,
+}
+
+impl FailureReport {
+    pub fn is_empty(&self) -> bool {
+        self.buf.is_empty()
+    }
+
+    pub fn overflowed(&self) -> bool {
+        self.overflowed
+    }
+
+    /// Buffer one already-rendered entry. Returns `false` when the cap is
+    /// reached — the caller must print `entry` itself so the diagnostic isn't
+    /// lost.
+    #[must_use]
+    pub fn push(&mut self, entry: &[u8]) -> bool {
+        if self.overflowed {
+            return false;
+        }
+        if self.buf.len() + entry.len() > FAILURE_REPORT_MAX_BYTES {
+            self.overflowed = true;
+            return false;
+        }
+        self.buf.extend_from_slice(entry);
+        self.entries += 1;
+        true
+    }
+
+    /// Drains: `process.exit()` renders on the exit callback and the normal
+    /// end-of-run path must not print the same entries a second time.
+    pub fn render(&mut self, writer: &mut impl bun_io::Write) {
+        let _ = writer.write_all(&self.buf);
+        self.buf.clear();
+    }
+
+    pub fn log_peak(&self) {
+        if self.entries == 0 {
+            return;
+        }
+        bun_output::scoped_log!(
+            testreporter,
+            "buffered failure report: {} bytes across {} entries{}",
+            self.buf.len(),
+            self.entries,
+            if self.overflowed { " (capped)" } else { "" }
+        );
+    }
+}
+
+/// Flushes the in-flight file's buffered block when `process.exit()` cuts the
+/// run short, so partial results aren't lost.
+extern "C" fn flush_active_file_block_on_exit() {
+    if let Some(runner) = jest::Jest::runner_ptr() {
+        // Raw ptr: a `&mut TestRunner` may already be live further up the stack.
+        // SAFETY: JS-thread-only; the runner outlives every exit callback.
+        unsafe { (*runner.as_ptr()).bun_test_root.flush_active_file_block() };
+    }
+}
+
+/// Aggregate glyph for a file's `path:` header (parallel coordinator).
+pub fn fmt_file_glyph(status: bun_test::Execution::Result, colors: bool) -> Output::PrettyBuf {
+    fmt_status_text_line(status, colors)
+}
+
+/// Wire encoding for `BasicResult` on the `--parallel` `TestDone` frame.
+pub fn basic_result_to_u8(b: bun_test::BasicResult) -> u8 {
+    match b {
+        bun_test::BasicResult::Pending => 0,
+        bun_test::BasicResult::Pass => 1,
+        bun_test::BasicResult::Fail => 2,
+        bun_test::BasicResult::Skip => 3,
+        bun_test::BasicResult::Todo => 4,
+    }
+}
+
+pub fn basic_result_from_u8(v: u8) -> bun_test::BasicResult {
+    match v {
+        1 => bun_test::BasicResult::Pass,
+        2 => bun_test::BasicResult::Fail,
+        3 => bun_test::BasicResult::Skip,
+        4 => bun_test::BasicResult::Todo,
+        _ => bun_test::BasicResult::Pending,
+    }
+}
 
 #[derive(Default)]
 pub struct JunitFailure {
@@ -406,15 +743,6 @@ impl JunitReporter {
             }
             body.push(b'\n');
         }
-    }
-
-    /// VirtualMachine::on_print_error_zig_exception thunk.
-    pub fn record_failure_cb(ctx: *mut core::ffi::c_void, exception: &jsc::ZigException) {
-        // SAFETY: `ctx` was set to `&mut JunitReporter` by `on_uncaught_exception`
-        // for the duration of a single `run_error_handler` call; single-threaded,
-        // no other borrow of the reporter is live across that call.
-        let this = unsafe { &mut *ctx.cast::<JunitReporter>() };
-        this.record_failure(exception);
     }
 
     fn generate_properties_list(&mut self) -> crate::Result<()> {
@@ -919,15 +1247,35 @@ pub struct CommandLineReporter {
     /// Interior-mut: written from `BunTestRoot::on_before_print` via `&CommandLineReporter`
     pub last_printed_dot: core::cell::Cell<bool>,
 
+    /// Identity (`file > describe > test`) of the last `console.*` write that
+    /// was labeled, so consecutive output from one test is labeled once.
+    /// Interior-mut for the same reason as `last_printed_dot`.
+    pub last_console_label: core::cell::RefCell<Vec<u8>>,
+
     /// When running as a `--parallel` worker, this is the coordinator-assigned
     /// index of the file currently being executed. While set, per-test output
     /// is sent over the IPC pipe instead of to stderr; the coordinator owns
     /// the terminal.
     pub worker_ipc_file_idx: Option<u32>,
 
-    pub failures_to_repeat_buf: Vec<u8>,
     pub skips_to_repeat_buf: Vec<u8>,
     pub todos_to_repeat_buf: Vec<u8>,
+
+    /// Diagnostics for the failure currently being reported. `on_uncaught_exception`
+    /// points `VirtualMachine::error_writer_override` at this for the duration of
+    /// one `run_error_handler`; `handle_test_completed` drains it into
+    /// `failure_report` under a header naming the test.
+    pub pending_diagnostic: bun_core::io::VecWriter,
+    /// Throw-site line of the first frame in the pending diagnostic, or 0.
+    /// Recorded by `capture_failure_cb` while the exception is already remapped,
+    /// so the header costs nothing extra to produce.
+    pub pending_diagnostic_line: u32,
+    /// Every failure's diagnostics, printed as one section at end of run.
+    pub failure_report: FailureReport,
+
+    /// Result lines for the file currently being reported, flushed as one block
+    /// on file exit. Unused by `--dots`, which stays streaming.
+    pub file_block: FileBlock,
 
     pub reporters: ReportersConfig,
 }
@@ -940,100 +1288,363 @@ pub struct ReportersConfig {
 }
 
 impl CommandLineReporter {
-    fn print_test_line<const DIM: bool>(
-        status: bun_test::Execution::Result,
-        sequence: &mut bun_test::Execution::ExecutionSequence,
-        test_entry: &mut bun_test::ExecutionEntry,
-        elapsed_ns: u64,
-        writer: &mut impl bun_io::Write,
+    /// Render and print the buffered block for the file that just finished, led
+    /// by its `path:` header carrying the file's aggregate glyph. Idempotent —
+    /// called both when the file's tests finish and again from `exit_file` as a
+    /// safety net for the bail/crash paths.
+    pub fn flush_file_block(&mut self) {
+        if self.reporters.dots {
+            return;
+        }
+        // `--only-failures` prints nothing at all for a clean file.
+        if self.reporters.only_failures && self.file_block.is_empty() {
+            self.file_block.clear();
+            return;
+        }
+        let _enable_buffering = Output::enable_buffering_scope();
+        let colors = Output::enable_ansi_colors_stderr();
+        // A file with no reported results keeps today's bare `path:` header;
+        // there is no status to roll up.
+        let glyph = if self.file_block.is_empty() {
+            None
+        } else {
+            Some(fmt_status_text_line(self.file_block.file_status(), colors))
+        };
+        self.jest
+            .current_file
+            .print_with_glyph(glyph.as_ref().map_or(&[][..], |g| g));
+        self.file_block.render(Output::error_writer());
+        Output::flush();
+        self.file_block.log_peak();
+        self.file_block.clear();
+    }
+
+    /// Move the diagnostics captured for the test that just finished into the
+    /// end-of-run report, headed by the test's qualified name.
+    ///
+    /// Only failures are batched. A `.todo` test that threw still reports
+    /// inline — its error is expected output, not a failure — and a retry that
+    /// eventually passes has diagnostics nobody needs.
+    fn drain_pending_diagnostic(
+        &mut self,
+        basic: bun_test::BasicResult,
+        scopes: &[*const bun_test::DescribeScope],
+        test_entry: &bun_test::ExecutionEntry,
     ) {
-        let initial_retry_count = test_entry.retry_count;
-        let attempts = (initial_retry_count - sequence.remaining_retry_count) + 1;
-        let initial_repeat_count = test_entry.repeat_count;
-        let repeats = (initial_repeat_count - sequence.remaining_repeat_count) + 1;
-        let mut scopes_stack: BoundedArray<*const bun_test::DescribeScope, 64> =
-            BoundedArray::default();
+        let line = core::mem::take(&mut self.pending_diagnostic_line);
+        if self.pending_diagnostic.is_empty() {
+            return;
+        }
+        let diagnostic = self.pending_diagnostic.take();
+        let status = match basic {
+            bun_test::BasicResult::Fail => bun_test::Execution::Result::Fail,
+            bun_test::BasicResult::Todo => bun_test::Execution::Result::Todo,
+            _ => return,
+        };
+
+        let colors = Output::enable_ansi_colors_stderr();
+        let mut entry: Vec<u8> = Vec::with_capacity(diagnostic.len() + 128);
+        entry.push(b'\n');
+        let glyph = fmt_status_text_line(status, colors);
+        let mut path: Vec<u8> = Vec::new();
+        self.jest.current_file.write_path(&mut path);
+        Self::write_qualified_name(
+            &glyph,
+            &path,
+            line,
+            scopes,
+            test_entry.base.name.as_deref().unwrap_or(b"(unnamed)"),
+            colors,
+            &mut entry,
+        );
+        entry.extend_from_slice(&diagnostic);
+        if !entry.ends_with(b"\n") {
+            entry.push(b'\n');
+        }
+
+        if status == bun_test::Execution::Result::Fail {
+            if let Some(idx) = self.worker_ipc_file_idx {
+                // The coordinator owns the terminal and the run-level report.
+                ParallelRunner::worker_emit_failure_diagnostic(idx, &entry);
+                return;
+            }
+            if self.failure_report.push(&entry) {
+                return;
+            }
+            // Over the cap — fall through and print now rather than drop it.
+        }
+        let _enable_buffering = Output::enable_buffering_scope();
+        let _ = Output::error_writer_buffered().write_all(&entry);
+        Output::flush();
+    }
+
+    /// ` > <describe> > … > <name>` for a console label. Uncolored: the caller
+    /// dims the whole line.
+    pub(crate) fn write_console_label_tail(
+        test_entry: &bun_test::ExecutionEntry,
+        out: &mut Vec<u8>,
+    ) {
+        let scopes = Self::collect_scopes(test_entry);
+        for scope in scopes.as_slice().iter().rev() {
+            out.extend_from_slice(b" > ");
+            out.extend_from_slice(Self::scope_name(*scope));
+        }
+        // Hooks are unnamed; the scope path alone is the best available label.
+        if let Some(name) = test_entry.base.name.as_deref() {
+            if !name.is_empty() {
+                out.extend_from_slice(b" > ");
+                out.extend_from_slice(name);
+            }
+        }
+    }
+
+    /// Diagnostics sink for a failing test, installed on the VM for the duration
+    /// of one `run_error_handler`. Also arms the `on_print_error_zig_exception`
+    /// thunk, which there is only one slot for — hence the forwarding to JUnit.
+    pub fn begin_diagnostic_capture(&mut self, vm: &mut VirtualMachine) {
+        self.pending_diagnostic.clear();
+        self.pending_diagnostic_line = 0;
+        vm.error_writer_override =
+            core::ptr::NonNull::new(core::ptr::from_mut(self.pending_diagnostic.interface()));
+        vm.on_print_error_zig_exception = Some(Self::capture_failure_cb);
+        vm.on_print_error_zig_exception_ctx = core::ptr::from_mut(self).cast();
+    }
+
+    pub fn end_diagnostic_capture(vm: &mut VirtualMachine) {
+        vm.error_writer_override = None;
+        vm.on_print_error_zig_exception = None;
+        vm.on_print_error_zig_exception_ctx = core::ptr::null_mut();
+    }
+
+    /// Records the throw-site line for the report header, and forwards to the
+    /// JUnit reporter when it is enabled.
+    fn capture_failure_cb(ctx: *mut core::ffi::c_void, exception: &jsc::ZigException) {
+        // SAFETY: `ctx` was set to `&mut CommandLineReporter` by
+        // `begin_diagnostic_capture` for the duration of a single
+        // `run_error_handler`; single-threaded, no other borrow live across it.
+        let this = unsafe { &mut *ctx.cast::<CommandLineReporter>() };
+        if this.pending_diagnostic_line == 0 {
+            if let Some(frame) = exception.stack.frames().first() {
+                if frame.position.line.is_valid() {
+                    this.pending_diagnostic_line = frame.position.line.one_based() as u32;
+                }
+            }
+        }
+        if let Some(junit) = this.reporters.junit.as_deref_mut() {
+            junit.record_failure(exception);
+        }
+    }
+
+    /// The `N test(s) failed:` section: every failure's diagnostics, each under a
+    /// header naming the file and test it came from.
+    pub fn render_failure_report(&mut self) {
+        if self.failure_report.is_empty() {
+            return;
+        }
+        let _enable_buffering = Output::enable_buffering_scope();
+        let fail = self.summary().fail;
+        pretty_error!(
+            "\n<r><d>{} test{} failed:<r>\n",
+            fail,
+            if fail == 1 { "" } else { "s" }
+        );
+        if self.failure_report.overflowed() {
+            pretty_error!(
+                "<r><d>(diagnostics past {} MB printed inline above)<r>\n",
+                FAILURE_REPORT_MAX_BYTES / (1024 * 1024)
+            );
+        }
+        self.failure_report.log_peak();
+        self.failure_report.render(Output::error_writer_buffered());
+        Output::flush();
+    }
+
+    /// Describe scopes enclosing `test_entry`, innermost first. Unnamed scopes
+    /// are omitted so they don't consume an indent level.
+    fn collect_scopes(
+        test_entry: &bun_test::ExecutionEntry,
+    ) -> BoundedArray<*const bun_test::DescribeScope, 64> {
+        let mut scopes: BoundedArray<*const bun_test::DescribeScope, 64> = BoundedArray::default();
         let mut parent_: Option<*const bun_test::DescribeScope> =
             test_entry.base.parent.map(|p| p.cast_const());
 
         while let Some(scope) = parent_ {
-            if scopes_stack.push(scope).is_err() {
+            if !Self::scope_name(scope).is_empty() && scopes.push(scope).is_err() {
                 break;
             }
             // SAFETY: scope is a live DescribeScope pointer kept alive for the test run
             parent_ = unsafe { (*scope).base.parent.map(|p| p.cast_const()) };
         }
 
-        let scopes: &[*const bun_test::DescribeScope] = scopes_stack.as_slice();
-        let display_label: &[u8] = test_entry.base.name.as_deref().unwrap_or(b"(unnamed)");
+        scopes
+    }
 
-        // Quieter output when claude code is in use.
-        if !Output::is_ai_agent() || !status.is_pass(bun_test::PendingMode::PendingIsFail) {
-            // `color_code`/`line_color_code` literals are inlined at use sites
-            // below via `if DIM { ... } else { ... }` to avoid runtime `format!`.
+    fn scope_name(scope: *const bun_test::DescribeScope) -> &'static [u8] {
+        // SAFETY: scope is alive for the duration of the test run
+        unsafe { (*scope).base.name.as_deref() }.unwrap_or(b"")
+    }
 
-            // `switch (Output.enable_ansi_colors_stderr) { inline else => |_| ... }` — the
-            // captured bool was unused except for monomorphization; collapsed to runtime.
-            match status {
-                bun_test::Execution::Result::FailBecauseExpectedAssertionCount => {
-                    // not sent to writer so it doesn't get printed twice
-                    let expected_count =
-                        if let bun_test::ExpectAssertions::Exact(n) = sequence.expect_assertions {
-                            n
-                        } else {
-                            12345
-                        };
-                    Output::err(
-                        crate::Error::AssertionError,
-                        "expected <green>{} assertion{}<r>, but test ended with <red>{} assertion{}<r>\n",
-                        (
-                            expected_count,
-                            if expected_count == 1 { "" } else { "s" },
-                            sequence.expect_call_count,
-                            if sequence.expect_call_count == 1 {
-                                ""
-                            } else {
-                                "s"
-                            },
-                        ),
-                    );
-                    Output::flush();
-                }
-                bun_test::Execution::Result::FailBecauseExpectedHasAssertions => {
-                    Output::err(
-                        crate::Error::AssertionError,
-                        "received <red>0 assertions<r>, but expected <green>at least one assertion<r> to be called\n",
-                        (),
-                    );
-                    Output::flush();
-                }
-                bun_test::Execution::Result::FailBecauseTimeout
-                | bun_test::Execution::Result::FailBecauseHookTimeout
-                | bun_test::Execution::Result::FailBecauseTimeoutWithDoneCallback
-                | bun_test::Execution::Result::FailBecauseHookTimeoutWithDoneCallback => {
-                    if Output::is_github_action() {
-                        Output::print_error(format_args!(
-                            "::error title=error: Test \"{}\" timed out after {}ms::\n",
-                            bun_fmt::github_action_property(display_label),
-                            test_entry.timeout
-                        ));
-                        Output::flush();
-                    }
-                }
-                _ => {}
+    /// Serialize `scopes` (innermost first) outermost-first into `out`.
+    fn write_scope_path(scopes: &[*const bun_test::DescribeScope], out: &mut Vec<u8>) {
+        for (i, scope) in scopes.iter().rev().enumerate() {
+            if i > 0 {
+                out.push(SCOPE_PATH_SEP);
             }
+            out.extend_from_slice(Self::scope_name(*scope));
+        }
+    }
 
-            if Output::enable_ansi_colors_stderr() {
-                for i in 0..scopes.len() {
-                    let index = (scopes.len() - 1) - i;
-                    let scope = scopes[index];
-                    // SAFETY: scope is alive for duration of test run
-                    let name: &[u8] = unsafe { (*scope).base.name.as_deref() }.unwrap_or(b"");
-                    if name.is_empty() {
-                        continue;
-                    }
-                    let _ = writer.write_all(b" ");
+    fn write_indent(writer: &mut impl bun_io::Write, depth: usize) {
+        let n = core::cmp::min(depth * 2, INDENT_SPACES.len());
+        let _ = writer.write_all(&INDENT_SPACES[..n]);
+    }
 
+    /// `<glyph> <path>[:line] > <describe> > … > <name>` — identifies which test
+    /// a batched diagnostic came from. Also used for the `stdout`/`stderr`
+    /// console labels, which pass an empty `glyph` and `line` of 0.
+    fn write_qualified_name(
+        glyph: &[u8],
+        path: &[u8],
+        line: u32,
+        scopes: &[*const bun_test::DescribeScope],
+        name: &[u8],
+        colors: bool,
+        writer: &mut impl bun_io::Write,
+    ) {
+        if !glyph.is_empty() {
+            let _ = writer.write_all(glyph);
+            let _ = writer.write_all(b" ");
+        }
+        let _ = writer.write_all(path);
+        if line > 0 {
+            let _ = bun_core::write_pretty!(writer, colors, "<d>:{d}<r>", line);
+        }
+        for scope in scopes.iter().rev() {
+            let _ = bun_core::write_pretty!(writer, colors, "<d> \\> <r>");
+            let _ = writer.write_all(Self::scope_name(*scope));
+        }
+        let _ = bun_core::write_pretty!(writer, colors, "<d> \\> <r>");
+        if colors {
+            let _ = writer.write_all(&Output::pretty_fmt::<true>("<b>"));
+            let _ = writer.write_all(name);
+            let _ = writer.write_all(&Output::pretty_fmt::<true>("<r>"));
+        } else {
+            let _ = writer.write_all(name);
+        }
+        let _ = writer.write_all(b"\n");
+    }
+
+    /// One describe header: `<indent><glyph> <dim name>`.
+    pub(crate) fn write_scope_header(
+        name: &[u8],
+        depth: usize,
+        glyph: &[u8],
+        colors: bool,
+        writer: &mut impl bun_io::Write,
+    ) {
+        Self::write_indent(writer, depth);
+        let _ = writer.write_all(glyph);
+        if colors {
+            let _ = writer.write_all(&Output::pretty_fmt::<true>("<r><d> "));
+            let _ = writer.write_all(name);
+            let _ = writer.write_all(&Output::pretty_fmt::<true>("<r>"));
+        } else {
+            let _ = writer.write_all(b" ");
+            let _ = writer.write_all(name);
+        }
+        let _ = writer.write_all(b"\n");
+    }
+
+    /// Diagnostics that accompany a result but are not part of the status line:
+    /// assertion-count errors and GitHub Actions annotations. Must run exactly
+    /// once per result — the status line itself may be formatted twice (nested
+    /// for streaming, flat for the end-of-run recap).
+    fn print_status_side_effects(
+        status: bun_test::Execution::Result,
+        sequence: &bun_test::Execution::ExecutionSequence,
+        test_entry: &bun_test::ExecutionEntry,
+    ) {
+        match status {
+            bun_test::Execution::Result::FailBecauseExpectedAssertionCount => {
+                // not sent to writer so it doesn't get printed twice
+                let expected_count =
+                    if let bun_test::ExpectAssertions::Exact(n) = sequence.expect_assertions {
+                        n
+                    } else {
+                        12345
+                    };
+                Output::err(
+                    crate::Error::AssertionError,
+                    "expected <green>{} assertion{}<r>, but test ended with <red>{} assertion{}<r>\n",
+                    (
+                        expected_count,
+                        if expected_count == 1 { "" } else { "s" },
+                        sequence.expect_call_count,
+                        if sequence.expect_call_count == 1 {
+                            ""
+                        } else {
+                            "s"
+                        },
+                    ),
+                );
+                Output::flush();
+            }
+            bun_test::Execution::Result::FailBecauseExpectedHasAssertions => {
+                Output::err(
+                    crate::Error::AssertionError,
+                    "received <red>0 assertions<r>, but expected <green>at least one assertion<r> to be called\n",
+                    (),
+                );
+                Output::flush();
+            }
+            bun_test::Execution::Result::FailBecauseTimeout
+            | bun_test::Execution::Result::FailBecauseHookTimeout
+            | bun_test::Execution::Result::FailBecauseTimeoutWithDoneCallback
+            | bun_test::Execution::Result::FailBecauseHookTimeoutWithDoneCallback => {
+                if Output::is_github_action() {
+                    let display_label: &[u8] =
+                        test_entry.base.name.as_deref().unwrap_or(b"(unnamed)");
+                    Output::print_error(format_args!(
+                        "::error title=error: Test \"{}\" timed out after {}ms::\n",
+                        bun_fmt::github_action_property(display_label),
+                        test_entry.timeout
+                    ));
+                    Output::flush();
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Writes one status line (without the leading glyph, which the caller
+    /// emits) plus any trailing explanation lines.
+    fn print_test_line<const DIM: bool>(
+        status: bun_test::Execution::Result,
+        sequence: &mut bun_test::Execution::ExecutionSequence,
+        test_entry: &mut bun_test::ExecutionEntry,
+        elapsed_ns: u64,
+        scopes: &[*const bun_test::DescribeScope],
+        layout: Layout,
+        writer: &mut impl bun_io::Write,
+    ) {
+        let initial_retry_count = test_entry.retry_count;
+        let attempts = (initial_retry_count - sequence.remaining_retry_count) + 1;
+        let initial_repeat_count = test_entry.repeat_count;
+        let repeats = (initial_repeat_count - sequence.remaining_repeat_count) + 1;
+
+        let display_label: &[u8] = test_entry.base.name.as_deref().unwrap_or(b"(unnamed)");
+        let colors = Output::enable_ansi_colors_stderr();
+        let indent = if layout == Layout::Nested {
+            scopes.len()
+        } else {
+            0
+        };
+
+        if layout == Layout::Flat {
+            for scope in scopes.iter().rev() {
+                let name = Self::scope_name(*scope);
+                let _ = writer.write_all(b" ");
+                if colors {
                     let prefix = if DIM {
                         Output::pretty_fmt::<true>("<r><d>")
                     } else {
@@ -1042,120 +1653,104 @@ impl CommandLineReporter {
                     let _ = writer.write_all(&prefix);
                     let _ = writer.write_all(name);
                     let _ = writer.write_all(&Output::pretty_fmt::<true>("<d>"));
-                    let _ = writer.write_all(b" >");
-                }
-            } else {
-                for i in 0..scopes.len() {
-                    let index = (scopes.len() - 1) - i;
-                    let scope = scopes[index];
-                    // SAFETY: scope is alive for duration of test run
-                    let name: &[u8] = unsafe { (*scope).base.name.as_deref() }.unwrap_or(b"");
-                    if name.is_empty() {
-                        continue;
-                    }
-                    let _ = writer.write_all(b" ");
-                    let _ = writer.write_all(name);
-                    let _ = writer.write_all(b" >");
-                }
-            }
-
-            if Output::enable_ansi_colors_stderr() {
-                let label_prefix = if DIM {
-                    Output::pretty_fmt::<true>("<r><d> ")
                 } else {
-                    Output::pretty_fmt::<true>("<r><b> ")
-                };
-                let _ = writer.write_all(&label_prefix);
-                let _ = writer.write_all(display_label);
-                let _ = writer.write_all(&Output::pretty_fmt::<true>("<r>"));
+                    let _ = writer.write_all(name);
+                }
+                let _ = writer.write_all(b" >");
+            }
+        }
+
+        if colors {
+            let label_prefix = if DIM {
+                Output::pretty_fmt::<true>("<r><d> ")
             } else {
-                let _ = writer.write_all(b" ");
-                let _ = writer.write_all(display_label);
-            }
+                Output::pretty_fmt::<true>("<r><b> ")
+            };
+            let _ = writer.write_all(&label_prefix);
+            let _ = writer.write_all(display_label);
+            let _ = writer.write_all(&Output::pretty_fmt::<true>("<r>"));
+        } else {
+            let _ = writer.write_all(b" ");
+            let _ = writer.write_all(display_label);
+        }
 
-            // Print attempt count if test was retried (attempts > 1)
-            if attempts > 1 {
+        // Print attempt count if test was retried (attempts > 1)
+        if attempts > 1 {
+            let _ = bun_core::write_pretty!(writer, colors, " <d>(attempt {d})<r>", attempts,);
+        }
+
+        // Print repeat count if test failed on a repeat (repeats > 1)
+        if repeats > 1 {
+            let _ = bun_core::write_pretty!(writer, colors, " <d>(run {d})<r>", repeats,);
+        }
+
+        if elapsed_ns > (bun::time::NS_PER_US * 10) {
+            let _ = write!(
+                writer,
+                " {}",
+                Output::ElapsedFormatter {
+                    colors,
+                    duration_ns: elapsed_ns,
+                }
+            );
+        }
+
+        let _ = writer.write_all(b"\n");
+
+        use bun_test::Execution::Result as R;
+        match status {
+            R::Pending | R::Pass | R::Skip | R::SkippedBecauseLabel | R::Todo | R::Fail => {}
+
+            R::FailBecauseFailingTestPassed => {
+                Self::write_indent(writer, indent);
                 let _ = bun_core::write_pretty!(
                     writer,
-                    Output::enable_ansi_colors_stderr(),
-                    " <d>(attempt {d})<r>",
-                    attempts,
+                    colors,
+                    "  <d>^<r> <red>this test is marked as failing but it passed.<r> <d>Remove `.failing` if tested behavior now works<r>\n"
                 );
             }
-
-            // Print repeat count if test failed on a repeat (repeats > 1)
-            if repeats > 1 {
+            R::FailBecauseTodoPassed => {
+                Self::write_indent(writer, indent);
                 let _ = bun_core::write_pretty!(
                     writer,
-                    Output::enable_ansi_colors_stderr(),
-                    " <d>(run {d})<r>",
-                    repeats,
+                    colors,
+                    "  <d>^<r> <red>this test is marked as todo but passes.<r> <d>Remove `.todo` if tested behavior now works<r>\n"
                 );
             }
-
-            if elapsed_ns > (bun::time::NS_PER_US * 10) {
-                let _ = write!(
+            R::FailBecauseExpectedAssertionCount | R::FailBecauseExpectedHasAssertions => {} // printed by print_status_side_effects
+            R::FailBecauseTimeout => {
+                Self::write_indent(writer, indent);
+                let _ = bun_core::write_pretty!(
                     writer,
-                    " {}",
-                    Output::ElapsedFormatter {
-                        colors: Output::enable_ansi_colors_stderr(),
-                        duration_ns: elapsed_ns,
-                    }
+                    colors,
+                    "  <d>^<r> <red>this test timed out after {d}ms.<r>\n",
+                    test_entry.timeout
                 );
             }
-
-            let _ = writer.write_all(b"\n");
-
-            let colors = Output::enable_ansi_colors_stderr();
-            use bun_test::Execution::Result as R;
-            match status {
-                R::Pending | R::Pass | R::Skip | R::SkippedBecauseLabel | R::Todo | R::Fail => {}
-
-                R::FailBecauseFailingTestPassed => {
-                    let _ = bun_core::write_pretty!(
-                        writer,
-                        colors,
-                        "  <d>^<r> <red>this test is marked as failing but it passed.<r> <d>Remove `.failing` if tested behavior now works<r>\n"
-                    );
-                }
-                R::FailBecauseTodoPassed => {
-                    let _ = bun_core::write_pretty!(
-                        writer,
-                        colors,
-                        "  <d>^<r> <red>this test is marked as todo but passes.<r> <d>Remove `.todo` if tested behavior now works<r>\n"
-                    );
-                }
-                R::FailBecauseExpectedAssertionCount | R::FailBecauseExpectedHasAssertions => {} // printed above
-                R::FailBecauseTimeout => {
-                    let _ = bun_core::write_pretty!(
-                        writer,
-                        colors,
-                        "  <d>^<r> <red>this test timed out after {d}ms.<r>\n",
-                        test_entry.timeout
-                    );
-                }
-                R::FailBecauseHookTimeout => {
-                    let _ = bun_core::write_pretty!(
-                        writer,
-                        colors,
-                        "  <d>^<r> <red>a beforeEach/afterEach hook timed out for this test.<r>\n"
-                    );
-                }
-                R::FailBecauseTimeoutWithDoneCallback => {
-                    let _ = bun_core::write_pretty!(
-                        writer,
-                        colors,
-                        "  <d>^<r> <red>this test timed out after {d}ms, before its done callback was called.<r> <d>If a done callback was not intended, remove the last parameter from the test callback function<r>\n",
-                        test_entry.timeout
-                    );
-                }
-                R::FailBecauseHookTimeoutWithDoneCallback => {
-                    let _ = bun_core::write_pretty!(
-                        writer,
-                        colors,
-                        "  <d>^<r> <red>a beforeEach/afterEach hook timed out before its done callback was called.<r> <d>If a done callback was not intended, remove the last parameter from the hook callback function<r>\n"
-                    );
-                }
+            R::FailBecauseHookTimeout => {
+                Self::write_indent(writer, indent);
+                let _ = bun_core::write_pretty!(
+                    writer,
+                    colors,
+                    "  <d>^<r> <red>a beforeEach/afterEach hook timed out for this test.<r>\n"
+                );
+            }
+            R::FailBecauseTimeoutWithDoneCallback => {
+                Self::write_indent(writer, indent);
+                let _ = bun_core::write_pretty!(
+                    writer,
+                    colors,
+                    "  <d>^<r> <red>this test timed out after {d}ms, before its done callback was called.<r> <d>If a done callback was not intended, remove the last parameter from the test callback function<r>\n",
+                    test_entry.timeout
+                );
+            }
+            R::FailBecauseHookTimeoutWithDoneCallback => {
+                Self::write_indent(writer, indent);
+                let _ = bun_core::write_pretty!(
+                    writer,
+                    colors,
+                    "  <d>^<r> <red>a beforeEach/afterEach hook timed out before its done callback was called.<r> <d>If a done callback was not intended, remove the last parameter from the hook callback function<r>\n"
+                );
             }
         }
     }
@@ -1364,6 +1959,13 @@ impl CommandLineReporter {
         elapsed_ns: u64,
     ) {
         let mut output_buf: Vec<u8> = Vec::new();
+        // Flat-formatted copy of the status line for the end-of-run recap, where
+        // the describe headers printed during streaming are absent.
+        let mut recap_buf: Vec<u8> = Vec::new();
+        let mut scope_path: Vec<u8> = Vec::new();
+        // Also needed after the print branches, to head this test's diagnostics
+        // in the end-of-run failure report.
+        let scopes_stack = Self::collect_scopes(test_entry);
 
         let initial_length = output_buf.len();
         let writer = &mut output_buf;
@@ -1413,28 +2015,65 @@ impl CommandLineReporter {
             } else {
                 buntest.bun_test_root.on_before_print();
 
-                if Output::enable_ansi_colors_stderr() {
-                    let _ = writer.write_all(&fmt_status_text_line(result, true));
-                } else {
-                    let _ = writer.write_all(&fmt_status_text_line(result, false));
-                }
-                let dim = match basic {
-                    bun_test::BasicResult::Todo => {
-                        if let Some(runner) = jest::Jest::runner() {
-                            !runner.run_todo
+                // Quieter output when an AI agent is driving.
+                if !Output::is_ai_agent() || !result.is_pass(bun_test::PendingMode::PendingIsFail) {
+                    Self::print_status_side_effects(result, sequence, test_entry);
+
+                    let scopes = scopes_stack.as_slice();
+
+                    // In dots mode the coordinator/reporter suppresses headers, so
+                    // the rare full line printed there stays self-describing.
+                    let layout = if reporter_ref.is_some_and(|r| r.reporters.dots) {
+                        Layout::Flat
+                    } else {
+                        Self::write_scope_path(scopes, &mut scope_path);
+                        Layout::Nested
+                    };
+
+                    let dim = match basic {
+                        bun_test::BasicResult::Todo => {
+                            if let Some(runner) = jest::Jest::runner() {
+                                !runner.run_todo
+                            } else {
+                                true
+                            }
+                        }
+                        bun_test::BasicResult::Skip | bun_test::BasicResult::Pending => true,
+                        bun_test::BasicResult::Pass | bun_test::BasicResult::Fail => false,
+                    };
+
+                    let colors = Output::enable_ansi_colors_stderr();
+                    let glyph = fmt_status_text_line(result, colors);
+
+                    let mut write_line = |layout: Layout, writer: &mut Vec<u8>| {
+                        if layout == Layout::Nested {
+                            Self::write_indent(writer, scopes.len());
+                        }
+                        let _ = writer.write_all(&glyph);
+                        if dim {
+                            Self::print_test_line::<true>(
+                                result, sequence, test_entry, elapsed_ns, scopes, layout, writer,
+                            );
                         } else {
-                            true
+                            Self::print_test_line::<false>(
+                                result, sequence, test_entry, elapsed_ns, scopes, layout, writer,
+                            );
+                        }
+                    };
+
+                    write_line(layout, writer);
+                    if matches!(
+                        basic,
+                        bun_test::BasicResult::Skip
+                            | bun_test::BasicResult::Todo
+                            | bun_test::BasicResult::Fail
+                    ) {
+                        if layout == Layout::Flat {
+                            recap_buf.extend_from_slice(writer);
+                        } else {
+                            write_line(Layout::Flat, &mut recap_buf);
                         }
                     }
-                    bun_test::BasicResult::Skip | bun_test::BasicResult::Pending => true,
-                    bun_test::BasicResult::Pass | bun_test::BasicResult::Fail => false,
-                };
-                if dim {
-                    Self::print_test_line::<true>(result, sequence, test_entry, elapsed_ns, writer);
-                } else {
-                    Self::print_test_line::<false>(
-                        result, sequence, test_entry, elapsed_ns, writer,
-                    );
                 }
             }
         }
@@ -1443,40 +2082,54 @@ impl CommandLineReporter {
         Self::maybe_print_junit_line(result, buntest, sequence, test_entry, elapsed_ns);
 
         let formatted_line = &output_buf[initial_length..];
-        // SAFETY: `BunTest.reporter` is `NonNull<CommandLineReporter>`; re-derived
-        // here (not held across `maybe_print_junit_line`'s `&mut`) per stacked
-        // borrows.
-        let worker_idx = buntest
-            .reporter
-            .and_then(|p| unsafe { (*p.as_ptr()).worker_ipc_file_idx });
-        if let Some(idx) = worker_idx {
-            ParallelRunner::worker_emit_test_done(idx, formatted_line);
-        } else {
-            let _ = Output::error_writer().write_all(formatted_line);
-        }
 
         let Some(this) = buntest.reporter else {
+            // command line reporter is missing! uh oh!
+            let _ = Output::error_writer().write_all(formatted_line);
             return;
-        }; // command line reporter is missing! uh oh!
+        };
         // SAFETY: `BunTest.reporter` is `NonNull<CommandLineReporter>` with write
         // provenance from `enter_file`'s `&mut`; single-threaded test runner,
-        // sole writer for the duration of this completion callback.
+        // sole writer for the duration of this completion callback. Re-derived
+        // here (not held across `maybe_print_junit_line`'s `&mut`) per stacked
+        // borrows.
         let this: &mut CommandLineReporter = unsafe { &mut *this.as_ptr() };
 
+        let basic = sequence.result.basic_result();
+        if let Some(idx) = this.worker_ipc_file_idx {
+            // The coordinator owns the terminal and buffers the file's block;
+            // ship the scope path and status alongside the line so it can.
+            ParallelRunner::worker_emit_test_done(
+                idx,
+                &scope_path,
+                basic_result_to_u8(basic),
+                formatted_line,
+            );
+        } else if this.reporters.dots || formatted_line.is_empty() {
+            // `--dots` streams; an empty line means the result was suppressed.
+            let _ = Output::error_writer().write_all(formatted_line);
+        } else {
+            let line = output_buf.split_off(initial_length);
+            this.file_block.push(&scope_path, basic, line);
+        }
+
         if !this.reporters.dots && !this.reporters.only_failures {
-            match sequence.result.basic_result() {
-                bun_test::BasicResult::Skip => this
-                    .skips_to_repeat_buf
-                    .extend_from_slice(&output_buf[initial_length..]),
-                bun_test::BasicResult::Todo => this
-                    .todos_to_repeat_buf
-                    .extend_from_slice(&output_buf[initial_length..]),
-                bun_test::BasicResult::Fail => this
-                    .failures_to_repeat_buf
-                    .extend_from_slice(&output_buf[initial_length..]),
-                bun_test::BasicResult::Pass | bun_test::BasicResult::Pending => {}
+            match basic {
+                bun_test::BasicResult::Skip => {
+                    this.skips_to_repeat_buf.extend_from_slice(&recap_buf)
+                }
+                bun_test::BasicResult::Todo => {
+                    this.todos_to_repeat_buf.extend_from_slice(&recap_buf)
+                }
+                bun_test::BasicResult::Pass
+                | bun_test::BasicResult::Fail
+                | bun_test::BasicResult::Pending => {}
             }
         }
+
+        // Diagnostics were captured while the test ran, when nothing yet knew
+        // which test they belonged to. This is the first point that does.
+        this.drain_pending_diagnostic(basic, scopes_stack.as_slice(), test_entry);
 
         use bun_test::Execution::Result as R;
         match sequence.result {
@@ -1498,6 +2151,7 @@ impl CommandLineReporter {
                 this.summary().fail += 1;
 
                 if this.summary().fail == this.jest.bail {
+                    this.flush_file_block();
                     this.print_summary();
                     pretty_error!(
                         "\nBailed out after {} failure{}<r>\n",
@@ -2254,10 +2908,14 @@ impl TestCommand {
             last_dot: 0,
             repeat_count: 1,
             last_printed_dot: core::cell::Cell::new(false),
+            last_console_label: core::cell::RefCell::new(Vec::new()),
             worker_ipc_file_idx: None,
-            failures_to_repeat_buf: Vec::new(),
             skips_to_repeat_buf: Vec::new(),
             todos_to_repeat_buf: Vec::new(),
+            pending_diagnostic: bun_core::io::VecWriter::new(),
+            pending_diagnostic_line: 0,
+            failure_report: FailureReport::default(),
+            file_block: FileBlock::default(),
             reporters: ReportersConfig::default(),
         });
         // `defer { if (reporter.reporters.junit) |fr| fr.deinit() }` — handled by Drop.
@@ -2268,6 +2926,7 @@ impl TestCommand {
         unsafe {
             jest::Jest::RUNNER.write(Some(core::ptr::NonNull::from(&mut reporter.jest)));
         }
+        Global::add_exit_callback(flush_active_file_block_on_exit);
         // `reporter.jest.test_options` is initialised in the struct
         // literal above (lifetime-erased); the post-init assignment is dropped.
 
@@ -2771,19 +3430,11 @@ impl TestCommand {
                 let error_writer = Output::error_writer();
                 let _ = error_writer.write_all(&reporter.todos_to_repeat_buf);
             }
-
-            if reporter.summary().fail > 0 {
-                if reporter.summary().skip > 0 || reporter.summary().todo > 0 {
-                    pretty_error!("\n");
-                }
-
-                pretty_error!("\n<r><d>{} tests failed:<r>\n", reporter.summary().fail);
-                Output::flush();
-
-                let error_writer = Output::error_writer();
-                let _ = error_writer.write_all(&reporter.failures_to_repeat_buf);
-            }
         }
+
+        // Not gated on the run being large: a failure's diagnostics are the
+        // point of the run, and this is the only place they are printed.
+        reporter.render_failure_report();
 
         Output::flush();
 
@@ -3265,6 +3916,7 @@ impl TestCommand {
             // disjoint without tripping borrowck.
             unsafe {
                 let rp: *mut CommandLineReporter = reporter;
+                (*rp).last_console_label.borrow_mut().clear();
                 (*rp).jest.current_file.set(
                     file_title,
                     file_prefix,
@@ -3301,6 +3953,7 @@ impl TestCommand {
                     reporter.summary().fail += 1;
 
                     if reporter.jest.bail == reporter.summary().fail {
+                        reporter.flush_file_block();
                         reporter.print_summary();
                         pretty_error!(
                             "\nBailed out after {} failure{}<r>\n",
@@ -3389,6 +4042,11 @@ impl TestCommand {
             }
 
             vm.global().handle_rejected_promises();
+
+            // Render the file's block before `::endgroup::` so GitHub Actions
+            // folds it into this file's group. `exit_file` re-runs this as a
+            // no-op safety net for the bail/crash paths.
+            reporter.flush_file_block();
 
             if Output::is_github_action() {
                 pretty_errorln!("<r>\n::endgroup::\n");

@@ -13,24 +13,32 @@ test("snapshot", () => {
 
   expect(normalizeBunSnapshot(stdout.toString() + stderr.toString())).toMatchInlineSnapshot(`
     "bun test <version> (<revision>)
+    stdout | test/cli/test/test-filter-lifecycle.js > parent
     <parent beforeAll>
+    stdout | test/cli/test/test-filter-lifecycle.js > parent > should run
     <beforeAll>
+    stdout | test/cli/test/test-filter-lifecycle.js > parent > should run > test
     <parent beforeEach>
     <beforeEach>
     <test 1>
     <afterEach>
     <parent afterEach>
+    stdout | test/cli/test/test-filter-lifecycle.js > parent > should run > test 2
     <parent beforeEach>
     <beforeEach>
     <test 2>
     <afterEach>
     <parent afterEach>
+    stdout | test/cli/test/test-filter-lifecycle.js > parent > should run
     <afterAll>
+    stdout | test/cli/test/test-filter-lifecycle.js > parent
     <parent afterAll>
 
-    test/cli/test/test-filter-lifecycle.js:
-    (pass) parent > should run > test
-    (pass) parent > should run > test 2
+    (pass) test/cli/test/test-filter-lifecycle.js:
+    (pass) parent
+      (pass) should run
+        (pass) test
+        (pass) test 2
 
      2 pass
      4 filtered out

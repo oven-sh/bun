@@ -1183,7 +1183,13 @@ fn print_exception(
     // (the `had_errors` save/restore lives in the low-tier caller). Route via
     // the buffered error writer; `defer writer.flush()` becomes a tail call —
     // no early returns below.
-    let writer = bun_core::Output::error_writer_buffered();
+    let writer = match vm_ref.error_writer_override {
+        // SAFETY: the override is installed around a single `run_error_handler`
+        // call by a caller that owns the sink for that whole window and clears
+        // it immediately after; single-threaded JS thread.
+        Some(w) => unsafe { &mut *w.as_ptr() },
+        None => bun_core::Output::error_writer_buffered(),
+    };
 
     let global = vm_ref.global();
 
@@ -1782,10 +1788,12 @@ unsafe fn retroactively_report_discovered_tests(agent: *mut bun_jsc::debugger::T
 // ════════════════════════════════════════════════════════════════════════════
 
 /// `Jest.runner.?.bun_test_root.onBeforePrint()` — flush the test reporter's
-/// line state before user `console.log` output interleaves with it.
-fn console_on_before_print() {
+/// line state before user `console.log` output interleaves with it, then label
+/// the output with the test that produced it.
+fn console_on_before_print(is_stderr: bool) {
     if let Some(runner) = crate::test_runner::jest::Jest::runner() {
         runner.bun_test_root.on_before_print();
+        runner.bun_test_root.print_console_attribution(is_stderr);
     }
 }
 

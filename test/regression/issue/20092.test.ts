@@ -14,9 +14,11 @@ test("20092", async () => {
 
   expect(exitCode).toBe(0);
   expect(normalizeBunSnapshot(stderr)).toMatchInlineSnapshot(`
-    "test/regression/issue/20092.fixture.ts:
-    (pass) foo > works
-    (pass) bar > works
+    "(pass) test/regression/issue/20092.fixture.ts:
+    (pass) foo
+      (pass) works
+    (pass) bar
+      (pass) works
 
      2 pass
      0 fail

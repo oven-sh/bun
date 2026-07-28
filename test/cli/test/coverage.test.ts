@@ -122,7 +122,7 @@ test("should call both functions", () => {
   stderr = normalizeBunSnapshot(stderr, dir);
 
   expect(stderr).toMatchInlineSnapshot(`
-"test.test.ts:
+"(pass) test.test.ts:
 (pass) should call both functions
 ---------------|---------|---------|-------------------
 File           | % Funcs | % Lines | Uncovered Line #s
@@ -187,7 +187,7 @@ test("should call only some functions", () => {
   stderr = normalizeBunSnapshot(stderr, dir);
 
   expect(stderr).toMatchInlineSnapshot(`
-"test.test.ts:
+"(pass) test.test.ts:
 (pass) should call only some functions
 ---------------|---------|---------|-------------------
 File           | % Funcs | % Lines | Uncovered Line #s
@@ -252,7 +252,7 @@ test("should call all functions", () => {
   stderr = normalizeBunSnapshot(stderr, dir);
 
   expect(stderr).toMatchInlineSnapshot(`
-"test.test.ts:
+"(pass) test.test.ts:
 (pass) should call all functions
 --------------|---------|---------|-------------------
 File          | % Funcs | % Lines | Uncovered Line #s
@@ -319,7 +319,7 @@ test("should call all functions", () => {
   stderr = normalizeBunSnapshot(stderr, dir);
 
   expect(stderr).toMatchInlineSnapshot(`
-"main.test.ts:
+"(pass) main.test.ts:
 (pass) should call all functions
 
 src/feature.spec.ts:
@@ -521,7 +521,7 @@ test("should call function", () => {
   stderr = normalizeBunSnapshot(stderr, dir);
 
   expect(stderr).toMatchInlineSnapshot(`
-"test.test.ts:
+"(pass) test.test.ts:
 (pass) should call function
 ---------------|---------|---------|-------------------
 File           | % Funcs | % Lines | Uncovered Line #s
@@ -574,7 +574,7 @@ test("should call function", () => {
   stderr = normalizeBunSnapshot(stderr, dir);
 
   expect(stderr).toMatchInlineSnapshot(`
-"test.test.ts:
+"(pass) test.test.ts:
 (pass) should call function
 -----------|---------|---------|-------------------
 File       | % Funcs | % Lines | Uncovered Line #s

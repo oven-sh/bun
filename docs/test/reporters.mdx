@@ -41,6 +41,28 @@ test/package-json-lint.test.ts:
 Ran 4 tests across 1 files. [0.66ms]
 ```
 
+Tests inside a `describe` block are nested beneath their scope, which is printed
+once. File and `describe` lines carry the worst status found beneath them, so a
+failure is visible without reading the whole block:
+
+```sh terminal icon="terminal"
+✗ test/math.test.ts:
+✗ math
+  ✗ arithmetic
+    ✓ add [0.12ms]
+    ✗ subtract [0.04ms]
+  ✓ is a module [0.03ms]
+✓ top-level test [0.02ms]
+
+ 3 pass
+ 1 fail
+Ran 4 tests across 1 files. [0.31ms]
+```
+
+Each file's results are buffered and printed when the file finishes, so a
+`describe` block is never split apart — even with `test.concurrent` or
+`--parallel`.
+
 ### Dots Reporter
 
 The dots reporter shows `.` for passing tests and prints full error details for failures, useful for large test suites.

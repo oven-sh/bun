@@ -10,7 +10,10 @@ test("issue 8964", async () => {
     stdio: ["ignore", "pipe", "inherit"],
   });
   const stdtext = stdout.toString();
-  const [, actual, expected] = stdout.toString().split("\n");
+  // Skip the banner and any `stdout | file > test` attribution headers.
+  const [actual, expected] = stdtext
+    .split("\n")
+    .filter(l => l.startsWith("ACTUAL:") || l.startsWith("EXPECTED:"));
   expect(actual.replace("EXPECTED:", "ACTUAL:")).toBe(expected);
   expect(exitCode).toBe(0);
   expect(signalCode).toBeUndefined();

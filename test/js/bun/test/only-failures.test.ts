@@ -19,7 +19,13 @@ test.concurrent("only-failures flag should show only failures", async () => {
     {
       "exitCode": 1,
       "stderr": 
-    "test/js/bun/test/only-failures.fixture.ts:
+    "(fail) test/js/bun/test/only-failures.fixture.ts:
+    (fail) failing test
+    (fail) another failing test
+
+    2 tests failed:
+
+    (fail) test/js/bun/test/only-failures.fixture.ts:12 > failing test
      7 | test("passing test 2", () => {
      8 |   expect(2 + 2).toBe(4);
      9 | });
@@ -32,7 +38,8 @@ test.concurrent("only-failures flag should show only failures", async () => {
     Expected: 3
     Received: 2
         at <anonymous> (file:NN:NN)
-    (fail) failing test
+
+    (fail) test/js/bun/test/only-failures.fixture.ts:26 > another failing test
     21 | });
     22 | 
     23 | test.todo("todo test");
@@ -42,7 +49,6 @@ test.concurrent("only-failures flag should show only failures", async () => {
                                             ^
     error: This test fails
         at <anonymous> (file:NN:NN)
-    (fail) another failing test
 
      3 pass
      1 skip

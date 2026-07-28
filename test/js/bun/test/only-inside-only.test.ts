@@ -11,6 +11,12 @@ test("only-inside-only", async () => {
   const exitCode = await result.exited;
   const stdout = await result.stdout.text();
   const stderr = await result.stderr.text();
-  expect(stdout).not.toContain("should not run");
-  expect(stdout).toIncludeRepeated("should run", 1);
+  // Drop `stdout | file > describe > test` attribution headers: they repeat
+  // the test name, which is what this asserts on.
+  const logs = stdout
+    .split("\n")
+    .filter(l => !l.startsWith("stdout | "))
+    .join("\n");
+  expect(logs).not.toContain("should not run");
+  expect(logs).toIncludeRepeated("should run", 1);
 });

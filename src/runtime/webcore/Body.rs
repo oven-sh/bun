@@ -68,6 +68,22 @@ fn set_blob_content_type(blob: &Blob, mime_type: MimeType) {
         .set(blob::BlobContentType::from(mime_type));
 }
 
+/// <https://fetch.spec.whatwg.org/#concept-header-extract-mime-type> + `Blob.type` lowercasing.
+fn set_blob_content_type_from_header(blob: &Blob, header_value: &[u8]) {
+    blob.content_type_was_set.set(true);
+    let content_type = bun_http_types::mime_sniff::extract_mime_type(header_value)
+        .filter(|ty| blob::is_valid_blob_type(ty))
+        .map(|mut ty| {
+            ty.make_ascii_lowercase();
+            blob::BlobContentType::Owned(std::sync::Arc::from(ty))
+        })
+        .unwrap_or_default();
+    if let Some(store) = blob_store_mut(blob) {
+        store.mime_type = MimeType::init(content_type.as_slice(), true, None);
+    }
+    blob.content_type.set(content_type);
+}
+
 // ────────────────────────────────────────────────────────────────────────────
 // Local shims for upstream-gated `JsClass` impls / `AnyPromise` methods.
 // These adapt call sites in this file without editing `bun_jsc` (orphan rule).
@@ -1097,8 +1113,7 @@ impl Value {
                                 fetch_headers.fast_get(HTTPHeaderName::ContentType)
                             {
                                 let content_slice = content_type.to_slice();
-                                let mime_type = MimeType::init(content_slice.slice(), true, None);
-                                set_blob_content_type(blob, mime_type);
+                                set_blob_content_type_from_header(blob, content_slice.slice());
                                 // content_slice dropped (replaces defer content_slice.deinit())
                             }
                         }
@@ -2113,8 +2128,7 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
                 let fetch_headers = bun_opaque::opaque_deref_mut(fetch_headers.as_ptr());
                 if let Some(content_type) = fetch_headers.fast_get(HTTPHeaderName::ContentType) {
                     let content_slice = content_type.to_slice();
-                    let mime_type = MimeType::init(content_slice.slice(), true, None);
-                    set_blob_content_type(blob, mime_type);
+                    set_blob_content_type_from_header(blob, content_slice.slice());
                     // content_slice dropped (replaces defer content_slice.deinit())
                 }
             }

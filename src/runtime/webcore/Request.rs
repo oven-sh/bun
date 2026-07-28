@@ -476,8 +476,12 @@ impl Request {
         let Some(content_type_slice) = self.get_content_type()? else {
             return Ok(None);
         };
-        let Some(encoding) = crate::webcore::form_data::Encoding::get(content_type_slice.slice())
+        let Some(extracted) =
+            bun_http_types::mime_sniff::extract_mime_type(content_type_slice.slice())
         else {
+            return Ok(None);
+        };
+        let Some(encoding) = crate::webcore::form_data::Encoding::get(&extracted) else {
             return Ok(None);
         };
         Ok(Some(crate::webcore::form_data::AsyncFormData::init(

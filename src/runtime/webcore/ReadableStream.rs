@@ -103,6 +103,10 @@ unsafe extern "C" {
         possible_readable_stream: JSValue,
         global_object: &JSGlobalObject,
     ) -> bool;
+    safe fn ReadableStream__isNativeSourceConsumed(
+        possible_readable_stream: JSValue,
+        global_object: &JSGlobalObject,
+    ) -> bool;
     safe fn ReadableStream__isLocked(
         possible_readable_stream: JSValue,
         global_object: &JSGlobalObject,
@@ -163,7 +167,7 @@ impl ReadableStream {
     }
 
     pub fn to_any_blob(&mut self, global_this: &JSGlobalObject) -> Option<webcore::blob::Any> {
-        if self.is_disturbed(global_this) {
+        if self.is_native_source_consumed(global_this) {
             return None;
         }
 
@@ -259,6 +263,14 @@ impl ReadableStream {
 
     pub fn is_disturbed(&self, global_object: &JSGlobalObject) -> bool {
         is_disturbed_value(self.value, global_object)
+    }
+
+    /// The native source handle no longer holds the whole body: the stream was read, or
+    /// materializing it moved bytes into the controller's queue. Bypassing the stream to
+    /// read the handle directly is only sound while this is false.
+    pub fn is_native_source_consumed(&self, global_object: &JSGlobalObject) -> bool {
+        // SAFETY: FFI call; value is a valid ReadableStream JSValue.
+        ReadableStream__isNativeSourceConsumed(self.value, global_object)
     }
 
     pub fn is_locked(&self, global_object: &JSGlobalObject) -> bool {
@@ -452,6 +464,11 @@ impl ReadableStream {
 pub(crate) fn is_disturbed_value(value: JSValue, global_object: &JSGlobalObject) -> bool {
     // SAFETY: FFI call; value may be any JSValue (C++ side checks).
     ReadableStream__isDisturbed(value, global_object)
+}
+
+pub(crate) fn is_locked_value(value: JSValue, global_object: &JSGlobalObject) -> bool {
+    // SAFETY: FFI call; value may be any JSValue (C++ side checks).
+    ReadableStream__isLocked(value, global_object)
 }
 
 // ─── Tag / Source ────────────────────────────────────────────────────────────

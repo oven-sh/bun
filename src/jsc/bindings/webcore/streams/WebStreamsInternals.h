@@ -589,6 +589,7 @@ int32_t ReadableStreamTag__tagged(Zig::GlobalObject*, JSC::EncodedJSValue* possi
 // The ReadableStream__* set.
 bool ReadableStream__tee(JSC::EncodedJSValue possibleReadableStream, Zig::GlobalObject*, JSC::EncodedJSValue* possibleReadableStream1, JSC::EncodedJSValue* possibleReadableStream2); // userJS: yes
 bool ReadableStream__isDisturbed(JSC::EncodedJSValue possibleReadableStream, Zig::GlobalObject*); // userJS: no
+bool ReadableStream__isNativeSourceConsumed(JSC::EncodedJSValue possibleReadableStream, Zig::GlobalObject*); // userJS: no
 bool ReadableStream__isLocked(JSC::EncodedJSValue possibleReadableStream, Zig::GlobalObject*); // userJS: no
 // no-op unless the reader slot holds a REAL reader (the direct/native lock is a no-op here).
 void ReadableStream__cancel(JSC::EncodedJSValue possibleReadableStream, Zig::GlobalObject*); // userJS: yes

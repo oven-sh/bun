@@ -340,6 +340,24 @@ impl PendingValue {
         false
     }
 
+    /// The other half of the fetch spec's "body unusable": a reader is attached to the body's
+    /// stream. Mirrors [`Self::is_disturbed`] — the JS-side stream cache is the source of truth.
+    pub(crate) fn is_locked<T: BodyOwnerJs>(
+        &self,
+        global_object: &JSGlobalObject,
+        this_value: JSValue,
+    ) -> bool {
+        if let Some(body_value) = T::body_get_cached(this_value) {
+            return webcore::readable_stream::is_locked_value(body_value, global_object);
+        }
+
+        if let Some(readable) = self.readable.get(global_object) {
+            return readable.is_locked(global_object);
+        }
+
+        false
+    }
+
     pub(crate) fn is_disturbed2(&self, global_object: &JSGlobalObject) -> bool {
         if self.promise.is_some() {
             return true;
@@ -953,7 +971,9 @@ impl Value {
             }
 
             match readable.ptr {
-                webcore::readable_stream::Source::Blob(blob) => {
+                webcore::readable_stream::Source::Blob(blob)
+                    if !readable.is_native_source_consumed(global_this) =>
+                {
                     // SAFETY: `Source::Blob` holds a live *mut ByteBlobLoader for the
                     // lifetime of the ReadableStream JS wrapper.
                     let result = if let Some(any_blob) = unsafe { (*blob).to_any_blob(global_this) }
@@ -1720,6 +1740,9 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
                 if readable.is_disturbed(global_object) {
                     return Ok(handle_body_already_used(global_object));
                 }
+                if readable.is_locked(global_object) {
+                    return Ok(handle_body_locked(global_object));
+                }
                 let value = self.get_body_value();
                 if let Value::Locked(locked) = value {
                     return locked.set_promise(global_object, Action::GetText, Some(readable));
@@ -1820,6 +1843,9 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
                 if readable.is_disturbed(global_object) {
                     return Ok(handle_body_already_used(global_object));
                 }
+                if readable.is_locked(global_object) {
+                    return Ok(handle_body_locked(global_object));
+                }
                 let value = self.get_body_value();
                 value.to_blob_if_possible();
                 if let Value::Locked(locked) = value {
@@ -1869,6 +1895,9 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
             if let Some(readable) = self.get_body_readable_stream(global_object) {
                 if readable.is_disturbed(global_object) {
                     return Ok(handle_body_already_used(global_object));
+                }
+                if readable.is_locked(global_object) {
+                    return Ok(handle_body_locked(global_object));
                 }
                 let value = self.get_body_value();
                 value.to_blob_if_possible();
@@ -1925,6 +1954,9 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
                 if readable.is_disturbed(global_object) {
                     return Ok(handle_body_already_used(global_object));
                 }
+                if readable.is_locked(global_object) {
+                    return Ok(handle_body_locked(global_object));
+                }
                 let value = self.get_body_value();
                 value.to_blob_if_possible();
                 if let Value::Locked(locked) = value {
@@ -1975,6 +2007,9 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
             if let Some(readable) = self.get_body_readable_stream(global_object) {
                 if readable.is_disturbed(global_object) {
                     return Ok(handle_body_already_used(global_object));
+                }
+                if readable.is_locked(global_object) {
+                    return Ok(handle_body_locked(global_object));
                 }
                 let value = self.get_body_value();
                 value.to_blob_if_possible();
@@ -2079,6 +2114,9 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
                 {
                     return Ok(handle_body_already_used(global_object));
                 }
+                if readable.is_locked(global_object) {
+                    return Ok(handle_body_locked(global_object));
+                }
                 value.to_blob_if_possible();
                 if let Value::Locked(locked) = value {
                     return locked.set_promise(global_object, Action::GetBlob, Some(readable));
@@ -2138,6 +2176,18 @@ fn handle_body_already_used(global_object: &JSGlobalObject) -> JSValue {
         .err(
             jsc::ErrorCode::BODY_ALREADY_USED,
             format_args!("Body already used"),
+        )
+        .reject()
+}
+
+/// Fetch spec "body unusable": a body whose stream is locked rejects the read without
+/// recording an action, so releasing the lock leaves the body readable again. Mirrors the
+/// message `Bun.readableStreamTo*` would have rejected with further down.
+fn handle_body_locked(global_object: &JSGlobalObject) -> JSValue {
+    global_object
+        .err(
+            jsc::ErrorCode::INVALID_STATE_TypeError,
+            format_args!("Invalid state: ReadableStream is locked"),
         )
         .reject()
 }
@@ -2422,14 +2472,24 @@ impl<'a> ValueBufferer<'a> {
                 webcore::readable_stream::Source::Invalid => {
                     return Err(crate::Error::InvalidStream);
                 }
-                // toBlobIfPossible should've caught this
+                // `to_blob_if_possible` converts these, but only while the native handle still
+                // owns the bytes: once the stream is materialized they live in the controller's
+                // queue, which only the (currently unsupported) JS sink below could reach.
                 webcore::readable_stream::Source::Blob(_)
-                | webcore::readable_stream::Source::File(_) => unreachable!(),
-                webcore::readable_stream::Source::JavaScript
+                | webcore::readable_stream::Source::File(_)
+                | webcore::readable_stream::Source::JavaScript
                 | webcore::readable_stream::Source::Direct => {
                     // this is broken right now
                     // return self.create_js_sink(stream);
                     return Err(crate::Error::UnsupportedStreamType);
+                }
+                // Same reason the arm above cannot read its handle: a materialized ByteStream
+                // has already moved its buffer into the controller's queue, so the fast path
+                // below would hand back a truncated body.
+                webcore::readable_stream::Source::Bytes(_)
+                    if stream.is_native_source_consumed(self.global) =>
+                {
+                    return Err(bun_core::err!("UnsupportedStreamType"));
                 }
                 webcore::readable_stream::Source::Bytes(byte_stream_ptr) => {
                     // BACKREF: see `Source::bytes()` — payload owned by the

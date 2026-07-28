@@ -1071,6 +1071,55 @@ describe("DONT_CONTEXTIFY", () => {
   });
 });
 
+test("runInContext on a vm context's own globalThis does not recurse unboundedly", async () => {
+  // Passing a vm context's own global proxy (the `globalThis` seen inside the
+  // context) as the contextified object used to overwrite that context's
+  // sandbox with a reference to itself. The next global identifier lookup then
+  // bounced NodeVMGlobalObject::getOwnPropertySlot -> sandbox->getPropertySlot
+  // -> NodeVMGlobalObject::getOwnPropertySlot until the native stack was
+  // exhausted, crashing with a raw SIGSEGV and no Bun crash report. Run out of
+  // process so the fail-before state is an observable non-zero exit rather
+  // than a crashed test runner.
+  const fixture = `
+    const vm = require("node:vm");
+
+    // via createContext + runInContext('globalThis')
+    const a = {};
+    vm.createContext(a);
+    const g = vm.runInContext("globalThis", a);
+    vm.createContext(g);
+    console.log("literal", vm.runInContext("40 + 2", g));
+    console.log("typeof-Array", vm.runInContext("typeof Array", g));
+    console.log("Array-identity", vm.runInContext("Array", g) === vm.runInContext("Array", a));
+    vm.runInContext("var fromG = 1", g);
+    console.log("var-visible", a.fromG, vm.runInContext("fromG", a));
+
+    // via runInNewContext('globalThis')
+    const g2 = vm.runInNewContext("globalThis");
+    vm.createContext(g2);
+    console.log("typeof-Object", vm.runInContext("typeof Object", g2));
+  `;
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", fixture],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toBe("");
+  expect(normalizeBunSnapshot(stdout)).toMatchInlineSnapshot(`
+    "literal 42
+    typeof-Array function
+    Array-identity true
+    var-visible 1 1
+    typeof-Object function"
+  `);
+  expect(exitCode).toBe(0);
+});
+
 test("Loader is not defined in vm context", () => {
   // Test with empty context - internal Loader should not leak through
   const emptyContext = createContext({});

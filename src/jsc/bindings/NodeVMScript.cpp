@@ -607,10 +607,17 @@ JSC_DEFINE_HOST_FUNCTION(scriptRunInContext, (JSGlobalObject * globalObject, Cal
     JSValue contextArg = args.at(0);
     NodeVMGlobalObject* nodeVmGlobalObject = getGlobalObjectFromContext(globalObject, contextArg, true);
     RETURN_IF_EXCEPTION(scope, {});
-    JSObject* context = asObject(contextArg);
     ASSERT(nodeVmGlobalObject != nullptr);
 
-    RELEASE_AND_RETURN(scope, runInContext(nodeVmGlobalObject, script, context, args.at(1)));
+    // The resolved NodeVMGlobalObject already knows its sandbox (set at
+    // createContext time). Pass that through rather than the raw contextArg:
+    // contextArg may be the context's own global proxy (e.g.
+    // `vm.runInContext('typeof Array', vm.runInNewContext('globalThis'))`), and
+    // installing that as m_sandbox makes getOwnPropertySlot recurse into itself
+    // until the native stack is exhausted.
+    JSObject* sandbox = nodeVmGlobalObject->contextifiedObject();
+
+    RELEASE_AND_RETURN(scope, runInContext(nodeVmGlobalObject, script, sandbox, args.at(1)));
 }
 
 JSC_DEFINE_HOST_FUNCTION(scriptRunInNewContext, (JSGlobalObject * globalObject, CallFrame* callFrame))

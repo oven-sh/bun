@@ -480,6 +480,18 @@ describe("AbortSignal rejections use node's AbortError shape", () => {
     }
   });
 
+  test("FileHandle#appendFile with a pre-aborted signal", async () => {
+    await using dir = tempDir("fs-abort-fh-appendfile", { "f.txt": "" });
+    const signal = AbortSignal.abort();
+    await using fh = await fsPromises.open(join(dir, "f.txt"), "a");
+    expect.assertions(4);
+    try {
+      await fh.appendFile("data", { signal });
+    } catch (err) {
+      expectNodeAbortError(err, signal.reason);
+    }
+  });
+
   test("writeFile with a pre-aborted signal", async () => {
     await using dir = tempDir("fs-abort-writefile", {});
     const signal = AbortSignal.abort();

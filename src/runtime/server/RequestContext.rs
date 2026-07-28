@@ -1797,8 +1797,6 @@ where
             });
         }
 
-        // Non-regular files (FIFO/chardev/socket) have no meaningful stat
-        // size; leave Content-Length unset so uWS chunk-frames the body.
         self.flags.set_needs_content_length(is_regular);
         let blob_offset = match &self.blob {
             AnyBlob::Blob(b) => b.offset.get(),

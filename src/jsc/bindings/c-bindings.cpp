@@ -228,41 +228,38 @@ static int bun__cgroup_constrained_cpu(const char* proc_self_cgroup, const char*
 // which is fine for JSC's internal pool sizing but over-reports for
 // Node-facing worker-pool sizing.
 //
-// BUN_INTERNAL_CGROUP_ROOT replaces the /sys/fs/cgroup prefix and
-// expects /proc/self/cgroup at "<root>/proc_self_cgroup"; it exists only
-// so the test suite can exercise fractional quotas without CAP_SYS_ADMIN.
+// BUN_INTERNAL_CGROUP_ROOT exists only so the test suite can exercise
+// fractional quotas without CAP_SYS_ADMIN: it reads
+// "<root>/proc_self_cgroup" and "<root>/..." in place of the real paths and
+// bypasses the host sysconf/affinity min so the fixture alone determines the
+// result.
 extern "C" int32_t Bun__availableParallelism()
 {
 #if OS(LINUX)
-    static int cached = 0;
-    if (cached > 0)
-        return cached;
+    static const int cached = [] {
+        if (const char* root = getenv("BUN_INTERNAL_CGROUP_ROOT")) {
+            char proc_path[4097];
+            snprintf(proc_path, sizeof(proc_path), "%s/proc_self_cgroup", root);
+            int constrained = bun__cgroup_constrained_cpu(proc_path, root);
+            return constrained > 0 ? constrained : 1;
+        }
 
-    long rc = sysconf(_SC_NPROCESSORS_ONLN);
+        long rc = sysconf(_SC_NPROCESSORS_ONLN);
 
-    cpu_set_t set;
-    CPU_ZERO(&set);
-    if (sched_getaffinity(0, sizeof(set), &set) == 0) {
-        long n = CPU_COUNT(&set);
-        if (n > 0 && (rc < 1 || n < rc))
-            rc = n;
-    }
+        cpu_set_t set;
+        CPU_ZERO(&set);
+        if (sched_getaffinity(0, sizeof(set), &set) == 0) {
+            long n = CPU_COUNT(&set);
+            if (n > 0 && (rc < 1 || n < rc))
+                rc = n;
+        }
 
-    const char* root = getenv("BUN_INTERNAL_CGROUP_ROOT");
-    char proc_path[4097];
-    const char* proc_self_cgroup = "/proc/self/cgroup";
-    const char* cgroup_root = "/sys/fs/cgroup";
-    if (root != NULL) {
-        snprintf(proc_path, sizeof(proc_path), "%s/proc_self_cgroup", root);
-        proc_self_cgroup = proc_path;
-        cgroup_root = root;
-    }
+        int constrained = bun__cgroup_constrained_cpu("/proc/self/cgroup", "/sys/fs/cgroup");
+        if (constrained > 0 && (rc < 1 || constrained < rc))
+            rc = constrained;
 
-    int constrained = bun__cgroup_constrained_cpu(proc_self_cgroup, cgroup_root);
-    if (constrained > 0 && (rc < 1 || constrained < rc))
-        rc = constrained;
-
-    cached = rc < 1 ? 1 : (int)rc;
+        return rc < 1 ? 1 : (int)rc;
+    }();
     return cached;
 #else
     return WTF::numberOfProcessorCores();

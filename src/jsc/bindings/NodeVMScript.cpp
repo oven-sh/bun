@@ -199,6 +199,8 @@ constructScript(JSGlobalObject* globalObject, CallFrame* callFrame, JSValue newT
                 script->cachedDataRejected(TriState::True);
             }
         }
+        // unwrapCachedData owns its copy; nothing reads m_options.cachedData after this.
+        cachedData = {};
     } else if (produceCachedData) {
         script->cacheBytecode();
     }

@@ -1960,7 +1960,7 @@ const UNSUPPORTED_RESERVED_WORDS: &[&[u8]] = &[
 ];
 
 pub fn is_unsupported_reserved_word(txt: &[u8]) -> bool {
-    UNSUPPORTED_RESERVED_WORDS.iter().any(|&w| txt == w)
+    UNSUPPORTED_RESERVED_WORDS.contains(&txt)
 }
 
 /// We make it so that `if`/`else`/`elif`/`then`/`fi` need to be single,

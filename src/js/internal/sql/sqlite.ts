@@ -244,13 +244,16 @@ class SQLiteQueryHandle implements BaseQueryHandle<BunSQLiteModule.Database> {
         // SELECT queries must use prepared statements for results
         const stmt = db.prepare(sql);
         let result: unknown[] | undefined;
-
-        if (mode === SQLQueryResultMode.values) {
-          result = stmt.values.$apply(stmt, values);
-        } else if (mode === SQLQueryResultMode.raw) {
-          result = stmt.raw.$apply(stmt, values);
-        } else {
-          result = stmt.all.$apply(stmt, values);
+        try {
+          if (mode === SQLQueryResultMode.values) {
+            result = stmt.values.$call(stmt, values);
+          } else if (mode === SQLQueryResultMode.raw) {
+            result = stmt.raw.$call(stmt, values);
+          } else {
+            result = stmt.all.$call(stmt, values);
+          }
+        } finally {
+          stmt.finalize();
         }
 
         const sqlResult = $isArray(result) ? new SQLResultArray(result) : new SQLResultArray([result]);
@@ -258,11 +261,10 @@ class SQLiteQueryHandle implements BaseQueryHandle<BunSQLiteModule.Database> {
         sqlResult.command = commandToString(command, parsedInfo.lastToken);
         sqlResult.count = $isArray(result) ? result.length : 1;
 
-        stmt.finalize();
         query.resolve(sqlResult);
       } else {
         // For INSERT/UPDATE/DELETE/CREATE etc., use db.run() which handles multiple statements natively
-        const changes = db.run.$apply(db, [sql].concat(values));
+        const changes = db.run.$call(db, sql, values);
         const sqlResult = new SQLResultArray();
 
         sqlResult.command = commandToString(command, parsedInfo.lastToken);

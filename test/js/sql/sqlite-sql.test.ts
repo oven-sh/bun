@@ -1,6 +1,6 @@
 import { randomUUIDv7, SQL } from "bun";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, mock, test } from "bun:test";
-import { tempDirWithFiles } from "harness";
+import { isDebug, tempDirWithFiles } from "harness";
 import { existsSync } from "node:fs";
 import { rm, stat } from "node:fs/promises";
 import { join } from "node:path";
@@ -1054,6 +1054,88 @@ describe("Template Literal Security", () => {
     ).toThrowErrorMatchingInlineSnapshot(`"Helpers are only allowed for INSERT, UPDATE and WHERE IN commands"`);
     await sql.close();
   });
+
+  describe("object/array as interpolated value cannot rewrite other parameters", () => {
+    let sql: SQL;
+
+    beforeAll(async () => {
+      sql = new SQL("sqlite://:memory:");
+      await sql`CREATE TABLE docs (id INTEGER, tenant TEXT, body TEXT)`;
+      await sql`INSERT INTO docs VALUES (1, 'alice', 'A-secret'), (2, 'bob', 'B-secret')`;
+    });
+
+    afterAll(async () => {
+      await sql?.close();
+    });
+
+    test("SELECT: indexed-key object as first value throws instead of overriding trusted params", async () => {
+      const serverTenant = "alice";
+      const attackerId = JSON.parse('{"0": 2, "1": "bob"}');
+      await expect(
+        sql`SELECT * FROM docs WHERE id = ${attackerId} AND tenant = ${serverTenant}`.execute(),
+      ).rejects.toThrow(TypeError);
+
+      const safe = await sql`SELECT * FROM docs WHERE id = ${1} AND tenant = ${serverTenant}`;
+      expect(safe).toEqual([{ id: 1, tenant: "alice", body: "A-secret" }]);
+    });
+
+    test("SELECT: array as first value throws instead of becoming the parameter list", async () => {
+      const serverTenant = "alice";
+      await expect(
+        sql`SELECT * FROM docs WHERE id = ${[2, "bob"]} AND tenant = ${serverTenant}`.execute(),
+      ).rejects.toThrow(TypeError);
+    });
+
+    test("SELECT: Date as first value throws instead of nulling all params", async () => {
+      await expect(sql`SELECT ${new Date()} as a, ${"server-value"} as b`.execute()).rejects.toThrow(TypeError);
+
+      const safe = await sql`SELECT ${"first"} as a, ${"second"} as b`;
+      expect(safe).toEqual([{ a: "first", b: "second" }]);
+    });
+
+    test("INSERT: indexed-key object as first value throws instead of overriding trusted params", async () => {
+      const serverTenant = "alice";
+      const attackerId = { 0: 99, 1: "eve", 2: "PWNED" };
+      await expect(
+        sql`INSERT INTO docs (id, tenant, body) VALUES (${attackerId}, ${serverTenant}, ${"legit"})`.execute(),
+      ).rejects.toThrow(TypeError);
+
+      const rows = await sql`SELECT * FROM docs WHERE id = 99`;
+      expect(rows).toEqual([]);
+    });
+
+    test("INSERT: array as first value throws instead of becoming the parameter list", async () => {
+      await expect(
+        sql`INSERT INTO docs (id, tenant, body) VALUES (${[99, "eve", "PWNED"]}, ${"alice"}, ${"legit"})`.execute(),
+      ).rejects.toThrow(TypeError);
+
+      const rows = await sql`SELECT * FROM docs WHERE id = 99`;
+      expect(rows).toEqual([]);
+    });
+
+    test(".values() and .raw() modes bind positionally", async () => {
+      const serverTenant = "alice";
+      const attackerId = JSON.parse('{"0": 2, "1": "bob"}');
+      await expect(
+        sql`SELECT * FROM docs WHERE id = ${attackerId} AND tenant = ${serverTenant}`.values().execute(),
+      ).rejects.toThrow(TypeError);
+      await expect(
+        sql`SELECT * FROM docs WHERE id = ${attackerId} AND tenant = ${serverTenant}`.raw().execute(),
+      ).rejects.toThrow(TypeError);
+    });
+
+    test("sql() WHERE IN helper still works", async () => {
+      const rows = await sql`SELECT id FROM docs WHERE id IN ${sql([1, 2])} ORDER BY id`;
+      expect(rows).toEqual([{ id: 1 }, { id: 2 }]);
+    });
+
+    test("sql() insert helper still works", async () => {
+      await sql`CREATE TABLE helper_ok (a INTEGER, b TEXT, c TEXT)`;
+      await sql`INSERT INTO helper_ok ${sql({ a: 1, b: "x", c: "y" })}`;
+      const rows = await sql`SELECT * FROM helper_ok`;
+      expect(rows).toEqual([{ a: 1, b: "x", c: "y" }]);
+    });
+  });
 });
 describe("Transactions", () => {
   let sql: SQL;
@@ -2014,7 +2096,9 @@ describe("Memory and resource management", () => {
 
     await sql`CREATE TABLE stmt_test (id INTEGER PRIMARY KEY, value TEXT)`;
 
-    const iterations = 10000;
+    // Each iteration prepares + finalizes a statement; debug+ASAN is ~100x slower,
+    // so 10,000 iterations exceeds the default test timeout there.
+    const iterations = isDebug ? 1000 : 10000;
 
     for (let i = 0; i < iterations; i++) {
       await sql`INSERT INTO stmt_test (id, value) VALUES (${i}, ${"test" + i})`;

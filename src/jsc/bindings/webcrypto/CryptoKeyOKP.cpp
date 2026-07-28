@@ -159,7 +159,6 @@ RefPtr<CryptoKeyOKP> CryptoKeyOKP::importJwk(CryptoAlgorithmIdentifier identifie
     }
 
     if (!keyData.d.isNull()) {
-        // FIXME: Validate keyData.x is paired with keyData.d
         auto d = base64URLDecode(keyData.d);
         if (!d)
             return nullptr;

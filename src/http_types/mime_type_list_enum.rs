@@ -5,7 +5,7 @@
 //! stores a `&'static str` per entry (16 bytes on 64-bit). Swap for the
 //! packed encoding if a packed-enum generator is added.
 
-/// Compact handle to one of the 2310 known MIME-type strings.
+/// Compact handle to one of the 2312 known MIME-type strings.
 ///
 /// Rust idents cannot
 /// contain `/`, so we wrap the literal instead and compare by string.
@@ -1979,6 +1979,7 @@ pub const ALL: &[MimeTypeList] = &[
     MimeTypeList("image/jphc"),
     MimeTypeList("image/jpm"),
     MimeTypeList("image/jpx"),
+    MimeTypeList("image/jxl"),
     MimeTypeList("image/jxr"),
     MimeTypeList("image/jxra"),
     MimeTypeList("image/jxrs"),
@@ -2242,6 +2243,7 @@ pub const ALL: &[MimeTypeList] = &[
     MimeTypeList("text/vnd.wap.wml"),
     MimeTypeList("text/vnd.wap.wmlscript"),
     MimeTypeList("text/vtt"),
+    MimeTypeList("text/wgsl"),
     MimeTypeList("text/x-asm"),
     MimeTypeList("text/x-c"),
     MimeTypeList("text/x-component"),

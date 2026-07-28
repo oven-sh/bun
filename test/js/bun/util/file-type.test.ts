@@ -16,4 +16,16 @@ describe("util file tests", () => {
     const file = Bun.file("test.css");
     expect(file.type).toBe("text/css;charset=utf-8");
   });
+
+  test("extension table has entries for jxl/wgsl/m2ts (#7171)", () => {
+    expect({
+      jxl: Bun.file("photo.jxl").type,
+      wgsl: Bun.file("shader.wgsl").type,
+      m2ts: Bun.file("seg.m2ts").type,
+    }).toEqual({
+      jxl: "image/jxl",
+      wgsl: "text/wgsl",
+      m2ts: "video/mp2t",
+    });
+  });
 });

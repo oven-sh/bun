@@ -53,6 +53,7 @@ image/jp2
 image/jph
 image/jpm
 image/jpx
+image/jxl
 image/jxr
 image/jxs
 image/ktx
@@ -76,6 +77,7 @@ text/shex
 text/slim
 text/spdx
 text/t140
+text/wgsl
 text/yaml
 video/av1
 video/jpm

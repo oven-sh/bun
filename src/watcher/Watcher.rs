@@ -752,13 +752,9 @@ impl Watcher {
         if strings::contains(dir, b"node_modules") {
             return false;
         }
-        // On Windows the platform watcher is a single recursive
-        // ReadDirectoryChangesW rooted at `top_level_dir`; directories outside
-        // it cannot be watched here. On Linux/macOS the inode-based watchers
-        // have no such restriction, and the parent-directory watch is what
-        // recovers from an atomic rename-save (write temp + rename over, which
-        // replaces the file's inode and orphans the per-file watch), so watch
-        // the parent of every imported file regardless of cwd.
+        // Windows' ReadDirectoryChangesW is rooted at cwd; on POSIX the
+        // parent-dir watch is what recovers from a rename-over, so allow it
+        // for any imported file's parent regardless of cwd.
         if cfg!(windows) {
             return strings::contains(dir, self.top_level_dir());
         }

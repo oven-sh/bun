@@ -919,16 +919,10 @@ where
                         ctx.remove_at_index(bun_watcher::Kind::File, event.index, 0, &[]);
                     }
 
-                    // Linux safety net: the per-file inotify watch follows the
-                    // inode. A rename-over unlinks the watched inode while bun
-                    // still holds it open, which delivers only IN_ATTRIB for
-                    // the link-count drop (IN_DELETE_SELF waits for the last
-                    // close). Evict on st_nlink == 0 so the stale fd is not
-                    // served by `snapshot_fd_and_package_json` on reload.
-                    // IN_MOVE_SELF (the watched inode was renamed away) is
-                    // treated the same: the module at the recorded path is
-                    // gone. The parent-directory watch is the primary recovery
-                    // path; this covers the case where that watch is absent.
+                    // inotify follows the inode: a rename-over delivers only
+                    // IN_ATTRIB while bun holds the old inode open. Evict on
+                    // st_nlink == 0 (or MOVE_SELF) so the reload re-opens by
+                    // path instead of reading the stale fd.
                     #[cfg(any(target_os = "linux", target_os = "android"))]
                     if !event.op.contains(WatchOp::DELETE)
                         && event.op.intersects(WatchOp::METADATA | WatchOp::RENAME)

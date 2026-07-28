@@ -129,10 +129,8 @@ impl INotifyWatcher {
         use bun_sys::linux::IN;
         debug_assert!(self.loaded);
         let old_count = self.watch_count.fetch_add(1, Ordering::Release);
-        // IN_ATTRIB is the only event delivered when a held-open watched inode
-        // is unlinked by a rename-over (IN_DELETE_SELF waits for the last
-        // close). The hot-reloader's File arm fstats the pinned fd on
-        // METADATA and evicts when st_nlink == 0.
+        // IN_ATTRIB: a rename-over of a held-open watched inode delivers only
+        // the link-count ATTRIB (DELETE_SELF waits for the last close).
         let watch_file_mask = IN::EXCL_UNLINK
             | IN::MOVE_SELF
             | IN::DELETE_SELF

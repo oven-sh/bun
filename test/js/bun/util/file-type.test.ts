@@ -21,10 +21,12 @@ describe("util file tests", () => {
     expect({
       jxl: Bun.file("photo.jxl").type,
       wgsl: Bun.file("shader.wgsl").type,
+      m2t: Bun.file("clip.m2t").type,
       m2ts: Bun.file("seg.m2ts").type,
     }).toEqual({
       jxl: "image/jxl",
       wgsl: "text/wgsl",
+      m2t: "video/mp2t",
       m2ts: "video/mp2t",
     });
   });

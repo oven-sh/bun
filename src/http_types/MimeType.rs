@@ -944,6 +944,7 @@ bun_core::comptime_string_map! {
     b"m1v" => t!("video/mpeg"),
     b"m21" => t!("application/mp21"),
     b"m2a" => t!("audio/mpeg"),
+    b"m2t" => t!("video/mp2t"),
     b"m2ts" => t!("video/mp2t"),
     b"m2v" => t!("video/mpeg"),
     b"m3a" => t!("audio/mpeg"),

@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
-import { scryptSync } from "node:crypto";
 import { bunEnv, bunExe, tempDir } from "harness";
+import { scryptSync } from "node:crypto";
 
 // When `crypto.scrypt` fails to allocate the output buffer (OOM for a huge
 // `keylen`), `CryptoJob.init` takes the error path. Previously the `errdefer`

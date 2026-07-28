@@ -1735,6 +1735,28 @@ describe("process.throwDeprecation", () => {
     expect(exitCode).toBe(1);
   });
 
+  it.concurrent("set at runtime throws util.deprecate warnings as uncaught exceptions", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const util = require("util");
+         process.on("warning", w => console.log("warning-event", w.name));
+         process.throwDeprecation = true;
+         console.log("readback", process.throwDeprecation);
+         util.deprecate(() => {}, "legacy widget", "DEP_WIDGET")();`,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toBe("readback true\n");
+    expect(stderr).toContain("DeprecationWarning: legacy widget");
+    expect(stderr).toContain("DEP_WIDGET");
+    expect(exitCode).toBe(1);
+  });
+
   it.concurrent("--throw-deprecation can be turned off at runtime", async () => {
     await using proc = Bun.spawn({
       cmd: [

@@ -302,8 +302,7 @@ impl DirectoryRoute {
             });
             return (sh.last_modified_u64, buf, len.unwrap_or(0));
         }
-        let slot =
-            &self.stat_cache[(bun_wyhash::hash(rel) as usize) % self.stat_cache.len()];
+        let slot = &self.stat_cache[(bun_wyhash::hash(rel) as usize) % self.stat_cache.len()];
         let mut entry = slot.replace(StatCacheEntry::default());
         if entry.path.as_slice() != rel {
             entry.path.clear();

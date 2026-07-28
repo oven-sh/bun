@@ -319,7 +319,8 @@ describe("BunFile exists()/size/lastModified reflect the current filesystem stat
 
     fs.writeFileSync(p, "abc");
     const s = Bun.file(p).slice(0, 100);
-    expect(s).toHaveLength(s.size);
+    expect(s.size).toBe(3);
+    expect(s).toHaveLength(3);
   });
 
   test("structuredClone does not poison the source blob's later read", async () => {

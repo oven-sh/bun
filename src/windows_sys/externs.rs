@@ -2052,3 +2052,113 @@ unsafe extern "system" {
 unsafe extern "C" {
     pub fn windows_enable_stdio_inheritance();
 }
+
+// ──────────────────────────────────────────────────────────────────────────
+// SSPI (`sspi.h` / `security.h`) — secur32.dll
+// ──────────────────────────────────────────────────────────────────────────
+
+pub mod sspi {
+    use core::ffi::{c_long, c_ulong, c_ushort, c_void};
+
+    pub type SECURITY_STATUS = c_long;
+
+    #[repr(C)]
+    #[derive(Copy, Clone)]
+    pub struct SecHandle {
+        pub dwLower: usize,
+        pub dwUpper: usize,
+    }
+    pub type CredHandle = SecHandle;
+    pub type CtxtHandle = SecHandle;
+
+    /// `SECURITY_INTEGER` (same layout as `FILETIME`).
+    #[repr(C)]
+    #[derive(Copy, Clone)]
+    pub struct TimeStamp {
+        pub LowPart: c_ulong,
+        pub HighPart: c_long,
+    }
+
+    #[repr(C)]
+    pub struct SecBuffer {
+        pub cbBuffer: c_ulong,
+        pub BufferType: c_ulong,
+        pub pvBuffer: *mut c_void,
+    }
+
+    #[repr(C)]
+    pub struct SecBufferDesc {
+        pub ulVersion: c_ulong,
+        pub cBuffers: c_ulong,
+        pub pBuffers: *mut SecBuffer,
+    }
+
+    #[repr(C)]
+    pub struct SecPkgInfoW {
+        pub fCapabilities: c_ulong,
+        pub wVersion: c_ushort,
+        pub wRPCID: c_ushort,
+        pub cbMaxToken: c_ulong,
+        pub Name: *mut u16,
+        pub Comment: *mut u16,
+    }
+
+    pub const SEC_E_OK: SECURITY_STATUS = 0;
+    pub const SEC_I_CONTINUE_NEEDED: SECURITY_STATUS = 0x0009_0312;
+    pub const SEC_I_COMPLETE_NEEDED: SECURITY_STATUS = 0x0009_0313;
+    pub const SEC_I_COMPLETE_AND_CONTINUE: SECURITY_STATUS = 0x0009_0314;
+
+    pub const SECPKG_CRED_OUTBOUND: c_ulong = 0x0000_0002;
+
+    pub const ISC_REQ_CONFIDENTIALITY: c_ulong = 0x0000_0010;
+
+    pub const SECBUFFER_TOKEN: c_ulong = 2;
+    pub const SECBUFFER_VERSION: c_ulong = 0;
+
+    pub const SECURITY_NETWORK_DREP: c_ulong = 0x0000_0000;
+    pub const SECURITY_NATIVE_DREP: c_ulong = 0x0000_0010;
+
+    #[cfg_attr(windows, link(name = "secur32"))]
+    unsafe extern "system" {
+        pub fn AcquireCredentialsHandleW(
+            pszPrincipal: *mut u16,
+            pszPackage: *mut u16,
+            fCredentialUse: c_ulong,
+            pvLogonID: *mut c_void,
+            pAuthData: *mut c_void,
+            pGetKeyFn: *mut c_void,
+            pvGetKeyArgument: *mut c_void,
+            phCredential: *mut CredHandle,
+            ptsExpiry: *mut TimeStamp,
+        ) -> SECURITY_STATUS;
+
+        pub fn InitializeSecurityContextW(
+            phCredential: *mut CredHandle,
+            phContext: *mut CtxtHandle,
+            pszTargetName: *mut u16,
+            fContextReq: c_ulong,
+            Reserved1: c_ulong,
+            TargetDataRep: c_ulong,
+            pInput: *mut SecBufferDesc,
+            Reserved2: c_ulong,
+            phNewContext: *mut CtxtHandle,
+            pOutput: *mut SecBufferDesc,
+            pfContextAttr: *mut c_ulong,
+            ptsExpiry: *mut TimeStamp,
+        ) -> SECURITY_STATUS;
+
+        pub fn CompleteAuthToken(
+            phContext: *mut CtxtHandle,
+            pToken: *mut SecBufferDesc,
+        ) -> SECURITY_STATUS;
+
+        pub fn DeleteSecurityContext(phContext: *mut CtxtHandle) -> SECURITY_STATUS;
+        pub fn FreeCredentialsHandle(phCredential: *mut CredHandle) -> SECURITY_STATUS;
+        pub fn FreeContextBuffer(pvContextBuffer: *mut c_void) -> SECURITY_STATUS;
+
+        pub fn QuerySecurityPackageInfoW(
+            pszPackageName: *mut u16,
+            ppPackageInfo: *mut *mut SecPkgInfoW,
+        ) -> SECURITY_STATUS;
+    }
+}

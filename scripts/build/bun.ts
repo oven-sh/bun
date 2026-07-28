@@ -110,6 +110,7 @@ function systemLibs(cfg: Config): string[] {
       "crypt32.lib",
       "wsock32.lib", // ws2_32 + wsock32 — wsock32 has TransmitFile (sendfile equiv)
       "ws2_32.lib",
+      "secur32.lib", // SSPI — Negotiate/NTLM proxy auth
       "delayimp.lib", // required for /delayload: in release
     );
   }

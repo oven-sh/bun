@@ -118,8 +118,6 @@ async function runStressTest({
   expect(getMaxFD()).toBeLessThan(initialMaxFD + 10);
 }
 
-// There used to be a fourth "shutdown after timeout" case that was byte-for-byte
-// identical to "gently close" (both call socket.end() then no-op).
 const variants: Array<[name: string, onServerWritten: (s: any) => void, onFetchWritten: (s: any) => void]> = [
   ["gently close", s => s.end(), () => {}],
   ["close after TCP fin", s => s.shutdown(), s => s.end()],

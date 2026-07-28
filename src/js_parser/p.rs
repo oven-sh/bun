@@ -4621,12 +4621,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 .slice();
 
             if original_name == b"await" {
-                // The name of a function expression binds inside the function itself, so
-                // an async function expression named "await" is always an early error.
-                // The name of a function statement binds in the enclosing scope, so it
-                // is only an error when "await" is reserved there (inside an async
-                // function or at the top level of a module). Node/V8 accept
-                // `async function await() {}` at statement position in scripts.
+                // Expr: name binds inside the function (reserved when the function is async).
+                // Stmt: name binds in the enclosing scope (reserved when that scope is [+Await]).
                 let reject = match kind {
                     FunctionKind::Expr => func.flags.contains(Flags::Function::IsAsync),
                     FunctionKind::Stmt => {

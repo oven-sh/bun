@@ -1,7 +1,6 @@
 import { spawn } from "bun";
 import { beforeEach, expect, it } from "bun:test";
 import {
-  appendFileSync,
   copyFileSync,
   cpSync,
   readdirSync,

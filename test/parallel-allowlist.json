@@ -11,8 +11,8 @@
     "rule": "a directory is listed when >= 67% of its bun test files are <= 15000ms (median, default lane of expected-durations.json) with zero flaky/failed annotations in the scanned builds; its other files are listed in excludeFiles; docker-service and stress-named tests never qualify",
     "stats": {
       "dirs": 283,
-      "files": 1645,
-      "excluded": 150
+      "files": 1643,
+      "excluded": 152
     }
   },
   "dirs": [
@@ -319,6 +319,7 @@
     "cli/install/bun-install-retry.test.ts",
     "cli/install/bun-install.test.ts",
     "cli/install/bun-publish.test.ts",
+    "cli/install/bun-run-bunfig.test.ts",
     "cli/install/bun-security-scanner-matrix-with-node-modules.test.ts",
     "cli/install/bun-security-scanner-matrix-without-node-modules.test.ts",
     "cli/install/bun-upgrade.test.ts",
@@ -450,6 +451,7 @@
     "regression/issue/28632.test.ts",
     "regression/issue/29181.test.ts",
     "regression/issue/29371.test.ts",
+    "regression/issue/ctrl-c.test.ts",
     "regression/issue/tty-reopen-after-stdin-eof.test.ts"
   ]
 }

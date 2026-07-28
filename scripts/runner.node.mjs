@@ -987,24 +987,36 @@ async function runTests() {
             .replace(/ \(\d+s\)$/, "")
             .replaceAll("\\", "/"),
         );
-      const suites = new Map(); // repo-relative path -> failures count
+      const suites = new Map(); // repo-relative path -> { failures, seconds }
       try {
         for (const [, attrs] of readFileSync(junitPath, "utf-8").matchAll(/<testsuite\b([^>]*)>/g)) {
           const file = /\bfile="([^"]+)"/.exec(attrs)?.[1]?.replace(/&amp;/g, "&");
           const failures = Number(/\bfailures="(\d+)"/.exec(attrs)?.[1] ?? 0);
-          if (file) suites.set(file.replaceAll("\\", "/"), failures);
+          const seconds = Number(/\btime="([\d.]+)"/.exec(attrs)?.[1] ?? 0);
+          if (file) suites.set(file.replaceAll("\\", "/"), { failures, seconds });
         }
       } catch {}
       rmSync(junitPath, { force: true });
+
+      // The junit's per-file wall clocks are the timing record for bucketed
+      // files (they no longer get their own timed group in the log): print
+      // them slowest-first so the log carries what the shard-balancing table
+      // and humans read.
+      if (suites.size) {
+        startGroup(`${getAnsi("gray")}parallel bucket: file timings (${suites.size} files)${getAnsi("reset")}`);
+        for (const [file, { seconds }] of [...suites].sort((a, b) => b[1].seconds - a[1].seconds)) {
+          console.log(`  ${seconds.toFixed(2)}s ${file}`);
+        }
+      }
 
       const failed = new Set(); // ran and failed (or hung) — a solo pass is a parallel-mode flake
       const incomplete = new Set(); // never finished/started — re-run quietly
       let evidence = suites.size > 0;
       if (!ok && suites.size) {
         for (const t of bucketFiles) {
-          const failures = suites.get(join("test", t).replaceAll("\\", "/"));
-          if (failures === undefined) incomplete.add(t);
-          else if (failures > 0) failed.add(t);
+          const suite = suites.get(join("test", t).replaceAll("\\", "/"));
+          if (suite === undefined) incomplete.add(t);
+          else if (suite.failures > 0) failed.add(t);
         }
       } else if (!ok) {
         // No junit: the coordinator didn't finish. Read what streamed.
@@ -1059,17 +1071,41 @@ async function runTests() {
         console.log(
           `${getAnsi("yellow")}parallel bucket: ${evidence ? `retrying ${failed.size} failed and ${incomplete.size} unfinished file(s)${suites.size ? "" : " (from streamed output; no junit)"}` : `no junit and no streamed evidence, re-running all ${rerun.length} file(s)`} one at a time${getAnsi("reset")}`,
         );
+        // Each file's output lives in its own GA group in the bucket log;
+        // slice those out so a flaky annotation carries the failure itself.
+        const blocks = new Map();
+        {
+          let file = null;
+          let lines = [];
+          for (const line of stdout.split(/\r?\n/)) {
+            const group = /^::group::(.+):$/.exec(stripAnsi(line));
+            if (group) {
+              if (file) blocks.set(file, lines.join("\n"));
+              file = norm(group[1]) ?? null;
+              lines = [];
+            } else if (line.startsWith("::endgroup")) {
+              if (file) blocks.set(file, lines.join("\n"));
+              file = null;
+              lines = [];
+            } else if (file && !line.startsWith("::")) {
+              lines.push(line);
+            }
+          }
+          if (file) blocks.set(file, lines.join("\n"));
+        }
         for (const testPath of rerun) {
           const result = await runOneTest(testPath, false);
           // Only a file the bucket ran and failed that then passes alone is a
           // parallel-mode flake; unfinished files just run.
           if (result?.ok && failed.has(testPath) && isBuildkite) {
             const title = join("test", testPath).replaceAll("\\", "/");
+            const output = blocks.get(testPath)?.trim();
+            const detail = output ? `\n\n\`\`\`terminal\n${escapeCodeBlock(output)}\n\`\`\`\n\n` : "";
             reportAnnotationToBuildKite({
               context: "flaky",
               label: title,
               style: "warning",
-              content: `<details><summary><a href="${getFileUrl(title)}"><code>${title}</code></a> - failed inside a <code>bun test --parallel</code> bucket on ${getBuildLabel()}, passed when re-run alone</summary></details>`,
+              content: `<details><summary><a href="${getFileUrl(title)}"><code>${title}</code></a> - failed inside a <code>bun test --parallel</code> bucket on ${getBuildLabel()}, passed when re-run alone</summary>${detail}</details>`,
             });
           }
         }

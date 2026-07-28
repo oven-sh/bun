@@ -339,6 +339,18 @@ pub struct VirtualMachine {
 
     pub test_isolation_generation: u32,
     pub test_isolation_enabled: bool,
+    /// Per-file state carried across the `--isolate` global swap; see
+    /// [`VirtualMachine::test_isolation_scope`].
+    pub test_isolation_state: TestIsolationState,
+}
+
+/// State one file may set that the isolation swap must undo before the next
+/// file starts. Only touched under `--isolate` (implied by `--parallel`).
+#[derive(Default)]
+pub struct TestIsolationState {
+    /// The cwd before this file's first `process.chdir()`; the swap chdirs
+    /// back so one file's chdir never leaks into the next.
+    pub saved_cwd: Option<Box<[u8]>>,
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -4622,8 +4634,65 @@ impl VirtualMachine {
     /// Strongs, which otherwise pin the outgoing global) before the blind
     /// socket-group close below. That helper lives in the higher-tier crate
     /// and cannot be called from here.
+    /// Runs `f` with the per-file isolation state when test isolation is on
+    /// (`bun test --isolate` / `--parallel`); a no-op returning `None`
+    /// otherwise, so callers pay nothing outside isolated runs.
+    pub fn test_isolation_scope<R>(
+        &mut self,
+        f: impl FnOnce(&mut TestIsolationState) -> R,
+    ) -> Option<R> {
+        if !self.test_isolation_enabled {
+            return None;
+        }
+        Some(f(&mut self.test_isolation_state))
+    }
+
+    /// `chdir` and keep the resolver's `top_level_dir` (and its
+    /// `bun_core::TOP_LEVEL_DIR` mirror) in sync — the process cwd is stored
+    /// in all three. On a failure after the syscall, chdirs back to the
+    /// previous `top_level_dir`.
+    pub fn set_process_cwd(&mut self, to: &bun_core::ZStr) -> bun_sys::Result<()> {
+        let fs = self.transpiler.fs_mut();
+        bun_sys::chdir(to)?;
+        let mut buf = bun_paths::PathBuffer::uninit();
+        let into_cwd_len = match bun_sys::getcwd(&mut buf[..]) {
+            bun_sys::Result::Ok(r) => r,
+            bun_sys::Result::Err(err) => {
+                let mut rollback = bun_paths::PathBuffer::uninit();
+                let _ = bun_sys::chdir(bun_paths::resolve_path::z(fs.top_level_dir, &mut rollback));
+                return bun_sys::Result::Err(err);
+            }
+        };
+        fs.top_level_dir_buf[..into_cwd_len].copy_from_slice(&buf[..into_cwd_len]);
+        fs.top_level_dir_buf[into_cwd_len] = 0;
+        // SAFETY: `top_level_dir_buf` is a process-lifetime field of the
+        // FileSystem singleton, so the detached borrow never outlives its
+        // backing storage.
+        fs.top_level_dir =
+            unsafe { bun_ptr::detach_lifetime(&fs.top_level_dir_buf[..into_cwd_len]) };
+        let len = fs.top_level_dir.len();
+        if fs.top_level_dir_buf[len - 1] != bun_paths::SEP {
+            fs.top_level_dir_buf[len] = bun_paths::SEP;
+            fs.top_level_dir_buf[len + 1] = 0;
+            // SAFETY: see above.
+            fs.top_level_dir =
+                unsafe { bun_ptr::detach_lifetime(&fs.top_level_dir_buf[..len + 1]) };
+        }
+        // The cwd also lives in `bun_core::TOP_LEVEL_DIR` (read by
+        // `bun_paths::fs::FileSystem::top_level_dir()` → `GlobWalker::init`).
+        bun_core::set_top_level_dir(fs.top_level_dir);
+        Ok(())
+    }
+
     pub fn swap_global_for_test_isolation(&mut self) {
         debug_assert!(self.test_isolation_enabled);
+
+        // A file's process.chdir() must not leak into the next file.
+        if let Some(cwd) = self.test_isolation_state.saved_cwd.take() {
+            let mut buf = bun_paths::PathBuffer::uninit();
+            let z = bun_paths::resolve_path::z(&cwd, &mut buf);
+            let _ = self.set_process_cwd(z);
+        }
 
         let _ = self.event_loop_mut().drain_microtasks();
 

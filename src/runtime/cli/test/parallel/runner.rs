@@ -557,6 +557,9 @@ struct WorkerLoop<'a> {
     reporter: &'a mut CommandLineReporter,
     vm: *mut VirtualMachine,
     cmds: WorkerCommands,
+    /// This worker's junit fragment path; rewritten after every file so a
+    /// mid-run crash keeps the suites of the files that already finished.
+    junit_fragment: Option<ZBox>,
 }
 
 impl<'a> WorkerLoop<'a> {
@@ -619,6 +622,12 @@ impl<'a> WorkerLoop<'a> {
                 .reset_hook_scope_for_test_isolation();
             self.reporter.jest.default_timeout_override = u32::MAX;
 
+            if let (Some(path), Some(junit)) =
+                (&self.junit_fragment, &mut self.reporter.reporters.junit)
+            {
+                let _ = junit.write_to_file(path);
+            }
+
             let after = *self.reporter.summary();
             wf.begin(frame::Kind::FileDone);
             for v in [
@@ -675,6 +684,10 @@ pub fn run_as_worker(
         reporter.reporters.junit = Some(test_command::JunitReporter::init());
     }
 
+    let junit_fragment = match (worker_tmp, reporter.reporters.junit.is_some()) {
+        (Some(dir), true) => Some(worker_junit_fragment_path(dir)),
+        _ => None,
+    };
     let mut wloop = WorkerLoop {
         reporter,
         vm,
@@ -685,6 +698,7 @@ pub fn run_as_worker(
             pending_path: Vec::new(),
             done: false,
         },
+        junit_fragment,
     };
     vm_ref.run_with_api_lock(|| wloop.begin());
 
@@ -711,6 +725,22 @@ pub fn run_as_worker(
     {
         Global::exit(0);
     }
+}
+
+/// This worker's junit fragment file inside the shared worker tmpdir.
+fn worker_junit_fragment_path(dir: &[u8]) -> ZBox {
+    let id: i64 = {
+        #[cfg(windows)]
+        {
+            i64::from(bun_sys::windows::GetCurrentProcessId())
+        }
+        #[cfg(not(windows))]
+        {
+            // SAFETY: getpid is always safe
+            i64::from(unsafe { libc::getpid() })
+        }
+    };
+    ZBox::from_bytes(format_bytes!("{}/w{}.xml", bstr::BStr::new(dir), id).as_slice())
 }
 
 fn worker_flush_aggregates(
@@ -748,9 +778,9 @@ fn worker_flush_aggregates(
                 i64::from(unsafe { libc::getpid() })
             }
         };
+        let _ = id;
         if let Some(junit) = &mut reporter.reporters.junit {
-            let path =
-                ZBox::from_bytes(format_bytes!("{}/w{}.xml", bstr::BStr::new(dir), id).as_slice());
+            let path = worker_junit_fragment_path(dir);
             if !junit.current_file.is_empty() {
                 let _ = junit.end_test_suite();
             }

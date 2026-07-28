@@ -545,6 +545,17 @@ impl<'a> Coordinator<'a> {
         }
 
         if let Some(p) = w.process.take() {
+            // A worker rewrites its junit fragment after every file, so one that
+            // died before workerFlushAggregates announced the path still left
+            // a report of the files it finished; pick it up by its
+            // deterministic name (the merge skips it if it never wrote one).
+            if let Some(dir) = self.worker_tmpdir {
+                // SAFETY: `p` is the live `*mut Process` from `to_process`.
+                let pid = unsafe { (*p).pid };
+                let mut path: Vec<u8> = Vec::with_capacity(dir.len() + 24);
+                let _ = write!(&mut path, "{}/w{}.xml", bstr::BStr::new(dir), pid);
+                self.junit_fragments.push(path.into_boxed_slice());
+            }
             // SAFETY: `p` is the live `*mut Process` from `to_process`; sole owner now.
             unsafe {
                 (*p).detach();

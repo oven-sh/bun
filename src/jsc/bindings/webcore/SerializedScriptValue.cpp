@@ -3137,7 +3137,8 @@ public:
         ,
         Vector<RefPtr<WebCodecsEncodedVideoChunkStorage>>&& serializedVideoChunks, Vector<WebCodecsVideoFrameData>&& serializedVideoFrames
 #endif
-    )
+        ,
+        SerializationForCrossProcessTransfer forTransfer = SerializationForCrossProcessTransfer::No)
     {
         if (!buffer.size())
             return std::make_pair(jsNull(), SerializationReturnCode::UnspecifiedError);
@@ -3159,6 +3160,7 @@ public:
             WTF::move(serializedVideoChunks), WTF::move(serializedVideoFrames)
 #endif
         );
+        deserializer.m_forTransfer = forTransfer;
         if (!deserializer.isValid())
             return std::make_pair(JSValue(), SerializationReturnCode::ValidationError);
         return deserializer.deserialize();
@@ -5082,6 +5084,10 @@ private:
         //     return JSValue();
 
         // read bun types
+        if (m_forTransfer == SerializationForCrossProcessTransfer::Yes && !StructuredCloneableDeserialize::isTagForTransfer(tag)) {
+            fail();
+            return JSValue();
+        }
         if (auto value = StructuredCloneableDeserialize::fromTagDeserialize(tag, m_lexicalGlobalObject, m_ptr, m_end)) {
             JSValue deserialized = JSValue::decode(value.value());
             if (deserialized.isEmpty()) {
@@ -5583,6 +5589,7 @@ private:
     const uint8_t* m_ptr;
     const uint8_t* const m_end;
     unsigned m_version;
+    SerializationForCrossProcessTransfer m_forTransfer { SerializationForCrossProcessTransfer::No };
     Vector<CachedString> m_constantPool;
     // Mirrors CloneSerializer's m_objectPool: ObjectReferenceTag indexes into this.
     // Only values the serializer passed to recordObject() may be appended here (via
@@ -7098,7 +7105,8 @@ JSValue SerializedScriptValue::deserialize(JSGlobalObject& lexicalGlobalObject, 
                                       ,
         WTF::move(m_serializedVideoChunks), WTF::move(m_serializedVideoFrames)
 #endif
-    );
+            ,
+        m_forTransfer);
     if (didFail)
         *didFail = result.second != SerializationReturnCode::SuccessfullyCompleted;
     // Deserialize may throw an exception. Similar to serialize (~L6240, SerializedScriptValue::create),

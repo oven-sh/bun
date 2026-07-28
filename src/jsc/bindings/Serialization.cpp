@@ -59,10 +59,11 @@ extern "C" void Bun__SerializedScriptSlice__free(SerializedScriptValue* value)
     value->deref();
 }
 
-extern "C" EncodedJSValue Bun__JSValue__deserialize(JSGlobalObject* globalObject, const uint8_t* bytes, size_t size)
+extern "C" EncodedJSValue Bun__JSValue__deserialize(JSGlobalObject* globalObject, const uint8_t* bytes, size_t size, const SerializedFlags flags)
 {
     Vector<uint8_t> vector(std::span { bytes, size });
+    auto forTransfer = (static_cast<uint8_t>(flags) & static_cast<uint8_t>(SerializedFlags::ForCrossProcessTransfer)) ? SerializationForCrossProcessTransfer::Yes : SerializationForCrossProcessTransfer::No;
     /// ?! did i just give ownership of these bytes to JSC?
-    auto scriptValue = SerializedScriptValue::createFromWireBytes(WTF::move(vector));
+    auto scriptValue = SerializedScriptValue::createFromWireBytes(WTF::move(vector), forTransfer);
     return JSValue::encode(scriptValue->deserialize(*globalObject, globalObject));
 }

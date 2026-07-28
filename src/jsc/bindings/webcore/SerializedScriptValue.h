@@ -173,9 +173,11 @@ public:
     // Vector<URLKeepingBlobAlive> blobHandles() const { return crossThreadCopy(m_blobHandles); }
     // void writeBlobsToDiskForIndexedDB(CompletionHandler<void(IDBValue&&)>&&);
     // IDBValue writeBlobsToDiskForIndexedDBSynchronously();
-    static Ref<SerializedScriptValue> createFromWireBytes(Vector<uint8_t>&& data)
+    static Ref<SerializedScriptValue> createFromWireBytes(Vector<uint8_t>&& data, SerializationForCrossProcessTransfer forTransfer = SerializationForCrossProcessTransfer::No)
     {
-        return adoptRef(*new SerializedScriptValue(WTF::move(data)));
+        auto value = adoptRef(*new SerializedScriptValue(WTF::move(data)));
+        value->m_forTransfer = forTransfer;
+        return value;
     }
     const Vector<uint8_t>& wireBytes() const { return m_data; }
 
@@ -284,6 +286,7 @@ private:
     // Fast path for postMessage with pure strings - avoids serialization overhead
     String m_fastPathString;
     FastPath m_fastPath { FastPath::None };
+    SerializationForCrossProcessTransfer m_forTransfer { SerializationForCrossProcessTransfer::No };
     size_t m_memoryCost { 0 };
 
     FixedVector<SimpleInMemoryPropertyTableEntry> m_simpleInMemoryPropertyTable {};

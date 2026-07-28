@@ -66,8 +66,6 @@ pub mod parent_death_watchdog {
 
     use crate::posix_event_loop::EventLoopCtx;
 
-    /// Unit struct — `FilePoll.Owner` dispatch needs a real pointee type.
-    pub struct ParentDeathWatchdog;
     pub(crate) const EXIT_CODE: u8 = 128 + 1;
 
     static ENABLED: AtomicBool = AtomicBool::new(false);
@@ -249,10 +247,6 @@ pub mod parent_death_watchdog {
 
     #[inline]
     pub fn install_on_event_loop(_handle: EventLoopCtx) {}
-    #[inline]
-    pub fn on_parent_exit(_this: &mut ParentDeathWatchdog) {
-        debug_assert!(false, "ParentDeathWatchdog FilePoll on Windows");
-    }
 }
 pub use parent_death_watchdog as ParentDeathWatchdog;
 
@@ -431,10 +425,6 @@ impl EventLoopCtx {
     #[inline]
     pub fn native_loop(&self) -> *mut Loop {
         uws_to_native(self.platform_event_loop_ptr())
-    }
-    #[inline]
-    pub fn as_event_loop_ctx(self) -> EventLoopCtx {
-        self
     }
 }
 #[cfg(not(windows))]
@@ -645,8 +635,6 @@ pub use source::Source;
 
 // Stub for never-constructed-on-POSIX `Source` so cross-platform sigs
 // (`Option<Source>`) typecheck.
-#[cfg(not(windows))]
-pub enum Source {}
 
 pub use pipe_reader::{BufferedReader, BufferedReaderParent, PosixFlags};
 

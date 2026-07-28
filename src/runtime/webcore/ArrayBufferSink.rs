@@ -104,10 +104,6 @@ impl ArrayBufferSink {
         streams::result::Writable::Owned(len as u64)
     }
 
-    #[inline]
-    pub fn write_bytes(&mut self, data: &streams::Result) -> streams::result::Writable {
-        self.write(data)
-    }
 
     pub(crate) fn write_latin1(&mut self, data: &streams::Result) -> streams::result::Writable {
         let len = match self.bytes.write_latin1(data.slice()) {

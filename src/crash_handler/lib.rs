@@ -3421,23 +3421,6 @@ mod draft {
     // `StoredTrace::capture()` instead — this crate no longer owns the type.
     pub use bun_core::StoredTrace;
 
-    /// Pre-crash handlers are likely, but not guaranteed to call. Errors are ignored.
-    pub fn append_pre_crash_handler<T: 'static>(
-        ptr: *mut T,
-        handler: fn(&mut T) -> crate::Result<()>,
-    ) -> Result<(), bun_alloc::AllocError> {
-        let on_crash = Box::new(move |opaque_ptr: *mut c_void| {
-            // SAFETY: `opaque_ptr` is the `ptr.cast()` stored below; it was a valid *mut T
-            // when registered and remove_pre_crash_handler() unregisters it before drop.
-            let this = unsafe { bun_ptr::callback_ctx::<T>(opaque_ptr) };
-            let _ = handler(this);
-        });
-
-        BEFORE_CRASH_HANDLERS
-            .lock()
-            .push(CrashHandlerEntry(ptr.cast(), on_crash));
-        Ok(())
-    }
 
     pub fn remove_pre_crash_handler(ptr: *mut c_void) {
         let mut list = BEFORE_CRASH_HANDLERS.lock();

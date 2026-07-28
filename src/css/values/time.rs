@@ -1,6 +1,5 @@
 use crate::css_parser as css;
 use crate::css_parser::{CssResult as Result, Maybe, PrintErr, Printer, Token};
-use crate::values::angle::Angle;
 use crate::values::calc::Calc;
 use crate::values::number::{CSSNumber, CSSNumberFns};
 
@@ -120,9 +119,6 @@ impl Time {
         }
     }
 
-    pub fn try_from_angle(_: Angle) -> Option<Self> {
-        None
-    }
 
     pub(crate) fn mul_f32(self, other: f32) -> Time {
         match self {
@@ -135,9 +131,6 @@ impl Time {
         self.add(other)
     }
 
-    pub fn into_calc(self) -> Calc<Time> {
-        Calc::Value(Box::new(self))
-    }
 
     pub(crate) fn add(self, other: Self) -> Time {
         self.op(other, |a, b| a + b)

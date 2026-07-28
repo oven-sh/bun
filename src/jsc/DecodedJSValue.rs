@@ -1,4 +1,4 @@
-use crate::{JSCell, JSValue, ffi};
+use crate::{JSCell, JSValue};
 
 /// ABI-compatible with `JSC::JSValue`.
 #[repr(C)]
@@ -40,14 +40,6 @@ impl DecodedJSValue {
         JSValue::from_raw(self.bits())
     }
 
-    fn as_u64(self) -> u64 {
-        self.bits() as u64
-    }
-
-    /// Equivalent to `JSC::JSValue::isCell`. Note that like JSC, this method treats 0 as a cell.
-    pub fn is_cell(self) -> bool {
-        self.as_u64() & ffi::NOT_CELL_MASK == 0
-    }
 }
 
 const _: () = assert!(

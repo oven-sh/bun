@@ -52,7 +52,7 @@ pub mod string;
 pub use ::bstr::{BStr, BString, ByteSlice};
 pub use string::string_joiner::StringJoiner;
 pub use string::{
-    ByteString, STRING_ALLOCATION_LIMIT, ZigStringGithubActionFormatter, cheap_prefix_normalizer,
+STRING_ALLOCATION_LIMIT, ZigStringGithubActionFormatter, cheap_prefix_normalizer,
     escape_reg_exp, identifier, lexer, lexer_tables, parse_double, printer, quote_for_json,
     string_joiner, write, zig_string,
 };
@@ -1162,7 +1162,7 @@ pub use crate::string::immutable::{
     format_escapes, has_prefix, has_prefix_case_insensitive, has_prefix_comptime,
     has_prefix_comptime_utf16, has_suffix_comptime, index_of, index_of_scalar, index_of_t,
     is_all_whitespace, is_ip_address, is_npm_package_name, is_npm_package_name_ignore_length,
-    is_on_char_boundary, is_utf8_char_boundary, is_valid_utf8, join, last_index_of,
+    is_on_char_boundary, is_utf8_char_boundary, is_valid_utf8, last_index_of,
     last_index_of_t, length_of_leading_whitespace_ascii, memmem, order, order_t,
     percent_encode_write, sort_asc, sort_desc, split, starts_with_case_insensitive_ascii,
     starts_with_char, str_utf8, to_ascii_hex_value, to_utf16_alloc, trim_leading_char, trim_prefix,
@@ -1170,20 +1170,6 @@ pub use crate::string::immutable::{
     without_prefix_comptime, without_suffix_comptime, without_utf8_bom,
 };
 
-#[allow(deprecated)]
-pub use crate::fmt::{
-    DigitCount, DoubleFormatter, FormatDouble, FormatOSPath, FormatUTF8, FormatUTF16,
-    HEX_DECODE_TABLE, HEX_INVALID, LOWER_HEX_TABLE, PathFormatOptions, QuotedFormatter, Raw,
-    SizeFormatter, SizeFormatterOptions, SliceCursor, TruncatedHash32, UPPER_HEX_TABLE, VecWriter,
-    buf_print, buf_print_infallible, buf_print_len, buf_print_z, buf_print_z_infallible, bytes,
-    bytes_to_hex_lower, bytes_to_hex_lower_string, count, count_float, digit_count,
-    digit_count_i64, digit_count_u64, double, fmt_os_path, fmt_path, fmt_path_u8, fmt_path_u16,
-    format_ip, format_latin1, format_utf16_type, hex_byte_lower, hex_byte_upper, hex_char_lower,
-    hex_char_upper, hex_digit_value, hex_lower, hex_pair_value, hex_u16, hex_upper, hex2_lower,
-    hex2_upper, hex4_upper, int_as_bytes, parse_ascii, parse_f32, parse_f64, parse_hex_prefix,
-    parse_hex_to_int, parse_hex4, parse_int as parse_int_radix, parse_num, print_int, quote, raw,
-    s, size, truncated_hash32, truncated_hash32_bytes, utf16,
-};
 
 /// Tier-0 surrogate/transcode primitives that [`crate::string::immutable`]
 /// (the public `bun.strings` namespace) wraps or re-exports. Nothing here

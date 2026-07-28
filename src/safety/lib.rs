@@ -1,5 +1,4 @@
 #![warn(unused_must_use)]
-pub mod alloc;
 
 
 // `ThreadLock` and `thread_id` live in `bun_core` (tier-0) so `bun_ptr` /
@@ -60,26 +59,4 @@ pub fn register_alloc_vtable(vtable: &'static bun_alloc::AllocatorVTable) {
     }
 }
 
-#[inline]
-fn known_alloc_vtable(alloc: bun_alloc::StdAllocator) -> bool {
-    let needle = std::ptr::from_ref(alloc.vtable) as *mut ();
-    let n = KNOWN_ALLOC_LEN.load(Ordering::Relaxed).min(KNOWN_ALLOC_CAP);
-    KNOWN_ALLOC_VTABLES[..n]
-        .iter()
-        .any(|s| s.load(Ordering::Relaxed) == needle)
-}
 
-/// Dump a captured trace via the T0 fallback (raw addresses / std::backtrace).
-/// Crash-report symbolication lives in `bun_crash_handler` and is invoked
-/// from there directly.
-#[inline]
-pub fn dump_stored_trace(trace: &bun_core::StoredTrace) {
-    bun_core::dump_stack_trace(
-        &trace.trace(),
-        bun_core::DumpStackTraceOptions {
-            frame_count: 10,
-            stop_at_jsc_llint: true,
-            ..Default::default()
-        },
-    );
-}

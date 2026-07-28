@@ -1,6 +1,5 @@
 use core::fmt;
 
-use bun_collections::{HashMap, IdentityContext};
 use bun_core::fmt::QuotedFormatter;
 use bun_core::{ZStr, strings};
 use bun_paths::{self, MAX_PATH_BYTES, PathBuffer, SEP, SEP_STR};
@@ -27,7 +26,6 @@ pub enum FolderResolution {
 }
 
 // The enum discriminant serves as the tag; expose an alias for it.
-pub type Tag = core::mem::Discriminant<FolderResolution>;
 
 pub(crate) struct PackageWorkspaceSearchPathFormatter<'a> {
     pub manager: &'a PackageManager,
@@ -93,7 +91,6 @@ pub struct Entry {
 
 // bun_collections::HashMap currently ignores the context/load-factor
 // type params (backed by std HashMap); identity hashing is a TODO(perf).
-pub type Map = HashMap<u64, Entry, IdentityContext<u64>>;
 
 fn normalize(path: &[u8]) -> &[u8] {
     FileSystem::instance().normalize(path)

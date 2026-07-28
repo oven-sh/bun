@@ -96,9 +96,6 @@ impl CachedBytecode {
         None
     }
 
-    pub fn deref(&mut self) {
-        CachedBytecode__deref(self)
-    }
 
     pub(crate) fn generate(
         format: Format,

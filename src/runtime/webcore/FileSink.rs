@@ -701,12 +701,6 @@ impl FileSink {
         sys::Result::Ok(())
     }
 
-    /// Returns the platform's `bun.Async.Loop` (`uv_loop_t*` on Windows,
-    /// `us_loop_t*` on POSIX). `bun_io::Loop` is the cfg-aliased nominal that
-    /// resolves to the correct one per target — see `aio/{posix,windows}_event_loop.rs`.
-    pub fn loop_(&self) -> *mut bun_io::Loop {
-        self.event_loop_handle.native_loop()
-    }
 
     pub(crate) fn event_loop(&self) -> EventLoopHandle {
         self.event_loop_handle
@@ -1007,10 +1001,6 @@ impl FileSink {
         self.to_result(rc, accepted)
     }
 
-    #[inline]
-    pub fn write_bytes(&self, data: &streams::Result) -> streams::Writable {
-        self.write(data)
-    }
 
     pub(crate) fn write_latin1(&self, data: &streams::Result) -> streams::Writable {
         if self.done.get() {

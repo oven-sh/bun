@@ -1,7 +1,6 @@
 use core::mem::size_of;
 
 use bun_event_loop::EventLoopHandle;
-use bun_io::Loop as AsyncLoop;
 #[cfg(windows)]
 use bun_io::pipe_writer::BaseWindowsPipeWriter as _;
 use bun_io::{BufferedWriter, WriteStatus};
@@ -90,11 +89,6 @@ impl<P: StaticPipeWriterProcess> StaticPipeWriter<P> {
         self.writer.update_ref(self.io_evtloop(), add);
     }
 
-    pub fn get_buffer(&self) -> &[u8] {
-        // `RawSlice` invariant: backing storage (`self.source` or the empty
-        // literal) outlives `self`.
-        self.buffer.slice()
-    }
 
     pub fn close(&mut self) {
         bun_output::scoped_log!(
@@ -105,11 +99,6 @@ impl<P: StaticPipeWriterProcess> StaticPipeWriter<P> {
         self.writer.close();
     }
 
-    pub fn flush(&mut self) {
-        if self.buffer.len() > 0 {
-            self.writer.write();
-        }
-    }
 
     /// Callers resolve to an `EventLoopHandle` before calling and we accept
     /// it directly.
@@ -296,9 +285,6 @@ impl<P: StaticPipeWriterProcess> StaticPipeWriter<P> {
         size_of::<Self>() + self.source.memory_cost() + self.writer.memory_cost()
     }
 
-    pub fn loop_(&self) -> *mut AsyncLoop {
-        self.event_loop.native_loop()
-    }
 
     pub fn watch(&mut self) {
         if self.buffer.len() > 0 {
@@ -306,9 +292,6 @@ impl<P: StaticPipeWriterProcess> StaticPipeWriter<P> {
         }
     }
 
-    pub fn event_loop(&self) -> EventLoopHandle {
-        self.event_loop
-    }
 }
 
 /// The `RefCount` destructor callback.

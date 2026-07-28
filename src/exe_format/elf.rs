@@ -430,10 +430,6 @@ impl ElfFile {
         Ok(())
     }
 
-    pub fn write(&self, writer: &mut impl std::io::Write) -> crate::Result<()> {
-        writer.write_all(&self.data)?;
-        Ok(())
-    }
 
     // --- Internal helpers ---
 

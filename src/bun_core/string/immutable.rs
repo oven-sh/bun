@@ -11,8 +11,7 @@ use bun_highway as highway;
 use bun_simdutf_sys::simdutf;
 
 pub use self::unicode::{
-    CodepointIterator, Cursor, NewCodePointIterator, UnsignedCodepointIterator, codepoint_size,
-    contains_non_bmp_code_point_or_is_invalid_identifier, decode_wtf8_rune_t,
+    CodepointIterator, Cursor, NewCodePointIterator, UnsignedCodepointIterator,     contains_non_bmp_code_point_or_is_invalid_identifier, decode_wtf8_rune_t,
     decode_wtf8_rune_t_multibyte, wtf8_byte_sequence_length,
     wtf8_byte_sequence_length_with_invalid,
 };
@@ -61,7 +60,7 @@ pub mod unicode {
     };
 
     pub use super::unicode_draft::{
-        codepoint_size, decode_wtf8_rune_t, decode_wtf8_rune_t_multibyte,
+decode_wtf8_rune_t, decode_wtf8_rune_t_multibyte,
     };
 
     /// `CodepointIterator` — yields WTF-8 codepoints with byte-width.
@@ -597,12 +596,6 @@ pub struct SplitIterator<'a> {
 }
 
 impl<'a> SplitIterator<'a> {
-    /// Returns a slice of the first field. This never fails.
-    /// Call this only to get the first field and then use `next` to get all subsequent fields.
-    pub fn first(&mut self) -> &'a [u8] {
-        debug_assert!(self.index.unwrap() == 0);
-        self.next().unwrap()
-    }
 
     /// Returns a slice of the next field, or null if splitting is complete.
     pub fn next(&mut self) -> Option<&'a [u8]> {
@@ -626,10 +619,6 @@ impl<'a> SplitIterator<'a> {
         &self.buffer[start..end]
     }
 
-    /// Resets the iterator to the initial slice.
-    pub fn reset(&mut self) {
-        self.index = Some(0);
-    }
 }
 
 pub fn cat(first: &[u8], second: &[u8]) -> Result<Box<[u8]>, AllocError> {

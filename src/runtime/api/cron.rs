@@ -1511,13 +1511,6 @@ impl CronJob {
 }
 
 impl CronJob {
-    /// `#[JsClass]` requires a `constructor`; the JS class is not directly
-    /// constructible (`noConstructor` in .classes.ts) so this always throws.
-    pub fn constructor(global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<Box<CronJob>> {
-        Err(global.throw_invalid_arguments(format_args!(
-            "CronJob cannot be constructed directly; use Bun.cron(schedule, handler)"
-        )))
-    }
 
     /// `self`'s address as `*mut Self` for raw-ptr-receiver helpers (e.g.
     /// `self_stop`, `schedule_next`). The callees deref it as `&*` (shared) —

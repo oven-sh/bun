@@ -135,13 +135,7 @@ impl Body {
         self.value_mut().size()
     }
 
-    pub fn slice(&self) -> &[u8] {
-        self.value.get().slice()
-    }
 
-    pub fn clone(&self, global_this: &JSGlobalObject) -> JsResult<Body> {
-        Ok(Body::new(self.value_mut().clone(global_this)?))
-    }
 }
 
 impl Body {
@@ -1188,22 +1182,6 @@ impl Value {
         Ok(())
     }
 
-    pub fn slice(&self) -> &[u8] {
-        match self {
-            Value::Blob(b) => b.shared_view(),
-            Value::InternalBlob(b) => b.slice_const(),
-            Value::WTFStringImpl(s) => {
-                let s = wtf_impl(s);
-                if s.can_use_as_utf8() {
-                    s.latin1_slice()
-                } else {
-                    b""
-                }
-            }
-            // Value::InlineBlob(b) => b.slice_const(),
-            _ => b"",
-        }
-    }
 
     pub(crate) fn use_(&mut self) -> Blob {
         self.to_blob_if_possible();

@@ -295,7 +295,6 @@ impl ArrayBuffer {
         resizable: false,
     };
 
-    pub const NAME: &'static str = "Bun__ArrayBuffer";
 
     // Via `#![feature(adt_const_params)]`: `JSType` derives `ConstParamTy`, so
     // `KIND` is a true const-generic and the `match` const-folds (the
@@ -650,10 +649,6 @@ impl Default for ArrayBufferStrong {
 }
 
 impl ArrayBufferStrong {
-    pub fn clear(&mut self) {
-        // Intentionally a no-op.
-        let _ = self;
-    }
 
     pub fn slice(&self) -> &[u8] {
         self.array_buffer.slice()

@@ -59,10 +59,6 @@ pub(crate) fn statat_windows(fd: Fd, path: &ZStr) -> Maybe<Stat> {
     Syscall::stat(statpath)
 }
 
-#[cfg(not(windows))]
-pub fn statat_windows(_fd: Fd, _path: &ZStr) -> Maybe<Stat> {
-    unreachable!("oi don't use this");
-}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Accessor trait

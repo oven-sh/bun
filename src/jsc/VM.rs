@@ -12,7 +12,6 @@ use crate::{JSGlobalObject, JSValue, JsError};
 // `holdAPILock` keeps a raw `*mut c_void` ctx (opaque round-trip; C++ never
 // dereferences it as Rust data) so it stays `unsafe fn`.
 unsafe extern "C" {
-    safe fn JSC__VM__deinit(vm: &VM, global_object: &JSGlobalObject);
     safe fn JSC__VM__setControlFlowProfiler(vm: &VM, enabled: bool);
     safe fn JSC__VM__hasExecutionTimeLimit(vm: &VM) -> bool;
     // safe: `VM` is an opaque `UnsafeCell`-backed ZST handle (`&` is ABI-identical
@@ -50,9 +49,6 @@ impl VM {
     // its VM via `Zig::GlobalObject::create` → `WebWorker__createVM` instead).
 
     // Note: not `impl Drop` — takes a `global_object` param and `VM` is an opaque FFI handle.
-    pub fn deinit(&self, global_object: &JSGlobalObject) {
-        JSC__VM__deinit(self, global_object)
-    }
 
     pub fn set_control_flow_profiler(&self, enabled: bool) {
         JSC__VM__setControlFlowProfiler(self, enabled)
@@ -156,9 +152,6 @@ pub struct Lock<'a> {
 }
 
 impl<'a> Lock<'a> {
-    /// Explicit release. Equivalent to `drop(self)`.
-    #[inline]
-    pub fn release(self) {}
 }
 
 impl Drop for Lock<'_> {

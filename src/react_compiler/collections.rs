@@ -46,10 +46,6 @@ impl<K, V> IndexMap<K, V> {
     pub(crate) fn new() -> Self {
         Self(Inner::new())
     }
-    #[inline]
-    pub fn with_capacity(n: usize) -> Self {
-        Self(Inner::with_capacity(n))
-    }
 
     #[inline]
     pub(crate) fn len(&self) -> usize {
@@ -58,14 +54,6 @@ impl<K, V> IndexMap<K, V> {
     #[inline]
     pub(crate) fn is_empty(&self) -> bool {
         self.0.is_empty()
-    }
-    #[inline]
-    pub fn clear(&mut self) {
-        self.0.clear();
-    }
-    #[inline]
-    pub fn reserve(&mut self, additional: usize) {
-        self.0.reserve(additional);
     }
 
     #[inline]
@@ -88,16 +76,6 @@ impl<K, V> IndexMap<K, V> {
         self.0.iterator().map(|e| (&*e.key_ptr, &mut *e.value_ptr))
     }
 
-    /// `(key, value)` at insertion-order position `i`.
-    #[inline]
-    pub fn get_index(&self, i: usize) -> Option<(&K, &V)> {
-        let k = self.0.keys().get(i)?;
-        Some((k, &self.0.values()[i]))
-    }
-    #[inline]
-    pub fn first(&self) -> Option<(&K, &V)> {
-        self.get_index(0)
-    }
 
     #[inline]
     pub(crate) fn retain<F: FnMut(&K, &mut V) -> bool>(&mut self, f: F) {
@@ -259,10 +237,6 @@ impl<K> IndexSet<K> {
     pub(crate) fn new() -> Self {
         Self(Inner::new())
     }
-    #[inline]
-    pub fn with_capacity(n: usize) -> Self {
-        Self(Inner::with_capacity(n))
-    }
 
     #[inline]
     pub(crate) fn len(&self) -> usize {
@@ -276,22 +250,10 @@ impl<K> IndexSet<K> {
     pub(crate) fn clear(&mut self) {
         self.0.clear();
     }
-    #[inline]
-    pub fn reserve(&mut self, additional: usize) {
-        self.0.reserve(additional);
-    }
 
     #[inline]
     pub(crate) fn iter(&self) -> slice::Iter<'_, K> {
         self.0.keys().iter()
-    }
-    #[inline]
-    pub fn get_index(&self, i: usize) -> Option<&K> {
-        self.0.keys().get(i)
-    }
-    #[inline]
-    pub fn first(&self) -> Option<&K> {
-        self.0.keys().first()
     }
 }
 
@@ -306,15 +268,7 @@ impl<K: Hash + Eq> IndexSet<K> {
         self.0.contains(key)
     }
     #[inline]
-    pub fn get(&self, key: &K) -> Option<&K> {
-        self.0.get_index(key).map(|i| &self.0.keys()[i])
-    }
-    #[inline]
     pub(crate) fn shift_remove(&mut self, key: &K) -> bool {
-        self.0.remove(key).is_some()
-    }
-    #[inline]
-    pub fn remove(&mut self, key: &K) -> bool {
         self.0.remove(key).is_some()
     }
 }

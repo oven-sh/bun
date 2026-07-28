@@ -286,22 +286,7 @@ impl Scripts {
         ]
     }
 
-    pub fn has_any(&self) -> bool {
-        for (_, list) in self.fields() {
-            if !list.is_empty() {
-                return true;
-            }
-        }
-        false
-    }
 
-    pub fn count(&self) -> usize {
-        let mut res: usize = 0;
-        for (_, list) in self.fields() {
-            res += list.len();
-        }
-        res
-    }
 }
 
 // `deinit` becomes `Drop` — body only frees owned fields → delete entirely; Vec<Box<[u8]>> drops automatically.
@@ -2521,16 +2506,6 @@ impl<'a> StringBuilder<'a> {
         }
     }
 
-    pub fn allocated_slice(&self) -> &[u8] {
-        // `allocate()` resized `string_bytes` to `off + cap` and recorded `off`,
-        // so the region is addressable by safe indexing — no need for the cached
-        // raw `ptr`.
-        if self.ptr.is_some() {
-            &self.string_bytes[self.off..self.off + self.cap]
-        } else {
-            b""
-        }
-    }
 
     pub(crate) fn clamp(&mut self) {
         debug_assert!(self.cap >= self.len);
@@ -2629,11 +2604,6 @@ pub mod package_index {
     // `bun_collections::HashMap` hard-codes an 80% max load factor.
     pub type Map = BunHashMap<PackageNameHash, Entry, IdentityContext<PackageNameHash>>;
 
-    #[repr(u8)]
-    pub enum Tag {
-        Id = 0,
-        Ids = 1,
-    }
 
     pub enum Entry {
         Id(PackageID),

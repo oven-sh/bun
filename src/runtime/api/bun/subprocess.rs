@@ -573,9 +573,6 @@ impl Subprocess<'_> {
         self.update_has_pending_activity();
     }
 
-    pub fn constructor(global_object: &JSGlobalObject, _frame: &CallFrame) -> JsResult<*mut Self> {
-        Err(global_object.throw(format_args!("Cannot construct Subprocess")))
-    }
 
     #[bun_jsc::host_fn(getter)]
     pub(crate) fn get_stderr(this: &Self, global_this: &JSGlobalObject) -> JsResult<JSValue> {

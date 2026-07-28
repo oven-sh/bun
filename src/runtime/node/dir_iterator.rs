@@ -879,13 +879,6 @@ impl NewWrappedIterator<false> {
 }
 
 impl NewWrappedIterator<true> {
-    #[cfg(not(windows))]
-    #[inline]
-    pub fn next(&mut self) -> Result {
-        // On POSIX the underlying iterator ignores `USE_WINDOWS_OSPATH` and
-        // always yields UTF-8 `IteratorResult`s.
-        self.iter.next()
-    }
     #[cfg(windows)]
     #[inline]
     pub(crate) fn next(&mut self) -> ResultW {

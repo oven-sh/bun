@@ -24,19 +24,6 @@ pub use parser::SelectorList;
 /// parser↔selector cycle has a single anchor. This module holds the
 /// `SelectorImpl` type aliases.
 pub use super::impl_;
-pub mod r#impl {
-    use super::*;
-
-    pub mod selectors {
-        use super::*;
-
-        pub mod selector_impl {
-            use super::*;
-
-            pub type VendorPrefix = css::VendorPrefix;
-        }
-    }
-}
 
 pub use super::parser;
 

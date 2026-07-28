@@ -2627,10 +2627,6 @@ impl NthSelectorData {
         hasher.update(&self.b.to_ne_bytes());
     }
 
-    #[inline]
-    pub fn deep_clone(&self) -> Self {
-        *self
-    }
 }
 
 /// The properties that comprise an :nth- pseudoclass as of Selectors 4 (e.g.,
@@ -2767,9 +2763,6 @@ impl SpecificityAndFlags {
     pub(crate) fn hash(self, hasher: &mut Wyhash) {
         hasher.update(&self.specificity.to_ne_bytes());
         hasher.update(&[self.flags.bits()]);
-    }
-    pub fn deep_clone(self) -> Self {
-        self
     }
 }
 
@@ -4232,9 +4225,6 @@ impl ViewTransitionPartName {
         }
     }
 
-    pub fn deep_clone(&self) -> Self {
-        self.clone()
-    }
 }
 
 pub(crate) fn parse_attribute_flags(input: &mut CssParser) -> CResult<AttributeFlags> {

@@ -233,10 +233,6 @@ pub mod vlq {
     }
 
     // Module-level alias for `VLQ::encode`.
-    #[inline]
-    pub const fn encode(value: i32) -> VLQ {
-        VLQ::encode(value)
-    }
 
     const VLQ_LOOKUP_TABLE: [VLQ; 256] = {
         let mut entries = [VLQ {

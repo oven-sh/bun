@@ -133,10 +133,6 @@ impl<T, const BUFFER_CAPACITY: usize> BoundedArrayAligned<T, BUFFER_CAPACITY> {
         self.const_slice()[i]
     }
 
-    /// Set the value of the element at index `i` of the slice.
-    pub fn set(&mut self, i: usize, item: T) {
-        self.slice()[i] = item;
-    }
 
     /// Check that the slice can hold at least `additional_count` items.
     pub(crate) fn ensure_unused_capacity(&self, additional_count: usize) -> Result<(), OverflowError> {
@@ -215,10 +211,6 @@ impl<T, const BUFFER_CAPACITY: usize> BoundedArrayAligned<T, BUFFER_CAPACITY> {
     #[inline]
     pub fn len(&self) -> usize {
         self.len
-    }
-    #[inline]
-    pub fn is_empty(&self) -> bool {
-        self.len == 0
     }
     #[inline]
     pub fn as_slice(&self) -> &[T] {

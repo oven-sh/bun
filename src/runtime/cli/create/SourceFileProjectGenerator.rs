@@ -945,12 +945,6 @@ pub enum Tag {
 }
 
 impl Tag {
-    pub fn logger(self) -> Logger {
-        Logger {
-            template: self,
-            has_written_initial_message: false,
-        }
-    }
 
     pub(crate) fn label(self) -> &'static [u8] {
         match self {

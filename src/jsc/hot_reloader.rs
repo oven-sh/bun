@@ -39,21 +39,7 @@ pub enum ImportWatcher {
 const _: () = assert!(bun_watcher::Loader::File.0 == bun_ast::Loader::File as u8);
 
 impl ImportWatcher {
-    pub fn start(&mut self) -> Result<(), crate::CrateError> {
-        match self {
-            ImportWatcher::Hot(w) => w.start().map_err(Into::into),
-            ImportWatcher::Watch(w) => w.start().map_err(Into::into),
-            ImportWatcher::None => Ok(()),
-        }
-    }
 
-    #[inline]
-    pub fn index_of(&self, hash: bun_watcher::HashType) -> Option<u32> {
-        match self {
-            ImportWatcher::Hot(w) | ImportWatcher::Watch(w) => w.index_of(hash),
-            ImportWatcher::None => None,
-        }
-    }
 
     /// Look up the cached fd (and `package_json` column) for `hash` under the
     /// watcher's mutex, snapshotting both before returning.
@@ -706,45 +692,6 @@ where
     Ctx: HotReloaderCtx<EventLoop = EventLoopType>,
     EventLoopType: HotReloaderEventLoop,
 {
-    /// # Safety
-    /// `ctx` must point to a live `Ctx` that outlives the returned watcher and
-    /// the leaked `NewHotReloader` (BACKREF held for the process lifetime).
-    pub unsafe fn init(
-        ctx: *mut Ctx,
-        fs: &'static FileSystem,
-        verbose: bool,
-        clear_screen_flag: bool,
-    ) -> Box<Watcher> {
-        let reloader = bun_core::heap::into_raw(Box::new(Self {
-            // SAFETY: precondition — `ctx` is the live owning context; it
-            // outlives the reloader and every Task spawned from it (BACKREF).
-            ctx: unsafe { bun_ptr::BackRef::from_raw(ctx) },
-            verbose: cfg!(feature = "debug_logs") || verbose,
-            pending_count: AtomicU32::new(0),
-            main: MainFile::default(),
-            #[cfg(not(windows))]
-            tombstones: StringHashMap::default(),
-            _event_loop: PhantomData,
-        }));
-
-        // SAFETY: single-threaded init; watcher thread not yet started.
-        CLEAR_SCREEN.store(clear_screen_flag, core::sync::atomic::Ordering::Relaxed);
-        let mut watcher = match Watcher::init(reloader, fs.top_level_dir) {
-            Ok(w) => w,
-            Err(err) => {
-                bun_core::handle_error_return_trace(&err);
-                Output::panic(format_args!(
-                    "Failed to enable File Watcher: {}",
-                    err.name()
-                ));
-            }
-        };
-        if let Err(err) = watcher.start() {
-            bun_core::handle_error_return_trace(&err);
-            Output::panic(format_args!("Failed to start File Watcher: {}", err.name()));
-        }
-        watcher
-    }
 
     fn debug(args: core::fmt::Arguments<'_>) {
         if cfg!(feature = "debug_logs") {
@@ -754,10 +701,6 @@ where
         }
     }
 
-    pub fn event_loop(&self) -> *mut EventLoopType {
-        // `ctx` is a BACKREF that outlives the reloader.
-        self.ctx.event_loop()
-    }
 
     /// # Safety
     /// `this` must point to a live `Ctx` (VirtualMachine / DevServer / BundleV2)

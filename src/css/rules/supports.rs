@@ -98,27 +98,6 @@ impl SupportsCondition {
 }
 
 impl SupportsCondition {
-    pub fn hash(&self, hasher: &mut bun_wyhash::Wyhash) {
-        // Hand-expanded because `#[derive(CssHash)]` would require
-        // `PropertyId: CssHash` (it only provides `core::hash::Hash`).
-        // Hash the discriminant, then field-wise structural hash.
-        use core::hash::{Hash, Hasher};
-        core::mem::discriminant(self).hash(hasher);
-        match self {
-            Self::Not(c) => c.hash(hasher),
-            Self::And(v) | Self::Or(v) => {
-                hasher.write_usize(v.len());
-                for c in v.iter() {
-                    c.hash(hasher);
-                }
-            }
-            Self::Declaration(d) => {
-                d.property_id.hash(hasher);
-                hasher.write(d.value);
-            }
-            Self::Selector(s) | Self::Unknown(s) => hasher.write(s),
-        }
-    }
 
     pub fn eql(&self, other: &SupportsCondition) -> bool {
         // Hand-expanded because `#[derive(CssEql)]` would require

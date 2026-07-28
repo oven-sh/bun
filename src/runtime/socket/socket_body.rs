@@ -655,9 +655,6 @@ impl<const SSL: bool> NewSocket<SSL> {
     // emits a bare `constructor(...)` call which doesn't resolve inside an
     // `impl<const SSL: bool>` block. The codegen `JsClass` derive owns the
     // constructor link name, so the placeholder shim isn't needed.
-    pub fn constructor(global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<*mut Self> {
-        Err(global.throw(format_args!("Cannot construct Socket")))
-    }
 
     #[bun_jsc::host_fn(method)]
     pub(crate) fn resume_from_js(

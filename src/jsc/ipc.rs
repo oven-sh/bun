@@ -2042,16 +2042,6 @@ pub mod IPCHandlers {
     pub mod PosixSocket {
         use super::*;
 
-        pub fn on_open(_: *mut c_void, _: Socket) {
-            log!("onOpen");
-            // it is NOT safe to use the first argument here because it has not been initialized yet.
-            // ideally we would call .ipc.writeVersionPacket() here, and we need that to handle the
-            // theoretical write failure, but since the .ipc.outgoing buffer isn't available, that
-            // data has nowhere to go.
-            //
-            // therefore, initializers of IPC handlers need to call .ipc.writeVersionPacket() themselves
-            // this is covered by an assertion.
-        }
 
         pub fn on_close(send_queue: &mut SendQueue, _: Socket, _: c_int, _: Option<*mut c_void>) {
             // uSockets has already freed the underlying socket
@@ -2101,11 +2091,6 @@ pub mod IPCHandlers {
             // unref if needed
         }
 
-        pub fn on_connect_error(send_queue: &mut SendQueue, _: Socket, _: c_int) {
-            log!("onConnectError");
-            // context has not been initialized
-            send_queue.close_socket(CloseReason::Failure, CloseFrom::User);
-        }
 
         pub fn on_end(send_queue: &mut SendQueue, _: Socket) {
             log!("onEnd");

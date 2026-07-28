@@ -33,7 +33,7 @@ pub use crate::error::{
     MinifyError, MinifyErrorKind, ParseError, ParserError, PrinterError, PrinterErrorKind,
     SelectorError,
 };
-pub use crate::generics::{self as generic, implement_deep_clone, implement_eql, implement_hash};
+pub use crate::generics::{self as generic, implement_deep_clone, implement_hash};
 pub use crate::logical::{self, PropertyCategory};
 pub use crate::prefixes;
 pub use crate::printer::{self as css_printer, ImportInfo, Printer, PrinterOptions};
@@ -201,7 +201,6 @@ impl IntoParserError for ParserError {
 // no caller ever passes one.
 // `SelectorParseErrorKind` is impl'd in `selectors/parser.rs`.
 
-pub type Error = Err<ParserError>;
 
 pub type CssResult<T> = Maybe<T, ParseError<ParserError>>;
 
@@ -630,9 +629,6 @@ pub struct DefaultAtRule;
 impl DefaultAtRule {
     pub fn to_css(self, dest: &mut Printer) -> Result<(), PrintErr> {
         dest.new_error(PrinterErrorKind::fmt_error, None)
-    }
-    pub fn deep_clone(self) -> Self {
-        Self
     }
 }
 
@@ -4113,7 +4109,6 @@ pub struct Tokenizer<'a> {
     pub(crate) current_line_number: u32,
     pub(crate) arena: &'a Bump,
     var_or_env_functions: SeenStatus,
-    pub(crate) previous: Token,
 }
 
 const FORM_FEED_BYTE: u8 = 0x0C;
@@ -4157,7 +4152,6 @@ impl<'a> Tokenizer<'a> {
             current_line_number: 0,
             arena,
             var_or_env_functions: SeenStatus::DontCare,
-            previous: Token::Whitespace(b""),
         }
     }
 
@@ -4208,10 +4202,6 @@ impl<'a> Tokenizer<'a> {
         }
     }
 
-    pub fn prev(&self) -> Token {
-        debug_assert!(self.position > 0);
-        self.previous.clone()
-    }
 
     #[inline]
     pub(crate) fn is_eof(&self) -> bool {
@@ -5276,9 +5266,6 @@ impl Token {
         generic::implement_eql(lhs, rhs)
     }
 
-    pub fn hash(&self, hasher: &mut bun_wyhash::Wyhash) {
-        generic::implement_hash(self, hasher)
-    }
 
     /// Return whether this token represents a parse error.
     pub(crate) fn is_parse_error(&self) -> bool {
@@ -5329,13 +5316,6 @@ impl Token {
         }
     }
 
-    pub fn raw(&self) -> &[u8] {
-        match self {
-            Token::Ident(v) => v,
-            // .function => ...
-            _ => unreachable!(),
-        }
-    }
 
     pub(crate) fn to_css_generic<W: WriteAll + ?Sized>(&self, writer: &mut W) -> bun_io::Result<()> {
         match self {

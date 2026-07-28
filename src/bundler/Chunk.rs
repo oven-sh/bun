@@ -170,10 +170,6 @@ impl CompileResultSlots {
         self.0.len()
     }
 
-    #[inline]
-    pub fn is_empty(&self) -> bool {
-        self.0.is_empty()
-    }
 
     /// Post-join read view. Single-threaded callers only (after `wait_for_all`).
     #[inline]

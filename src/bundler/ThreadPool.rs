@@ -735,9 +735,4 @@ impl Worker {
         &mut data.transpiler
     }
 
-    pub fn run(&mut self, ctx: &BundleV2<'_>) {
-        if !self.has_created {
-            self.create(ctx);
-        }
-    }
 }

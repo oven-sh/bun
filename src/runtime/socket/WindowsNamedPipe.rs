@@ -26,7 +26,6 @@ use bun_boringssl_sys as boringssl;
 #[cfg(windows)]
 use bun_collections::ByteVecExt;
 use bun_core::timespec;
-use bun_io::Loop as AsyncLoop;
 #[cfg(windows)]
 use bun_io::pipe_writer::BaseWindowsPipeWriter as _;
 use bun_io::{StreamingWriter, WriteStatus};
@@ -130,10 +129,6 @@ impl Flags {
     #[inline]
     pub(crate) fn set_is_closed(&mut self, v: bool) {
         self.set(Self::IS_CLOSED, v)
-    }
-    #[inline]
-    pub fn is_client(self) -> bool {
-        self.contains(Self::IS_CLIENT)
     }
     #[inline]
     pub(crate) fn set_is_client(&mut self, v: bool) {
@@ -994,48 +989,6 @@ impl WindowsNamedPipe {
         None
     }
 
-    pub fn start_tls(
-        &mut self,
-        ssl_options: &SSLConfig,
-        is_client: bool,
-    ) -> Result<(), crate::Error> {
-        self.flags.set_is_ssl(true);
-        if self.start(is_client) {
-            self.wrapper = Some(ssl_wrapper::init(
-                ssl_options,
-                is_client,
-                ssl_wrapper::Handlers {
-                    ctx: std::ptr::from_mut(self),
-                    on_open: Self::ssl_on_open,
-                    on_handshake: Self::ssl_on_handshake,
-                    on_data: Self::ssl_on_data,
-                    on_close: Self::ssl_on_close,
-                    write: Self::ssl_write,
-                    on_session: Some(Self::ssl_on_session),
-                    on_keylog: Some(Self::ssl_on_keylog),
-                },
-            )?);
-
-            // Re-entrancy guard: `SSLWrapper::start → handle_traffic` can fire
-            // `trigger_close_callback` synchronously; see `on_read` for the
-            // WRAPPER_BUSY pattern. (`wrapper` was just assigned `Some` above.)
-            let w: *mut WrapperType = self.wrapper_ptr().unwrap();
-            // Re-entrancy: see `on_read` — only the OUTERMOST scope may clear
-            // the flag / run the deferred-drop epilogue.
-            let was_busy = self.flags.contains(Flags::WRAPPER_BUSY);
-            self.flags.insert(Flags::WRAPPER_BUSY);
-            // SAFETY: see `on_read` — WRAPPER_BUSY keeps the `Some` payload
-            // bytes at `*w` valid for the call's duration.
-            unsafe { (*w).start() };
-            if !was_busy {
-                self.flags.remove(Flags::WRAPPER_BUSY);
-                if self.flags.is_closed() {
-                    self.wrapper = None;
-                }
-            }
-        }
-        Ok(())
-    }
 
     pub(crate) fn start(&mut self, is_client: bool) -> bool {
         self.flags.set_is_client(is_client);
@@ -1094,15 +1047,6 @@ impl WindowsNamedPipe {
         self.flags.is_ssl()
     }
 
-    /// SAFETY: `vm.uv_loop()` hands back the process-wide libuv loop; two calls
-    /// alias the same `&mut AsyncLoop`. Caller must not hold another live
-    /// `&mut` to it.
-    #[allow(clippy::mut_from_ref)]
-    pub unsafe fn loop_(&self) -> &mut AsyncLoop {
-        // SAFETY: see fn-level safety comment — process-wide libuv loop, caller
-        // promises no aliasing `&mut`.
-        unsafe { &mut *self.vm.uv_loop() }
-    }
 
     #[bun_uws::uws_callback(export = "WindowsNamedPipe__encode_and_write")]
     pub fn encode_and_write(&mut self, data: &[u8]) -> i32 {

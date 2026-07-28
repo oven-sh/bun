@@ -575,17 +575,6 @@ impl<T: ?Sized> ThreadCell<T> {
         self.inner.get()
     }
 
-    /// `&mut T` scoped to the closure (debug-asserts owner if claimed).
-    ///
-    /// # Safety
-    /// Caller guarantees no other live reference to the inner `T` for the
-    /// closure's duration (the same invariant `RacyCell` already imposed).
-    #[inline]
-    pub unsafe fn with_mut<R>(&self, f: impl FnOnce(&mut T) -> R) -> R {
-        self.assert_owner();
-        // SAFETY: caller contract above.
-        f(unsafe { &mut *self.inner.get() })
-    }
 }
 
 impl<T: Default> Default for ThreadCell<T> {

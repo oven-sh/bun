@@ -75,12 +75,6 @@ pub struct StoredTrace {
     pub(crate) index: usize,
 }
 impl StoredTrace {
-    pub const fn empty() -> Self {
-        Self {
-            data: [0; 31],
-            index: 0,
-        }
-    }
 }
 impl StoredTrace {
     pub const EMPTY: StoredTrace = StoredTrace {
@@ -394,8 +388,6 @@ pub mod debug_flags {
     #[cfg(debug_assertions)]
     static RESOLVE_BREAKPOINTS: crate::Once<&'static [&'static [u8]]> =
         crate::Once::new();
-    #[cfg(debug_assertions)]
-    static PRINT_BREAKPOINTS: crate::Once<&'static [&'static [u8]]> = crate::Once::new();
 
     #[inline]
     pub fn has_resolve_breakpoint(str_: &[u8]) -> bool {
@@ -409,17 +401,6 @@ pub mod debug_flags {
         false
     }
 
-    #[inline]
-    pub fn has_print_breakpoint(pretty: &[u8], text: &[u8]) -> bool {
-        #[cfg(debug_assertions)]
-        for bp in PRINT_BREAKPOINTS.get().copied().unwrap_or(&[]) {
-            if crate::strings::includes(pretty, bp) || crate::strings::includes(text, bp) {
-                return true;
-            }
-        }
-        let _ = (pretty, text);
-        false
-    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────

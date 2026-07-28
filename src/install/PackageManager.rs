@@ -43,27 +43,6 @@ use crate::RunCommand;
 #[allow(non_snake_case)]
 pub mod Command {
     pub use bun_options_types::context::{Context, ContextData};
-
-    /// Hook (GENUINE b0): `bun_runtime::cli::Command::get()` returns the
-    /// process-global `*ContextData`. The static itself lives in tier-6
-    /// (`cli.rs`); install only needs a pointer for the bundler hook in
-    /// `update_package_json_and_install`. Registered once at startup by bun_cli.
-    static GLOBAL_CTX: core::sync::atomic::AtomicPtr<ContextData> =
-        core::sync::atomic::AtomicPtr::new(core::ptr::null_mut());
-
-    /// Returns the raw process-global `*mut ContextData`.
-    /// Returns a raw pointer rather than `&'static mut`
-    /// because callers (e.g. `update_package_json_and_install`) already hold a
-    /// live `ctx: &mut ContextData` to the same allocation — materializing a
-    /// second `&mut` here would alias and is UB. Callers must deref at point
-    /// of use under their own SAFETY justification.
-    #[inline]
-    pub fn get() -> *mut ContextData {
-        // SAFETY: `GLOBAL_CTX` is set exactly once during single-threaded CLI
-        // startup (before any install entry point runs) and never cleared; we
-        // only read the pointer value here, no dereference.
-        GLOBAL_CTX.load(core::sync::atomic::Ordering::Relaxed)
-    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -788,10 +767,6 @@ impl PackageManager {
         self.root_package_id.id = None;
     }
 
-    pub fn deinit_caches(&mut self) {
-        self.workspace_package_json_cache = WorkspacePackageJSONCache::default();
-        self.update_requests = Box::default();
-    }
 
     /// Reshaped for borrowck — `Lockfile::load_from_cwd` takes the manager as
     /// a separate argument while the receiver borrows `self.lockfile`, which
@@ -1004,6 +979,12 @@ impl PackageManager {
     /// takes `env`, `log`, and reads `lockfile` in the same argument list).
     #[inline]
     #[allow(clippy::mut_from_ref)]
+    #[cfg(bun_asan)]
+    pub fn deinit_caches(&mut self) {
+        self.workspace_package_json_cache = WorkspacePackageJSONCache::default();
+        self.update_requests = Box::default();
+    }
+
     pub fn env_mut<'a>(&self) -> &'a mut dot_env::Loader {
         // SAFETY: `env` is set during `init()` and never None afterward; the
         // pointee is a process-lifetime singleton (leaked `DotEnv.Loader`)

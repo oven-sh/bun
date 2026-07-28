@@ -136,13 +136,6 @@ impl<Js: ResumableSinkJs, Context: ResumableSinkContext> ResumableSink<Js, Conte
         Err(global.throw_illegal_constructor())
     }
 
-    pub fn init(
-        global_this: &JSGlobalObject,
-        stream: ReadableStream,
-        context: *mut Context,
-    ) -> *mut Self {
-        Self::init_exact_refs(global_this, stream, context, 1)
-    }
 
     pub(crate) fn init_exact_refs(
         global_this: &JSGlobalObject,

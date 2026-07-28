@@ -351,27 +351,6 @@ impl IdentOrRef {
         None
     }
 
-    pub fn as_str(
-        self,
-        map: &bun_ast::symbol::Map,
-        local_names: Option<&css::LocalsResultsMap>,
-    ) -> Option<&'static [u8]> {
-        // Returns an arena/symbol-table borrow; `'static` is a placeholder for
-        // the not-yet-threaded `'bump` lifetime.
-        if self.is_ident() {
-            // SAFETY: arena slice reconstructed from packed ptr/len
-            return Some(unsafe { crate::arena_str(self.as_ident().unwrap().v) });
-        }
-        let r = self.as_ref().unwrap();
-        let final_ref = map.follow(r);
-        // SAFETY: LocalsResultsMap values are `Box<[u8]>` owned by the linker
-        // for the symbol-map lifetime; `arena_str` erases to the placeholder
-        // `'static` until the proper `'bump` lifetime is threaded.
-        local_names
-            .unwrap()
-            .get(&final_ref)
-            .map(|p| unsafe { crate::arena_str(&raw const **p) })
-    }
 
     pub(crate) fn as_original_string(self, symbols: &[bun_ast::Symbol]) -> &[u8] {
         if self.is_ident() {
@@ -407,9 +386,6 @@ impl IdentOrRef {
         false
     }
 
-    pub fn deep_clone(&self, _bump: &bun_alloc::Arena) -> Self {
-        *self
-    }
 }
 
 impl core::fmt::Display for IdentOrRef {

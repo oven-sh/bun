@@ -30,15 +30,6 @@ impl Default for SavedSourceMap {
 
 impl SavedSourceMap {
     // In-place init — `this` is a pre-allocated field on VirtualMachine; `map` is a sibling field backref.
-    pub unsafe fn init(this: &mut core::mem::MaybeUninit<Self>, map: *mut HashTable) {
-        this.write(Self {
-            map,
-            mutex: Mutex::default(),
-        });
-
-        // SAFETY: `map` is a valid pointer to the sibling HashTable on VirtualMachine.
-        unsafe { (*map).lock_pointers() };
-    }
 
     /// Mutable access to the sibling `HashTable` on `VirtualMachine`.
     ///

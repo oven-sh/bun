@@ -35,10 +35,8 @@ impl YAML {
         let stream = match parser.parse() {
             Ok(s) => s,
             Err(e) => {
-                let err = ParseResult::<Utf8>::fail(e, &parser);
-                if let ParseResult::Err(err) = err {
-                    err.add_to_log(source, log)?;
-                }
+                let err = ParseResultError::from_parse_error(e, &parser);
+                err.add_to_log(source, log)?;
                 return Err(YamlParseError::SyntaxError);
             }
         };
@@ -91,17 +89,6 @@ impl From<YamlParseError> for crate::Error {
 // Top-level free functions
 // ───────────────────────────────────────────────────────────────────────────
 
-pub fn parse<'i, Enc: Encoding>(
-    bump: &'i bun_alloc::Arena,
-    input: &'i [Enc::Unit],
-) -> ParseResult<'i, Enc> {
-    let mut parser: Parser<Enc> = Parser::init(bump, input);
-
-    match parser.parse() {
-        Ok(stream) => ParseResult::success(stream, &parser),
-        Err(err) => ParseResult::fail(err, &parser),
-    }
-}
 
 // ───────────────────────────────────────────────────────────────────────────
 // Context
@@ -189,9 +176,6 @@ impl Indent {
         Indent(self.0 + n)
     }
 
-    pub fn sub(self, n: usize) -> Indent {
-        Indent(self.0 - n)
-    }
 
     pub(crate) fn is_less_than(self, other: Indent) -> bool {
         self.0 < other.0
@@ -315,15 +299,6 @@ impl Pos {
         self.0 < other
     }
 
-    pub fn cmp(self, r: usize) -> Ordering {
-        if self.0 < r {
-            return Ordering::Less;
-        }
-        if self.0 > r {
-            return Ordering::Greater;
-        }
-        Ordering::Equal
-    }
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -339,21 +314,12 @@ impl Line {
         Line(line)
     }
 
-    pub fn cast(self) -> usize {
-        self.0
-    }
 
     pub(crate) fn inc(&mut self, n: usize) {
         self.0 += n;
     }
 
-    pub fn add(self, n: usize) -> Line {
-        Line(self.0 + n)
-    }
 
-    pub fn sub(self, n: usize) -> Line {
-        Line(self.0 - n)
-    }
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -786,12 +752,6 @@ pub enum YamlString<Enc: Encoding> {
 }
 
 impl<Enc: Encoding> YamlString<Enc> {
-    pub fn slice<'i>(&'i self, input: &'i [Enc::Unit]) -> &'i [Enc::Unit] {
-        match self {
-            YamlString::Range(range) => range.slice(input),
-            YamlString::List(list) => list.as_slice(),
-        }
-    }
 
     pub(crate) fn len(&self) -> usize {
         match self {
@@ -800,23 +760,7 @@ impl<Enc: Encoding> YamlString<Enc> {
         }
     }
 
-    pub fn is_empty(&self) -> bool {
-        match self {
-            YamlString::Range(range) => range.is_empty(),
-            YamlString::List(list) => list.is_empty(),
-        }
-    }
 
-    pub fn eql(&self, r: &[u8], input: &[Enc::Unit]) -> bool {
-        let l_slice = self.slice(input);
-        if l_slice.len() != r.len() {
-            return false;
-        }
-        l_slice
-            .iter()
-            .zip(r.iter())
-            .all(|(a, b)| Enc::wide(*a) == *b as u32)
-    }
 }
 
 // Plain-scalar string builder. `whitespace_buf` is taken from the parser by
@@ -1961,18 +1905,8 @@ impl<Enc: Encoding> Token<Enc> {
 }
 
 // ───────────────────────────────────────────────────────────────────────────
-// ParseResult
+// ParseResultError
 // ───────────────────────────────────────────────────────────────────────────
-
-pub enum ParseResult<'i, Enc: Encoding> {
-    Result(ParseResultOk<'i, Enc>),
-    Err(ParseResultError),
-}
-
-pub struct ParseResultOk<'i, Enc: Encoding> {
-    pub stream: Stream<'i, Enc>,
-    // allocator dropped — global mimalloc
-}
 
 pub enum ParseResultError {
     Oom,
@@ -2057,13 +1991,9 @@ impl ParseResultError {
     }
 }
 
-impl<'i, Enc: Encoding> ParseResult<'i, Enc> {
-    pub fn success(stream: Stream<'i, Enc>, _parser: &Parser<'_, Enc>) -> Self {
-        ParseResult::Result(ParseResultOk { stream })
-    }
-
-    pub(crate) fn fail(err: ParseError, parser: &Parser<'_, Enc>) -> Self {
-        let e = match err {
+impl ParseResultError {
+    pub(crate) fn from_parse_error<Enc: Encoding>(err: ParseError, parser: &Parser<'_, Enc>) -> Self {
+        match err {
             ParseError::OutOfMemory => ParseResultError::Oom,
             ParseError::StackOverflow => ParseResultError::StackOverflow,
             ParseError::UnexpectedToken => ParseResultError::UnexpectedToken {
@@ -2115,8 +2045,7 @@ impl<'i, Enc: Encoding> ParseResult<'i, Enc> {
             ParseError::ExcessiveAliasing => ParseResultError::ExcessiveAliasing {
                 pos: parser.token.start,
             },
-        };
-        ParseResult::Err(e)
+        }
     }
 }
 
@@ -3392,9 +3321,6 @@ pub enum Escape {
 }
 
 impl Escape {
-    pub const fn characters(self) -> u8 {
-        self as u8
-    }
 }
 
 // ───────────────────────────────────────────────────────────────────────────

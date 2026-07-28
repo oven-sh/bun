@@ -1,7 +1,7 @@
 use core::ffi::c_void;
 use core::ptr::NonNull;
 
-use crate::{JSGlobalObject, JSValue};
+use crate::JSValue;
 use bun_core::ZigString;
 
 bun_opaque::opaque_ffi! {
@@ -10,7 +10,6 @@ bun_opaque::opaque_ffi! {
 }
 
 unsafe extern "C" {
-    safe fn URLSearchParams__create(global_object: &JSGlobalObject, init: &ZigString) -> JSValue;
     safe fn URLSearchParams__fromJS(value: JSValue) -> Option<NonNull<URLSearchParams>>;
     // safe: `URLSearchParams` is an `opaque_ffi!` ZST handle (`&mut` is
     // ABI-identical to a non-null `*mut`); `ctx` is an opaque round-trip pointer
@@ -23,9 +22,6 @@ unsafe extern "C" {
 }
 
 impl URLSearchParams {
-    pub fn create(global_object: &JSGlobalObject, init: ZigString) -> JSValue {
-        URLSearchParams__create(global_object, &init)
-    }
 
     // The returned opaque handle is owned by the JS GC heap, not by `value`;
     // callers must keep the JS object alive while using it.

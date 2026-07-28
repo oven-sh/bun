@@ -43,7 +43,6 @@ pub mod ansi_b {
     pub const ITALIC: &[u8] = ansi::ITALIC.as_bytes();
     pub const UNDERLINE: &[u8] = ansi::UNDERLINE.as_bytes();
     pub const STRIKETHROUGH: &[u8] = ansi::STRIKETHROUGH.as_bytes();
-    pub const RED: &[u8] = ansi::RED.as_bytes();
     pub const GREEN: &[u8] = ansi::GREEN.as_bytes();
     pub const YELLOW: &[u8] = ansi::YELLOW.as_bytes();
     pub const BLUE: &[u8] = ansi::BLUE.as_bytes();

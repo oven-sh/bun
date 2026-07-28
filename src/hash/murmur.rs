@@ -8,8 +8,6 @@
 //! `len` is read as a `u32` truncation of `str.len()` for the 32-bit variants
 //! — a deliberate quirk so > 4 GiB inputs keep hashing the way they always have.
 
-const DEFAULT_SEED: u32 = 0xc70f6907;
-
 #[inline(always)]
 fn read_u32_le(b: &[u8]) -> u32 {
     u32::from_le_bytes([b[0], b[1], b[2], b[3]])
@@ -27,10 +25,6 @@ fn read_u64_le(b: &[u8]) -> u64 {
 pub struct Murmur2_32;
 
 impl Murmur2_32 {
-    #[inline]
-    pub fn hash(str: &[u8]) -> u32 {
-        Self::hash_with_seed(str, DEFAULT_SEED)
-    }
 
     pub fn hash_with_seed(str: &[u8], seed: u32) -> u32 {
         const M: u32 = 0x5bd1e995;
@@ -75,10 +69,6 @@ impl Murmur2_32 {
 pub struct Murmur2_64;
 
 impl Murmur2_64 {
-    #[inline]
-    pub fn hash(str: &[u8]) -> u64 {
-        Self::hash_with_seed(str, DEFAULT_SEED as u64)
-    }
 
     pub fn hash_with_seed(str: &[u8], seed: u64) -> u64 {
         const M: u64 = 0xc6a4a7935bd1e995;
@@ -135,10 +125,6 @@ impl Murmur3_32 {
         x.rotate_left(r)
     }
 
-    #[inline]
-    pub fn hash(str: &[u8]) -> u32 {
-        Self::hash_with_seed(str, DEFAULT_SEED)
-    }
 
     pub fn hash_with_seed(str: &[u8], seed: u32) -> u32 {
         const C1: u32 = 0xcc9e2d51;

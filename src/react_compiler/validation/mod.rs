@@ -61,8 +61,6 @@ pub(crate) use validate_locals_not_reassigned_after_render::validate_locals_not_
 pub(crate) use validate_no_capitalized_calls::validate_no_capitalized_calls;
 #[cfg(any(debug_assertions, bun_asan, feature = "fixtures"))]
 pub(crate) use validate_no_derived_computations_in_effects::validate_no_derived_computations_in_effects;
-#[cfg(any(debug_assertions, bun_asan, feature = "fixtures"))]
-pub use validate_no_derived_computations_in_effects::validate_no_derived_computations_in_effects_exp;
 pub(crate) use validate_no_freezing_known_mutable_functions::validate_no_freezing_known_mutable_functions;
 #[cfg(any(debug_assertions, bun_asan, feature = "fixtures"))]
 pub(crate) use validate_no_jsx_in_try_statement::validate_no_jsx_in_try_statement;

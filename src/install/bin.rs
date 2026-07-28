@@ -733,7 +733,6 @@ impl bun_collections::PriorityCompare<DependencyID> for PriorityQueueContext {
 pub(crate) type PriorityQueue = bun_collections::PriorityQueue<DependencyID, PriorityQueueContext>;
 
 // `inherent_associated_types` is unstable, so callers use `Bin::PriorityQueueContext`.
-pub type Context = PriorityQueueContext;
 
 // https://github.com/npm/npm-normalize-package-bin/blob/574e6d7cd21b2f3dee28a216ec2053c2551f7af9/lib/index.js#L38
 fn normalized_bin_name(name: &[u8]) -> &[u8] {

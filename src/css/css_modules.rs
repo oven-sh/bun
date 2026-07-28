@@ -5,7 +5,6 @@ use bun_alloc::{ArenaVec as BumpVec, ArenaVecExt as _};
 use bun_collections::ArrayHashMap;
 
 use crate as css;
-pub use crate::Error;
 
 // ─────────────────────────────────────────────────────────────────────────
 // `reference_dashed`'s `dest.importRecord()` lookup is hoisted to the caller (see the comment

@@ -260,15 +260,7 @@ impl PostgresSQLConnection {
         self.password.slice()
     }
 
-    #[inline]
-    pub fn path(&self) -> &[u8] {
-        self.path.slice()
-    }
 
-    #[inline]
-    pub fn options(&self) -> &[u8] {
-        self.options.slice()
-    }
 
     /// Project `&mut SASL` from `authentication_state` if it is currently the
     /// `Sasl` variant. One audited [`JsCell::get_mut`] here replaces the three

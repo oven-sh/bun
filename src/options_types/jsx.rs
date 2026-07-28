@@ -95,10 +95,6 @@ impl MemberList {
         }
     }
 
-    #[inline]
-    pub fn is_empty(&self) -> bool {
-        self.len() == 0
-    }
 
     #[inline]
     pub(crate) fn get(&self, i: usize) -> Option<&[u8]> {

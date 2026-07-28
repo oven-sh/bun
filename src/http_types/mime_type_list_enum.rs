@@ -24,15 +24,7 @@ impl MimeTypeList {
         self.0.as_bytes()
     }
 
-    #[inline]
-    pub const fn as_str(self) -> &'static str {
-        self.0
-    }
 
-    #[inline]
-    pub const fn len(self) -> usize {
-        self.0.len()
-    }
 
     pub(crate) const ALL: &'static [MimeTypeList] = ALL;
 }

@@ -153,9 +153,6 @@ impl<'a> CopyFile<'a> {
         )
     }
 
-    pub fn run(&mut self) {
-        self.run_async();
-    }
 
     #[cfg(not(windows))]
     pub(crate) fn do_close(&mut self) {

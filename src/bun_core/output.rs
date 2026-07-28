@@ -196,24 +196,7 @@ pub fn warn(payload: impl PrettyFmtInput) {
     pretty_errorln!("<r><yellow>warn<r><d>:<r> {}", buf);
 }
 
-/// `bun.Output.note` — blue `note:` prefix to stderr.
-#[inline]
-pub fn note(payload: impl PrettyFmtInput) {
-    let buf = payload.into_pretty_buf(enable_ansi_colors_stderr());
-    pretty_errorln!("<blue>note<r><d>:<r> {}", buf);
-}
 
-/// Function-form of `Output.debug`.
-/// The macro form is `crate::debug!`; this fn variant takes a single
-/// pre-formatted payload for call sites that build the message dynamically.
-#[inline]
-pub fn debug(payload: impl PrettyFmtInput) {
-    if crate::env::IS_DEBUG {
-        let buf = payload.into_pretty_buf(enable_ansi_colors_stderr());
-        pretty_errorln!("<d>DEBUG:<r> {}", buf);
-        flush();
-    }
-}
 
 /// `Output.prettyErrorln` — function form. Performs `<tag>` → ANSI rewrite on
 /// the rendered payload (using stderr's colour state), writes to stderr, and
@@ -228,27 +211,7 @@ pub fn pretty_errorln(payload: impl PrettyFmtInput) {
     }
 }
 
-/// `Output.prettyError` — `<tag>`-rewritten payload to stderr without a
-/// trailing newline.
-#[inline]
-pub fn pretty_error(payload: impl PrettyFmtInput) {
-    let buf = payload.into_pretty_buf(enable_ansi_colors_stderr());
-    write_bytes(Destination::Stderr, &buf);
-}
 
-/// Test-harness initializer: configure the output sinks without touching the
-/// real stdio FDs. Safe to call repeatedly.
-pub fn init_test() {
-    if SOURCE_SET.get() {
-        return;
-    }
-    let stdout = File::from(Fd::stdout());
-    let stderr = File::from(Fd::stderr());
-    Source::set_init(stdout, stderr);
-    // Tests run without a TTY; force colours off so snapshot output is stable.
-    ENABLE_ANSI_COLORS_STDOUT.store(false, Ordering::Relaxed);
-    ENABLE_ANSI_COLORS_STDERR.store(false, Ordering::Relaxed);
-}
 
 /// `bun.Output.Source.Stdio.restore` — restore terminal to cooked mode on exit.
 /// Thin alias over [`crate::output::stdio::restore`] (the real impl, also in

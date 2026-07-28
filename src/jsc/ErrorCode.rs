@@ -79,10 +79,6 @@ impl ErrorCode {
 }
 
 impl ErrorCode {
-    #[inline]
-    pub const fn raw(self) -> u16 {
-        self.0
-    }
 
     /// Node `error.code` string (e.g. `"ERR_INVALID_ARG_TYPE"`).
     #[inline]

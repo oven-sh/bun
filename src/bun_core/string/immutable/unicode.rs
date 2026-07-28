@@ -110,7 +110,6 @@ pub fn decode_wtf8_rune_t<T: CodePointZero>(p: [u8; 4], len: U3Fast, zero: T) ->
     decode_wtf8_rune_t_multibyte::<T>(p, len, zero)
 }
 
-pub use crate::strings_impl::codepoint_size;
 
 // ───────────────────────────── UTF16 → UTF8 ─────────────────────────────
 //

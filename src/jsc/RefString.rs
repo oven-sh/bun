@@ -47,11 +47,6 @@ impl RefString {
         bun_hash::XxHash32::hash(0, input)
     }
 
-    pub fn slice(&self) -> &[u8] {
-        self.ref_();
-
-        self.leak()
-    }
 
     /// Single audited deref of the set-once `impl_` backref so `ref_` /
     /// `deref` below are safe callers. `impl_` is assigned at construction

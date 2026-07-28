@@ -617,12 +617,6 @@ impl DateTime {
         }
     }
 
-    pub fn to_js(self, global_object: &JSGlobalObject) -> JSValue {
-        JSValue::from_date_number(
-            global_object,
-            self.to_js_timestamp(global_object).unwrap_or(f64::NAN),
-        )
-    }
 
     /// `from_unix_timestamp`/`gregorian_date` can only represent
     /// 1970-01-01T00:00:00Z through 9999-12-31T23:59:59Z (the MySQL DATETIME

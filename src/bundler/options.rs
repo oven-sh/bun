@@ -2365,9 +2365,6 @@ impl PathTemplateConst {
         )
     }
 
-    pub fn needs(&self, field: PlaceholderField) -> bool {
-        path_template_needs(self.data, field)
-    }
 }
 
 impl core::fmt::Display for PathTemplateConst {

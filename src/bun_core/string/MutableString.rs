@@ -327,14 +327,7 @@ impl MutableString {
         &mut self.list
     }
 
-    pub fn index_of(&self, str: u8) -> Option<usize> {
-        // Single-byte search (the `str` parameter is one byte despite the name).
-        self.list.iter().position(|&b| b == str)
-    }
 
-    pub fn eql(&self, other: &[u8]) -> bool {
-        self.list.as_slice() == other
-    }
 
     pub fn write_all(&mut self, bytes: &[u8]) -> Result<usize, AllocError> {
         self.list.extend_from_slice(bytes);

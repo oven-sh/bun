@@ -133,10 +133,6 @@ impl UInt31WithReserved {
         Self(value)
     }
     #[inline]
-    pub const fn init(value: u32, reserved: bool) -> Self {
-        Self((value & 0x7fff_ffff) | if reserved { 0x8000_0000 } else { 0 })
-    }
-    #[inline]
     pub fn from_bytes(src: &[u8]) -> Self {
         Self(u32_from_bytes(src))
     }
@@ -166,14 +162,6 @@ const _: () = assert!(core::mem::size_of::<StreamPriority>() == StreamPriority::
 impl StreamPriority {
     pub const BYTE_SIZE: usize = 5;
 
-    #[inline]
-    pub fn from(dst: &mut StreamPriority, src: &[u8]) {
-        bytemuck::bytes_of_mut(dst).copy_from_slice(src);
-        // Byte-swap each field; `weight: u8` is a no-op.
-        // Brace-expr `{packed.field}` performs an unaligned copy;
-        // assignment to a packed field is an unaligned store. No `unsafe`.
-        dst.stream_identifier = u32::swap_bytes(dst.stream_identifier);
-    }
 }
 
 /// NOT `#[repr(packed)]` — the `u24` length is widened to a native `u32`

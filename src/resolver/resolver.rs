@@ -372,8 +372,6 @@ pub struct Bufs {
 
     #[cfg(windows)]
     pub(crate) win32_normalized_dir_info_cache: [u8; MAX_PATH_BYTES * 2],
-    #[cfg(not(windows))]
-    pub win32_normalized_dir_info_cache: (),
 }
 // `Bufs` is modeled as a `thread_local! { static BUFS_PTR: BufsSlot }` caching a
 // leaked `Box<Bufs>` pointer. `BufsSlot`'s `Drop` reclaims that box when a

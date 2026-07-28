@@ -83,9 +83,6 @@ impl TableSymbols {
     pub const UNICODE: TableSymbols = TableSymbols {
         enable_ansi_colors: true,
     };
-    pub const ASCII: TableSymbols = TableSymbols {
-        enable_ansi_colors: false,
-    };
 
     pub(crate) const fn top_left_sep(self) -> &'static str {
         if self.enable_ansi_colors { "┌" } else { "|" }
@@ -2343,14 +2340,6 @@ pub struct CountingWriter<'a, W: fmt::Write = Null> {
 }
 
 impl<'a, W: fmt::Write> CountingWriter<'a, W> {
-    /// Wrap an existing `fmt::Write` sink, forwarding writes through it.
-    #[inline]
-    pub fn wrap(w: &'a mut W) -> Self {
-        Self {
-            inner: Some(w),
-            count: 0,
-        }
-    }
     /// Direct access to the inner sink (bypasses counting). Panics on the
     /// `null()` variant — callers know which mode they constructed.
     #[inline]
@@ -2360,14 +2349,6 @@ impl<'a, W: fmt::Write> CountingWriter<'a, W> {
 }
 
 impl CountingWriter<'static, Null> {
-    /// Pure discarding sink — `inner: None`, never forwarded.
-    #[inline]
-    pub fn null() -> Self {
-        Self {
-            inner: None,
-            count: 0,
-        }
-    }
 }
 
 impl<W: fmt::Write> fmt::Write for CountingWriter<'_, W> {

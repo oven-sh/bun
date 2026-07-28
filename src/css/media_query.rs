@@ -6,7 +6,6 @@ use crate::css_values::ident::{DashedIdent, Ident};
 use crate::{Parser, PrintErr, Printer, Result};
 use bun_alloc::ArenaPtr;
 
-pub use crate::Error;
 
 // Strings here borrow parser input/arena memory but the structs carry no lifetime
 // params (crate-wide `&'static`/raw-slice placeholder convention); see lib.rs.
@@ -1258,11 +1257,6 @@ impl MediaList {
         Self { media_queries }
     }
 
-    /// Alias for `deep_clone`.
-    #[inline]
-    pub fn clone_in(&self, bump: &bun_alloc::Arena) -> Self {
-        self.deep_clone(bump)
-    }
 
     /// `MediaList` carries no
     /// `ImportRecord` indices so this is just `deep_clone`.

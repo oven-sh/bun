@@ -6833,10 +6833,6 @@ impl Internal {
         &self.bytes
     }
 
-    #[inline]
-    pub fn slice(&mut self) -> &mut [u8] {
-        &mut self.bytes
-    }
 
     pub(crate) fn to_owned_slice(&mut self) -> Vec<u8> {
         if self.bytes.is_empty() && self.bytes.capacity() > 0 {
@@ -6894,40 +6890,10 @@ impl Inline {
         inline_blob
     }
 
-    fn internal_init(data: &[u8], was_string: bool) -> Inline {
-        debug_assert!(data.len() <= Self::AVAILABLE_BYTES);
 
-        let mut blob = Inline {
-            bytes: [0; Self::AVAILABLE_BYTES],
-            len: data.len() as u8,
-            was_string,
-        };
-        if !data.is_empty() {
-            blob.bytes[..data.len()].copy_from_slice(data);
-        }
-        blob
-    }
 
-    pub fn init(data: &[u8]) -> Inline {
-        Self::internal_init(data, false)
-    }
 
-    pub fn content_type(&self) -> &'static [u8] {
-        // see Internal::content_type — MimeType consts are `const`, not `static`.
-        if self.was_string {
-            b"text/plain;charset=utf-8"
-        } else {
-            b"application/octet-stream"
-        }
-    }
 
-    pub fn deinit(&mut self) {}
-
-    #[inline]
-    pub fn slice(&mut self) -> &mut [u8] {
-        let len = self.len as usize;
-        &mut self.bytes[..len]
-    }
 }
 
 impl Default for Inline {

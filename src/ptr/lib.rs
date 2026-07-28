@@ -419,10 +419,6 @@ impl Interned {
         self.0
     }
 
-    #[inline]
-    pub const fn len(self) -> usize {
-        self.0.len()
-    }
 
     #[inline]
     pub const fn is_empty(self) -> bool {

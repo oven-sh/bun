@@ -260,23 +260,6 @@ impl<'a> LinkerGraph<'a> {
 }
 
 impl<'a> LinkerGraph<'a> {
-    pub fn init(bump: &Arena, file_count: usize) -> Result<Self, crate::Error> {
-        Ok(LinkerGraph {
-            files: FileList::default(),
-            files_live: BitSet::init_empty(file_count)?,
-            parts_live: Vec::new(),
-            entry_points: entry_point::List::default(),
-            symbols: symbol::Map::default(),
-            bump: bun_ptr::BackRef::new(bump),
-            code_splitting: false,
-            ast: MultiArrayList::default(),
-            meta: MultiArrayList::default(),
-            reachable_files: Vec::new(),
-            stable_source_indices: Vec::new(),
-            is_scb_bitset: BitSet::default(),
-            ts_enums: bun_ast::ast_result::TsEnumsMap::default(),
-        })
-    }
 }
 
 impl Default for LinkerGraph<'_> {

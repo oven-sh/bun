@@ -382,4 +382,3 @@ impl<T: ExternalSharedDescriptor> BindgenOptionalRepr for BindgenExternalShared<
     }
 }
 
-pub type BindgenBlob = BindgenExternalShared<crate::webcore::Blob>;

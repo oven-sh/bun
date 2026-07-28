@@ -128,7 +128,7 @@ pub use values::string::{CssString as CSSString, CssStringFns as CSSStringFns};
 // reflection helpers in `generics`; alias both spellings so value/property
 // modules can use `crate::generic::partial_cmp_f32` etc.
 pub use generics as generic;
-pub use generics::{implement_deep_clone, implement_eql, implement_hash};
+pub use generics::{implement_deep_clone, implement_hash};
 // Same-name trait + derive macro re-export so `#[derive(bun_css::DeepClone)]`
 // (and `use bun_css::DeepClone;` at leaf sites) brings both into scope.
 pub use generics::{CssEql, DeepClone};

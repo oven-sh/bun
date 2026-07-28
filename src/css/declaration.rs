@@ -207,20 +207,6 @@ impl<'bump> DeclarationBlock<'bump> {
                 .all(|(a, b)| a.eql(b))
     }
 
-    pub fn deep_clone(&self, bump: &'bump Bump) -> Self {
-        Self {
-            important_declarations: bun_alloc::vec_from_iter_in(
-                self.important_declarations
-                    .iter()
-                    .map(|p| p.deep_clone(bump)),
-                bump,
-            ),
-            declarations: bun_alloc::vec_from_iter_in(
-                self.declarations.iter().map(|p| p.deep_clone(bump)),
-                bump,
-            ),
-        }
-    }
 }
 
 // ─── PropertyDeclarationParser ────────────────────────────────────────────

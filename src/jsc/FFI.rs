@@ -8,7 +8,7 @@
 
 #![allow(non_snake_case, non_upper_case_globals, clippy::missing_safety_doc)]
 
-use core::ffi::{c_int, c_longlong, c_ulonglong, c_void};
+use core::ffi::{c_int, c_longlong, c_void};
 
 use bun_jsc::JSValue;
 
@@ -50,6 +50,3 @@ static ValueTrue: bun_core::RacyCell<EncodedJSValue> =
 
 const DOUBLE_ENCODE_OFFSET_BIT: c_int = 49;
 pub(crate) const DOUBLE_ENCODE_OFFSET: c_longlong = (1 as c_longlong) << DOUBLE_ENCODE_OFFSET_BIT;
-const OTHER_TAG: c_int = 0x2;
-pub(crate) const NOT_CELL_MASK: c_ulonglong = NUMBER_TAG | OTHER_TAG as c_ulonglong;
-const NUMBER_TAG: c_ulonglong = 0xfffe_0000_0000_0000;

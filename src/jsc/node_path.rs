@@ -269,13 +269,6 @@ impl PathOrFileDescriptorSerializeTag {
 }
 
 impl PathOrFileDescriptor {
-    #[inline]
-    pub fn slice(&self) -> &[u8] {
-        match self {
-            Self::Fd(_) => b"",
-            Self::Path(p) => p.slice(),
-        }
-    }
 
     #[inline]
     pub fn to_thread_safe(&mut self) {
@@ -344,13 +337,4 @@ impl PathOrFileDescriptor {
         }
     }
 
-    pub fn hash(&self) -> u64 {
-        match self {
-            Self::Path(path) => bun_wyhash::hash(path.slice()),
-            // `Fd` is `#[repr(transparent)]` over its backing integer (`i32`
-            // on posix, `u64` on Windows), so hashing `fd.0.to_ne_bytes()` is
-            // byte-identical to the previous raw `from_raw_parts` reinterpret.
-            Self::Fd(fd) => bun_wyhash::hash(&fd.0.to_ne_bytes()),
-        }
-    }
 }

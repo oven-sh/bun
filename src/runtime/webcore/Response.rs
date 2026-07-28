@@ -13,7 +13,7 @@ use crate::webcore::jsc::{
 };
 use bun_core::Output;
 use bun_core::{
-    OwnedString, String as BunString, WTFStringImplExt as _, ZigString, ZigStringSlice,
+    OwnedString, String as BunString, WTFStringImplExt as _, ZigStringSlice,
 };
 use bun_http_types::Method::Method;
 
@@ -183,10 +183,6 @@ pub mod js {
 #[inline]
 pub fn from_js(value: JSValue) -> Option<*mut Response> {
     js::from_js(value).map(<*mut ()>::cast::<Response>)
-}
-#[inline]
-pub fn from_js_direct(value: JSValue) -> Option<*mut Response> {
-    js::from_js_direct(value).map(<*mut ()>::cast::<Response>)
 }
 
 // `JsClass` impl delegates to `bun_jsc::generated::JSResponse` — the
@@ -626,13 +622,6 @@ impl Response {
 
 // ─── getters & header helpers ───────────────────────────────────────────────
 impl Response {
-    pub fn header(&self, name: HTTPHeaderName) -> Option<ZigString> {
-        // reshaped for borrowck — `FetchHeaders::fast_get` takes
-        // `&mut self` (FFI writes through an out-param), so we return the
-        // owned `ZigString` instead of a borrowed slice. Callers do
-        // `.slice()` themselves. R-2 escape hatch via `init_mut()`.
-        self.init_mut().headers.as_mut()?.fast_get(name)
-    }
 
     pub(crate) fn is_ok(&self) -> bool {
         let status_code = self.init.get().status_code;

@@ -148,18 +148,6 @@ pub(crate) type DedupeMap = HashMap<
 >;
 
 impl NetworkTask {
-    /// Access the HTTP client after `for_manifest`/`for_tarball` (or `notify`'s
-    /// bitwise copy) has initialized it. All callers in this module and
-    /// `runTasks` are post-init by construction; the field is `MaybeUninit`
-    /// only to keep `&mut NetworkTask` sound between `write_init` and the
-    /// `for_*` overwrite.
-    #[inline]
-    pub fn http(&self) -> &AsyncHTTP<'static> {
-        // SAFETY: every caller is reached only after `unsafe_http_client` was
-        // populated via `MaybeUninit::new(AsyncHTTP::init(..))` (or the
-        // `ptr::write(real, ..)` in `notify`).
-        unsafe { self.unsafe_http_client.assume_init_ref() }
-    }
 
     /// Mutable counterpart of [`http`]; same precondition.
     #[inline]

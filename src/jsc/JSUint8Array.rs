@@ -21,23 +21,7 @@ impl JSUint8Array {
         }
     }
 
-    pub fn len(&self) -> usize {
-        // SAFETY: same invariant as `ptr()` — fixed byte offset into the JSUint8Array
-        // cell where the typed-array length is stored.
-        unsafe {
-            std::ptr::from_ref::<Self>(self)
-                .byte_add(sizes::BUN_FFI_POINTER_OFFSET_TO_TYPED_ARRAY_LENGTH)
-                .cast::<usize>()
-                .read()
-        }
-    }
 
-    pub fn slice(&mut self) -> &mut [u8] {
-        // Note: detached/empty JSUint8Array has ptr=null, len=0;
-        // `ffi::slice_mut` tolerates `(null, 0)` so no extra guard.
-        // SAFETY: JSC guarantees `ptr()` is valid for `len()` bytes while the cell is alive.
-        unsafe { bun_core::ffi::slice_mut(self.ptr(), self.len()) }
-    }
 
     /// `bytes` must come from `bun.default_allocator` (the global mimalloc allocator);
     /// ownership is transferred to the returned JS Uint8Array.

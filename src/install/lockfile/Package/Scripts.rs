@@ -461,10 +461,6 @@ impl List {
         }
     }
 
-    pub fn first(&self) -> &[u8] {
-        debug_assert!(self.items[self.first_index as usize].is_some());
-        self.items[self.first_index as usize].as_ref().unwrap()
-    }
 
     // No manual deinit: `Box<[u8]>` fields drop automatically.
 

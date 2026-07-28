@@ -1,5 +1,3 @@
-use core::ffi::c_void;
-use core::ptr::NonNull;
 
 // LAYERING: re-export `bun_core::Timespec` so every embedder of
 // `EventLoopTimer.next` agrees on the type (was a local stub with the same
@@ -226,7 +224,6 @@ impl Tag {
 pub struct TimerCallback {
     pub callback: fn(*mut TimerCallback),
     // Opaque user ctx; ownership stays with whoever installs the callback.
-    pub ctx: Option<NonNull<c_void>>,
     pub event_loop_timer: EventLoopTimer,
 }
 

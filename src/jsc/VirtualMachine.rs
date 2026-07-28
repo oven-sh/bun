@@ -829,10 +829,6 @@ impl VirtualMachine {
         unsafe { self.transpiler.env.as_ref() }
     }
 
-    #[inline]
-    pub fn transpiler(&mut self) -> &mut Transpiler<'static> {
-        &mut self.transpiler
-    }
 
     /// Safe accessor for the process-lifetime resolver `FileSystem` singleton
     /// (`vm.transpiler.fs`). Allocated once during VM init and never freed;

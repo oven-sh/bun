@@ -61,27 +61,7 @@ pub type ThreadId = usize;
 
 // ── Atomic wrapper ─────────────────────────────────────────────────────────
 // Width-matched alias so `CriticalSection` can `compare_exchange` on it directly.
-#[cfg(any(
-    target_os = "linux",
-    target_os = "android",
-    target_os = "freebsd",
-    target_os = "netbsd",
-    target_os = "openbsd",
-    target_os = "dragonfly",
-    target_os = "haiku",
-    target_os = "wasi",
-    target_os = "windows",
-))]
-pub type AtomicThreadId = core::sync::atomic::AtomicU32;
 
-#[cfg(any(
-    target_os = "macos",
-    target_os = "ios",
-    target_os = "watchos",
-    target_os = "tvos",
-    target_os = "visionos",
-))]
-pub type AtomicThreadId = core::sync::atomic::AtomicU64;
 
 #[cfg(not(any(
     target_os = "linux",
@@ -101,8 +81,6 @@ pub type AtomicThreadId = core::sync::atomic::AtomicU64;
 )))]
 pub type AtomicThreadId = core::sync::atomic::AtomicUsize;
 
-/// A value that does not alias any other thread ID.
-pub const INVALID: ThreadId = ThreadId::MAX;
 
 /// Per-thread cache of [`current()`]. Without it, every call paid a syscall
 /// (`gettid`/`pthread_threadid_np`/`GetCurrentThreadId`). The

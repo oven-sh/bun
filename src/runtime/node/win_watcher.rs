@@ -190,7 +190,6 @@ impl ChangeEvent {
     }
 }
 
-pub type Callback = fn(ctx: Option<*mut c_void>, event: Event, is_file: bool);
 
 impl PathWatcher {
     extern "C" fn uv_event_callback(

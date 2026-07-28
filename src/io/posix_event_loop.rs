@@ -479,13 +479,6 @@ impl FilePoll {
             && self.flags.contains(Flags::HasIncrementedPollCount)
     }
 
-    pub fn set_keeping_process_alive(&mut self, event_loop_ctx: EventLoopCtx, value: bool) {
-        if value {
-            self.enable_keeping_process_alive(event_loop_ctx);
-        } else {
-            self.disable_keeping_process_alive(event_loop_ctx);
-        }
-    }
 
     pub fn enable_keeping_process_alive(&mut self, event_loop_ctx: EventLoopCtx) {
         if self.flags.contains(Flags::Closed) {
@@ -572,11 +565,6 @@ impl FilePoll {
         poll
     }
 
-    /// Prevent a poll from keeping the process alive.
-    pub fn unref(&mut self, event_loop_ctx: EventLoopCtx) {
-        syslog!("unref");
-        self.disable_keeping_process_alive(event_loop_ctx);
-    }
 
     /// Allow a poll to keep the process alive.
     pub fn ref_(&mut self, event_loop_ctx: EventLoopCtx) {

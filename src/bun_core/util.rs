@@ -49,12 +49,6 @@ impl<T: Copy> Unaligned<T> {
         self.0
     }
 
-    #[inline(always)]
-    pub fn set(&mut self, value: T) {
-        // SAFETY: `self` points to `size_of::<T>()` writable bytes; alignment
-        // is 1 by `#[repr(packed)]`, hence `write_unaligned`.
-        unsafe { core::ptr::addr_of_mut!(self.0).write_unaligned(value) }
-    }
 
     #[inline]
     pub fn slice_align_cast_mut(slice: &mut [Unaligned<T>]) -> &mut [T] {
@@ -717,8 +711,6 @@ pub type OSPathChar = u16;
 pub type OSPathChar = u8;
 
 pub type OSPathSlice<'a> = &'a [OSPathChar];
-#[cfg(windows)]
-pub type OSPathSliceZ = WStr;
 
 pub use bun_alloc::SEP;
 
@@ -804,12 +796,6 @@ impl WPathBuffer {
         // track the written length out-of-band.
         unsafe { core::mem::MaybeUninit::uninit().assume_init() }
     }
-    /// Inherent `as_slice` so `wbuf.as_slice()` resolves here instead of the
-    /// unstable `<[u16]>::as_slice` (`str_as_str` feature) via `Deref`.
-    #[inline]
-    pub fn as_slice(&self) -> &[u16] {
-        &self.0
-    }
     #[inline]
     pub fn as_mut_slice(&mut self) -> &mut [u16] {
         &mut self.0
@@ -834,8 +820,6 @@ impl core::ops::DerefMut for WPathBuffer {
         &mut self.0
     }
 }
-#[cfg(windows)]
-pub type OSPathBuffer = WPathBuffer;
 
 /// Directory portion of `path` (handles trailing-sep stripping and root).
 pub fn dirname(path: &[u8]) -> Option<&[u8]> {
@@ -1196,11 +1180,6 @@ impl Fd {
         self.native()
     }
 
-    /// Properly converts `Fd::INVALID` into `FdOptional::NONE`.
-    #[inline]
-    pub const fn to_optional(self) -> FdOptional {
-        FdOptional(self.0)
-    }
 
     pub fn stdio_tag(self) -> Option<Stdio> {
         #[cfg(not(windows))]
@@ -1290,10 +1269,6 @@ impl Stdio {
             _ => None,
         }
     }
-    #[inline]
-    pub fn to_int(self) -> i32 {
-        self as i32
-    }
 }
 
 /// Niche-packed `Option<Fd>`: the invalid-fd bit pattern is the `none` sentinel.
@@ -1304,25 +1279,12 @@ pub struct FdOptional(FdBacking);
 impl FdOptional {
     pub const NONE: FdOptional = FdOptional(Fd::INVALID.0);
     #[inline]
-    pub const fn init(maybe: Option<Fd>) -> FdOptional {
-        match maybe {
-            Some(fd) => fd.to_optional(),
-            None => FdOptional::NONE,
-        }
-    }
-    #[inline]
     pub const fn unwrap(self) -> Option<Fd> {
         if self.0 == FdOptional::NONE.0 {
             None
         } else {
             Some(Fd(self.0))
         }
-    }
-    #[inline]
-    pub fn take(&mut self) -> Option<Fd> {
-        let r = self.unwrap();
-        *self = FdOptional::NONE;
-        r
     }
 }
 
@@ -1983,11 +1945,6 @@ pub struct Version {
 }
 
 impl Version {
-    pub const ZERO: Self = Self {
-        major: 0,
-        minor: 0,
-        patch: 0,
-    };
 
     /// Parse leading `"MAJOR.MINOR.PATCH"` from a byte slice. Per field:
     /// accumulate ASCII digits (wrapping on overflow), stop at the first
@@ -2517,10 +2474,6 @@ impl<T> Once<T> {
         }
     }
 
-    #[inline(always)]
-    pub fn done(&self) -> bool {
-        self.state.load(core::sync::atomic::Ordering::Acquire) == ONCE_DONE
-    }
 
     /// `OnceLock::get_or_init` equivalent. Hot path is the inlined DONE check;
     /// the init closure runs at most once.
@@ -2984,18 +2937,8 @@ pub mod time {
     }
     impl Timer {
         #[inline]
-        pub fn start() -> crate::CrateResult<Self> {
-            Ok(Self {
-                start: std::time::Instant::now(),
-            })
-        }
-        #[inline]
         pub fn read(&self) -> u64 {
             self.start.elapsed().as_nanos() as u64
-        }
-        #[inline]
-        pub fn reset(&mut self) {
-            self.start = std::time::Instant::now();
         }
     }
 }
@@ -3016,13 +2959,6 @@ pub enum EmbedKind {
     SrcEager,
 }
 
-pub fn runtime_embed_file(_root: EmbedKind, sub_path: &'static str) -> &'static str {
-    panic!(
-        "runtime_embed_file({sub_path}): non-embedded debug load requires a per-site \
-         static cache — migrate this call to `bun_core::runtime_embed_file!` or rebuild \
-         with codegen_embed",
-    );
-}
 
 #[doc(hidden)]
 pub fn __runtime_embed_load(kind: EmbedKind, sub: &'static str) -> String {
@@ -3140,10 +3076,6 @@ impl StringPointer {
     #[inline]
     pub fn slice<'a>(self, buf: &'a [u8]) -> &'a [u8] {
         &buf[self.offset as usize..(self.offset + self.length) as usize]
-    }
-    #[inline]
-    pub fn is_empty(self) -> bool {
-        self.length == 0
     }
 }
 
@@ -3439,22 +3371,12 @@ impl<I: GenericIndexInt, M> GenericIndex<I, M> {
     pub fn get_usize(self) -> usize {
         I::to_usize(self.get())
     }
-    /// `init()` from a `usize` source (Vec length etc.). Debug-panics on
-    /// truncation.
-    #[inline]
-    pub fn from_usize(n: usize) -> Self {
-        Self::init(I::from_usize(n))
-    }
     #[inline]
     pub fn to_optional(self) -> GenericIndexOptional<I, M> {
         GenericIndexOptional(self.0, core::marker::PhantomData)
     }
 }
 impl<I: GenericIndexInt, M> GenericIndexOptional<I, M> {
-    #[inline]
-    pub fn is_none(self) -> bool {
-        self.0 == I::NULL_VALUE
-    }
     #[inline]
     pub fn is_some(self) -> bool {
         !self.is_none()
@@ -3484,19 +3406,17 @@ impl<I: core::fmt::Debug, M> core::fmt::Debug for GenericIndexOptional<I, M> {
     }
 }
 impl<I: GenericIndexInt, M> GenericIndexOptional<I, M> {
+    #[inline]
+    pub fn is_none(self) -> bool {
+        self.0 == I::NULL_VALUE
+    }
+
     pub const NONE: Self = Self(I::NULL_VALUE, core::marker::PhantomData);
     /// Alias for `unwrap()` matching the local-newtype API that pre-existed in
     /// `bun_bundler::output_file::IndexOptional`.
     #[inline]
     pub fn get(self) -> Option<GenericIndex<I, M>> {
         self.unwrap()
-    }
-    #[inline]
-    pub fn init(maybe: Option<I>) -> Self {
-        match maybe {
-            Some(i) => GenericIndex::<I, M>::init(i).to_optional(),
-            None => Self::NONE,
-        }
     }
     #[inline]
     pub fn unwrap(self) -> Option<GenericIndex<I, M>> {
@@ -3596,8 +3516,6 @@ impl_native_endian_int!(u8, i8, u16, i16, u32, i32, u64, i64);
 // ── mach_port ─────────────────────────────────────────────────────────────
 #[cfg(target_os = "macos")]
 pub type mach_port = libc::mach_port_t;
-#[cfg(not(target_os = "macos"))]
-pub type mach_port = u32;
 
 // ── rand ──────────────────────────────────────────────────────────────────
 // xoshiro256++; the exact algorithm keeps `bun.fastRandom()` output
@@ -3963,10 +3881,6 @@ impl Argv {
     #[inline]
     pub fn len(&self) -> usize {
         self.0.len()
-    }
-    #[inline]
-    pub fn is_empty(&self) -> bool {
-        self.0.is_empty()
     }
     #[inline]
     pub fn get(&self, i: usize) -> Option<&'static ZStr> {
@@ -5092,14 +5006,6 @@ impl Timespec {
         t
     }
 
-    #[inline]
-    pub fn min(a: Timespec, b: Timespec) -> Timespec {
-        if a.order(&b).is_lt() { a } else { b }
-    }
-    #[inline]
-    pub fn max(a: Timespec, b: Timespec) -> Timespec {
-        if a.order(&b).is_gt() { a } else { b }
-    }
 
     /// `bun.timespec.orderIgnoreEpoch` — EPOCH = "no timeout", treated as +∞.
     pub fn order_ignore_epoch(a: Timespec, b: Timespec) -> core::cmp::Ordering {
@@ -5392,7 +5298,21 @@ pub mod perf {
 
     /// `bun.perf.trace("Event.name")`. Emits an ftrace span on Linux when
     /// `BUN_TRACE=1`; no-op elsewhere (macOS signposts live in `bun_perf`).
-    #[inline]
+    /// re-declaring them.
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    pub mod sys {
+        unsafe extern "C" {
+            /// No preconditions; returns 0/1 based on tracefs availability.
+            pub safe fn Bun__linux_trace_init() -> core::ffi::c_int;
+            /// No preconditions.
+            pub safe fn Bun__linux_trace_close();
+            pub fn Bun__linux_trace_emit(
+                event_name: *const core::ffi::c_char,
+                duration_ns: i64,
+            ) -> core::ffi::c_int;
+        }
+    }
+
     pub fn trace(name: &'static str) -> Ctx {
         if !is_enabled() {
             let _ = name;
@@ -5458,23 +5378,6 @@ pub mod perf {
         }
     }
 
-    /// Single source of truth for the Linux ftrace FFI decls (defined in
-    /// `src/jsc/bindings/linux_perf_tracing.cpp`). Re-exported so `bun_perf`
-    /// (the canonical signpost/ftrace entry point) imports these instead of
-    /// re-declaring them.
-    #[cfg(any(target_os = "linux", target_os = "android"))]
-    pub mod sys {
-        unsafe extern "C" {
-            /// No preconditions; returns 0/1 based on tracefs availability.
-            pub safe fn Bun__linux_trace_init() -> core::ffi::c_int;
-            /// No preconditions.
-            pub safe fn Bun__linux_trace_close();
-            pub fn Bun__linux_trace_emit(
-                event_name: *const core::ffi::c_char,
-                duration_ns: i64,
-            ) -> core::ffi::c_int;
-        }
-    }
 }
 
 // ── form_data ─────────────────────────────────────────────────────────────

@@ -403,10 +403,6 @@ impl MySQLConnection {
         true
     }
 
-    #[inline]
-    pub fn is_connected(&self) -> bool {
-        self.status == ConnectionState::Connected
-    }
 
     pub(crate) fn do_handshake(
         &mut self,

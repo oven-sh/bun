@@ -316,15 +316,7 @@ impl FileReader {
         unsafe { &mut *self.reader.get() }
     }
 
-    pub fn event_loop(&self) -> EventLoopHandle {
-        self.event_loop.get()
-    }
 
-    /// Returns the platform's `bun.Async.Loop` (`uv_loop_t*` on Windows,
-    /// `us_loop_t*` on POSIX). See `aio/{posix,windows}_event_loop.rs`.
-    pub fn loop_(&self) -> *mut bun_io::Loop {
-        self.event_loop().native_loop()
-    }
 
     // In-place init — `self` is the `context` field of an already-allocated
     // `Source`; `event_loop` is set to its real value right after the reset.

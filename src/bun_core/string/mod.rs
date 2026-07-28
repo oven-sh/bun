@@ -782,11 +782,6 @@ impl String {
         self.0.tag == Tag::Dead
     }
 
-    /// `bun.String.static` (alt. spelling for callers that prefer `from_*`).
-    #[inline]
-    pub fn from_static(s: &'static [u8]) -> Self {
-        Self::static_(s)
-    }
 
     /// `bun.String.fromBytes` — borrow `value` without copying or refcounting;
     /// auto-tags UTF-8 if `value` contains any non-ASCII byte.
@@ -1367,12 +1362,6 @@ impl ZigString {
     pub const fn init(s: &[u8]) -> Self {
         Self(bun_alloc::ZigString::init(s))
     }
-    /// [`init`](Self::init) for `'static` literals — alias for callers
-    /// spelling it `init_static`.
-    #[inline]
-    pub const fn init_static(s: &'static [u8]) -> Self {
-        Self(bun_alloc::ZigString::init(s))
-    }
     /// `ZigString.fromUTF8` — alias of [`init_utf8`].
     #[inline]
     pub fn from_utf8(s: &[u8]) -> Self {
@@ -1553,16 +1542,6 @@ impl ZigString {
         self.to_slice().slice() == other.to_slice().slice()
     }
 
-    /// `ZigString.as` — encoding-dispatched borrow as either Latin-1 bytes or
-    /// UTF-16 code units.
-    #[inline]
-    pub fn as_(&self) -> ByteString<'_> {
-        if self.is_16bit() {
-            ByteString::Utf16(self.utf16_slice_aligned())
-        } else {
-            ByteString::Latin1(self.slice())
-        }
-    }
 
     /// `ZigString.detectEncoding` — if the (currently-untagged) bytes contain
     /// any non-ASCII, mark the pointer as UTF-16 (assumes the bytes were
@@ -1588,16 +1567,6 @@ impl ZigString {
         }
     }
 
-    /// `ZigString.full` — raw 8-bit byte view without the `u32::MAX` length
-    /// clamp `slice()` applies.
-    #[inline]
-    pub fn full(&self) -> &[u8] {
-        if self.len == 0 {
-            return &[];
-        }
-        // SAFETY: untagged ptr valid for `self.len` bytes (constructor invariant).
-        unsafe { core::slice::from_raw_parts(Self::untagged(self.tagged_ptr()), self.len) }
-    }
 
     /// `ZigString.toSliceFast` — like `to_slice` but skips the Latin-1-to-UTF-8
     /// rescan for 8-bit inputs (caller asserts bytes are already valid UTF-8 /
@@ -2467,10 +2436,6 @@ impl OwnedStringCell {
     #[inline]
     pub fn replace(&self, new: String) -> OwnedString {
         OwnedString(self.0.replace(new))
-    }
-    #[inline]
-    pub fn take(&self) -> OwnedString {
-        OwnedString(self.0.replace(String::dead()))
     }
 }
 

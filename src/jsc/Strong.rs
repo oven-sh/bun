@@ -96,14 +96,6 @@ impl Optional {
         Impl::clear(r);
     }
 
-    pub fn call(&mut self, global: &JSGlobalObject, args: &[JSValue]) -> JSValue {
-        let Some(function) = self.try_swap() else {
-            return JSValue::ZERO;
-        };
-        function
-            .call(global, JSValue::UNDEFINED, args)
-            .unwrap_or(JSValue::ZERO)
-    }
 
     pub fn get(&self) -> Option<JSValue> {
         let imp = self.handle?;

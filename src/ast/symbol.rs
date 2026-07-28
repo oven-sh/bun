@@ -580,13 +580,6 @@ impl Map {
         self.symbols_for_source.get_mut(src)?.get_mut(idx)
     }
 
-    pub fn get_with_link_const(&self, ref_: Ref) -> Option<&Symbol> {
-        let symbol = self.get_const(ref_)?;
-        if symbol.has_link() {
-            return Some(self.get_const(symbol.link.get()).unwrap_or(symbol));
-        }
-        Some(symbol)
-    }
 
     pub fn follow_all(&mut self) {
         // The returned `Ctx` is RAII and ends the span on drop.

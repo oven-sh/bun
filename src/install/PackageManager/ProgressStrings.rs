@@ -22,14 +22,6 @@ impl ProgressStrings {
     .as_bytes();
     pub(crate) const DOWNLOAD_EMOJI: &'static str = "  🔍 ";
 
-    const EXTRACT_NO_EMOJI_: &'static str = "Resolving & extracting";
-    const EXTRACT_NO_EMOJI: &'static [u8] =
-        concatcp!(ProgressStrings::EXTRACT_NO_EMOJI_, "\n").as_bytes();
-    const EXTRACT_WITH_EMOJI: &'static [u8] = concatcp!(
-        ProgressStrings::EXTRACT_EMOJI,
-        ProgressStrings::EXTRACT_NO_EMOJI_
-    )
-    .as_bytes();
     pub(crate) const EXTRACT_EMOJI: &'static str = "  🚚 ";
 
     pub(crate) const INSTALL_NO_EMOJI_: &'static str = "Installing";
@@ -76,14 +68,6 @@ impl ProgressStrings {
         }
     }
 
-    #[inline]
-    pub fn extract() -> &'static [u8] {
-        if Output::enable_ansi_colors_stderr() {
-            Self::EXTRACT_WITH_EMOJI
-        } else {
-            Self::EXTRACT_NO_EMOJI
-        }
-    }
 
     #[inline]
     pub(crate) fn install() -> &'static [u8] {

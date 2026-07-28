@@ -1239,29 +1239,6 @@ impl fmt::Display for Tag {
 // ───────────────────────────────────────────────────────────────────────────
 
 impl Expr {
-    pub fn is_boolean(&self) -> bool {
-        match self.data {
-            Data::EBoolean(_) | Data::EBranchBoolean(_) => true,
-            Data::EIf(ex) => ex.yes.is_boolean() && ex.no.is_boolean(),
-            Data::EUnary(ex) => ex.op == crate::OpCode::UnNot || ex.op == crate::OpCode::UnDelete,
-            Data::EBinary(ex) => match ex.op {
-                crate::OpCode::BinStrictEq
-                | crate::OpCode::BinStrictNe
-                | crate::OpCode::BinLooseEq
-                | crate::OpCode::BinLooseNe
-                | crate::OpCode::BinLt
-                | crate::OpCode::BinGt
-                | crate::OpCode::BinLe
-                | crate::OpCode::BinGe
-                | crate::OpCode::BinInstanceof
-                | crate::OpCode::BinIn => true,
-                crate::OpCode::BinLogicalOr => ex.left.is_boolean() && ex.right.is_boolean(),
-                crate::OpCode::BinLogicalAnd => ex.left.is_boolean() && ex.right.is_boolean(),
-                _ => false,
-            },
-            _ => false,
-        }
-    }
 
     // `assign` lives in the `init`/`allocate` impl block above.
 

@@ -62,11 +62,6 @@ impl JSValue {
     pub const fn encoded(self) -> usize {
         self.0
     }
-    /// Signed view of the encoded bit-pattern.
-    #[inline]
-    pub const fn raw(self) -> i64 {
-        self.0 as i64
-    }
     #[inline]
     pub(crate) const fn from_raw(raw: i64) -> JSValue {
         JSValue(raw as usize, PhantomData)

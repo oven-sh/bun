@@ -4061,19 +4061,6 @@ impl RecordType {
 }
 
 impl Resolver {
-    /// Dereference the back-pointer to the VirtualMachine.
-    /// SAFETY: VirtualMachine outlives the Resolver (BACKREF, see field decl).
-    #[inline]
-    /// JS `new Resolver()` — `#[bun_jsc::JsClass]` requires an associated
-    /// `constructor` returning `JsResult<*mut Self>`.
-    pub fn constructor(
-        global_this: &JSGlobalObject,
-        _callframe: &CallFrame,
-    ) -> JsResult<*mut Self> {
-        // SAFETY: `bun_vm()` returns the live thread-local VM for this global.
-        let vm = global_this.bun_vm();
-        Ok(Self::init(vm))
-    }
 
     pub(crate) fn vm(&self) -> &VirtualMachine {
         self.vm.get()

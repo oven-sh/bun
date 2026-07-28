@@ -23,7 +23,6 @@ unsafe extern "C" {
         global: &JSGlobalObject,
         zig_str: &mut ZigString,
     );
-    safe fn JSC__JSString__eql(this: &JSString, global: &JSGlobalObject, other: &JSString) -> bool;
     fn JSC__JSString__iterator(this: &JSString, global_object: &JSGlobalObject, iter: *mut c_void);
     safe fn JSC__JSString__length(this: &JSString) -> usize;
     safe fn JSC__JSString__is8Bit(this: &JSString) -> bool;
@@ -76,9 +75,6 @@ impl JSString {
     // sentinel. `to_slice()` is not NUL-terminated; passing it to a C API that
     // expects one reads past the buffer end.
 
-    pub fn eql(&self, global: &JSGlobalObject, other: &JSString) -> bool {
-        JSC__JSString__eql(self, global, other)
-    }
 
     pub fn iterator(&self, global_object: &JSGlobalObject, iter: &mut Iterator) {
         // SAFETY: `self`/`global_object` are valid opaque GC-cell handles; `iter`

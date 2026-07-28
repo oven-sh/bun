@@ -3,6 +3,7 @@ use core::sync::atomic::{AtomicU8, AtomicUsize, Ordering};
 use std::sync::OnceLock;
 
 use bun_core::env_var;
+#[cfg(any(target_os = "macos", target_os = "linux", target_os = "android"))]
 use bun_semver as semver;
 
 use crate::schema::analytics;
@@ -499,10 +500,6 @@ pub mod generate_header {
                 patch: u64::from(v.patch),
                 ..Default::default()
             }
-        }
-        #[cfg(not(any(target_os = "linux", target_os = "android")))]
-        pub fn kernel_version() -> semver::Version {
-            unreachable!("kernel_version() is only implemented on Linux");
         }
 
         #[unsafe(no_mangle)]

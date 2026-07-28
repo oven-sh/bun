@@ -385,13 +385,6 @@ impl<'a> Printer<'a> {
         self.ctx
     }
 
-    /// To satisfy io.Writer interface
-    ///
-    /// NOTE: Same constraints as `write_str`, the `str` param is assumed to not
-    /// contain any newline characters
-    pub fn write_all(&mut self, str_: &[u8]) -> Result<(), bun_alloc::AllocError> {
-        self.write_str(str_).map_err(|_| bun_alloc::AllocError)
-    }
 }
 
 /// `Printer` participates in `serializer::serialize_*<W: bun_io::Write>` so

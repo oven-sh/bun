@@ -168,10 +168,6 @@ impl<'a> JSPropertyIterator<'a> {
         })
     }
 
-    pub fn reset(&mut self) {
-        self.iter_i = 0;
-        self.i = 0;
-    }
 
     /// The bun.String returned has not incremented its reference count.
     pub fn next(&mut self) -> JsResult<Option<bstr::String>> {

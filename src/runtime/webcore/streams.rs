@@ -477,16 +477,6 @@ impl WritablePending {
 }
 
 impl Writable {
-    pub fn is_done(&self) -> bool {
-        matches!(
-            self,
-            Writable::OwnedAndDone(_)
-                | Writable::TemporaryAndDone(_)
-                | Writable::IntoArrayAndDone(_)
-                | Writable::Done
-                | Writable::Err(_)
-        )
-    }
 
     pub(crate) fn fulfill_promise(
         result: Writable,
@@ -864,10 +854,6 @@ impl Signal {
         }
     }
 
-    pub fn init<T: SignalHandler>(handler: &mut T) -> Signal {
-        // SAFETY: &mut T is a valid non-null pointer
-        unsafe { Self::init_with_type(std::ptr::from_mut::<T>(handler)) }
-    }
 
     pub fn close(&mut self, err: Option<SysError>) {
         if self.is_dead() {
@@ -1601,9 +1587,6 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
         self.writable_result(len)
     }
 
-    pub fn write_bytes(&mut self, data: &StreamResult) -> Writable {
-        self.write(data)
-    }
 
     pub(crate) fn write_latin1(&mut self, data: &StreamResult) -> Writable {
         if self.done || self.requested_end {
@@ -2227,9 +2210,6 @@ impl NetworkSink {
         Writable::Owned(len)
     }
 
-    pub fn write_bytes(&mut self, data: &StreamResult) -> Writable {
-        self.write(data)
-    }
 
     pub(crate) fn write_latin1(&mut self, data: &StreamResult) -> Writable {
         if self.ended {
@@ -2419,14 +2399,6 @@ impl BufferAction {
         JSPromise::opaque_mut(self.swap()).reject(global, Ok(err.to_js(global)))
     }
 
-    pub fn resolve(
-        &mut self,
-        global: &JSGlobalObject,
-        result: JSValue,
-    ) -> core::result::Result<(), jsc::JsTerminated> {
-        // S008: `JSPromise` is an `opaque_ffi!` ZST — safe `*mut → &mut` deref.
-        JSPromise::opaque_mut(self.swap()).resolve(global, result)
-    }
 
     pub fn value(&self) -> JSValue {
         self.promise.value()

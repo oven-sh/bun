@@ -240,10 +240,6 @@ pub struct ArgumentsSlice<'a> {
     /// Cursor into `remaining_buf`; advances on `eat()`.
     remaining_start: usize,
     pub vm: &'a VirtualMachine,
-    /// `bun_alloc::Arena` is a `MimallocArena`
-    /// whose `new()` calls `mi_heap_new()` eagerly, so we keep it `None` until a
-    /// caller actually needs scratch storage (currently none do).
-    pub(crate) arena: Option<bun_alloc::Arena>,
     pub all: &'a [JSValue],
     pub(crate) protected: IntegerBitSet<32>,
     pub will_be_async: bool,
@@ -256,11 +252,6 @@ impl<'a> ArgumentsSlice<'a> {
         &self.remaining_buf[self.remaining_start..]
     }
 
-    /// Lazily create the scratch arena.
-    #[inline]
-    pub fn arena(&mut self) -> &bun_alloc::Arena {
-        self.arena.get_or_insert_with(bun_alloc::Arena::new)
-    }
 
     pub(crate) fn unprotect(&mut self) {
         let mut iter = self.protected.iterator::<true, true>();
@@ -295,7 +286,6 @@ impl<'a> ArgumentsSlice<'a> {
             remaining_start: 0,
             vm,
             all: slice,
-            arena: None,
             protected: IntegerBitSet::<32>::init_empty(),
             will_be_async: false,
         }
@@ -328,7 +318,6 @@ impl<'a> ArgumentsSlice<'a> {
 impl<'a> Drop for ArgumentsSlice<'a> {
     fn drop(&mut self) {
         self.unprotect();
-        // arena dropped automatically
     }
 }
 

@@ -127,35 +127,6 @@ impl ConsoleObject {
     // `VirtualMachine.console` stores the raw pointer (`*mut c_void`), so
     // callers leak via `heap::alloc(Pin::into_inner_unchecked(..))` — the
     // VM owns it for the process lifetime.
-    pub fn init(
-        error_writer: Output::StreamType,
-        writer: Output::StreamType,
-    ) -> core::pin::Pin<Box<ConsoleObject>> {
-        let mut out = Box::new(ConsoleObject {
-            stderr_buffer: [0; 4096],
-            stdout_buffer: [0; 4096],
-            error_writer_backing: Output::QuietWriterAdapter::uninit(),
-            writer_backing: Output::QuietWriterAdapter::uninit(),
-            default_indent: 0,
-            counts: Counter::default(),
-            _pin: core::marker::PhantomPinned,
-        });
-        let p: *mut ConsoleObject = &raw mut *out;
-        // SAFETY: `out` is heap-allocated at its final address; the adapters
-        // store raw pointers into `out.{stderr,stdout}_buffer`, which remain
-        // valid for the box's lifetime. We split the borrow through a raw
-        // pointer because `adapt_to_new_api` would otherwise hold a unique
-        // borrow of one field while we assign another.
-        unsafe {
-            (*p).error_writer_backing = error_writer
-                .quiet_writer()
-                .adapt_to_new_api(&mut (*p).stderr_buffer);
-            (*p).writer_backing = writer
-                .quiet_writer()
-                .adapt_to_new_api(&mut (*p).stdout_buffer);
-        }
-        Box::into_pin(out)
-    }
 
     /// Out-param variant kept for callers that already own pinned storage
     /// (e.g. a static / arena slot). The address of `*out` MUST be stable for

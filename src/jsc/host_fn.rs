@@ -430,29 +430,7 @@ pub fn host_fn_construct_this<R: IntoHostConstructReturn>(
     host_construct_result(global, || f(global, callframe, this_value))
 }
 
-/// `getInternalProperties`: `fn(&mut self, &JSGlobalObject, JSValue) -> R`.
-#[track_caller]
-#[inline]
-pub fn host_fn_internal_props<T, R: IntoHostFnReturn>(
-    this: &mut T,
-    global: &JSGlobalObject,
-    this_value: JSValue,
-    f: impl FnOnce(&mut T, &JSGlobalObject, JSValue) -> R,
-) -> JSValue {
-    host_fn_result(global, || f(this, global, this_value))
-}
 
-/// `fn(&self, &JSGlobalObject, JSValue) -> R`.
-#[track_caller]
-#[inline]
-pub fn host_fn_internal_props_shared<T, R: IntoHostFnReturn>(
-    this: &T,
-    global: &JSGlobalObject,
-    this_value: JSValue,
-    f: impl FnOnce(&T, &JSGlobalObject, JSValue) -> R,
-) -> JSValue {
-    host_fn_result(global, || f(this, global, this_value))
-}
 
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -507,17 +485,6 @@ pub fn host_fn_getter_shared<T, R: IntoHostFnReturn>(
     host_fn_result(global, || f(this, global))
 }
 
-/// Prototype getter (this: true): `fn(&mut self, JSValue, &JSGlobalObject) -> R`.
-#[track_caller]
-#[inline]
-pub fn host_fn_getter_this<T, R: IntoHostFnReturn>(
-    this: &mut T,
-    this_value: JSValue,
-    global: &JSGlobalObject,
-    f: impl FnOnce(&mut T, JSValue, &JSGlobalObject) -> R,
-) -> JSValue {
-    host_fn_result(global, || f(this, this_value, global))
-}
 
 /// Prototype getter (`sharedThis`, this: true):
 /// `fn(&self, JSValue, &JSGlobalObject) -> R`.
@@ -544,18 +511,6 @@ pub fn host_fn_setter_shared<T, R: IntoHostSetterReturn>(
     host_setter_result(global, || f(this, global, value))
 }
 
-/// Prototype setter (this: true): `fn(&mut self, JSValue, &JSGlobalObject, JSValue) -> R`.
-#[track_caller]
-#[inline]
-pub fn host_fn_setter_this<T, R: IntoHostSetterReturn>(
-    this: &mut T,
-    this_value: JSValue,
-    global: &JSGlobalObject,
-    value: JSValue,
-    f: impl FnOnce(&mut T, JSValue, &JSGlobalObject, JSValue) -> R,
-) -> bool {
-    host_setter_result(global, || f(this, this_value, global, value))
-}
 
 /// Prototype setter (`sharedThis`, this: true):
 /// `fn(&self, JSValue, &JSGlobalObject, JSValue) -> R`.

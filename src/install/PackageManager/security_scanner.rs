@@ -16,7 +16,7 @@ use crate::package_manager_real::Command::Context as CommandContext;
 use bun_collections::ArrayHashMap;
 use bun_core::strings;
 use bun_core::{self, Output};
-use bun_event_loop::{AnyEventLoop, EventLoopHandle};
+use bun_event_loop::EventLoopHandle;
 use bun_install::{
     DependencyID, PackageID, PackageManager, invalid_dependency_id, invalid_package_id,
 };
@@ -1362,9 +1362,6 @@ impl<'a> SecurityScanSubprocess<'a> {
         self.has_process_exited && self.remaining_fds == 0
     }
 
-    pub fn event_loop(&self) -> &AnyEventLoop {
-        &self.manager.event_loop
-    }
 
     pub(crate) fn loop_(&mut self) -> *mut AsyncLoop {
         self.manager.event_loop.native_loop()

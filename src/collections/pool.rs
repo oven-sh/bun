@@ -38,37 +38,8 @@ impl<T> Node<T> {
         unsafe { (*p).next }
     }
 
-    /// See [`Node::data_ref`] for safety requirements.
-    #[inline]
-    pub unsafe fn data_mut(&mut self) -> &mut T {
-        // SAFETY: caller guarantees `data` is initialized.
-        unsafe { self.data.assume_init_mut() }
-    }
 
-    /// Insert a new node after the current one.
-    ///
-    /// Arguments:
-    ///     new_node: Pointer to the new node to insert.
-    pub fn insert_after(&mut self, new_node: &mut Node<T>) {
-        new_node.next = self.next;
-        self.next = std::ptr::from_mut::<Node<T>>(new_node);
-    }
 
-    /// Remove a node from the list.
-    ///
-    /// Arguments:
-    ///     node: Pointer to the node to be removed.
-    /// Returns:
-    ///     node removed
-    pub fn remove_next(&mut self) -> Option<*mut Node<T>> {
-        let next_node = if self.next.is_null() {
-            return None;
-        } else {
-            self.next
-        };
-        self.next = Node::next_of(next_node);
-        Some(next_node)
-    }
 
     /// Iterate over each next node, returning the count of all nodes except the starting one.
     /// This operation is O(N).
@@ -231,6 +202,7 @@ pub trait ObjectPoolTrait {
     type Item;
     type Node;
 }
+
 
 impl<T: ObjectPoolType, const TS: bool, const MAX: usize, S> ObjectPoolTrait
     for ObjectPool<T, TS, MAX, S>

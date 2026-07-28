@@ -227,11 +227,6 @@ impl WriteFile {
     #[cfg(not(windows))]
     pub(crate) const IO_TAG: io::Tag = io::Tag::WriteFile;
 
-    pub fn on_writable(request: &mut io::Request) {
-        // SAFETY: request points to WriteFile.io_request
-        let this = unsafe { &mut *WriteFile::from_io_request(std::ptr::from_mut(request)) };
-        this.on_ready();
-    }
 
     pub fn on_ready(&mut self) {
         bun_output::scoped_log!(WriteFile, "WriteFile.onReady()");

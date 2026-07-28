@@ -33,8 +33,6 @@ pub use posix_spawn::WaitPidResult;
 #[cfg(windows)]
 #[derive(Clone, Copy)]
 pub struct WaitPidResult {
-    pub pid: PidT,
-    pub status: c_int,
 }
 
 /// Low-level fd / memfd helpers historically grouped here as `spawn_sys`.
@@ -207,33 +205,6 @@ pub fn event_loop_handle_to_ctx(handle: EventLoopHandle) -> bun_io::EventLoopCtx
 
 // ─── posix_spawn / FilePoll / uv-backed Process methods ──────────────────────
 impl Process {
-    #[cfg(windows)]
-    /// SAFETY: `this` must be the live heap-allocated `Process` (the same
-    /// pointer stored in `uv_process_t.data`).
-    ///
-    /// Receiver is `*mut Process`, not `&mut self`: this path synchronously
-    /// runs the exit logic, and `on_exit_uv` re-derives `&mut Process` from
-    /// the heap-root `data` pointer. A `&mut self` argument carries a
-    /// Stacked-Borrows protector for the call's full duration, so that
-    /// re-derivation would pop the protected tag → instant UB.
-    pub unsafe fn update_status_on_windows(this: *mut Process) {
-        // Run the exit logic inline with
-        // exit_status=0 / term_signal=0 (→ `Exited{0,0}`) instead of
-        // round-tripping through `on_exit_uv`'s `data`-ptr lookup, which
-        // would create a second `&mut Process` aliasing the one below.
-        // SAFETY: caller contract — `this` is live and exclusively accessed.
-        let p = unsafe { &mut *this };
-        if let Poller::Uv(uv_proc) = &mut p.poller {
-            if uv_proc.is_active() || !matches!(p.status, Status::Running) {
-                return;
-            }
-            let rusage = uv_getrusage(uv_proc);
-            // NLL: `uv_proc`'s borrow of `p.poller` ends here; `p` is free
-            // to be reborrowed whole for `close()` / `on_exit()`.
-            p.close();
-            p.on_exit(Status::Exited(Exited { code: 0, signal: 0 }), &rusage);
-        }
-    }
 
     #[cfg(unix)]
     pub(crate) fn init_posix(
@@ -624,9 +595,6 @@ impl Process {
         self.poller.disable_keeping_event_loop_alive(ctx);
     }
 
-    pub fn has_ref(&self) -> bool {
-        self.poller.has_ref()
-    }
 
     pub fn enable_keeping_event_loop_alive(&mut self) {
         if self.has_exited() {
@@ -854,32 +822,20 @@ impl PollerPosix {
         }
     }
 
-    /// Borrow the hive-allocated `FilePoll` slot if this poller is `Fd`.
+    /// Mutably borrow the hive-allocated `FilePoll` slot if this poller is `Fd`.
     ///
     /// Single `unsafe` deref site for the `NonNull<FilePoll>` payload. The slot
     /// lives in the hive `Store` until `deinit` returns it; the only Rust handle
-    /// is the `NonNull` inside this enum, so `&self` ⇒ no overlapping `&mut`.
-    #[inline]
-    fn fd_poll(&self) -> Option<&FilePoll> {
-        match self {
-            // SAFETY: `Fd` holds the unique handle to a live hive slot, freed
-            // only via `deinit` (which consumes the variant). `&self` rules out
-            // any concurrent exclusive borrow of the slot.
-            PollerPosix::Fd(poll) => Some(unsafe { poll.as_ref() }),
-            _ => None,
-        }
-    }
-
-    /// Mutably borrow the hive-allocated `FilePoll` slot if this poller is `Fd`.
-    ///
-    /// See [`fd_poll`](Self::fd_poll); `&mut self` additionally guarantees the
-    /// returned `&mut FilePoll` is the only live reference to the slot
+    /// is the `NonNull` inside this enum, so `&mut self` ⇒ the returned
+    /// `&mut FilePoll` is the only live reference to the slot
     /// (event-loop-thread exclusive).
     #[inline]
     fn fd_poll_mut(&mut self) -> Option<&mut FilePoll> {
         match self {
-            // SAFETY: see `fd_poll`. `&mut self` ⇒ exclusive access to the
-            // unique handle ⇒ exclusive access to the hive slot.
+            // SAFETY: `Fd` holds the unique handle to a live hive slot, freed
+            // only via `deinit` (which consumes the variant). `&mut self` ⇒
+            // exclusive access to the unique handle ⇒ exclusive access to
+            // the hive slot.
             PollerPosix::Fd(poll) => Some(unsafe { poll.as_mut() }),
             _ => None,
         }
@@ -901,15 +857,6 @@ impl PollerPosix {
         }
     }
 
-    pub fn has_ref(&self) -> bool {
-        if let Some(fd) = self.fd_poll() {
-            return fd.can_enable_keeping_process_alive();
-        }
-        match self {
-            PollerPosix::WaiterThread(w) => w.is_active(),
-            _ => false,
-        }
-    }
 }
 
 #[cfg(unix)]
@@ -953,12 +900,6 @@ impl PollerWindows {
         }
     }
 
-    pub fn has_ref(&self) -> bool {
-        match self {
-            PollerWindows::Uv(p) => p.has_ref(),
-            _ => false,
-        }
-    }
 }
 
 #[cfg(unix)]
@@ -1057,9 +998,6 @@ pub mod waiter_thread_posix {
             };
         }
 
-        pub fn run_from_main_thread_mini(self, _: *mut ()) {
-            self.run_from_main_thread();
-        }
     }
 
     /// Posted to `MiniEventLoop` from the waiter thread. Self-referential via
@@ -1426,12 +1364,7 @@ pub enum WaiterThread {}
 
 #[cfg(not(unix))]
 impl WaiterThread {
-    #[inline]
-    pub fn should_use_waiter_thread() -> bool {
-        false
-    }
     pub fn set_should_use_waiter_thread() {}
-    pub fn reload_handlers() {}
 }
 
 // (PosixSpawnOptions / StdioKind / Dup2 / PosixStdio moved to bun_spawn_sys —
@@ -1527,16 +1460,6 @@ impl WindowsSpawnResult {
         self.process.take().unwrap()
     }
 
-    pub fn close(&mut self) {
-        if let Some(proc) = self.process.take() {
-            // SAFETY: proc is a live intrusive-refcounted Process
-            unsafe {
-                (*proc).close();
-                (*proc).detach();
-                bun_ptr::ThreadSafeRefCount::<Process>::deref(proc);
-            }
-        }
-    }
 }
 
 #[cfg(windows)]

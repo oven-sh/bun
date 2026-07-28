@@ -9,7 +9,6 @@ use crate::lockfile_real::package::scripts::List as ScriptsList;
 use crate::package_manager_real::ProgressStrings;
 use crate::package_manager_real::package_manager_lifecycle::LifecycleScriptTimeLogEntry;
 use bun_core::{Global, Output};
-use bun_event_loop::AnyEventLoop;
 use bun_io::BufferedReader;
 use bun_io::heap as io_heap;
 #[cfg(unix)]
@@ -383,9 +382,6 @@ impl<'a> LifecycleScriptSubprocess<'a> {
         unsafe { self.manager.get_mut() }
     }
 
-    pub fn event_loop(&self) -> &AnyEventLoop {
-        &self.manager().event_loop
-    }
 
     pub(crate) fn script_name(&self) -> &'static [u8] {
         debug_assert!((self.current_script_index as usize) < LockfileScripts::NAMES.len());

@@ -909,7 +909,6 @@ pub mod resolved_source_tag {
         pub const Javascript: Self = Self(0);
         pub const PackageJsonTypeModule: Self = Self(1);
         pub const PackageJsonTypeCommonjs: Self = Self(2);
-        pub const File: Self = Self(5);
         pub const Esm: Self = Self(6);
         pub const JsonForObjectLoader: Self = Self(7);
         /// Generate an object with `default` set to all the exports, including a `default` property.
@@ -1013,7 +1012,6 @@ impl BuiltinName {
     // streams.rs / fetch.rs / TextDecoder.rs / pretty_format.rs use these).
     pub const Method: Self = Self::method;
     pub const Headers: Self = Self::headers;
-    pub const Status: Self = Self::status;
     pub const Url: Self = Self::url;
     pub const Body: Self = Self::body;
     pub const Data: Self = Self::data;
@@ -1025,11 +1023,7 @@ impl BuiltinName {
     pub const Error: Self = Self::error;
     pub const Encoding: Self = Self::encoding;
     pub const Type: Self = Self::type_;
-    pub const Signal: Self = Self::signal;
 
-    pub fn has(property: &[u8]) -> bool {
-        Self::get(property).is_some()
-    }
     pub fn get(property: &[u8]) -> Option<BuiltinName> {
         BUILTIN_NAME_MAP.get(property).copied()
     }
@@ -1886,9 +1880,6 @@ pub struct Ref {
 }
 
 impl Ref {
-    pub fn init() -> Ref {
-        Ref::default()
-    }
 
     pub fn unref(&mut self, vm: &mut virtual_machine::VirtualMachine) {
         if !self.has {

@@ -384,9 +384,6 @@ pub struct TagInfo {
 }
 
 impl TagInfo {
-    pub fn eql(&self, that: &TagInfo, this_buf: &[u8], that_buf: &[u8]) -> bool {
-        self.name.eql(that.name, this_buf, that_buf) && self.tag.eql(that.tag, this_buf, that_buf)
-    }
 }
 
 #[derive(Clone, Copy)]
@@ -894,14 +891,6 @@ impl Libc {
     // TODO: runtime libc detection
 
     #[inline]
-    pub const fn none() -> Self {
-        Self::NONE
-    }
-    #[inline]
-    pub const fn all() -> Self {
-        Self::ALL
-    }
-    #[inline]
     pub(crate) fn has(self, other: u8) -> bool {
         (self.0 & other) != 0
     }
@@ -950,8 +939,6 @@ impl Architecture {
     #[cfg(target_arch = "x86_64")]
     pub const CURRENT: Self = Self(Self::X64);
 
-    #[cfg(target_arch = "aarch64")]
-    pub const CURRENT_NAME: &'static str = "arm64";
 
     #[inline]
     pub const fn none() -> Self {
@@ -1242,28 +1229,7 @@ impl Features {
     pub const fn main() -> Self {
         Self::MAIN
     }
-    #[inline]
-    pub const fn npm() -> Self {
-        Self::NPM
-    }
-    #[inline]
-    pub const fn workspace() -> Self {
-        Self::WORKSPACE
-    }
-    #[inline]
-    pub const fn link() -> Self {
-        Self::LINK
-    }
 
-    pub fn behavior(self) -> Behavior {
-        let mut out: u8 = 0;
-        out |= (self.dependencies as u8) << 1;
-        out |= (self.optional_dependencies as u8) << 2;
-        out |= (self.dev_dependencies as u8) << 3;
-        out |= (self.peer_dependencies as u8) << 4;
-        out |= (self.workspaces as u8) << 5;
-        Behavior::from_bits_retain(out)
-    }
 
     const fn base() -> Self {
         Self {

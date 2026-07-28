@@ -63,6 +63,7 @@ pub enum Tag {
 impl Tag {
     pub const COUNT: usize = 7;
 
+
     #[inline]
     const fn from_raw(n: u8) -> Tag {
         match n {

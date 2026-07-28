@@ -175,7 +175,6 @@ pub struct HiveArray<T, const CAPACITY: usize> {
 }
 
 impl<T, const CAPACITY: usize> HiveArray<T, CAPACITY> {
-    pub const SIZE: usize = CAPACITY;
 
     pub const fn init() -> Self {
         Self {

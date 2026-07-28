@@ -384,9 +384,6 @@ pub struct ZigFormatter<'a, 'b> {
 }
 
 impl<'a, 'b> ZigFormatter<'a, 'b> {
-    pub fn new(formatter: &'a mut Formatter<'b>, global: &'b JSGlobalObject, value: JSValue) -> Self {
-        Self { formatter: Cell::new(Some(formatter)), global, value }
-    }
 }
 
 impl core::fmt::Display for ZigFormatter<'_, '_> {

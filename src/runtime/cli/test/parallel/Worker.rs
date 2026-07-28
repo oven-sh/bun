@@ -13,8 +13,7 @@ use crate::api::bun::process::SpawnResultExt as _;
 use crate::api::bun::process::WindowsStdio as Stdio;
 use crate::api::bun::process::{self as spawn, Process, Rusage, SpawnOptions, Status};
 use bun_core::{self, Output};
-use bun_io as r#async;
-use bun_io;
+#[cfg(windows)]
 use bun_jsc as jsc;
 use bun_sys;
 
@@ -336,24 +335,6 @@ impl Worker {
         self.alive = false;
         // SAFETY: coord backref valid for worker lifetime; mutation — see `coord` field doc (provenance caveats).
         unsafe { (*self.coord.cast_mut()).on_worker_exit(self, status) };
-    }
-
-    /// Borrow the parent `Coordinator`.
-    ///
-    /// SAFETY (invariant): `coord` is a backref to the owning `Coordinator`,
-    /// set at construction and valid for the worker's entire lifetime (the
-    /// coordinator owns all workers). Never null.
-    #[inline]
-    fn coord(&self) -> &Coordinator<'static> {
-        // SAFETY: see doc comment — non-null backref valid for `'_`.
-        unsafe { &*self.coord }
-    }
-
-    pub fn event_loop(&self) -> *mut jsc::event_loop::EventLoop {
-        self.coord().vm.event_loop()
-    }
-    pub fn loop_(&self) -> *mut r#async::Loop {
-        self.coord().vm.uv_loop()
     }
 
     pub(crate) fn dispatch(&mut self, file_idx: u32, file: &[u8]) {

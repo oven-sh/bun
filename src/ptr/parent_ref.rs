@@ -110,11 +110,6 @@ impl<T: ?Sized> ParentRef<T> {
         unsafe { self.ptr.as_ref() }
     }
 
-    /// Raw pointer (for `container_of`, FFI round-trip, ptr-eq).
-    #[inline]
-    pub fn as_ptr(self) -> *const T {
-        self.ptr.as_ptr()
-    }
 
     /// Raw pointer with the provenance the `ParentRef` was constructed with.
     /// Only carries write permission if constructed via

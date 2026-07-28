@@ -693,10 +693,6 @@ impl JSMySQLConnection {
         self.connection.get().is_able_to_write()
     }
     #[inline]
-    pub fn is_connected(&self) -> bool {
-        self.connection.get().status == my_sql_connection::Status::Connected
-    }
-    #[inline]
     pub(crate) fn can_pipeline(&self) -> bool {
         self.connection_mut().can_pipeline()
     }

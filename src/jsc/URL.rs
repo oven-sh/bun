@@ -19,28 +19,16 @@ unsafe extern "C" {
     safe fn URL__username(url: &URL) -> String;
     safe fn URL__password(url: &URL) -> String;
     safe fn URL__host(url: &URL) -> String;
-    safe fn URL__hostname(url: &URL) -> String;
     safe fn URL__port(url: &URL) -> u32;
     fn URL__deinit(url: *mut URL);
     safe fn URL__pathname(url: &URL) -> String;
     safe fn URL__getHrefFromJS(value: JSValue, global: &JSGlobalObject) -> String;
     safe fn URL__getFileURLString(input: &mut String) -> String;
-    safe fn URL__getHrefJoin(base: &mut String, relative: &mut String) -> String;
     safe fn URL__pathFromFileURL(input: &mut String) -> String;
-    safe fn URL__hash(url: &URL) -> String;
 }
 
 impl URL {
-    /// Includes the leading '#'.
-    pub fn hash(&self) -> String {
-        URL__hash(self)
-    }
 
-    pub fn join(base: String, relative: String) -> String {
-        let mut base_str = base;
-        let mut relative_str = relative;
-        URL__getHrefJoin(&mut base_str, &mut relative_str)
-    }
 
     pub fn file_url_from_string(str: String) -> String {
         let mut input = str;
@@ -99,17 +87,6 @@ impl URL {
         URL__host(self)
     }
 
-    /// Returns the host WITH the port.
-    ///
-    /// Note that this does NOT match JS behavior which returns the host without the port. See
-    /// `host` for the JS equivalent of `hostname`.
-    ///
-    /// ```text
-    /// URL("http://example.com:8080").hostname() => "example.com:8080"
-    /// ```
-    pub fn hostname(&self) -> String {
-        URL__hostname(self)
-    }
 
     /// Returns `u32::MAX` if the port is not set. Otherwise, `port`
     /// is guaranteed to be within the `u16` range.

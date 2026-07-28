@@ -607,10 +607,6 @@ impl<T> Slice<T> {
         self.len
     }
 
-    #[inline]
-    pub fn is_empty(&self) -> bool {
-        self.len == 0
-    }
 
     /// Typed column base for field `fi`. Substitutes a properly-aligned
     /// dangling pointer when `F` is a ZST (the computed column offset is not
@@ -862,13 +858,6 @@ impl<T, A: Allocator + Default> Default for MultiArrayList<T, A> {
 }
 
 impl<T> MultiArrayList<T, Global> {
-    pub const EMPTY: Self = Self {
-        bytes: Reflected::<T>::DANGLING,
-        len: 0,
-        capacity: 0,
-        alloc: Global,
-        _marker: PhantomData,
-    };
 }
 
 impl<T, A: Allocator> MultiArrayList<T, A> {
@@ -890,10 +879,6 @@ impl<T, A: Allocator> MultiArrayList<T, A> {
         self.len
     }
 
-    #[inline]
-    pub fn is_empty(&self) -> bool {
-        self.len == 0
-    }
 
     #[inline]
     pub fn capacity(&self) -> usize {
@@ -989,23 +974,7 @@ impl<T, A: Allocator> MultiArrayList<T, A> {
         s.set(self.len - 1, elem);
     }
 
-    /// Extend the list by 1 element, returning the newly reserved
-    /// index with uninitialized data.
-    /// Allocates more memory as necessary.
-    pub fn add_one(&mut self) -> Result<usize, AllocError> {
-        self.ensure_unused_capacity(1)?;
-        Ok(self.add_one_assume_capacity())
-    }
 
-    /// Extend the list by 1 element, asserting `self.capacity`
-    /// is sufficient to hold an additional item. Returns the
-    /// newly reserved index with uninitialized data.
-    pub fn add_one_assume_capacity(&mut self) -> usize {
-        debug_assert!(self.len < self.capacity);
-        let index = self.len;
-        self.len += 1;
-        index
-    }
 
     /// Remove and return the last element from the list, or return `None` if list is empty.
     /// Invalidates pointers to fields of the removed element.
@@ -1105,10 +1074,6 @@ impl<T, A: Allocator> MultiArrayList<T, A> {
         self.len = 0;
     }
 
-    /// Reduce length to `new_len`.
-    pub fn shrink_retaining_capacity(&mut self, new_len: usize) {
-        self.len = new_len;
-    }
 
     /// Invalidates all element pointers.
     pub fn clear_retaining_capacity(&mut self) {

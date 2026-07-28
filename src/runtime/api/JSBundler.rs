@@ -1890,13 +1890,6 @@ fn __bun_blob_from_build_artifact(value: JSValue) -> Option<*mut Blob> {
 }
 
 impl BuildArtifact {
-    /// `BuildArtifact` is not user-constructible (`noConstructor` in .classes.ts).
-    pub fn constructor(
-        global_this: &JSGlobalObject,
-        _callframe: &CallFrame,
-    ) -> JsResult<*mut BuildArtifact> {
-        Err(global_this.throw(format_args!("BuildArtifact is not constructable")))
-    }
 
     #[bun_jsc::host_fn(method)]
     pub(crate) fn get_text(

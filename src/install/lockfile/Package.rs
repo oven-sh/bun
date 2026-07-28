@@ -1539,18 +1539,6 @@ impl Diff {
 }
 
 impl Package<u64> {
-    pub fn hash(name: &[u8], version: SemverVersion) -> u64 {
-        let mut hasher = bun_wyhash::Wyhash::init(0);
-        hasher.update(name);
-        // SAFETY: Semver.Version is POD; reading its raw bytes is sound.
-        hasher.update(unsafe {
-            bun_core::ffi::slice(
-                (&raw const version).cast::<u8>(),
-                mem::size_of::<SemverVersion>(),
-            )
-        });
-        hasher.final_()
-    }
 
     pub fn parse<R: ResolverContext>(
         &mut self,

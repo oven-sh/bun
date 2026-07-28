@@ -128,16 +128,6 @@ impl JSObject {
         self.to_js().get(global, prop.as_ref())
     }
 
-    #[inline]
-    pub fn put(
-        &self,
-        global: &JSGlobalObject,
-        key: impl AsRef<[u8]>,
-        value: JSValue,
-    ) -> JsResult<()> {
-        self.to_js().put(global, key.as_ref(), value);
-        Ok(())
-    }
 
     /// # Safety
     /// `owner` must be a cell-tagged `JSValue` (its payload is a live

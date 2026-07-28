@@ -1129,17 +1129,6 @@ impl<'a, K, V, C, A: MapAllocator> OccupiedEntry<'a, K, V, C, A> {
     pub fn into_mut(self) -> &'a mut V {
         &mut self.map.values[self.idx]
     }
-    #[inline]
-    pub fn key(&self) -> &K {
-        &self.map.keys[self.idx]
-    }
-    #[inline]
-    pub fn index(&self) -> usize {
-        self.idx
-    }
-    pub fn insert(&mut self, value: V) -> V {
-        core::mem::replace(&mut self.map.values[self.idx], value)
-    }
 }
 
 pub struct VacantEntry<'a, K, V, C, A: MapAllocator = Global> {
@@ -1149,10 +1138,6 @@ pub struct VacantEntry<'a, K, V, C, A: MapAllocator = Global> {
 }
 
 impl<'a, K, V, C, A: MapAllocator> VacantEntry<'a, K, V, C, A> {
-    #[inline]
-    pub fn key(&self) -> &K {
-        &self.key
-    }
     pub fn insert(self, value: V) -> &'a mut V {
         let i = self.map.push_entry(self.key, value, self.hash);
         &mut self.map.values[i]
@@ -1735,15 +1720,6 @@ impl<V, A: Allocator + HashbrownAllocator + Clone + Default> StringHashMap<V, A>
         Self::default()
     }
 
-    pub fn with_capacity(n: usize) -> Self {
-        Self {
-            inner: hashbrown::HashMap::with_capacity_and_hasher_in(
-                n,
-                bun_wyhash::BuildHasher::default(),
-                A::default(),
-            ),
-        }
-    }
 
     #[inline]
     pub fn count(&self) -> usize {
@@ -1768,10 +1744,6 @@ impl<V, A: Allocator + HashbrownAllocator + Clone + Default> StringHashMap<V, A>
         Ok(())
     }
 
-    pub fn ensure_unused_capacity(&mut self, additional: usize) -> Result<(), AllocError> {
-        self.inner.reserve(additional);
-        Ok(())
-    }
 
     pub fn put(&mut self, key: &[u8], value: V) -> Result<(), AllocError> {
         use hashbrown::hash_map::RawEntryMut;

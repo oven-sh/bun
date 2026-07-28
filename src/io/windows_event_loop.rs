@@ -137,17 +137,6 @@ impl FilePoll {
         vm.file_polls_mut().put(this, vm, was_ever_registered);
     }
 
-    pub fn is_readable(&mut self) -> bool {
-        let readable = self.flags.contains(Flags::Readable);
-        self.flags.remove(Flags::Readable);
-        readable
-    }
-
-    pub fn is_writable(&mut self) -> bool {
-        let readable = self.flags.contains(Flags::Writable);
-        self.flags.remove(Flags::Writable);
-        readable
-    }
 
     pub(crate) fn deinit_with_vm(&mut self, vm: EventLoopCtx) {
         // `loop_mut()` — crate-private nonnull-asref accessor (single deref in
@@ -168,18 +157,6 @@ impl FilePoll {
         vm.loop_add_active(self.flags.contains(Flags::HasIncrementedPollCount) as u32);
     }
 
-    /// Only intended to be used from EventLoop.Pollable
-    // Note: the cycle-broken `EventLoopCtx::platform_event_loop` vtable is typed
-    // `*mut bun_uws_sys::Loop` (the uws `WindowsLoop` wrapper) so the
-    // impl-crate bodies (`VirtualMachine::uws_loop` / `MiniEventLoop::loop_ptr`)
-    // type-check. `WindowsLoop::sub_active`/`add_active` proxy straight through
-    // to `(*self.uv_loop).{sub,add}_active`, so accept the wrapper here.
-    pub fn deactivate(&mut self, loop_: &mut WindowsLoop) {
-        debug_assert!(self.flags.contains(Flags::HasIncrementedPollCount));
-        loop_.sub_active(self.flags.contains(Flags::HasIncrementedPollCount) as u32);
-        bun_core::scoped_log!(FilePoll, "deactivate - {}", loop_.uv().active_handles);
-        self.flags.remove(Flags::HasIncrementedPollCount);
-    }
 
     /// Only intended to be used from EventLoop.Pollable
     pub fn activate(&mut self, loop_: &mut WindowsLoop) {
@@ -198,21 +175,6 @@ impl FilePoll {
         }
 
         !self.flags.contains(Flags::HasIncrementedPollCount)
-    }
-
-    #[inline]
-    pub fn can_unref(&self) -> bool {
-        self.flags.contains(Flags::HasIncrementedPollCount)
-    }
-
-    /// Prevent a poll from keeping the process alive.
-    pub fn unref(&mut self, vm: EventLoopCtx) {
-        if !self.can_unref() {
-            return;
-        }
-        bun_core::scoped_log!(FilePoll, "unref");
-        // this.deactivate(vm.event_loop_handle.?);
-        self.deactivate(vm.loop_mut());
     }
 
     /// Allow a poll to keep the process alive.

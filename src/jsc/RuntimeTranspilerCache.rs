@@ -598,7 +598,6 @@ pub struct RuntimeTranspilerCache {
     pub(crate) input_byte_length: Option<u64>,
     pub(crate) features_hash: Option<u64>,
     pub(crate) exports_kind: ExportsKind,
-    pub(crate) output_code: Option<BunString>,
     pub(crate) entry: Option<Entry>,
     // `sourcemap` / `esm_record` are owned `Box<[u8]>` (global mimalloc).
     // The per-call arena that once backed the output code is gone: the UTF-8
@@ -613,7 +612,6 @@ impl Default for RuntimeTranspilerCache {
             input_byte_length: None,
             features_hash: None,
             exports_kind: ExportsKind::None,
-            output_code: None,
             entry: None,
         }
     }
@@ -1005,38 +1003,6 @@ impl RuntimeTranspilerCache {
         self.entry.is_some()
     }
 
-    pub fn put(&mut self, output_code_bytes: &[u8], sourcemap: &[u8], esm_record: &[u8]) {
-        const _: () = assert!(
-            FeatureFlags::RUNTIME_TRANSPILER_CACHE,
-            "RuntimeTranspilerCache is disabled"
-        );
-
-        if self.input_hash.is_none() || IS_DISABLED.load(Ordering::Relaxed) {
-            return;
-        }
-        debug_assert!(self.entry.is_none());
-        let output_code = BunString::clone_latin1(output_code_bytes);
-        // Refcount stays at 1, sole owner.
-        // BunString is Copy with no Drop, so an extra dupe_ref here would leak.
-        self.output_code = Some(output_code);
-
-        if let Err(err) = Self::to_file(
-            self.input_byte_length.unwrap(),
-            self.input_hash.unwrap(),
-            self.features_hash.unwrap(),
-            sourcemap,
-            esm_record,
-            &output_code,
-            self.exports_kind,
-        ) {
-            bun_core::scoped_log!(cache, "put() = {}", err.name());
-            return;
-        }
-        #[cfg(debug_assertions)]
-        {
-            bun_core::scoped_log!(cache, "put() = {} bytes", output_code.latin1().len());
-        }
-    }
 }
 
 pub static IS_DISABLED: AtomicBool = AtomicBool::new(false);
@@ -1064,7 +1030,6 @@ bun_ast::link_impl_TranspilerCacheImpl! {
                 input_byte_length: this.input_byte_length,
                 features_hash: this.features_hash,
                 exports_kind: this.exports_kind,
-                output_code: None,
                 entry: None,
             };
             let hit = jsc.get(source, parser_options, used_jsx);

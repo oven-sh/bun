@@ -64,16 +64,13 @@ pub mod whatwg {
         safe fn URL__fromString(str: &mut String) -> Option<core::ptr::NonNull<URL>>;
         safe fn URL__protocol(url: &URL) -> String;
         safe fn URL__href(url: &URL) -> String;
-        safe fn URL__host(url: &URL) -> String;
         safe fn URL__hostname(url: &URL) -> String;
-        safe fn URL__port(url: &URL) -> u32;
         safe fn URL__deinit(url: &mut URL);
         safe fn URL__pathname(url: &URL) -> String;
         safe fn URL__getHref(input: &mut String) -> String;
         safe fn URL__getFileURLString(input: &mut String) -> String;
         safe fn URL__getHrefJoin(base: &mut String, relative: &mut String) -> String;
         safe fn URL__pathFromFileURL(input: &mut String) -> String;
-        safe fn URL__hash(url: &URL) -> String;
         safe fn URL__fragmentIdentifier(url: &URL) -> String;
         fn URL__originLength(latin1_slice: *const u8, len: usize) -> u32;
     }
@@ -129,10 +126,6 @@ pub mod whatwg {
         pub fn from_utf8(input: &[u8]) -> Option<core::ptr::NonNull<URL>> {
             Self::from_string(&String::borrow_utf8(input))
         }
-        /// Includes the leading '#'.
-        pub fn hash(&self) -> String {
-            URL__hash(self)
-        }
         /// Exactly the same as `hash`, excluding the leading '#'.
         pub fn fragment_identifier(&self) -> String {
             URL__fragmentIdentifier(self)
@@ -142,17 +135,6 @@ pub mod whatwg {
         }
         pub fn href(&self) -> String {
             URL__href(self)
-        }
-        /// Returns the host WITHOUT the port.
-        ///
-        /// Note that this does NOT match JS behavior, which returns the host with the port. See
-        /// `hostname` for the JS equivalent of `host`.
-        ///
-        /// ```text
-        /// URL("http://example.com:8080").host() => "example.com"
-        /// ```
-        pub fn host(&self) -> String {
-            URL__host(self)
         }
         /// Returns the host WITH the port.
         ///
@@ -165,11 +147,6 @@ pub mod whatwg {
         pub fn hostname(&self) -> String {
             URL__hostname(self)
         }
-        /// Returns `u32::MAX` if the port is not set. Otherwise, the result is
-        /// guaranteed to be within the `u16` range.
-        pub fn port(&self) -> u32 {
-            URL__port(self)
-        }
         pub fn pathname(&self) -> String {
             URL__pathname(self)
         }
@@ -181,7 +158,7 @@ pub mod whatwg {
 // Re-export the free helpers at crate root so lower-tier callers can write
 // `bun_url::join(...)` / `bun_url::href_from_string(...)` (install, http, bake, js_parser).
 pub use whatwg::{
-    file_url_from_string, href_from_string, join, origin_from_slice, path_from_file_url,
+    file_url_from_string, href_from_string, join, origin_from_slice,
 };
 
 // URL is a pure view struct — every field is a slice into `href` (or a
@@ -359,9 +336,6 @@ impl<'a> URL<'a> {
         Ok(OwnedURL { href: owned })
     }
 
-    pub fn from_utf8(input: &[u8]) -> crate::Result<OwnedURL> {
-        Self::from_string(&BunString::borrow_utf8(input))
-    }
 
     pub fn display_protocol(&self) -> &[u8] {
         if !self.protocol.is_empty() {
@@ -947,20 +921,8 @@ impl QueryStringMap {
         &slice[ptr.offset as usize..ptr.offset as usize + ptr.length as usize]
     }
 
-    pub fn get_index(&self, input: &[u8]) -> Option<usize> {
-        let hash = wyhash(input);
-        self.list.iter().position(|p| p.name_hash == hash)
-    }
 
-    pub fn get(&self, input: &[u8]) -> Option<&[u8]> {
-        let hash = wyhash(input);
-        let i = self.list.iter().position(|p| p.name_hash == hash)?;
-        Some(self.str(self.list[i].value))
-    }
 
-    pub fn has(&self, input: &[u8]) -> bool {
-        self.get_index(input).is_some()
-    }
 
     pub fn init_with_scanner(
         mut scanner: CombinedScanner<'_>,
@@ -1491,9 +1453,6 @@ impl<'a> CombinedScanner<'a> {
         self.pathname.reset();
     }
 
-    pub fn next(&mut self) -> Option<ScannerResult> {
-        self.pathname.next().or_else(|| self.query.next())
-    }
 }
 
 fn string_pointer_from_strings(parent: &[u8], in_: &[u8]) -> api::StringPointer {

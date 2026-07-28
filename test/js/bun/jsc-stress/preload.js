@@ -24,3 +24,12 @@ globalThis.callerIsBBQOrOMGCompiled = function () {
 };
 if (!globalThis.$) globalThis.$ = {};
 if (!$.agent) $.agent = { report: function () {} };
+
+// GC + tier-control helpers used by the ffi stress fixtures.
+const jsc = require("bun:jsc");
+globalThis.gc = () => Bun.gc(true);
+globalThis.fullGC = jsc.fullGC;
+globalThis.edenGC = jsc.edenGC;
+globalThis.numberOfDFGCompiles = jsc.numberOfDFGCompiles;
+// noDFG: hints JSC to keep a function out of the DFG. No-op in Bun, like noInline.
+globalThis.noDFG = jsc.noInline;

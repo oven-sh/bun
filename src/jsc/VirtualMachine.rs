@@ -3668,7 +3668,7 @@ impl VirtualMachine {
         vm_ref.hot_reload = parent.hot_reload;
         vm_ref.initial_script_execution_context_identifier = worker.execution_context_id() as i32;
         vm_ref.transpiler.resolver.store_fd = opts.store_fd;
-        // Auto-install settings (wired post-init by run_command::wire_transpiler_from_ctx).
+        // Settings run_command::wire_transpiler_from_ctx applied post-init.
         {
             let b = &mut vm_ref.transpiler;
             let p = &parent.transpiler;
@@ -3676,6 +3676,7 @@ impl VirtualMachine {
             b.options.install = p.options.install;
             b.options.prefer_offline_install = p.options.prefer_offline_install;
             b.options.prefer_latest_install = p.options.prefer_latest_install;
+            b.options.no_macros = p.options.no_macros;
             b.resolver.opts.global_cache = p.resolver.opts.global_cache;
             b.resolver.opts.install = p.resolver.opts.install;
             b.resolver.opts.prefer_offline_install = p.resolver.opts.prefer_offline_install;

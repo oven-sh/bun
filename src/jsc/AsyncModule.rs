@@ -300,6 +300,7 @@ impl<const PROGRESS: bool> run_tasks::RunTasksCallbacks for QueueRunTasksCallbac
 
 impl Queue {
     pub fn enqueue(&mut self, global_object: &JSGlobalObject, opts: InitOpts<'_>) {
+        let _guard = bun_resolver::auto_install_lock();
         bun_core::scoped_log!(AsyncModule, "enqueue: {}", bstr::BStr::new(opts.specifier));
         let mut module = AsyncModule::init(opts, global_object).expect("unreachable");
         module.poll_ref.ref_(bun_io::posix_event_loop::get_vm_ctx(
@@ -381,9 +382,58 @@ impl Queue {
     }
 
     pub fn on_poll(&mut self) {
+        let _guard = bun_resolver::auto_install_lock();
         bun_core::scoped_log!(AsyncModule, "onPoll");
         self.run_tasks();
+        self.drain_failed_root_dependencies();
         self.poll_modules();
+    }
+
+    fn drain_failed_root_dependencies(&mut self) {
+        let pm = VirtualMachine::get().as_mut().package_manager();
+        let mut failed = pm.failed_root_dependencies.lock();
+        if failed.is_empty() {
+            return;
+        }
+        failed.retain(|&(dep_id, err)| {
+            let vm = VirtualMachine::get().as_mut();
+            let dep = match vm
+                .package_manager()
+                .lockfile
+                .buffers
+                .dependencies
+                .get(dep_id as usize)
+            {
+                Some(d) => d.clone(),
+                None => return false,
+            };
+            let before = self.map.len();
+            self.map.retain_mut(|module| {
+                for pending in module.parse_result.pending_imports.iter() {
+                    if pending.root_dependency_id != dep_id {
+                        continue;
+                    }
+                    let import_record_id = pending.import_record_id;
+                    let vm = VirtualMachine::get().as_mut();
+                    let name = bun_ptr::RawSlice::new(vm.package_manager().lockfile.str(&dep.name));
+                    module
+                        .resolve_error(
+                            vm,
+                            import_record_id,
+                            &PackageResolveError {
+                                name: name.slice(),
+                                err,
+                                url: b"",
+                                version: dep.version.clone(),
+                            },
+                        )
+                        .expect("unreachable");
+                    return false;
+                }
+                true
+            });
+            before == self.map.len()
+        });
     }
 
     pub fn run_tasks(&mut self) {

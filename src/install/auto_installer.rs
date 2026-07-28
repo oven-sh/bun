@@ -308,7 +308,14 @@ impl hooks::AutoInstaller for PackageManager {
     // ── PackageManager ops ────────────────────────────────────────────────
 
     fn set_on_wake(&mut self, handler: hooks::WakeHandler) {
-        self.on_wake = handler;
+        let mut list = self.on_wake.lock();
+        if !list.iter().any(|h| h.context == handler.context) {
+            list.push(handler);
+        }
+    }
+
+    fn remove_on_wake(&mut self, context: core::ptr::NonNull<core::ffi::c_void>) {
+        self.on_wake.lock().retain(|h| h.context != Some(context));
     }
 
     fn path_for_resolution<'b>(

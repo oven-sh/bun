@@ -391,7 +391,8 @@ pub struct PackageManager {
     pub global_dir: Option<bun_sys::Dir>,
     pub global_link_dir_path: Box<[u8]>,
 
-    pub on_wake: WakeHandler,
+    pub on_wake: bun_core::Mutex<Vec<WakeHandler>>,
+    pub failed_root_dependencies: bun_core::Mutex<Vec<(DependencyID, &'static str)>>,
 
     pub peer_dependencies: LinearFifo<DependencyID, DynamicBuffer<DependencyID>>,
 
@@ -863,22 +864,16 @@ impl PackageManager {
 
     pub fn fail_root_resolution(
         &mut self,
-        dependency: &Dependency,
+        _dependency: &Dependency,
         dependency_id: DependencyID,
         err: Error,
     ) {
-        if let Some(ctx) = self.on_wake.context {
-            // SAFETY: `ctx` is the `WakeHandler::context` registered alongside
-            // this callback (a live `*mut Queue`); see `runtime::jsc_hooks`.
-            unsafe {
-                (self.on_wake.get_on_dependency_error())(
-                    ctx.as_ptr(),
-                    dependency,
-                    dependency_id,
-                    err.name(),
-                );
-            }
-        }
+        self.failed_root_dependencies
+            .lock()
+            .push((dependency_id, err.name()));
+        let this: *mut Self = self;
+        // SAFETY: `this` names the live singleton; `wake_raw` only forms field pointers.
+        unsafe { Self::wake_raw(this) };
     }
 
     /// Raw-pointer wake for concurrent task-thread callers (see
@@ -898,11 +893,10 @@ impl PackageManager {
         // borrow) and `wakeup()` is internally synchronized for cross-thread use.
         unsafe {
             let on_wake = &*core::ptr::addr_of!((*this).on_wake);
-            if let Some(ctx) = on_wake.context {
-                // `WakeHandler.handler`'s second arg is the erased
-                // `*mut PackageManager` (`bun_install_types` cannot name this
-                // type); cast back to `*mut c_void` here.
-                (on_wake.get_handler())(ctx.as_ptr(), this.cast::<c_void>());
+            for h in on_wake.lock().iter() {
+                if let Some(ctx) = h.context {
+                    (h.get_handler())(ctx.as_ptr(), this.cast::<c_void>());
+                }
             }
             (*core::ptr::addr_of_mut!((*this).event_loop)).wakeup();
         }
@@ -1944,7 +1938,8 @@ pub fn init(
         wr!(global_link_dir, None);
         wr!(global_dir, None);
         wr!(global_link_dir_path, Box::default());
-        wr!(on_wake, WakeHandler::default());
+        wr!(on_wake, bun_core::Mutex::new(Vec::new()));
+        wr!(failed_root_dependencies, bun_core::Mutex::new(Vec::new()));
         wr!(
             peer_dependencies,
             LinearFifo::<DependencyID, DynamicBuffer<DependencyID>>::init()
@@ -2300,7 +2295,10 @@ pub(crate) fn init_with_runtime_once(
             }
         );
         wr!(network_task_fifo, NetworkQueue::init());
-        wr!(log, std::ptr::from_mut(log));
+        wr!(
+            log,
+            bun_core::heap::into_raw(Box::new(bun_ast::Log::default()))
+        );
         wr!(root_dir, root_dir);
         wr!(ast_arena, bun_alloc::Arena::new());
         // reborrow `&mut *env` so the local stays usable for
@@ -2376,7 +2374,8 @@ pub(crate) fn init_with_runtime_once(
         wr!(global_link_dir, None);
         wr!(global_dir, None);
         wr!(global_link_dir_path, Box::default());
-        wr!(on_wake, WakeHandler::default());
+        wr!(on_wake, bun_core::Mutex::new(Vec::new()));
+        wr!(failed_root_dependencies, bun_core::Mutex::new(Vec::new()));
         wr!(
             peer_dependencies,
             LinearFifo::<DependencyID, DynamicBuffer<DependencyID>>::init()

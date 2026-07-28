@@ -443,6 +443,42 @@ macro_rules! bufs {
 // (the resolver mutex is one of the two documented guards for the entries singleton).
 pub(crate) static RESOLVER_MUTEX: Mutex = Mutex::new();
 
+static AUTO_INSTALL_LOCK: Mutex = Mutex::new();
+thread_local! {
+    static AUTO_INSTALL_LOCK_DEPTH: core::cell::Cell<u32> = const { core::cell::Cell::new(0) };
+}
+
+/// Serializes `PackageManager` singleton access across JS VMs for the runtime
+/// auto-install path. Reentrant on the owning thread because
+/// `PackageManager::sleep_until` pumps the JS event loop under the lock.
+/// SAFETY: the returned guard must be dropped on the thread that acquired it.
+#[must_use = "the mutex unlocks immediately if the guard is dropped"]
+pub fn auto_install_lock() -> AutoInstallGuard {
+    let depth = AUTO_INSTALL_LOCK_DEPTH.with(|d| {
+        let v = d.get();
+        d.set(v + 1);
+        v
+    });
+    let acquired = depth == 0;
+    if acquired {
+        AUTO_INSTALL_LOCK.lock();
+    }
+    AutoInstallGuard { acquired }
+}
+
+pub struct AutoInstallGuard {
+    acquired: bool,
+}
+
+impl Drop for AutoInstallGuard {
+    fn drop(&mut self) {
+        AUTO_INSTALL_LOCK_DEPTH.with(|d| d.set(d.get() - 1));
+        if self.acquired {
+            AUTO_INSTALL_LOCK.unlock();
+        }
+    }
+}
+
 type BinFolderArray = BoundedArray<&'static [u8], 128>;
 // `BoundedArray` has no const constructor; init lazily under
 // `BIN_FOLDERS_LOADED`.
@@ -861,6 +897,17 @@ impl<'a> Resolver<'a> {
         // singleton, live for the resolver's lifetime once installed; `&mut
         // self` ⇒ exclusive access to the only Rust handle.
         self.package_manager.map(|mut pm| unsafe { pm.as_mut() })
+    }
+
+    /// Called from Worker shutdown so `PackageManager::wake_raw` cannot reach this VM after teardown.
+    pub fn remove_package_manager_wake(&mut self) {
+        if let (Some(mut pm), Some(ctx)) =
+            (self.package_manager, self.on_wake_package_manager.context)
+        {
+            let _guard = auto_install_lock();
+            // SAFETY: BACKREF — `package_manager` names the process-static singleton.
+            unsafe { pm.as_mut() }.remove_on_wake(ctx);
+        }
     }
 
     /// Safe read-only accessor for the optional `DotEnv::Loader` back-reference.
@@ -2868,6 +2915,7 @@ impl<'a> Resolver<'a> {
             && let Some(esm_ref) = esm_.as_ref()
             && strings::is_npm_package_name(esm_ref.name)
         {
+            let _auto_install_guard = auto_install_lock();
             let esm = esm_ref.with_auto_version();
             'load_module_from_cache: {
                 // If the source directory doesn't have a node_modules directory, we can

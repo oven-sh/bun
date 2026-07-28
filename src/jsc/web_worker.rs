@@ -975,7 +975,7 @@ impl WebWorker {
         // SAFETY: `vm` is a valid heap-allocated VM ptr (checked above).
         unsafe {
             let b = &mut (*vm).transpiler;
-            b.resolver.env_loader = NonNull::new(b.env);
+            b.resolver.env_loader = NonNull::new(parent.transpiler.env);
 
             if let Some(graph) = parent.standalone_module_graph {
                 (hooks.apply_standalone_runtime_flags)(b, graph);
@@ -1243,6 +1243,7 @@ impl WebWorker {
             // SAFETY: vm_ptr valid; unpublished above under vm_lock, so no
             // other thread can dereference it now — `&mut` is exclusive.
             let vm = unsafe { &mut *vm_ptr };
+            vm.transpiler.resolver.remove_package_manager_wake();
             // terminate() set the JSC termination flag to interrupt running JS;
             // clear it so process.on('exit') handlers can run. teardownJSCVM
             // re-sets it for the JSC VM teardown.

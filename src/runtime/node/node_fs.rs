@@ -435,6 +435,11 @@ fn err_from_static(name: &'static str) -> crate::Error {
 const PREALLOCATE_SUPPORTED: bool = cfg!(any(target_os = "linux", target_os = "android"));
 const PREALLOCATE_LENGTH: usize = 2048 * 1024;
 
+/// Node's `kWriteFileMaxChunkSize` (lib/internal/fs/promises.js): `writeFile`
+/// polls the AbortSignal between writes of this size so an in-flight abort can
+/// stop the write before the whole buffer is committed.
+const WRITE_FILE_CHUNK_SIZE: usize = 512 * 1024;
+
 /// `CLONE_NOFOLLOW` from `<sys/clonefile.h>` — not re-exported by `bun_sys::c`
 /// (or the `libc` crate), so define it locally. `clonefile(2)` then clones a
 /// symbolic-link `src` itself rather than the file it points to.
@@ -4754,25 +4759,38 @@ impl NodeFS {
 
     pub fn append_file(&mut self, args: &args::AppendFile, _: Flavor) -> Maybe<ret::AppendFile> {
         let mut data = args.data.slice();
-        match &args.file {
-            PathOrFileDescriptor::Fd(fd) => {
-                while !data.is_empty() {
-                    let written = Syscall::write(*fd, data)?;
-                    data = &data[written..];
-                }
-                Ok(())
-            }
+        let has_signal = args.signal.is_some();
+        let fd = match &args.file {
+            PathOrFileDescriptor::Fd(fd) => *fd,
             PathOrFileDescriptor::Path(path_) => {
                 let path = path_.slice_z(&mut self.sync_error_buf);
-                let fd = Syscall::open(path, FileSystemFlags::A.as_int(), args.mode)?;
-                let _close = scopeguard::guard(fd, |fd| fd.close());
-                while !data.is_empty() {
-                    let written = Syscall::write(fd, data)?;
-                    data = &data[written..];
-                }
-                Ok(())
+                Syscall::open(path, FileSystemFlags::A.as_int(), args.mode)?
             }
+        };
+        let _close = scopeguard::guard(
+            (fd, matches!(args.file, PathOrFileDescriptor::Path(_))),
+            |(fd, owned)| {
+                if owned {
+                    fd.close();
+                }
+            },
+        );
+        while !data.is_empty() {
+            let chunk = if has_signal {
+                if args.aborted() {
+                    return Err(abort_err());
+                }
+                &data[..data.len().min(WRITE_FILE_CHUNK_SIZE)]
+            } else {
+                data
+            };
+            let written = Syscall::write(fd, chunk)?;
+            if written == 0 {
+                break;
+            }
+            data = &data[written..];
         }
+        Ok(())
     }
 
     pub fn close(&mut self, args: &args::Close, _: Flavor) -> Maybe<ret::Close> {
@@ -7423,17 +7441,14 @@ impl NodeFS {
         let mut buf = args.data.slice();
         #[cfg(not(windows))]
         let mut written: usize = 0;
-
-        // Node checks the abort signal between chunks of this size
-        // (kWriteFileMaxChunkSize in lib/internal/fs/promises.js). Without the
-        // cap a single write() call can commit the whole buffer before the
-        // signal is ever consulted.
-        const WRITE_FILE_CHUNK_SIZE: usize = 512 * 1024;
         let has_signal = args.signal.is_some();
 
-        // Attempt to pre-allocate large files
-        // Worthwhile after 6 MB at least on ext4 linux
-        if PREALLOCATE_SUPPORTED && buf.len() >= PREALLOCATE_LENGTH {
+        // Attempt to pre-allocate large files.
+        // Worthwhile after 6 MB at least on ext4 linux. Skip it when an
+        // AbortSignal is attached: fallocate(mode 0) grows the file to the full
+        // length up front, and an abort mid-write would leave a zeroed tail on
+        // paths where the post-loop truncate does not run (fd targets, r+).
+        if PREALLOCATE_SUPPORTED && !has_signal && buf.len() >= PREALLOCATE_LENGTH {
             'preallocate: {
                 let is_path = matches!(args.file, PathOrFileDescriptor::Path(_));
                 // Preallocating grows the file, so skip it when the kernel picks
@@ -7472,6 +7487,10 @@ impl NodeFS {
         // the bytes that did land.
         let mut write_err: Option<sys::Error> = None;
         while !buf.is_empty() {
+            // Node checks the abort signal between 512 KiB chunks
+            // (kWriteFileMaxChunkSize in lib/internal/fs/promises.js); without
+            // the per-write bound a single write() can commit the whole buffer
+            // before the signal is consulted.
             let chunk = if has_signal {
                 if args.aborted() {
                     write_err = Some(abort_err());

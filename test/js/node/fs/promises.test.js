@@ -496,26 +496,38 @@ describe("AbortSignal rejections use node's AbortError shape", () => {
   // one-shot write that commits the whole buffer and only then rejects tells the
   // caller the operation failed while leaving the full payload on disk.
   test("writeFile aborted mid-write stops before the full buffer is committed", async () => {
-    const dir = tempDirWithFiles("fs-abort-writefile-midwrite", {});
-    const p = join(dir, "big.bin");
+    await using dir = tempDir("fs-abort-writefile-midwrite", {});
     const SIZE = 128 * 1024 * 1024;
     const buf = Buffer.alloc(SIZE, 7);
-    // The write runs on a thread-pool worker; busy-poll from the JS thread until
-    // the worker has opened the file, then abort. This lands the abort while the
-    // write loop is live without relying on a timer.
-    const ac = new AbortController();
-    const promise = fsPromises.writeFile(p, buf, { signal: ac.signal });
-    while (!fs.existsSync(p));
-    ac.abort();
-    let rejected;
-    try {
-      await promise;
-    } catch (err) {
-      rejected = err;
+    let result;
+    for (let attempt = 0; attempt < 20; attempt++) {
+      const p = join(String(dir), `big-${attempt}.bin`);
+      fs.writeFileSync(p, "");
+      const ac = new AbortController();
+      const promise = fsPromises.writeFile(p, buf, { signal: ac.signal });
+      // The write runs on a thread-pool worker; busy-poll from the JS thread
+      // until bytes have landed so abort() fires while the write loop is live.
+      for (let i = 0; fs.statSync(p).size === 0; i++) {
+        if (i > 1_000_000) throw new Error("worker never started writing");
+      }
+      const sizeAtAbort = fs.statSync(p).size;
+      ac.abort();
+      let rejected;
+      try {
+        await promise;
+      } catch (err) {
+        rejected = err;
+      }
+      const size = fs.statSync(p).size;
+      fs.unlinkSync(p);
+      result = { name: rejected?.name, code: rejected?.code, size };
+      // Only assert on an attempt that observably caught the worker mid-write;
+      // an attempt where the write raced to completion before abort() proves
+      // nothing either way.
+      if (sizeAtAbort < SIZE) break;
     }
-    const size = fs.statSync(p).size;
-    expect({ name: rejected?.name, code: rejected?.code }).toEqual({ name: "AbortError", code: "ABORT_ERR" });
-    expect(size).toBeLessThan(SIZE);
+    expect({ name: result.name, code: result.code }).toEqual({ name: "AbortError", code: "ABORT_ERR" });
+    expect(result.size).toBeLessThan(SIZE);
   });
 
   test("writeFile of an async iterable with a pre-aborted signal", async () => {

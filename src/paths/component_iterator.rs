@@ -205,11 +205,8 @@ pub enum MakePathStep<E> {
 /// Starts at `it.last()`; on `Created`/`Exists` advances via `next()`
 /// (returning `Ok(())` when there is none), on `NotFound(e)` steps back via
 /// `previous()` (returning `Err(e)` when there is none — i.e. the very first
-/// component's parent does not exist).
-///
-/// Once the walk has advanced forward, a subsequent `NotFound` is terminal:
-/// the parent was just confirmed to exist, so stepping back would oscillate
-/// (e.g. a dangling symlink is `EEXIST` itself but `ENOENT` for any child).
+/// component's parent does not exist). Once the walk has advanced forward,
+/// `NotFound` is terminal (the just-confirmed parent cannot host the child).
 ///
 /// `mkdir` is invoked with `component.path`: a borrowed prefix slice into the
 /// original input, never NUL-terminated. Callers that need a sentinel must

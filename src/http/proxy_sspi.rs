@@ -57,7 +57,7 @@ pub fn select_scheme(
     let challenge = if rest.is_empty() {
         None
     } else {
-        bun_base64::decode_alloc(rest).ok()
+        Some(bun_base64::decode_alloc(rest).ok()?)
     };
     Some((scheme, challenge))
 }

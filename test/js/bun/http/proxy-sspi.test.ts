@@ -115,6 +115,18 @@ async function ntlmProxy(opts: { bodyLen?: number; forward: (sock: net.Socket, l
   };
 }
 
+function forwardConnect(sock: net.Socket, leg: Leg, rest: Buffer) {
+  const [host, port] = leg.path.split(":");
+  const upstream = net.connect(Number(port), host, () => {
+    sock.write("HTTP/1.1 200 Connection Established\r\n\r\n");
+    if (rest.length) upstream.write(rest);
+    sock.pipe(upstream);
+    upstream.pipe(sock);
+  });
+  upstream.on("error", () => sock.end());
+  sock.on("close", () => upstream.end());
+}
+
 describe.skipIf(!isWindows)("proxy NTLM/Negotiate via SSPI", () => {
   test("CONNECT tunnel to https target", async () => {
     await using target = Bun.serve({
@@ -123,19 +135,7 @@ describe.skipIf(!isWindows)("proxy NTLM/Negotiate via SSPI", () => {
       fetch: () => new Response("tunneled"),
     });
 
-    using proxy = await ntlmProxy({
-      forward(sock, leg, rest) {
-        const [host, port] = leg.path.split(":");
-        const upstream = net.connect(Number(port), host, () => {
-          sock.write("HTTP/1.1 200 Connection Established\r\n\r\n");
-          if (rest.length) upstream.write(rest);
-          sock.pipe(upstream);
-          upstream.pipe(sock);
-        });
-        upstream.on("error", () => sock.end());
-        sock.on("close", () => upstream.end());
-      },
-    });
+    using proxy = await ntlmProxy({ forward: forwardConnect });
 
     const res = await fetch(`https://localhost:${target.port}/hello`, {
       proxy: proxy.url,
@@ -162,26 +162,41 @@ describe.skipIf(!isWindows)("proxy NTLM/Negotiate via SSPI", () => {
       fetch: () => new Response("tunneled"),
     });
 
-    using proxy = await ntlmProxy({
-      bodyLen: 1024,
-      forward(sock, leg, rest) {
-        const [host, port] = leg.path.split(":");
-        const upstream = net.connect(Number(port), host, () => {
-          sock.write("HTTP/1.1 200 Connection Established\r\n\r\n");
-          if (rest.length) upstream.write(rest);
-          sock.pipe(upstream);
-          upstream.pipe(sock);
-        });
-        upstream.on("error", () => sock.end());
-        sock.on("close", () => upstream.end());
-      },
-    });
+    using proxy = await ntlmProxy({ bodyLen: 1024, forward: forwardConnect });
 
     const res = await fetch(`https://localhost:${target.port}/hello`, {
       method: "HEAD",
       proxy: proxy.url,
       tls: { ca: tlsCert.cert },
     });
+    expect(res.status).toBe(200);
+
+    expect(proxy.conns.length).toBe(1);
+    expect(proxy.conns[0].map(l => [l.method, ntlmMessageType(l.auth)])).toEqual([
+      ["CONNECT", null],
+      ["CONNECT", 1],
+      ["CONNECT", 3],
+    ]);
+  });
+
+  // The CONNECT leg writes no body, so a non-empty user body must not block
+  // the retry (the body is deferred until the tunnel is up).
+  test("POST with body via CONNECT tunnel", async () => {
+    await using target = Bun.serve({
+      port: 0,
+      tls: tlsCert,
+      fetch: async req => new Response(await req.text()),
+    });
+
+    using proxy = await ntlmProxy({ forward: forwardConnect });
+
+    const res = await fetch(`https://localhost:${target.port}/echo`, {
+      method: "POST",
+      body: "hello sspi",
+      proxy: proxy.url,
+      tls: { ca: tlsCert.cert },
+    });
+    expect(await res.text()).toBe("hello sspi");
     expect(res.status).toBe(200);
 
     expect(proxy.conns.length).toBe(1);
@@ -207,17 +222,16 @@ describe.skipIf(!isWindows)("proxy NTLM/Negotiate via SSPI", () => {
 
     // Proxy lets CONNECT through without auth.
     const server = net.createServer(sock => {
-      sock.once("data", data => {
-        const [, path] = data.toString("latin1").split(" ");
-        const [host, port] = path.split(":");
-        const upstream = net.connect(Number(port), host, () => {
-          sock.write("HTTP/1.1 200 Connection Established\r\n\r\n");
-          sock.pipe(upstream);
-          upstream.pipe(sock);
-        });
-        upstream.on("error", () => sock.end());
-        sock.on("close", () => upstream.end());
-      });
+      let buf = Buffer.alloc(0);
+      const onData = (chunk: Buffer) => {
+        buf = Buffer.concat([buf, chunk]);
+        const eoh = buf.indexOf("\r\n\r\n");
+        if (eoh < 0) return;
+        sock.removeListener("data", onData);
+        const leg = parseHead(buf.subarray(0, eoh).toString("latin1"));
+        forwardConnect(sock, leg, buf.subarray(eoh + 4));
+      };
+      sock.on("data", onData);
       sock.on("error", () => {});
     });
     server.listen(0, "127.0.0.1");

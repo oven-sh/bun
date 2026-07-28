@@ -2293,8 +2293,9 @@ impl<'a> HTTPClient<'a> {
             // Retry replays `original_request_body`; a consumed ReadableStream can't be rewound.
             return false;
         }
-        if !self.state.request_body.slice().is_empty() {
-            // Leg-1 body not fully written; retrying would desync against the declared Content-Length.
+        let is_connect_leg = self.flags.proxy_tunneling && self.proxy_tunnel.is_none();
+        if !is_connect_leg && !self.state.request_body.slice().is_empty() {
+            // Absolute-form leg-1 body not fully written; retrying would desync against its Content-Length.
             return false;
         }
         if self.state.transfer_encoding == Encoding::Chunked || self.state.content_length.is_none()

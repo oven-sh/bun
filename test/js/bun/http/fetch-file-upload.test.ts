@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { isBroken, isWindows, tempDir, withoutAggressiveGC } from "harness";
-import net from "node:net";
 import fs from "node:fs";
+import net from "node:net";
 import { tmpdir } from "os";
 import { join } from "path";
 
@@ -164,69 +164,73 @@ test.todoIf(isBroken && isWindows)(
 // The sendfile path is only taken on POSIX for a plain-HTTP file body
 // >= 32 KB; on Windows the file is read fully into memory before the
 // request is sent, so a later truncation is not observable.
-test.skipIf(isWindows)("fetch rejects when the Bun.file body is truncated mid-upload", async () => {
-  const size = 32 * 1024 * 1024;
-  using dir = tempDir("fetch-sendfile-truncate", {});
-  const p = join(String(dir), "body.bin");
-  {
-    const fd = fs.openSync(p, "w");
-    const chunk = Buffer.alloc(1024 * 1024, 83);
-    for (let i = 0; i < size / chunk.length; i++) fs.writeSync(fd, chunk);
-    fs.closeSync(fd);
-  }
-
-  let head = "";
-  let socket: net.Socket | undefined;
-  const gotHead = Promise.withResolvers<void>();
-  const socketClosed = Promise.withResolvers<void>();
-  const server = net.createServer(s => {
-    socket = s;
-    s.once("close", () => socketClosed.resolve());
-    s.on("data", d => {
-      if (head === "") {
-        head = d.toString("latin1").split("\r\n\r\n")[0];
-        s.pause();
-        gotHead.resolve();
-      }
-    });
-  });
-  await new Promise<void>(r => server.listen(0, "127.0.0.1", r));
-  try {
-    const port = (server.address() as net.AddressInfo).port;
-    const req = fetch(`http://127.0.0.1:${port}/upload`, {
-      method: "POST",
-      body: Bun.file(p),
-      signal: AbortSignal.timeout(10_000),
-    });
-
-    await gotHead.promise;
-    expect(head).toContain(`Content-Length: ${size}`);
-
-    // With the server paused, sendfile fills the kernel send buffer and
-    // then parks on EAGAIN with the file offset well short of `size`.
-    // Truncating below that offset means the next sendfile(2) call returns
-    // 0 with bytes still owed.
-    fs.truncateSync(p, 64 * 1024);
-    socket!.resume();
-
-    let err: any;
-    try {
-      await req;
-    } catch (e) {
-      err = e;
+test.skipIf(isWindows)(
+  "fetch rejects when the Bun.file body is truncated mid-upload",
+  async () => {
+    const size = 32 * 1024 * 1024;
+    using dir = tempDir("fetch-sendfile-truncate", {});
+    const p = join(String(dir), "body.bin");
+    {
+      const fd = fs.openSync(p, "w");
+      const chunk = Buffer.alloc(1024 * 1024, 83);
+      for (let i = 0; i < size / chunk.length; i++) fs.writeSync(fd, chunk);
+      fs.closeSync(fd);
     }
-    expect(err).toBeDefined();
-    expect(err?.name).not.toBe("TimeoutError");
-    expect(err?.code).toBe("RequestBodyTruncated");
 
-    // The client must close the connection so the origin is not left
-    // holding a half-sent body.
-    await socketClosed.promise;
-  } finally {
-    socket?.destroy();
-    server.close();
-  }
-}, 15_000);
+    let head = "";
+    let socket: net.Socket | undefined;
+    const gotHead = Promise.withResolvers<void>();
+    const socketClosed = Promise.withResolvers<void>();
+    const server = net.createServer(s => {
+      socket = s;
+      s.once("close", () => socketClosed.resolve());
+      s.on("data", d => {
+        if (head === "") {
+          head = d.toString("latin1").split("\r\n\r\n")[0];
+          s.pause();
+          gotHead.resolve();
+        }
+      });
+    });
+    await new Promise<void>(r => server.listen(0, "127.0.0.1", r));
+    try {
+      const port = (server.address() as net.AddressInfo).port;
+      const req = fetch(`http://127.0.0.1:${port}/upload`, {
+        method: "POST",
+        body: Bun.file(p),
+        signal: AbortSignal.timeout(10_000),
+      });
+
+      await gotHead.promise;
+      expect(head).toContain(`Content-Length: ${size}`);
+
+      // With the server paused, sendfile fills the kernel send buffer and
+      // then parks on EAGAIN with the file offset well short of `size`.
+      // Truncating below that offset means the next sendfile(2) call returns
+      // 0 with bytes still owed.
+      fs.truncateSync(p, 64 * 1024);
+      socket!.resume();
+
+      let err: any;
+      try {
+        await req;
+      } catch (e) {
+        err = e;
+      }
+      expect(err).toBeDefined();
+      expect(err?.name).not.toBe("TimeoutError");
+      expect(err?.code).toBe("RequestBodyTruncated");
+
+      // The client must close the connection so the origin is not left
+      // holding a half-sent body.
+      await socketClosed.promise;
+    } finally {
+      socket?.destroy();
+      server.close();
+    }
+  },
+  15_000,
+);
 
 test("missing file throws the expected error", async () => {
   Bun.gc(true);

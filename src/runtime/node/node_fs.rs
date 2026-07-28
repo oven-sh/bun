@@ -4444,7 +4444,7 @@ pub mod args {
     }
 
     #[derive(Copy, Clone, Default)]
-    pub struct CpFlags     {
+    pub struct CpFlags {
         pub(crate) recursive: bool,
         pub(crate) error_on_exist: bool,
         pub(crate) force: bool,

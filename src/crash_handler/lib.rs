@@ -456,11 +456,11 @@ impl Write for StderrWriter {
 mod draft {
 
     use core::cell::Cell;
+    use core::ffi::c_char;
     #[cfg(not(windows))]
     use core::ffi::c_int;
     #[cfg(windows)]
     use core::ffi::c_long;
-    use core::ffi::c_char;
     #[cfg(not(windows))]
     use core::ffi::c_void;
     use core::fmt;

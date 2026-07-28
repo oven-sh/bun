@@ -166,14 +166,16 @@ async function runSecurityScannerTest(options: SecurityScannerTestOptions) {
 
   const scannerPath = scannerType === "local" ? "./scanner.js" : "test-security-scanner";
 
-  // First write bunfig WITHOUT scanner for pre-install
-  await Bun.write(
-    join(dir, "bunfig.toml"),
-    `[install]
-cache.disable = true
+  // `cache = false` (not `cache.disable = true`): the latter leaves the
+  // manifest cache enabled, and its fire-and-forget async save makes the set
+  // of registry requests observed by the second command nondeterministic.
+  const bunfigBase = `[install]
+cache = false
 linker = "${linker}"
-registry = "${session.url}/"`,
-  );
+registry = "${session.url}/"`;
+
+  // First write bunfig WITHOUT scanner for pre-install
+  await Bun.write(join(dir, "bunfig.toml"), bunfigBase);
 
   const shouldDoInitialInstall = hasExistingNodeModules || hasLockfile;
   if (shouldDoInitialInstall) {
@@ -206,10 +208,7 @@ registry = "${session.url}/"`,
   // write the full bunfig WITH scanner configuration
   await Bun.write(
     join(dir, "bunfig.toml"),
-    `[install]
-cache.disable = true
-linker = "${linker}"
-registry = "${session.url}/"
+    `${bunfigBase}
 
 [install.security]
 scanner = "${scannerPath}"`,

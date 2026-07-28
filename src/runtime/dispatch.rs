@@ -467,6 +467,19 @@ pub fn run_task(
             panic!("Unexpected Task tag: {}", task.tag.0);
         }
 
+        // ── reserved sentinel ────────────────────────────────────────────
+        task_tag::INVALID => {
+            // All-zeros `Task` — the consumer read a `ConcurrentTask` whose
+            // `.task` field was never written (or whose owner was freed and
+            // its storage reused) between enqueue and drain. See
+            // `bun_event_loop::task_tag::INVALID`.
+            panic!(
+                "zeroed ConcurrentTask (tag=INVALID, ptr={:p}): use-after-free of an inline \
+                 concurrent_task field, or enqueue of a default-initialised ConcurrentTask",
+                task.ptr,
+            );
+        }
+
         _ => {
             // A value outside `task_tag::COUNT` is a producer bug, but it's
             // treated as a recoverable crash, not UB.
@@ -585,7 +598,7 @@ fn run_task_cold(task: Task) {
 /// Compile-time guard that the arm count above tracks
 /// `bun_event_loop::task_tag::COUNT`. Bump when adding a variant.
 const _: () = assert!(
-    task_tag::COUNT == 96,
+    task_tag::COUNT == 97,
     "dispatch::run_task arm count out of sync with bun_event_loop::task_tag",
 );
 

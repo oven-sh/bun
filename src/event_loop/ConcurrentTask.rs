@@ -44,12 +44,23 @@ pub struct TaskTag(pub u8);
 #[allow(non_upper_case_globals)]
 pub mod task_tag {
     use super::TaskTag;
+
+    /// Reserved: never produced by any `Taskable` impl. A `Task` with this tag
+    /// is an all-zeros bit pattern (the state of `ConcurrentTask::default()`),
+    /// so observing it in dispatch means the consumer read a `ConcurrentTask`
+    /// whose owner was freed (or whose `.task` field was never written) before
+    /// the drain. `bun_runtime::dispatch::run_task` panics on it so the bug
+    /// class surfaces as a labelled crash rather than dispatching as whichever
+    /// real tag happens to be value 0.
+    pub const INVALID: TaskTag = TaskTag(0);
+
     macro_rules! tags {
         ($($name:ident),* $(,)?) => {
-            tags!(@ 0u8, $($name,)*);
-            /// Number of task tags. `bun_runtime::dispatch::run_task` asserts
+            tags!(@ 1u8, $($name,)*);
+            /// Number of task tag values, including the reserved [`INVALID`]
+            /// sentinel at 0. `bun_runtime::dispatch::run_task` asserts
             /// exhaustiveness against this.
-            pub const COUNT: u8 = tags!(@count 0u8, $($name,)*);
+            pub const COUNT: u8 = tags!(@count 1u8, $($name,)*);
         };
         (@ $n:expr, $head:ident, $($rest:ident,)*) => {
             pub const $head: TaskTag = TaskTag($n);
@@ -232,8 +243,10 @@ pub struct ConcurrentTask {
 impl Default for ConcurrentTask {
     fn default() -> Self {
         Self {
+            // All-zero `Task` is `{tag: task_tag::INVALID, ptr: null}`; caller
+            // must overwrite it before enqueueing. Dispatch panics on `INVALID`.
             // SAFETY: all-zero is a valid bit pattern for `Task` (plain tag
-            // byte + raw pointer); caller must set a real task before use.
+            // byte + raw pointer).
             task: unsafe { bun_core::ffi::zeroed_unchecked() },
             next: Link::new(),
             auto_delete: false,

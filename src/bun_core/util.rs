@@ -2881,9 +2881,7 @@ pub fn get_thread_count() -> u16 {
                 if let Some(v) = getenv_z(key) {
                     return Some(parse(v));
                 }
-                // Windows: `getenv_z` is currently a no-op (no narrow C environ
-                // to borrow from); read via `std::env::var` and route through
-                // the same parser so accepted grammar matches POSIX.
+                // Windows: `getenv_z` is a no-op there (no narrow C environ).
                 #[cfg(windows)]
                 if let Ok(s) = std::env::var(
                     // SAFETY: keys above are ASCII literals.

@@ -1284,10 +1284,8 @@ impl BlobExt for Blob {
         if !matches!(store.data, store::Data::File(_)) {
             return JSValue::FALSE;
         }
-        // A `.slice()` sets `size` to a concrete length, so the `MAX_SIZE`
-        // gate above skips `resolve_size()` and `file.mode` stays 0. Stat the
-        // file when it has never been stat'd (`seekable` is the resolved
-        // sentinel) so `ISREG`/`ISFIFO` below sees the real mode.
+        // A slice has concrete `size`, so the `MAX_SIZE` gate above skipped the
+        // stat and `file.mode` is still 0. `seekable == None` means never stat'd.
         if store.data_mut().as_file().seekable.is_none() {
             resolve_file_stat(store);
         }
@@ -5022,9 +5020,7 @@ pub fn write_file_internal(
             return Err(global_this.throw_invalid_arguments(format_args!("Blob is detached")));
         };
         debug_assert!(!matches!(blob_store.data, store::Data::Bytes(_)));
-        // Callers that reach here via `PathOrBlob::from_js_no_copy` (Image,
-        // `Bun.s3.file().write`) do not go through `validate_writable_blob`,
-        // so reject a sliced destination here too.
+        // Some callers bypass `validate_writable_blob`; reject sliced here too.
         if blob.is_sliced_view.get() {
             return Err(global_this.throw_invalid_arguments(format_args!(
                 "A sliced Bun.file() is a read-only byte-range view; delete() and write() would affect the whole file. Use the un-sliced Bun.file() instead."
@@ -5325,9 +5321,6 @@ fn validate_writable_blob(global_this: &JSGlobalObject, blob: &Blob) -> JsResult
             "Cannot write to a Blob backed by bytes, which are always read-only"
         )));
     }
-    // A `.slice()` of a file/S3-backed blob keeps the parent's pathlike store
-    // but represents a byte-range view. `delete()`/`writer()`/`write()` ignore
-    // the window and would unlink or truncate the whole underlying object.
     if blob.is_sliced_view.get() {
         return Err(global_this.throw_invalid_arguments(format_args!(
             "A sliced Bun.file() is a read-only byte-range view; delete() and write() would affect the whole file. Use the un-sliced Bun.file() instead."

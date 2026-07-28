@@ -129,10 +129,8 @@ pub struct Blob {
     pub charset: Cell<AsciiStatus>,
     /// Was it created via the `File` constructor?
     pub is_jsdom_file: Cell<bool>,
-    /// Set by `.slice()`: a range view onto a file/S3-backed store. Destructive
-    /// operations (`delete`, `writer`, `write`) on such a view would act on the
-    /// whole underlying object, so they are rejected. This is distinct from
-    /// `offset != 0` because `slice(0, n)` is also a partial view.
+    /// Set by `.slice()`. A byte-range view is read-only for file/S3 stores
+    /// (`delete`/`writer`/`write` would act on the whole path).
     pub is_sliced_view: Cell<bool>,
     /// `bun.ptr.RawRefCount(u32, .single_threaded)` — counts in-flight `*Blob`
     /// borrows handed to async readers; not the JS GC retain count. Zero while

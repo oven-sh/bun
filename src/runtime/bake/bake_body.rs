@@ -1487,6 +1487,34 @@ pub(crate) fn add_import_meta_defines(
         DefineData::init_boolean(mode == Mode::ProductionStatic),
     )?;
 
+    // The server/SSR graphs target `bun`, for which
+    // `defines_from_transform_options` does not auto-inline
+    // `process.env.NODE_ENV`. Production is explicit here, so seed the
+    // define so dev-only branches (React, react-dom/server, ...) are
+    // still DCE'd. The client graph targets the browser and already gets
+    // this via `defines_from_transform_options`. Skip when an explicit
+    // value is already present (e.g. env inlining put one in via
+    // `configure_defines()`); user-supplied `bundler_options.define` is
+    // applied after this call at both call sites, so that wins either way.
+    if side == Side::Server && mode != Mode::Development {
+        for (tail, key) in [
+            (b"NODE_ENV" as &[u8], b"process.env.NODE_ENV" as &[u8]),
+            (b"BUN_ENV" as &[u8], b"process.env.BUN_ENV" as &[u8]),
+        ] {
+            let already_present = define.dots.get(tail).is_some_and(|entries| {
+                entries.iter().any(|d| {
+                    d.parts.len() == 3
+                        && &*d.parts[0] == b"process"
+                        && &*d.parts[1] == b"env"
+                        && &*d.parts[2] == tail
+                })
+            });
+            if !already_present {
+                define.insert(key, DefineData::init_static_string(&MODE_PRODUCTION))?;
+            }
+        }
+    }
+
     Ok(())
 }
 

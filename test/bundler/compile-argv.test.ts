@@ -82,9 +82,9 @@ describe("bundler", () => {
           process.exit(1);
         }
 
-        // argv[0] should be "bun" for standalone executables
-        if (process.argv[0] !== "bun") {
-          console.error("FAIL: Expected argv[0] to be 'bun', got", process.argv[0]);
+        // argv[0] should be the standalone executable's resolved path (same as execPath)
+        if (process.argv[0] !== process.execPath) {
+          console.error("FAIL: Expected argv[0] === process.execPath, got", process.argv[0], "vs", process.execPath);
           process.exit(1);
         }
 
@@ -141,8 +141,8 @@ describe("bundler", () => {
           process.exit(1);
         }
 
-        if (process.argv[0] !== "bun") {
-          console.error("FAIL: Expected argv[0] to be 'bun', got", process.argv[0]);
+        if (process.argv[0] !== process.execPath) {
+          console.error("FAIL: Expected argv[0] === process.execPath, got", process.argv[0], "vs", process.execPath);
           process.exit(1);
         }
 

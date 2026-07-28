@@ -1592,9 +1592,21 @@ pub mod bv2_impl {
             // handled by `for_worker` + `wire_after_move`.
             boxed.wire_after_move();
 
-            // `configure_defines` early-returns on `options.defines_loaded` (cloned
-            // as `true`); kept for spec parity.
-            boxed.configure_defines()?;
+            // The cloned define table was computed for the parent's
+            // server-side target, which (unlike `Target::Browser`) doesn't
+            // get a default `process.env.NODE_ENV` define. Rebuild it for the
+            // browser target via `load_defines` directly; the full
+            // `configure_defines()` would also re-run `run_env_loader()` on
+            // the shared env loader (double-emitting the ".env" stderr line
+            // and the analytics counter when `--env=inline`/a prefix is set).
+            // Explicit user/`--production` defines are re-applied from
+            // `transform_options.define`; `force_node_env`/`production` were
+            // already derived by the parent's `configure_defines` and are
+            // cloned by `for_worker`.
+            boxed.options.defines_loaded = false;
+            boxed
+                .options
+                .load_defines(boxed.arena, Some(boxed.env_mut()))?;
 
             // Re-project the resolver subset now that `target`/`conditions` etc.
             // have been overwritten for the browser.

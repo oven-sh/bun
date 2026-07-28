@@ -461,6 +461,8 @@ impl BuildCommand {
         if ctx.bundler_options.production {
             this_transpiler.options.jsx.development = false;
             this_transpiler.resolver.opts.jsx.development = false;
+            this_transpiler.options.force_node_env = options::ForceNodeEnv::Production;
+            this_transpiler.resolver.opts.force_node_env = options::ForceNodeEnv::Production;
         }
 
         match &ctx.debug.macros {

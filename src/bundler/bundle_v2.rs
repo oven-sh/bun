@@ -2534,11 +2534,13 @@ pub mod bv2_impl {
             task.known_target = target;
             {
                 let t = self.transpiler_for_target(target);
-                task.jsx.development = match t.options.force_node_env {
-                    options::ForceNodeEnv::Development => true,
-                    options::ForceNodeEnv::Production => false,
-                    options::ForceNodeEnv::Unspecified => t.options.jsx.development,
-                };
+                match t.options.force_node_env {
+                    options::ForceNodeEnv::Development => task.jsx.development = true,
+                    options::ForceNodeEnv::Production => task.jsx.development = false,
+                    // `task.jsx` is the per-file tsconfig-merged value from
+                    // `ParseTask::init` (via the resolver); keep it.
+                    options::ForceNodeEnv::Unspecified => {}
+                }
             }
 
             // Handle onLoad plugins as entry points
@@ -2644,11 +2646,13 @@ pub mod bv2_impl {
             task.known_target = target;
             {
                 let bundler = self.transpiler_for_target(target);
-                task.jsx.development = match bundler.options.force_node_env {
-                    options::ForceNodeEnv::Development => true,
-                    options::ForceNodeEnv::Production => false,
-                    options::ForceNodeEnv::Unspecified => bundler.options.jsx.development,
-                };
+                match bundler.options.force_node_env {
+                    options::ForceNodeEnv::Development => task.jsx.development = true,
+                    options::ForceNodeEnv::Production => task.jsx.development = false,
+                    // `task.jsx` is the per-file tsconfig-merged value from
+                    // `ParseTask::init` (via the resolver); keep it.
+                    options::ForceNodeEnv::Unspecified => {}
+                }
             }
 
             // Handle onLoad plugins as entry points
@@ -6044,13 +6048,15 @@ pub mod bv2_impl {
                         resolve_task.known_target = target;
                         // Use transpiler JSX options, applying force_node_env like the disk path does
                         resolve_task.jsx = transpiler.options.jsx.clone();
-                        resolve_task.jsx.development = match transpiler.options.force_node_env {
-                            options::ForceNodeEnv::Development => true,
-                            options::ForceNodeEnv::Production => false,
-                            options::ForceNodeEnv::Unspecified => {
-                                transpiler.options.jsx.development
+                        match transpiler.options.force_node_env {
+                            options::ForceNodeEnv::Development => {
+                                resolve_task.jsx.development = true
                             }
-                        };
+                            options::ForceNodeEnv::Production => {
+                                resolve_task.jsx.development = false
+                            }
+                            options::ForceNodeEnv::Unspecified => {}
+                        }
                         resolve_task.loader = Some(import_record_loader);
                         resolve_task.tree_shaking = transpiler.options.tree_shaking;
                         resolve_task.side_effects = bun_ast::SideEffects::HasSideEffects;
@@ -6413,11 +6419,12 @@ pub mod bv2_impl {
                 };
 
                 resolve_task.jsx = resolve_result.jsx.clone();
-                resolve_task.jsx.development = match transpiler.options.force_node_env {
-                    options::ForceNodeEnv::Development => true,
-                    options::ForceNodeEnv::Production => false,
-                    options::ForceNodeEnv::Unspecified => transpiler.options.jsx.development,
-                };
+                match transpiler.options.force_node_env {
+                    options::ForceNodeEnv::Development => resolve_task.jsx.development = true,
+                    options::ForceNodeEnv::Production => resolve_task.jsx.development = false,
+                    // `resolve_result.jsx` is already tsconfig-merged; keep it.
+                    options::ForceNodeEnv::Unspecified => {}
+                }
 
                 resolve_task.loader = Some(import_record_loader);
                 resolve_task.tree_shaking = transpiler.options.tree_shaking;

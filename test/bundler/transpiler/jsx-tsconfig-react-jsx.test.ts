@@ -68,4 +68,77 @@ describe("tsconfig compilerOptions.jsx", () => {
       expect(exitCode).toBe(0);
     }
   });
+
+  // Passing any --jsx-* CLI flag must not override tsconfig's dev/prod selection.
+  // Previously bundle_v2 overwrote the per-file resolver-merged `jsx.development`
+  // with the global CLI default whenever force_node_env was Unspecified, so
+  // adding e.g. --jsx-import-source=shim would discard the tsconfig "jsx" value.
+  describe.concurrent("bun build: --jsx-* flags preserve tsconfig dev/prod", () => {
+    const flags = [
+      ["--jsx-runtime=automatic"],
+      ["--jsx-import-source=shim"],
+      ["--jsx-fragment=Fragment"],
+      ["--jsx-factory=h"],
+    ] as const;
+    for (const extraArgs of flags) {
+      for (const [jsx, importSource] of [
+        ["react-jsx", "shim/jsx-runtime"],
+        ["react-jsxdev", "shim/jsx-dev-runtime"],
+      ] as const) {
+        test(`tsconfig "${jsx}" + ${extraArgs.join(" ")} -> ${importSource}`, async () => {
+          using dir = tempDir("jsx-tsconfig-cli", {
+            ...shimFiles,
+            "b.jsx": `export const b = <span />;\n`,
+            "m.jsx": `import "./b.jsx";\nexport const a = <div p="1">x</div>;\n`,
+            "tsconfig.json": JSON.stringify({ compilerOptions: { jsx, jsxImportSource: "shim" } }),
+          });
+          await using proc = Bun.spawn({
+            cmd: [bunExe(), "build", "m.jsx", "--external", "shim*", ...extraArgs],
+            env: { ...bunEnv, NODE_ENV: undefined, BUN_ENV: undefined },
+            cwd: String(dir),
+            stdout: "pipe",
+            stderr: "pipe",
+          });
+          const [stdout, stderr, exitCode] = await Promise.all([
+            proc.stdout.text(),
+            proc.stderr.text(),
+            proc.exited,
+          ]);
+          expect(stderr).toBe("");
+          // Both the entry point and the imported file go through the bundler;
+          // neither should have its runtime flipped.
+          const unwanted =
+            importSource === "shim/jsx-runtime" ? "shim/jsx-dev-runtime" : "shim/jsx-runtime";
+          expect(stdout).toContain(`"${importSource}"`);
+          expect(stdout).not.toContain(`"${unwanted}"`);
+          expect(exitCode).toBe(0);
+        });
+      }
+    }
+
+    test("--production still forces the production runtime over tsconfig react-jsxdev", async () => {
+      using dir = tempDir("jsx-tsconfig-prod", {
+        ...shimFiles,
+        "tsconfig.json": JSON.stringify({
+          compilerOptions: { jsx: "react-jsxdev", jsxImportSource: "shim" },
+        }),
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "build", "m.jsx", "--external", "shim*", "--production"],
+        env: { ...bunEnv, NODE_ENV: undefined, BUN_ENV: undefined },
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([
+        proc.stdout.text(),
+        proc.stderr.text(),
+        proc.exited,
+      ]);
+      expect(stderr).toBe("");
+      expect(stdout).toContain("shim/jsx-runtime");
+      expect(stdout).not.toContain("jsx-dev-runtime");
+      expect(exitCode).toBe(0);
+    });
+  });
 });

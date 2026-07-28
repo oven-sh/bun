@@ -111,11 +111,14 @@ test("Uint8Array element in a BYTEA array is hex-encoded like Buffer", async () 
   });
 });
 
-test("DataView element in a BYTEA array is hex-encoded like Buffer", async () => {
-  const fromDataView = await bindLiteral(sql =>
-    sql.array([new DataView(new Uint8Array([0xca, 0xfe]).buffer)], "BYTEA"),
-  );
-  expect(fromDataView).toBe('{"\\\\xcafe"}');
+test("DataView and bare ArrayBuffer elements in a BYTEA array are hex-encoded like Buffer", async () => {
+  const backing = new Uint8Array([0xca, 0xfe]);
+  const fromDataView = await bindLiteral(sql => sql.array([new DataView(backing.buffer)], "BYTEA"));
+  const fromArrayBuffer = await bindLiteral(sql => sql.array([backing.buffer], "BYTEA"));
+  expect({ fromDataView, fromArrayBuffer }).toEqual({
+    fromDataView: '{"\\\\xcafe"}',
+    fromArrayBuffer: '{"\\\\xcafe"}',
+  });
 });
 
 test("byte-view elements honour byteOffset / byteLength", async () => {
@@ -131,10 +134,16 @@ test("ArrayBufferView element in a JSON array is hex-encoded like Buffer", async
   expect({ fromBuffer, fromUint8 }).toEqual({ fromBuffer: '{"\\"4142\\""}', fromUint8: '{"\\"4142\\""}' });
 });
 
-test("ArrayBufferView element in a non-BYTEA non-JSON array is rejected", () => {
+test("binary element in a non-BYTEA non-JSON array is rejected", () => {
   // sql.array() serializes eagerly, so the error surfaces before any I/O.
   const sql = new SQL({ adapter: "postgres", hostname: "127.0.0.1", port: 1, database: "d", max: 1 });
-  for (const element of [new Uint8Array([65, 66]), Buffer.from([65, 66]), new Float32Array([1.5, 2.5])]) {
+  const elements = [
+    new Uint8Array([65, 66]),
+    Buffer.from([65, 66]),
+    new Float32Array([1.5, 2.5]),
+    new Uint8Array([65, 66]).buffer,
+  ];
+  for (const element of elements) {
     for (const type of ["TEXT", "INT", "REAL"]) {
       const err = (() => {
         try {

@@ -141,8 +141,13 @@ function arrayValueSerializer(type: ArrayType, is_numeric: boolean, is_json: boo
   // we do minimal to none type validation, we just try to format nicely and let the server handle if is valid SQL
   // postgres will try to convert string -> array type
   // postgres will emit a nice error saying what value dont have the expected format outputing the value in the error
-  if (ArrayBuffer.isView(value)) {
-    const buf = Buffer.isBuffer(value) ? value : Buffer.from(value.buffer, value.byteOffset, value.byteLength);
+  const isView = ArrayBuffer.isView(value);
+  if (isView || value instanceof ArrayBuffer || value instanceof SharedArrayBuffer) {
+    const buf = Buffer.isBuffer(value)
+      ? value
+      : isView
+        ? Buffer.from(value.buffer, value.byteOffset, value.byteLength)
+        : Buffer.from(value);
     const hexValue = buf.toString("hex");
     if (type === "BYTEA") {
       return `"${arrayEscape("\\x" + hexValue)}"`;
@@ -153,7 +158,7 @@ function arrayValueSerializer(type: ArrayType, is_numeric: boolean, is_json: boo
     throw $ERR_INVALID_ARG_VALUE(
       "values",
       value,
-      `ArrayBufferView elements are only supported in BYTEA or JSON arrays (got ${type})`,
+      `binary (ArrayBuffer / TypedArray) elements are only supported in BYTEA or JSON arrays (got ${type})`,
     );
   }
   if ($isArray(value)) {

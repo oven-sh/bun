@@ -74,6 +74,12 @@ unsafe extern "C" {
     fn NapiEnv__deref(env: *mut NapiEnv);
     fn NapiEnv__ref(env: *mut NapiEnv);
     fn napi_set_last_error(env: napi_env, status: NapiStatus) -> napi_status;
+    fn napi_internal_as_array_buffer(
+        env: *mut NapiEnv,
+        value: JSValue,
+        out: *mut jsc::ArrayBuffer,
+    ) -> bool;
+    fn napi_internal_get_array_buffer_view_buffer(env: *mut NapiEnv, value: JSValue) -> JSValue;
 }
 
 impl NapiEnv {
@@ -124,6 +130,24 @@ impl NapiEnv {
     pub fn check_gc(&self) {
         // SAFETY: env is non-null; C++ side is read-only here.
         unsafe { napi_internal_check_gc(self.as_mut_ptr()) };
+    }
+
+    /// `JSValue::as_array_buffer` that tolerates a VM-pending exception (Node.js CHECK_ENV accessor).
+    pub fn as_array_buffer(&self, value: JSValue) -> Option<jsc::ArrayBuffer> {
+        let mut out = jsc::ArrayBuffer::default();
+        // SAFETY: env is non-null; `out` is a live exclusive borrow.
+        if unsafe { napi_internal_as_array_buffer(self.as_mut_ptr(), value, &raw mut out) } {
+            out.value = value;
+            Some(out)
+        } else {
+            None
+        }
+    }
+
+    /// `JSValue::get_array_buffer_view_buffer`, same scope as [`Self::as_array_buffer`].
+    pub fn get_array_buffer_view_buffer(&self, value: JSValue) -> JSValue {
+        // SAFETY: env is non-null.
+        unsafe { napi_internal_get_array_buffer_view_buffer(self.as_mut_ptr(), value) }
     }
 
     pub fn get_and_clear_pending_exception(&self) -> Option<JSValue> {
@@ -1358,8 +1382,8 @@ pub(super) extern "C" fn napi_is_arraybuffer(
     // ArrayBuffer in JSC, so `js_type` alone can't tell them apart. Node's
     // `napi_is_arraybuffer` maps to V8's `IsArrayBuffer()`, which is false for
     // SharedArrayBuffer, so exclude shared buffers here too.
-    *result = value
-        .as_array_buffer(env.to_js())
+    *result = env
+        .as_array_buffer(value)
         .is_some_and(|ab| ab.typed_array_type == jsc::JSType::ArrayBuffer && !ab.shared);
     env.ok()
 }
@@ -1395,7 +1419,7 @@ pub(super) extern "C" fn napi_get_arraybuffer_info(
     let env = get_env!(env_);
     env.check_gc();
     let arraybuffer = arraybuffer_.get();
-    let Some(array_buffer) = arraybuffer.as_array_buffer(env.to_js()) else {
+    let Some(array_buffer) = env.as_array_buffer(arraybuffer) else {
         return NapiEnv::set_last_error(Some(env), NapiStatus::invalid_arg);
     };
     if array_buffer.typed_array_type != jsc::JSType::ArrayBuffer {
@@ -1434,7 +1458,7 @@ pub(super) extern "C" fn napi_get_typedarray_info(
     }
     let _keep = jsc::EnsureStillAlive(typedarray);
 
-    let Some(array_buffer) = typedarray.as_array_buffer(env.to_js()) else {
+    let Some(array_buffer) = env.as_array_buffer(typedarray) else {
         return env.invalid_arg();
     };
     // SAFETY: `maybe_type` is null or a valid exclusive out-param per N-API contract.
@@ -1454,7 +1478,7 @@ pub(super) extern "C" fn napi_get_typedarray_info(
 
     // SAFETY: `maybe_arraybuffer` is null or a valid exclusive out-param per N-API contract.
     if let Some(arraybuffer) = unsafe { maybe_arraybuffer.as_mut() } {
-        arraybuffer.set(env, typedarray.get_array_buffer_view_buffer(env.to_js()));
+        arraybuffer.set(env, env.get_array_buffer_view_buffer(typedarray));
     }
 
     // SAFETY: `maybe_byte_offset` is null or a valid exclusive out-param per N-API contract.
@@ -1508,14 +1532,14 @@ pub(super) extern "C" fn napi_get_dataview_info(
     if dataview.is_empty() {
         return env.invalid_arg();
     }
-    let Some(array_buffer) = dataview.as_array_buffer(env.to_js()) else {
+    let Some(array_buffer) = env.as_array_buffer(dataview) else {
         return NapiEnv::set_last_error(Some(env), NapiStatus::object_expected);
     };
     write_out(maybe_bytelength, array_buffer.byte_len);
     write_out(maybe_data, array_buffer.ptr);
     // SAFETY: `maybe_arraybuffer` is null or a valid exclusive out-param per N-API contract.
     if let Some(arraybuffer) = unsafe { maybe_arraybuffer.as_mut() } {
-        arraybuffer.set(env, dataview.get_array_buffer_view_buffer(env.to_js()));
+        arraybuffer.set(env, env.get_array_buffer_view_buffer(dataview));
     }
     // SAFETY: `maybe_byte_offset` is null or a valid exclusive out-param per N-API contract.
     if let Some(byte_offset) = unsafe { maybe_byte_offset.as_mut() } {
@@ -2068,7 +2092,7 @@ pub(super) extern "C" fn napi_get_buffer_info(
     bun_output::scoped_log!(napi, "napi_get_buffer_info");
     let env = get_env!(env_);
     let value = value_.get();
-    let Some(array_buf) = value.as_array_buffer(env.to_js()) else {
+    let Some(array_buf) = env.as_array_buffer(value) else {
         return NapiEnv::set_last_error(Some(env), NapiStatus::invalid_arg);
     };
 

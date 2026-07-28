@@ -433,6 +433,22 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
       expect(result).toContain("side_effect arr[7]=undefined");
       expect(result).toContain("side_effect script_ran=false");
     });
+
+    it("ArrayBuffer/typed-array info accessors succeed while a VM exception is pending", async () => {
+      // napi_throw(E) + napi_call_function puts E into vm.m_exception. The
+      // CHECK_ENV accessors must return napi_ok (Node.js does not gate them)
+      // and leave E untouched. Debug/ASAN builds previously aborted in
+      // ASSERT_NO_PENDING_EXCEPTION inside JSC__JSValue__asArrayBuffer.
+      const result = await checkSameOutput("test_arraybuffer_info_with_vm_exception", []);
+      expect(result).toContain("napi_call_function: status=10");
+      expect(result).toContain("napi_is_arraybuffer: status=0 result=true");
+      expect(result).toContain("napi_get_arraybuffer_info: status=0 len=64 same_data=true");
+      expect(result).toContain("napi_get_typedarray_info: status=0 type=1 len=16 off=8 ab=set");
+      expect(result).toContain("napi_get_dataview_info: status=0 len=16 off=8 ab=set");
+      expect(result).toContain("napi_get_buffer_info: status=0 len=16");
+      expect(result).toContain("pending_after=true");
+      expect(result).toContain("exception=Error: E1");
+    });
   });
 
   describe("napi_async_work", () => {

@@ -287,7 +287,7 @@ describe("dns", () => {
     test("resolve() with a UTF-16 invalid record type throws TypeError", () => {
       // @ts-expect-error
       expect(() => Bun.dns.resolve("localhost", utf16("BOGUS"))).toThrow(
-        `The property "record" is invalid. Expected one of: A, AAAA, ANY, CAA, CNAME, MX, NS, PTR, SOA, SRV, TXT, received type string ('BOGUS')`,
+        `The property "record" is invalid. Expected one of: A, AAAA, ANY, CAA, CNAME, MX, NS, PTR, SOA, SRV, TLSA, TXT, received type string ('BOGUS')`,
       );
     });
   });

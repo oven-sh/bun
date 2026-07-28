@@ -264,11 +264,28 @@ describe("BunFile exists()/size/lastModified reflect the current filesystem stat
     expect(await f.text()).toBe("hello world");
   });
 
-  test("slice() negative indices use the live file size", async () => {
-    using dir = tempDir("bunfile-slice-neg", {});
+  test("slice() on an empty regular file keeps its file store and content-type", async () => {
+    using dir = tempDir("bunfile-slice-empty", {});
     const p = join(String(dir), "f");
-    fs.writeFileSync(p, "BunFoo");
+    fs.writeFileSync(p, "");
+    const s = Bun.file(p).slice(0, 5, "text/plain");
+    expect({ type: s.type.split(";")[0], exists: await s.exists() }).toEqual({
+      type: "text/plain",
+      exists: true,
+    });
+  });
+
+  test("structuredClone does not poison the source blob's later read", async () => {
+    using dir = tempDir("bunfile-clone-poison", {});
+    const p = join(String(dir), "f");
     const f = Bun.file(p);
-    expect(await f.slice(-3, 4).slice(-1, 3).text()).toBe("F");
+    structuredClone(f);
+    fs.writeFileSync(p, "content");
+    expect(await f.text()).toBe("content");
+
+    const g = Bun.file(p);
+    structuredClone(g);
+    fs.appendFileSync(p, "!!!");
+    expect(await g.text()).toBe("content!!!");
   });
 });

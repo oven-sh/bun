@@ -762,7 +762,6 @@ impl BlobExt for Blob {
                 } else {
                     MAX_SIZE
                 })?;
-                self.resolve_size();
                 store.serialize(writer)?;
             }
         }
@@ -2000,7 +1999,7 @@ impl BlobExt for Blob {
 
         let this_size = self.view_size();
 
-        if this_size == 0 {
+        if this_size == 0 && !self.is_bun_file() {
             let ptr = Blob::new(Blob::init_empty(global_this));
             // SAFETY: `ptr` just came from `heap::alloc` in `Blob::new`; force
             // the inherent `Blob::to_js(&mut self)` over `JsClass::to_js`.

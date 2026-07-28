@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug, normalizeBunSnapshot, tempDir, tls } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isWindows, normalizeBunSnapshot, tempDir, tls } from "harness";
 
 test("--parallel: each worker has a unique JEST_WORKER_ID and BUN_TEST_WORKER_ID", async () => {
   // Sleep so worker 0 is busy when workers 1/2 come online and pick up the
@@ -200,7 +200,10 @@ test("--parallel --bail stops dispatching new files after threshold", async () =
   expect(exitCode).toBe(1);
 });
 
-test(
+// Worker crashes are classified as panics by fatal signal, which Windows
+// never surfaces (a crash there is exit code 3, indistinguishable from
+// process.exit) — see is_panic_status. So this contract is POSIX-only.
+test.skipIf(isWindows)(
   "--parallel --bail: a worker panic still prints the panic banner and stops sibling workers",
   async () => {
     using dir = tempDir("parallel-bail-panic", {

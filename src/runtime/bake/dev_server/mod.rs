@@ -788,8 +788,11 @@ impl WatcherAtomics {
             }
 
             let event: *mut HotReloadEvent = loop {
-                let next =
-                    NextEvent((*this).next_event.swap(NextEvent::WAITING.0, Ordering::AcqRel));
+                let next = NextEvent(
+                    (*this)
+                        .next_event
+                        .swap(NextEvent::WAITING.0, Ordering::AcqRel),
+                );
                 match next {
                     NextEvent::WAITING => {
                         // Success order is not AcqRel because the swap above performed an Acquire load.
@@ -893,7 +896,10 @@ impl WatcherAtomics {
     /// watcher thread still holds exclusive access to it.
     // `&(...)` is deliberate — sidesteps dangerous_implicit_autorefs.
     #[allow(clippy::needless_borrow)]
-    pub(crate) unsafe fn watcher_release_and_submit_event(this: *mut Self, ev: *mut HotReloadEvent) {
+    pub(crate) unsafe fn watcher_release_and_submit_event(
+        this: *mut Self,
+        ev: *mut HotReloadEvent,
+    ) {
         // SAFETY: caller contract — `this` and `ev` are live slots in the heap
         // `WatcherAtomics`; every `(*this)` / `(*ev)` below is a field access
         // on that allocation. `(*ev).owner` is the live DevServer (watcher
@@ -926,10 +932,9 @@ impl WatcherAtomics {
             }
             // There are files to be processed.
 
-            let ev_index: u8 = u8::try_from(
-                ev.offset_from((&raw const (*this).events).cast::<HotReloadEvent>()),
-            )
-            .unwrap();
+            let ev_index: u8 =
+                u8::try_from(ev.offset_from((&raw const (*this).events).cast::<HotReloadEvent>()))
+                    .unwrap();
             let old_next = NextEvent((*this).next_event.swap(ev_index, Ordering::AcqRel));
             match old_next {
                 NextEvent::DONE => {

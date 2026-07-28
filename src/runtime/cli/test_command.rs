@@ -246,6 +246,13 @@ pub struct JunitReporter {
     pub total_metrics: Metrics,
     pub offset_of_testsuites_value: usize,
     pub current_file: Box<[u8]>,
+    /// Under `--parallel`, how much of `contents` the worker has already
+    /// streamed to the coordinator (JunitChunk frames); zero elsewhere.
+    pub sent_upto: usize,
+    /// A worker streams bare <testsuite> elements to the coordinator, which
+    /// owns the document; so a worker never writes the `<?xml…>` /
+    /// `<testsuites>` preamble into its buffer.
+    pub elements_only: bool,
     /// Monotonic ns stamped by the file loop when a file starts / finishes.
     /// The file-level suite opens on the file's first result and closes on
     /// the next file's, so its element span is not the file's; these are.
@@ -534,7 +541,7 @@ impl JunitReporter {
         line_number: u32,
         is_file_suite: bool,
     ) -> crate::Result<()> {
-        if self.contents.is_empty() {
+        if self.contents.is_empty() && !self.elements_only {
             self.contents
                 .extend_from_slice(b"<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n");
             self.contents
@@ -1606,15 +1613,14 @@ impl CommandLineReporter {
 
     /// Write an LCOV-only report to a specific path. Used by `--parallel`
     /// workers to emit a fragment the coordinator merges.
-    pub fn write_lcov_only(
+    /// Render this process's coverage as LCOV. `None` when there is
+    /// nothing to report.
+    pub fn render_lcov(
         &mut self,
         vm: &mut VirtualMachine,
         opts: &CodeCoverageOptions,
-        out_path: &bun_core::ZStr,
-    ) -> crate::Result<()> {
-        let Some(map) = ByteRangeMapping::map() else {
-            return Ok(());
-        };
+    ) -> Option<Vec<u8>> {
+        let map = ByteRangeMapping::map()?;
         // SAFETY: thread-local Box pinned for the thread; sole `&mut` for the
         // collection loop below (single-threaded CLI report path).
         let map = unsafe { &mut *map.as_ptr() };
@@ -1624,28 +1630,11 @@ impl CommandLineReporter {
             byte_ranges.push(entry);
         }
         if byte_ranges.is_empty() {
-            return Ok(());
+            return None;
         }
         byte_ranges.sort_by(coverage::is_less_than_cmp);
 
         let relative_dir = bun_resolver::fs::FileSystem::get().top_level_dir;
-        let file = match File::openat(
-            Fd::cwd(),
-            out_path,
-            bun_sys::O::CREAT | bun_sys::O::WRONLY | bun_sys::O::TRUNC | bun_sys::O::CLOEXEC,
-            0o644,
-        ) {
-            bun_sys::Result::Err(e) => {
-                Output::err(
-                    crate::Error::lcovCoverageError,
-                    "failed to open coverage fragment {}\n{}",
-                    (bstr::BStr::new(out_path.as_bytes()), e),
-                );
-                return Err(crate::Error::OpenFailed);
-            }
-            bun_sys::Result::Ok(f) => f,
-        };
-        // Buffer in a Vec (impl `bun_io::Write`) and write through in one shot below.
         let mut buffered: Vec<u8> = Vec::with_capacity(64 * 1024);
         let writer = &mut buffered;
 
@@ -1674,6 +1663,34 @@ impl CommandLineReporter {
             }
             drop(report);
         }
+        Some(buffered)
+    }
+
+    pub fn write_lcov_only(
+        &mut self,
+        vm: &mut VirtualMachine,
+        opts: &CodeCoverageOptions,
+        out_path: &bun_core::ZStr,
+    ) -> crate::Result<()> {
+        let Some(buffered) = self.render_lcov(vm, opts) else {
+            return Ok(());
+        };
+        let file = match File::openat(
+            Fd::cwd(),
+            out_path,
+            bun_sys::O::CREAT | bun_sys::O::WRONLY | bun_sys::O::TRUNC | bun_sys::O::CLOEXEC,
+            0o644,
+        ) {
+            bun_sys::Result::Err(e) => {
+                Output::err(
+                    crate::Error::lcovCoverageError,
+                    "failed to open coverage fragment {}\n{}",
+                    (bstr::BStr::new(out_path.as_bytes()), e),
+                );
+                return Err(crate::Error::OpenFailed);
+            }
+            bun_sys::Result::Ok(f) => f,
+        };
         match file.write_all(&buffered) {
             bun_sys::Result::Ok(()) => {}
             bun_sys::Result::Err(e) => return Err(crate::Error::from(e)),

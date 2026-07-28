@@ -14,7 +14,6 @@ use bun_core::strings;
 use bun_core::{Global, Output};
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_ptr::Interned;
-use bun_sys::FdExt as _;
 
 use super::frame::{self, Frame};
 use super::worker::{PipeRole, Worker, WorkerPipe};
@@ -41,11 +40,13 @@ pub struct Coordinator<'a> {
     pub envps: Vec<bun_dotenv::NullDelimitedEnvMap>,
 
     pub workers: &'a mut [Worker],
-    /// Temp dir for per-worker JUnit XML and LCOV coverage fragments; None
-    /// when neither was requested.
-    pub worker_tmpdir: Option<&'a [u8]>,
-    pub junit_fragments: Vec<Box<[u8]>>,
-    pub coverage_fragments: Vec<Box<[u8]>>,
+    /// Merged junit: each worker streams a file's completed <testsuite> as a
+    /// JunitChunk right after that file, so a crashed worker's finished
+    /// files are already here. Only the coordinator writes the report.
+    pub junit_body: Vec<u8>,
+    pub junit_totals: super::aggregate::JunitTotals,
+    /// Each worker's LCOV bytes (CoverageChunk at worker exit).
+    pub coverage_chunks: Vec<Box<[u8]>>,
     /// File index whose `path:` header was most recently written. Result lines
     /// from concurrent workers interleave; whenever the source file changes the
     /// header is re-emitted so every line has visible context. None at start.
@@ -192,9 +193,6 @@ impl<'a> Coordinator<'a> {
                     let _ = unsafe { (*p).kill(1) };
                 }
             }
-        }
-        if let Some(d) = self.worker_tmpdir {
-            let _ = bun_sys::Fd::cwd().delete_tree(d);
         }
         Global::exit(130);
     }
@@ -484,17 +482,26 @@ impl<'a> Coordinator<'a> {
                     .todos_to_repeat_buf
                     .extend_from_slice(rd.str());
             }
-            frame::Kind::JunitFile | frame::Kind::CoverageFile => {
-                let path = rd.str();
-                if path.is_empty() {
-                    return;
+            frame::Kind::JunitChunk => {
+                let chunk = rd.str();
+                if !chunk.is_empty() {
+                    super::aggregate::add_junit_chunk_totals(&mut self.junit_totals, chunk);
+                    self.junit_body.extend_from_slice(chunk);
+                    if !bun_core::strings::ends_with_char(chunk, b'\n') {
+                        self.junit_body.push(b'\n');
+                    }
                 }
-                let list = if kind == frame::Kind::JunitFile {
-                    &mut self.junit_fragments
-                } else {
-                    &mut self.coverage_fragments
-                };
-                list.push(Box::<[u8]>::from(path));
+            }
+            frame::Kind::CoverageChunk => {
+                let chunk = rd.str();
+                if !chunk.is_empty() {
+                    self.coverage_chunks.push(Box::<[u8]>::from(chunk));
+                }
+            }
+            // No longer sent (reports stream as chunks over IPC); tolerate
+            // them so an old worker binary can't corrupt the channel.
+            frame::Kind::JunitFile | frame::Kind::CoverageFile => {
+                let _ = rd.str();
             }
             frame::Kind::Run | frame::Kind::Shutdown => {}
         }
@@ -545,17 +552,6 @@ impl<'a> Coordinator<'a> {
         }
 
         if let Some(p) = w.process.take() {
-            // A worker rewrites its junit fragment after every file, so one that
-            // died before workerFlushAggregates announced the path still left
-            // a report of the files it finished; pick it up by its
-            // deterministic name (the merge skips it if it never wrote one).
-            if let Some(dir) = self.worker_tmpdir {
-                // SAFETY: `p` is the live `*mut Process` from `to_process`.
-                let pid = unsafe { (*p).pid };
-                let mut path: Vec<u8> = Vec::with_capacity(dir.len() + 24);
-                let _ = write!(&mut path, "{}/w{}.xml", bstr::BStr::new(dir), pid);
-                self.junit_fragments.push(path.into_boxed_slice());
-            }
             // SAFETY: `p` is the live `*mut Process` from `to_process`; sole owner now.
             unsafe {
                 (*p).detach();

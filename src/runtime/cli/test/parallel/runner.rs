@@ -7,13 +7,12 @@ use core::ffi::c_char;
 use core::ptr::NonNull;
 use std::io::Write as _;
 
-use bun_core::ZBox;
 use bun_core::{Global, Output};
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_options_types::context::MacroOptions;
 use bun_ptr::Interned;
-use bun_resolver::fs::{FileSystem, RealFS};
-use bun_sys::{Fd, FdDirExt, FdExt};
+use bun_resolver::fs::FileSystem;
+use bun_sys::Fd;
 
 use super::aggregate;
 use super::channel::{Channel, ChannelOwner};
@@ -26,41 +25,10 @@ use crate::test_command::{self, CommandLineReporter, TestCommand};
 use crate::test_runner::bun_test::FirstLast;
 use bun_options_types::code_coverage_options::CodeCoverageOptions;
 
-// Local helper: formats args into a Vec<u8>. The `unwrap` cannot fail —
-// `Write for Vec<u8>` is infallible.
-macro_rules! format_bytes {
-    ($($arg:tt)*) => {{
-        let mut __v: Vec<u8> = Vec::new();
-        ::std::io::Write::write_fmt(&mut __v, format_args!($($arg)*)).unwrap();
-        __v
-    }};
-}
-
 /// All workers are busy for at least this long before another is spawned.
 /// Overridable via BUN_TEST_PARALLEL_SCALE_MS for tests, where debug-build
 /// module load alone can exceed the production 5ms threshold.
 pub(crate) const DEFAULT_SCALE_UP_AFTER_MS: i64 = 5;
-
-/// Owns the coordinator-side per-run worker temp directory path bytes;
-/// recursively removes it on drop. Stores the bare path with no trailing NUL
-/// so `path()`/Drop hand the exact same bytes to `delete_tree` that
-/// `make_path` created.
-struct WorkerTmpdir(Option<Box<[u8]>>);
-
-impl WorkerTmpdir {
-    #[inline]
-    fn path(&self) -> Option<&[u8]> {
-        self.0.as_deref()
-    }
-}
-
-impl Drop for WorkerTmpdir {
-    fn drop(&mut self) {
-        if let Some(d) = &self.0 {
-            let _ = Fd::cwd().delete_tree(d);
-        }
-    }
-}
 
 /// Returns true if files were actually run via the worker pool, false if it
 /// fell back to the sequential path (≤1 effective worker). The caller uses
@@ -93,48 +61,20 @@ pub fn run_as_coordinator(
     // Owned path bytes. ZStr is a borrow header; we must own the backing
     // storage here. Drop recursively removes the directory once the run
     // finishes.
-    let mut worker_tmpdir = WorkerTmpdir(None);
     // Workers' stderr is a pipe; have them format with ANSI when we will be
     // rendering to a color terminal so streamed lines match serial output.
     if Output::enable_ansi_colors_stderr() {
         let _ = env.map.put(b"FORCE_COLOR", b"1");
     }
-    if ctx.test_options.reporters.junit || coverage_opts.enabled {
-        let pid: i64 = {
-            #[cfg(windows)]
-            {
-                bun_sys::windows::GetCurrentProcessId() as i64
-            }
-            #[cfg(not(windows))]
-            {
-                // SAFETY: getpid is always safe
-                unsafe { libc::getpid() as i64 }
-            }
-        };
-        let dir: Box<[u8]> = format_bytes!(
-            "{}/bun-test-worker-{}",
-            bstr::BStr::new(RealFS::get_default_temp_dir()),
-            pid
-        )
-        .into_boxed_slice();
-        let dir_bytes: &[u8] = &dir;
-        if let Err(e) = Fd::cwd().make_path(dir_bytes) {
-            Output::err(
-                e,
-                "failed to create worker temp dir {}",
-                &[&bstr::BStr::new(dir_bytes)],
-            );
-            Global::exit(1);
-        }
-        let _ = env.map.put(b"BUN_TEST_WORKER_TMP", dir_bytes);
+    if ctx.test_options.reporters.junit {
         // Coordinator's own JunitReporter would otherwise produce an empty
         // document and overwrite the merged one in writeJUnitReportIfNeeded.
+        // Workers keep their reporter and stream each file's suite back over
+        // IPC (JunitChunk); only this process writes the report.
         if let Some(jr) = reporter.reporters.junit.take() {
             let _ = env.map.put(b"BUN_TEST_WORKER_JUNIT", b"1");
             drop(jr);
-            // reporter.reporters.junit already None via .take()
         }
-        worker_tmpdir.0 = Some(dir);
     }
     // Each worker gets a unique JEST_WORKER_ID / BUN_TEST_WORKER_ID (1-indexed,
     // matching Jest) so tests can pick distinct ports/databases. Serialize the
@@ -209,7 +149,6 @@ pub fn run_as_coordinator(
         // backref to the Coordinator; the raw pointers (never a second `&mut`)
         // are what keep this sound. See the backref patch loop below.
         workers: &mut workers,
-        worker_tmpdir: worker_tmpdir.path(),
         parallel_limit: k,
         scale_up_after_ms: if let Some(d) = ctx.test_options.parallel_delay_ms {
             i64::from(d)
@@ -222,8 +161,9 @@ pub fn run_as_coordinator(
         },
         bail: ctx.test_options.bail,
         dots: ctx.test_options.reporters.dots,
-        junit_fragments: Vec::new(),
-        coverage_fragments: Vec::new(),
+        junit_body: Vec::new(),
+        junit_totals: Default::default(),
+        coverage_chunks: Vec::new(),
         last_header_idx: None,
         frame: Frame::default(),
         files_done: 0,
@@ -272,11 +212,7 @@ pub fn run_as_coordinator(
         }
     }
     if coverage_opts.enabled {
-        let frags: Vec<&[u8]> = coord
-            .coverage_fragments
-            .iter()
-            .map(|b| b.as_ref())
-            .collect();
+        let frags: Vec<&[u8]> = coord.coverage_chunks.iter().map(|b| b.as_ref()).collect();
         if Output::enable_ansi_colors_stderr() {
             aggregate::merge_coverage_fragments::<true>(&frags, coverage_opts);
         } else {
@@ -557,9 +493,6 @@ struct WorkerLoop<'a> {
     reporter: &'a mut CommandLineReporter,
     vm: *mut VirtualMachine,
     cmds: WorkerCommands,
-    /// This worker's junit fragment path; rewritten after every file so a
-    /// mid-run crash keeps the suites of the files that already finished.
-    junit_fragment: Option<ZBox>,
 }
 
 impl<'a> WorkerLoop<'a> {
@@ -622,10 +555,20 @@ impl<'a> WorkerLoop<'a> {
                 .reset_hook_scope_for_test_isolation();
             self.reporter.jest.default_timeout_override = u32::MAX;
 
-            if let (Some(path), Some(junit)) =
-                (&self.junit_fragment, &mut self.reporter.reporters.junit)
-            {
-                let _ = junit.write_to_file(path);
+            if let Some(junit) = &mut self.reporter.reporters.junit {
+                // The file suite otherwise closes lazily on the next file's
+                // first result; close it now so its element is complete, then
+                // stream it. Only the coordinator writes the report.
+                while !junit.suite_stack.is_empty() {
+                    let _ = junit.end_test_suite();
+                }
+                junit.current_file = Box::default();
+                if junit.contents.len() > junit.sent_upto {
+                    wf.begin(frame::Kind::JunitChunk);
+                    wf.str(&junit.contents[junit.sent_upto..]);
+                    self.cmds.send(wf.finish());
+                    junit.sent_upto = junit.contents.len();
+                }
             }
 
             let after = *self.reporter.summary();
@@ -679,15 +622,14 @@ pub fn run_as_worker(
     // vm.allocator = arena.arena(); — allocator params dropped in Rust
 
     let env = vm_ref.env_loader();
-    let worker_tmp = env.get(b"BUN_TEST_WORKER_TMP");
     if env.get(b"BUN_TEST_WORKER_JUNIT").is_some() && reporter.reporters.junit.is_none() {
-        reporter.reporters.junit = Some(test_command::JunitReporter::init());
+        let mut junit = test_command::JunitReporter::init();
+        // Elements only: this worker streams suites; the coordinator writes
+        // the document.
+        junit.elements_only = true;
+        reporter.reporters.junit = Some(junit);
     }
 
-    let junit_fragment = match (worker_tmp, reporter.reporters.junit.is_some()) {
-        (Some(dir), true) => Some(worker_junit_fragment_path(dir)),
-        _ => None,
-    };
     let mut wloop = WorkerLoop {
         reporter,
         vm,
@@ -698,11 +640,10 @@ pub fn run_as_worker(
             pending_path: Vec::new(),
             done: false,
         },
-        junit_fragment,
     };
     vm_ref.run_with_api_lock(|| wloop.begin());
 
-    worker_flush_aggregates(wloop.reporter, vm_ref, ctx, worker_tmp, &mut wloop.cmds);
+    worker_flush_aggregates(wloop.reporter, vm_ref, ctx, &mut wloop.cmds);
     // Drain any backpressure-buffered frames before exit so the coordinator
     // sees repeat_bufs/junit_file/coverage_file.
     while wloop.cmds.channel.has_pending_writes() && !wloop.cmds.channel.done {
@@ -727,27 +668,10 @@ pub fn run_as_worker(
     }
 }
 
-/// This worker's junit fragment file inside the shared worker tmpdir.
-fn worker_junit_fragment_path(dir: &[u8]) -> ZBox {
-    let id: i64 = {
-        #[cfg(windows)]
-        {
-            i64::from(bun_sys::windows::GetCurrentProcessId())
-        }
-        #[cfg(not(windows))]
-        {
-            // SAFETY: getpid is always safe
-            i64::from(unsafe { libc::getpid() })
-        }
-    };
-    ZBox::from_bytes(format_bytes!("{}/w{}.xml", bstr::BStr::new(dir), id).as_slice())
-}
-
 fn worker_flush_aggregates(
     reporter: &mut CommandLineReporter,
     vm: &mut VirtualMachine,
     ctx: &Command::ContextData,
-    worker_tmp: Option<&[u8]>,
     cmds: &mut WorkerCommands,
 ) {
     // Snapshots flush lazily when the next file opens its snapshot file; the
@@ -766,57 +690,29 @@ fn worker_flush_aggregates(
     wf.str(reporter.todos_to_repeat_buf.as_slice());
     cmds.send(wf.finish());
 
-    if let Some(dir) = worker_tmp {
-        let id: i64 = {
-            #[cfg(windows)]
-            {
-                i64::from(bun_sys::windows::GetCurrentProcessId())
-            }
-            #[cfg(not(windows))]
-            {
-                // SAFETY: getpid is always safe
-                i64::from(unsafe { libc::getpid() })
-            }
-        };
-        let _ = id;
-        if let Some(junit) = &mut reporter.reporters.junit {
-            let path = worker_junit_fragment_path(dir);
-            if !junit.current_file.is_empty() {
-                let _ = junit.end_test_suite();
-            }
-            match junit.write_to_file(&path) {
-                Ok(_) => {
-                    wf.begin(frame::Kind::JunitFile);
-                    wf.str(path.as_bytes());
-                    cmds.send(wf.finish());
-                }
-                Err(e) => {
-                    Output::err(
-                        e,
-                        "failed to write JUnit fragment to {}",
-                        &[&bstr::BStr::new(path.as_bytes())],
-                    );
-                }
-            }
+    // Any junit bytes not yet streamed (normally none — each file's suite
+    // went out right after the file) and this worker's coverage, both over
+    // IPC. Only the coordinator writes reports to disk. `junit_sent` is
+    // the cursor the file loop maintains; pass the whole buffer offset by
+    // what the loop already sent via the shared counter on the reporter.
+    if let Some(junit) = &mut reporter.reporters.junit {
+        while !junit.suite_stack.is_empty() {
+            let _ = junit.end_test_suite();
         }
-        if ctx.test_options.coverage.enabled {
-            let path = ZBox::from_bytes(
-                format_bytes!("{}/cov{}.lcov", bstr::BStr::new(dir), id).as_slice(),
-            );
-            match reporter.write_lcov_only(vm, &ctx.test_options.coverage, &path) {
-                Ok(_) => {
-                    wf.begin(frame::Kind::CoverageFile);
-                    wf.str(path.as_bytes());
-                    cmds.send(wf.finish());
-                }
-                Err(e) => {
-                    Output::err(
-                        e,
-                        "failed to write coverage fragment to {}",
-                        &[&bstr::BStr::new(path.as_bytes())],
-                    );
-                }
-            }
+        junit.current_file = Box::default();
+        let start = junit.sent_upto;
+        if junit.contents.len() > start {
+            wf.begin(frame::Kind::JunitChunk);
+            wf.str(&junit.contents[start..]);
+            cmds.send(wf.finish());
+            junit.sent_upto = junit.contents.len();
+        }
+    }
+    if ctx.test_options.coverage.enabled {
+        if let Some(lcov) = reporter.render_lcov(vm, &ctx.test_options.coverage) {
+            wf.begin(frame::Kind::CoverageChunk);
+            wf.str(&lcov);
+            cmds.send(wf.finish());
         }
     }
 }

@@ -33,52 +33,36 @@ fn attr_value(head: &[u8], name: &'static [u8]) -> u32 {
     strings::parse_int::<u32>(&head[start..end], 10).unwrap_or(0)
 }
 
-pub(crate) fn merge_junit_fragments(coord: &mut Coordinator, outfile: &[u8], summary: &Summary) {
-    let mut body: Vec<u8> = Vec::new();
-    // Crashed workers never reach workerFlushAggregates, so any files they ran
-    // (including earlier passing ones) have no fragment. Compute the outer
-    // <testsuites> totals from what we actually emit so they always equal the
-    // sum of inner <testsuite> elements; CI tools schema-validate this.
-    #[derive(Default)]
-    struct Totals {
-        tests: u32,
-        failures: u32,
-        skipped: u32,
-    }
-    let mut totals = Totals::default();
+/// Outer <testsuites> totals, accumulated as chunks arrive so they always
+/// equal the sum of the inner file suites; CI tools schema-validate this.
+#[derive(Default)]
+pub struct JunitTotals {
+    pub tests: u32,
+    pub failures: u32,
+    pub skipped: u32,
+}
 
-    for path in &coord.junit_fragments {
-        let file = match File::read_from(Fd::cwd(), path) {
-            bun_sys::Result::Ok(r) => r,
-            bun_sys::Result::Err(_) => continue,
-        };
-        // Each fragment is a full <testsuites> document; extract its header
-        // attributes for the merged totals and its body for the inner suites.
-        let Some(open_start) = strings::index_of(&file, b"<testsuites") else {
-            continue;
-        };
-        let Some(gt) = strings::index_of_char(&file[open_start..], b'>') else {
-            continue;
-        };
-        let head_end = open_start + gt as usize;
-        let head = &file[open_start..head_end];
-        totals.tests += attr_value(head, b"tests");
-        totals.failures += attr_value(head, b"failures");
-        totals.skipped += attr_value(head, b"skipped");
-        let body_start = head_end + 1;
-        let Some(body_end) = strings::last_index_of(&file, b"</testsuites>") else {
-            continue;
-        };
-        if body_start >= body_end {
-            continue;
-        }
-        let inner = strings::trim(&file[body_start..body_end], b"\n");
-        if inner.is_empty() {
-            continue;
-        }
-        body.extend_from_slice(inner);
-        body.push(b'\n');
-    }
+/// A chunk is one file's completed <testsuite> (nested describes inside);
+/// its head carries the file's counts, which already include the nested ones.
+pub(crate) fn add_junit_chunk_totals(totals: &mut JunitTotals, chunk: &[u8]) {
+    let Some(open) = strings::index_of(chunk, b"<testsuite ") else {
+        return;
+    };
+    let Some(gt) = strings::index_of_char(&chunk[open..], b'>') else {
+        return;
+    };
+    let head = &chunk[open..open + gt as usize];
+    totals.tests += attr_value(head, b"tests");
+    totals.failures += attr_value(head, b"failures");
+    totals.skipped += attr_value(head, b"skipped");
+}
+
+pub(crate) fn merge_junit_fragments(coord: &mut Coordinator, outfile: &[u8], summary: &Summary) {
+    // Files streamed their <testsuite> over IPC as they finished (including
+    // from workers that later crashed), so the body is what actually ran.
+    let mut body: Vec<u8> = core::mem::take(&mut coord.junit_body);
+    let totals = core::mem::take(&mut coord.junit_totals);
+    let mut totals = totals;
 
     for &idx in &coord.crashed_files {
         let rel = coord.rel_path(idx);
@@ -151,16 +135,12 @@ impl FileCoverage {
 /// can't be unioned; this under-reports % Funcs when workers cover different
 /// functions of the same file. The non-parallel path has the same FN/FNDA gap.
 pub(crate) fn merge_coverage_fragments<const ENABLE_COLORS: bool>(
-    paths: &[&[u8]],
+    chunks: &[&[u8]],
     opts: &mut CodeCoverageOptions,
 ) {
     let mut by_file: StringArrayHashMap<FileCoverage> = StringArrayHashMap::default();
 
-    for &path in paths {
-        let data = match File::read_from(Fd::cwd(), path) {
-            bun_sys::Result::Ok(r) => r,
-            bun_sys::Result::Err(_) => continue,
-        };
+    for &data in chunks {
         let mut cur: Option<usize> = None; // index into by_file; raw &mut would alias across getOrPut
         // reshaped for borrowck — store index instead of *mut FileCoverage
         for raw in data.split(|b| *b == b'\n') {

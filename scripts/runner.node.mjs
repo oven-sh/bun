@@ -984,13 +984,42 @@ async function runTests() {
       }
       if (isAsan) env.BUN_FEATURE_FLAG_NO_ORPHANS = "1";
 
+      // Render each file's `::group::<path>:` from the coordinator as the
+      // runner's own `[i/N] <path>` group, so a bucketed file reads like any
+      // other test in the log and the durations job times it header-to-header
+      // as usual. `filesSeen` are those that got a group (i.e. produced
+      // output); `i` advances once per file, in whatever order they surface.
+      const filesSeen = new Set();
+      const makePipe = io => {
+        let partial = "";
+        return chunk => {
+          const lines = (partial + chunk).split(/\r?\n/);
+          partial = lines.pop();
+          let plain = "";
+          for (const line of lines) {
+            const group = /^::group::(.+):$/.exec(stripAnsi(line));
+            const testPath = group && norm(group[1]);
+            if (testPath) {
+              if (plain) pipeTestStdout(io, plain);
+              plain = "";
+              filesSeen.add(testPath);
+              const index = ++i;
+              startGroup(
+                `${getAnsi("gray")}[${index}/${total}]${getAnsi("reset")} ${join("test", testPath).replaceAll("\\", "/")}`,
+              );
+            } else {
+              plain += line + "\n";
+            }
+          }
+          if (plain) pipeTestStdout(io, plain);
+        };
+      };
       const { ok, error, stdout, crashes } = await startGroup(`${range} ${label}`, () =>
         spawnBun(execPath, {
           args: [
             "test",
             `--parallel=${width}`,
             `--timeout=${perTestTimeout}`,
-            "--dots",
             "--reporter=junit",
             `--reporter-outfile=${junitPath}`,
             ...bucketFiles.map(t => join(testsPath, t)),
@@ -999,8 +1028,8 @@ async function runTests() {
           timeout: Math.max(10 * 60_000, bucketFiles.length * 5_000),
           gracefulTimeout: true,
           env,
-          stdout: chunk => pipeTestStdout(process.stdout, chunk),
-          stderr: chunk => pipeTestStdout(process.stderr, chunk),
+          stdout: makePipe(process.stdout),
+          stderr: makePipe(process.stderr),
         }),
       );
       if (crashes) process.stderr.write(crashes);
@@ -1021,36 +1050,24 @@ async function runTests() {
             .replace(/ \(\d+s\)$/, "")
             .replaceAll("\\", "/"),
         );
-      const suites = new Map(); // repo-relative path -> { failures, seconds }
+      const suites = new Map(); // repo-relative path -> failures count
       try {
         for (const [, attrs] of readFileSync(junitPath, "utf-8").matchAll(/<testsuite\b([^>]*)>/g)) {
           const file = /\bfile="([^"]+)"/.exec(attrs)?.[1]?.replace(/&amp;/g, "&");
           const failures = Number(/\bfailures="(\d+)"/.exec(attrs)?.[1] ?? 0);
-          const seconds = Number(/\btime="([\d.]+)"/.exec(attrs)?.[1] ?? 0);
-          if (file) suites.set(file.replaceAll("\\", "/"), { failures, seconds });
+          if (file) suites.set(file.replaceAll("\\", "/"), failures);
         }
       } catch {}
       rmSync(junitPath, { force: true });
-
-      // The junit's per-file wall clocks are the timing record for bucketed
-      // files (they no longer get their own timed group in the log): print
-      // them slowest-first so the log carries what the shard-balancing table
-      // and humans read.
-      if (suites.size) {
-        startGroup(`${getAnsi("gray")}parallel bucket: file timings (${suites.size} files)${getAnsi("reset")}`);
-        for (const [file, { seconds }] of [...suites].sort((a, b) => b[1].seconds - a[1].seconds)) {
-          console.log(`  ${seconds.toFixed(2)}s ${file}`);
-        }
-      }
 
       const failed = new Set(); // ran and failed (or hung) — a solo pass is a parallel-mode flake
       const incomplete = new Set(); // never finished/started — re-run quietly
       let evidence = suites.size > 0;
       if (!ok && suites.size) {
         for (const t of bucketFiles) {
-          const suite = suites.get(join("test", t).replaceAll("\\", "/"));
-          if (suite === undefined) incomplete.add(t);
-          else if (suite.failures > 0) failed.add(t);
+          const failures = suites.get(join("test", t).replaceAll("\\", "/"));
+          if (failures === undefined) incomplete.add(t);
+          else if (failures > 0) failed.add(t);
         }
       } else if (!ok) {
         // No junit: the coordinator didn't finish. Read what streamed.
@@ -1090,7 +1107,7 @@ async function runTests() {
       const rerunSet = new Set(rerun);
       for (const t of bucketFiles) {
         if (rerunSet.has(t)) continue;
-        i++;
+        if (!filesSeen.has(t)) i++;
         okResults.push({
           testPath: join("test", t).replaceAll("\\", "/"),
           ok: true,

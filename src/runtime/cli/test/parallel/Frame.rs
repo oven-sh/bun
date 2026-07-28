@@ -25,6 +25,14 @@ pub enum Kind {
     Run,
     /// (empty)
     Shutdown,
+    // worker → coordinator (appended; discriminants above stay stable)
+    /// str xml — one file's completed <testsuite> element(s). Workers never
+    /// write reports to disk; the coordinator concatenates chunks into the
+    /// single junit document it writes at the end.
+    JunitChunk,
+    /// str lcov — this worker's coverage data, sent at exit; the coordinator
+    /// merges every worker's into the one report it writes.
+    CoverageChunk,
 }
 
 impl TryFrom<u8> for Kind {
@@ -41,6 +49,8 @@ impl TryFrom<u8> for Kind {
             6 => Kind::CoverageFile,
             7 => Kind::Run,
             8 => Kind::Shutdown,
+            9 => Kind::JunitChunk,
+            10 => Kind::CoverageChunk,
             _ => return Err(()),
         })
     }

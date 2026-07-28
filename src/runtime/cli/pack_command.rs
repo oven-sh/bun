@@ -232,10 +232,6 @@ impl PackCommand {
                 {
                     break 'err None;
                 }
-                // A lockfile is only needed to resolve `workspace:^` / `workspace:~` /
-                // `workspace:*` / `catalog:` specifiers. If it is unreadable for any
-                // reason, warn and continue; `edit_root_package_json` will error with
-                // "Run `bun install`" if resolution actually needs it.
                 let step = match cause.step {
                     LoadStep::OpenFile => "open",
                     LoadStep::ParseFile => "parse",

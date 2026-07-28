@@ -7271,9 +7271,7 @@ impl NodeFS {
         // to the kernel which only stores into it.
         unsafe { buf.expand_to_capacity() };
 
-        // Node checks the abort signal between chunks of this size
-        // (kReadFileBufferLength in lib/internal/fs/utils.js). Without the cap a
-        // single read() can return the whole file before the signal is consulted.
+        // Node's kReadFileBufferLength: caps each read() so aborted() runs between chunks.
         const READ_FILE_CHUNK_SIZE: usize = 512 * 1024;
         let has_signal = args.signal.is_some();
 

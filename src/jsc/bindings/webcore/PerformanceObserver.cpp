@@ -102,9 +102,6 @@ ExceptionOr<void> PerformanceObserver::observe(Init&& init)
         m_performance->registerPerformanceObserver(*this);
         m_registered = true;
     }
-    // Performance Timeline L2 §observe: buffered entries are appended to the
-    // observer buffer synchronously, and delivery is queued as a task so a
-    // following takeRecords() sees them and disconnect() cancels the callback.
     if (isBuffered && !m_entriesToDeliver.isEmpty())
         m_performance->scheduleTaskIfNeeded();
 

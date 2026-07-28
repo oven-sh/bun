@@ -679,13 +679,6 @@ static GLOBAL_MIMALLOC_VTABLE: crate::AllocatorVTable = crate::AllocatorVTable {
     free: crate::basic::default_allocator_free,
 };
 
-/// Both vtable addresses this module hands out, for
-/// `bun_safety::register_alloc_vtable` (so `has_ptr` recognises either form;
-/// see `is_instance` above which checks both).
-#[inline]
-pub fn std_vtables() -> [&'static crate::AllocatorVTable; 2] {
-    [&HEAP_ALLOCATOR_VTABLE, &GLOBAL_MIMALLOC_VTABLE]
-}
 
 // ── ArenaVec helpers ─────────────────────────────────────────────────────
 

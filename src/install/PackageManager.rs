@@ -975,14 +975,14 @@ impl PackageManager {
     /// outside the manager (set once in `init()`), and callers interleave env
     /// mutation with disjoint `&mut self.X` field writes (e.g. `find_commit`
     /// takes `env`, `log`, and reads `lockfile` in the same argument list).
-    #[inline]
-    #[allow(clippy::mut_from_ref)]
     #[cfg(bun_asan)]
     pub fn deinit_caches(&mut self) {
         self.workspace_package_json_cache = WorkspacePackageJSONCache::default();
         self.update_requests = Box::default();
     }
 
+    #[inline]
+    #[allow(clippy::mut_from_ref)]
     pub fn env_mut<'a>(&self) -> &'a mut dot_env::Loader {
         // SAFETY: `env` is set during `init()` and never None afterward; the
         // pointee is a process-lifetime singleton (leaked `DotEnv.Loader`)

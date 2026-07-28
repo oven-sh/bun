@@ -15,15 +15,18 @@
 //! the virtual memory. So we should only really use this for large blobs of
 //! data that we expect to be cloned multiple times. Such as Blob in FormData.
 
+#[cfg(any(target_os = "linux", target_os = "android"))]
 use core::ffi::c_void;
 #[cfg(any(target_os = "linux", target_os = "android"))]
 use core::sync::atomic::{AtomicUsize, Ordering};
 
 #[cfg(any(target_os = "linux", target_os = "android"))]
-use bun_alloc::StdAllocator;
 use bun_alloc::{Alignment, AllocatorVTable};
+#[cfg(any(target_os = "linux", target_os = "android"))]
+use bun_alloc::StdAllocator;
 use bun_core::Fd;
 // bun_sys (T1) — mmap/munmap/pwrite/ftruncate/memfd_create/Result/Error/E/Tag/can_use_memfd.
+#[cfg(any(target_os = "linux", target_os = "android"))]
 use bun_sys as sys;
 use bun_sys::FdExt;
 
@@ -305,6 +308,7 @@ impl LinuxMemFdAllocator {
 // retains the `heap::alloc` *mut provenance it needs to drop `self`.
 
 mod allocator_interface {
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     use super::*;
 
     /// # Safety
@@ -317,6 +321,7 @@ mod allocator_interface {
     /// `buf` must describe the exact `mmap` region previously returned for this
     /// allocator. The region is unmapped on return; the caller must not access
     /// it afterwards.
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     unsafe fn free(ptr: *mut c_void, buf: &mut [u8], _alignment: Alignment, _ret_addr: usize) {
         // The deref runs after munmap regardless of result.
         //
@@ -339,12 +344,8 @@ mod allocator_interface {
     }
 
     /// Free-only vtable.
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     /// Own static — address is the identity tag for `is_instance`.
     pub(super) static VTABLE: &AllocatorVTable = &AllocatorVTable::free_only(free);
 }
 
-/// For `bun_safety::register_alloc_vtable` (see `super::register_safety_vtables`).
-#[inline]
-pub(super) fn std_vtable() -> &'static AllocatorVTable {
-    allocator_interface::VTABLE
-}

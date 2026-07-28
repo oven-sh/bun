@@ -204,12 +204,6 @@ pub(crate) unsafe extern "C" fn main(argc: c_int, argv: *const *const c_char) ->
     StackCheck::configure_thread();
     bun_io::ParentDeathWatchdog::install();
 
-    // 6. Push high-tier allocator vtable addresses into the
-    //    `bun_safety::alloc::has_ptr` registry so debug-only allocator-mismatch
-    //    checks can identify `LinuxMemFdAllocator`/`MimallocArena` instances.
-    //    Runs once; reads are lock-free Relaxed.
-    bun_runtime::allocators::register_safety_vtables();
-
     // 7. CLI dispatch.
     bun_runtime::cli::Cli::start();
     // `Global::exit` is `-> !`; it coerces to the `c_int` return type.

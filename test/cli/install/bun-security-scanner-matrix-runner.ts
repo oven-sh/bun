@@ -1,7 +1,7 @@
-import { bunEnv, bunExe, isWindows, runBunInstall, tempDirWithFiles } from "harness";
-import { rm } from "node:fs/promises";
-import { join } from "node:path";
-import { isCI } from "../../harness";
+import { bunEnv, bunExe, isCI, isWindows, runBunInstall, tempDir } from "harness";
+import { readFile, rm, writeFile } from "node:fs/promises";
+import { createRequire } from "node:module";
+import { basename, dirname, join } from "node:path";
 import { getRegistry, SimpleRegistry, startRegistry, stopRegistry } from "./simple-dummy-registry";
 
 const CI_SAMPLE_PERCENT = 10; // only 10% of tests will run in CI because this matrix generates so many tests
@@ -48,6 +48,11 @@ interface SecurityScannerTestOptions {
   ttyResponse: "y" | "n"; // Response to send when prompted (only used when hasTTY is true and scannerReturns is "warn")
 }
 
+interface SecurityScannerTestInternals {
+  testId: string;
+  expectSnapshot: (actual: string[], hint: string) => void;
+}
+
 const DO_TEST_DEBUG = process.env.SCANNER_TEST_DEBUG === "true";
 
 async function globEverything(dir: string) {
@@ -56,17 +61,59 @@ async function globEverything(dir: string) {
   );
 }
 
+// One lockfile per unique package.json instead of one `bun install` per test.
+// bun.lock embeds the registry URL so we generate it under a placeholder
+// session and string-replace that placeholder with the test's real session key
+// when seeding each test dir. node_modules cannot be cached this way because
+// node_modules/.cache keys its manifest files by registry-URL hash.
+interface LockfileCacheEntry {
+  sessionKey: string;
+  lockfile: string;
+}
+const lockfileCache = new Map<string, LockfileCacheEntry>();
+
+function lockfileCacheKey(o: Pick<SecurityScannerTestOptions, "command" | "scannerType">): string {
+  const hasRemoveDeps = o.command === "remove" || o.command === "uninstall";
+  return `${hasRemoveDeps ? "rm" : "base"}-${o.scannerType === "npm" ? "npm" : "nonpm"}`;
+}
+
+function makePackageJson(o: Pick<SecurityScannerTestOptions, "command" | "scannerType">): string {
+  return JSON.stringify(
+    {
+      name: "test-app",
+      version: "1.0.0",
+      dependencies: {
+        "left-pad": "1.3.0",
+
+        // For remove/uninstall commands, add the packages we're trying to remove
+        ...(o.command === "remove" || o.command === "uninstall"
+          ? {
+              "is-even": "1.0.0",
+              "is-odd": "1.0.0",
+            }
+          : {}),
+
+        // For npm scanner, add it to dependencies so it gets installed
+        ...(o.scannerType === "npm"
+          ? {
+              "test-security-scanner": "1.0.0",
+            }
+          : {}),
+      },
+    },
+    null,
+    "\t",
+  );
+}
+
 let registryUrl: string;
 
-async function runSecurityScannerTest(options: SecurityScannerTestOptions) {
+async function runSecurityScannerTest(options: SecurityScannerTestOptions, internals: SecurityScannerTestInternals) {
   const registry = getRegistry();
 
   if (!registry) {
     throw new Error("Registry not found");
   }
-
-  registry.clearRequestLog();
-  registry.setScannerBehavior(options.scannerReturns ?? "none");
 
   const {
     command,
@@ -81,6 +128,11 @@ async function runSecurityScannerTest(options: SecurityScannerTestOptions) {
     hasTTY,
     ttyResponse,
   } = options;
+
+  const { testId, expectSnapshot } = internals;
+
+  const sessionKey = `s${testId}-${scannerReturns}`;
+  const sessionRegistryUrl = `${registryUrl}/${sessionKey}`;
 
   const expectedExitCode = shouldFail ? 1 : 0;
 
@@ -125,65 +177,41 @@ async function runSecurityScannerTest(options: SecurityScannerTestOptions) {
 
   // Base files for the test directory
   const files: Record<string, string> = {
-    "package.json": JSON.stringify(
-      {
-        name: "test-app",
-        version: "1.0.0",
-        dependencies: {
-          "left-pad": "1.3.0",
-
-          // For remove/uninstall commands, add the packages we're trying to remove
-          ...(command === "remove" || command === "uninstall"
-            ? {
-                "is-even": "1.0.0",
-                "is-odd": "1.0.0",
-              }
-            : {}),
-
-          // For npm scanner, add it to dependencies so it gets installed
-          ...(scannerType === "npm"
-            ? {
-                "test-security-scanner": "1.0.0",
-              }
-            : {}),
-        },
-      },
-      null,
-      "\t",
-    ),
+    "package.json": makePackageJson(options),
   };
 
   if (scannerType === "local") {
     files["scanner.js"] = scannerCode;
   }
 
-  const dir = tempDirWithFiles("scanner-matrix", files);
-
   const scannerPath = scannerType === "local" ? "./scanner.js" : "test-security-scanner";
 
   // First write bunfig WITHOUT scanner for pre-install
-  await Bun.write(
-    join(dir, "bunfig.toml"),
-    `[install]
+  files["bunfig.toml"] = `[install]
 cache.disable = true
 linker = "${linker}"
-registry = "${registryUrl}/"`,
-  );
+registry = "${sessionRegistryUrl}/"`;
+
+  using dir = tempDir("scanner-matrix", files);
 
   const shouldDoInitialInstall = hasExistingNodeModules || hasLockfile;
-  if (hasExistingNodeModules || hasLockfile) {
-    if (DO_TEST_DEBUG) console.log(redShellPrefix, `${bunExe()} install`);
-    await runBunInstall(bunEnv, dir);
-  }
-
-  if (shouldDoInitialInstall && !hasExistingNodeModules) {
-    if (DO_TEST_DEBUG) console.log(redShellPrefix, `rm -rf ${dir}/node_modules`);
-    await rm(join(dir, "node_modules"), { recursive: true });
-  }
-
-  if (shouldDoInitialInstall && !hasLockfile) {
-    if (DO_TEST_DEBUG) console.log(redShellPrefix, `rm ${dir}/bun.lock`);
-    await rm(join(dir, "bun.lock"));
+  if (shouldDoInitialInstall) {
+    const cached = hasExistingNodeModules ? undefined : lockfileCache.get(lockfileCacheKey(options));
+    if (cached) {
+      if (DO_TEST_DEBUG) console.log(redShellPrefix, `[cached lockfile] -> ${dir}/bun.lock`);
+      await writeFile(join(String(dir), "bun.lock"), cached.lockfile.replaceAll(cached.sessionKey, sessionKey));
+    } else {
+      if (DO_TEST_DEBUG) console.log(redShellPrefix, `${bunExe()} install`);
+      await runBunInstall(bunEnv, String(dir));
+      if (!hasExistingNodeModules) {
+        if (DO_TEST_DEBUG) console.log(redShellPrefix, `rm -rf ${dir}/node_modules`);
+        await rm(join(String(dir), "node_modules"), { recursive: true });
+      }
+      if (!hasLockfile) {
+        if (DO_TEST_DEBUG) console.log(redShellPrefix, `rm ${dir}/bun.lock`);
+        await rm(join(String(dir), "bun.lock"));
+      }
+    }
   }
 
   ////////////////////////// POST SETUP DONE //////////////////////////
@@ -196,15 +224,15 @@ registry = "${registryUrl}/"`,
     console.log(redShellPrefix, cmd.join(" "));
   }
 
-  registry.clearRequestLog();
+  registry.clearRequestLog(sessionKey);
 
   // write the full bunfig WITH scanner configuration
   await Bun.write(
-    join(dir, "bunfig.toml"),
+    join(String(dir), "bunfig.toml"),
     `[install]
 cache.disable = true
 linker = "${linker}"
-registry = "${registryUrl}/"
+registry = "${sessionRegistryUrl}/"
 
 [install.security]
 scanner = "${scannerPath}"`,
@@ -219,16 +247,16 @@ scanner = "${scannerPath}"`,
     console.log(`[DEBUG] Linker: ${linker}`);
     console.log("");
     console.log("Files in test directory:");
-    const files = await globEverything(dir);
+    const files = await globEverything(String(dir));
     for (const file of files) {
       console.log(`  ${file}`);
     }
     console.log("");
     console.log("bunfig.toml contents:");
-    console.log(await Bun.file(join(dir, "bunfig.toml")).text());
+    console.log(await Bun.file(join(String(dir), "bunfig.toml")).text());
     console.log("");
     console.log("package.json contents:");
-    console.log(await Bun.file(join(dir, "package.json")).text());
+    console.log(await Bun.file(join(String(dir), "package.json")).text());
     console.log("");
     console.log("To run the command manually:");
     console.log(`cd ${dir} && ${cmd.join(" ")}`);
@@ -266,7 +294,7 @@ scanner = "${scannerPath}"`,
     });
 
     await using proc = Bun.spawn(cmd, {
-      cwd: dir,
+      cwd: String(dir),
       env: bunEnv,
       terminal,
     });
@@ -276,7 +304,7 @@ scanner = "${scannerPath}"`,
     // Non-TTY mode: use piped stdin to ensure isatty(stdin) returns false
     await using proc = Bun.spawn({
       cmd,
-      cwd: dir,
+      cwd: String(dir),
       stdout: "pipe",
       stderr: "pipe",
       stdin: "pipe",
@@ -322,12 +350,15 @@ scanner = "${scannerPath}"`,
   if (exitCode !== expectedExitCode) {
     console.log("Command:", cmd.join(" "));
     console.log("Expected exit code:", expectedExitCode, "Got:", exitCode);
-    console.log("Test directory:", dir);
-    console.log("Files in test dir:", await globEverything(dir));
-    console.log("Registry:", registryUrl);
+    console.log("Test directory:", String(dir));
+    console.log("Files in test dir:", await globEverything(String(dir)));
+    console.log("Registry:", sessionRegistryUrl);
     console.log();
     console.log("bunfig:");
-    console.log(await Bun.file(join(dir, "bunfig.toml")).text());
+    console.log(await Bun.file(join(String(dir), "bunfig.toml")).text());
+    console.log();
+    console.log("Output:");
+    console.log(errAndOut);
     console.log();
   }
 
@@ -341,7 +372,10 @@ scanner = "${scannerPath}"`,
   }
 
   if (scannerType === "npm.bunfigonly") {
-    expect(errAndOut).toContain("");
+    // The scanner name is a bare package identifier that isn't in package.json,
+    // so Bun has nowhere to install it from and must refuse.
+    expect(errAndOut).toContain("'test-security-scanner' is configured in bunfig.toml but is not installed");
+    expect(errAndOut).not.toContain("SCANNER_RAN");
   }
 
   if (scannerType !== "npm.bunfigonly" && !scannerSyncronouslyThrows) {
@@ -374,7 +408,7 @@ scanner = "${scannerPath}"`,
     switch (scannerReturns) {
       case "fatal": {
         // Fatal advisories always cancel installation
-        expect(await Bun.file(join(dir, "node_modules", "left-pad", "package.json")).exists()).toBe(false);
+        expect(await Bun.file(join(String(dir), "node_modules", "left-pad", "package.json")).exists()).toBe(false);
         break;
       }
 
@@ -387,11 +421,11 @@ scanner = "${scannerPath}"`,
             // These commands don't install packages, they remove them
             // Without existing node_modules, there's nothing to verify
           } else {
-            expect(await Bun.file(join(dir, "node_modules", "left-pad", "package.json")).exists()).toBe(true);
+            expect(await Bun.file(join(String(dir), "node_modules", "left-pad", "package.json")).exists()).toBe(true);
           }
         } else {
           // No TTY to prompt OR user rejected, installation is cancelled
-          expect(await Bun.file(join(dir, "node_modules", "left-pad", "package.json")).exists()).toBe(false);
+          expect(await Bun.file(join(String(dir), "node_modules", "left-pad", "package.json")).exists()).toBe(false);
         }
         break;
       }
@@ -405,14 +439,14 @@ scanner = "${scannerPath}"`,
             for (const arg of args) {
               switch (linker) {
                 case "hoisted": {
-                  expect(await Bun.file(join(dir, "node_modules", arg, "package.json")).exists()).toBe(false);
+                  expect(await Bun.file(join(String(dir), "node_modules", arg, "package.json")).exists()).toBe(false);
                   break;
                 }
 
                 case "isolated": {
                   const versionInRegistry = SimpleRegistry.packages[arg][0];
                   const path = join(
-                    dir,
+                    String(dir),
                     "node_modules",
                     ".bun",
                     `${arg}@${versionInRegistry}`,
@@ -432,14 +466,14 @@ scanner = "${scannerPath}"`,
             for (const arg of args) {
               switch (linker) {
                 case "hoisted": {
-                  expect(await Bun.file(join(dir, "node_modules", arg, "package.json")).exists()).toBe(true);
+                  expect(await Bun.file(join(String(dir), "node_modules", arg, "package.json")).exists()).toBe(true);
                   break;
                 }
 
                 case "isolated": {
                   const versionInRegistry = SimpleRegistry.packages[arg][0];
                   const path = join(
-                    dir,
+                    String(dir),
                     "node_modules",
                     ".bun",
                     `${arg}@${versionInRegistry}`,
@@ -461,8 +495,8 @@ scanner = "${scannerPath}"`,
     }
   }
 
-  const requestedPackages = registry.getRequestedPackages();
-  const requestedTarballs = registry.getRequestedTarballs();
+  const requestedPackages = registry.getRequestedPackages(sessionKey);
+  const requestedTarballs = registry.getRequestedTarballs(sessionKey);
 
   // when we have no node modules and the scanner comes from npm, we must first install the scanner
   // but, if we expect the scanner to report failure then we should ONLY see the scanner tarball requested, no others
@@ -494,8 +528,28 @@ scanner = "${scannerPath}"`,
   const sortedTarballs = [...requestedTarballs].sort();
 
   const key = `${command} ${args.length > 0 ? "with args" : "without args"}` as const;
-  expect(sortedPackages).toMatchSnapshot(`requested-packages: ${key}`);
-  expect(sortedTarballs).toMatchSnapshot(`requested-tarballs: ${key}`);
+  expectSnapshot(sortedPackages, `requested-packages: ${key}`);
+  expectSnapshot(sortedTarballs, `requested-tarballs: ${key}`);
+}
+
+// Load the sibling .snap file and compare against it with toEqual so the matrix
+// can use test.concurrent (bun:test forbids snapshot matchers in concurrent
+// tests). The .snap file stays the source of truth; to regenerate, run with
+// SCANNER_MATRIX_SERIAL=1 which falls back to serial test() + toMatchSnapshot.
+function loadFrozenSnapshots(selfModuleName: string): Map<string, string[]> {
+  const snapPath = join(dirname(selfModuleName), "__snapshots__", basename(selfModuleName) + ".snap");
+  const req = createRequire(selfModuleName);
+  let raw: Record<string, string>;
+  try {
+    raw = req(snapPath);
+  } catch {
+    return new Map();
+  }
+  const out = new Map<string, string[]>();
+  for (const [k, v] of Object.entries(raw)) {
+    out.set(k, JSON.parse(v.replace(/,(\s*\])/g, "$1")));
+  }
+  return out;
 }
 
 export function runSecurityScannerTests(selfModuleName: string, hasExistingNodeModules: boolean) {
@@ -503,8 +557,42 @@ export function runSecurityScannerTests(selfModuleName: string, hasExistingNodeM
 
   const { describe, beforeAll, afterAll, test } = Bun.jest(selfModuleName);
 
+  // SCANNER_MATRIX_SERIAL=1 opts back into serial execution + real
+  // toMatchSnapshot, which is how you regenerate the .snap files (pair with
+  // --update-snapshots).
+  const serial = process.env.SCANNER_MATRIX_SERIAL === "1";
+  const testFn = serial ? test : test.concurrent;
+  const frozen = serial ? new Map<string, string[]>() : loadFrozenSnapshots(selfModuleName);
+
   beforeAll(async () => {
     registryUrl = await startRegistry(DO_TEST_DEBUG);
+    lockfileCache.clear();
+
+    if (!serial && !hasExistingNodeModules) {
+      // Warm the lockfile cache once per unique package.json so the
+      // hasLockfile=true half of the matrix can seed bun.lock by copy instead
+      // of spawning a second `bun install` per test.
+      const variants: Array<Pick<SecurityScannerTestOptions, "command" | "scannerType">> = [];
+      for (const command of ["install", "remove"] as const) {
+        for (const scannerType of ["local", "npm"] as const) {
+          variants.push({ command, scannerType });
+        }
+      }
+      await Promise.all(
+        variants.map(async (v, idx) => {
+          const key = lockfileCacheKey(v);
+          if (lockfileCache.has(key)) return;
+          const sessionKey = `sCache${idx}-none`;
+          using cacheDir = tempDir("scanner-matrix-cache", {
+            "package.json": makePackageJson(v),
+            "bunfig.toml": `[install]\ncache.disable = true\nlinker = "hoisted"\nregistry = "${registryUrl}/${sessionKey}/"\n`,
+          });
+          await runBunInstall(bunEnv, String(cacheDir));
+          const lockfile = await readFile(join(String(cacheDir), "bun.lock"), "utf8");
+          lockfileCache.set(key, { sessionKey, lockfile });
+        }),
+      );
+    }
   });
 
   afterAll(() => {
@@ -523,7 +611,7 @@ export function runSecurityScannerTests(selfModuleName: string, hasExistingNodeM
       { args: [], name: "no args" },
       { args: ["is-even"], name: "is-even" },
       { args: ["left-pad", "is-even"], name: "left-pad,is-even" },
-    ])("$name", ({ args }) => {
+    ])("$name", ({ args, name: argsName }) => {
       describe.each(["hoisted", "isolated"] as const)("--linker=%s", linker => {
         describe.each(["local", "npm", "npm.bunfigonly"] as const)("(scanner: %s)", scannerType => {
           describe.each([true, false] as const)("(bun.lock exists: %p)", hasLockfile => {
@@ -531,7 +619,7 @@ export function runSecurityScannerTests(selfModuleName: string, hasExistingNodeM
               // TTY tests only apply to "warn" cases - for "none" and "fatal", only test non-TTY
               const applicableTtyConfigs = scannerReturns === "warn" ? ttyConfigs : ttyConfigsNoTTY;
 
-              describe.each(applicableTtyConfigs)("($ttyLabel)", ({ hasTTY, ttyResponse }) => {
+              describe.each(applicableTtyConfigs)("($ttyLabel)", ({ hasTTY, ttyResponse, ttyLabel }) => {
                 if ((command === "add" || command === "uninstall" || command === "remove") && args.length === 0) {
                   // TODO(@alii): Test this case:
                   //  - Exit code 1
@@ -540,34 +628,28 @@ export function runSecurityScannerTests(selfModuleName: string, hasExistingNodeM
                   return;
                 }
 
-                const testName = getTestName(String(++i).padStart(4, "0"), hasExistingNodeModules);
+                const testId = String(++i).padStart(4, "0");
+                const testName = getTestName(testId, hasExistingNodeModules);
+
+                // A test.skip registered between two concurrent tests breaks
+                // the concurrent batch, so anything we can drop outright uses
+                // a bare return.
+                if (hasTTY && isWindows) {
+                  // PTY not supported on Windows
+                  return;
+                }
+
+                if (isCI) {
+                  // `uninstall` is the same code path as `remove`.
+                  if (command === "uninstall") return;
+
+                  if (Math.random() < (100 - CI_SAMPLE_PERCENT) / 100) return;
+                }
 
                 if (TESTS_TO_SKIP.has(testName)) {
                   return test.skip(testName, async () => {
                     // TODO
                   });
-                }
-
-                if (hasTTY && isWindows) {
-                  return test.skip(testName, async () => {
-                    // PTY not supported on Windows
-                  });
-                }
-
-                if (isCI) {
-                  if (command === "uninstall") {
-                    return test.skip(testName, async () => {
-                      // Same as `remove`, optimising for CI time here
-                    });
-                  }
-
-                  const random = Math.random();
-
-                  if (random < (100 - CI_SAMPLE_PERCENT) / 100) {
-                    return test.skip(testName, async () => {
-                      // skipping this one for CI
-                    });
-                  }
                 }
 
                 // npm.bunfigonly is the case where a scanner is a valid npm package name identifier
@@ -579,23 +661,46 @@ export function runSecurityScannerTests(selfModuleName: string, hasExistingNodeM
                   scannerReturns === "fatal" ||
                   (scannerReturns === "warn" && (!hasTTY || ttyResponse === "n"));
 
-                test(testName, async () => {
-                  await runSecurityScannerTest({
-                    command,
-                    args,
-                    hasExistingNodeModules,
-                    linker,
-                    scannerType,
-                    scannerReturns,
-                    shouldFail,
-                    hasLockfile,
+                // This is the describe/test path bun:test uses as the snapshot
+                // key; we rebuild it so we can look the value up ourselves.
+                const snapshotScope =
+                  `bun ${command} ${argsName} --linker=${linker} (scanner: ${scannerType}) ` +
+                  `(bun.lock exists: ${hasLockfile}) (advisories: ${scannerReturns}) (${ttyLabel}) ${testName}`;
 
-                    // TODO(@alii): Test this case
-                    scannerSyncronouslyThrows: false,
+                const expectSnapshot = serial
+                  ? (actual: string[], hint: string) => expect(actual).toMatchSnapshot(hint)
+                  : (actual: string[], hint: string) => {
+                      const key = `${snapshotScope}: ${hint} 1`;
+                      const expected = frozen.get(key);
+                      if (expected === undefined) {
+                        throw new Error(
+                          `Missing snapshot: ${key}\n` +
+                            `Regenerate with: SCANNER_MATRIX_SERIAL=1 bun bd test ${basename(selfModuleName)} --update-snapshots`,
+                        );
+                      }
+                      expect(actual).toEqual(expected);
+                    };
 
-                    hasTTY,
-                    ttyResponse,
-                  });
+                testFn(testName, async () => {
+                  await runSecurityScannerTest(
+                    {
+                      command,
+                      args,
+                      hasExistingNodeModules,
+                      linker,
+                      scannerType,
+                      scannerReturns,
+                      shouldFail,
+                      hasLockfile,
+
+                      // TODO(@alii): Test this case
+                      scannerSyncronouslyThrows: false,
+
+                      hasTTY,
+                      ttyResponse,
+                    },
+                    { testId, expectSnapshot },
+                  );
                 });
               });
             });

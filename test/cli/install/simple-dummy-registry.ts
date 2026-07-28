@@ -3,12 +3,20 @@ import { dirname, join } from "node:path";
 
 const __dirname = dirname(Bun.fileURLToPath(import.meta.url));
 
+type ScannerBehavior = "clean" | "warn" | "fatal";
+
+// Session prefix: a URL path whose first segment matches this regex isolates
+// request logging and scanner-tarball selection under that key, so many tests
+// can share one registry server concurrently. e.g. "/s0042-warn/left-pad".
+const SESSION_RE = /^s[0-9A-Za-z]+-(none|warn|fatal)$/;
+
 export class SimpleRegistry {
   private debugLogs: boolean;
   private server: Server | null = null;
   private port: number = 0;
   public requestedUrls: string[] = [];
-  private scannerBehavior: "clean" | "warn" | "fatal" = "clean";
+  private scannerBehavior: ScannerBehavior = "clean";
+  private sessionLogs: Map<string, string[]> = new Map();
 
   public static readonly packages: Record<string, [version: string]> = {
     "left-pad": ["1.3.0"],
@@ -33,21 +41,41 @@ export class SimpleRegistry {
       port: 0,
       async fetch(req) {
         const url = new URL(req.url);
-        const pathname = url.pathname;
+        let pathname = url.pathname;
 
-        self.requestedUrls.push(pathname);
-        if (self.debugLogs) console.error(`[REGISTRY] ${req.method} ${pathname}`);
+        let sessionKey: string | null = null;
+        let behavior: ScannerBehavior = self.scannerBehavior;
+        {
+          const slash = pathname.indexOf("/", 1);
+          const first = pathname.slice(1, slash === -1 ? undefined : slash);
+          const m = first.match(SESSION_RE);
+          if (m) {
+            sessionKey = first;
+            behavior = m[1] === "none" ? "clean" : (m[1] as ScannerBehavior);
+            pathname = slash === -1 ? "/" : pathname.slice(slash);
+          }
+        }
+
+        if (sessionKey) {
+          let log = self.sessionLogs.get(sessionKey);
+          if (!log) self.sessionLogs.set(sessionKey, (log = []));
+          log.push(pathname);
+          if (self.debugLogs) console.error(`[REGISTRY ${sessionKey}] ${req.method} ${pathname}`);
+        } else {
+          self.requestedUrls.push(pathname);
+          if (self.debugLogs) console.error(`[REGISTRY] ${req.method} ${pathname}`);
+        }
 
         if (pathname.startsWith("/") && !pathname.includes(".tgz")) {
           const packageName = decodeURIComponent(pathname.slice(1));
-          return self.handleMetadata(packageName);
+          return self.handleMetadata(packageName, sessionKey);
         }
 
         if (pathname.endsWith(".tgz")) {
           const match = pathname.match(/\/(.+)-(\d+\.\d+\.\d+)\.tgz$/);
           if (match) {
             const [, name, version] = match;
-            return self.handleTarball(name, version);
+            return self.handleTarball(name, version, behavior);
           }
         }
 
@@ -70,12 +98,13 @@ export class SimpleRegistry {
     this.stop();
   }
 
-  private handleMetadata(packageName: string): Response {
+  private handleMetadata(packageName: string, sessionKey: string | null): Response {
     const versions = SimpleRegistry.packages[packageName];
     if (!versions) {
       return new Response("Package not found", { status: 404 });
     }
 
+    const prefix = sessionKey ? `/${sessionKey}` : "";
     const metadata = {
       name: packageName,
       versions: {},
@@ -89,7 +118,7 @@ export class SimpleRegistry {
         name: packageName,
         version: version,
         dist: {
-          tarball: `http://localhost:${this.port}/${packageName}-${version}.tgz`,
+          tarball: `http://localhost:${this.port}${prefix}/${packageName}-${version}.tgz`,
         },
         dependencies: this.getDependencies(packageName, version),
       };
@@ -110,7 +139,7 @@ export class SimpleRegistry {
     return {};
   }
 
-  private async handleTarball(name: string, version: string): Promise<Response> {
+  private async handleTarball(name: string, version: string, behavior: ScannerBehavior): Promise<Response> {
     const versions = SimpleRegistry.packages[name];
 
     if (!versions || !versions.includes(version)) {
@@ -119,7 +148,7 @@ export class SimpleRegistry {
 
     let tarballPath: string;
     if (name === "test-security-scanner") {
-      tarballPath = join(__dirname, `${name}-${version}-${this.scannerBehavior}.tgz`);
+      tarballPath = join(__dirname, `${name}-${version}-${behavior}.tgz`);
     } else {
       tarballPath = join(__dirname, `${name}-${version}.tgz`);
     }
@@ -144,18 +173,22 @@ export class SimpleRegistry {
     return `http://localhost:${this.port}`;
   }
 
-  clearRequestLog() {
-    this.requestedUrls = [];
+  clearRequestLog(sessionKey?: string) {
+    if (sessionKey !== undefined) {
+      this.sessionLogs.set(sessionKey, []);
+    } else {
+      this.requestedUrls = [];
+    }
   }
 
-  getRequestedPackages(): string[] {
-    return this.requestedUrls
-      .filter(url => !url.includes(".tgz") && url !== "/")
-      .map(url => decodeURIComponent(url.slice(1)));
+  getRequestedPackages(sessionKey?: string): string[] {
+    const urls = sessionKey !== undefined ? (this.sessionLogs.get(sessionKey) ?? []) : this.requestedUrls;
+    return urls.filter(url => !url.includes(".tgz") && url !== "/").map(url => decodeURIComponent(url.slice(1)));
   }
 
-  getRequestedTarballs(): string[] {
-    return this.requestedUrls.filter(url => url.endsWith(".tgz"));
+  getRequestedTarballs(sessionKey?: string): string[] {
+    const urls = sessionKey !== undefined ? (this.sessionLogs.get(sessionKey) ?? []) : this.requestedUrls;
+    return urls.filter(url => url.endsWith(".tgz"));
   }
 }
 

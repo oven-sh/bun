@@ -39,7 +39,14 @@ function assetCandidates(): string[] {
   else return [];
   const arch = process.arch === "arm64" ? "arm64" : "amd64";
   const base = isMusl ? `${os}-${arch}-musl` : `${os}-${arch}`;
-  const suffixes = isDebug && isASAN ? ["-debug-asan", "-asan", "-debug", ""] : isASAN ? ["-asan", ""] : isDebug ? ["-debug", ""] : ["", "-lto"];
+  const suffixes =
+    isDebug && isASAN
+      ? ["-debug-asan", "-asan", "-debug", ""]
+      : isASAN
+        ? ["-asan", ""]
+        : isDebug
+          ? ["-debug", ""]
+          : ["", "-lto"];
   const ext = isWindows ? ".exe" : "";
   return suffixes.map(s => `testFFI-${base}${s}${ext}`);
 }

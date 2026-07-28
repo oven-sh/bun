@@ -1281,9 +1281,17 @@ impl BlobExt for Blob {
         }
 
         // We say regular files and pipes exist.
-        let store::Data::File(file) = &store.data else {
+        if !matches!(store.data, store::Data::File(_)) {
             return JSValue::FALSE;
-        };
+        }
+        // A `.slice()` sets `size` to a concrete length, so the `MAX_SIZE`
+        // gate above skips `resolve_size()` and `file.mode` stays 0. Stat the
+        // file when it has never been stat'd (`seekable` is the resolved
+        // sentinel) so `ISREG`/`ISFIFO` below sees the real mode.
+        if store.data_mut().as_file().seekable.is_none() {
+            resolve_file_stat(store);
+        }
+        let file = store.data_mut().as_file();
         JSValue::from(bun_sys::S::ISREG(file.mode) || bun_sys::S::ISFIFO(file.mode))
     }
     fn do_write(&self, global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
@@ -1970,6 +1978,7 @@ impl BlobExt for Blob {
         let blob = self.dupe();
         blob.offset.set(offset);
         blob.size.set(len);
+        blob.is_sliced_view.set(true);
 
         let content_type_was_allocated = content_type.is_owned() && !content_type.is_empty();
         // infer the content type if it was not specified
@@ -3339,6 +3348,7 @@ impl BlobExt for Blob {
                                     ),
                                     charset: Cell::new(blob.charset.get()),
                                     is_jsdom_file: Cell::new(blob.is_jsdom_file.get()),
+                                    is_sliced_view: Cell::new(blob.is_sliced_view.get()),
                                     ref_count: bun_ptr::RawRefCount::init(0), // setNotHeapAllocated
                                     global_this: Cell::new(blob.global_this.get()),
                                     last_modified: Cell::new(blob.last_modified.get()),
@@ -5012,6 +5022,14 @@ pub fn write_file_internal(
             return Err(global_this.throw_invalid_arguments(format_args!("Blob is detached")));
         };
         debug_assert!(!matches!(blob_store.data, store::Data::Bytes(_)));
+        // Callers that reach here via `PathOrBlob::from_js_no_copy` (Image,
+        // `Bun.s3.file().write`) do not go through `validate_writable_blob`,
+        // so reject a sliced destination here too.
+        if blob.is_sliced_view.get() {
+            return Err(global_this.throw_invalid_arguments(format_args!(
+                "A sliced Bun.file() is a read-only byte-range view; delete() and write() would affect the whole file. Use the un-sliced Bun.file() instead."
+            )));
+        }
         // TODO only reset last_modified on success paths instead of resetting
         // last_modified at the beginning for better performance.
         if let store::Data::File(ref mut file) = *blob_store.data_mut() {
@@ -5305,6 +5323,14 @@ fn validate_writable_blob(global_this: &JSGlobalObject, blob: &Blob) -> JsResult
     if matches!(store.data, store::Data::Bytes(_)) {
         return Err(global_this.throw_invalid_arguments(format_args!(
             "Cannot write to a Blob backed by bytes, which are always read-only"
+        )));
+    }
+    // A `.slice()` of a file/S3-backed blob keeps the parent's pathlike store
+    // but represents a byte-range view. `delete()`/`writer()`/`write()` ignore
+    // the window and would unlink or truncate the whole underlying object.
+    if blob.is_sliced_view.get() {
+        return Err(global_this.throw_invalid_arguments(format_args!(
+            "A sliced Bun.file() is a read-only byte-range view; delete() and write() would affect the whole file. Use the un-sliced Bun.file() instead."
         )));
     }
     Ok(())

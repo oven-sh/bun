@@ -248,13 +248,16 @@ const IS_UV_FS_COPYFILE_DISABLED =
     }
 
     {
-      await Bun.write(
-        Bun.file(tmpbase + "fetch.js.in").slice(0, (exampleHtml.length / 2) | 0),
-        Bun.file(tmpbase + "fetch.js.out"),
-      );
-      expect(await Bun.file(tmpbase + "fetch.js.in").text()).toBe(
-        exampleHtml.substring(0, (exampleHtml.length / 2) | 0),
-      );
+      // A sliced Bun.file() destination is a read-only byte-range view; the
+      // previous behavior truncated the whole destination and copied the
+      // first N bytes, which silently destroyed the rest of the file.
+      expect(() =>
+        Bun.write(
+          Bun.file(tmpbase + "fetch.js.in").slice(0, (exampleHtml.length / 2) | 0),
+          Bun.file(tmpbase + "fetch.js.out"),
+        ),
+      ).toThrow(TypeError);
+      expect(await Bun.file(tmpbase + "fetch.js.in").text()).toBe(exampleHtml);
     }
 
     {

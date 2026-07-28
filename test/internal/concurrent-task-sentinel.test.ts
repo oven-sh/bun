@@ -22,34 +22,30 @@ test("tag 0 is no longer a real task type (fs.promises.access still dispatches)"
 
 // The child intentionally panics; the debug build's crash handler symbolicates
 // the full backtrace, which is slow under ASAN.
-test(
-  "a zeroed ConcurrentTask is reported, not dispatched",
-  async () => {
-    await using proc = Bun.spawn({
-      cmd: [
-        bunExe(),
-        "-e",
-        `
+test("a zeroed ConcurrentTask is reported, not dispatched", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
         const { enqueueZeroedConcurrentTaskForTesting } = require("bun:internal-for-testing");
         enqueueZeroedConcurrentTaskForTesting();
         // Return to the loop so the concurrent queue drains and run_task sees it.
         await new Promise(r => setImmediate(r));
         console.log("unreachable");
       `,
-      ],
-      env: { ...bunEnv, BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING: "1" },
-      stdout: "pipe",
-      stderr: "pipe",
-    });
+    ],
+    env: { ...bunEnv, BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING: "1" },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
 
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    expect(stdout).not.toContain("unreachable");
-    // The sentinel panic message. Without the sentinel, tag 0 dispatched as
-    // `fs.access` with a null self and the process segfaulted (no such text).
-    expect(stderr).toContain("zeroed ConcurrentTask");
-    expect(stderr).not.toMatch(/Segmentation fault|EXC_BAD_ACCESS|EXCEPTION_ACCESS_VIOLATION/);
-    expect(exitCode).not.toBe(0);
-  },
-  30_000,
-);
+  expect(stdout).not.toContain("unreachable");
+  // The sentinel panic message. Without the sentinel, tag 0 dispatched as
+  // `fs.access` with a null self and the process segfaulted (no such text).
+  expect(stderr).toContain("zeroed ConcurrentTask");
+  expect(stderr).not.toMatch(/Segmentation fault|EXC_BAD_ACCESS|EXCEPTION_ACCESS_VIOLATION/);
+  expect(exitCode).not.toBe(0);
+}, 30_000);

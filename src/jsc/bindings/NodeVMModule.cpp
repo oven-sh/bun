@@ -105,7 +105,6 @@ JSValue NodeVMModule::evaluate(JSGlobalObject* globalObject, uint32_t timeout, b
             // below, then convert it to ERR_SCRIPT_EXECUTION_*.
             std::ignore = scope.exception();
             if (vm.hasTerminationRequest() || vm.hasPendingTerminationException()) {
-                vm.drainMicrotasksForGlobalObject(nodeVmGlobalObject);
                 DECLARE_TOP_EXCEPTION_SCOPE(vm).clearException();
                 vm.clearHasTerminationRequest();
                 if (getSigintReceived()) {
@@ -245,7 +244,6 @@ JSValue NodeVMModule::evaluate(JSGlobalObject* globalObject, uint32_t timeout, b
     // so the exception-check validator is satisfied before the TOP scope.
     std::ignore = scope.exception();
     if (vm.hasTerminationRequest() || vm.hasPendingTerminationException()) {
-        vm.drainMicrotasksForGlobalObject(nodeVmGlobalObject);
         DECLARE_TOP_EXCEPTION_SCOPE(vm).clearException();
         vm.clearHasTerminationRequest();
         if (getSigintReceived()) {

@@ -2102,6 +2102,13 @@ pub mod winhttp {
             pszProxyBypassW: LPCWSTR,
             dwFlags: DWORD,
         ) -> HINTERNET;
+        pub fn WinHttpSetTimeouts(
+            hInternet: HINTERNET,
+            nResolveTimeout: core::ffi::c_int,
+            nConnectTimeout: core::ffi::c_int,
+            nSendTimeout: core::ffi::c_int,
+            nReceiveTimeout: core::ffi::c_int,
+        ) -> BOOL;
         pub fn WinHttpCloseHandle(hInternet: HINTERNET) -> BOOL;
         pub fn WinHttpGetIEProxyConfigForCurrentUser(
             pProxyConfig: *mut WINHTTP_CURRENT_USER_IE_PROXY_CONFIG,

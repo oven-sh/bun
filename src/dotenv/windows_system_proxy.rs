@@ -51,11 +51,10 @@ impl SystemProxy {
 
     /// Proxy href for `url` (static config or PAC); `None` → direct.
     pub fn resolve(&'static self, url: &bun_url::URL<'_>) -> Option<&'static [u8]> {
-        let hostname = url.hostname;
-        if self.bypass_local && !hostname.is_empty() && !hostname.contains(&b'.') {
+        if self.bypass_local && is_simple_hostname(url.hostname) {
             return None;
         }
-        if crate::env_loader::no_proxy_list_matches(&self.no_proxy, hostname, url.host) {
+        if crate::env_loader::no_proxy_list_matches(&self.no_proxy, url.hostname, url.host) {
             return None;
         }
         if let Some(href) = self.proxy_for_scheme(!url.is_http()) {
@@ -63,6 +62,12 @@ impl SystemProxy {
         }
         self.pac.as_ref()?.resolve(url)
     }
+}
+
+/// WinINet `<local>` bypass: a dotless intranet name, not an IP literal.
+#[inline]
+pub fn is_simple_hostname(hostname: &[u8]) -> bool {
+    !hostname.is_empty() && !hostname.contains(&b'.') && !hostname.contains(&b':')
 }
 
 #[inline]
@@ -305,7 +310,10 @@ impl Pac {
         if let Some(cached) = self.cache.lock().ok()?.get(key.as_slice()) {
             return cached.as_deref().map(Self::as_static);
         }
-        let proxy = self.resolve_uncached(url.href).map(Vec::into_boxed_slice);
+        // CVE-2016-5134: pass only `scheme://host/`; never hand userinfo/path/query to a WPAD-fetched PAC script.
+        let mut sanitized = key.clone();
+        sanitized.push(b'/');
+        let proxy = self.resolve_uncached(&sanitized).map(Vec::into_boxed_slice);
         let mut cache = self.cache.lock().ok()?;
         cache
             .entry(key.into_boxed_slice())
@@ -381,6 +389,7 @@ mod ffi {
         WINHTTP_AUTOPROXY_AUTO_DETECT, WINHTTP_AUTOPROXY_CONFIG_URL, WINHTTP_AUTOPROXY_OPTIONS,
         WINHTTP_CURRENT_USER_IE_PROXY_CONFIG, WINHTTP_PROXY_INFO,
         WinHttpGetIEProxyConfigForCurrentUser, WinHttpGetProxyForUrl, WinHttpOpen,
+        WinHttpSetTimeouts,
     };
     use core::ptr;
 
@@ -444,6 +453,8 @@ mod ffi {
             );
             return None;
         }
+        // SAFETY: `h` is the live session handle; all args are by-value ints.
+        unsafe { WinHttpSetTimeouts(h, 5000, 5000, 5000, 5000) };
         Some(h)
     }
 

@@ -662,7 +662,9 @@ impl ProxySettings {
             return None;
         }
         if let Some(sys) = self.system {
-            if sys.bypass_local() && !url.hostname.is_empty() && !url.hostname.contains(&b'.') {
+            if sys.bypass_local()
+                && bun_dotenv::windows_system_proxy::is_simple_hostname(url.hostname)
+            {
                 return None;
             }
         }

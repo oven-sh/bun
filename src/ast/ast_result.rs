@@ -87,7 +87,18 @@ pub struct Ast<'a> {
     /// We use this with `commonjs_at_runtime` to re-export CommonJS
     pub has_commonjs_export_names: bool,
     pub has_import_meta: bool,
+    pub const_values_declared: ConstValuesDeclared,
     pub import_meta_ref: Ref,
+}
+
+bitflags::bitflags! {
+    /// Set when the file declares a local binding of the named global constant.
+    #[derive(Default, Clone, Copy, PartialEq, Eq)]
+    pub struct ConstValuesDeclared: u8 {
+        const UNDEFINED = 1 << 0;
+        const NAN = 1 << 1;
+        const INFINITY = 1 << 2;
+    }
 }
 
 // `parts`/`symbols`/`import_records` are now `ArenaVec`s and need an allocator,
@@ -128,6 +139,7 @@ impl<'a> Ast<'a> {
             ts_enums: Default::default(),
             has_commonjs_export_names: false,
             has_import_meta: false,
+            const_values_declared: ConstValuesDeclared::empty(),
             import_meta_ref: Ref::NONE,
         }
     }

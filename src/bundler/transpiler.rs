@@ -2407,6 +2407,7 @@ impl<'a> Transpiler<'a> {
             print_dce_annotations: self.options.emit_dce_annotations,
             runtime_transpiler_cache,
             hmr_ref: ast.wrapper_ref,
+            const_values_declared: ast.const_values_declared,
             mangled_props: None,
             ..Default::default()
         };
@@ -2497,6 +2498,7 @@ impl<'a> Transpiler<'a> {
             runtime_transpiler_cache,
             module_info,
             hmr_ref: ast.wrapper_ref,
+            const_values_declared: ast.const_values_declared,
             mangled_props: None,
             // The printer reads `opts.target` at
             // js_printer/lib.rs:6872 to gate the `var {require}=import.meta;`

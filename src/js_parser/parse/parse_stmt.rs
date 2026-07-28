@@ -314,6 +314,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // Push a scope so we make sure to prevent any bare identifiers referenced
         // within the body from being renamed. Renaming them might change the
         // semantics of the code.
+        p.const_values_declared = js_ast::ConstValuesDeclared::all();
         let _ = p.push_scope_for_parse_pass(js_ast::scope::Kind::With, body_loc)?;
         let mut stmt_opts = ParseStatementOptions::default();
         let body = p.parse_stmt(&mut stmt_opts)?;

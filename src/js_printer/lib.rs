@@ -1057,6 +1057,7 @@ pub struct Options<'a> {
     pub transform_only: bool,
     pub inline_require_and_import_errors: bool,
     pub has_run_symbol_renamer: bool,
+    pub const_values_declared: js_ast::ConstValuesDeclared,
 
     pub require_or_import_meta_for_source_callback: RequireOrImportMetaCallback,
 
@@ -1083,6 +1084,11 @@ pub struct Options<'a> {
 }
 
 impl<'a> Options<'a> {
+    #[inline]
+    pub fn can_emit_const_value_identifier(&self, which: js_ast::ConstValuesDeclared) -> bool {
+        self.has_run_symbol_renamer || !self.const_values_declared.contains(which)
+    }
+
     pub fn require_or_import_meta_for_source(
         &self,
         id: u32,
@@ -1128,6 +1134,7 @@ impl<'a> Default for Options<'a> {
             transform_only: false,
             inline_require_and_import_errors: true,
             has_run_symbol_renamer: false,
+            const_values_declared: js_ast::ConstValuesDeclared::empty(),
             require_or_import_meta_for_source_callback: RequireOrImportMetaCallback::default(),
             input_module_type: bundle_opts::ModuleType::Unknown,
             module_type: bundle_opts::Format::Esm,
@@ -1876,19 +1883,21 @@ pub mod __gated_printer {
 
         #[inline]
         pub fn print_undefined(&mut self, loc: bun_ast::Loc, level: Level) {
-            if self.options.minify_syntax {
-                if level.gte(Level::Prefix) {
-                    self.add_source_mapping(loc);
-                    self.print(b"(void 0)");
-                } else {
-                    self.print_space_before_identifier();
-                    self.add_source_mapping(loc);
-                    self.print(b"void 0");
-                }
-            } else {
+            if !self.options.minify_syntax
+                && self
+                    .options
+                    .can_emit_const_value_identifier(js_ast::ConstValuesDeclared::UNDEFINED)
+            {
                 self.print_space_before_identifier();
                 self.add_source_mapping(loc);
                 self.print(b"undefined");
+            } else if level.gte(Level::Prefix) {
+                self.add_source_mapping(loc);
+                self.print(b"(void 0)");
+            } else {
+                self.print_space_before_identifier();
+                self.add_source_mapping(loc);
+                self.print(b"void 0");
             }
         }
 
@@ -4323,7 +4332,14 @@ pub mod __gated_printer {
         pub fn number_property_key_must_be_computed(&self, value: f64) -> bool {
             value.is_sign_negative()
                 || (value == f64::INFINITY
-                    && (self.options.minify_syntax || !self.options.has_run_symbol_renamer))
+                    && (self.options.minify_syntax
+                        || !self.options.can_emit_const_value_identifier(
+                            js_ast::ConstValuesDeclared::INFINITY,
+                        )))
+                || (value.is_nan()
+                    && !self
+                        .options
+                        .can_emit_const_value_identifier(js_ast::ConstValuesDeclared::NAN))
         }
 
         /// `E::ObjectJSON` (JSON-only): always printed in JSON shape.
@@ -6453,11 +6469,35 @@ pub mod __gated_printer {
         pub fn print_number(&mut self, value: f64, level: Level) {
             let abs_value = value.abs();
             if value.is_nan() {
-                self.print_space_before_identifier();
-                self.print(b"NaN");
+                if IS_JSON
+                    || self
+                        .options
+                        .can_emit_const_value_identifier(js_ast::ConstValuesDeclared::NAN)
+                {
+                    self.print_space_before_identifier();
+                    self.print(b"NaN");
+                } else {
+                    let wrap = level.gte(Level::Multiply);
+                    if wrap {
+                        self.print(b"(");
+                    } else {
+                        self.print_space_before_identifier();
+                    }
+                    if self.options.minify_whitespace {
+                        self.print(b"0/0");
+                    } else {
+                        self.print(b"0 / 0");
+                    }
+                    if wrap {
+                        self.print(b")");
+                    }
+                }
             } else if value.is_infinite() {
+                let can_emit_infinity = self
+                    .options
+                    .can_emit_const_value_identifier(js_ast::ConstValuesDeclared::INFINITY);
                 let is_neg_inf = value.is_sign_negative();
-                let wrap = ((!self.options.has_run_symbol_renamer || self.options.minify_syntax)
+                let wrap = ((!can_emit_infinity || self.options.minify_syntax)
                     && level.gte(Level::Multiply))
                     || (is_neg_inf && level.gte(Level::Prefix));
 
@@ -6472,8 +6512,7 @@ pub mod __gated_printer {
                     self.print_space_before_identifier();
                 }
 
-                // If we are not running the symbol renamer, we must not print "Infinity".
-                if IS_JSON || (!self.options.minify_syntax && self.options.has_run_symbol_renamer) {
+                if IS_JSON || (!self.options.minify_syntax && can_emit_infinity) {
                     self.print(b"Infinity");
                 } else if self.options.minify_whitespace {
                     self.print(b"1/0");

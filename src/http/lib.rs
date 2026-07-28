@@ -589,6 +589,11 @@ pub struct ProxySettings {
     http_proxy: Box<[u8]>,
     https_proxy: Box<[u8]>,
     no_proxy: Box<[u8]>,
+    /// Set when `from_env()` fell back to the Windows system proxy (no proxy
+    /// env vars present). `resolve()` then consults it for the WinINet
+    /// `<local>` bypass rule and, when no static per-scheme proxy matched,
+    /// PAC/WPAD via `WinHttpGetProxyForUrl`.
+    system: Option<&'static bun_dotenv::windows_system_proxy::SystemProxy>,
 }
 
 impl ProxySettings {
@@ -607,10 +612,13 @@ impl ProxySettings {
             http_proxy: http_proxy.into(),
             https_proxy: https_proxy.into(),
             no_proxy: no_proxy.unwrap_or(b"").into(),
+            system: None,
         }))
     }
 
     /// Capture `http_proxy` / `https_proxy` / `no_proxy` from the process env.
+    /// On Windows, when none of the proxy env vars are set, falls back to the
+    /// system (WinINet) proxy configuration.
     pub fn from_env(env: &bun_dotenv::Loader) -> Option<Box<Self>> {
         #[inline]
         fn is_emptyish(v: &[u8]) -> bool {
@@ -624,11 +632,22 @@ impl ProxySettings {
                 .or_else(|| env.get(upper))?;
             if is_emptyish(v) { None } else { Some(v) }
         };
-        Self::new(
-            read(b"http_proxy", b"HTTP_PROXY"),
-            read(b"https_proxy", b"HTTPS_PROXY"),
-            read(b"no_proxy", b"NO_PROXY"),
-        )
+        let http = read(b"http_proxy", b"HTTP_PROXY");
+        let https = read(b"https_proxy", b"HTTPS_PROXY");
+        let no_proxy = read(b"no_proxy", b"NO_PROXY");
+        if http.is_some() || https.is_some() {
+            return Self::new(http, https, no_proxy);
+        }
+        let sys = bun_dotenv::windows_system_proxy::get()?;
+        Some(Box::new(Self {
+            http_proxy: sys.http_proxy().unwrap_or(b"").into(),
+            https_proxy: sys.https_proxy().unwrap_or(b"").into(),
+            no_proxy: match no_proxy {
+                Some(n) => n.into(),
+                None => sys.no_proxy().into(),
+            },
+            system: Some(sys),
+        }))
     }
 
     /// Build from an explicit `fetch(url, { proxy })` option. The same proxy is
@@ -644,18 +663,26 @@ impl ProxySettings {
 
     /// Proxy href to use for `url`, or `None` for a direct connection.
     pub fn resolve(&self, url: &URL<'_>) -> Option<&[u8]> {
+        if no_proxy_matches(&self.no_proxy, url.hostname, url.host) {
+            return None;
+        }
+        if let Some(sys) = self.system {
+            if sys.bypass_local() && !url.hostname.is_empty() && !url.hostname.contains(&b'.') {
+                return None;
+            }
+        }
         let href: &[u8] = if url.is_http() {
             &self.http_proxy
         } else {
             &self.https_proxy
         };
-        if href.is_empty() {
-            return None;
+        if !href.is_empty() {
+            return Some(href);
         }
-        if no_proxy_matches(&self.no_proxy, url.hostname, url.host) {
-            return None;
-        }
-        Some(href)
+        // Static proxy wasn't configured for this scheme. On the Windows
+        // system-proxy path that can mean PAC/WPAD; the interned result is
+        // `'static`, which outlives `self`.
+        self.system.and_then(|sys| sys.resolve(url))
     }
 }
 

@@ -2,6 +2,7 @@
 #![warn(unused_must_use)]
 pub mod env_loader;
 pub mod error;
+pub mod windows_system_proxy;
 
 pub use error::{Error, Result};
 

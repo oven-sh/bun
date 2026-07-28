@@ -2052,3 +2052,73 @@ unsafe extern "system" {
 unsafe extern "C" {
     pub fn windows_enable_stdio_inheritance();
 }
+
+// ── WinHTTP (`winhttp.h`) — system proxy configuration ─────────────────────
+// Used by `bun_dotenv::windows_system_proxy` to fall back to the Windows
+// Internet Settings proxy when `http_proxy`/`HTTPS_PROXY` are unset.
+pub mod winhttp {
+    use super::{BOOL, DWORD, LPCWSTR, LPWSTR, c_void};
+
+    pub type HINTERNET = *mut c_void;
+
+    #[repr(C)]
+    pub struct WINHTTP_CURRENT_USER_IE_PROXY_CONFIG {
+        pub fAutoDetect: BOOL,
+        pub lpszAutoConfigUrl: LPWSTR,
+        pub lpszProxy: LPWSTR,
+        pub lpszProxyBypass: LPWSTR,
+    }
+
+    #[repr(C)]
+    pub struct WINHTTP_AUTOPROXY_OPTIONS {
+        pub dwFlags: DWORD,
+        pub dwAutoDetectFlags: DWORD,
+        pub lpszAutoConfigUrl: LPCWSTR,
+        pub lpvReserved: *mut c_void,
+        pub dwReserved: DWORD,
+        pub fAutoLogonIfChallenged: BOOL,
+    }
+
+    #[repr(C)]
+    pub struct WINHTTP_PROXY_INFO {
+        pub dwAccessType: DWORD,
+        pub lpszProxy: LPWSTR,
+        pub lpszProxyBypass: LPWSTR,
+    }
+
+    pub const WINHTTP_ACCESS_TYPE_DEFAULT_PROXY: DWORD = 0;
+    pub const WINHTTP_ACCESS_TYPE_NO_PROXY: DWORD = 1;
+    pub const WINHTTP_ACCESS_TYPE_NAMED_PROXY: DWORD = 3;
+
+    pub const WINHTTP_AUTOPROXY_AUTO_DETECT: DWORD = 0x0000_0001;
+    pub const WINHTTP_AUTOPROXY_CONFIG_URL: DWORD = 0x0000_0002;
+    pub const WINHTTP_AUTO_DETECT_TYPE_DHCP: DWORD = 0x0000_0001;
+    pub const WINHTTP_AUTO_DETECT_TYPE_DNS_A: DWORD = 0x0000_0002;
+
+    #[cfg_attr(windows, link(name = "winhttp"))]
+    unsafe extern "system" {
+        pub fn WinHttpOpen(
+            pszAgentW: LPCWSTR,
+            dwAccessType: DWORD,
+            pszProxyW: LPCWSTR,
+            pszProxyBypassW: LPCWSTR,
+            dwFlags: DWORD,
+        ) -> HINTERNET;
+        pub fn WinHttpCloseHandle(hInternet: HINTERNET) -> BOOL;
+        pub fn WinHttpGetIEProxyConfigForCurrentUser(
+            pProxyConfig: *mut WINHTTP_CURRENT_USER_IE_PROXY_CONFIG,
+        ) -> BOOL;
+        pub fn WinHttpGetProxyForUrl(
+            hSession: HINTERNET,
+            lpcwszUrl: LPCWSTR,
+            pAutoProxyOptions: *mut WINHTTP_AUTOPROXY_OPTIONS,
+            pProxyInfo: *mut WINHTTP_PROXY_INFO,
+        ) -> BOOL;
+    }
+
+    #[cfg_attr(windows, link(name = "kernel32"))]
+    unsafe extern "system" {
+        /// Frees the `LPWSTR` fields WinHTTP allocates into its out-structs.
+        pub fn GlobalFree(hMem: *mut c_void) -> *mut c_void;
+    }
+}

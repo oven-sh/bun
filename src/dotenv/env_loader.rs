@@ -297,10 +297,27 @@ impl Loader {
     }
 
     pub fn get_http_proxy_for(&self, url: &URL<'_>) -> Option<URL<'_>> {
-        self.get_http_proxy(url.is_http(), Some(url.hostname), Some(url.host))
+        if let Some(p) = self.get_http_proxy(url.is_http(), Some(url.hostname), Some(url.host)) {
+            return Some(p);
+        }
+        // Windows: fall back to the system (WinINet) proxy when no proxy env
+        // var is set. `NO_PROXY` from the environment is still honoured.
+        if self.has_http_proxy_env() {
+            return None;
+        }
+        let sys = crate::windows_system_proxy::get()?;
+        if self.is_no_proxy(Some(url.hostname), Some(url.host)) {
+            return None;
+        }
+        Some(URL::parse(sys.resolve(url)?))
     }
 
     pub fn has_http_proxy(&self) -> bool {
+        self.has_http_proxy_env() || crate::windows_system_proxy::get().is_some()
+    }
+
+    #[inline]
+    fn has_http_proxy_env(&self) -> bool {
         self.has(b"http_proxy")
             || self.has(b"HTTP_PROXY")
             || self.has(b"https_proxy")

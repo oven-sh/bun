@@ -246,6 +246,10 @@ pub struct JunitReporter {
     pub total_metrics: Metrics,
     pub offset_of_testsuites_value: usize,
     pub current_file: Box<[u8]>,
+    pub sent_upto: usize,
+    pub elements_only: bool,
+    pub file_start_ns: u64,
+    pub file_end_ns: u64,
     pub properties_list_to_repeat_in_every_test_suite: Option<Box<[u8]>>,
 
     pub suite_stack: Vec<SuiteInfo>,
@@ -265,6 +269,7 @@ pub struct SuiteInfo {
     pub metrics: Metrics,
     pub is_file_suite: bool,
     pub line_number: u32,
+    pub started_ns: u64,
 }
 
 // We dupe the name unconditionally in begin_test_suite_with_line, so the
@@ -526,7 +531,7 @@ impl JunitReporter {
         line_number: u32,
         is_file_suite: bool,
     ) -> crate::Result<()> {
-        if self.contents.is_empty() {
+        if self.contents.is_empty() && !self.elements_only {
             self.contents
                 .extend_from_slice(b"<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n");
             self.contents
@@ -580,6 +585,7 @@ impl JunitReporter {
             metrics: Metrics::default(),
             is_file_suite,
             line_number,
+            started_ns: if is_file_suite { self.file_start_ns } else { 0 },
         });
 
         self.current_depth += 1;
@@ -597,9 +603,16 @@ impl JunitReporter {
         self.current_depth -= 1;
         let suite_info = self.suite_stack.swap_remove(self.suite_stack.len() - 1);
 
-        let elapsed_time_ms = suite_info.metrics.elapsed_time;
-        let elapsed_time_ms_f64: f64 = elapsed_time_ms as f64;
-        let elapsed_time_seconds = elapsed_time_ms_f64 / bun::time::MS_PER_S as f64;
+        let elapsed_time_seconds = if suite_info.is_file_suite && suite_info.started_ns > 0 {
+            let end_ns = if self.file_end_ns >= suite_info.started_ns {
+                self.file_end_ns
+            } else {
+                bun::Timespec::now(bun::TimespecMockMode::ForceRealTime).ns()
+            };
+            end_ns.saturating_sub(suite_info.started_ns) as f64 / bun::time::NS_PER_S as f64
+        } else {
+            suite_info.metrics.elapsed_time as f64 / bun::time::MS_PER_S as f64
+        };
 
         // Reshaped for borrowck — get hostname first
         let hostname = self.get_hostname().map(|h| h.to_vec()).unwrap_or_default();
@@ -1586,17 +1599,12 @@ impl CommandLineReporter {
         )
     }
 
-    /// Write an LCOV-only report to a specific path. Used by `--parallel`
-    /// workers to emit a fragment the coordinator merges.
-    pub fn write_lcov_only(
+    pub fn render_lcov(
         &mut self,
         vm: &mut VirtualMachine,
         opts: &CodeCoverageOptions,
-        out_path: &bun_core::ZStr,
-    ) -> crate::Result<()> {
-        let Some(map) = ByteRangeMapping::map() else {
-            return Ok(());
-        };
+    ) -> Option<Vec<u8>> {
+        let map = ByteRangeMapping::map()?;
         // SAFETY: thread-local Box pinned for the thread; sole `&mut` for the
         // collection loop below (single-threaded CLI report path).
         let map = unsafe { &mut *map.as_ptr() };
@@ -1606,28 +1614,11 @@ impl CommandLineReporter {
             byte_ranges.push(entry);
         }
         if byte_ranges.is_empty() {
-            return Ok(());
+            return None;
         }
         byte_ranges.sort_by(coverage::is_less_than_cmp);
 
         let relative_dir = bun_resolver::fs::FileSystem::get().top_level_dir;
-        let file = match File::openat(
-            Fd::cwd(),
-            out_path,
-            bun_sys::O::CREAT | bun_sys::O::WRONLY | bun_sys::O::TRUNC | bun_sys::O::CLOEXEC,
-            0o644,
-        ) {
-            bun_sys::Result::Err(e) => {
-                Output::err(
-                    crate::Error::lcovCoverageError,
-                    "failed to open coverage fragment {}\n{}",
-                    (bstr::BStr::new(out_path.as_bytes()), e),
-                );
-                return Err(crate::Error::OpenFailed);
-            }
-            bun_sys::Result::Ok(f) => f,
-        };
-        // Buffer in a Vec (impl `bun_io::Write`) and write through in one shot below.
         let mut buffered: Vec<u8> = Vec::with_capacity(64 * 1024);
         let writer = &mut buffered;
 
@@ -1656,11 +1647,7 @@ impl CommandLineReporter {
             }
             drop(report);
         }
-        match file.write_all(&buffered) {
-            bun_sys::Result::Ok(()) => {}
-            bun_sys::Result::Err(e) => return Err(crate::Error::from(e)),
-        }
-        Ok(())
+        Some(buffered)
     }
 
     pub fn print_code_coverage<
@@ -3281,6 +3268,9 @@ impl TestCommand {
             );
             // Bun.jsc.Jest.bun_test.debug.group.log → local declare_scope!(bun_test).
 
+            if let Some(junit) = reporter.reporters.junit.as_mut() {
+                junit.file_start_ns = bun::Timespec::now(bun::TimespecMockMode::ForceRealTime).ns();
+            }
             // need to wake up so autoTick() doesn't wait for 16-100ms after loading the entrypoint
             vm.wakeup();
             let promise = vm.load_entry_point_for_test_runner(file_path)?;
@@ -3390,7 +3380,7 @@ impl TestCommand {
 
             vm.global().handle_rejected_promises();
 
-            if Output::is_github_action() {
+            if Output::is_github_action() && reporter.worker_ipc_file_idx.is_none() {
                 pretty_errorln!("<r>\n::endgroup::\n");
                 Output::flush();
             }
@@ -3404,6 +3394,13 @@ impl TestCommand {
             }
 
             repeat_index += 1;
+        }
+        if let Some(junit) = reporter.reporters.junit.as_mut() {
+            junit.file_end_ns = bun::Timespec::now(bun::TimespecMockMode::ForceRealTime).ns();
+            while !junit.suite_stack.is_empty() {
+                let _ = junit.end_test_suite();
+            }
+            junit.current_file = Box::default();
         }
         Ok(())
     }

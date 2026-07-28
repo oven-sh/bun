@@ -939,6 +939,9 @@ public:
     inline NapiPrototype* signaturePrototype() const { return m_signaturePrototype.get(); }
     inline void setSignaturePrototype(VM& vm, NapiPrototype* prototype);
 
+    // The prototype created by napi_define_class, independent of the JS-visible .prototype property.
+    inline NapiPrototype* classPrototype() const { return m_classPrototype.get(); }
+
 private:
     NapiClass(VM& vm, NativeExecutable* executable, napi_env env, Structure* structure, void* data)
         : Base(vm, executable, env->globalObject(), structure)
@@ -956,6 +959,7 @@ private:
     napi_callback m_constructor = nullptr;
     napi_env m_env = nullptr;
     JSC::WriteBarrier<NapiPrototype> m_signaturePrototype;
+    JSC::WriteBarrier<NapiPrototype> m_classPrototype;
 
     DECLARE_VISIT_CHILDREN;
 };

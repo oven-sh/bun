@@ -764,6 +764,14 @@ nativeTests.test_napi_class_receiver_check = () => {
   Object.setPrototypeOf(a2, B.prototype);
   report("check.call(a with B.prototype)", () => a2.check());
 
+  // Reassigning the constructor's .prototype must not change which class the
+  // receiver check considers an instance to belong to.
+  const savedBProto = B.prototype;
+  B.prototype = A.prototype;
+  const b3 = new B();
+  report("check.call(b with swapped B.prototype)", () => check.call(b3));
+  B.prototype = savedBProto;
+
   console.log("native callback calls:", nativeTests.get_receiver_check_call_count());
 };
 

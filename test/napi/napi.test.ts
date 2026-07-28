@@ -926,9 +926,10 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
       expect(output).toContain("check.call(reflected): returned 0");
       expect(output).toContain("B.staticCheck.call({}): returned static");
       expect(output).toContain("check.call(a with B.prototype): TypeError: Illegal invocation");
-      // 3 on b + 2 accessor on a + 2 on sub + 1 on reflected = 8; the native
-      // method callback must not have been reached for any rejected receiver.
-      expect(output).toContain("native callback calls: 8");
+      expect(output).toContain("check.call(b with swapped B.prototype): returned 0");
+      // 3 on b + 2 accessor on a + 2 on sub + 1 on reflected + 1 on b3 = 9;
+      // the callback must not have been reached for any rejected receiver.
+      expect(output).toContain("native callback calls: 9");
     });
 
     it("keeps the receiver check working after GC drops the class", async () => {

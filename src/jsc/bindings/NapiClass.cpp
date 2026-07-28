@@ -11,6 +11,7 @@ void NapiClass::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
     visitor.append(thisObject->m_signaturePrototype);
+    visitor.append(thisObject->m_classPrototype);
 }
 
 DEFINE_VISIT_CHILDREN(NapiClass);
@@ -46,15 +47,8 @@ JSC_HOST_CALL_ATTRIBUTES JSC::EncodedJSValue NapiClass_ConstructorFunction(JSC::
     JSValue newTarget;
 
     if constexpr (ConstructCall) {
-        // Use ::get instead of ::getIfPropertyExists here so that DontEnum is ignored.
-        auto prototypeValue = napi->get(globalObject, vm.propertyNames->prototype);
-        RETURN_IF_EXCEPTION(scope, {});
-        NapiPrototype* prototype = dynamicDowncast<NapiPrototype>(prototypeValue);
-
-        if (!prototype) {
-            JSC::throwVMError(globalObject, scope, JSC::createTypeError(globalObject, "NapiClass constructor is missing the prototype"_s));
-            return JSValue::encode(JSC::jsUndefined());
-        }
+        NapiPrototype* prototype = napi->classPrototype();
+        ASSERT(prototype);
 
         newTarget = callFrame->newTarget();
         NapiPrototype* thisValue;
@@ -142,6 +136,7 @@ napi_status NapiClass::finishCreation(VM& vm, const String& name, napi_callback 
     this->putDirect(vm, vm.propertyNames->name, jsString(vm, name), JSC::PropertyAttribute::DontEnum | 0);
 
     NapiPrototype* prototype = NapiPrototype::create(vm, globalObject->NapiPrototypeStructure());
+    m_classPrototype.set(vm, this, prototype);
 
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     auto env = m_env;

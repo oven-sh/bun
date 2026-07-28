@@ -1478,14 +1478,19 @@ impl VirtualMachine {
         loop {
             while self.is_event_loop_alive() {
                 self.tick();
+                // Watch exit during this tick: run no more JS.
+                if self.watch_exit_requested {
+                    return;
+                }
                 self.auto_tick_active();
                 dispatch = true;
             }
 
             // Same guard as on entry: a fatal throw during the inner drain
             // must not re-dispatch. The main-thread case already hard-exits
-            // via `exit_on_uncaught_exception`; this covers workers.
-            if dispatch && self.unhandled_error_counter == 0 {
+            // via `exit_on_uncaught_exception`; this covers workers. A watch
+            // exit (possible inside `auto_tick_active`) must not either.
+            if dispatch && self.unhandled_error_counter == 0 && !self.watch_exit_requested {
                 ExitHandler::dispatch_on_before_exit(self);
                 dispatch = false;
 

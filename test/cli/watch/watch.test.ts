@@ -58,12 +58,17 @@ const exitScenarios = {
   // Callbacks queued before process.exit() must not resume while the watcher
   // waits for the next change.
   "pending callbacks": (n: number) =>
-    `console.log("MARK:${n}");\nsetImmediate(() => console.log("AFTER_EXIT_SHOULD_NOT_PRINT"));\nsetTimeout(() => console.log("AFTER_EXIT_SHOULD_NOT_PRINT"), 0);\nprocess.exit(1);\n`,
+    `console.log("MARK:${n}");\nprocess.nextTick(() => console.log("AFTER_EXIT_SHOULD_NOT_PRINT"));\nsetImmediate(() => console.log("AFTER_EXIT_SHOULD_NOT_PRINT"));\nsetTimeout(() => console.log("AFTER_EXIT_SHOULD_NOT_PRINT"), 0);\nprocess.exit(1);\n`,
   // process.exit() from a beforeExit handler: the run ends normally, then the
   // handler calls process.exit() while the watcher loop is dispatching
   // beforeExit.
   "beforeExit handler": (n: number) =>
     `console.log("MARK:${n}");\nprocess.on("beforeExit", () => { process.exit(1); console.log("AFTER_EXIT_SHOULD_NOT_PRINT"); });\n`,
+  // A beforeExit handler that defers process.exit() to a timer: the exit fires
+  // inside on_before_exit's own drain loop, which must not re-dispatch
+  // beforeExit or run more JS.
+  "deferred exit in beforeExit": (n: number) =>
+    `console.log("MARK:${n}");\nprocess.on("beforeExit", () => setTimeout(() => { process.exit(1); console.log("AFTER_EXIT_SHOULD_NOT_PRINT"); }, 0));\n`,
   // process.exit() inside a node:vm script: node:vm converts terminations to
   // SIGINT/timeout errors (and aborts on any other source), so the watch-exit
   // termination must propagate through it instead.

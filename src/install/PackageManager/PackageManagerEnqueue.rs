@@ -533,10 +533,14 @@ pub fn enqueue_dependency_to_root(
                 manager: mgr,
             };
             // SAFETY: `mgr` derived from the live exclusive `this` borrow;
-            // `sleep_until` + `tick_raw` hold no `&mut PackageManager` across
-            // `Closure::is_done`, so the callback's `&mut *closure.manager`
-            // is the unique live borrow.
-            unsafe { PackageManager::sleep_until(mgr, &mut closure, Closure::is_done) };
+            // `sleep_until_io_only` + `tick_raw_io_only` hold no
+            // `&mut PackageManager` across `Closure::is_done`, so the
+            // callback's `&mut *closure.manager` is the unique live borrow.
+            //
+            // `_io_only`: this wait is reachable from inside
+            // `HostLoadImportedModule` (resolver auto-install), so it must not
+            // dispatch JS tasks; `Closure::is_done` drives `run_tasks` itself.
+            unsafe { PackageManager::sleep_until_io_only(mgr, &mut closure, Closure::is_done) };
 
             if this.options.log_level.show_progress() {
                 this.end_progress_bar();

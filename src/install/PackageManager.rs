@@ -965,6 +965,56 @@ impl PackageManager {
         };
     }
 
+    /// Like [`sleep_until`](Self::sleep_until), but never drives
+    /// `jsc::EventLoop::tick()` while waiting; only the usockets poll runs.
+    /// See [`AnyEventLoop::tick_raw_io_only`] for the rationale.
+    ///
+    /// `is_done_fn` must drain whatever completion queues the wait depends on
+    /// (e.g. `run_tasks` for network/manifest completions), since no JS tasks
+    /// are dispatched on its behalf.
+    ///
+    /// # Safety
+    /// Same contract as [`sleep_until`](Self::sleep_until).
+    pub unsafe fn sleep_until_io_only<C>(
+        this: *mut PackageManager,
+        closure: &mut C,
+        is_done_fn: fn(&mut C) -> bool,
+    ) {
+        Output::flush();
+        struct Erased<C> {
+            ctx: *mut C,
+            is_done: fn(&mut C) -> bool,
+        }
+        fn trampoline<C>(p: *mut c_void) -> bool {
+            let erased = p as *const Erased<C>;
+            // SAFETY: `p` is the `Erased<C>` local below; only its two POD
+            // fields are read (no `&mut Erased` materialized).
+            let (ctx_ptr, is_done) = unsafe { ((*erased).ctx, (*erased).is_done) };
+            // SAFETY: `ctx_ptr` is the caller's exclusive `closure: &mut C`;
+            // the caller does not touch it again until `tick_raw_io_only`
+            // returns, so this is the unique live `&mut C` for the callback.
+            let ctx = unsafe { &mut *ctx_ptr };
+            is_done(ctx)
+        }
+        let mut erased = Erased::<C> {
+            ctx: std::ptr::from_mut::<C>(closure),
+            is_done: is_done_fn,
+        };
+        // SAFETY: `this` is valid per fn contract; `&raw mut` does not create
+        // a reference, only a place projection.
+        let event_loop: *mut AnyEventLoop = unsafe { &raw mut (*this).event_loop };
+        // SAFETY: `tick_raw_io_only` reborrows `*event_loop` only between
+        // `is_done` calls (never across them), so the callback's
+        // `&mut PackageManager` never overlaps a live `&mut AnyEventLoop`.
+        unsafe {
+            AnyEventLoop::tick_raw_io_only(
+                event_loop,
+                (&raw mut erased).cast::<c_void>(),
+                trampoline::<C>,
+            )
+        };
+    }
+
     pub fn ensure_temp_node_gyp_script(&mut self) -> Result<(), Error> {
         // The body is
         // already idempotent (early-returns when `node_gyp_tempdir_name` is

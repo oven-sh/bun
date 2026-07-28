@@ -161,6 +161,49 @@ impl AnyEventLoop {
             AnyEventLoop::Mini(mini) => mini.tick_without_idle(context),
         }
     }
+
+    /// Like [`tick_raw`](Self::tick_raw), but the `Js` arm only polls the
+    /// usockets loop and never runs `jsc::EventLoop::tick()` / `auto_tick()`.
+    ///
+    /// This is for synchronous waits that run *inside* the JS call stack
+    /// (currently: the resolver's auto-install wait reached from
+    /// `HostLoadImportedModule`). Dispatching JS tasks there re-enters the
+    /// module loader while a graph walk is mid-edge, and unrelated module
+    /// completions populate the referrer's `[[LoadedModules]]` from under it.
+    ///
+    /// The caller's `is_done` is responsible for draining whatever completion
+    /// queues it cares about; this function only provides the
+    /// sleep-until-I/O-wakes-us primitive.
+    ///
+    /// # Safety
+    /// Same contract as [`tick_raw`](Self::tick_raw).
+    pub unsafe fn tick_raw_io_only(
+        this: *mut Self,
+        context: *mut core::ffi::c_void,
+        is_done: fn(*mut core::ffi::c_void) -> bool,
+    ) {
+        while !is_done(context) {
+            // SAFETY: per fn contract — reborrow strictly after `is_done`
+            // returns; the borrow ends at the bottom of this loop body before
+            // the next `is_done` call.
+            match unsafe { &mut *this } {
+                AnyEventLoop::Js { owner } => {
+                    let loop_ = owner.uws_loop();
+                    // SAFETY: `uws_loop()` returns the live per-thread loop.
+                    // `inc`/`dec` keep one poll registered so `tick()` parks
+                    // until I/O instead of returning immediately.
+                    unsafe {
+                        (*loop_).inc();
+                        (*loop_).tick();
+                        (*loop_).dec();
+                    }
+                }
+                AnyEventLoop::Mini(mini) => {
+                    mini.tick_once(context);
+                }
+            }
+        }
+    }
 }
 
 // ─── AnyEventLoop → EventLoopHandle forwarders ──────────────────────────────

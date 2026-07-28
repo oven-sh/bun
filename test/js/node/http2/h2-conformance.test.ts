@@ -1687,9 +1687,11 @@ describe("RST_STREAM flood (CVE-2023-44487 rapid-reset)", () => {
     expect(Buffer.from(frame.payload.subarray(8)).toString()).toBe("too many RST_STREAM frames");
     // The handler fires for every stream whose RST_STREAM has not yet emptied the token bucket
     // (node parity: test-http2-client-rststream-before-connect expects 'stream' to fire even when
-    // the client immediately resets). The default burst is 1000; refill at 33/s may add a few.
+    // the client immediately resets). The default burst is 1000; refill at 33/s may add up to a
+    // few hundred on a slow debug+ASAN lane, so assert the bucket bounded it rather than a tight
+    // count.
     expect(handlers).toBeGreaterThan(900);
-    expect(handlers).toBeLessThan(1100);
+    expect(handlers).toBeLessThanOrEqual(1200);
     // The engine sees each RST_STREAM right after its HEADERS in the same buffer, so request()
     // and writeStream() short-circuit and nothing is written on the reset stream's behalf. A pair
     // split across two socket reads misses the lookahead and can write once, so allow a small
@@ -1699,8 +1701,9 @@ describe("RST_STREAM flood (CVE-2023-44487 rapid-reset)", () => {
   });
 
   test("streamResetBurst lowers the threshold at which the flood is detected", async () => {
-    // node's updateOptionsBuffer only applies the pair when both are provided.
-    const serverOptions = { streamResetBurst: 50, streamResetRate: 33 } as any;
+    // node's updateOptionsBuffer only applies the pair when both are provided. rate 0 makes the
+    // trip point wall-clock-independent so the last-stream-id assertion below is exact.
+    const serverOptions = { streamResetBurst: 50, streamResetRate: 0 } as any;
     const { frame } = await floodRapidReset({ serverOptions, count: 60 });
     expect(frame.type).toBe(FrameType.GOAWAY);
     expect(goawayErrorCode(frame)).toBe(ErrorCode.ENHANCE_YOUR_CALM);

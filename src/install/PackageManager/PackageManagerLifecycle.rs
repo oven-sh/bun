@@ -415,14 +415,8 @@ impl PackageManager {
         // (which auto-signs .node ELF files before loading).
         #[cfg(target_env = "ohos")]
         {
-            let bun_dir_bytes = bun_core::self_exe_path().ok().and_then(|exe| {
-                Some(
-                    std::path::Path::new(std::os::unix::ffi::OsStrExt::from_bytes(exe.as_bytes()))
-                        .parent()?
-                        .as_os_str()
-                        .as_encoded_bytes(),
-                )
-            });
+            let bun_dir_bytes = bun_core::self_exe_path().ok()
+                .and_then(|exe| bun_paths::dirname(exe.as_bytes()));
             if let Some(bun_dir) = bun_dir_bytes {
                 let current_path = path.slice();
                 let mut ohos_path = EnvPath::init_capacity(

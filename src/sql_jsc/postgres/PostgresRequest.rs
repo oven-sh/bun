@@ -49,6 +49,25 @@ pub enum MessageType {
 /// The PostgreSQL wire protocol uses 16-bit integers for parameter and column counts.
 const MAX_PARAMETERS: usize = u16::MAX as usize;
 
+/// True when a JS value should be serialized to postgres as JSON text: a plain
+/// object or array, matching what `tag_jsc::from_js` classifies as json/jsonb.
+/// Strings, dates, typed arrays/buffers, and bigints are handled by other arms.
+fn value_is_json(value: JSValue) -> bool {
+    use crate::jsc::JSType;
+    if !value.is_cell() {
+        return false;
+    }
+    let t = value.js_type();
+    if t.is_string_like()
+        || t == JSType::JSDate
+        || t.is_typed_array_or_array_buffer()
+        || t == JSType::HeapBigInt
+    {
+        return false;
+    }
+    t.is_array_like() || t.is_object()
+}
+
 pub fn write_bind<Context: WriterContext>(
     name: &[u8],
     cursor_name: BunString,
@@ -159,14 +178,27 @@ pub fn write_bind<Context: WriterContext>(
         // for mistakes on our end, such as stripping the timezone
         // differently than what Postgres does when given a timestamp with
         // timezone.
-        let effective_tag = if tag.is_binary_format_supported() && value.is_string() {
-            types::Tag::text
+        let effective_tag = if tag.is_binary_format_supported() {
+            if value.is_string() {
+                types::Tag::text
+            } else {
+                tag
+            }
+        } else if value_is_json(value) {
+            // The server-declared OID is unknown (0) or text on the unnamed
+            // one-shot path because Bind is written before ParameterDescription
+            // arrives. Serialize plain objects/arrays as JSON text regardless,
+            // which json, jsonb, and text columns all accept.
+            types::Tag::json
         } else {
             tag
         };
         match effective_tag {
             types::Tag::jsonb | types::Tag::json => {
-                let mut str = BunString::empty();
+                // OwnedString derefs the +1 WTFStringImpl ref from
+                // json_stringify_fast on scope exit; bun_core::String is Copy
+                // with no Drop, so a bare BunString here would leak it.
+                let mut str = bun_core::OwnedString::new(BunString::empty());
                 // Use jsonStringifyFast for SIMD-optimized serialization
                 value
                     .json_stringify_fast(global, &mut str)
@@ -175,7 +207,6 @@ pub fn write_bind<Context: WriterContext>(
                 let l = writer.length()?;
                 writer.write(slice.slice())?;
                 l.write_excluding_self()?;
-                // `str.deref()` and `slice.deinit()` handled by Drop
             }
             types::Tag::bool => {
                 let l = writer.length()?;

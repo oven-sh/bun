@@ -673,19 +673,25 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
                 // SAFETY: dupe_z NUL-terminates
                 let pathz_ref = ZStr::from_slice_with_nul(&pathz[..]);
                 let stat_result: Stat = match A::statat(fd, pathz_ref) {
-                    Err(e_) => {
-                        let e: SysError = e_;
-                        self.close_disallowing_cwd(fd);
-                        if e.get_errno() == E::ENOENT {
-                            self.iter_state = IterState::GetNext;
-                            return Ok(Ok(()));
-                        }
-                        return Ok(Err(e.with_path(
-                            self.walker.pattern_components[idx as usize]
-                                .pattern_slice(&self.walker.pattern),
-                        )));
-                    }
                     Ok(stat) => stat,
+                    // statat follows symlinks, so a dangling or cyclic link
+                    // fails (ENOENT/ELOOP) even though the directory entry
+                    // exists. Retry without following so this path agrees with
+                    // directory iteration, which sees the entry regardless.
+                    Err(e) => match A::lstatat(fd, pathz_ref) {
+                        Ok(lst) if !self.walker.error_on_broken_symlinks => lst,
+                        lstat_result => {
+                            self.close_disallowing_cwd(fd);
+                            if lstat_result.is_err() && e.get_errno() == E::ENOENT {
+                                self.iter_state = IterState::GetNext;
+                                return Ok(Ok(()));
+                            }
+                            return Ok(Err(e.with_path(
+                                self.walker.pattern_components[idx as usize]
+                                    .pattern_slice(&self.walker.pattern),
+                            )));
+                        }
+                    },
                 };
                 self.close_disallowing_cwd(fd);
                 let mode = stat_result.st_mode as u32;

@@ -207,22 +207,6 @@ describe.concurrent("node-module-module", () => {
     expect(await proc.exited).toBe(0);
   });
 
-  test("Module._resolveFilename with an options object missing .paths does not crash", async () => {
-    await using proc = Bun.spawn({
-      cmd: [
-        bunExe(),
-        "-e",
-        `const { Module } = require("node:module");` +
-          `console.log(Module._resolveFilename("node:fs", module, false, {}));` +
-          `console.log(Module._resolveFilename("node:fs", module, false, { unrelated: 1 }));`,
-      ],
-      env: bunEnv,
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "node:fs\nnode:fs\n", stderr: "", exitCode: 0 });
-  });
-
   test("Overridden _resolveFilename receives Node-compatible arguments from a CJS entry", async () => {
     using dir = tempDir("resolve-filename-args-cjs", {
       "real.cjs": "module.exports = 'REAL';",

@@ -12,9 +12,10 @@ test("fs.promises readFile/writeFile does not leak AbortSignal", async () => {
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect(stderr).toBe("");
-  const { numAbortSignalObjects, rss, nonAbortErrors } = JSON.parse(stdout);
+  // rss is reported for diagnostics only; the AbortSignal wrapper count is the
+  // assertion that actually detects a missing pending-activity unref.
+  const { numAbortSignalObjects, nonAbortErrors } = JSON.parse(stdout);
   expect({ nonAbortErrors }).toEqual({ nonAbortErrors: 0 });
   expect(numAbortSignalObjects).toBeLessThanOrEqual(10);
-  expect(rss).toBeGreaterThan(0);
   expect(exitCode).toBe(0);
-}, 30_000);
+});

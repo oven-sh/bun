@@ -1446,21 +1446,13 @@ impl Run {
                     break 'do_postgres_preconnect;
                 }
             };
-            let connect_fn = match sql_object.get(global, "connect") {
-                Ok(Some(v)) => v,
-                Ok(None) => break 'do_postgres_preconnect,
-                Err(e) => {
-                    global.report_active_exception_as_unhandled(e);
-                    break 'do_postgres_preconnect;
-                }
+            let mut key = bun_jsc::zig_string::ZigString::init(b"bun.sql.preconnect");
+            let sym = JSValue::symbol_for(global, &mut key);
+            let Some(preconnect_fn) = sql_object.get_own_by_value(global, sym) else {
+                break 'do_postgres_preconnect;
             };
-            match connect_fn.call(global, sql_object, &[JSValue::js_boolean(true)]) {
-                Ok(promise) => {
-                    if let Some(p) = promise.as_promise() {
-                        bun_jsc::JSPromise::opaque_mut(p).set_handled();
-                    }
-                }
-                Err(e) => global.report_active_exception_as_unhandled(e),
+            if let Err(e) = preconnect_fn.call(global, sql_object, &[]) {
+                global.report_active_exception_as_unhandled(e);
             }
         }
 

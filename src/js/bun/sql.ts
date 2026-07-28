@@ -12,6 +12,7 @@ const { SQLHelper, parseOptions } = require("internal/sql/shared");
 const { SQLError, PostgresError, SQLiteError, MySQLError } = require("internal/sql/errors");
 
 const defineProperties = Object.defineProperties;
+const preconnectSymbol = Symbol.for("bun.sql.preconnect");
 
 type TransactionCallback = (sql: (strings: string, ...values: any[]) => Query<any, any>) => Promise<any>;
 
@@ -902,7 +903,7 @@ const SQL: typeof Bun.SQL = function SQL(
     pool.connect(onTransactionConnected.bind(null, callback, options, resolve, reject, false, false), useReserved);
     return promise;
   };
-  sql.connect = preconnect => {
+  sql.connect = () => {
     if (pool.closed) {
       return Promise.$reject(pool.connectionClosedError());
     }
@@ -921,9 +922,18 @@ const SQL: typeof Bun.SQL = function SQL(
       resolve(sql);
     };
 
-    pool.connect(onConnected, false, preconnect === true);
+    pool.connect(onConnected);
 
     return promise;
+  };
+
+  sql[preconnectSymbol] = () => {
+    if (pool.closed || pool.isConnected()) {
+      return;
+    }
+    pool.connect((err, connection) => {
+      if (!err) pool.release(connection);
+    }, false, true);
   };
 
   sql.close = async (options?: { timeout?: number }) => {
@@ -992,6 +1002,11 @@ defaultSQLObject.distributed = defaultSQLObject.beginDistributed = (...args) => 
 defaultSQLObject.connect = (...args) => {
   ensureDefaultSQL();
   return lazyDefaultSQL.connect(...args);
+};
+
+defaultSQLObject[preconnectSymbol] = () => {
+  ensureDefaultSQL();
+  return lazyDefaultSQL[preconnectSymbol]();
 };
 
 defaultSQLObject.unsafe = (...args) => {

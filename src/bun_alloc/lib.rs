@@ -244,7 +244,6 @@ pub mod default_alloc {
         }
     }
 
-
     #[inline]
     pub fn calloc(count: usize, size: usize) -> *mut c_void {
         if cfg!(bun_asan) {
@@ -254,7 +253,6 @@ pub mod default_alloc {
             crate::mimalloc::mi_calloc(count, size)
         }
     }
-
 
     /// # Safety
     /// `ptr` must be null or a live allocation from the default allocator.
@@ -315,7 +313,6 @@ pub mod default_alloc {
         }
         p
     }
-
 
     #[cfg(bun_asan)]
     #[inline]
@@ -695,7 +692,6 @@ unsafe impl core::alloc::GlobalAlloc for Mimalloc {
     }
 }
 
-
 /// Raw-pointer variant of [`realloc_slice`] for callers that cannot soundly
 /// materialize a `&mut [u8]` over their buffer (e.g. it contains uninitialized
 /// or padding bytes). Returns the new base pointer; `min(old_size, new_size)`
@@ -1002,7 +998,6 @@ pub union WTFStringImplPtr {
 pub type WTFStringImpl = *mut WTFStringImplStruct;
 
 impl WTFStringImplStruct {
-
     // ---------------------------------------------------------------------
     // These details must stay in sync with WTFStringImpl.h in WebKit!
     // ---------------------------------------------------------------------
@@ -1183,8 +1178,6 @@ pub struct String {
 }
 
 impl String {
-
-
     pub const EMPTY: String = String {
         tag: Tag::Empty,
         value: StringImpl {
@@ -1224,10 +1217,6 @@ impl String {
             _ => ZigString::EMPTY,
         }
     }
-
-
-
-
 }
 
 impl core::fmt::Display for String {
@@ -1286,8 +1275,6 @@ pub fn range_of_slice_in_buffer(slice: &[u8], buffer: &[u8]) -> Option<[u32; 2]>
     debug_assert_eq!(slice, &buffer[r[0] as usize..][..r[1] as usize]);
     Some(r)
 }
-
-
 
 /// Zeros
 /// `len` bytes at `p` in a way the optimizer cannot elide. Uses bulk
@@ -1775,7 +1762,6 @@ impl Result {
     pub fn has_checked_if_exists(&self) -> bool {
         self.index.index() != UNASSIGNED.index()
     }
-
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -1804,7 +1790,6 @@ pub struct OverflowGroup<Block> {
 }
 
 impl<Block: OverflowBlock> OverflowGroup<Block> {
-
     pub(crate) fn tail(&mut self) -> core::result::Result<&mut Block, AllocError> {
         if self.used as usize + 1 >= OVERFLOW_GROUP_SLOTS
             && self.ptrs[self.used as usize]
@@ -1844,7 +1829,6 @@ impl<Block: OverflowBlock> OverflowGroup<Block> {
 
         Ok(self.ptrs[self.used as usize].as_mut().expect("alloc"))
     }
-
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -1861,7 +1845,6 @@ pub struct OverflowListBlock<ValueType, const COUNT: usize> {
 }
 
 impl<ValueType, const COUNT: usize> OverflowListBlock<ValueType, COUNT> {
-
     pub(crate) fn append(&mut self, value: ValueType) -> &mut ValueType {
         debug_assert!((self.used as usize) < COUNT);
         let index = self.used as usize;
@@ -1892,7 +1875,6 @@ pub struct OverflowList<ValueType, const COUNT: usize> {
 }
 
 impl<ValueType, const COUNT: usize> OverflowList<ValueType, COUNT> {
-
     /// In-place init of just the three scalar counters (`list.used`,
     /// `list.allocated`, `count`) into storage that is already all-zeros.
     ///
@@ -1928,8 +1910,6 @@ impl<ValueType, const COUNT: usize> OverflowList<ValueType, COUNT> {
         self.count += 1;
         Ok(block.append(value))
     }
-
-
 
     #[inline]
     pub fn at_index_mut(&mut self, index: IndexType) -> &mut ValueType {
@@ -2031,7 +2011,6 @@ impl<ValueType> BSSListOverflowBlock<ValueType> {
         }
     }
 
-
     /// Reserve a slot and return its uninitialized storage. Caller MUST
     /// initialize the slot before any other access.
     #[inline(always)]
@@ -2059,7 +2038,6 @@ impl<ValueType, const COUNT: usize> BSSList<ValueType, COUNT> {
     // calls `init_at` on first access. `init()` is kept for callers that manage
     // their own once-guard (e.g. `dir_info::hash_map_instance`); it heap-allocs
     // a fresh instance each call.
-
 
     /// In-place field initialization into demand-zero storage.
     ///
@@ -2094,8 +2072,6 @@ impl<ValueType, const COUNT: usize> BSSList<ValueType, COUNT> {
 
     // Singleton teardown belongs to the `bss_list!` singleton wrapper;
     // Drop only frees the heap-allocated head chain.
-
-
 
     /// Reserve an overflow slot and return its uninitialized storage. Mutex is
     /// held by the caller (`append_uninit`). Cold path — only hit after the
@@ -2181,7 +2157,6 @@ impl<ValueType, const COUNT: usize> BSSList<ValueType, COUNT> {
             Ok(unsafe { this.backing_buf.as_mut_ptr().add(index) })
         }
     }
-
 }
 
 impl<ValueType, const COUNT: usize> Drop for BSSList<ValueType, COUNT> {
@@ -2202,7 +2177,6 @@ impl<ValueType, const COUNT: usize> Drop for BSSList<ValueType, COUNT> {
         }
     }
 }
-
 
 // ──────────────────────────────────────────────────────────────────────────
 // BSSStringList<_COUNT, _ITEM_LENGTH>
@@ -2320,7 +2294,6 @@ impl<const COUNT: usize, const ITEM_LENGTH: usize> BSSStringList<COUNT, ITEM_LEN
 
     // Singleton is process-lifetime; never freed.
 
-
     pub fn exists(&self, value: &[u8]) -> bool {
         // Pointer-range check against the backing storage. Done with addresses
         // rather than forming a `&[u8]` over `MaybeUninit<u8>` storage (which
@@ -2330,7 +2303,6 @@ impl<const COUNT: usize, const ITEM_LENGTH: usize> BSSStringList<COUNT, ITEM_LEN
         let p = value.as_ptr() as usize;
         base <= p && p + value.len() <= end
     }
-
 
     /// Append `value` and return a mutable slice over the freshly-reserved bytes.
     ///
@@ -2360,7 +2332,6 @@ impl<const COUNT: usize, const ITEM_LENGTH: usize> BSSStringList<COUNT, ITEM_LEN
         // live borrow of that region exists.
         Ok(unsafe { core::slice::from_raw_parts_mut(ptr, len) })
     }
-
 
     /// SAFETY: see [`append_mutable`].
     pub(crate) unsafe fn print_with_type<'a>(
@@ -2631,7 +2602,6 @@ impl<ValueType, const COUNT: usize, const REMOVE_TRAILING_SLASHES: bool>
 
     // With `IndexMap = HashMap`, Drop frees it; singleton Box drop frees instance.
 
-
     /// Normalize `denormalized_key` per `REMOVE_TRAILING_SLASHES` and hash it.
     /// Shared prelude of `get_or_put` / `get` / `remove`; the trimmed slice itself
     /// is never needed by callers, only the hash. `#[inline(always)]` + the
@@ -2753,7 +2723,6 @@ impl<ValueType, const COUNT: usize, const REMOVE_TRAILING_SLASHES: bool>
         let _key = Self::key_hash(denormalized_key);
         self.index.remove(&_key).is_some()
     }
-
 }
 
 /// `store_keys = true` wrapper.
@@ -2800,21 +2769,11 @@ impl<
         bss_heap_init(Self::init_at)
     }
 
-
     // Process-lifetime; never freed.
-
-
-
-
-
-
-
 
     // There's two parts to this.
     // 1. Storing the underlying string.
     // 2. Making the key accessible at the index.
-
-
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -2847,17 +2806,13 @@ pub trait Allocator: 'static {
     }
 }
 
-impl dyn Allocator {
-}
-
+impl dyn Allocator {}
 
 /// Legacy default-allocator ZST. With `#[global_allocator]` set,
 /// this is just a unit marker.
 #[derive(Clone, Copy, Default)]
 pub struct DefaultAlloc;
 impl Allocator for DefaultAlloc {}
-
-
 
 // `GenericAllocator` / `Borrowed<A>` / `Nullable<A>` are dropped — they modelled
 // an allocator-borrowing discipline (avoid double-free), which Rust's

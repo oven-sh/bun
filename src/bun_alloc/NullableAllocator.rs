@@ -25,7 +25,6 @@ impl Default for NullableAllocator {
 }
 
 impl NullableAllocator {
-
     #[inline]
     pub fn init(alloc: Option<StdAllocator>) -> NullableAllocator {
         match alloc {

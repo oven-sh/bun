@@ -193,7 +193,6 @@ impl<T: 'static> PoolStorage<T> for UnwiredStorage {
     }
 }
 
-
 /// RAII handle for a pooled `T`. Derefs to the inner value; on `Drop`, the
 /// node is returned to its pool.
 pub struct PoolGuard<'a, T: ObjectPoolType + 'static> {

@@ -49,4 +49,3 @@ impl From<crate::credentials::SignError> for Error {
         }
     }
 }
-

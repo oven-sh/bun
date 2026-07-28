@@ -438,7 +438,6 @@ impl MimallocArena {
         // initialization invariant.
         unsafe { core::slice::from_raw_parts_mut(dst.as_ptr(), len) }
     }
-
 }
 
 impl Drop for MimallocArena {

@@ -216,7 +216,6 @@ impl<'a, T> BabyVec<'a, T> {
         }
     }
 
-
     #[inline]
     pub fn truncate(&mut self, new_len: usize) {
         if new_len >= self.len as usize {

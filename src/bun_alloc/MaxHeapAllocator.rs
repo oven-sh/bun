@@ -24,7 +24,6 @@ unsafe impl Send for MaxHeapAllocator {}
 unsafe impl Sync for MaxHeapAllocator {}
 
 impl MaxHeapAllocator {
-
     /// No-op (single owned buffer freed on Drop).
     pub fn free(&mut self, _buf: &mut [u8], _alignment: Alignment, _ret_addr: usize) {}
 

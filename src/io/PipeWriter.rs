@@ -512,7 +512,6 @@ impl<Parent: PosixBufferedWriterParent> PosixBufferedWriter<Parent> {
             .set_owner(Owner::new(Parent::POLL_OWNER_TAG, owner.cast()));
     }
 
-
     pub fn watch(&mut self) {
         if self.pollable {
             if matches!(self.handle, PollOrFd::Fd(_)) {

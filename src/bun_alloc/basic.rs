@@ -118,7 +118,6 @@ mod memory_allocator_tags {
     pub(crate) const DEFAULT_ALLOCATOR_TAG_PTR: *mut c_void = DEFAULT_ALLOCATOR_TAG as *mut c_void;
 }
 
-
 /// mimalloc can free allocations without being given their size.
 ///
 /// # Safety

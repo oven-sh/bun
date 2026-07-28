@@ -54,7 +54,6 @@ impl<Value> GuardedBy<Value, Mutex> {
             mutex: Mutex::new(),
         }
     }
-
 }
 
 impl<Value, M: RawMutex> GuardedBy<Value, M> {

@@ -473,7 +473,6 @@ impl FilePoll {
         self.flags.remove(Flags::HasIncrementedActiveCount);
     }
 
-
     pub fn enable_keeping_process_alive(&mut self, event_loop_ctx: EventLoopCtx) {
         if self.flags.contains(Flags::Closed) {
             return;

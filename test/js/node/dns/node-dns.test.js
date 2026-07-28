@@ -448,37 +448,37 @@ describe("dns.reverse rejects invalid IP strings with EINVAL", () => {
     const wire = [];
     let srvError;
     const srv = dgram.createSocket("udp4");
-    srv.on("error", err => (srvError = err));
-    await new Promise((resolve, reject) => {
-      srv.once("error", reject);
-      srv.bind(0, "127.0.0.1", resolve);
-    });
-    srv.on("message", (m, ri) => {
-      let o = 12;
-      const labels = [];
-      while (m[o]) {
-        labels.push(m.subarray(o + 1, o + 1 + m[o]).toString());
-        o += 1 + m[o];
-      }
-      o++;
-      wire.push(labels.join("."));
-      const q = m.subarray(12, o + 4);
-      const enc = n =>
-        Buffer.concat([
-          ...n.split(".").map(p => Buffer.concat([Buffer.from([p.length]), Buffer.from(p)])),
-          Buffer.from([0]),
-        ]);
-      const rd = enc("host.example");
-      const a = Buffer.concat([Buffer.from([0xc0, 12, 0, 12, 0, 1, 0, 0, 0, 60, 0, rd.length]), rd]);
-      const h = Buffer.alloc(12);
-      h.writeUInt16BE(m.readUInt16BE(0), 0);
-      h.writeUInt16BE(0x8180, 2);
-      h.writeUInt16BE(1, 4);
-      h.writeUInt16BE(1, 6);
-      srv.send(Buffer.concat([h, q, a]), ri.port, ri.address);
-    });
-
     try {
+      srv.on("error", err => (srvError = err));
+      await new Promise((resolve, reject) => {
+        srv.once("error", reject);
+        srv.bind(0, "127.0.0.1", resolve);
+      });
+      srv.on("message", (m, ri) => {
+        let o = 12;
+        const labels = [];
+        while (m[o]) {
+          labels.push(m.subarray(o + 1, o + 1 + m[o]).toString());
+          o += 1 + m[o];
+        }
+        o++;
+        wire.push(labels.join("."));
+        const q = m.subarray(12, o + 4);
+        const enc = n =>
+          Buffer.concat([
+            ...n.split(".").map(p => Buffer.concat([Buffer.from([p.length]), Buffer.from(p)])),
+            Buffer.from([0]),
+          ]);
+        const rd = enc("host.example");
+        const a = Buffer.concat([Buffer.from([0xc0, 12, 0, 12, 0, 1, 0, 0, 0, 60, 0, rd.length]), rd]);
+        const h = Buffer.alloc(12);
+        h.writeUInt16BE(m.readUInt16BE(0), 0);
+        h.writeUInt16BE(0x8180, 2);
+        h.writeUInt16BE(1, 4);
+        h.writeUInt16BE(1, 6);
+        srv.send(Buffer.concat([h, q, a]), ri.port, ri.address);
+      });
+
       const resolver = new dns.promises.Resolver({ timeout: 1500, tries: 1 });
       resolver.setServers([`127.0.0.1:${srv.address().port}`]);
 

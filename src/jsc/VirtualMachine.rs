@@ -4646,6 +4646,8 @@ impl VirtualMachine {
         fs.top_level_dir_buf[..into_cwd_len].copy_from_slice(&buf[..into_cwd_len]);
         fs.top_level_dir_buf[into_cwd_len] = 0;
         // SAFETY: `top_level_dir_buf` is a process-lifetime field of the
+        // FileSystem singleton, so the detached borrow never outlives its
+        // backing storage.
         fs.top_level_dir =
             unsafe { bun_ptr::detach_lifetime(&fs.top_level_dir_buf[..into_cwd_len]) };
         let len = fs.top_level_dir.len();

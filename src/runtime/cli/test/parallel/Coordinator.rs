@@ -56,6 +56,8 @@ pub struct Coordinator<'a> {
     pub spawned_count: u32,
     pub live_workers: u32,
     pub crashed_files: Vec<u32>,
+    pub aborted_files: Vec<u32>,
+    pub aborted: Option<u32>,
     pub bailed: bool,
     pub last_printed_dot: bool,
     /// Kill-on-close Job Object so the OS reaps workers if the coordinator dies
@@ -109,6 +111,7 @@ impl<'a> Coordinator<'a> {
         while !self.is_done() {
             if abort_handler::SHOULD_ABORT.load(Ordering::Acquire) {
                 self.abort_all();
+                return;
             }
             self.vm.event_loop_ref().tick();
             self.maybe_scale_up();
@@ -142,7 +145,7 @@ impl<'a> Coordinator<'a> {
     /// the coordinator can't run this (SIGKILL): PDEATHSIG on Linux,
     /// kill-on-close Job Object on Windows. macOS has neither; the process
     /// group kill here plus stdin EOF in the worker loop is the best effort.
-    fn abort_all(&mut self) -> ! {
+    fn abort_all(&mut self) {
         abort_handler::uninstall();
         let now = bun_core::time::milli_timestamp();
         let workers = &self.workers[..self.spawned_count as usize];
@@ -187,7 +190,7 @@ impl<'a> Coordinator<'a> {
                 }
             }
         }
-        Global::exit(130);
+        self.aborted = Some(130);
     }
 
     fn spawn_worker(&mut self) -> bool {
@@ -484,9 +487,6 @@ impl<'a> Coordinator<'a> {
                     self.coverage_chunks.push(Box::<[u8]>::from(chunk));
                 }
             }
-            frame::Kind::JunitFile | frame::Kind::CoverageFile => {
-                let _ = rd.str();
-            }
             frame::Kind::Run | frame::Kind::Shutdown => {}
         }
     }
@@ -682,9 +682,7 @@ impl<'a> Coordinator<'a> {
                     )),
                     bstr::BStr::new(reason),
                 );
-                self.reporter.summary().fail += 1;
-                self.reporter.summary().files += 1;
-                self.crashed_files.push(idx);
+                self.aborted_files.push(idx);
                 self.files_done += 1;
             }
         }

@@ -58,9 +58,6 @@ pub fn run_as_coordinator(
         return Ok(false);
     }
 
-    // Owned path bytes. ZStr is a borrow header; we must own the backing
-    // storage here. Drop recursively removes the directory once the run
-    // finishes.
     // Workers' stderr is a pipe; have them format with ANSI when we will be
     // rendering to a color terminal so streamed lines match serial output.
     if Output::enable_ansi_colors_stderr() {
@@ -168,6 +165,8 @@ pub fn run_as_coordinator(
         spawned_count: 0,
         live_workers: 0,
         crashed_files: Vec::new(),
+        aborted_files: Vec::new(),
+        aborted: None,
         bailed: false,
         last_printed_dot: false,
         #[cfg(windows)]
@@ -216,6 +215,10 @@ pub fn run_as_coordinator(
         } else {
             aggregate::merge_coverage_fragments::<false>(&frags, coverage_opts);
         }
+    }
+    if let Some(code) = coord.aborted {
+        Output::flush();
+        Global::exit(code);
     }
     Ok(true)
 }
@@ -618,7 +621,9 @@ pub fn run_as_worker(
     // vm.allocator = arena.arena(); — allocator params dropped in Rust
 
     let env = vm_ref.env_loader();
-    if env.get(b"BUN_TEST_WORKER_JUNIT").is_some() && reporter.reporters.junit.is_none() {
+    if let Some(junit) = reporter.reporters.junit.as_mut() {
+        junit.elements_only = true;
+    } else if env.get(b"BUN_TEST_WORKER_JUNIT").is_some() {
         let mut junit = test_command::JunitReporter::init();
         junit.elements_only = true;
         reporter.reporters.junit = Some(junit);
@@ -639,7 +644,7 @@ pub fn run_as_worker(
 
     worker_flush_aggregates(wloop.reporter, vm_ref, ctx, &mut wloop.cmds);
     // Drain any backpressure-buffered frames before exit so the coordinator
-    // sees repeat_bufs/junit_file/coverage_file.
+    // sees repeat_bufs / junit_chunk / coverage_chunk.
     while wloop.cmds.channel.has_pending_writes() && !wloop.cmds.channel.done {
         // SAFETY: event_loop pointer is valid while vm lives.
         unsafe { (*vm_ref.event_loop()).tick() };

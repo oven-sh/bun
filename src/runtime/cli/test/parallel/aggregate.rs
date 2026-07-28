@@ -1,6 +1,5 @@
-//! Per-worker JUnit XML and LCOV coverage fragment merging. Workers write
-//! their own fragments to a shared temp dir; the coordinator stitches them
-//! into a single document/report after `drive()` completes.
+//! Merges the JUnit and LCOV chunks workers stream over IPC into the
+//! single report the coordinator writes after `drive()` completes.
 
 use std::io::Write as _;
 

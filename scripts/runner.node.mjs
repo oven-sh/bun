@@ -618,8 +618,7 @@ async function runTests() {
   // finished, so no parallel-safe process ever overlaps a serial test (an
   // overlap surfaced new flakes in tight-timeout / port-bind tests such as
   // dns-tcp-bidirectional-poll and test-https-timeout). `--parallel` already
-  // widens `limit` above and supersedes this split. Windows caps lower
-  // because process creation is heavier there.
+  // widens `limit` above and supersedes this split.
   const parallelSafeWidth = parallelism > 1 ? parallelism : Math.max(availableParallelism() - 1, 1);
   const parallelSafeLimit = parallelism > 1 ? limit : pLimit(parallelSafeWidth);
   const isParallelSafeTest = testPath => {
@@ -989,8 +988,9 @@ async function runTests() {
       const suites = new Map(); // repo-relative path -> { failures, seconds, cases: [{name, message}] }
       const unescapeXml = str =>
         str
-          .replace(/&#10;/g, "\n")
+          .replace(/&#(\d+);/g, (_, code) => String.fromCharCode(Number(code)))
           .replace(/&quot;/g, '"')
+          .replace(/&apos;/g, "'")
           .replace(/&lt;/g, "<")
           .replace(/&gt;/g, ">")
           .replace(/&amp;/g, "&");

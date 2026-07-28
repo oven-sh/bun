@@ -3,7 +3,7 @@ import { availableParallelism } from "node:os";
 import { existsSync } from "node:fs";
 import { copyFile, mkdir, writeFile } from "node:fs/promises";
 import { basename, dirname, join, relative, resolve } from "node:path";
-import { build, buildGypDir, isBuilt, parseBindingGyp } from "./harness";
+import { build, buildWithNodeGyp, isBuilt, parseBindingGyp } from "./harness";
 
 const dirs = [...new Set(process.argv.slice(2).map(dir => resolve(dir)))];
 if (dirs.length === 0) {
@@ -68,7 +68,7 @@ if (pending.length) {
     if (targets.length) {
       await writeFile(join(combinedDir, "binding.gyp"), JSON.stringify({ targets }, null, 2));
       try {
-        await buildGypDir(combinedDir);
+        await buildWithNodeGyp(combinedDir);
         for (const { from, to } of copies) {
           if (!existsSync(from)) throw new Error(`combined build did not produce ${basename(from)}`);
           await mkdir(dirname(to), { recursive: true });

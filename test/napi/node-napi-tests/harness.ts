@@ -198,7 +198,6 @@ export async function isBuilt(dir: string): Promise<boolean> {
   });
 }
 
-export const buildGypDir = buildWithNodeGyp;
 
 export async function build(dir: string) {
   if (await isBuilt(dir)) return;

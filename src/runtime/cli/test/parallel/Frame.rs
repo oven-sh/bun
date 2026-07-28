@@ -16,10 +16,6 @@ pub enum Kind {
     FileDone,
     /// 3 × str: failures, skips, todos (verbatim repeat-buffer bytes)
     RepeatBufs,
-    /// str path
-    JunitFile,
-    /// str path
-    CoverageFile,
     // coordinator → worker
     /// u32 file_idx, str path
     Run,
@@ -45,12 +41,10 @@ impl TryFrom<u8> for Kind {
             2 => Kind::TestDone,
             3 => Kind::FileDone,
             4 => Kind::RepeatBufs,
-            5 => Kind::JunitFile,
-            6 => Kind::CoverageFile,
-            7 => Kind::Run,
-            8 => Kind::Shutdown,
-            9 => Kind::JunitChunk,
-            10 => Kind::CoverageChunk,
+            5 => Kind::Run,
+            6 => Kind::Shutdown,
+            7 => Kind::JunitChunk,
+            8 => Kind::CoverageChunk,
             _ => return Err(()),
         })
     }

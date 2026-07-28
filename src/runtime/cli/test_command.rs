@@ -1599,8 +1599,6 @@ impl CommandLineReporter {
         )
     }
 
-    /// Write an LCOV-only report to a specific path. Used by `--parallel`
-    /// workers to emit a fragment the coordinator merges.
     pub fn render_lcov(
         &mut self,
         vm: &mut VirtualMachine,
@@ -3382,14 +3380,6 @@ impl TestCommand {
 
             vm.global().handle_rejected_promises();
 
-            if let Some(junit) = reporter.reporters.junit.as_mut() {
-                junit.file_end_ns = bun::Timespec::now(bun::TimespecMockMode::ForceRealTime).ns();
-                while !junit.suite_stack.is_empty() {
-                    let _ = junit.end_test_suite();
-                }
-                junit.current_file = Box::default();
-            }
-
             if Output::is_github_action() && reporter.worker_ipc_file_idx.is_none() {
                 pretty_errorln!("<r>\n::endgroup::\n");
                 Output::flush();
@@ -3404,6 +3394,13 @@ impl TestCommand {
             }
 
             repeat_index += 1;
+        }
+        if let Some(junit) = reporter.reporters.junit.as_mut() {
+            junit.file_end_ns = bun::Timespec::now(bun::TimespecMockMode::ForceRealTime).ns();
+            while !junit.suite_stack.is_empty() {
+                let _ = junit.end_test_suite();
+            }
+            junit.current_file = Box::default();
         }
         Ok(())
     }

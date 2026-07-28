@@ -54,7 +54,7 @@ console.log("done", ITER);
     // Repeated Bun.serve({ development: true }) currently leaks a few small
     // ServerConfig allocations; this test covers the hot-reload-drop UAF,
     // not those leaks, so keep ASAN on but leave LSAN off for the child.
-    env: { ...bunEnv, ASAN_OPTIONS: "allow_user_segv_handler=1:disable_coredump=0:detect_leaks=0" },
+    env: { ...bunEnv, ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=0"].filter(Boolean).join(":") },
     cwd: String(dir),
     stdout: "pipe",
     stderr: "pipe",

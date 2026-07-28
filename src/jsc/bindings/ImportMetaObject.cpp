@@ -319,10 +319,6 @@ extern "C" JSC::EncodedJSValue functionImportMeta__resolveSyncPrivate(JSC::JSGlo
                 if (overrideHandler) [[likely]] {
                     ASSERT(overrideHandler->isCallable());
 
-                    // Node.js passes the calling Module instance as `parent`. Prefer the
-                    // module object the require/resolve builtin is bound to (arg 6), then
-                    // Module._cache, and fall back to a synthesized Module so hooks always
-                    // observe a real parent (createRequire from ESM, etc).
                     JSValue parentModuleObject = jsUndefined();
                     if (parentArg.isObject()) {
                         parentModuleObject = parentArg;
@@ -343,8 +339,6 @@ extern "C" JSC::EncodedJSValue functionImportMeta__resolveSyncPrivate(JSC::JSGlo
                     MarkedArgumentBuffer args;
                     args.append(moduleName);
                     args.append(parentModuleObject);
-                    // `isMain` means "is the request being resolved the process entry
-                    // point". require()/require.resolve() never resolve the entry.
                     args.append(jsBoolean(false));
 
                     if (!userPathList.isUndefinedOrNull()) {

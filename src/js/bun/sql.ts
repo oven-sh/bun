@@ -931,9 +931,13 @@ const SQL: typeof Bun.SQL = function SQL(
     if (pool.closed || pool.isConnected()) {
       return;
     }
-    pool.connect((err, connection) => {
-      if (!err) pool.release(connection);
-    }, false, true);
+    pool.connect(
+      (err, connection) => {
+        if (!err) pool.release(connection);
+      },
+      false,
+      true,
+    );
   };
 
   sql.close = async (options?: { timeout?: number }) => {

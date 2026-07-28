@@ -3516,7 +3516,6 @@ describe.concurrent("bundler", () => {
       `,
     },
     format: "iife",
-    todo: true,
     bundleErrors: {
       "/entry.js": ['Top-level await is currently not supported with the "iife" output format'],
     },
@@ -3539,7 +3538,6 @@ describe.concurrent("bundler", () => {
       `,
     },
     format: "cjs",
-    todo: true,
     bundleErrors: {
       "/entry.js": ['Top-level await is currently not supported with the "cjs" output format'],
     },

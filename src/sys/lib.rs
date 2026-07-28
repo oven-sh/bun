@@ -9291,8 +9291,7 @@ pub fn renameat_concurrently_without_fallback(
                     break;
                 }
                 Err(err)
-                    if matches!(err.get_errno(), E::EEXIST | E::ENOTEMPTY)
-                        && attempts_left > 0 =>
+                    if matches!(err.get_errno(), E::EEXIST | E::ENOTEMPTY) && attempts_left > 0 =>
                 {
                     // A concurrent process recreated the destination between
                     // the two renames; retry against the new one.

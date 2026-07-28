@@ -785,6 +785,11 @@ impl AnyRoute {
                             "Directory routes do not support :parameters; use a fixed prefix ending in `/*`"
                         )));
                     }
+                    if strings::contains(path, b"//") {
+                        return Err(global.throw_invalid_arguments(format_args!(
+                            "Directory route paths cannot contain empty segments"
+                        )));
+                    }
                     // `{ dir }` without `style` serves the directory tree
                     // verbatim; `{ dir, style }` opts into framework routing.
                     let url_prefix: &[u8] = if path.len() == 2 {

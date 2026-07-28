@@ -63,6 +63,7 @@ impl DirectoryRoute {
         enable_stat_cache: bool,
     ) -> JsResult<*mut DirectoryRoute> {
         debug_assert!(url_prefix.last() == Some(&b'/'));
+        debug_assert!(!strings::contains(url_prefix, b"//"));
 
         let root_fd = match bun_sys::open_a(
             root,
@@ -135,19 +136,14 @@ impl DirectoryRoute {
             resp.timeout(server.config().idle_timeout);
         }
 
-        let mut decode_buf = bun_paths::path_buffer_pool::get();
         let mut path_buf = bun_paths::path_buffer_pool::get();
-        let Some((rel_len, had_trailing_slash)) = resolve_subpath(
-            req.url(),
-            &this.url_prefix,
-            &mut decode_buf.0[..],
-            &mut path_buf.0[..],
-        ) else {
+        let Some((rel_len, had_trailing_slash)) =
+            resolve_subpath(req.url(), &this.url_prefix, &mut path_buf.0[..])
+        else {
             bun_output::scoped_log!(DirectoryRoute, "reject {}", bstr::BStr::new(req.url()));
             write_miss(&mut req, resp);
             return;
         };
-        drop(decode_buf);
         let rel: &[u8] = &path_buf.0[..rel_len];
 
         let (file, stat, is_index) = match this.open_subpath(rel, had_trailing_slash) {
@@ -505,12 +501,7 @@ fn is_url_path_literal(b: u8) -> bool {
 /// canonical relative path. `None` for any input that would make the served
 /// path differ from the routed path (see comment on the segment scan below).
 /// Writes into `out`; returns `(len, had_trailing_slash)`.
-fn resolve_subpath(
-    url: &[u8],
-    url_prefix: &[u8],
-    scratch: &mut [u8],
-    out: &mut [u8],
-) -> Option<(usize, bool)> {
+fn resolve_subpath(url: &[u8], url_prefix: &[u8], out: &mut [u8]) -> Option<(usize, bool)> {
     let (path, _query) = path_and_query(url);
     let after_prefix = if strings::starts_with(path, url_prefix) {
         &path[url_prefix.len()..]
@@ -559,9 +550,9 @@ fn resolve_subpath(
     }
 
     let decoded_len =
-        bun_url::PercentEncoding::decode_into(&mut scratch[..after_prefix.len()], after_prefix)
-            .ok()? as usize;
-    let decoded = &scratch[..decoded_len];
+        bun_url::PercentEncoding::decode_into(&mut out[..after_prefix.len()], after_prefix).ok()?
+            as usize;
+    let decoded = &out[..decoded_len];
 
     if decoded.iter().filter(|&&b| b == b'/').count() != raw_slashes {
         return None;
@@ -585,8 +576,6 @@ fn resolve_subpath(
         }
         i += 1;
     }
-
-    out[..end].copy_from_slice(&decoded[..end]);
     Some((end, had_trailing_slash))
 }
 
@@ -609,9 +598,8 @@ mod tests {
     use super::*;
 
     fn resolve(url: &[u8], prefix: &[u8]) -> Option<(Vec<u8>, bool)> {
-        let mut scratch = [0u8; 4096];
         let mut out = [0u8; 4096];
-        resolve_subpath(url, prefix, &mut scratch, &mut out).map(|(n, s)| (out[..n].to_vec(), s))
+        resolve_subpath(url, prefix, &mut out).map(|(n, s)| (out[..n].to_vec(), s))
     }
     fn ok(bytes: &[u8], slash: bool) -> Option<(Vec<u8>, bool)> {
         Some((bytes.to_vec(), slash))

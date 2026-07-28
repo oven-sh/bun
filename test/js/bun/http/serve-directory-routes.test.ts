@@ -445,6 +445,18 @@ describe("Bun.serve() directory routes", () => {
     ).toThrow(/do not support :parameters/);
   });
 
+  it("rejects empty segments in the route path", () => {
+    using dir = tempDir("serve-dir-empty-seg", { "public/x.txt": "x" });
+    for (const key of ["//*", "//assets/*", "/a//*"]) {
+      expect(() =>
+        serve({
+          port: 0,
+          routes: { [key]: { dir: join(String(dir), "public") } },
+        }),
+      ).toThrow(/empty segments/);
+    }
+  });
+
   it("throws if the directory does not exist", () => {
     using dir = tempDir("serve-dir-enoent", {});
     expect(() =>

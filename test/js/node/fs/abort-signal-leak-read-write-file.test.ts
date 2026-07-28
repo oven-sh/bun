@@ -1,6 +1,20 @@
 import { expect, test } from "bun:test";
+import { bunEnv, bunExe } from "harness";
 import path from "path";
 
-test("should not leak memory with already aborted signals", async () => {
-  expect([path.join(import.meta.dir, "abort-signal-leak-read-write-file-fixture.ts")]).toRun();
-});
+test("fs.promises readFile/writeFile does not leak AbortSignal", async () => {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), path.join(import.meta.dir, "abort-signal-leak-read-write-file-fixture.ts")],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toBe("");
+  const { numAbortSignalObjects, rss, nonAbortErrors } = JSON.parse(stdout);
+  expect({ nonAbortErrors }).toEqual({ nonAbortErrors: 0 });
+  expect(numAbortSignalObjects).toBeLessThanOrEqual(10);
+  expect(rss).toBeGreaterThan(0);
+  expect(exitCode).toBe(0);
+}, 30_000);

@@ -815,7 +815,7 @@ function expectBundled(
               jsx.factory && ["--jsx-factory", jsx.factory],
               jsx.fragment && ["--jsx-fragment", jsx.fragment],
               jsx.importSource && ["--jsx-import-source", jsx.importSource],
-              jsx.side_effects && ["--jsx-side-effects"],
+              jsx.sideEffects && ["--jsx-side-effects"],
               dotenv && ["--env", dotenv],
               // metafile && `--manifest=${metafile}`,
               sourceMap && `--sourcemap=${sourceMap}`,

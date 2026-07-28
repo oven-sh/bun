@@ -115,8 +115,10 @@ function posixCompileArgs(target: GypTarget, include: string, out: string): stri
 // MSVC toolchain + Windows SDK, so unlike cl.exe it works without a Developer Command
 // Prompt. This mirrors the node-gyp-generated MSBuild invocation for the addons here:
 // one translation unit per source, win_delay_load_hook.cc linked in, /DELAYLOAD:node.exe
-// so the hook can redirect the import to the host process at load time.
-function windowsCompileArgs(target: GypTarget, include: string, lib: string, scratch: string, out: string): string[] {
+// so the hook can redirect the import to the host process at load time. Every output
+// (objects, /OUT, /PDB) lands in the per-target scratch dir; tryBuildFast promotes the
+// .node and .pdb into build/Debug only after the link exits cleanly.
+function windowsCompileArgs(target: GypTarget, include: string, lib: string, scratch: string): string[] {
   return [
     "clang-cl",
     "/nologo",
@@ -138,7 +140,7 @@ function windowsCompileArgs(target: GypTarget, include: string, lib: string, scr
     "/DLL",
     "/DEBUG",
     `/OUT:${join(scratch, `${target.target_name}.node`)}`,
-    `/PDB:${join(out, `${target.target_name}.pdb`)}`,
+    `/PDB:${join(scratch, `${target.target_name}.pdb`)}`,
     lib,
     "delayimp.lib",
     "/DELAYLOAD:node.exe",
@@ -178,7 +180,7 @@ async function tryBuildFast(dir: string): Promise<boolean> {
         const child = spawn({
           cmd:
             process.platform === "win32"
-              ? windowsCompileArgs(target, headers.include, headers.lib!, tmp, outDir)
+              ? windowsCompileArgs(target, headers.include, headers.lib!, tmp)
               : posixCompileArgs(target, headers.include, tmp),
           cwd: dir,
           stderr: "pipe",
@@ -197,7 +199,12 @@ async function tryBuildFast(dir: string): Promise<boolean> {
           );
           return false;
         }
-        renameSync(process.platform === "win32" ? join(tmp, `${target.target_name}.node`) : tmp, output);
+        if (process.platform === "win32") {
+          renameSync(join(tmp, `${target.target_name}.node`), output);
+          renameSync(join(tmp, `${target.target_name}.pdb`), join(outDir, `${target.target_name}.pdb`));
+        } else {
+          renameSync(tmp, output);
+        }
         return true;
       } catch (error) {
         console.warn(`direct compile of ${target.target_name} in ${dir} failed, falling back to node-gyp: ${error}`);

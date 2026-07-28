@@ -1,4 +1,4 @@
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
 import { bunEnv, bunExe, isDebug, tempDir } from "harness";
 
 // --breakpoint-resolve / --breakpoint-print are debug-build-only flags that

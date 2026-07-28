@@ -313,50 +313,48 @@ fn get_temporary_directory_run(manager: &mut PackageManager) -> TemporaryDirecto
 #[cold]
 #[inline(never)]
 unsafe fn ensure_cache_directory(this: *mut PackageManager) -> Dir {
-    loop {
-        // SAFETY: field projections through the caller-provided provenance
-        // root; see fn safety contract. Project `enable` narrowly so callers
-        // may hold borrows into disjoint `options` sub-fields.
-        if unsafe { (*this).options.enable.contains(Enable::CACHE) } {
-            // SAFETY: caller-provided provenance root; `env_mut()` itself
-            // encapsulates the BackRef deref + singleton-liveness invariant.
-            let env = unsafe { &*this }.env_mut();
-            // SAFETY: shared read of `options`; disjoint from `cache_directory_path`.
-            let cache_dir = fetch_cache_directory_path(env, Some(unsafe { &(*this).options }));
-            // SAFETY: see fn safety contract.
-            unsafe { (*this).cache_directory_path = ZBox::from_bytes(&cache_dir.path) };
-
-            match Dir::cwd().make_open_path(&cache_dir.path, Default::default()) {
-                Ok(d) => return d,
-                Err(_) => {
-                    // SAFETY: narrow `&mut enable` projection; disjoint from
-                    // any `&options.{registries,scope}` the caller may hold.
-                    unsafe { (*this).options.enable.set(Enable::CACHE, false) };
-                    // SAFETY: see fn safety contract.
-                    unsafe { (*this).cache_directory_path = ZBox::from_bytes(b"") };
-                    continue;
-                }
-            }
-        }
-
+    // SAFETY: field projections through the caller-provided provenance
+    // root; see fn safety contract. Project `enable` narrowly so callers
+    // may hold borrows into disjoint `options` sub-fields.
+    if unsafe { (*this).options.enable.contains(Enable::CACHE) } {
+        // SAFETY: caller-provided provenance root; `env_mut()` itself
+        // encapsulates the BackRef deref + singleton-liveness invariant.
+        let env = unsafe { &*this }.env_mut();
+        // SAFETY: shared read of `options`; disjoint from `cache_directory_path`.
+        let cache_dir = fetch_cache_directory_path(env, Some(unsafe { &(*this).options }));
         // SAFETY: see fn safety contract.
-        unsafe {
-            (*this).cache_directory_path =
-                ZBox::from_bytes(path::resolve_path::join_abs_string::<path::platform::Auto>(
-                    FileSystem::instance().top_level_dir(),
-                    &[b"node_modules", b".cache"],
-                ))
-        };
+        unsafe { (*this).cache_directory_path = ZBox::from_bytes(&cache_dir.path) };
 
-        match Dir::cwd().make_open_path(b"node_modules/.cache", Default::default()) {
-            Ok(d) => return d,
+        return match Dir::cwd().make_open_path(&cache_dir.path, Default::default()) {
+            Ok(d) => d,
             Err(err) => {
                 bun_core::pretty_errorln!(
-                    "<r><red>error<r>: bun is unable to write files: {}",
+                    "<r><red>error<r>: cache directory \"{}\" is not creatable: {}",
+                    bun_fmt::s(&cache_dir.path),
                     bun_fmt::s(err.name())
                 );
                 Global::crash();
             }
+        };
+    }
+
+    // SAFETY: see fn safety contract.
+    unsafe {
+        (*this).cache_directory_path =
+            ZBox::from_bytes(path::resolve_path::join_abs_string::<path::platform::Auto>(
+                FileSystem::instance().top_level_dir(),
+                &[b"node_modules", b".cache"],
+            ))
+    };
+
+    match Dir::cwd().make_open_path(b"node_modules/.cache", Default::default()) {
+        Ok(d) => d,
+        Err(err) => {
+            bun_core::pretty_errorln!(
+                "<r><red>error<r>: bun is unable to write files: {}",
+                bun_fmt::s(err.name())
+            );
+            Global::crash();
         }
     }
 }

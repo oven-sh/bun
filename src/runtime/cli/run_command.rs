@@ -1454,7 +1454,7 @@ impl Run {
                     break 'do_postgres_preconnect;
                 }
             };
-            match connect_fn.call(global, sql_object, &[]) {
+            match connect_fn.call(global, sql_object, &[JSValue::js_boolean(true)]) {
                 Ok(promise) => {
                     if let Some(p) = promise.as_promise() {
                         bun_jsc::JSPromise::opaque_mut(p).set_handled();

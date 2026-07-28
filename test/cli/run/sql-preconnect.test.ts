@@ -69,6 +69,36 @@ describe("--sql-preconnect", () => {
     expect(exitCode).toBe(0);
   });
 
+  test("does not hang when the server accepts then closes", async () => {
+    await using server = Bun.listen({
+      port: 0,
+      hostname: "127.0.0.1",
+      socket: {
+        open(socket) {
+          socket.end();
+        },
+        data() {},
+        close() {},
+      },
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--sql-preconnect", "-e", `console.log("script done")`],
+      env: {
+        ...bunEnv,
+        DATABASE_URL: `postgres://127.0.0.1:${server.port}/nope`,
+      },
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stdout).toBe("script done\n");
+    expect(stderr).not.toContain("PostgresError");
+    expect(stderr).not.toContain("ERR_POSTGRES");
+    expect(exitCode).toBe(0);
+  });
+
   test("should not connect when flag is not used", async () => {
     let connectionAttempts = 0;
 

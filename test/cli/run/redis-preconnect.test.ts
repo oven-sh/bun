@@ -26,7 +26,7 @@ describe("--redis-preconnect", () => {
       "index.js": `console.log("Script executed");`,
     });
 
-    const proc = Bun.spawn({
+    await using proc = Bun.spawn({
       cmd: [bunExe(), "--redis-preconnect", "index.js"],
       env: {
         ...bunEnv,
@@ -73,13 +73,11 @@ describe("--redis-preconnect", () => {
     // Preconnect starts a background attempt that does not ref the loop. When
     // the script then calls .connect() itself, the returned promise must still
     // settle (resolve here) before the process exits.
-    const { promise, resolve } = Promise.withResolvers<void>();
     await using server = Bun.listen({
       port: 0,
       hostname: "127.0.0.1",
       socket: {
         open(socket) {
-          resolve();
           // RESP3 HELLO → reply with a minimal map so the handshake succeeds.
           socket.write("%1\r\n$6\r\nserver\r\n$5\r\nredis\r\n");
         },
@@ -98,7 +96,6 @@ describe("--redis-preconnect", () => {
     });
 
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    await promise;
 
     expect(stderr).toBe("");
     expect(stdout).toBe("connected\n");

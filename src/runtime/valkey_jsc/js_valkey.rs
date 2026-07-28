@@ -1627,6 +1627,8 @@ impl JSValkeyClient {
         // the host-fn shim passes a bare `&self` with no ref of its own.
         let _guard = self.ref_scope();
 
+        self.client_mut().flags.is_preconnecting = false;
+
         if self.client.get().flags.needs_to_open_socket {
             bun_core::hint::cold();
 

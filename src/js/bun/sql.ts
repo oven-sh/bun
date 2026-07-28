@@ -902,7 +902,7 @@ const SQL: typeof Bun.SQL = function SQL(
     pool.connect(onTransactionConnected.bind(null, callback, options, resolve, reject, false, false), useReserved);
     return promise;
   };
-  sql.connect = () => {
+  sql.connect = preconnect => {
     if (pool.closed) {
       return Promise.$reject(pool.connectionClosedError());
     }
@@ -921,7 +921,7 @@ const SQL: typeof Bun.SQL = function SQL(
       resolve(sql);
     };
 
-    pool.connect(onConnected);
+    pool.connect(onConnected, false, preconnect === true);
 
     return promise;
   };

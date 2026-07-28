@@ -724,7 +724,8 @@ abstract class BasePooledConnection<ConnectionHandle extends { close(): void; fl
       return false;
     }
     // only retry while queries are actually waiting for a connection
-    if (this.adapter.waitingQueue.length === 0 && this.adapter.reservedQueue.length === 0) {
+    const adapter = this.adapter;
+    if (adapter.waitingQueue.length <= adapter.preconnectWaiters && adapter.reservedQueue.length === 0) {
       return false;
     }
     // an explicit connectionTimeout of 0 disables the connect timer, and with
@@ -913,6 +914,7 @@ abstract class BaseSQLAdapter<PooledConnection extends BasePooledConnection, Con
 
   public waitingQueue: Array<(err: Error | null, result: any) => void> = [];
   public reservedQueue: Array<(err: Error | null, result: any) => void> = [];
+  public preconnectWaiters: number = 0;
 
   public poolStarted: boolean = false;
   public closed: boolean = false;
@@ -1279,9 +1281,19 @@ abstract class BaseSQLAdapter<PooledConnection extends BasePooledConnection, Con
    * @param {function} onConnected - The callback function to be called when the connection is established.
    * @param {boolean} reserved - Whether the connection is reserved, if is reserved the connection will not be released until release is called, if not release will only decrement the queryCount counter
    */
-  connect(onConnected: (err: Error | null, result: any) => void, reserved: boolean = false) {
+  connect(onConnected: (err: Error | null, result: any) => void, reserved: boolean = false, preconnect: boolean = false) {
     if (this.closed) {
       return onConnected(this.connectionClosedError(), null);
+    }
+
+    if (preconnect) {
+      this.preconnectWaiters++;
+      const inner = onConnected;
+      const adapter = this;
+      onConnected = function (err, result) {
+        adapter.preconnectWaiters--;
+        inner(err, result);
+      };
     }
 
     if (this.readyConnections.size === 0) {
@@ -2113,7 +2125,7 @@ export interface TransactionCommands {
 export interface DatabaseAdapter<Connection, ConnectionHandle, QueryHandle> {
   normalizeQuery(strings: string | TemplateStringsArray, values: unknown[]): [sql: string, values: unknown[]];
   createQueryHandle(sql: string, values: unknown[], flags: number): QueryHandle;
-  connect(onConnected: OnConnected<Connection>, reserved?: boolean): void;
+  connect(onConnected: OnConnected<Connection>, reserved?: boolean, preconnect?: boolean): void;
   release(connection: Connection, connectingEvent?: boolean): void;
   close(options?: { timeout?: number }): Promise<void>;
   flush(): void;

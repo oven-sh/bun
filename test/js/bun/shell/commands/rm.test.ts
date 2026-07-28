@@ -6,8 +6,8 @@
  */
 import { $ } from "bun";
 import { beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
-import { bunEnv, bunExe, tempDir, tempDirWithFiles } from "harness";
-import { existsSync, mkdirSync, renameSync, symlinkSync, writeFileSync } from "node:fs";
+import { bunEnv, bunExe, isPosix, tempDir, tempDirWithFiles } from "harness";
+import { chmodSync, existsSync, mkdirSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import path from "path";
 import { createTestBuilder, sortedShellOutput } from "../util";
 const TestBuilder = createTestBuilder(import.meta.path);
@@ -237,6 +237,81 @@ function packagejson() {
   "version": "0.0.0"
 }`;
 }
+
+// With `rm -rf a b`, a failure removing `a/sub` after its children are gone
+// must not abort the concurrent removal of `b`. The nested `a/sub/ss*` layout
+// routes the failure through `delete_after_waiting_for_children`: the
+// grandchildren are removed, then `rmdirat("a/sub")` hits EACCES because `a`
+// is read-only. Multiple grandchildren ensure `sub` publishes `need_to_wait`
+// before any of them can finish. The sibling `b` must still be fully removed.
+test.if(isPosix)("rm -rf: failure removing one directory does not abort sibling arguments", async () => {
+  const fixture = `
+      const { $ } = require("bun");
+      const fs = require("fs");
+      const path = require("path");
+      const base = process.env.RM_SIBLING_BASE;
+
+      if (process.getuid() === 0) {
+        try { process.setgid("nobody"); } catch { process.setgid("nogroup"); }
+        process.setuid("nobody");
+      }
+
+      const r = path.join(base, "work");
+      fs.mkdirSync(path.join(r, "a", "sub", "ss0"), { recursive: true });
+      fs.mkdirSync(path.join(r, "a", "sub", "ss1"), { recursive: true });
+      fs.mkdirSync(path.join(r, "a", "sub", "ss2"), { recursive: true });
+      fs.mkdirSync(path.join(r, "b"), { recursive: true });
+      for (let i = 0; i < 500; i++) fs.writeFileSync(path.join(r, "b", String(i)), "x");
+      fs.chmodSync(path.join(r, "a"), 0o555);
+
+      const res = await $\`rm -rf \${path.join(r, "a")} \${path.join(r, "b")}\`.nothrow().quiet();
+
+      try { fs.chmodSync(path.join(r, "a"), 0o755); } catch {}
+      const bDir = path.join(r, "b");
+      const bRemaining = fs.existsSync(bDir) ? fs.readdirSync(bDir).length : -1;
+      console.log(JSON.stringify({
+        bRemaining,
+        subExists: fs.existsSync(path.join(r, "a", "sub")),
+        subRemaining: fs.readdirSync(path.join(r, "a", "sub")).length,
+        exitCode: res.exitCode,
+      }));
+      fs.rmSync(r, { recursive: true, force: true });
+    `;
+
+  using dir = tempDir("rm-sibling", {});
+  chmodSync(String(dir), 0o777);
+  try {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: { ...bunEnv, RM_SIBLING_BASE: String(dir) },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    let result;
+    try {
+      result = JSON.parse(stdout.trim());
+    } catch {
+      result = { parseError: true, stdout, stderr };
+    }
+    // `a/sub/ss*` are removed; `a/sub` survives because `a` is read-only.
+    // `b` must be fully removed regardless.
+    expect({ result, exitCode }).toEqual({
+      result: {
+        bRemaining: -1,
+        subExists: true,
+        subRemaining: 0,
+        exitCode: 1,
+      },
+      exitCode: 0,
+    });
+  } finally {
+    try {
+      chmodSync(path.join(String(dir), "work", "a"), 0o755);
+    } catch {}
+    rmSync(path.join(String(dir), "work"), { recursive: true, force: true });
+  }
+});
 
 // Recursive `rm -rf` classifies each entry as a directory from readdir, then
 // later re-opens it by path on a worker thread. If that path is replaced by a

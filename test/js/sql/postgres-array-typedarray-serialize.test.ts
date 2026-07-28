@@ -118,6 +118,13 @@ test("DataView element in a BYTEA array is hex-encoded like Buffer", async () =>
   expect(fromDataView).toBe('{"\\xcafe"}');
 });
 
+test("byte-view elements honour byteOffset / byteLength", async () => {
+  const backing = new Uint8Array([0xaa, 0xca, 0xfe, 0xbb]);
+  const fromDataView = await bindLiteral(sql => sql.array([new DataView(backing.buffer, 1, 2)], "BYTEA"));
+  const fromSubarray = await bindLiteral(sql => sql.array([backing.subarray(1, 3)], "BYTEA"));
+  expect({ fromDataView, fromSubarray }).toEqual({ fromDataView: '{"\\xcafe"}', fromSubarray: '{"\\xcafe"}' });
+});
+
 test("Uint8Array element in a non-BYTEA array follows the Buffer hex path", async () => {
   const fromBuffer = await bindLiteral(sql => sql.array([Buffer.from([65, 66])], "TEXT"));
   const fromUint8 = await bindLiteral(sql => sql.array([new Uint8Array([65, 66])], "TEXT"));

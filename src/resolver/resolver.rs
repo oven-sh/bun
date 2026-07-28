@@ -905,12 +905,13 @@ impl<'a> Resolver<'a> {
 
     /// Called from Worker shutdown so `PackageManager::wake_raw` cannot reach this VM after teardown.
     pub fn remove_package_manager_wake(&mut self) {
-        if let (Some(mut pm), Some(ctx)) =
-            (self.package_manager, self.on_wake_package_manager.context)
+        if let (Some(pm), Some(ctx)) = (self.package_manager, self.on_wake_package_manager.context)
         {
-            let _guard = auto_install_lock();
-            // SAFETY: BACKREF — `package_manager` names the process-static singleton.
-            unsafe { pm.as_mut() }.remove_on_wake(ctx);
+            // SAFETY: BACKREF — `package_manager` names the process-static
+            // singleton; `remove_on_wake` only touches the `on_wake` field via
+            // its own mutex (the `wake_raw` serialization barrier), so no
+            // `auto_install_lock` is needed here.
+            unsafe { &mut *pm.as_ptr() }.remove_on_wake(ctx);
         }
     }
 

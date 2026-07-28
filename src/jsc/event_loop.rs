@@ -1332,7 +1332,7 @@ bun_event_loop::link_impl_JsEventLoop! {
         tick() => (*this).tick(),
         auto_tick() => (*this).auto_tick(),
         auto_tick_active() => (*this).auto_tick_active(),
-        execution_forbidden() => (*this).vm_ref().jsc_vm().execution_forbidden(),
+        has_termination_request() => (*this).vm_ref().jsc_vm().has_termination_request(),
         global_object() => (*this).global.map_or(core::ptr::null_mut(), |p| p.as_ptr().cast()),
         bun_vm() => (*this).virtual_machine.map_or(core::ptr::null_mut(), |p| p.as_ptr().cast()),
         stdout() => (*this).vm_ref().as_mut().rare_data().stdout().cast(),

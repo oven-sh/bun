@@ -289,3 +289,80 @@ test.skipIf(process.platform === "win32")(
     }
   },
 );
+
+// Same as above, but the component that gets swapped for a symlink is an
+// intermediate directory whose children are still being processed. Entries
+// discovered inside a directory must be removed relative to the directory
+// that was actually enumerated, so a swap of any ancestor after enumeration
+// must never redirect deletions into the symlink target.
+test.skipIf(process.platform === "win32")(
+  "recursive rm does not follow an intermediate directory replaced by a symlink during deletion",
+  async () => {
+    const ENTRIES = 32;
+    const INNER = 8;
+    const FILES = 3;
+    const ITERATIONS = 3;
+
+    for (let iter = 0; iter < ITERATIONS; iter++) {
+      const files: Record<string, string> = {
+        "stash/.keep": "",
+      };
+      const victimFiles: string[] = [];
+      for (let j = 0; j < INNER; j++) {
+        for (let k = 0; k < FILES; k++) {
+          files[`victim/inner${j}/f${k}.txt`] = "important";
+          victimFiles.push(`victim/inner${j}/f${k}.txt`);
+        }
+      }
+      for (let i = 0; i < ENTRIES; i++) {
+        for (let j = 0; j < INNER; j++) {
+          for (let k = 0; k < FILES; k++) {
+            files[`target/d${i}/inner${j}/f${k}.txt`] = "";
+          }
+        }
+      }
+      const root = tempDirWithFiles(`rm-swap-mid-${iter}`, files);
+      const victimDir = path.join(root, "victim");
+      const target = path.join(root, "target");
+
+      // Start the recursive delete on the worker pool, then swap each
+      // intermediate directory for a symlink pointing at the victim
+      // directory (whose entries share names with the swapped tree) while
+      // the walk of its subdirectories is in flight.
+      const running = $`rm -rf ${target}`.nothrow().quiet().run();
+      for (let i = 0; i < ENTRIES; i++) {
+        const entry = path.join(target, `d${i}`);
+        try {
+          renameSync(entry, path.join(root, "stash", `d${i}`));
+          symlinkSync(victimDir, entry);
+        } catch {
+          // The walker may have already deleted this entry; that's fine.
+        }
+      }
+      await running;
+
+      for (const f of victimFiles) {
+        expect({ file: f, exists: existsSync(path.join(root, f)) }).toEqual({ file: f, exists: true });
+      }
+    }
+  },
+);
+
+test.skipIf(process.platform === "win32")("recursive rm removes a very deeply nested tree", async () => {
+  using base = tempDir("rm-deep", {});
+  // Keep the absolute path under the platform's path-length limit (1024 on
+  // darwin); two bytes per level ("/d").
+  const DEPTH = process.platform === "darwin" ? 400 : 500;
+  let dir = String(base);
+  for (let i = 0; i < DEPTH; i++) {
+    dir = path.join(dir, "d");
+  }
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(path.join(dir, "leaf.txt"), "");
+  const top = path.join(String(base), "d");
+
+  const { stderr, exitCode } = await $`rm -rf ${top}`.nothrow().quiet();
+  expect(stderr.toString()).toBe("");
+  expect(existsSync(top)).toBeFalse();
+  expect(exitCode).toBe(0);
+});

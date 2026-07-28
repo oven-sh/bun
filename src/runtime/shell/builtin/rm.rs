@@ -621,6 +621,66 @@ pub enum EntryKindHint {
     File,
 }
 
+/// `(st_dev, st_ino)` of a directory. Recorded when a parent enumerates a
+/// subdirectory entry and re-checked when the child task opens it, so every
+/// syscall in the walk is issued relative to an fd known to refer to the
+/// enumerated directory.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub struct DirIdentity {
+    dev: u64,
+    ino: u64,
+}
+
+impl DirIdentity {
+    #[inline]
+    fn of(st: &bun_sys::Stat) -> Self {
+        #[allow(clippy::unnecessary_cast)]
+        Self {
+            dev: st.st_dev as u64,
+            ino: st.st_ino as u64,
+        }
+    }
+}
+
+/// Where a child [`DirTask`] sits relative to its containing directory: the
+/// task whose `(path, identity)` names that directory, plus the child's own
+/// expected identity and where its leaf name starts inside its `path`.
+#[derive(Clone, Copy)]
+struct ChildAnchor {
+    identity: Option<DirIdentity>,
+    anchor: *mut DirTask,
+    leaf_start: usize,
+}
+
+#[cfg(windows)]
+impl ChildAnchor {
+    /// Removed relative to the shell cwd by its full path.
+    fn root() -> Self {
+        Self {
+            identity: None,
+            anchor: core::ptr::null_mut(),
+            leaf_start: 0,
+        }
+    }
+}
+
+/// The directory containing a [`DirTask`], resolved for the final
+/// remove-directory syscall. Root tasks resolve against the shell cwd and
+/// their full path; children re-open the containing task's path and verify
+/// it against the recorded identity.
+struct ContainingDir {
+    fd: bun_sys::Fd,
+    owned: bool,
+}
+
+impl Drop for ContainingDir {
+    fn drop(&mut self) {
+        if self.owned {
+            self.fd.close();
+        }
+    }
+}
+
 /// One per filepath argument; owns the root
 /// [`DirTask`] and tracks the cross-thread error state.
 pub struct ShellRmTask {
@@ -661,6 +721,15 @@ pub struct DirTask {
     pub(crate) parent_task: *mut DirTask,
     pub path: ZBox,
     pub(crate) is_absolute: bool,
+    /// Root: recorded once the directory is opened. Child: recorded by the
+    /// parent when it enumerated the entry and verified when the child opens
+    /// the directory.
+    pub(crate) identity: Option<DirIdentity>,
+    /// The task whose `path`/`identity` name this task's containing
+    /// directory. Null for a root task (removed relative to the shell cwd).
+    pub(crate) anchor: *mut DirTask,
+    /// Offset of the leaf component within `path`.
+    pub(crate) leaf_start: usize,
     pub(crate) subtask_count: AtomicUsize,
     pub(crate) need_to_wait: AtomicBool,
     pub(crate) deleting_after_waiting_for_children: AtomicBool,
@@ -702,6 +771,9 @@ impl ShellRmTask {
             parent_task: core::ptr::null_mut(),
             path: ZBox::from_bytes(root_path),
             is_absolute: false,
+            identity: None,
+            anchor: core::ptr::null_mut(),
+            leaf_start: 0,
             subtask_count: AtomicUsize::new(1),
             need_to_wait: AtomicBool::new(false),
             deleting_after_waiting_for_children: AtomicBool::new(false),
@@ -810,12 +882,13 @@ impl ShellRmTask {
         self.error_signal.get()
     }
 
-    /// Joins `path` onto `parent_dir.path` and spawns
-    /// a child DirTask.
+    /// Joins the directory entry `name` onto `parent_dir.path` and spawns a
+    /// child DirTask anchored to `parent_dir`.
     fn enqueue(
         &self,
         parent_dir: *mut DirTask,
-        path: &[u8],
+        parent_fd: bun_sys::Fd,
+        name: &dir_iterator::Name,
         is_absolute: bool,
         kind_hint: EntryKindHint,
     ) {
@@ -824,12 +897,59 @@ impl ShellRmTask {
         }
         // SAFETY: `parent_dir` is live for the duration of its run_from_thread_pool_impl.
         let parent_path = unsafe { (*parent_dir).path.as_bytes() };
-        let new_path = self.join(&[parent_path, path], is_absolute);
-        self.enqueue_no_join(parent_dir, new_path, kind_hint);
+        let new_path = self.join(&[parent_path, name.slice_u8()], is_absolute);
+        #[cfg(not(windows))]
+        let anchor = match self.child_anchor(parent_dir, parent_fd, name.as_zstr(), &new_path) {
+            Ok(anchor) => anchor,
+            Err(e) => return self.handle_child_lookup_err(e),
+        };
+        #[cfg(windows)]
+        let anchor = {
+            let _ = parent_fd;
+            ChildAnchor::root()
+        };
+        self.enqueue_no_join(parent_dir, new_path, kind_hint, anchor);
+    }
+
+    /// Records the identity of the entry `name` inside the (already
+    /// verified) open directory `parent_fd`, for the child task to check
+    /// after it opens the directory itself.
+    #[cfg(not(windows))]
+    fn child_anchor(
+        &self,
+        parent_dir: *mut DirTask,
+        parent_fd: bun_sys::Fd,
+        name: &ZStr,
+        joined: &ZBox,
+    ) -> bun_sys::Maybe<ChildAnchor> {
+        debug_assert!(joined.as_bytes().ends_with(name.as_bytes()));
+        let st = bun_sys::lstatat(parent_fd, name)
+            .map_err(|e| self.error_with_path(&e, joined.as_bytes()))?;
+        Ok(ChildAnchor {
+            identity: Some(DirIdentity::of(&st)),
+            anchor: parent_dir,
+            leaf_start: joined.len() - name.len(),
+        })
+    }
+
+    /// The entry vanished (or became unreadable) between readdir and the
+    /// identity lookup: no child task is spawned.
+    #[cfg(not(windows))]
+    fn handle_child_lookup_err(&self, e: bun_sys::Error) {
+        if e.get_errno() == E::ENOENT && self.opts.force {
+            return;
+        }
+        self.handle_err(e);
     }
 
     /// Takes ownership of `path`.
-    fn enqueue_no_join(&self, parent: *mut DirTask, path: ZBox, kind_hint: EntryKindHint) {
+    fn enqueue_no_join(
+        &self,
+        parent: *mut DirTask,
+        path: ZBox,
+        kind_hint: EntryKindHint,
+        anchor: ChildAnchor,
+    ) {
         if self.error_signal().load(Ordering::SeqCst) {
             return;
         }
@@ -842,6 +962,9 @@ impl ShellRmTask {
             parent_task: parent,
             path,
             is_absolute: false,
+            identity: anchor.identity,
+            anchor: anchor.anchor,
+            leaf_start: anchor.leaf_start,
             subtask_count: AtomicUsize::new(1),
             need_to_wait: AtomicBool::new(false),
             deleting_after_waiting_for_children: AtomicBool::new(false),
@@ -938,6 +1061,64 @@ impl ShellRmTask {
         e.with_path(path)
     }
 
+    /// Resolves the directory that contains `dir_task` for the syscall that
+    /// removes `dir_task` itself. A root task is removed relative to the shell
+    /// cwd by its full path; a child is removed relative to a fresh open of
+    /// its anchor's directory, which must still have the identity that was
+    /// recorded for it.
+    fn open_containing_dir(&self, dir_task: *mut DirTask) -> bun_sys::Maybe<ContainingDir> {
+        // SAFETY: `dir_task` is live and owned by this thread; its `anchor`
+        // (parent chain) stays alive until this task's own `post_run` releases
+        // the parent's `subtask_count`. Only read-only fields are read.
+        let (anchor, my_path) = unsafe { ((*dir_task).anchor, (*dir_task).path.as_zstr()) };
+        if anchor.is_null() {
+            return Ok(ContainingDir {
+                fd: self.cwd,
+                owned: false,
+            });
+        }
+        // SAFETY: see above — `anchor` is a live DirTask.
+        let (anchor_path, anchor_identity) =
+            unsafe { ((*anchor).path.as_zstr(), (*anchor).identity) };
+        let flags = bun_sys::O::DIRECTORY | bun_sys::O::RDONLY | bun_sys::O::NOFOLLOW;
+        let fd = shell_openat(self.cwd, anchor_path, flags, 0)
+            .map_err(|e| self.error_with_path(&e, my_path.as_bytes()))?;
+        if let Some(expected) = anchor_identity {
+            match self.dir_identity(fd) {
+                Ok(id) if id == expected => {}
+                Ok(_) => {
+                    fd.close();
+                    return Err(bun_sys::Error::from_code(E::ENOENT, bun_sys::Tag::unlink)
+                        .with_path(my_path.as_bytes()));
+                }
+                Err(e) => {
+                    fd.close();
+                    return Err(self.error_with_path(&e, my_path.as_bytes()));
+                }
+            }
+        }
+        Ok(ContainingDir { fd, owned: true })
+    }
+
+    fn dir_identity(&self, fd: bun_sys::Fd) -> bun_sys::Maybe<DirIdentity> {
+        bun_sys::fstat(fd).map(|st| DirIdentity::of(&st))
+    }
+
+    /// The path to hand to a syscall issued relative to
+    /// [`open_containing_dir`]: the full path for a root task, the leaf name
+    /// for a child.
+    fn path_in_containing_dir(&self, dir_task: *mut DirTask) -> &ZStr {
+        // SAFETY: `dir_task` is live and owned by this thread; `path` /
+        // `anchor` / `leaf_start` are read-only after construction.
+        unsafe {
+            let dt = &*dir_task;
+            if dt.anchor.is_null() {
+                return dt.path.as_zstr();
+            }
+            ZStr::from_slice_with_nul(&dt.path.as_bytes_with_nul()[dt.leaf_start..])
+        }
+    }
+
     /// Returns `Ok(true)` when [`remove_entry_dir`] handed `dir_task` off to
     /// a child (its `subtask_count` slot was released without reaching 0).
     /// Once that happens, a child finishing on another thread may run
@@ -958,9 +1139,20 @@ impl ShellRmTask {
                 let mut vtable = RemoveFileVTable {
                     task: self,
                     child_of_dir: false,
+                    dir_fd: bun_sys::Fd::INVALID,
                     need_to_wait_out: Some(&mut waiting),
                 };
-                self.remove_entry_file(dir_task, path, is_absolute, &mut buf, &mut vtable)?;
+                let cd = self.open_containing_dir(dir_task)?;
+                let sys_path = self.path_in_containing_dir(dir_task);
+                self.remove_entry_file(
+                    dir_task,
+                    cd.fd,
+                    sys_path,
+                    path,
+                    is_absolute,
+                    &mut buf,
+                    &mut vtable,
+                )?;
             }
             EntryKindHint::Dir => {
                 self.remove_entry_dir(dir_task, is_absolute, &mut buf, &mut waiting)?;
@@ -1004,7 +1196,15 @@ impl ShellRmTask {
                         }
                         E::ENOTDIR => {
                             state.treat_as_dir = false;
-                            self.remove_entry_file(dir_task, path, is_absolute, buf, &mut state)?;
+                            self.remove_entry_file(
+                                dir_task,
+                                dirfd,
+                                path,
+                                path,
+                                is_absolute,
+                                buf,
+                                &mut state,
+                            )?;
                             if !state.treat_as_dir {
                                 return Ok(());
                             }
@@ -1037,7 +1237,25 @@ impl ShellRmTask {
                 }
                 E::ENOTDIR => {
                     let mut dummy = DummyRemoveFile;
-                    return self.remove_entry_file(dir_task, path, is_absolute, buf, &mut dummy);
+                    let cd = match self.open_containing_dir(dir_task) {
+                        Ok(cd) => cd,
+                        Err(e) => {
+                            if e.get_errno() == E::ENOENT && self.opts.force {
+                                return self.verbose_deleted(dir_task, path.as_bytes());
+                            }
+                            return Err(e);
+                        }
+                    };
+                    let sys_path = self.path_in_containing_dir(dir_task);
+                    return self.remove_entry_file(
+                        dir_task,
+                        cd.fd,
+                        sys_path,
+                        path,
+                        is_absolute,
+                        buf,
+                        &mut dummy,
+                    );
                 }
                 _ => return Err(self.error_with_path(&e, path.as_bytes())),
             },
@@ -1051,6 +1269,29 @@ impl ShellRmTask {
             }
         });
 
+        // The directory we operate relative to must be the one that was
+        // enumerated as this entry; children hold the identity their parent
+        // recorded, the root records its own now.
+        #[cfg(not(windows))]
+        {
+            let id = self
+                .dir_identity(fd)
+                .map_err(|e| self.error_with_path(&e, path.as_bytes()))?;
+            // SAFETY: `dir_task` is live; this thread owns it.
+            let expected = unsafe { (*dir_task).identity };
+            match expected {
+                Some(expected_id) if expected_id != id => {
+                    if self.opts.force {
+                        return Ok(());
+                    }
+                    return Err(bun_sys::Error::from_code(E::ENOENT, bun_sys::Tag::unlink)
+                        .with_path(path.as_bytes()));
+                }
+                // SAFETY: `dir_task` is live; this thread owns it.
+                _ => unsafe { (*dir_task).identity = Some(id) },
+            }
+        }
+
         if self.error_signal().load(Ordering::SeqCst) {
             return Ok(());
         }
@@ -1059,6 +1300,7 @@ impl ShellRmTask {
         let mut child_vtable = RemoveFileVTable {
             task: self,
             child_of_dir: true,
+            dir_fd: fd,
             // Never read: `child_of_dir == true` makes both vtable callbacks
             // enqueue and return early before reaching `remove_entry_dir`.
             need_to_wait_out: None,
@@ -1085,12 +1327,7 @@ impl ShellRmTask {
             i += 1;
             match current.kind {
                 bun_sys::EntryKind::Directory => {
-                    self.enqueue(
-                        dir_task,
-                        current.name.slice_u8(),
-                        is_absolute,
-                        EntryKindHint::Dir,
-                    );
+                    self.enqueue(dir_task, fd, &current.name, is_absolute, EntryKindHint::Dir);
                 }
                 _ => {
                     let name = current.name.slice_u8();
@@ -1100,8 +1337,14 @@ impl ShellRmTask {
                         let joined = self.buf_join(buf, &[path.as_bytes(), name]);
                         ZBox::from_bytes(joined.as_bytes())
                     };
+                    #[cfg(not(windows))]
+                    let (file_dirfd, file_sys_path) = (fd, current.name.as_zstr());
+                    #[cfg(windows)]
+                    let (file_dirfd, file_sys_path) = (self.cwd, file_path.as_zstr());
                     if let Err(e) = self.remove_entry_file(
                         dir_task,
+                        file_dirfd,
+                        file_sys_path,
                         file_path.as_zstr(),
                         is_absolute,
                         buf,
@@ -1165,7 +1408,15 @@ impl ShellRmTask {
             }
         }
 
-        match bun_sys::unlinkat_with_flags(self.cwd, path, bun_sys::AT_REMOVEDIR) {
+        let removed = match self.open_containing_dir(dir_task) {
+            Ok(cd) => bun_sys::unlinkat_with_flags(
+                cd.fd,
+                self.path_in_containing_dir(dir_task),
+                bun_sys::AT_REMOVEDIR,
+            ),
+            Err(e) => Err(e),
+        };
+        match removed {
             Ok(()) => self.verbose_deleted(dir_task, path.as_bytes()),
             Err(e) => match e.get_errno() {
                 E::ENOENT => {
@@ -1174,7 +1425,7 @@ impl ShellRmTask {
                     }
                     Err(self.error_with_path(&e, path.as_bytes()))
                 }
-                _ => Err(e),
+                _ => Err(self.error_with_path(&e, path.as_bytes())),
             },
         }
     }
@@ -1183,7 +1434,6 @@ impl ShellRmTask {
     /// directory was deleted (or force-ignored), `Ok(false)` if a subtask was
     /// enqueued and the caller should not run `post_run` yet.
     fn remove_entry_dir_after_children(&self, dir_task: *mut DirTask) -> bun_sys::Maybe<bool> {
-        let dirfd = self.cwd;
         // SAFETY: `dir_task` is live; this thread owns it.
         let (path, is_abs) = unsafe { ((*dir_task).path.as_zstr(), (*dir_task).is_absolute) };
         let mut state = RemoveFileParent {
@@ -1192,9 +1442,20 @@ impl ShellRmTask {
             allow_enqueue: true,
             enqueued: false,
         };
+        let cd = match self.open_containing_dir(dir_task) {
+            Ok(cd) => cd,
+            Err(e) => {
+                if e.get_errno() == E::ENOENT && self.opts.force {
+                    let _ = self.verbose_deleted(dir_task, path.as_bytes());
+                    return Ok(true);
+                }
+                return Err(e);
+            }
+        };
+        let sys_path = self.path_in_containing_dir(dir_task);
         loop {
             if state.treat_as_dir {
-                match bun_sys::rmdirat(dirfd, path) {
+                match bun_sys::rmdirat(cd.fd, sys_path) {
                     Ok(()) => {
                         let _ = self.verbose_deleted(dir_task, path.as_bytes());
                         return Ok(true);
@@ -1216,7 +1477,9 @@ impl ShellRmTask {
                 }
             } else {
                 let mut buf = bun_paths::PathBuffer::uninit();
-                self.remove_entry_file(dir_task, path, is_abs, &mut buf, &mut state)?;
+                self.remove_entry_file(
+                    dir_task, cd.fd, sys_path, path, is_abs, &mut buf, &mut state,
+                )?;
                 if state.enqueued {
                     return Ok(false);
                 }
@@ -1228,16 +1491,20 @@ impl ShellRmTask {
         }
     }
 
+    /// Unlinks `sys_path` relative to `dirfd`; `path` is the full path used
+    /// for verbose output and error messages.
+    #[allow(clippy::too_many_arguments)]
     fn remove_entry_file<V: RemoveFileHandler>(
         &self,
         parent_dir_task: *mut DirTask,
+        dirfd: bun_sys::Fd,
+        sys_path: &ZStr,
         path: &ZStr,
         is_absolute: bool,
         buf: &mut bun_paths::PathBuffer,
         vtable: &mut V,
     ) -> bun_sys::Maybe<()> {
-        let dirfd = self.cwd;
-        match bun_sys::unlinkat_with_flags(dirfd, path, 0) {
+        match bun_sys::unlinkat_with_flags(dirfd, sys_path, 0) {
             Ok(()) => self.verbose_deleted(parent_dir_task, path.as_bytes()),
             Err(e) => match e.get_errno() {
                 E::ENOENT => {
@@ -1246,7 +1513,7 @@ impl ShellRmTask {
                     }
                     Err(self.error_with_path(&e, path.as_bytes()))
                 }
-                E::EISDIR => vtable.on_is_dir(parent_dir_task, path, is_absolute, buf),
+                E::EISDIR => vtable.on_is_dir(parent_dir_task, sys_path, path, is_absolute, buf),
                 // This might happen if the file is actually a directory.
                 E::EPERM => {
                     // Non-Linux POSIX systems and Windows return EPERM when
@@ -1271,8 +1538,8 @@ impl ShellRmTask {
                         // so we don't need to call `stat` to check that.
                         if self.opts.recursive || self.opts.remove_empty_dirs {
                             return match bun_sys::unlinkat_with_flags(
-                                self.cwd,
-                                path,
+                                dirfd,
+                                sys_path,
                                 bun_sys::AT_REMOVEDIR,
                             ) {
                                 // it was empty, we saved a syscall
@@ -1281,6 +1548,7 @@ impl ShellRmTask {
                                     // not empty, process directory as we would normally
                                     E::ENOTEMPTY => vtable.on_dir_not_empty(
                                         parent_dir_task,
+                                        sys_path,
                                         path,
                                         is_absolute,
                                         buf,
@@ -1294,7 +1562,7 @@ impl ShellRmTask {
                         // We don't know if it was an actual permissions error
                         // or it was a directory so we need to try to delete it
                         // as a directory.
-                        return vtable.on_is_dir(parent_dir_task, path, is_absolute, buf);
+                        return vtable.on_is_dir(parent_dir_task, sys_path, path, is_absolute, buf);
                     }
                     #[cfg(not(any(
                         target_os = "macos",
@@ -1586,6 +1854,7 @@ trait RemoveFileHandler {
     fn on_is_dir(
         &mut self,
         parent_dir_task: *mut DirTask,
+        sys_path: &ZStr,
         path: &ZStr,
         is_absolute: bool,
         buf: &mut bun_paths::PathBuffer,
@@ -1594,6 +1863,7 @@ trait RemoveFileHandler {
     fn on_dir_not_empty(
         &mut self,
         parent_dir_task: *mut DirTask,
+        sys_path: &ZStr,
         path: &ZStr,
         is_absolute: bool,
         buf: &mut bun_paths::PathBuffer,
@@ -1606,6 +1876,7 @@ impl RemoveFileHandler for DummyRemoveFile {
         &mut self,
         _: *mut DirTask,
         _: &ZStr,
+        _: &ZStr,
         _: bool,
         _: &mut bun_paths::PathBuffer,
     ) -> bun_sys::Maybe<()> {
@@ -1615,6 +1886,7 @@ impl RemoveFileHandler for DummyRemoveFile {
     fn on_dir_not_empty(
         &mut self,
         _: *mut DirTask,
+        _: &ZStr,
         _: &ZStr,
         _: bool,
         _: &mut bun_paths::PathBuffer,
@@ -1626,6 +1898,9 @@ impl RemoveFileHandler for DummyRemoveFile {
 struct RemoveFileVTable<'a> {
     task: &'a ShellRmTask,
     child_of_dir: bool,
+    /// The open, verified directory being enumerated when
+    /// `child_of_dir == true`.
+    dir_fd: bun_sys::Fd,
     /// Out-param forwarded to [`ShellRmTask::remove_entry_dir`] on the
     /// `child_of_dir == false` path so [`ShellRmTask::remove_entry`] learns
     /// — without re-reading the (possibly already-freed) DirTask — that
@@ -1633,20 +1908,39 @@ struct RemoveFileVTable<'a> {
     /// both callbacks return before the recursive call.
     need_to_wait_out: Option<&'a mut bool>,
 }
+impl RemoveFileVTable<'_> {
+    /// Spawn a child DirTask for the entry `sys_path` (leaf name relative to
+    /// `dir_fd`) whose full path is `path`.
+    fn enqueue_child(&self, parent: *mut DirTask, sys_path: &ZStr, path: &ZStr) {
+        let new_path = ZBox::from_bytes(path.as_bytes());
+        #[cfg(not(windows))]
+        let anchor = match self
+            .task
+            .child_anchor(parent, self.dir_fd, sys_path, &new_path)
+        {
+            Ok(anchor) => anchor,
+            Err(e) => return self.task.handle_child_lookup_err(e),
+        };
+        #[cfg(windows)]
+        let anchor = {
+            let _ = (sys_path, self.dir_fd);
+            ChildAnchor::root()
+        };
+        self.task
+            .enqueue_no_join(parent, new_path, EntryKindHint::Dir, anchor);
+    }
+}
 impl RemoveFileHandler for RemoveFileVTable<'_> {
     fn on_is_dir(
         &mut self,
         parent: *mut DirTask,
+        sys_path: &ZStr,
         path: &ZStr,
         is_absolute: bool,
         buf: &mut bun_paths::PathBuffer,
     ) -> bun_sys::Maybe<()> {
         if self.child_of_dir {
-            self.task.enqueue_no_join(
-                parent,
-                ZBox::from_bytes(path.as_bytes()),
-                EntryKindHint::Dir,
-            );
+            self.enqueue_child(parent, sys_path, path);
             return Ok(());
         }
         // `child_of_dir == false` is only constructed in `remove_entry`, which
@@ -1661,16 +1955,13 @@ impl RemoveFileHandler for RemoveFileVTable<'_> {
     fn on_dir_not_empty(
         &mut self,
         parent: *mut DirTask,
+        sys_path: &ZStr,
         path: &ZStr,
         is_absolute: bool,
         buf: &mut bun_paths::PathBuffer,
     ) -> bun_sys::Maybe<()> {
         if self.child_of_dir {
-            self.task.enqueue_no_join(
-                parent,
-                ZBox::from_bytes(path.as_bytes()),
-                EntryKindHint::Dir,
-            );
+            self.enqueue_child(parent, sys_path, path);
             return Ok(());
         }
         // See `on_is_dir`.
@@ -1693,6 +1984,7 @@ impl RemoveFileHandler for RemoveFileParent {
         &mut self,
         _: *mut DirTask,
         _: &ZStr,
+        _: &ZStr,
         _: bool,
         _: &mut bun_paths::PathBuffer,
     ) -> bun_sys::Maybe<()> {
@@ -1703,6 +1995,7 @@ impl RemoveFileHandler for RemoveFileParent {
     fn on_dir_not_empty(
         &mut self,
         parent: *mut DirTask,
+        _: &ZStr,
         path: &ZStr,
         _: bool,
         _: &mut bun_paths::PathBuffer,
@@ -1711,11 +2004,22 @@ impl RemoveFileHandler for RemoveFileParent {
         if self.allow_enqueue {
             // SAFETY: `parent` is a live DirTask; `task_manager` is live until
             // `pending_main_callbacks` hits 0.
-            let task = unsafe { &*(*parent).task_manager };
+            let (task, anchor) = unsafe {
+                let p = &*parent;
+                (
+                    &*p.task_manager,
+                    ChildAnchor {
+                        identity: p.identity,
+                        anchor: p.anchor,
+                        leaf_start: p.leaf_start,
+                    },
+                )
+            };
             task.enqueue_no_join(
                 parent,
                 ZBox::from_bytes(path.as_bytes()),
                 EntryKindHint::Dir,
+                anchor,
             );
             self.enqueued = true;
         }

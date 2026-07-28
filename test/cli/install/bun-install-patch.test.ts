@@ -1,7 +1,7 @@
 import { $ } from "bun";
 import { describe, expect, it, setDefaultTimeout, test } from "bun:test";
-import { rmSync } from "fs";
-import { bunEnv, bunExe, normalizeBunSnapshot as normalizeBunSnapshot_, tempDirWithFiles } from "harness";
+import { readdirSync, readFileSync, rmSync, unlinkSync, writeFileSync } from "fs";
+import { bunEnv, bunExe, normalizeBunSnapshot as normalizeBunSnapshot_, tempDirWithFiles, tmpdirSync } from "harness";
 import { join } from "path";
 
 const normalizeBunSnapshot = (str: string) => {
@@ -1021,5 +1021,108 @@ index 0000000000000000000000000000000000000000..2f9a147b6e5d17254f1bfce0d4e109a2
     });
     expect(await Bun.file(join(filedir, "node_modules", "is-odd", "bun-patch-test.txt")).exists()).toBe(false);
     expect(await Bun.file(join(filedir, "bun.lock")).text()).not.toContain("patchedDependencies");
+  });
+
+  // https://github.com/oven-sh/bun/issues/33520
+  test("re-applies a patch when the cached patched folder lost its .bun-tag marker", async () => {
+    const original = `module.exports = function () {\n  return "ORIGINAL";\n};\n`;
+
+    // Pack a tiny package we can serve from an in-process npm registry.
+    const pkgSrc = tempDirWithFiles("patch-33520-src", {
+      "package.json": JSON.stringify({ name: "patch-target", version: "1.0.0", main: "index.js" }),
+      "index.js": original,
+    });
+    {
+      await using pack = Bun.spawn({
+        cmd: [bunExe(), "pm", "pack"],
+        cwd: pkgSrc,
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [, stderr, exitCode] = await Promise.all([pack.stdout.text(), pack.stderr.text(), pack.exited]);
+      expect(stderr).not.toContain("error:");
+      expect(exitCode).toBe(0);
+    }
+    const tgz = readFileSync(join(pkgSrc, "patch-target-1.0.0.tgz"));
+
+    await using server = Bun.serve({
+      port: 0,
+      fetch(req, server) {
+        const { pathname } = new URL(req.url);
+        if (pathname.endsWith(".tgz")) return new Response(tgz);
+        const name = pathname.slice(1);
+        return Response.json({
+          name,
+          "dist-tags": { latest: "1.0.0" },
+          versions: {
+            "1.0.0": {
+              name,
+              version: "1.0.0",
+              main: "index.js",
+              dist: { tarball: `http://localhost:${server.port}/${name}-1.0.0.tgz` },
+            },
+          },
+        });
+      },
+    });
+
+    const cache = tmpdirSync();
+    const dir = tempDirWithFiles("patch-33520-proj", {
+      "package.json": JSON.stringify({
+        name: "proj",
+        version: "1.0.0",
+        dependencies: { "patch-target": "1.0.0" },
+        patchedDependencies: { "patch-target@1.0.0": "patches/patch-target.patch" },
+      }),
+      patches: {
+        "patch-target.patch": `diff --git a/index.js b/index.js
+index 1111111111111111111111111111111111111111..2222222222222222222222222222222222222222 100644
+--- a/index.js
++++ b/index.js
+@@ -1,3 +1,3 @@
+ module.exports = function () {
+-  return "ORIGINAL";
++  return "PATCHED";
+ };
+`,
+      },
+      "bunfig.toml": `[install]\nregistry = "http://localhost:${server.port}/"\n`,
+    });
+
+    const env = { ...bunEnv, BUN_INSTALL_CACHE_DIR: cache };
+    const installedIndex = join(dir, "node_modules", "patch-target", "index.js");
+    const install = async () => {
+      await using proc = Bun.spawn({ cmd: [bunExe(), "install"], cwd: dir, env, stdout: "pipe", stderr: "pipe" });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout, stderr, exitCode };
+    };
+
+    // Cold install applies the patch and writes the patched cache folder.
+    let r = await install();
+    expect(r.stderr).not.toContain("error:");
+    expect(r.exitCode).toBe(0);
+    expect(readFileSync(installedIndex, "utf8")).toContain("PATCHED");
+
+    // Simulate a warm cache that captured the patched folder without the patch:
+    // the `_patch_hash=` folder is present but its `.bun-tag-<hash>` marker and
+    // patched content are gone (as happens when CI restores an unpatched snapshot).
+    const patchedFolder = readdirSync(cache).find(f => f.includes("_patch_hash="));
+    expect(patchedFolder).toBeDefined();
+    const patchedPath = join(cache, patchedFolder!);
+    for (const entry of readdirSync(patchedPath)) {
+      if (entry.startsWith(".bun-tag-")) unlinkSync(join(patchedPath, entry));
+    }
+    writeFileSync(join(patchedPath, "index.js"), original);
+    rmSync(join(dir, "node_modules"), { recursive: true, force: true });
+
+    // Reinstalling must re-apply the patch instead of silently installing the
+    // stale unpatched cache folder.
+    r = await install();
+    expect(r.stderr).not.toContain("error:");
+    expect(r.exitCode).toBe(0);
+    const reinstalled = readFileSync(installedIndex, "utf8");
+    expect(reinstalled).toContain("PATCHED");
+    expect(reinstalled).not.toContain("ORIGINAL");
   });
 });

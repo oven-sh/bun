@@ -601,26 +601,7 @@ it("Bun.file(fd).writer() write/end under GC pressure does not crash", async () 
 
 describe("FileSink buffered data is flushed on process exit", () => {
   const line = "LAST-LOG-LINE:fatal error, exiting\n";
-  const modes = [
-    // write() then process.exit() in the same synchronous tick: the write is
-    // buffered (below the auto-flush threshold) and the deferred auto-flush
-    // task hasn't run yet. Previously this produced a 0-byte file.
-    ["same-tick process.exit()", `process.exit(0);`],
-    // Control cases that already worked: after a tick, via process.exitCode,
-    // and natural fall-through. Kept so a future change doesn't regress them.
-    ["next-tick process.exit()", `await Bun.sleep(0); process.exit(0);`],
-    ["process.exitCode then fall-through", `process.exitCode = 0;`],
-    ["natural fall-through", ``],
-    // A FileSink write performed inside a process.on('exit') listener should
-    // also reach the file.
-    [
-      "write inside 'exit' listener",
-      `process.on("exit", () => { w.write(${JSON.stringify(line)}); }); process.exit(0);`,
-      line + line,
-    ],
-  ] as const;
-
-  it.concurrent.each(modes)("%s", async (_label, tail, expected = line) => {
+  async function check(tail: string, expected: string) {
     const dir = tmpdirSync();
     const out = join(dir, "sink.log");
     await using proc = Bun.spawn({
@@ -640,7 +621,26 @@ describe("FileSink buffered data is flushed on process exit", () => {
     const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
     const contents = await Bun.file(out).text();
     expect({ stderr, contents, exitCode }).toEqual({ stderr: "", contents: expected, exitCode: 0 });
-  });
+  }
+
+  // write() then process.exit() in the same synchronous tick: on POSIX the
+  // write is buffered (below the auto-flush threshold) and the deferred
+  // auto-flush task hasn't run yet. Previously this produced a 0-byte file.
+  it.concurrent("same-tick process.exit()", () => check(`process.exit(0);`, line));
+  // Control cases that already worked: after a tick, via process.exitCode,
+  // and natural fall-through. Kept so a future change doesn't regress them.
+  it.concurrent("next-tick process.exit()", () => check(`await Bun.sleep(0); process.exit(0);`, line));
+  it.concurrent("process.exitCode then fall-through", () => check(`process.exitCode = 0;`, line));
+  it.concurrent("natural fall-through", () => check(``, line));
+  // A FileSink write performed inside a process.on('exit') listener should
+  // also reach the file. Skipped on Windows: the Windows writer dispatches the
+  // first write via uv_fs_write and queues the listener's write behind it; the
+  // completion callback never runs because process.exit() does not return to
+  // the event loop, so only the first write lands. POSIX buffers both writes
+  // synchronously and the on_exit auto-flush drains them in one write(2).
+  it.skipIf(isWindows).concurrent("write inside 'exit' listener", () =>
+    check(`process.on("exit", () => { w.write(${JSON.stringify(line)}); }); process.exit(0);`, line + line),
+  );
 });
 
 it("fs.promises.writeFile with iterables under GC pressure does not crash", async () => {

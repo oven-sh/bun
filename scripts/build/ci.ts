@@ -19,7 +19,7 @@ import type { Config } from "./config.ts";
 import { BuildError } from "./error.ts";
 import { crossFeaturesJson } from "./features-json.ts";
 import { orderFilePath, usesOrderFile } from "./flags.ts";
-import { depBuildDir } from "./source.ts";
+import { webkitTestFFIPath } from "./deps/webkit.ts";
 
 /** True if running under any CI (env: CI, BUILDKITE, or GITHUB_ACTIONS). */
 export const isCI: boolean = utils.isCI;
@@ -275,6 +275,12 @@ export function uploadArtifacts(cfg: Config, output: BunOutput): void {
     upload(depPaths, cfg.buildDir);
   }
 
+  const testFFI = webkitTestFFIPath(cfg);
+  if (existsSync(testFFI)) {
+    console.log("Uploading testFFI...");
+    upload([relative(cfg.buildDir, testFFI)], cfg.buildDir);
+  }
+
   // ─── Phase 2: free disk, gzip (posix only), upload archive ───
   // CI agents are disk-constrained. Free what we no longer need: codegen/
   // (sources already compiled into the archive), obj/ (.o files archived),
@@ -407,7 +413,7 @@ export function packageAndUpload(cfg: Config, output: BunOutput): void {
   // Result: bun-linux-x64-profile, bun-linux-x64-asan, etc.
   const bunPath = exeName.replace(/^bun/, bunTriplet);
   const files: string[] = [basename(exe), "features.json"];
-  files.push(resolve(depBuildDir(cfg, "WebKit"), "bin", cfg.windows ? "testFFI.exe" : "testFFI"));
+  files.push(webkitTestFFIPath(cfg));
   // Debug symbols / linker map — platform-specific extras.
   if (cfg.windows) {
     files.push(`${exeName}.pdb`);

@@ -708,6 +708,7 @@ function getVerifyBaselineStep(platform, options) {
           `buildkite-agent artifact download '${profileDir}.zip' . --step ${targetKey}-build-bun`,
           `unzip -o '${profileDir}.zip'`,
           `chmod +x ${profileDir}/${profileExe}`,
+          `chmod +x ${profileDir}/testFFI 2>/dev/null || true`,
           // Linux lanes pin a known-good qemu (see PINNED_QEMU). sha256 check makes a
           // truncated/hijacked download a hard failure before anything runs under it.
           ...(abi === "android"

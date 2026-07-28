@@ -106,6 +106,11 @@ function prebuiltDestDir(cfg: Config): string {
 // Lib paths — relative to destDir (prebuilt) or buildDir (local)
 // ───────────────────────────────────────────────────────────────────────────
 
+export function webkitTestFFIPath(cfg: Config): string {
+  const root = cfg.webkit === "prebuilt" ? prebuiltDestDir(cfg) : depBuildDir(cfg, "WebKit");
+  return resolve(root, "bin", cfg.windows ? "testFFI.exe" : "testFFI");
+}
+
 /** Build a lib path under the WebKit install's lib/ dir. */
 function wkLib(cfg: Config, name: string): string {
   return `lib/${cfg.libPrefix}${name}${cfg.libSuffix}`;

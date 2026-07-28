@@ -1945,16 +1945,9 @@ struct ParsedRedirect<'bump> {
     redirect: Option<ast::Redirect<'bump>>,
 }
 
-/// Reserved words whose constructs Bun Shell does not implement yet. If one of
-/// these reaches `parse_compound_cmd` in command position (a bare, delimited
-/// `.Text` token, not quoted, not from a JS-interpolated string), the parse
-/// fails up front instead of falling through to `parse_simple_cmd`, where the
-/// word would be dispatched as an external command while the surrounding
-/// statements still execute.
-///
-/// `if`/`then`/`elif`/`else`/`fi` and `[[`/`]]` are recognized separately;
-/// `{`/`}` arrive as `BraceBegin`/`BraceEnd` tokens and are checked on that
-/// path; `in` is omitted because it is only reserved inside `for`/`case`.
+/// Reserved words `parse_compound_cmd` rejects so they are not dispatched as
+/// external commands. `{`/`}` lex as `BraceBegin`/`BraceEnd` and are handled
+/// there; `in` is only reserved inside `for`/`case` so it is omitted.
 const UNSUPPORTED_RESERVED_WORDS: &[&[u8]] = &[
     b"!",
     b"while",
@@ -4168,12 +4161,9 @@ pub fn is_if_clause_keyword_bunstr(bunstr: BunString) -> bool {
         .any(|&kw| bunstr.eql_comptime(<&'static str>::from(kw)))
 }
 
-/// True for any text the parser treats specially when it appears as a bare
-/// delimited word in command position: the implemented `if`-clause keywords
-/// plus the `UNSUPPORTED_RESERVED_WORDS` that `parse_compound_cmd` rejects.
-/// Template-literal interpolation uses this to route such values through
-/// `append_js_str_ref` so they land in `js_string_ranges` and the parser sees
-/// them as data, not syntax.
+/// `if`-clause keywords plus `UNSUPPORTED_RESERVED_WORDS`: every word
+/// `parse_compound_cmd` treats as syntax when it appears bare in command
+/// position.
 pub fn is_reserved_word_text(txt: &[u8]) -> bool {
     IfClauseTok::from_text(txt).is_some() || is_unsupported_reserved_word(txt)
 }

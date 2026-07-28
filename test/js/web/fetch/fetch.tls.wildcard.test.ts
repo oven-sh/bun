@@ -526,5 +526,20 @@ describe("TLS certificate name matching: fetch() / checkServerIdentity / checkHo
     ] as const)("%s checkHost(%j, %o) -> %j", (name, host, opts, expected) => {
       expect(checkHost(certs[name].x509, host, opts)).toBe(expected);
     });
+
+    // OpenSSL valid_star pattern-side scan: every pattern label must be LDH
+    // with no boundary hyphen, else the `*` is never expanded.
+    it.each([
+      ["*_x.wild.test", "foo_x.wild.test", undefined],
+      ["*.a_b.test", "foo.a_b.test", undefined],
+      ["*-.wild.test", "foo-.wild.test", undefined],
+      ["-*.wild.test", "-foo.wild.test", undefined],
+      ["a-*.wild.test", "a-b.wild.test", undefined],
+      ["*.-wild.test", "foo.-wild.test", undefined],
+      ["*.wild-.test", "foo.wild-.test", undefined],
+      ["*-b.wild.test", "a-b.wild.test", "*-b.wild.test"],
+    ] as const)("SAN %j checkHost(%j) -> %j", (san, host, expected) => {
+      expect(checkHost(makeCert("x", [["dns", san]]).x509, host)).toBe(expected);
+    });
   });
 });

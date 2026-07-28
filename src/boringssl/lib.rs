@@ -228,6 +228,37 @@ impl MatchOpts {
     };
 }
 
+/// OpenSSL `valid_star`'s pattern scan: every label must be LDH with no
+/// boundary hyphen, and every byte one of `[A-Za-z0-9.*-]`. `*` is treated as
+/// a non-hyphen-clearing label char so `a-*.` and `-*.` are rejected.
+fn openssl_valid_pattern(pattern: &[u8]) -> bool {
+    let mut at_start = true;
+    let mut hyphen = false;
+    for &b in pattern {
+        match b {
+            b'.' => {
+                if at_start || hyphen {
+                    return false;
+                }
+                at_start = true;
+            }
+            b'-' => {
+                if at_start {
+                    return false;
+                }
+                hyphen = true;
+            }
+            b'*' => at_start = false,
+            _ if b.is_ascii_alphanumeric() => {
+                at_start = false;
+                hyphen = false;
+            }
+            _ => return false,
+        }
+    }
+    !at_start && !hyphen
+}
+
 /// Matches one DNS name from a certificate (possibly containing a single `*`
 /// wildcard in its left-most label) against `hostname`. This is the ONE
 /// hostname matcher every native TLS client and `X509Certificate#checkHost`
@@ -278,9 +309,14 @@ pub fn match_hostname(pattern: &[u8], hostname: &[u8], opts: MatchOpts) -> bool 
     let prefix = &pat_first[..star];
     let suffix = &pat_first[star + 1..];
     let is_full_label = prefix.is_empty() && suffix.is_empty();
+    let openssl_mode = matches!(
+        opts.wildcards,
+        Wildcards::FullLabel | Wildcards::EdgePartial
+    );
 
-    // A second `*`, an IDNA A-label, fewer than three labels, or a partial
-    // wildcard the caller's mode does not permit all reduce to a literal
+    // A second `*`, an IDNA A-label, fewer than three labels, a partial
+    // wildcard the caller's mode does not permit, or (for the OpenSSL modes) a
+    // pattern that fails `valid_star`'s LDH scan all reduce to a literal
     // comparison (the `*` can never appear in a real hostname, so this is a
     // rejection in practice).
     if strings::index_of_char(suffix, b'*').is_some()
@@ -290,6 +326,7 @@ pub fn match_hostname(pattern: &[u8], hostname: &[u8], opts: MatchOpts) -> bool 
         || (matches!(opts.wildcards, Wildcards::EdgePartial)
             && !prefix.is_empty()
             && !suffix.is_empty())
+        || (openssl_mode && !openssl_valid_pattern(pattern))
     {
         return eq_nocase(pattern, hostname);
     }
@@ -326,10 +363,7 @@ pub fn match_hostname(pattern: &[u8], hostname: &[u8], opts: MatchOpts) -> bool 
     // OpenSSL `wildcard_match`: the bytes the `*` spans must be LDH (plus `.`
     // under multi-label) and a partial wildcard never matches an IDNA host
     // label. Node lib/tls.js `check()` applies neither host-side check.
-    if matches!(
-        opts.wildcards,
-        Wildcards::FullLabel | Wildcards::EdgePartial
-    ) {
+    if openssl_mode {
         let span = &host_first[prefix.len()..host_first.len() - suffix.len()];
         let allow_dot = opts.multi_label_wildcards && is_full_label;
         if span

@@ -122,8 +122,7 @@ static int bun__slurp(const char* path, char* buf, size_t len)
     return 0;
 }
 
-// cgroup v2: walk from the leaf named in /proc/self/cgroup up to the
-// mount root, taking the tightest cpu.max at any level.
+// cgroup v2: tightest cpu.max on the path from the leaf to the mount root.
 static int bun__cgroup2_constrained_cpu(const char* cgroup_root, const char* buf)
 {
     char path[4097];
@@ -159,10 +158,8 @@ static int bun__cgroup2_constrained_cpu(const char* cgroup_root, const char* buf
     return min_cpus;
 }
 
-// cgroup v1: find the line whose controller list contains "cpu" as a
-// whole token ("cpu", "cpu,cpuacct", "cpuacct,cpu") and read
-// cpu.cfs_{quota,period}_us from that path, falling back to the root
-// mount when the controller line is absent.
+// cgroup v1: cpu.cfs_{quota,period}_us under the "cpu" controller's path
+// (whole-token match, so "cpuacct" alone is skipped).
 static int bun__cgroup1_constrained_cpu(const char* cgroup_root, char* buf)
 {
     char filename[4097];
@@ -219,20 +216,11 @@ static int bun__cgroup_constrained_cpu(const char* proc_self_cgroup, const char*
 }
 #endif
 
-// navigator.hardwareConcurrency / os.availableParallelism().
-//
-// On Linux this mirrors libuv's uv_available_parallelism(): the minimum of
-// sched_getaffinity's CPU count and the cgroup v1/v2 CPU quota, where a
-// fractional quota is truncated toward zero (so --cpus=2.5 reports 2, the
-// same as Node.js). WTF::numberOfProcessorCores() rounds that quota up,
-// which is fine for JSC's internal pool sizing but over-reports for
-// Node-facing worker-pool sizing.
-//
-// BUN_INTERNAL_CGROUP_ROOT exists only so the test suite can exercise
-// fractional quotas without CAP_SYS_ADMIN: it reads
-// "<root>/proc_self_cgroup" and "<root>/..." in place of the real paths and
-// bypasses the host sysconf/affinity min so the fixture alone determines the
-// result.
+// navigator.hardwareConcurrency / os.availableParallelism(). On Linux this
+// matches libuv's uv_available_parallelism(): min(sched_getaffinity, cgroup
+// quota) with fractional quotas truncated toward zero, where
+// WTF::numberOfProcessorCores() rounds them up. BUN_INTERNAL_CGROUP_ROOT is a
+// test-only override that returns the fixture's cgroup value directly.
 extern "C" int32_t Bun__availableParallelism()
 {
 #if OS(LINUX)

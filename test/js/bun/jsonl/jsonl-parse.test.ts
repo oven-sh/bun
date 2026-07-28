@@ -267,6 +267,81 @@ describe("Bun.JSONL", () => {
       });
     });
 
+    describe("extra content after value on the same line", () => {
+      // JSONL/NDJSON require exactly one JSON value per line. A second value
+      // or non-whitespace garbage between a parsed value and the line
+      // terminator must be rejected, not silently dropped.
+      test.each([
+        ['{"a":1} {"b":2} {"c":3}\n{"d":4}\n', "multiple space-separated values"],
+        ['{"a":1}{"b":2}\n{"d":4}\n', "concatenated values"],
+        ['{"a":1} garbage more junk\n{"d":4}\n', "trailing garbage after value"],
+        ["1 2\n3 4\n", "space-separated primitives"],
+        ['{"a":1}\t{"b":2}\n', "tab-separated values"],
+        ['"x" "y"\n', "two strings on one line"],
+        ["[1] [2]\n", "two arrays on one line"],
+        ["true false\n", "two booleans on one line"],
+        ["null null\n", "two nulls on one line"],
+      ])("parseChunk: %s reports error (%s)", input => {
+        const r = Bun.JSONL.parseChunk(input);
+        expect(r.error).toBeInstanceOf(SyntaxError);
+        expect(r.done).toBe(false);
+      });
+
+      test("parseChunk: read stops at end of the first value on the bad line", () => {
+        const r = Bun.JSONL.parseChunk('{"a":1} {"b":2}\n{"d":4}\n');
+        expect(r.values).toStrictEqual([{ a: 1 }]);
+        expect(r.read).toBe('{"a":1}'.length);
+        expect(r.error).toBeInstanceOf(SyntaxError);
+        expect(r.done).toBe(false);
+      });
+
+      test("parseChunk: error is raised on the offending line, prior lines are kept", () => {
+        const r = Bun.JSONL.parseChunk('{"a":1}\n{"b":2} junk\n{"c":3}\n');
+        expect(r.values).toStrictEqual([{ a: 1 }, { b: 2 }]);
+        expect(r.read).toBe('{"a":1}\n{"b":2}'.length);
+        expect(r.error).toBeInstanceOf(SyntaxError);
+        expect(r.done).toBe(false);
+      });
+
+      test("parse: does not silently drop second value on a line", () => {
+        // Must not return [{"a":1},{"d":4}] as if everything succeeded.
+        const r = Bun.JSONL.parse('{"a":1} {"b":2} {"c":3}\n{"d":4}\n');
+        expect(r).not.toContainEqual({ d: 4 });
+        expect(r).toStrictEqual([{ a: 1 }]);
+      });
+
+      test("parse: trailing garbage after value on a line stops parsing there", () => {
+        const r = Bun.JSONL.parse('{"a":1} garbage\n{"d":4}\n');
+        expect(r).not.toContainEqual({ d: 4 });
+        expect(r).toStrictEqual([{ a: 1 }]);
+      });
+
+      test("typed array input: extra content on a line reports error", () => {
+        const buf = new TextEncoder().encode('{"a":1} {"b":2}\n{"d":4}\n');
+        const r = Bun.JSONL.parseChunk(buf);
+        expect(r.values).toStrictEqual([{ a: 1 }]);
+        expect(r.error).toBeInstanceOf(SyntaxError);
+        expect(r.done).toBe(false);
+      });
+
+      test("UTF-16 path: non-ASCII input with extra content on a line reports error", () => {
+        const r = Bun.JSONL.parseChunk('{"e":"🎉"} {"x":1}\n');
+        expect(r.values).toStrictEqual([{ e: "🎉" }]);
+        expect(r.error).toBeInstanceOf(SyntaxError);
+        expect(r.done).toBe(false);
+      });
+
+      test("trailing JSON whitespace after a value remains accepted", () => {
+        for (const ws of [" ", "  ", "\t", " \t ", "\r", " \r"]) {
+          const input = `{"a":1}${ws}\n{"b":2}${ws}\n`;
+          const r = Bun.JSONL.parseChunk(input);
+          expect(r.values).toStrictEqual([{ a: 1 }, { b: 2 }]);
+          expect(r.error).toBeNull();
+          expect(r.done).toBe(true);
+        }
+      });
+    });
+
     describe("partial/incomplete trailing data", () => {
       test("returns only complete values when input ends mid-value", () => {
         expect(Bun.JSONL.parse('{"a":1}\n{"b":2}\n{"c":')).toStrictEqual([{ a: 1 }, { b: 2 }]);

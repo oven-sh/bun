@@ -678,6 +678,56 @@ it(".params decodes percent escapes in a route segment exactly once", () => {
   expect(percent.params.id).toBe("100%25");
 });
 
+it("percent-encoded slash and question mark stay inside their route segment", () => {
+  using dir = tempDir("fsr-encoded-delimiters", {
+    "index.tsx": "export default 1;",
+    "top.tsx": "export default 1;",
+    "a/b.tsx": "export default 1;",
+    "user/[name].tsx": "export default 1;",
+  });
+
+  const router = new FileSystemRouter({ dir: String(dir), style: "nextjs" });
+
+  // Un-encoded paths keep their exact segments, params, query and pathname.
+  const plain = router.match("/user/alice?x=1")!;
+  expect(plain.name).toBe("/user/[name]");
+  expect(plain.pathname).toBe("/user/alice?x=1");
+  expect(plain.params).toEqual({ name: "alice" });
+  expect(plain.query).toEqual({ name: "alice", x: "1" });
+  expect(router.match("/user/alice/settings.json")).toBeNull();
+
+  const staticRoute = router.match("/a/b")!;
+  expect(staticRoute.name).toBe("/a/b");
+  expect(staticRoute.params).toEqual({});
+
+  // A literal "?" in the path still starts the query string.
+  const literalQuery = router.match("/user/carol?tab=2")!;
+  expect(literalQuery.name).toBe("/user/[name]");
+  expect(literalQuery.params).toEqual({ name: "carol" });
+  expect(literalQuery.query).toEqual({ name: "carol", tab: "2" });
+
+  // "%2F" decodes to a slash that is part of the single segment it appears in.
+  const slash = router.match("/user/a%2Fb")!;
+  expect(slash.name).toBe("/user/[name]");
+  expect(slash.pathname).toBe("/user/a/b");
+  expect(slash.params).toEqual({ name: "a/b" });
+  expect(slash.query).toEqual({ name: "a/b" });
+
+  // A single encoded segment does not match a two-segment static route, and a
+  // decoded leading slash is segment content rather than a separator.
+  expect(router.match("/a%2Fb")).toBeNull();
+  expect(router.match("/top")!.name).toBe("/top");
+  expect(router.match("/%2Ftop")).toBeNull();
+
+  // "%3F" decodes to a question mark that is part of the segment, not the
+  // start of the query string.
+  const questionMark = router.match("/user/x%3Fy=1")!;
+  expect(questionMark.name).toBe("/user/[name]");
+  expect(questionMark.pathname).toBe("/user/x?y=1");
+  expect(questionMark.params).toEqual({ name: "x?y=1" });
+  expect(questionMark.query).toEqual({ name: "x?y=1" });
+});
+
 it("caps the number of parsed query string parameters instead of crashing", async () => {
   // A query string with more parameters than the iterator's fixed-size visited
   // bitset (2048 entries) must not be able to take down the process when

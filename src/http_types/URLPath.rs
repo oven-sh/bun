@@ -20,6 +20,33 @@ pub struct URLPath {
     /// `URLPath` must not be `Clone`: copying the slice fields without this
     /// owner would re-introduce the dangling hazard.
     _decoded_storage: Option<Box<[u8]>>,
+    /// `/` bytes in `pathname` that were percent-decoded from the input and
+    /// are therefore segment content, not segment separators.
+    pub literal_slashes: LiteralSlashes,
+}
+
+/// Addresses of the `/` bytes within a decoded path buffer that came from a
+/// percent-encoded input byte. Identity is by address, so any sub-slice of the
+/// path can be queried. Sorted ascending; empty for un-encoded input.
+#[derive(Default)]
+pub struct LiteralSlashes(Vec<*const u8>);
+
+impl LiteralSlashes {
+    #[inline]
+    pub fn is_separator(&self, byte: &u8) -> bool {
+        *byte == b'/' && self.0.binary_search(&core::ptr::from_ref(byte)).is_err()
+    }
+
+    #[inline]
+    pub fn find_separator(&self, s: &[u8]) -> Option<usize> {
+        s.iter().position(|b| self.is_separator(b))
+    }
+
+    #[inline]
+    pub fn contains_any(&self, s: &[u8]) -> bool {
+        let range = s.as_ptr_range();
+        self.0.iter().any(|p| range.contains(p))
+    }
 }
 
 impl URLPath {
@@ -43,14 +70,45 @@ impl URLPath {
 pub fn parse(possibly_encoded_pathname_: &[u8]) -> Result<URLPath, bun_url::DecodeError> {
     let mut decoded_pathname: &[u8] = possibly_encoded_pathname_;
     let mut decoded_storage: Option<Box<[u8]>> = None;
+    let mut needs_redirect = false;
+    let mut query_start: Option<usize> =
+        possibly_encoded_pathname_.iter().rposition(|&b| b == b'?');
+    let mut literal_slash_offsets: Vec<usize> = Vec::new();
+
     if strings::index_of_char(decoded_pathname, b'%').is_some() {
         // The in-place decode buffer is capped at 16384 bytes of input.
         let capped = &possibly_encoded_pathname_[..possibly_encoded_pathname_.len().min(16384)];
+        let raw_query_start = capped.iter().rposition(|&b| b == b'?');
+        let raw_path = &capped[..raw_query_start.unwrap_or(capped.len())];
 
         let mut buf: Vec<u8> = Vec::with_capacity(capped.len());
-        let n = PercentEncoding::decode_fault_tolerant::<_, true>(&mut buf, capped)?;
-        debug_assert!(n as usize <= buf.len());
-        buf.truncate(n as usize);
+        let mut rest = raw_path;
+        loop {
+            let encoded_slash = rest
+                .windows(3)
+                .position(|w| w[0] == b'%' && w[1] == b'2' && matches!(w[2], b'F' | b'f'));
+            let chunk = &rest[..encoded_slash.unwrap_or(rest.len())];
+            PercentEncoding::decode_fault_tolerant::<_, true>(
+                &mut buf,
+                chunk,
+                Some(&mut needs_redirect),
+            )?;
+            let Some(encoded_slash) = encoded_slash else {
+                break;
+            };
+            literal_slash_offsets.push(buf.len());
+            buf.push(b'/');
+            rest = &rest[encoded_slash + 3..];
+        }
+        query_start = None;
+        if let Some(q) = raw_query_start {
+            query_start = Some(buf.len());
+            PercentEncoding::decode_fault_tolerant::<_, true>(
+                &mut buf,
+                &capped[q..],
+                Some(&mut needs_redirect),
+            )?;
+        }
         // Freeze into a heap-stable Box and park it in `decoded_storage` before
         // borrowing: the slice fields in the returned URLPath borrow from this
         // allocation, and the Box is later moved into that same URLPath, so the
@@ -68,6 +126,8 @@ pub fn parse(possibly_encoded_pathname_: &[u8]) -> Result<URLPath, bun_url::Deco
     if decoded_pathname.is_empty() {
         decoded_pathname = b"/";
         decoded_storage = None;
+        query_start = None;
+        literal_slash_offsets.clear();
     }
 
     let mut question_mark_i: i32 = -1;
@@ -78,10 +138,11 @@ pub fn parse(possibly_encoded_pathname_: &[u8]) -> Result<URLPath, bun_url::Deco
     let mut i: i32 = i32::try_from(decoded_pathname.len()).expect("int cast") - 1;
 
     while i >= 0 {
-        let c = decoded_pathname[usize::try_from(i).expect("int cast")];
+        let idx = usize::try_from(i).expect("int cast");
+        let c = decoded_pathname[idx];
 
         match c {
-            b'?' => {
+            b'?' if query_start == Some(idx) => {
                 question_mark_i = question_mark_i.max(i);
                 if question_mark_i < period_i {
                     period_i = -1;
@@ -94,7 +155,7 @@ pub fn parse(possibly_encoded_pathname_: &[u8]) -> Result<URLPath, bun_url::Deco
             b'.' => {
                 period_i = period_i.max(i);
             }
-            b'/' => {
+            b'/' if literal_slash_offsets.binary_search(&idx).is_err() => {
                 last_slash = last_slash.max(i);
             }
             _ => {}
@@ -152,7 +213,21 @@ pub fn parse(possibly_encoded_pathname_: &[u8]) -> Result<URLPath, bun_url::Deco
         unsafe { bun_collections::detach_lifetime(s) }
     }
 
+    let literal_slashes = LiteralSlashes(
+        literal_slash_offsets
+            .iter()
+            .map(|&offset| decoded_pathname[offset..].as_ptr())
+            .collect(),
+    );
+
     Ok(URLPath {
+        literal_slashes,
+        extname: extend(if !is_source_map {
+            extname
+        } else {
+            backup_extname
+        }),
+        is_source_map,
         pathname: extend(decoded_pathname),
         path: extend(if decoded_pathname.len() == 1 {
             b"."

@@ -140,3 +140,25 @@ describe.concurrent("WebKit 01aaa3e0be0c upgrade", () => {
     expect(exitCode).toBe(0);
   });
 });
+
+describe("WebKit 2e37adcc23b7 upgrade", () => {
+  // These are upstream Yarr correctness fixes; they needed no Bun-side change
+  // but are observable behaviour differences delivered by this sync.
+  test("sticky dot-star-wrapped expression does not skip the leading .*", () => {
+    // https://bugs.webkit.org/show_bug.cgi?id=320348
+    // optimizeDotStarWrappedExpressions reported the inner match position,
+    // which a sticky pattern then rejected because it wasn't at lastIndex 0.
+    expect(/^.*a.*$/y.exec("xa")?.[0]).toBe("xa");
+    const r = /^.*a.*$/y;
+    r.lastIndex = 0;
+    expect(r.test("xa")).toBe(true);
+  });
+
+  test("^ inside an empty-matching parenthesis does not anchor the whole pattern", () => {
+    // https://bugs.webkit.org/show_bug.cgi?id=320347
+    // /(?:^a)?b/ was compiled as anchored, so 'b' at a non-start position
+    // never matched.
+    expect(/(?:^a)?b/.exec("cb")?.[0]).toBe("b");
+    expect(/(?:^a)?b/.exec("ab")?.[0]).toBe("ab");
+  });
+});

@@ -389,10 +389,8 @@ extern "C" JSC::EncodedJSValue BunObject__createBunStdout(JSC::JSGlobalObject*);
 static void checkIfNextTickWasCalledDuringMicrotask(JSC::VM& vm)
 {
     auto* globalObject = defaultGlobalObject();
-    // Prevent this hook from re-entering drain() through its own
-    // processTicksAndRejections -> drainMicrotasks() path. drain() itself must
-    // stay re-enterable from GlobalObject::drainMicrotasks (a tick callback may
-    // spin wait_for_promise, which needs to drain ticks queued during the spin).
+    // Guard only this hook, not drain(): GlobalObject::drainMicrotasks must still
+    // re-enter drain() when a tick callback spins wait_for_promise.
     if (globalObject->m_isDrainingNextTickQueue)
         return;
     auto queue = globalObject->m_nextTickQueue.get();

@@ -67,20 +67,6 @@ static ExceptionOr<Vector<uint8_t>> signWithEVP_MD(const CryptoKeyRSA& key, cons
     return signature;
 }
 
-ExceptionOr<Vector<uint8_t>> CryptoAlgorithmRSASSA_PKCS1_v1_5::platformSignNoAlgorithm(const CryptoKeyRSA& key, size_t padding, const Vector<uint8_t>& data)
-{
-    return signWithEVP_MD(key, nullptr, padding, data);
-}
-
-ExceptionOr<Vector<uint8_t>> CryptoAlgorithmRSASSA_PKCS1_v1_5::platformSignWithAlgorithm(const CryptoKeyRSA& key, CryptoAlgorithmIdentifier algorithm, const Vector<uint8_t>& data)
-{
-
-    const EVP_MD* md = digestAlgorithm(algorithm);
-    if (!md)
-        return Exception { NotSupportedError };
-
-    return signWithEVP_MD(key, md, RSA_PKCS1_PADDING, data);
-}
 ExceptionOr<Vector<uint8_t>> CryptoAlgorithmRSASSA_PKCS1_v1_5::platformSign(const CryptoKeyRSA& key, const Vector<uint8_t>& data)
 {
     const EVP_MD* md = digestAlgorithm(key.hashAlgorithmIdentifier());
@@ -114,15 +100,6 @@ static ExceptionOr<bool> verifyWithEVP_MD(const CryptoKeyRSA& key, const EVP_MD*
     return ret == 1;
 }
 
-ExceptionOr<bool> CryptoAlgorithmRSASSA_PKCS1_v1_5::platformVerifyWithAlgorithm(const CryptoKeyRSA& key, CryptoAlgorithmIdentifier algorithm, const Vector<uint8_t>& signature, const Vector<uint8_t>& data)
-{
-    const EVP_MD* md = digestAlgorithm(algorithm);
-    if (!md)
-        return Exception { NotSupportedError };
-
-    return verifyWithEVP_MD(key, md, signature, data);
-}
-
 ExceptionOr<bool> CryptoAlgorithmRSASSA_PKCS1_v1_5::platformVerify(const CryptoKeyRSA& key, const Vector<uint8_t>& signature, const Vector<uint8_t>& data)
 {
     const EVP_MD* md = digestAlgorithm(key.hashAlgorithmIdentifier());
@@ -130,30 +107,6 @@ ExceptionOr<bool> CryptoAlgorithmRSASSA_PKCS1_v1_5::platformVerify(const CryptoK
         return Exception { NotSupportedError };
 
     return verifyWithEVP_MD(key, md, signature, data);
-}
-
-ExceptionOr<Vector<uint8_t>> CryptoAlgorithmRSASSA_PKCS1_v1_5::platformVerifyRecover(const CryptoKeyRSA& key, size_t padding, const Vector<uint8_t>& signature)
-{
-    auto ctx = EvpPKeyCtxPtr(EVP_PKEY_CTX_new(key.platformKey(), nullptr));
-    if (!ctx)
-        return Exception { OperationError };
-
-    if (EVP_PKEY_verify_recover_init(ctx.get()) <= 0)
-        return Exception { OperationError };
-
-    if (EVP_PKEY_CTX_set_rsa_padding(ctx.get(), padding) <= 0)
-        return Exception { OperationError };
-
-    size_t plaintextLen;
-    if (EVP_PKEY_verify_recover(ctx.get(), nullptr, &plaintextLen, signature.begin(), signature.size()) <= 0)
-        return Exception { OperationError };
-
-    Vector<uint8_t> plaintext(plaintextLen);
-    if (EVP_PKEY_verify_recover(ctx.get(), plaintext.begin(), &plaintextLen, signature.begin(), signature.size()) <= 0)
-        return Exception { OperationError };
-    plaintext.shrink(plaintextLen);
-
-    return plaintext;
 }
 
 } // namespace WebCore

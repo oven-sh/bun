@@ -61,7 +61,6 @@ enum class CryptoAlgorithmIdentifier : uint8_t;
 class SubtleCrypto : public ContextDestructionObserver, public RefCounted<SubtleCrypto>, public CanMakeWeakPtr<SubtleCrypto> {
 public:
     static Ref<SubtleCrypto> create(ScriptExecutionContext* context) { return adoptRef(*new SubtleCrypto(context)); }
-    static SubtleCrypto* createPtr(ScriptExecutionContext* context) { return new SubtleCrypto(context); }
     ~SubtleCrypto();
 
     using KeyFormat = CryptoKeyFormat;

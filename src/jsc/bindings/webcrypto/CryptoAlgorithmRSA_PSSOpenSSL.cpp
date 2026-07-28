@@ -76,18 +76,6 @@ static ExceptionOr<Vector<uint8_t>> signWithMD(const CryptoAlgorithmRsaPssParams
 
     return signature;
 }
-ExceptionOr<Vector<uint8_t>> CryptoAlgorithmRSA_PSS::platformSignWithAlgorithm(const CryptoAlgorithmRsaPssParams& parameters, CryptoAlgorithmIdentifier hash, const CryptoKeyRSA& key, const Vector<uint8_t>& data)
-{
-#if 1 //  defined(EVP_PKEY_CTX_set_rsa_pss_saltlen) && defined(EVP_PKEY_CTX_set_rsa_mgf1_md)
-    const EVP_MD* md = digestAlgorithm(hash);
-    if (!md)
-        return Exception { NotSupportedError };
-
-    return signWithMD(parameters, key, data, md);
-#else
-    return Exception { NotSupportedError };
-#endif
-}
 
 ExceptionOr<Vector<uint8_t>> CryptoAlgorithmRSA_PSS::platformSign(const CryptoAlgorithmRsaPssParams& parameters, const CryptoKeyRSA& key, const Vector<uint8_t>& data)
 {
@@ -137,14 +125,6 @@ static ExceptionOr<bool> verifyWithMD(const CryptoAlgorithmRsaPssParams& paramet
     int ret = EVP_PKEY_verify(ctx.get(), signature.begin(), signature.size(), digest->begin(), digest->size());
 
     return ret == 1;
-}
-ExceptionOr<bool> CryptoAlgorithmRSA_PSS::platformVerifyWithAlgorithm(const CryptoAlgorithmRsaPssParams& parameters, CryptoAlgorithmIdentifier hash, const CryptoKeyRSA& key, const Vector<uint8_t>& signature, const Vector<uint8_t>& data)
-{
-    const EVP_MD* md = digestAlgorithm(hash);
-    if (!md)
-        return Exception { NotSupportedError };
-
-    return verifyWithMD(parameters, key, signature, data, md);
 }
 
 ExceptionOr<bool> CryptoAlgorithmRSA_PSS::platformVerify(const CryptoAlgorithmRsaPssParams& parameters, const CryptoKeyRSA& key, const Vector<uint8_t>& signature, const Vector<uint8_t>& data)

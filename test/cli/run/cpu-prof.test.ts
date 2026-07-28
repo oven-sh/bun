@@ -155,6 +155,30 @@ describe.concurrent("--cpu-prof", () => {
     expect(exitCode).toBe(0);
   });
 
+  test("--cpu-prof-dir longer than the OS path limit does not crash", async () => {
+    using dir = tempDir("cpu-prof-dir-long", {
+      "test.js": `console.log("done");`,
+    });
+
+    // Nested short components so no single component exceeds NAME_MAX, but
+    // the joined absolute path is far beyond the 4096-byte path buffer.
+    const longDir = "a/".repeat(2200);
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--cpu-prof", "--cpu-prof-dir", longDir, "test.js"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stdout).toBe("done\n");
+    expect(stderr).toContain("Failed to write CPU profile");
+    expect(exitCode).toBe(0);
+  });
+
   test("profile captures function names", async () => {
     using dir = tempDir("cpu-prof-functions", {
       "test.js": `

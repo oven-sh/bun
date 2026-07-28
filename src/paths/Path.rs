@@ -133,11 +133,11 @@ pub mod options {
     /// `Result<T, Error>` unconditionally (see note above), but their
     /// bodies *skip the length check entirely* in `ASSUME`
     /// mode -- `Err(MaxPathExceeded)` is dead code, and an over-long input
-    /// instead panics inside `PooledBuf::append` slice indexing. So callers
-    /// on `ASSUME` types should use this instead of `?`/`handle_oom`: it
-    /// makes the infallibility explicit and, unlike `handle_oom`, panics with
-    /// the real reason if the invariant is ever violated rather than
-    /// misreporting it as "out of memory".
+    /// instead grows the `Path`'s storage onto the heap. So callers on
+    /// `ASSUME` types should use this instead of `?`/`handle_oom`: it makes
+    /// the infallibility explicit and, unlike `handle_oom`, panics with the
+    /// real reason if the invariant is ever violated rather than misreporting
+    /// it as "out of memory".
     pub trait AssumeOk<T> {
         fn assume_ok(self) -> T;
     }
@@ -152,8 +152,8 @@ pub mod options {
                 // a real diagnostic instead of UB.
                 Err(Error::MaxPathExceeded) => unreachable!(
                     "MaxPathExceeded on a CheckLength::ASSUME Path \
-                     (Err arm is dead under ASSUME; over-long input panics in \
-                     PooledBuf::append slice indexing first)"
+                     (Err arm is dead under ASSUME; over-long input grows \
+                     the Path onto the heap instead)"
                 ),
             }
         }
@@ -352,26 +352,100 @@ impl PathUnit for u16 {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// Buf — only the `.pool` variant is implemented
+// Buf — pooled fixed buffer fast path, heap-grown on overflow
 // ──────────────────────────────────────────────────────────────────────────
 
+enum Storage<U: PathUnit> {
+    // LIFETIMES.tsv: OWNED → Box<PathBuffer> (pool.get() in init(); pool.put() in
+    // `Path::drop` or on promotion to `Heap`).
+    Pooled(Box<U::Buffer>),
+    Heap(Vec<U>),
+}
+
+impl<U: PathUnit> Storage<U> {
+    #[inline]
+    fn as_slice(&self) -> &[U] {
+        match self {
+            Storage::Pooled(buf) => U::buffer_as_slice(buf),
+            Storage::Heap(vec) => vec,
+        }
+    }
+
+    #[inline]
+    fn as_mut_slice(&mut self) -> &mut [U] {
+        match self {
+            Storage::Pooled(buf) => U::buffer_as_mut_slice(buf),
+            Storage::Heap(vec) => vec,
+        }
+    }
+}
+
 pub(crate) struct Buf<U: PathUnit, const SEP_OPT: u8> {
-    // LIFETIMES.tsv: OWNED → Box<PathBuffer> (pool.get() in init(); pool.put() in deinit()).
-    // Wrapped in ManuallyDrop so `Path::drop` can move the Box back into the pool
-    // without leaving a dangling Box behind for the field destructor.
-    pooled: ManuallyDrop<Box<U::Buffer>>,
+    storage: Storage<U>,
     len: usize,
 }
 
 impl<U: PathUnit, const SEP_OPT: u8> Buf<U, SEP_OPT> {
     #[inline]
+    fn new() -> Self {
+        Buf {
+            storage: Storage::Pooled(U::pool_get()),
+            len: 0,
+        }
+    }
+
+    #[inline]
     pub(crate) fn set_length(&mut self, new_len: usize) {
         self.len = new_len;
     }
 
+    #[inline]
+    fn as_slice(&self) -> &[U] {
+        self.storage.as_slice()
+    }
+
+    #[inline]
+    fn as_mut_slice(&mut self) -> &mut [U] {
+        self.storage.as_mut_slice()
+    }
+
+    #[inline]
+    fn capacity(&self) -> usize {
+        self.as_slice().len()
+    }
+
+    /// Ensure the backing storage holds at least `min` units, promoting the
+    /// pooled fixed buffer to a heap `Vec` (and returning the buffer to the
+    /// pool) when it would overflow.
+    fn ensure_capacity(&mut self, min: usize) {
+        let cap = self.capacity();
+        if min <= cap {
+            return;
+        }
+        let new_cap = min.max(cap.saturating_mul(2));
+        match &mut self.storage {
+            Storage::Heap(vec) => {
+                bun_core::handle_oom(vec.try_reserve(new_cap - vec.len()));
+                vec.resize(new_cap, U::from_u8(0));
+            }
+            Storage::Pooled(_) => {
+                let mut vec: Vec<U> = Vec::new();
+                bun_core::handle_oom(vec.try_reserve_exact(new_cap));
+                vec.extend_from_slice(&self.as_slice()[..self.len]);
+                vec.resize(new_cap, U::from_u8(0));
+                if let Storage::Pooled(pooled) =
+                    core::mem::replace(&mut self.storage, Storage::Heap(vec))
+                {
+                    U::pool_put(pooled);
+                }
+            }
+        }
+    }
+
     /// Append `characters` (same code-unit width as `U`), optionally prefixing a separator.
     pub(crate) fn append(&mut self, characters: &[U], add_separator: bool) {
-        let buf = U::buffer_as_mut_slice(&mut self.pooled);
+        self.ensure_capacity(self.len + (add_separator as usize) + characters.len());
+        let buf = self.storage.as_mut_slice();
         if add_separator {
             buf[self.len] = match PathSeparators::from_u8(SEP_OPT) {
                 PathSeparators::Any | PathSeparators::Auto => U::from_u8(SEP),
@@ -402,7 +476,11 @@ impl<U: PathUnit, const SEP_OPT: u8> Buf<U, SEP_OPT> {
 
     /// Append `characters` of the *other* code-unit width, transcoding into the buffer.
     pub(crate) fn append_other(&mut self, characters: &[U::Other], add_separator: bool) {
-        let buf = U::buffer_as_mut_slice(&mut self.pooled);
+        let max_units_per_char = if core::mem::size_of::<U>() == 1 { 3 } else { 1 };
+        self.ensure_capacity(
+            self.len + (add_separator as usize) + characters.len() * max_units_per_char,
+        );
+        let buf = self.storage.as_mut_slice();
         if add_separator {
             buf[self.len] = match PathSeparators::from_u8(SEP_OPT) {
                 PathSeparators::Any | PathSeparators::Auto => U::from_u8(SEP),
@@ -610,12 +688,8 @@ impl<U: PathUnit, const KIND: u8, const SEP_OPT: u8, const CHECK: u8>
     Path<U, KIND, SEP_OPT, CHECK>
 {
     pub fn init() -> Self {
-        // match BufType::Pool
         Self {
-            _buf: Buf {
-                pooled: ManuallyDrop::new(U::pool_get()),
-                len: 0,
-            },
+            _buf: Buf::new(),
             _unit: PhantomData,
         }
     }
@@ -682,7 +756,7 @@ impl<U: PathUnit, const KIND: u8, const SEP_OPT: u8, const CHECK: u8>
         let mut this = Self::init();
 
         if TypeId::of::<U>() == TypeId::of::<u8>() {
-            let buf: &mut [u8] = U::id_u8_mut(U::buffer_as_mut_slice(&mut this._buf.pooled));
+            let buf: &mut [u8] = U::id_u8_mut(this._buf.as_mut_slice());
 
             // On Windows the u8 path still resolves via
             // `GetFinalPathNameByHandleW` into a stack `WPathBuffer`, then
@@ -727,7 +801,7 @@ impl<U: PathUnit, const KIND: u8, const SEP_OPT: u8, const CHECK: u8>
             }
         } else {
             // U == u16 → getFdPathW (Windows GetFinalPathNameByHandleW).
-            let buf: &mut [u16] = U::id_u16_mut(U::buffer_as_mut_slice(&mut this._buf.pooled));
+            let buf: &mut [u16] = U::id_u16_mut(this._buf.as_mut_slice());
 
             // SAFETY: buf is valid for buf.len() writable u16 units.
             let n = unsafe { bun_core::fd_path_raw_w(fd, buf.as_mut_ptr(), buf.len()) };
@@ -834,8 +908,7 @@ impl<U: PathUnit, const KIND: u8, const SEP_OPT: u8, const CHECK: u8>
     }
 
     pub fn slice(&self) -> &[U] {
-        // match BufType::Pool
-        &U::buffer_as_slice(&self._buf.pooled)[..self._buf.len]
+        &self._buf.as_slice()[..self._buf.len]
     }
 
     /// Reinterpret this path under a different `SEP_OPT` const parameter.
@@ -853,31 +926,24 @@ impl<U: PathUnit, const KIND: u8, const SEP_OPT: u8, const CHECK: u8>
         // optimizes to the same no-op move.
         let mut this = ManuallyDrop::new(self);
         let len = this._buf.len;
-        // SAFETY: `pooled` was initialized in `init()` and is taken exactly once
-        // here; `this` is wrapped in `ManuallyDrop` so `Path::drop` will not run
-        // and observe the now-uninitialized field.
-        let pooled = unsafe { ManuallyDrop::take(&mut this._buf.pooled) };
+        let storage = core::mem::replace(&mut this._buf.storage, Storage::Heap(Vec::new()));
         Path {
-            _buf: Buf {
-                pooled: ManuallyDrop::new(pooled),
-                len,
-            },
+            _buf: Buf { storage, len },
             _unit: PhantomData,
         }
     }
 
     pub fn slice_z(&mut self) -> &U::ZSlice {
-        // match BufType::Pool
         let len = self._buf.len;
-        let buf = U::buffer_as_mut_slice(&mut self._buf.pooled);
+        self._buf.ensure_capacity(len + 1);
+        let buf = self._buf.as_mut_slice();
         buf[len] = U::from_u8(0);
         // SAFETY: buf[len] == 0 written above; buf outlives the returned borrow.
         unsafe { U::zslice_from_raw(buf.as_ptr(), len) }
     }
 
     pub fn buf(&mut self) -> &mut [U] {
-        // match BufType::Pool
-        U::buffer_as_mut_slice(&mut self._buf.pooled)
+        self._buf.as_mut_slice()
     }
 
     pub fn set_length(&mut self, new_length: usize) {
@@ -908,8 +974,8 @@ impl<U: PathUnit, const KIND: u8, const SEP_OPT: u8, const CHECK: u8>
         // match BufType::Pool
         let mut cloned = Self::init();
         let len = self._buf.len;
-        U::buffer_as_mut_slice(&mut cloned._buf.pooled)[..len]
-            .copy_from_slice(&U::buffer_as_slice(&self._buf.pooled)[..len]);
+        cloned._buf.ensure_capacity(len);
+        cloned._buf.as_mut_slice()[..len].copy_from_slice(&self._buf.as_slice()[..len]);
         cloned._buf.len = len;
         cloned
     }
@@ -1023,23 +1089,24 @@ impl<U: PathUnit, const KIND: u8, const SEP_OPT: u8, const CHECK: u8>
     pub fn append_fmt(&mut self, args: core::fmt::Arguments<'_>) -> options::Result<()> {
         // TODO: there's probably a better way to do this. needed for trimming slashes
         let mut temp: Path<u8, { Kind::ANY }, { PathSeparators::ANY }> = Path::init();
+        let heap: Vec<u8>;
 
-        // match BufType::Pool
         let input = {
             use std::io::Write;
-            let buf = u8::buffer_as_mut_slice(&mut temp._buf.pooled);
+            let buf = temp._buf.as_mut_slice();
             let mut cursor: &mut [u8] = buf;
             let total = cursor.len();
             match cursor.write_fmt(args) {
                 Ok(()) => {
                     let written = total - cursor.len();
-                    &u8::buffer_as_slice(&temp._buf.pooled)[..written]
+                    &temp._buf.as_slice()[..written]
                 }
                 Err(_) => {
                     if CheckLength::from_u8(CHECK) == CheckLength::CheckForGreaterThanMaxPath {
                         return Err(PathError::MaxPathExceeded);
                     }
-                    unreachable!();
+                    heap = std::fmt::format(args).into_bytes();
+                    &heap
                 }
             }
         };
@@ -1064,9 +1131,13 @@ impl<U: PathUnit, const KIND: u8, const SEP_OPT: u8, const CHECK: u8>
 
         let cloned = self.clone();
 
-        // match BufType::Pool
         {
-            let pooled: &mut [u8] = U::id_u8_mut(U::buffer_as_mut_slice(&mut self._buf.pooled));
+            let mut needed = cloned.len() + 8;
+            for part in parts {
+                needed += part.len() + 1;
+            }
+            self._buf.ensure_capacity(needed);
+            let pooled: &mut [u8] = U::id_u8_mut(self._buf.as_mut_slice());
             let cloned_slice: &[u8] = U::id_u8(cloned.slice());
             // TypeId check above proves U == u8; trait-dispatched identity (no
             // `unsafe`) — the u8 impl is `fn(s) { s }`, the u16 default is
@@ -1098,14 +1169,12 @@ impl<U: PathUnit, const KIND: u8, const SEP_OPT: u8, const CHECK: u8>
         match (c_is_u8, u_is_u8) {
             (true, true) => {
                 // part: &[u8], unit: u8
-                let mut cwd_path_buf = crate::path_buffer_pool::get();
-                // RAII guard puts back on Drop.
-                let current_slice: &[u8] = U::id_u8(self.slice());
-                let cwd_path = &mut cwd_path_buf[..current_slice.len()];
-                cwd_path.copy_from_slice(current_slice);
-
-                let pooled: &mut [u8] = U::id_u8_mut(U::buffer_as_mut_slice(&mut self._buf.pooled));
+                let cloned = self.clone();
                 let part_u8: &[u8] = C::id_u8(part);
+                self._buf.ensure_capacity(cloned.len() + part_u8.len() + 8);
+                let cwd_path: &[u8] = U::id_u8(cloned.slice());
+
+                let pooled: &mut [u8] = U::id_u8_mut(self._buf.as_mut_slice());
                 let joined = sep_dispatch!(join_string_buf(pooled, &[cwd_path, part_u8]));
 
                 let trimmed = trim_input(TrimInputKind::Abs, joined);
@@ -1113,33 +1182,27 @@ impl<U: PathUnit, const KIND: u8, const SEP_OPT: u8, const CHECK: u8>
             }
             (true, false) => {
                 // part: &[u8], unit: u16 → transcode then recurse
-                let mut path_buf = crate::w_path_buffer_pool::get();
-                let part_u8: &[u8] = C::id_u8(part);
-                let converted =
-                    strings::convert_utf8_to_utf16_in_buffer(&mut path_buf[..], part_u8);
-                return self.append_join::<u16>(converted);
+                let mut converted: Path<u16, { Kind::ANY }, { PathSeparators::ANY }> = Path::init();
+                converted.buf_append_input(part, false);
+                return self.append_join::<u16>(converted.slice());
             }
             (false, false) => {
                 // part: &[u16], unit: u16
-                let mut cwd_path_buf = crate::w_path_buffer_pool::get();
-                let current_slice: &[u16] = U::id_u16(self.slice());
-                let cwd_path = &mut cwd_path_buf[..current_slice.len()];
-                cwd_path.copy_from_slice(current_slice);
-
-                let pooled: &mut [u16] =
-                    U::id_u16_mut(U::buffer_as_mut_slice(&mut self._buf.pooled));
+                let cloned = self.clone();
                 let part_u16: &[u16] = C::id_u16(part);
+                self._buf.ensure_capacity(cloned.len() + part_u16.len() + 8);
+                let cwd_path: &[u16] = U::id_u16(cloned.slice());
+
+                let pooled: &mut [u16] = U::id_u16_mut(self._buf.as_mut_slice());
                 let joined = sep_dispatch!(join_string_buf_w_same(pooled, &[cwd_path, part_u16]));
                 let trimmed = trim_input(TrimInputKind::Abs, joined);
                 self._buf.len = trimmed.len();
             }
             (false, true) => {
                 // part: &[u16], unit: u8 → transcode then recurse
-                let mut path_buf = crate::path_buffer_pool::get();
-                let part_u16: &[u16] = C::id_u16(part);
-                let converted =
-                    strings::convert_utf16_to_utf8_in_buffer(&mut path_buf[..], part_u16);
-                return self.append_join::<u8>(converted);
+                let mut converted: Path<u8, { Kind::ANY }, { PathSeparators::ANY }> = Path::init();
+                converted.buf_append_input(part, false);
+                return self.append_join::<u8>(converted.slice());
             }
         }
         Ok(())
@@ -1156,32 +1219,38 @@ impl<U: PathUnit, const KIND: u8, const SEP_OPT: u8, const CHECK: u8>
         let mut output: RelPath<U, SEP_OPT, CHECK> = Path::init();
 
         if TypeId::of::<U>() == TypeId::of::<u8>() {
-            let pooled: &mut [u8] = U::id_u8_mut(U::buffer_as_mut_slice(&mut output._buf.pooled));
             let from_u8: &[u8] = U::id_u8(self.slice());
             let to_u8: &[u8] = U::id_u8(to.slice());
+            output
+                ._buf
+                .ensure_capacity(relative_capacity(from_u8, to_u8));
+            let pooled: &mut [u8] = U::id_u8_mut(output._buf.as_mut_slice());
             let rel = path::relative_buf_z(pooled, from_u8, to_u8);
             let trimmed = trim_input(TrimInputKind::Rel, rel.as_bytes());
             output._buf.len = trimmed.len();
         } else {
-            // U == u16: transcode from/to → u8 scratch buffers, compute the
-            // relative path in u8-space, then transcode back into the u16
-            // output buffer. Mirrors the cross-width arms in `append_join`.
-            // Three pooled buffers + two transcodes — only ever reached on
-            // Windows wide-path callers.
-            let from_u16: &[u16] = U::id_u16(self.slice());
-            let to_u16: &[u16] = U::id_u16(to.slice());
+            // U == u16: transcode from/to → u8 scratch, compute the relative
+            // path in u8-space, then transcode back into the u16 output.
+            // Mirrors the cross-width arms in `append_join`; only ever reached
+            // on Windows wide-path callers.
+            let mut from_tmp: Path<u8, { Kind::ANY }, { PathSeparators::ANY }> = Path::init();
+            from_tmp.buf_append_input(self.slice(), false);
+            let mut to_tmp: Path<u8, { Kind::ANY }, { PathSeparators::ANY }> = Path::init();
+            to_tmp.buf_append_input(to.slice(), false);
+            let mut rel_tmp: Path<u8, { Kind::ANY }, { PathSeparators::ANY }> = Path::init();
+            rel_tmp
+                ._buf
+                .ensure_capacity(relative_capacity(from_tmp.slice(), to_tmp.slice()));
 
-            let mut from_buf = crate::path_buffer_pool::get();
-            let mut to_buf = crate::path_buffer_pool::get();
-            let mut rel_buf = crate::path_buffer_pool::get();
-
-            let from_u8 = strings::convert_utf16_to_utf8_in_buffer(&mut from_buf[..], from_u16);
-            let to_u8 = strings::convert_utf16_to_utf8_in_buffer(&mut to_buf[..], to_u16);
-
-            let rel = path::relative_buf_z(&mut rel_buf[..], from_u8, to_u8);
+            let rel = path::relative_buf_z(
+                rel_tmp._buf.as_mut_slice(),
+                from_tmp.slice(),
+                to_tmp.slice(),
+            );
             let trimmed = trim_input(TrimInputKind::Rel, rel.as_bytes());
 
-            let pooled: &mut [u16] = U::id_u16_mut(U::buffer_as_mut_slice(&mut output._buf.pooled));
+            output._buf.ensure_capacity(trimmed.len());
+            let pooled: &mut [u16] = U::id_u16_mut(output._buf.as_mut_slice());
             let converted = strings::convert_utf8_to_utf16_in_buffer(pooled, trimmed);
             output._buf.len = converted.len();
         }
@@ -1271,11 +1340,29 @@ impl<U: PathUnit, const KIND: u8, const SEP_OPT: u8, const CHECK: u8> Drop
     for Path<U, KIND, SEP_OPT, CHECK>
 {
     fn drop(&mut self) {
-        // match BufType::Pool
-        // SAFETY: `pooled` is initialized in `init()` and never taken before this; Drop runs once.
-        let pooled = unsafe { ManuallyDrop::take(&mut self._buf.pooled) };
-        U::pool_put(pooled);
+        if let Storage::Pooled(pooled) =
+            core::mem::replace(&mut self._buf.storage, Storage::Heap(Vec::new()))
+        {
+            U::pool_put(pooled);
+        }
     }
+}
+
+/// Provable worst-case output length of `resolve_path::relative_buf_z`: every
+/// component of the normalized `from` can expand to a `..` + separator,
+/// followed by the tail of the normalized `to`, plus the NUL sentinel.
+/// Relative inputs are resolved against `top_level_dir`; both normalized
+/// forms live in fixed `MAX_PATH_BYTES` scratch inside the helper.
+fn relative_capacity(from: &[u8], to: &[u8]) -> usize {
+    let normalized_bound = |input: &[u8]| -> usize {
+        let top_level = if is_input_absolute(input) || !crate::fs::FileSystem::instance_loaded() {
+            0
+        } else {
+            crate::fs::FileSystem::instance().top_level_dir().len() + 2
+        };
+        (input.len() + top_level).min(MAX_PATH_BYTES)
+    };
+    3 * (normalized_bound(from) + 2) + normalized_bound(to) + 8
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -1486,4 +1573,140 @@ fn is_input_absolute<C: PathUnit>(input: &[C]) -> bool {
     }
 
     false
+}
+
+#[cfg(test)]
+mod tests {
+    use super::options::AssumeOk as _;
+    use super::*;
+
+    fn pool_len() -> usize {
+        use crate::path_buffer_pool::PoolStorage as _;
+        PathBuffer::with_pool(|p| p.borrow().len())
+    }
+
+    #[unsafe(no_mangle)]
+    extern "Rust" fn __bun_crash_handler_out_of_memory() -> ! {
+        panic!("out of memory");
+    }
+
+    /// Scalar UTF-16 → UTF-8 stubs so `relative`/`append_join`'s cross-width
+    /// arms link in this crate's test binary (paths here are ASCII-only).
+    fn stub_utf16(buf: *const u16, len: usize) -> String {
+        // SAFETY: test stub; callers pass a valid (ptr, len) input pair.
+        String::from_utf16_lossy(unsafe { core::slice::from_raw_parts(buf, len) })
+    }
+    #[unsafe(no_mangle)]
+    unsafe extern "C" fn simdutf__utf8_length_from_utf16le(input: *const u16, len: usize) -> usize {
+        stub_utf16(input, len).len()
+    }
+    #[unsafe(no_mangle)]
+    unsafe extern "C" fn simdutf__convert_valid_utf16le_to_utf8(
+        buf: *const u16,
+        len: usize,
+        utf8_buffer: *mut u8,
+    ) -> usize {
+        let s = stub_utf16(buf, len);
+        // SAFETY: test stub mirroring simdutf — caller sized `utf8_buffer` for the conversion.
+        unsafe { core::ptr::copy_nonoverlapping(s.as_ptr(), utf8_buffer, s.len()) };
+        s.len()
+    }
+
+    #[test]
+    fn append_grows_past_max_path_bytes() {
+        let mut path: AutoAbsPath = AutoAbsPath::init();
+        let mut expected: Vec<u8> = Vec::new();
+        path.append(b"/root").assume_ok();
+        expected.extend_from_slice(b"/root");
+        while expected.len() <= MAX_PATH_BYTES * 3 {
+            path.append(b"component").assume_ok();
+            expected.push(SEP);
+            expected.extend_from_slice(b"component");
+        }
+        assert!(path.len() > MAX_PATH_BYTES);
+        assert_eq!(path.slice(), &expected[..]);
+        assert_eq!(path.slice_z().as_bytes(), &expected[..]);
+    }
+
+    #[test]
+    fn append_fmt_grows_past_max_path_bytes() {
+        let long = "x".repeat(MAX_PATH_BYTES * 2);
+        let mut path: AutoAbsPath = AutoAbsPath::init();
+        path.append(b"/root").assume_ok();
+        path.append_fmt(format_args!("{long}-{}", 42)).assume_ok();
+
+        let mut expected = Vec::from(&b"/root/"[..]);
+        expected.extend_from_slice(long.as_bytes());
+        expected.extend_from_slice(b"-42");
+        assert_eq!(path.slice(), &expected[..]);
+    }
+
+    #[test]
+    fn join_and_append_join_grow_past_max_path_bytes() {
+        let a = vec![b'a'; MAX_PATH_BYTES];
+        let b = vec![b'b'; MAX_PATH_BYTES];
+        let mut path: AbsPath = AbsPath::from(b"/base".as_slice()).assume_ok();
+        path.join(&[&a[..], &b[..]]).assume_ok();
+
+        let mut expected = Vec::from(&b"/base/"[..]);
+        expected.extend_from_slice(&a);
+        expected.push(b'/');
+        expected.extend_from_slice(&b);
+        assert_eq!(path.slice(), &expected[..]);
+
+        let c = vec![b'c'; MAX_PATH_BYTES];
+        path.append_join(&c[..]).assume_ok();
+        expected.push(b'/');
+        expected.extend_from_slice(&c);
+        assert_eq!(path.slice(), &expected[..]);
+    }
+
+    #[test]
+    fn relative_output_grows_past_max_path_bytes() {
+        let components = MAX_PATH_BYTES / 2 - 8;
+        let mut from = Vec::new();
+        for _ in 0..components {
+            from.extend_from_slice(b"/a");
+        }
+        let from_path: AbsPath = AbsPath::from(&from[..]).assume_ok();
+        let to_path: AbsPath = AbsPath::from(b"/b/x".as_slice()).assume_ok();
+        let rel = from_path.relative(&to_path);
+
+        let mut expected: Vec<u8> = Vec::new();
+        for i in 0..components {
+            if i > 0 {
+                expected.push(b'/');
+            }
+            expected.extend_from_slice(b"..");
+        }
+        expected.extend_from_slice(b"/b/x");
+        assert!(expected.len() > MAX_PATH_BYTES);
+        assert_eq!(rel.slice(), &expected[..]);
+    }
+
+    #[test]
+    fn pooled_and_promoted_paths_return_buffers_correctly() {
+        let baseline = pool_len();
+        {
+            let mut short: AutoAbsPath = AutoAbsPath::init();
+            short.append(b"/short/path").assume_ok();
+            assert_eq!(short.slice(), b"/short/path");
+        }
+        let after_short = pool_len();
+        assert!(after_short >= baseline);
+        {
+            let long_component = vec![b'l'; MAX_PATH_BYTES * 2];
+            let mut long: AutoAbsPath = AutoAbsPath::init();
+            long.append(b"/start").assume_ok();
+            long.append(&long_component[..]).assume_ok();
+            assert_eq!(long.len(), b"/start/".len() + long_component.len());
+            assert_eq!(pool_len(), after_short);
+        }
+        assert_eq!(pool_len(), after_short);
+        {
+            let short: AutoAbsPath = AutoAbsPath::init();
+            drop(short);
+        }
+        assert_eq!(pool_len(), after_short);
+    }
 }

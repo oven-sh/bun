@@ -2741,8 +2741,7 @@ pub(crate) fn pack<const FOR_PUBLISH: bool>(
                 }
             };
 
-            // `openat` succeeds on directories on POSIX; skip non-regular
-            // optional items so a `main`/`bin` naming a directory is not fatal.
+            // openat(O_RDONLY) succeeds on directories on POSIX
             if item.optional && !bun_core::S::ISREG(stat.st_mode as bun_sys::Mode) {
                 ctx.stats.total_files -= 1;
                 if log_level.show_progress() {

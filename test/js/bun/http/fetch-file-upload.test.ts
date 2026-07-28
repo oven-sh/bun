@@ -178,6 +178,7 @@ test.skipIf(isWindows)(
     }
 
     let head = "";
+    let buf = "";
     let socket: net.Socket | undefined;
     const gotHead = Promise.withResolvers<void>();
     const socketClosed = Promise.withResolvers<void>();
@@ -185,11 +186,13 @@ test.skipIf(isWindows)(
       socket = s;
       s.once("close", () => socketClosed.resolve());
       s.on("data", d => {
-        if (head === "") {
-          head = d.toString("latin1").split("\r\n\r\n")[0];
-          s.pause();
-          gotHead.resolve();
-        }
+        if (head !== "") return;
+        buf += d.toString("latin1");
+        const i = buf.indexOf("\r\n\r\n");
+        if (i === -1) return;
+        head = buf.slice(0, i);
+        s.pause();
+        gotHead.resolve();
       });
     });
     await new Promise<void>(r => server.listen(0, "127.0.0.1", r));
@@ -229,7 +232,6 @@ test.skipIf(isWindows)(
       server.close();
     }
   },
-  15_000,
 );
 
 test("missing file throws the expected error", async () => {

@@ -778,8 +778,6 @@ pub(crate) fn from_bytes(
             if binary && bytes.len() == 8 {
                 Ok(SQLDataCell::float8(parse_binary_float8(bytes)?))
             } else {
-                // parse_f64 accepts the `Infinity` / `-Infinity` / `NaN` tokens
-                // Postgres emits (float8out); WTF::parseDouble alone does not.
                 Ok(SQLDataCell::float8(
                     bun_core::fmt::parse_f64(bytes).unwrap_or(f64::NAN),
                 ))

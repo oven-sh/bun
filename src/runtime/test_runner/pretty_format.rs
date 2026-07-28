@@ -383,9 +383,6 @@ pub struct ZigFormatter<'a, 'b> {
     pub value: JSValue,
 }
 
-impl<'a, 'b> ZigFormatter<'a, 'b> {
-}
-
 impl core::fmt::Display for ZigFormatter<'_, '_> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         // Move the unique `&mut Formatter` out of the cell for the body;

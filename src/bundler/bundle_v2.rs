@@ -27,7 +27,7 @@ pub use bv2_impl::{DevServerInput, DevServerOutput, ImportTrackerIterator, Impor
 use self::bake_types as bake;
 pub use bv2_impl::{
     BuildResult, BundleV2Result, CompletionStruct, DependenciesScanner, DependenciesScannerResult,
-    EXTERNAL_FREE_VTABLE, OnDependenciesAnalyze, singleton,
+    OnDependenciesAnalyze, singleton,
 };
 
 pub use crate::DeferredBatchTask::DeferredBatchTask;
@@ -320,7 +320,6 @@ pub mod bv2_impl {
     //     make mimalloc-debug
     //
 
-    use core::ffi::c_void;
     use core::ptr::NonNull;
     use std::io::Write as _;
 
@@ -7631,34 +7630,6 @@ pub mod bv2_impl {
         }
         key
     }
-
-    struct ExternalFreeFunctionAllocator {
-        free_callback: unsafe extern "C" fn(*mut c_void),
-        context: *mut c_void,
-    }
-
-    impl ExternalFreeFunctionAllocator {
-        // (Could implement `bun_alloc::Allocator` instead of the manual vtable.)
-
-        fn free(ext_free_function: *mut c_void, _: &mut [u8], _: bun_alloc::Alignment, _: usize) {
-            // SAFETY: ptr was created by ExternalFreeFunctionAllocator::create
-            let info: &mut ExternalFreeFunctionAllocator =
-                unsafe { &mut *ext_free_function.cast::<ExternalFreeFunctionAllocator>() };
-            // SAFETY: free_callback is a valid C fn provided by plugin
-            unsafe { (info.free_callback)(info.context) };
-            // SAFETY: info was heap-allocated in create()
-            drop(unsafe { bun_core::heap::take(info) });
-        }
-    }
-
-    /// `pub` so `bun_runtime::allocators::register_safety_vtables` can push the
-    /// address into the `bun_safety` registry.
-    pub static EXTERNAL_FREE_VTABLE: bun_alloc::AllocatorVTable = bun_alloc::AllocatorVTable {
-        alloc: |_, _, _, _| core::ptr::null_mut(),
-        resize: |_, _, _, _, _| false,
-        remap: |_, _, _, _, _| core::ptr::null_mut(),
-        free: |ctx, buf, a, ra| ExternalFreeFunctionAllocator::free(ctx, buf, a, ra),
-    };
 
     // LAYERING: `BuildResult` / `BundleV2Result` are defined once in
     // `BundleThread.rs` (the trait that consumes them lives there). The previous

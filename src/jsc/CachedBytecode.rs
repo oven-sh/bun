@@ -114,8 +114,7 @@ impl CachedBytecode {
 // `alloc`/`free` methods to dispatch through — so "free → deref" semantics
 // cannot ride the trait object. Call sites that would have freed through this
 // allocator must instead call `deref()` on the `NonNull<CachedBytecode>` handle
-// directly. `is_instance` is preserved for the vtable-identity check in
-// `bun_safety::alloc::has_ptr`.
+// directly.
 // ──────────────────────────────────────────────────────────────────────────
 
 impl bun_alloc::Allocator for CachedBytecode {}

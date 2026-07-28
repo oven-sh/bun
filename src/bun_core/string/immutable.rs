@@ -346,9 +346,6 @@ pub fn contains(self_: &[u8], str: &[u8]) -> bool {
     index_of(self_, str).is_some()
 }
 
-// Canonical impl lives in tier-0 `crate::strings_impl` (which `bun_paths` etc.
-// reach without depending on this crate); re-export to avoid a second copy.
-
 /// Index of the first byte in `slice` that appears in `chars` (SIMD via
 /// highway). Returns `usize` (unlike the `u32`-returning single-char
 /// scanners above) so callers can index with the result directly.

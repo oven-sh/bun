@@ -1298,19 +1298,10 @@ impl<'arena> ScopeOrder<'arena> {
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Default)]
 pub struct ParenExprOpts {
     pub(crate) is_async: bool,
     pub(crate) force_arrow_fn: bool,
-}
-
-impl Default for ParenExprOpts {
-    fn default() -> Self {
-        Self {
-            is_async: false,
-            force_arrow_fn: false,
-        }
-    }
 }
 
 #[repr(u8)]

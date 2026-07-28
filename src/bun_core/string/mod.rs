@@ -1334,12 +1334,6 @@ impl core::ops::DerefMut for ZigString {
     }
 }
 
-/// `ZigString.as_()` — encoding-dispatched borrow.
-pub enum ByteString<'a> {
-    Latin1(&'a [u8]),
-    Utf16(&'a [u16]),
-}
-
 impl Default for ZigString {
     #[inline]
     fn default() -> Self {

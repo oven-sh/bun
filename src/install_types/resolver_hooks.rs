@@ -383,8 +383,6 @@ pub struct TagInfo {
     pub tag: SemverString,
 }
 
-impl TagInfo {}
-
 #[derive(Clone, Copy)]
 pub struct TarballInfo {
     pub uri: URI,

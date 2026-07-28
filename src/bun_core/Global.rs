@@ -74,7 +74,6 @@ pub struct StoredTrace {
     pub(crate) data: [usize; 31],
     pub(crate) index: usize,
 }
-impl StoredTrace {}
 impl StoredTrace {
     pub const EMPTY: StoredTrace = StoredTrace {
         data: [0; 31],

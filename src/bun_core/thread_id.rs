@@ -10,9 +10,8 @@
 //!
 //! Rust's `std::thread::ThreadId` is intentionally NOT used: it is an opaque,
 //! process-local monotonic counter (no `MAX`, no atomic repr, not the kernel
-//! TID), whereas every consumer (`CriticalSection`, `ThreadLock`, `ThreadCell`)
-//! needs a plain integer it can store in an atomic and compare against a
-//! sentinel.
+//! TID), whereas every consumer (`ThreadLock`, `ThreadCell`) needs a plain
+//! integer it can store in an atomic and compare against a sentinel.
 
 // ── ThreadId width ─────────────────────────────────────────────────────────
 //   linux / *bsd / haiku / wasi / serenity → u32
@@ -58,27 +57,6 @@ pub type ThreadId = u64;
     target_os = "visionos",
 )))]
 pub type ThreadId = usize;
-
-// ── Atomic wrapper ─────────────────────────────────────────────────────────
-// Width-matched alias so `CriticalSection` can `compare_exchange` on it directly.
-
-#[cfg(not(any(
-    target_os = "linux",
-    target_os = "android",
-    target_os = "freebsd",
-    target_os = "netbsd",
-    target_os = "openbsd",
-    target_os = "dragonfly",
-    target_os = "haiku",
-    target_os = "wasi",
-    target_os = "windows",
-    target_os = "macos",
-    target_os = "ios",
-    target_os = "watchos",
-    target_os = "tvos",
-    target_os = "visionos",
-)))]
-pub type AtomicThreadId = core::sync::atomic::AtomicUsize;
 
 /// Per-thread cache of [`current()`]. Without it, every call paid a syscall
 /// (`gettid`/`pthread_threadid_np`/`GetCurrentThreadId`). The

@@ -460,7 +460,9 @@ mod draft {
     use core::ffi::c_int;
     #[cfg(windows)]
     use core::ffi::c_long;
-    use core::ffi::{c_char, c_void};
+    use core::ffi::c_char;
+    #[cfg(not(windows))]
+    use core::ffi::c_void;
     use core::fmt;
     // D101: `core::fmt::Write` intentionally NOT in scope here — `bun_io::Write`
     // (via `super::Write`) supplies `write_fmt` for `BoundedArray<u8,N>`; importing
@@ -607,17 +609,6 @@ mod draft {
         pub static CURRENT_ACTION: Cell<Option<Action>> = const { Cell::new(None) };
     }
 
-    // PORTING.md §Concurrency: `bun_threading::Guarded<Vec<..>>` instead of bare Mutex + global Vec.
-    // Stores a boxed type-erased closure (not a bare fn pointer) so that
-    // `append_pre_crash_handler` can monomorphize a wrapper that actually invokes the
-    // caller's typed handler.
-    struct CrashHandlerEntry(*mut c_void, Box<dyn Fn(*mut c_void) + Send>);
-    // SAFETY: only accessed under the mutex; the opaque ptr is never dereferenced
-    // except by the registered callback on the crash thread.
-    unsafe impl Send for CrashHandlerEntry {}
-    static BEFORE_CRASH_HANDLERS: bun_threading::Guarded<Vec<CrashHandlerEntry>> =
-        bun_threading::Guarded::new(Vec::new());
-
     /// Prevents crash reports from being uploaded to any server. Reports will still be printed and
     /// abort the process. Overrides BUN_CRASH_REPORT_URL, BUN_ENABLE_CRASH_REPORTING, and all other
     /// things that affect crash reporting. See suppressReporting() for intended usage.
@@ -719,7 +710,6 @@ mod draft {
         // is not truly `'static`. Correctness relies on the `scoped_action`
         // RAII guard restoring the thread-local before the owning arena or
         // resolver storage is freed.
-        BundleGenerateChunk(()),
         Resolver(()),
         Dlopen(&'static [u8]),
     }
@@ -730,7 +720,6 @@ mod draft {
                 Action::Parse(path) => write!(writer, "parsing {}", bstr::BStr::new(path)),
                 Action::Visit(path) => write!(writer, "visiting {}", bstr::BStr::new(path)),
                 Action::Print(path) => write!(writer, "printing {}", bstr::BStr::new(path)),
-                Action::BundleGenerateChunk(()) => Ok(()),
                 Action::Resolver(()) => Ok(()),
                 Action::Dlopen(path) => {
                     write!(writer, "loading native module: {}", bstr::BStr::new(path))
@@ -819,12 +808,6 @@ mod draft {
 
                 PANIC_STAGE.with(|s| s.set(1));
                 let _ = PANICKING.fetch_add(1, Ordering::SeqCst);
-
-                if let Some(handlers) = BEFORE_CRASH_HANDLERS.try_lock() {
-                    for CrashHandlerEntry(ptr, cb) in handlers.iter() {
-                        cb(*ptr);
-                    }
-                }
 
                 {
                     let _panic_guard = PANIC_MUTEX.lock();
@@ -3343,19 +3326,6 @@ mod draft {
     // `@returnAddress()` intrinsic, apply that improvement in bun_core's
     // `StoredTrace::capture()` instead — this crate no longer owns the type.
     pub use bun_core::StoredTrace;
-
-    pub fn remove_pre_crash_handler(ptr: *mut c_void) {
-        let mut list = BEFORE_CRASH_HANDLERS.lock();
-        let index = 'find: {
-            for (i, item) in list.iter().enumerate() {
-                if item.0 == ptr {
-                    break 'find i;
-                }
-            }
-            return;
-        };
-        let _ = list.remove(index);
-    }
 
     #[cfg(not(any(target_os = "linux", target_os = "android")))]
     struct SourceAtAddress {

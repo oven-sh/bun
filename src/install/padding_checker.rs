@@ -104,7 +104,7 @@ pub fn assert_no_uninitialized_padding<T>(_type_witness: T) {
 // only ABI the binary formats are defined for (the lockfile header hard-codes
 // little-endian and 8-byte pointer alignment).
 // ──────────────────────────────────────────────────────────────────────────
-
+#[cfg(all(target_pointer_width = "64", target_endian = "little"))]
 pub mod layout_asserts {
     use core::mem::{align_of, size_of};
 

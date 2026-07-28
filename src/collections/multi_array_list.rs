@@ -856,8 +856,6 @@ impl<T, A: Allocator + Default> Default for MultiArrayList<T, A> {
     }
 }
 
-impl<T> MultiArrayList<T, Global> {}
-
 impl<T, A: Allocator> MultiArrayList<T, A> {
     /// Construct an empty list backed by `alloc`.
     #[inline]

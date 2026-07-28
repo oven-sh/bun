@@ -420,7 +420,6 @@ pub struct DevServer {
     pub(crate) emit_memory_visualizer_events: u32,
     pub(crate) memory_visualizer_timer: EventLoopTimer,
 
-    pub(crate) has_pre_crash_handler: bool,
     pub(crate) assume_perfect_incremental_bundling: bool,
 
     /// If true, console logs from the browser will be echoed to the server console.
@@ -538,7 +537,6 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
             memory_visualizer_timer,
             EventLoopTimer::init_paused(EventLoopTimerTag::DevServerMemoryVisualizerTick)
         );
-        w!(has_pre_crash_handler, false);
         // `dev.frontend_only = dev.framework.file_system_router_types.len == 0`
         w!(
             frontend_only,
@@ -1073,7 +1071,6 @@ impl Drop for DevServer {
                 emit_incremental_visualizer_events: _,
                 emit_memory_visualizer_events: _,
                 memory_visualizer_timer: _,
-                has_pre_crash_handler: _,
                 assume_perfect_incremental_bundling: _,
                 broadcast_console_log_from_browser_to_server: _,
             } = &*self;
@@ -1116,10 +1113,6 @@ impl Drop for DevServer {
         // SAFETY: `Box::into_raw` yields the unique heap pointer; ownership
         // transfers to `shutdown`, which reclaims or hands off to the thread.
         unsafe { Watcher::shutdown(Box::into_raw(watcher), true) };
-
-        if self.has_pre_crash_handler {
-            bun_crash_handler::remove_pre_crash_handler(std::ptr::from_mut(self).cast::<c_void>());
-        }
 
         // The map's `Drop` runs `SerializedFailure::drop` for each value.
 

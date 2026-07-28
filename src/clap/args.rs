@@ -45,20 +45,13 @@ impl<'a> ArgIter<'a> for SliceIterator<'a> {
 pub struct OsIterator {
     // `remain` borrows the process-global argv, so nothing is allocated per-call.
     pub(crate) remain: &'static [&'static [u8]],
-
-    /// The executable path (this is the first argument passed to the program)
-    /// TODO: Is it the right choice for this to be null? Maybe `init` should
-    ///       return an error when we have no exe.
-    pub(crate) exe_arg: Option<&'static [u8]>,
 }
 
 impl OsIterator {
     pub(crate) fn init() -> OsIterator {
-        let mut res = OsIterator {
-            exe_arg: None,
-            remain: os_argv(),
-        };
-        res.exe_arg = res.next();
+        let mut res = OsIterator { remain: os_argv() };
+        // Consume argv[0] (the executable path).
+        let _ = res.next();
         res
     }
 

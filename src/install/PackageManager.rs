@@ -968,6 +968,12 @@ impl PackageManager {
         // encapsulates the deref under the back-reference invariant.
         self.env.as_ref().expect("env initialised").get()
     }
+    #[cfg(bun_asan)]
+    pub fn deinit_caches(&mut self) {
+        self.workspace_package_json_cache = WorkspacePackageJSONCache::default();
+        self.update_requests = Box::default();
+    }
+
     /// Reborrow the process-global env loader.
     ///
     /// Lifetime is decoupled from `&self` for the same reason as [`log_mut`] /
@@ -975,12 +981,6 @@ impl PackageManager {
     /// outside the manager (set once in `init()`), and callers interleave env
     /// mutation with disjoint `&mut self.X` field writes (e.g. `find_commit`
     /// takes `env`, `log`, and reads `lockfile` in the same argument list).
-    #[cfg(bun_asan)]
-    pub fn deinit_caches(&mut self) {
-        self.workspace_package_json_cache = WorkspacePackageJSONCache::default();
-        self.update_requests = Box::default();
-    }
-
     #[inline]
     #[allow(clippy::mut_from_ref)]
     pub fn env_mut<'a>(&self) -> &'a mut dot_env::Loader {

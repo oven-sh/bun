@@ -232,8 +232,6 @@ pub mod vlq {
         }
     }
 
-    // Module-level alias for `VLQ::encode`.
-
     const VLQ_LOOKUP_TABLE: [VLQ; 256] = {
         let mut entries = [VLQ {
             bytes: [0; VLQ_MAX_IN_BYTES],

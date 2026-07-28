@@ -2925,28 +2925,13 @@ pub mod time {
     pub fn timestamp() -> i64 {
         (nano_timestamp() / NS_PER_S as i128) as i64
     }
-
-    /// Monotonic stopwatch.
-    #[derive(Clone, Copy, Debug)]
-    pub struct Timer {
-        start: std::time::Instant,
-    }
-    impl Timer {
-        #[inline]
-        pub fn read(&self) -> u64 {
-            self.start.elapsed().as_nanos() as u64
-        }
-    }
 }
 
 // ── runtime_embed_file ────────────────────────────────────────────────────
 // A per-call-site `static once` cache cannot be manufactured
 // from a plain fn without leaking, so the canonical form is the
 // `runtime_embed_file!` macro below (per-site `OnceLock<String>` — sanctioned
-// by PORTING.md §Forbidden, "true process-lifetime singleton"). The fn form is
-// kept so existing draft callers type-check; it's only reachable when the
-// `codegen_embed` feature is off (debug fast-iteration), where it panics with
-// a migration hint.
+// by PORTING.md §Forbidden, "true process-lifetime singleton").
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum EmbedKind {
     Codegen,
@@ -5295,8 +5280,9 @@ pub mod perf {
         }
     }
 
-    /// `bun.perf.trace("Event.name")`. Emits an ftrace span on Linux when
-    /// `BUN_TRACE=1`; no-op elsewhere (macOS signposts live in `bun_perf`).
+    /// Single source of truth for the Linux ftrace FFI decls (defined in
+    /// `src/jsc/bindings/linux_perf_tracing.cpp`). Re-exported so `bun_perf`
+    /// (the canonical signpost/ftrace entry point) imports these instead of
     /// re-declaring them.
     #[cfg(any(target_os = "linux", target_os = "android"))]
     pub mod sys {
@@ -5312,6 +5298,9 @@ pub mod perf {
         }
     }
 
+    /// `bun.perf.trace("Event.name")`. Emits an ftrace span on Linux when
+    /// `BUN_TRACE=1`; no-op elsewhere (macOS signposts live in `bun_perf`).
+    #[inline]
     pub fn trace(name: &'static str) -> Ctx {
         if !is_enabled() {
             let _ = name;

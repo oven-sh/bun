@@ -99,8 +99,7 @@ pub struct ConsoleObject {
     counts: Counter,
 
     // The writer adapters above hold raw pointers into `{stderr,stdout}_buffer`;
-    // moving the struct would dangle them. `PhantomPinned` opts out of `Unpin`
-    // so `Pin<Box<Self>>` (returned by `init`) actually enforces that.
+    // moving the struct would dangle them, so opt out of `Unpin`.
     _pin: core::marker::PhantomPinned,
 }
 
@@ -112,26 +111,10 @@ impl core::fmt::Display for ConsoleObject {
 }
 
 impl ConsoleObject {
-    // `adapt_to_new_api(&mut self.stderr_buffer)` captures a raw
-    // pointer into the buffer field, so the struct is self-referential once
-    // initialized. The previous out-param shape (`&mut MaybeUninit<Self>`)
-    // still let the caller move the value afterwards (e.g.
-    // `Box::new(unsafe { mu.assume_init() })`), which is exactly what
-    // `VirtualMachine` needs to do — and that move would dangle both
-    // adapter pointers.
-    //
-    // Instead, allocate the storage here and return it pinned:
-    // `Pin<Box<Self>>` puts the 8 KiB of buffers at a stable heap address
-    // before the adapters are wired up, and the `Pin` makes the
-    // "must not move" invariant a type-system fact rather than a comment.
-    // `VirtualMachine.console` stores the raw pointer (`*mut c_void`), so
-    // callers leak via `heap::alloc(Pin::into_inner_unchecked(..))` — the
-    // VM owns it for the process lifetime.
-
-    /// Out-param variant kept for callers that already own pinned storage
-    /// (e.g. a static / arena slot). The address of `*out` MUST be stable for
-    /// the value's entire lifetime — moving it afterwards leaves the writer
-    /// adapters dangling. Prefer [`init`](Self::init) for new code.
+    /// `adapt_to_new_api(&mut self.stderr_buffer)` captures a raw pointer into
+    /// the buffer field, so the struct is self-referential once initialized:
+    /// the address of `*out` MUST be stable for the value's entire lifetime —
+    /// moving it afterwards leaves the writer adapters dangling.
     pub(crate) fn init_in_place(
         out: &mut core::mem::MaybeUninit<ConsoleObject>,
         error_writer: Output::StreamType,

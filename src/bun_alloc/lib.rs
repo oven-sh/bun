@@ -62,7 +62,7 @@ pub(crate) const MAX_ALIGN_T: usize = core::mem::align_of::<MaxAlignT>();
 // only defines `max_align_t` for FreeBSD on x86_64, so hardcode the ABI value
 // for the aarch64 port.
 #[cfg(all(target_os = "freebsd", target_arch = "aarch64"))]
-pub const MAX_ALIGN_T: usize = 16;
+pub(crate) const MAX_ALIGN_T: usize = 16;
 #[cfg(not(any(windows, all(target_os = "freebsd", target_arch = "aarch64"))))]
 pub(crate) const MAX_ALIGN_T: usize = core::mem::align_of::<libc::max_align_t>();
 

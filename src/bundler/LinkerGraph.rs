@@ -259,8 +259,6 @@ impl<'a> LinkerGraph<'a> {
     }
 }
 
-impl<'a> LinkerGraph<'a> {}
-
 impl Default for LinkerGraph<'_> {
     fn default() -> Self {
         LinkerGraph {

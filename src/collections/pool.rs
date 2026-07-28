@@ -245,8 +245,6 @@ impl<'a, T: ObjectPoolType> Drop for PoolGuard<'a, T> {
     }
 }
 
-impl<'a, T: ObjectPoolType> PoolGuard<'a, T> {}
-
 impl<T: ObjectPoolType + 'static, const THREADSAFE: bool, const MAX_COUNT: usize, S>
     ObjectPool<T, THREADSAFE, MAX_COUNT, S>
 where

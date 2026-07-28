@@ -151,8 +151,6 @@ pub struct Lock<'a> {
     vm: &'a VM,
 }
 
-impl<'a> Lock<'a> {}
-
 impl Drop for Lock<'_> {
     fn drop(&mut self) {
         JSC__VM__releaseAPILock(self.vm)

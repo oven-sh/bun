@@ -72,8 +72,6 @@ impl Default for Route {
     }
 }
 
-impl Route {}
-
 impl Drop for Route {
     fn drop(&mut self) {
         if !self.param_names.is_null() {

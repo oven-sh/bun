@@ -63,9 +63,9 @@ impl<const CAPACITY: usize> HiveBitSet<CAPACITY> {
         (self.masks[index / WORD_BITS].get() >> (index % WORD_BITS)) & 1 != 0
     }
 
-    /// `pub(crate)` — toggling occupancy from outside `HiveArray` while a
+    /// Private — toggling occupancy from outside `HiveArray` while a
     /// `HiveSlot`/`HiveBox` for the same index is alive would let a
-    /// re-`claim()` alias it. Use [`HiveArray::claim`]/[`alloc`](HiveArray::alloc)/
+    /// re-`claim()` alias it. Use [`HiveArray::claim`]/[`get_init`](HiveArray::get_init)/
     /// [`put`](HiveArray::put)/[`box_at`](HiveArray::box_at).
     #[inline]
     fn set(&self, index: usize) {
@@ -74,7 +74,7 @@ impl<const CAPACITY: usize> HiveBitSet<CAPACITY> {
         self.masks[w].set(self.masks[w].get() | (1usize << (index % WORD_BITS)));
     }
 
-    /// `pub(crate)` — see [`set`](Self::set).
+    /// Private — see [`set`](Self::set).
     #[inline]
     fn unset(&self, index: usize) {
         debug_assert!(index < CAPACITY);
@@ -224,19 +224,17 @@ impl<T, const CAPACITY: usize> HiveArray<T, CAPACITY> {
         }
     }
 
-    /// Recover a [`HiveBox`] for a slot previously allocated via [`alloc`](Self::alloc)
-    /// whose [`index()`](HiveBox::index) was stored across a callback. `None`
-    /// if `index` is out of bounds or the slot is free — a stale index is
-    /// `None`, not UB.
+    /// Recover a [`HiveBox`] for a slot whose [`index_of`](Self::index_of)
+    /// was stored across a callback. `None` if `index` is out of bounds or
+    /// the slot is free — a stale index is `None`, not UB.
     ///
     /// # Safety
     /// The slot at `index`, if occupied, must hold a fully-initialized `T`,
     /// and no other live access path ([`HiveSlot`], [`HiveBox`], `*mut T`) to
     /// it may exist. The bitset check cannot prove this: [`claim`](Self::claim)
-    /// and the deprecated [`get`](Self::get) family set the `used` bit *before*
-    /// the slot is written, so safe code holding a claim token can have an
-    /// occupied-but-uninit slot. Pools that only use [`alloc`](Self::alloc)/
-    /// [`get_init`](Self::get_init) (which write before returning) trivially
+    /// sets the `used` bit *before* the slot is written, so safe code holding a
+    /// claim token can have an occupied-but-uninit slot. Pools that only use
+    /// [`get_init`](Self::get_init) (which writes before returning) trivially
     /// satisfy this.
     #[inline]
     pub unsafe fn box_at(&self, index: usize) -> Option<HiveBox<'_, T, CAPACITY>> {
@@ -259,10 +257,10 @@ impl<T, const CAPACITY: usize> HiveArray<T, CAPACITY> {
         Some(self.claim()?.write(value))
     }
 
-    /// Low-level reservation. Only when [`get_init`](Self::get_init) /
-    /// [`emplace`](Self::emplace) are insufficient — typically when the caller
-    /// must interleave fallible work between claim and commit, or perform
-    /// `repr(C)` placement-new via [`HiveSlot::as_uninit`].
+    /// Low-level reservation. Only when [`get_init`](Self::get_init) is
+    /// insufficient — typically when the caller must interleave fallible
+    /// work between claim and commit, or perform `repr(C)` placement-new
+    /// through [`HiveSlot::addr`].
     pub fn claim(&self) -> Option<HiveSlot<'_, T, CAPACITY>> {
         let index = self.used.find_first_unset()?;
         self.used.set(index);
@@ -286,8 +284,8 @@ impl<T, const CAPACITY: usize> HiveArray<T, CAPACITY> {
     ///
     /// # Safety
     /// No live token ([`HiveSlot`], [`HiveBox`]) may exist for this slot — once
-    /// the `used` bit is cleared, [`alloc`](Self::alloc)/[`claim`](Self::claim)
-    /// can hand it out again, aliasing the stale token's `DerefMut`/`Drop`.
+    /// the `used` bit is cleared, [`claim`](Self::claim) can hand it out
+    /// again, aliasing the stale token's `DerefMut`/`Drop`.
     pub(crate) unsafe fn put_raw(&self, value: *mut T) -> bool {
         let Some(index) = self.index_of(value) else {
             return false;
@@ -328,10 +326,10 @@ impl<T, const CAPACITY: usize> HiveArray<T, CAPACITY> {
     ///
     /// # Safety
     /// Every slot whose `used` bit is set must hold a fully-initialized `T`
-    /// (the invariant [`get_init`](Self::get_init) / [`alloc`](Self::alloc) /
+    /// (the invariant [`get_init`](Self::get_init) /
     /// [`claim`](Self::claim)+[`write`](HiveSlot::write) maintain). A slot
-    /// claimed via the deprecated [`get`](Self::get) but never written
-    /// violates this and makes the `drop_in_place` UB.
+    /// claimed but never written violates this and makes the
+    /// `drop_in_place` UB.
     pub(crate) unsafe fn drop_all(&mut self) {
         if core::mem::needs_drop::<T>() {
             // `iter_set` snapshots the bitset, so `unset` inside the loop is
@@ -358,8 +356,7 @@ impl<T, const CAPACITY: usize> HiveArray<T, CAPACITY> {
     ///
     /// # Safety
     /// If `value` points into this hive, it must point to a fully-initialized
-    /// `T` previously obtained via [`get`](Self::get) and written by the
-    /// caller. The slot is dropped in place; passing a moved-from or
+    /// `T` previously handed out by this hive and written by the caller. The slot is dropped in place; passing a moved-from or
     /// uninitialized slot is UB for `T` with drop glue.
     pub unsafe fn put(&self, value: *mut T) -> bool {
         let Some(index) = self.index_of(value) else {
@@ -386,11 +383,10 @@ impl<T, const CAPACITY: usize> HiveArray<T, CAPACITY> {
 impl<T, const CAPACITY: usize> Drop for HiveArray<T, CAPACITY> {
     #[inline]
     fn drop(&mut self) {
-        // SAFETY: `alloc`/`get_init`/`emplace` set `used` and write the slot
-        // in one `&self` call, and `claim()` hands out a `HiveSlot<'_>` that
-        // borrows the pool (its Drop unsets the bit if never written), so by
-        // the time `&mut self` is obtainable every `used` slot is fully
-        // initialized. The deprecated `get()` family has no external callers.
+        // SAFETY: `get_init` sets `used` and writes the slot in one `&self`
+        // call, and `claim()` hands out a `HiveSlot<'_>` that borrows the pool
+        // (its Drop unsets the bit if never written), so by the time
+        // `&mut self` is obtainable every `used` slot is fully initialized.
         unsafe { self.drop_all() };
     }
 }
@@ -401,9 +397,8 @@ impl<T, const CAPACITY: usize> Drop for HiveArray<T, CAPACITY> {
 
 /// Linear reservation token for a claimed-but-uninitialized hive slot.
 ///
-/// `HiveArray` slots are `[MaybeUninit<T>; CAP]`. The legacy [`HiveArray::get`]
-/// contract was two-phase — claim a `*mut T` to garbage, then `ptr::write` it
-/// — which opened three UB hazards in the gap: (H1) early-return / `?` / panic
+/// `HiveArray` slots are `[MaybeUninit<T>; CAP]`. A two-phase claim-then-
+/// `ptr::write` contract opens three UB hazards in the gap: (H1) early-return / `?` / panic
 /// leaves the slot claimed-uninit so a later `put()` drops garbage; (H2)
 /// `&mut *p` over uninit `T` is instant validity UB when `T` has niches; (H3)
 /// partial field-write then `assume_init_ref` on the whole slot.
@@ -449,8 +444,8 @@ impl<'h, T, const CAPACITY: usize> HiveSlot<'h, T, CAPACITY> {
         p
     }
 
-    /// Caller has fully initialized the slot via [`as_uninit`](Self::as_uninit)
-    /// (or by writing through [`addr`](Self::addr)). Consumes the token.
+    /// Caller has fully initialized the slot by writing through
+    /// [`addr`](Self::addr). Consumes the token.
     ///
     /// # Safety
     /// Every field of `T` must be initialized, including padding-adjacent
@@ -494,15 +489,15 @@ impl<T, const CAPACITY: usize> Drop for HiveSlot<'_, T, CAPACITY> {
 /// extracts the value. Single-owner (no `Clone`), so [`DerefMut`] is sound.
 ///
 /// For pools whose tokens cross an opaque round-trip as a slot *index* (e.g.
-/// the c-ares callback context in `dns_jsc`), store [`index()`](Self::index)
-/// and recover via [`HiveArray::box_at`].
+/// the c-ares callback context in `dns_jsc`), store
+/// [`HiveArray::index_of`] and recover via [`HiveArray::box_at`].
 pub struct HiveBox<'a, T, const CAPACITY: usize> {
     slot: NonNull<T>,
     owner: &'a HiveArray<T, CAPACITY>,
 }
 
 impl<'a, T, const CAPACITY: usize> HiveBox<'a, T, CAPACITY> {
-    /// Extract the value, freeing the slot. Inverse of [`HiveArray::alloc`].
+    /// Extract the value, freeing the slot.
     #[inline]
     pub fn into_inner(self) -> T {
         let this = ManuallyDrop::new(self);
@@ -626,9 +621,8 @@ impl<T, const CAPACITY: usize> Fallback<T, CAPACITY> {
     ///
     /// # Safety
     /// `value` must point to a fully-initialized `T` previously obtained from
-    /// [`get`](Self::get) / [`get_and_see_if_new`](Self::get_and_see_if_new) /
-    /// [`try_get`](Self::try_get) on this `Fallback` and subsequently written
-    /// by the caller.
+    /// [`get_init`](Self::get_init) / [`claim`](Self::claim) on this `Fallback`
+    /// and subsequently written by the caller.
     pub unsafe fn put(&self, value: *mut T) {
         if CAPACITY > 0 {
             // SAFETY: caller contract — `value` is fully initialized.
@@ -720,7 +714,7 @@ impl<T, const CAPACITY: usize> HiveRef<T, CAPACITY> {
 
 /// Owning handle to a refcounted [`HiveRef`] pool slot. `Clone` increments,
 /// `Drop` decrements and recycles when the count hits zero. Cross FFI with
-/// [`into_raw`](Self::into_raw) / [`from_raw`](Self::from_raw), like `Rc`/`Box`.
+/// [`as_ptr`](Self::as_ptr) / [`from_raw`](Self::from_raw), like `Rc`/`Box`.
 pub struct HiveRefHandle<T, const CAP: usize> {
     ptr: NonNull<HiveRef<T, CAP>>,
 }
@@ -747,7 +741,8 @@ impl<T, const CAP: usize> HiveRefHandle<T, CAP> {
         }
     }
 
-    /// Reclaim ownership of a `+1` ref returned by [`into_raw`].
+    /// Reclaim ownership of a `+1` ref previously leaked as a raw pointer
+    /// (e.g. via [`as_ptr`](Self::as_ptr) + `mem::forget`).
     ///
     /// # Safety
     /// `ptr` must be a live slot whose `+1` has not already been released.

@@ -294,8 +294,6 @@ pub struct Source {
 
     pub(crate) raw_stream: StreamType,
     pub(crate) raw_error_stream: StreamType,
-    // Borrowed WASM-mode write buffers, never freed by this file.
-    // Not owned → raw fat ptr (BORROW_FIELD-style), not `Box<[u8]>`.
 }
 
 impl Source {

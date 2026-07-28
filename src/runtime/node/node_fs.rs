@@ -4443,20 +4443,11 @@ pub mod args {
         }
     }
 
-    #[derive(Copy, Clone)]
-    pub struct CpFlags {
+    #[derive(Copy, Clone, Default)]
+    pub struct CpFlags     {
         pub(crate) recursive: bool,
         pub(crate) error_on_exist: bool,
         pub(crate) force: bool,
-    }
-    impl Default for CpFlags {
-        fn default() -> Self {
-            Self {
-                recursive: false,
-                error_on_exist: false,
-                force: false,
-            }
-        }
     }
 
     pub struct Cp {

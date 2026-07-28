@@ -25,7 +25,7 @@ pub struct Cp {
 pub enum State {
     #[default]
     Idle,
-    Exec(ExecState),
+    Exec(Box<ExecState>),
     /// Windows-only post-processing of EBUSY collisions.
     Ebusy(EbusyState),
     WaitingWriteErr,
@@ -88,7 +88,7 @@ impl Cp {
             }
         };
         Self::state_mut(interp, cmd).opts = opts;
-        Self::state_mut(interp, cmd).state = State::Exec(ExecState {
+        Self::state_mut(interp, cmd).state = State::Exec(Box::new(ExecState {
             sources_start,
             target_idx,
             started: false,
@@ -98,7 +98,7 @@ impl Cp {
             err: None,
             #[cfg(windows)]
             ebusy: EbusyState::default(),
-        });
+        }));
         Self::next(interp, cmd)
     }
 

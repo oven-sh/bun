@@ -1481,12 +1481,13 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteFunction, (JSC::JSGlobalObject * l
 
     auto sqlStringView = jsSqlString->view(lexicalGlobalObject);
     RETURN_IF_EXCEPTION(scope, {});
-    // CString is NUL-terminated so the prepare loop can pass nByte = -1 and
-    // avoid SQLite copying the entire remaining tail for every statement.
+    // CString is NUL-terminated; the prepare loop passes nByte including that
+    // terminator so sqlite3Prepare sees zSql[nByte-1] == 0 and parses in place
+    // instead of copying the entire remaining tail for every statement.
     WTF::CString utf8 = sqlStringView->utf8();
 
     const char* sqlStringHead = utf8.data();
-    const char* end = utf8.data() + utf8.length();
+    const char* end = utf8.data() + utf8.length(); // *end == '\0'
 
     bool didSetBindings = false;
     bool didExecuteAny = false;
@@ -1518,7 +1519,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteFunction, (JSC::JSGlobalObject * l
         ASSERT(end - sqlStringHead >= 0);
         ASSERT(end - sqlStringHead <= maxSqlStringBytes);
 
-        rc = sqlite3_prepare_v3(db, sqlStringHead, -1, 0, &sql.stmt, &tail);
+        rc = sqlite3_prepare_v3(db, sqlStringHead, (end - sqlStringHead) + 1 /* include NUL: parse in place */, 0, &sql.stmt, &tail);
 
         if (rc != SQLITE_OK)
             break;

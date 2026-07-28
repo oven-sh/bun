@@ -239,7 +239,12 @@ describe("crypto.createSign()/.verifySign()", () => {
 
     const invalid = ["rot13", "utf-42", 123, {}] as const;
     for (const encoding of invalid) {
-      expect(() => crypto.createSign("sha256").update("m").sign(privateKey, encoding as any)).toThrow(
+      expect(() =>
+        crypto
+          .createSign("sha256")
+          .update("m")
+          .sign(privateKey, encoding as any),
+      ).toThrow(
         expect.objectContaining({
           code: "ERR_UNKNOWN_ENCODING",
           message: `Unknown encoding: ${typeof encoding === "object" ? "{}" : encoding}`,
@@ -249,11 +254,17 @@ describe("crypto.createSign()/.verifySign()", () => {
 
     const falsy = [undefined, null, "", 0, false] as const;
     for (const encoding of falsy) {
-      const out = crypto.createSign("sha256").update("m").sign(privateKey, encoding as any);
+      const out = crypto
+        .createSign("sha256")
+        .update("m")
+        .sign(privateKey, encoding as any);
       expect(Buffer.isBuffer(out)).toBeTrue();
     }
 
-    const asBuffer = crypto.createSign("sha256").update("m").sign(privateKey, "buffer" as any);
+    const asBuffer = crypto
+      .createSign("sha256")
+      .update("m")
+      .sign(privateKey, "buffer" as any);
     expect(Buffer.isBuffer(asBuffer)).toBeTrue();
 
     const asHex = crypto.createSign("sha256").update("m").sign(privateKey, "hex");

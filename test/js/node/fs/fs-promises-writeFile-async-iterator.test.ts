@@ -48,6 +48,6 @@ test("fs.promises.writeFile async iterator throws on invalid input", async () =>
   const fn = {
     [Symbol.asyncIterator]: mock(() => {}),
   };
-  expect(() => writeFile(dir, fn)).toThrow();
+  expect(() => writeFile(String(dir), fn)).toThrow();
   expect(fn[Symbol.asyncIterator]).not.toBeCalled();
 });

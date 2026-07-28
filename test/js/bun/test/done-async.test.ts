@@ -17,7 +17,7 @@ test("done() causes the test to fail when it should", async () => {
 
   const $$ = new Bun.$.Shell();
   $$.nothrow();
-  $.cwd(String(dir));
+  $$.cwd(String(dir));
   $$.env(bunEnv);
   const result = await $$`${bunExe()} test`;
 

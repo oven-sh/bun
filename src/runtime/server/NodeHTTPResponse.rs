@@ -1756,6 +1756,16 @@ impl NodeHTTPResponse {
         self.clear_pending_pinned_write(global_object, JSValue::ZERO);
     }
 
+    /// C entry for the raw `req.socket.write()` path: the zero-copy tail is a
+    /// third buffer that `uws_async_socket_write` never sees, so spill it into
+    /// `AsyncSocketData::buffer` first and the raw bytes follow it on the wire
+    /// (mirrors the `spill_pending_pinned_write` call before a second
+    /// `res.write()`/`res.end()`).
+    #[uws::uws_callback(export = "Bun__NodeHTTPResponse_spillPendingPinnedWrite", no_catch)]
+    pub(crate) fn spill_pending_pinned_write_from_socket(&self) {
+        self.spill_pending_pinned_write(self.server.global_this());
+    }
+
     /// Continue a zero-copy write from the stored offset. Returns `true` if
     /// bytes are still outstanding (the caller should wait for another
     /// onWritable before notifying JS).

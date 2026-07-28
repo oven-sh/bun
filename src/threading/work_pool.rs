@@ -140,17 +140,11 @@ fn create() -> ThreadPool {
     })
 }
 
-/// Concurrency cap for CPU-bound pool jobs (crypto KDFs, compression, WebCrypto).
-///
-/// Sized to `get_thread_count() - 1` (min 1) so a full CPU flood leaves one
-/// core free for the JS thread; the pool itself stays at `get_thread_count()`
-/// so I/O-bound jobs (fs, dns) are unaffected. Acquired via
-/// [`WorkPool::cpu_permit`] from a worker thread immediately before the
-/// compute body; released on drop.
 static CPU_SEM: OnceLock<Semaphore> = OnceLock::new();
 
 #[cold]
 fn create_cpu_sem() -> Semaphore {
+    // One fewer than the pool so a CPU flood leaves a core for the JS thread.
     let n = usize::from(bun_core::get_thread_count().saturating_sub(1).max(1));
     Semaphore::with_permits(n)
 }
@@ -172,13 +166,9 @@ impl WorkPool {
         POOL.get_or_init(create)
     }
 
-    /// Acquire one CPU-bound concurrency slot, blocking the calling worker
-    /// thread until one is free. Held for the duration of the compute body
-    /// and released on drop.
-    ///
-    /// Call this from the worker thread (inside the task callback), not from
-    /// the JS thread: blocking the JS thread here would deadlock it against
-    /// the very pool jobs it is waiting on.
+    /// Acquire one CPU-bound concurrency slot (pool size minus one), blocking
+    /// the calling worker until free. Must only be called from a worker
+    /// thread; calling from the JS thread can deadlock.
     pub fn cpu_permit() -> CpuPermit {
         let sem = CPU_SEM.get_or_init(create_cpu_sem);
         sem.wait();

@@ -25,10 +25,8 @@ use crate::{JSGlobalObject, JsResult, VirtualMachineRef as VirtualMachine};
 /// (from `run_from_js`'s `heap::take`) on every exit, including the
 /// `is_shutting_down` early-out and `init` failure.
 pub trait AnyTaskJobCtx: Sized {
-    /// Whether [`run`](Self::run) is CPU-bound and should count against the
-    /// [`WorkPool::cpu_permit`] concurrency cap. Defaults to `true` (every
-    /// in-tree implementor is crypto/compression) — override to `false` for
-    /// IPC/I/O bodies that merely block.
+    /// Whether [`run`](Self::run) is CPU-bound and should hold a
+    /// [`WorkPool::cpu_permit`]. Override to `false` for IPC/I/O bodies.
     const CPU_BOUND: bool = true;
 
     /// Optional fallible JS-thread setup, run after heap allocation but before

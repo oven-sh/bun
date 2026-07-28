@@ -495,6 +495,9 @@ pub fn enqueue_dependency_to_root(
                     // below; `sleep_until`/`tick_raw` hold no `&mut` across
                     // this callback, so this is the unique live borrow.
                     let manager = unsafe { &mut *self.manager };
+                    if manager.event_loop.execution_forbidden() {
+                        return true;
+                    }
                     if manager.pending_task_count() > 0 {
                         // All callbacks void: `VoidRunTasksCallbacks` (below)
                         // has `Ctx = ()` and every `HAS_* = false`.

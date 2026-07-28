@@ -74,6 +74,13 @@ impl AnyEventLoop {
         }
     }
 
+    pub fn execution_forbidden(&self) -> bool {
+        match self {
+            AnyEventLoop::Js { owner } => owner.execution_forbidden(),
+            AnyEventLoop::Mini(_) => false,
+        }
+    }
+
     /// Convert to an owned [`EventLoopHandle`]. Thin alias for
     /// [`EventLoopHandle::from_any`].
     #[inline]

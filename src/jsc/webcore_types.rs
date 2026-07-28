@@ -129,9 +129,7 @@ pub struct Blob {
     pub charset: Cell<AsciiStatus>,
     /// Was it created via the `File` constructor?
     pub is_jsdom_file: Cell<bool>,
-    /// True when `size` is a bound the caller asked for (`Blob.slice`). For a
-    /// file store `size` is otherwise a `stat` hint that must be refreshed on
-    /// every access: the filesystem can change between calls.
+    /// `size` is a caller-supplied `slice()` bound, not a `stat` hint.
     pub size_is_explicit: Cell<bool>,
     /// `bun.ptr.RawRefCount(u32, .single_threaded)` — counts in-flight `*Blob`
     /// borrows handed to async readers; not the JS GC retain count. Zero while

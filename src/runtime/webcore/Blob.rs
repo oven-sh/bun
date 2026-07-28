@@ -755,10 +755,7 @@ impl BlobExt for Blob {
                 writer.write_int_le::<u32>(stored_name.len() as u32)?;
                 writer.write_all(stored_name)?;
             } else {
-                // Version 4: a file-backed slice's window end. A stat-derived
-                // `size` is a hint (the receiver re-stats locally), so only a
-                // caller-supplied slice bound goes on the wire; an unbounded
-                // view stays MAX_SIZE (unknown), like v3.
+                // Version 4: slice window end (MAX_SIZE = unbounded; receiver re-stats).
                 writer.write_int_le::<u64>(if self.size_is_explicit.get() {
                     self.size.get()
                 } else {
@@ -1280,8 +1277,6 @@ impl BlobExt for Blob {
             // Bytes will never error
             store::DataTag::Bytes => JSValue::TRUE,
             store::DataTag::File => {
-                // Always re-stat: `exists()` must reflect the current
-                // filesystem state, not a cached snapshot.
                 resolve_file_stat(store);
                 let file = store.data_mut().as_file();
                 // We say regular files and pipes exist.
@@ -1974,8 +1969,6 @@ impl BlobExt for Blob {
         let blob = self.dupe();
         blob.offset.set(offset);
         blob.size.set(len);
-        // `MAX_SIZE` is the "unbounded" sentinel, so an unbounded slice of an
-        // unresolved file blob is still unbounded.
         blob.size_is_explicit.set(len != MAX_SIZE);
 
         let content_type_was_allocated = content_type.is_owned() && !content_type.is_empty();
@@ -2159,11 +2152,7 @@ impl BlobExt for Blob {
     fn get_last_modified(&self, _: &JSGlobalObject) -> JSValue {
         if let Some(store) = self.store.get() {
             if matches!(store.data, store::Data::File(_)) {
-                // Always re-stat so `lastModified` reflects the current mtime
-                // instead of a cached snapshot. Do not hold a pattern-bound
-                // `&File` across `resolve_file_stat` (Stacked Borrows UB).
                 resolve_file_stat(store);
-                // Fresh borrow after mutation by `resolve_file_stat`.
                 return JSValue::js_number(JSValue::purify_nan(
                     store.data_mut().as_file().last_modified as f64,
                 ));
@@ -2263,15 +2252,11 @@ impl BlobExt for Blob {
     fn get_size(&self, _: &JSGlobalObject) -> JSValue {
         if let Some(store) = self.store.get() {
             if matches!(store.data, store::Data::File(_)) {
-                // Always re-stat so `size` reflects the current file size
-                // instead of a cached snapshot.
                 resolve_file_stat(store);
                 let file = store.data_mut().as_file();
                 if file.seekable.is_some() && file.max_size != MAX_SIZE {
                     let offset = file.max_size.min(self.offset.get());
                     let available = file.max_size - offset;
-                    // A caller-supplied `slice()` bound is authoritative, but
-                    // still cannot report past EOF.
                     if self.size_is_explicit.get() {
                         return JSValue::js_number(available.min(self.size.get()) as f64);
                     }
@@ -2279,8 +2264,6 @@ impl BlobExt for Blob {
                     self.size.set(available);
                     return JSValue::js_number(available as f64);
                 }
-                // Non-seekable (pipe/FIFO/char device) or stat failed. A slice
-                // bound is the only size the caller has, so keep it.
                 if self.size_is_explicit.get() {
                     return JSValue::js_number(self.size.get() as f64);
                 }
@@ -6226,9 +6209,7 @@ fn resolve_file_stat(store: &StoreRef) {
             file.seekable = Some(bun_sys::S::ISREG(stat.st_mode as _));
             file.last_modified = stat_to_js_mtime(&stat);
         }
-        // The file may not exist (or the fd is invalid). Clear the cached
-        // stat so the JS-facing getters reflect the current state instead
-        // of a past snapshot.
+        // stat failed: clear the cached snapshot.
         _ => {
             file.max_size = MAX_SIZE;
             file.mode = 0;

@@ -2642,6 +2642,47 @@ console.log(<div {...obj} key="after" />);`),
       // );
     });
 
+    it("function declaration names: await/yield", () => {
+      // A function statement's name binds in the enclosing scope, so "await" is
+      // only reserved when the enclosing scope is async (or the module top level).
+      // Node/V8 accept `async function await(){}` at statement position in scripts.
+      expectPrinted_(
+        "function outer() { async function await() {} }",
+        "function outer() {\n  async function await() {}\n}",
+      );
+      expectPrinted_("function outer() { function await() {} }", "function outer() {\n  function await() {}\n}");
+      expectPrinted_(
+        "async function outer() { (function() { function await() {} })() }",
+        "async function outer() {\n  (function() {\n    function await() {}\n  })();\n}",
+      );
+      expectPrinted_(
+        "function outer() { function* yield() {} }",
+        "function outer() {\n  function* yield() {}\n}",
+      );
+
+      // Inside an async function, "await" cannot name a nested function declaration.
+      expectParseError(
+        "async function outer() { async function await() {} }",
+        'Cannot use "await" as an identifier here',
+      );
+      expectParseError(
+        "async function outer() { function await() {} }",
+        'Cannot use "await" as an identifier here',
+      );
+      // Inside a generator, "yield" cannot name a nested function declaration.
+      expectParseError(
+        "function* outer() { function* yield() {} }",
+        'Cannot use "yield" as an identifier here',
+      );
+      expectParseError("function* outer() { function yield() {} }", 'Cannot use "yield" as an identifier here');
+
+      // Function expression names bind inside the function itself.
+      expectParseError("(async function await() {})", 'An async function cannot be named "await"');
+      expectParseError("(function* yield() {})", 'A generator function expression cannot be named "yield"');
+      expectPrinted_("x = function await() {}", "x = function await() {}");
+      expectPrinted_("x = async function yield() {}", "x = async function yield() {}");
+    });
+
     it("import assert", () => {
       expectPrinted_(`import json from "./foo.json" assert { type: "json" };`, `import json from "./foo.json"`);
       expectPrinted_(`import json from "./foo.json";`, `import json from "./foo.json"`);

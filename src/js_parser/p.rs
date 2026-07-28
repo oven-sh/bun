@@ -4620,21 +4620,48 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 .original_name
                 .slice();
 
-            if func.flags.contains(Flags::Function::IsAsync) && original_name == b"await" {
-                self.log().add_range_error(
-                    Some(self.source),
-                    js_lexer::range_of_identifier(self.source, name.loc),
-                    b"An async function cannot be named \"await\"",
-                );
-            } else if kind == FunctionKind::Expr
-                && func.flags.contains(Flags::Function::IsGenerator)
-                && original_name == b"yield"
-            {
-                self.log().add_range_error(
-                    Some(self.source),
-                    js_lexer::range_of_identifier(self.source, name.loc),
-                    b"An generator function expression cannot be named \"yield\"",
-                );
+            if original_name == b"await" {
+                // The name of a function expression binds inside the function itself, so
+                // an async function expression named "await" is always an early error.
+                // The name of a function statement binds in the enclosing scope, so it
+                // is only an error when "await" is reserved there (inside an async
+                // function or at the top level of a module). Node/V8 accept
+                // `async function await() {}` at statement position in scripts.
+                let reject = match kind {
+                    FunctionKind::Expr => func.flags.contains(Flags::Function::IsAsync),
+                    FunctionKind::Stmt => {
+                        self.fn_or_arrow_data_parse.allow_await != crate::AwaitOrYield::AllowIdent
+                    }
+                };
+                if reject {
+                    self.log().add_range_error(
+                        Some(self.source),
+                        js_lexer::range_of_identifier(self.source, name.loc),
+                        if kind == FunctionKind::Expr {
+                            b"An async function cannot be named \"await\""
+                        } else {
+                            b"Cannot use \"await\" as an identifier here"
+                        },
+                    );
+                }
+            } else if original_name == b"yield" {
+                let reject = match kind {
+                    FunctionKind::Expr => func.flags.contains(Flags::Function::IsGenerator),
+                    FunctionKind::Stmt => {
+                        self.fn_or_arrow_data_parse.allow_yield != crate::AwaitOrYield::AllowIdent
+                    }
+                };
+                if reject {
+                    self.log().add_range_error(
+                        Some(self.source),
+                        js_lexer::range_of_identifier(self.source, name.loc),
+                        if kind == FunctionKind::Expr {
+                            b"A generator function expression cannot be named \"yield\""
+                        } else {
+                            b"Cannot use \"yield\" as an identifier here"
+                        },
+                    );
+                }
             }
         }
     }

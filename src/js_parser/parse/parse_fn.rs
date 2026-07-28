@@ -145,6 +145,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
         func.name = name;
 
+        p.validate_function_name(&func, FunctionKind::Stmt);
+
         // flags is freshly built so unset → only insert when true
         if has_if_scope {
             func.flags.insert(Flags::Function::HasIfScope);

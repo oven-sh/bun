@@ -347,7 +347,7 @@ describe("`bun audit`", () => {
 
   test("sends a well-formed JSON request body when a package name contains a double quote", async () => {
     const packageName = 'a"b';
-    const dir = tempDirWithFiles("bun-test-audit-name-with-quote", {
+    using dirHandle = tempDir("bun-test-audit-name-with-quote", {
       "package.json": JSON.stringify({
         name: "test",
         version: "1.0.0",
@@ -370,6 +370,7 @@ describe("`bun audit`", () => {
         },
       }),
     });
+    const dir = String(dirHandle);
 
     let receivedBody = "";
     await using auditServer = Bun.serve({

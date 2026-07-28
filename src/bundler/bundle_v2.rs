@@ -2532,15 +2532,13 @@ pub mod bv2_impl {
             task.task.node.next = core::ptr::null_mut();
             task.tree_shaking = self.linker.options.tree_shaking;
             task.known_target = target;
+            if let Some(dev) = self
+                .transpiler_for_target(target)
+                .options
+                .force_node_env
+                .jsx_development_override()
             {
-                let t = self.transpiler_for_target(target);
-                match t.options.force_node_env {
-                    options::ForceNodeEnv::Development => task.jsx.development = true,
-                    options::ForceNodeEnv::Production => task.jsx.development = false,
-                    // `task.jsx` is the per-file tsconfig-merged value from
-                    // `ParseTask::init` (via the resolver); keep it.
-                    options::ForceNodeEnv::Unspecified => {}
-                }
+                task.jsx.development = dev;
             }
 
             // Handle onLoad plugins as entry points
@@ -2644,15 +2642,13 @@ pub mod bv2_impl {
             task.tree_shaking = self.linker.options.tree_shaking;
             task.is_entry_point = is_entry_point;
             task.known_target = target;
+            if let Some(dev) = self
+                .transpiler_for_target(target)
+                .options
+                .force_node_env
+                .jsx_development_override()
             {
-                let bundler = self.transpiler_for_target(target);
-                match bundler.options.force_node_env {
-                    options::ForceNodeEnv::Development => task.jsx.development = true,
-                    options::ForceNodeEnv::Production => task.jsx.development = false,
-                    // `task.jsx` is the per-file tsconfig-merged value from
-                    // `ParseTask::init` (via the resolver); keep it.
-                    options::ForceNodeEnv::Unspecified => {}
-                }
+                task.jsx.development = dev;
             }
 
             // Handle onLoad plugins as entry points
@@ -6048,14 +6044,10 @@ pub mod bv2_impl {
                         resolve_task.known_target = target;
                         // Use transpiler JSX options, applying force_node_env like the disk path does
                         resolve_task.jsx = transpiler.options.jsx.clone();
-                        match transpiler.options.force_node_env {
-                            options::ForceNodeEnv::Development => {
-                                resolve_task.jsx.development = true
-                            }
-                            options::ForceNodeEnv::Production => {
-                                resolve_task.jsx.development = false
-                            }
-                            options::ForceNodeEnv::Unspecified => {}
+                        if let Some(dev) =
+                            transpiler.options.force_node_env.jsx_development_override()
+                        {
+                            resolve_task.jsx.development = dev;
                         }
                         resolve_task.loader = Some(import_record_loader);
                         resolve_task.tree_shaking = transpiler.options.tree_shaking;
@@ -6419,11 +6411,8 @@ pub mod bv2_impl {
                 };
 
                 resolve_task.jsx = resolve_result.jsx.clone();
-                match transpiler.options.force_node_env {
-                    options::ForceNodeEnv::Development => resolve_task.jsx.development = true,
-                    options::ForceNodeEnv::Production => resolve_task.jsx.development = false,
-                    // `resolve_result.jsx` is already tsconfig-merged; keep it.
-                    options::ForceNodeEnv::Unspecified => {}
+                if let Some(dev) = transpiler.options.force_node_env.jsx_development_override() {
+                    resolve_task.jsx.development = dev;
                 }
 
                 resolve_task.loader = Some(import_record_loader);

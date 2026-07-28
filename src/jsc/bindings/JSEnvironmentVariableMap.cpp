@@ -32,6 +32,7 @@ extern "C" size_t Bun__getEnvKey(void* list, size_t index, unsigned char** out);
 extern "C" bool Bun__getEnvValue(JSGlobalObject* globalObject, const ZigString* name, ZigString* value);
 extern "C" bool Bun__getEnvValueBunString(JSGlobalObject* globalObject, const BunString* name, BunString* value);
 extern "C" void Bun__setEnvValue(JSGlobalObject* globalObject, const BunString* name, const BunString* value);
+extern "C" void Bun__deleteEnvValue(JSGlobalObject* globalObject, const BunString* name);
 
 namespace Bun {
 
@@ -129,11 +130,14 @@ JSC_DEFINE_CUSTOM_SETTER(jsSetterProxyEnvironmentVariable, (JSGlobalObject * glo
     unsigned attributes;
     JSValue existing = object->getDirect(vm, propertyName, attributes);
     if (existing && (attributes & JSC::PropertyAttribute::DontEnum)) {
-        // putDirectCustomAccessor asserts NewProperty, so delete first.
-        object->deleteProperty(globalObject, propertyName);
+        // putDirectCustomAccessor asserts NewProperty; static delete so
+        // JSProcessEnv::deleteProperty does not reinstall it mid-setter.
+        DeletePropertySlot deleteSlot;
+        if (JSObject::deleteProperty(object, globalObject, propertyName, deleteSlot)) {
+            object->putDirectCustomAccessor(vm, propertyName, existing,
+                attributes & ~JSC::PropertyAttribute::DontEnum);
+        }
         RETURN_IF_EXCEPTION(scope, false);
-        object->putDirectCustomAccessor(vm, propertyName, existing,
-            attributes & ~JSC::PropertyAttribute::DontEnum);
     }
     return true;
 }
@@ -597,6 +601,15 @@ bool JSSharedEnvMap::deleteProperty(JSCell* cell, JSGlobalObject* globalObject, 
         applyTLSRejectFromString(globalObject, String());
     else if (normalized == "BUN_CONFIG_VERBOSE_FETCH"_s)
         applyVerboseFetchFromString(globalObject, String());
+    else {
+        for (auto proxyName : kProxyEnvVarNames) {
+            if (normalized == proxyName) {
+                BunString name = Bun::toString(keyStr);
+                Bun__deleteEnvValue(globalObject, &name);
+                break;
+            }
+        }
+    }
     syncWindowsEnv(store, keyStr, nullptr);
     store->remove(keyStr);
     // Also drop any own property the Base fallback installed (accessor descriptors).
@@ -775,6 +788,18 @@ static void reinstallSideEffectingEnvAccessor(VM& vm, JSGlobalObject* globalObje
         privateName = BUN_CONFIG_VERBOSE_FETCH_PRIVATE_PROPERTY(vm);
         applyVerboseFetchFromString(globalObject, String());
     } else {
+        // Proxy vars are backed by the native env map; drop the entry and
+        // re-install the accessor so later assignments still write through.
+        for (auto proxyName : kProxyEnvVarNames) {
+            if (key == proxyName) {
+                BunString name = Bun::toString(key);
+                Bun__deleteEnvValue(globalObject, &name);
+                object->putDirectCustomAccessor(vm, Identifier::fromString(vm, key),
+                    CustomGetterSetter::create(vm, jsGetterProxyEnvironmentVariable, jsSetterProxyEnvironmentVariable),
+                    JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DontEnum);
+                return;
+            }
+        }
         return;
     }
     // jsUndefined sentinel: the getter must not fall through to the OS env map.
@@ -783,7 +808,7 @@ static void reinstallSideEffectingEnvAccessor(VM& vm, JSGlobalObject* globalObje
         JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DontEnum);
 }
 
-// process.env: deleteProperty reinstalls the TZ/TLS/verbose accessors.
+// process.env: deleteProperty reinstalls the TZ/TLS/verbose/proxy accessors.
 class JSProcessEnv final : public JSC::JSNonFinalObject {
 public:
     using Base = JSC::JSNonFinalObject;
@@ -973,7 +998,6 @@ JSValue createEnvironmentVariablesMap(Zig::GlobalObject* globalObject)
         Identifier::fromString(vm, BUN_CONFIG_VERBOSE_FETCH), JSC::CustomGetterSetter::create(vm, jsBunConfigVerboseFetchGetter, jsBunConfigVerboseFetchSetter), BUN_CONFIG_VERBOSE_FETCH_Attrs);
 
     for (size_t j = 0; j < proxyVarCount; j++) {
-        // delete leaves the Zig env map stale (no unset FFI); assign "" to clear.
         unsigned attrs = JSC::PropertyAttribute::CustomAccessor | 0;
         if (!hasProxyVar[j]) {
             attrs |= JSC::PropertyAttribute::DontEnum;

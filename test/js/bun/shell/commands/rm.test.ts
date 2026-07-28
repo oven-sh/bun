@@ -321,7 +321,8 @@ test.skipIf(process.platform === "win32")(
           }
         }
       }
-      const root = tempDirWithFiles(`rm-swap-mid-${iter}`, files);
+      using rootDir = tempDir(`rm-swap-mid-${iter}`, files);
+      const root = String(rootDir);
       const victimDir = path.join(root, "victim");
       const target = path.join(root, "target");
 

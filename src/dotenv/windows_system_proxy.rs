@@ -83,8 +83,7 @@ pub fn is_implicit_bypass(hostname: &[u8]) -> bool {
     if strings::eql_case_insensitive_ascii(h, b"localhost", true) {
         return true;
     }
-    if h.len() > 10
-        && strings::eql_case_insensitive_ascii(&h[h.len() - 10..], b".localhost", true)
+    if h.len() > 10 && strings::eql_case_insensitive_ascii(&h[h.len() - 10..], b".localhost", true)
     {
         return true;
     }
@@ -507,7 +506,8 @@ mod ffi {
             lpszProxyBypass: ptr::null_mut(),
         };
         // SAFETY: all pointers are valid for the call; WinHTTP populates `info` on success.
-        let mut ok = unsafe { WinHttpGetProxyForUrl(session, url_w.as_ptr(), &mut opts, &mut info) };
+        let mut ok =
+            unsafe { WinHttpGetProxyForUrl(session, url_w.as_ptr(), &mut opts, &mut info) };
         if ok == 0 {
             let err = bun_sys::windows::kernel32::GetLastError();
             const ERROR_WINHTTP_LOGIN_FAILURE: u32 = 12015;

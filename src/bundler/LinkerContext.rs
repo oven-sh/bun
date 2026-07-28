@@ -392,13 +392,18 @@ impl<'a> LinkerContext<'a> {
         self.pending_task_count.fetch_sub(1, Ordering::Relaxed);
     }
 
-    pub fn is_external_dynamic_import(&self, record: &ImportRecord, source_index: u32) -> bool {
+    pub fn is_external_dynamic_import(&self, record: &ImportRecord) -> bool {
         use crate::linker_graph::FileColumns as _;
+        // A dynamic import of a file that is itself an entry point (user-specified
+        // or promoted via dynamic_import_entry_points) becomes a runtime `import()`
+        // of that entry's chunk. This includes a file dynamically importing itself:
+        // excluding that case leaves the record pointing at an unwrapped file, and
+        // the printer then emits a call to a wrapper that was never generated
+        // (issue #6621).
         self.graph.code_splitting
             && record.kind == ImportKind::Dynamic
             && self.graph.files.items_entry_point_kind()[record.source_index.get() as usize]
                 .is_entry_point()
-            && record.source_index.get() != source_index
     }
 
     /// Note: this should call a `MimallocArena` debug hook
@@ -2722,7 +2727,7 @@ impl<'a> LinkerContext<'a> {
 
             for record in ctx.import_records[source_index as usize].iter() {
                 if record.source_index.is_valid()
-                    && !self.is_external_dynamic_import(record, source_index)
+                    && !self.is_external_dynamic_import(record)
                     && !ctx.file_entry_bits[record.source_index.get() as usize]
                         .is_set(entry_points_count)
                 {

@@ -894,7 +894,7 @@ pub fn scan_imports_and_exports(
                     let is_external_dyn = rec_source_index.is_valid() && {
                         let record = &col_ref!(import_records_list)[id].as_slice()
                             [import_record_index as usize];
-                        this.is_external_dynamic_import(record, source_index)
+                        this.is_external_dynamic_import(record)
                     };
                     if !rec_source_index.is_valid() || is_external_dyn {
                         if output_format == Format::InternalBakeDev {

@@ -290,6 +290,89 @@ describe("bundler", () => {
     },
   });
 
+  // https://github.com/oven-sh/bun/issues/6621
+  // A file that dynamically imports itself must resolve to its own chunk, not
+  // to an unwrapped `require_<name>()` call that was never emitted.
+  itBundled("splitting/EntryDynamicImportsItself", {
+    files: {
+      "/entry.js": /* js */ `
+        export const v = "V";
+        export async function reload() {
+          const m = await import("./entry.js");
+          return "got " + m.v + " " + typeof m.reload;
+        }
+        reload().then(x => console.log(x));
+      `,
+    },
+    entryPoints: ["/entry.js"],
+    splitting: true,
+    outdir: "/out",
+    format: "esm",
+    run: {
+      file: "/out/entry.js",
+      env,
+      stdout: "got V function",
+    },
+    onAfterBundle(api) {
+      api.expectFile("/out/entry.js").not.toContain("require_entry");
+    },
+  });
+
+  // Same as above, but the self-importing file is not a user-specified entry
+  // point. It becomes a dynamic-import entry point and its code lands in a
+  // shared chunk; the self-import must still resolve to its entry chunk.
+  itBundled("splitting/NonEntryDynamicImportsItself", {
+    files: {
+      "/main.js": /* js */ `
+        import { self, name } from "./lib.js";
+        self().then(got => console.log("main:", name, got));
+      `,
+      "/lib.js": /* js */ `
+        export const name = "lib";
+        export async function self() {
+          const m = await import("./lib.js");
+          return m.name + " " + typeof m.self;
+        }
+      `,
+    },
+    entryPoints: ["/main.js"],
+    splitting: true,
+    outdir: "/out",
+    format: "esm",
+    run: {
+      file: "/out/main.js",
+      env,
+      stdout: "main: lib lib function",
+    },
+  });
+
+  // Lazy-recursion idiom: the function re-imports its own file on each
+  // iteration. Exercises the minified path as well.
+  itBundled("splitting/SelfDynamicImportRecursionMinified", {
+    files: {
+      "/entry.js": /* js */ `
+        export async function loop(n) {
+          if (n <= 0) return "done";
+          const m = await import("./entry.js");
+          return m.loop(n - 1);
+        }
+        loop(3).then(x => console.log(x));
+      `,
+    },
+    entryPoints: ["/entry.js"],
+    splitting: true,
+    minifyWhitespace: true,
+    minifyIdentifiers: true,
+    minifySyntax: true,
+    outdir: "/out",
+    format: "esm",
+    run: {
+      file: "/out/entry.js",
+      env,
+      stdout: "done",
+    },
+  });
+
   itBundled("splitting/CircularDynamicImportsWithCSS", {
     files: {
       "/entry.js": `

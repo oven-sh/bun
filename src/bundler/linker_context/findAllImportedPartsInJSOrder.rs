@@ -313,7 +313,7 @@ impl<'a, 'ctx> FindImportedPartsVisitor<'a, 'ctx> {
                             if record.source_index.is_valid()
                                 && (record.kind == ImportKind::Stmt || is_part_in_this_chunk)
                             {
-                                if self.c.is_external_dynamic_import(record, source_index) {
+                                if self.c.is_external_dynamic_import(record) {
                                     // Don't follow import() dependencies
                                     continue;
                                 }

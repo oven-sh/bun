@@ -1826,6 +1826,10 @@ pub struct RuntimeHooks {
     /// never lazily created. Called from `WebWorker::shutdown` / `global_exit`
     /// right after `close_all_socket_groups`.
     pub close_dns_for_terminate: fn(),
+    /// `server.stop(true)` every `Bun.serve` server this VM started. The
+    /// registry lives in `bun_runtime::RuntimeState` (b2-cycle). Called from
+    /// `WebWorker::shutdown` before `close_all_socket_groups`.
+    pub stop_servers_for_terminate: fn(),
 }
 
 /// Canonical `EventLoopCtx` vtable for a `*mut VirtualMachine` owner — the JS

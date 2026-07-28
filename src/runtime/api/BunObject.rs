@@ -1634,15 +1634,11 @@ pub(crate) fn serve(global_object: &JSGlobalObject, callframe: &CallFrame) -> Js
             drop(_handler_pins);
             server_ref.gc_hint_after_listen();
 
-            if global_object.bun_vm().test_isolation_enabled {
-                if let Some(handles) = crate::jsc_hooks::isolation_handles() {
-                    bun_core::handle_oom(handles.put(
-                        crate::jsc_hooks::IsolationHandle::Server(AnyServer::from(
-                            server.cast_const(),
-                        )),
-                        (),
-                    ));
-                }
+            if let Some(handles) = crate::jsc_hooks::isolation_handles() {
+                bun_core::handle_oom(handles.put(
+                    crate::jsc_hooks::IsolationHandle::Server(AnyServer::from(server.cast_const())),
+                    (),
+                ));
             }
 
             // `init` moved `config` into the server (`mem::take`), so the

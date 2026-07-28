@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isLinux } from "harness";
 import { join } from "path";
 
 // Worker VM startup/teardown is much slower under debug and/or ASAN; these
@@ -173,6 +173,98 @@ test.skipIf(!isASAN)(
 
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect({ stdout, stderr, exitCode }).toEqual({ stdout: "ok\n", stderr: "", exitCode: 0 });
+  },
+  timeout,
+);
+
+// Regression: a Bun.serve() listen socket in a worker was never closed when
+// the worker exited. WebWorker::shutdown()'s close_all_socket_groups() skips
+// listen sockets (the owner holds a raw *mut us_listen_socket_t), and nothing
+// else called stop() on the server, so the fd survived on a destroyed epoll
+// instance: the port stayed bound process-wide and new clients were accepted
+// by the kernel into a backlog no thread serviced. Covers all three shutdown
+// entry points (terminate(), worker process.exit(), unref'd natural exit).
+test(
+  "a worker's Bun.serve() listen socket is closed when the worker exits",
+  async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const { connect } = require("net");
+        const mk = body => "data:text/javascript," + encodeURIComponent(body);
+        const serve = "const s = Bun.serve({ port: 0, fetch: () => new Response('W') });";
+
+        // After the worker's "close" event the port must be free: a raw TCP
+        // connect is the observable signal (ECONNREFUSED vs. ACCEPTED into a
+        // kernel backlog nothing accept()s).
+        const probe = port =>
+          new Promise(res => {
+            const s = connect(port, "127.0.0.1");
+            s.once("connect", () => { s.destroy(); res("ACCEPTED"); });
+            s.once("error", e => res(e.code));
+          });
+
+        async function cycle(body, terminate) {
+          const w = new Worker(mk(body));
+          const port = await new Promise((resolve, reject) => {
+            w.addEventListener("message", e => resolve(e.data), { once: true });
+            w.addEventListener("error", e => reject(e.error ?? e.message), { once: true });
+          });
+          const closed = new Promise(r => w.addEventListener("close", r, { once: true }));
+          if (terminate) w.terminate();
+          else w.postMessage(0);
+          await closed;
+          return probe(port);
+        }
+
+        // One warm-up cycle so lazily-created per-process fds (event-loop
+        // timers, DNS, net module) don't count against the leak delta below.
+        await cycle(serve + "postMessage(s.port);", true);
+
+        const fdCount = ${isLinux}
+          ? () => require("fs").readdirSync("/proc/self/fd").length
+          : () => 0;
+        const before = fdCount();
+
+        const out = {};
+        out.terminate = await cycle(serve + "postMessage(s.port);", true);
+        out.processExit = await cycle(
+          serve + "postMessage(s.port); self.onmessage = () => process.exit(0);",
+          false,
+        );
+        out.unrefNatural = await cycle(serve + "s.unref(); postMessage(s.port);", false);
+        // Two more terminate cycles so the fd delta is meaningful.
+        for (let i = 0; i < 2; i++) await cycle(serve + "postMessage(s.port);", true);
+
+        out.fdDelta = fdCount() - before;
+        console.log(JSON.stringify(out));
+      `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    const out = JSON.parse(stdout.trim());
+    expect({
+      terminate: out.terminate,
+      processExit: out.processExit,
+      unrefNatural: out.unrefNatural,
+    }).toEqual({
+      terminate: "ECONNREFUSED",
+      processExit: "ECONNREFUSED",
+      unrefNatural: "ECONNREFUSED",
+    });
+    if (isLinux) {
+      // Unfixed: one listen fd per cycle (>= 5). Allow a couple of incidental
+      // fds (net.connect client sockets, worker message channels).
+      expect(out.fdDelta).toBeLessThanOrEqual(2);
+    }
+    expect(exitCode).toBe(0);
   },
   timeout,
 );

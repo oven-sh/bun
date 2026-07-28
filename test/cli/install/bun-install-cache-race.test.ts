@@ -179,57 +179,54 @@ afterAll(() => {
   shimDir?.[Symbol.dispose]();
 });
 
-test.skipIf(!canShim)(
-  "concurrent installs sharing a cache survive a filesystem without RENAME_EXCHANGE",
-  async () => {
-    const { tgz, shasum, integrity } = buildTarball();
-    await using registry = makeRegistry(tgz, shasum, integrity);
+test.skipIf(!canShim)("concurrent installs sharing a cache survive a filesystem without RENAME_EXCHANGE", async () => {
+  const { tgz, shasum, integrity } = buildTarball();
+  await using registry = makeRegistry(tgz, shasum, integrity);
 
-    const PROCS = 4;
-    const ITERATIONS = 3;
-    const existingPreload = bunEnv.LD_PRELOAD;
+  const PROCS = 4;
+  const ITERATIONS = 3;
+  const existingPreload = bunEnv.LD_PRELOAD;
 
-    for (let iter = 0; iter < ITERATIONS; iter++) {
-      const projects: Record<string, string> = {};
-      for (let i = 0; i < PROCS; i++) {
-        projects[`proj-${i}/package.json`] = JSON.stringify({
-          name: `proj-${i}`,
-          version: "1.0.0",
-          dependencies: { [PKG_NAME]: "1.0.0" },
-        });
-        projects[`proj-${i}/bunfig.toml`] = `[install]\nregistry = "${registry.url}"\n`;
-      }
-      using dir = tempDir(`cache-race-${iter}`, projects);
-      const cacheDir = join(String(dir), ".shared-cache");
-
-      const procs = Array.from({ length: PROCS }, (_, i) =>
-        Bun.spawn({
-          cmd: [bunExe(), "install", "--backend=copyfile", "--linker=hoisted", "--no-progress"],
-          cwd: join(String(dir), `proj-${i}`),
-          env: {
-            ...bunEnv,
-            BUN_INSTALL_CACHE_DIR: cacheDir,
-            LD_PRELOAD: existingPreload ? `${shimPath}:${existingPreload}` : shimPath,
-            BUN_TEST_FAIL_RENAME_EXCHANGE: "1",
-          },
-          stdout: "pipe",
-          stderr: "pipe",
-        }),
-      );
-
-      const results = await Promise.all(
-        procs.map(async proc => {
-          const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-          return { stdout, stderr, exitCode };
-        }),
-      );
-
-      for (let i = 0; i < results.length; i++) {
-        const { stdout, stderr, exitCode } = results[i];
-        const output = `iteration ${iter} proj-${i}:\n${stdout}\n${stderr}`;
-        expect(output).not.toContain("ENOENT");
-        expect(exitCode).toBe(0);
-      }
+  for (let iter = 0; iter < ITERATIONS; iter++) {
+    const projects: Record<string, string> = {};
+    for (let i = 0; i < PROCS; i++) {
+      projects[`proj-${i}/package.json`] = JSON.stringify({
+        name: `proj-${i}`,
+        version: "1.0.0",
+        dependencies: { [PKG_NAME]: "1.0.0" },
+      });
+      projects[`proj-${i}/bunfig.toml`] = `[install]\nregistry = "${registry.url}"\n`;
     }
-  },
-);
+    using dir = tempDir(`cache-race-${iter}`, projects);
+    const cacheDir = join(String(dir), ".shared-cache");
+
+    const procs = Array.from({ length: PROCS }, (_, i) =>
+      Bun.spawn({
+        cmd: [bunExe(), "install", "--backend=copyfile", "--linker=hoisted", "--no-progress"],
+        cwd: join(String(dir), `proj-${i}`),
+        env: {
+          ...bunEnv,
+          BUN_INSTALL_CACHE_DIR: cacheDir,
+          LD_PRELOAD: existingPreload ? `${shimPath}:${existingPreload}` : shimPath,
+          BUN_TEST_FAIL_RENAME_EXCHANGE: "1",
+        },
+        stdout: "pipe",
+        stderr: "pipe",
+      }),
+    );
+
+    const results = await Promise.all(
+      procs.map(async proc => {
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        return { stdout, stderr, exitCode };
+      }),
+    );
+
+    for (let i = 0; i < results.length; i++) {
+      const { stdout, stderr, exitCode } = results[i];
+      const output = `iteration ${iter} proj-${i}:\n${stdout}\n${stderr}`;
+      expect(output).not.toContain("ENOENT");
+      expect(exitCode).toBe(0);
+    }
+  }
+});

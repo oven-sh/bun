@@ -4,9 +4,9 @@ permissions:
   contents: read
 
 # Source-tree lints and build-script unit tests from test/internal/source-lints/.
-# These never touch the built bun binary (no bun:internal-for-testing, no
-# bunExe() spawns), so they can run against a released bun immediately on push
-# instead of waiting for build-bun in every Buildkite test lane.
+# These never exercise behavior compiled into the bun binary, so they can run
+# against a released bun immediately on push instead of waiting for build-bun
+# in every Buildkite test lane.
 on:
   workflow_dispatch:
   push:

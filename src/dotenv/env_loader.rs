@@ -71,9 +71,9 @@ impl DotEnvBehavior {
         }
         match s.iter().filter(|&&b| b == b'*').count() {
             0 => Err("must be \"inline\", \"disable\", or a prefix pattern like \"PUBLIC_*\""),
-            1 if s == b"*" => {
-                Err("pattern \"*\" has no prefix; use \"inline\" to inline every environment variable")
-            }
+            1 if s == b"*" => Err(
+                "pattern \"*\" has no prefix; use \"inline\" to inline every environment variable",
+            ),
             1 if *s.last().unwrap() == b'*' => Ok((Self::prefix, Some(&s[..s.len() - 1]))),
             1 => Err(
                 "pattern must end with '*' (e.g. \"PUBLIC_*\"); a leading '*' would inline every variable including secrets",

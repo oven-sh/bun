@@ -767,6 +767,30 @@ nativeTests.test_napi_class_receiver_check = () => {
   console.log("native callback calls:", nativeTests.get_receiver_check_call_count());
 };
 
+nativeTests.test_napi_class_receiver_check_gc = gc => {
+  let classes = nativeTests.get_receiver_check_classes();
+  const check = classes.B.prototype.check;
+  const b = new classes.B();
+  const a = new classes.A();
+  // Sever every other path to the class prototypes so the WriteBarrier fields
+  // on the detached method and instances are the only remaining roots.
+  Object.setPrototypeOf(b, null);
+  Object.setPrototypeOf(a, null);
+  classes = null;
+  gc();
+  gc();
+  try {
+    console.log("b after GC:", check.call(b));
+  } catch (e) {
+    console.log("b after GC:", e.name + ":", e.message);
+  }
+  try {
+    console.log("a after GC:", check.call(a));
+  } catch (e) {
+    console.log("a after GC:", e.name + ":", e.message);
+  }
+};
+
 nativeTests.test_reflect_construct_napi_class = () => {
   const NapiClass = nativeTests.get_class_with_constructor();
   let instance = Reflect.construct(NapiClass, [], Object);

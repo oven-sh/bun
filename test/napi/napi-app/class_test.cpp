@@ -165,18 +165,15 @@ static napi_value get_class_with_constructor(const Napi::CallbackInfo &info) {
 }
 
 static int receiver_check_method_calls = 0;
-
-static void receiver_check_finalize(napi_env env, void *data, void *hint) {
-  free(data);
-}
+static int receiver_check_wrap_a;
+static int receiver_check_wrap_b;
 
 static napi_value receiver_check_ctor_a(napi_env env, napi_callback_info info) {
   napi_value self;
   size_t argc = 0;
   NODE_API_CALL(env, napi_get_cb_info(env, info, &argc, nullptr, &self, nullptr));
-  void *p = calloc(1, 8);
-  NODE_API_CALL(env,
-                napi_wrap(env, self, p, receiver_check_finalize, nullptr, nullptr));
+  NODE_API_CALL(env, napi_wrap(env, self, &receiver_check_wrap_a, nullptr,
+                               nullptr, nullptr));
   return nullptr;
 }
 
@@ -184,9 +181,8 @@ static napi_value receiver_check_ctor_b(napi_env env, napi_callback_info info) {
   napi_value self;
   size_t argc = 0;
   NODE_API_CALL(env, napi_get_cb_info(env, info, &argc, nullptr, &self, nullptr));
-  void *p = calloc(1, 40);
-  NODE_API_CALL(env,
-                napi_wrap(env, self, p, receiver_check_finalize, nullptr, nullptr));
+  NODE_API_CALL(env, napi_wrap(env, self, &receiver_check_wrap_b, nullptr,
+                               nullptr, nullptr));
   return nullptr;
 }
 

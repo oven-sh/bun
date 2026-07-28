@@ -930,6 +930,12 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
       // method callback must not have been reached for any rejected receiver.
       expect(output).toContain("native callback calls: 8");
     });
+
+    it("keeps the receiver check working after GC drops the class", async () => {
+      const output = await checkSameOutput("test_napi_class_receiver_check_gc", []);
+      expect(output).toContain("b after GC: 0");
+      expect(output).toContain("a after GC: TypeError: Illegal invocation");
+    });
   });
 
   describe("bigint conversion to int64/uint64", () => {

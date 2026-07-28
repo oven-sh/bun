@@ -64,6 +64,11 @@ const exitScenarios = {
   // beforeExit.
   "beforeExit handler": (n: number) =>
     `console.log("MARK:${n}");\nprocess.on("beforeExit", () => { process.exit(1); console.log("AFTER_EXIT_SHOULD_NOT_PRINT"); });\n`,
+  // process.exit() inside a node:vm script: node:vm converts terminations to
+  // SIGINT/timeout errors (and aborts on any other source), so the watch-exit
+  // termination must propagate through it instead.
+  "node:vm script": (n: number) =>
+    `console.log("MARK:${n}");\nrequire("node:vm").runInThisContext("process.exit(1)");\nconsole.log("AFTER_EXIT_SHOULD_NOT_PRINT");\n`,
 } as const;
 
 for (const [scenario, fixture] of Object.entries(exitScenarios)) {

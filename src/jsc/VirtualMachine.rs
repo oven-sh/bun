@@ -4539,6 +4539,14 @@ impl VirtualMachine {
         self.global().delete_module_registry_entry(&str)
     }
 
+    /// `node:vm` consults this before mapping a main-thread termination onto
+    /// its SIGINT/timeout errors: a `--watch` `process.exit()` termination
+    /// must propagate to the top of the run instead.
+    #[unsafe(export_name = "Bun__VM__isWatchExitRequested")]
+    pub extern "C" fn is_watch_exit_requested(&self) -> bool {
+        self.watch_exit_requested
+    }
+
     /// Whether the per-test-isolation source provider cache is active.
     #[unsafe(export_name = "Bun__VM__useIsolationSourceProviderCache")]
     pub extern "C" fn use_isolation_source_provider_cache(&self) -> bool {

@@ -309,6 +309,13 @@ void NodeVMScript::destroy(JSCell* cell)
 static bool checkForTermination(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, NodeVMScript* script, std::optional<double> timeout)
 {
     if (vm.hasTerminationRequest()) {
+        if (Bun__VM__isWatchExitRequested(Bun::vm(vm))) {
+            // `process.exit()` under `bun --watch` terminated this run; keep
+            // the termination pending so it unwinds past node:vm instead of
+            // being mapped to a SIGINT/timeout error.
+            scope.throwException(globalObject, vm.terminationException());
+            return true;
+        }
         vm.drainMicrotasksForGlobalObject(globalObject);
         // The termination may have fired inside an afterEvaluate microtask
         // checkpoint, leaving the termination exception pending; clear it so

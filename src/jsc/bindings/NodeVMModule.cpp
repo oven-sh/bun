@@ -105,6 +105,12 @@ JSValue NodeVMModule::evaluate(JSGlobalObject* globalObject, uint32_t timeout, b
             // below, then convert it to ERR_SCRIPT_EXECUTION_*.
             std::ignore = scope.exception();
             if (vm.hasTerminationRequest() || vm.hasPendingTerminationException()) {
+                // See checkForTermination in NodeVMScript.cpp: a `--watch`
+                // process.exit() termination propagates instead.
+                if (Bun__VM__isWatchExitRequested(Bun::vm(vm))) {
+                    scope.throwException(globalObject, vm.terminationException());
+                    return {};
+                }
                 vm.drainMicrotasksForGlobalObject(nodeVmGlobalObject);
                 DECLARE_TOP_EXCEPTION_SCOPE(vm).clearException();
                 vm.clearHasTerminationRequest();
@@ -245,6 +251,12 @@ JSValue NodeVMModule::evaluate(JSGlobalObject* globalObject, uint32_t timeout, b
     // so the exception-check validator is satisfied before the TOP scope.
     std::ignore = scope.exception();
     if (vm.hasTerminationRequest() || vm.hasPendingTerminationException()) {
+        // See checkForTermination in NodeVMScript.cpp: a `--watch`
+        // process.exit() termination propagates instead.
+        if (Bun__VM__isWatchExitRequested(Bun::vm(vm))) {
+            scope.throwException(globalObject, vm.terminationException());
+            return {};
+        }
         vm.drainMicrotasksForGlobalObject(nodeVmGlobalObject);
         DECLARE_TOP_EXCEPTION_SCOPE(vm).clearException();
         vm.clearHasTerminationRequest();

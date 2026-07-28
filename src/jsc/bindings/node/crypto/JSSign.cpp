@@ -435,8 +435,15 @@ JSC_DEFINE_HOST_FUNCTION(jsSignProtoFuncSign, (JSC::JSGlobalObject * lexicalGlob
     }
 
     JSValue outputEncodingValue = callFrame->argument(1);
-    auto outputEncoding = parseEnumeration<BufferEncodingType>(*lexicalGlobalObject, outputEncodingValue).value_or(BufferEncodingType::buffer);
-    RETURN_IF_EXCEPTION(scope, {});
+    BufferEncodingType outputEncoding = BufferEncodingType::buffer;
+    if (outputEncodingValue.toBoolean(lexicalGlobalObject)) {
+        auto parsed = WebCore::parseEnumerationAllowBuffer(*lexicalGlobalObject, outputEncodingValue);
+        RETURN_IF_EXCEPTION(scope, {});
+        if (!parsed) {
+            return Bun::ERR::UNKNOWN_ENCODING(scope, lexicalGlobalObject, outputEncodingValue);
+        }
+        outputEncoding = parsed.value();
+    }
 
     // Get RSA padding mode and salt length if applicable
     int32_t padding = getPadding(lexicalGlobalObject, scope, options, {});

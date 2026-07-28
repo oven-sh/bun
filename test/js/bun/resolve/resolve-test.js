@@ -80,7 +80,7 @@ it("import.meta.resolveSync", async () => {
   );
 
   // "./baz.js" is not an exported subpath; Node rejects it and so do we.
-  expect(() => import.meta.resolveSync("package-json-exports/baz.js")).toThrow();
+  expect(() => import.meta.resolveSync("package-json-exports/baz.js")).toThrow(ResolveMessage);
 
   // works with TypeScript compiler edgecases like:
   // - If the file ends with .js and it doesn't exist, try again with .ts and .tsx

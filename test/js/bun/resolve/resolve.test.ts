@@ -1085,7 +1085,7 @@ it("exports map does not alias a .js suffix onto an extensionless key", async ()
       const req = createRequire(__filename);
       const probe = (spec, fn) => {
         try { console.log(spec + " " + JSON.stringify(fn())); }
-        catch (e) { console.log(spec + " ERR"); }
+        catch (e) { console.log(spec + " ERR:" + e.code); }
       };
       probe("pk/pub", () => req("pk/pub"));
       probe("pk/pub.js", () => req("pk/pub.js"));
@@ -1106,15 +1106,18 @@ it("exports map does not alias a .js suffix onto an extensionless key", async ()
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(stderr).toBe("");
+  // Node distinguishes ERR_PACKAGE_PATH_NOT_EXPORTED (no key) from MODULE_NOT_FOUND
+  // (pattern matched, target missing). Bun currently reports MODULE_NOT_FOUND for
+  // both; error-code parity is tracked separately.
   expect(stdout.trim().split("\n")).toEqual([
     'pk/pub "PUB"',
-    "pk/pub.js ERR",
-    "pk/esm.js ERR",
-    "pk/data.js ERR",
+    "pk/pub.js ERR:MODULE_NOT_FOUND",
+    "pk/esm.js ERR:MODULE_NOT_FOUND",
+    "pk/data.js ERR:MODULE_NOT_FOUND",
     'pk/pat/x "X"',
-    "pk/pat/x.js.js ERR",
+    "pk/pat/x.js.js ERR:MODULE_NOT_FOUND",
     'pk/exact.js "EXACT"',
-    "pk/main.js ERR",
+    "pk/main.js ERR:MODULE_NOT_FOUND",
   ]);
   expect(exitCode).toBe(0);
 });

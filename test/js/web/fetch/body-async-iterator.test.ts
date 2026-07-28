@@ -53,11 +53,12 @@ test("Response.arrayBuffer() with async iterable body does not crash with null d
   expect(exitCode).toBe(0);
 });
 
-// An async generator that never awaits fulfills every next() synchronously, so the direct
-// controller's drive loop would pump it forever (zero event-loop ticks, unbounded buffer)
-// without the controller's own backpressure signal. Each face runs in a subprocess whose
-// generator has a yield cap: on an unguarded build it hits that cap with ticks=0; with the
-// guard the paced consumer's five reads finish first.
+// An async generator that never awaits still returns a Pending next() (yield's implicit
+// Await), but the fulfilled reaction immediately calls next() again, so without the
+// controller's own backpressure signal the drive loop is a tight microtask chain that starves
+// timers and buffers without bound. Each face runs in a subprocess whose generator has a yield
+// cap: on an unguarded build it hits that cap with ticks=0; with the guard the paced consumer's
+// five reads finish first.
 describe("Response(async iterable).body: direct-controller pump guard", () => {
   const producer = (cap: number) => `
     const chunk = new Uint8Array(1024);

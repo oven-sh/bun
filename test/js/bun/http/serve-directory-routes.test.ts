@@ -394,10 +394,11 @@ describe("Bun.serve() directory routes", () => {
   });
 
   it("throws if the directory does not exist", () => {
+    using dir = tempDir("serve-dir-enoent", {});
     expect(() =>
       serve({
         port: 0,
-        routes: { "/static/*": { dir: "/nonexistent/path/that/does/not/exist" } },
+        routes: { "/static/*": { dir: join(String(dir), "does-not-exist") } },
       }),
     ).toThrow(expect.objectContaining({ code: "ENOENT" }));
   });

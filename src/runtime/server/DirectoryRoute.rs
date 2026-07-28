@@ -104,23 +104,28 @@ impl DirectoryRoute {
 
     #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub fn on_head_request(this: *mut DirectoryRoute, req: AnyRequest, resp: AnyResponse) {
-        bun_ptr::BackRef::from(NonNull::new(this).unwrap()).on(req, resp, Method::HEAD);
+        Self::on(NonNull::new(this).unwrap(), req, resp, Method::HEAD);
     }
 
     #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub fn on_request(this: *mut DirectoryRoute, req: AnyRequest, resp: AnyResponse) {
         let method = Method::find(req.method()).unwrap_or(Method::GET);
-        bun_ptr::BackRef::from(NonNull::new(this).unwrap()).on(req, resp, method);
+        Self::on(NonNull::new(this).unwrap(), req, resp, method);
     }
 
-    fn on(&self, mut req: AnyRequest, resp: AnyResponse, method: Method) {
-        debug_assert!(self.server.get().is_some());
-        self.ref_();
+    // `this_ptr` (not `&self`) because it is stashed as `FileResponseStream`'s
+    // ctx userdata; `on_stream_complete` may drop the last ref after a reload,
+    // and `Box::from_raw` on a `&self`-derived pointer is UB under Stacked
+    // Borrows. See src/CLAUDE.md §Pointer provenance at FFI boundaries.
+    fn on(this_ptr: NonNull<DirectoryRoute>, mut req: AnyRequest, resp: AnyResponse, method: Method) {
+        let this = bun_ptr::BackRef::from(this_ptr);
+        debug_assert!(this.server.get().is_some());
+        this.ref_();
         let guard = ResponseGuard {
-            route: NonNull::from(self),
+            route: this_ptr,
             resp,
         };
-        if let Some(mut server) = self.server.get() {
+        if let Some(mut server) = this.server.get() {
             server.on_pending_request();
             resp.timeout(server.config().idle_timeout);
         }
@@ -129,7 +134,7 @@ impl DirectoryRoute {
         let mut path_buf = bun_paths::path_buffer_pool::get();
         let Some(rel_len) = resolve_subpath(
             req.url(),
-            &self.url_prefix,
+            &this.url_prefix,
             &mut decode_buf.0[..],
             &mut path_buf.0[..],
         ) else {
@@ -140,7 +145,7 @@ impl DirectoryRoute {
         drop(decode_buf);
         let rel: &[u8] = &path_buf.0[..rel_len];
 
-        let Some((file, stat, is_index)) = self.open_subpath(rel) else {
+        let Some((file, stat, is_index)) = this.open_subpath(rel) else {
             bun_output::scoped_log!(DirectoryRoute, "miss  {}", bstr::BStr::new(rel));
             write_miss(&mut req, resp);
             return;
@@ -148,7 +153,7 @@ impl DirectoryRoute {
 
         let size: u64 = u64::try_from(stat.st_size.max(0)).expect("int cast");
 
-        let (last_modified_ms, lm_buf, lm_len) = self.stat_cache_lookup(rel, &stat);
+        let (last_modified_ms, lm_buf, lm_len) = this.stat_cache_lookup(rel, &stat);
         let last_modified = (lm_len > 0).then(|| &lm_buf[..lm_len]);
 
         let mut etag_buf = [0u8; 40];
@@ -186,7 +191,7 @@ impl DirectoryRoute {
             resp.write_header(b"last-modified", lm);
         }
         resp.write_header(b"etag", etag);
-        if let Some(srv) = self.server.get() {
+        if let Some(srv) = this.server.get() {
             if let Some(alt) = srv.h3_alt_svc() {
                 resp.write_header(b"alt-svc", alt);
             }
@@ -233,7 +238,7 @@ impl DirectoryRoute {
             size
         );
 
-        let server = self.server.get().unwrap();
+        let server = this.server.get().unwrap();
         FileResponseStream::start(&FileResponseStreamOptions {
             fd: file.into_raw(),
             auto_close: true,
@@ -282,7 +287,7 @@ impl DirectoryRoute {
     fn open_beneath(&self, rel: &[u8]) -> Option<File> {
         let mut buf = bun_paths::path_buffer_pool::get();
         let zrel = resolve_path::z(rel, &mut *buf);
-        let flags = bun_sys::O::RDONLY | bun_sys::O::CLOEXEC | bun_sys::O::NONBLOCK;
+        let flags = bun_sys::O::RDONLY | bun_sys::O::CLOEXEC;
         #[cfg(any(target_os = "linux", target_os = "android"))]
         let fd = bun_sys::openat2_in_root(self.root_fd.get(), zrel, flags, 0).ok()?;
         #[cfg(not(any(target_os = "linux", target_os = "android")))]

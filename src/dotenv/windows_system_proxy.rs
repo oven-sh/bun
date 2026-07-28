@@ -349,6 +349,10 @@ impl Pac {
     }
 
     fn resolve(&self, url: &bun_url::URL<'_>) -> Option<&'static [u8]> {
+        #[cfg(windows)]
+        if self.inner.failed.load(std::sync::atomic::Ordering::Relaxed) {
+            return None;
+        }
         let key = pac_cache_key(url);
         if let Some(&cached) = self.cache.lock().ok()?.get(key.as_slice()) {
             return cached;

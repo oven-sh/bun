@@ -47,6 +47,38 @@ describe.skipIf(isWindows)("install cache directory inside a dangling symlink", 
     expect(exitCode).not.toBe(0);
   });
 
+  test.concurrent("bunfig install.cache.dir exits with a cache-directory error instead of spinning", async () => {
+    using dir = tempDir("cache-dir-dangling-bunfig", {
+      "proj/package.json": JSON.stringify({ name: "x", version: "1.0.0", dependencies: { "any-pkg": "1.0.0" } }),
+    });
+    const root = String(dir);
+    symlinkSync(join(root, "does-not-exist"), join(root, "dangling"));
+    const cacheDir = join(root, "dangling", "cache");
+    await Bun.write(
+      join(root, "proj", "bunfig.toml"),
+      `[install]\nregistry = "http://127.0.0.1:1/"\n[install.cache]\ndir = ${JSON.stringify(cacheDir)}\n`,
+    );
+    const env = { ...bunEnv };
+    delete env.BUN_INSTALL_CACHE_DIR;
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "install"],
+      cwd: join(root, "proj"),
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+      timeout: 15_000,
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect({ signalCode: proc.signalCode, stdout, stderr }).toMatchObject({
+      signalCode: null,
+      stderr: expect.stringContaining(`error: cache directory "${cacheDir}" is not creatable: ENOENT`),
+    });
+    expect(stderr).not.toContain("ConnectionRefused");
+    expect(exitCode).not.toBe(0);
+  });
+
   test.concurrent("runtime auto-install exits with a cache-directory error instead of spinning", async () => {
     const ctx = setup();
     using _dir = ctx.dir;

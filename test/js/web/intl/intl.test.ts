@@ -104,6 +104,60 @@ describe("Intl.DateTimeFormat", () => {
     }
     expect(out).toMatchSnapshot();
   });
+
+  // formatRange must render the same timeStyle pattern as format for locales whose
+  // full/long time patterns use literal separators instead of ':'. Previously the
+  // UDateIntervalFormat was opened with a redundant -u-hc- extension that, in ICU < 76
+  // (ICU-22669), caused DateTimePatternGenerator to drop the style pattern and fall back
+  // to "H:mm:ss", so formatRange disagreed with format on the same instant.
+  test("formatRange preserves timeStyle pattern (ja/ko/th literal separators)", () => {
+    const a = new Date(Date.UTC(2024, 0, 15, 13, 4, 5));
+    const b = new Date(Date.UTC(2024, 6, 4, 3, 30, 0));
+    const hms = (f: Intl.DateTimeFormat, d: Date) =>
+      f
+        .formatToParts(d)
+        .filter(p => p.type === "hour" || p.type === "minute" || p.type === "second" || p.type === "literal")
+        .map(p => p.value)
+        .join("")
+        .trim();
+    for (const [locale, timeStyle] of [
+      ["ja-JP", "full"],
+      ["ko-KR", "full"],
+      ["ko-KR", "long"],
+      ["th-TH", "full"],
+    ] as const) {
+      const f = new Intl.DateTimeFormat(locale, { timeZone: "UTC", timeStyle });
+      const single = hms(f, a);
+      const range = f.formatRange(a, b);
+      // The exact literals are CLDR-version-specific; the invariant is that whatever
+      // time string format(a) produces must appear verbatim in formatRange(a, b).
+      expect(range, `${locale} timeStyle:${timeStyle}: "${single}" not found in "${range}"`).toContain(single);
+      // formatRangeToParts must agree with formatToParts on the literal between hour and minute.
+      const singleSep = f
+        .formatToParts(a)
+        .find((p, i, arr) => p.type === "literal" && arr[i - 1]?.type === "hour")!.value;
+      const rangeSep = f
+        .formatRangeToParts(a, b)
+        .find((p, i, arr) => p.type === "literal" && arr[i - 1]?.type === "hour")!.value;
+      expect({ locale, timeStyle, rangeSep }).toEqual({ locale, timeStyle, rangeSep: singleSep });
+    }
+  });
+
+  // The -u-hc- extension is still applied when hourCycle is explicit, so h11/h12/h23/h24
+  // must continue to be honored by formatRange (midnight is where h11 vs h12 differ).
+  test("formatRange honors explicit hourCycle", () => {
+    const a = new Date(Date.UTC(2024, 0, 15, 0, 4, 0));
+    const b = new Date(Date.UTC(2024, 0, 15, 0, 30, 0));
+    const hourOf = (parts: Intl.DateTimeRangeFormatPart[]) => parts.find(p => p.type === "hour")!.value;
+    const expected = { h11: "0", h12: "12", h23: "00", h24: "24" } as const;
+    for (const hourCycle of ["h11", "h12", "h23", "h24"] as const) {
+      const f = new Intl.DateTimeFormat("en-US", { timeZone: "UTC", hour: "numeric", minute: "2-digit", hourCycle });
+      expect({ hourCycle, hour: hourOf(f.formatRangeToParts(a, b)) }).toEqual({
+        hourCycle,
+        hour: expected[hourCycle],
+      });
+    }
+  });
 });
 
 // ---------------------------------------------------------------------------

@@ -2274,8 +2274,8 @@ impl BlobExt for Blob {
     /// Live size for the W3C slice algorithm; does not write `self.size`.
     fn view_size(&self) -> SizeType {
         if let Some(store) = self.store.get() {
-            if matches!(store.data, store::Data::File(_)) && !self.size_is_explicit.get() {
-                return self.stat_file_size(store).unwrap_or(MAX_SIZE);
+            if matches!(store.data, store::Data::File(_)) {
+                return self.stat_file_size(store).unwrap_or_else(|| self.size.get());
             }
         }
         self.size.get()

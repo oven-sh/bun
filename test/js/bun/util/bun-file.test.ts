@@ -296,6 +296,10 @@ describe("BunFile exists()/size/lastModified reflect the current filesystem stat
     fs.writeFileSync(p, "BunFoo");
     const f = Bun.file(p);
     expect(await f.slice(-3, 4).slice(-1, 3).text()).toBe("F");
+
+    fs.writeFileSync(p, "abc");
+    const s = Bun.file(p).slice(0, 100);
+    expect({ size: s.size, last: await s.slice(-1).text() }).toEqual({ size: 3, last: "c" });
   });
 
   test("expect().toHaveLength / .toBeEmpty do not poison the source blob's later read", async () => {

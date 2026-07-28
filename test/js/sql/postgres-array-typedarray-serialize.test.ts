@@ -111,13 +111,17 @@ test("Uint8Array element in a BYTEA array is hex-encoded like Buffer", async () 
   });
 });
 
-test("DataView and bare ArrayBuffer elements in a BYTEA array are hex-encoded like Buffer", async () => {
+test("DataView and bare ArrayBuffer/SharedArrayBuffer elements in a BYTEA array are hex-encoded like Buffer", async () => {
   const backing = new Uint8Array([0xca, 0xfe]);
+  const sab = new SharedArrayBuffer(2);
+  new Uint8Array(sab).set(backing);
   const fromDataView = await bindLiteral(sql => sql.array([new DataView(backing.buffer)], "BYTEA"));
   const fromArrayBuffer = await bindLiteral(sql => sql.array([backing.buffer], "BYTEA"));
-  expect({ fromDataView, fromArrayBuffer }).toEqual({
+  const fromSharedArrayBuffer = await bindLiteral(sql => sql.array([sab], "BYTEA"));
+  expect({ fromDataView, fromArrayBuffer, fromSharedArrayBuffer }).toEqual({
     fromDataView: '{"\\\\xcafe"}',
     fromArrayBuffer: '{"\\\\xcafe"}',
+    fromSharedArrayBuffer: '{"\\\\xcafe"}',
   });
 });
 

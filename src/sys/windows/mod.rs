@@ -157,6 +157,7 @@ pub use bun_windows_sys::FILE_DEVICE_NAMED_PIPE;
 pub use bun_windows_sys::FILE_DEVICE_NULL;
 pub use bun_windows_sys::FILE_DIRECTORY_FILE;
 pub use bun_windows_sys::FILE_DIRECTORY_INFORMATION;
+pub use bun_windows_sys::FILE_ID_FULL_DIR_INFORMATION;
 pub use bun_windows_sys::FILE_FS_DEVICE_INFORMATION;
 pub use bun_windows_sys::FILE_FS_VOLUME_INFORMATION;
 pub use bun_windows_sys::FILE_INFO_BY_HANDLE_CLASS;

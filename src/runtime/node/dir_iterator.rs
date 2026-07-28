@@ -445,8 +445,22 @@ mod platform {
     use bun_sys::windows::ntdll;
     use bun_sys::windows::{
         BOOLEAN, FALSE, FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_REPARSE_POINT,
-        FILE_DIRECTORY_INFORMATION, IO_STATUS_BLOCK, TRUE, UNICODE_STRING, Win32ErrorExt as _,
+        FILE_DIRECTORY_INFORMATION, FILE_ID_FULL_DIR_INFORMATION, IO_STATUS_BLOCK, TRUE,
+        UNICODE_STRING, Win32ErrorExt as _,
     };
+
+    // The shared prefix (through `FileNameLength`) of both info classes is
+    // layout-identical; only the `FileName` offset differs. Static asserts for
+    // both layouts live alongside the struct definitions in
+    // `bun_windows_sys::externs`.
+    const _: () = assert!(
+        offset_of!(FILE_DIRECTORY_INFORMATION, NextEntryOffset)
+            == offset_of!(FILE_ID_FULL_DIR_INFORMATION, NextEntryOffset)
+            && offset_of!(FILE_DIRECTORY_INFORMATION, FileAttributes)
+                == offset_of!(FILE_ID_FULL_DIR_INFORMATION, FileAttributes)
+            && offset_of!(FILE_DIRECTORY_INFORMATION, FileNameLength)
+                == offset_of!(FILE_ID_FULL_DIR_INFORMATION, FileNameLength)
+    );
 
     // While the official api docs guarantee FILE_BOTH_DIR_INFORMATION to be aligned properly
     // this may not always be the case (e.g. due to faulty VM/Sandboxing tools)
@@ -546,6 +560,11 @@ mod platform {
         pub index: usize,
         pub end_index: usize,
         pub first: bool,
+        /// Starts at `FileIdFullDirectoryInformation` (reparse tag + file id in
+        /// the same enumeration); falls back to `FileDirectoryInformation` if
+        /// the filesystem/redirector rejects it with
+        /// `STATUS_INVALID_INFO_CLASS` / `STATUS_NOT_SUPPORTED`.
+        pub info_class: w::FILE_INFORMATION_CLASS,
         pub name_data: <Select<USE_WINDOWS_OSPATH> as WindowsOsPath>::NameData,
         /// Optional kernel-side wildcard filter passed to NtQueryDirectoryFile.
         /// Evaluated by FsRtlIsNameInExpression (case-insensitive, supports `*` and `?`).
@@ -597,7 +616,7 @@ mod platform {
 
                     // SAFETY: FFI; `dir` is a directory HANDLE, `buf` is 8192 8-byte-aligned
                     // bytes, `io`/`filter_us` live on this stack frame for the call duration.
-                    let rc = unsafe {
+                    let mut rc = unsafe {
                         ntdll::NtQueryDirectoryFile(
                             self.dir.native(),
                             core::ptr::null_mut(),
@@ -606,7 +625,7 @@ mod platform {
                             &mut io,
                             self.buf.as_mut_ptr().cast(),
                             self.buf.len() as u32,
-                            w::FILE_INFORMATION_CLASS::FileDirectoryInformation,
+                            self.info_class,
                             FALSE as BOOLEAN,
                             filter_ptr,
                             if self.first {
@@ -616,6 +635,40 @@ mod platform {
                             },
                         )
                     };
+
+                    // Some redirectors / filter drivers reject
+                    // FileIdFullDirectoryInformation. Fall back once, on the
+                    // first call only (RestartScan=TRUE), so no entries are
+                    // lost.
+                    if self.first
+                        && self.info_class
+                            == w::FILE_INFORMATION_CLASS::FileIdFullDirectoryInformation
+                        && matches!(
+                            rc,
+                            w::NTSTATUS::INVALID_INFO_CLASS
+                                | w::NTSTATUS::NOT_SUPPORTED
+                                | w::NTSTATUS::NOT_IMPLEMENTED
+                        )
+                    {
+                        self.info_class = w::FILE_INFORMATION_CLASS::FileDirectoryInformation;
+                        io = bun_core::ffi::zeroed();
+                        // SAFETY: same preconditions as the call above.
+                        rc = unsafe {
+                            ntdll::NtQueryDirectoryFile(
+                                self.dir.native(),
+                                core::ptr::null_mut(),
+                                core::ptr::null_mut(),
+                                core::ptr::null_mut(),
+                                &mut io,
+                                self.buf.as_mut_ptr().cast(),
+                                self.buf.len() as u32,
+                                self.info_class,
+                                FALSE as BOOLEAN,
+                                filter_ptr,
+                                TRUE as BOOLEAN,
+                            )
+                        };
+                    }
 
                     self.first = false;
 
@@ -700,8 +753,14 @@ mod platform {
                 // what remains in buf (source) so a misbehaving driver cannot
                 // walk us past the end of either buffer.
                 let max_name_u16 = <Select<USE_WINDOWS_OSPATH> as WindowsOsPath>::max_name_u16();
-                let name_byte_offset =
-                    entry_offset + offset_of!(FILE_DIRECTORY_INFORMATION, FileName);
+                let file_name_field_offset = if self.info_class
+                    == w::FILE_INFORMATION_CLASS::FileIdFullDirectoryInformation
+                {
+                    offset_of!(FILE_ID_FULL_DIR_INFORMATION, FileName)
+                } else {
+                    offset_of!(FILE_DIRECTORY_INFORMATION, FileName)
+                };
+                let name_byte_offset = entry_offset + file_name_field_offset;
                 let buf_remaining_u16 =
                     self.buf.len().saturating_sub(name_byte_offset) / size_of::<u16>();
                 let name_len_u16 = (file_name_length / 2)
@@ -709,9 +768,10 @@ mod platform {
                     .min(buf_remaining_u16);
                 // name_byte_offset + name_len_u16*2 ≤ buf.len() by clamp above.
                 // `buf` follows the 8-byte `Fd` in a `repr(C, align(8))` struct so
-                // it is itself 8-byte aligned, and per MS docs each record (and
-                // thus its FileName at offset 64) lands on an 8-byte boundary —
-                // bytemuck checks the u8→u16 alignment at runtime.
+                // it is itself 8-byte aligned, and per MS docs each record lands
+                // on an 8-byte boundary; the FileName field offset (64 or 80) is
+                // a multiple of 2 for both classes — bytemuck checks the u8→u16
+                // alignment at runtime.
                 let dir_info_name: &[u16] = bytemuck::cast_slice(
                     &self.buf[name_byte_offset..name_byte_offset + name_len_u16 * 2],
                 );
@@ -934,12 +994,14 @@ where
         }
         #[cfg(windows)]
         {
+            use bun_sys::windows as w;
             return Self {
                 iter: NewIterator {
                     dir,
                     index: 0,
                     end_index: 0,
                     first: true,
+                    info_class: w::FILE_INFORMATION_CLASS::FileIdFullDirectoryInformation,
                     // zero-init avoids the invalid_value lint on integer arrays
                     buf: [0u8; 8192],
                     // SAFETY: NameData is [u8; 513] or [u16; 257]; zero is a valid bit pattern.

@@ -382,6 +382,28 @@ pub struct FILE_DIRECTORY_INFORMATION {
     pub FileName: [WCHAR; 1],
 }
 
+/// `FILE_ID_FULL_DIR_INFORMATION` (`ntifs.h`) — `NtQueryDirectoryFile` record
+/// for `FileIdFullDirectoryInformation`. Superset of
+/// `FILE_DIRECTORY_INFORMATION`: the first 64 bytes (through `FileNameLength`)
+/// are layout-identical, then `EaSize` (the reparse tag when
+/// `FILE_ATTRIBUTE_REPARSE_POINT` is set) and `FileId`.
+#[repr(C)]
+pub struct FILE_ID_FULL_DIR_INFORMATION {
+    pub NextEntryOffset: ULONG,
+    pub FileIndex: ULONG,
+    pub CreationTime: LARGE_INTEGER,
+    pub LastAccessTime: LARGE_INTEGER,
+    pub LastWriteTime: LARGE_INTEGER,
+    pub ChangeTime: LARGE_INTEGER,
+    pub EndOfFile: LARGE_INTEGER,
+    pub AllocationSize: LARGE_INTEGER,
+    pub FileAttributes: ULONG,
+    pub FileNameLength: ULONG,
+    pub EaSize: ULONG,
+    pub FileId: LARGE_INTEGER,
+    pub FileName: [WCHAR; 1],
+}
+
 /// `FILE_INFORMATION_CLASS` (`wdm.h`) — selector for `NtQuery*` /
 /// `NtSetInformationFile`. Newtype-over-u32 so unmapped values round-trip.
 #[repr(transparent)]
@@ -393,6 +415,7 @@ impl FILE_INFORMATION_CLASS {
     pub const FileDispositionInformation: Self = Self(13);
     pub const FileAllInformation: Self = Self(18);
     pub const FileEndOfFileInformation: Self = Self(20);
+    pub const FileIdFullDirectoryInformation: Self = Self(38);
     pub const FileDispositionInformationEx: Self = Self(64);
 }
 
@@ -474,6 +497,18 @@ const _: () = {
     assert!(core::mem::size_of::<FILE_FS_DEVICE_INFORMATION>() == 8);
     assert!(core::mem::size_of::<FILE_FS_VOLUME_INFORMATION>() == 24);
     assert!(core::mem::offset_of!(FILE_FS_VOLUME_INFORMATION, VolumeSerialNumber) == 8);
+    // FILE_ID_FULL_DIR_INFORMATION shares the FILE_DIRECTORY_INFORMATION prefix
+    // through FileNameLength; the directory iterator reads NextEntryOffset /
+    // FileAttributes / FileNameLength from the shared prefix regardless of
+    // which class is active.
+    assert!(core::mem::offset_of!(FILE_DIRECTORY_INFORMATION, FileAttributes) == 56);
+    assert!(core::mem::offset_of!(FILE_DIRECTORY_INFORMATION, FileNameLength) == 60);
+    assert!(core::mem::offset_of!(FILE_DIRECTORY_INFORMATION, FileName) == 64);
+    assert!(core::mem::offset_of!(FILE_ID_FULL_DIR_INFORMATION, FileAttributes) == 56);
+    assert!(core::mem::offset_of!(FILE_ID_FULL_DIR_INFORMATION, FileNameLength) == 60);
+    assert!(core::mem::offset_of!(FILE_ID_FULL_DIR_INFORMATION, EaSize) == 64);
+    assert!(core::mem::offset_of!(FILE_ID_FULL_DIR_INFORMATION, FileId) == 72);
+    assert!(core::mem::offset_of!(FILE_ID_FULL_DIR_INFORMATION, FileName) == 80);
 };
 
 /// `DEVICE_TYPE` values (`ntddk.h`).
@@ -1050,6 +1085,8 @@ impl NTSTATUS {
     /// `NtSetInformationFile(FileDispositionInformation)`.
     pub const CANNOT_DELETE: NTSTATUS = NTSTATUS(0xC000_0121);
     pub const NOT_IMPLEMENTED: NTSTATUS = NTSTATUS(0xC000_0002);
+    pub const INVALID_INFO_CLASS: NTSTATUS = NTSTATUS(0xC000_0003);
+    pub const NOT_SUPPORTED: NTSTATUS = NTSTATUS(0xC000_00BB);
     pub const NO_MORE_FILES: NTSTATUS = NTSTATUS(0x8000_0006);
     pub const NO_SUCH_FILE: NTSTATUS = NTSTATUS(0xC000_000F);
     /// `STATUS_TIMEOUT` — returned by `NtWaitForSingleObject` /

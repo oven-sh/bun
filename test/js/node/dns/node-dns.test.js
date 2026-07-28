@@ -1,5 +1,6 @@
 import { beforeAll, describe, expect, it, setDefaultTimeout, test } from "bun:test";
 import { isWindows } from "harness";
+import * as dgram from "node:dgram";
 import * as dns from "node:dns";
 import * as dns_promises from "node:dns/promises";
 import * as fs from "node:fs";
@@ -406,6 +407,93 @@ test("dns.promises.reverse", async () => {
     let hostnames = await dns.promises.reverse("2606:4700:4700::1111");
     expect(hostnames).toContain("one.one.one.one");
   }
+});
+
+// https://github.com/oven-sh/bun/issues/6580
+describe("dns.reverse rejects invalid IP strings with EINVAL", () => {
+  const invalid = ["1.2.3", "127.1", "1", "999.9.9.9", "not-an-ip", "1.2.3.4.5", ""];
+
+  it("callback form throws synchronously", () => {
+    for (const ip of invalid) {
+      let called = false;
+      expect(() => dns.reverse(ip, () => (called = true))).toThrow(
+        expect.objectContaining({ code: "EINVAL", syscall: "getHostByAddr" }),
+      );
+      expect(called).toBe(false);
+    }
+  });
+
+  it("callback form validates argument types in order", () => {
+    // non-string ip is ERR_INVALID_ARG_TYPE for "name", checked before callback
+    expect(() => dns.reverse(123, () => {})).toThrow(expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }));
+    expect(() => dns.reverse(123, 456)).toThrow(/"name" argument/);
+    // callback is validated before the IP string is parsed
+    expect(() => dns.reverse("1.2.3", 123)).toThrow(expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }));
+  });
+
+  it("promises form rejects asynchronously and never queries", async () => {
+    // Local PTR responder: records every queried name and answers with a fixed PTR.
+    const wire = [];
+    const srv = dgram.createSocket("udp4");
+    await new Promise(resolve => srv.bind(0, "127.0.0.1", resolve));
+    srv.on("message", (m, ri) => {
+      let o = 12;
+      const labels = [];
+      while (m[o]) {
+        labels.push(m.subarray(o + 1, o + 1 + m[o]).toString());
+        o += 1 + m[o];
+      }
+      o++;
+      wire.push(labels.join("."));
+      const q = m.subarray(12, o + 4);
+      const enc = n =>
+        Buffer.concat([...n.split(".").map(p => Buffer.concat([Buffer.from([p.length]), Buffer.from(p)])), Buffer.from([0])]);
+      const rd = enc("host.example");
+      const a = Buffer.concat([Buffer.from([0xc0, 12, 0, 12, 0, 1, 0, 0, 0, 60, 0, rd.length]), rd]);
+      const h = Buffer.alloc(12);
+      h.writeUInt16BE(m.readUInt16BE(0), 0);
+      h.writeUInt16BE(0x8180, 2);
+      h.writeUInt16BE(1, 4);
+      h.writeUInt16BE(1, 6);
+      srv.send(Buffer.concat([h, q, a]), ri.port, ri.address);
+    });
+
+    try {
+      const resolver = new dns.promises.Resolver({ timeout: 1500, tries: 1 });
+      resolver.setServers([`127.0.0.1:${srv.address().port}`]);
+
+      for (const ip of invalid) {
+        const p = resolver.reverse(ip);
+        expect(p).toBeInstanceOf(Promise);
+        let err;
+        await p.catch(e => (err = e));
+        expect(err).toEqual(
+          expect.objectContaining({
+            code: "EINVAL",
+            syscall: "getHostByAddr",
+            ...(ip ? { hostname: ip } : {}),
+          }),
+        );
+        if (!ip) expect("hostname" in err).toBe(false);
+      }
+
+      // top-level dns.promises.reverse should behave the same
+      for (const ip of ["999.9.9.9", "not-an-ip", "1.2.3.4.5"]) {
+        await expect(dns.promises.reverse(ip)).rejects.toEqual(
+          expect.objectContaining({ code: "EINVAL", syscall: "getHostByAddr", hostname: ip }),
+        );
+      }
+
+      // non-string input is a synchronous ERR_INVALID_ARG_TYPE even in the promises form
+      expect(() => dns.promises.reverse(123)).toThrow(expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }));
+
+      // control: a valid IP still reaches the local responder
+      expect(await resolver.reverse("192.0.2.1")).toEqual(["host.example"]);
+      expect(wire).toEqual(["1.2.0.192.in-addr.arpa"]);
+    } finally {
+      await new Promise(resolve => srv.close(resolve));
+    }
+  });
 });
 
 describe("test invalid arguments", () => {

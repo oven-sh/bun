@@ -97,6 +97,18 @@ function getDefaultResultOrder() {
   return defaultResultOrder();
 }
 
+// Node's reverse() gates on uv_inet_pton (strict dotted quad / IPv6) and fails
+// with UV_EINVAL before anything hits the resolver. c-ares' ares_inet_pton is
+// looser and zero-fills short forms like "1.2.3", so we gate with isIP() here.
+function reverseInvalidIPError(ip) {
+  const err = new Error(ip ? `getHostByAddr EINVAL ${ip}` : "getHostByAddr EINVAL");
+  err.errno = -22;
+  err.code = "EINVAL";
+  err.syscall = "getHostByAddr";
+  if (ip) err.hostname = ip;
+  return err;
+}
+
 // ares_inet_pton rejects IPv6 zone identifiers; Node's uv_inet_pton strips them.
 function stripZoneId(host) {
   const pct = host.indexOf("%");
@@ -621,8 +633,12 @@ var InternalResolver = class Resolver {
   }
 
   reverse(ip, callback) {
+    validateString(ip, "name");
     if (typeof callback !== "function") {
       throw $ERR_INVALID_ARG_TYPE("callback", "function", callback);
+    }
+    if (isIP(ip) === 0) {
+      throw reverseInvalidIPError(ip);
     }
 
     Resolver.#getResolver(this)
@@ -843,6 +859,10 @@ const promises = {
     return translateErrorCode(dns.resolveCname(hostname));
   },
   reverse(ip) {
+    validateString(ip, "name");
+    if (isIP(ip) === 0) {
+      return Promise.$reject(reverseInvalidIPError(ip));
+    }
     return translateErrorCode(dns.reverse(ip));
   },
 
@@ -935,6 +955,10 @@ const promises = {
     }
 
     reverse(ip) {
+      validateString(ip, "name");
+      if (isIP(ip) === 0) {
+        return Promise.$reject(reverseInvalidIPError(ip));
+      }
       return translateErrorCode(Resolver.#getResolver(this).reverse(ip));
     }
 

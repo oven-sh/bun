@@ -366,8 +366,7 @@ pub struct PackageManager {
     /// TODO: Does this need to be atomic? It seems to be accessed only from the main thread.
     pub pending_pre_calc_hashes: AtomicU32,
     pub pending_tasks: AtomicU32,
-    /// Bumped by [`wake_raw`]; [`sleep_until`] futex-waits on it on the
-    /// [`AnyEventLoop::Js`] arm instead of ticking the JS loop.
+    /// Bumped by [`wake_raw`]; futex target for [`sleep_until`] on the Js arm.
     pub wake_counter: AtomicU32,
     pub total_tasks: u32,
     pub preallocated_network_tasks: PreallocatedNetworkTasks,

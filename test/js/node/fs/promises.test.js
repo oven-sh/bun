@@ -493,7 +493,7 @@ describe("AbortSignal rejections use node's AbortError shape", () => {
       // jumps straight from 256 KiB to SIZE.
       const ac = new AbortController();
       const promise = fsPromises.readFile(fd, { signal: ac.signal });
-      const deadline = performance.now() + 10_000;
+      const deadline = performance.now() + 4_000;
       while (pos() <= 256 * 1024) {
         if (performance.now() > deadline) {
           ac.abort();

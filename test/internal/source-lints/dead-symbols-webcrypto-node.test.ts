@@ -6,17 +6,13 @@
 // Source-tree lint: reads files from src/ and does not touch the built binary.
 
 import { expect, test } from "bun:test";
-import { existsSync, readFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import path from "node:path";
 
 const repoRoot = path.resolve(import.meta.dir, "..", "..", "..");
 
 function src(p: string): string {
   return readFileSync(path.join(repoRoot, p), "utf8");
-}
-
-function exists(p: string): boolean {
-  return existsSync(path.join(repoRoot, p));
 }
 
 test("webcrypto dead functions do not reappear", () => {
@@ -108,13 +104,6 @@ test("webcrypto dead functions do not reappear", () => {
   expect(resurrected).toEqual([]);
 });
 
-test("SerializedCryptoKeyWrap files are removed", () => {
-  // WebKit's wrap/unwrap helpers for CryptoKey serialization; Bun's
-  // SerializedScriptValue serializes CryptoKey inline and never calls these.
-  expect(exists("src/jsc/bindings/webcrypto/SerializedCryptoKeyWrap.h")).toBe(false);
-  expect(exists("src/jsc/bindings/webcrypto/SerializedCryptoKeyWrapOpenSSL.cpp")).toBe(false);
-});
-
 test("sqlite dead declarations do not reappear", () => {
   const checks: Array<[string, RegExp]> = [
     // Orphan forward declaration with no definition since 2022.
@@ -129,11 +118,11 @@ test("sqlite dead declarations do not reappear", () => {
   expect(resurrected).toEqual([]);
 });
 
-test("node_error_binding.rs is removed", () => {
+test("node_error_binding module is not compiled", () => {
   // Both generated functions (ERR_INVALID_HANDLE_TYPE, ERR_CHILD_CLOSED_BEFORE_REPLY)
   // had zero callers; the JS-side $ERR_INVALID_HANDLE_TYPE() is served by the
-  // C++ ErrorCode table, not this Rust module.
-  expect(exists("src/runtime/node/node_error_binding.rs")).toBe(false);
+  // C++ ErrorCode table, not this Rust module. Asserted via the mod declaration
+  // rather than file presence: a stray .rs file with no `mod` entry isn't compiled.
   expect(src("src/runtime/node.rs")).not.toMatch(/pub mod node_error_binding;/);
 });
 

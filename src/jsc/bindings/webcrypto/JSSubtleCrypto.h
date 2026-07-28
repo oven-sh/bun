@@ -22,7 +22,6 @@
 
 #if ENABLE(WEB_CRYPTO)
 
-#include "JSDOMConvertEnumeration.h"
 #include "JSDOMWrapper.h"
 #include "SubtleCrypto.h"
 #include <wtf/NeverDestroyed.h>

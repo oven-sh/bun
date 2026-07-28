@@ -1652,38 +1652,6 @@ impl CommandLineReporter {
         Some(buffered)
     }
 
-    pub fn write_lcov_only(
-        &mut self,
-        vm: &mut VirtualMachine,
-        opts: &CodeCoverageOptions,
-        out_path: &bun_core::ZStr,
-    ) -> crate::Result<()> {
-        let Some(buffered) = self.render_lcov(vm, opts) else {
-            return Ok(());
-        };
-        let file = match File::openat(
-            Fd::cwd(),
-            out_path,
-            bun_sys::O::CREAT | bun_sys::O::WRONLY | bun_sys::O::TRUNC | bun_sys::O::CLOEXEC,
-            0o644,
-        ) {
-            bun_sys::Result::Err(e) => {
-                Output::err(
-                    crate::Error::lcovCoverageError,
-                    "failed to open coverage fragment {}\n{}",
-                    (bstr::BStr::new(out_path.as_bytes()), e),
-                );
-                return Err(crate::Error::OpenFailed);
-            }
-            bun_sys::Result::Ok(f) => f,
-        };
-        match file.write_all(&buffered) {
-            bun_sys::Result::Ok(()) => {}
-            bun_sys::Result::Err(e) => return Err(crate::Error::from(e)),
-        }
-        Ok(())
-    }
-
     pub fn print_code_coverage<
         const REPORTERS_TEXT: bool,
         const REPORTERS_LCOV: bool,
@@ -3416,6 +3384,10 @@ impl TestCommand {
 
             if let Some(junit) = reporter.reporters.junit.as_mut() {
                 junit.file_end_ns = bun::Timespec::now(bun::TimespecMockMode::ForceRealTime).ns();
+                while !junit.suite_stack.is_empty() {
+                    let _ = junit.end_test_suite();
+                }
+                junit.current_file = Box::default();
             }
 
             if Output::is_github_action() && reporter.worker_ipc_file_idx.is_none() {

@@ -81,11 +81,6 @@ function parseLog(raw) {
     const m = /^\x1b_bk;t=(\d+)\x07(.*)$/.exec(line);
     const ts = m ? Number(m[1]) : null;
     const text = m ? m[2] : line;
-    const timing = /^  (\d+(?:\.\d+)?)s (test\/\S+)$/.exec(text);
-    if (timing) {
-      out.push([timing[2], Math.round(parseFloat(timing[1]) * 1000)]);
-      continue;
-    }
     const hdr = /^(--- )?\[\d+\/\d+\] (.+)$/.exec(text);
     if (hdr) {
       emit(ts);

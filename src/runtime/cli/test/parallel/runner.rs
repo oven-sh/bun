@@ -689,14 +689,6 @@ fn worker_flush_aggregates(
             let _ = junit.end_test_suite();
         }
         junit.current_file = Box::default();
-        let start = junit.sent_upto;
-        if junit.contents.len() > start {
-            wf.begin(frame::Kind::JunitChunk);
-            wf.u32(u32::MAX); // tail belongs to no single file; sorts last
-            wf.str(&junit.contents[start..]);
-            cmds.send(wf.finish());
-            junit.sent_upto = junit.contents.len();
-        }
     }
     if ctx.test_options.coverage.enabled {
         if let Some(lcov) = reporter.render_lcov(vm, &ctx.test_options.coverage) {

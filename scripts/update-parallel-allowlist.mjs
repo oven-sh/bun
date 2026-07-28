@@ -87,12 +87,11 @@ async function collectFlakes(builds) {
     for (;;) {
       const build = queue.shift();
       if (!build) return;
-      let annotations;
-      try {
-        annotations = await (await api(`builds/${build}/annotations?per_page=100`)).json();
-      } catch (e) {
-        console.error(`  skip build ${build}: ${e?.message || e}`);
-        continue;
+      const annotations = [];
+      for (let page = 1; ; page++) {
+        const batch = await (await api(`builds/${build}/annotations?per_page=100&page=${page}`)).json();
+        annotations.push(...batch);
+        if (batch.length < 100) break;
       }
       const seen = new Set();
       for (const a of annotations) {
@@ -139,7 +138,8 @@ const isGood = file => {
 
 const byDir = new Map();
 for (const file of files) {
-  const dir = file.slice(0, file.lastIndexOf("/"));
+  const slash = file.lastIndexOf("/");
+  const dir = slash === -1 ? "" : file.slice(0, slash);
   if (!byDir.has(dir)) byDir.set(dir, []);
   byDir.get(dir).push(file);
 }

@@ -1,5 +1,5 @@
 import { spawn, spawnSync } from "bun";
-import { existsSync, renameSync } from "node:fs";
+import { existsSync, renameSync, statSync } from "node:fs";
 import { mkdir } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -188,7 +188,14 @@ export async function parseBindingGyp(dir: string): Promise<GypTarget[] | null> 
 export async function isBuilt(dir: string): Promise<boolean> {
   const targets = await parseBindingGyp(dir);
   if (targets === null) return false;
-  return targets.every(target => existsSync(join(dir, "build", "Debug", `${target.target_name}.node`)));
+  const mtime = (path: string) => (existsSync(path) ? statSync(path).mtimeMs : Infinity);
+  const gyp = statSync(join(dir, "binding.gyp")).mtimeMs;
+  return targets.every(target => {
+    const artifact = join(dir, "build", "Debug", `${target.target_name}.node`);
+    if (!existsSync(artifact)) return false;
+    const built = statSync(artifact).mtimeMs;
+    return built >= gyp && target.sources.every(source => built >= mtime(join(dir, source)));
+  });
 }
 
 export const buildGypDir = buildWithNodeGyp;

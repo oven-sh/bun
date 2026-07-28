@@ -10,7 +10,7 @@
     "fast_ms": 15000,
     "rule": "a directory is listed when >= 67% of its bun test files are <= 15000ms (median, default lane of expected-durations.json) with zero flaky/failed annotations in the scanned builds; its other files are listed in excludeFiles; docker-service and stress-named tests never qualify",
     "stats": {
-      "dirs": 283,
+      "dirs": 282,
       "files": 1642,
       "excluded": 153
     }
@@ -268,7 +268,6 @@
     "napi/node-napi-tests/test/node-api/test_worker_buffer_callback",
     "napi/node-napi-tests/test/node-api/test_worker_terminate",
     "napi/node-napi-tests/test/node-api/test_worker_terminate_finalization",
-    "package-json-lint.test.t",
     "regression",
     "regression/issue",
     "regression/issue/02499",

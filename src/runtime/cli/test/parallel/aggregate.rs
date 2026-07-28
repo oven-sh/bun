@@ -69,6 +69,8 @@ pub(crate) fn merge_junit_fragments(coord: &mut Coordinator, outfile: &[u8], sum
             let rel = coord.rel_path(idx as u32);
             body.extend_from_slice(b"  <testsuite name=\"");
             let _ = test_command::escape_xml(rel, &mut body); // fmt::Result into Vec<u8> is infallible
+            body.extend_from_slice(b"\" file=\"");
+            let _ = test_command::escape_xml(rel, &mut body); // fmt::Result into Vec<u8> is infallible
             body.extend_from_slice(b"\" tests=\"1\" assertions=\"0\" failures=\"1\" skipped=\"0\" time=\"0\">\n    <testcase name=\"(worker crashed)\" classname=\"");
             let _ = test_command::escape_xml(rel, &mut body); // fmt::Result into Vec<u8> is infallible
             body.extend_from_slice(

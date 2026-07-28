@@ -751,16 +751,15 @@ async function runTests() {
       timeout: integrationTimeout,
       stdout: chunk => (output += chunk),
       stderr: chunk => (output += chunk),
-    }).then(({ ok, error }) => {
-      startGroup(`napi prebuild: ${napiAddonDirs.length} addon(s), ${((Date.now() - started) / 1000).toFixed(1)}s`);
-      process.stdout.write(output);
-      if (!ok) console.warn("napi prebuild failed; each do.test.ts builds its own addon:", error);
-    });
+    }).then(({ ok, error }) => ({ ok, error, output, seconds: (Date.now() - started) / 1000 }));
   }
   const awaitNapiPrebuild = async testPath => {
     if (napiPrebuild && isNapiAddonTest(testPath)) {
-      await napiPrebuild;
-      napiPrebuild = null; // settled; later addon tests skip the check
+      const { ok, error, output, seconds } = await napiPrebuild;
+      napiPrebuild = null;
+      startGroup(`napi prebuild: ${napiAddonDirs.length} addon(s), ${seconds.toFixed(1)}s`);
+      process.stdout.write(output);
+      if (!ok) console.warn("napi prebuild failed; each do.test.ts builds its own addon:", error);
     }
   };
 
@@ -1043,9 +1042,9 @@ async function runTests() {
             continue;
           }
           list = null;
-          const crashed = /^✗ (.+?) \(worker crashed/.exec(line)?.[1];
-          const testPath = crashed && norm(crashed);
-          if (testPath) failed.add(testPath);
+          const ended = /^✗ (.+?) \((worker crashed|aborted:|no live workers)/.exec(line);
+          const testPath = ended && norm(ended[1]);
+          if (testPath) (ended[2] === "worker crashed" ? failed : incomplete).add(testPath);
         }
         evidence = failed.size + incomplete.size > 0;
       }
@@ -1497,7 +1496,10 @@ async function spawnSafe(options) {
           timedOut = true;
           if (options.gracefulTimeout && !isWindows) {
             subprocess.kill("SIGTERM");
-            timer = setTimeout(() => done(resolve), 15_000);
+            timer = setTimeout(() => {
+              subprocess.kill(9);
+              done(resolve);
+            }, 15_000);
             return;
           }
           done(resolve);
@@ -1668,7 +1670,7 @@ async function spawnSafe(options) {
     }
     error = `code ${exitCode}`;
   }
-  if (timedOut) error = "timeout";
+  if (timedOut && (!error || error === signalCode || /^code \d+$/.test(error))) error = "timeout";
   return {
     ok: exitCode === 0 && !signalCode && !spawnError,
     error,

@@ -471,11 +471,11 @@ impl<'a> Coordinator<'a> {
             frame::Kind::JunitChunk => {
                 let idx = rd.u32() as usize;
                 let chunk = rd.str();
-                if !chunk.is_empty() {
+                if !chunk.is_empty()
+                    && let Some(slot) = self.junit_chunks.get_mut(idx)
+                {
                     super::aggregate::add_junit_chunk_totals(&mut self.junit_totals, chunk);
-                    if let Some(slot) = self.junit_chunks.get_mut(idx) {
-                        *slot = Some(Box::<[u8]>::from(chunk));
-                    }
+                    *slot = Some(Box::<[u8]>::from(chunk));
                 }
             }
             frame::Kind::CoverageChunk => {

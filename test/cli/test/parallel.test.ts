@@ -368,7 +368,7 @@ test("--parallel --reporter=junit keeps the suites of files a worker finished be
 
 test("--parallel --reporter=junit carries a large per-file report intact over IPC", async () => {
   const cases = 4000;
-  const pad = "x".repeat(240);
+  const pad = Buffer.alloc(240, "x").toString();
   using dir = tempDir("parallel-junit-large", {
     "big.test.js": `import {test,expect} from "bun:test";
       const pad = ${JSON.stringify(pad)};

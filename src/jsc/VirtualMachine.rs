@@ -4621,13 +4621,6 @@ impl VirtualMachine {
             .remove_listening_socket_for_watch_mode(socket);
     }
 
-    /// Replaces the global object between test files so each file runs in a fresh realm.
-    ///
-    /// Callers must run `bun_runtime::jsc_hooks::close_isolation_handles(vm)`
-    /// first so leaked watchers/servers are stopped (dropping their JS-side
-    /// Strongs, which otherwise pin the outgoing global) before the blind
-    /// socket-group close below. That helper lives in the higher-tier crate
-    /// and cannot be called from here.
     pub fn test_isolation_scope<R>(
         &mut self,
         f: impl FnOnce(&mut TestIsolationState) -> R,
@@ -4667,6 +4660,13 @@ impl VirtualMachine {
         Ok(())
     }
 
+    /// Replaces the global object between test files so each file runs in a fresh realm.
+    ///
+    /// Callers must run `bun_runtime::jsc_hooks::close_isolation_handles(vm)`
+    /// first so leaked watchers/servers are stopped (dropping their JS-side
+    /// Strongs, which otherwise pin the outgoing global) before the blind
+    /// socket-group close below. That helper lives in the higher-tier crate
+    /// and cannot be called from here.
     pub fn swap_global_for_test_isolation(&mut self) {
         debug_assert!(self.test_isolation_enabled);
 

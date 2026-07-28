@@ -66,6 +66,46 @@ describe.concurrent("bun test --isolate", () => {
     expect(exitCode).toBe(0);
   });
 
+  test("with --isolate, a file's process.chdir() is undone before the next file", async () => {
+    const cwdFixtures = {
+      "a-chdir.test.ts": `
+        import { test, expect } from "bun:test";
+        import { tmpdir } from "node:os";
+        test("chdir away", () => {
+          process.chdir(tmpdir());
+          expect(process.cwd()).not.toBe(import.meta.dir);
+        });
+      `,
+      "b-cwd.test.ts": `
+        import { test, expect } from "bun:test";
+        import { realpathSync } from "node:fs";
+        test("cwd is the fixture dir", () => {
+          expect(realpathSync(process.cwd())).toBe(realpathSync(import.meta.dir));
+        });
+      `,
+    };
+    const files = ["./a-chdir.test.ts", "./b-cwd.test.ts"];
+
+    using isolated = tempDir("isolate-cwd", cwdFixtures);
+    const serial = await runTests(String(isolated), ["--isolate"], files);
+    expect(normalizeBunSnapshot(serial.stderr, isolated)).toContain("2 pass");
+    expect(serial.exitCode).toBe(0);
+
+    // One worker takes both files (scale-up gated), so the same restore runs
+    // between files inside a --parallel worker.
+    using parallel = tempDir("isolate-cwd-parallel", cwdFixtures);
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "--parallel=2", ...files],
+      env: { ...bunEnv, BUN_TEST_PARALLEL_SCALE_MS: "60000" },
+      cwd: String(parallel),
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect(normalizeBunSnapshot(stderr, parallel)).toContain("2 pass");
+    expect(exitCode).toBe(0);
+  });
+
   test("with --isolate, --preload re-runs in each file's fresh global", async () => {
     using dir = tempDir("isolate-preload", {
       "preload.ts": `

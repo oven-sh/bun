@@ -407,7 +407,16 @@ impl Loader {
                 return None;
             }
         }
-        http_proxy
+        if http_proxy.is_some() || self.has_http_proxy_env() {
+            return http_proxy;
+        }
+        let sys = crate::windows_system_proxy::get()?;
+        if let Some(hn) = hostname {
+            if self.is_no_proxy(Some(hn), host) || sys.is_bypassed(hn, host.unwrap_or(b"")) {
+                return None;
+            }
+        }
+        Some(URL::parse(sys.proxy_for_scheme(!is_http)?))
     }
 
     /// Returns true if the given hostname/host should bypass the proxy

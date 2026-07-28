@@ -15,6 +15,8 @@ pub struct SystemProxy {
     no_proxy: Box<[u8]>,
     /// `<local>` was in the bypass list: hostnames with no `.` bypass.
     bypass_local: bool,
+    /// `<-loopback>` was present: suppresses the implicit loopback/link-local bypass.
+    disable_implicit_loopback: bool,
     pac: Option<Pac>,
 }
 
@@ -32,10 +34,6 @@ impl SystemProxy {
         &self.no_proxy
     }
     #[inline]
-    pub fn bypass_local(&self) -> bool {
-        self.bypass_local
-    }
-    #[inline]
     pub fn has_pac(&self) -> bool {
         self.pac.is_some()
     }
@@ -49,12 +47,20 @@ impl SystemProxy {
         }
     }
 
+    /// True when `hostname` should bypass the proxy per this config's bypass rules.
+    pub fn is_bypassed(&self, hostname: &[u8], host: &[u8]) -> bool {
+        if !self.disable_implicit_loopback && is_implicit_bypass(hostname) {
+            return true;
+        }
+        if self.bypass_local && is_simple_hostname(hostname) {
+            return true;
+        }
+        crate::env_loader::no_proxy_list_matches(&self.no_proxy, hostname, host)
+    }
+
     /// Proxy href for `url` (static config or PAC); `None` → direct.
     pub fn resolve(&'static self, url: &bun_url::URL<'_>) -> Option<&'static [u8]> {
-        if self.bypass_local && is_simple_hostname(url.hostname) {
-            return None;
-        }
-        if crate::env_loader::no_proxy_list_matches(&self.no_proxy, url.hostname, url.host) {
+        if self.is_bypassed(url.hostname, url.host) {
             return None;
         }
         if let Some(href) = self.proxy_for_scheme(!url.is_http()) {
@@ -66,8 +72,32 @@ impl SystemProxy {
 
 /// WinINet `<local>` bypass: a dotless intranet name, not an IP literal.
 #[inline]
-pub fn is_simple_hostname(hostname: &[u8]) -> bool {
+fn is_simple_hostname(hostname: &[u8]) -> bool {
     !hostname.is_empty() && !hostname.contains(&b'.') && !hostname.contains(&b':')
+}
+
+/// WinHTTP/Chromium implicit bypass (suppressible via `<-loopback>`): loopback, localhost, link-local.
+pub fn is_implicit_bypass(hostname: &[u8]) -> bool {
+    let h = hostname.strip_prefix(b"[").unwrap_or(hostname);
+    let h = h.strip_suffix(b"]").unwrap_or(h);
+    if strings::eql_case_insensitive_ascii(h, b"localhost", true) {
+        return true;
+    }
+    if h.len() > 10
+        && strings::eql_case_insensitive_ascii(&h[h.len() - 10..], b".localhost", true)
+    {
+        return true;
+    }
+    if strings::has_prefix_comptime(h, b"127.") || strings::has_prefix_comptime(h, b"169.254.") {
+        return true;
+    }
+    if h == b"::1" {
+        return true;
+    }
+    h.len() >= 6 && strings::eql_case_insensitive_ascii(&h[..2], b"fe", true) && {
+        let c = h[2].to_ascii_lowercase();
+        (c == b'8' || c == b'9' || c == b'a' || c == b'b') && h[3] == b':'
+    }
 }
 
 #[inline]
@@ -103,7 +133,7 @@ struct RawConfig {
 
 fn parse_raw_config(raw: RawConfig) -> Option<SystemProxy> {
     let (http_proxy, https_proxy) = parse_proxy_server(&raw.proxy);
-    let (no_proxy, bypass_local) = parse_bypass_list(&raw.proxy_bypass);
+    let (no_proxy, bypass_local, disable_implicit_loopback) = parse_bypass_list(&raw.proxy_bypass);
 
     let has_static = !http_proxy.is_empty() || !https_proxy.is_empty();
     let has_pac = raw.auto_detect || !raw.auto_config_url.is_empty();
@@ -133,6 +163,7 @@ fn parse_raw_config(raw: RawConfig) -> Option<SystemProxy> {
         https_proxy: https_proxy.into_boxed_slice(),
         no_proxy: no_proxy.into_boxed_slice(),
         bypass_local,
+        disable_implicit_loopback,
         pac,
     })
 }
@@ -153,7 +184,7 @@ fn test_hook_config() -> Option<RawConfig> {
     })
 }
 
-/// WinINet `ProxyServer` (`host:port` or `http=a;https=b;socks=s`) → `(http_proxy, https_proxy)` hrefs.
+/// WinINet `ProxyServer` (`host:port` or `http=a;https=b`) → `(http_proxy, https_proxy)` hrefs.
 fn parse_proxy_server(raw: &[u8]) -> (Vec<u8>, Vec<u8>) {
     let raw = strings::trim(raw, &strings::WHITESPACE_CHARS);
     if raw.is_empty() {
@@ -165,7 +196,6 @@ fn parse_proxy_server(raw: &[u8]) -> (Vec<u8>, Vec<u8>) {
     }
     let mut http = Vec::new();
     let mut https = Vec::new();
-    let mut socks = Vec::new();
     for entry in raw.split(|&b| b == b';') {
         let entry = strings::trim(entry, &strings::WHITESPACE_CHARS);
         let Some(eq) = entry.iter().position(|&b| b == b'=') else {
@@ -180,20 +210,8 @@ fn parse_proxy_server(raw: &[u8]) -> (Vec<u8>, Vec<u8>) {
             http = schemeify_proxy(host);
         } else if strings::eql_case_insensitive_ascii(scheme, b"https", true) {
             https = schemeify_proxy(host);
-        } else if strings::eql_case_insensitive_ascii(scheme, b"socks", true) {
-            socks = {
-                let mut v = Vec::with_capacity(8 + host.len());
-                v.extend_from_slice(b"socks://");
-                v.extend_from_slice(host);
-                v
-            };
         }
-    }
-    if http.is_empty() && !socks.is_empty() {
-        http = socks.clone();
-    }
-    if https.is_empty() && !socks.is_empty() {
-        https = socks;
+        // `socks=` / `ftp=` are ignored: Bun's HTTP client has no SOCKS support.
     }
     (http, https)
 }
@@ -208,10 +226,11 @@ fn schemeify_proxy(host: &[u8]) -> Vec<u8> {
     v
 }
 
-/// WinINet bypass list (`;`-separated, `*.foo`, `<local>`) → `(no_proxy, had_local)`.
-fn parse_bypass_list(raw: &[u8]) -> (Vec<u8>, bool) {
+/// WinINet bypass list (`;`-separated, `*.foo`, `<local>`, `<-loopback>`) → `(no_proxy, had_local, had_disable_loopback)`.
+fn parse_bypass_list(raw: &[u8]) -> (Vec<u8>, bool, bool) {
     let mut out = Vec::new();
     let mut bypass_local = false;
+    let mut disable_loopback = false;
     for entry in raw.split(|&b| b == b';' || b == b',' || b == b' ') {
         let mut entry = strings::trim(entry, &strings::WHITESPACE_CHARS);
         if entry.is_empty() {
@@ -222,6 +241,7 @@ fn parse_bypass_list(raw: &[u8]) -> (Vec<u8>, bool) {
             continue;
         }
         if strings::eql_case_insensitive_ascii(entry, b"<-loopback>", true) {
+            disable_loopback = true;
             continue;
         }
         if strings::starts_with_char(entry, b'*') {
@@ -230,7 +250,7 @@ fn parse_bypass_list(raw: &[u8]) -> (Vec<u8>, bool) {
                 entry = &entry[1..];
             }
             if entry.is_empty() {
-                return (b"*".to_vec(), bypass_local);
+                return (b"*".to_vec(), bypass_local, disable_loopback);
             }
         }
         if !out.is_empty() {
@@ -238,7 +258,7 @@ fn parse_bypass_list(raw: &[u8]) -> (Vec<u8>, bool) {
         }
         out.extend_from_slice(entry);
     }
-    (out, bypass_local)
+    (out, bypass_local, disable_loopback)
 }
 
 #[cfg(windows)]
@@ -471,7 +491,7 @@ mod ffi {
             lpszAutoConfigUrl: ptr::null(),
             lpvReserved: ptr::null_mut(),
             dwReserved: 0,
-            fAutoLogonIfChallenged: 1,
+            fAutoLogonIfChallenged: 0,
         };
         if auto_detect {
             opts.dwFlags |= WINHTTP_AUTOPROXY_AUTO_DETECT;
@@ -487,9 +507,19 @@ mod ffi {
             lpszProxyBypass: ptr::null_mut(),
         };
         // SAFETY: all pointers are valid for the call; WinHTTP populates `info` on success.
-        let ok = unsafe { WinHttpGetProxyForUrl(session, url_w.as_ptr(), &mut opts, &mut info) };
+        let mut ok = unsafe { WinHttpGetProxyForUrl(session, url_w.as_ptr(), &mut opts, &mut info) };
         if ok == 0 {
-            return Err(bun_sys::windows::kernel32::GetLastError());
+            let err = bun_sys::windows::kernel32::GetLastError();
+            const ERROR_WINHTTP_LOGIN_FAILURE: u32 = 12015;
+            if err != ERROR_WINHTTP_LOGIN_FAILURE {
+                return Err(err);
+            }
+            opts.fAutoLogonIfChallenged = 1;
+            // SAFETY: same as above; `opts`/`info` are still valid.
+            ok = unsafe { WinHttpGetProxyForUrl(session, url_w.as_ptr(), &mut opts, &mut info) };
+            if ok == 0 {
+                return Err(bun_sys::windows::kernel32::GetLastError());
+            }
         }
         // SAFETY: on success `info`'s LPWSTR fields are either null or owned.
         let proxy = unsafe { take_lpwstr(info.lpszProxy) };

@@ -8,6 +8,9 @@
 // tests drive the code path through BUN_INTERNAL_WINHTTP_IE_PROXY_CONFIG which
 // substitutes for the WinHTTP call with the same field shape. That hook is
 // honoured on every platform so the gate can verify the wiring.
+//
+// Tests that need 127.0.0.1 to route through the proxy put `<-loopback>` in
+// the bypass list, which disables WinHTTP's implicit loopback bypass.
 
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
@@ -82,7 +85,7 @@ describe.concurrent("Windows system proxy fallback", () => {
     await using proc = Bun.spawn({
       cmd: [bunExe(), "-e", CHILD],
       env: envWithoutProxy({
-        BUN_INTERNAL_WINHTTP_IE_PROXY_CONFIG: `0||${proxy.url}|`,
+        BUN_INTERNAL_WINHTTP_IE_PROXY_CONFIG: `0||${proxy.url}|<-loopback>`,
         TARGET_URL: `http://127.0.0.1:${direct.port}/hello`,
       }),
       stderr: "pipe",
@@ -95,24 +98,7 @@ describe.concurrent("Windows system proxy fallback", () => {
     expect(exitCode).toBe(0);
   });
 
-  test("per-scheme system proxy: http= used for http://", async () => {
-    using proxy = await makeHttpProxy();
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "-e", CHILD],
-      env: envWithoutProxy({
-        BUN_INTERNAL_WINHTTP_IE_PROXY_CONFIG: `0||http=${proxy.url};https=192.0.2.1:1;ftp=ignored:1|`,
-        TARGET_URL: `http://127.0.0.1:1/x`,
-      }),
-      stderr: "pipe",
-    });
-    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stdout).toBe("FROM_PROXY");
-    expect(exitCode).toBe(0);
-  });
-
-  test("bypass list: <local> does not bypass dotted hosts", async () => {
-    // `<local>` is "intranet hostnames with no dot". `127.0.0.1` has dots so
-    // it still routes through the proxy.
+  test("loopback is implicitly bypassed (unless <-loopback> is present)", async () => {
     using proxy = await makeHttpProxy();
     await using direct = Bun.serve({
       port: 0,
@@ -123,7 +109,44 @@ describe.concurrent("Windows system proxy fallback", () => {
     await using proc = Bun.spawn({
       cmd: [bunExe(), "-e", CHILD],
       env: envWithoutProxy({
-        BUN_INTERNAL_WINHTTP_IE_PROXY_CONFIG: `0||${proxy.url}|*.example.com;<local>`,
+        BUN_INTERNAL_WINHTTP_IE_PROXY_CONFIG: `0||${proxy.url}|`,
+        TARGET_URL: `http://127.0.0.1:${direct.port}/`,
+      }),
+      stderr: "pipe",
+    });
+    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toBe("DIRECT");
+    expect(proxy.connections).toBe(0);
+    expect(exitCode).toBe(0);
+  });
+
+  test("per-scheme system proxy: http= used for http://", async () => {
+    using proxy = await makeHttpProxy();
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", CHILD],
+      env: envWithoutProxy({
+        BUN_INTERNAL_WINHTTP_IE_PROXY_CONFIG: `0||http=${proxy.url};https=192.0.2.1:1;ftp=ignored:1|<-loopback>`,
+        TARGET_URL: `http://127.0.0.1:1/x`,
+      }),
+      stderr: "pipe",
+    });
+    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toBe("FROM_PROXY");
+    expect(exitCode).toBe(0);
+  });
+
+  test("bypass list: <local> does not bypass dotted hosts", async () => {
+    using proxy = await makeHttpProxy();
+    await using direct = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch: () => new Response("DIRECT"),
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", CHILD],
+      env: envWithoutProxy({
+        BUN_INTERNAL_WINHTTP_IE_PROXY_CONFIG: `0||${proxy.url}|*.example.com;<local>;<-loopback>`,
         TARGET_URL: `http://127.0.0.1:${direct.port}/`,
       }),
       stderr: "pipe",
@@ -145,7 +168,7 @@ describe.concurrent("Windows system proxy fallback", () => {
     await using proc = Bun.spawn({
       cmd: [bunExe(), "-e", CHILD],
       env: envWithoutProxy({
-        BUN_INTERNAL_WINHTTP_IE_PROXY_CONFIG: `0||${proxy.url}|127.0.0.1`,
+        BUN_INTERNAL_WINHTTP_IE_PROXY_CONFIG: `0||${proxy.url}|<-loopback>;127.0.0.1`,
         TARGET_URL: `http://127.0.0.1:${direct.port}/`,
       }),
       stderr: "pipe",
@@ -186,7 +209,7 @@ describe.concurrent("Windows system proxy fallback", () => {
       cmd: [bunExe(), "-e", CHILD],
       env: {
         ...envWithoutProxy({
-          BUN_INTERNAL_WINHTTP_IE_PROXY_CONFIG: `0||${proxy.url}|`,
+          BUN_INTERNAL_WINHTTP_IE_PROXY_CONFIG: `0||${proxy.url}|<-loopback>`,
           TARGET_URL: `http://127.0.0.1:${direct.port}/`,
         }),
         NO_PROXY: "*",

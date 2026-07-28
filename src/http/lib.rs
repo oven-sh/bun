@@ -637,10 +637,7 @@ impl ProxySettings {
         Some(Box::new(Self {
             http_proxy: sys.http_proxy().unwrap_or(b"").into(),
             https_proxy: sys.https_proxy().unwrap_or(b"").into(),
-            no_proxy: match no_proxy {
-                Some(n) => n.into(),
-                None => sys.no_proxy().into(),
-            },
+            no_proxy: no_proxy.unwrap_or(b"").into(),
             system: Some(sys),
         }))
     }
@@ -662,9 +659,7 @@ impl ProxySettings {
             return None;
         }
         if let Some(sys) = self.system {
-            if sys.bypass_local()
-                && bun_dotenv::windows_system_proxy::is_simple_hostname(url.hostname)
-            {
+            if sys.is_bypassed(url.hostname, url.host) {
                 return None;
             }
         }

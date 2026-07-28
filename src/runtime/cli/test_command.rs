@@ -849,8 +849,7 @@ impl JunitReporter {
         Ok(())
     }
 
-    /// Emit a synthetic `<testcase><error>` for an exception not attributable
-    /// to any test entry. Consumes `last_failure` for the error details.
+    /// Emit a `<testcase><error>` for `last_failure`, attributed to `file`.
     pub fn write_unhandled_error(&mut self, file: &[u8]) -> crate::Result<()> {
         let top = FileSystem::instance().top_level_dir;
         let filename: &[u8] = if strings::has_prefix(file, top) {

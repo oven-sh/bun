@@ -1382,8 +1382,6 @@ impl BunTest {
                 let junit = unsafe {
                     &mut *junit_ctx.cast::<crate::cli::test_command::JunitReporter>()
                 };
-                // BuildMessage/ResolveMessage/AggregateError never reach the
-                // ZigException callback; pull their text directly.
                 if junit.last_failure.is_none() {
                     if let Some(m) = exception.as_class_ref::<crate::api::BuildMessage>() {
                         junit.record_failure_text(b"BuildMessage", m.msg.data.text.as_ref());

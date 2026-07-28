@@ -16,10 +16,10 @@ import { generateOrderFile } from "../orderfile/generate.ts";
 import * as utils from "../utils.mjs";
 import { bunExeName, shouldStrip, type BunOutput } from "./bun.ts";
 import type { Config } from "./config.ts";
+import { webkitTestFFIPath } from "./deps/webkit.ts";
 import { BuildError } from "./error.ts";
 import { crossFeaturesJson } from "./features-json.ts";
 import { orderFilePath, usesOrderFile } from "./flags.ts";
-import { webkitTestFFIPath } from "./deps/webkit.ts";
 
 /** True if running under any CI (env: CI, BUILDKITE, or GITHUB_ACTIONS). */
 export const isCI: boolean = utils.isCI;

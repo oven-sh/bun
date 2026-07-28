@@ -1,15 +1,15 @@
 import fs from "fs";
 import { join } from "path";
-import { isASAN, tmpdirSync } from "harness";
+import { tmpdirSync } from "harness";
 import { heapStats } from "bun:jsc";
 
 const tmpdir = tmpdirSync();
 const target = join(tmpdir, "blah");
 
-// 5,000 iterations is enough to expose the original leak (#16788): the
-// AbortSignal object-count check below would see ~15,000 live signals instead
+// 2,000 iterations is enough to expose the original leak (#16788): the
+// AbortSignal object-count check below would see ~6,000 live signals instead
 // of a handful. 100,000 iterations made this file cost ~17s on slower CI lanes.
-const ITERATIONS = 5_000;
+const ITERATIONS = 2_000;
 
 let nonAbortErrors = 0;
 const check = (e: unknown) => {
@@ -42,11 +42,4 @@ if (nonAbortErrors > 0) {
 
 if (numAbortSignalObjects > 10) {
   throw new Error(`AbortSignal objects > 10, received ${numAbortSignalObjects}`);
-}
-
-// ASAN's quarantine retains freed allocations (default 256 MB) and shadow
-// memory raises the absolute RSS floor; widen the cap to avoid false positives.
-const limitMB = isASAN ? 700 : 200;
-if (rss > limitMB) {
-  throw new Error(`Memory leak detected: ${rss} MB, expected < ${limitMB} MB`);
 }

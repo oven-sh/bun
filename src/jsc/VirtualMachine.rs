@@ -1485,11 +1485,12 @@ impl VirtualMachine {
 
         ExitHandler::dispatch_on_exit(self);
 
-        // `process.exit()` never returns to the event loop; flush `AutoFlusher`
-        // writers (FileSink et al.) the same way `drain_microtasks_with_global` does.
-        self.is_inside_deferred_task_queue.set(true);
-        self.event_loop_mut().deferred_tasks.run();
-        self.is_inside_deferred_task_queue.set(false);
+        // process.exit() never reaches drain_microtasks; flush AutoFlusher sinks here.
+        if !self.is_inside_deferred_task_queue.get() {
+            self.is_inside_deferred_task_queue.set(true);
+            self.event_loop_mut().deferred_tasks.run();
+            self.is_inside_deferred_task_queue.set(false);
+        }
 
         self.is_shutting_down = true;
 

@@ -13,6 +13,7 @@ pub use walk::GlobWalker;
 // parameter (const-generic fn ptrs are unstable).
 pub type BunGlobWalker = walk::GlobWalker<walk::SyscallAccessor, false>;
 pub type BunGlobWalkerZ = walk::GlobWalker<walk::SyscallAccessor, true>;
+pub type BunGlobIterator = walk::Iterator<Box<BunGlobWalker>, walk::SyscallAccessor, false>;
 
 /// Returns true if the given string contains glob syntax,
 /// excluding those escaped with backslashes

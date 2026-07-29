@@ -85,6 +85,7 @@ pub trait Accessor {
 
     fn open(path: &ZStr) -> Result<Maybe<Self::Handle>, Error>;
     fn openat(handle: Self::Handle, path: &ZStr) -> Result<Maybe<Self::Handle>, Error>;
+    fn stat(path: &ZStr) -> Maybe<Stat>;
     fn statat(handle: Self::Handle, path: &ZStr) -> Maybe<Stat>;
     /// Like statat but does not follow symlinks.
     fn lstatat(handle: Self::Handle, path: &ZStr) -> Maybe<Stat>;
@@ -174,6 +175,10 @@ impl Accessor for SyscallAccessor {
 
     fn open(path: &ZStr) -> Result<Maybe<SyscallHandle>, Error> {
         Ok(Syscall::open(path, O::DIRECTORY | O::RDONLY, 0).map(|fd| SyscallHandle { value: fd }))
+    }
+
+    fn stat(path: &ZStr) -> Maybe<Stat> {
+        Syscall::stat(path)
     }
 
     fn statat(handle: SyscallHandle, path: &ZStr) -> Maybe<Stat> {
@@ -349,8 +354,11 @@ impl<A: Accessor> Directory<A> {
 // Iterator
 // ─────────────────────────────────────────────────────────────────────────────
 
-pub struct Iterator<'a, A: Accessor, const SENTINEL: bool> {
-    pub walker: &'a mut GlobWalker<A, SENTINEL>,
+pub struct Iterator<W, A: Accessor, const SENTINEL: bool>
+where
+    W: core::ops::DerefMut<Target = GlobWalker<A, SENTINEL>>,
+{
+    pub walker: W,
     pub iter_state: IterState<A>,
     pub cwd_fd: A::Handle,
     /// This is to make sure in debug/tests that we are closing file descriptors
@@ -363,13 +371,21 @@ pub struct Iterator<'a, A: Accessor, const SENTINEL: bool> {
     pub nt_filter_buf: [u16; 256],
 }
 
+/// Iterator that borrows the walker. Kept for callers that drive the walk
+/// and still want to read `walker.matched_paths` afterwards.
+pub type IteratorRef<'a, A, const SENTINEL: bool> =
+    Iterator<&'a mut GlobWalker<A, SENTINEL>, A, SENTINEL>;
+
 #[inline]
 fn count_fds<A: Accessor>() -> bool {
     A::COUNT_FDS && cfg!(debug_assertions)
 }
 
-impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
-    pub fn new(walker: &'a mut GlobWalker<A, SENTINEL>) -> Self {
+impl<W, A: Accessor, const SENTINEL: bool> Iterator<W, A, SENTINEL>
+where
+    W: core::ops::DerefMut<Target = GlobWalker<A, SENTINEL>>,
+{
+    pub fn new(walker: W) -> Self {
         Self {
             walker,
             iter_state: IterState::GetNext,
@@ -425,30 +441,31 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
                 //
                 // In that case we don't need to do any walking and can just open up the FS entry
                 if starting_component_idx as usize >= self.walker.pattern_components.len() {
-                    // Matched-path payload must respect SENTINEL. The open()
-                    // probe always needs a NUL — use a separate dupeZ for it so
+                    // Matched-path payload must respect SENTINEL. The stat()
+                    // probe always needs a NUL; use a separate dupeZ for it so
                     // SENTINEL=false matched paths don't carry a spurious 0x00.
                     let path = dupe_matched::<SENTINEL>(path_without_special_syntax);
                     let pathz_owned = dupe_z(path_without_special_syntax);
                     // SAFETY: dupe_z appends NUL at len()-1; ZStr len excludes it.
                     let pathz = ZStr::from_slice_with_nul(&pathz_owned[..]);
-                    let fd = match A::open(pathz)? {
+                    let mode = match A::stat(pathz) {
                         Err(e) => {
-                            if e.get_errno() == E::ENOTDIR {
-                                self.iter_state = IterState::Matched(path);
-                                return Ok(Ok(()));
-                            }
-                            // Doesn't exist
-                            if e.get_errno() == E::ENOENT {
+                            if matches!(e.get_errno(), E::ENOENT | E::ENOTDIR) {
                                 self.iter_state = IterState::GetNext;
                                 return Ok(Ok(()));
                             }
                             return Ok(Err(e.with_path(matched_as_slice::<SENTINEL>(&path))));
                         }
-                        Ok(fd) => fd,
+                        Ok(st) => st.st_mode as u32,
                     };
-                    let _ = A::close(fd);
-                    self.iter_state = IterState::Matched(path);
+                    let matches = (S::ISDIR(mode) && !self.walker.only_files)
+                        || S::ISREG(mode)
+                        || !self.walker.only_files;
+                    self.iter_state = if matches {
+                        IterState::Matched(path)
+                    } else {
+                        IterState::GetNext
+                    };
                     return Ok(Ok(()));
                 }
 
@@ -1213,7 +1230,10 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
     }
 }
 
-impl<'a, A: Accessor, const SENTINEL: bool> Drop for Iterator<'a, A, SENTINEL> {
+impl<W, A: Accessor, const SENTINEL: bool> Drop for Iterator<W, A, SENTINEL>
+where
+    W: core::ops::DerefMut<Target = GlobWalker<A, SENTINEL>>,
+{
     fn drop(&mut self) {
         self.close_cwd_fd();
         if let IterState::Directory(dir) = &self.iter_state {

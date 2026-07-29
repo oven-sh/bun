@@ -502,7 +502,15 @@ void ${proto}::finishCreation(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
 {
     Base::finishCreation(vm);
     ${
-      Object.keys(protoFields).length > 0
+      Object.keys(protoFields).some(
+        n =>
+          !(
+            "privateSymbol" in protoFields[n] ||
+            "internal" in protoFields[n] ||
+            "value" in protoFields[n] ||
+            n.startsWith("@@")
+          ),
+      )
         ? `reifyStaticProperties(vm, ${className(typeName)}::info(), ${proto}TableValues, *this);`
         : ""
     }${specialSymbols}${staticPrototypeValues}

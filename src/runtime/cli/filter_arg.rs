@@ -39,7 +39,7 @@ type GlobWalker = glob::GlobWalker<bun_resolver::DirEntryAccessor, false>;
 // heap-allocated (`*mut GlobWalker` from `Box::into_raw`) so its address is stable even if
 // the `PackageFilterIterator` itself moves; the borrow is erased to `'static` because the
 // allocation lives until `deinit_walker` drops the iterator first, then frees the walker.
-type GlobWalkerIterator = glob::walk::Iterator<'static, bun_resolver::DirEntryAccessor, false>;
+type GlobWalkerIterator = glob::walk::IteratorRef<'static, bun_resolver::DirEntryAccessor, false>;
 
 pub(crate) fn get_candidate_package_patterns<'a>(
     log: &mut Log,

@@ -5,7 +5,6 @@ export default [
     name: "Glob",
     construct: true,
     finalize: true,
-    hasPendingActivity: true,
     configurable: false,
     klass: {},
     JSType: "0b11101110",
@@ -33,6 +32,32 @@ export default [
       match: {
         fn: "match",
         length: 1,
+      },
+    },
+  }),
+  define({
+    name: "GlobScanHandle",
+    construct: false,
+    noConstructor: true,
+    finalize: true,
+    hasPendingActivity: true,
+    configurable: false,
+    klass: {},
+    proto: {
+      __batch: {
+        fn: "__batch",
+        length: 0,
+        privateSymbol: "pull",
+      },
+      __batchSync: {
+        fn: "__batchSync",
+        length: 0,
+        privateSymbol: "resolveSync",
+      },
+      __close: {
+        fn: "__close",
+        length: 0,
+        privateSymbol: "close",
       },
     },
   }),

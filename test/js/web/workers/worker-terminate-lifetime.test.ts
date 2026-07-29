@@ -24,7 +24,7 @@ const timeout = slow ? 60_000 : 20_000;
 // leaving the sticky exception in place for the same class of assert. Both
 // asserts are debug/ASAN-only; release builds compile them out.
 test.skipIf(!isDebug)(
-  "terminate() while Bun.serve is streaming a type:\"direct\" body does not trip DeferTermination / assertNoException",
+  'terminate() while Bun.serve is streaming a type:"direct" body does not trip DeferTermination / assertNoException',
   async () => {
     await using proc = Bun.spawn({
       cmd: [

@@ -4367,15 +4367,12 @@ pub extern "C" fn Blob__dupe(this: &Blob) -> *mut Blob {
     Blob::new(this.dupe_with_content_type(true))
 }
 
-/// Default `filename` for `FormData.append(name, blob)`. For a file-backed
-/// blob the store holds an absolute path, so emit only the basename to avoid
-/// leaking the cwd in `Content-Disposition` (matches browser `<input>` / RFC
-/// 7578 §4.2). `File`/`S3` names set explicitly by the user pass through.
 #[unsafe(no_mangle)]
 pub extern "C" fn Blob__getFileNameString(this: &Blob) -> BunString {
     if let Some(store) = this.store.get().as_deref() {
         if let store::Data::File(file) = &store.data {
             if let PathOrFileDescriptor::Path(path) = &file.pathlike {
+                // FormData default filename: basename only (RFC 7578 4.2).
                 return BunString::from_bytes(bun_paths::basename(path.slice()));
             }
             return BunString::empty();

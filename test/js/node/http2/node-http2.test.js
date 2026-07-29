@@ -1573,6 +1573,92 @@ for (const nodeExecutable of [nodeExe(), bunExe()]) {
           }
         });
 
+        it("caps CONTINUATION frames per header block (CVE-2024-28182)", async () => {
+          // nghttp2's NGHTTP2_DEFAULT_MAX_CONTINUATIONS: a peer that keeps sending
+          // CONTINUATION without END_HEADERS (in particular, zero-length frames the
+          // size cap cannot catch) must not be able to pin the session in
+          // header-block state.
+          const { promise: waitToWrite, resolve: allowWrite } = Promise.withResolvers();
+          const { promise: serverListening, resolve: serverResolve } = Promise.withResolvers();
+          const server = net.createServer(async socket => {
+            socket.on("error", () => {});
+            socket.write(new http2utils.SettingsFrame(true).data);
+            await waitToWrite;
+            // HEADERS (:status 200) without END_HEADERS, then a burst of empty
+            // CONTINUATION frames that never complete the block.
+            const status200 = Buffer.from([0x88]);
+            socket.write(new http2utils.HeadersFrame(1, status200, 0, /* EOH */ false, false).data);
+            const emptyCont = new http2utils.Frame(0, 9, 0, 1).data;
+            const burst = Buffer.concat(Array(64).fill(emptyCont));
+            socket.write(burst);
+          });
+          server.listen(0, "127.0.0.1", () => serverResolve());
+          await serverListening;
+
+          const url = `http://127.0.0.1:${server.address().port}`;
+          try {
+            const { promise, resolve } = Promise.withResolvers();
+            const client = http2.connect(url);
+            client.on("error", resolve);
+            client.on("connect", () => {
+              const req = client.request({ ":path": "/" });
+              req.on("error", () => {});
+              req.on("response", headers => resolve({ response: headers }));
+              req.end();
+              allowWrite();
+            });
+            const result = await promise;
+            expect(result).toBeDefined();
+            // node: NGHTTP2_ERR_TOO_MANY_CONTINUATIONS surfaces as NghttpError with this
+            // exact errno/message; the session terminates with GOAWAY(INTERNAL_ERROR).
+            expect(result.code).toBe("ERR_HTTP2_ERROR");
+            expect(result.errno).toBe(-905);
+            expect(result.message).toBe("Too many CONTINUATION frames following a HEADER frame");
+          } finally {
+            server.close();
+          }
+        });
+
+        it("accepts a header block split across the full CONTINUATION budget", async () => {
+          // The count cap must not reject a legitimate block that uses exactly the
+          // allowed CONTINUATION budget (8 frames per block, matching nghttp2).
+          const { promise: waitToWrite, resolve: allowWrite } = Promise.withResolvers();
+          const { promise: serverListening, resolve: serverResolve } = Promise.withResolvers();
+          const server = net.createServer(async socket => {
+            socket.on("error", () => {});
+            socket.write(new http2utils.SettingsFrame(true).data);
+            await waitToWrite;
+            const status200 = Buffer.from([0x88]);
+            socket.write(new http2utils.HeadersFrame(1, status200, 0, /* EOH */ false, /* final */ true).data);
+            // 7 empty CONTINUATIONs, then the 8th carries END_HEADERS and completes the block.
+            const emptyCont = new http2utils.Frame(0, 9, 0, 1).data;
+            for (let i = 0; i < 7; i++) socket.write(emptyCont);
+            socket.write(new http2utils.Frame(0, 9, 0x04, 1).data);
+          });
+          server.listen(0, "127.0.0.1", () => serverResolve());
+          await serverListening;
+
+          const url = `http://127.0.0.1:${server.address().port}`;
+          try {
+            const { promise, resolve } = Promise.withResolvers();
+            const client = http2.connect(url);
+            client.on("error", err => resolve({ error: err }));
+            client.on("connect", () => {
+              const req = client.request({ ":path": "/" });
+              req.on("error", err => resolve({ error: err }));
+              req.on("response", headers => resolve({ response: headers }));
+              req.end();
+              allowWrite();
+            });
+            const result = await promise;
+            expect(result.error).toBeUndefined();
+            expect(result.response?.[":status"]).toBe(200);
+            client.destroy();
+          } finally {
+            server.close();
+          }
+        });
+
         it("rejects a header block whose compressed size exceeds maxHeaderListSize", async () => {
           const { promise: waitToWrite, resolve: allowWrite } = Promise.withResolvers();
           const { promise: serverListening, resolve: serverResolve } = Promise.withResolvers();

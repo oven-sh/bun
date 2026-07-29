@@ -842,7 +842,11 @@ impl Connection {
             u32::from_be_bytes([payload[0], payload[1], payload[2], payload[3]]) & 0x7fff_ffff;
         // §5.1: WINDOW_UPDATE on an idle stream is a connection PROTOCOL_ERROR.
         if hdr.stream_id != 0 && self.is_idle_stream_id(sink, hdr.stream_id) {
-            self.send_go_away(sink, ErrorCode::ProtocolError, b"WINDOW_UPDATE on idle stream");
+            self.send_go_away(
+                sink,
+                ErrorCode::ProtocolError,
+                b"WINDOW_UPDATE on idle stream",
+            );
             return true;
         }
         // §6.9.1: a 0 increment is an error (connection error on stream 0).

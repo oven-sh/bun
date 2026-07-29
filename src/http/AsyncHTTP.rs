@@ -171,6 +171,9 @@ fn make_client<'a>(
         allow_retry: false,
         h2_retries: 0,
         redirect_type,
+        referrer: Box::default(),
+        referrer_policy: crate::ReferrerPolicy::Empty,
+        computed_referer: Vec::new(),
         redirect: Vec::new(),
         prev_redirect: Vec::new(),
         progress_node: None,
@@ -259,6 +262,11 @@ pub struct Options<'a> {
     pub reject_unauthorized: Option<bool>,
     pub tls_props: Option<SSLConfigSharedPtr>,
     pub compress: Option<crate::compress_body::CompressOption>,
+    /// The request's referrer (stored serialized form) and referrer policy,
+    /// used by `build_request` to compute the `Referer` header on each hop.
+    /// Leave `referrer` empty when the caller set an explicit `Referer` header.
+    pub referrer: Box<[u8]>,
+    pub referrer_policy: crate::ReferrerPolicy,
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -497,6 +505,8 @@ impl<'a> AsyncHTTP<'a> {
         }
         this.client.compress = options.compress;
         this.client.proxy_settings = options.proxy_settings;
+        this.client.referrer = options.referrer;
+        this.client.referrer_policy = options.referrer_policy;
 
         // `client.proxy_authorization` stays `None` on the JS-thread original;
         // `on_start` derives it on the HTTP-thread clone so redirects can
@@ -752,6 +762,7 @@ impl<'a> AsyncHTTP<'a> {
                     drop(core::mem::take(&mut client.redirect));
                     drop(core::mem::take(&mut client.prev_redirect));
                     drop(core::mem::take(&mut client.compressed_request_body));
+                    drop(core::mem::take(&mut client.computed_referer));
                     drop(core::mem::take(&mut client.proxy_authorization));
                     if let Some(tunnel) = client.proxy_tunnel.take() {
                         // SAFETY: tunnel was created by ProxyTunnel::start

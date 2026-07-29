@@ -1733,25 +1733,20 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         ));
     }
 
-    // Serialize the `Referer` request header from the resolved referrer and
-    // policy. Must come after the body Content-Type fallback above, which only
-    // fires while `headers` is still `None`.
-    //
-    // An explicit user-set `Referer` header wins: the spec appends
+    // `build_request` computes the `Referer` header from `referrer` /
+    // `referrer_policy` on each hop, so it's not appended to the header list
+    // here. An explicit user-set `Referer` header wins: the spec appends
     // unconditionally, but only because in browsers `Referer` is a forbidden
     // header name that can never already be present, and RFC 9110 makes
-    // `Referer` a singleton field.
-    {
-        let referrer_utf8 = request_referrer.to_utf8();
-        if let Some(referer_value) =
-            referrer::determine_referer_header(referrer_utf8.slice(), referrer_policy, &url)
-        {
-            let request_headers = headers.get_or_insert_with(Headers::default);
-            if request_headers.get(b"referer").is_none() {
-                request_headers.append(b"Referer", &referer_value);
-            }
+    // `Referer` a singleton field. An empty `referrer` tells `build_request`
+    // to leave the `Referer` header entirely to the user's header list.
+    let referrer: Box<[u8]> = match headers.as_ref().and_then(|h| h.get(b"referer")) {
+        Some(_) => Box::default(),
+        None => {
+            let utf8 = request_referrer.to_utf8();
+            Box::from(utf8.slice())
         }
-    }
+    };
 
     // `body` is mutated in place for the sendfile/readfile paths and then
     // *moved* into `FetchOptions`.
@@ -2185,6 +2180,8 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         max_redirects,
         reject_unauthorized,
         redirect_type,
+        referrer,
+        referrer_policy,
         verbose,
         proxy: proxy_static,
         proxy_headers: proxy_headers.take(),

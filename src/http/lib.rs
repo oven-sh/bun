@@ -84,6 +84,7 @@ pub type AsyncHttp<'a> = AsyncHTTP<'a>;
 pub type ThreadlocalAsyncHttp<'a> = ThreadlocalAsyncHTTP<'a>;
 pub use bun_http_types::FetchRedirect::FetchRedirect;
 pub use bun_http_types::Method::Method;
+pub use bun_http_types::ReferrerPolicy::{ReferrerPolicy, determine_referer_header};
 pub use bun_picohttp as picohttp;
 
 #[repr(u8)]
@@ -740,6 +741,17 @@ pub struct HTTPClient<'a> {
     /// `MAX_H2_RETRIES`.
     pub h2_retries: u8,
     pub redirect_type: FetchRedirect,
+    /// The request's referrer in its stored serialized form (see the
+    /// `bun_http_types::ReferrerPolicy::determine_referer_header` docs) and the
+    /// request's referrer policy. Empty when the caller set an explicit
+    /// `Referer` header, so `build_request` leaves that header untouched
+    /// across redirects. `referrer_policy` may be updated by a
+    /// `Referrer-Policy` response header on a redirect hop.
+    pub referrer: Box<[u8]>,
+    pub referrer_policy: ReferrerPolicy,
+    /// Backing storage for the `Referer` header value `build_request` emits
+    /// each hop. Lives on `self` so the `picohttp::Request` can borrow it.
+    pub computed_referer: Vec<u8>,
     pub redirect: Vec<u8>,
     /// The previous hop's `redirect` buffer, parked by `handle_response_metadata`
     /// when it overwrites `redirect`. `connected_url` may still borrow from it
@@ -950,6 +962,7 @@ pub type GenHttpContext<const SSL: bool> = http_context::HTTPContext<SSL>;
 
 // ── header constants ────────────────────────────────────────────────────
 const HOST_HEADER_NAME: &[u8] = b"Host";
+const REFERER_HEADER_NAME: &[u8] = b"Referer";
 const CONTENT_LENGTH_HEADER_NAME: &[u8] = b"Content-Length";
 const CHUNKED_ENCODED_HEADER: picohttp::Header =
     picohttp::Header::new(b"Transfer-Encoding", b"chunked");
@@ -2336,12 +2349,14 @@ impl<'a> HTTPClient<'a> {
         let mut override_host_header = false;
         let mut override_connection_header = false;
         let mut override_user_agent = false;
+        let mut override_referer = false;
         let mut add_transfer_encoding = true;
         let mut original_content_length: Option<&[u8]> = None;
 
         // Reserve slots for default headers that may be appended after user headers
-        // (Connection, User-Agent, Accept, Host, Accept-Encoding, Content-Length/Transfer-Encoding).
-        const MAX_DEFAULT_HEADERS: usize = 6;
+        // (Connection, User-Agent, Accept, Host, Accept-Encoding, Referer,
+        // Content-Length/Transfer-Encoding).
+        const MAX_DEFAULT_HEADERS: usize = 7;
         const MAX_USER_HEADERS: usize = MAX_REQUEST_HEADERS - MAX_DEFAULT_HEADERS;
 
         for (i, head) in header_names.iter().enumerate() {
@@ -2392,6 +2407,11 @@ impl<'a> HTTPClient<'a> {
                 h if h == hash_header_const(HOST_HEADER_NAME) => {
                     if will_append {
                         override_host_header = true;
+                    }
+                }
+                h if h == hash_header_const(REFERER_HEADER_NAME) => {
+                    if will_append {
+                        override_referer = true;
                     }
                 }
                 h if h == hash_header_const(b"Accept") => {
@@ -2467,6 +2487,27 @@ impl<'a> HTTPClient<'a> {
         if !override_accept_encoding && !self.flags.disable_decompression {
             request_headers_buf[header_count] = ACCEPT_ENCODING_HEADER;
             header_count += 1;
+        }
+
+        // Compute the `Referer` header for this hop. `self.referrer` is empty
+        // when the caller set an explicit `Referer` (already in the loop
+        // above, which sets `override_referer`), so this recomputes only when
+        // the header came from the `referrer` / `referrerPolicy` options. It
+        // runs per `build_request`, i.e. freshly on every redirect hop.
+        if !override_referer && !self.referrer.is_empty() {
+            self.computed_referer.clear();
+            if let Some(value) =
+                determine_referer_header(&self.referrer, self.referrer_policy, &self.url)
+            {
+                self.computed_referer = value;
+                request_headers_buf[header_count] = picohttp::Header::new(
+                    REFERER_HEADER_NAME,
+                    // SAFETY: `computed_referer` lives on `self`; same erasure
+                    // as `request_content_len_buf` below.
+                    unsafe { bun_ptr::detach_lifetime(self.computed_referer.as_slice()) },
+                );
+                header_count += 1;
+            }
         }
 
         if body_len > 0 || self.method.has_request_body() {
@@ -4874,6 +4915,15 @@ impl<'a> HTTPClient<'a> {
                 }
                 h if h == hash_header_const(b"Location") => {
                     location = header.value();
+                }
+                h if h == hash_header_const(b"Referrer-Policy") => {
+                    // "Set request's referrer policy on redirect"
+                    // (https://fetch.spec.whatwg.org/#http-redirect-fetch,
+                    // step 19). Applied unconditionally: when no redirect is
+                    // followed, `referrer_policy` is never read again.
+                    if let Some(policy) = ReferrerPolicy::from_response_header(header.value()) {
+                        self.referrer_policy = policy;
+                    }
                 }
                 h if h == hash_header_const(b"Connection") => {
                     if response.status_code >= 200 && response.status_code <= 299 {

@@ -301,4 +301,155 @@ describe.concurrent("fetch referrer and referrerPolicy", () => {
       "/nrwd": "https://secure.example/page?q=1",
     });
   });
+
+  // The Referer header is computed per hop, so a redirect to a different
+  // origin applies the referrer policy against that hop's URL.
+  // https://fetch.spec.whatwg.org/#http-redirect-fetch
+  describe("redirects", () => {
+    // Two servers on different ports = two origins. A redirects to itself
+    // (same-origin) or to B (cross-origin). An optional `referrer-policy` key
+    // sets that response header on the redirect.
+    function redirectServers(hops: Record<string, string | null>) {
+      const B = Bun.serve({
+        port: 0,
+        fetch(req) {
+          hops["B " + new URL(req.url).search] = req.headers.get("referer");
+          return new Response("ok");
+        },
+      });
+      const A = Bun.serve({
+        port: 0,
+        fetch(req) {
+          const url = new URL(req.url);
+          hops["A " + url.search] = req.headers.get("referer");
+          const target = url.pathname.slice(1);
+          const redirectHeaders: Record<string, string> = {};
+          const policy = url.searchParams.get("respond-policy");
+          if (policy !== null) redirectHeaders["referrer-policy"] = policy;
+          if (target === "same") {
+            return Response.redirect(`http://127.0.0.1:${A.port}/landed${url.search}`, {
+              status: 302,
+              headers: redirectHeaders,
+            });
+          }
+          if (target === "cross") {
+            return Response.redirect(`http://127.0.0.1:${B.port}/landed${url.search}`, {
+              status: 302,
+              headers: redirectHeaders,
+            });
+          }
+          return new Response("ok");
+        },
+      });
+      return { A, B, urlA: `http://127.0.0.1:${A.port}` };
+    }
+
+    it("fetch() recomputes the Referer header on each redirect hop", async () => {
+      const hops: Record<string, string | null> = {};
+      const { A, B, urlA } = redirectServers(hops);
+      await using _a = A;
+      await using _b = B;
+
+      // With the default policy, a referrer that is same-origin with A sends
+      // the full URL to A but only its origin to B (the cross-origin hop). On
+      // the unpatched path the initial Referer would be re-sent verbatim.
+      await fetch(`${urlA}/cross?c=per-hop`, { referrer: `${urlA}/page?x=1` });
+      // unsafe-url: the full URL on every hop
+      await fetch(`${urlA}/cross?c=unsafe`, { referrer: `${urlA}/page?x=1`, referrerPolicy: "unsafe-url" });
+      // same-origin: A gets the full URL, B gets nothing
+      await fetch(`${urlA}/cross?c=same-origin`, { referrer: `${urlA}/page?x=1`, referrerPolicy: "same-origin" });
+      // origin: both hops get only the origin
+      await fetch(`${urlA}/cross?c=origin`, {
+        referrer: "https://app.example/page?x=1",
+        referrerPolicy: "origin",
+      });
+
+      expect(hops).toEqual({
+        "A ?c=per-hop": `${urlA}/page?x=1`,
+        "B ?c=per-hop": `${urlA}/`,
+        "A ?c=unsafe": `${urlA}/page?x=1`,
+        "B ?c=unsafe": `${urlA}/page?x=1`,
+        "A ?c=same-origin": `${urlA}/page?x=1`,
+        "B ?c=same-origin": null,
+        "A ?c=origin": "https://app.example/",
+        "B ?c=origin": "https://app.example/",
+      });
+    });
+
+    it("fetch() applies a Referrer-Policy response header to subsequent hops", async () => {
+      const hops: Record<string, string | null> = {};
+      const { A, B, urlA } = redirectServers(hops);
+      await using _a = A;
+      await using _b = B;
+      const referrer = "https://app.example/page?x=1";
+
+      // the redirect response's Referrer-Policy overrides the request's
+      await fetch(`${urlA}/cross?c=set-none&respond-policy=no-referrer`, {
+        referrer,
+        referrerPolicy: "unsafe-url",
+      });
+      await fetch(`${urlA}/cross?c=set-unsafe&respond-policy=unsafe-url`, {
+        referrer,
+        referrerPolicy: "origin",
+      });
+      // an unrecognized token is ignored (policy stays unsafe-url)
+      await fetch(`${urlA}/cross?c=bad&respond-policy=bogus`, {
+        referrer,
+        referrerPolicy: "unsafe-url",
+      });
+      // a comma-separated list: the last valid non-empty token wins
+      const list = encodeURIComponent("bogus, no-referrer, ");
+      await fetch(`${urlA}/cross?c=list&respond-policy=${list}`, {
+        referrer,
+        referrerPolicy: "unsafe-url",
+      });
+
+      expect(hops).toEqual({
+        "A ?c=set-none&respond-policy=no-referrer": referrer,
+        "B ?c=set-none&respond-policy=no-referrer": null,
+        "A ?c=set-unsafe&respond-policy=unsafe-url": "https://app.example/",
+        "B ?c=set-unsafe&respond-policy=unsafe-url": referrer,
+        "A ?c=bad&respond-policy=bogus": referrer,
+        "B ?c=bad&respond-policy=bogus": referrer,
+        [`A ?c=list&respond-policy=${list}`]: referrer,
+        [`B ?c=list&respond-policy=${list}`]: null,
+      });
+    });
+
+    it("an explicit Referer header is forwarded verbatim across redirects", async () => {
+      const hops: Record<string, string | null> = {};
+      const { A, B, urlA } = redirectServers(hops);
+      await using _a = A;
+      await using _b = B;
+
+      // user-set Referer passes through both hops unchanged (parity with Node)
+      await fetch(`${urlA}/cross?c=user`, { headers: { referer: "https://manual.example/set-by-user" } });
+      // and a Referrer-Policy response header does not touch it
+      await fetch(`${urlA}/cross?c=user-policy&respond-policy=no-referrer`, {
+        headers: { referer: "https://manual.example/set-by-user" },
+      });
+
+      expect(hops).toEqual({
+        "A ?c=user": "https://manual.example/set-by-user",
+        "B ?c=user": "https://manual.example/set-by-user",
+        "A ?c=user-policy&respond-policy=no-referrer": "https://manual.example/set-by-user",
+        "B ?c=user-policy&respond-policy=no-referrer": "https://manual.example/set-by-user",
+      });
+    });
+
+    it("fetch() sends no Referer on any redirect hop when none was computed for the first", async () => {
+      const hops: Record<string, string | null> = {};
+      const { A, B, urlA } = redirectServers(hops);
+      await using _a = A;
+      await using _b = B;
+
+      // no referrer option: "about:client" yields no Referer on any hop
+      await fetch(`${urlA}/cross?c=none`);
+
+      expect(hops).toEqual({
+        "A ?c=none": null,
+        "B ?c=none": null,
+      });
+    });
+  });
 });

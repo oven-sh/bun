@@ -579,7 +579,7 @@ for (const nodeExecutable of [nodeExe(), bunExe()]) {
             expect("unreachable").toBe(true);
           } catch (err) {
             expect(err.code).toBe("ERR_HTTP2_STREAM_ERROR");
-            expect(err.message).toBe("Stream closed with error code NGHTTP2_COMPRESSION_ERROR");
+            expect(err.message).toBe("Stream closed with error code NGHTTP2_FRAME_SIZE_ERROR");
           }
         });
         it("should be destroyed after close", async () => {

@@ -2494,6 +2494,51 @@ impl H2FrameParser {
         let _ = self.write(&buffer);
     }
 
+    /// A request/response header block hit an entry the HPACK encoder cannot emit (a single field
+    /// exceeding the encoder's per-entry limit). On the server the peer has already opened this
+    /// stream, so silently swallowing the failure leaves it waiting on a HEADERS frame that never
+    /// comes (RFC 9113 section 8.1) while a later end() flushes a stray DATA+END_STREAM with no
+    /// HEADERS in front of it, which a conforming client answers with a connection-level GOAWAY.
+    /// Reset the one stream with RST_STREAM(FRAME_SIZE_ERROR) so the failure stays scoped to it
+    /// (node/nghttp2 behavior). On the client the HEADERS never reached the wire, so RST_STREAM
+    /// would name a stream the peer still considers idle; fail it locally without a wire write.
+    fn reject_unencodable_header_block(
+        &self,
+        stream_id: u32,
+        stream_ctx_arg: JSValue,
+        global_object: &JSGlobalObject,
+    ) -> JSValue {
+        let Some(stream_ptr) = self.handle_received_stream_id(stream_id) else {
+            return JSValue::js_number(-1.0);
+        };
+        // SAFETY: stream_ptr is the heap::alloc'd *mut Stream stored in self.streams; valid while
+        // the map entry exists.
+        let stream = unsafe { &mut *stream_ptr };
+        if !stream_ctx_arg.is_empty_or_undefined_or_null() && stream_ctx_arg.is_object() {
+            stream.set_context(stream_ctx_arg, global_object);
+        }
+        let identifier = stream.get_identifier();
+        identifier.ensure_still_alive();
+        self.dispatch_with_2_extra(
+            JSH2FrameParser::Gc::onFrameError,
+            identifier,
+            JSValue::js_number(FrameType::HTTP_FRAME_HEADERS as u8 as f64),
+            JSValue::js_number(ErrorCode::FRAME_SIZE_ERROR.0 as f64),
+        );
+        if self.is_server.get() {
+            self.end_stream(stream, ErrorCode::FRAME_SIZE_ERROR);
+        } else {
+            stream.state = StreamState::CLOSED;
+            stream.rst_code = ErrorCode::FRAME_SIZE_ERROR.0;
+            self.dispatch_with_extra(
+                JSH2FrameParser::Gc::onStreamError,
+                identifier,
+                JSValue::js_number(ErrorCode::FRAME_SIZE_ERROR.0 as f64),
+            );
+        }
+        JSValue::js_number(stream_id as f64)
+    }
+
     pub(crate) fn send_go_away(
         &self,
         triggering_stream_id: u32,
@@ -7443,7 +7488,14 @@ impl H2FrameParser {
         let stream = unsafe { &mut *stream };
 
         stream.wait_for_trailers = false;
-        let _ = this.send_data(stream, b"", true, JSValue::UNDEFINED, false, false);
+        // The compat response always routes _final through here (kBeginSend sets
+        // waitForTrailers: true); when the response headers could not be encoded the stream has
+        // already been reset to CLOSED, and emitting the empty END_STREAM DATA here would put a
+        // frame on the wire after RST_STREAM (or, before the encode-failure fix, with no HEADERS
+        // in front of it). Same guard write_stream() applies.
+        if stream.can_send_data() {
+            let _ = this.send_data(stream, b"", true, JSValue::UNDEFINED, false, false);
+        }
         Ok(JSValue::UNDEFINED)
     }
 
@@ -8603,24 +8655,11 @@ impl H2FrameParser {
                             return Err(global_object
                                 .throw(format_args!("Failed to allocate header buffer")));
                         }
-                        let Some(stream) = this.handle_received_stream_id(stream_id) else {
-                            return Ok(JSValue::js_number(-1.0));
-                        };
-                        // SAFETY: stream is a *mut Stream from self.streams (heap::alloc); valid while the map entry exists
-                        let stream = unsafe { &mut *stream };
-                        stream.state = StreamState::CLOSED;
-                        if !stream_ctx_arg.is_empty_or_undefined_or_null()
-                            && stream_ctx_arg.is_object()
-                        {
-                            stream.set_context(stream_ctx_arg, global_object);
-                        }
-                        stream.rst_code = ErrorCode::COMPRESSION_ERROR.0;
-                        this.dispatch_with_extra(
-                            JSH2FrameParser::Gc::onStreamError,
-                            stream.get_identifier(),
-                            JSValue::js_number(stream.rst_code as f64),
-                        );
-                        return Ok(JSValue::js_number(stream_id as f64));
+                        return Ok(this.reject_unencodable_header_block(
+                            stream_id,
+                            stream_ctx_arg,
+                            global_object,
+                        ));
                     }
                 }
             }
@@ -8776,24 +8815,11 @@ impl H2FrameParser {
                                 return Err(global_object
                                     .throw(format_args!("Failed to allocate header buffer")));
                             }
-                            let Some(stream) = this.handle_received_stream_id(stream_id) else {
-                                return Ok(JSValue::js_number(-1.0));
-                            };
-                            // SAFETY: stream is a *mut Stream from self.streams (heap::alloc); valid while the map entry exists
-                            let stream = unsafe { &mut *stream };
-                            if !stream_ctx_arg.is_empty_or_undefined_or_null()
-                                && stream_ctx_arg.is_object()
-                            {
-                                stream.set_context(stream_ctx_arg, global_object);
-                            }
-                            stream.state = StreamState::CLOSED;
-                            stream.rst_code = ErrorCode::COMPRESSION_ERROR.0;
-                            this.dispatch_with_extra(
-                                JSH2FrameParser::Gc::onStreamError,
-                                stream.get_identifier(),
-                                JSValue::js_number(stream.rst_code as f64),
-                            );
-                            return Ok(JSValue::UNDEFINED);
+                            return Ok(this.reject_unencodable_header_block(
+                                stream_id,
+                                stream_ctx_arg,
+                                global_object,
+                            ));
                         }
                     }
                 } else if !js_value.is_empty_or_undefined_or_null() {
@@ -8852,24 +8878,11 @@ impl H2FrameParser {
                             return Err(global_object
                                 .throw(format_args!("Failed to allocate header buffer")));
                         }
-                        let Some(stream) = this.handle_received_stream_id(stream_id) else {
-                            return Ok(JSValue::js_number(-1.0));
-                        };
-                        // SAFETY: stream is a *mut Stream from self.streams (heap::alloc); valid while the map entry exists
-                        let stream = unsafe { &mut *stream };
-                        stream.state = StreamState::CLOSED;
-                        if !stream_ctx_arg.is_empty_or_undefined_or_null()
-                            && stream_ctx_arg.is_object()
-                        {
-                            stream.set_context(stream_ctx_arg, global_object);
-                        }
-                        stream.rst_code = ErrorCode::COMPRESSION_ERROR.0;
-                        this.dispatch_with_extra(
-                            JSH2FrameParser::Gc::onStreamError,
-                            stream.get_identifier(),
-                            JSValue::js_number(stream.rst_code as f64),
-                        );
-                        return Ok(JSValue::js_number(stream_id as f64));
+                        return Ok(this.reject_unencodable_header_block(
+                            stream_id,
+                            stream_ctx_arg,
+                            global_object,
+                        ));
                     }
                 }
             }

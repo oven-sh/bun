@@ -1041,6 +1041,126 @@ describe("request pseudo-header requirements (RFC 9113 §8.3.1)", () => {
   });
 });
 
+describe("response header block encode failures (RFC 9113 section 8.1)", () => {
+  // A single header entry whose encoded size overflows the HPACK encoder's per-entry limit
+  // (name + value > LSHPACK_MAX_HEADER_SIZE) cannot be emitted at all. Before the fix the native
+  // layer marked the stream CLOSED locally and let the JS end path flush a stray DATA+END_STREAM
+  // with no HEADERS in front of it, which a conforming client treats as a connection
+  // PROTOCOL_ERROR and tears down every multiplexed stream. node 26 / nghttp2 instead reset just
+  // that stream with RST_STREAM(FRAME_SIZE_ERROR); the connection stays up.
+  async function serveOversized(
+    handler: (stream: http2.ServerHttp2Stream) => void,
+  ): Promise<{ frames: Frame[]; frameError: [number, number] | null }> {
+    let frameError: [number, number] | null = null;
+    const srv = http2.createServer();
+    srv.on("session", s => s.on("error", () => {}));
+    srv.on("stream", stream => {
+      stream.on("error", () => {});
+      stream.on("frameError", (type, code) => {
+        frameError = [type, code];
+      });
+      handler(stream);
+    });
+    srv.listen(0, "127.0.0.1");
+    await once(srv, "listening");
+    const c = await RawH2.connect((srv.address() as net.AddressInfo).port);
+    try {
+      c.sendPreface();
+      c.sendEmptySettings();
+      c.sendSettingsAck();
+      c.sendFrame(FrameType.HEADERS, 0x5 /* END_HEADERS|END_STREAM */, 1, requestHeaderBlock("GET"));
+      await c.waitFor(
+        f => f.streamId === 1 && (f.type === FrameType.RST_STREAM || f.type === FrameType.DATA),
+      );
+      // PING barrier: once the ACK arrives the server has flushed everything queued for stream 1.
+      c.sendFrame(FrameType.PING, 0, 0, Buffer.alloc(8));
+      await c.waitFor(f => f.type === FrameType.PING && (f.flags & 0x1) !== 0);
+      return { frames: c.frames.slice(), frameError };
+    } finally {
+      c.destroy();
+      srv.close();
+    }
+  }
+
+  function expectStreamReset({ frames, frameError }: { frames: Frame[]; frameError: [number, number] | null }) {
+    const onStream1 = frames.filter(f => f.streamId === 1);
+    const types = onStream1.map(f => f.type);
+    // No response HEADERS or DATA reached the wire for the failed stream.
+    expect(types).not.toContain(FrameType.HEADERS);
+    expect(types).not.toContain(FrameType.DATA);
+    // The peer sees an RST_STREAM(FRAME_SIZE_ERROR) for just that stream.
+    const rst = onStream1.find(f => f.type === FrameType.RST_STREAM);
+    expect(rst?.payload.readUInt32BE(0)).toBe(ErrorCode.FRAME_SIZE_ERROR);
+    // The handler was told via 'frameError' that the HEADERS frame could not be sent.
+    expect(frameError).toEqual([FrameType.HEADERS, ErrorCode.FRAME_SIZE_ERROR]);
+    // The connection survived: PING was answered and no GOAWAY went out.
+    expect(frames.find(f => f.type === FrameType.GOAWAY)).toBeUndefined();
+  }
+
+  const BIG = Buffer.alloc(200000, 0x42).toString("latin1");
+
+  test("stream.respond() with an unencodable header resets the stream, no HEADERS/DATA written", async () => {
+    expectStreamReset(
+      await serveOversized(stream => {
+        stream.respond({ ":status": 200, "x-big": BIG });
+        stream.end("big");
+      }),
+    );
+  });
+
+  test("stream.respond() with the unencodable header as an array value resets the stream", async () => {
+    expectStreamReset(
+      await serveOversized(stream => {
+        stream.respond({ ":status": 200, "x-big": [BIG] });
+        stream.end("big");
+      }),
+    );
+  });
+
+  test("stream.respond() with a raw-array header list resets the stream", async () => {
+    expectStreamReset(
+      await serveOversized(stream => {
+        stream.respond([":status", 200, "x-big", BIG] as any);
+        stream.end("big");
+      }),
+    );
+  });
+
+  test("the compat Http2ServerResponse writes RST_STREAM instead of a headerless DATA frame", async () => {
+    let frameError: [number, number] | null = null;
+    const srv = http2.createServer();
+    srv.on("session", s => s.on("error", () => {}));
+    srv.on("request", (_req, res) => {
+      res.stream.on("error", () => {});
+      res.stream.on("frameError", (type: number, code: number) => {
+        frameError = [type, code];
+      });
+      res.setHeader("x-big", BIG);
+      res.end("big");
+    });
+    srv.listen(0, "127.0.0.1");
+    await once(srv, "listening");
+    const c = await RawH2.connect((srv.address() as net.AddressInfo).port);
+    try {
+      c.sendPreface();
+      c.sendEmptySettings();
+      c.sendSettingsAck();
+      c.sendFrame(FrameType.HEADERS, 0x5, 1, requestHeaderBlock("GET"));
+      const first = await c.waitFor(
+        f => f.streamId === 1 && (f.type === FrameType.RST_STREAM || f.type === FrameType.DATA),
+      );
+      // The first stream-1 frame must be the reset, not a stray DATA with no HEADERS.
+      expect(first.type).toBe(FrameType.RST_STREAM);
+      c.sendFrame(FrameType.PING, 0, 0, Buffer.alloc(8));
+      await c.waitFor(f => f.type === FrameType.PING && (f.flags & 0x1) !== 0);
+      expectStreamReset({ frames: c.frames.slice(), frameError });
+    } finally {
+      c.destroy();
+      srv.close();
+    }
+  });
+});
+
 describe("inbound stream lifecycle", () => {
   test("releases server stream objects once the peer resets their streams", async () => {
     const total = 32;

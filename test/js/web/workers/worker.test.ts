@@ -375,6 +375,16 @@ describe("web worker", () => {
     expect("close" in globalThis).toBe(false);
     expect("name" in globalThis).toBe(false);
   });
+
+  test("close and name are not defined in a node:worker_threads worker", async () => {
+    const worker = new wt.Worker(
+      `require("worker_threads").parentPort.postMessage({ close: "close" in globalThis, name: "name" in globalThis })`,
+      { eval: true, name: "nw" },
+    );
+    const [msg] = await once(worker, "message");
+    await worker.terminate();
+    expect(msg).toEqual({ close: false, name: false });
+  });
 });
 
 // TODO: move to node:worker_threads tests directory

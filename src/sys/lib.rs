@@ -2913,8 +2913,22 @@ mod posix_impl {
         let rc = unsafe { libc::faccessat(dir.native(), sub.as_ptr(), libc::F_OK, 0) };
         Ok(rc == 0)
     }
+    /// Clamp a `timespec` so `tv_sec` is non-negative — some filesystems
+    /// (notably OHOS FUSE) reject or silently truncate pre-epoch timestamps.
+    #[cfg(target_env = "ohos")]
+    fn clamp_timespec(ts: libc::timespec) -> libc::timespec {
+        libc::timespec {
+            tv_sec: if ts.tv_sec < 0 { 0 } else { ts.tv_sec },
+            tv_nsec: if ts.tv_sec < 0 { 0 } else { ts.tv_nsec },
+        }
+    }
+    #[cfg(not(target_env = "ohos"))]
+    fn clamp_timespec(ts: libc::timespec) -> libc::timespec {
+        ts
+    }
+
     pub fn futimens(fd: Fd, atime: TimeLike, mtime: TimeLike) -> Maybe<()> {
-        let ts = [atime.to_timespec(), mtime.to_timespec()];
+        let ts = [clamp_timespec(atime.to_timespec()), clamp_timespec(mtime.to_timespec())];
         check!(
             // SAFETY: `fd` is a live descriptor; `ts` is a 2-element stack
             // array and `futimens` reads exactly two `timespec`s.
@@ -2924,7 +2938,7 @@ mod posix_impl {
         Ok(())
     }
     pub fn utimens(path: &ZStr, atime: TimeLike, mtime: TimeLike) -> Maybe<()> {
-        let ts = [atime.to_timespec(), mtime.to_timespec()];
+        let ts = [clamp_timespec(atime.to_timespec()), clamp_timespec(mtime.to_timespec())];
         check_p!(
             // SAFETY: `path` is NUL-terminated (`ZStr`); `ts` is a 2-element
             // stack array and `utimensat` reads exactly two `timespec`s.
@@ -2935,7 +2949,7 @@ mod posix_impl {
         Ok(())
     }
     pub fn lutimens(path: &ZStr, atime: TimeLike, mtime: TimeLike) -> Maybe<()> {
-        let ts = [atime.to_timespec(), mtime.to_timespec()];
+        let ts = [clamp_timespec(atime.to_timespec()), clamp_timespec(mtime.to_timespec())];
         check_p!(
             // SAFETY: `path` is NUL-terminated (`ZStr`); `ts` is a 2-element
             // stack array and `utimensat` reads exactly two `timespec`s.

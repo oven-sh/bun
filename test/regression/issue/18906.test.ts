@@ -29,7 +29,7 @@ async function runInstall(cwd: string, extra: string[] = []) {
 }
 
 describe("bun.lock workspace version tracks package.json version", () => {
-  async function setup(prefix: string) {
+  async function setup(prefix: string, pkgAVersion = "1.0.0") {
     const dir = tempDir(prefix, {
       "package.json": JSON.stringify({
         name: "root",
@@ -37,7 +37,7 @@ describe("bun.lock workspace version tracks package.json version", () => {
       }),
       "packages/pkg-a/package.json": JSON.stringify({
         name: "pkg-a",
-        version: "1.0.0",
+        version: pkgAVersion,
       }),
       "packages/pkg-b/package.json": JSON.stringify({
         name: "pkg-b",
@@ -45,18 +45,23 @@ describe("bun.lock workspace version tracks package.json version", () => {
         dependencies: { "pkg-a": "workspace:*" },
       }),
     });
-    const cwd = String(dir);
+    try {
+      const cwd = String(dir);
 
-    const { stderr, exitCode } = await runInstall(cwd);
-    expect(stderr).not.toContain("error:");
-    expect(exitCode).toBe(0);
+      const { stderr, exitCode } = await runInstall(cwd);
+      expect(stderr).not.toContain("error:");
+      expect(exitCode).toBe(0);
 
-    const lockfile = await Bun.file(join(cwd, "bun.lock")).text();
-    expect(workspaceEntry(lockfile, "packages/pkg-a")).toBe(
-      `"packages/pkg-a": { "name": "pkg-a", "version": "1.0.0", }`,
-    );
+      const lockfile = await Bun.file(join(cwd, "bun.lock")).text();
+      expect(workspaceEntry(lockfile, "packages/pkg-a")).toBe(
+        `"packages/pkg-a": { "name": "pkg-a", "version": "${pkgAVersion}", }`,
+      );
 
-    return dir;
+      return dir;
+    } catch (e) {
+      dir[Symbol.dispose]();
+      throw e;
+    }
   }
 
   for (const extra of [["--lockfile-only"], []]) {
@@ -83,6 +88,26 @@ describe("bun.lock workspace version tracks package.json version", () => {
       );
     });
   }
+
+  test(`"bun install" after changing only build metadata`, async () => {
+    using dir = await setup("issue-18906-build", "1.0.0+build.1");
+    const cwd = String(dir);
+
+    await Bun.write(
+      join(cwd, "packages", "pkg-a", "package.json"),
+      JSON.stringify({ name: "pkg-a", version: "1.0.0+build.2" }),
+    );
+
+    const { stderr, exitCode } = await runInstall(cwd);
+    expect(stderr).not.toContain("error:");
+    expect(stderr).toContain("Saved lockfile");
+    expect(exitCode).toBe(0);
+
+    const lockfile = await Bun.file(join(cwd, "bun.lock")).text();
+    expect(workspaceEntry(lockfile, "packages/pkg-a")).toBe(
+      `"packages/pkg-a": { "name": "pkg-a", "version": "1.0.0+build.2", }`,
+    );
+  });
 
   test(`"bun install" after adding a version where there was none`, async () => {
     using dir = tempDir("issue-18906-add-version", {

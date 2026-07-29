@@ -1296,7 +1296,11 @@ impl Diff {
                 for (key, to_version) in to_lockfile.workspace_versions.iter() {
                     match from_lockfile.workspace_versions.get(key) {
                         Some(from_version) => {
-                            if !from_version.eql(*to_version) {
+                            // `Version::eql` is precedence equality (ignores build metadata);
+                            // compare build.hash too so `1.0.0+a` -> `1.0.0+b` is a diff.
+                            if !from_version.eql(*to_version)
+                                || from_version.tag.build.hash != to_version.tag.build.hash
+                            {
                                 break 'workspace_versions_changed true;
                             }
                         }

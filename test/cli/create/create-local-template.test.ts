@@ -256,6 +256,8 @@ test.concurrent(
   },
 );
 
+// Windows classifies reparse points by target kind, so the no-follow refusal
+// does not apply there; creating symlinks also needs elevation on Windows.
 test.skipIf(isWindows).concurrent("bun create treats a destination symlink as a conflict, not its target", async () => {
   using dir = tempDir("create-local-symlink", {
     "templates/mytpl/sub/nested.txt": "template nested",
@@ -281,6 +283,7 @@ test.skipIf(isWindows).concurrent("bun create treats a destination symlink as a 
   });
 });
 
+// See the Windows note on the previous symlink test.
 test
   .skipIf(isWindows)
   .concurrent("bun create with --force replaces a destination symlink instead of writing through it", async () => {

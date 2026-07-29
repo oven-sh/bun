@@ -839,11 +839,26 @@ If you're using `@mapbox/node-pre-gyp` or similar tools, the `.node` file must b
 
 ### Embed directories
 
-Use `--asset` to embed a file or directory tree into the executable under its original relative path. The embedded files live under `import.meta.dir` at runtime and are reachable via `node:fs` (`existsSync`, `statSync`, `readdirSync`, `readFileSync`) and `Bun.file()`.
+Use `--asset` (or `compile.assets` in the JavaScript API) to embed a file or directory tree into the executable under its original relative path. The embedded files live under `import.meta.dir` at runtime and are reachable via `node:fs` (`existsSync`, `statSync`, `readdirSync`, `readFileSync`) and `Bun.file()`.
 
-```bash terminal icon="terminal"
-bun build --compile ./index.ts --asset ./public --outfile myapp
-```
+<Tabs>
+  <Tab title="CLI">
+    ```bash terminal icon="terminal"
+    bun build --compile ./index.ts --asset ./public --outfile myapp
+    ```
+  </Tab>
+  <Tab title="JavaScript">
+    ```ts build.ts icon="/icons/typescript.svg"
+    await Bun.build({
+      entrypoints: ["./index.ts"],
+      compile: {
+        outfile: "./myapp",
+        assets: ["./public"],
+      },
+    });
+    ```
+  </Tab>
+</Tabs>
 
 ```ts index.ts icon="/icons/typescript.svg"
 import fs from "node:fs";
@@ -1222,6 +1237,7 @@ interface BuildConfig {
 interface CompileBuildOptions {
   target?: Bun.Build.CompileTarget; // Cross-compilation target
   outfile?: string; // Output executable path
+  assets?: string[]; // Files/directories to embed under import.meta.dir
   execArgv?: string[]; // Runtime arguments (process.execArgv)
   autoloadTsconfig?: boolean; // Load tsconfig.json (default: false)
   autoloadPackageJson?: boolean; // Load package.json (default: false)

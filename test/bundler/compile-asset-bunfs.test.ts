@@ -226,6 +226,64 @@ describe.concurrent("compile --asset and /$bunfs/ directory semantics", () => {
   );
 
   test(
+    "Bun.build({compile: {assets}}) embeds a directory tree",
+    async () => {
+      using dir = tempDir("bunfs-asset-jsapi", {
+        "index.ts": /* ts */ `
+          import fs from "node:fs";
+          import path from "node:path";
+          const root = path.join(import.meta.dir, "public");
+          console.log(JSON.stringify({
+            entries: fs.readdirSync(root).sort(),
+            content: fs.readFileSync(path.join(root, "index.html"), "utf8"),
+          }));
+        `,
+        "public/index.html": "<h1>js-api</h1>",
+        "public/sub/a.css": "body{}",
+      });
+
+      const result = await Bun.build({
+        entrypoints: [join(String(dir), "index.ts")],
+        compile: {
+          outfile: join(String(dir), "app"),
+          assets: [join(String(dir), "public")],
+        },
+      });
+      expect(result.success).toBe(true);
+
+      const { stdout, stderr, code } = await run(String(dir));
+      expect(stderr.trim()).toBe("");
+      const r = JSON.parse(stdout.trim());
+      expect(r.entries).toEqual(["index.html", "sub"]);
+      expect(r.content).toBe("<h1>js-api</h1>");
+      expect(code).toBe(0);
+    },
+    TIMEOUT,
+  );
+
+  test(
+    "Bun.build({compile: {assets}}) rejects colliding paths",
+    async () => {
+      using dir = tempDir("bunfs-asset-jsapi-err", {
+        "index.ts": `console.log("x");`,
+        "a/data.json": `1`,
+        "b/data.json": `2`,
+      });
+      const result = await Bun.build({
+        entrypoints: [join(String(dir), "index.ts")],
+        throw: false,
+        compile: {
+          outfile: join(String(dir), "app"),
+          assets: [join(String(dir), "a", "data.json"), join(String(dir), "b", "data.json")],
+        },
+      });
+      expect(result.success).toBe(false);
+      expect(result.logs.map(String).join("\n")).toContain("collides");
+    },
+    TIMEOUT,
+  );
+
+  test(
     "--asset errors on colliding embedded paths",
     async () => {
       using dir = tempDir("bunfs-asset-collide", {
@@ -286,7 +344,7 @@ describe.concurrent("compile --asset and /$bunfs/ directory semantics", () => {
       ["build", "--compile", "--target=browser", "./index.html", "--asset", "./public"],
       "--target browser with --asset",
     ],
-    [["build", "--compile", "./index.ts", "--outfile", "app", "--asset", "./does-not-exist"], "failed to read --asset"],
+    [["build", "--compile", "./index.ts", "--outfile", "app", "--asset", "./does-not-exist"], "failed to read asset"],
     ...(process.platform === "win32"
       ? []
       : [

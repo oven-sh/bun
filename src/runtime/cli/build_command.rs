@@ -737,13 +737,12 @@ impl BuildCommand {
         };
 
         if ctx.bundler_options.compile && !ctx.bundler_options.compile_assets.is_empty() {
-            if collect_compile_assets(
+            if let Err(msg) = collect_compile_assets(
                 &ctx.bundler_options.compile_assets,
                 outfile,
                 &mut output_files,
-            )
-            .is_err()
-            {
+            ) {
+                Output::err_generic("{}", (msg.as_str(),));
                 exit_or_watch(1, ctx.debug.hot_reload == HotReload::Watch);
             }
         }
@@ -1236,22 +1235,21 @@ fn print_summary(
     bun_core::prettyln!("  <green>bundle<r>  {} modules", reachable_file_count);
 }
 
-fn collect_compile_assets(
+pub(crate) fn collect_compile_assets(
     assets: &[Box<[u8]>],
     outfile: &[u8],
     out: &mut Vec<options::OutputFile>,
-) -> Result<(), ()> {
+) -> Result<(), String> {
     use bun_ast::Loader;
     use bun_collections::StringArrayHashMap;
     use bun_sys::EntryKind;
 
-    let fail = |err: bun_sys::Error| -> Result<(), ()> {
-        Output::err(
-            &err,
-            "failed to read --asset {}",
-            (bun_fmt::quote(&err.path),),
-        );
-        Err(())
+    let fail = |err: bun_sys::Error| -> Result<(), String> {
+        Err(format!(
+            "failed to read asset {}: {}",
+            bun_fmt::quote(&err.path),
+            err,
+        ))
     };
     let entry_name = bun_paths::basename(outfile);
 
@@ -1283,11 +1281,11 @@ fn collect_compile_assets(
     let mut push =
         |out: &mut Vec<options::OutputFile>, asset: &[u8], dest: Vec<u8>, bytes: Vec<u8>| {
             if seen.contains_key(&dest) {
-                Output::err_generic(
-                    "--asset {} collides with another embedded file at {}",
-                    (bun_fmt::quote(asset), bun_fmt::quote(&dest)),
-                );
-                return Err(());
+                return Err(format!(
+                    "asset {} collides with another embedded file at {}",
+                    bun_fmt::quote(asset),
+                    bun_fmt::quote(&dest),
+                ));
             }
             let _ = seen.put(&dest, ());
             out.push(options::OutputFile {
@@ -1323,11 +1321,10 @@ fn collect_compile_assets(
             );
         }
         if base == entry_name {
-            Output::err_generic(
-                "--asset {} would embed at the same path as the entry point; pass a different --outfile",
-                (bun_fmt::quote(asset),),
-            );
-            return Err(());
+            return Err(format!(
+                "asset {} would embed at the same path as the entry point; use a different outfile",
+                bun_fmt::quote(asset),
+            ));
         }
 
         let n = asset_trimmed.len().min(zbuf.len() - 1);
@@ -1406,11 +1403,10 @@ fn collect_compile_assets(
             };
             push(out, asset, base.to_vec(), bytes)?;
         } else {
-            Output::err_generic(
-                "--asset {} is not a regular file or directory",
-                (bun_fmt::quote(asset),),
-            );
-            return Err(());
+            return Err(format!(
+                "asset {} is not a regular file or directory",
+                bun_fmt::quote(asset),
+            ));
         }
     }
     Ok(())

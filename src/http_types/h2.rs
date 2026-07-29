@@ -137,10 +137,6 @@ impl UInt31WithReserved {
 }
 
 // ─── packed wire structs ────────────────────────
-//
-// `SettingsPayloadUnit` is `#[repr(C, packed)]` with integer-only fields and
-// therefore has no padding bytes and no niches. It implements `bytemuck::Pod`,
-// so the per-`from()` byte-view is the safe `bytemuck::bytes_of_mut`.
 
 /// 5-byte PRIORITY payload: BE stream identifier + weight.
 #[repr(C, packed)]

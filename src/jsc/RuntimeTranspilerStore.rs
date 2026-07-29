@@ -1019,14 +1019,17 @@ impl TranspilerJob {
         for import_record in parse_result.ast.import_records.as_mut_slice() {
             let import_record: &mut ImportRecord = import_record;
 
+            let alias_cfg = HardcodedAliasCfg {
+                rewrite_jest_for_tests: transpiler.options.rewrite_jest_for_tests,
+            };
             if let Some(replacement) = HardcodedAlias::get(
                 import_record.path.text,
                 transpiler.options.target,
-                HardcodedAliasCfg {
-                    rewrite_jest_for_tests: transpiler.options.rewrite_jest_for_tests,
-                },
+                alias_cfg,
             ) {
-                import_record.path.text = replacement.path.as_bytes();
+                if !replacement.defers_to_resolve_time(transpiler.options.target, alias_cfg) {
+                    import_record.path.text = replacement.path.as_bytes();
+                }
                 import_record.tag = replacement.tag;
                 import_record
                     .flags

@@ -464,6 +464,11 @@ pub(crate) unsafe extern "C" fn Bun__resolveAndFetchBuiltinModule(
     let Some(alias) = bun_aliases_get(spec_utf8.slice()) else {
         return false;
     };
+    // Agree with `ModuleLoader__isBuiltin`: `prefer_installed` specifiers are
+    // not builtins, so `process.getBuiltinModule` returns undefined for them.
+    if alias.prefer_installed {
+        return false;
+    }
     let Some(&hardcoded) = bun_resolve_builtins::Module::MAP.get(alias.path.as_bytes()) else {
         debug_assert!(false);
         return false;
@@ -510,7 +515,9 @@ pub(crate) unsafe extern "C" fn Bun__resolveEmbeddedNodeFile(
 pub(crate) unsafe extern "C" fn ModuleLoader__isBuiltin(data: *const u8, len: usize) -> bool {
     // SAFETY: C++ guarantees `data[..len]` is a valid UTF-8 specifier slice.
     let str = unsafe { bun_core::ffi::slice(data, len) };
-    bun_aliases_get(str).is_some() || exposed_internal_tag(str).is_some()
+    // `prefer_installed` aliases resolve like normal packages (the builtin is
+    // only a fallback), so `require.resolve.paths` must report search paths.
+    bun_aliases_get(str).is_some_and(|a| !a.prefer_installed) || exposed_internal_tag(str).is_some()
 }
 
 // The pure byte-string

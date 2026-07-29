@@ -434,7 +434,9 @@ const modules = [
   "_http_server",
   "http2",
   "process",
-  "undici",
+  // Bun's undici shim. Bare "undici" resolves to the installed package when
+  // present; this alias always maps to the shim.
+  "next/dist/compiled/undici",
   "timers",
   "punycode",
   "trace_events",

@@ -319,6 +319,9 @@ pub struct Alias {
     pub tag: import_record::Tag,
     pub node_builtin: bool,
     pub node_only_prefix: bool,
+    /// The builtin is only a fallback: when the package is installed in
+    /// node_modules, module resolution uses the installed copy instead.
+    pub prefer_installed: bool,
 }
 
 impl Default for Alias {
@@ -328,6 +331,7 @@ impl Default for Alias {
             tag: import_record::Tag::Builtin,
             node_builtin: false,
             node_only_prefix: false,
+            prefer_installed: false,
         }
     }
 }
@@ -364,6 +368,7 @@ macro_rules! node_entry {
                 tag: import_record::Tag::Builtin,
                 node_builtin: true,
                 node_only_prefix: false,
+                prefer_installed: false,
             },
         )
     };
@@ -378,6 +383,7 @@ macro_rules! node_entry_only_prefix {
                 tag: import_record::Tag::Builtin,
                 node_builtin: true,
                 node_only_prefix: true,
+                prefer_installed: false,
             },
         )
     };
@@ -392,6 +398,7 @@ macro_rules! entry {
                 tag: import_record::Tag::Builtin,
                 node_builtin: false,
                 node_only_prefix: false,
+                prefer_installed: false,
             },
         )
     };
@@ -544,6 +551,7 @@ const COMMON_ALIAS_KVS: &[AliasKv] = &[
             tag: import_record::Tag::Builtin,
             node_builtin: true,
             node_only_prefix: false,
+            prefer_installed: false,
         },
     ),
     (
@@ -553,6 +561,7 @@ const COMMON_ALIAS_KVS: &[AliasKv] = &[
             tag: import_record::Tag::Builtin,
             node_builtin: true,
             node_only_prefix: false,
+            prefer_installed: false,
         },
     ),
     //
@@ -565,6 +574,7 @@ const COMMON_ALIAS_KVS: &[AliasKv] = &[
             tag: import_record::Tag::Builtin,
             node_builtin: true,
             node_only_prefix: false,
+            prefer_installed: false,
         },
     ),
     (
@@ -574,6 +584,7 @@ const COMMON_ALIAS_KVS: &[AliasKv] = &[
             tag: import_record::Tag::Builtin,
             node_builtin: true,
             node_only_prefix: false,
+            prefer_installed: false,
         },
     ),
     (
@@ -583,6 +594,7 @@ const COMMON_ALIAS_KVS: &[AliasKv] = &[
             tag: import_record::Tag::Builtin,
             node_builtin: true,
             node_only_prefix: false,
+            prefer_installed: false,
         },
     ),
     (
@@ -592,6 +604,7 @@ const COMMON_ALIAS_KVS: &[AliasKv] = &[
             tag: import_record::Tag::Builtin,
             node_builtin: true,
             node_only_prefix: false,
+            prefer_installed: false,
         },
     ),
     (
@@ -601,6 +614,7 @@ const COMMON_ALIAS_KVS: &[AliasKv] = &[
             tag: import_record::Tag::Builtin,
             node_builtin: true,
             node_only_prefix: false,
+            prefer_installed: false,
         },
     ),
     (
@@ -610,6 +624,7 @@ const COMMON_ALIAS_KVS: &[AliasKv] = &[
             tag: import_record::Tag::Builtin,
             node_builtin: true,
             node_only_prefix: false,
+            prefer_installed: false,
         },
     ),
     (
@@ -619,6 +634,7 @@ const COMMON_ALIAS_KVS: &[AliasKv] = &[
             tag: import_record::Tag::Builtin,
             node_builtin: true,
             node_only_prefix: false,
+            prefer_installed: false,
         },
     ),
     (
@@ -628,6 +644,7 @@ const COMMON_ALIAS_KVS: &[AliasKv] = &[
             tag: import_record::Tag::Builtin,
             node_builtin: true,
             node_only_prefix: false,
+            prefer_installed: false,
         },
     ),
     (
@@ -637,6 +654,7 @@ const COMMON_ALIAS_KVS: &[AliasKv] = &[
             tag: import_record::Tag::Builtin,
             node_builtin: true,
             node_only_prefix: false,
+            prefer_installed: false,
         },
     ),
     (
@@ -646,6 +664,7 @@ const COMMON_ALIAS_KVS: &[AliasKv] = &[
             tag: import_record::Tag::Builtin,
             node_builtin: true,
             node_only_prefix: false,
+            prefer_installed: false,
         },
     ),
     (
@@ -655,6 +674,7 @@ const COMMON_ALIAS_KVS: &[AliasKv] = &[
             tag: import_record::Tag::Builtin,
             node_builtin: true,
             node_only_prefix: false,
+            prefer_installed: false,
         },
     ),
     (
@@ -664,6 +684,7 @@ const COMMON_ALIAS_KVS: &[AliasKv] = &[
             tag: import_record::Tag::Builtin,
             node_builtin: true,
             node_only_prefix: false,
+            prefer_installed: false,
         },
     ),
     (
@@ -673,6 +694,7 @@ const COMMON_ALIAS_KVS: &[AliasKv] = &[
             tag: import_record::Tag::Builtin,
             node_builtin: true,
             node_only_prefix: false,
+            prefer_installed: false,
         },
     ),
     (
@@ -682,6 +704,7 @@ const COMMON_ALIAS_KVS: &[AliasKv] = &[
             tag: import_record::Tag::Builtin,
             node_builtin: true,
             node_only_prefix: false,
+            prefer_installed: false,
         },
     ),
     (
@@ -691,6 +714,7 @@ const COMMON_ALIAS_KVS: &[AliasKv] = &[
             tag: import_record::Tag::Builtin,
             node_builtin: true,
             node_only_prefix: false,
+            prefer_installed: false,
         },
     ),
     (
@@ -700,6 +724,7 @@ const COMMON_ALIAS_KVS: &[AliasKv] = &[
             tag: import_record::Tag::Builtin,
             node_builtin: true,
             node_only_prefix: false,
+            prefer_installed: false,
         },
     ),
 ];
@@ -712,6 +737,7 @@ const BUN_EXTRA_ALIAS_KVS: &[AliasKv] = &[
             tag: import_record::Tag::Bun,
             node_builtin: false,
             node_only_prefix: false,
+            prefer_installed: false,
         },
     ),
     entry!("bun:test"),
@@ -736,6 +762,7 @@ const BUN_EXTRA_ALIAS_KVS: &[AliasKv] = &[
             tag: import_record::Tag::Builtin,
             node_builtin: false,
             node_only_prefix: false,
+            prefer_installed: false,
         },
     ),
     //
@@ -743,7 +770,17 @@ const BUN_EXTRA_ALIAS_KVS: &[AliasKv] = &[
     entry!("@vercel/fetch"),
     entry!("isomorphic-fetch"),
     entry!("node-fetch"),
-    entry!("undici"),
+    // The shim is only a fallback; an installed undici wins (#36098).
+    (
+        b"undici",
+        Alias {
+            path: zstr!("undici"),
+            tag: import_record::Tag::Builtin,
+            node_builtin: false,
+            node_only_prefix: false,
+            prefer_installed: true,
+        },
+    ),
     entry!("utf-8-validate"),
     entry!("ws"),
     (
@@ -753,6 +790,7 @@ const BUN_EXTRA_ALIAS_KVS: &[AliasKv] = &[
             tag: import_record::Tag::Builtin,
             node_builtin: false,
             node_only_prefix: false,
+            prefer_installed: false,
         },
     ),
     //
@@ -765,6 +803,7 @@ const BUN_EXTRA_ALIAS_KVS: &[AliasKv] = &[
             tag: import_record::Tag::Builtin,
             node_builtin: false,
             node_only_prefix: false,
+            prefer_installed: false,
         },
     ),
     //
@@ -776,6 +815,7 @@ const BUN_EXTRA_ALIAS_KVS: &[AliasKv] = &[
             tag: import_record::Tag::Builtin,
             node_builtin: false,
             node_only_prefix: false,
+            prefer_installed: false,
         },
     ),
     (
@@ -785,6 +825,7 @@ const BUN_EXTRA_ALIAS_KVS: &[AliasKv] = &[
             tag: import_record::Tag::Builtin,
             node_builtin: false,
             node_only_prefix: false,
+            prefer_installed: false,
         },
     ),
     (
@@ -794,6 +835,7 @@ const BUN_EXTRA_ALIAS_KVS: &[AliasKv] = &[
             tag: import_record::Tag::Builtin,
             node_builtin: false,
             node_only_prefix: false,
+            prefer_installed: false,
         },
     ),
 ];
@@ -806,6 +848,7 @@ const BUN_TEST_EXTRA_ALIAS_KVS: &[AliasKv] = &[
             tag: import_record::Tag::Builtin,
             node_builtin: false,
             node_only_prefix: false,
+            prefer_installed: false,
         },
     ),
     (
@@ -815,6 +858,7 @@ const BUN_TEST_EXTRA_ALIAS_KVS: &[AliasKv] = &[
             tag: import_record::Tag::Builtin,
             node_builtin: false,
             node_only_prefix: false,
+            prefer_installed: false,
         },
     ),
 ];
@@ -914,6 +958,14 @@ pub struct Cfg {
 impl Alias {
     pub fn has(name: &[u8], target: Target, cfg: Cfg) -> bool {
         Self::get(name, target, cfg).is_some()
+    }
+
+    /// True when an import of `self.path` is `prefer_installed`, so
+    /// transpile-time rewrites keep the original specifier and let
+    /// resolve time pick installed package vs builtin.
+    pub fn defers_to_resolve_time(&self, target: Target, cfg: Cfg) -> bool {
+        self.prefer_installed
+            || Self::get(self.path.as_bytes(), target, cfg).is_some_and(|a| a.prefer_installed)
     }
 
     pub fn get(name: &[u8], target: Target, cfg: Cfg) -> Option<Alias> {

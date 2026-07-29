@@ -115,9 +115,6 @@ pub mod parent_death_watchdog {
             if !job.is_null() {
                 let mut jeli: windows::JOBOBJECT_EXTENDED_LIMIT_INFORMATION =
                     bun_core::ffi::zeroed();
-                // See the constant's doc — Bun's own crash reporter (installed
-                // via `SetUnhandledExceptionFilter`) still runs before
-                // `DIE_ON_UNHANDLED_EXCEPTION` applies.
                 jeli.BasicLimitInformation.LimitFlags = windows::JOB_LIMIT_FLAGS_KILL_TREE_ON_CLOSE;
                 if windows::SetInformationJobObject(
                     job,

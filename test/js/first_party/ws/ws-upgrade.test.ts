@@ -1,7 +1,8 @@
 import { describe, expect, it } from "bun:test";
 import { once } from "events";
-import type { ClientRequest, IncomingMessage } from "http";
-import { createServer } from "node:http";
+import type { ClientRequest } from "http";
+import { createServer, IncomingMessage } from "node:http";
+import { createServer as createTcpServer } from "node:net";
 import type { AddressInfo } from "node:net";
 import { WebSocket, WebSocketServer } from "ws";
 
@@ -40,6 +41,7 @@ describe("ws client upgrade event", () => {
       // `upgrade` must fire, and it must fire before `open` (as in node's ws).
       expect(order[0]).toBe("upgrade");
       // The argument is the handshake response (an http.IncomingMessage).
+      expect(res).toBeInstanceOf(IncomingMessage);
       expect(res.statusCode).toBe(101);
       expect(res.statusMessage).toBe("Switching Protocols");
       expect(res.httpVersion).toBe("1.1");
@@ -242,12 +244,17 @@ describe("ws client unexpected-response event", () => {
       ws.on("open", () => reject(new Error("should not open")));
 
       const { req, res, errorFired: sawError } = await promise;
+      // npm ws hands the listener a real http.IncomingMessage.
+      expect(res).toBeInstanceOf(IncomingMessage);
       expect(res.statusCode).toBe(401);
       expect(res.statusMessage).toBe("Unauthorized");
       expect(res.headers["content-type"]).toBe("text/plain");
       expect(res.headers["x-reason"]).toBe("bad-token");
       expect(Array.isArray(res.rawHeaders)).toBe(true);
       expect(typeof req.abort).toBe("function");
+      expect(req.aborted).toBe(false);
+      req.abort();
+      expect(req.aborted).toBe(true);
       // npm ws skips the 'error' emission when an 'unexpected-response'
       // listener handled the non-101.
       expect(sawError).toBe(false);
@@ -327,6 +334,49 @@ describe("ws client unexpected-response event", () => {
     } finally {
       ws.close();
       wss.close();
+    }
+  });
+
+  // Node's IncomingMessage folds duplicate headers per-field: first-wins for
+  // singleton fields like content-type/server, array for set-cookie. The
+  // handshake response must use the same rules (it's the real IncomingMessage
+  // + _addHeaderLines), not a hand-rolled comma-join.
+  it("folds duplicate response headers with Node's per-field rules", async () => {
+    const server = createTcpServer(socket => {
+      socket.once("data", () => {
+        socket.write(
+          "HTTP/1.1 403 Forbidden\r\n" +
+            "Content-Type: text/plain\r\n" +
+            "Content-Type: text/html\r\n" +
+            "Server: one\r\n" +
+            "Server: two\r\n" +
+            "Set-Cookie: a=1\r\n" +
+            "Set-Cookie: b=2\r\n" +
+            "X-Multi: a\r\n" +
+            "X-Multi: b\r\n" +
+            "Content-Length: 2\r\n" +
+            "\r\n" +
+            "no",
+        );
+        socket.end();
+      });
+    });
+    await once(server.listen(0), "listening");
+    try {
+      const { promise, resolve, reject } = Promise.withResolvers<IncomingMessage>();
+      const ws = new WebSocket(`ws://127.0.0.1:${(server.address() as AddressInfo).port}`);
+      ws.on("error", reject);
+      ws.on("unexpected-response", (_req, res) => resolve(res));
+      const res = await promise;
+      expect(res).toBeInstanceOf(IncomingMessage);
+      expect(res.statusCode).toBe(403);
+      expect(res.headers["content-type"]).toBe("text/plain");
+      expect(res.headers["server"]).toBe("one");
+      expect(res.headers["set-cookie"]).toEqual(["a=1", "b=2"]);
+      expect(res.headers["x-multi"]).toBe("a, b");
+      ws.terminate();
+    } finally {
+      server.close();
     }
   });
 

@@ -101,37 +101,20 @@ function emitWarning(type, message) {
 }
 
 // ws emits `upgrade` / `unexpected-response` with an `http.IncomingMessage` for
-// the handshake response. We bypass node:http, so build a minimal
-// IncomingMessage-shaped Readable from the status + rawHeaders the native
-// WebSocket parsed. Lazily pull in node:stream the first time it's needed.
-let lazyReadable;
+// the handshake response. We bypass node:http's client, so construct one
+// directly and let `_addHeaderLines` fold rawHeaders with Node's per-header
+// rules (first-wins for singleton fields, array for set-cookie, "; " for
+// cookie) instead of hand-rolling them.
 function makeHandshakeResponse(statusCode, statusMessage, rawHeaders, body) {
-  lazyReadable ??= require("node:stream").Readable;
-  const res = new lazyReadable({ read() {} });
-  // Match node's http.IncomingMessage.headers: a plain object that inherits
-  // from Object.prototype (so `res.headers.hasOwnProperty(...)` works). Use
-  // Object.hasOwn for the dup-check so a header literally named "constructor"
-  // is not confused with Object.prototype.constructor.
-  const headers = (res.headers = {});
-  res.rawHeaders = rawHeaders;
-  for (let i = 0; i < rawHeaders.length; i += 2) {
-    const lower = rawHeaders[i].toLowerCase();
-    const value = rawHeaders[i + 1];
-    const seen = Object.hasOwn(headers, lower);
-    if (lower === "set-cookie") {
-      if (!seen) headers[lower] = [value];
-      else headers[lower].push(value);
-    } else {
-      headers[lower] = !seen ? value : headers[lower] + ", " + value;
-    }
-  }
+  const res = new http.IncomingMessage(null);
   res.statusCode = statusCode;
   res.statusMessage = statusMessage;
   res.httpVersion = "1.1";
   res.httpVersionMajor = 1;
   res.httpVersionMinor = 1;
-  res.socket = res.connection = null;
+  res._addHeaderLines(rawHeaders, rawHeaders.length);
   if (body && body.length) res.push(body);
+  res.complete = true;
   res.push(null);
   return res;
 }
@@ -176,8 +159,7 @@ class BunWebSocket extends EventEmitter {
   // forwarder can drop the subsequent "Expected 101" error.
   #suppressNextError = false;
   // Minimal ClientRequest shim passed as the first arg to
-  // `unexpected-response`. Stored from the `finishRequest` path when present,
-  // else lazily built on demand.
+  // `unexpected-response`; lazily built on first use.
   #clientRequest;
   // Bitset to track whether event handlers are set.
   #eventId = 0;
@@ -296,7 +278,6 @@ class BunWebSocket extends EventEmitter {
         _last: null,
       };
       EventEmitter.$call(nodeHttpClientRequestSimulated);
-      this.#clientRequest = nodeHttpClientRequestSimulated;
       finishRequest(nodeHttpClientRequestSimulated);
       if (!didCallEnd) {
         this.#createWebSocket(url, protocols, headers, method, proxy, tlsOptions, disableDeflate);
@@ -383,10 +364,13 @@ class BunWebSocket extends EventEmitter {
       return;
     }
     // Non-101: npm ws emits `unexpected-response` with (req, res) when a
-    // listener is registered; otherwise it emits `error` with
-    // "Unexpected server response: <code>" and then `close`. The native client
-    // always tears the socket down after this event, so the `body` here is
-    // whatever arrived in the same read as the headers.
+    // listener is registered, otherwise it emits `error` then `close`. The
+    // native client tears the socket down right after this dispatch, so `body`
+    // is whatever arrived in the same read as the headers (typically the whole
+    // body for a small error response). Deviation from npm ws: there the
+    // listener owns the live socket and can stream a large/chunked body until
+    // it aborts; here the body may be truncated. `res.statusCode`/`headers`
+    // are always complete.
     const res = makeHandshakeResponse(statusCode, statusMessage, rawHeaders, body);
     if (this.emit("unexpected-response", this.#ensureClientRequest(), res)) {
       this.#suppressNextError = true;

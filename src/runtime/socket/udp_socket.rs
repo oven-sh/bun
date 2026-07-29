@@ -98,6 +98,15 @@ extern "C" fn on_recv_error(socket: *mut uws::udp::Socket, errno: c_int, is_errq
     // ICMP error (so_error) arrives. node:dgram must drop only the former on
     // unconnected sockets, and the errno namespaces overlap.
     let this: &UDPSocket = UDPSocket::from_uws(socket);
+    let Some(this_value) = this.this_value.get().try_get() else {
+        return;
+    };
+    // Recv-path errors are advisory (socket stays open); with no handler drop
+    // them instead of uncaught_exception. node:dgram always registers one.
+    let callback = js::on_error_get_cached(this_value).unwrap_or(JSValue::ZERO);
+    if callback.is_empty_or_undefined_or_null() {
+        return;
+    }
     let sys_err = bun_sys::Error::from_code_int(errno, bun_sys::Tag::recv);
     let global_this = this.global_this.get();
     // A callback earlier in the same poll dispatch may have left a
@@ -113,7 +122,7 @@ extern "C" fn on_recv_error(socket: *mut uws::udp::Socket, errno: c_int, is_errq
     if is_errqueue != 0 {
         err_value.put(global_this, b"errqueue", JSValue::TRUE);
     }
-    this.call_error_handler(JSValue::ZERO, err_value);
+    this.call_error_handler(this_value, err_value);
 }
 
 extern "C" fn on_drain(socket: *mut uws::udp::Socket) {

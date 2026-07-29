@@ -148,11 +148,28 @@ int us_udp_socket_set_ttl_multicast(struct us_udp_socket_t *s, int ttl) {
 }
 
 int us_udp_socket_connect(struct us_udp_socket_t *s, const char* host, unsigned short port) {
-    return bsd_connect_udp_socket(us_poll_fd((struct us_poll_t *)s), host, port);
+    LIBUS_SOCKET_DESCRIPTOR fd = us_poll_fd((struct us_poll_t *)s);
+    int rc = bsd_connect_udp_socket(fd, host, port);
+    /* Only a connected socket has one peer to attribute ICMP to; without an
+     * on_recv_error handler the error queue would never be drained. */
+    if (rc == 0 && s->on_recv_error) bsd_udp_socket_set_recverr(fd, 1);
+    return rc;
 }
 
 int us_udp_socket_disconnect(struct us_udp_socket_t *s) {
-    return bsd_disconnect_udp_socket(us_poll_fd((struct us_poll_t *)s));
+    LIBUS_SOCKET_DESCRIPTOR fd = us_poll_fd((struct us_poll_t *)s);
+    int rc = bsd_disconnect_udp_socket(fd);
+    if (rc == 0) {
+        /* Disabling IP_RECVERR purges the error queue but not sk_err; reading
+         * SO_ERROR clears that too so a stale ICMP from the connected phase
+         * cannot surface on the now-unconnected socket. */
+        bsd_udp_socket_set_recverr(fd, 0);
+#if !defined(_WIN32)
+        int so_err = 0; socklen_t so_len = sizeof(so_err);
+        getsockopt(fd, SOL_SOCKET, SO_ERROR, &so_err, &so_len);
+#endif
+    }
+    return rc;
 }
 
 int us_udp_socket_set_multicast_loopback(struct us_udp_socket_t *s, int enabled) {
@@ -184,10 +201,11 @@ struct us_udp_socket_t *us_create_udp_socket(
     void *user
 ) {
 
-    /* IP_RECVERR is only useful when there is an on_recv_error handler to
-     * drain the error queue; without one it only poisons subsequent sends. */
-    if (recv_error_cb) flags |= LIBUS_UDP_LINUX_RECVERR;
-    else flags &= ~LIBUS_UDP_LINUX_RECVERR;
+    /* IP_RECVERR is NOT enabled at creation time. On an unconnected socket it
+     * turns an ICMP from any one peer into an async error (and poisons sk_err
+     * for the next send to a different peer), which is a single-packet DoS for
+     * a DNS/statsd/echo server. us_udp_socket_connect arms it once there is a
+     * peer to attribute the error to; Node's dgram never sets it at all. */
     LIBUS_SOCKET_DESCRIPTOR fd = bsd_create_udp_socket(host, port, flags, err);
     if (fd == LIBUS_SOCKET_ERROR) {
         return 0;

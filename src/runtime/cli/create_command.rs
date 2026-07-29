@@ -1279,9 +1279,7 @@ impl CreateCommand {
         let user_skipped_install = create_options.skip_install;
         create_options.skip_install = create_options.skip_install || !has_dependencies;
 
-        // git add/commit on a pre-existing repo would sweep the user's files
-        // in. `.git` may be a file (worktrees, submodules), so any entry kind
-        // counts, and a failed check skips git rather than committing.
+        // Any .git entry counts (worktrees use a file); check errors skip git.
         if !create_options.skip_git {
             create_options.skip_git = match bun_sys::Dir::open(destination) {
                 Ok(d) => !matches!(

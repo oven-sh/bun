@@ -1069,9 +1069,7 @@ describe("response header block encode failures (RFC 9113 section 8.1)", () => {
       c.sendEmptySettings();
       c.sendSettingsAck();
       c.sendFrame(FrameType.HEADERS, 0x5 /* END_HEADERS|END_STREAM */, 1, requestHeaderBlock("GET"));
-      await c.waitFor(
-        f => f.streamId === 1 && (f.type === FrameType.RST_STREAM || f.type === FrameType.DATA),
-      );
+      await c.waitFor(f => f.streamId === 1 && (f.type === FrameType.RST_STREAM || f.type === FrameType.DATA));
       // PING barrier: once the ACK arrives the server has flushed everything queued for stream 1.
       c.sendFrame(FrameType.PING, 0, 0, Buffer.alloc(8));
       await c.waitFor(f => f.type === FrameType.PING && (f.flags & 0x1) !== 0);

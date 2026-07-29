@@ -417,9 +417,12 @@ mod _impl {
     }
 
     fn get_cwd(global_object: &JSGlobalObject) -> JsResult<JSValue> {
+        // C++ owns the cache; this cache-miss path must hit the kernel, not `fs.top_level_dir`.
         let mut buf = PathBuffer::uninit();
-        match crate::node::path::get_cwd(&mut buf) {
-            bun_sys::Result::Ok(r) => Ok(ZigString::init(r).with_encoding().to_js(global_object)),
+        match Syscall::getcwd(&mut buf[..]) {
+            bun_sys::Result::Ok(len) => Ok(ZigString::init(&buf[..len])
+                .with_encoding()
+                .to_js(global_object)),
             bun_sys::Result::Err(e) => Err(global_object.throw_value(e.to_js(global_object))),
         }
     }
@@ -448,7 +451,11 @@ mod _impl {
 
         let mut buf = PathBuffer::uninit();
         let Ok(slice) = to.slice_z_buf(&mut buf) else {
-            return Err(global_object.throw(format_args!("Invalid path")));
+            // Buffer overflow (> PATH_MAX_BYTES): same ENAMETOOLONG shape as the chdir-syscall branch.
+            let dest = to.to_slice();
+            let e = Syscall::Error::from_code(Syscall::E::ENAMETOOLONG, Syscall::Tag::chdir)
+                .with_path_dest(fs.top_level_dir, dest.slice());
+            return Err(global_object.throw_value(e.to_js(global_object)));
         };
 
         // path=cwd, dest=target so the

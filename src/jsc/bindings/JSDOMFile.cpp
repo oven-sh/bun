@@ -9,6 +9,8 @@ using namespace JSC;
 extern "C" SYSV_ABI void* JSDOMFile__construct(JSC::JSGlobalObject*, JSC::CallFrame* callframe);
 extern "C" SYSV_ABI size_t Blob__estimatedSize(void* ptr);
 
+extern "C" SYSV_ABI bool BlobPrototype__setName(void* ptr, JSC::EncodedJSValue thisValue, JSC::JSGlobalObject* lexicalGlobalObject, JSC::EncodedJSValue value);
+
 namespace WebCore {
 JSC_DECLARE_CUSTOM_GETTER(BlobPrototype__nameGetterWrap);
 JSC_DECLARE_CUSTOM_GETTER(BlobPrototype__lastModifiedGetterWrap);
@@ -16,8 +18,22 @@ JSC_DECLARE_CUSTOM_GETTER(BlobPrototype__lastModifiedGetterWrap);
 
 namespace Bun {
 
+static JSC_DEFINE_CUSTOM_SETTER(jsDOMFilePrototypeNameSetter, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue encodedThisValue, EncodedJSValue encodedValue, PropertyName attributeName))
+{
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    auto* thisObject = dynamicDowncast<WebCore::JSBlob>(JSValue::decode(encodedThisValue));
+    if (!thisObject) [[unlikely]] {
+        WebCore::throwDOMAttributeSetterTypeError(lexicalGlobalObject, throwScope, WebCore::JSBlob::info(), attributeName);
+        return false;
+    }
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+    bool result = BlobPrototype__setName(thisObject->wrapped(), encodedThisValue, lexicalGlobalObject, encodedValue);
+    RELEASE_AND_RETURN(throwScope, result);
+}
+
 static const HashTableValue JSDOMFilePrototypeTableValues[] = {
-    { "name"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, WebCore::BlobPrototype__nameGetterWrap, 0 } },
+    { "name"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, WebCore::BlobPrototype__nameGetterWrap, jsDOMFilePrototypeNameSetter } },
     { "lastModified"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, WebCore::BlobPrototype__lastModifiedGetterWrap, 0 } },
 };
 

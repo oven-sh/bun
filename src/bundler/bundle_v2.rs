@@ -2353,6 +2353,19 @@ pub mod bv2_impl {
                     // However, doing this means we tell them all the resolve errors
                     // Rather than just the first one.
                     record.path.is_disabled = true;
+                    if resolve_result.flags.is_missing_optional_peer() {
+                        // The specifier is an uninstalled optional peer of the
+                        // importer's package. Defer to runtime: for `require`
+                        // the printer emits a throw (keyed off
+                        // HANDLES_IMPORT_ERRORS on a disabled record) so the
+                        // package's own try/catch sees `MODULE_NOT_FOUND`;
+                        // `require.resolve` / dynamic `import()` are left as
+                        // external calls and fail at runtime when the module
+                        // is still absent.
+                        record
+                            .flags
+                            .insert(bun_ast::ImportRecordFlags::HANDLES_IMPORT_ERRORS);
+                    }
                     return;
                 }
             };
@@ -6245,6 +6258,11 @@ pub mod bv2_impl {
                     None => {
                         import_record.path.is_disabled = true;
                         import_record.source_index = Index::INVALID;
+                        if resolve_result.flags.is_missing_optional_peer() {
+                            import_record
+                                .flags
+                                .insert(bun_ast::ImportRecordFlags::HANDLES_IMPORT_ERRORS);
+                        }
                         continue;
                     }
                 };

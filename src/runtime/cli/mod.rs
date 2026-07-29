@@ -1237,6 +1237,12 @@ pub mod command {
                     match argv.get(1).map(bun_core::ZStr::as_bytes) {
                         Some(b"-v" | b"--version") => print_version_and_exit(),
                         Some(b"--revision") => print_revision_and_exit(),
+                        // `bun -` hangs because the hyphen is treated as stdin.
+                        // Treat single hyphen as help request (like `bun --help`).
+                        Some(b"-") => {
+                            Output::flush();
+                            return HelpCommand::exec();
+                        }
                         _ => {}
                     }
                 }

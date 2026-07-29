@@ -262,6 +262,33 @@ describe.concurrent("compile --asset and /$bunfs/ directory semantics", () => {
   );
 
   test(
+    "Bun.build({compile: {assets}}) keys the entry point at basename(outfile) so an index.js asset does not collide",
+    async () => {
+      using dir = tempDir("bunfs-asset-jsapi-entry", {
+        "index.ts": /* ts */ `
+          import fs from "node:fs";
+          import path from "node:path";
+          console.log(fs.readFileSync(path.join(import.meta.dir, "index.js"), "utf8"));
+        `,
+        "cfg/index.js": `ASSET_CONTENT`,
+      });
+      const result = await Bun.build({
+        entrypoints: [join(String(dir), "index.ts")],
+        compile: {
+          outfile: join(String(dir), "app"),
+          assets: [join(String(dir), "cfg", "index.js")],
+        },
+      });
+      expect(result.success).toBe(true);
+      const { stdout, stderr, code } = await run(String(dir));
+      expect(stderr.trim()).toBe("");
+      expect(stdout.trim()).toBe("ASSET_CONTENT");
+      expect(code).toBe(0);
+    },
+    TIMEOUT,
+  );
+
+  test(
     "Bun.build({compile: {assets}}) rejects colliding paths",
     async () => {
       using dir = tempDir("bunfs-asset-jsapi-err", {

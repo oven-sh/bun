@@ -301,6 +301,18 @@ impl<const SSL: bool> HTTPContext<SSL> {
         socket.close(uws::CloseKind::Failure);
     }
 
+    /// macOS `close_and_fail` for a request with a body: FIN, not RST. With
+    /// body bytes in the kernel send buffer XNU's SO_LINGER RST carries
+    /// `snd_nxt`, which the peer can drop as out-of-window and never observe
+    /// the close; a FIN is in-order. Linux clamps the RST into window and
+    /// Windows delivers it, and a FIN would put the aborting client into
+    /// TIME_WAIT for every aborted upload (ephemeral-port exhaustion under
+    /// abort churn), so those platforms keep `terminate_socket`.
+    pub(crate) fn fail_socket(socket: HTTPSocket<SSL>) {
+        Self::mark_socket_as_dead(socket);
+        socket.close(uws::CloseKind::FastShutdown);
+    }
+
     pub(crate) fn close_socket(socket: HTTPSocket<SSL>) {
         Self::mark_socket_as_dead(socket);
         socket.close(uws::CloseKind::Normal);

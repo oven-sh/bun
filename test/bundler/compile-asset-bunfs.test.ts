@@ -101,6 +101,7 @@ describe.concurrent("compile --asset and /$bunfs/ directory semantics", () => {
         const nestedCss = path.join(root, "_app", "immutable", "app.css");
 
         const recursive = fs.readdirSync(root, { recursive: true }).map(String).sort();
+        const recursiveAsync = (await fs.promises.readdir(root, { recursive: true })).map(String).sort();
 
         const out = {
           root,
@@ -114,6 +115,7 @@ describe.concurrent("compile --asset and /$bunfs/ directory semantics", () => {
           nestedCssViaReadFile: fs.readFileSync(nestedCss, "utf8"),
           nestedDirIsDir: fs.statSync(path.join(root, "_app", "immutable")).isDirectory(),
           recursive,
+          recursiveAsync,
           embeddedFileCount: Bun.embeddedFiles.length,
         };
         console.log(JSON.stringify(out));
@@ -156,6 +158,7 @@ describe.concurrent("compile --asset and /$bunfs/ directory semantics", () => {
       expect(rec).toContain("favicon.svg");
       expect(rec).toContain("index.html");
       expect(r.recursive.join("\n")).not.toContain(sep === "/" ? "\\" : "/");
+      expect(r.recursiveAsync).toEqual(r.recursive);
 
       expect(r.embeddedFileCount).toBeGreaterThanOrEqual(4);
       expect(code).toBe(0);
@@ -215,6 +218,40 @@ describe.concurrent("compile --asset and /$bunfs/ directory semantics", () => {
       expect(r.content).toBe(`{"ok":true}`);
       expect(r.readdirCode).toBe("ENOTDIR");
       expect(code).toBe(0);
+    },
+    TIMEOUT,
+  );
+
+  test(
+    "--asset errors on colliding embedded paths",
+    async () => {
+      const dir = tempDirWithFiles("bunfs-asset-collide", {
+        "index.ts": `console.log("unreachable");`,
+        "a/config.json": `1`,
+        "b/config.json": `2`,
+      });
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "build",
+          "--compile",
+          "./index.ts",
+          "--outfile",
+          "app",
+          "--asset",
+          "./a/config.json",
+          "--asset",
+          "./b/config.json",
+        ],
+        cwd: dir,
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stderr, code] = await Promise.all([proc.stderr.text(), proc.exited]);
+      expect(stderr).toContain("collides");
+      expect(stderr).toContain("config.json");
+      expect(code).not.toBe(0);
     },
     TIMEOUT,
   );

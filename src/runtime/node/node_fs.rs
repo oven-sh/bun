@@ -6396,10 +6396,12 @@ impl NodeFS {
     }
 
     pub fn readdir(&mut self, args: &args::Readdir, flavor: Flavor) -> Maybe<ret::Readdir> {
-        if flavor != Flavor::Sync {
-            if args.recursive {
-                panic!("Assertion failure: this code path should never be reached.");
-            }
+        if flavor != Flavor::Sync && args.recursive {
+            debug_assert!(
+                standalone_module_graph_get().is_some()
+                    && bun_standalone_graph::is_bun_standalone_file_path(args.path.slice()),
+                "async recursive readdir must go through AsyncReaddirRecursiveTask"
+            );
         }
         let maybe = match args.tag() {
             ret::ReaddirTag::Buffers => Self::readdir_inner::<Buffer>(

@@ -731,14 +731,9 @@ impl BuildCommand {
         };
 
         if ctx.bundler_options.compile && !ctx.bundler_options.compile_assets.is_empty() {
-            if let Err(err) =
-                collect_compile_assets(&ctx.bundler_options.compile_assets, &mut output_files)
+            if collect_compile_assets(&ctx.bundler_options.compile_assets, &mut output_files)
+                .is_err()
             {
-                Output::err(
-                    &err,
-                    "failed to read --asset {}",
-                    (bun_fmt::quote(&err.path),),
-                );
                 exit_or_watch(1, ctx.debug.hot_reload == HotReload::Watch);
             }
         }
@@ -1234,25 +1229,42 @@ fn print_summary(
 fn collect_compile_assets(
     assets: &[Box<[u8]>],
     out: &mut Vec<options::OutputFile>,
-) -> bun_sys::Maybe<()> {
+) -> Result<(), ()> {
     use bun_ast::Loader;
+    use bun_collections::StringArrayHashMap;
     use bun_sys::EntryKind;
 
-    let push = |out: &mut Vec<options::OutputFile>, dest: Vec<u8>, bytes: Vec<u8>| {
-        out.push(options::OutputFile {
-            loader: Loader::File,
-            input_loader: Loader::File,
-            output_kind: options::OutputKind::Asset,
-            dest_path: dest.into_boxed_slice(),
-            size: bytes.len(),
-            size_without_sourcemap: bytes.len(),
-            value: options::OutputFileValue::Buffer {
-                bytes: bytes.into_boxed_slice(),
-            },
-            side: Some(options::Side::Client),
-            ..options::OutputFile::zero_value()
-        });
+    let fail = |err: bun_sys::Error| -> Result<(), ()> {
+        Output::err(&err, "failed to read --asset {}", (bun_fmt::quote(&err.path),));
+        Err(())
     };
+
+    let mut seen: StringArrayHashMap<()> = StringArrayHashMap::new();
+    let mut push =
+        |out: &mut Vec<options::OutputFile>, asset: &[u8], dest: Vec<u8>, bytes: Vec<u8>| {
+            if seen.contains_key(&dest) {
+                Output::err_generic(
+                    "--asset {} collides with an earlier --asset at embedded path {}",
+                    (bun_fmt::quote(asset), bun_fmt::quote(&dest)),
+                );
+                return Err(());
+            }
+            let _ = seen.put(&dest, ());
+            out.push(options::OutputFile {
+                loader: Loader::File,
+                input_loader: Loader::File,
+                output_kind: options::OutputKind::Asset,
+                dest_path: dest.into_boxed_slice(),
+                size: bytes.len(),
+                size_without_sourcemap: bytes.len(),
+                value: options::OutputFileValue::Buffer {
+                    bytes: bytes.into_boxed_slice(),
+                },
+                side: Some(options::Side::Client),
+                ..options::OutputFile::zero_value()
+            });
+            Ok(())
+        };
 
     let cwd = Fd::cwd();
     let mut zbuf = bun_paths::path_buffer_pool::get();
@@ -1266,7 +1278,7 @@ fn collect_compile_assets(
         };
         let base = bun_paths::basename(asset_trimmed);
         if base.is_empty() || base == b"." || base == b".." {
-            return Err(
+            return fail(
                 bun_sys::Error::from_code(bun_sys::E::EINVAL, bun_sys::Tag::open).with_path(asset),
             );
         }
@@ -1276,16 +1288,28 @@ fn collect_compile_assets(
         zbuf[n] = 0;
         let asset_z = bun_core::ZStr::from_buf(&zbuf[..], n);
 
-        let st = bun_sys::stat(asset_z).map_err(|e| e.with_path(asset))?;
+        let st = match bun_sys::stat(asset_z) {
+            Ok(st) => st,
+            Err(e) => return fail(e.with_path(asset)),
+        };
         if bun_core::S::ISDIR(st.st_mode as _) {
-            let dir = bun_sys::open_dir_for_iteration(cwd, asset_trimmed)
-                .map_err(|e| e.with_path(asset))?;
+            let dir = match bun_sys::open_dir_for_iteration(cwd, asset_trimmed) {
+                Ok(d) => d,
+                Err(e) => return fail(e.with_path(asset)),
+            };
             let _close = scopeguard::guard(dir, |fd| fd.close());
-            let mut walker = bun_sys::walker_skippable::walk(dir, &[], &[])
-                .map_err(|_| bun_sys::Error::from_code(bun_sys::E::ENOMEM, bun_sys::Tag::open))?;
+            let mut walker = match bun_sys::walker_skippable::walk(dir, &[], &[]) {
+                Ok(w) => w,
+                Err(_) => bun_core::out_of_memory(),
+            };
             walker.resolve_unknown_entry_types = true;
-            while let Some(entry) = walker.next().map_err(|e| e.with_path(asset))? {
-                if entry.kind == EntryKind::Directory {
+            loop {
+                let entry = match walker.next() {
+                    Ok(Some(e)) => e,
+                    Ok(None) => break,
+                    Err(e) => return fail(e.with_path(asset)),
+                };
+                if entry.kind != EntryKind::File {
                     continue;
                 }
                 #[cfg(windows)]
@@ -1306,27 +1330,34 @@ fn collect_compile_assets(
                         &mut base_buf[..],
                         entry.basename.as_slice(),
                     );
-                    let bytes = bun_sys::File::read_from(entry.dir, base_z.as_bytes())
-                        .map_err(|e| e.with_path(&rel))?;
+                    let bytes = match bun_sys::File::read_from(entry.dir, base_z.as_bytes()) {
+                        Ok(b) => b,
+                        Err(e) => return fail(e.with_path(&rel)),
+                    };
                     (rel, bytes)
                 };
                 #[cfg(not(windows))]
                 let (rel, bytes) = {
                     let rel = entry.path.as_bytes().to_vec();
-                    let bytes = bun_sys::File::read_from(entry.dir, entry.basename.as_bytes())
-                        .map_err(|e| e.with_path(entry.path.as_bytes()))?;
+                    let bytes = match bun_sys::File::read_from(entry.dir, entry.basename.as_bytes())
+                    {
+                        Ok(b) => b,
+                        Err(e) => return fail(e.with_path(entry.path.as_bytes())),
+                    };
                     (rel, bytes)
                 };
                 let mut dest = Vec::with_capacity(base.len() + 1 + rel.len());
                 dest.extend_from_slice(base);
                 dest.push(b'/');
                 dest.extend_from_slice(&rel);
-                push(out, dest, bytes);
+                push(out, asset, dest, bytes)?;
             }
         } else {
-            let bytes =
-                bun_sys::File::read_from(cwd, asset_trimmed).map_err(|e| e.with_path(asset))?;
-            push(out, base.to_vec(), bytes);
+            let bytes = match bun_sys::File::read_from(cwd, asset_trimmed) {
+                Ok(b) => b,
+                Err(e) => return fail(e.with_path(asset)),
+            };
+            push(out, asset, base.to_vec(), bytes)?;
         }
     }
     Ok(())

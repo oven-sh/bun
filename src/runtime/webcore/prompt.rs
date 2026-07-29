@@ -376,9 +376,6 @@ pub mod prompt {
             }
         }
 
-        // We read up to the `\n`; drop the `\r` that immediately preceded it so
-        // a CRLF terminator is handled the same as a bare LF. Any other `\r`
-        // bytes are part of the answer and are left in place.
         if input.last() == Some(&b'\r') {
             input.pop();
         }

@@ -295,21 +295,25 @@ describe.concurrent("compile --asset and /$bunfs/ directory semantics", () => {
             "is not a regular file or directory",
           ] as const,
         ]),
-  ])("rejects %j", async (args, expected) => {
-    using dir = tempDir("bunfs-asset-reject", {
-      "index.ts": `console.log("x");`,
-      "index.html": `<!doctype html>`,
-      "public/a.txt": `a`,
-    });
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), ...args],
-      cwd: String(dir),
-      env: bunEnv,
-      stdout: "ignore",
-      stderr: "pipe",
-    });
-    const [stderr, code] = await Promise.all([proc.stderr.text(), proc.exited]);
-    expect(stderr).toContain(expected);
-    expect(code).not.toBe(0);
-  }, TIMEOUT);
+  ])(
+    "rejects %j",
+    async (args, expected) => {
+      using dir = tempDir("bunfs-asset-reject", {
+        "index.ts": `console.log("x");`,
+        "index.html": `<!doctype html>`,
+        "public/a.txt": `a`,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), ...args],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "ignore",
+        stderr: "pipe",
+      });
+      const [stderr, code] = await Promise.all([proc.stderr.text(), proc.exited]);
+      expect(stderr).toContain(expected);
+      expect(code).not.toBe(0);
+    },
+    TIMEOUT,
+  );
 });

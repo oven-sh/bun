@@ -596,8 +596,7 @@ fn mirror_asan_segv_handler_into_env() -> AsanOptionsRestore {
         let mut original = Vec::with_capacity(bytes.len() + 1);
         original.extend_from_slice(bytes);
         original.push(0);
-        let mut merged =
-            Vec::with_capacity(bytes.len() + b":allow_user_segv_handler=1\0".len());
+        let mut merged = Vec::with_capacity(bytes.len() + b":allow_user_segv_handler=1\0".len());
         merged.extend_from_slice(bytes);
         merged.extend_from_slice(if bytes.is_empty() {
             b"allow_user_segv_handler=1\0"

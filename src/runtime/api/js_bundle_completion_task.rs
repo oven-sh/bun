@@ -444,6 +444,7 @@ impl JSBundleCompletionTask {
             let keep_this = if i == entry_point_index {
                 true
             } else if matches!(result, CompileResult::Success)
+                && compile_options.sourcemap_sidecar
                 && output_files[i].output_kind == OutputKind::Sourcemap
                 && matches!(output_files[i].value, OutputFileValue::Buffer { .. })
             {

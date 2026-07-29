@@ -216,6 +216,52 @@ export function greet() {
   // sidecar even though the map is embedded in the executable. Only
   // `--sourcemap=external` should emit a sidecar.
   describe.each([
+    [true, false],
+    ["linked", false],
+    ["inline", false],
+    ["external", true],
+  ] as const)("JS API: compile with sourcemap: %p", (sourcemap, expectSidecar) => {
+    test(expectSidecar ? "writes a .map sidecar" : "does not write a .map sidecar", async () => {
+      using dir = tempDir(`build-compile-jsapi-sourcemap-${sourcemap}`, {
+        "thr.ts": 'function f() {\n  throw new Error("x");\n}\nf();\n',
+      });
+      const outfile = join(String(dir), "app");
+
+      const result = await Bun.build({
+        entrypoints: [join(String(dir), "thr.ts")],
+        compile: { outfile },
+        sourcemap,
+      });
+      expect(result.success).toBe(true);
+
+      const mapFiles = readdirSync(String(dir)).filter(name => name.endsWith(".map"));
+      const sourcemapOutputs = result.outputs.filter(o => o.kind === "sourcemap");
+      if (expectSidecar) {
+        expect(mapFiles.length).toBe(1);
+        expect(sourcemapOutputs.length).toBe(1);
+        const map = JSON.parse(await Bun.file(join(String(dir), mapFiles[0])).text());
+        expect(map.version).toBe(3);
+      } else {
+        expect(mapFiles).toEqual([]);
+        expect(sourcemapOutputs).toEqual([]);
+      }
+
+      const exe = process.platform === "win32" ? `${outfile}.exe` : outfile;
+      await using run = Bun.spawn({
+        cmd: [exe],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [, runStderr, runExit] = await Promise.all([run.stdout.text(), run.stderr.text(), run.exited]);
+      expect(runStderr).toContain("thr.ts");
+      expect(runStderr).not.toMatch(/(\$bunfs|~BUN)\/root\//);
+      expect(runExit).not.toBe(0);
+    });
+  });
+
+  describe.each([
     ["--sourcemap", false],
     ["--sourcemap=linked", false],
     ["--sourcemap=inline", false],

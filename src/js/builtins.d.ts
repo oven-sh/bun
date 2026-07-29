@@ -475,6 +475,12 @@ declare interface AddEventListenerOptions {
    * internal `kResistStopPropagation`.
    */
   $kResistStopPropagation?: boolean;
+  /**
+   * Private symbol read by the native EventTarget. A listener registered with it is
+   * invoked with the event's underlying value (data / detail / error) instead of the
+   * Event wrapper. Mirrors Node.js's internal `kIsNodeStyleListener`.
+   */
+  $kIsNodeStyleListener?: boolean;
 }
 
 declare class OutOfMemoryError {

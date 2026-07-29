@@ -115,6 +115,9 @@ public:
     // Report the actual loop-ref state (matches Node's uv_has_ref), not the intent flag.
     bool jsHasRef() { return m_hasRef || m_listenerLoopRefActive; }
 
+    uint32_t nodeMaxListeners() const { return m_nodeMaxListeners; }
+    void setNodeMaxListeners(uint32_t n) { m_nodeMaxListeners = n; }
+
 private:
     MessagePort(ScriptExecutionContext&, Ref<MessagePortPipe>&&, uint8_t side);
 
@@ -165,6 +168,7 @@ private:
     bool m_listenerLoopRefActive { false };
 
     uint32_t m_messageEventCount { 0 };
+    uint32_t m_nodeMaxListeners { 10 };
     static void onDidChangeListenerImpl(EventTarget& self, const AtomString& eventType, OnDidChangeListenerKind kind);
     // Reconciles the listener event-loop ref with (m_isRefd && m_messageEventCount > 0).
     void updateListenerEventLoopRef();

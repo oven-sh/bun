@@ -52,6 +52,9 @@ public:
     virtual ~EventListener() = default;
     virtual bool operator==(const EventListener&) const = 0;
     virtual void handleEvent(ScriptExecutionContext&, Event&) = 0;
+    // For listeners registered with kIsNodeStyleListener; JSEventListener
+    // overrides this to pass the event's carried value (.data/.detail/.error).
+    virtual void handleEventNodeStyle(ScriptExecutionContext& ctx, Event& event) { handleEvent(ctx, event); }
 
     virtual void visitJSFunction(JSC::AbstractSlotVisitor&) {}
     virtual void visitJSFunction(JSC::SlotVisitor&) {}

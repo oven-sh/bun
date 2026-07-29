@@ -88,8 +88,8 @@ JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject*, JSDOMGlobalObject* globalObj
     }
     //     case CompositionEventInterfaceType:
     //         return createWrapper<CompositionEvent>(globalObject, WTF::move(impl));
-    //     case CustomEventInterfaceType:
-    //         return createWrapper<CustomEvent>(globalObject, WTF::move(impl));
+    case CustomEventInterfaceType:
+        return createWrapper<CustomEvent>(globalObject, WTF::move(impl));
     // #if ENABLE(DEVICE_ORIENTATION)
     //     case DeviceMotionEventInterfaceType:
     //         return createWrapper<DeviceMotionEvent>(globalObject, WTF::move(impl));

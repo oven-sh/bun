@@ -101,189 +101,7 @@ type NodeWorkerOptions = import("node:worker_threads").WorkerOptions;
 // after their Worker exits
 let urlRevokeRegistry: FinalizationRegistry<string> | undefined = undefined;
 
-function injectFakeEmitter(Class) {
-  // Per-instance registry mapping each event to (user listener -> wrapper), so
-  // listenerCount/eventNames/removeAllListeners work over EventTarget's opaque
-  // internal map and off() can find the wrapper a given listener registered.
-  // SafeMap: its prototype is a frozen, null-proto snapshot of Map.prototype, so
-  // .get/.set/.size/.values()/iteration all bypass a user-replaced Map.prototype.
-  // (It has no @get/@set private names, so the $-intrinsics don't apply to it.)
-  // Keyed by a module-local symbol, not a WeakMap — WeakMap has neither defence.
-  const kListenerRegistry = Symbol("listenerRegistry");
-  function registryFor(target, create) {
-    let map = target[kListenerRegistry];
-    if (!map && create) target[kListenerRegistry] = map = new SafeMap();
-    return map;
-  }
-
-  function messageEventHandler(event: MessageEvent) {
-    return event.data;
-  }
-
-  function errorEventHandler(event: ErrorEvent) {
-    return event.error;
-  }
-
-  function customEventHandler(event) {
-    return event.detail;
-  }
-
-  function wrapped(run, listener) {
-    return function (event) {
-      return listener(run(event));
-    };
-  }
-
-  function functionForEventType(event, listener) {
-    switch (event) {
-      case "error":
-      case "messageerror": {
-        return wrapped(errorEventHandler, listener);
-      }
-
-      case "message": {
-        return wrapped(messageEventHandler, listener);
-      }
-
-      default: {
-        return wrapped(customEventHandler, listener);
-      }
-    }
-  }
-
-  function EventClass(eventName) {
-    if (eventName === "error" || eventName === "messageerror") {
-      return ErrorEvent;
-    }
-
-    return MessageEvent;
-  }
-
-  // EventTarget dedupes on (type, callback), so in node the FIRST registration of
-  // a listener wins outright -- including its once-ness -- and later adds of the
-  // same function are no-ops. Keying wrappers per listener reproduces that.
-  function register(target, event, listener, wrapper, options) {
-    const map = registryFor(target, true)!;
-    let byListener = map.get(event);
-    if (!byListener) map.set(event, (byListener = new SafeMap()));
-    if (byListener.has(listener)) return false;
-    target.addEventListener(event, wrapper, options);
-    byListener.set(listener, wrapper);
-    return true;
-  }
-
-  function on(event, listener) {
-    register(this, event, listener, functionForEventType(event, listener), undefined);
-    return this;
-  }
-
-  function off(event, listener) {
-    if (listener) {
-      const byListener = registryFor(this, false)?.get(event);
-      const wrapper = byListener?.get(listener) ?? listener;
-      this.removeEventListener(event, wrapper);
-      byListener?.delete(listener);
-    } else {
-      this.removeEventListener(event);
-    }
-    return this;
-  }
-
-  function once(event, listener) {
-    const wrapper = functionForEventType(event, listener);
-    const target = this;
-    // EventTarget drops a {once:true} listener natively, without telling the
-    // registry — so purge it here or listenerCount()/eventNames() keep counting
-    // a listener that already fired.
-    function onceWrapper(ev) {
-      registryFor(target, false)?.get(event)?.delete(listener);
-      return wrapper(ev);
-    }
-    register(this, event, listener, onceWrapper, { once: true });
-    return this;
-  }
-
-  function emit(event, ...args) {
-    switch (event) {
-      case "error":
-      case "messageerror":
-      case "message":
-        this.dispatchEvent(new (EventClass(event))(event, ...args));
-        break;
-      default:
-        // Non-standard events surface as CustomEvent (detail = first arg) to
-        // addEventListener and as the raw argument to .on(), matching node.
-        this.dispatchEvent(new CustomEvent(event, { detail: args[0] }));
-        break;
-    }
-    return this;
-  }
-
-  const kMaxListeners = Symbol("kMaxListeners");
-  function setMaxListeners(n) {
-    this[kMaxListeners] = n;
-    return this;
-  }
-  function getMaxListeners() {
-    return this[kMaxListeners] ?? 10;
-  }
-  function listenerCount(type) {
-    return registryFor(this, false)?.get(type)?.size ?? 0;
-  }
-  function eventNames() {
-    const map = registryFor(this, false);
-    if (!map) return [];
-    const out: string[] = [];
-    for (const [k, v] of map) if (v.size > 0) out.push(k);
-    return out;
-  }
-  function removeAllListeners(type) {
-    const map = registryFor(this, false);
-    if (!map) return this;
-    const removeType = t => {
-      const byListener = map.get(t);
-      if (byListener) {
-        for (const w of byListener.values()) this.removeEventListener(t, w);
-        map.delete(t);
-      }
-    };
-    if (arguments.length === 0) {
-      // removeType only deletes `t`, and a Map iterator tolerates deleting the
-      // entry it just yielded — so no snapshot copy is needed here.
-      for (const t of map.keys()) removeType(t);
-    } else {
-      removeType(type);
-    }
-    return this;
-  }
-
-  // node inherits these from NodeEventTarget.prototype (a curated subset of
-  // EventEmitter, not EventEmitter itself); use an intermediate prototype so
-  // Object.getOwnPropertyNames(MessagePort.prototype) matches node.
-  const proto = Class.prototype;
-  const inherited = Object.create(Object.getPrototypeOf(proto));
-  const emitterMethods: [string, Function][] = [
-    ["on", on],
-    ["off", off],
-    ["once", once],
-    ["emit", emit],
-    ["addListener", on],
-    ["removeListener", off],
-    ["listenerCount", listenerCount],
-    ["eventNames", eventNames],
-    ["removeAllListeners", removeAllListeners],
-    ["setMaxListeners", setMaxListeners],
-    ["getMaxListeners", getMaxListeners],
-  ];
-  for (const [methodName, value] of emitterMethods) {
-    Object.defineProperty(inherited, methodName, { value, writable: true, enumerable: false, configurable: true });
-  }
-  Object.setPrototypeOf(proto, inherited);
-}
-
 const _MessagePort = globalThis.MessagePort;
-injectFakeEmitter(_MessagePort);
-
 const MessagePort = _MessagePort;
 
 // node's close(cb) registers cb as a one-time "close" listener before the native close.
@@ -810,19 +628,93 @@ function fakeParentPort() {
     value: self.addEventListener.bind(self),
   });
 
+  // MessagePort.prototype.on/etc. require a real MessagePort receiver; shadow
+  // them so calls on this stand-in forward to the global scope. A local map
+  // tracks which listeners were added via parentPort so listenerCount/
+  // eventNames/removeAllListeners see only those (self may carry internal
+  // listeners the user must not touch).
+  const byType = new SafeMap();
   Object.defineProperty(fake, "removeEventListener", {
-    value: self.removeEventListener.bind(self),
+    value(type: string, listener: any, options?: any) {
+      const set = byType.get(type);
+      self.removeEventListener(type, set?.get(listener) ?? listener, options);
+      set?.delete(listener);
+    },
   });
-
-  Object.defineProperty(fake, "removeListener", {
-    value: self.removeEventListener.bind(self),
-    enumerable: false,
-  });
-
-  Object.defineProperty(fake, "addListener", {
-    value: self.addEventListener.bind(self),
-    enumerable: false,
-  });
+  function track(type: string, listener: any, registered: any) {
+    let set = byType.get(type);
+    if (!set) byType.set(type, (set = new SafeMap()));
+    // First registration of a given listener wins (including its once-ness),
+    // matching node's NodeEventTarget dedup.
+    if (set.has(listener)) return false;
+    set.set(listener, registered);
+    return true;
+  }
+  function on(this: any, type: string, listener: any) {
+    if (track(type, listener, listener))
+      self.addEventListener(type, listener, { $kIsNodeStyleListener: true } as AddEventListenerOptions);
+    return this;
+  }
+  function once(this: any, type: string, listener: any) {
+    const wrapper = (arg: any) => {
+      byType.get(type)?.delete(listener);
+      return listener(arg);
+    };
+    if (track(type, listener, wrapper))
+      self.addEventListener(type, wrapper, { once: true, $kIsNodeStyleListener: true } as AddEventListenerOptions);
+    return this;
+  }
+  function off(this: any, type: string, listener: any) {
+    const set = byType.get(type);
+    self.removeEventListener(type, set?.get(listener) ?? listener);
+    set?.delete(listener);
+    return this;
+  }
+  function listenerCount(type: string) {
+    return byType.get(type)?.size ?? 0;
+  }
+  function eventNames() {
+    const out: string[] = [];
+    for (const [k, v] of byType) if (v.size > 0) out.push(k);
+    return out;
+  }
+  function removeAllListeners(this: any, type?: string) {
+    const clear = (t: string) => {
+      const set = byType.get(t);
+      if (set) {
+        for (const registered of set.values()) self.removeEventListener(t, registered);
+        byType.delete(t);
+      }
+    };
+    if (arguments.length === 0) for (const t of byType.keys()) clear(t);
+    else clear(type!);
+    return this;
+  }
+  function emit(type: string, arg?: any) {
+    const had = (byType.get(type)?.size ?? 0) > 0;
+    const ev =
+      type === "message" || type === "messageerror"
+        ? new MessageEvent(type, { data: arg })
+        : new CustomEvent(type, { detail: arg });
+    self.dispatchEvent(ev);
+    return had;
+  }
+  let maxListeners = 10;
+  for (const [name, fn] of [
+    ["on", on],
+    ["addListener", on],
+    ["once", once],
+    ["off", off],
+    ["removeListener", off],
+    ["listenerCount", listenerCount],
+    ["eventNames", eventNames],
+    ["removeAllListeners", removeAllListeners],
+    ["emit", emit],
+    ["getMaxListeners", () => maxListeners],
+    ["setMaxListeners", n => ((maxListeners = n), fake)],
+  ] as const) {
+    Object.defineProperty(fake, name, { value: fn, enumerable: false, configurable: true, writable: true });
+  }
 
   return fake;
 }

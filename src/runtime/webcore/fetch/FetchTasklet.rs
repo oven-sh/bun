@@ -1291,9 +1291,6 @@ impl FetchTasklet {
 
         let fail = self.result.fail.unwrap();
 
-        // Fetch-spec "network error" cases that callers feature-detect via
-        // `instanceof TypeError`. Keep this list narrow; the catch-all
-        // SystemError below is still a plain Error for backwards compat.
         if fail == http::Error::RequestBodyNotReusable {
             return BodyValueError::TypeError(BunString::static_(
                 "Request body is a ReadableStream and cannot be replayed for this redirect",
@@ -1327,15 +1324,17 @@ impl FetchTasklet {
                     hostname,
                 );
                 err.path = path.into();
-                return BodyValueError::SystemError(err);
+                return BodyValueError::FetchError(err);
             }
         }
 
-        let code = if fail == http::Error::ConnectionClosed {
-            BunString::static_("ECONNRESET")
-        } else {
-            BunString::static_(fail.name())
+        // Map failures with a direct Node/libuv errno equivalent to that errno string.
+        let (code, syscall) = match fail {
+            http::Error::ConnectionClosed => ("ECONNRESET", None),
+            http::Error::ConnectionRefused => ("ECONNREFUSED", Some("connect")),
+            _ => (fail.name(), None),
         };
+        let code = BunString::static_(code);
 
         let message = match fail {
             http::Error::ConnectionClosed => BunString::static_(
@@ -1564,10 +1563,11 @@ impl FetchTasklet {
             code: code.into(),
             message: message.into(),
             path: path.into(),
+            syscall: syscall.map(BunString::static_).unwrap_or_default().into(),
             ..Default::default()
         };
 
-        BodyValueError::SystemError(fetch_error)
+        BodyValueError::FetchError(fetch_error)
     }
 
     pub(crate) fn on_readable_stream_available(

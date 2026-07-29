@@ -3654,6 +3654,9 @@ impl BlobExt for Blob {
             // C++ side wraps it in a JSS3File without taking a second ref.
             return crate::webcore::s3_file::to_js_unchecked(global_object, this);
         }
+        if self.is_jsdom_file.get() {
+            return BUN__createJSDOMFile(global_object, this.cast::<core::ffi::c_void>());
+        }
 
         js::to_js_unchecked(global_object, this)
     }
@@ -6943,22 +6946,12 @@ impl Default for Inline {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// JSDOMFile__hasInstance / FileOpener / FileCloser
-// ──────────────────────────────────────────────────────────────────────────
-
-// C++ side declares `extern "C" SYSV_ABI bool JSDOMFile__hasInstance(...)` (JSDOMFile.cpp).
-bun_jsc::jsc_host_abi! {
-    #[unsafe(no_mangle)]
-    pub unsafe fn JSDOMFile__hasInstance(
-        _a: JSValue,
-        _b: &JSGlobalObject,
-        value: JSValue,
-    ) -> bool {
-        jsc::mark_binding();
-        let Some(blob) = value.as_class_ref::<Blob>() else { return false };
-        blob.is_jsdom_file.get()
-    }
+// C++ side defines `SYSV_ABI EncodedJSValue` (JSDOMFile.cpp).
+bun_jsc::jsc_abi_extern! {
+    safe fn BUN__createJSDOMFile(
+        global: &JSGlobalObject,
+        blob: *mut core::ffi::c_void,
+    ) -> JSValue;
 }
 
 // ──────────────────────────────────────────────────────────────────────────

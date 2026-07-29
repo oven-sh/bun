@@ -232,25 +232,28 @@ test.concurrent("bun create skips a template's .git worktree pointer file even w
   expect({ exitCode, stderr }).toEqual({ exitCode: 0, stderr: expect.not.stringContaining("error") });
 });
 
-test.concurrent("bun create from local template replaces an existing .gitignore via the gitignore convention", async () => {
-  using dir = tempDir("create-local-gitignore-rename", {
-    "templates/mytpl/gitignore": "node_modules",
-    "proj/.gitignore": "dist",
-  });
+test.concurrent(
+  "bun create from local template replaces an existing .gitignore via the gitignore convention",
+  async () => {
+    using dir = tempDir("create-local-gitignore-rename", {
+      "templates/mytpl/gitignore": "node_modules",
+      "proj/.gitignore": "dist",
+    });
 
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "create", "mytpl", "."],
-    env: createEnv(join(String(dir), "templates")),
-    cwd: join(String(dir), "proj"),
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited, proc.stdout.text()]);
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "create", "mytpl", "."],
+      env: createEnv(join(String(dir), "templates")),
+      cwd: join(String(dir), "proj"),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited, proc.stdout.text()]);
 
-  expect(await Bun.file(join(String(dir), "proj", ".gitignore")).text()).toBe("node_modules");
-  expect(await Bun.file(join(String(dir), "proj", "gitignore")).exists()).toBe(false);
-  expect({ exitCode, stderr }).toEqual({ exitCode: 0, stderr: expect.not.stringContaining("error") });
-});
+    expect(await Bun.file(join(String(dir), "proj", ".gitignore")).text()).toBe("node_modules");
+    expect(await Bun.file(join(String(dir), "proj", "gitignore")).exists()).toBe(false);
+    expect({ exitCode, stderr }).toEqual({ exitCode: 0, stderr: expect.not.stringContaining("error") });
+  },
+);
 
 test.concurrent("bun create from local template flags a directory named README.md as a conflict", async () => {
   using dir = tempDir("create-local-readme-dir", {

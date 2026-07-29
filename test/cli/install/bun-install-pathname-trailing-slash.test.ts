@@ -250,6 +250,6 @@ test("bunfig.toml install.cache takes precedence over .npmrc cache", async () =>
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect(stderr).toBe("");
-  expect(stdout.trim()).toBe(bunfigCache);
+  expect(stdout.trim().replaceAll("\\", "/")).toBe(bunfigCache.replaceAll("\\", "/"));
   expect(exitCode).toBe(0);
 });

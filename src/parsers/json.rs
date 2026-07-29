@@ -1849,7 +1849,12 @@ mod tests {
                 out.push('\n');
             }
 
-            writeln!(out, "bool={:?}", Expr::get_boolean(&root, b"private")).unwrap();
+            writeln!(
+                out,
+                "bool={:?}",
+                root.get(b"private").and_then(|e| e.as_bool())
+            )
+            .unwrap();
             writeln!(out, "num={:?}", root.get_number(b"count").map(|(n, _)| n)).unwrap();
             writeln!(
                 out,

@@ -1283,6 +1283,7 @@ fn collect_compile_assets(
             let _close = scopeguard::guard(dir, |fd| fd.close());
             let mut walker = bun_sys::walker_skippable::walk(dir, &[], &[])
                 .map_err(|_| bun_sys::Error::from_code(bun_sys::E::ENOMEM, bun_sys::Tag::open))?;
+            walker.resolve_unknown_entry_types = true;
             while let Some(entry) = walker.next().map_err(|e| e.with_path(asset))? {
                 if entry.kind == EntryKind::Directory {
                     continue;

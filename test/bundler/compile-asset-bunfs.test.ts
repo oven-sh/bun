@@ -1,8 +1,4 @@
 // https://github.com/oven-sh/bun/issues/15734
-// `bun build --compile` could not embed asset directories, and the `/$bunfs/`
-// virtual filesystem had no directory semantics for `fs.readdirSync` /
-// `fs.statSync` / `fs.existsSync`. SvelteKit's adapter (via sirv/totalist)
-// enumerates `${import.meta.dir}/client` at startup, so every static asset 404'd.
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDirWithFiles } from "harness";
 import { join, sep } from "path";
@@ -37,7 +33,7 @@ async function run(dir: string) {
   return { stdout, stderr, code };
 }
 
-describe("compiled executable: /$bunfs/ directory semantics", () => {
+describe.concurrent("compile --asset and /$bunfs/ directory semantics", () => {
   test(
     "existsSync/statSync/readdirSync on embedded-file parent directories",
     async () => {
@@ -55,6 +51,7 @@ describe("compiled executable: /$bunfs/ directory semantics", () => {
           dirStatIsDir: fs.statSync(dir).isDirectory(),
           dirLstatIsDir: fs.lstatSync(dir).isDirectory(),
           accessOk: (() => { try { fs.accessSync(dir); return true; } catch { return false; } })(),
+          accessWriteErr: (() => { try { fs.accessSync(asset, fs.constants.W_OK); return ""; } catch (e: any) { return e.code; } })(),
           readdir: fs.readdirSync(dir).sort(),
           readdirHasAsset: fs.readdirSync(dir).includes(path.basename(asset)),
         };
@@ -73,6 +70,7 @@ describe("compiled executable: /$bunfs/ directory semantics", () => {
       expect(r.dirStatIsDir).toBe(true);
       expect(r.dirLstatIsDir).toBe(true);
       expect(r.accessOk).toBe(true);
+      expect(r.accessWriteErr).toBe("EACCES");
       expect(r.readdirHasAsset).toBe(true);
       expect(r.readdir.length).toBeGreaterThan(0);
       expect(code).toBe(0);

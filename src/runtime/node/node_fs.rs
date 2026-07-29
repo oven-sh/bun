@@ -4741,7 +4741,14 @@ impl NodeFS {
             // SAFETY: see `standalone_module_graph_get`.
             let graph = unsafe { &mut *graph };
             let p = args.path.slice();
-            if graph.find(p).is_some() || graph.find_dir(p) {
+            let is_dir = graph.find_dir(p);
+            if is_dir || graph.find(p).is_some() {
+                const W_OK: c_int = 2;
+                const X_OK: c_int = 1;
+                let mode = args.mode.as_int();
+                if (mode & W_OK) != 0 || ((mode & X_OK) != 0 && !is_dir) {
+                    return Err(sys::Error::from_code(E::EACCES, sys::Tag::access).with_path(p));
+                }
                 return Ok(Null);
             }
         }

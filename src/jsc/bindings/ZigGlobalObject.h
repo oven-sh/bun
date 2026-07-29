@@ -29,7 +29,6 @@ class SubtleCrypto;
 class EventTarget;
 class Performance;
 class JSBuiltinInternalFunctions;
-class JSStreamsRuntime;
 } // namespace WebCore
 
 namespace Bun {
@@ -69,6 +68,7 @@ struct node_module;
 #include <node_api.h>
 #include "BakeAdditionsToGlobalObject.h"
 #include "WriteBarrierList.h"
+#include "streams/JSStreamsRuntime.h"
 
 namespace Bun {
 class JSCommonJSExtensions;
@@ -273,7 +273,7 @@ public:
     JSC::JSObject* NodeVMSyntheticModule() const { return m_NodeVMSyntheticModuleClassStructure.constructorInitializedOnMainThread(this); }
     JSC::JSValue NodeVMSyntheticModulePrototype() const { return m_NodeVMSyntheticModuleClassStructure.prototypeInitializedOnMainThread(this); }
 
-    WebCore::JSStreamsRuntime* streamsRuntime() const { return m_streamsRuntime.getInitializedOnMainThread(this); }
+    WebCore::JSStreamsRuntime* streamsRuntime() { return &m_streamsRuntime; }
     JSC::JSMap* requireMap() const { return m_requireMap.getInitializedOnMainThread(this); }
     // The JSC module loader registry is no longer a JS Map. Use
     // moduleLoader()->registryEntry(key) / moduleMap() / removeEntry(key) /
@@ -604,7 +604,7 @@ public:
     V(private, LazyPropertyOfGlobalObject<JSFunction>, m_utilInspectStylizeColorFunction)                    \
     V(private, LazyPropertyOfGlobalObject<JSFunction>, m_utilInspectStylizeNoColorFunction)                  \
     V(private, LazyPropertyOfGlobalObject<JSFunction>, m_wasmStreamingConsumeStreamFunction)                 \
-    V(private, LazyPropertyOfGlobalObject<WebCore::JSStreamsRuntime>, m_streamsRuntime)                      \
+    V(private, WebCore::JSStreamsRuntime, m_streamsRuntime)                                                  \
     V(private, LazyPropertyOfGlobalObject<JSMap>, m_requireMap)                                              \
     V(private, LazyPropertyOfGlobalObject<JSObject>, m_JSArrayBufferControllerPrototype)                     \
     V(private, LazyPropertyOfGlobalObject<JSObject>, m_JSHTTPSResponseControllerPrototype)                   \

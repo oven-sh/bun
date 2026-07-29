@@ -996,7 +996,7 @@ impl<'a> Parser<'a> {
         let mut end = start;
         while end < self.src.len() {
             match self.src[end] {
-                b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_' | b'-' | b'.' => {
+                b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_' | b'-' | b'.' | 0x80..=0xFF => {
                     end += 1;
                     continue;
                 }
@@ -1144,24 +1144,22 @@ impl<'a> Parser<'a> {
         let mut last = value.len();
         loop {
             if value[pos] == b'$' {
+                let next = value[pos + 1];
                 if pos > 0 && value[pos - 1] == b'\\' {
                     // PERF: splice at the front is O(n)
                     self.value_buffer
                         .splice(0..0, value[pos..last].iter().copied());
                     pos -= 1;
-                } else {
-                    let mut end = if value[pos + 1] == b'{' {
-                        pos + 2
-                    } else {
-                        pos + 1
-                    };
+                    last = pos;
+                } else if next == b'{' || matches!(next, b'a'..=b'z' | b'A'..=b'Z' | b'_') {
+                    let braced = next == b'{';
+                    let mut end = if braced { pos + 2 } else { pos + 1 };
                     let key_start = end;
                     while end < value.len() {
                         match value[end] {
-                            b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_' => {
-                                end += 1;
-                                continue;
-                            }
+                            b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_' => end += 1,
+                            // `${...}` may name a non-ASCII key; bare `$IDENT` stays ASCII.
+                            0x80..=0xFF if braced => end += 1,
                             _ => break,
                         }
                     }
@@ -1185,12 +1183,15 @@ impl<'a> Parser<'a> {
                     if end < value.len() && value[end] == b'}' {
                         end += 1;
                     }
+                    // A `${A:-$B}` default re-scans bytes the inner `$B` already
+                    // claimed (end > last); clamp so the slice is never reversed.
                     self.value_buffer
-                        .splice(0..0, value[end..last].iter().copied());
+                        .splice(0..0, value[end.min(last)..last].iter().copied());
                     self.value_buffer
                         .splice(0..0, lookup_value.unwrap_or(default_value).iter().copied());
+                    last = pos;
                 }
-                last = pos;
+                // else: `$` not introducing an expansion; leave it in the literal tail.
             }
             if pos == 0 {
                 if last == value.len() {

@@ -1,7 +1,9 @@
 #include "root.h"
 #include "ZigGlobalObject.h"
 #include "AsyncContextFrame.h"
+#include "JSValueInWrappedObject.h"
 #include <JavaScriptCore/InternalFieldTuple.h>
+#include <JavaScriptCore/StrongInlines.h>
 
 #if ASSERT_ENABLED
 #include <JavaScriptCore/IntegrityInlines.h>
@@ -32,6 +34,41 @@ AsyncContextFrame* AsyncContextFrame::create(JSGlobalObject* global, JSValue cal
 JSC::Structure* AsyncContextFrame::createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
 {
     return Structure::create(vm, globalObject, jsNull(), TypeInfo(ObjectType, StructureFlags), info());
+}
+
+void AsyncContextFrame::captureCurrentContext(JSGlobalObject* globalObject, WebCore::JSValueInWrappedObject& slot)
+{
+    JSValue context = globalObject->m_asyncContextData.get()->getInternalField(0);
+    // If there is no async context, do not snapshot it.
+    if (context.isUndefined())
+        return;
+    slot.setWeakly(context);
+}
+
+void AsyncContextFrame::captureCurrentContext(JSGlobalObject* globalObject, JSC::Strong<JSC::Unknown>& slot)
+{
+    JSValue context = globalObject->m_asyncContextData.get()->getInternalField(0);
+    // If there is no async context, do not snapshot it.
+    if (context.isUndefined())
+        return;
+    slot.set(globalObject->vm(), context);
+}
+
+AsyncContextFrameScope::AsyncContextFrameScope(JSGlobalObject* globalObject, JSValue context)
+{
+    if (!globalObject || !context || context.isUndefined())
+        return;
+    m_globalObject = globalObject;
+    auto* asyncContextData = globalObject->m_asyncContextData.get();
+    m_previousContext = asyncContextData->getInternalField(0);
+    asyncContextData->putInternalField(globalObject->vm(), 0, context);
+}
+
+AsyncContextFrameScope::~AsyncContextFrameScope()
+{
+    if (!m_globalObject)
+        return;
+    m_globalObject->m_asyncContextData.get()->putInternalField(m_globalObject->vm(), 0, m_previousContext);
 }
 
 JSValue AsyncContextFrame::withAsyncContextIfNeeded(JSGlobalObject* globalObject, JSValue callback)

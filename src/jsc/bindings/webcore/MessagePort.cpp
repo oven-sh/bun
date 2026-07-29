@@ -29,6 +29,7 @@
 #include <wtf/SetForScope.h>
 #include <JavaScriptCore/JSArrayBuffer.h>
 
+#include "AsyncContextFrame.h"
 #include "BunClientData.h"
 #include "EventNames.h"
 #include "JSMessagePort.h"
@@ -63,6 +64,11 @@ MessagePort::MessagePort(ScriptExecutionContext& context, Ref<MessagePortPipe>&&
     // listening port keeps its thread alive until closed or unref'd); otherwise a
     // buffered message could be lost if its listener is added late.
     onDidChangeListener = &MessagePort::onDidChangeListenerImpl;
+
+    // Message delivery happens from a posted task, not from a JS caller, so
+    // snapshot the creator's async context now (Node's AsyncWrap does the same).
+    if (auto* globalObject = context.jsGlobalObject())
+        AsyncContextFrame::captureCurrentContext(globalObject, m_creationAsyncContext);
 }
 
 MessagePort::~MessagePort()
@@ -243,10 +249,16 @@ void MessagePort::close()
         context->postTask([protectedThis = Ref { *this }](ScriptExecutionContext&) {
             protectedThis->dispatchCloseEvent();
             protectedThis->removeAllEventListeners();
+            // close() set m_isDetached, so this is the last possible dispatch;
+            // release the creation snapshot. Kept out of dispatchCloseEvent()
+            // because peerClosed() reaches that without detaching and can still
+            // deliver buffered messages if a listener is added afterwards.
+            protectedThis->m_creationAsyncContext.clear();
             protectedThis->m_closeEventPending.store(false, std::memory_order_release);
         });
     } else {
         removeAllEventListeners();
+        m_creationAsyncContext.clear();
     }
 }
 
@@ -264,8 +276,10 @@ void MessagePort::dispatchCloseEvent()
     auto* globalObject = defaultGlobalObject(context->globalObject());
     // Bypass the m_isDetached guard in MessagePort::dispatchEvent — the deferred
     // close task runs after m_isDetached is set.
-    if (Zig::GlobalObject::scriptExecutionStatus(globalObject, globalObject) == ScriptExecutionStatus::Running)
+    if (Zig::GlobalObject::scriptExecutionStatus(globalObject, globalObject) == ScriptExecutionStatus::Running) {
+        AsyncContextFrameScope asyncContextScope(globalObject, m_creationAsyncContext.getValue());
         EventTarget::dispatchEvent(Event::create(eventNames().closeEvent, Event::CanBubble::No, Event::IsCancelable::No));
+    }
 }
 
 void MessagePort::peerClosed()
@@ -299,6 +313,9 @@ TransferredMessagePort MessagePort::disentangle()
     // there would be nothing to unref.
     removeAllEventListeners();
     m_hasMessageEventListener = false;
+
+    // A transferred-away port is inert; release the creation snapshot.
+    m_creationAsyncContext.clear();
 
     // Release the self-reference taken by jsRef() on the sending side. After
     // transfer this object is inert (the receiving side gets a fresh
@@ -363,6 +380,10 @@ void MessagePort::dispatchOneMessage(ScriptExecutionContext& context, MessageWit
     }
 
     auto event = MessageEvent::create(*context.jsGlobalObject(), message.message.releaseNonNull(), {}, {}, {}, WTF::move(ports));
+    // Listeners observe the async context that was active when this port was
+    // created. entanglePorts() above stays outside: Node deserializes a
+    // message's transferred ports before restoring the receiver's context.
+    AsyncContextFrameScope asyncContextScope(globalObject, m_creationAsyncContext.getValue());
     dispatchEvent(event.event);
 }
 

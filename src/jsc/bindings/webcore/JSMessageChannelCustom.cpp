@@ -41,6 +41,12 @@ void JSMessageChannel::visitAdditionalChildrenInGCThread(Visitor& visitor)
     visitor.addOpaqueRoot(WTF::getPtr(wrapped().port2()));
     // addWebCoreOpaqueRoot(visitor, wrapped().port1());
     // addWebCoreOpaqueRoot(visitor, wrapped().port2());
+
+    // port1/port2 have no JSMessagePort wrapper until first read (the getters
+    // are lazy), so until then this is the only visitor that can keep the
+    // ports' captured async context alive.
+    wrapped().port1().creationAsyncContext().visit(visitor);
+    wrapped().port2().creationAsyncContext().visit(visitor);
 }
 
 DEFINE_VISIT_ADDITIONAL_CHILDREN_IN_GC_THREAD(JSMessageChannel);

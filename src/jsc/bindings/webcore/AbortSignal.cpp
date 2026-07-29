@@ -27,6 +27,7 @@
 #include "AbortSignal.h"
 
 #include "AbortAlgorithm.h"
+#include "AsyncContextFrame.h"
 #include "DOMException.h"
 // #include "DOMTimer.h"
 #include "Event.h"
@@ -66,6 +67,11 @@ Ref<AbortSignal> AbortSignal::abort(JSDOMGlobalObject& globalObject, ScriptExecu
 Ref<AbortSignal> AbortSignal::timeout(ScriptExecutionContext& context, uint64_t milliseconds)
 {
     auto signal = adoptRef(*new AbortSignal(&context));
+    // The abort fires from the timer heap, not from a JS caller, so snapshot
+    // the caller's async context now. Node does the equivalent through the
+    // setTimeout() that backs its AbortSignal.timeout().
+    if (auto* globalObject = context.jsGlobalObject())
+        AsyncContextFrame::captureCurrentContext(globalObject, signal->m_timeoutAsyncContext);
     signal->m_timeout = AbortSignal__Timeout__create(bunVM(context.vm()), signal.ptr(), milliseconds);
     ASSERT(signal->m_timeout);
     signal->ref();
@@ -152,6 +158,14 @@ void AbortSignal::cancelTimer()
     if (auto timeout = std::exchange(m_timeout, nullptr)) {
         AbortSignal__Timeout__deinit(timeout);
     }
+    clearTimeoutAsyncContext();
+}
+
+void AbortSignal::clearTimeoutAsyncContext()
+{
+    // The timer can never fire past this point, so release the snapshot taken
+    // in timeout(); signalAbort() has already copied it into its restore scope.
+    m_timeoutAsyncContext.clear();
 }
 
 void AbortSignal::markAborted(JSC::JSValue reason)
@@ -216,6 +230,12 @@ void AbortSignal::signalAbort(JSC::JSValue reason)
     // Defer the deref until after all abort work is done so `this` stays
     // alive throughout.
     bool hadTimeout = m_timeout != nullptr;
+
+    // Restore the async context captured by AbortSignal.timeout(): the timer
+    // fires from the event loop with no active AsyncLocalStorage context.
+    // Undefined (and so a no-op) for every other abort path.
+    auto* context = scriptExecutionContext();
+    AsyncContextFrameScope asyncContextScope(context ? context->jsGlobalObject() : nullptr, m_timeoutAsyncContext.get());
 
     // 2. Set signal’s abort reason to reason if it is given; otherwise to a new "AbortError" DOMException.
     markAborted(reason);

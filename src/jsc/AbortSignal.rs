@@ -54,6 +54,7 @@ unsafe extern "C" {
     // the non-`repr(C)` interior of `EventLoopTimer` is irrelevant to FFI.
     #[allow(improper_ctypes)]
     safe fn WebCore__AbortSignal__getTimeout(arg0: &AbortSignal) -> *mut Timeout;
+    safe fn WebCore__AbortSignal__clearTimeoutAsyncContext(arg0: &AbortSignal);
     safe fn WebCore__AbortSignal__signal(
         arg0: &AbortSignal,
         arg1: &JSGlobalObject,
@@ -208,6 +209,13 @@ impl AbortSignal {
         // SAFETY: returned Timeout is owned by `self` and valid while `self` is held
         // (see doc comment).
         NonNull::new(ptr).map(|p| unsafe { p.as_ref() })
+    }
+
+    /// Release the async context snapshot AbortSignal.timeout() captured.
+    /// Every path that retires the timer without going through the C++
+    /// `cancelTimer()` must call this, or the snapshot stays a GC root.
+    pub fn clear_timeout_async_context(&self) {
+        WebCore__AbortSignal__clearTimeoutAsyncContext(self)
     }
 }
 
@@ -371,8 +379,10 @@ impl Timeout {
 
             // The signal and its handlers belong to a previous isolated test
             // file's global; firing now would run them against the new global.
-            // Drop the extra ref that signalAbort() would have released.
+            // Release the async context snapshot (this path never reaches
+            // cancelTimer()), then drop the extra ref signalAbort() would have.
             if (*this).generation != (*vm).test_isolation_generation {
+                (*(*this).signal).clear_timeout_async_context();
                 (*(*this).signal).unref();
                 return;
             }

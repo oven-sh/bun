@@ -84,10 +84,12 @@ async function switchLoop(opts: { handshakePlugin: string; switches: string[]; l
   return { err, responses };
 }
 
-test("MySQL: AuthSwitchRequest to the plugin already in use is rejected", async () => {
-  // Handshake advertises mysql_native_password; a switch to that same plugin
-  // is a no-op the server has no legitimate reason to request and is the
-  // signature of the ping-pong attack.
+test("MySQL: a second AuthSwitchRequest to the same plugin is rejected", async () => {
+  // A first switch to the handshake-advertised plugin is legitimate (Azure
+  // Database for MySQL and proxy front-ends do this to deliver a fresh nonce)
+  // and must be honoured; a second switch to that same plugin is the
+  // ping-pong attack signature and is rejected. Before the fix `responses`
+  // hit the limit.
   const { err, responses } = await switchLoop({
     handshakePlugin: "mysql_native_password",
     switches: ["mysql_native_password"],
@@ -95,7 +97,7 @@ test("MySQL: AuthSwitchRequest to the plugin already in use is rejected", async 
   });
   expect({ err, responses }).toEqual({
     err: { code: "ERR_MYSQL_UNEXPECTED_PACKET" },
-    responses: 0,
+    responses: 1,
   });
 });
 
@@ -182,19 +184,24 @@ test("MySQL: caching_sha2 perform_full_authentication is honoured at most once",
   });
 });
 
-test("MySQL: a single AuthSwitchRequest then OK still connects", async () => {
-  // Boundary: the normal one-switch happy path must still work.
+// Boundary: the normal one-switch happy path must still work, both when the
+// switch targets a different plugin and when it targets the plugin the
+// greeting already advertised (Azure / ProxySQL fresh-nonce pattern).
+test.each([
+  { name: "to a different plugin", handshake: "caching_sha2_password", switchTo: "mysql_native_password" },
+  { name: "to the greeting's plugin", handshake: "mysql_native_password", switchTo: "mysql_native_password" },
+])("MySQL: a single AuthSwitchRequest $name then OK still connects", async ({ handshake, switchTo }) => {
   let responses = 0;
   const { server, port } = await listeningServer(socket => {
     let buffered = Buffer.alloc(0);
     let phase = 0;
-    socket.write(mysqlHandshakeV10({ authPlugin: "caching_sha2_password" }));
+    socket.write(mysqlHandshakeV10({ authPlugin: handshake }));
     socket.on("error", () => {});
     socket.on("data", chunk => {
       buffered = mysqlReadPackets(Buffer.concat([buffered, chunk]), seq => {
         if (phase === 0) {
           phase = 1;
-          socket.write(mysqlAuthSwitchRequest(seq + 1, "mysql_native_password", Buffer.alloc(20, 0x62)));
+          socket.write(mysqlAuthSwitchRequest(seq + 1, switchTo, Buffer.alloc(20, 0x62)));
         } else if (phase === 1) {
           phase = 2;
           responses++;

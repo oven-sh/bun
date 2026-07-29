@@ -913,7 +913,9 @@ impl MySQLConnection {
                     .ok_or(AnyMySQLError::UnsupportedAuthPlugin)?;
 
                 // Bound a hostile server's auth ping-pong.
-                if self.auth_switch_count >= 2 || self.auth_plugin == Some(auth_method) {
+                if self.auth_switch_count >= 2
+                    || (self.auth_switch_count > 0 && self.auth_plugin == Some(auth_method))
+                {
                     bun_core::scoped_log!(
                         MySQLConnection,
                         "rejecting AuthSwitchRequest (count={}, plugin={:?})",

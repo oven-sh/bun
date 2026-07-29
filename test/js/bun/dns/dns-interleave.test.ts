@@ -49,7 +49,7 @@ async function run(body: string, timeoutMs = 10_000) {
   return { out, stderr, exitCode, signal: proc.signalCode };
 }
 
-describe("getaddrinfo interleave (RFC 8305)", () => {
+describe.concurrent("getaddrinfo interleave (RFC 8305)", () => {
   test("fetch() through a seeded 4xAAAA + 4xA entry connects via the interleaved order", async () => {
     const { out, stderr, exitCode, signal } = await run(/* js */ `
       using server = Bun.serve({ port: 0, fetch: () => new Response("ok") });

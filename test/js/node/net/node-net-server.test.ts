@@ -571,26 +571,26 @@ describe("net.createServer events", () => {
   });
 });
 
+async function run(body: string) {
+  // Spawned so "process exits naturally" is the observable.
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", body],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  // stderr is drained but only surfaced on failure: debug builds may emit
+  // benign warnings, so it is not asserted empty.
+  return { stdout, exitCode, failureDetail: exitCode === 0 ? "" : stderr };
+}
+
 // Node gives each accepted handle its own uv_stream_t ref; Bun's Listener used
 // to hold ONE KeepAlive for the listening socket and all its connections, so an
 // accepted socket's unref() was a no-op and server.unref() dropped live
 // connections. Both directions are covered below via Bun.listen to bypass
 // node:net's onconnection (whose resume() on main would paper over case 1).
 describe("accepted socket event-loop hold matches Node (per-connection KeepAlive)", () => {
-  async function run(body: string) {
-    // Spawned so "process exits naturally" is the observable.
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "-e", body],
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    // stderr is drained but only surfaced on failure: debug builds may emit
-    // benign warnings, so it is not asserted empty.
-    return { stdout, exitCode, failureDetail: exitCode === 0 ? "" : stderr };
-  }
-
   it("server.stop() + accepted socket.unref() lets the process exit", async () => {
     // do_stop used to gate the listener's KeepAlive release on
     // active_connections == 0, and the accepted socket's own KeepAlive was
@@ -698,17 +698,6 @@ describe("accepted socket event-loop hold matches Node (per-connection KeepAlive
 });
 
 describe("net.createServer options.highWaterMark", () => {
-  async function run(body: string) {
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "-e", body],
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    return { stdout, exitCode, failureDetail: exitCode === 0 ? "" : stderr };
-  }
-
   it("normalizes a negative value to the default so accepted connections work", async () => {
     // Node's Server ctor validates highWaterMark with validateNumber and maps
     // negative values to the default. Without that, the accepted Socket's

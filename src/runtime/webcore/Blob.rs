@@ -4465,6 +4465,7 @@ fn write_file_with_empty_source_to_destination(
     ctx: &JSGlobalObject,
     destination_blob: &mut Blob,
     options: &WriteFileOptions,
+    source_content_type: Option<&[u8]>,
 ) -> JsResult<JSValue> {
     // SAFETY: null-checked by caller
     let destination_store = destination_blob
@@ -4638,7 +4639,7 @@ fn write_file_with_empty_source_to_destination(
                 &aws_options.credentials,
                 s3.path(),
                 b"",
-                destination_blob.content_type_or_mime_type(),
+                resolve_s3_upload_content_type(destination_blob, source_content_type),
                 // SAFETY: `*const [u8]` borrows from sibling `_*_slice` fields
                 // on `aws_options`, which outlives this call.
                 aws_options.content_disposition.as_deref(),
@@ -4668,6 +4669,25 @@ fn write_file_with_empty_source_to_destination(
     ))
 }
 
+fn resolve_s3_upload_content_type<'a>(
+    destination: &'a Blob,
+    source_content_type: Option<&'a [u8]>,
+) -> Option<&'a [u8]> {
+    if destination.content_type_was_set.get() {
+        let ct = destination.content_type_slice();
+        if !ct.is_empty() {
+            return Some(ct);
+        }
+    }
+    if let Some(ct) = source_content_type {
+        // `OTHER` is the `Bun.file()` placeholder for an unrecognised extension.
+        if !ct.is_empty() && ct != bun_http_types::MimeType::OTHER.value.as_ref() {
+            return Some(ct);
+        }
+    }
+    destination.content_type_or_mime_type()
+}
+
 pub fn write_file_with_source_destination(
     ctx: &JSGlobalObject,
     source_blob: &mut Blob,
@@ -4688,7 +4708,12 @@ pub fn write_file_with_source_destination(
     );
 
     let Some(source_store) = source_blob.store.get().clone() else {
-        return write_file_with_empty_source_to_destination(ctx, destination_blob, options);
+        return write_file_with_empty_source_to_destination(
+            ctx,
+            destination_blob,
+            options,
+            source_blob.content_type_or_mime_type(),
+        );
     };
     let source_type = source_store.data.tag();
 
@@ -4836,6 +4861,11 @@ pub fn write_file_with_source_destination(
         };
         let proxy_owned = http_proxy_href(ctx);
         let proxy_url = proxy_owned.as_deref();
+        let content_type: Option<Box<[u8]>> = resolve_s3_upload_content_type(
+            destination_blob,
+            source_blob.content_type_or_mime_type(),
+        )
+        .map(Box::from);
         match &source_store.data {
             store::Data::Bytes(bytes) => {
                 if bytes.len() as usize > S3::MultiPartUploadOptions::MAX_SINGLE_UPLOAD_SIZE {
@@ -4859,7 +4889,7 @@ pub fn write_file_with_source_destination(
                             aws_options.options,
                             aws_options.acl,
                             aws_options.storage_class,
-                            destination_blob.content_type_or_mime_type(),
+                            content_type.as_deref(),
                             // SAFETY: `*const [u8]` borrows from sibling `_*_slice`
                             // fields on `aws_options`, which outlives this call.
                             aws_options.content_disposition.as_deref(),
@@ -4917,7 +4947,7 @@ pub fn write_file_with_source_destination(
                         &aws_options.credentials,
                         s3.path(),
                         bytes.slice(),
-                        destination_blob.content_type_or_mime_type(),
+                        content_type.as_deref(),
                         // SAFETY: `*const [u8]` borrows from sibling `_*_slice` fields
                         // on `aws_options`, which outlives this call.
                         aws_options.content_disposition.as_deref(),
@@ -4959,7 +4989,7 @@ pub fn write_file_with_source_destination(
                         s3.options,
                         aws_options.acl,
                         aws_options.storage_class,
-                        destination_blob.content_type_or_mime_type(),
+                        content_type.as_deref(),
                         // SAFETY: `*const [u8]` borrows from sibling `_*_slice` fields
                         // on `aws_options`, which outlives this call.
                         aws_options.content_disposition.as_deref(),
@@ -5147,7 +5177,8 @@ pub fn write_file_internal(
         // body-value pointer and a `get_stream` closure.
         let mut body_dispatch =
             |body_value: *mut webcore::body::Value,
-             get_stream: &mut dyn FnMut(&JSGlobalObject) -> Option<ReadableStream>|
+             get_stream: &mut dyn FnMut(&JSGlobalObject) -> Option<ReadableStream>,
+             source_content_type: Option<&[u8]>|
              -> JsResult<core::ops::ControlFlow<JSValue, Blob>> {
                 use core::ops::ControlFlow;
                 use webcore::body::Value as BodyValue;
@@ -5160,7 +5191,17 @@ pub fn write_file_internal(
                     | BodyValue::Used
                     | BodyValue::Empty
                     | BodyValue::Blob(_)
-                    | BodyValue::Null => Ok(ControlFlow::Continue(body_value_ref.use_())),
+                    | BodyValue::Null => {
+                        let b = body_value_ref.use_();
+                        if let Some(ct) = source_content_type {
+                            if !ct.is_empty() {
+                                b.content_type_was_set.set(true);
+                                b.content_type
+                                    .set(BlobContentType::Owned(std::sync::Arc::from(ct)));
+                            }
+                        }
+                        Ok(ControlFlow::Continue(b))
+                    }
                     BodyValue::Error(err_ref) => {
                         let err_js = err_ref.to_js(global_this);
                         destination_blob.detach();
@@ -5212,7 +5253,10 @@ pub fn write_file_internal(
                                     aws_options.options,
                                     aws_options.acl,
                                     aws_options.storage_class,
-                                    destination_blob.content_type_or_mime_type(),
+                                    resolve_s3_upload_content_type(
+                                        &destination_blob,
+                                        source_content_type,
+                                    ),
                                     // SAFETY: `*const [u8]` borrows from sibling
                                     // `_*_slice` fields on `aws_options`, which
                                     // outlives this call.
@@ -5261,16 +5305,30 @@ pub fn write_file_internal(
         // in `JSValue`); `get_body_value` / `get_body_readable_stream` both
         // take `&self` (interior mutability for the body cell).
         if let Some(response) = data.as_class_ref::<Response>() {
+            let content_type = response
+                .get_content_type()?
+                .map(|s| Box::<[u8]>::from(s.slice()));
             let bv = std::ptr::from_mut(response.get_body_value());
-            match body_dispatch(bv, &mut |g| response.get_body_readable_stream(g))? {
+            match body_dispatch(
+                bv,
+                &mut |g| response.get_body_readable_stream(g),
+                content_type.as_deref(),
+            )? {
                 core::ops::ControlFlow::Break(v) => return Ok(v),
                 core::ops::ControlFlow::Continue(b) => break 'brk b,
             }
         }
 
         if let Some(request) = data.as_class_ref::<Request>() {
+            let content_type = request
+                .get_content_type()?
+                .map(|s| Box::<[u8]>::from(s.slice()));
             let bv = std::ptr::from_mut(request.get_body_value());
-            match body_dispatch(bv, &mut |g| request.get_body_readable_stream(g))? {
+            match body_dispatch(
+                bv,
+                &mut |g| request.get_body_readable_stream(g),
+                content_type.as_deref(),
+            )? {
                 core::ops::ControlFlow::Break(v) => return Ok(v),
                 core::ops::ControlFlow::Continue(b) => break 'brk b,
             }

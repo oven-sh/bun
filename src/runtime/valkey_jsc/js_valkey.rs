@@ -1034,8 +1034,7 @@ impl JSValkeyClient {
             return Ok(promise);
         }
 
-        let promise_ptr = JSPromise::create(global_object);
-        let promise = promise_ptr.to_js();
+        let promise = JSPromise::create(global_object).to_js();
         Js::connection_promise_set_cached(this_value, global_object, promise);
 
         // If was manually closed, reset that flag
@@ -1053,15 +1052,7 @@ impl JSValkeyClient {
 
             if let Err(err) = self.connect() {
                 self.poll_ref.with_mut(|r| r.unref(vm_event_loop_ctx()));
-                self.client_mut().flags.needs_to_open_socket = true;
-                let err_value = global_object
-                    .err(
-                        jsc::ErrorCode::SOCKET_CLOSED_BEFORE_CONNECTION,
-                        format_args!(" {} connecting to Valkey", err.name()),
-                    )
-                    .to_js();
-                let _exit = self.vm().enter_event_loop_scope();
-                promise_ptr.reject(global_object, Ok(err_value))?;
+                self.reject_connection_promise(global_object, this_value, err)?;
                 return Ok(promise);
             }
 
@@ -1073,12 +1064,45 @@ impl JSValkeyClient {
             valkey::Status::Disconnected => {
                 self.client_mut().flags.is_reconnecting = true;
                 self.client_mut().retry_attempts = 0;
-                self.reconnect();
+                if let Err(err) = self.reconnect() {
+                    // reconnect() reported the failure through the onclose callback but
+                    // never started a socket, so no event would ever settle the promise.
+                    self.client_mut().flags.is_reconnecting = false;
+                    self.reject_connection_promise(global_object, this_value, err)?;
+                }
             }
             _ => {}
         }
 
         Ok(promise)
+    }
+
+    /// A synchronous connect() failure means no socket event will ever settle
+    /// the cached connectionPromise; take it out of the slot and reject it, the
+    /// same way on_valkey_connect and on_valkey_close settle it. No-op when the
+    /// slot is empty (the reconnect timer firing with no connect() pending).
+    fn reject_connection_promise(
+        &self,
+        global_object: &JSGlobalObject,
+        this_value: JSValue,
+        err: bun_core::Error,
+    ) -> JsResult<()> {
+        self.client_mut().flags.needs_to_open_socket = true;
+        let Some(cached) = Js::connection_promise_get_cached(this_value) else {
+            return Ok(());
+        };
+        Js::connection_promise_set_cached(this_value, global_object, JSValue::ZERO);
+        let err_value = global_object
+            .err(
+                jsc::ErrorCode::SOCKET_CLOSED_BEFORE_CONNECTION,
+                format_args!(" {} connecting to Valkey", err.name()),
+            )
+            .to_js();
+        let _exit = self.vm().enter_event_loop_scope();
+        // `JSPromise` is an `opaque_ffi!` ZST — `opaque_mut` is the safe deref.
+        // The cached slot only ever holds a JSPromise.
+        JSPromise::opaque_mut(cached.as_promise().unwrap()).reject(global_object, Ok(err_value))?;
+        Ok(())
     }
 
     #[bun_jsc::host_fn(method)]
@@ -1175,18 +1199,32 @@ impl JSValkeyClient {
         let _guard = self.ref_scope();
         let _timer_ref = self.reconnect_timer.take_fire_ref(self);
 
-        // Execute reconnection logic
-        self.reconnect();
+        // A .connect() promise can still be cached here: on_close()'s
+        // auto-reconnect branch schedules this timer without ever reaching
+        // on_valkey_close(), which is what normally clears and settles it.
+        if let Err(err) = self.reconnect() {
+            // No socket was created, so no close event will arrive to schedule
+            // another attempt; a stale is_reconnecting would keep update_poll_ref
+            // holding a strong this_value root forever and leak the JS wrapper.
+            self.client_mut().flags.is_reconnecting = false;
+            if let Some(this_value) = self.this_value.get().try_get() {
+                let _ = self.reject_connection_promise(&self.global_object, this_value, err);
+            }
+            self.update_poll_ref();
+        }
     }
 
-    pub fn reconnect(&self) {
+    /// Returns the error when `connect()` fails synchronously: nothing else
+    /// will settle a connectionPromise cached before the attempt, so the
+    /// caller must (see `reject_connection_promise`).
+    pub fn reconnect(&self) -> Result<(), bun_core::Error> {
         if !self.client.get().flags.is_reconnecting {
-            return;
+            return Ok(());
         }
 
         if self.vm().is_shutting_down() {
             bun_core::hint::cold();
-            return;
+            return Ok(());
         }
 
         // Ref to keep this alive during the reconnection
@@ -1209,11 +1247,12 @@ impl JSValkeyClient {
                     .to_js(),
             );
             self.poll_ref.with_mut(|r| r.disable());
-            return;
+            return Err(err);
         }
 
         // Reset the socket timeout
         self.reset_connection_timeout();
+        Ok(())
     }
 
     // Callback for when Valkey client connects

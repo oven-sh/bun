@@ -34,9 +34,7 @@ use bun_core::strings;
 struct Brace {
     open_brace_idx: u32,
     branch_idx: u32,
-    /// Index of the matching `}` (or `glob.len()` if unterminated). Computed
-    /// once per group so `skip_branch` is an O(1) jump instead of a linear
-    /// scan; without it a wide group costs `BRACE_BRANCH_BUDGET * group_len`.
+    /// Index of the matching `}`, or `glob.len()` if the group is unterminated.
     close_brace_idx: u32,
 }
 type BraceStack = BoundedArray<Brace, 10>;
@@ -556,18 +554,12 @@ fn match_brace_branch(
     matched
 }
 
-/// Jumps `state.glob_index` to just past the `}` of the innermost brace group
-/// on `brace_stack` that encloses the current position. Returns `false` when no
-/// stacked group encloses it, i.e. the `,`/`}` is a literal that only looked
-/// like a separator because `brace_depth` over-counts after sequential groups.
+/// Jumps `glob_index` past the `}` of the innermost stacked group that encloses
+/// it; returns `false` if none does (the `,`/`}` is then a literal).
 ///
-/// `brace_depth` can't index `brace_stack` directly: the stack also holds
-/// frames for groups already exited earlier in this attempt (sequential
-/// `{a,b}/{c,d}` keeps A on the stack while matching inside B), and wildcard
-/// backtracks can re-enter a later frame without the count lining up. So scan
-/// the (≤10-entry) stack by range instead. Frames are pushed outer→inner, so
-/// iterating in reverse visits inner→outer and the first enclosing frame found
-/// is the innermost.
+/// `brace_stack[brace_depth - 1]` is not that group: the stack also holds
+/// already-exited sequential groups, so look up by range. Reverse iteration
+/// visits inner→outer, so the first enclosing frame is the innermost.
 fn skip_branch(state: &mut State, glob: &[u8], brace_stack: &BraceStack) -> bool {
     let gi = state.glob_index;
     for frame in brace_stack.as_slice().iter().rev() {
@@ -586,9 +578,7 @@ fn skip_branch(state: &mut State, glob: &[u8], brace_stack: &BraceStack) -> bool
     false
 }
 
-/// Returns the index of the `}` matching the `{` at `open_idx`, or `glob.len()`
-/// if the group is unterminated. Mirrors `match_brace`'s scan (bracket-aware,
-/// escape-aware) so both agree on where a group ends.
+/// Index of the `}` matching the `{` at `open_idx`, or `glob.len()` if unterminated.
 fn find_brace_end(glob: &[u8], open_idx: u32) -> u32 {
     let mut i = open_idx as usize;
     debug_assert!(i < glob.len() && glob[i] == b'{');

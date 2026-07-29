@@ -962,11 +962,8 @@ impl CreateCommand {
             if template_has_gitignore {
                 // rename replaces files; only a directory blocks it (--force clears it).
                 if create_options.overwrite
-                    && bun_sys::directory_exists_at(
-                        parent_dir.fd(),
-                        bun_core::zstr!(".gitignore"),
-                    )
-                    .unwrap_or(false)
+                    && bun_sys::directory_exists_at(parent_dir.fd(), bun_core::zstr!(".gitignore"))
+                        .unwrap_or(false)
                 {
                     if let Err(err) = parent_dir.delete_tree(b".gitignore") {
                         pretty_errorln!(

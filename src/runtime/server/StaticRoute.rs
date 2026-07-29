@@ -33,6 +33,7 @@ pub struct StaticRoute {
     pub(super) ref_count: Cell<u32>,
     pub server: Cell<Option<AnyServer>>,
     pub status_code: u16,
+    pub status_text: Box<[u8]>,
     pub blob: AnyBlob,
     pub cached_blob_size: u64,
     pub has_date: bool,
@@ -111,6 +112,7 @@ impl StaticRoute {
             headers,
             server: Cell::new(options.server),
             status_code: options.status_code,
+            status_text: Box::default(),
         }))
     }
 
@@ -142,11 +144,15 @@ impl StaticRoute {
             headers: self.headers.clone(),
             server: Cell::new(self.server.get()),
             status_code: self.status_code,
+            status_text: self.status_text.clone(),
         })))
     }
 
     pub fn memory_cost(&self) -> usize {
-        size_of::<StaticRoute>() + self.blob.memory_cost() + self.headers.memory_cost()
+        size_of::<StaticRoute>()
+            + self.blob.memory_cost()
+            + self.headers.memory_cost()
+            + self.status_text.len()
     }
 
     pub fn from_js(
@@ -245,6 +251,8 @@ impl StaticRoute {
 
             let cached_blob_size = blob.size();
             let has_date = headers.get(b"date").is_some();
+            let status_text_str = response.get_init_status_text();
+            let status_text_slice = status_text_str.to_utf8_without_ref();
             return Ok(Some(bun_core::heap::into_raw(Box::new(StaticRoute {
                 ref_count: Cell::new(1),
                 blob,
@@ -253,6 +261,7 @@ impl StaticRoute {
                 headers,
                 server: Cell::new(None),
                 status_code: response.status_code(),
+                status_text: Box::from(status_text_slice.slice()),
             }))));
         }
 
@@ -467,10 +476,10 @@ impl StaticRoute {
         resp.try_end(bytes, all_bytes.len(), resp.should_close_connection())
     }
 
-    fn do_write_status(&self, status: u16, resp: AnyResponse) {
+    fn do_write_status(&self, status: u16, status_text: &[u8], resp: AnyResponse) {
         match resp {
-            AnyResponse::SSL(r) => write_status::<true>(r, status),
-            AnyResponse::TCP(r) => write_status::<false>(r, status),
+            AnyResponse::SSL(r) => write_status::<true>(r, status, status_text),
+            AnyResponse::TCP(r) => write_status::<false>(r, status, status_text),
             AnyResponse::H3(r) => {
                 let mut b = bun_core::fmt::ItoaBuf::new();
                 let s = bun_core::fmt::itoa(&mut b, status);
@@ -513,7 +522,7 @@ impl StaticRoute {
     }
 
     fn render_metadata(&self, resp: AnyResponse) {
-        self.do_write_status(self.status_code, resp);
+        self.do_write_status(self.status_code, &self.status_text, resp);
         self.do_write_headers(resp);
     }
 
@@ -526,7 +535,7 @@ impl StaticRoute {
                 Method::GET => Self::on(this, resp),
                 Method::HEAD => Self::on_head(this, resp),
                 _ => {
-                    (*this).do_write_status(405, resp); // Method not allowed
+                    (*this).do_write_status(405, &[], resp); // Method not allowed
                     resp.write_header(b"Allow", b"GET, HEAD");
                     resp.write_header_int(b"Content-Length", 0);
                     resp.end_without_body(resp.should_close_connection());
@@ -622,7 +631,7 @@ impl StaticRoute {
                 server.on_pending_request();
                 resp.timeout(server.config().idle_timeout);
             }
-            (*this).do_write_status(status, resp);
+            (*this).do_write_status(status, &[], resp);
             (*this).do_write_headers(resp);
             if !HTTPStatusText::is_null_body(status) {
                 resp.write_header_int(b"Content-Length", 0);

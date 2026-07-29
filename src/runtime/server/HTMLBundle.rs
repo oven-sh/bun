@@ -653,6 +653,7 @@ impl Route {
                         blob,
                         server: Cell::new(Some(server)),
                         status_code: 200,
+                        status_text: Box::default(),
                         headers,
                         cached_blob_size,
                         has_date: false,

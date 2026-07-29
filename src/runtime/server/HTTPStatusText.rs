@@ -11,6 +11,35 @@ pub const fn is_sendable(code: u16) -> bool {
     matches!(code, 100..=999)
 }
 
+/// RFC 9112 §4 `reason-phrase`: HTAB / SP / VCHAR (0x21..=0x7E) / obs-text (0x80..=0xFF).
+pub fn is_valid_reason_phrase(s: &[u8]) -> bool {
+    s.iter()
+        .all(|&c| c == b'\t' || (0x20..=0x7E).contains(&c) || c >= 0x80)
+}
+
+pub const STATUS_LINE_BUF: usize = 256;
+
+/// `"<code> <reason>"` for uWS `writeStatus`: prefers a valid `status_text`,
+/// then [`get`], then an empty reason phrase.
+pub fn format<'a>(buf: &'a mut [u8; STATUS_LINE_BUF], code: u16, status_text: &[u8]) -> &'a [u8] {
+    let mut itoa = bun_core::fmt::ItoaBuf::new();
+    let c = bun_core::fmt::itoa(&mut itoa, code);
+    if !status_text.is_empty() && is_valid_reason_phrase(status_text) {
+        let msg = &status_text[..status_text.len().min(buf.len() - c.len() - 1)];
+        let n = c.len() + 1 + msg.len();
+        buf[..c.len()].copy_from_slice(c);
+        buf[c.len()] = b' ';
+        buf[c.len() + 1..n].copy_from_slice(msg);
+        return &buf[..n];
+    }
+    if let Some(canned) = get(code) {
+        return canned;
+    }
+    buf[..c.len()].copy_from_slice(c);
+    buf[c.len()] = b' ';
+    &buf[..c.len() + 1]
+}
+
 pub fn get(code: u16) -> Option<&'static [u8]> {
     match code {
         100 => Some(b"100 Continue"),

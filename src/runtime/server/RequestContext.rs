@@ -1863,7 +1863,7 @@ where
                         fd.close();
                     }
                     let mut crbuf = [0u8; RangeRequest::CONTENT_RANGE_BUF];
-                    self.do_write_status(416);
+                    self.do_write_status(416, &[]);
                     if let Some(response) = self.response_weakref.get() {
                         if let Some(mut headers_) = response.swap_init_headers() {
                             self.do_write_headers(&mut headers_);
@@ -3653,6 +3653,9 @@ where
         // an async hop keep the Response rooted via response_protected.
         let response: &mut Response = self.response_weakref.get().unwrap();
         let mut status = response.status_code();
+        // +0 borrow of `init.status_text`; that field is not mutated below.
+        let status_text_str = response.get_init_status_text();
+        let status_text_slice = status_text_str.to_utf8_without_ref();
         let mut needs_content_range = self.flags.needs_content_range()
             && (self.sendfile.total > 0 || self.sendfile.remain < self.blob.size());
 
@@ -3684,7 +3687,14 @@ where
                 status = 206;
             }
 
-            self.do_write_status(status);
+            self.do_write_status(
+                status,
+                if needs_content_range {
+                    &[]
+                } else {
+                    status_text_slice.slice()
+                },
+            );
             self.do_write_headers(&mut headers_);
             // `HeadersRef` is RAII — its Drop
             // already calls `WebCore__FetchHeaders__deref`, so an explicit
@@ -3693,9 +3703,9 @@ where
             drop(headers_);
         } else if needs_content_range {
             status = 206;
-            self.do_write_status(status);
+            self.do_write_status(status, &[]);
         } else {
-            self.do_write_status(status);
+            self.do_write_status(status, status_text_slice.slice());
         }
 
         if let Some(mut cookies) = self.cookies.take() {
@@ -3794,21 +3804,14 @@ where
         }
     }
 
-    fn do_write_status(&mut self, status: u16) {
+    fn do_write_status(&mut self, status: u16, status_text: &[u8]) {
         debug_assert!(!self.flags.has_written_status());
         self.flags.set_has_written_status(true);
 
         // `AnyResponse` is a `Copy` handle; methods take `self` by value.
         let Some(resp) = self.resp else { return };
-        if let Some(text) = HTTPStatusText::get(status) {
-            resp.write_status(text);
-        } else {
-            let mut buf = [0u8; 48];
-            let mut w = &mut buf[..];
-            let _ = write!(w, "{} HM", status);
-            let written = 48 - w.len();
-            resp.write_status(&buf[..written]);
-        }
+        let mut buf = [0u8; HTTPStatusText::STATUS_LINE_BUF];
+        resp.write_status(HTTPStatusText::format(&mut buf, status, status_text));
     }
 
     fn do_write_headers(&mut self, headers: &mut FetchHeaders) {

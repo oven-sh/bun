@@ -803,3 +803,70 @@ it("CustomEvent", () => {
     }"
   `);
 });
+
+describe("Map/Set entry count is capped", () => {
+  it("Map truncates past 100 entries", () => {
+    const m = new Map();
+    for (let i = 0; i < 150; i++) m.set(i, i);
+    const out = Bun.inspect(m);
+    expect(out).toContain("99: 99,");
+    expect(out).not.toContain("100: 100");
+    expect(out).toContain("... 50 more items");
+  });
+
+  it("Set truncates past 100 entries", () => {
+    const s = new Set();
+    for (let i = 0; i < 150; i++) s.add(i);
+    const out = Bun.inspect(s);
+    expect(out).toContain("99,");
+    expect(out).not.toContain("100,");
+    expect(out).toContain("... 50 more items");
+  });
+
+  it("singularizes 1 remaining entry", () => {
+    const m = new Map();
+    for (let i = 0; i < 101; i++) m.set(i, i);
+    expect(Bun.inspect(m)).toContain("... 1 more item,");
+    expect(Bun.inspect(m)).not.toContain("items");
+  });
+
+  it("Map/Set at exactly the cap are not truncated", () => {
+    const m = new Map();
+    for (let i = 0; i < 100; i++) m.set(i, i);
+    expect(Bun.inspect(m)).not.toContain("more item");
+    const s = new Set();
+    for (let i = 0; i < 100; i++) s.add(i);
+    expect(Bun.inspect(s)).not.toContain("more item");
+  });
+
+  it("single-line Map/Set truncation has the right separators", () => {
+    const m = new Map();
+    for (let i = 0; i < 105; i++) m.set(i, i);
+    expect(Bun.inspect(m, { compact: true })).toEndWith("98: 98, 99: 99, ... 5 more items }");
+    const s = new Set();
+    for (let i = 0; i < 105; i++) s.add(i);
+    expect(Bun.inspect(s, { compact: true })).toEndWith("98, 99, ... 5 more items }");
+  });
+
+  it("large Map output is bounded", () => {
+    const m = new Map();
+    for (let i = 0; i < 10_000; i++) m.set(i, i);
+    const out = Bun.inspect(m);
+    expect(out.length).toBeLessThan(4096);
+    expect(out).toContain("... 9900 more items");
+  });
+
+  it("cap is driven by the real entry count, not a lying size getter", () => {
+    class M extends Map {
+      get size() {
+        return 1;
+      }
+    }
+    const m = new M();
+    for (let i = 0; i < 500; i++) m.set(i, i);
+    const out = Bun.inspect(m);
+    expect(out).not.toContain("100: 100");
+    expect(out).toContain("... 400 more items");
+    expect(out.length).toBeLessThan(4096);
+  });
+});

@@ -380,10 +380,6 @@ test("unsupported protocol", async () => {
   );
 });
 
-// https://github.com/oven-sh/bun/issues/8150
-// A malformed proxy *string* already rejects with ERR_INVALID_ARG_VALUE, but a
-// wrong-typed proxy *value* (number/array/boolean/object without `url`) used to
-// be silently ignored so the request went direct to the origin.
 describe("proxy option validation", () => {
   test("rejects wrong-typed values instead of silently going direct", async () => {
     const hits: string[] = [];

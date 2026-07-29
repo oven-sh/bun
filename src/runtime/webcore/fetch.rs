@@ -52,6 +52,7 @@ use bun_core::{String as BunString, Tag as BunStringTag, ZigStringSlice};
 use bun_http::{self as http, FetchRedirect, Headers, HeadersExt as _, MimeType};
 use bun_http_jsc::method_jsc;
 use bun_http_types::Method::Method;
+use bun_http_types::ReferrerPolicy::ReferrerPolicy;
 use bun_jsc::{HTTPHeaderName, StringJsc as _, SysErrorJsc as _};
 use bun_paths::{self, PathBuffer};
 use bun_sys::FdExt as _;
@@ -64,6 +65,7 @@ use crate::socket::ssl_config::{SSLConfig, SSLConfigFromJs};
 use crate::webcore::blob::BlobExt as _;
 use crate::webcore::body::{Action as BodyValueLockedAction, InternalBlob, Value as BodyValue};
 use crate::webcore::headers_ref::any_blob_content_type_opt;
+use crate::webcore::referrer;
 use crate::webcore::s3::client as s3;
 use crate::webcore::{
     AbortSignal, Blob, Body, FetchHeaders, ObjectURLRegistry, ReadableStream, Request, Response,
@@ -1406,6 +1408,85 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         return Ok(JSValue::ZERO);
     }
 
+    // referrer: string | undefined; resolved as in the `Request` constructor
+    // and stored as described in `crate::webcore::referrer`.
+    let request_referrer: bun_core::OwnedString = bun_core::OwnedString::new('extract_referrer: {
+        let objects_to_try = [
+            options_object.unwrap_or(JSValue::ZERO),
+            request_init_object.unwrap_or(JSValue::ZERO),
+        ];
+
+        for obj in objects_to_try {
+            if !obj.is_empty() {
+                match obj.get(global_this, "referrer")? {
+                    Some(referrer_value) if !referrer_value.is_undefined() => {
+                        let raw = bun_core::OwnedString::new(BunString::from_js(
+                            referrer_value,
+                            global_this,
+                        )?);
+                        match referrer::parse_init_referrer(&raw) {
+                            Some(stored) => break 'extract_referrer stored,
+                            None => {
+                                return Err(global_this.throw_type_error(format_args!(
+                                    "fetch() referrer is not a valid URL: \"{}\"",
+                                    raw.get()
+                                )));
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+
+                if global_this.has_exception() {
+                    return Ok(JSValue::ZERO);
+                }
+            }
+        }
+
+        if let Some(req) = request_mut!() {
+            break 'extract_referrer req.referrer.get().dupe_ref();
+        }
+
+        break 'extract_referrer referrer::client();
+    });
+
+    if global_this.has_exception() {
+        return Ok(JSValue::ZERO);
+    }
+
+    // referrerPolicy: ReferrerPolicy | undefined;
+    let referrer_policy: ReferrerPolicy = 'extract_referrer_policy: {
+        let mut referrer_policy = ReferrerPolicy::Empty;
+        if let Some(req) = request_mut!() {
+            referrer_policy = req.flags.referrer_policy;
+        }
+
+        let objects_to_try = [
+            options_object.unwrap_or(JSValue::ZERO),
+            request_init_object.unwrap_or(JSValue::ZERO),
+        ];
+
+        for obj in objects_to_try {
+            if !obj.is_empty() {
+                match obj.get_optional_enum::<ReferrerPolicy>(global_this, "referrerPolicy") {
+                    Err(_) => {
+                        return Ok(JSValue::ZERO);
+                    }
+                    Ok(Some(policy_value)) => {
+                        break 'extract_referrer_policy policy_value;
+                    }
+                    Ok(None) => {}
+                }
+            }
+        }
+
+        break 'extract_referrer_policy referrer_policy;
+    };
+
+    if global_this.has_exception() {
+        return Ok(JSValue::ZERO);
+    }
+
     if proxy.is_some() && !unix_socket_path.slice().is_empty() {
         let err = ctx.to_type_error(
             jsc::ErrorCode::INVALID_ARG_VALUE,
@@ -1645,6 +1726,17 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             any_blob_content_type_opt(body.get_any_blob().map(|b| &*b)),
         ));
     }
+
+    // `build_request` computes `Referer` on each hop, so it's not appended
+    // here. An explicit user-set `Referer` header wins: an empty `referrer`
+    // tells `build_request` to leave the user's header alone.
+    let referrer: Box<[u8]> = match headers.as_ref().and_then(|h| h.get(b"referer")) {
+        Some(_) => Box::default(),
+        None => {
+            let utf8 = request_referrer.to_utf8();
+            Box::from(utf8.slice())
+        }
+    };
 
     // `body` is mutated in place for the sendfile/readfile paths and then
     // *moved* into `FetchOptions`.
@@ -2078,6 +2170,8 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         max_redirects,
         reject_unauthorized,
         redirect_type,
+        referrer,
+        referrer_policy,
         verbose,
         proxy: proxy_static,
         proxy_headers: proxy_headers.take(),

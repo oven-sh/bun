@@ -2040,6 +2040,8 @@ impl FetchTasklet {
                 verbose: Some(fetch_options.verbose),
                 tls_props: fetch_options.ssl_config,
                 compress: fetch_options.compress,
+                referrer: fetch_options.referrer,
+                referrer_policy: fetch_options.referrer_policy,
             },
         )));
         // enable streaming the write side
@@ -2563,6 +2565,10 @@ pub struct FetchOptions {
     pub url: ZigURL<'static>,
     pub verbose: http::HTTPVerboseLevel,
     pub redirect_type: FetchRedirect,
+    /// See `HTTPClient.referrer`. Empty when the caller set an explicit
+    /// `Referer` header.
+    pub referrer: Box<[u8]>,
+    pub referrer_policy: http::ReferrerPolicy,
     pub proxy: Option<ZigURL<'static>>,
     pub proxy_headers: Option<Headers>,
     pub url_proxy_buffer: Box<[u8]>,
@@ -2600,6 +2606,8 @@ impl Default for FetchOptions {
             url: ZigURL::default(),
             verbose: http::HTTPVerboseLevel::None,
             redirect_type: FetchRedirect::Follow,
+            referrer: Box::default(),
+            referrer_policy: http::ReferrerPolicy::Empty,
             proxy: None,
             proxy_headers: None,
             url_proxy_buffer: Box::default(),

@@ -10,6 +10,8 @@ use crate::Error;
 use crate::webcore::Lifetime;
 #[cfg(not(windows))]
 use crate::webcore::blob::ClosingState;
+#[cfg(not(windows))]
+use crate::webcore::blob::Store;
 use crate::webcore::blob::store::{Bytes as ByteStore, Data, File as FileStore};
 use crate::webcore::blob::{Blob, FileCloser, FileOpener, MAX_SIZE, SizeType, StoreRef};
 use crate::webcore::node_types::PathOrFileDescriptor;
@@ -133,6 +135,14 @@ impl<'a, F: ReadFileToJs> ReadFileCompletion for NewReadFileHandler<'a, F> {
 
 pub type ReadFileOnReadFileCallback = fn(ctx: *mut c_void, bytes: ReadFileResultType);
 
+#[cfg(not(windows))]
+pub fn completion_thunk<C: ReadFileCompletion>(ctx: *mut c_void, bytes: ReadFileResultType) {
+    // The JsTerminated error is intentionally swallowed.
+    // SAFETY: `ctx` is the `*mut C` passed through `on_complete_ctx` /
+    // `extra_completions`; ownership transfers per `ReadFileCompletion::run`.
+    let _ = unsafe { C::run(ctx.cast::<C>(), bytes) };
+}
+
 pub struct ReadFileRead {
     /// Always a `Box::<[u8]>::into_raw` from the producer's read buffer
     /// (`Vec::into_boxed_slice()` so layout is exactly `(ptr, len)`). Every
@@ -157,6 +167,14 @@ pub enum ReadFileResultType {
 }
 
 pub type ReadFileTask = bun_jsc::work_task::WorkTask<ReadFile>;
+
+#[cfg(not(windows))]
+thread_local! {
+    /// (fd-backed `Store`, offset, max_length) → in-flight `ReadFile`; see `try_coalesce_fd_read`.
+    static IN_FLIGHT_FD_READERS: core::cell::RefCell<
+        bun_collections::HashMap<(*const Store, SizeType, SizeType), *mut ReadFile>,
+    > = core::cell::RefCell::new(bun_collections::HashMap::new());
+}
 
 // `WorkTaskContext` fixes `run`/`then` to take `*mut Self`; the trait method
 // cannot be marked `unsafe fn` and the parameter type cannot change, so the
@@ -196,6 +214,8 @@ pub struct ReadFile {
     pub errno: Option<Error>,
     pub on_complete_ctx: *mut c_void,
     pub on_complete_callback: ReadFileOnReadFileCallback,
+    /// JS-thread-only; attached via `try_coalesce_fd_read`.
+    pub extra_completions: bun_threading::Guarded<Vec<(ReadFileOnReadFileCallback, *mut c_void)>>,
     pub io_task: Option<*mut ReadFileTask>,
     pub io_poll: io::Poll,
     pub io_request: io::Request,
@@ -361,6 +381,7 @@ impl ReadFile {
             errno: None,
             on_complete_ctx: on_read_file_context,
             on_complete_callback,
+            extra_completions: bun_threading::Guarded::new(Vec::new()),
             io_task: None,
             io_poll: io::Poll::default(),
             io_request: io::Request {
@@ -383,26 +404,63 @@ impl ReadFile {
         context: *mut C,
     ) -> Result<Box<ReadFile>, Error> {
         // `ReadFileCompletion`
-        // monomorphizes per `C`, so `handler_run::<C>` calls `C::run` directly
+        // monomorphizes per `C`, so `completion_thunk::<C>` calls `C::run` directly
         // and `on_complete_ctx` is the unwrapped `*mut C` — no extra heap box,
         // nothing to leak on the `Err` path.
-        fn handler_run<C: ReadFileCompletion>(ctx: *mut c_void, bytes: ReadFileResultType) {
-            // The JsTerminated error is intentionally swallowed.
-            // TODO: propagate the exception.
-            // SAFETY: `ctx` is the `*mut C` passed unmodified through
-            // `on_complete_ctx`; ownership transfers per `ReadFileCompletion::run`.
-            let _ = unsafe { C::run(ctx.cast::<C>(), bytes) };
-        }
         ReadFile::create_with_ctx(
             store,
             context.cast::<c_void>(),
-            handler_run::<C>,
+            completion_thunk::<C>,
             off,
             max_len,
         )
     }
 
     pub const IO_TAG: io::Tag = io::Tag::ReadFile;
+
+    /// JS-thread-only. Attach to this store's in-flight reader instead of racing the fd.
+    #[cfg(not(windows))]
+    pub fn try_coalesce_fd_read(
+        store: &StoreRef,
+        offset: SizeType,
+        max_length: SizeType,
+        ctx: *mut c_void,
+        callback: ReadFileOnReadFileCallback,
+    ) -> bool {
+        if !matches!(&store.data, Data::File(f) if f.pathlike.is_fd()) {
+            return false;
+        }
+        let key = (store.as_ptr().cast_const(), offset, max_length);
+        let Some(existing) = IN_FLIGHT_FD_READERS.with(|m| m.borrow().get(&key).copied()) else {
+            return false;
+        };
+        // SAFETY: `existing` was inserted on this thread before scheduling and
+        // is removed on this thread in `then()` before the `ReadFile` is
+        // dropped (`WorkTask::then` runs on the creating event loop), so the
+        // pointee is live. The work pool holds `&mut ReadFile` concurrently,
+        // so project the `Guarded` field through the raw pointer without
+        // materialising `&ReadFile`.
+        let extras = unsafe { &*core::ptr::addr_of!((*existing).extra_completions) };
+        extras.lock().push((callback, ctx));
+        true
+    }
+
+    /// JS-thread-only. See `IN_FLIGHT_FD_READERS`.
+    #[cfg(not(windows))]
+    pub fn mark_in_flight(
+        store: &StoreRef,
+        offset: SizeType,
+        max_length: SizeType,
+        reader: *mut ReadFile,
+    ) {
+        if matches!(&store.data, Data::File(f) if f.pathlike.is_fd()) {
+            IN_FLIGHT_FD_READERS.with(|m| {
+                m.borrow_mut()
+                    .entry((store.as_ptr().cast_const(), offset, max_length))
+                    .or_insert_with(|| reader);
+            });
+        }
+    }
 
     pub fn on_ready(&mut self) {
         bloblog!("ReadFile.onReady");
@@ -562,10 +620,28 @@ impl ReadFile {
         let cb = this.on_complete_callback;
         let cb_ctx = this.on_complete_ctx;
 
+        let mut this = this;
+
+        // Clear before the callbacks so a read they schedule starts fresh.
+        #[cfg(not(windows))]
+        if let Some(store) = this.store.as_ref() {
+            let key = (store.as_ptr().cast_const(), this.offset, this.max_length);
+            let self_ptr = core::ptr::from_ref::<ReadFile>(&this).cast_mut();
+            IN_FLIGHT_FD_READERS.with(|m| {
+                let mut m = m.borrow_mut();
+                if m.get(&key) == Some(&self_ptr) {
+                    m.remove(&key);
+                }
+            });
+        }
+        let extras: Vec<_> = core::mem::take(&mut *this.extra_completions.lock());
+
         if this.store.is_none() && this.system_error.is_some() {
-            let mut this = this;
             let system_error = this.system_error.take().unwrap();
             drop(this);
+            for (extra_cb, extra_ctx) in extras {
+                extra_cb(extra_ctx, ReadFileResultType::Err(system_error.clone()));
+            }
             cb(cb_ctx, ReadFileResultType::Err(system_error));
             return Ok(());
         } else if this.store.is_none() {
@@ -573,20 +649,19 @@ impl ReadFile {
             if cfg!(debug_assertions) {
                 panic!("assertion failure - store should not be null");
             }
-            cb(
-                cb_ctx,
-                ReadFileResultType::Err(SystemError {
-                    code: BunString::static_("INTERNAL_ERROR").into(),
-                    message: BunString::static_("assertion failure - store should not be null")
-                        .into(),
-                    syscall: BunString::static_("read").into(),
-                    ..Default::default()
-                }),
-            );
+            let err = SystemError {
+                code: BunString::static_("INTERNAL_ERROR").into(),
+                message: BunString::static_("assertion failure - store should not be null").into(),
+                syscall: BunString::static_("read").into(),
+                ..Default::default()
+            };
+            for (extra_cb, extra_ctx) in extras {
+                extra_cb(extra_ctx, ReadFileResultType::Err(err.clone()));
+            }
+            cb(cb_ctx, ReadFileResultType::Err(err));
             return Ok(());
         }
 
-        let mut this = this;
         let _store = this.store.take().unwrap();
         // reshaped for borrowck — take buffer out so it survives `drop(this)`.
         let buf = core::mem::take(&mut this.buffer);
@@ -597,12 +672,24 @@ impl ReadFile {
         drop(this);
 
         if let Some(err) = system_error {
+            for (extra_cb, extra_ctx) in extras {
+                extra_cb(extra_ctx, ReadFileResultType::Err(err.clone()));
+            }
             cb(cb_ctx, ReadFileResultType::Err(err));
             return Ok(());
         }
 
         // The receiver takes ownership. Normalize to `Box<[u8]>` so every
         // consumer can reclaim via `heap::take` with a matching layout.
+        for (extra_cb, extra_ctx) in extras {
+            extra_cb(
+                extra_ctx,
+                ReadFileResultType::Result(ReadFileRead {
+                    buf: bun_core::heap::into_raw(buf.clone().into_boxed_slice()),
+                    total_size,
+                }),
+            );
+        }
         cb(
             cb_ctx,
             ReadFileResultType::Result(ReadFileRead {

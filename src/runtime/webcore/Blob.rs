@@ -472,17 +472,7 @@ impl BlobExt for Blob {
 
         #[cfg(not(windows))]
         {
-            let file_read = read_file::ReadFile::create(
-                self.store().expect("infallible: store present").clone(),
-                self.offset.get(),
-                self.size.get(),
-                handler,
-            )
-            .unwrap_or_else(|e| bun_core::handle_oom(Err(e)));
-            let read_file_task = read_file::ReadFileTask::create_on_js_thread(
-                global,
-                bun_core::heap::into_raw(file_read),
-            );
+            let store = self.store().expect("infallible: store present").clone();
 
             // Create the Promise only after the store has been ref()'d.
             // The garbage collector runs on memory allocations
@@ -495,6 +485,26 @@ impl BlobExt for Blob {
             // SAFETY: same `handler` as above; still solely owned here.
             let promise_value = unsafe { (*handler).promise.value() };
             promise_value.ensure_still_alive();
+
+            let offset = self.offset.get();
+            let size = self.size.get();
+            if read_file::ReadFile::try_coalesce_fd_read(
+                &store,
+                offset,
+                size,
+                handler.cast::<c_void>(),
+                read_file::completion_thunk::<Handler<'_, F>>,
+            ) {
+                debug!("doReadFile: coalesced onto in-flight fd reader");
+                return promise_value;
+            }
+
+            let file_read = read_file::ReadFile::create(store.clone(), offset, size, handler)
+                .unwrap_or_else(|e| bun_core::handle_oom(Err(e)));
+            let file_read_ptr = bun_core::heap::into_raw(file_read);
+            read_file::ReadFile::mark_in_flight(&store, offset, size, file_read_ptr);
+            let read_file_task =
+                read_file::ReadFileTask::create_on_js_thread(global, file_read_ptr);
 
             // SAFETY: `read_file_task` was just heap-allocated by `create_on_js_thread`.
             read_file::ReadFileTask::schedule(unsafe { &mut *read_file_task });
@@ -688,18 +698,30 @@ impl BlobExt for Blob {
         }
         #[cfg(not(windows))]
         {
-            let file_read = read_file::ReadFile::create_with_ctx(
-                self.store().expect("infallible: store present").clone(),
+            let store = self.store().expect("infallible: store present").clone();
+            let offset = self.offset.get();
+            let size = self.size.get();
+            if read_file::ReadFile::try_coalesce_fd_read(
+                &store,
+                offset,
+                size,
                 ctx.cast::<c_void>(),
                 NewInternalReadFileHandler::<C, F>::run,
-                self.offset.get(),
-                self.size.get(),
+            ) {
+                return;
+            }
+            let file_read = read_file::ReadFile::create_with_ctx(
+                store.clone(),
+                ctx.cast::<c_void>(),
+                NewInternalReadFileHandler::<C, F>::run,
+                offset,
+                size,
             )
             .unwrap_or_else(|e| bun_core::handle_oom(Err(e)));
-            let read_file_task = read_file::ReadFileTask::create_on_js_thread(
-                global,
-                bun_core::heap::into_raw(file_read),
-            );
+            let file_read_ptr = bun_core::heap::into_raw(file_read);
+            read_file::ReadFile::mark_in_flight(&store, offset, size, file_read_ptr);
+            let read_file_task =
+                read_file::ReadFileTask::create_on_js_thread(global, file_read_ptr);
             // SAFETY: `read_file_task` was just heap-allocated by `create_on_js_thread`.
             read_file::ReadFileTask::schedule(unsafe { &mut *read_file_task });
         }

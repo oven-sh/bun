@@ -107,6 +107,8 @@ export const crash_handler = $rust("crash_handler.rs", "js_bindings.generate") a
   abort: () => void;
   trap: () => void;
   raiseIgnoringPanicHandler: () => void;
+  jitPoolRange: () => [number, number];
+  stackLine: (addr: number) => { address: number; object: string | null } | undefined;
 };
 
 export const upgrade_test_helpers = $rust("upgrade_command.rs", "upgrade_js_bindings.generate") as {

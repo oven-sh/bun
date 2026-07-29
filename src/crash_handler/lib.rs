@@ -23,6 +23,9 @@
 #![allow(internal_features)]
 #![allow(nonstandard_style, static_mut_refs, unexpected_cfgs)]
 #![warn(unused_must_use)]
+
+extern crate alloc;
+
 #[path = "CPUFeatures.rs"]
 pub mod cpu_features;
 
@@ -526,11 +529,16 @@ mod draft {
     // that `bun_runtime` populates at startup (the full `Cli` stays in
     // `bun_runtime::cli`, a higher-tier crate).
     pub mod cli_state {
-        use core::sync::atomic::{AtomicU8, AtomicU64, Ordering};
+        use core::sync::atomic::{AtomicU8, AtomicU64, AtomicUsize, Ordering};
 
         static MAIN_THREAD_ID: AtomicU64 = AtomicU64::new(0);
         /// 0 = unset → encoded as `_` in the trace string.
         static CMD_CHAR: AtomicU8 = AtomicU8::new(0);
+        /// JSC's fixed executable-memory pool `[start, end)`. Written once from
+        /// C++ (`JSCInitialize`) after `JSC::initialize()`; zero = unset (JIT
+        /// disabled or not yet initialized).
+        static JIT_POOL_START: AtomicUsize = AtomicUsize::new(0);
+        static JIT_POOL_END: AtomicUsize = AtomicUsize::new(0);
 
         pub fn set_main_thread_id(id: u64) {
             MAIN_THREAD_ID.store(id, Ordering::Relaxed);
@@ -552,6 +560,30 @@ mod draft {
                 0 => None,
                 c => Some(c),
             }
+        }
+
+        pub(crate) fn set_jit_pool_range(start: usize, end: usize) {
+            JIT_POOL_START.store(start, Ordering::Relaxed);
+            JIT_POOL_END.store(end, Ordering::Relaxed);
+        }
+
+        pub fn jit_pool_range() -> (usize, usize) {
+            (
+                JIT_POOL_START.load(Ordering::Relaxed),
+                JIT_POOL_END.load(Ordering::Relaxed),
+            )
+        }
+
+        /// JSC's `isJITPC`: `g_jscConfig.startExecutableMemory <= pc <
+        /// g_jscConfig.endExecutableMemory`. Returns the offset into the pool
+        /// so the trace-string encoder has a stable (ASLR-independent) value.
+        pub(crate) fn jit_pool_offset(addr: usize) -> Option<usize> {
+            let start = JIT_POOL_START.load(Ordering::Relaxed);
+            if start == 0 {
+                return None;
+            }
+            let end = JIT_POOL_END.load(Ordering::Relaxed);
+            (start <= addr && addr < end).then(|| addr - start)
         }
     }
 
@@ -2210,6 +2242,15 @@ mod draft {
     #[unsafe(no_mangle)]
     pub(crate) static Bun__reported_memory_size: AtomicUsize = AtomicUsize::new(0);
 
+    /// Called from C++ `JSCInitialize` once `JSC::initialize()` has reserved
+    /// the fixed executable-memory pool; mirrors
+    /// `g_jscConfig.{start,end}ExecutableMemory` so `StackLine::from_address`
+    /// can tag JIT frames without linking against JSC.
+    #[unsafe(no_mangle)]
+    pub(crate) extern "C" fn Bun__setJITPoolRange(start: usize, end: usize) {
+        cli_state::set_jit_pool_range(start, end);
+    }
+
     pub fn print_metadata(writer: &mut impl Write) -> crate::Result<()> {
         #[cfg(debug_assertions)]
         {
@@ -2515,15 +2556,26 @@ mod draft {
 
     struct StackLine {
         address: i32,
-        // None -> from bun.exe
-        object: Option<Box<[u8]>>,
-        // Box<[u8]> rather than a borrowed slice into caller's `name_bytes`,
-        // since the only caller writes into a stack buffer and the value is consumed immediately.
+        /// `None` → from bun.exe. `Cow` so static labels (`b"JIT"`) encode
+        /// without touching the allocator; only the Windows DLL path owns.
+        object: Option<alloc::borrow::Cow<'static, [u8]>>,
     }
 
     impl StackLine {
         /// `None` implies the trace is not known.
         pub(crate) fn from_address(addr: usize, name_bytes: &mut [u8]) -> Option<StackLine> {
+            // JSC's JIT pool (Baseline/DFG/FTL/Wasm/Yarr) is a single
+            // VirtualAlloc/mmap reservation, not a loaded image, so the
+            // per-platform module lookup below can never find it. Classify it
+            // here so the trace string records the frame (as a pool offset)
+            // instead of discarding the captured PC as `_`.
+            if let Some(offset) = cli_state::jit_pool_offset(addr) {
+                let _ = name_bytes;
+                return Some(StackLine {
+                    address: offset as i32,
+                    object: Some(alloc::borrow::Cow::Borrowed(b"JIT")),
+                });
+            }
             #[cfg(windows)]
             {
                 let module = bun_sys::windows::get_module_handle_from_address(addr)?;
@@ -2548,8 +2600,8 @@ mod draft {
                         // or bare drive prefix, so `basename_windows`'s
                         // stripping is a no-op on this domain.
                         let basename = bun_paths::basename_windows(name);
-                        Some(Box::<[u8]>::from(
-                            &*strings::convert_utf16_to_utf8_in_buffer(name_bytes, basename),
+                        Some(alloc::borrow::Cow::Owned(
+                            strings::convert_utf16_to_utf8_in_buffer(name_bytes, basename).to_vec(),
                         ))
                     } else {
                         None
@@ -2823,6 +2875,15 @@ mod draft {
             writer.write_all(b"/view")?;
         }
         Ok(())
+    }
+
+    /// `bun:internal-for-testing` hook: the `(address, object)` the
+    /// trace-string encoder would record for this PC. `None` → encoded as `_`.
+    pub fn stack_line_for_testing(
+        addr: usize,
+    ) -> Option<(i32, Option<alloc::borrow::Cow<'static, [u8]>>)> {
+        let mut name_bytes: [u8; 1024] = [0; 1024];
+        StackLine::from_address(addr, &mut name_bytes).map(|l| (l.address, l.object))
     }
 
     pub fn write_u64_as_two_vlqs(writer: &mut impl Write, addr: usize) -> crate::Result<()> {
@@ -3356,6 +3417,11 @@ mod draft {
             let Some(line) = StackLine::from_address(addr, &mut name_bytes) else {
                 continue;
             };
+            // `--exe` is bun's own image; a foreign-object offset (system
+            // DLL or JIT pool) would symbolize against the wrong binary.
+            if line.object.is_some() {
+                continue;
+            }
             argv.push(format!("0x{:X}", line.address).into_bytes());
         }
 

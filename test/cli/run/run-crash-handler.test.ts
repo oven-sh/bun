@@ -2,7 +2,7 @@ import { crash_handler } from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug, isLinux, isPosix, isWindows, mergeWindowEnvs } from "harness";
 import path from "path";
-const { getMachOImageZeroOffset } = crash_handler;
+const { getMachOImageZeroOffset, jitPoolRange, stackLine } = crash_handler;
 
 // CI sets BUN_CRASH_REPORT_URL so unexpected crashes are captured; these
 // deliberate crashes must not upload there or the runner pins them on the
@@ -12,6 +12,30 @@ const noReportEnv = { ...bunEnv, BUN_CRASH_REPORT_URL: "", BUN_ENABLE_CRASH_REPO
 // On Linux, debug builds symbolize crash traces by spawning llvm-symbolizer;
 // without it the fallback printer has no Rust symbol names to assert on.
 const hasSymbolizer = !!(Bun.which("llvm-symbolizer") || Bun.which("llvm-symbolizer-21"));
+
+// The crash-report trace-string encoder used to throw away any captured PC
+// that `GetModuleHandleExW`/`dl_iterate_phdr`/`_dyld_get_image_header` cannot
+// map to a loaded image. JSC's JIT pool is a bare VirtualAlloc/mmap (not an
+// image), so JIT frames were encoded as the single byte `_` and bun.report
+// rendered them as `pkg:"?" addr:0x0000`.
+test("JIT pool addresses are tagged in crash-report frames", () => {
+  const [start, end] = jitPoolRange();
+  // JSCInitialize calls Bun__setJITPoolRange after JSC::initialize(); the
+  // test runner has already brought up a VM, so the pool must be registered.
+  expect(start).toBeGreaterThan(0);
+  expect(end).toBeGreaterThan(start);
+
+  // A PC inside the pool is now encoded with object "JIT" (reusing the
+  // existing foreign-module slot, so bun.report needs no decoder change) and
+  // address = offset-into-pool so the value is stable across ASLR.
+  expect(stackLine(start)).toEqual({ object: "JIT", address: 0 });
+  expect(stackLine(start + 0x100)).toEqual({ object: "JIT", address: 0x100 });
+  // `| 0` mirrors the Rust `offset as i32` wrap for a hypothetical >2GB pool.
+  expect(stackLine(end - 1)).toEqual({ object: "JIT", address: (end - start - 1) | 0 });
+  // Boundaries: end is exclusive, and 0 is never a valid PC.
+  expect(stackLine(end)?.object).not.toBe("JIT");
+  expect(stackLine(0)).toBeUndefined();
+});
 
 test.if(isDebug && isLinux && hasSymbolizer)(
   "crash trace starts at the crash site, not inside the crash handler",

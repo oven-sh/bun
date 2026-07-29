@@ -298,7 +298,7 @@ impl PathWatcher {
         }
     }
 
-    #[cfg(not(any(windows, target_os = "freebsd")))]
+    #[cfg(not(windows))]
     fn emit_error(&mut self, err: &sys::Error, close: bool) {
         for &ctx in self.handlers.keys() {
             (FSWatcher::ON_PATH_UPDATE)(
@@ -1389,9 +1389,19 @@ impl Kqueue {
         Kqueue::add_one(manager, watcher, &root, b"", is_file)?;
         if watcher.recursive && !watcher.is_file {
             // kqueue needs an open fd per *file* as well as per directory.
+            let mut first_err: Option<sys::Error> = None;
             walk_subtree::<false>(&root, b"", &mut |abs, rel, is_file| {
-                let _ = Kqueue::add_one(manager, watcher, abs, rel, is_file);
+                if let Err(e) = Kqueue::add_one(manager, watcher, abs, rel, is_file) {
+                    if first_err.is_none() {
+                        first_err = Some(e);
+                    }
+                }
             });
+            if let Some(err) = first_err {
+                // Partial coverage: emit 'error' but keep the watcher, like node.
+                watcher.emit_error(&err, false);
+                watcher.flush();
+            }
         }
         Ok(())
     }
@@ -1413,10 +1423,10 @@ impl Kqueue {
             0,
         ) {
             Err(e) => {
-                if !subpath.is_empty() {
-                    return Ok(()); // best-effort on children
+                if !subpath.is_empty() && matches!(e.get_errno(), E::ENOENT | E::ENOTDIR) {
+                    return Ok(());
                 }
-                return Err(e.without_path());
+                return Err(e.with_path(abs_path.as_bytes()));
             }
             Ok(f) => f,
         };
@@ -1459,14 +1469,12 @@ impl Kqueue {
             // dead entry in the map that will never deliver events.
             let errno = sys::get_errno(krc);
             fd.close();
-            if !subpath.is_empty() {
-                return Ok(()); // best-effort on children
-            }
             return Err(sys::Error {
                 errno: errno as u16,
                 syscall: Tag::kevent,
                 ..Default::default()
-            });
+            }
+            .with_path(abs_path.as_bytes()));
         }
 
         // SAFETY: caller holds manager.mutex; exclusive access to `entries`.

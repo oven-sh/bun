@@ -746,11 +746,55 @@ describe("fs.watch", () => {
         expect(stderr).toBe("");
         const result = JSON.parse(stdout.trim());
         expect(result.errorEvent).not.toBeNull();
+        // internal/fs/watch.ts rewrites EACCES to EPERM for watchpack compat.
+        expect(result.errorEvent.code).toBe("EPERM");
         expect(result.errorEvent.syscall).toBe("watch");
         expect(result.errorEvent.path).toContain("locked");
         expect(result.closed).toBe(false);
         expect(result.openDelivered).toBe(true);
         expect(exitCode).toBe(0);
+
+        // fs.promises.watch wraps the native watcher in an async iterator with
+        // no user-accessible handle. A subtree-registration error that keeps
+        // the native watcher open must not leave it refing the event loop
+        // after the iterator throws, or the process hangs at exit.
+        const promisesFixture = `
+          const fs = require("fs");
+          const root = process.env.WATCH_ROOT;
+          (async () => {
+            let caught = null;
+            try {
+              for await (const e of fs.promises.watch(root, { recursive: true })) break;
+            } catch (e) {
+              caught = { code: e.code, syscall: e.syscall, path: e.path };
+            }
+            console.log(JSON.stringify({ caught }));
+          })();
+          setTimeout(() => { console.log(JSON.stringify({ hung: true })); process.exit(1); }, 4000).unref();
+        `;
+        await using proc2 = Bun.spawn({
+          cmd: [bunExe(), "-e", promisesFixture],
+          env: { ...bunEnv, WATCH_ROOT: root },
+          cwd: "/",
+          uid: NOBODY,
+          gid: NOBODY,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout2, stderr2, exitCode2] = await Promise.all([
+          proc2.stdout.text(),
+          proc2.stderr.text(),
+          proc2.exited,
+        ]);
+        expect(stderr2).toBe("");
+        const result2 = JSON.parse(stdout2.trim());
+        expect(result2.hung).toBeUndefined();
+        expect(result2.caught).toEqual({
+          code: "EACCES",
+          syscall: "watch",
+          path: path.join(root, "locked"),
+        });
+        expect(exitCode2).toBe(0);
       } finally {
         fs.chmodSync(path.join(root, "locked"), 0o755);
       }

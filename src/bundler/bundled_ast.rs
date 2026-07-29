@@ -328,7 +328,9 @@ impl<'arena> BundledAst<'arena> {
         }
     }
 
-    /// TODO: Move this from being done on all parse tasks into the start of the linker. This currently allocates base64 encoding for every small file loaded thing.
+    /// Populate `url_for_css` with a base64 `data:` URI for CSS `url(...)`
+    /// references that inline this file. When no URI is produced, the
+    /// `unique_key` placeholder is later rewritten to the hashed output path.
     pub fn add_url_for_css(
         &mut self,
         bump: &'arena bun_alloc::Arena,
@@ -336,6 +338,7 @@ impl<'arena> BundledAst<'arena> {
         mime_type_: Option<&[u8]>,
         unique_key: Option<&[u8]>,
         force_inline: bool,
+        inline_limit: u32,
     ) {
         {
             // `by_extension` returns an owned MimeType whose `.value` is a Cow; bind it
@@ -350,10 +353,8 @@ impl<'arena> BundledAst<'arena> {
                 &mime_type_owned.value
             };
             let contents: &[u8] = &source.contents;
-            // TODO: make this configurable
-            const COPY_THRESHOLD: usize = 128 * 1024; // 128kb
             let should_copy =
-                !force_inline && contents.len() >= COPY_THRESHOLD && unique_key.is_some();
+                !force_inline && contents.len() >= inline_limit as usize && unique_key.is_some();
             if should_copy {
                 return;
             }

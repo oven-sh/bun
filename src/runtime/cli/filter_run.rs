@@ -867,6 +867,8 @@ pub(crate) fn run_scripts_with_filter(
 
     // SAFETY: Transpiler::init always sets `env` to the process-lifetime singleton.
     let env_ptr: *mut bun_dotenv::Loader = this_transpiler.env;
+    // SAFETY: env_ptr is the process-lifetime DotEnv loader.
+    RunCommand::forward_color_to_piped_scripts(unsafe { &mut *env_ptr });
     let event_loop = MiniEventLoopMod::init_global(
         // SAFETY: see above; `&'static mut` reborrow of the singleton for first-init only.
         Some(unsafe { &mut *env_ptr }),
@@ -907,6 +909,9 @@ pub(crate) fn run_scripts_with_filter(
         remaining_scripts: 0,
         draw_buf: Vec::new(),
         last_lines_written: 0,
+        // Redraw renderer emits cursor-up/erase-line sequences; those only make
+        // sense on a real terminal. `FORCE_COLOR` (which we now inject for
+        // child scripts) must not enable it on a pipe.
         pretty_output: {
             #[cfg(windows)]
             {
@@ -914,7 +919,7 @@ pub(crate) fn run_scripts_with_filter(
             }
             #[cfg(not(windows))]
             {
-                Output::enable_ansi_colors_stdout()
+                Output::is_stdout_tty() && Output::enable_ansi_colors_stdout()
             }
         },
         shell_bin,

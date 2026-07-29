@@ -87,8 +87,6 @@ function runInCwdSuccess({
   antipattern,
   command = ["present"],
   auto = false,
-  env = {},
-  elideCount,
 }: {
   cwd: string;
   pattern: string | string[];
@@ -96,15 +94,8 @@ function runInCwdSuccess({
   antipattern?: RegExp | RegExp[];
   command?: string[];
   auto?: boolean;
-  env?: Record<string, string | undefined>;
-  elideCount?: number;
 }) {
   const cmd = auto ? [bunExe()] : [bunExe(), "run"];
-
-  // Add elide-lines first if specified
-  if (elideCount !== undefined) {
-    cmd.push("--elide-lines", elideCount.toString());
-  }
 
   if (Array.isArray(pattern)) {
     for (const p of pattern) {
@@ -121,7 +112,7 @@ function runInCwdSuccess({
   const { exitCode, stdout, stderr } = spawnSync({
     cwd,
     cmd,
-    env: { ...bunEnv, ...env },
+    env: bunEnv,
     stdout: "pipe",
     stderr: "pipe",
   });
@@ -471,7 +462,7 @@ describe("bun", () => {
     expect(exitCode).toBe(23);
   });
 
-  function runElideLinesTest({
+  async function runElideLinesTest({
     elideLines,
     target_pattern,
     antipattern,
@@ -498,63 +489,58 @@ describe("bun", () => {
       }),
     });
 
-    if (process.platform === "win32") {
-      // Windows spawnSync pipes stdout, so `windowsIsTerminal()` returns false,
-      // `state.pretty_output` is false, and `redraw()` short-circuits before
-      // ever emitting elision output. `target_pattern` is intentionally NOT
-      // iterated here: every caller bundles TTY-only regexes such as
-      // `/\[N lines elided\]/` that would never appear in piped Windows output
-      // and would fail the test for the wrong reason. The hardcoded log_line
-      // match covers the non-TTY subset of every caller's target_pattern.
-      // `antipattern` is iterated because absence-checks remain valid on either
-      // code path.
-      const { exitCode, stderr, stdout } = spawnSync({
-        cwd: dir,
-        cmd: [bunExe(), "run", "--filter", "./packages/dep0", "--elide-lines", String(elideLines), "script"],
-        env: { ...bunEnv, FORCE_COLOR: "1", NO_COLOR: "0" },
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-
-      const stdoutval = stdout.toString();
-      expect(stderr.toString()).not.toContain("--elide-lines is only supported in terminal environments");
-      expect(stdoutval).toMatch(/(?:log_line[\s\S]*?){20}/);
-      if (antipattern) {
-        for (const r of antipattern) {
-          expect(stdoutval).not.toMatch(r);
-        }
-      }
-      expect(exitCode).toBe(0);
-      return;
-    }
-
-    runInCwdSuccess({
+    // Elision lives in the redraw renderer which only runs when stdout is a
+    // real terminal, so spawn on a pty. The final frame is written in full at
+    // exit so `[N lines elided]` is observable in the collected output.
+    const decoder = new TextDecoder();
+    let output = "";
+    const done = Promise.withResolvers<void>();
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "run", "--elide-lines", String(elideLines), "--filter", "./packages/dep0", "script"],
       cwd: dir,
-      pattern: "./packages/dep0",
-      env: { FORCE_COLOR: "1", NO_COLOR: "0" },
-      target_pattern,
-      antipattern,
-      command: ["script"],
-      elideCount: elideLines,
+      env: { ...bunEnv, FORCE_COLOR: undefined, NO_COLOR: undefined, TERM: "xterm-256color" },
+      terminal: {
+        cols: 200,
+        rows: 40,
+        data(_t, chunk: Uint8Array) {
+          output += decoder.decode(chunk, { stream: true });
+        },
+        exit() {
+          done.resolve();
+        },
+      },
     });
+    await done.promise;
+    const exitCode = await proc.exited;
+    output += decoder.decode();
+    const stdoutval = Bun.stripANSI(output);
+    for (const r of target_pattern) {
+      expect(stdoutval).toMatch(r);
+    }
+    if (antipattern) {
+      for (const r of antipattern) {
+        expect(stdoutval).not.toMatch(r);
+      }
+    }
+    expect(exitCode).toBe(0);
   }
 
-  test("elides output by default when using --filter", () => {
-    runElideLinesTest({
+  test("elides output by default when using --filter", async () => {
+    await runElideLinesTest({
       elideLines: 10,
-      target_pattern: [/\[10 lines elided\]/, /(?:log_line[\s\S]*?){20}/],
+      target_pattern: [/\[10 lines elided\]/, /(?:log_line[\s\S]*?){10}/],
     });
   });
 
-  test("respects --elide-lines argument", () => {
-    runElideLinesTest({
+  test("respects --elide-lines argument", async () => {
+    await runElideLinesTest({
       elideLines: 15,
-      target_pattern: [/\[5 lines elided\]/, /(?:log_line[\s\S]*?){20}/],
+      target_pattern: [/\[5 lines elided\]/, /(?:log_line[\s\S]*?){15}/],
     });
   });
 
-  test("--elide-lines=0 shows all output", () => {
-    runElideLinesTest({
+  test("--elide-lines=0 shows all output", async () => {
+    await runElideLinesTest({
       elideLines: 0,
       target_pattern: [/(?:log_line[\s\S]*?){20}/],
       antipattern: [/lines elided/],
@@ -659,6 +645,178 @@ describe("bun", () => {
     const sep = process.platform === "win32" ? "\\" : "/";
     expect(stderr).toContain(`broken${sep}package.json`);
     expect(stderr).toContain("skipping this workspace package");
+    expect(exitCode).toBe(0);
+  });
+});
+
+// https://github.com/oven-sh/bun/issues/10346
+// `bun --filter` pipes child stdout/stderr, so the child's isatty() is false and
+// tools that gate color on it go monochrome. When the parent is attached to a
+// color terminal the filter runner now forwards that decision via FORCE_COLOR.
+describe("--filter forwards color to scripts", () => {
+  function colorFixture() {
+    return tempDirWithFiles("filter-color", {
+      packages: {
+        pkga: {
+          "probe.js": `process.stdout.write("RESULT " + JSON.stringify({
+            FORCE_COLOR: process.env.FORCE_COLOR ?? null,
+            NO_COLOR: process.env.NO_COLOR ?? null,
+            enableANSI: Bun.enableANSIColors,
+          }) + "\\n");`,
+          "package.json": JSON.stringify({
+            name: "pkga",
+            scripts: { probe: `${bunExe()} probe.js` },
+          }),
+        },
+      },
+      "package.json": JSON.stringify({ name: "ws", workspaces: ["packages/*"] }),
+    });
+  }
+
+  async function runOnPTY(
+    dir: string,
+    extraEnv: Record<string, string | undefined>,
+    args = ["--filter", "*", "probe"],
+  ) {
+    const decoder = new TextDecoder();
+    let output = "";
+    const done = Promise.withResolvers<void>();
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "run", ...args],
+      cwd: dir,
+      env: {
+        ...bunEnv,
+        NO_COLOR: undefined,
+        FORCE_COLOR: undefined,
+        NODE_DISABLE_COLORS: undefined,
+        CI: undefined,
+        TERM: "xterm-256color",
+        COLORTERM: undefined,
+        TMUX: undefined,
+        TERM_PROGRAM: undefined,
+        ...extraEnv,
+      },
+      terminal: {
+        cols: 200,
+        rows: 24,
+        data(_t, chunk: Uint8Array) {
+          output += decoder.decode(chunk, { stream: true });
+          if (output.includes("RESULT ") && output.includes("}")) done.resolve();
+        },
+        exit() {
+          done.resolve();
+        },
+      },
+    });
+    await done.promise;
+    const exitCode = await proc.exited;
+    output += decoder.decode();
+    const stripped = Bun.stripANSI(output).replace(/\r/g, "");
+    const m = stripped.match(/RESULT (\{[^}]*\})/);
+    if (!m) throw new Error("missing RESULT in terminal output: " + JSON.stringify(output));
+    const result = JSON.parse(m[1]);
+    expect(exitCode).toBe(0);
+    return result;
+  }
+
+  test("sets FORCE_COLOR when parent stdout is a color TTY", async () => {
+    const dir = colorFixture();
+    const result = await runOnPTY(dir, {});
+    expect(result).toEqual({
+      FORCE_COLOR: "2",
+      NO_COLOR: null,
+      enableANSI: true,
+    });
+  });
+
+  test("sets FORCE_COLOR=3 for a truecolor terminal", async () => {
+    const dir = colorFixture();
+    const result = await runOnPTY(dir, { COLORTERM: "truecolor" });
+    expect(result).toEqual({
+      FORCE_COLOR: "3",
+      NO_COLOR: null,
+      enableANSI: true,
+    });
+  });
+
+  test("respects an explicit NO_COLOR", async () => {
+    const dir = colorFixture();
+    const result = await runOnPTY(dir, { NO_COLOR: "1" });
+    expect(result).toEqual({
+      FORCE_COLOR: null,
+      NO_COLOR: "1",
+      enableANSI: false,
+    });
+  });
+
+  test("respects an explicit FORCE_COLOR value", async () => {
+    const dir = colorFixture();
+    const result = await runOnPTY(dir, { FORCE_COLOR: "0" });
+    expect(result.FORCE_COLOR).toBe("0");
+  });
+
+  test("respects NODE_DISABLE_COLORS", async () => {
+    const dir = colorFixture();
+    const result = await runOnPTY(dir, { NODE_DISABLE_COLORS: "1" });
+    expect(result.FORCE_COLOR).toBe(null);
+  });
+
+  test("--parallel forwards FORCE_COLOR the same way", async () => {
+    const dir = colorFixture();
+    const result = await runOnPTY(dir, {}, ["--filter", "*", "--parallel", "probe"]);
+    expect(result).toEqual({
+      FORCE_COLOR: "2",
+      NO_COLOR: null,
+      enableANSI: true,
+    });
+  });
+
+  test("does not set FORCE_COLOR when parent stdout is not a TTY", async () => {
+    const dir = colorFixture();
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "run", "--filter", "*", "probe"],
+      cwd: dir,
+      env: {
+        ...bunEnv,
+        NO_COLOR: undefined,
+        FORCE_COLOR: undefined,
+        NODE_DISABLE_COLORS: undefined,
+        CI: undefined,
+        TERM: "xterm-256color",
+        COLORTERM: undefined,
+        TMUX: undefined,
+        TERM_PROGRAM: undefined,
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const m = stdout.match(/RESULT (\{[^}]*\})/);
+    if (!m) throw new Error("missing RESULT in: " + JSON.stringify({ stdout, stderr }));
+    const result = JSON.parse(m[1]);
+    expect({ FORCE_COLOR: result.FORCE_COLOR, NO_COLOR: result.NO_COLOR }).toEqual({
+      FORCE_COLOR: null,
+      NO_COLOR: null,
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  // A nested `bun --filter` inherits the outer runner's injected FORCE_COLOR
+  // but its own stdout is a pipe. The redraw renderer must stay off so its
+  // cursor-up/erase sequences don't corrupt the outer tree.
+  test("FORCE_COLOR on piped stdout uses the line-prefixed writer, not redraw", async () => {
+    const dir = colorFixture();
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "run", "--filter", "*", "probe"],
+      cwd: dir,
+      env: { ...bunEnv, NO_COLOR: undefined, FORCE_COLOR: "2" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toContain("pkga probe: RESULT ");
+    expect(stdout).not.toContain("\x1b[?2026h");
+    expect(stdout).not.toContain("\x1b[1A");
     expect(exitCode).toBe(0);
   });
 });

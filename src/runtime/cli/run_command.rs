@@ -1917,6 +1917,35 @@ impl RunCommand {
         Ok(())
     }
 
+    /// `--filter` / `--parallel` pipe script stdio, so isatty() in the script
+    /// is false. Forward the parent's color decision via `FORCE_COLOR` unless
+    /// the user set `FORCE_COLOR`/`NO_COLOR`/`NODE_DISABLE_COLORS` themselves.
+    pub fn forward_color_to_piped_scripts(env: &mut DotEnv::Loader) {
+        if !(Output::is_stdout_tty() && Output::enable_ansi_colors_stdout()) {
+            return;
+        }
+        if env.map.get(b"FORCE_COLOR").is_some()
+            || env.map.get(b"NO_COLOR").is_some_and(|v| !v.is_empty())
+            || env
+                .map
+                .get(b"NODE_DISABLE_COLORS")
+                .is_some_and(|v| !v.is_empty())
+        {
+            return;
+        }
+        use bun_core::output::{ColorDepth, Source};
+        let depth: &[u8] = match Source::color_depth() {
+            ColorDepth::C16m => b"3",
+            ColorDepth::C256 => b"2",
+            ColorDepth::C16 => b"1",
+            // Windows terminals typically don't set TERM/COLORTERM; every
+            // supported Windows build has truecolor (see is_color_terminal).
+            ColorDepth::None if cfg!(windows) => b"3",
+            ColorDepth::None => b"1",
+        };
+        let _ = env.map.put(b"FORCE_COLOR", depth);
+    }
+
     /// Builds a new PATH with `node_modules/.bin` for each ancestor of `cwd`
     /// (plus `package_json_dir` and the bun-node shim dir) prepended, returns
     /// it as an owned buffer, and writes the original PATH out via

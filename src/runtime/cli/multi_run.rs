@@ -802,6 +802,8 @@ pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infal
 
     // SAFETY: transpiler.env is a process-lifetime *mut Loader set in init.
     let env_ptr: *mut DotEnvLoader = this_transpiler.env;
+    // SAFETY: env_ptr is the process-lifetime DotEnv loader; no other borrow is live yet.
+    RunCommand::forward_color_to_piped_scripts(unsafe { &mut *env_ptr });
     let event_loop = bun_event_loop::MiniEventLoop::init_global(
         // SAFETY: env_ptr is the process-lifetime DotEnv loader; no other borrow of it is live yet.
         Some(unsafe { &mut *env_ptr }),

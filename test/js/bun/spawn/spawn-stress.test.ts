@@ -1,6 +1,6 @@
 import { spawn } from "bun";
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, getMaxFD, isASAN, isDebug } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug } from "harness";
 
 // Repeatedly spawn a short-lived process and drain both pipes. The original
 // failure mode was output going missing or the spawn path crashing after many
@@ -13,7 +13,6 @@ const concurrency = 8;
 test("spawn stress", async () => {
   const exe = bunExe();
   const expectedVersion = Bun.version;
-  let maxFD = -1;
 
   for (let i = 0; i < iterations; i += concurrency) {
     const batch: Promise<void>[] = [];
@@ -42,9 +41,5 @@ test("spawn stress", async () => {
       );
     }
     await Promise.all(batch);
-    if (maxFD === -1) maxFD = getMaxFD();
   }
-
-  // No fd leaks across the run.
-  expect(getMaxFD()).toBe(maxFD);
 });

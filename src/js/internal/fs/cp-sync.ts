@@ -225,8 +225,6 @@ function getStatsSync(src, dest, opts) {
   return { srcStat, destStat };
 }
 
-// realpath(p), walking up past ENOENT and rejoining the missing tail so the
-// result names where p would land once created.
 function resolveExistingRealpathSync(p) {
   let current = resolve(p);
   const tail: string[] = [];
@@ -248,8 +246,6 @@ function resolveExistingRealpathSync(p) {
 }
 
 function checkParentPathsSync(src, srcStat, dest) {
-  // isSrcSubdir compares path strings and the inode walk below only matches
-  // src itself, so repeat the prefix check on realpath-resolved locations.
   if (srcStat.isDirectory()) {
     const resolvedSrc = resolveExistingRealpathSync(src);
     const resolvedDest = resolveExistingRealpathSync(dest);

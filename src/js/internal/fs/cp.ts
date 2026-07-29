@@ -91,8 +91,6 @@ function getStats(src, dest, opts) {
   ]);
 }
 
-// realpath(p), walking up past ENOENT and rejoining the missing tail so the
-// result names where p would land once created.
 async function resolveExistingRealpath(p) {
   let current = resolve(p);
   const tail: string[] = [];
@@ -114,8 +112,6 @@ async function resolveExistingRealpath(p) {
 }
 
 async function checkParentPaths(src, srcStat, dest) {
-  // isSrcSubdir compares path strings and the inode walk below only matches
-  // src itself, so repeat the prefix check on realpath-resolved locations.
   if (srcStat.isDirectory()) {
     const resolvedSrc = await resolveExistingRealpath(src);
     const resolvedDest = await resolveExistingRealpath(dest);

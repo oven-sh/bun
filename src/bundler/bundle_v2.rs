@@ -1120,6 +1120,7 @@ pub mod bv2_impl {
                             std::ptr::from_mut::<Self>(self).cast::<core::ffi::c_void>(),
                         ),
                         callback: Self::run_on_js_thread_wrap,
+                        dispose: None,
                     };
                     let task =
                         bun_event_loop::ConcurrentTask::ConcurrentTask::create(self.js_task.task());
@@ -1250,6 +1251,7 @@ pub mod bv2_impl {
                             std::ptr::from_mut::<Self>(self).cast::<core::ffi::c_void>(),
                         ),
                         callback: Self::run_on_js_thread_wrap,
+                        dispose: None,
                     };
                     let concurrent_task =
                         bun_event_loop::ConcurrentTask::ConcurrentTask::create(self.js_task.task());

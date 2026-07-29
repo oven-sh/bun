@@ -91,6 +91,7 @@ impl<C: AnyTaskJobCtx> AnyTaskJob<C> {
             (*job).any_task = AnyTask {
                 ctx: NonNull::new(job.cast::<c_void>()),
                 callback: |p: *mut c_void| Self::run_from_js(p.cast::<Self>()).map_err(Into::into),
+                dispose: None,
             };
         }
         // `ctx.init` may throw (e.g. CryptoJob<Scrypt>); on error, reclaim the

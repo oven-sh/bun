@@ -4610,6 +4610,7 @@ pub fn js_upgrade_duplex_to_tls(
                 DuplexUpgradeContext::run_event(p.cast::<DuplexUpgradeContext>());
                 Ok(())
             },
+            dispose: None,
         });
         ptr::addr_of_mut!((*duplex_context).task_event).write(EventState::StartTLS);
         // When `owned_ctx` is set, `runEvent` builds from it and ignores

@@ -369,6 +369,7 @@ impl WindowsNamedPipeContext {
                     Self::run_event(ctx.cast::<WindowsNamedPipeContext>());
                     Ok(())
                 },
+                dispose: None,
             };
 
             // SAFETY: `this` is freshly allocated uninit storage exclusively owned here; we write

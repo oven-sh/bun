@@ -2568,16 +2568,29 @@ impl PackageManifest {
                             package_version.unpacked_size = n.value() as u32;
                         }
 
-                        if let Some(shasum_str) = dist.get(b"integrity").and_then(|v| v.as_str()) {
-                            package_version.integrity = Integrity::parse(shasum_str);
+                        let mut had_invalid_integrity = false;
+                        if let Some(sri_str) = dist.get(b"integrity").and_then(|v| v.as_str()) {
+                            package_version.integrity = Integrity::parse(sri_str);
                             if package_version.integrity.tag.is_supported() {
                                 break 'integrity;
                             }
+                            had_invalid_integrity = !sri_str.is_empty();
                         }
 
                         if let Some(shasum_str) = dist.get(b"shasum").and_then(|v| v.as_str()) {
                             package_version.integrity =
                                 Integrity::parse_sha_sum(shasum_str).unwrap_or_default();
+                            if package_version.integrity.tag.is_supported() {
+                                break 'integrity;
+                            }
+                            had_invalid_integrity |= !shasum_str.is_empty();
+                        }
+
+                        if had_invalid_integrity {
+                            package_version.integrity = Integrity {
+                                tag: crate::integrity::Tag::INVALID,
+                                ..Default::default()
+                            };
                         }
                     }
                 }

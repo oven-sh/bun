@@ -844,7 +844,22 @@ impl Package<u64> {
 
             package.meta.arch = package_version.cpu;
             package.meta.os = package_version.os;
-            package.meta.integrity = package_version.integrity;
+            package.meta.integrity = if package_version.integrity.tag
+                == crate::integrity::Tag::INVALID
+            {
+                log.add_error_fmt(
+                    None,
+                    bun_ast::Loc::EMPTY,
+                    format_args!(
+                        "Registry provided an invalid integrity hash for {}@{}",
+                        bstr::BStr::new(manifest.name()),
+                        version.fmt(&manifest.string_buf),
+                    ),
+                );
+                crate::integrity::Integrity::default()
+            } else {
+                package_version.integrity
+            };
             package
                 .meta
                 .set_has_install_script(package_version.has_install_script);

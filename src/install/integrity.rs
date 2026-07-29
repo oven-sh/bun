@@ -287,6 +287,13 @@ impl Tag {
     pub const SHA384: Tag = Tag(3);
     /// The value is a [Subresource Integrity](https://developer.mozilla.org/en-US/docs/Web/Security/Subresource_Integrity) value
     pub const SHA512: Tag = Tag(4);
+    /// The registry manifest carried a non-empty `dist.integrity` that did not
+    /// parse as a supported SRI value (unknown algorithm, bad base64, or wrong
+    /// digest length). Distinguished from `UNKNOWN` so the resolve step can
+    /// refuse the version instead of treating the hash as merely absent.
+    /// Never written to disk: not `is_supported()`, so `Display` emits nothing
+    /// and `verify()` rejects it.
+    pub const INVALID: Tag = Tag(5);
 
     #[inline]
     pub fn is_supported(self) -> bool {

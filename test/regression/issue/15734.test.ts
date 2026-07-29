@@ -3,7 +3,7 @@
 // virtual filesystem had no directory semantics for `fs.readdirSync` /
 // `fs.statSync` / `fs.existsSync`. SvelteKit's adapter (via sirv/totalist)
 // enumerates `${import.meta.dir}/client` at startup, so every static asset 404'd.
-import { test, expect, describe } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDirWithFiles } from "harness";
 import { join } from "path";
 
@@ -38,9 +38,11 @@ async function run(dir: string) {
 }
 
 describe("compiled executable: /$bunfs/ directory semantics", () => {
-  test("existsSync/statSync/readdirSync on embedded-file parent directories", async () => {
-    const dir = tempDirWithFiles("bunfs-dirsem", {
-      "index.ts": /* ts */ `
+  test(
+    "existsSync/statSync/readdirSync on embedded-file parent directories",
+    async () => {
+      const dir = tempDirWithFiles("bunfs-dirsem", {
+        "index.ts": /* ts */ `
         import asset from "./data.txt" with { type: "file" };
         import fs from "node:fs";
         import path from "node:path";
@@ -58,27 +60,31 @@ describe("compiled executable: /$bunfs/ directory semantics", () => {
         };
         console.log(JSON.stringify(results));
       `,
-      "data.txt": "hello",
-    });
+        "data.txt": "hello",
+      });
 
-    await compile(dir);
-    const { stdout, stderr, code } = await run(dir);
-    expect(stderr.trim()).toBe("");
-    const r = JSON.parse(stdout.trim());
-    expect(r.assetExists).toBe(true);
-    expect(r.dirExists).toBe(true);
-    expect(r.dirExistsTrailingSlash).toBe(true);
-    expect(r.dirStatIsDir).toBe(true);
-    expect(r.dirLstatIsDir).toBe(true);
-    expect(r.accessOk).toBe(true);
-    expect(r.readdirHasAsset).toBe(true);
-    expect(r.readdir.length).toBeGreaterThan(0);
-    expect(code).toBe(0);
-  }, TIMEOUT);
+      await compile(dir);
+      const { stdout, stderr, code } = await run(dir);
+      expect(stderr.trim()).toBe("");
+      const r = JSON.parse(stdout.trim());
+      expect(r.assetExists).toBe(true);
+      expect(r.dirExists).toBe(true);
+      expect(r.dirExistsTrailingSlash).toBe(true);
+      expect(r.dirStatIsDir).toBe(true);
+      expect(r.dirLstatIsDir).toBe(true);
+      expect(r.accessOk).toBe(true);
+      expect(r.readdirHasAsset).toBe(true);
+      expect(r.readdir.length).toBeGreaterThan(0);
+      expect(code).toBe(0);
+    },
+    TIMEOUT,
+  );
 
-  test("--asset embeds a directory tree with original paths, enumerable via fs and readable via Bun.file", async () => {
-    const dir = tempDirWithFiles("bunfs-asset-flag", {
-      "index.ts": /* ts */ `
+  test(
+    "--asset embeds a directory tree with original paths, enumerable via fs and readable via Bun.file",
+    async () => {
+      const dir = tempDirWithFiles("bunfs-asset-flag", {
+        "index.ts": /* ts */ `
         import fs from "node:fs";
         import path from "node:path";
 
@@ -114,50 +120,54 @@ describe("compiled executable: /$bunfs/ directory semantics", () => {
         };
         console.log(JSON.stringify(out));
       `,
-      "client/index.html": "<!doctype html><h1>hi</h1>",
-      "client/favicon.svg": "<svg/>",
-      "client/_app/immutable/app.css": "body{margin:0}",
-      "client/_app/immutable/chunks/entry.js": "export default 1;",
-    });
+        "client/index.html": "<!doctype html><h1>hi</h1>",
+        "client/favicon.svg": "<svg/>",
+        "client/_app/immutable/app.css": "body{margin:0}",
+        "client/_app/immutable/chunks/entry.js": "export default 1;",
+      });
 
-    await compile(dir, ["--asset", "./client"]);
-    const { stdout, stderr, code } = await run(dir);
-    expect(stderr.trim()).toBe("");
-    const r = JSON.parse(stdout.trim());
+      await compile(dir, ["--asset", "./client"]);
+      const { stdout, stderr, code } = await run(dir);
+      expect(stderr.trim()).toBe("");
+      const r = JSON.parse(stdout.trim());
 
-    // import.meta.dir is /$bunfs/root (or B:/~BUN/root on Windows); client lives directly under it.
-    expect(r.root.replace(/\\/g, "/")).toMatch(/\/root\/client$/);
+      // import.meta.dir is /$bunfs/root (or B:/~BUN/root on Windows); client lives directly under it.
+      expect(r.root.replace(/\\/g, "/")).toMatch(/\/root\/client$/);
 
-    expect(r.entries).toEqual(["_app", "favicon.svg", "index.html"]);
-    expect(r.byName["index.html"]).toEqual({ isDir: false, isFile: true });
-    expect(r.byName["favicon.svg"]).toEqual({ isDir: false, isFile: true });
-    expect(r.byName["_app"]).toEqual({ isDir: true, isFile: false });
+      expect(r.entries).toEqual(["_app", "favicon.svg", "index.html"]);
+      expect(r.byName["index.html"]).toEqual({ isDir: false, isFile: true });
+      expect(r.byName["favicon.svg"]).toEqual({ isDir: false, isFile: true });
+      expect(r.byName["_app"]).toEqual({ isDir: true, isFile: false });
 
-    expect(r.indexHtmlExists).toBe(true);
-    expect(r.indexHtmlSize).toBe("<!doctype html><h1>hi</h1>".length);
-    expect(r.indexHtmlContent).toBe("<!doctype html><h1>hi</h1>");
-    expect(r.nestedCssExists).toBe(true);
-    expect(r.nestedCssContent).toBe("body{margin:0}");
-    expect(r.nestedCssViaReadFile).toBe("body{margin:0}");
-    expect(r.nestedDirIsDir).toBe(true);
+      expect(r.indexHtmlExists).toBe(true);
+      expect(r.indexHtmlSize).toBe("<!doctype html><h1>hi</h1>".length);
+      expect(r.indexHtmlContent).toBe("<!doctype html><h1>hi</h1>");
+      expect(r.nestedCssExists).toBe(true);
+      expect(r.nestedCssContent).toBe("body{margin:0}");
+      expect(r.nestedCssViaReadFile).toBe("body{margin:0}");
+      expect(r.nestedDirIsDir).toBe(true);
 
-    // recursive must include both files and intermediate directories.
-    const rec = r.recursive.map((p: string) => p.replace(/\\/g, "/"));
-    expect(rec).toContain("_app");
-    expect(rec).toContain("_app/immutable");
-    expect(rec).toContain("_app/immutable/app.css");
-    expect(rec).toContain("_app/immutable/chunks");
-    expect(rec).toContain("_app/immutable/chunks/entry.js");
-    expect(rec).toContain("favicon.svg");
-    expect(rec).toContain("index.html");
+      // recursive must include both files and intermediate directories.
+      const rec = r.recursive.map((p: string) => p.replace(/\\/g, "/"));
+      expect(rec).toContain("_app");
+      expect(rec).toContain("_app/immutable");
+      expect(rec).toContain("_app/immutable/app.css");
+      expect(rec).toContain("_app/immutable/chunks");
+      expect(rec).toContain("_app/immutable/chunks/entry.js");
+      expect(rec).toContain("favicon.svg");
+      expect(rec).toContain("index.html");
 
-    expect(r.embeddedFileCount).toBeGreaterThanOrEqual(4);
-    expect(code).toBe(0);
-  }, TIMEOUT);
+      expect(r.embeddedFileCount).toBeGreaterThanOrEqual(4);
+      expect(code).toBe(0);
+    },
+    TIMEOUT,
+  );
 
-  test("readdirSync on a non-existent /$bunfs/ path throws ENOENT", async () => {
-    const dir = tempDirWithFiles("bunfs-enoent", {
-      "index.ts": /* ts */ `
+  test(
+    "readdirSync on a non-existent /$bunfs/ path throws ENOENT",
+    async () => {
+      const dir = tempDirWithFiles("bunfs-enoent", {
+        "index.ts": /* ts */ `
         import fs from "node:fs";
         import path from "node:path";
         const p = path.join(import.meta.dir, "does-not-exist");
@@ -168,18 +178,22 @@ describe("compiled executable: /$bunfs/ directory semantics", () => {
           console.log(JSON.stringify({ code: e.code, exists: fs.existsSync(p) }));
         }
       `,
-    });
-    await compile(dir);
-    const { stdout, code } = await run(dir);
-    const r = JSON.parse(stdout.trim());
-    expect(r.code).toBe("ENOENT");
-    expect(r.exists).toBe(false);
-    expect(code).toBe(0);
-  }, TIMEOUT);
+      });
+      await compile(dir);
+      const { stdout, code } = await run(dir);
+      const r = JSON.parse(stdout.trim());
+      expect(r.code).toBe("ENOENT");
+      expect(r.exists).toBe(false);
+      expect(code).toBe(0);
+    },
+    TIMEOUT,
+  );
 
-  test("--asset on a single file", async () => {
-    const dir = tempDirWithFiles("bunfs-asset-file", {
-      "index.ts": /* ts */ `
+  test(
+    "--asset on a single file",
+    async () => {
+      const dir = tempDirWithFiles("bunfs-asset-file", {
+        "index.ts": /* ts */ `
         import fs from "node:fs";
         import path from "node:path";
         const p = path.join(import.meta.dir, "config.json");
@@ -188,14 +202,16 @@ describe("compiled executable: /$bunfs/ directory semantics", () => {
           content: fs.readFileSync(p, "utf8"),
         }));
       `,
-      "config.json": `{"ok":true}`,
-    });
-    await compile(dir, ["--asset", "./config.json"]);
-    const { stdout, stderr, code } = await run(dir);
-    expect(stderr.trim()).toBe("");
-    const r = JSON.parse(stdout.trim());
-    expect(r.exists).toBe(true);
-    expect(r.content).toBe(`{"ok":true}`);
-    expect(code).toBe(0);
-  }, TIMEOUT);
+        "config.json": `{"ok":true}`,
+      });
+      await compile(dir, ["--asset", "./config.json"]);
+      const { stdout, stderr, code } = await run(dir);
+      expect(stderr.trim()).toBe("");
+      const r = JSON.parse(stdout.trim());
+      expect(r.exists).toBe(true);
+      expect(r.content).toBe(`{"ok":true}`);
+      expect(code).toBe(0);
+    },
+    TIMEOUT,
+  );
 });

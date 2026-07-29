@@ -731,11 +731,14 @@ impl BuildCommand {
         };
 
         if ctx.bundler_options.compile && !ctx.bundler_options.compile_assets.is_empty() {
-            if let Err(err) = collect_compile_assets(
-                &ctx.bundler_options.compile_assets,
-                &mut output_files,
-            ) {
-                Output::err(&err, "failed to read --asset {}", (bun_fmt::quote(&err.path),));
+            if let Err(err) =
+                collect_compile_assets(&ctx.bundler_options.compile_assets, &mut output_files)
+            {
+                Output::err(
+                    &err,
+                    "failed to read --asset {}",
+                    (bun_fmt::quote(&err.path),),
+                );
                 exit_or_watch(1, ctx.debug.hot_reload == HotReload::Watch);
             }
         }
@@ -1266,8 +1269,9 @@ fn collect_compile_assets(
         };
         let base = bun_paths::basename(asset_trimmed);
         if base.is_empty() || base == b"." || base == b".." {
-            return Err(bun_sys::Error::from_code(bun_sys::E::EINVAL, bun_sys::Tag::open)
-                .with_path(asset));
+            return Err(
+                bun_sys::Error::from_code(bun_sys::E::EINVAL, bun_sys::Tag::open).with_path(asset),
+            );
         }
 
         let n = asset_trimmed.len().min(zbuf.len() - 1);
@@ -1289,8 +1293,10 @@ fn collect_compile_assets(
                 #[cfg(windows)]
                 let (rel, bytes) = {
                     let mut rel_buf = bun_paths::path_buffer_pool::get();
-                    let rel_z =
-                        bun_paths::string_paths::from_w_path(&mut rel_buf[..], entry.path.as_slice());
+                    let rel_z = bun_paths::string_paths::from_w_path(
+                        &mut rel_buf[..],
+                        entry.path.as_slice(),
+                    );
                     let mut rel = rel_z.as_bytes().to_vec();
                     for b in rel.iter_mut() {
                         if *b == b'\\' {
@@ -1320,8 +1326,8 @@ fn collect_compile_assets(
                 push(out, dest, bytes);
             }
         } else {
-            let bytes = bun_sys::File::read_from(cwd, asset_trimmed)
-                .map_err(|e| e.with_path(asset))?;
+            let bytes =
+                bun_sys::File::read_from(cwd, asset_trimmed).map_err(|e| e.with_path(asset))?;
             push(out, base.to_vec(), bytes);
         }
     }

@@ -6966,7 +6966,8 @@ impl NodeFS {
                                 sys::FileKind::File
                             };
                             if recursive {
-                                let (base, parent) = match strings::last_index_of_char(&name, b'/') {
+                                let (base, parent) = match strings::last_index_of_char(&name, b'/')
+                                {
                                     Some(i) => (&name[i + 1..], &name[..i]),
                                     None => (&name[..], b"".as_slice()),
                                 };

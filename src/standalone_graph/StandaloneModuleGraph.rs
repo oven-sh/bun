@@ -241,7 +241,7 @@ impl StandaloneModuleGraph {
 
         let mut out: Vec<(Box<[u8]>, bool)> = Vec::with_capacity(seen.count());
         for (k, v) in seen.iter() {
-            out.push ((Box::<[u8]>::from(&k[..]), *v));
+            out.push((Box::<[u8]>::from(&k[..]), *v));
         }
         Some(out)
     }

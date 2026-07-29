@@ -18,13 +18,8 @@ describe("net.createServer listen", () => {
     done();
   });
 
-  // These tests formerly armed `setTimeout(closeAndFail, 100)` as a secondary
-  // deadline. After #36175 reordered the serial phase to overlap with the
-  // docker-service prestart, the alpine lane saw the 100ms timer fire before
-  // `'listening'` (the timer was measuring scheduling contention, not listen()).
-  // The test runner already bounds each test, so the extra timer only added a
-  // flake surface. A real listen failure still reaches done() via the 'error'
-  // listener below.
+  // No secondary setTimeout deadline: the test runner already bounds each test,
+  // and a real listen failure reaches done() via the 'error' listener below.
   const failOnError = (server: Server, done: (err?: unknown) => void) => (err: unknown) => {
     server.close();
     done(err);

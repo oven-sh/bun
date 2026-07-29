@@ -289,6 +289,7 @@ struct us_socket_t *us_internal_socket_close_raw(struct us_socket_t *s, int code
 
         if (s->flags.low_prio_state == 1) {
             /* Unlink this socket from the low-priority queue */
+            if (s == loop->data.low_prio_iterator) loop->data.low_prio_iterator = s->next;
             if (!s->prev) loop->data.low_prio_head = s->next;
             else s->prev->next = s->next;
 
@@ -365,6 +366,7 @@ struct us_socket_t *us_socket_detach(struct us_socket_t *s) {
 
         if (s->flags.low_prio_state == 1) {
             /* Unlink this socket from the low-priority queue */
+            if (s == loop->data.low_prio_iterator) loop->data.low_prio_iterator = s->next;
             if (!s->prev) loop->data.low_prio_head = s->next;
             else s->prev->next = s->next;
 

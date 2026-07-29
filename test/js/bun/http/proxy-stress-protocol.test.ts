@@ -52,10 +52,7 @@ afterAll(async () => {
 
 describe("early reply during upload", () => {
   async function makeEarlyReplyOrigin(status: number, after: number, withTls: boolean) {
-    const sockets = new Set<net.Socket>();
     const handler = (sock: net.Socket) => {
-      sockets.add(sock);
-      sock.on("close", () => sockets.delete(sock));
       sock.on("error", () => {});
       let got = 0;
       let replied = false;
@@ -64,14 +61,7 @@ describe("early reply during upload", () => {
         if (!replied && got >= after) {
           replied = true;
           const reply = `HTTP/1.1 ${status} Nope\r\nContent-Length: 5\r\nConnection: close\r\n\r\nearly`;
-          // Keep the socket open after replying: the client is still
-          // mid-upload, and if we end here the proxy relays the FIN and
-          // closes the client leg while ~1MB of body is still in flight.
-          // bun's next on_writable then observes a shut-down socket before
-          // it has read this response and fails with ConnectionClosed
-          // (ECONNRESET). The client closes after reading Connection: close,
-          // which tears down the proxy→origin leg.
-          sock.write(reply);
+          sock.write(reply, () => sock.end());
         }
       });
     };
@@ -81,15 +71,11 @@ describe("early reply during upload", () => {
     server.listen(0, "127.0.0.1");
     await once(server, "listening");
     const port = (server.address() as net.AddressInfo).port;
-    const close = () => {
-      server.close();
-      for (const s of sockets) s.destroy();
-    };
     return {
       url: `${withTls ? "https" : "http"}://localhost:${port}`,
       port,
-      close,
-      [Symbol.asyncDispose]: async () => close(),
+      close: () => server.close(),
+      [Symbol.asyncDispose]: async () => server.close(),
     };
   }
 

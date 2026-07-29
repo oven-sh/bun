@@ -4898,19 +4898,24 @@ impl<'a> HTTPClient<'a> {
                     location = header.value();
                 }
                 h if h == hash_header_const(b"Connection") => {
-                    if response.status_code >= 200 && response.status_code <= 299 {
-                        // HTTP headers are case-insensitive (RFC 7230)
-                        if bun_core::strings::eql_case_insensitive_ascii_check_length(
-                            header.value(),
-                            b"close",
-                        ) {
-                            self.state.flags.allow_keepalive = false;
-                        } else if bun_core::strings::eql_case_insensitive_ascii_check_length(
+                    // RFC 9112 §9.6: `Connection: close` means the sender will
+                    // close after this response; status code is irrelevant. The
+                    // old 2xx-only guard dates from when keep-alive defaulted
+                    // off and the block only handled `keep-alive`; with the
+                    // default now on, gating `close` on 2xx pools a socket the
+                    // server (or relaying proxy) is closing after a 4xx/5xx.
+                    if bun_core::strings::eql_case_insensitive_ascii_check_length(
+                        header.value(),
+                        b"close",
+                    ) {
+                        self.state.flags.allow_keepalive = false;
+                    } else if (200..=299).contains(&response.status_code)
+                        && bun_core::strings::eql_case_insensitive_ascii_check_length(
                             header.value(),
                             b"keep-alive",
-                        ) {
-                            self.state.flags.allow_keepalive = true;
-                        }
+                        )
+                    {
+                        self.state.flags.allow_keepalive = true;
                     }
                 }
                 h if h == hash_header_const(b"Last-Modified") => {

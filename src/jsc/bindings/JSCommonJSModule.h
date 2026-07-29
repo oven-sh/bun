@@ -32,6 +32,14 @@ void populateESMExports(
     JSC::MarkedArgumentBuffer& exportValues,
     bool ignoreESModuleAnnotation);
 
+// Called from GlobalObject::moduleLoaderEvaluate for the ESM wrapper that
+// createCommonJSModule emits: runs the CommonJS body and fills the wrapper's
+// module-environment bindings. Returns false when `key` has no such wrapper.
+bool evaluateDeferredCommonJSModuleForESM(
+    Zig::GlobalObject* globalObject,
+    JSC::AbstractModuleRecord* moduleRecord,
+    JSC::JSValue key);
+
 class JSCommonJSModule final : public JSC::JSDestructibleObject {
 public:
     using Base = JSC::JSDestructibleObject;
@@ -73,6 +81,11 @@ public:
 
     bool ignoreESModuleAnnotation { false };
     JSC::SourceCode sourceCode = JSC::SourceCode();
+
+    // Statically detected export names for the ESM-imports-CJS wrapper.
+    // `m_hasStaticExportNames` gates the deferred-evaluation path.
+    Vector<JSC::Identifier, 4> m_staticExportNames;
+    bool m_hasStaticExportNames { false };
 
     static size_t estimatedSize(JSC::JSCell* cell, JSC::VM& vm);
 

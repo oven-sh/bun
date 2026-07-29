@@ -7573,13 +7573,20 @@ pub fn print_ast<'a, W: WriterTrait, const ASCII_ONLY: bool, const GENERATE_SOUR
                 .map_err(|_| crate::Error::WriteFailed)?;
         }
         // SAFETY: caller guarantees the cache outlives the print call.
-        unsafe { &mut *cache.as_ptr() }.put(
+        let cache = unsafe { &mut *cache.as_ptr() };
+        let cjs_export_names = core::mem::take(&mut cache.cjs_export_names);
+        let esm_record: &[u8] = if have_module_info {
+            &srlz_res
+        } else {
+            &cjs_export_names
+        };
+        cache.put(
             printer.writer.slice(),
             source_maps_chunk
                 .as_ref()
                 .map(|c| c.buffer.list.as_slice())
                 .unwrap_or(b""),
-            &srlz_res,
+            esm_record,
         );
     }
 

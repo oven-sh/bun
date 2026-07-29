@@ -370,6 +370,65 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             // inline module.path
                             p.ignore_usage(p.module_ref);
                             return Some(p.new_expr(e_string_init(p.source.path.pretty), name_loc));
+                        } else if p.options.features.commonjs_at_runtime
+                            && !p.should_unwrap_common_js_to_esm()
+                            && name == b"exports"
+                            && identifier_opts.assign_target() != js_ast::AssignTarget::None
+                            && !identifier_opts.is_delete_target()
+                        {
+                            let mut handled = false;
+                            if identifier_opts.assign_target() == js_ast::AssignTarget::Replace {
+                                if let js_ast::ExprData::EBinary(bin) = p.stmt_expr_value {
+                                    if bin.op == js_ast::OpCode::BinAssign
+                                        && matches!(
+                                            &bin.left.data,
+                                            js_ast::ExprData::EDot(d)
+                                                if d.name == b"exports"
+                                                    && matches!(
+                                                        d.target.data,
+                                                        js_ast::ExprData::EIdentifier(inner)
+                                                            if inner.ref_.eql(p.module_ref)
+                                                    )
+                                        )
+                                    {
+                                        // `module.exports = { a, b, ... }` (cjs-module-lexer MODULE_EXPORTS_ASSIGN)
+                                        if let js_ast::ExprData::EObject(obj) = &bin.right.data {
+                                            handled = true;
+                                            for prop in obj.properties.slice() {
+                                                if prop.kind != G::PropertyKind::Normal
+                                                    || prop
+                                                        .flags
+                                                        .contains(Flags::Property::IsComputed)
+                                                    || prop
+                                                        .flags
+                                                        .contains(Flags::Property::IsSpread)
+                                                    || prop
+                                                        .flags
+                                                        .contains(Flags::Property::IsMethod)
+                                                {
+                                                    continue;
+                                                }
+                                                if let Some(key) = prop.key {
+                                                    if let js_ast::ExprData::EString(key_str) =
+                                                        &key.data
+                                                    {
+                                                        if !key_str.is_utf16 {
+                                                            p.record_runtime_commonjs_export_name(
+                                                                &key_str.data,
+                                                                key.loc,
+                                                            );
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            if !handled {
+                                // `module.exports = <non-object>`: export set is dynamic, keep the eager path.
+                                p.commonjs_module_exports_assigned_deoptimized = true;
+                            }
                         }
                     }
 
@@ -430,6 +489,19 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 p.has_commonjs_export_names = true;
                             }
                         }
+                    } else if p.options.features.commonjs_at_runtime
+                        && !p.is_control_flow_dead
+                        && identifier_opts.assign_target() != js_ast::AssignTarget::None
+                        && !identifier_opts.is_delete_target()
+                        && (id.ref_.eql(p.exports_ref)
+                            || p.symbols.as_slice()[id.ref_.inner_index() as usize]
+                                .original_name
+                                .slice()
+                                == b"exports")
+                    {
+                        // Match cjs-module-lexer's lexical scan: any identifier spelled
+                        // `exports` counts, including UMD-factory parameters.
+                        p.record_runtime_commonjs_export_name(name, name_loc);
                     }
 
                     // Handle references to namespaces or namespace members
@@ -580,6 +652,28 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
                 // EDot and EIndex are handled with structurally identical arms.
                 js_ast::ExprData::EDot(data) => {
+                    // `module.exports.<name>` — at runtime `module.exports` is not
+                    // rewritten to `ESpecial::ModuleExports`, so it arrives here as
+                    // a nested EDot.
+                    if p.options.features.commonjs_at_runtime
+                        && !p.should_unwrap_common_js_to_esm()
+                        && !p.is_control_flow_dead
+                        && identifier_opts.assign_target() != js_ast::AssignTarget::None
+                        && !identifier_opts.is_delete_target()
+                        && data.name == b"exports"
+                        && matches!(
+                            data.target.data,
+                            js_ast::ExprData::EIdentifier(inner)
+                                if inner.ref_.eql(p.module_ref)
+                                    || p.symbols.as_slice()[inner.ref_.inner_index() as usize]
+                                        .original_name
+                                        .slice()
+                                        == b"module"
+                        )
+                    {
+                        p.record_runtime_commonjs_export_name(name, name_loc);
+                    }
+
                     if matches!(p.ts_namespace.expr, js_ast::ExprData::EDot(ns_data) if data.as_ptr() == ns_data.as_ptr())
                         && identifier_opts.assign_target() == js_ast::AssignTarget::None
                         && !identifier_opts.is_delete_target()

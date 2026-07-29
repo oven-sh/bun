@@ -18,6 +18,10 @@ pub struct RuntimeTranspilerCache {
     pub input_byte_length: Option<u64>,
     pub features_hash: Option<u64>,
     pub exports_kind: ExportsKind,
+    /// NUL-joined static CommonJS export names. Stored as the `esm_record`
+    /// blob for Cjs entries so a cache hit takes the same ESM-imports-CJS
+    /// evaluation path as a fresh transpile.
+    pub cjs_export_names: Vec<u8>,
     /// Set by `put()` / `get()` when a cache hit returns transpiled output.
     /// Bundler/parser only store/read the bytes; T6 owns the string wrapper
     /// when surfacing to JS.
@@ -38,6 +42,7 @@ impl Default for RuntimeTranspilerCache {
             input_byte_length: None,
             features_hash: None,
             exports_kind: ExportsKind::None,
+            cjs_export_names: Vec::new(),
             output_code: None,
             entry: None,
             r#impl: None,

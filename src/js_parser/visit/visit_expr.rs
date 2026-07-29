@@ -246,7 +246,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         ),
                     ),
                 }
-            } else if p.exports_ref.eql(e_.ref_) {
+            } else if p.exports_ref.eql(e_.ref_) && !p.commonjs_named_exports_deoptimized {
                 // Assigning to `exports` in a CommonJS module must be tracked to undo the
                 // `module.exports` -> `exports` optimization.
                 p.commonjs_module_exports_assigned_deoptimized = true;
@@ -1982,6 +1982,130 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
             for arg in e_.args.slice_mut() {
                 p.visit_expr(arg);
+            }
+
+            // cjs-module-lexer shapes: `Object.defineProperty(exports, "X", ...)` records X;
+            // `__exportStar(_, exports)` / `Object.keys(_).forEach(k => exports[k] = ...)` deopt.
+            if p.options.features.commonjs_at_runtime
+                && !p.should_unwrap_common_js_to_esm()
+                && !p.is_control_flow_dead
+            {
+                enum Action<'s> {
+                    None,
+                    Record(&'s [u8], bun_ast::Loc),
+                    Deopt,
+                }
+                let action = {
+                    let exports_ref = p.exports_ref;
+                    let module_ref = p.module_ref;
+                    let symbols = p.symbols.as_slice();
+                    let is_identifier_named = |ex: &Expr, want: &[u8]| -> bool {
+                        matches!(
+                            &ex.data,
+                            Data::EIdentifier(id)
+                                if symbols[id.ref_.inner_index() as usize].original_name.slice() == want
+                        )
+                    };
+                    let is_exports_expr = |ex: &Expr| -> bool {
+                        match &ex.data {
+                            Data::EIdentifier(id) => {
+                                id.ref_.eql(exports_ref)
+                                    || symbols[id.ref_.inner_index() as usize]
+                                        .original_name
+                                        .slice()
+                                        == b"exports"
+                            }
+                            Data::EDot(d) => {
+                                d.name == b"exports"
+                                    && matches!(
+                                        d.target.data,
+                                        Data::EIdentifier(inner)
+                                            if inner.ref_.eql(module_ref)
+                                                || symbols[inner.ref_.inner_index() as usize]
+                                                    .original_name
+                                                    .slice()
+                                                    == b"module"
+                                    )
+                            }
+                            _ => false,
+                        }
+                    };
+                    let is_object_define_property = matches!(
+                        &e_.target.data,
+                        Data::EDot(dot)
+                            if dot.name == b"defineProperty" && is_identifier_named(&dot.target, b"Object")
+                    );
+                    let args = e_.args.slice();
+                    if is_object_define_property && args.len() >= 2 && is_exports_expr(&args[0]) {
+                        match &args[1].data {
+                            Data::EString(name_str) if !name_str.is_utf16 => {
+                                Action::Record(&name_str.data, args[1].loc)
+                            }
+                            _ => Action::None,
+                        }
+                    } else if args.len() == 2 && is_exports_expr(&args[1]) {
+                        let target_name: &[u8] = match &e_.target.data {
+                            Data::EDot(d) => &d.name,
+                            Data::EIdentifier(id) => symbols[id.ref_.inner_index() as usize]
+                                .original_name
+                                .slice(),
+                            _ => b"",
+                        };
+                        if matches!(target_name, b"__exportStar" | b"__export" | b"_exportStar") {
+                            Action::Deopt
+                        } else {
+                            Action::None
+                        }
+                    } else if let Data::EDot(dot) = &e_.target.data {
+                        let body_stmts: &[Stmt] = match (dot.name == b"forEach", args) {
+                            (true, [a]) => match &a.data {
+                                Data::EArrow(a) => a.body.stmts.slice(),
+                                Data::EFunction(f) => f.func.body.stmts.slice(),
+                                _ => &[],
+                            },
+                            _ => &[],
+                        };
+                        let callback_writes_exports = body_stmts.iter().any(|s| {
+                            let js_ast::StmtData::SExpr(se) = &s.data else {
+                                return false;
+                            };
+                            match &se.value.data {
+                                Data::ECall(c) => {
+                                    matches!(
+                                        &c.target.data,
+                                        Data::EDot(d) if d.name == b"defineProperty" && is_identifier_named(&d.target, b"Object")
+                                    ) && c.args.slice().first().is_some_and(is_exports_expr)
+                                }
+                                Data::EBinary(b) => {
+                                    b.op == js_ast::OpCode::BinAssign
+                                        && matches!(&b.left.data, Data::EIndex(i) if is_exports_expr(&i.target))
+                                }
+                                _ => false,
+                            }
+                        });
+                        if callback_writes_exports
+                            && matches!(
+                                &dot.target.data,
+                                Data::ECall(inner)
+                                    if matches!(
+                                        &inner.target.data,
+                                        Data::EDot(d) if d.name == b"keys" && is_identifier_named(&d.target, b"Object")
+                                    )
+                            )
+                        {
+                            Action::Deopt
+                        } else {
+                            Action::None
+                        }
+                    } else {
+                        Action::None
+                    }
+                };
+                match action {
+                    Action::Record(name, loc) => p.record_runtime_commonjs_export_name(name, loc),
+                    Action::Deopt => p.commonjs_module_exports_assigned_deoptimized = true,
+                    Action::None => {}
+                }
             }
 
             // Restore saved state.

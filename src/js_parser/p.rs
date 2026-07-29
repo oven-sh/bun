@@ -5220,6 +5220,28 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.commonjs_named_exports_deoptimized = true;
     }
 
+    /// Runtime path (cjs-module-lexer analogue): record a statically visible
+    /// CommonJS export name for the ESM-imports-CJS wrapper. The expression is
+    /// not rewritten.
+    pub fn record_runtime_commonjs_export_name(&mut self, name: &[u8], loc: bun_ast::Loc) {
+        // Names cross to C++ NUL-joined in a single BunString.
+        if name.is_empty() || name.contains(&0) || self.commonjs_named_exports.contains(name) {
+            return;
+        }
+        self.commonjs_named_exports
+            .put(
+                name,
+                bun_ast::ast_result::CommonJSNamedExport {
+                    loc_ref: bun_ast::LocRef {
+                        loc,
+                        ref_: bun_ast::Ref::NONE,
+                    },
+                    needs_decl: false,
+                },
+            )
+            .expect("unreachable");
+    }
+
     pub fn maybe_keep_expr_symbol_name(
         &mut self,
         expr: Expr,
@@ -5265,7 +5287,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             if self.options.repl_mode {
                 return None;
             }
-            if self.has_es_module_syntax && self.commonjs_named_exports.count() == 0 {
+            if self.has_es_module_syntax
+                && (!self.should_unwrap_common_js_to_esm()
+                    || self.commonjs_named_exports.count() == 0)
+            {
                 // In an ES6 module, "this" is supposed to be undefined. Instead of
                 // doing this at runtime using "fn.call(undefined)", we do it at
                 // compile time using expression substitution here.

@@ -188,6 +188,7 @@ SourceProvider::~SourceProvider()
     m_resolvedSource.specifier.deref();
     m_resolvedSource.source_url.deref();
     m_resolvedSource.bytecode_origin_path.deref();
+    m_resolvedSource.commonjs_export_names.deref();
 }
 
 extern "C" void CachedBytecode__deref(JSC::CachedBytecode* cachedBytecode)

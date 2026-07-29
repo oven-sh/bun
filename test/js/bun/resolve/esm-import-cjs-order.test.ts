@@ -1,0 +1,238 @@
+// When an ESM graph imports a CommonJS module, the CommonJS body must evaluate
+// at its source-order (depth-first post-order) position in InnerModuleEvaluation,
+// the same as any other dependency. Previously Bun ran the body the moment its
+// async transpile settled, so it could observe state from before earlier ESM
+// siblings ran and, with multiple CJS siblings, in transpile-completion (i.e.
+// nondeterministic) order.
+import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, tempDir } from "harness";
+
+// Pad the ESM sibling so its async transpile reliably settles *after* a tiny
+// CJS sibling's. Without the fix that is enough to reorder them.
+const pad = "/* " + Buffer.alloc(256 * 1024, "x").toString() + " */\n";
+
+async function run(dir: string, entry: string) {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), entry],
+    env: { ...bunEnv, BUN_RUNTIME_TRANSPILER_CACHE_PATH: "0" },
+    cwd: String(dir),
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  return { stdout, stderr, exitCode };
+}
+
+describe("ESM importing CommonJS: evaluation order", () => {
+  test.concurrent("CJS dependency runs after an earlier ESM sibling (setup/config shape)", async () => {
+    using dir = tempDir("esm-cjs-order-setup", {
+      "entry.mjs": `
+        import "./setup.mjs";
+        import "./dep.cjs";
+      `,
+      "setup.mjs":
+        pad +
+        `
+        globalThis.__ORDER__ = ["setup.mjs"];
+        globalThis.__CONFIG__ = { db: "postgres://localhost" };
+      `,
+      "dep.cjs": `
+        globalThis.__ORDER__ = globalThis.__ORDER__ || [];
+        globalThis.__ORDER__.push("dep.cjs");
+        module.exports.config = globalThis.__CONFIG__;
+        console.log(JSON.stringify({ order: globalThis.__ORDER__, config: globalThis.__CONFIG__ }));
+      `,
+    });
+    const { stdout, stderr, exitCode } = await run(String(dir), "entry.mjs");
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({
+      order: ["setup.mjs", "dep.cjs"],
+      config: { db: "postgres://localhost" },
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("esm, cjs, esm siblings evaluate in source order", async () => {
+    using dir = tempDir("esm-cjs-order-sandwich", {
+      "entry.mjs": `
+        import "./a.mjs";
+        import "./b.cjs";
+        import "./c.mjs";
+        console.log(JSON.stringify(globalThis.__O__));
+      `,
+      "a.mjs": pad + `(globalThis.__O__ ||= []).push("a");`,
+      "b.cjs": `(globalThis.__O__ ||= []).push("b"); module.exports.b = 1;`,
+      "c.mjs": `(globalThis.__O__ ||= []).push("c");`,
+    });
+    const { stdout, stderr, exitCode } = await run(String(dir), "entry.mjs");
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual(["a", "b", "c"]);
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("two CJS siblings evaluate in source order (was transpile-race nondeterministic)", async () => {
+    using dir = tempDir("esm-cjs-order-two", {
+      "entry.mjs": `
+        import "./a.cjs";
+        import "./b.cjs";
+        console.log(JSON.stringify(globalThis.__O__));
+      `,
+      "a.cjs": pad + `(globalThis.__O__ ||= []).push("a"); module.exports.a = 1;`,
+      "b.cjs": `(globalThis.__O__ ||= []).push("b"); module.exports.b = 1;`,
+    });
+    const results = await Promise.all(Array.from({ length: 5 }, () => run(String(dir), "entry.mjs")));
+    for (const { stdout, stderr, exitCode } of results) {
+      expect(stderr).toBe("");
+      expect(JSON.parse(stdout)).toEqual(["a", "b"]);
+      expect(exitCode).toBe(0);
+    }
+  });
+
+  test.concurrent("named import reads a value produced by an earlier ESM sibling (dotenv shape)", async () => {
+    using dir = tempDir("esm-cjs-order-dotenv", {
+      "entry.mjs": `
+        import "./load-env.mjs";
+        import { url } from "./db.cjs";
+        console.log(url);
+      `,
+      "load-env.mjs": pad + `process.env.DB_URL = "postgres://set-by-load-env";`,
+      "db.cjs": `exports.url = process.env.DB_URL;`,
+    });
+    const { stdout, stderr, exitCode } = await run(String(dir), "entry.mjs");
+    expect(stderr).toBe("");
+    expect(stdout.trim()).toBe("postgres://set-by-load-env");
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("static named exports from exports.x / module.exports.x are importable", async () => {
+    using dir = tempDir("esm-cjs-order-named", {
+      "entry.mjs": `
+        import "./setup.mjs";
+        import def, { foo, bar, baz } from "./lib.cjs";
+        console.log(JSON.stringify({ def, foo, bar, baz, order: globalThis.__ORDER__ }));
+      `,
+      "setup.mjs":
+        pad +
+        `
+        globalThis.__ORDER__ = ["setup"];
+        globalThis.__VAL__ = 42;
+      `,
+      "lib.cjs": `
+        globalThis.__ORDER__ = globalThis.__ORDER__ || [];
+        globalThis.__ORDER__.push("lib");
+        exports.foo = globalThis.__VAL__;
+        exports.bar = "bar";
+        module.exports.baz = "baz";
+      `,
+    });
+    const { stdout, stderr, exitCode } = await run(String(dir), "entry.mjs");
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({
+      def: { foo: 42, bar: "bar", baz: "baz" },
+      foo: 42,
+      bar: "bar",
+      baz: "baz",
+      order: ["setup", "lib"],
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("module.exports = { X, Y } exposes each literal key as a named export", async () => {
+    using dir = tempDir("esm-cjs-order-object-literal", {
+      "entry.mjs": `
+        import "./setup.mjs";
+        import { value, other } from "./lib.cjs";
+        console.log(JSON.stringify({ value, other }));
+      `,
+      "setup.mjs": pad + `globalThis.__V__ = 42;`,
+      "lib.cjs": `
+        const value = globalThis.__V__;
+        module.exports = { value, other: "x" };
+      `,
+    });
+    const { stdout, stderr, exitCode } = await run(String(dir), "entry.mjs");
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({ value: 42, other: "x" });
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("getter-backed exports are read once per named binding", async () => {
+    using dir = tempDir("esm-cjs-order-getter", {
+      "entry.mjs": `
+        import def, { foo } from "./lib.cjs";
+        console.log(JSON.stringify({ foo, hits: def.getHits() }));
+      `,
+      "lib.cjs": `
+        Object.defineProperty(exports, "__esModule", { value: true });
+        let hits = 0;
+        Object.defineProperty(exports, "foo", { enumerable: true, get() { hits++; return 1; } });
+        exports.getHits = () => hits;
+      `,
+    });
+    const { stdout, stderr, exitCode } = await run(String(dir), "entry.mjs");
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({ foo: 1, hits: 1 });
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("__exportStar re-exports keep the runtime export set", async () => {
+    using dir = tempDir("esm-cjs-order-exportstar", {
+      "entry.mjs": `
+        import { inner, own } from "./pkg.cjs";
+        console.log(JSON.stringify({ inner, own }));
+      `,
+      "pkg.cjs": `
+        var tslib = { __exportStar(m, e) { for (var k in m) if (k !== "default") Object.defineProperty(e, k, { enumerable: true, get: () => m[k] }); } };
+        tslib.__exportStar(require("./inner.cjs"), exports);
+        exports.own = "own";
+      `,
+      "inner.cjs": `exports.inner = 7;`,
+    });
+    const { stdout, stderr, exitCode } = await run(String(dir), "entry.mjs");
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({ inner: 7, own: "own" });
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("module.exports = require(x) keeps the runtime export set (prod/dev shims)", async () => {
+    using dir = tempDir("esm-cjs-order-shim", {
+      "entry.mjs": `
+        import { tag } from "./shim.cjs";
+        console.log(tag);
+      `,
+      "shim.cjs": `
+        if (process.env.NODE_ENV === "production") {
+          module.exports = require("./a.cjs");
+        } else {
+          module.exports = require("./b.cjs");
+        }
+      `,
+      "a.cjs": `exports.tag = "a";`,
+      "b.cjs": `exports.tag = "b";`,
+    });
+    const { stdout, stderr, exitCode } = await run(String(dir), "entry.mjs");
+    expect(stderr).toBe("");
+    expect(stdout.trim()).toBe("b");
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("an error thrown by the CJS body rejects the importing promise", async () => {
+    using dir = tempDir("esm-cjs-order-throws", {
+      "entry.mjs": `
+        try {
+          await import("./throws.cjs");
+          console.log("unreachable");
+        } catch (e) {
+          console.log("caught:" + e.message);
+        }
+      `,
+      "throws.cjs": `
+        exports.x = 1;
+        throw new Error("boom from cjs");
+      `,
+    });
+    const { stdout, stderr, exitCode } = await run(String(dir), "entry.mjs");
+    expect(stderr).toBe("");
+    expect(stdout.trim()).toBe("caught:boom from cjs");
+    expect(exitCode).toBe(0);
+  });
+});

@@ -971,6 +971,7 @@ impl TranspilerJob {
                 ptr::null_mut()
             };
 
+            let is_commonjs_module = entry.metadata.module_type == CacheModuleType::Cjs;
             self.resolved_source = OwnedResolvedSource::from(ResolvedSource {
                 source_code: match &mut entry.output_code {
                     OutputCode::String(s) => *s,
@@ -980,8 +981,13 @@ impl TranspilerJob {
                         result
                     }
                 },
-                is_commonjs_module: entry.metadata.module_type == CacheModuleType::Cjs,
+                is_commonjs_module,
                 module_info,
+                commonjs_export_names: if is_commonjs_module {
+                    String::clone_utf8(&entry.esm_record)
+                } else {
+                    String::empty()
+                },
                 tag: this_tag,
                 ..Default::default()
             });
@@ -1074,6 +1080,11 @@ impl TranspilerJob {
 
         let is_commonjs_module = parse_result.ast.has_commonjs_export_names
             || parse_result.ast.exports_kind == ExportsKind::Cjs;
+        let commonjs_export_names = crate::resolved_source::join_commonjs_export_names(
+            is_commonjs_module,
+            &parse_result.ast,
+        );
+        cache.cjs_export_names.clone_from(&commonjs_export_names);
         let mut module_info: Option<Box<analyze_transpiled_module::ModuleInfo>> =
             if use_isolation_source_provider_cache
                 && !is_commonjs_module
@@ -1181,6 +1192,7 @@ impl TranspilerJob {
                     bun_core::heap::into_raw(mi.into_deserialized()).cast()
                 })
                 .unwrap_or(ptr::null_mut()),
+            commonjs_export_names: String::clone_utf8(&commonjs_export_names),
             tag: this_tag,
             ..Default::default()
         });

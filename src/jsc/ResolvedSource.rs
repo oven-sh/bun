@@ -51,6 +51,9 @@ pub struct ResolvedSource {
     /// was used at build time. If empty, the origin is derived from source_url.
     /// This is converted to a file:// URL on the C++ side.
     pub bytecode_origin_path: BunString,
+    /// Statically detected CommonJS export names, NUL-joined. Consumed and
+    /// deref'd by `createCommonJSModule` in C++.
+    pub commonjs_export_names: BunString,
 }
 
 impl Default for ResolvedSource {
@@ -70,8 +73,35 @@ impl Default for ResolvedSource {
             bytecode_cache_size: 0,
             module_info: core::ptr::null_mut(),
             bytecode_origin_path: BunString::empty(),
+            commonjs_export_names: BunString::empty(),
         }
     }
+}
+
+/// NUL-join the transpiler's static CommonJS export names for
+/// `createCommonJSModule`. Empty => no names detected, keep the eager
+/// synthetic path so UMD-via-alias shapes (lodash's `freeModule.exports = _`,
+/// which the ref-only `module.exports` deopt cannot see) stay enumerable.
+pub fn join_commonjs_export_names(
+    is_commonjs_module: bool,
+    ast: &bun_ast::ast_result::Ast,
+) -> Vec<u8> {
+    if !is_commonjs_module || ast.commonjs_module_exports_assigned_deoptimized {
+        return Vec::new();
+    }
+    let keys = ast.commonjs_named_exports.keys();
+    if keys.is_empty() {
+        return Vec::new();
+    }
+    let cap: usize = keys.iter().map(|k| k.as_ref().len() + 1).sum();
+    let mut joined: Vec<u8> = Vec::with_capacity(cap);
+    for (i, key) in keys.iter().enumerate() {
+        if i > 0 {
+            joined.push(0);
+        }
+        joined.extend_from_slice(key.as_ref());
+    }
+    joined
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -142,5 +172,6 @@ impl Drop for OwnedResolvedSource {
         self.0.specifier.deref();
         self.0.source_url.deref();
         self.0.bytecode_origin_path.deref();
+        self.0.commonjs_export_names.deref();
     }
 }

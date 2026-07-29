@@ -7,6 +7,7 @@
 #include "DOMClientIsoSubspaces.h"
 #include "DOMIsoSubspaces.h"
 #include "ErrorCode.h"
+#include "JSAsyncIteratorSourceOperation.h"
 #include "JSDOMBinding.h"
 #include "JSDOMGlobalObject.h"
 #include "JSDOMWrapperCache.h"
@@ -20,6 +21,7 @@
 #include "JSStreamsRuntime.h"
 #include "WebStreamsHeapAnalyzer.h"
 #include "WebStreamsInternals.h"
+#include "ZigGeneratedClasses.h"
 #include "ZigGlobalObject.h"
 #include <JavaScriptCore/AggregateError.h>
 #include <JavaScriptCore/ArgList.h>
@@ -1436,7 +1438,7 @@ static void resumableEnd(JSC::VM& vm, JSGlobalObject* globalObject, JSResumableS
         if (hasError)
             args.append(error);
         ASSERT(!args.hasOverflowed());
-        invokeMethod(vm, globalObject, sink, hasError ? vm.propertyNames->error : builtinNames(vm).endPublicName(), args);
+        invokeMethod(vm, globalObject, sink, builtinNames(vm).endPublicName(), args);
         if (catchScope.exception()) [[unlikely]] {
             if (takeAbruptCompletion(globalObject, catchScope).isEmpty())
                 return;
@@ -1582,57 +1584,64 @@ static void resumableSetup(JSC::VM& vm, JSGlobalObject* globalObject, JSResumabl
     RELEASE_AND_RETURN(scope, resumableDrain(vm, globalObject, op));
 }
 
-// DirectPending -> ResumableSink without an ArrayBufferSink intermediary: the underlying
-// source's pull() writes straight into sink.write (bool backpressure, flush(true) drain
-// promise) exactly as readDirectStream hands a JSSink to the same pull.
-static void resumableSetupDirect(JSC::VM& vm, JSGlobalObject* globalObject, JSReadableStream* stream, JSObject* sink, JSObject* underlyingSource)
+extern "C" {
+int32_t Bun__ResumableFetchSink__nativeWrite(void*, const uint8_t*, size_t);
+void Bun__ResumableFetchSink__nativeEnd(void*, JSC::EncodedJSValue);
+int32_t Bun__ResumableS3UploadSink__nativeWrite(void*, const uint8_t*, size_t);
+void Bun__ResumableS3UploadSink__nativeEnd(void*, JSC::EncodedJSValue);
+}
+
+// Async-iterable body → ResumableSink without an ArrayBufferSink intermediary or per-chunk JS
+// dispatch: the pump calls the Rust side directly, suspends on its backpressure flag, and the
+// sink's native drain() resumes it via Bun__AsyncIterableSource__resumeFromDrain.
+static bool tryResumableSetupAsyncIterable(JSC::VM& vm, JSGlobalObject* globalObject, JSReadableStream* stream, JSObject* sink)
 {
+    JSValue nativePtr = stream->m_nativePtr.get();
+    if (!nativePtr.isCell())
+        return false;
+    auto* op = dynamicDowncast<WebCore::JSAsyncIteratorSourceOperation>(nativePtr.asCell());
+    if (!op)
+        return false;
+
+    void* ctx;
+    WebCore::JSAsyncIteratorSourceOperation::NativeSinkWriteFn write;
+    WebCore::JSAsyncIteratorSourceOperation::NativeSinkEndFn end;
+    if (auto* fetchSink = dynamicDowncast<WebCore::JSResumableFetchSink>(sink)) {
+        ctx = fetchSink->wrapped();
+        write = Bun__ResumableFetchSink__nativeWrite;
+        end = Bun__ResumableFetchSink__nativeEnd;
+    } else if (auto* s3Sink = dynamicDowncast<WebCore::JSResumableS3UploadSink>(sink)) {
+        ctx = s3Sink->wrapped();
+        write = Bun__ResumableS3UploadSink__nativeWrite;
+        end = Bun__ResumableS3UploadSink__nativeEnd;
+    } else
+        return false;
+    if (!ctx)
+        return false;
+
     auto scope = DECLARE_THROW_SCOPE(vm);
-    auto* runtime = WebCore::JSStreamsRuntime::from(globalObject);
-
+    JSObject* underlyingSource = stream->m_directUnderlyingSource.get();
     stream->m_directUnderlyingSource.clear();
+    stream->m_nativePtr.clear();
     stream->m_bunMode = BunStreamMode::Default;
+    stream->m_lockedWithoutReader = true;
 
-    JSValue pull = underlyingSource->get(globalObject, builtinNames(vm).pullPublicName());
-    RETURN_IF_EXCEPTION(scope, );
-
-    double rawHighWaterMark = stream->m_bunHighWaterMark;
-    auto* startOptions = constructEmptyObject(globalObject);
-    startOptions->putDirect(vm, builtinNames(vm).highWaterMarkPublicName(), jsNumber(std::isnan(rawHighWaterMark) ? 0 : rawHighWaterMark));
-    MarkedArgumentBuffer startArgs;
-    startArgs.append(startOptions);
-    ASSERT(!startArgs.hasOverflowed());
-    invokeMethod(vm, globalObject, sink, builtinNames(vm).startPublicName(), startArgs);
-    RETURN_IF_EXCEPTION(scope, );
-
-    auto* cancelBound = createBoundHandler(globalObject, runtime->boundResumableSinkDirectCancel(), underlyingSource);
-    RETURN_IF_EXCEPTION(scope, );
+    // The sink's ondrain slot stores the op cell so drain() can resume the pump; oncancel
+    // reaches the iterator via the bound underlyingSource.cancel(reason).
+    JSValue cancel = underlyingSource ? underlyingSource->get(globalObject, builtinNames(vm).cancelPublicName()) : jsUndefined();
+    RETURN_IF_EXCEPTION(scope, true);
+    auto* cancelBound = createBoundHandler(globalObject, WebCore::JSStreamsRuntime::from(globalObject)->boundResumableSinkDirectCancel(), cancel.isCell() ? cancel.asCell() : nullptr);
+    RETURN_IF_EXCEPTION(scope, true);
     MarkedArgumentBuffer handlerArgs;
-    handlerArgs.append(jsUndefined());
+    handlerArgs.append(op);
     handlerArgs.append(cancelBound);
     ASSERT(!handlerArgs.hasOverflowed());
     invokeMethod(vm, globalObject, sink, builtinNames(vm).setHandlersPublicName(), handlerArgs);
-    RETURN_IF_EXCEPTION(scope, );
+    RETURN_IF_EXCEPTION(scope, true);
 
-    stream->m_lockedWithoutReader = true;
-
-    if (!pull.isCallable()) {
-        MarkedArgumentBuffer noArgs;
-        scope.release();
-        invokeMethod(vm, globalObject, sink, builtinNames(vm).endPublicName(), noArgs);
-        return;
-    }
-
-    MarkedArgumentBuffer pullArgs;
-    pullArgs.append(sink);
-    ASSERT(!pullArgs.hasOverflowed());
-    JSValue maybePromise = JSC::call(globalObject, pull, getCallData(pull), underlyingSource, pullArgs);
-    RETURN_IF_EXCEPTION(scope, );
-
-    if (auto* pullPromise = dynamicDowncast<JSPromise>(maybePromise)) {
-        markPromiseAsHandled(vm, pullPromise);
-        pullPromise->performPromiseThenWithContext(vm, globalObject, runtime->onReturnUndefined(), runtime->onResumableSinkDirectPullRejected(), jsUndefined(), sink);
-    }
+    scope.release();
+    driveAsyncIterableSourceIntoResumableSink(globalObject, op, sink, ctx, write, end);
+    return true;
 }
 
 JSValue assignStreamIntoResumableSink(JSGlobalObject* globalObject, JSReadableStream* stream, JSObject* resumableSink)
@@ -1642,25 +1651,24 @@ JSValue assignStreamIntoResumableSink(JSGlobalObject* globalObject, JSReadableSt
     auto* domGlobalObject = defaultGlobalObject(globalObject);
     auto* runtime = WebCore::JSStreamsRuntime::from(globalObject);
 
-    if (JSObject* underlyingSource = stream->m_directUnderlyingSource.get(); stream->m_bunMode == BunStreamMode::DirectPending && underlyingSource) {
-        JSValue thrown;
+    if (stream->m_bunMode == BunStreamMode::DirectPending) {
+        bool handled;
         {
             auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-            resumableSetupDirect(vm, globalObject, stream, resumableSink, underlyingSource);
+            handled = tryResumableSetupAsyncIterable(vm, globalObject, stream, resumableSink);
             if (catchScope.exception()) [[unlikely]] {
-                thrown = takeAbruptCompletion(globalObject, catchScope);
+                JSValue thrown = takeAbruptCompletion(globalObject, catchScope);
                 if (thrown.isEmpty())
                     return {};
+                MarkedArgumentBuffer args;
+                args.append(thrown);
+                ASSERT(!args.hasOverflowed());
+                invokeMethod(vm, globalObject, resumableSink, builtinNames(vm).endPublicName(), args);
             }
         }
-        if (!thrown.isEmpty()) {
-            MarkedArgumentBuffer args;
-            args.append(thrown);
-            ASSERT(!args.hasOverflowed());
-            invokeMethod(vm, globalObject, resumableSink, vm.propertyNames->error, args);
-        }
         RETURN_IF_EXCEPTION(scope, {});
-        return jsUndefined();
+        if (handled)
+            return jsUndefined();
     }
 
     auto* op = JSResumableSinkPumpOperation::create(vm, runtime->resumableSinkPumpOperationStructure(domGlobalObject));
@@ -1933,40 +1941,21 @@ JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_boundResumableSinkCancel, (JSGlobal
     return JSValue::encode(jsUndefined());
 }
 
-// Native cancel on the direct path: (underlyingSource, unused, reason) -> source.cancel(reason).
+// Native cancel on the async-iterable path: (boundAsyncIterableSourceCancel, unused, reason) ->
+// cancel(reason), which runs iterator.throw()/return() so the node Readable's eos() fires.
 JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_boundResumableSinkDirectCancel, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
-    auto& vm = getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    JSObject* underlyingSource = callFrame->argument(0).getObject();
-    if (!underlyingSource)
+    auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));
+    JSValue cancel = callFrame->argument(0);
+    if (!cancel.isCallable())
         return JSValue::encode(jsUndefined());
     MarkedArgumentBuffer args;
     args.append(callFrame->argument(2));
     ASSERT(!args.hasOverflowed());
-    JSValue result = invokeOptionalMethod(globalObject, underlyingSource, builtinNames(vm).cancelPublicName(), args);
+    JSValue result = JSC::call(globalObject, cancel, jsUndefined(), args, "cancel is not a function"_s);
     RETURN_IF_EXCEPTION(scope, {});
-    if (result && result.isCell()) {
-        if (auto* promise = dynamicDowncast<JSPromise>(result))
-            markPromiseAsHandled(vm, promise);
-    }
-    return JSValue::encode(jsUndefined());
-}
-
-// pull(sink) rejected on the direct path: end the sink with the error so the native side
-// aborts the upload; the pump already ran iterator.throw().
-JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onResumableSinkDirectPullRejected, (JSGlobalObject * globalObject, CallFrame* callFrame))
-{
-    auto& vm = getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    JSObject* sink = callFrame->argument(1).getObject();
-    if (!sink)
-        return JSValue::encode(jsUndefined());
-    MarkedArgumentBuffer args;
-    args.append(callFrame->argument(0));
-    ASSERT(!args.hasOverflowed());
-    invokeOptionalMethod(globalObject, sink, vm.propertyNames->error, args);
-    RETURN_IF_EXCEPTION(scope, {});
+    if (auto* promise = dynamicDowncast<JSPromise>(result))
+        markPromiseAsHandled(getVM(globalObject), promise);
     return JSValue::encode(jsUndefined());
 }
 

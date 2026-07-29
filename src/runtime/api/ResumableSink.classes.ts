@@ -19,25 +19,9 @@ function generate(name) {
         fn: "jsWrite",
         length: 1,
       },
-      flush: {
-        fn: "jsFlush",
-        length: 1,
-        passThis: true,
-      },
       end: {
-        fn: "jsClose",
-        length: 0,
-        passThis: true,
-      },
-      close: {
-        fn: "jsClose",
-        length: 0,
-        passThis: true,
-      },
-      error: {
-        fn: "jsError",
+        fn: "jsEnd",
         length: 1,
-        passThis: true,
       },
       setHandlers: {
         fn: "jsSetHandlers",
@@ -45,7 +29,7 @@ function generate(name) {
         passThis: true,
       },
     },
-    values: ["ondrain", "oncancel", "stream", "flushPromise"],
+    values: ["ondrain", "oncancel", "stream"],
   });
 }
 export default [generate("ResumableFetchSink"), generate("ResumableS3UploadSink")];

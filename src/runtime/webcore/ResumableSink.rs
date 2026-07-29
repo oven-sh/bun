@@ -34,8 +34,6 @@ pub trait ResumableSinkJs {
     fn ondrain_get_cached(this_value: JSValue) -> Option<JSValue>;
     fn stream_set_cached(this_value: JSValue, global: &JSGlobalObject, value: JSValue);
     fn stream_get_cached(this_value: JSValue) -> Option<JSValue>;
-    fn flushpromise_set_cached(this_value: JSValue, global: &JSGlobalObject, value: JSValue);
-    fn flushpromise_get_cached(this_value: JSValue) -> Option<JSValue>;
 }
 
 /// Trait capturing the per-`Context` callbacks the sink invokes.
@@ -119,19 +117,6 @@ impl<Js: ResumableSinkJs, Context: ResumableSinkContext> ResumableSink<Js, Conte
     #[inline]
     fn set_stream(this_value: JSValue, global: &JSGlobalObject, value: JSValue) {
         Js::stream_set_cached(this_value, global, value);
-    }
-    #[inline]
-    fn set_flush_promise(this_value: JSValue, global: &JSGlobalObject, value: JSValue) {
-        Js::flushpromise_set_cached(this_value, global, value);
-    }
-    fn take_flush_promise(
-        this_value: JSValue,
-        global: &JSGlobalObject,
-    ) -> Option<&'static mut bun_jsc::JSPromise> {
-        let value = Js::flushpromise_get_cached(this_value)?;
-        let promise = value.as_promise()?;
-        Js::flushpromise_set_cached(this_value, global, JSValue::ZERO);
-        Some(bun_jsc::JSPromise::opaque_mut(promise))
     }
 
     #[inline]
@@ -278,7 +263,7 @@ impl<Js: ResumableSinkJs, Context: ResumableSinkContext> ResumableSink<Js, Conte
         let ondrain = args[0];
         let oncancel = args[1];
 
-        if ondrain.is_callable() {
+        if ondrain.is_cell() {
             Self::set_drain(this_value, global_this, ondrain);
         }
         if oncancel.is_callable() {
@@ -348,82 +333,78 @@ impl<Js: ResumableSinkJs, Context: ResumableSinkContext> ResumableSink<Js, Conte
         Ok(JSValue::from(this.status != Status::Paused))
     }
 
-    /// `flush(true)` while paused returns a promise that `drain()` fulfills (or `cancel()`
-    /// rejects); the direct-stream pump awaits it when `write()` returns `false`.
-    #[bun_jsc::host_fn(method)]
-    pub fn js_flush(
-        this: &mut Self,
-        global_this: &JSGlobalObject,
-        callframe: &CallFrame,
-        this_value: JSValue,
-    ) -> JsResult<JSValue> {
-        bun_jsc::mark_binding!();
+    /// Direct-pump write: the C++ async-iterator pump extracts bytes from the yielded
+    /// JSValue and calls this instead of dispatching `sink.write` through JS.
+    ///
+    /// # Safety
+    /// `this` is the live `m_ctx` of a JSResumable*Sink cell and `bytes`/`len` name a
+    /// readable span valid for the call.
+    pub unsafe fn native_write(this: *mut Self, bytes: *const u8, len: usize) -> i32 {
+        // SAFETY: contract above.
+        let this = unsafe { &mut *this };
         if this.is_detached() {
-            return Ok(JSValue::UNDEFINED);
+            return 2;
         }
-        let args = callframe.arguments();
-        let wait = args.first().is_some_and(|v| v.to_boolean());
-        if !wait || this.status != Status::Paused {
-            return Ok(JSValue::UNDEFINED);
-        }
-        if let Some(pending) = Js::flushpromise_get_cached(this_value) {
-            if pending.as_promise().is_some() {
-                return Ok(pending);
+        let slice = if len == 0 {
+            &[][..]
+        } else {
+            // SAFETY: contract above.
+            unsafe { core::slice::from_raw_parts(bytes, len) }
+        };
+        scoped_log!(ResumableSink, "nativeWrite {}", slice.len());
+        match Self::on_write(this.context, slice) {
+            ResumableSinkBackpressure::Backpressure => {
+                scoped_log!(ResumableSink, "paused");
+                this.status = Status::Paused;
+                1
+            }
+            ResumableSinkBackpressure::Done => {
+                this.status = Status::Done;
+                2
+            }
+            ResumableSinkBackpressure::WantMore => {
+                this.status = Status::Started;
+                0
             }
         }
-        let promise = bun_jsc::JSPromise::create(global_this);
-        let promise_value = promise.to_js();
-        Self::set_flush_promise(this_value, global_this, promise_value);
-        Ok(promise_value)
     }
 
-    /// `error(e)` on the controller surface: abort the upload with `e` (or `undefined`).
+    /// Direct-pump end: `err.is_empty()` is a clean close, otherwise abort with `err`.
+    ///
+    /// # Safety
+    /// `this` is the live `m_ctx` of a JSResumable*Sink cell.
+    pub unsafe fn native_end(this: *mut Self, err: JSValue) {
+        // SAFETY: contract above.
+        let this = unsafe { &mut *this };
+        if this.is_detached() {
+            return;
+        }
+        this.detach_js();
+        scoped_log!(ResumableSink, "nativeEnd");
+        this.status = Status::Done;
+        Self::on_end(this.context, if err.is_empty() { None } else { Some(err) });
+    }
+
     #[bun_jsc::host_fn(method)]
-    pub fn js_error(
+    pub fn js_end(
         this: &mut Self,
-        global_this: &JSGlobalObject,
+        _global_this: &JSGlobalObject,
         callframe: &CallFrame,
-        this_value: JSValue,
     ) -> JsResult<JSValue> {
         bun_jsc::mark_binding!();
+        let args = callframe.arguments();
+        // ignore any call if detached
         if this.is_detached() {
             return Ok(JSValue::UNDEFINED);
         }
-        let err = callframe
-            .arguments()
-            .first()
-            .copied()
-            .unwrap_or(JSValue::UNDEFINED);
-        if let Some(promise) = Self::take_flush_promise(this_value, global_this) {
-            let _ = promise.reject_as_handled(global_this, err);
-        }
         this.detach_js();
-        scoped_log!(ResumableSink, "jsError");
+        scoped_log!(ResumableSink, "jsEnd {}", args.len());
         this.status = Status::Done;
-        Self::on_end(this.context, Some(err));
-        Ok(JSValue::UNDEFINED)
-    }
 
-    /// `end()` / `close()` on the controller surface: a clean end regardless of the reason
-    /// argument (the direct controller's `end`/`close` are the same no-error target).
-    #[bun_jsc::host_fn(method)]
-    pub fn js_close(
-        this: &mut Self,
-        global_this: &JSGlobalObject,
-        _callframe: &CallFrame,
-        this_value: JSValue,
-    ) -> JsResult<JSValue> {
-        bun_jsc::mark_binding!();
-        if this.is_detached() {
-            return Ok(JSValue::UNDEFINED);
-        }
-        if let Some(promise) = Self::take_flush_promise(this_value, global_this) {
-            let _ = promise.resolve(global_this, JSValue::UNDEFINED);
-        }
-        this.detach_js();
-        scoped_log!(ResumableSink, "jsClose");
-        this.status = Status::Done;
-        Self::on_end(this.context, None);
+        Self::on_end(
+            this.context,
+            if args.len() > 0 { Some(args[0]) } else { None },
+        );
         Ok(JSValue::UNDEFINED)
     }
 
@@ -436,21 +417,22 @@ impl<Js: ResumableSinkJs, Context: ResumableSinkContext> ResumableSink<Js, Conte
             let global_object = self.global_this;
             let global_object = global_object.get();
 
-            self.status = Status::Started;
-            if let Some(promise) = Self::take_flush_promise(js_this, global_object) {
-                let _ = promise.resolve(global_object, JSValue::UNDEFINED);
-            }
             if let Some(ondrain) = Self::get_drain(js_this) {
-                // SAFETY: `bun_vm()` returns a live `*mut VirtualMachine` owned by
-                // the global; `event_loop()` returns its self-referential
-                // `*mut EventLoop`. Both outlive this call.
-                unsafe {
-                    (*global_object.bun_vm().as_mut().event_loop()).run_callback(
-                        ondrain,
-                        global_object,
-                        JSValue::UNDEFINED,
-                        &[JSValue::UNDEFINED, JSValue::UNDEFINED],
-                    );
+                self.status = Status::Started;
+                if ondrain.is_callable() {
+                    // SAFETY: `bun_vm()` returns a live `*mut VirtualMachine` owned by
+                    // the global; `event_loop()` returns its self-referential
+                    // `*mut EventLoop`. Both outlive this call.
+                    unsafe {
+                        (*global_object.bun_vm().as_mut().event_loop()).run_callback(
+                            ondrain,
+                            global_object,
+                            JSValue::UNDEFINED,
+                            &[JSValue::UNDEFINED, JSValue::UNDEFINED],
+                        );
+                    }
+                } else {
+                    Bun__AsyncIterableSource__resumeFromDrain(global_object, ondrain);
                 }
             }
         }
@@ -476,9 +458,6 @@ impl<Js: ResumableSinkJs, Context: ResumableSinkContext> ResumableSink<Js, Conte
             let global_object = self.global_this;
             let global_object = global_object.get();
 
-            if let Some(promise) = Self::take_flush_promise(js_this, global_object) {
-                let _ = promise.reject_as_handled(global_object, reason);
-            }
             // detach first so if cancel calls end will be a no-op
             self.detach_js();
 
@@ -520,7 +499,6 @@ impl<Js: ResumableSinkJs, Context: ResumableSinkContext> ResumableSink<Js, Conte
             Self::set_drain(js_this, global, JSValue::ZERO);
             Self::set_cancel(js_this, global, JSValue::ZERO);
             Self::set_stream(js_this, global, JSValue::ZERO);
-            Self::set_flush_promise(js_this, global, JSValue::ZERO);
             self.js_this.downgrade();
         }
     }
@@ -695,14 +673,6 @@ macro_rules! impl_resumable_sink_js {
             fn stream_get_cached(this: JSValue) -> Option<JSValue> {
                 bun_jsc::generated::$name::stream_get_cached(this)
             }
-            #[inline]
-            fn flushpromise_set_cached(this: JSValue, global: &JSGlobalObject, v: JSValue) {
-                bun_jsc::generated::$name::flush_promise_set_cached(this, global, v)
-            }
-            #[inline]
-            fn flushpromise_get_cached(this: JSValue) -> Option<JSValue> {
-                bun_jsc::generated::$name::flush_promise_get_cached(this)
-            }
         }
     )*};
 }
@@ -725,10 +695,40 @@ impl ResumableSinkContext for FetchTasklet {
 pub type ResumableFetchSink = ResumableSink<JSResumableFetchSink, FetchTasklet>;
 pub type ResumableS3UploadSink = ResumableSink<JSResumableS3UploadSink, S3UploadStreamWrapper>;
 
+macro_rules! resumable_sink_native_exports {
+    ($write:ident, $end:ident, $Alias:ident) => {
+        /// # Safety
+        /// See [`ResumableSink::native_write`].
+        #[unsafe(no_mangle)]
+        pub unsafe extern "C" fn $write(this: *mut $Alias, bytes: *const u8, len: usize) -> i32 {
+            // SAFETY: forwarded caller contract.
+            unsafe { <$Alias>::native_write(this, bytes, len) }
+        }
+        /// # Safety
+        /// See [`ResumableSink::native_end`].
+        #[unsafe(no_mangle)]
+        pub unsafe extern "C" fn $end(this: *mut $Alias, err: JSValue) {
+            // SAFETY: forwarded caller contract.
+            unsafe { <$Alias>::native_end(this, err) }
+        }
+    };
+}
+resumable_sink_native_exports!(
+    Bun__ResumableFetchSink__nativeWrite,
+    Bun__ResumableFetchSink__nativeEnd,
+    ResumableFetchSink
+);
+resumable_sink_native_exports!(
+    Bun__ResumableS3UploadSink__nativeWrite,
+    Bun__ResumableS3UploadSink__nativeEnd,
+    ResumableS3UploadSink
+);
+
 unsafe extern "C" {
     safe fn Bun__assignStreamIntoResumableSink(
         global_this: &JSGlobalObject,
         stream: JSValue,
         sink: JSValue,
     ) -> JSValue;
+    safe fn Bun__AsyncIterableSource__resumeFromDrain(global_this: &JSGlobalObject, op: JSValue);
 }

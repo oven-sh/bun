@@ -108,13 +108,13 @@ impl Handlers {
     }
 
     /// The accepting listener, or `None` for client-mode handlers and for a
-    /// listener already torn down by `Listener::deinit`.
+    /// listener already torn down by `Listener::finalize`.
     pub fn listener(&self) -> Option<&SocketListener> {
         // SAFETY: `Listener::listen` stores its `heap::into_raw` allocation root
-        // here, and `Listener::deinit` clears it before freeing that allocation
-        // (after force-closing every accepted socket), so a `Some` is live. The
-        // borrow cannot outlive `&self`, and nothing frees a `Listener` while a
-        // caller holds one — `deinit` runs from GC finalize, not from dispatch.
+        // here; `Listener::finalize` clears it inside the GC sweep before
+        // deferring `deinit` to the event loop, and `deinit` clears it again
+        // before `heap::take`, so a `Some` is always a live allocation and no
+        // caller can hold this borrow across the free.
         self.listener.get().map(|l| unsafe { &*l.as_ptr() })
     }
 

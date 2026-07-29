@@ -1244,9 +1244,15 @@ impl WebWorker {
             // other thread can dereference it now — `&mut` is exclusive.
             let vm = unsafe { &mut *vm_ptr };
             // terminate() set the JSC termination flag to interrupt running JS;
-            // clear it so process.on('exit') handlers can run. teardownJSCVM
-            // re-sets it for the JSC VM teardown.
-            vm.jsc_vm().clear_has_termination_request();
+            // clear both the request flag and the already-thrown
+            // TerminationException so process.on('exit') handlers and
+            // close_all_socket_groups' on_close callbacks can re-enter JS.
+            // Clearing only the flag would leave the sticky exception pending,
+            // and JSC's DeferTermination scope asserts
+            // `hasTerminationRequest()` whenever a termination exception is
+            // pending (VMTraps::deferTerminationSlow). teardownJSCVM re-sets
+            // the flag for the JSC VM teardown.
+            vm.global().clear_termination_exception();
             vm.is_shutting_down = true;
             vm.on_exit();
             if let Some(hooks) = runtime_hooks() {

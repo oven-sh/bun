@@ -11,6 +11,63 @@ const rounds = slow ? 4 : 8;
 const perRound = slow ? 12 : 32;
 const timeout = slow ? 60_000 : 20_000;
 
+// Regression: Bun.serve() inside a worker streaming a type:"direct" body,
+// then worker.terminate() mid-stream. drain_microtasks() drives the async
+// pull loop; when the termination trap fires inside it, the outermost
+// VMEntryScope's executeEntryScopeServicesOnExit clears hasTerminationRequest
+// while the TerminationException stays pending. do_render_stream then kept
+// going and (a) lazy-initialized NativePromiseContextStructure inside a
+// DeferTerminationForAWhile scope, asserting hasTerminationRequest() in
+// VMTraps::deferTerminationSlow, and (b) re-entered JS via then_with_value,
+// asserting !exception() in executeCallImpl. Separately, WebWorker::shutdown
+// cleared only the request flag before on_exit / close_all_socket_groups,
+// leaving the sticky exception in place for the same class of assert. Both
+// asserts are debug/ASAN-only; release builds compile them out.
+test.skipIf(!isDebug)(
+  "terminate() while Bun.serve is streaming a type:\"direct\" body does not trip DeferTermination / assertNoException",
+  async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const { Worker } = require("node:worker_threads");
+        const src = 'const server = Bun.serve({ port: 0, fetch() {' +
+          '  return new Response(new ReadableStream({ type: "direct", async pull(ctrl) {' +
+          '    for (let i = 0; i < 20000; i++) {' +
+          '      ctrl.write(new Uint8Array(8192).fill(i));' +
+          '      await ctrl.flush();' +
+          '    }' +
+          '    ctrl.close();' +
+          '  }, cancel() {} }));' +
+          '} });' +
+          'require("node:worker_threads").parentPort.postMessage(server.port);';
+        for (let i = 0; i < ${rounds}; i++) {
+          const w = new Worker(src, { eval: true });
+          const port = await new Promise(r => w.once("message", r));
+          const res = await fetch("http://127.0.0.1:" + port + "/");
+          const rd = res.body.getReader();
+          await rd.read();
+          const done = new Promise(r => w.once("exit", r));
+          w.terminate();
+          await done;
+          await rd.cancel().catch(() => {});
+        }
+        console.log("survived");
+      `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("survived\n");
+    expect(exitCode).toBe(0);
+  },
+  timeout,
+);
+
 // Regression: `new Worker(url, { ref: false })` was silently ignored — the
 // Zig-side `user_keep_alive` field was set from it but never read, and the
 // parent keep-alive was taken unconditionally in `create()`. `.unref()` after

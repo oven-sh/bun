@@ -2129,6 +2129,23 @@ where
                 stream_log!("returned a promise");
                 this.drain_microtasks();
 
+                // A worker terminate() arriving while drain_microtasks() was
+                // driving the stream's async pull leaves the
+                // TerminationException pending here. Every branch below would
+                // then re-enter JS (NativePromiseContext lazy-init /
+                // then_with_value / handle_resolve_stream /
+                // handle_reject_stream), tripping JSC's DeferTermination or
+                // executeCallImpl assertNoException under debug/ASAN. The
+                // worker is shutting down, so the sink already in `this.sink`
+                // is torn down by the server abort path during
+                // close_all_socket_groups; nothing to wire up.
+                if global_this.has_exception() {
+                    response_stream.sink.on_first_write = None;
+                    response_stream.sink.ctx = None;
+                    this.flags.set_has_marked_pending(true);
+                    return;
+                }
+
                 // `MarkHandled` matters for the Rejected arm: the promise
                 // settled before any reaction was attached, so without the
                 // flag the VM would report it as an unhandled rejection even

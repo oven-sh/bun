@@ -1170,7 +1170,6 @@ pub(crate) fn inject(
     inject_options: &InjectOptions,
     target: &CompileTarget,
 ) -> Fd {
-    let _ = inject_options;
     let mut buf = PathBuffer::uninit();
     // Note: `tmpname` borrows `buf` mutably for the &ZStr it returns. The
     // tmpdir-fallback retry below may need to repoint `zname` at a heap-owned
@@ -1452,6 +1451,13 @@ pub(crate) fn inject(
                     return Fd::INVALID;
                 }
             };
+            if inject_options.hide_console {
+                if let Err(e) = pe_file.set_subsystem(bun_pe::IMAGE_SUBSYSTEM_WINDOWS_GUI) {
+                    bun_core::pretty_errorln!("Error setting PE subsystem: {}", e);
+                    cleanup(zname, cloned_executable_fd);
+                    return Fd::INVALID;
+                }
+            }
             // Always strip authenticode when adding .bun section for --compile
             if let Err(e) = pe_file.add_bun_section(bytes, bun_pe::StripMode::StripAlways) {
                 bun_core::pretty_errorln!("Error adding Bun section to PE file: {}", e);
@@ -1675,7 +1681,7 @@ pub(crate) fn download_to_path(
             let send_result = async_http.send_sync();
 
             progress.end();
-            let status_code = send_result?.status_code as u16;
+            let status_code = send_result?.status_code() as u16;
 
             match status_code {
                 404 => {

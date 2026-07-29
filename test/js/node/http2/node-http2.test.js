@@ -2337,9 +2337,9 @@ it("http2 request.close() validates input and manages stream state", async done 
         throw new Error("Response event should not be called");
       });
 
-      // Node only emits 'end' here when the stream was still `pending` at
-      // close() time; Bun assigns stream ids eagerly so the stream is never
-      // pending and 'end' is suppressed in favour of the 'error' above.
+      // The `end` event should still fire as we close the readable stream by
+      // pushing a `null` chunk.
+      req.on("end", mustCall());
 
       req.resume();
       req.end();

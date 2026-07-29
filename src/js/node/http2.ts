@@ -2601,8 +2601,8 @@ class Http2Stream extends Duplex {
         validateFunction(callback, "callback");
         this.once("close", callback);
       }
-      if (code === NGHTTP2_NO_ERROR || code === NGHTTP2_CANCEL) {
-        // For error rstCodes _destroy ends the readable so 'end' is suppressed.
+      if (this.pending || code === NGHTTP2_NO_ERROR || code === NGHTTP2_CANCEL) {
+        // For other rstCodes _destroy ends the readable so 'end' is suppressed.
         this.push(null);
       }
       const { ending } = this._writableState;

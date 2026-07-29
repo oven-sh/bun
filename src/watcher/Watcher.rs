@@ -108,11 +108,10 @@ pub struct Watcher {
     // Storing the `top_level_dir` slice directly avoids a forward-decl
     // dependency on the higher-tier `bun_resolver::fs::FileSystem` type.
     // allocator field dropped — global mimalloc (see §Allocators)
-    /// Whether `thread_main` is running. Written by the watcher thread, read
-    /// by `start`/`shutdown` on the main thread. The actual `ThreadId` value
-    /// was never read — only `is_some()`/`is_none()` — so this is a `bool`.
-    pub watchloop_handle: bun_core::AtomicCell<bool>,
     pub cwd: &'static [u8],
+    /// Written synchronously by `start()`; `shutdown()` reads `is_some()` to
+    /// decide whether a watcher thread owns `*this`. Never joined (the thread
+    /// frees `*this` and detaches).
     pub thread: Option<std::thread::JoinHandle<()>>,
     /// Main thread clears this in `shutdown`; watcher thread polls it in
     /// `watch_loop` and the platform `watch_loop_cycle`.
@@ -197,7 +196,6 @@ impl Watcher {
             platform: Platform::new(top_level_dir)?,
             watch_events: vec![WatchEvent::default(); MAX_COUNT].into_boxed_slice(),
             changed_filepaths: [const { None }; MAX_COUNT],
-            watchloop_handle: bun_core::AtomicCell::new(false),
             thread: None,
             running: bun_core::AtomicCell::new(true),
             close_descriptors: bun_core::AtomicCell::new(false),
@@ -232,7 +230,7 @@ impl Watcher {
     }
 
     pub fn start(&mut self) -> Result<(), crate::Error> {
-        debug_assert!(!self.watchloop_handle.load());
+        debug_assert!(self.thread.is_none());
         // Watcher must be Send across the spawned thread boundary; we pass a
         // raw pointer (as usize) and uphold the safety contract manually.
         let this = std::ptr::from_mut::<Watcher>(self) as usize;
@@ -276,16 +274,26 @@ impl Watcher {
     pub unsafe fn shutdown(this: *mut Self, close_descriptors: bool) {
         // SAFETY: caller passes the unique heap pointer returned from init()
         let me = unsafe { &mut *this };
-        if me.watchloop_handle.load() {
+        // Keyed off `thread` (written synchronously by `start()`), not a flag
+        // set by `thread_main`: once `start()` has returned a thread owns
+        // `*this` even if it hasn't been scheduled yet, and freeing here would
+        // hand `thread_main` a freed pointer.
+        if me.thread.is_some() {
             me.mutex.lock();
             me.close_descriptors.store(close_descriptors);
             me.running.store(false);
+            me.platform.wake();
             me.mutex.unlock();
+            // `*this` may be freed by the watcher thread any time after this
+            // unlock; `thread_main` lock/unlocks `mutex` before `heap::take`.
         } else {
+            me.platform.stop();
             if close_descriptors && me.running.load() {
                 let fds = me.watchlist.items_fd();
                 for &fd in fds {
-                    let _ = bun_sys::close(fd);
+                    if fd.is_valid() {
+                        let _ = bun_sys::close(fd);
+                    }
                 }
             }
             // watchlist freed by Drop on Box
@@ -314,36 +322,37 @@ impl Watcher {
             // SAFETY: caller contract — `this` is a valid, exclusively-accessed
             // heap allocation for the duration of this scope.
             let me = unsafe { &mut *this };
-            me.watchloop_handle.store(true);
             me.thread_lock.lock();
             Output::Source::configure_named_thread(zstr!("File Watcher"));
 
             // defer Output.flush() — handled at end
             log!("Watcher started");
 
-            match me.watch_loop() {
-                Err(err) => {
-                    me.watchloop_handle.store(false);
-                    me.platform.stop();
-                    if me.running.load() {
-                        (me.on_error)(me.ctx, err);
-                    }
+            if let Err(err) = me.watch_loop() {
+                if me.running.load() {
+                    (me.on_error)(me.ctx, err);
                 }
-                Ok(()) => {}
             }
+
+            // Barrier: `shutdown()` holds `mutex` across `running.store(false)`
+            // and `platform.wake()`; `stop()` and `heap::take(this)` below
+            // must not run until `shutdown()` has unlocked.
+            me.mutex.lock();
+            me.mutex.unlock();
+
+            me.platform.stop();
 
             // deinit and close descriptors if needed
             if me.close_descriptors.load() {
                 let fds = me.watchlist.items_fd();
                 for &fd in fds {
-                    let _ = bun_sys::close(fd);
+                    if fd.is_valid() {
+                        let _ = bun_sys::close(fd);
+                    }
                 }
             }
             // watchlist freed by Drop below
         }
-
-        // Close trace file if open
-        WatcherTrace::deinit();
 
         Output::flush();
 

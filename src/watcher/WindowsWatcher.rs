@@ -21,6 +21,10 @@ pub struct WindowsWatcher {
     pub watcher: DirWatcher,
     pub buf: PathBuffer,
     pub base_idx: usize,
+    /// Latched true once `next()` has armed a `ReadDirectoryChangesW` on
+    /// `self.watcher.overlapped`; while set, `stop()` must leak the handles
+    /// (the kernel's cancellation write would land in freed memory).
+    pub armed: bool,
 }
 
 impl Default for WindowsWatcher {
@@ -34,6 +38,7 @@ impl Default for WindowsWatcher {
             },
             buf: PathBuffer::uninit(),
             base_idx: 0,
+            armed: false,
         }
     }
 }
@@ -304,6 +309,7 @@ impl WindowsWatcher {
             bun_core::scoped_log!(watcher, "prepare() returned error");
             return Err(err);
         }
+        self.armed = true;
 
         let mut nbytes: w::DWORD = 0;
         let mut key: w::ULONG_PTR = 0;
@@ -325,6 +331,12 @@ impl WindowsWatcher {
                 if err == w::Win32Error::TIMEOUT || err == w::Win32Error(258) {
                     return Ok(None);
                 } else {
+                    // GQCS returning FALSE with `*lpOverlapped != NULL`
+                    // dequeued a failed-I/O completion; nothing remains
+                    // outstanding on our OVERLAPPED in that case.
+                    if overlapped == &mut self.watcher.overlapped as *mut w::OVERLAPPED {
+                        self.armed = false;
+                    }
                     bun_core::scoped_log!(watcher, "GetQueuedCompletionStatus failed: {}", err.0);
                     return Err(bun_sys::Error {
                         errno: bun_sys::SystemErrno::init(err.0 as u32)
@@ -341,6 +353,9 @@ impl WindowsWatcher {
                 if overlapped != &mut self.watcher.overlapped as *mut w::OVERLAPPED {
                     continue;
                 }
+                // Our completion was dequeued; nothing is pending on
+                // `overlapped` until the next successful `prepare()`.
+                self.armed = false;
                 if nbytes == 0 {
                     // ReadDirectoryChangesW internal change-buffer overflow — too many
                     // events arrived between drain and re-arm. This is NOT a shutdown
@@ -358,6 +373,7 @@ impl WindowsWatcher {
                     if let Err(err) = self.watcher.prepare() {
                         return Err(err);
                     }
+                    self.armed = true;
                     continue;
                 }
                 return Ok(Some(EventIterator {
@@ -380,12 +396,23 @@ impl WindowsWatcher {
     }
 
     pub(crate) fn stop(&mut self) {
+        if self.armed {
+            // See `armed`. Proper fix: `CancelIoEx` + IOCP drain before
+            // `heap::take`; until then leak the two handles.
+            return;
+        }
         // SAFETY: handles were opened in init() and are valid until stop() is called once.
         unsafe {
             w::CloseHandle(self.watcher.dir_handle);
             w::CloseHandle(self.iocp);
         }
     }
+
+    /// No-op: `next()` keeps a `ReadDirectoryChangesW` pending on
+    /// `self.watcher.overlapped`, so freeing `self` after waking would race
+    /// the kernel's cancellation write. The thread stays parked in
+    /// `GetQueuedCompletionStatus` until process exit (see `armed`).
+    pub(crate) fn wake(&self) {}
 }
 
 #[repr(u32)]

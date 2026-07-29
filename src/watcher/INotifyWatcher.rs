@@ -3,12 +3,10 @@
 
 use core::ffi::c_int;
 use core::mem::{align_of, size_of};
-use core::sync::atomic::{AtomicU32, Ordering};
 
 use bun_core::{ZStr, env_var, output as Output};
 use bun_paths::MAX_PATH_BYTES;
 use bun_sys::{self, Fd};
-use bun_threading::Futex;
 
 use crate::watcher_impl::{MAX_COUNT as max_count, Op, WatchEvent, WatchItemIndex, Watcher};
 
@@ -40,6 +38,9 @@ pub(crate) type Platform = INotifyWatcher;
 
 pub struct INotifyWatcher {
     pub fd: Fd,
+    /// eventfd written by `wake()`; `read()` ppolls on `[fd, wake_fd]` so
+    /// `Watcher::shutdown` can unpark the thread.
+    pub wake_fd: Fd,
     pub loaded: bool,
 
     // Avoid statically allocating because it increases the binary size.
@@ -52,7 +53,6 @@ pub struct INotifyWatcher {
     /// see `test-fs-watch-recursive-linux-parallel-remove.js`
     read_ptr: Option<ReadPtr>,
 
-    pub watch_count: AtomicU32,
     /// nanoseconds
     pub coalesce_interval: isize,
 }
@@ -61,11 +61,11 @@ impl Default for INotifyWatcher {
     fn default() -> Self {
         Self {
             fd: Fd::INVALID,
+            wake_fd: Fd::INVALID,
             loaded: false,
             eventlist_bytes: bun_core::boxed_zeroed(),
             eventlist_ptrs: [core::ptr::null(); max_count],
             read_ptr: None,
-            watch_count: AtomicU32::new(0),
             coalesce_interval: 100_000,
         }
     }
@@ -128,7 +128,6 @@ impl INotifyWatcher {
     pub(crate) fn watch_path(&mut self, pathname: &ZStr) -> bun_sys::Result<EventListIndex> {
         use bun_sys::linux::IN;
         debug_assert!(self.loaded);
-        let old_count = self.watch_count.fetch_add(1, Ordering::Release);
         let watch_file_mask =
             IN::EXCL_UNLINK | IN::MOVE_SELF | IN::DELETE_SELF | IN::MOVED_TO | IN::MODIFY;
         // SAFETY: fd is a valid inotify fd (loaded == true), pathname is NUL-terminated.
@@ -136,24 +135,19 @@ impl INotifyWatcher {
             bun_sys::linux::inotify_add_watch(self.fd.native(), pathname.as_ptr(), watch_file_mask)
         };
         bun_core::scoped_log!(watcher, "inotify_add_watch({}) = {}", self.fd, rc);
-        let result = if rc < 0 {
+        if rc < 0 {
             Err(
                 bun_sys::Error::from_code_int(bun_sys::last_errno(), bun_sys::Tag::watch)
                     .with_path(pathname.as_bytes()),
             )
         } else {
             Ok(rc)
-        };
-        if old_count == 0 {
-            Futex::wake(&self.watch_count, 10);
         }
-        result
     }
 
     pub(crate) fn watch_dir(&mut self, pathname: &ZStr) -> bun_sys::Result<EventListIndex> {
         use bun_sys::linux::IN;
         debug_assert!(self.loaded);
-        let old_count = self.watch_count.fetch_add(1, Ordering::Release);
         let watch_dir_mask = IN::EXCL_UNLINK
             | IN::DELETE
             | IN::DELETE_SELF
@@ -167,18 +161,14 @@ impl INotifyWatcher {
             bun_sys::linux::inotify_add_watch(self.fd.native(), pathname.as_ptr(), watch_dir_mask)
         };
         bun_core::scoped_log!(watcher, "inotify_add_watch({}) = {}", self.fd, rc);
-        let result = if rc < 0 {
+        if rc < 0 {
             Err(
                 bun_sys::Error::from_code_int(bun_sys::last_errno(), bun_sys::Tag::watch)
                     .with_path(pathname.as_bytes()),
             )
         } else {
             Ok(rc)
-        };
-        if old_count == 0 {
-            Futex::wake(&self.watch_count, 10);
         }
-        result
     }
 
     pub(crate) fn new(_root: &[u8]) -> crate::Result<Self> {
@@ -192,9 +182,17 @@ impl INotifyWatcher {
             return Err(crate::Error::Sys(errno));
         }
         let fd = Fd::from_native(raw);
-        bun_core::scoped_log!(watcher, "{} init", fd);
+        let wake_fd = match bun_sys::eventfd(0, libc::EFD_CLOEXEC | libc::EFD_NONBLOCK) {
+            Ok(fd) => fd,
+            Err(err) => {
+                let _ = bun_sys::close(fd);
+                return Err(crate::Error::Sys(err.get_errno()));
+            }
+        };
+        bun_core::scoped_log!(watcher, "{} init (wake_fd {})", fd, wake_fd);
         Ok(Self {
             fd,
+            wake_fd,
             loaded: true,
             coalesce_interval: env_var::BUN_INOTIFY_COALESCE_INTERVAL
                 .get()
@@ -221,12 +219,53 @@ impl INotifyWatcher {
         // reshaped for borrowck — track length instead of borrowing a sub-slice
         // of self.eventlist_bytes across the whole function.
         let read_len: usize = if let Some(ptr) = self.read_ptr {
-            Futex::wait_forever(&self.watch_count, 0);
             i = ptr.i;
             ptr.len as usize
         } else {
             'outer: loop {
-                Futex::wait_forever(&self.watch_count, 0);
+                // Block until the inotify fd has events or `wake()` has
+                // signalled the eventfd; an inotify fd with no watches never
+                // becomes readable, so `wake_fd` is the only way out then.
+                let mut fds = [
+                    system::pollfd {
+                        fd: self.fd.native(),
+                        events: libc::POLLIN,
+                        revents: 0,
+                    },
+                    system::pollfd {
+                        fd: self.wake_fd.native(),
+                        events: libc::POLLIN,
+                        revents: 0,
+                    },
+                ];
+                // SAFETY: fds is a valid stack array of `fds.len()` entries;
+                // timeout/sigmask are null (block indefinitely).
+                let poll_rc = unsafe {
+                    system::ppoll(
+                        fds.as_mut_ptr(),
+                        fds.len(),
+                        core::ptr::null(),
+                        core::ptr::null(),
+                    )
+                };
+                if poll_rc < 0 {
+                    let e = get_errno(poll_rc);
+                    if matches!(e, E::EAGAIN | E::EINTR) {
+                        continue 'outer;
+                    }
+                    return Err(bun_sys::Error {
+                        errno: e as u32 as _,
+                        syscall: bun_sys::Tag::poll,
+                        ..Default::default()
+                    });
+                }
+                if fds[1].revents != 0 {
+                    // `wake()` fired: let `watch_loop` re-check `running`.
+                    return Ok(&[]);
+                }
+                if fds[0].revents & libc::POLLIN == 0 {
+                    continue 'outer;
+                }
 
                 // SAFETY: fd is a valid inotify fd; buffer is valid for eventlist_bytes.len() bytes.
                 let rc = unsafe {
@@ -364,6 +403,19 @@ impl INotifyWatcher {
             let _ = bun_sys::close(self.fd);
             self.fd = Fd::INVALID;
         }
+        if self.wake_fd != Fd::INVALID {
+            let _ = bun_sys::close(self.wake_fd);
+            self.wake_fd = Fd::INVALID;
+        }
+    }
+
+    /// Unblock the watcher thread's `ppoll()` so it re-checks `running`.
+    /// Called from `Watcher::shutdown` under `Watcher.mutex`.
+    pub(crate) fn wake(&self) {
+        if self.wake_fd == Fd::INVALID {
+            return;
+        }
+        let _ = bun_sys::write(self.wake_fd, &1u64.to_ne_bytes());
     }
 }
 

@@ -3450,6 +3450,7 @@ pub enum PendingCacheField {
     PendingNaptrCacheCares,
     PendingMxCacheCares,
     PendingCaaCacheCares,
+    PendingTlsaCacheCares,
     PendingNsCacheCares,
     PendingPtrCacheCares,
     PendingCnameCacheCares,
@@ -3560,6 +3561,48 @@ impl_cares_record_type!(
     ns_t_caa,
     super::cares_jsc::caa_reply_to_js_response
 );
+
+// TLSA reply list is Rust-owned; `destroy` drops Boxes instead of `ares_free_data`.
+impl CAresRecordType for c_ares::struct_ares_tlsa_reply {
+    const TYPE_NAME: &'static str = "tlsa";
+    const SYSCALL: &'static str = "queryTlsa";
+    const CACHE_FIELD: PendingCacheField = PendingCacheField::PendingTlsaCacheCares;
+    const NS_TYPE: c_ares::NSType = c_ares::NSType::ns_t_tlsa;
+    const RAW_CALLBACK: unsafe extern "C" fn(*mut c_void, c_int, c_int, *mut u8, c_int) =
+        c_ares::ares_reply_callback::<
+            c_ares::struct_ares_tlsa_reply,
+            ResolveInfoRequest<c_ares::struct_ares_tlsa_reply>,
+        >;
+    fn to_js_response(
+        &mut self,
+        global: &JSGlobalObject,
+        type_name: &'static str,
+    ) -> JsResult<JSValue> {
+        super::cares_jsc::tlsa_reply_to_js_response(self, global, type_name.as_bytes())
+    }
+    unsafe fn destroy(this: *mut Self) {
+        // SAFETY: caller contract — `this` is the list head handed to the
+        // completion callback; Rust-owned, not aliased.
+        unsafe { c_ares::struct_ares_tlsa_reply::destroy(this) }
+    }
+}
+impl c_ares::ReplyHandler<c_ares::struct_ares_tlsa_reply>
+    for ResolveInfoRequest<c_ares::struct_ares_tlsa_reply>
+{
+    fn on_reply(
+        &mut self,
+        status: Option<c_ares::Error>,
+        timeouts: i32,
+        results: *mut c_ares::struct_ares_tlsa_reply,
+    ) {
+        let result = if results.is_null() {
+            None
+        } else {
+            Some(results)
+        };
+        Self::on_cares_complete(core::ptr::from_mut(self), status, timeouts, result);
+    }
+}
 
 // `any` — handler receives `Option<Box<struct_any_reply>>` (parser allocates the
 // aggregate); convert via `heap::alloc` so the rest of the pipeline sees a
@@ -3746,6 +3789,8 @@ type MxPendingCache =
     HiveArray<resolve_info_request::PendingCacheKey<c_ares::struct_ares_mx_reply>, 32>;
 type CaaPendingCache =
     HiveArray<resolve_info_request::PendingCacheKey<c_ares::struct_ares_caa_reply>, 32>;
+type TlsaPendingCache =
+    HiveArray<resolve_info_request::PendingCacheKey<c_ares::struct_ares_tlsa_reply>, 32>;
 type NSPendingCache = HiveArray<resolve_info_request::PendingCacheKey<NsHostent>, 32>;
 type PtrPendingCache = HiveArray<resolve_info_request::PendingCacheKey<PtrHostent>, 32>;
 type CnamePendingCache = HiveArray<resolve_info_request::PendingCacheKey<CnameHostent>, 32>;
@@ -3788,6 +3833,7 @@ pub struct Resolver {
     pub pending_naptr_cache_cares: JsCell<NaptrPendingCache>,
     pub pending_mx_cache_cares: JsCell<MxPendingCache>,
     pub pending_caa_cache_cares: JsCell<CaaPendingCache>,
+    pub pending_tlsa_cache_cares: JsCell<TlsaPendingCache>,
     pub pending_ns_cache_cares: JsCell<NSPendingCache>,
     pub pending_ptr_cache_cares: JsCell<PtrPendingCache>,
     pub pending_cname_cache_cares: JsCell<CnamePendingCache>,
@@ -4048,6 +4094,7 @@ pub enum RecordType {
     PTR = 12,
     SOA = 6,
     SRV = 33,
+    TLSA = 52,
     TXT = 16,
     ANY = 255,
 }
@@ -4057,11 +4104,11 @@ bun_core::comptime_string_map! {
         b"A" => RecordType::A, b"AAAA" => RecordType::AAAA, b"ANY" => RecordType::ANY,
         b"CAA" => RecordType::CAA, b"CNAME" => RecordType::CNAME, b"MX" => RecordType::MX,
         b"NS" => RecordType::NS, b"PTR" => RecordType::PTR, b"SOA" => RecordType::SOA,
-        b"SRV" => RecordType::SRV, b"TXT" => RecordType::TXT,
+        b"SRV" => RecordType::SRV, b"TLSA" => RecordType::TLSA, b"TXT" => RecordType::TXT,
         b"a" => RecordType::A, b"aaaa" => RecordType::AAAA, b"any" => RecordType::ANY,
         b"caa" => RecordType::CAA, b"cname" => RecordType::CNAME, b"mx" => RecordType::MX,
         b"ns" => RecordType::NS, b"ptr" => RecordType::PTR, b"soa" => RecordType::SOA,
-        b"srv" => RecordType::SRV, b"txt" => RecordType::TXT,
+        b"srv" => RecordType::SRV, b"tlsa" => RecordType::TLSA, b"txt" => RecordType::TXT,
     };
 }
 
@@ -4146,6 +4193,7 @@ impl Resolver {
             pending_naptr_cache_cares: JsCell::new(HiveArray::init()),
             pending_mx_cache_cares: JsCell::new(HiveArray::init()),
             pending_caa_cache_cares: JsCell::new(HiveArray::init()),
+            pending_tlsa_cache_cares: JsCell::new(HiveArray::init()),
             pending_ns_cache_cares: JsCell::new(HiveArray::init()),
             pending_ptr_cache_cares: JsCell::new(HiveArray::init()),
             pending_cname_cache_cares: JsCell::new(HiveArray::init()),
@@ -4254,6 +4302,7 @@ impl Resolver {
             pending_naptr_cache_cares,
             pending_mx_cache_cares,
             pending_caa_cache_cares,
+            pending_tlsa_cache_cares,
             pending_ns_cache_cares,
             pending_ptr_cache_cares,
             pending_cname_cache_cares,
@@ -4400,6 +4449,7 @@ impl Resolver {
             PendingCacheField::PendingNaptrCacheCares => field!(pending_naptr_cache_cares),
             PendingCacheField::PendingMxCacheCares => field!(pending_mx_cache_cares),
             PendingCacheField::PendingCaaCacheCares => field!(pending_caa_cache_cares),
+            PendingCacheField::PendingTlsaCacheCares => field!(pending_tlsa_cache_cares),
             PendingCacheField::PendingNsCacheCares => field!(pending_ns_cache_cares),
             PendingCacheField::PendingPtrCacheCares => field!(pending_ptr_cache_cares),
             PendingCacheField::PendingCnameCacheCares => field!(pending_cname_cache_cares),
@@ -5140,7 +5190,9 @@ impl Resolver {
                     None => {
                         return Err(global_this.throw_invalid_argument_property_value(
                             b"record",
-                            Some("one of: A, AAAA, ANY, CAA, CNAME, MX, NS, PTR, SOA, SRV, TXT"),
+                            Some(
+                                "one of: A, AAAA, ANY, CAA, CNAME, MX, NS, PTR, SOA, SRV, TLSA, TXT",
+                            ),
                             record_type_value,
                         ));
                     }
@@ -5185,6 +5237,9 @@ impl Resolver {
             }
             RecordType::SRV => {
                 self.do_resolve_cares::<c_ares::struct_ares_srv_reply>(name.slice(), global_this)
+            }
+            RecordType::TLSA => {
+                self.do_resolve_cares::<c_ares::struct_ares_tlsa_reply>(name.slice(), global_this)
             }
             RecordType::TXT => {
                 self.do_resolve_cares::<c_ares::struct_ares_txt_reply>(name.slice(), global_this)
@@ -5470,6 +5525,13 @@ impl Resolver {
         resolve_caa,
         "resolveCaa",
         c_ares::struct_ares_caa_reply,
+        false
+    );
+    resolve_record_fn!(
+        global_resolve_tlsa,
+        resolve_tlsa,
+        "resolveTlsa",
+        c_ares::struct_ares_tlsa_reply,
         false
     );
     resolve_record_fn!(global_resolve_ns, resolve_ns, "resolveNs", NsHostent, true);
@@ -6210,6 +6272,7 @@ export_host_fn!(Resolver::global_resolve_mx, "Bun__DNS__resolveMx");
 export_host_fn!(Resolver::global_resolve_naptr, "Bun__DNS__resolveNaptr");
 export_host_fn!(Resolver::global_resolve_srv, "Bun__DNS__resolveSrv");
 export_host_fn!(Resolver::global_resolve_caa, "Bun__DNS__resolveCaa");
+export_host_fn!(Resolver::global_resolve_tlsa, "Bun__DNS__resolveTlsa");
 export_host_fn!(Resolver::global_resolve_ns, "Bun__DNS__resolveNs");
 export_host_fn!(Resolver::global_resolve_ptr, "Bun__DNS__resolvePtr");
 export_host_fn!(Resolver::global_resolve_cname, "Bun__DNS__resolveCname");

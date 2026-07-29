@@ -49,6 +49,9 @@ impl SocketAddress {
     }
 }
 
+/// IPv6 flow labels are 20 bits wide (RFC 6437).
+const IPV6_FLOWLABEL_MAX: u32 = 0xFFFFF;
+
 #[derive(Copy, Clone)]
 pub struct Options {
     pub family: AF,
@@ -73,9 +76,10 @@ impl Default for Options {
 }
 
 impl Options {
-    /// NOTE: assumes options object has been normalized and validated by JS code.
     pub fn from_js(global: &JSGlobalObject, obj: JSValue) -> JsResult<Options> {
-        if !obj.is_object() {
+        // Node's `validateObject` also rejects arrays and callables.
+        global.validate_object("options", obj, Default::default())?;
+        if obj.is_callable() {
             return Err(global.throw_invalid_argument_type_value(b"options", b"object", obj));
         }
 
@@ -122,13 +126,13 @@ impl Options {
                     fl,
                 ));
             }
-            if !fl.is_uint32_as_any_int() {
+            if !fl.is_uint32_as_any_int() || fl.to_u32() > IPV6_FLOWLABEL_MAX {
                 return Err(global.throw_range_error(
                     fl.as_number(),
                     bun_jsc::RangeErrorOptions {
                         field_name: b"options.flowlabel",
                         min: 0,
-                        max: i64::from(u32::MAX),
+                        max: i64::from(IPV6_FLOWLABEL_MAX),
                         msg: b"",
                     },
                 ));
@@ -304,10 +308,6 @@ impl SocketAddress {
 
 impl SocketAddress {
     /// `new SocketAddress([options])`
-    ///
-    /// ## Safety
-    /// Constructor assumes that options object has already been sanitized and validated
-    /// by JS wrapper.
     ///
     /// ## References
     /// - [Node docs](https://nodejs.org/api/net.html#new-netsocketaddressoptions)

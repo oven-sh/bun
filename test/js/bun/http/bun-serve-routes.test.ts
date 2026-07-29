@@ -773,7 +773,10 @@ describe("per-method route value validation", () => {
       fetch(new URL("/x", server.url)),
       fetch(new URL("/x", server.url), { method: "POST" }),
     ]);
-    expect({ get: { status: g.status, body: await g.text() }, post: { status: p.status, body: await p.text() } }).toEqual({
+    expect({
+      get: { status: g.status, body: await g.text() },
+      post: { status: p.status, body: await p.text() },
+    }).toEqual({
       get: { status: 299, body: "fallback" },
       post: { status: 200, body: "post-ok" },
     });

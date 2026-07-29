@@ -421,6 +421,109 @@ impl File {
     pub fn buffered_writer(&self) -> std::io::BufWriter<FileWriter> {
         std::io::BufWriter::new(FileWriter(self.handle))
     }
+
+    /// Map this file read-only for its full length. The mapping outlives `self`
+    /// (the fd may be closed after this returns).
+    pub fn map_read_only(&self) -> Maybe<MemoryMapping> {
+        let stat = fstat(self.handle)?;
+        // `st_size` is `i64` (libc::stat) on POSIX and `u64` (uv_stat_t) on
+        // Windows; `usize: TryFrom<_>` covers both.
+        #[allow(clippy::unnecessary_fallible_conversions)]
+        let len = usize::try_from(stat.st_size).unwrap_or(0);
+        MemoryMapping::read_only(self.handle, len)
+    }
+}
+
+/// Read-only memory mapping of a file. `mmap` `PROT_READ, MAP_PRIVATE` on
+/// POSIX; `CreateFileMappingW` + `MapViewOfFile` `FILE_MAP_READ` on Windows.
+/// Derefs to `&[u8]` and unmaps on `Drop`.
+pub struct MemoryMapping {
+    ptr: core::ptr::NonNull<u8>,
+    len: usize,
+    #[cfg(windows)]
+    mapping: *mut core::ffi::c_void,
+}
+
+impl MemoryMapping {
+    fn read_only(fd: Fd, len: usize) -> Maybe<Self> {
+        if len == 0 {
+            return Err(Error::new(E::EINVAL, Tag::mmap).with_fd(fd));
+        }
+        #[cfg(not(windows))]
+        {
+            let ptr = mmap(
+                core::ptr::null_mut(),
+                len,
+                libc::PROT_READ,
+                libc::MAP_PRIVATE,
+                fd,
+                0,
+            )?;
+            let Some(ptr) = core::ptr::NonNull::new(ptr) else {
+                return Err(Error::new(E::ENOMEM, Tag::mmap).with_fd(fd));
+            };
+            Ok(Self { ptr, len })
+        }
+        #[cfg(windows)]
+        {
+            use super::windows as w;
+            const PAGE_READONLY: u32 = 0x02;
+            const FILE_MAP_READ: u32 = 0x0004;
+            // SAFETY: `fd.native()` is a valid open file HANDLE; null
+            // attributes/name select the default unnamed mapping; a zero
+            // max-size maps the whole file.
+            let mapping = unsafe {
+                w::CreateFileMappingW(
+                    fd.native(),
+                    core::ptr::null_mut(),
+                    PAGE_READONLY,
+                    0,
+                    0,
+                    core::ptr::null(),
+                )
+            };
+            if mapping.is_null() {
+                return Err(Error::new(w::get_last_errno(), Tag::mmap).with_fd(fd));
+            }
+            // SAFETY: `mapping` is a valid mapping object just created above;
+            // zero size maps the whole file.
+            let ptr = unsafe { w::MapViewOfFile(mapping, FILE_MAP_READ, 0, 0, 0) };
+            let Some(ptr) = core::ptr::NonNull::new(ptr.cast::<u8>()) else {
+                let err = Error::new(w::get_last_errno(), Tag::mmap).with_fd(fd);
+                // SAFETY: `mapping` is a valid HANDLE from CreateFileMappingW.
+                unsafe { w::CloseHandle(mapping) };
+                return Err(err);
+            };
+            Ok(Self { ptr, len, mapping })
+        }
+    }
+}
+
+impl core::ops::Deref for MemoryMapping {
+    type Target = [u8];
+    fn deref(&self) -> &[u8] {
+        // SAFETY: `ptr` points at a live mapping of `len` bytes until `Drop`.
+        unsafe { core::slice::from_raw_parts(self.ptr.as_ptr(), self.len) }
+    }
+}
+
+impl Drop for MemoryMapping {
+    fn drop(&mut self) {
+        #[cfg(not(windows))]
+        {
+            let _ = munmap(self.ptr.as_ptr(), self.len);
+        }
+        #[cfg(windows)]
+        {
+            use super::windows as w;
+            // SAFETY: `ptr` is the base of a live view; `mapping` is its
+            // backing HANDLE. Both were validated non-null in `read_only`.
+            unsafe {
+                w::UnmapViewOfFile(self.ptr.as_ptr().cast());
+                w::CloseHandle(self.mapping);
+            }
+        }
+    }
 }
 
 #[cfg(test)]

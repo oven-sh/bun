@@ -39,8 +39,19 @@ pub struct ElfFile {
 }
 
 impl ElfFile {
-    pub fn init(data: Vec<u8>) -> Result<Box<ElfFile>, ElfError> {
-        validate_elf64_le(&data)?;
+    /// Copy `input` into an owned buffer pre-sized for the `write_bun_section`
+    /// output so the later `resize` never reallocates. `payload_len` is the
+    /// `.bun` section body length that will be passed to `write_bun_section`.
+    pub fn init(input: &[u8], payload_len: usize) -> Result<Box<ElfFile>, ElfError> {
+        validate_elf64_le(input)?;
+        let cap = match output_size(input, payload_len) {
+            Ok(n) => usize::try_from(n).expect("int cast"),
+            // Fall back to input size; `write_bun_section` will surface the
+            // real error (or grow the Vec if this was overly pessimistic).
+            Err(_) => input.len(),
+        };
+        let mut data = Vec::with_capacity(cap.max(input.len()));
+        data.extend_from_slice(input);
         Ok(Box::new(ElfFile { data }))
     }
 
@@ -224,30 +235,11 @@ impl ElfFile {
         // naturally produce; WSL1's kernel loader rejects binaries that
         // instead add a late PT_LOAD by repurposing PT_GNU_STACK (#29963).
         let phdr_size = size_of::<Elf64_Phdr>();
-        let mut rw_phdr_index: Option<usize> = None;
-        let mut rw_phdr: Elf64_Phdr = Elf64_Phdr::ZEROED;
-        let mut max_vaddr_end: u64 = 0;
-        for i in 0..ehdr.e_phnum as usize {
-            let phdr_offset = usize::try_from(ehdr.e_phoff).expect("int cast") + i * phdr_size;
-            let phdr: Elf64_Phdr = read_struct(&self.data[phdr_offset..][..phdr_size]);
-            if phdr.p_type != PT_LOAD {
-                continue;
-            }
-
-            let vaddr_end = phdr.p_vaddr + phdr.p_memsz;
-            if vaddr_end > max_vaddr_end {
-                max_vaddr_end = vaddr_end;
-            }
-
-            if (phdr.p_flags & PF_W) != 0 && rw_phdr_index.is_none() {
-                rw_phdr_index = Some(i);
-                rw_phdr = phdr;
-            }
-        }
-
-        let Some(rw_index) = rw_phdr_index else {
-            return Err(ElfError::NoWritableLoadSegment);
-        };
+        let RwLoadScan {
+            rw_index,
+            rw_phdr,
+            max_vaddr_end,
+        } = scan_load_segments(&self.data, ehdr)?;
 
         // Place the new data at a page-aligned virtual address past every
         // existing mapping. page_size is ≥ 128 so this also guarantees the
@@ -310,6 +302,8 @@ impl ElfFile {
         // resize() zero-fills, so the explicit zero-fills below are
         // partially redundant but harmless.
         let total_new_size_usz = usize::try_from(total_new_size).expect("int cast");
+        // `init` pre-sizes to `output_size(...)`; keep the two in lockstep.
+        debug_assert!(self.data.capacity() >= total_new_size_usz);
         self.data
             .reserve(total_new_size_usz.saturating_sub(self.data.len()));
         self.data.resize(total_new_size_usz, 0);
@@ -494,6 +488,82 @@ impl ElfFile {
             _ => 0x1000,                      // 4KB
         }
     }
+}
+
+struct RwLoadScan {
+    rw_index: usize,
+    rw_phdr: Elf64_Phdr,
+    max_vaddr_end: u64,
+}
+
+/// Walk PT_LOAD entries, returning the first writable segment and the highest
+/// vaddr end across all of them. Shared by `write_bun_section` and
+/// `output_size` so the capacity pre-computation in `init` stays in lockstep
+/// with the actual layout.
+fn scan_load_segments(data: &[u8], ehdr: Elf64_Ehdr) -> Result<RwLoadScan, ElfError> {
+    let phdr_size = size_of::<Elf64_Phdr>();
+
+    // `--compile-executable-path` accepts arbitrary files; reject a bogus
+    // e_phoff/e_phnum up front instead of indexing past `data`.
+    let phdr_table_end = ehdr
+        .e_phoff
+        .saturating_add((ehdr.e_phnum as u64).saturating_mul(phdr_size as u64));
+    if phdr_table_end > data.len() as u64 {
+        return Err(ElfError::InvalidElfFile);
+    }
+
+    let mut rw_phdr_index: Option<usize> = None;
+    let mut rw_phdr: Elf64_Phdr = Elf64_Phdr::ZEROED;
+    let mut max_vaddr_end: u64 = 0;
+    for i in 0..ehdr.e_phnum as usize {
+        let phdr_offset = usize::try_from(ehdr.e_phoff).expect("int cast") + i * phdr_size;
+        let phdr: Elf64_Phdr = read_struct(&data[phdr_offset..][..phdr_size]);
+        if phdr.p_type != PT_LOAD {
+            continue;
+        }
+
+        let Some(vaddr_end) = phdr.p_vaddr.checked_add(phdr.p_memsz) else {
+            return Err(ElfError::InvalidElfFile);
+        };
+        if vaddr_end > max_vaddr_end {
+            max_vaddr_end = vaddr_end;
+        }
+
+        if (phdr.p_flags & PF_W) != 0 && rw_phdr_index.is_none() {
+            rw_phdr_index = Some(i);
+            rw_phdr = phdr;
+        }
+    }
+    let Some(rw_index) = rw_phdr_index else {
+        return Err(ElfError::NoWritableLoadSegment);
+    };
+    Ok(RwLoadScan {
+        rw_index,
+        rw_phdr,
+        max_vaddr_end,
+    })
+}
+
+/// Compute the exact file size `write_bun_section` will produce for `input`
+/// and a payload of `payload_len` bytes, without allocating. Used by `init`
+/// to size the working buffer so the later `resize` never reallocates.
+fn output_size(input: &[u8], payload_len: usize) -> Result<u64, ElfError> {
+    let ehdr = read_ehdr(input);
+    let scan = scan_load_segments(input, ehdr)?;
+    let page_size = ElfFile::page_size(ehdr);
+
+    let header_size: u64 = size_of::<u64>() as u64;
+    let aligned_new_size = align_up(header_size + payload_len as u64, page_size);
+    let new_vaddr = align_up(scan.max_vaddr_end, page_size);
+    let new_file_offset = scan.rw_phdr.p_offset + (new_vaddr - scan.rw_phdr.p_vaddr);
+
+    let old_rw_file_end = scan.rw_phdr.p_offset + scan.rw_phdr.p_filesz;
+    let old_file_size: u64 = input.len() as u64;
+    if old_rw_file_end > old_file_size {
+        return Err(ElfError::InvalidElfFile);
+    }
+    let moved_tail_size: u64 = old_file_size - old_rw_file_end;
+    Ok(new_file_offset + aligned_new_size + moved_tail_size)
 }
 
 struct BunSectionInfo {

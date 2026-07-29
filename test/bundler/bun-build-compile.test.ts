@@ -578,4 +578,56 @@ describe("compiled binary in a deleted cwd", () => {
   );
 });
 
+// The ELF inject path used to copy the source executable to the temp file,
+// read it back into the heap, rewrite it in memory, then write the whole
+// thing back again: 3x the binary over the write() syscall for a single
+// --compile. This measures wchar from /proc/self/io around Bun.build to
+// prove the output is emitted once.
+describe("bun build --compile inject I/O", () => {
+  test.skipIf(!isLinux)("writes the output executable once", async () => {
+    using dir = tempDir("build-compile-io", {
+      "app.js": `console.log("io-probe");`,
+      "probe.ts": `
+        import { readFileSync, statSync } from "node:fs";
+        const wchar = () => {
+          const m = readFileSync("/proc/self/io", "utf8").match(/^wchar:\\s+(\\d+)/m);
+          return m ? Number(m[1]) : 0;
+        };
+        const before = wchar();
+        const result = await Bun.build({
+          entrypoints: [process.argv[2]],
+          compile: { executablePath: process.execPath, outfile: process.argv[3] },
+        });
+        const after = wchar();
+        if (!result.success) throw new Error(result.logs.join("\\n"));
+        const out = statSync(process.argv[3]).size;
+        console.log(JSON.stringify({ written: after - before, out }));
+      `,
+    });
+    const outfile = join(String(dir), "app-out");
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), join(String(dir), "probe.ts"), join(String(dir), "app.js"), outfile],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).not.toContain("error:");
+    expect(stdout).not.toBe("");
+    expect(exitCode).toBe(0);
+
+    const { written, out } = JSON.parse(stdout.trim().split("\n").pop()!);
+    expect(out).toBeGreaterThan(0);
+    // Single emit of the output: ratio ~1.0. Old path measured ~2.95x.
+    expect(written / out).toBeLessThan(1.5);
+
+    await using run = Bun.spawn({ cmd: [outfile], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    const [runOut, , runExit] = await Promise.all([run.stdout.text(), run.stderr.text(), run.exited]);
+    expect(runOut).toBe("io-probe\n");
+    expect(runExit).toBe(0);
+  });
+});
+
 // file command test works well

@@ -288,7 +288,7 @@ test.skipIf(isWindows)("rm preserve-root guard resolves against the shell cwd", 
     import { $ } from "bun";
     $.nothrow();
     const r = await $\`rm -rf sub\`.cwd(${JSON.stringify(String(dir))}).quiet();
-    console.log(JSON.stringify({ exitCode: r.exitCode, stderr: r.stderr.toString() }));
+    console.log(JSON.stringify({ cwd: process.cwd(), exitCode: r.exitCode, stderr: r.stderr.toString() }));
   `;
   await using proc = Bun.spawn({
     cmd: [bunExe(), "-e", fixture],
@@ -300,6 +300,7 @@ test.skipIf(isWindows)("rm preserve-root guard resolves against the shell cwd", 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(stderr).toBe("");
   expect({ ...JSON.parse(stdout.trim()), subExists: existsSync(path.join(String(dir), "sub")) }).toEqual({
+    cwd: "/",
     exitCode: 0,
     stderr: "",
     subExists: false,

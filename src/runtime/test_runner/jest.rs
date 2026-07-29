@@ -589,7 +589,7 @@ pub mod on_unhandled_rejection {
         jsc_vm: &mut VirtualMachine,
         global_object: &JSGlobalObject,
         rejection: JSValue,
-    ) {
+    ) -> bool {
         if let Some(buntest_strong) = bun_test::clone_active_strong() {
             // `buntest_strong` released by Rc drop.
             // SAFETY: single-threaded JS VM; `buntest_strong` is the only handle
@@ -622,7 +622,7 @@ pub mod on_unhandled_rejection {
             // for `Terminated` (which carries no pending exception to take).
             use bun_jsc::JsResultExt as _;
             bun_test::BunTest::run(&buntest_strong, global_object).report_unhandled(global_object);
-            return;
+            return false;
         }
 
         // SAFETY: `on_unhandled_rejection_exception_list` is either None or a
@@ -632,6 +632,7 @@ pub mod on_unhandled_rejection {
             .on_unhandled_rejection_exception_list
             .map(|p| unsafe { &mut *p.as_ptr() });
         jsc_vm.run_error_handler(rejection, exception_list);
+        false
     }
 }
 

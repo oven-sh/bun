@@ -1301,13 +1301,14 @@ impl Run {
         this: &mut VirtualMachine,
         _global: &JSGlobalObject,
         value: JSValue,
-    ) {
+    ) -> bool {
         // SAFETY: BORROW_PARAM ptr set by caller, outlives this call.
         let list = this
             .on_unhandled_rejection_exception_list
             .map(|p| unsafe { &mut *p.as_ptr() });
         this.run_error_handler(value, list);
         ANY_UNHANDLED.store(true, Ordering::Relaxed);
+        false
     }
 
     /// Wire `--eval`/`--print`

@@ -1,7 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { once } from "events";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import path from "path";
+import { pathToFileURL } from "url";
 import wt from "worker_threads";
 
 describe("web worker", () => {
@@ -332,7 +333,242 @@ describe("web worker", () => {
       const [err] = await once(worker, "error");
       expect(err.type).toBe("error");
       expect(err.message).toBe("5");
-      expect(err.error).toBe(null);
+      expect(err.error).toBe(5);
+      expect(err.cancelable).toBe(true);
+    });
+
+    test("thrown Error populates message/filename/lineno/colno/error and is cancelable", async () => {
+      const url = URL.createObjectURL(new Blob(["throw new Error('EE-BOOM');"], { type: "text/javascript" }));
+      const worker = new Worker(url);
+      try {
+        const [e] = await once(worker, "error");
+        expect({
+          type: e.type,
+          cancelable: e.cancelable,
+          multiline: /\n/.test(e.message),
+          message: e.message,
+          filename: e.filename,
+          lineno: e.lineno,
+          colno: e.colno,
+          errorIsError: e.error instanceof Error,
+          errorMessage: e.error?.message,
+        }).toEqual({
+          type: "error",
+          cancelable: true,
+          multiline: false,
+          message: "Error: EE-BOOM",
+          filename: url,
+          lineno: 1,
+          colno: 11,
+          errorIsError: true,
+          errorMessage: "EE-BOOM",
+        });
+      } finally {
+        worker.terminate();
+      }
+    });
+
+    test("thrown Error from a file populates filename/lineno", async () => {
+      using dir = tempDir("worker-error-event", {
+        "bad-worker.mjs": "\n\nthrow new TypeError('boom from file');\n",
+      });
+      const workerPath = path.join(String(dir), "bad-worker.mjs");
+      const worker = new Worker(pathToFileURL(workerPath).href, { type: "module" });
+      try {
+        const [e] = await once(worker, "error");
+        expect(e.message).toBe("TypeError: boom from file");
+        expect(e.filename).toEndWith("bad-worker.mjs");
+        expect(path.isAbsolute(e.filename)).toBe(true);
+        expect(e.lineno).toBe(3);
+        expect(e.colno).toBe(11);
+        expect(e.error).toBeInstanceOf(TypeError);
+        expect(e.error.message).toBe("boom from file");
+      } finally {
+        worker.terminate();
+      }
+    });
+
+    test("self.onerror inside the worker is cancelable and populated", async () => {
+      const script = [
+        "self.addEventListener('error', e => {",
+        "  self.postMessage({",
+        "    cancelable: e.cancelable,",
+        "    message: e.message,",
+        "    filename: e.filename,",
+        "    lineno: e.lineno,",
+        "    colno: e.colno,",
+        "    errorMessage: e.error && e.error.message,",
+        "  });",
+        "});",
+        "throw new Error('inside');",
+      ].join("\n");
+      const url = URL.createObjectURL(new Blob([script], { type: "text/javascript" }));
+      const worker = new Worker(url);
+      try {
+        const [msg] = await once(worker, "message");
+        expect(msg.data).toEqual({
+          cancelable: true,
+          message: "Error: inside",
+          filename: url,
+          lineno: 11,
+          colno: 11,
+          errorMessage: "inside",
+        });
+      } finally {
+        worker.terminate();
+      }
+    });
+
+    test("self.onerror preventDefault() keeps the worker alive and suppresses the parent error event", async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
+          const script = [
+            "self.addEventListener('error', e => { e.preventDefault(); });",
+            "setTimeout(() => self.postMessage('still-alive'), 0);",
+            "throw new Error('handled');",
+          ].join("\\n");
+          const w = new Worker(URL.createObjectURL(new Blob([script], { type: "text/javascript" })));
+          w.onerror = e => { console.log("PARENT-ERROR:" + e.message); process.exit(1); };
+          w.onmessage = e => { console.log("MSG:" + e.data); w.terminate(); };
+          w.addEventListener("close", e => { console.log("CLOSE:" + e.code); process.exit(e.code); });
+          `,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(stdout).not.toContain("PARENT-ERROR");
+      expect(stdout).toContain("MSG:still-alive");
+      expect(stdout).toContain("CLOSE:0");
+      expect(exitCode).toBe(0);
+    });
+
+    test("error event fires once per rejection under --unhandled-rejections=throw", async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "--unhandled-rejections=throw",
+          "-e",
+          `
+          const script = [
+            "self.addEventListener('error', e => { e.preventDefault(); postMessage('errorevent'); });",
+            "self.onmessage = () => postMessage('pong');",
+            "Promise.reject(new Error('rejected-once'));",
+          ].join("\\n");
+          const w = new Worker(URL.createObjectURL(new Blob([script], { type: "text/javascript" })));
+          const events = [];
+          w.onmessage = e => {
+            events.push(e.data);
+            if (e.data === "errorevent") w.postMessage("ping");
+            if (e.data === "pong") { console.log(JSON.stringify(events)); w.terminate(); process.exit(0); }
+          };
+          w.addEventListener("close", e => { console.log("CLOSE:" + e.code); process.exit(1); });
+          `,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      // A second "errorevent" here means the same rejection was dispatched twice.
+      expect(stdout.trim()).toBe('["errorevent","pong"]');
+      expect(exitCode).toBe(0);
+    });
+
+    test("preventDefault() preserves a user-set process.exitCode", async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
+          const script = [
+            "process.exitCode = 42;",
+            "self.addEventListener('error', e => {",
+            "  e.preventDefault();",
+            "  queueMicrotask(() => postMessage(process.exitCode));",
+            "});",
+            "throw new Error('thrown-and-handled');",
+          ].join("\\n");
+          const w = new Worker(URL.createObjectURL(new Blob([script], { type: "text/javascript" })));
+          w.onmessage = e => { console.log("EXITCODE:" + e.data); w.terminate(); process.exit(e.data === 42 ? 0 : 1); };
+          w.onerror = e => { console.log("PARENT-ERROR:" + e.message); process.exit(1); };
+          w.addEventListener("close", e => { console.log("CLOSE:" + e.code); process.exit(1); });
+          `,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(stdout).toContain("EXITCODE:42");
+      expect(exitCode).toBe(0);
+    });
+
+    test("preventDefault() keeps a process.exitCode set inside the error handler", async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
+          const script = [
+            "self.addEventListener('error', e => {",
+            "  process.exitCode = 1;",
+            "  e.preventDefault();",
+            "  queueMicrotask(() => postMessage(process.exitCode));",
+            "});",
+            "throw new Error('handled-but-failed');",
+          ].join("\\n");
+          const w = new Worker(URL.createObjectURL(new Blob([script], { type: "text/javascript" })));
+          w.onmessage = e => { console.log("EXITCODE:" + e.data); w.terminate(); process.exit(e.data === 1 ? 0 : 1); };
+          w.onerror = e => { console.log("PARENT-ERROR:" + e.message); process.exit(1); };
+          w.addEventListener("close", e => { console.log("CLOSE:" + e.code); process.exit(1); });
+          `,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(stdout).toContain("EXITCODE:1");
+      expect(exitCode).toBe(0);
+    });
+
+    test("a throw after preventDefault() still exits the worker with code 1", async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
+          const script = [
+            "self.addEventListener('error', e => {",
+            "  e.preventDefault();",
+            "  throw new Error('handler-bug');",
+            "});",
+            "throw new Error('original');",
+          ].join("\\n");
+          const w = new Worker(URL.createObjectURL(new Blob([script], { type: "text/javascript" })));
+          let sawError = false;
+          w.onerror = e => { sawError = true; console.log("PARENT-ERROR:" + e.message); };
+          w.addEventListener("close", e => { console.log("CLOSE:" + e.code); process.exit(!sawError && e.code === 1 ? 0 : 1); });
+          `,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(stdout).not.toContain("PARENT-ERROR");
+      expect(stdout).toContain("CLOSE:1");
+      expect(exitCode).toBe(0);
     });
   });
 });

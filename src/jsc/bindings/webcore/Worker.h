@@ -47,6 +47,7 @@ class JSPromise;
 namespace WebCore {
 
 class ScriptExecutionContext;
+class SerializedScriptValue;
 struct StructuredSerializeOptions;
 struct WorkerOptions;
 
@@ -132,7 +133,7 @@ public:
     // -- Worker-thread entry points (each posts to m_parentContextId) --------
     void dispatchOnline(Zig::GlobalObject* workerGlobalObject);
     void fireEarlyMessages(Zig::GlobalObject* workerGlobalObject);
-    void dispatchErrorWithMessage(WTF::String message);
+    void dispatchError(WTF::String message, WTF::String filename, unsigned lineno, unsigned colno, RefPtr<SerializedScriptValue>&& serializedError);
     bool dispatchErrorWithValue(Zig::GlobalObject* workerGlobalObject, JSValue value);
     bool dispatchExit(int32_t exitCode);
 

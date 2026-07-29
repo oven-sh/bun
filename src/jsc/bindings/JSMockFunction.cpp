@@ -386,8 +386,10 @@ public:
             } else if (this->spyAttributes & SpyAttributeProxy) {
                 // Restore via [[DefineOwnProperty]] so the Proxy handler (or its target) sees the
                 // write, and so an accessor we installed is replaced rather than invoked.
+                // clearSpy() has no error return and is also driven from JSMock__resetSpies' loop
+                // with no per-iteration exception check, so a throwing trap is swallowed here.
                 auto catcher = DECLARE_TOP_EXCEPTION_SCOPE(this->vm());
-                JSC::PropertyDescriptor descriptor(implValue, static_cast<unsigned>(0));
+                JSC::PropertyDescriptor descriptor(implValue, this->spyAttributes & ~SpyAttributeMask);
                 target->methodTable()->defineOwnProperty(target, globalObject(), this->spyIdentifier, descriptor, false);
                 if (catcher.exception()) [[unlikely]]
                     catcher.clearException();

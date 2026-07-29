@@ -769,7 +769,7 @@ describe("File prototype chain", () => {
     const blob = new Blob(["hi"]);
     expect(Object.create(blob) instanceof File).toBe(false);
     expect(Object.create(blob) instanceof Blob).toBe(true);
-    expect(({ __proto__: blob }) instanceof File).toBe(false);
+    expect({ __proto__: blob } instanceof File).toBe(false);
   });
 
   test("File whose prototype has been set to null", () => {
@@ -803,7 +803,7 @@ describe("File prototype chain", () => {
     expect((undefined as any) instanceof File).toBe(false);
     expect((42 as any) instanceof File).toBe(false);
     expect(("hi" as any) instanceof File).toBe(false);
-    expect(({}) instanceof File).toBe(false);
+    expect({} instanceof File).toBe(false);
   });
 
   test("File instances have Blob methods via inheritance", async () => {

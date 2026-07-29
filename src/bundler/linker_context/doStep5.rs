@@ -163,7 +163,7 @@ impl LinkerContext<'_> {
         // TODO: can this be u32 instead of a string?
         // if yes, we could just move all the hidden exports to the end of the array
         // and only store a count instead of an array
-        strings::sort_desc(aliases.as_mut_slice());
+        strings::sort_asc(aliases.as_mut_slice());
         let export_aliases = aliases.into_bump_slice();
         *row_mut!(
             meta.sorted_and_filtered_export_aliases,

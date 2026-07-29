@@ -1,6 +1,6 @@
 import type { Server, Subprocess } from "bun";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, isDebug, tempDir, tempDirWithFiles } from "harness";
 import { join } from "path";
 
 function replaceHash(html: string) {
@@ -822,7 +822,11 @@ test("you can have HTML imports apply to only specific methods outside of the de
 });
 
 for (let development of [true, false, { hmr: false }]) {
-  test(`mixed api and html routes with non-* false routes`, async () => {
+  // `{ hmr: false }` does a full React production bundle for every route
+  // fetch; under the debug build that is slow enough to exceed the default
+  // per-test timeout. The hmr-off path is covered by the release lanes.
+  const maybeTest = isDebug && typeof development === "object" ? test.skip : test;
+  maybeTest(`mixed api and html routes with non-* false routes`, async () => {
     const dir = join(import.meta.dir, "jsx-runtime");
     const { default: html } = await import(join(dir, "index.html"));
 
@@ -865,7 +869,7 @@ for (let development of [true, false, { hmr: false }]) {
     }
   });
 
-  test(`mixed api and html routes with development: ${JSON.stringify(development)}`, async () => {
+  maybeTest(`mixed api and html routes with development: ${JSON.stringify(development)}`, async () => {
     const dir = join(import.meta.dir, "jsx-runtime");
     const { default: html } = await import(join(dir, "index.html"));
 

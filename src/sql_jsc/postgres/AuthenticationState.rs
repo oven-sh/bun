@@ -6,6 +6,7 @@ pub enum AuthenticationState {
     Ok,
     Sasl(SASL),
     Md5,
+    ClearText,
 }
 
 impl AuthenticationState {

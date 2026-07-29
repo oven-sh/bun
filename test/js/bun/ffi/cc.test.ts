@@ -917,7 +917,7 @@ describe("double <-> JSValue conversions", () => {
         huge_bigint: ["number", "Infinity"],
         negative_huge_bigint: ["number", "-Infinity"],
         fractional: ["number", "-2.5"],
-        string: ["number", "2.5"],
+        string: ["threw", "TypeError"],
         null_arg: ["number", "0"],
         undefined_arg: ["number", "NaN"],
       },

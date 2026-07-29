@@ -1,13 +1,15 @@
 import { afterAll, describe, expect, it } from "bun:test";
 import { existsSync } from "fs";
-import { bunEnv, bunExe, isGlibcVersionAtLeast, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, compileFixture, isGlibcVersionAtLeast, isWindows, tempDir } from "harness";
 import { platform } from "os";
 
 import {
-  dlopen as _dlopen,
+  cc,
   CFunction,
   CString,
+  dlopen,
   JSCallback,
+  linkSymbols,
   ptr,
   read,
   suffix,
@@ -16,15 +18,15 @@ import {
   viewSource,
 } from "bun:ffi";
 
-const dlopen = (...args) => {
-  try {
-    return _dlopen(...args);
-  } catch (err) {
-    console.error("To enable this test, run `make compile-ffi-test`.");
-    throw err;
-  }
-};
-const ok = existsSync("/tmp/bun-ffi-test." + suffix);
+let FFI_FIXTURE_PATH = null;
+let ABI_FIXTURE_PATH = null;
+try {
+  FFI_FIXTURE_PATH = compileFixture(import.meta.dir + "/ffi-test.c");
+  ABI_FIXTURE_PATH = compileFixture(import.meta.dir + "/ffi-abi-fixture.c");
+} catch (e) {
+  if (!String(e?.message ?? e).includes("no C compiler")) throw e;
+  console.warn(`[ffi.test] fixture-dependent tests skipped: ${e?.message ?? e}`);
+}
 
 it("ffi print", async () => {
   await Bun.write(
@@ -155,6 +157,22 @@ function getTypes(fast) {
     identity_int32_t: {
       returns: "int32_t",
       args: ["int32_t"],
+    },
+    returns_cstring: {
+      returns: "cstring",
+      args: [],
+    },
+    returns_null_cstring: {
+      returns: "cstring",
+      args: [],
+    },
+    echoes_cstring: {
+      returns: "cstring",
+      args: ["cstring"],
+    },
+    strlen_cstring: {
+      returns: "uint64_t",
+      args: ["cstring"],
     },
     identity_int64_t: {
       returns: int64_t,
@@ -307,6 +325,10 @@ function getTypes(fast) {
       returns: "ptr",
       args: [],
     },
+    getNoopDeallocatorCallback: {
+      returns: "ptr",
+      args: [],
+    },
     getDeallocatorBuffer: {
       returns: "ptr",
       args: [],
@@ -360,6 +382,7 @@ function ffiRunner(fast) {
         is_null,
         does_pointer_equal_42_as_int32_t,
         ptr_should_point_to_42_as_int32_t,
+        getNoopDeallocatorCallback,
         cb_identity_true,
         cb_identity_false,
         cb_identity_42_char,
@@ -378,7 +401,7 @@ function ffiRunner(fast) {
         getDeallocatorBuffer,
       },
       close,
-    } = dlopen("/tmp/bun-ffi-test.dylib", types);
+    } = dlopen(FFI_FIXTURE_PATH, types);
     it("primitives", () => {
       Bun.gc(true);
       expect(returns_true()).toBe(true);
@@ -470,10 +493,14 @@ function ffiRunner(fast) {
       expect(cptr != 0).toBe(true);
       expect(typeof cptr === "number").toBe(true);
       expect(does_pointer_equal_42_as_int32_t(cptr)).toBe(true);
-      const buffer = toBuffer(cptr, 0, 4);
-      expect(buffer.readInt32(0)).toBe(42);
-      expect(new DataView(toArrayBuffer(cptr, 0, 4), 0, 4).getInt32(0, true)).toBe(42);
-      expect(ptr(buffer)).toBe(cptr);
+      const noopDeallocator = getNoopDeallocatorCallback();
+      {
+        const buffer = toBuffer(cptr, 0, 4, noopDeallocator);
+        expect(buffer.readInt32(0)).toBe(42);
+        expect(new DataView(toArrayBuffer(cptr, 0, 4, noopDeallocator), 0, 4).getInt32(0, true)).toBe(42);
+        expect(ptr(buffer)).toBe(cptr);
+      }
+      Bun.gc(true);
       expect(new CString(cptr, 0, 1).toString()).toBe("*");
       expect(identity_ptr(cptr)).toBe(cptr);
       const second_ptr = ptr(new Buffer(8));
@@ -647,14 +674,11 @@ it("read", () => {
   delete globalThis.buffer;
 });
 
-if (ok) {
-  describe("run ffi", () => {
-    ffiRunner(false);
-    ffiRunner(true);
-  });
-} else {
-  it.skip("run ffi", () => {});
-}
+describe.skipIf(!FFI_FIXTURE_PATH)("run ffi", () => {
+  if (!FFI_FIXTURE_PATH) return;
+  ffiRunner(false);
+  ffiRunner(true);
+});
 
 it("dlopen throws an error instead of returning it", () => {
   let err;
@@ -715,6 +739,163 @@ it(".ptr is not leaked", () => {
   }
 });
 
+describe.skipIf(!FFI_FIXTURE_PATH)("engine-native cstring", () => {
+  it("dlopen returns:'cstring' yields a string primitive; NULL yields null", () => {
+    const {
+      symbols: { returns_cstring, returns_null_cstring },
+    } = dlopen(FFI_FIXTURE_PATH, {
+      returns_cstring: { returns: "cstring", args: [] },
+      returns_null_cstring: { returns: "cstring", args: [] },
+    });
+    const value = returns_cstring();
+    expect(typeof value).toBe("string");
+    expect(value).toBe("engine cstring");
+    expect(returns_null_cstring()).toBe(null);
+  });
+
+  it("args:['cstring'] accepts a JS string, a TypedArray, and a pointer", () => {
+    const {
+      symbols: { echoes_cstring, strlen_cstring },
+    } = dlopen(FFI_FIXTURE_PATH, {
+      echoes_cstring: { returns: "cstring", args: ["cstring"] },
+      strlen_cstring: { returns: "uint64_t", args: ["cstring"] },
+    });
+    expect(echoes_cstring("round trip")).toBe("round trip");
+    expect(strlen_cstring("héllo")).toBe(6n);
+    const bytes = Buffer.from("bytes\0", "utf8");
+    expect(strlen_cstring(bytes)).toBe(5n);
+    expect(strlen_cstring(ptr(bytes))).toBe(5n);
+  });
+
+  it("a JSCallback receiving a cstring parameter gets a string", () => {
+    const {
+      symbols: { echoes_cstring },
+    } = dlopen(FFI_FIXTURE_PATH, {
+      echoes_cstring: { returns: "cstring", args: ["cstring"] },
+    });
+    let received;
+    const cb = new JSCallback(s => (received = s), { args: ["cstring"], returns: "void" });
+    try {
+      const call = CFunction({ ptr: cb.ptr, args: ["cstring"], returns: "void" });
+      call("hello from js");
+    } finally {
+      cb.close();
+    }
+    expect(received).toBe("hello from js");
+    expect(typeof received).toBe("string");
+    expect(echoes_cstring(received)).toBe("hello from js");
+  });
+});
+
+describe("read edge cases", () => {
+  it("a negative byteOffset does not abort the process", () => {
+    const buf = new Uint8Array([9, 8, 7, 6]);
+    const base = ptr(buf) + 2;
+    expect(read.u8(base, -1)).toBe(8);
+    expect(read.u8(base, -2)).toBe(9);
+    expect(() => read.u8(1, -5)).toThrow("ptr cannot be zero");
+    expect(() => read.u8(0)).toThrow("ptr cannot be zero");
+  });
+
+  it("read.* and toArrayBuffer accept a BigInt pointer", () => {
+    const buf = new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8]);
+    const address = BigInt(ptr(buf));
+    expect(read.u8(address, 0)).toBe(1);
+    expect(read.u8(address, 3)).toBe(4);
+    expect(new Uint8Array(toArrayBuffer(address, 0, 8))).toEqual(buf);
+    expect(() => read.u8(-1n, 0)).toThrow("Expected a pointer");
+    expect(() => CFunction({ ptr: -1n, args: [], returns: "void" })).toThrow(/out of range/);
+  });
+});
+
+describe("CString", () => {
+  it("call and construct forms are identical for falsy pointers", () => {
+    for (const falsy of [null, undefined, 0]) {
+      expect(CString(falsy)).toBe("");
+      expect(new CString(falsy)).toBe("");
+    }
+  });
+  it("accepts a BigInt pointer", () => {
+    const buf = Buffer.from("bigint ok\0", "utf8");
+    const address = BigInt(ptr(buf));
+    expect(new CString(address)).toBe("bigint ok");
+    expect(CString(address)).toBe("bigint ok");
+  });
+  it("throws (not stringifies) on an invalid pointer", () => {
+    expect(() => new CString(-1)).toThrow("ptr must be a number");
+    expect(() => CString(-1)).toThrow("ptr must be a number");
+    expect(() => new CString(-1n)).toThrow(/out of range/);
+    expect(() => CString(-1n)).toThrow(/out of range/);
+  });
+  const hello = Buffer.from("Hello, world!\0", "utf8");
+  (globalThis.__ffiTestPinnedBuffers ??= []).push(hello);
+  const helloPtr = ptr(hello);
+
+  it("yields a string primitive", () => {
+    const cs = new CString(helloPtr);
+    expect(typeof cs).toBe("string");
+    expect(cs).toBe("Hello, world!");
+    expect(cs === "Hello, world!").toBe(true);
+    expect(cs.length).toBe(13);
+    expect(cs.slice(7)).toBe("world!");
+    expect(JSON.stringify(cs)).toBe('"Hello, world!"');
+  });
+
+  it("takes byteOffset and byteLength", () => {
+    expect(new CString(helloPtr, 7, 5)).toBe("world");
+    expect(new CString(helloPtr, 0, 5)).toBe("Hello");
+  });
+
+  it("a falsy pointer yields an empty string", () => {
+    for (const value of [0, null, undefined]) {
+      const cs = new CString(value);
+      expect(typeof cs).toBe("string");
+      expect(cs).toBe("");
+    }
+  });
+
+  it("Bun.FFI.CString is the same constructor, callable with and without new", () => {
+    expect(Bun.FFI.CString).toBe(CString);
+    expect(new Bun.FFI.CString(helloPtr, 0, 5)).toBe("Hello");
+    expect(Bun.FFI.CString(helloPtr, 0, 5)).toBe("Hello");
+    expect(CString(helloPtr, 0, 5)).toBe("Hello");
+    expect(CString.name).toBe("CString");
+  });
+});
+
+describe("CFunction", () => {
+  it("returns the engine-native callable with a working .close()", () => {
+    const callback = new JSCallback(() => 42, { returns: "int32_t", args: [] });
+    try {
+      const fn = new CFunction({ ptr: callback.ptr, returns: "int32_t", args: [] });
+      expect(typeof fn).toBe("function");
+      expect(fn()).toBe(42);
+      expect(fn()).toBe(42);
+      expect(fn.close).toBeFunction();
+      expect(fn.close()).toBeUndefined();
+      expect(fn.close()).toBeUndefined();
+    } finally {
+      callback.close();
+    }
+  });
+
+  it("passes arguments and marshals the return value", () => {
+    const add = new JSCallback((a, b) => a + b, { returns: "int32_t", args: ["int32_t", "int32_t"] });
+    try {
+      const fn = new CFunction({ ptr: add.ptr, returns: "int32_t", args: ["int32_t", "int32_t"] });
+      expect(fn(40, 2)).toBe(42);
+      expect(fn(-1, 1)).toBe(0);
+      fn.close();
+    } finally {
+      add.close();
+    }
+  });
+
+  it("reports a missing ptr the same way linkSymbols() does", () => {
+    expect(() => new CFunction({ returns: "int32_t", args: [] })).toThrow(/CFunction.*ptr.*(linkSymbols|CFunction)/);
+  });
+});
+
 // Runs in a subprocess: `bun test`'s exit path does not finalize the CFunction's native handle,
 // which the ASan lane's leak checker then reports against this file.
 it("JSCallback exceptions propagate out of the native call", async () => {
@@ -748,6 +929,62 @@ it("JSCallback exceptions propagate out of the native call", async () => {
     stdout: "caught boom\n",
     stderr: "",
     exitCode: 0,
+  });
+});
+
+it("worker teardown drops queued threadsafe JSCallback invocations without crashing", async () => {
+  using dir = tempDir("ffi-jscallback-terminate-queued", {
+    "main.js": `
+      import { join } from "node:path";
+      import { Worker } from "node:worker_threads";
+
+      const sab = new SharedArrayBuffer(4);
+      const queued = new Int32Array(sab);
+
+      const worker = new Worker(join(import.meta.dir, "worker.js"), { workerData: sab });
+      worker.on("error", err => {
+        console.error("worker error:", err);
+        process.exit(1);
+      });
+
+      // Wait until the worker has queued a batch of threadsafe invocations that its blocked
+      // event loop cannot drain, then tear it down with those tasks still pending.
+      await Atomics.waitAsync(queued, 0, 0).value;
+      await worker.terminate();
+      console.log("done");
+    `,
+    "worker.js": `
+      import { CFunction, JSCallback } from "bun:ffi";
+      import { workerData } from "node:worker_threads";
+
+      const queued = new Int32Array(workerData);
+      let ran = 0;
+      const callback = new JSCallback(() => { ran++; }, { returns: "void", args: [], threadsafe: true });
+      const fire = new CFunction({ ptr: callback.ptr, returns: "void", args: [] });
+
+      // Each call enqueues an invocation onto this worker's event loop; none can run while
+      // this module keeps the loop occupied, so they are all still queued at terminate().
+      for (let i = 0; i < 200; i++) fire();
+
+      Atomics.store(queued, 0, 1);
+      Atomics.notify(queued, 0);
+      while (true) {}
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "main.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode, signalCode: proc.signalCode }).toEqual({
+    stdout: "done\n",
+    stderr: "",
+    exitCode: 0,
+    signalCode: null,
   });
 });
 
@@ -1119,4 +1356,343 @@ describe.if(!!libPath)("can open more than 63 symbols via", () => {
       expect(lib.symbols.strlen(Buffer.from("bunbun\0", "ascii"))).toBe(6n);
     });
   }
+});
+
+describe.skipIf(!FFI_FIXTURE_PATH)("engine-native FFI (single implementation)", () => {
+  const lib = FFI_FIXTURE_PATH;
+  it("linkSymbols() binds and calls symbols from raw pointers", () => {
+    const {
+      symbols: { returns_true, add_int32_t, identity_ptr },
+    } = dlopen(lib, {
+      returns_true: { args: [], returns: "bool" },
+      add_int32_t: { args: ["i32", "i32"], returns: "i32" },
+      identity_ptr: { args: ["ptr"], returns: "ptr" },
+    });
+    const linked = linkSymbols({
+      isTrue: { ptr: returns_true.ptr, args: [], returns: "bool" },
+      sum: { ptr: add_int32_t.ptr, args: ["i32", "i32"], returns: "i32" },
+      echoPtr: { ptr: identity_ptr.ptr, args: ["ptr"], returns: "ptr" },
+    });
+    expect(linked.symbols.isTrue()).toBe(true);
+    expect(linked.symbols.sum(40, 2)).toBe(42);
+    expect(linked.symbols.sum(-1, -2)).toBe(-3);
+    expect(linked.symbols.echoPtr(1234)).toBe(1234);
+    expect(typeof linked.symbols.sum.ptr).toBe("number");
+    linked.close();
+  });
+
+  it("buffer_length passes the view's byteLength, atomically paired with the pointer", () => {
+    const {
+      symbols: { bl_echo_len, bl_last_byte },
+    } = dlopen(lib, {
+      bl_echo_len: { args: ["buffer", "buffer_length"], returns: "u64" },
+      bl_last_byte: { args: ["buffer", "buffer_length"], returns: "u32" },
+    });
+    const u8 = new Uint8Array([10, 20, 30, 40, 50, 60, 70, 80]);
+    expect(bl_echo_len(u8, u8)).toBe(8n);
+    const sub = u8.subarray(2, 5);
+    expect(bl_echo_len(sub, sub)).toBe(3n);
+    expect(bl_last_byte(sub, sub)).toBe(50);
+    const dv = new DataView(u8.buffer, 1, 4);
+    expect(bl_echo_len(dv, dv)).toBe(4n);
+    expect(bl_last_byte(dv, dv)).toBe(50);
+    expect(bl_echo_len(new Float64Array(3), new Float64Array(3))).toBe(24n);
+    expect(bl_echo_len(new Uint8Array(0), new Uint8Array(0))).toBe(0n);
+    expect(() => bl_echo_len(u8, 8)).toThrow(TypeError);
+    expect(() => bl_echo_len(u8, "8")).toThrow(TypeError);
+    expect(() =>
+      cc({
+        source: import.meta.dir + "/ffi-test.c",
+        symbols: { bl_echo_len: { args: ["ptr", "buffer_length"], returns: "u64" } },
+      }),
+    ).toThrow(/buffer_length/);
+    expect(() => viewSource({ f: { args: ["buffer_length"], returns: "void" } })).toThrow(/buffer_length/);
+    expect(() => viewSource({ f: { args: [], returns: "buffer_length" } })).toThrow(/buffer_length/);
+    expect(() => dlopen(lib, { f: { args: [], returns: "buffer_length" } })).toThrow(/buffer_length/);
+    expect(() => new JSCallback(() => {}, { args: ["buffer_length"], returns: "void" })).toThrow(/buffer_length/);
+  });
+
+  it("u32 arguments >= 2^31 are not sign-flipped (#7007)", () => {
+    const {
+      symbols: { identity_uint32_t },
+    } = dlopen(lib, { identity_uint32_t: { args: ["u32"], returns: "u32" } });
+    expect(identity_uint32_t(2 ** 31)).toBe(2 ** 31);
+    expect(identity_uint32_t(2 ** 32 - 1)).toBe(2 ** 32 - 1);
+    expect(identity_uint32_t(0)).toBe(0);
+  });
+
+  it("integer parameters WRAP to width instead of clamping", () => {
+    const {
+      symbols: { identity_uint8_t },
+    } = dlopen(lib, { identity_uint8_t: { args: ["u8"], returns: "u8" } });
+    expect(identity_uint8_t(256)).toBe(0);
+    expect(identity_uint8_t(257)).toBe(1);
+    expect(identity_uint8_t(-1)).toBe(255);
+  });
+
+  it("pointers above 2^53 round-trip as exact BigInt (#28068) and BigInt addresses are accepted (#22751)", () => {
+    const {
+      symbols: { identity_ptr },
+    } = dlopen(lib, { identity_ptr: { args: ["ptr"], returns: "ptr" } });
+    const big = (1n << 60n) + 7n;
+    const round = identity_ptr(big);
+    expect(typeof round).toBe("bigint");
+    expect(round).toBe(big);
+    expect(identity_ptr(1024)).toBe(1024);
+    expect(identity_ptr(null)).toBe(null);
+  });
+
+  it("numeric strings for numeric parameters throw (intentional behavior change)", () => {
+    const {
+      symbols: { identity_int32_t },
+    } = dlopen(lib, { identity_int32_t: { args: ["i32"], returns: "i32" } });
+    expect(() => identity_int32_t("42")).toThrow(TypeError);
+    expect(identity_int32_t(42)).toBe(42);
+  });
+
+  it("dlopen symbols expose intrinsic .ptr (a real address) and .native", () => {
+    const {
+      symbols: { returns_true },
+    } = dlopen(lib, { returns_true: { args: [], returns: "bool" } });
+    expect(typeof returns_true.ptr).toBe("number");
+    expect(returns_true.ptr).toBeGreaterThan(0);
+    expect(returns_true.native).toBe(returns_true);
+    expect(returns_true()).toBe(true);
+  });
+
+  it("CFunction returns the engine cell itself with a callable close()", () => {
+    const {
+      symbols: { returns_42_char },
+    } = dlopen(lib, { returns_42_char: { args: [], returns: "char" } });
+    const fn = new CFunction({ ptr: returns_42_char.ptr, args: [], returns: "char" });
+    expect(fn()).toBe(42);
+    expect(typeof fn.close).toBe("function");
+    fn.close();
+    expect(fn()).toBe(42);
+  });
+
+  it("passing a JSCallback OBJECT (not .ptr) as a function-typed argument works", () => {
+    const {
+      symbols: { cb_identity_42_double },
+    } = dlopen(lib, { cb_identity_42_double: { args: ["callback"], returns: "double" } });
+    const cb = new JSCallback(() => 42.42, { returns: "double", args: [] });
+    try {
+      expect(cb_identity_42_double(cb.ptr)).toBe(42.42);
+      expect(cb_identity_42_double(cb)).toBe(42.42);
+    } finally {
+      cb.close();
+    }
+  });
+
+  it("a JSCallback instance is the engine cell (instanceof + own ptr) and close() is idempotent", () => {
+    const cb = new JSCallback(a => a * 2, { args: ["i32"], returns: "i32" });
+    expect(cb instanceof JSCallback).toBe(true);
+    expect(typeof cb.ptr).toBe("number");
+    expect(cb.threadsafe).toBe(false);
+    cb.close();
+    cb.close();
+  });
+
+  it("an omitted callback argument throws instead of calling through NULL", () => {
+    const {
+      symbols: { cb_identity_true },
+    } = dlopen(lib, { cb_identity_true: { args: ["callback"], returns: "bool" } });
+    expect(() => cb_identity_true(undefined)).toThrow(TypeError);
+  });
+
+  it("napi_env / napi_value are rejected outside cc()", () => {
+    expect(() => dlopen(lib, { returns_true: { args: ["napi_env"], returns: "napi_value" } })).toThrow(
+      /napi_env \/ napi_value are only supported in bun:ffi cc\(\)/,
+    );
+    expect(() => new CFunction({ ptr: 1, args: ["napi_env"], returns: "void" })).toThrow(
+      /napi_env \/ napi_value are only supported in bun:ffi cc\(\)/,
+    );
+    expect(() => new JSCallback(() => {}, { args: ["napi_env"], returns: "void" })).toThrow(
+      /napi_env \/ napi_value are only supported in bun:ffi cc\(\)/,
+    );
+    expect(() => linkSymbols({ f: { ptr: 1, args: ["napi_env"], returns: "void" } })).toThrow(
+      /napi_env \/ napi_value are only supported in bun:ffi cc\(\)/,
+    );
+  });
+
+  it("a hot polymorphic call site stays correct across tiers (CallFFI)", () => {
+    const {
+      symbols: { identity_int32_t },
+    } = dlopen(lib, { identity_int32_t: { args: ["i32"], returns: "i32" } });
+    const wrappers = [() => identity_int32_t(7), () => identity_int32_t(9)];
+    let sum = 0;
+    for (let i = 0; i < 400000; ++i) sum += wrappers[i & 1]();
+    expect(sum).toBe(200000 * 7 + 200000 * 9);
+  });
+});
+
+describe.skipIf(!ABI_FIXTURE_PATH)("ABI conformance", () => {
+  if (!ABI_FIXTURE_PATH) return;
+  const w = (vals, big = false) =>
+    big ? vals.reduce((s, v, i) => s + BigInt(v) * BigInt(i + 1), 0n) : vals.reduce((s, v, i) => s + v * (i + 1), 0);
+
+  it("integer widths and signedness at their boundaries", () => {
+    const { symbols: s } = dlopen(ABI_FIXTURE_PATH, {
+      abi_i8: { args: ["i8"], returns: "i8" },
+      abi_u8: { args: ["u8"], returns: "u8" },
+      abi_i16: { args: ["i16"], returns: "i16" },
+      abi_u16: { args: ["u16"], returns: "u16" },
+      abi_i32: { args: ["i32"], returns: "i32" },
+      abi_u32: { args: ["u32"], returns: "u32" },
+      abi_i64: { args: ["i64"], returns: "i64" },
+      abi_u64: { args: ["u64"], returns: "u64" },
+      abi_bool: { args: ["bool"], returns: "bool" },
+      abi_char: { args: ["char"], returns: "char" },
+      abi_f32: { args: ["f32"], returns: "f32" },
+      abi_f64: { args: ["f64"], returns: "f64" },
+    });
+    for (const v of [-128, -1, 0, 1, 127]) expect(s.abi_i8(v)).toBe(v);
+    for (const v of [0, 1, 127, 128, 255]) expect(s.abi_u8(v)).toBe(v);
+    for (const v of [-32768, -1, 0, 32767]) expect(s.abi_i16(v)).toBe(v);
+    for (const v of [0, 32767, 32768, 65535]) expect(s.abi_u16(v)).toBe(v);
+    for (const v of [-2147483648, -1, 0, 2147483647]) expect(s.abi_i32(v)).toBe(v);
+    for (const v of [0, 2147483647, 2147483648, 4294967295]) expect(s.abi_u32(v)).toBe(v);
+    for (const v of [-(2n ** 63n), -1n, 0n, 2n ** 63n - 1n]) expect(s.abi_i64(v)).toBe(v);
+    for (const v of [0n, 2n ** 63n, 2n ** 64n - 1n]) expect(s.abi_u64(v)).toBe(v);
+    expect(s.abi_bool(true)).toBe(false);
+    expect(s.abi_bool(false)).toBe(true);
+    for (const v of [0, 65, 127]) expect(s.abi_char(v)).toBe(v);
+    for (const v of [0, 1.5, -2.25, 3.4028234663852886e38]) expect(s.abi_f32(v)).toBeCloseTo(v, 6);
+    for (const v of [0, 1e-300, 1.7976931348623157e308, -Number.EPSILON, Math.PI]) expect(s.abi_f64(v)).toBe(v);
+  });
+
+  it("i32 args past the register count (stack spill, all ABIs)", () => {
+    const {
+      symbols: { abi_sum_i32_x10 },
+    } = dlopen(ABI_FIXTURE_PATH, { abi_sum_i32_x10: { args: Array(10).fill("i32"), returns: "i64" } });
+    const cases = [
+      [1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
+      [-1, -2, -3, -4, -5, -6, -7, -8, -9, -10],
+      [2147483647, -2147483648, 0, 1, -1, 7, 7, 7, 7, 7],
+      [100000, 4, 5, -1, 6, 8, 1, 2, 2, 3],
+    ];
+    for (const a of cases) expect(abi_sum_i32_x10(...a)).toBe(w(a, true));
+  });
+
+  it("i64 args past the register count", () => {
+    const {
+      symbols: { abi_sum_i64_x10 },
+    } = dlopen(ABI_FIXTURE_PATH, { abi_sum_i64_x10: { args: Array(10).fill("i64"), returns: "i64" } });
+    const a = [1n, -2n, 3n, 2n ** 40n, -(2n ** 40n), 5n, 6n, -7n, 8n, 9n];
+    expect(abi_sum_i64_x10(...a)).toBe(w(a, true));
+  });
+
+  it("f64 args past the FP register count", () => {
+    const {
+      symbols: { abi_sum_f64_x10 },
+    } = dlopen(ABI_FIXTURE_PATH, { abi_sum_f64_x10: { args: Array(10).fill("f64"), returns: "f64" } });
+    const a = [0.5, 1.25, -2.5, 3.125, 4, -5.5, 6.75, 7, 8.5, -9.25];
+    expect(abi_sum_f64_x10(...a)).toBeCloseTo(w(a), 9);
+  });
+
+  it("f32 args past the FP register count (single-precision handling)", () => {
+    const {
+      symbols: { abi_sum_f32_x10 },
+    } = dlopen(ABI_FIXTURE_PATH, { abi_sum_f32_x10: { args: Array(10).fill("f32"), returns: "f64" } });
+    const a = [0.5, 1.25, -2.5, 3.125, 4, -5.5, 6.75, 7, 8.5, -9.25];
+    expect(abi_sum_f32_x10(...a)).toBeCloseTo(w(a), 5);
+  });
+
+  it("mixed alternating int/float, 12 args (Win64 positional vs SysV/AAPCS64 separate)", () => {
+    const args = ["i32", "f64", "i32", "f64", "i32", "f64", "i32", "f64", "i32", "f64", "i32", "f64"];
+    const {
+      symbols: { abi_mix12 },
+    } = dlopen(ABI_FIXTURE_PATH, { abi_mix12: { args, returns: "f64" } });
+    const a = [1, 0.5, -3, 1.5, 5, -2.5, 7, 3.5, -9, 4.5, 11, -5.5];
+    expect(abi_mix12(...a)).toBeCloseTo(w(a), 9);
+    const b = [2147483647, 1e-3, -2147483648, 1e6, 3, 4.25, -6, 7.75, 8, -9.5, 10, 0.125];
+    expect(abi_mix12(...b)).toBeCloseTo(w(b), 6);
+  });
+
+  it("mixed i64/f64 past the register count", () => {
+    const args = ["i64", "f64", "i64", "f64", "i64", "f64", "i64", "f64", "i64", "f64"];
+    const {
+      symbols: { abi_mix_i64f64 },
+    } = dlopen(ABI_FIXTURE_PATH, { abi_mix_i64f64: { args, returns: "i64" } });
+    const a = [10n, 2, 30n, 4, 50n, 6, 70n, 8, 90n, 10];
+    const expected = a.reduce((s, v, i) => s + (typeof v === "bigint" ? v * BigInt(i + 1) : BigInt(v * (i + 1))), 0n);
+    expect(abi_mix_i64f64(...a)).toBe(expected);
+  });
+
+  it("u8 args past the register count (sub-word stack packing / Darwin natural alignment)", () => {
+    const {
+      symbols: { abi_sum_u8_x12 },
+    } = dlopen(ABI_FIXTURE_PATH, { abi_sum_u8_x12: { args: Array(12).fill("u8"), returns: "i64" } });
+    const a = [255, 1, 128, 0, 200, 3, 17, 254, 99, 42, 7, 250];
+    expect(abi_sum_u8_x12(...a)).toBe(w(a, true));
+  });
+
+  it("i8 args past the register count (stacked byte sign-extension)", () => {
+    const {
+      symbols: { abi_sum_i8_x12 },
+    } = dlopen(ABI_FIXTURE_PATH, { abi_sum_i8_x12: { args: Array(12).fill("i8"), returns: "i64" } });
+    const a = [-128, 127, -1, 0, -100, 3, 17, -2, 99, -42, 7, -50];
+    expect(abi_sum_i8_x12(...a)).toBe(w(a, true));
+  });
+
+  it("i16 args past the register count", () => {
+    const {
+      symbols: { abi_sum_i16_x12 },
+    } = dlopen(ABI_FIXTURE_PATH, { abi_sum_i16_x12: { args: Array(12).fill("i16"), returns: "i64" } });
+    const a = [-32768, 32767, -1, 0, -1000, 3, 1717, -2, 9999, -4242, 7, -50];
+    expect(abi_sum_i16_x12(...a)).toBe(w(a, true));
+  });
+
+  it("bool args past the register count (each exactly 0/1)", () => {
+    const {
+      symbols: { abi_bools_x10 },
+    } = dlopen(ABI_FIXTURE_PATH, { abi_bools_x10: { args: Array(10).fill("bool"), returns: "i32" } });
+    const bits = [true, false, true, true, false, false, true, false, true, true];
+    expect(abi_bools_x10(...bits)).toBe(bits.reduce((s, b, i) => s + (b ? 1 << i : 0), 0));
+  });
+
+  it("callback direction: C invokes JS callbacks with many-arg shapes", () => {
+    const { symbols: s } = dlopen(ABI_FIXTURE_PATH, {
+      abi_cb_i32_x10: { args: ["callback", "i32"], returns: "i64" },
+      abi_cb_f64_x10: { args: ["callback", "f64"], returns: "f64" },
+      abi_cb_mix12: { args: ["callback", "i32", "f64"], returns: "f64" },
+      abi_cb_i64_x10: { args: ["callback", "i64"], returns: "i64" },
+    });
+    const cbI = new JSCallback((...a) => a.reduce((t, v, i) => t + BigInt(v) * BigInt(i + 1), 0n), {
+      args: Array(10).fill("i32"),
+      returns: "i64",
+    });
+    const cbF = new JSCallback((...a) => a.reduce((t, v, i) => t + v * (i + 1), 0), {
+      args: Array(10).fill("f64"),
+      returns: "f64",
+    });
+    const cbM = new JSCallback((...a) => a.reduce((t, v, i) => t + v * (i + 1), 0), {
+      args: ["i32", "f64", "i32", "f64", "i32", "f64", "i32", "f64", "i32", "f64", "i32", "f64"],
+      returns: "f64",
+    });
+    const cbL = new JSCallback((...a) => a.reduce((t, v, i) => t + BigInt(v) * BigInt(i + 1), 0n), {
+      args: Array(10).fill("i64"),
+      returns: "i64",
+    });
+    try {
+      const ki = 5;
+      const ai = Array.from({ length: 10 }, (_, i) => ki + i);
+      expect(s.abi_cb_i32_x10(cbI, ki)).toBe(w(ai, true));
+      const kf = 1.5;
+      const af = Array.from({ length: 10 }, (_, i) => kf + i * 0.5);
+      expect(s.abi_cb_f64_x10(cbF, kf)).toBeCloseTo(w(af), 9);
+      const i0 = 7,
+        d0 = 2.5;
+      const am = [i0, d0, i0 + 1, d0 + 1, i0 + 2, d0 + 2, i0 + 3, d0 + 3, i0 + 4, d0 + 4, i0 + 5, d0 + 5];
+      expect(s.abi_cb_mix12(cbM, i0, d0)).toBeCloseTo(w(am), 9);
+      const kl = 2n ** 40n;
+      const al = Array.from({ length: 10 }, (_, i) => kl + BigInt(i));
+      expect(s.abi_cb_i64_x10(cbL, kl)).toBe(w(al, true));
+    } finally {
+      cbI.close();
+      cbF.close();
+      cbM.close();
+      cbL.close();
+    }
+  });
 });

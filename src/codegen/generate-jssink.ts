@@ -661,7 +661,11 @@ void JS${controllerName}::detach() {
 
     if (readableStream.value() && onClose.value()) {
         JSC::JSGlobalObject *globalObject = this->globalObject();
-        auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+        auto& vm = globalObject->vm();
+        // Re-entering JS on a terminated worker trips executeCallImpl's assertNoException().
+        if (vm.hasPendingTerminationException()) [[unlikely]]
+            return;
+        auto scope = DECLARE_THROW_SCOPE(vm);
         JSC::MarkedArgumentBuffer arguments;
         arguments.append(readableStream.value());
         arguments.append(jsUndefined());
@@ -971,7 +975,11 @@ extern "C" void ${name}__onReady(JSC::EncodedJSValue controllerValue, JSC::Encod
     if (!function)
         return;
     JSC::JSGlobalObject *globalObject = controller->globalObject();
-    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    auto& vm = globalObject->vm();
+    // Re-entering JS on a terminated worker trips executeCallImpl's assertNoException().
+    if (vm.hasPendingTerminationException()) [[unlikely]]
+        return;
+    auto scope = DECLARE_THROW_SCOPE(vm);
     JSC::MarkedArgumentBuffer arguments;
     arguments.append(controller);
     arguments.append(JSC::JSValue::decode(amt));
@@ -996,7 +1004,11 @@ extern "C" void ${name}__onClose(JSC::EncodedJSValue controllerValue, JSC::Encod
     // only call close once
     controller->m_onClose.clear();
     JSC::JSGlobalObject* globalObject = controller->globalObject();
-    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    auto& vm = globalObject->vm();
+    // Re-entering JS on a terminated worker trips executeCallImpl's assertNoException().
+    if (vm.hasPendingTerminationException()) [[unlikely]]
+        return;
+    auto scope = DECLARE_THROW_SCOPE(vm);
 
     JSC::MarkedArgumentBuffer arguments;
     auto readableStream = controller->m_weakReadableStream.get();

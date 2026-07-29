@@ -10,9 +10,7 @@ use crate::options::OutputFormat;
 use crate::thread_pool::Worker;
 use crate::{Chunk, CompileResult, Index, PartRange};
 
-use super::generate_code_for_file_in_chunk_js::{
-    DeclCollector, generate_code_for_file_in_chunk_js,
-};
+use super::generate_code_for_file_in_chunk_js::generate_code_for_file_in_chunk_js;
 
 // CONCURRENCY: thread-pool callback — runs on worker threads, one task per
 // `PendingPartRange`. Writes: `chunk.compile_results_for_chunk[i]` (disjoint
@@ -94,9 +92,8 @@ fn generate_compile_result_for_js_chunk_impl(
 
     // Client and server bundles for Bake must outlive the bundle task.
     // `BufferWriter::init()` output is allocated from the global heap and
-    // `DeclCollector.decls` from the worker heap (`worker.arena`, alive until
-    // bundle teardown) — both outlive the task's CompileResult consumption,
-    // so a per-dev-server arena would only be a perf optimization.
+    // outlives the task's CompileResult consumption, so a per-dev-server
+    // arena would only be a perf optimization.
     let _ = c.dev_server;
 
     // temporary_arena / stmt_list are initialized in Worker::create before any task runs.
@@ -148,16 +145,6 @@ fn generate_compile_result_for_js_chunk_impl(
         )
     };
 
-    let collect_decls = c.options.generate_bytecode_cache
-        && c.options.output_format == OutputFormat::Esm
-        && c.options.compile;
-    // DeclCollector wants `*const Arena` and uses the worker heap (see
-    // the dev-server allocation note above).
-    let mut dc = DeclCollector {
-        arena: worker.arena.as_ptr(),
-        ..Default::default()
-    };
-
     // `worker.arena` (= `BackRef` to `worker.heap`) is a disjoint field from
     // `worker.temporary_arena` / `worker.stmt_list` borrowed `&mut` above, so
     // a direct shared borrow is fine. Heap is pinned; see `Worker::arena`.
@@ -181,7 +168,6 @@ fn generate_compile_result_for_js_chunk_impl(
         stmt_list,
         worker_alloc,
         &**arena,
-        if collect_decls { Some(&mut dc) } else { None },
     );
 
     // Update bytesInOutput for this source in the chunk (for metafile)
@@ -206,10 +192,5 @@ fn generate_compile_result_for_js_chunk_impl(
     CompileResult::Javascript {
         source_index: part_range.source_index.get(),
         result,
-        decls: if collect_decls {
-            dc.decls.into_boxed_slice()
-        } else {
-            Box::new([])
-        },
     }
 }

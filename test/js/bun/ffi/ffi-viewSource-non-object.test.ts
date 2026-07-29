@@ -47,7 +47,7 @@ describe("FFI viewSource", () => {
 
     const cbSrc = viewSource({ args: ["i32"], returns: "i32" }, true);
     expect(typeof cbSrc).toBe("string");
-    expect(cbSrc).toContain("my_callback_function");
+    expect(cbSrc).toContain("compiled by JavaScriptCore");
   });
 });
 

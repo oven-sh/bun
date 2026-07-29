@@ -275,6 +275,9 @@ impl<T: JsSinkAbi> SinkSignal<T> {
             // `simulateThrow()`.
             // TODO: this should be got from a parameter / properly propagate exception upwards.
             let global = ::bun_jsc::virtual_machine::VirtualMachine::get().global();
+            if global.has_exception() {
+                return;
+            }
             let _ =
                 ::bun_jsc::call_check_slow(global, || T::on_close_extern(cpp, JSValue::UNDEFINED));
         }
@@ -289,6 +292,9 @@ impl<T: JsSinkAbi> SinkSignal<T> {
             // own); see `close` above. Same wrapper.
             // TODO: this should be got from a parameter / properly propagate exception upwards.
             let global = ::bun_jsc::virtual_machine::VirtualMachine::get().global();
+            if global.has_exception() {
+                return;
+            }
             let _ = ::bun_jsc::call_check_slow(global, || {
                 T::on_ready_extern(cpp, JSValue::UNDEFINED, JSValue::UNDEFINED)
             });

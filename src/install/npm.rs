@@ -176,15 +176,12 @@ pub fn whoami(manager: &mut PackageManager) -> Result<Vec<u8>, WhoamiError> {
         }
     };
 
-    if res.status_code >= 400 {
+    if res.status_code() >= 400 {
         const OTP_RESPONSE: bool = false;
         response_error::<OTP_RESPONSE>(&req, &res, None, &mut response_buf)?;
     }
 
-    if let Some(notice) = res
-        .headers
-        .get_if_other_is_absent(b"npm-notice", b"x-local-cache")
-    {
+    if let Some(notice) = res.header_if_other_is_absent(b"npm-notice", b"x-local-cache") {
         Output::print_error("\n");
         bun_core::note!("{}", bstr::BStr::new(notice));
         Output::flush();
@@ -221,7 +218,7 @@ pub fn whoami(manager: &mut PackageManager) -> Result<Vec<u8>, WhoamiError> {
 
 pub fn response_error<const OTP_RESPONSE: bool>(
     req: &AsyncHTTP,
-    res: &picohttp::Response,
+    res: &bun_http::HTTPResponseMetadata,
     // `<name>@<version>`
     pkg_id: Option<(&[u8], &[u8])>,
     response_body: &mut MutableString,
@@ -246,13 +243,17 @@ pub fn response_error<const OTP_RESPONSE: bool>(
 
     bun_core::pretty_errorln!(
         "\n<red>{}<r>{}{}: {}\n",
-        res.status_code,
-        if !res.status.is_empty() { " " } else { "" },
-        bstr::BStr::new(&res.status),
+        res.status_code(),
+        if !res.status_text().is_empty() {
+            " "
+        } else {
+            ""
+        },
+        bstr::BStr::new(res.status_text()),
         bun_fmt::redacted_npm_url(req.url.href),
     );
 
-    if res.status_code == 404
+    if res.status_code() == 404
         && let Some((package_name, package_version)) = pkg_id
     {
         bun_core::pretty_errorln!(
@@ -262,7 +263,7 @@ pub fn response_error<const OTP_RESPONSE: bool>(
         );
     } else if let Some(msg) = &message {
         if OTP_RESPONSE {
-            if res.status_code == 401
+            if res.status_code() == 401
                 && strings::contains(
                     msg,
                     b"You must provide a one-time pass. Upgrade your client to npm@latest in order to use 2FA.",

@@ -228,6 +228,7 @@ pub struct BundlerOptions {
     pub compile_autoload_tsconfig: bool,
     pub compile_autoload_package_json: bool,
     pub compile_executable_path: Option<Box<[u8]>>,
+    pub compile_assets: Vec<Box<[u8]>>,
     pub windows: bundle_enums::WindowsOptions,
     pub allow_unresolved: Option<Vec<Box<[u8]>>>,
 }
@@ -278,6 +279,7 @@ impl Default for BundlerOptions {
             compile_autoload_tsconfig: false,
             compile_autoload_package_json: false,
             compile_executable_path: None,
+            compile_assets: Vec::new(),
             windows: bundle_enums::WindowsOptions::default(),
             allow_unresolved: None,
         }

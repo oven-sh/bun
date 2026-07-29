@@ -425,6 +425,9 @@ pub(crate) const BUILD_ONLY_PARAMS: &[ParamType] = concat_params!(
         parse_param!(
             "--compile-executable-path <STR>  Path to a Bun executable to use for cross-compilation instead of downloading"
         ),
+        parse_param!(
+            "--asset <STR>...                 Embed a file or directory into the compiled executable, preserving its relative path (requires --compile)"
+        ),
         parse_param!("--bytecode                       Use a bytecode cache"),
         parse_param!(
             "--watch                          Automatically restart the process on file change"
@@ -2053,6 +2056,17 @@ fn parse_build_command_options(
         ctx.bundler_options.compile_exec_argv = Some(compile_exec_argv.into());
     }
 
+    {
+        let assets = args.options(b"--asset");
+        if !assets.is_empty() {
+            if !ctx.bundler_options.compile {
+                Output::err_generic("--asset requires --compile", ());
+                Global::crash();
+            }
+            ctx.bundler_options.compile_assets = slice_to_owned(assets);
+        }
+    }
+
     // Handle --compile-autoload-dotenv flags
     {
         let has_positive = args.flag(b"--compile-autoload-dotenv");
@@ -2146,15 +2160,6 @@ fn parse_build_command_options(
     }
 
     if args.flag(b"--windows-hide-console") {
-        // --windows-hide-console technically doesnt depend on WinAPI, but since since --windows-icon
-        // does, all of these customization options have been gated to windows-only
-        if !cfg!(windows) {
-            Output::err_generic(
-                "Using --windows-hide-console is only available when compiling on Windows",
-                (),
-            );
-            Global::crash();
-        }
         if ctx.bundler_options.compile_target.os != OperatingSystem::Windows {
             Output::err_generic(
                 "--windows-hide-console requires a Windows compile target",

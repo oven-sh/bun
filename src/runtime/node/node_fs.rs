@@ -4737,6 +4737,19 @@ fn encode_path_result(bytes: &[u8], encoding: Encoding) -> StringOrBuffer {
 
 impl NodeFS {
     pub fn access(&mut self, args: &args::Access, _: Flavor) -> Maybe<ret::Access> {
+        if let Some(graph) = standalone_module_graph_get() {
+            // SAFETY: see `standalone_module_graph_get`.
+            let graph = unsafe { &mut *graph };
+            let p = args.path.slice();
+            let is_dir = graph.find_dir(p);
+            if is_dir || graph.find(p).is_some() {
+                let mode = args.mode.as_int();
+                if (mode & sys::posix::W_OK) != 0 || ((mode & sys::posix::X_OK) != 0 && !is_dir) {
+                    return Err(sys::Error::from_code(E::EACCES, sys::Tag::access).with_path(p));
+                }
+                return Ok(Null);
+            }
+        }
         // The `bun_sys::access` Windows
         // arm takes `&ZStr` and performs the kernel32 widening internally
         // (sys/lib.rs `windows_impl::access`), so feed it the UTF-8 path on
@@ -5421,7 +5434,8 @@ impl NodeFS {
             // SAFETY: see `standalone_module_graph_get` — exclusive lookup on
             // the per-process singleton; `find` only mutates lazy per-`File`
             // fields.
-            if unsafe { &mut *graph }.find(path.slice()).is_some() {
+            let graph = unsafe { &mut *graph };
+            if graph.find(path.slice()).is_some() || graph.find_dir(path.slice()) {
                 return Ok(true);
             }
         }
@@ -5642,6 +5656,15 @@ impl NodeFS {
 
     pub fn lstat(&mut self, args: &args::Lstat, _: Flavor) -> Maybe<ret::Lstat> {
         let path = args.path.slice_z(&mut self.sync_error_buf);
+        if let Some(graph) = standalone_module_graph_get() {
+            // SAFETY: see `standalone_module_graph_get`.
+            if let Some(result) = unsafe { &mut *graph }.stat(path.as_bytes()) {
+                return Ok(StatOrNotFound::Stats(Box::new(Stats::init(
+                    &PosixStat::init(&result),
+                    args.big_int,
+                ))));
+            }
+        }
         #[cfg(any(target_os = "linux", target_os = "android"))]
         if sys::SUPPORTS_STATX_ON_LINUX.load(Ordering::Relaxed) {
             return match sys::lstatx(path, sys::STATX_MASK_FOR_STATS) {
@@ -6371,10 +6394,12 @@ impl NodeFS {
     }
 
     pub fn readdir(&mut self, args: &args::Readdir, flavor: Flavor) -> Maybe<ret::Readdir> {
-        if flavor != Flavor::Sync {
-            if args.recursive {
-                panic!("Assertion failure: this code path should never be reached.");
-            }
+        if flavor != Flavor::Sync && args.recursive {
+            debug_assert!(
+                standalone_module_graph_get().is_some()
+                    && bun_standalone_graph::is_bun_standalone_file_path(args.path.slice()),
+                "async recursive readdir must go through AsyncReaddirRecursiveTask"
+            );
         }
         let maybe = match args.tag() {
             ret::ReaddirTag::Buffers => Self::readdir_inner::<Buffer>(
@@ -6926,6 +6951,75 @@ impl NodeFS {
     ) -> Maybe<ret::Readdir> {
         let path = args.path.slice_z(buf);
 
+        if let Some(graph) = standalone_module_graph_get() {
+            if bun_standalone_graph::is_bun_standalone_file_path(path.as_bytes()) {
+                // SAFETY: see `standalone_module_graph_get`.
+                let graph = unsafe { &mut *graph };
+                let Some(list) = graph.readdir(path.as_bytes(), recursive) else {
+                    let code = if graph.find_assume_standalone_path(path.as_bytes()).is_some() {
+                        E::ENOTDIR
+                    } else {
+                        E::ENOENT
+                    };
+                    return Err(
+                        sys::Error::from_code(code, sys::Tag::scandir).with_path(args.path.slice())
+                    );
+                };
+                let mut entries: Vec<T> = Vec::with_capacity(list.len());
+                let root_path = if T::IS_DIRENT {
+                    BunString::clone_utf8(args.path.slice())
+                } else {
+                    BunString::empty()
+                };
+                let mut joined: Vec<u8> = Vec::new();
+                #[allow(unused_mut)]
+                for (mut name, is_dir) in list {
+                    let kind = if is_dir {
+                        sys::FileKind::Directory
+                    } else {
+                        sys::FileKind::File
+                    };
+                    if recursive {
+                        #[cfg(windows)]
+                        for b in name.iter_mut() {
+                            if *b == b'/' {
+                                *b = paths::SEP;
+                            }
+                        }
+                        let (base, parent) = match strings::last_index_of_char(&name, paths::SEP) {
+                            Some(i) => (&name[i + 1..], &name[..i]),
+                            None => (&name[..], b"".as_slice()),
+                        };
+                        let dirent_path = if T::IS_DIRENT && !parent.is_empty() {
+                            joined.clear();
+                            joined.extend_from_slice(args.path.slice());
+                            if !matches!(joined.last(), Some(&b'/') | Some(&b'\\')) {
+                                joined.push(paths::SEP);
+                            }
+                            joined.extend_from_slice(parent);
+                            BunString::clone_utf8(&joined)
+                        } else {
+                            root_path.dupe_ref()
+                        };
+                        T::append_entry_recursive(
+                            &mut entries,
+                            base,
+                            &name,
+                            &dirent_path,
+                            kind,
+                            args.encoding,
+                            flavor == Flavor::Sync,
+                        );
+                        dirent_path.deref();
+                    } else {
+                        T::append_entry(&mut entries, &name, &root_path, kind, args.encoding);
+                    }
+                }
+                root_path.deref();
+                return Ok(T::into_readdir(entries));
+            }
+        }
+
         if recursive && flavor == Flavor::Sync {
             let mut buf_to_pass = PathBuffer::uninit();
             let mut entries: Vec<T> = Vec::new();
@@ -7036,7 +7130,8 @@ impl NodeFS {
 
                 if let Some(graph) = standalone_module_graph_get() {
                     // SAFETY: see `standalone_module_graph_get`.
-                    if let Some(file) = unsafe { &mut *graph }.find(path.as_bytes()) {
+                    let graph = unsafe { &mut *graph };
+                    if let Some(file) = graph.find(path.as_bytes()) {
                         let contents: &[u8] = file.contents.as_bytes();
                         return if args.encoding == Encoding::Buffer {
                             // PORTING.md §Forbidden bans `Vec::leak()`; round-trip through
@@ -7062,6 +7157,11 @@ impl NodeFS {
                                 bun_core::ZBox::from_vec_with_nul(z),
                             ))
                         };
+                    }
+                    if graph.find_dir(path.as_bytes()) {
+                        return Err(
+                            sys::Error::from_code(E::EISDIR, sys::Tag::read).with_path(p.slice())
+                        );
                     }
                 }
 

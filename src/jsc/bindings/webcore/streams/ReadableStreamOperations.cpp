@@ -540,7 +540,7 @@ void readableStreamReaderGenericRelease(JSGlobalObject* globalObject, JSReadable
         // Bun: drop the native handle's event-loop ref when its consumer releases the lock.
         if (stream->m_nativePtr && controller->m_algorithms.kind == SourceKind::Native) {
             const auto* adapter = uncheckedDowncast<WebCore::JSNativeStreamSourceAdapter>(controller->m_algorithms.algorithmContext.get());
-            if (auto* handle = adapter->m_handle.get()) {
+            if (auto* handle = adapter->handle()) {
                 JSValue updateRef = handle->getIfPropertyExists(globalObject, builtinNames(vm).updateRefPublicName());
                 RETURN_IF_EXCEPTION(scope, void());
                 if (updateRef && updateRef.isCallable()) {
@@ -839,7 +839,7 @@ static IterationRecord getIteratorAsync(JSC::VM& vm, JSGlobalObject* globalObjec
         }
         IterationRecord syncRecord = iteratorDirect(globalObject, syncIterator);
         RETURN_IF_EXCEPTION(scope, {});
-        auto* asyncFromSyncIterator = JSAsyncFromSyncIterator::create(vm, globalObject->asyncFromSyncIteratorStructure(), syncRecord.iterator, syncRecord.nextMethod);
+        auto* asyncFromSyncIterator = JSAsyncFromSyncIterator::create(vm, globalObject->asyncFromSyncIteratorStructure(), asObject(syncRecord.iterator), syncRecord.nextMethod, IterationMode::Generic);
         RETURN_IF_EXCEPTION(scope, {});
         RELEASE_AND_RETURN(scope, iteratorDirect(globalObject, asyncFromSyncIterator));
     }

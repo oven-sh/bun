@@ -85,6 +85,18 @@ double identity_double(double a) { return a; }
 int8_t identity_int8_t(int8_t a) { return a; }
 int16_t identity_int16_t(int16_t a) { return a; }
 int32_t identity_int32_t(int32_t a) { return a; }
+
+FFI_EXPORT const char *returns_cstring(void) { return "engine cstring"; }
+
+FFI_EXPORT const char *returns_null_cstring(void) { return NULL; }
+
+FFI_EXPORT const char *echoes_cstring(const char *s) { return s; }
+
+FFI_EXPORT uint64_t strlen_cstring(const char *s) {
+  uint64_t n = 0;
+  while (s && s[n]) n++;
+  return n;
+}
 int64_t identity_int64_t(int64_t a) { return a; }
 uint8_t identity_uint8_t(uint8_t a) { return a; }
 uint16_t identity_uint16_t(uint16_t a) { return a; }
@@ -106,12 +118,13 @@ uint32_t add_uint32_t(uint32_t a, uint32_t b) { return a + b; }
 uint64_t add_uint64_t(uint64_t a, uint64_t b) { return a + b; }
 
 FFI_EXPORT void *ptr_should_point_to_42_as_int32_t();
+FFI_EXPORT void *getNoopDeallocatorCallback();
 
-void *ptr_should_point_to_42_as_int32_t() {
-  int32_t *ptr = malloc(sizeof(int32_t));
-  *ptr = 42;
-  return ptr;
-}
+static int32_t ffi_static_42 = 42;
+void *ptr_should_point_to_42_as_int32_t() { return &ffi_static_42; }
+
+static void noop_deallocator(void *ptr, void *ctx) { (void)ptr; (void)ctx; }
+void *getNoopDeallocatorCallback() { return &noop_deallocator; }
 
 static uint8_t buffer_with_deallocator[128];
 static int deallocatorCalled;
@@ -149,3 +162,6 @@ FFI_EXPORT uint64_t cb_identity_42_uint64_t(uint64_t (*cb)()) { return cb(); }
 FFI_EXPORT int16_t cb_identity_neg_42_int16_t(int16_t (*cb)()) { return cb(); }
 FFI_EXPORT int32_t cb_identity_neg_42_int32_t(int32_t (*cb)()) { return cb(); }
 FFI_EXPORT int64_t cb_identity_neg_42_int64_t(int64_t (*cb)()) { return cb(); }
+
+FFI_EXPORT uint64_t bl_echo_len(const void *buf, uint64_t len) { (void)buf; return len; }
+FFI_EXPORT uint32_t bl_last_byte(const uint8_t *buf, uint64_t len) { return len ? buf[len - 1] : 999u; }

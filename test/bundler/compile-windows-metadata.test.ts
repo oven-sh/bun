@@ -4,6 +4,21 @@ import { promises as fs } from "fs";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "path";
 
+// PE optional-header Subsystem values
+const IMAGE_SUBSYSTEM_WINDOWS_GUI = 2;
+const IMAGE_SUBSYSTEM_WINDOWS_CUI = 3;
+
+// Read the Subsystem field from a PE32+ optional header.
+// Layout: e_lfanew at DOS+0x3C points to "PE\0\0" (4 bytes), followed by the
+// 20-byte COFF header, then the optional header whose Subsystem is at +68.
+// The whole header fits in the first page, so read 4 KiB instead of the full exe.
+async function readPESubsystem(path: string): Promise<number> {
+  const data = await Bun.file(path).slice(0, 4096).bytes();
+  const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
+  const peOffset = view.getUint32(0x3c, true);
+  return view.getUint16(peOffset + 24 + 68, true);
+}
+
 // Helper to ensure executable cleanup
 function cleanup(outfile: string) {
   return {
@@ -24,6 +39,110 @@ async function expectBuildOk(proc: Bun.Subprocess<"ignore", "pipe", "pipe">) {
   expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
   return { stdout, stderr, exitCode };
 }
+
+// https://github.com/oven-sh/bun/issues/19916
+describe.skipIf(!isWindows).concurrent("--windows-hide-console", () => {
+  test("default build is a console subsystem", async () => {
+    using dir = tempDir("windows-subsystem-default", {
+      "app.js": `console.log("cui");`,
+    });
+    const outfile = join(String(dir), "cui.exe");
+    await using _cleanup = cleanup(outfile);
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "--compile", join(String(dir), "app.js"), "--outfile", outfile],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    await expectBuildOk(proc);
+
+    expect(await readPESubsystem(outfile)).toBe(IMAGE_SUBSYSTEM_WINDOWS_CUI);
+  });
+
+  test("CLI flag sets GUI subsystem", async () => {
+    using dir = tempDir("windows-subsystem-gui-cli", {
+      "app.js": `require("fs").writeFileSync(process.argv[2], "ran");`,
+    });
+    const outfile = join(String(dir), "gui.exe");
+    await using _cleanup = cleanup(outfile);
+
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "build",
+        "--compile",
+        "--windows-hide-console",
+        join(String(dir), "app.js"),
+        "--outfile",
+        outfile,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    await expectBuildOk(proc);
+
+    expect(await readPESubsystem(outfile)).toBe(IMAGE_SUBSYSTEM_WINDOWS_GUI);
+
+    // The resulting GUI-subsystem exe still has to be a valid, runnable PE.
+    // A GUI process has no console, so assert via a file side effect + exit code.
+    const marker = join(String(dir), "marker.txt");
+    await using run = Bun.spawn({ cmd: [outfile, marker], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    const [, , runExit] = await Promise.all([run.stdout.text(), run.stderr.text(), run.exited]);
+    expect(await Bun.file(marker).text()).toBe("ran");
+    expect(runExit).toBe(0);
+  });
+
+  test("Bun.build() hideConsole sets GUI subsystem", async () => {
+    using dir = tempDir("windows-subsystem-gui-api", {
+      "app.js": `console.log("gui");`,
+    });
+
+    const result = await Bun.build({
+      entrypoints: [join(String(dir), "app.js")],
+      outdir: String(dir),
+      compile: {
+        target: process.arch === "arm64" ? "bun-windows-aarch64" : "bun-windows-x64",
+        outfile: "gui-api.exe",
+        windows: { hideConsole: true },
+      },
+    });
+    expect(result.success).toBe(true);
+
+    const outfile = result.outputs[0].path;
+    await using _cleanup = cleanup(outfile);
+    expect(await readPESubsystem(outfile)).toBe(IMAGE_SUBSYSTEM_WINDOWS_GUI);
+  });
+
+  test("GUI subsystem survives the rescle metadata pass", async () => {
+    using dir = tempDir("windows-subsystem-gui-rescle", {
+      "app.js": `console.log("gui+metadata");`,
+    });
+    const outfile = join(String(dir), "gui-rescle.exe");
+    await using _cleanup = cleanup(outfile);
+
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "build",
+        "--compile",
+        "--windows-hide-console",
+        "--windows-title",
+        "Hidden Console App",
+        join(String(dir), "app.js"),
+        "--outfile",
+        outfile,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    await expectBuildOk(proc);
+
+    expect(await readPESubsystem(outfile)).toBe(IMAGE_SUBSYSTEM_WINDOWS_GUI);
+  });
+});
 
 describe.skipIf(!isWindows).concurrent("Windows compile metadata", () => {
   describe("CLI flags", () => {

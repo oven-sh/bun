@@ -186,6 +186,8 @@ const IMAGE_SCN_MEM_READ: u32 = 0x4000_0000;
 const IMAGE_DIRECTORY_ENTRY_SECURITY: usize = 4;
 const IMAGE_DLLCHARACTERISTICS_FORCE_INTEGRITY: u16 = 0x0080;
 
+pub const IMAGE_SUBSYSTEM_WINDOWS_GUI: u16 = 2;
+
 // Section name constant for exact comparison
 const BUN_SECTION_NAME: [u8; 8] = [b'.', b'b', b'u', b'n', 0, 0, 0, 0];
 
@@ -683,6 +685,16 @@ impl PEFile {
 
         // 10. Recompute checksum (recommended)
         self.recompute_pe_checksum()?;
+        Ok(())
+    }
+
+    /// Set the Windows subsystem field in the optional header. Does not recompute the checksum.
+    pub fn set_subsystem(&mut self, subsystem: u16) -> Result<(), Error> {
+        let opt = self.get_optional_header_mut()?;
+        // SAFETY: opt points into self.data at validated offset
+        unsafe {
+            (*opt).subsystem = subsystem;
+        }
         Ok(())
     }
 

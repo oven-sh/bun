@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, normalizeBunSnapshot, tempDir, tls } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isWindows, normalizeBunSnapshot, tempDir, tls } from "harness";
 
 test("--parallel: each worker has a unique JEST_WORKER_ID and BUN_TEST_WORKER_ID", async () => {
   // Sleep so worker 0 is busy when workers 1/2 come online and pick up the
@@ -199,6 +199,33 @@ test("--parallel --bail stops dispatching new files after threshold", async () =
   expect(Number(m![1])).toBeLessThanOrEqual(2);
   expect(exitCode).toBe(1);
 });
+
+// Worker crashes are classified as panics by fatal signal, which Windows
+// never surfaces (a crash there is exit code 3, indistinguishable from
+// process.exit) — see is_panic_status. So this contract is POSIX-only.
+test.skipIf(isWindows)(
+  "--parallel --bail: a worker panic still prints the panic banner and stops sibling workers",
+  async () => {
+    using dir = tempDir("parallel-bail-panic", {
+      "a-hang.test.js": `import {test} from "bun:test"; test("hang", async () => { await new Promise(() => {}); }, 999999);`,
+      // A real segfault the OS delivers on every platform (SIGSEGV isn't a
+      // signal you can `process.kill` on Windows).
+      "b-panic.test.js": `import {test} from "bun:test"; import { crash_handler } from "bun:internal-for-testing"; test("panic", () => { crash_handler.segfault(); });`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "--parallel=2", "--bail=1"],
+      env: { ...bunEnv, BUN_TEST_PARALLEL_SCALE_MS: "0" },
+      cwd: String(dir),
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain("a test worker process crashed with");
+    expect(stderr).toContain("Aborting");
+    expect(exitCode).not.toBe(0);
+  },
+  isASAN || isDebug ? 60_000 : 20_000,
+);
 
 test("--parallel prints per-test lines under their file's header", async () => {
   using dir = tempDir("parallel-output", {

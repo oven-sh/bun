@@ -384,7 +384,10 @@ pub struct DevServer {
     // `Watcher::shutdown` instead.
     pub bun_watcher: ::core::mem::ManuallyDrop<Box<Watcher>>,
     pub directory_watchers: DirectoryWatchStore,
-    pub watcher_atomics: WatcherAtomics,
+    /// Heap-owned via `heap::into_raw` so a still-queued
+    /// `HotReloadEvent.concurrent_task` can outlive `DevServer`; see the
+    /// `next_event` check in `Drop`.
+    pub watcher_atomics: ::core::ptr::NonNull<WatcherAtomics>,
     pub testing_batch_events: TestingBatchEvents,
 
     /// Number of bundles that have been executed. This is currently not read, but
@@ -1197,10 +1200,36 @@ impl Drop for DevServer {
             self.timer_heap().remove(timer_ptr);
         }
 
-        for event in &mut self.watcher_atomics.events {
-            event.dirs.clear_and_free();
-            event.files.clear_and_free();
-            event.extra_files.clear();
+        // `Watcher::shutdown` serialises with `dispatch_file_updates` on
+        // `Watcher.mutex`, so `next_event` is stable from the watcher side.
+        let atomics = self.watcher_atomics.as_ptr();
+        // SAFETY: `atomics` is the `heap::into_raw` pointer from `init()`.
+        let next = unsafe {
+            (*atomics)
+                .next_event
+                .load(::core::sync::atomic::Ordering::Acquire)
+        };
+        if next == crate::bake::dev_server::NextEvent::DONE.0 {
+            // SAFETY: `atomics` is the unique owner; no event is queued.
+            unsafe {
+                for event in &mut (*atomics).events {
+                    event.dirs.clear_and_free();
+                    event.files.clear_and_free();
+                    event.extra_files.clear();
+                }
+                bun_core::heap::destroy(atomics);
+            }
+        } else {
+            // A `HotReloadEvent.concurrent_task` is still linked in the
+            // concurrent queue; `HotReloadEvent::run` will see the nulled
+            // `owner` and reclaim this allocation.
+            // SAFETY: `atomics` is live; the main thread is the sole writer
+            // of `owner` here (watcher thread is serialised out).
+            unsafe {
+                for event in &mut (*atomics).events {
+                    event.owner = ::core::ptr::null_mut();
+                }
+            }
         }
 
         if let TestingBatchEvents::Enabled(batch) = &mut self.testing_batch_events {
@@ -4983,11 +5012,14 @@ impl DevServer {
                         // `self.watcher_atomics.events[_]`, disjoint from the
                         // graph/watcher fields `process_file_list` mutates.
                         current.process_file_list(unsafe { &mut *self_ptr }, &mut entry_points);
-                        // SAFETY: `current` points into `self.watcher_atomics.events[_]`;
+                        // SAFETY: `current` points into `*self.watcher_atomics`;
                         // `recycle_event_from_dev_server` only reads/swaps that slot.
-                        let Some(next) = self.watcher_atomics.recycle_event_from_dev_server(
-                            std::ptr::from_mut::<HotReloadEvent>(current),
-                        ) else {
+                        let Some(next) = (unsafe {
+                            WatcherAtomics::recycle_event_from_dev_server(
+                                self.watcher_atomics.as_ptr(),
+                                std::ptr::from_mut::<HotReloadEvent>(current),
+                            )
+                        }) else {
                             break;
                         };
                         // SAFETY: `recycle_event_from_dev_server` returns a slot
@@ -5999,16 +6031,19 @@ impl DevServer {
         // SAFETY: see above; `kinds` is a disjoint SoA column owned by `watchlist`.
         let kinds = unsafe { &*kinds };
 
-        let ev_ptr = self.watcher_atomics.watcher_acquire_event();
-        // SAFETY: `watcher_acquire_event` returns a valid `*mut HotReloadEvent`
-        // into `self.watcher_atomics.events`; exclusive on the watcher thread.
+        let atomics = self.watcher_atomics.as_ptr();
+        // SAFETY: `atomics` is the heap `WatcherAtomics`; watcher thread holds
+        // `Watcher.mutex`. The returned slot is exclusive on this thread.
+        let ev_ptr = unsafe { WatcherAtomics::watcher_acquire_event(atomics) };
+        // SAFETY: see above.
         let ev = unsafe { &mut *ev_ptr };
         // Note: erase `self` to a raw ptr in the deferred closures so the
         // loop body can keep using `self.bun_watcher`.
         let self_ptr: *mut Self = self;
         scopeguard::defer! {
-            // SAFETY: `self_ptr` is live for the entire fn body; guard runs at scope exit.
-            unsafe { (*self_ptr).watcher_atomics.watcher_release_and_submit_event(ev_ptr) }
+            // SAFETY: `atomics`/`ev_ptr` are live for the fn body; guard runs
+            // at scope exit with `Watcher.mutex` still held.
+            unsafe { WatcherAtomics::watcher_release_and_submit_event(atomics, ev_ptr) }
         };
 
         // SAFETY: see `self_ptr` SAFETY above.

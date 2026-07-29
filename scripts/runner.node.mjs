@@ -74,6 +74,12 @@ let isQuiet = false;
 const cwd = import.meta.dirname ? dirname(import.meta.dirname) : process.cwd();
 const testsPath = join(cwd, "test");
 
+const runnerStartedAt = Date.now();
+const jobBudgetMs = () => {
+  const minutes = parseInt(process.env.BUILDKITE_TIMEOUT || "", 10);
+  if (!Number.isFinite(minutes) || minutes <= 0) return Infinity;
+  return minutes * 60_000 - (Date.now() - runnerStartedAt);
+};
 const spawnTimeout = 5_000;
 const spawnBunTimeout = 20_000; // when running with ASAN/LSAN bun can take a bit longer to exit, not a bug.
 const testTimeout = 3 * 60_000;
@@ -981,7 +987,11 @@ async function runTests() {
             ...bucketFiles.map(t => join(testsPath, t)),
           ],
           cwd,
-          timeout: Math.max(10 * 60_000, bucketFiles.length * 5_000),
+          timeout: Math.max(
+            60_000,
+            Math.min(Math.max(10 * 60_000, bucketFiles.length * 5_000), jobBudgetMs() - 5 * 60_000),
+          ),
+          idleTimeout: parseInt(process.env.BUN_RUNNER_BATCH_IDLE_MS || "", 10) || 4 * 60_000,
           gracefulTimeout: true,
           env,
           stdout: chunk => pipeTestStdout(process.stdout, chunk),
@@ -1440,9 +1450,12 @@ async function spawnSafe(options) {
   let spawnError;
   let timestamp;
   let timedOut = false;
+  let idledOut = false;
   let duration;
   let subprocess;
   let timer;
+  let idleTimer;
+  let armIdleTimer;
   let buffer = "";
   let doneCalls = 0;
   const beforeDone = resolve => {
@@ -1455,6 +1468,7 @@ async function spawnSafe(options) {
     if (timer) {
       clearTimeout(timer);
     }
+    clearTimeout(idleTimer);
     subprocess.stderr.unref();
     subprocess.stdout.unref();
     subprocess.unref();
@@ -1496,8 +1510,9 @@ async function spawnSafe(options) {
       });
       subprocess.on("spawn", () => {
         timestamp = Date.now();
-        timer = setTimeout(() => {
+        const expire = () => {
           timedOut = true;
+          clearTimeout(idleTimer);
           if (options.gracefulTimeout && !isWindows) {
             subprocess.kill("SIGTERM");
             timer = setTimeout(() => {
@@ -1507,7 +1522,18 @@ async function spawnSafe(options) {
             return;
           }
           done(resolve);
-        }, timeout);
+        };
+        timer = setTimeout(expire, timeout);
+        if (options.idleTimeout) {
+          armIdleTimer = () => {
+            clearTimeout(idleTimer);
+            idleTimer = setTimeout(() => {
+              idledOut = true;
+              expire();
+            }, options.idleTimeout);
+          };
+          armIdleTimer();
+        }
       });
       subprocess.on("error", error => {
         spawnError = error;
@@ -1527,11 +1553,13 @@ async function spawnSafe(options) {
         beforeDone(resolve);
       });
       subprocess.stdout.on("data", chunk => {
+        armIdleTimer?.();
         const text = chunk.toString("utf-8");
         stdout?.(text);
         buffer += text;
       });
       subprocess.stderr.on("data", chunk => {
+        armIdleTimer?.();
         const text = chunk.toString("utf-8");
         stderr?.(text);
         buffer += text;
@@ -1674,7 +1702,8 @@ async function spawnSafe(options) {
     }
     error = `code ${exitCode}`;
   }
-  if (timedOut && (!error || error === signalCode || /^code \d+$/.test(error))) error = "timeout";
+  if (timedOut && (!error || error === signalCode || /^code \d+$/.test(error)))
+    error = idledOut ? "stalled" : "timeout";
   return {
     ok: exitCode === 0 && !signalCode && !spawnError,
     error,
@@ -1724,7 +1753,7 @@ function getCombinedPath(execPath) {
  * @param {SpawnOptions} options
  * @returns {Promise<SpawnBunResult>}
  */
-async function spawnBun(execPath, { args, cwd, timeout, gracefulTimeout, env, stdout, stderr }) {
+async function spawnBun(execPath, { args, cwd, timeout, gracefulTimeout, idleTimeout, env, stdout, stderr }) {
   const path = getCombinedPath(execPath);
   const tmpdirPath = mkdtempSync(join(tmpdir(), "buntmp-"));
   const { username, homedir } = userInfo();
@@ -1779,6 +1808,7 @@ async function spawnBun(execPath, { args, cwd, timeout, gracefulTimeout, env, st
       cwd,
       timeout,
       gracefulTimeout,
+      idleTimeout,
       env: bunEnv,
       stdout,
       stderr,

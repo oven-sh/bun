@@ -10,7 +10,7 @@ use bun_js_printer::{self as js_printer, PrintResult, PrintResultSuccess};
 use crate::generic_path_with_pretty_initialized;
 use crate::linker_context_mod::{StmtList, StmtListWhich};
 use crate::options::Format as OutputFormat;
-use crate::{Chunk, DeclInfo, DeclInfoKind, Index, LinkerContext, Part, PartRange, WrapKind};
+use crate::{Chunk, Index, LinkerContext, Part, PartRange, WrapKind};
 
 use bun_ast::StoreRef;
 use bun_ast::binding::ToExprWrapper;
@@ -33,7 +33,6 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
     stmts: &mut StmtList,
     arena: &Bump,
     temp_arena: &Bump,
-    decl_collector: Option<&mut DeclCollector>,
 ) -> js_printer::PrintResult {
     let source_index = part_range.source_index.get() as usize;
 
@@ -915,16 +914,6 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
         });
     }
 
-    // Collect top-level declarations from the converted statements.
-    // This is done here (after convertStmtsForChunk) rather than in
-    // postProcessJSChunk, because convertStmtsForChunk transforms the AST
-    // (e.g. export default expr → var, export stripping) and the converted
-    // statements reflect what actually gets printed.
-    let mut r = r;
-    if let Some(dc) = decl_collector {
-        dc.collect_from_stmts(out_stmts, &mut r, c);
-    }
-
     // `get_source` returns `&'static Source` (parse_graph SoA is append-only and
     // outlives the link step), so it does not borrow `c` — no split-borrow needed
     // across the `&mut self` call below.
@@ -942,112 +931,6 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
         part_range.source_index,
         source,
     )
-}
-
-pub struct DeclCollector {
-    pub decls: Vec<DeclInfo>,
-    pub arena: *const Bump,
-}
-
-impl Default for DeclCollector {
-    fn default() -> Self {
-        Self {
-            decls: Vec::new(),
-            arena: core::ptr::null(),
-        }
-    }
-}
-
-impl DeclCollector {
-    /// Collect top-level declarations from **converted** statements (after
-    /// `convertStmtsForChunk`). At that point, export statements have already
-    /// been transformed:
-    /// - `s_export_default` → `s_local` / `s_function` / `s_class`
-    /// - `s_export_clause` → removed entirely
-    /// - `s_export_from` / `s_export_star` → removed or converted to `s_import`
-    ///
-    /// Remaining `s_import` statements (external, non-bundled) don't need
-    /// handling here; their bindings are recorded separately in
-    /// `postProcessJSChunk` by scanning the original AST import records.
-    pub fn collect_from_stmts(
-        &mut self,
-        stmts: &[Stmt],
-        r: &mut renamer::Renamer<'_, '_>,
-        c: &LinkerContext,
-    ) {
-        for stmt in stmts {
-            match stmt.data {
-                StmtData::SLocal(s) => {
-                    let kind: DeclInfoKind = if s.kind == LocalKind::KVar {
-                        DeclInfoKind::Declared
-                    } else {
-                        DeclInfoKind::Lexical
-                    };
-                    for decl in s.decls.slice() {
-                        self.collect_from_binding(decl.binding, kind, r, c);
-                    }
-                }
-                StmtData::SFunction(s) => {
-                    if let Some(name_loc_ref) = s.func.name {
-                        if let Some(name_ref) = name_loc_ref.ref_.to_nullable() {
-                            self.add_ref(name_ref, DeclInfoKind::Lexical, r, c);
-                        }
-                    }
-                }
-                StmtData::SClass(s) => {
-                    if let Some(class_name) = s.class.class_name {
-                        if let Some(name_ref) = class_name.ref_.to_nullable() {
-                            self.add_ref(name_ref, DeclInfoKind::Lexical, r, c);
-                        }
-                    }
-                }
-                _ => {}
-            }
-        }
-    }
-
-    fn collect_from_binding(
-        &mut self,
-        binding: Binding,
-        kind: DeclInfoKind,
-        r: &mut renamer::Renamer<'_, '_>,
-        c: &LinkerContext,
-    ) {
-        match binding.data {
-            BindingData::BIdentifier(b) => {
-                self.add_ref(b.r#ref, kind, r, c);
-            }
-            BindingData::BArray(b) => {
-                for item in b.items() {
-                    self.collect_from_binding(item.binding, kind, r, c);
-                }
-            }
-            BindingData::BObject(b) => {
-                for prop in b.properties() {
-                    self.collect_from_binding(prop.value, kind, r, c);
-                }
-            }
-            BindingData::BMissing(_) => {}
-        }
-    }
-
-    fn add_ref(
-        &mut self,
-        ref_: Ref,
-        kind: DeclInfoKind,
-        r: &mut renamer::Renamer<'_, '_>,
-        c: &LinkerContext,
-    ) {
-        let followed = c.graph.symbols.follow(ref_);
-        let name = r.name_for_symbol(followed);
-        if name.is_empty() {
-            return;
-        }
-        self.decls.push(DeclInfo {
-            name: name.to_vec().into_boxed_slice(),
-            kind,
-        });
-    }
 }
 
 fn merge_adjacent_local_stmts(stmts: &mut Vec<Stmt>, _arena: &Bump) {
@@ -1107,7 +990,5 @@ fn merge_adjacent_local_stmts(stmts: &mut Vec<Stmt>, _arena: &Bump) {
 }
 
 // Type aliases / re-imports for readability of match arms.
-use bun_ast::LocalKind;
-use bun_ast::binding::Data as BindingData;
 use bun_ast::expr::Data as ExprData;
 use bun_ast::stmt::Data as StmtData;

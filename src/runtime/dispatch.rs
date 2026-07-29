@@ -570,10 +570,12 @@ fn run_task_cold(task: Task) {
 
         // ── bake dev-server ──────────────────────────────────────────────
         task_tag::BakeHotReloadEvent => {
-            // SAFETY: §Dispatch — tag identifies pointee; the event is an inline
-            // element of `DevServer.watcher_atomics.events[_]` and `run` itself
-            // re-derives `&mut DevServer` from the BACKREF, so pass the raw
-            // pointer to avoid materialising an aliasing `&mut` here.
+            // SAFETY: §Dispatch — tag identifies pointee; the event lives in a
+            // heap `WatcherAtomics` that can outlive its `DevServer`. `run`
+            // either re-derives `&mut DevServer` from the BACKREF or (when the
+            // owner has been dropped) only reclaims the heap `WatcherAtomics`,
+            // so pass the raw pointer to avoid materialising an aliasing
+            // `&mut` here.
             unsafe { BakeHotReloadEvent::run(cast_ptr!(BakeHotReloadEvent)) };
         }
 

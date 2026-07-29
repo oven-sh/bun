@@ -1835,7 +1835,11 @@ export class VerdaccioRegistry {
 
   async start(silent: boolean = true) {
     await rm(join(dirname(this.configPath), "htpasswd"), { force: true });
-    this.process = fork(require.resolve("verdaccio/bin/verdaccio"), ["-c", this.configPath, "-l", `${this.port}`], {
+    // Bind the IPv4 loopback explicitly: a bare port makes verdaccio listen on
+    // whatever `localhost` resolves to, which is `::1` on hosts that list it first,
+    // while the install client connects to 127.0.0.1 and every request is refused.
+    const listen = `127.0.0.1:${this.port}`;
+    this.process = fork(require.resolve("verdaccio/bin/verdaccio"), ["-c", this.configPath, "-l", listen], {
       silent,
       // Prefer using a release build of Bun since it's faster
       execPath: isCI ? bunExe() : Bun.which("bun") || bunExe(),
@@ -2188,4 +2192,32 @@ export function getPuppeteerInstallEnv(): Record<string, string> {
   // earlier failed run otherwise blocks every later install. Pass the same
   // env to whatever later launches puppeteer so it finds the browser.
   return { PUPPETEER_CACHE_DIR: tmpdirSync("puppeteer-cache") };
+}
+
+const compiledFixtures = new Map<string, string>();
+export function compileFixture(sourcePath: string, options: { flags?: string[] } = {}): string {
+  const cacheKey = sourcePath + "\0" + (options.flags ?? []).join("\0");
+  const cached = compiledFixtures.get(cacheKey);
+  if (cached) return cached;
+
+  const outDir = tmpdirSync("ffi-fixture-");
+  const base = basename(sourcePath).replace(/\.c$/, "");
+  const libExt = isWindows ? "dll" : isMacOS ? "dylib" : "so";
+  const flagsTag = options.flags?.length ? "-" + Bun.hash((options.flags ?? []).join(" ")).toString(36) : "";
+  const outPath = join(outDir, `${base}${flagsTag}.${libExt}`);
+
+  const cc = which("cc") || which("clang") || which("gcc");
+  if (!cc) throw new Error("compileFixture: no C compiler (cc/clang/gcc) found in $PATH");
+
+  const cmd = isWindows
+    ? [cc, sourcePath, "-shared", "-o", outPath, ...(options.flags ?? [])]
+    : [cc, sourcePath, "-shared", "-fPIC", "-O2", "-o", outPath, ...(options.flags ?? [])];
+  const { exitCode, stderr } = spawnSync({ cmd, cwd: outDir, stdout: "inherit", stderr: "pipe", env: bunEnv });
+  if (exitCode !== 0) {
+    throw new Error(
+      `compileFixture: \`${cmd.join(" ")}\` failed (exit ${exitCode}):\n${stderr?.toString?.() ?? stderr}`,
+    );
+  }
+  compiledFixtures.set(cacheKey, outPath);
+  return outPath;
 }

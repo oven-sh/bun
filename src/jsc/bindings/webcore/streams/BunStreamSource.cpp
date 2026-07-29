@@ -29,6 +29,7 @@
 #include <JavaScriptCore/JSArrayBufferView.h>
 #include <JavaScriptCore/JSBoundFunction.h>
 #include <JavaScriptCore/JSCInlines.h>
+#include <JavaScriptCore/JSInternalFieldObjectImplInlines.h>
 #include <JavaScriptCore/JSPromise.h>
 #include <JavaScriptCore/JSTypedArrays.h>
 #include <JavaScriptCore/Microtask.h>
@@ -38,7 +39,6 @@
 #include <JavaScriptCore/SourceCode.h>
 #include <JavaScriptCore/SubspaceInlines.h>
 #include <JavaScriptCore/TopExceptionScope.h>
-#include <JavaScriptCore/WeakInlines.h>
 #include <wtf/text/MakeString.h>
 
 namespace WebCore {
@@ -53,16 +53,12 @@ JSNativeStreamSourceAdapter::JSNativeStreamSourceAdapter(VM& vm, Structure* stru
 {
 }
 
-JSNativeStreamSourceAdapter::~JSNativeStreamSourceAdapter() = default;
-
-void JSNativeStreamSourceAdapter::destroy(JSCell* cell)
-{
-    static_cast<JSNativeStreamSourceAdapter*>(cell)->JSNativeStreamSourceAdapter::~JSNativeStreamSourceAdapter();
-}
-
 void JSNativeStreamSourceAdapter::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
+    auto values = initialValues();
+    for (unsigned i = 0; i < numberOfInternalFields; ++i)
+        Base::internalField(i).set(vm, this, values[i]);
     ASSERT(inherits(info()));
 }
 
@@ -94,24 +90,9 @@ void JSNativeStreamSourceAdapter::visitChildrenImpl(JSCell* cell, Visitor& visit
     auto* thisObject = uncheckedDowncast<JSNativeStreamSourceAdapter>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
-    visitor.appendHidden(thisObject->m_handle);
-    visitor.appendHidden(thisObject->m_pendingView);
-    visitor.appendHidden(thisObject->m_closer);
-    visitor.appendHidden(thisObject->m_drainValue);
 }
 
 DEFINE_VISIT_CHILDREN(JSNativeStreamSourceAdapter);
-
-void JSNativeStreamSourceAdapter::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
-{
-    auto* thisObject = uncheckedDowncast<JSNativeStreamSourceAdapter>(cell);
-    auto& vm = cell->vm();
-    Base::analyzeHeap(cell, analyzer);
-    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_handle, "handle"_s);
-    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_pendingView, "pendingView"_s);
-    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_closer, "closer"_s);
-    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_drainValue, "drainValue"_s);
-}
 
 const ClassInfo JSDirectSinkCloseState::s_info = { "DirectSinkCloseState"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSDirectSinkCloseState) };
 
@@ -397,9 +378,9 @@ static void clearStreamControllerSlots(JSReadableStream* stream)
 static void nativeStorePendingView(JSC::VM& vm, JSNativeStreamSourceAdapter* adapter, JSValue newView)
 {
     if (JSObject* object = newView.getObject())
-        adapter->m_pendingView.set(vm, adapter, object);
+        adapter->setPendingView(vm, object);
     else
-        adapter->m_pendingView.clear();
+        adapter->clearPendingView(vm);
 }
 
 // Text mode: decode `bytes` against `state` and enqueue the resulting string
@@ -423,7 +404,7 @@ static void nativeEnqueueTextChunk(JSGlobalObject* globalObject, JSReadableStrea
 static bool nativeCloserFlag(JSC::VM& vm, JSGlobalObject* globalObject, JSNativeStreamSourceAdapter* adapter)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
-    auto* closer = uncheckedDowncast<JSArray>(adapter->m_closer.get());
+    auto* closer = uncheckedDowncast<JSArray>(adapter->closer());
     JSValue flag = closer->getIndex(globalObject, 0);
     RETURN_IF_EXCEPTION(scope, false);
     return flag.toBoolean(globalObject);
@@ -433,7 +414,7 @@ static bool nativeCloserFlag(JSC::VM& vm, JSGlobalObject* globalObject, JSNative
 static void nativeSourceSever(JSGlobalObject* globalObject, JSNativeStreamSourceAdapter* adapter)
 {
     auto& vm = getVM(globalObject);
-    if (JSObject* handle = adapter->m_handle.get()) {
+    if (JSObject* handle = adapter->handle()) {
         auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
         PutPropertySlot onCloseSlot(handle, false);
         handle->methodTable()->put(handle, globalObject, builtinNames(vm).onClosePublicName(), jsUndefined(), onCloseSlot);
@@ -446,14 +427,15 @@ static void nativeSourceSever(JSGlobalObject* globalObject, JSNativeStreamSource
                 return;
         }
     }
-    adapter->m_handle.clear();
-    adapter->m_pendingView.clear();
+    adapter->clearHandle(vm);
+    adapter->clearPendingView(vm);
 }
 
 // The queued callClose job body: close the controller if the consumer is still alive, then sever.
 static void nativeSourceCallClose(JSC::VM& vm, JSGlobalObject* globalObject, JSNativeStreamSourceAdapter* adapter)
 {
-    auto* controller = adapter->m_controller.get();
+    auto* controller = adapter->controller();
+    adapter->clearController(vm);
     if (controller && readableStreamDefaultControllerCanCloseOrEnqueue(controller)) {
         auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
         if (adapter->m_textMode)
@@ -495,14 +477,14 @@ static JSC::JSUint8Array* nativeGetInternalBuffer(JSC::VM& vm, JSGlobalObject* g
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
     const size_t chunkSize = adapter->m_chunkSize;
-    if (JSObject* pending = adapter->m_pendingView.get()) {
+    if (JSObject* pending = adapter->pendingView()) {
         auto* view = uncheckedDowncast<JSC::JSUint8Array>(pending);
         if (!view->isDetached() && view->possiblySharedBuffer() && view->possiblySharedBuffer()->byteLength() >= chunkSize)
             return view;
     }
     auto* fresh = JSC::JSUint8Array::create(globalObject, globalObject->typedArrayStructure(JSC::TypeUint8, false), chunkSize);
     RETURN_IF_EXCEPTION(scope, nullptr);
-    adapter->m_pendingView.set(vm, adapter, fresh);
+    adapter->setPendingView(vm, fresh);
     return fresh;
 }
 
@@ -631,16 +613,16 @@ void materializeNativeSource(JSGlobalObject* globalObject, JSReadableStream* str
     }
 
     auto* adapter = WebCore::JSNativeStreamSourceAdapter::create(vm, runtime->nativeStreamSourceAdapterStructure(domGlobalObject));
-    adapter->m_handle.set(vm, adapter, handle);
+    adapter->setHandle(vm, handle);
     adapter->m_textMode = stream->m_nativeTextMode;
     adapter->m_chunkSize = std::max(static_cast<size_t>(chunkSize), autoAllocateChunkSize);
     auto* closer = JSC::constructEmptyArray(globalObject, nullptr, 1);
     RETURN_IF_EXCEPTION(scope, );
     closer->putDirectIndex(globalObject, 0, jsBoolean(false));
     RETURN_IF_EXCEPTION(scope, );
-    adapter->m_closer.set(vm, adapter, closer);
+    adapter->setCloser(vm, closer);
     if (!drainValue.isUndefined())
-        adapter->m_drainValue.set(vm, adapter, drainValue);
+        adapter->setDrainValue(vm, drainValue);
 
     auto* onCloseBound = createBoundHandler(globalObject, runtime->boundOnNativeSourceClose(), adapter);
     RETURN_IF_EXCEPTION(scope, );
@@ -667,11 +649,11 @@ JSValue nativeSourceStart(JSGlobalObject* globalObject, JSReadableStreamDefaultC
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* adapter = uncheckedDowncast<JSNativeStreamSourceAdapter>(controller->m_algorithms.algorithmContext.get());
-    JSValue drainValue = adapter->m_drainValue.get();
-    if (!drainValue.isEmpty()) {
-        adapter->m_drainValue.clear();
-        if (!adapter->m_controller)
-            adapter->m_controller = JSC::Weak<JSReadableStreamDefaultController>(controller);
+    JSValue drainValue = adapter->drainValue();
+    if (!drainValue.isUndefined()) {
+        adapter->clearDrainValue(vm);
+        if (!adapter->controller())
+            adapter->setController(vm, controller);
         if (adapter->m_textMode) {
             if (auto* drainView = dynamicDowncast<JSC::JSArrayBufferView>(drainValue))
                 nativeEnqueueTextChunk(globalObject, controller, adapter->m_textState, drainView->span(), /* flush */ false);
@@ -686,10 +668,10 @@ JSValue nativeSourceStart(JSGlobalObject* globalObject, JSReadableStreamDefaultC
 static JSPromise* nativeSourcePullImpl(JSC::VM& vm, JSGlobalObject* globalObject, JSNativeStreamSourceAdapter* adapter, JSReadableStreamDefaultController* controller)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
-    if (!adapter->m_controller)
-        adapter->m_controller = JSC::Weak<JSReadableStreamDefaultController>(controller);
+    if (!adapter->controller())
+        adapter->setController(vm, controller);
 
-    JSObject* handle = adapter->m_handle.get();
+    JSObject* handle = adapter->handle();
     if (!handle || adapter->m_closed) {
         adapter->m_closed = true;
         scheduleNativeSourceCallClose(globalObject, adapter);
@@ -698,11 +680,11 @@ static JSPromise* nativeSourcePullImpl(JSC::VM& vm, JSGlobalObject* globalObject
         return nullptr;
     }
 
-    auto* closer = uncheckedDowncast<JSArray>(adapter->m_closer.get());
+    auto* closer = uncheckedDowncast<JSArray>(adapter->closer());
     closer->putDirectIndex(globalObject, 0, jsBoolean(false));
     RETURN_IF_EXCEPTION(scope, nullptr);
 
-    if (JSObject* pendingObject = adapter->m_pendingView.get()) {
+    if (JSObject* pendingObject = adapter->pendingView()) {
         MarkedArgumentBuffer noArgs;
         JSValue drained = invokeMethod(vm, globalObject, handle, builtinNames(vm).drainPublicName(), noArgs);
         RETURN_IF_EXCEPTION(scope, nullptr);
@@ -740,7 +722,7 @@ static JSPromise* nativeSourcePullImpl(JSC::VM& vm, JSGlobalObject* globalObject
     RETURN_IF_EXCEPTION(scope, nullptr);
     nativeStorePendingView(vm, adapter, newView);
     if (adapter->m_closed)
-        adapter->m_pendingView.clear();
+        adapter->clearPendingView(vm);
     return nullptr;
 }
 
@@ -775,8 +757,9 @@ JSPromise* nativeSourceCancel(JSGlobalObject* globalObject, JSReadableStreamDefa
     JSValue thrown;
     {
         auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-        adapter->m_pendingView.clear();
-        if (JSObject* handle = adapter->m_handle.get())
+        adapter->clearPendingView(vm);
+        adapter->clearController(vm);
+        if (JSObject* handle = adapter->handle())
             invokeNativeHandleCancel(vm, globalObject, handle, reason);
         if (!catchScope.exception())
             nativeSourceSever(globalObject, adapter);
@@ -819,7 +802,7 @@ JSPromise* cancelPendingNativeSource(JSGlobalObject* globalObject, JSReadableStr
 // The [bound-convention] onDrain body: a dead consumer drops the chunk.
 static void nativeSourceOnDrain(JSGlobalObject* globalObject, JSNativeStreamSourceAdapter* adapter, JSValue chunk)
 {
-    auto* controller = adapter->m_controller.get();
+    auto* controller = adapter->controller();
     if (!controller)
         return;
     if (adapter->m_textMode) {
@@ -834,7 +817,7 @@ static void nativeSourceOnDrain(JSGlobalObject* globalObject, JSNativeStreamSour
 static void nativeSourceOnClose(JSGlobalObject* globalObject, JSNativeStreamSourceAdapter* adapter)
 {
     adapter->m_closed = true;
-    if (adapter->m_controller.get())
+    if (adapter->controller())
         scheduleNativeSourceCallClose(globalObject, adapter);
     nativeSourceSever(globalObject, adapter);
 }
@@ -842,9 +825,9 @@ static void nativeSourceOnClose(JSGlobalObject* globalObject, JSNativeStreamSour
 static void nativeSourcePullFulfilled(JSC::VM& vm, JSGlobalObject* globalObject, JSNativeStreamSourceAdapter* adapter, JSValue result)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
-    auto* controller = adapter->m_controller.get();
+    auto* controller = adapter->controller();
     JSC::JSUint8Array* view = nullptr;
-    if (JSObject* pendingObject = adapter->m_pendingView.get())
+    if (JSObject* pendingObject = adapter->pendingView())
         view = uncheckedDowncast<JSC::JSUint8Array>(pendingObject);
     bool isClosed = nativeCloserFlag(vm, globalObject, adapter);
     RETURN_IF_EXCEPTION(scope, );
@@ -852,16 +835,16 @@ static void nativeSourcePullFulfilled(JSC::VM& vm, JSGlobalObject* globalObject,
     RETURN_IF_EXCEPTION(scope, );
     nativeStorePendingView(vm, adapter, newView);
     if (adapter->m_closed)
-        adapter->m_pendingView.clear();
+        adapter->clearPendingView(vm);
 }
 
 static void nativeSourcePullRejected(JSC::VM& vm, JSGlobalObject* globalObject, JSNativeStreamSourceAdapter* adapter, JSValue error)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
-    adapter->m_pendingView.clear();
+    adapter->clearPendingView(vm);
     adapter->m_closed = true;
-    auto* controller = adapter->m_controller.get();
-    adapter->m_controller.clear();
+    auto* controller = adapter->controller();
+    adapter->clearController(vm);
     if (controller) {
         readableStreamDefaultControllerError(globalObject, controller, error);
         RETURN_IF_EXCEPTION(scope, );
@@ -1641,7 +1624,7 @@ JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onNativePullFulfilled, (JSGlobalObj
     }
     // Boundary: an internal decode failure errors the stream instead of escaping.
     if (!thrown.isEmpty()) {
-        if (auto* controller = adapter->m_controller.get()) {
+        if (auto* controller = adapter->controller()) {
             readableStreamDefaultControllerError(globalObject, controller, thrown);
             RETURN_IF_EXCEPTION(scope, {});
         }

@@ -90,6 +90,23 @@ pub(crate) fn new_cstring(
     }
 }
 
+#[unsafe(no_mangle)]
+pub(crate) unsafe extern "C" fn Bun__FFI__CString__transcode(
+    global: &JSGlobalObject,
+    ptr: JSValue,
+    byte_offset: JSValue,
+    byte_length: JSValue,
+) -> JSValue {
+    jsc::to_js_host_fn_result(
+        global,
+        new_cstring(global, ptr, Some(byte_offset), Some(byte_length)),
+    )
+}
+
+unsafe extern "C" {
+    fn Bun__FFI__CStringConstructor(global: *const JSGlobalObject) -> JSValue;
+}
+
 // DOMJIT fast-path descriptor + slow-path host fn, represented here as a const
 // descriptor. The `DOMEffect.forRead(.TypedArrayProperties)` argument is consumed
 // by the C++ codegen, not the runtime descriptor; it lives in the generated
@@ -103,34 +120,20 @@ pub(crate) const DOM_CALL: DomCall = DomCall {
 pub fn to_js(global_object: &JSGlobalObject) -> JSValue {
     // Unrolled manually; keep in sync with `FIELDS` below.
     let fields = FIELDS();
-    let object = JSValue::create_empty_object(global_object, fields.len() + 2);
+    let object = JSValue::create_empty_object(global_object, fields.len() + 3);
 
     for &(name, func) in &fields {
-        if name == "CString" {
-            // CString needs to be callable as a constructor for backward compatibility.
-            // Pass the same function as the constructor so `new CString(ptr)` works.
-            object.put(
-                global_object,
-                name.as_bytes(),
-                JSFunction::create(
-                    global_object,
-                    name,
-                    func,
-                    1,
-                    jsc::js_function::CreateJSFunctionOptions {
-                        constructor: Some(func),
-                        ..Default::default()
-                    },
-                ),
-            );
-        } else {
-            object.put(
-                global_object,
-                name.as_bytes(),
-                JSFunction::create(global_object, name, func, 1, Default::default()),
-            );
-        }
+        object.put(
+            global_object,
+            name.as_bytes(),
+            JSFunction::create(global_object, name, func, 1, Default::default()),
+        );
     }
+
+    // SAFETY: `global_object` is a live JSC handle for the duration of the call.
+    object.put(global_object, b"CString", unsafe {
+        Bun__FFI__CStringConstructor(global_object)
+    });
 
     // SAFETY: `put` is the C++-side `FFI__ptr__put` helper; global_object is live.
     unsafe { (DOM_CALL.put)(std::ptr::from_ref(global_object).cast_mut(), object) };
@@ -258,15 +261,31 @@ pub mod reader {
 
     #[inline(always)]
     fn addr_from_args(global_object: &JSGlobalObject, arguments: &[JSValue]) -> JsResult<usize> {
-        if arguments.is_empty() || !arguments[0].is_number() {
-            return Err(global_object.throw_invalid_arguments(format_args!("Expected a pointer")));
-        }
-        let off = if arguments.len() > 1 {
-            usize::try_from(arguments[1].to_int32()).expect("int cast")
+        let base = if !arguments.is_empty() && arguments[0].is_number() {
+            arguments[0].as_ptr_address()
+        } else if !arguments.is_empty()
+            && arguments[0].is_big_int()
+            && arguments[0].is_big_int_in_uint64_range(1, usize::MAX as u64)
+        {
+            arguments[0].to_uint64_no_truncate() as usize
         } else {
-            0usize
+            return Err(global_object.throw_invalid_arguments(format_args!("Expected a pointer")));
         };
-        Ok(arguments[0].as_ptr_address() + off)
+        let mut addr = base;
+        if let Some(off_value) = arguments.get(1) {
+            let off = off_value.to_int32();
+            if off < 0 {
+                addr = addr.saturating_sub(off.unsigned_abs() as usize);
+            } else {
+                addr = addr.saturating_add(off as usize);
+            }
+        }
+        if addr == 0 {
+            return Err(global_object.throw_invalid_arguments(format_args!(
+                "ptr cannot be zero, that would segfault Bun :("
+            )));
+        }
+        Ok(addr)
     }
 
     /// Read a `T` from a user-supplied raw address (unaligned).
@@ -451,9 +470,10 @@ fn ptr_(global_this: &JSGlobalObject, value: JSValue, byte_offset: Option<JSValu
 
         let bytei64 = off.to_int64();
         if bytei64 < 0 {
-            addr = addr.saturating_sub(usize::try_from(-bytei64).expect("int cast"));
+            addr =
+                addr.saturating_sub(usize::try_from(bytei64.unsigned_abs()).unwrap_or(usize::MAX));
         } else {
-            addr += usize::try_from(bytei64).expect("int cast");
+            addr = addr.saturating_add(usize::try_from(bytei64).unwrap_or(usize::MAX));
         }
 
         if addr > array_buffer.ptr as usize + array_buffer.byte_len as usize {
@@ -502,13 +522,21 @@ fn get_ptr_slice(
     byte_offset: Option<JSValue>,
     byte_length: Option<JSValue>,
 ) -> ValueOrError {
-    if !value.is_number() || value.as_number() < 0.0 || value.as_number() > usize::MAX as f64 {
-        return ValueOrError::Err(
-            global_this.to_invalid_arguments(format_args!("ptr must be a number.")),
-        );
-    }
-
-    let num = value.as_ptr_address();
+    let num = if value.is_big_int() {
+        if !value.is_big_int_in_uint64_range(0, usize::MAX as u64) {
+            return ValueOrError::Err(
+                global_this.to_invalid_arguments(format_args!("ptr is out of range.")),
+            );
+        }
+        value.to_uint64_no_truncate() as usize
+    } else {
+        if !value.is_number() || value.as_number() < 0.0 || value.as_number() > usize::MAX as f64 {
+            return ValueOrError::Err(
+                global_this.to_invalid_arguments(format_args!("ptr must be a number.")),
+            );
+        }
+        value.as_ptr_address()
+    };
     if num == 0 {
         return ValueOrError::Err(global_this.to_invalid_arguments(format_args!(
             "ptr cannot be zero, that would segfault Bun :("
@@ -521,9 +549,10 @@ fn get_ptr_slice(
         if byte_off.is_number() {
             let off = byte_off.to_int64();
             if off < 0 {
-                addr = addr.saturating_sub(usize::try_from(-off).expect("int cast"));
+                addr =
+                    addr.saturating_sub(usize::try_from(off.unsigned_abs()).unwrap_or(usize::MAX));
             } else {
-                addr = addr.saturating_add(usize::try_from(off).expect("int cast"));
+                addr = addr.saturating_add(usize::try_from(off).unwrap_or(usize::MAX));
             }
 
             if addr == 0 {
@@ -600,9 +629,8 @@ fn get_cptr(value: JSValue) -> Option<usize> {
             return Some(addr);
         }
     } else if value.is_big_int() {
-        let addr: u64 = value.to_uint64_no_truncate();
-        if addr > 0 {
-            return Some(addr as usize);
+        if value.is_big_int_in_uint64_range(1, usize::MAX as u64) {
+            return Some(value.to_uint64_no_truncate() as usize);
         }
     }
 
@@ -860,23 +888,20 @@ mod fields {
         super::to_array_buffer(global, value, byte_offset, length, final_ctx, final_cb)
     }
 
-    // closeCallback → FFI::close_callback(global, JSValue) -> JSValue
-    pub(super) fn close_callback(
+    pub(super) fn close_jsc_callback(
         global: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
         let mut iter = callframe.arguments().iter();
-        let ctx = eat_required(global, &mut iter)?;
-        Ok(FfiImpl::close_callback(global, ctx))
+        let callback = eat_required(global, &mut iter)?;
+        Ok(FfiImpl::close_jsc_callback(global, callback))
     }
 
-    // CString → new_cstring(global, JSValue, ?JSValue, ?JSValue) -> JsResult<JSValue>
-    pub(super) fn cstring(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+    pub(super) fn cfunction(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         let mut iter = callframe.arguments().iter();
-        let value = eat_required(global, &mut iter)?;
-        let byte_offset = next_eat(&mut iter);
-        let length = next_eat(&mut iter);
-        new_cstring(global, value, byte_offset, length)
+        let options = eat_required(global, &mut iter)?;
+        let name = next_eat(&mut iter);
+        FfiImpl::create_cfunction(global, options, name)
     }
 }
 
@@ -893,8 +918,8 @@ fn FIELDS() -> [(&'static str, jsc::JSHostFn); 8] {
         ("linkSymbols", wrap_host_fn!(fields::link_symbols)),
         ("toBuffer", wrap_host_fn!(fields::to_buffer)),
         ("toArrayBuffer", wrap_host_fn!(fields::to_array_buffer)),
-        ("closeCallback", wrap_host_fn!(fields::close_callback)),
-        ("CString", wrap_host_fn!(fields::cstring)),
+        ("closeCallback", wrap_host_fn!(fields::close_jsc_callback)),
+        ("cfunction", wrap_host_fn!(fields::cfunction)),
     ]
 }
 

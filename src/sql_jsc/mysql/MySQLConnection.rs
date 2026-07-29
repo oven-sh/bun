@@ -70,6 +70,8 @@ pub struct MySQLConnection {
 
     auth_plugin: Option<AuthMethod>,
     _auth_state: AuthState,
+    auth_switch_count: u8,
+    full_auth_requested: bool,
 
     auth_data: Vec<u8>,
     // PERF: database/user/password/options could be sub-slices into options_buf
@@ -108,6 +110,8 @@ impl Default for MySQLConnection {
             status_flags: StatusFlags::default(),
             auth_plugin: None,
             _auth_state: AuthState::Pending,
+            auth_switch_count: 0,
+            full_auth_requested: false,
             auth_data: Vec::new(),
             database: Box::default(),
             user: Box::default(),
@@ -826,6 +830,11 @@ impl MySQLConnection {
                                 Auth::caching_sha2_password::FastAuthStatus::CONTINUE_AUTH => {
                                     bun_core::scoped_log!(MySQLConnection, "continue auth");
 
+                                    if self.full_auth_requested {
+                                        return Err(AnyMySQLError::UnexpectedPacket);
+                                    }
+                                    self.full_auth_requested = true;
+
                                     if self.tls_status != TLSStatus::SslOk {
                                         // Over plain TCP, an on-path attacker can answer the
                                         // public-key request with their own key and recover the
@@ -900,15 +909,28 @@ impl MySQLConnection {
                 };
                 auth_switch.decode_internal(reader)?;
 
-                // Update auth plugin and data
                 let auth_method = AuthMethod::from_string(auth_switch.plugin_name.slice())
                     .ok_or(AnyMySQLError::UnsupportedAuthPlugin)?;
+
+                // Bound a hostile server's auth ping-pong.
+                if self.auth_switch_count >= 2
+                    || (self.auth_switch_count > 0 && self.auth_plugin == Some(auth_method))
+                {
+                    bun_core::scoped_log!(
+                        MySQLConnection,
+                        "rejecting AuthSwitchRequest (count={}, plugin={:?})",
+                        self.auth_switch_count,
+                        auth_method
+                    );
+                    return Err(AnyMySQLError::UnexpectedPacket);
+                }
+                self.auth_switch_count += 1;
+
                 let auth_data = auth_switch.plugin_data.slice();
                 self.auth_plugin = Some(auth_method);
                 self.auth_data.clear();
                 self.auth_data.extend_from_slice(auth_data);
 
-                // Send new auth response
                 self.send_auth_switch_response(auth_method, auth_data)?;
             }
 

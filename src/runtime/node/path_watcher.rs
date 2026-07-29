@@ -980,6 +980,15 @@ impl Linux {
                 };
 
                 let is_dir_child = ev.mask & IN::ISDIR != 0;
+                // Suppress the OpenHarmony creation-labeling ATTRIB (see
+                // `attrib_shadowed_by_create`). `i` already points past this
+                // event, i.e. at the first candidate for the lookahead.
+                if (ev.mask & IN::ATTRIB != 0)
+                    && !name.is_empty()
+                    && attrib_shadowed_by_create(&buf.0[..n], i, ev.watch_descriptor, name)
+                {
+                    continue;
+                }
                 let event_type: WatchEventKind = if ev.mask
                     & (IN::CREATE
                         | IN::DELETE
@@ -1131,6 +1140,50 @@ impl Linux {
 /// field naming there is `watch_descriptor` / `name_len`.
 #[cfg(any(target_os = "linux", target_os = "android"))]
 use bun_watcher::inotify_watcher::Event as InotifyEvent;
+
+/// OpenHarmony kernels queue a spurious IN_ATTRIB immediately before IN_CREATE
+/// when an inode is created via open(O_CREAT)/mkdir (security labeling at
+/// creation; established by a raw inotify probe against the device kernel,
+/// which shows ATTR→CRE where a stock-Linux container shows CRE alone — and
+/// node on the device surfaces the same leading "change"). Every other
+/// platform guarantees a new entry's first event is "rename", and bun's own
+/// watcher tests encode that ordering, so the reader suppresses the labeling
+/// ATTRIB when a later event in the same read buffer is an IN_CREATE for the
+/// same (wd, name). Genuine attribute changes (chmod/chown/utimens) are never
+/// followed by IN_CREATE and pass through untouched. The two events are
+/// queued back-to-back by the same syscall; the small lookahead bound covers
+/// interleaving from other writers without an O(n²) scan on ATTRIB-heavy
+/// batches (a mass chmod never matches anyway).
+#[cfg(any(target_os = "linux", target_os = "android"))]
+fn attrib_shadowed_by_create(buf: &[u8], mut off: usize, wd: i32, name: &[u8]) -> bool {
+    const HEADER: usize = core::mem::size_of::<InotifyEvent>();
+    for _ in 0..16 {
+        if off + HEADER > buf.len() {
+            return false;
+        }
+        // SAFETY: same guarantees as the reader loop — inotify returns whole
+        // events, `buf` came from the 4-byte-aligned AlignedBuf, and every
+        // offset derived from kernel-reported name_len stays in bounds
+        // (checked immediately below).
+        let ev: &InotifyEvent = unsafe { &*buf.as_ptr().add(off).cast::<InotifyEvent>() };
+        let next = off + HEADER + ev.name_len as usize;
+        if next > buf.len() {
+            return false;
+        }
+        if ev.watch_descriptor == wd && ev.mask & bun_sys::linux::IN::CREATE != 0 {
+            let raw = &buf[off + HEADER..next];
+            let ev_name = match raw.iter().position(|&b| b == 0) {
+                Some(z) => &raw[..z],
+                None => raw,
+            };
+            if ev_name == name {
+                return true;
+            }
+        }
+        off = next;
+    }
+    false
+}
 
 // ────────────────────────────────────────────────────────────────────────────────
 // Darwin

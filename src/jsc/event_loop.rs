@@ -69,6 +69,16 @@ pub struct EventLoop {
     pub immediate_tasks: Vec<*mut ()>,
     pub next_immediate_tasks: Vec<*mut ()>,
 
+    /// Tasks that must not run until the *next* event-loop iteration, after
+    /// `tick()` has returned and the outer loop has polled I/O and fired due
+    /// timers. Promoted into `tasks` at `tick()` entry only, so a task queued
+    /// here from inside the current tick cannot be picked up by that tick's
+    /// drain-until-empty loop. This is Node's `uv_async_send` yield in
+    /// `MessagePort::OnMessage`: a batch-limit reschedule runs on the next
+    /// iteration instead of back-to-back, so a sustained sender can't starve
+    /// timers, immediates and I/O.
+    pub next_iteration_tasks: Vec<Task>,
+
     pub concurrent_tasks: ConcurrentQueue,
     // BACKREF — `*JSGlobalObject` owned by the VM; outlives this EventLoop.
     pub global: Option<NonNull<JSGlobalObject>>,
@@ -114,6 +124,7 @@ impl Default for EventLoop {
             tasks: Queue::init(),
             immediate_tasks: Vec::new(),
             next_immediate_tasks: Vec::new(),
+            next_iteration_tasks: Vec::new(),
             concurrent_tasks: ConcurrentQueue::default(),
             global: None,
             virtual_machine: None,
@@ -621,6 +632,11 @@ impl EventLoop {
         jsc::mark_binding();
         crate::top_scope!(scope, self.global_ref());
         self.entered_event_loop_count += 1;
+        // Promote next-iteration tasks queued by the previous tick. Entry-only:
+        // anything deferred from inside this tick lands in the next one.
+        for task in self.next_iteration_tasks.drain(..) {
+            let _ = self.tasks.write_item(task);
+        }
         // The scope/counter cleanup is inlined at each return site below (a
         // scopeguard closure would alias `&mut self`).
 
@@ -681,6 +697,12 @@ impl EventLoop {
 
     pub fn enqueue_task(&mut self, task: Task) {
         let _ = self.tasks.write_item(task);
+    }
+
+    /// Queue `task` for the next event-loop iteration (see
+    /// `next_iteration_tasks`). JS-thread only.
+    pub fn enqueue_task_next_iteration(&mut self, task: Task) {
+        self.next_iteration_tasks.push(task);
     }
 
     /// Drain `concurrent_tasks` without running them and `delete` any
@@ -747,6 +769,11 @@ impl EventLoop {
     /// definer can't safely dispatch every `AnyTask` callback at shutdown.
     pub fn release_queued_tasks_for_shutdown(&mut self) {
         self.drop_concurrent_cpp_tasks();
+        // Never-promoted next-iteration tasks get the same per-tag reclaim as
+        // ordinary queued tasks.
+        for task in self.next_iteration_tasks.drain(..) {
+            let _ = self.tasks.write_item(task);
+        }
         let mut requeue: Vec<bun_event_loop::Task> = Vec::new();
         while let Some(task) = self.tasks.read_item() {
             // SAFETY: tag-specific release (drops JSC handles while the VM is

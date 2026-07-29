@@ -85,16 +85,16 @@ void MessagePortPipe::scheduleDrain(uint8_t side, ScriptExecutionContextIdentifi
 void MessagePortPipe::drainAndDispatch(uint8_t side, ScriptExecutionContextIdentifier expectedCtx)
 {
     // Mirrors Node's MessagePort::OnMessage (src/node_messaging.cc): one
-    // drain task processes the whole inbox in a loop, draining microtasks
-    // between each delivery so queueMicrotask/Promise callbacks observe
-    // messages one at a time, but without a separate posted task per
-    // message. The per-invocation limit is max(initial queue size, 1000)
-    // — enough to amortize the uv_async-style reschedule cost, capped so a
-    // fast sender can't starve the event loop indefinitely.
+    // drain task processes a bounded batch, draining microtasks between each
+    // delivery so queueMicrotask/Promise callbacks observe messages one at a
+    // time, but without a separate posted task per message. The per-turn
+    // limit is a fixed cap so a fast sender can't starve the event loop;
+    // anything beyond it waits for the next loop iteration.
     //
     // Messages are popped one at a time under the lock, so if the handler
     // transfers this port (pipe->detach clears `s.port`/`Attached`) the
     // remaining inbox stays buffered for the new owner.
+    static constexpr size_t kMessageDrainPerTurnCap = 1024;
     auto& s = m_sides[side];
 
     RefPtr<MessagePort> port;
@@ -114,7 +114,7 @@ void MessagePortPipe::drainAndDispatch(uint8_t side, ScriptExecutionContextIdent
             s.state.store(st & ~DrainScheduled, std::memory_order_release);
             return;
         }
-        limit = std::max<size_t>(s.inbox.size(), 1000);
+        limit = std::min<size_t>(s.inbox.size(), kMessageDrainPerTurnCap);
     }
 
     // All 'message' listeners removed: the port is paused. Leave the inbox buffered
@@ -179,8 +179,18 @@ void MessagePortPipe::drainAndDispatch(uint8_t side, ScriptExecutionContextIdent
         }
     }
 
-    if (rescheduleCtx)
-        scheduleDrain(side, rescheduleCtx);
+    if (rescheduleCtx) {
+        // Limit exhausted with messages still queued. Resume on the NEXT
+        // event-loop iteration: `tick()` drains tasks queued by tasks, so an
+        // ordinary post (scheduleDrain -> postTaskTo -> concurrent queue)
+        // would re-run this drain inside the same tick and starve timers,
+        // immediates and I/O forever under a same-thread ping-pong. Node
+        // yields the same way here (TriggerAsync in MessagePort::OnMessage).
+        // We are on `rescheduleCtx`'s thread (== expectedCtx, checked above).
+        context->postTaskNextIteration([pipe = Ref { *this }, side, ctxId = rescheduleCtx](ScriptExecutionContext&) {
+            pipe->drainAndDispatch(side, ctxId);
+        });
+    }
 }
 
 std::optional<MessageWithMessagePorts> MessagePortPipe::takeOne(uint8_t side)

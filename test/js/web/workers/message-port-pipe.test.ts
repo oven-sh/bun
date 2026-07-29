@@ -7,6 +7,35 @@ import { receiveMessageOnPort } from "node:worker_threads";
 // and thread-safety under concurrent channel churn.
 
 describe("MessagePort pipe", () => {
+  test("self-feeding onmessage loop yields to timers/immediates", async () => {
+    // port1's handler posts via port2 back to port1, so port1's drain keeps
+    // finding more in its inbox. The drain must hit its per-batch limit and
+    // reschedule on the NEXT event-loop iteration so setTimeout/setImmediate
+    // get a turn; if it re-runs in the same tick the loop never yields.
+    // Deterministic: single-threaded, no wall-clock dependency.
+    const script = `
+      const { port1, port2 } = new MessageChannel();
+      let count = 0, fired = false;
+      port1.onmessage = () => {
+        if (count++ === 0) {
+          setTimeout(() => { fired = true; }, 0);
+          setImmediate(() => { fired = true; });
+        }
+        if (fired) { console.log(JSON.stringify({ count })); process.exit(0); }
+        if (count > 10000) { console.log(JSON.stringify({ count, STARVED: true })); process.exit(1); }
+        port2.postMessage(0);
+      };
+      port2.postMessage(0);
+    `;
+    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    const out = JSON.parse(stdout.trim());
+    expect(out.STARVED).toBeUndefined();
+    expect(out.count).toBeLessThan(10000);
+    expect(exitCode).toBe(0);
+  });
+
   test("microtasks run between message events (task-source semantics)", async () => {
     const { port1, port2 } = new MessageChannel();
     const order: string[] = [];

@@ -268,16 +268,20 @@ void Worker::enqueueToParent(MessageWithMessagePorts&& message)
 }
 
 // Shared drain loop for the two inboxes. Mirrors MessagePortPipe's
-// drainAndDispatch (and Node's MessagePort::OnMessage): one task drains up to
-// max(initial queue size, 1000) messages, running microtasks between each so
-// queueMicrotask/Promise callbacks observe messages one at a time, then
-// yields and reschedules if more remain.
+// drainAndDispatch: one task drains a bounded batch, running microtasks
+// between each message so queueMicrotask/Promise callbacks observe messages
+// one at a time, then yields and reschedules on the NEXT event-loop iteration
+// if more remain. The per-turn cap is fixed: when the sender outruns the
+// receiver the inbox is the backpressure buffer, and a cap that grows with it
+// (max(size, 1000)) never yields to timers/poll.
 //
 // Unlike MessagePortPipe, Worker sides never transfer, so we don't need to
 // re-check port identity each iteration — which lets us swap the whole inbox
 // into a local deque under the lock and dispatch without contending with the
 // sender. A sustained producer (e.g. a tight postMessage loop) would otherwise
 // make every per-message pop a contended acquire.
+static constexpr size_t kMessageDrainPerTurnCap = 1024;
+
 template<typename Dispatch>
 static inline bool drainInbox(Worker::MessageInbox& inbox, Zig::GlobalObject* globalObject, ScriptExecutionContext& context, Dispatch&& dispatch)
 {
@@ -289,7 +293,7 @@ static inline bool drainInbox(Worker::MessageInbox& inbox, Zig::GlobalObject* gl
             inbox.drainScheduled.store(false, std::memory_order_relaxed);
             return false;
         }
-        limit = std::max<size_t>(inbox.queue.size(), 1000);
+        limit = std::min<size_t>(inbox.queue.size(), kMessageDrainPerTurnCap);
         batch = std::exchange(inbox.queue, {});
     }
 
@@ -342,7 +346,12 @@ void Worker::drainToWorker(ScriptExecutionContext& context)
         globalObject->globalEventScope->dispatchEvent(event);
     });
     if (reschedule) {
-        ScriptExecutionContext::postTaskTo(m_clientIdentifier, [protectedThis = Ref { *this }](ScriptExecutionContext& ctx) {
+        // Budget spent with messages left. Resume on the next loop iteration
+        // so this thread's timers, immediates and I/O get a turn; an ordinary
+        // post would re-run inside the same tick's drain-until-empty task
+        // loop and a sustained sender would starve them forever. `context` is
+        // the worker thread's own context (we are running on it).
+        context.postTaskNextIteration([protectedThis = Ref { *this }](ScriptExecutionContext& ctx) {
             protectedThis->drainToWorker(ctx);
         });
     }
@@ -360,7 +369,9 @@ void Worker::drainToParent(ScriptExecutionContext& context)
         dispatchEvent(event);
     });
     if (reschedule) {
-        postTaskToParent([protectedThis = Ref { *this }](ScriptExecutionContext& c) {
+        // Same yield as drainToWorker: this runs on the parent thread, so
+        // `context` is the parent context this drain task was dispatched on.
+        context.postTaskNextIteration([protectedThis = Ref { *this }](ScriptExecutionContext& c) {
             protectedThis->drainToParent(c);
         });
     }

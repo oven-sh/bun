@@ -2247,10 +2247,7 @@ describe("bun.lock workspace version tracks package.json version", () => {
           workspaces: ["packages/*"],
         }),
       ),
-      write(
-        join(packageDir, "packages", "pkg-a", "package.json"),
-        JSON.stringify({ name: "pkg-a" }),
-      ),
+      write(join(packageDir, "packages", "pkg-a", "package.json"), JSON.stringify({ name: "pkg-a" })),
     ]);
 
     let { stderr, exited } = spawn({

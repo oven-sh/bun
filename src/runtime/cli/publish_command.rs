@@ -1032,8 +1032,7 @@ impl PublishCommand {
 
                 // https://github.com/npm/cli/blob/534ad7789e5c61f579f44d782bdd18ea3ff1ee20/node_modules/npm-registry-fetch/lib/check-response.js#L14
                 // ignore if x-local-cache exists
-                if let Some(notice) =
-                    res.header_if_other_is_absent(b"npm-notice", b"x-local-cache")
+                if let Some(notice) = res.header_if_other_is_absent(b"npm-notice", b"x-local-cache")
                 {
                     Output::print_error(format_args!("\n"));
                     bun_core::note!("{}", bstr::BStr::new(notice));

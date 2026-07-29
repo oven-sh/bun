@@ -244,7 +244,11 @@ pub fn response_error<const OTP_RESPONSE: bool>(
     bun_core::pretty_errorln!(
         "\n<red>{}<r>{}{}: {}\n",
         res.status_code(),
-        if !res.status_text().is_empty() { " " } else { "" },
+        if !res.status_text().is_empty() {
+            " "
+        } else {
+            ""
+        },
         bstr::BStr::new(res.status_text()),
         bun_fmt::redacted_npm_url(req.url.href),
     );

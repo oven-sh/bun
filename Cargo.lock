@@ -1061,6 +1061,7 @@ dependencies = [
  "bun_core",
  "bun_crash_handler",
  "bun_dispatch",
+ "bun_glob",
  "bun_highway",
  "bun_io",
  "bun_options_types",

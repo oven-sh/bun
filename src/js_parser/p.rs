@@ -1003,6 +1003,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             );
         }
 
+        if let Some(glob) = self.handle_glob_pattern(arg, Some(state)) {
+            return glob;
+        }
+
         if self.options.warn_about_unbundled_modules {
             // Use a debug log so people can see this if they want to
             let r = js_lexer::range_of_identifier(self.source, state.loc);
@@ -1223,6 +1227,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 )
             }
             _ => {
+                // Covers each branch of a ternary require() split apart by
+                // `maybe_transpose_if_require`.
+                if let Some(glob) = self.handle_glob_pattern(arg, None) {
+                    return glob;
+                }
                 let _ = self.check_dynamic_specifier(arg, arg.loc, "require()");
                 self.record_usage_of_runtime_require();
                 self.new_expr(
@@ -1234,6 +1243,316 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     arg.loc,
                 )
             }
+        }
+    }
+
+    /// Lower `require("./dir/" + x)` / `import("./dir/" + x)` to a bundled
+    /// lookup map, matching esbuild (https://esbuild.github.io/api/#glob).
+    /// `None` means the pattern does not qualify and the caller falls through
+    /// to the unbundled runtime path. `import_state` is `None` for `require()`.
+    pub fn handle_glob_pattern(
+        &mut self,
+        arg: Expr,
+        import_state: Option<&TransposeState>,
+    ) -> Option<Expr> {
+        if !self.options.bundle || self.is_control_flow_dead {
+            return None;
+        }
+        // Only the `file` namespace has a source directory to glob from.
+        if !self.source.path.is_file() {
+            return None;
+        }
+
+        // (text, is_wildcard) pairs flattened from the expression.
+        let mut raw_parts: smallvec::SmallVec<[(&'a [u8], bool); 8]> = smallvec::SmallVec::new();
+        if !self.glob_parts_from_expr(arg, &mut raw_parts) {
+            return None;
+        }
+
+        // The literal prefix must be `./`/`../` and name a real path component
+        // (not just dots and slashes), so a bare "./" + x or "../" + x does
+        // not glob-bundle an entire directory tree.
+        match raw_parts.first() {
+            Some((text, false))
+                if (strings::has_prefix_comptime(text, b"./")
+                    || strings::has_prefix_comptime(text, b"../"))
+                    && text.iter().any(|&c| c != b'.' && c != b'/') => {}
+            _ => return None,
+        }
+
+        // Like esbuild: a wildcard after `/` becomes `**/*` (recursive),
+        // mid-segment it becomes `*` so `"./file-" + x + ".js"` stays flat.
+        let mut pattern = Vec::<u8>::new();
+        let mut had_wildcard = false;
+        let mut ends_in_slash = true;
+        for (text, is_wildcard) in &raw_parts {
+            if *is_wildcard {
+                had_wildcard = true;
+                if ends_in_slash {
+                    pattern.extend_from_slice(b"**/*");
+                } else {
+                    pattern.push(b'*');
+                }
+                ends_in_slash = false;
+                continue;
+            }
+            // Glob metacharacters in literal text would change the match; bail.
+            if bun_glob::detect_glob_syntax(text) {
+                return None;
+            }
+            pattern.extend_from_slice(text);
+            if !text.is_empty() {
+                ends_in_slash = *text.last().unwrap() == b'/';
+            }
+        }
+        // Fully-static strings go through the normal `require("...")` path.
+        if !had_wildcard {
+            return None;
+        }
+
+        let source_dir = self.source.path.source_dir();
+        if source_dir.is_empty() {
+            return None;
+        }
+
+        let mut matches: Vec<Box<[u8]>> = Vec::new();
+        if !walk_glob_for_bundle(source_dir, &pattern, &mut matches) {
+            return None;
+        }
+
+        // Zero matches falls through so `check_dynamic_specifier` still runs.
+        if matches.is_empty() {
+            return None;
+        }
+        matches.sort();
+
+        let loc = arg.loc;
+        let arena = self.arena;
+        let mut properties = BumpVec::<G::Property>::with_capacity_in(matches.len(), arena);
+        let in_try = self.fn_or_arrow_data_visit.try_body_count != 0;
+        let handles_import_errors = match import_state {
+            None => in_try,
+            Some(s) => (s.is_await_target && in_try) || s.is_then_catch_target,
+        };
+        let import_options = import_state
+            .map(|s| s.import_options)
+            .unwrap_or(Expr::EMPTY);
+        let import_loader = import_state.and_then(|s| s.import_loader);
+        let import_tag = import_state.and_then(|s| s.import_record_tag);
+
+        for abs in &matches {
+            // `Loose` normalizes with host rules but emits POSIX separators,
+            // so keys match what callers build at runtime on every platform.
+            let rel = bun_paths::resolve_path::relative_platform::<
+                bun_paths::resolve_path::platform::Loose,
+                false,
+            >(source_dir, abs);
+            let rel_with_dot: &'a [u8] = if strings::has_prefix_comptime(rel, b"../")
+                || strings::has_prefix_comptime(rel, b"./")
+            {
+                arena.alloc_slice_copy(rel)
+            } else {
+                let mut buf = BumpVec::<u8>::with_capacity_in(rel.len() + 2, arena);
+                buf.extend_from_slice(b"./");
+                buf.extend_from_slice(rel);
+                buf.into_bump_slice()
+            };
+
+            // Relative specifier so `--external` and `onResolve` match it.
+            let import_record_index = self.add_import_record(
+                if import_state.is_none() {
+                    ImportKind::Require
+                } else {
+                    ImportKind::Dynamic
+                },
+                loc,
+                rel_with_dot,
+            );
+            {
+                let rec = &mut self.import_records.items_mut()[import_record_index as usize];
+                rec.flags.set(
+                    bun_ast::ImportRecordFlags::HANDLES_IMPORT_ERRORS,
+                    handles_import_errors,
+                );
+                if let Some(loader) = import_loader {
+                    rec.loader = Some(loader);
+                }
+                if let Some(tag) = import_tag {
+                    rec.tag = tag;
+                }
+            }
+            self.import_records_for_current_part
+                .push(import_record_index);
+
+            let value_expr = if import_state.is_none() {
+                self.new_expr(
+                    E::RequireString {
+                        import_record_index,
+                        ..Default::default()
+                    },
+                    loc,
+                )
+            } else {
+                let path_expr = self.new_expr(E::String::init(rel_with_dot), loc);
+                self.new_expr(
+                    E::Import {
+                        expr: path_expr,
+                        import_record_index,
+                        options: import_options,
+                    },
+                    loc,
+                )
+            };
+
+            let body = bun_core::handle_oom(G::FnBody::init_return_expr(arena, value_expr));
+            let arrow = self.new_expr(
+                E::Arrow {
+                    body,
+                    prefer_expr: true,
+                    ..Default::default()
+                },
+                loc,
+            );
+
+            properties.push(G::Property {
+                key: Some(self.new_expr(E::String::init(rel_with_dot), loc)),
+                value: Some(arrow),
+                ..Default::default()
+            });
+        }
+
+        let map = self.new_expr(
+            E::Object {
+                properties: G::PropertyList::from_bump_vec(properties),
+                ..Default::default()
+            },
+            loc,
+        );
+
+        // On a map miss `__glob` falls back to the runtime `require`/`import()`
+        // so extensionless specifiers (`"./engines/" + "boa"`) still resolve.
+        let fallback = if !self.options.features.allow_runtime {
+            None
+        } else if import_state.is_none() {
+            self.record_usage_of_runtime_require();
+            Some(self.value_for_require(loc))
+        } else {
+            let param_ref = self.new_symbol(js_ast::symbol::Kind::Other, b"p");
+            VecExt::append(&mut self.current_scope_mut().generated, param_ref);
+            self.record_declared_symbol(param_ref);
+            let param_expr = self.new_expr(
+                E::Identifier {
+                    ref_: param_ref,
+                    ..Default::default()
+                },
+                loc,
+            );
+            let import_expr = self.new_expr(
+                E::Import {
+                    expr: param_expr,
+                    import_record_index: u32::MAX,
+                    options: import_options,
+                },
+                loc,
+            );
+            let body = bun_core::handle_oom(G::FnBody::init_return_expr(arena, import_expr));
+            let param_binding = self.b(B::Identifier { r#ref: param_ref }, loc);
+            let args: &mut [G::Arg] = arena.alloc_slice_fill_with(1, |_| G::Arg {
+                binding: param_binding,
+                ..Default::default()
+            });
+            Some(self.new_expr(
+                E::Arrow {
+                    args: bun_ast::StoreSlice::new_mut(args),
+                    body,
+                    prefer_expr: true,
+                    ..Default::default()
+                },
+                loc,
+            ))
+        };
+
+        let glob_args = match fallback {
+            Some(f) => ExprNodeList::from_slice(&[map, f]),
+            None => ExprNodeList::init_one(map),
+        };
+        let glob_call = self.call_runtime(loc, b"__glob", glob_args);
+        Some(self.new_expr(
+            E::Call {
+                target: glob_call,
+                args: ExprNodeList::init_one(arg),
+                ..Default::default()
+            },
+            loc,
+        ))
+    }
+
+    /// Flattens `expr` into alternating literal / wildcard segments.
+    /// `false` means the shape cannot be analysed (tagged template, etc).
+    fn glob_parts_from_expr(
+        &mut self,
+        expr: Expr,
+        out: &mut smallvec::SmallVec<[(&'a [u8], bool); 8]>,
+    ) -> bool {
+        if !self.stack_check.is_safe_to_recurse() || self.reported_stack_overflow.get() {
+            self.report_stack_overflow(expr.loc);
+            return false;
+        }
+        match expr.data {
+            js_ast::ExprData::EString(mut s) => {
+                s.resolve_rope_if_needed(self.arena);
+                let bytes = match s.string(self.arena) {
+                    Ok(b) => b,
+                    Err(_) => return false,
+                };
+                out.push((bytes, false));
+                true
+            }
+            js_ast::ExprData::ETemplate(mut tmpl) => {
+                if tmpl.tag.is_some() {
+                    return false;
+                }
+                match &mut tmpl.head {
+                    js_ast::e::TemplateContents::Cooked(head) => {
+                        // Constant folding can leave the head as a rope.
+                        head.resolve_rope_if_needed(self.arena);
+                        let bytes = match head.string(self.arena) {
+                            Ok(b) => b,
+                            Err(_) => return false,
+                        };
+                        out.push((bytes, false));
+                    }
+                    js_ast::e::TemplateContents::Raw(_) => return false,
+                }
+                for part in tmpl.parts_mut().iter_mut() {
+                    if !self.glob_parts_from_expr(part.value, out) {
+                        out.push((b"", true));
+                    }
+                    match &mut part.tail {
+                        js_ast::e::TemplateContents::Cooked(tail) => {
+                            tail.resolve_rope_if_needed(self.arena);
+                            let bytes = match tail.string(self.arena) {
+                                Ok(b) => b,
+                                Err(_) => return false,
+                            };
+                            out.push((bytes, false));
+                        }
+                        js_ast::e::TemplateContents::Raw(_) => return false,
+                    }
+                }
+                true
+            }
+            js_ast::ExprData::EBinary(bin) if bin.op == js_ast::op::Code::BinAdd => {
+                // The left side must yield a literal prefix to anchor the glob.
+                if !self.glob_parts_from_expr(bin.left, out) {
+                    return false;
+                }
+                if !self.glob_parts_from_expr(bin.right, out) {
+                    out.push((b"", true));
+                }
+                true
+            }
+            _ => false,
         }
     }
 
@@ -9243,6 +9562,31 @@ pub trait GenerateImportSymbols {
     type Key;
     fn get(&self, key: &Self::Key) -> Option<Ref>;
     fn alias_name(&self, key: &Self::Key) -> &'static [u8];
+}
+
+/// Pushes the absolute path of every file under `source_dir` matching
+/// `pattern` into `out`; `false` on any I/O failure.
+fn walk_glob_for_bundle(source_dir: &[u8], pattern: &[u8], out: &mut Vec<Box<[u8]>>) -> bool {
+    let mut walker = match bun_glob::BunGlobWalker::init_with_cwd(
+        pattern, source_dir, /*dot*/ false, /*absolute*/ true,
+        /*follow_symlinks*/ true, /*error_on_broken_symlinks*/ false,
+        /*only_files*/ true, None,
+    ) {
+        Ok(Ok(w)) => w,
+        _ => return false,
+    };
+    let mut iter = bun_glob::walk::Iterator::new(&mut walker);
+    match iter.init() {
+        Ok(Ok(())) => {}
+        _ => return false,
+    }
+    loop {
+        match iter.next() {
+            Ok(Ok(Some(path))) => out.push(path),
+            Ok(Ok(None)) => return true,
+            _ => return false,
+        }
+    }
 }
 
 // ─── Module-level constructor fns ───

@@ -109,6 +109,14 @@ var __moduleCache;
 // When you do know the module is CJS
 export var __commonJS = (cb, mod) => () => (mod || cb((mod = { exports: {} }).exports, mod), mod.exports);
 
+// Lookup map for `require("./dir/" + x)`; `fallback` is the unbundled require/import.
+export var __glob = (map, fallback) => path => {
+  var fn = map[path];
+  if (fn) return fn();
+  if (fallback) return fallback(path);
+  throw new Error("Module not found in bundle: " + path);
+};
+
 export var __name = (target, name) => {
   Object.defineProperty(target, "name", {
     value: name,

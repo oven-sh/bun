@@ -375,7 +375,7 @@ describe("bundler", async () => {
           "/empty.txt": "",
         },
         onAfterBundle(api) {
-          const jsFile = readdirSync(api.outdir).find(x => x.endsWith(".js"))!;
+          const jsFile = readdirSync(api.outdir).find(x => /\.m?js$/.test(x))!;
           const module = require(join(api.outdir, jsFile));
           api.assertFileExists(join("out", module.default));
         },

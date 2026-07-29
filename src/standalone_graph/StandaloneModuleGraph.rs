@@ -2083,9 +2083,8 @@ pub fn to_executable(
         // OHOS: compiled binaries need a .codesign section to execute.
         #[cfg(target_env = "ohos")]
         {
-            let out_bytes = outfile.as_bytes();
-            if !out_bytes.is_empty() {
-                if let Some(signed_path) = core::str::from_utf8(out_bytes).ok() {
+            if !outfile.is_empty() {
+                if let Some(signed_path) = core::str::from_utf8(outfile).ok() {
                     let p = std::path::Path::new(signed_path);
                     if p.exists() && !ohos_sign::has_codesign(&std::fs::read(p).unwrap_or_default()) {
                         let _ = ohos_sign::sign_selfsign_inplace(p);

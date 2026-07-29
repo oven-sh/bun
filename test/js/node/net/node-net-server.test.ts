@@ -18,18 +18,23 @@ describe("net.createServer listen", () => {
     done();
   });
 
+  // These tests formerly armed `setTimeout(closeAndFail, 100)` as a secondary
+  // deadline. After #36175 reordered the serial phase to overlap with the
+  // docker-service prestart, the alpine lane saw the 100ms timer fire before
+  // `'listening'` (the timer was measuring scheduling contention, not listen()).
+  // The test runner already bounds each test, so the extra timer only added a
+  // flake surface. A real listen failure still reaches done() via the 'error'
+  // listener below.
+  const failOnError = (server: Server, done: (err?: unknown) => void) => (err: unknown) => {
+    server.close();
+    done(err);
+  };
+
   it("should listen on IPv6 by default", done => {
-    const { mustCall, mustNotCall } = createCallCheckCtx(done);
+    const { mustCall } = createCallCheckCtx(done);
 
     const server: Server = createServer();
-    let timeout: Timer;
-    const closeAndFail = () => {
-      clearTimeout(timeout);
-      server.close();
-      mustNotCall()();
-    };
-    server.on("error", closeAndFail);
-    timeout = setTimeout(closeAndFail, 100);
+    server.on("error", failOnError(server, done));
 
     server.listen(
       0,
@@ -46,18 +51,10 @@ describe("net.createServer listen", () => {
   });
 
   it("should listen on IPv4", done => {
-    const { mustCall, mustNotCall } = createCallCheckCtx(done);
+    const { mustCall } = createCallCheckCtx(done);
 
     const server: Server = createServer();
-
-    let timeout: Timer;
-    const closeAndFail = () => {
-      clearTimeout(timeout);
-      server.close();
-      mustNotCall()();
-    };
-    server.on("error", closeAndFail);
-    timeout = setTimeout(closeAndFail, 100);
+    server.on("error", failOnError(server, done));
 
     server.listen(
       0,
@@ -75,73 +72,45 @@ describe("net.createServer listen", () => {
   });
 
   it("should call listening", done => {
-    const { mustCall, mustNotCall } = createCallCheckCtx(done);
+    const { mustCall } = createCallCheckCtx(done);
 
     const server: Server = createServer();
 
-    let timeout: Timer;
-    const closeAndFail = () => {
-      clearTimeout(timeout);
-      server.close();
-      mustNotCall()();
-    };
-
-    server.on("error", closeAndFail).on(
+    server.on("error", failOnError(server, done)).on(
       "listening",
       mustCall(() => {
-        clearTimeout(timeout);
         server.close();
         done();
       }),
     );
 
-    timeout = setTimeout(closeAndFail, 100);
-
     server.listen(0, "0.0.0.0");
   });
 
   it("should provide listening property", done => {
-    const { mustCall, mustNotCall } = createCallCheckCtx(done);
+    const { mustCall } = createCallCheckCtx(done);
 
     const server: Server = createServer();
     expect(server.listening).toBeFalse();
 
-    let timeout: Timer;
-    const closeAndFail = () => {
-      clearTimeout(timeout);
-      server.close();
-      mustNotCall()();
-    };
-
-    server.on("error", closeAndFail).on(
+    server.on("error", failOnError(server, done)).on(
       "listening",
       mustCall(() => {
         expect(server.listening).toBeTrue();
-        clearTimeout(timeout);
         server.close();
         expect(server.listening).toBeFalse();
         done();
       }),
     );
 
-    timeout = setTimeout(closeAndFail, 100);
-
     server.listen(0, "0.0.0.0");
   });
 
   it("should listen on localhost", done => {
-    const { mustCall, mustNotCall } = createCallCheckCtx(done);
+    const { mustCall } = createCallCheckCtx(done);
 
     const server: Server = createServer();
-
-    let timeout: Timer;
-    const closeAndFail = () => {
-      clearTimeout(timeout);
-      server.close();
-      mustNotCall()();
-    };
-    server.on("error", closeAndFail);
-    timeout = setTimeout(closeAndFail, 100);
+    server.on("error", failOnError(server, done));
 
     server.listen(
       0,
@@ -159,18 +128,10 @@ describe("net.createServer listen", () => {
   });
 
   it("should listen on localhost", done => {
-    const { mustCall, mustNotCall } = createCallCheckCtx(done);
+    const { mustCall } = createCallCheckCtx(done);
 
     const server: Server = createServer();
-
-    let timeout: Timer;
-    const closeAndFail = () => {
-      clearTimeout(timeout);
-      server.close();
-      mustNotCall()();
-    };
-    server.on("error", closeAndFail);
-    timeout = setTimeout(closeAndFail, 100);
+    server.on("error", failOnError(server, done));
 
     server.listen(
       0,
@@ -186,18 +147,10 @@ describe("net.createServer listen", () => {
   });
 
   it("should listen without port or host", done => {
-    const { mustCall, mustNotCall } = createCallCheckCtx(done);
+    const { mustCall } = createCallCheckCtx(done);
 
     const server: Server = createServer();
-
-    let timeout: Timer;
-    const closeAndFail = () => {
-      clearTimeout(timeout);
-      server.close();
-      mustNotCall()();
-    };
-    server.on("error", closeAndFail);
-    timeout = setTimeout(closeAndFail, 100);
+    server.on("error", failOnError(server, done));
 
     server.listen(
       mustCall(() => {
@@ -213,18 +166,10 @@ describe("net.createServer listen", () => {
   });
 
   it("should listen on unix domain socket", done => {
-    const { mustCall, mustNotCall } = createCallCheckCtx(done);
+    const { mustCall } = createCallCheckCtx(done);
 
     const server: Server = createServer();
-
-    let timeout: Timer;
-    const closeAndFail = () => {
-      clearTimeout(timeout);
-      server.close();
-      mustNotCall()();
-    };
-    server.on("error", closeAndFail);
-    timeout = setTimeout(closeAndFail, 100);
+    server.on("error", failOnError(server, done));
 
     server.listen(
       socket_domain,
@@ -238,17 +183,10 @@ describe("net.createServer listen", () => {
   });
 
   it("should bind IPv4 0.0.0.0 when listen on 0.0.0.0, issue#7355", done => {
-    const { mustCall, mustNotCall } = createCallCheckCtx(done);
+    const { mustCall } = createCallCheckCtx(done);
 
     const server: Server = createServer();
-    let timeout: Timer;
-    const closeAndFail = () => {
-      clearTimeout(timeout);
-      server.close();
-      mustNotCall()();
-    };
-    server.on("error", closeAndFail);
-    timeout = setTimeout(closeAndFail, 100);
+    server.on("error", failOnError(server, done));
 
     server.listen(
       0,

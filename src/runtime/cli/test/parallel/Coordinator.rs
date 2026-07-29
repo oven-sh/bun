@@ -729,7 +729,15 @@ impl<'a> Coordinator<'a> {
                 return None;
             }
             let mut jeli: windows::JOBOBJECT_EXTENDED_LIMIT_INFORMATION = bun_core::ffi::zeroed();
-            jeli.BasicLimitInformation.LimitFlags = windows::JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+            // Same flag set as `ParentDeathWatchdog::enable()` (see the comment
+            // there): DIE_ON_UNHANDLED_EXCEPTION so a crashed worker/fixture
+            // exits instead of parking on WER, BREAKAWAY_OK so a fixture's
+            // `CreateProcess(CREATE_BREAKAWAY_FROM_JOB)` doesn't EACCES, and
+            // no SILENT_BREAKAWAY_OK because we want the whole worker tree
+            // (grandchildren included) to inherit Job membership.
+            jeli.BasicLimitInformation.LimitFlags = windows::JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
+                | windows::JOB_OBJECT_LIMIT_DIE_ON_UNHANDLED_EXCEPTION
+                | windows::JOB_OBJECT_LIMIT_BREAKAWAY_OK;
             if windows::SetInformationJobObject(
                 job,
                 windows::JobObjectExtendedLimitInformation,

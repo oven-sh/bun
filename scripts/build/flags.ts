@@ -235,6 +235,14 @@ export const globalFlags: Flag[] = [
     when: c => c.ohos && !!c.ohosIcuDir,
     desc: "OHOS: use cross-compiled ICU headers (sysroot ICU is incomplete); no U_DISABLE_RENAMING to match ICU lib symbol versions",
   },
+  // OHOS musl math.h does not define the FP_* classification macros
+  // (FP_NAN, FP_INFINITE, FP_NORMAL, FP_SUBNORMAL, FP_ZERO) that LLVM's
+  // libc++ <math.h> expects. Define them explicitly.
+  {
+    flag: "-DFP_NAN=FP_NAN -DFP_INFINITE=FP_INFINITE -DFP_NORMAL=FP_NORMAL -DFP_SUBNORMAL=FP_SUBNORMAL -DFP_ZERO=FP_ZERO",
+    when: c => c.ohos,
+    desc: "OHOS: define FP_* classification macros missing from musl math.h",
+  },
   {
     flag: "-fno-c++-static-destructors",
     when: c => c.ohos,

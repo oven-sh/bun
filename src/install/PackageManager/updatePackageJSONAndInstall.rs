@@ -818,8 +818,7 @@ fn update_package_json_and_install_with_manager_with_updates(
             }
         }
 
-        // Clean dangling symlinks: shims whose package was removed, or whose
-        // bin entry was dropped by the newly installed version (#36388).
+        // Clean dangling bin shims left by removed packages or dropped bin entries (#36388).
         if subcommand == Subcommand::Remove || subcommand.can_globally_install_packages() {
             let cwd = bun_sys::Dir::cwd();
             let mut node_modules_buf = PathBuffer::uninit();
@@ -849,8 +848,7 @@ fn update_package_json_and_install_with_manager_with_updates(
                                         let _ = file.close();
                                     }
                                     Err(err) => {
-                                        // A transient failure (EACCES, EMFILE) must not
-                                        // delete a valid shim.
+                                        // EACCES/EMFILE etc. must not delete a valid shim.
                                         if matches!(
                                             err.get_errno(),
                                             bun_sys::E::ENOENT

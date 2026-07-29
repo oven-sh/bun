@@ -818,10 +818,8 @@ fn update_package_json_and_install_with_manager_with_updates(
             }
         }
 
-        // This is where we clean dangling symlinks. For `remove`, the removed
-        // package's shims are now dangling. For install/add/update, a new
-        // version of a package may declare fewer bin entries than the version
-        // it replaced, leaving the dropped ones dangling (#36388).
+        // Clean dangling symlinks: shims whose package was removed, or whose
+        // bin entry was dropped by the newly installed version (#36388).
         if subcommand == Subcommand::Remove || subcommand.can_globally_install_packages() {
             let cwd = bun_sys::Dir::cwd();
             let mut node_modules_buf = PathBuffer::uninit();
@@ -851,9 +849,8 @@ fn update_package_json_and_install_with_manager_with_updates(
                                         let _ = file.close();
                                     }
                                     Err(err) => {
-                                        // Only unlink when the target can never resolve.
-                                        // Transient failures (EACCES, EMFILE, ...) must
-                                        // not delete a valid shim.
+                                        // A transient failure (EACCES, EMFILE) must not
+                                        // delete a valid shim.
                                         if matches!(
                                             err.get_errno(),
                                             bun_sys::E::ENOENT

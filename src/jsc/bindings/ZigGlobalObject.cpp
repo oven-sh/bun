@@ -123,6 +123,7 @@
 #include "JSPerformanceMeasure.h"
 #include "JSPerformanceObserver.h"
 #include "JSPerformanceObserverEntryList.h"
+#include "JSPromiseRejectionEvent.h"
 #include "streams/JSReadableByteStreamController.h"
 #include "streams/JSReadableStream.h"
 #include "streams/JSReadableStreamBYOBReader.h"
@@ -1186,6 +1187,48 @@ JSC_DEFINE_CUSTOM_SETTER(setGlobalOnError,
     return true;
 }
 
+JSC_DEFINE_CUSTOM_GETTER(globalOnUnhandledRejection,
+    (JSC::JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue,
+        JSC::PropertyName))
+{
+    Zig::GlobalObject* thisObject = uncheckedDowncast<Zig::GlobalObject>(JSValue::decode(thisValue));
+    return JSValue::encode(eventHandlerAttribute(thisObject->eventTarget(), eventNames().unhandledrejectionEvent, thisObject->world()));
+}
+
+JSC_DEFINE_CUSTOM_SETTER(setGlobalOnUnhandledRejection,
+    (JSC::JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue,
+        JSC::EncodedJSValue encodedValue, JSC::PropertyName property))
+{
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    JSValue value = JSValue::decode(encodedValue);
+    auto* thisObject = uncheckedDowncast<Zig::GlobalObject>(JSValue::decode(thisValue));
+    setEventHandlerAttribute<JSEventListener>(thisObject->eventTarget(), eventNames().unhandledrejectionEvent, value, *thisObject);
+    vm.writeBarrier(thisObject, value);
+    ensureStillAliveHere(value);
+    return true;
+}
+
+JSC_DEFINE_CUSTOM_GETTER(globalOnRejectionHandled,
+    (JSC::JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue,
+        JSC::PropertyName))
+{
+    Zig::GlobalObject* thisObject = uncheckedDowncast<Zig::GlobalObject>(JSValue::decode(thisValue));
+    return JSValue::encode(eventHandlerAttribute(thisObject->eventTarget(), eventNames().rejectionhandledEvent, thisObject->world()));
+}
+
+JSC_DEFINE_CUSTOM_SETTER(setGlobalOnRejectionHandled,
+    (JSC::JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue,
+        JSC::EncodedJSValue encodedValue, JSC::PropertyName property))
+{
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    JSValue value = JSValue::decode(encodedValue);
+    auto* thisObject = uncheckedDowncast<Zig::GlobalObject>(JSValue::decode(thisValue));
+    setEventHandlerAttribute<JSEventListener>(thisObject->eventTarget(), eventNames().rejectionhandledEvent, value, *thisObject);
+    vm.writeBarrier(thisObject, value);
+    ensureStillAliveHere(value);
+    return true;
+}
+
 WebCore::EventTarget& GlobalObject::eventTarget()
 {
     return globalEventScope;
@@ -1230,6 +1273,7 @@ WEBCORE_GENERATED_CONSTRUCTOR_GETTER(PerformanceObserverEntryList)
 WEBCORE_GENERATED_CONSTRUCTOR_GETTER(PerformanceResourceTiming)
 WEBCORE_GENERATED_CONSTRUCTOR_GETTER(PerformanceServerTiming)
 WEBCORE_GENERATED_CONSTRUCTOR_GETTER(PerformanceTiming)
+WEBCORE_GENERATED_CONSTRUCTOR_GETTER(PromiseRejectionEvent);
 WEBCORE_GENERATED_CONSTRUCTOR_GETTER(ReadableByteStreamController)
 WEBCORE_GENERATED_CONSTRUCTOR_GETTER(ReadableStream)
 WEBCORE_GENERATED_CONSTRUCTOR_GETTER(ReadableStreamBYOBReader)
@@ -3175,6 +3219,8 @@ void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
     // TODO: this should be usable on the lookup table. it crashed las time i tried it
     putDirectCustomAccessor(vm, JSC::Identifier::fromString(vm, "onmessage"_s), JSC::CustomGetterSetter::create(vm, globalOnMessage, setGlobalOnMessage), 0);
     putDirectCustomAccessor(vm, JSC::Identifier::fromString(vm, "onerror"_s), JSC::CustomGetterSetter::create(vm, globalOnError, setGlobalOnError), 0);
+    putDirectCustomAccessor(vm, JSC::Identifier::fromString(vm, "onunhandledrejection"_s), JSC::CustomGetterSetter::create(vm, globalOnUnhandledRejection, setGlobalOnUnhandledRejection), 0);
+    putDirectCustomAccessor(vm, JSC::Identifier::fromString(vm, "onrejectionhandled"_s), JSC::CustomGetterSetter::create(vm, globalOnRejectionHandled, setGlobalOnRejectionHandled), 0);
 
     // ----- Extensions to Built-in objects -----
 

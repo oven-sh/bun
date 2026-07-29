@@ -197,8 +197,9 @@ JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject*, JSDOMGlobalObject* globalObj
     //         return createWrapper<PopStateEvent>(globalObject, WTF::move(impl));
     //     case ProgressEventInterfaceType:
     //         return createWrapper<ProgressEvent>(globalObject, WTF::move(impl));
-    //     case PromiseRejectionEventInterfaceType:
-    //         return createWrapper<PromiseRejectionEvent>(globalObject, WTF::move(impl));
+    case PromiseRejectionEventInterfaceType: {
+        return createWrapper<PromiseRejectionEvent>(globalObject, WTF::move(impl));
+    }
     // #if ENABLE(SERVICE_WORKER)
     //     case PushEventInterfaceType:
     //         return createWrapper<PushEvent>(globalObject, WTF::move(impl));

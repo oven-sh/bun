@@ -48,6 +48,10 @@
 #include <JavaScriptCore/VMTrapsInlines.h>
 #include "wtf-bindings.h"
 #include "EventLoopTask.h"
+#include "EventNames.h"
+#include "BunWorkerGlobalScope.h"
+#include "PromiseRejectionEvent.h"
+#include <JavaScriptCore/JSPromise.h>
 #include <JavaScriptCore/StructureCache.h>
 
 #include <webcore/SerializedScriptValue.h>
@@ -1348,6 +1352,18 @@ extern "C" int Bun__handleUnhandledRejection(JSC::JSGlobalObject* lexicalGlobalO
     auto* globalObject = uncheckedDowncast<Zig::GlobalObject>(lexicalGlobalObject);
     auto* process = globalObject->processObject();
 
+    auto& eventTarget = globalObject->globalEventScope;
+    if (eventTarget->hasEventListeners(WebCore::eventNames().unhandledrejectionEvent)) {
+        WebCore::PromiseRejectionEvent::Init init;
+        init.cancelable = true;
+        init.promise = promise;
+        init.reason = reason;
+        auto event = WebCore::PromiseRejectionEvent::create(WebCore::eventNames().unhandledrejectionEvent, init, WebCore::EventIsTrusted::Yes);
+        eventTarget->dispatchEvent(event);
+        if (event->defaultPrevented())
+            return true;
+    }
+
     auto eventType = Identifier::fromString(JSC::getVM(globalObject), "unhandledRejection"_s);
     auto& wrapped = process->wrapped();
     if (wrapped.listenerCount(eventType) > 0) {
@@ -1377,6 +1393,21 @@ extern "C" bool Bun__emitHandledPromiseEvent(JSC::JSGlobalObject* lexicalGlobalO
         Process::emitWarning(globalObject, jsString(globalObject->vm(), String("Promise rejection was handled asynchronously"_s)), jsString(globalObject->vm(), String("PromiseRejectionHandledWarning"_s)), jsUndefined(), jsUndefined());
         CLEAR_IF_EXCEPTION(scope);
     }
+
+    auto& eventTarget = globalObject->globalEventScope;
+    bool dispatched = false;
+    if (eventTarget->hasEventListeners(WebCore::eventNames().rejectionhandledEvent)) {
+        WebCore::PromiseRejectionEvent::Init init;
+        init.promise = promise;
+        if (auto* jsPromise = dynamicDowncast<JSC::JSPromise>(promise))
+            init.reason = jsPromise->result();
+        else
+            init.reason = jsUndefined();
+        auto event = WebCore::PromiseRejectionEvent::create(WebCore::eventNames().rejectionhandledEvent, init, WebCore::EventIsTrusted::Yes);
+        eventTarget->dispatchEvent(event);
+        dispatched = true;
+    }
+
     auto& wrapped = process->wrapped();
     if (wrapped.listenerCount(eventType) > 0) {
         MarkedArgumentBuffer args;
@@ -1385,7 +1416,7 @@ extern "C" bool Bun__emitHandledPromiseEvent(JSC::JSGlobalObject* lexicalGlobalO
         return true;
     }
 
-    return false;
+    return dispatched;
 }
 
 extern "C" void Bun__refChannelUnlessOverridden(JSC::JSGlobalObject* globalObject);

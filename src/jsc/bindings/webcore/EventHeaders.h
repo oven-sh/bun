@@ -186,8 +186,8 @@
 // #include "JSPopStateEvent.h"
 // #include "ProgressEvent.h"
 // #include "JSProgressEvent.h"
-// #include "PromiseRejectionEvent.h"
-// #include "JSPromiseRejectionEvent.h"
+#include "PromiseRejectionEvent.h"
+#include "JSPromiseRejectionEvent.h"
 // #if ENABLE(SERVICE_WORKER)
 // #include "PushEvent.h"
 // #include "JSPushEvent.h"

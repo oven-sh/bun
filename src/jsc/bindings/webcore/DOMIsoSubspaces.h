@@ -519,7 +519,7 @@ public:
     // std::unique_ptr<IsoSubspace> m_subspaceForPopStateEvent;
     // std::unique_ptr<IsoSubspace> m_subspaceForProcessingInstruction;
     // std::unique_ptr<IsoSubspace> m_subspaceForProgressEvent;
-    // std::unique_ptr<IsoSubspace> m_subspaceForPromiseRejectionEvent;
+    std::unique_ptr<IsoSubspace> m_subspaceForPromiseRejectionEvent;
     // std::unique_ptr<IsoSubspace> m_subspaceForRange;
     // std::unique_ptr<IsoSubspace> m_subspaceForSecurityPolicyViolationEvent;
     // std::unique_ptr<IsoSubspace> m_subspaceForShadowRoot;

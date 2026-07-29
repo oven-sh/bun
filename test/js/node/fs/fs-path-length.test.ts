@@ -290,6 +290,31 @@ describe("over-PATH_MAX path goes to the callback with full error identity (#256
     });
   });
 
+  // watch / watchFile are synchronous and don't fit the callback-form table.
+  // Node's watchFile never throws for a nonexistent/over-long path (it polls),
+  // so only assert that Bun throws a well-formed error rather than panicking.
+  for (const [name, fn] of [
+    ["watch", (p: string) => fs.watch(p, () => {})],
+    ["watchFile", (p: string) => fs.watchFile(p, () => {})],
+  ] as const) {
+    it(`fs.${name} reports ENAMETOOLONG with syscall=watch and path`, () => {
+      let err!: NodeJS.ErrnoException;
+      try {
+        fn(BIG);
+        expect.unreachable();
+      } catch (e) {
+        err = e as NodeJS.ErrnoException;
+      } finally {
+        if (name === "watchFile") fs.unwatchFile(BIG);
+      }
+      expect({ code: err.code, syscall: err.syscall, hasPath: "path" in err }).toEqual({
+        code: "ENAMETOOLONG",
+        syscall: "watch",
+        hasPath: true,
+      });
+    });
+  }
+
   it("callback form with a Buffer path delivers via the callback", async () => {
     const { sync, cb } = await viaCallback(fs.stat, Buffer.from(BIG));
     expect({ sync: sync?.code, cb: cb?.code, syscall: cb?.syscall }).toEqual({

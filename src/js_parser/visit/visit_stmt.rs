@@ -183,13 +183,19 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 let symbol = p.find_symbol(items[i].alias_loc, name)?;
                 let ref_ = symbol.r#ref;
 
-                // reshaped for borrowck — get_ptr borrows options; clone the
-                // small enum payload so `inject_replacement_export(&mut self, ...)` can run.
-                if let Some(entry) = p.options.features.replace_exports.get_ptr(name).cloned() {
+                if let Some(entry) = p
+                    .options
+                    .features
+                    .replace_exports
+                    .get_ptr(name)
+                    .map(bun_ptr::BackRef::new)
+                {
+                    // `BackRef::get` — entry lives in `self.options.features.replace_exports`,
+                    // which is not mutated during the visit pass.
                     if !entry.is_replace() {
                         p.ignore_usage(symbol.r#ref);
                     }
-                    let _ = p.inject_replacement_export(stmts, symbol.r#ref, stmt.loc, &entry);
+                    let _ = p.inject_replacement_export(stmts, symbol.r#ref, stmt.loc, entry.get());
                     any_replaced = true;
                     continue;
                 }

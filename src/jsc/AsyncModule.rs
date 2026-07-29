@@ -328,6 +328,12 @@ impl Queue {
             bstr::BStr::new(this.vm().package_manager().lockfile.str(&dependency.name))
         );
 
+        let name: Vec<u8> = this
+            .vm()
+            .package_manager()
+            .lockfile
+            .str(&dependency.name)
+            .to_vec();
         // retain_mut lets Drop free removed modules.
         this.map.retain_mut(|module| {
             for pending in module.parse_result.pending_imports.iter() {
@@ -339,19 +345,12 @@ impl Queue {
                 // `container_of`-derived `*mut`; provenance is the original
                 // allocation, disjoint from the `&mut module` borrow above.
                 let vm = VirtualMachine::get().as_mut();
-                // reshaped for borrowck — `lockfile.str()` ties the
-                // returned slice to `&vm`, which conflicts with passing
-                // `&mut vm` to `resolve_error`. The lockfile string buffer is
-                // stable across `resolve_error` (no realloc on the error
-                // path); detach the borrow via raw ptr.
-                let name =
-                    bun_ptr::RawSlice::new(vm.package_manager().lockfile.str(&dependency.name));
                 module
                     .resolve_error(
                         vm,
                         import_record_id,
                         &PackageResolveError {
-                            name: name.slice(),
+                            name: &name[..],
                             err,
                             url: b"",
                             version: dependency.version.clone(),

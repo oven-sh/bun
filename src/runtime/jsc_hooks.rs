@@ -2356,47 +2356,24 @@ fn transpile_source_code_inner(
                 }
             };
 
-            let mut should_close_input_file_fd = fd.is_none();
-
             // Only JS-like loaders get the cjs/esm wrapper hint.
             let module_type_only_for_wrappables = match loader {
                 L::Js | L::Jsx | L::Ts | L::Tsx => module_type,
                 _ => ModuleType::Unknown,
             };
 
-            let mut input_file_fd = bun_sys::Fd::INVALID;
             // The deferred fd close is independent of `give_back_arena`
             // and must fire on every exit path: parse failure, JSON early
             // return, `disable_transpilying`, already_bundled, empty `.cjs`,
             // cache-hit, AsyncModule, the wasm recurse, and the print error.
-            // Note: reshaped for borrowck — capture raw pointers so the
-            // guard does not alias the parser's `file_fd_ptr` /
-            // `maybe_watch_file` borrows. **All** later access to
-            // `should_close_input_file_fd` / `input_file_fd` MUST go through
-            // these raw pointers — taking a fresh `&mut` to either local would
-            // invalidate the guard's tag under Stacked Borrows, making the
-            // deferred `.close()` (which the parse path always reaches) UB.
-            let should_close_ptr: *mut bool = &raw mut should_close_input_file_fd;
-            let input_file_fd_ptr: *mut bun_sys::Fd = &raw mut input_file_fd;
-            // Note: `scopeguard::defer!` would capture the two `*mut`
-            // locals by-ref in its non-`move` closure, which borrowck then
-            // treats as conflicting with the later `&mut *ptr` reborrows below
-            // (edition-2021 capture analysis). Thread the raw pointers through
-            // the guard *payload* instead so nothing is captured.
-            let _fd_guard = scopeguard::guard(
-                (should_close_ptr, input_file_fd_ptr),
-                |(should_close_ptr, input_file_fd_ptr)| {
-                    // SAFETY: `should_close_input_file_fd` / `input_file_fd`
-                    // are declared earlier in this stack frame and outlive
-                    // this guard (locals drop in reverse declaration order);
-                    // the guard runs on the same thread before either is
-                    // destroyed.
-                    unsafe {
-                        if *should_close_ptr && (*input_file_fd_ptr).is_valid() {
-                            use bun_sys::FdExt as _;
-                            (*input_file_fd_ptr).close();
-                            *input_file_fd_ptr = bun_sys::Fd::INVALID;
-                        }
+            // Payload is `(should_close_input_file_fd, input_file_fd)`; access
+            // via `fd_guard.0` / `fd_guard.1`.
+            let mut fd_guard = scopeguard::guard(
+                (fd.is_none(), bun_sys::Fd::INVALID),
+                |(should_close, input_file_fd): (bool, bun_sys::Fd)| {
+                    if should_close && input_file_fd.is_valid() {
+                        use bun_sys::FdExt as _;
+                        input_file_fd.close();
                     }
                 },
             );
@@ -2516,11 +2493,7 @@ fn transpile_source_code_inner(
                     loader,
                     dirname_fd: bun_sys::Fd::INVALID,
                     file_descriptor: fd,
-                    // SAFETY: `input_file_fd_ptr` points at this frame's
-                    // `input_file_fd`; reborrow through the raw pointer so the
-                    // `_fd_guard` scopeguard's tag is not invalidated by a
-                    // fresh `&mut` (see Note on `_fd_guard`).
-                    file_fd_ptr: Some(unsafe { &mut *input_file_fd_ptr }),
+                    file_fd_ptr: Some(&mut fd_guard.1),
                     macro_remappings,
                     // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
                     jsx: unsafe { &*jsc_vm }.transpiler.options.jsx.clone(),
@@ -2582,12 +2555,11 @@ fn transpile_source_code_inner(
                 let Some(mut parse_result) = parse_result else {
                     // Register with watcher even on parse failure.
                     if !disable_transpilying {
-                        // SAFETY: see Note on `_fd_guard` — reborrow via
-                        // the raw pointers so the guard stays valid.
+                        let (should_close, input_file_fd) = &mut *fd_guard;
                         maybe_watch_file(
                             jsc_vm,
-                            unsafe { &mut *should_close_ptr },
-                            unsafe { *input_file_fd_ptr },
+                            should_close,
+                            *input_file_fd,
                             is_node_override,
                             path,
                             hash,
@@ -2631,12 +2603,11 @@ fn transpile_source_code_inner(
 
                 // Register with watcher on success too.
                 if !disable_transpilying {
-                    // SAFETY: see Note on `_fd_guard` — reborrow via the
-                    // raw pointers so the guard stays valid.
+                    let (should_close, input_file_fd) = &mut *fd_guard;
                     maybe_watch_file(
                         jsc_vm,
-                        unsafe { &mut *should_close_ptr },
-                        unsafe { *input_file_fd_ptr },
+                        should_close,
+                        *input_file_fd,
                         is_node_override,
                         path,
                         hash,
@@ -3166,7 +3137,7 @@ fn transpile_source_code_inner(
                     printer.ctx.append_null_byte = false;
                 }
 
-                // (fd close handled by `_fd_guard` registered above; spec
+                // (fd close handled by `fd_guard` registered above; spec
                 // :251-256 `defer` fires on every exit path.)
 
                 return Ok(OwnedResolvedSource::from(ResolvedSource {

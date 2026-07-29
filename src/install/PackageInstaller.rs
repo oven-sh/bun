@@ -297,48 +297,6 @@ pub(crate) type TreeContextId = lockfile::tree::Id;
 
 // TreeContext::deinit dropped — Vec and Bin::PriorityQueue impl Drop.
 
-pub(crate) enum LazyPackageDestinationDir<'a> {
-    /// Non-owning view of a directory handle the caller owns.
-    #[allow(dead_code)]
-    Dir(Fd),
-    NodeModulesPath {
-        #[allow(dead_code)]
-        node_modules: &'a NodeModulesFolder,
-        /// Non-owning view; the owning `Dir` lives on `PackageInstaller`.
-        root_node_modules_dir: Fd,
-    },
-    Owned(Dir),
-    Closed,
-}
-
-impl<'a> LazyPackageDestinationDir<'a> {
-    #[allow(dead_code)]
-    pub(crate) fn get_dir(&mut self) -> crate::Result<Fd> {
-        match self {
-            LazyPackageDestinationDir::Dir(fd) => Ok(*fd),
-            LazyPackageDestinationDir::Owned(dir) => Ok(dir.fd()),
-            LazyPackageDestinationDir::NodeModulesPath {
-                node_modules,
-                root_node_modules_dir,
-            } => {
-                let dir = node_modules.open_dir(Dir::borrow(root_node_modules_dir))?;
-                let fd = dir.fd();
-                *self = LazyPackageDestinationDir::Owned(dir);
-                Ok(fd)
-            }
-            LazyPackageDestinationDir::Closed => {
-                panic!(
-                    "LazyPackageDestinationDir is closed! This should never happen. Why did this happen?! It's not your fault. Its our fault. We're sorry."
-                )
-            }
-        }
-    }
-
-    pub(crate) fn close(&mut self) {
-        *self = LazyPackageDestinationDir::Closed;
-    }
-}
-
 /// A dependency alias becomes the install destination inside `node_modules`
 /// (the existing entry is renamed aside, deleted, and re-created). Reject
 /// anything that could escape `node_modules`: empty names, `.`/`..`
@@ -1711,9 +1669,6 @@ impl<'a> PackageInstaller<'a> {
                 }
             };
 
-            #[cfg(not(windows))]
-            let mut lazy_package_dir = LazyPackageDestinationDir::Dir(destination_dir.fd());
-
             let install_result: package_install::InstallResult = match resolution.tag {
                 resolution::Tag::Symlink | resolution::Tag::Workspace => {
                     installer.install_from_link(self.skip_delete, &destination_dir)
@@ -2016,25 +1971,7 @@ impl<'a> PackageInstaller<'a> {
                         if !NODE_MODULES_IS_OK.load(Ordering::Relaxed) {
                             #[cfg(not(windows))]
                             {
-                                let dir = match lazy_package_dir.get_dir() {
-                                    Ok(d) => d,
-                                    Err(err) => {
-                                        Output::err(
-                                            "EACCES",
-                                            "Permission denied while installing <b>{}<r>",
-                                            (bstr::BStr::new(
-                                                self.names[package_id as usize].slice(
-                                                    self.lockfile().buffers.string_bytes.as_slice(),
-                                                ),
-                                            ),),
-                                        );
-                                        if cfg!(debug_assertions) {
-                                            Output::err(err, "Failed to stat node_modules", ());
-                                        }
-                                        Global::exit(1);
-                                    }
-                                };
-                                let stat = match bun_sys::fstat(dir) {
+                                let stat = match bun_sys::fstat(destination_dir.fd()) {
                                     Ok(s) => s,
                                     Err(err) => {
                                         Output::err(
@@ -2115,19 +2052,6 @@ impl<'a> PackageInstaller<'a> {
                     .add(dependency_id)
                     .unwrap_or_oom();
             }
-
-            // reshaped for borrowck — `LazyPackageDestinationDir` borrows
-            // `&self.node_modules`, but this else-branch never reads `destination_dir`
-            // (it only `close()`s it at the end, which is a no-op for `NodeModulesPath`).
-            // Detach via raw ptr so subsequent `&mut self` calls type-check.
-            // BACKREF — `self.node_modules` is not moved/dropped in this branch.
-            let mut destination_dir = LazyPackageDestinationDir::NodeModulesPath {
-                node_modules: node_modules_ref.get(),
-                root_node_modules_dir: self.root_node_modules_folder.fd(),
-            };
-
-            // `defer { destination_dir.close(); }` + `defer increment_tree_install_count`.
-            // No early returns in this branch, so manual calls at end are equivalent.
 
             let dep = &self.lockfile().buffers.dependencies.as_slice()[dependency_id as usize];
             let dep_behavior = dep.behavior;
@@ -2227,13 +2151,6 @@ impl<'a> PackageInstaller<'a> {
                 }
             }
 
-            // `destination_dir` is `LazyPackageDestinationDir::NodeModulesPath`
-            // holding `&self.node_modules`. `increment_tree_install_count` takes
-            // `&mut self` and (via `link_tree_bins`) reads `self.node_modules.path`,
-            // which would alias the borrow held by `destination_dir`. Close it first
-            // — `destination_dir` is never read in this else-branch (`get_dir()` is
-            // only used in the `needs_install` branch's EACCES handler).
-            destination_dir.close();
             self.increment_tree_install_count(
                 !IS_PENDING_PACKAGE_INSTALL,
                 self.current_tree_id,

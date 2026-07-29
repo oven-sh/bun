@@ -2285,8 +2285,9 @@ impl H2FrameParser {
     }
 
     fn increment_window_size_if_needed(&self) {
-        // Note: reshaped for borrowck — collect actions then apply
-        let mut updates: Vec<(u32, u64)> = Vec::new();
+        use bun_collections::smallvec::SmallVec;
+        // send_window_update can re-enter JS which may mutate self.streams, so collect first.
+        let mut updates: SmallVec<[(u32, u64); 8]> = SmallVec::new();
         for (_, item) in self.streams.get().iter() {
             // SAFETY: item is &*mut Stream from streams.iter(); the boxed Stream outlives the iteration
             let stream = unsafe { &mut **item };

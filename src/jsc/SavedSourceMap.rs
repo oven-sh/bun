@@ -151,10 +151,6 @@ impl SavedSourceMap {
     /// as a `ParsedSourceMap` materialized from that provider.
     pub fn remove_source_provider(&mut self, opaque_source_provider: *mut c_void, path: &[u8]) {
         self.lock();
-        // Note: reshaped for borrowck — explicit unlock paired manually.
-        // `get`+`remove(&key)`: the std
-        // backing has no key-slot pointer to hand out, and the key is a u64 hash
-        // we already have in hand.
         let key = hash(path);
         let Some(&ptr) = self.map_mut().get(&key) else {
             self.unlock();

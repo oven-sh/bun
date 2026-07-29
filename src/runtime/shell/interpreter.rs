@@ -1918,9 +1918,6 @@ impl ShellExecEnv {
         // Only `OLDPWD` is gated on `!in_init`;
         // `PWD` is written unconditionally so the very first env (built during
         // `init()` with `in_init = true`) still exports the resolved cwd.
-        // Note: reshaped for borrowck — materialize the EnvStr (which
-        // erases the slice lifetime into a packed ptr) before taking
-        // `&mut self.export_env`.
         use crate::shell::env_str::EnvStr;
         if !in_init {
             let oldpwd = EnvStr::init_slice(self.prev_cwd());

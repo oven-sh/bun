@@ -85,14 +85,7 @@ pub fn compute_chunks(this: &mut LinkerContext, unique_key: u64) -> crate::Resul
     for (entry_id_, &source_index) in entry_source_indices.iter().enumerate() {
         let entry_bit = entry_id_ as chunk::EntryPointId;
 
-        // reshaped for borrowck — set the bit through a scoped &mut, then keep an
-        // owned clone so the `this.graph.files` borrow does not span the helper calls below
-        // that need `&LinkerContext` / `&mut LinkerContext`.
-        let entry_bits: AutoBitSet = {
-            let eb = &mut this.graph.files.items_entry_bits_mut()[source_index as usize];
-            eb.set(entry_bit as usize);
-            eb.clone()?
-        };
+        this.graph.files.items_entry_bits_mut()[source_index as usize].set(entry_bit as usize);
 
         let has_html_chunk = loaders[source_index as usize] == Loader::Html;
 
@@ -114,7 +107,10 @@ pub fn compute_chunks(this: &mut LinkerContext, unique_key: u64) -> crate::Resul
                 // entry_bits is arbitrary bytes (not UTF-8) and cannot go through fmt::Display.
                 let mut v = bun_alloc::ArenaVec::new_in(temp);
                 v.push((!has_html_chunk) as u8);
-                v.extend_from_slice(entry_bits.bytes(this.graph.entry_points.len()));
+                v.extend_from_slice(
+                    this.graph.files.items_entry_bits()[source_index as usize]
+                        .bytes(this.graph.entry_points.len()),
+                );
                 break 'brk v.into_bump_slice();
             }
         };
@@ -150,7 +146,10 @@ pub fn compute_chunks(this: &mut LinkerContext, unique_key: u64) -> crate::Resul
             // always generated even if the resulting file is empty
             let hash_to_use = if !this.options.css_chunking {
                 bun_wyhash::hash(
-                    temp.alloc_slice_copy(entry_bits.bytes(this.graph.entry_points.len())),
+                    temp.alloc_slice_copy(
+                        this.graph.files.items_entry_bits()[source_index as usize]
+                            .bytes(this.graph.entry_points.len()),
+                    ),
                 )
             } else {
                 let mut hasher = Wyhash::init(5);
@@ -257,7 +256,8 @@ pub fn compute_chunks(this: &mut LinkerContext, unique_key: u64) -> crate::Resul
                     }
                     *css_chunk_entry.value_ptr = Chunk {
                         entry_point: chunk::EntryPoint::new(source_index, entry_bit, true, false),
-                        entry_bits: entry_bits.clone()?,
+                        entry_bits: this.graph.files.items_entry_bits()[source_index as usize]
+                            .clone()?,
                         content: chunk::Content::Css(chunk::CssChunk {
                             imports_in_chunk_in_order: order,
                             asts: (0..order_len)

@@ -344,14 +344,10 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                 name,
                 is_extended_manifest,
             } => {
-                // reshaped for borrowck — capture the name's slice
-                // pointer (`StringOrTinyString` is self-referential and not
-                // `Clone`) so the loop body can read `name` after the
-                // `&mut task.callback` borrow ends.
-                // SAFETY: `name` lives in `task.callback` which outlives this
-                // match arm (the task is only `put` back to the pool by a later
-                // resolve-task pass, never inside this loop iteration).
-                let name = unsafe { bun_ptr::detach_lifetime(name.slice()) };
+                // Package names are short; copy once so later `&mut task` uses
+                // in this arm do not conflict with the `&task.callback` borrow.
+                let name_buf: bun_collections::smallvec::SmallVec<[u8; 64]> = name.slice().into();
+                let name: &[u8] = &name_buf;
                 let is_extended_manifest = *is_extended_manifest;
                 if log_level.show_progress() {
                     if !has_updated_this_run.get() {
@@ -541,10 +537,6 @@ pub fn run_tasks<C: RunTasksCallbacks>(
 
                         manifest.pkg.public_max_age = timestamp_this_tick.unwrap();
 
-                        // reshaped for borrowck —
-                        // `bun_collections::HashMap` lacks `get_or_put` for
-                        // non-`Default` values, so insert by-value (overwriting
-                        // any prior entry) and reborrow.
                         let name_hash = manifest.pkg.name.hash;
                         manager
                             .manifests

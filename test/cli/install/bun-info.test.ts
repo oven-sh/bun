@@ -270,11 +270,11 @@ describe.concurrent("bun info", () => {
 
     it("should handle scoped packages", async () => {
       const testDir = await setupTest();
-      const { output, error, code } = await runCommand([bunExe(), "pm", "view", "@types/node"], testDir);
+      const { output, error, code } = await runCommand([bunExe(), "pm", "view", "@types/semver"], testDir);
 
       expect(code).toBe(0);
       expect(error).toBe("");
-      expect(output).toContain("@types/node@");
+      expect(output).toContain("@types/semver@");
       expect(output).toContain("TypeScript definitions");
     });
 

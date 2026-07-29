@@ -52,7 +52,9 @@ describe("bun.lock workspace version tracks package.json version", () => {
     expect(exitCode).toBe(0);
 
     const lockfile = await Bun.file(join(cwd, "bun.lock")).text();
-    expect(workspaceEntry(lockfile, "packages/pkg-a")).toBe(`"packages/pkg-a": { "name": "pkg-a", "version": "1.0.0", }`);
+    expect(workspaceEntry(lockfile, "packages/pkg-a")).toBe(
+      `"packages/pkg-a": { "name": "pkg-a", "version": "1.0.0", }`,
+    );
 
     return dir;
   }
@@ -101,7 +103,10 @@ describe("bun.lock workspace version tracks package.json version", () => {
     let lockfile = await Bun.file(join(cwd, "bun.lock")).text();
     expect(workspaceEntry(lockfile, "packages/pkg-a")).toBe(`"packages/pkg-a": { "name": "pkg-a", }`);
 
-    await Bun.write(join(cwd, "packages", "pkg-a", "package.json"), JSON.stringify({ name: "pkg-a", version: "1.0.0" }));
+    await Bun.write(
+      join(cwd, "packages", "pkg-a", "package.json"),
+      JSON.stringify({ name: "pkg-a", version: "1.0.0" }),
+    );
 
     const { stderr, exitCode } = await runInstall(cwd);
     expect(stderr).not.toContain("error:");

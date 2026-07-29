@@ -266,11 +266,10 @@ describe("through export merge", () => {
             test.concurrent(file, async () => {
               const result = await run([bunExe(), file], dir);
 
-              expect(result.stderr.trim()).toInclude(
-                file === "a." + fmt
-                  ? 'error: Multiple exports with the same name "value"\n' // bun's syntax error
-                  : "SyntaxError: Cannot export a duplicate name 'value'.\n", // jsc's syntax error
-              );
+              // Bun's parser error surfaces whether `a` is the entrypoint or
+              // reached via import (the async transpile path now propagates
+              // parser log errors instead of handing the broken output to JSC).
+              expect(result.stderr.trim()).toInclude('error: Multiple exports with the same name "value"\n');
 
               expect(result.exitCode).toBe(1);
             });

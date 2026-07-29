@@ -424,6 +424,22 @@ describe("web worker", () => {
     });
   }
 
+  test("self.close() from a MessagePort onmessage drops the rest of the batch", async () => {
+    const src = `
+      const { port1, port2 } = new MessageChannel();
+      port1.onmessage = e => { postMessage(e.data); if (e.data === 0) self.close(); };
+      self.onmessage = () => { for (let i = 0; i < 5; i++) port2.postMessage(i); };
+    `;
+    const worker = new Worker("data:text/javascript," + encodeURIComponent(src));
+    const errored = new Promise<never>((_, r) => (worker.onerror = e => r(e.message ?? e)));
+    await Promise.race([once(worker, "open"), errored]);
+    worker.postMessage("go");
+    const messages: any[] = [];
+    worker.addEventListener("message", e => messages.push(e.data));
+    await Promise.race([once(worker, "close"), errored]);
+    expect(messages).toEqual([0]);
+  });
+
   test("close and name are not defined on the main-thread global", () => {
     expect("close" in globalThis).toBe(false);
     expect("name" in globalThis).toBe(false);

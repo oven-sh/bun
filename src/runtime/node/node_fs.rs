@@ -4220,8 +4220,6 @@ pub mod args {
         }
         pub fn aborted(&self) -> bool {
             if let Some(signal) = &self.signal {
-                // Off-thread poll of a non-atomic flag: fence for LTO + weak ordering.
-                core::sync::atomic::fence(core::sync::atomic::Ordering::SeqCst);
                 return signal.aborted();
             }
             false
@@ -4342,8 +4340,6 @@ pub mod args {
         }
         pub fn aborted(&self) -> bool {
             if let Some(signal) = &self.signal {
-                // Off-thread poll of a non-atomic flag: fence for LTO + weak ordering.
-                core::sync::atomic::fence(core::sync::atomic::Ordering::SeqCst);
                 return signal.aborted();
             }
             false

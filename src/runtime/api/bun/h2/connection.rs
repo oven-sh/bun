@@ -397,9 +397,8 @@ impl Connection {
         );
     }
 
-    /// RFC 9113 §5.1 idle-stream detection (nghttp2's session_detect_idle_stream): a stream neither
-    /// side has opened/promised. An id at or below either high-water mark existed (closed at worst),
-    /// so late frames on an evicted stream are not misread as idle.
+    /// §5.1 idle-stream test (nghttp2's session_detect_idle_stream): neither side has opened it
+    /// and it is above both high-water marks, so an evicted stream reads as closed, not idle.
     fn is_idle_stream_id(&self, sink: &impl Sink, stream_id: u32) -> bool {
         !self.streams.contains_key(&stream_id)
             && !sink.is_local_stream(stream_id)
@@ -719,8 +718,7 @@ impl Connection {
                     );
                     return true;
                 }
-                // RFC 9113 §8.4 (nghttp2_session_on_settings_received): a client MUST reject
-                // SETTINGS_ENABLE_PUSH from a server unless the value is 0.
+                // §8.4: a server sending SETTINGS_ENABLE_PUSH other than 0 is a connection error.
                 if sid == SettingId::EnablePush && value != 0 && !self.is_server {
                     self.send_go_away(
                         sink,
@@ -880,8 +878,7 @@ impl Connection {
                 return true;
             }
         } else {
-            // Transition shim: a stream the embedder opened locally (legacy outbound) is tracked so
-            // the §6.9.1 overflow check below covers it.
+            // Transition shim: track a locally-opened stream so the overflow check covers it.
             if !self.streams.contains_key(&hdr.stream_id) && sink.is_local_stream(hdr.stream_id) {
                 let send_init = self.remote_settings.initial_window_size;
                 let recv_init = self.local_settings.initial_window_size;
@@ -890,9 +887,8 @@ impl Connection {
                 self.streams.insert(hdr.stream_id, s);
             }
             if let Some(s) = self.streams.get_mut(&hdr.stream_id) {
-                // §6.9.1: a per-stream window exceeding 2^31-1. nghttp2
-                // (session_on_stream_window_update_received) treats this as NGHTTP2_ERR_FLOW_CONTROL
-                // and node terminates the session — match that instead of a stream-level RST.
+                // §6.9.1: per-stream window > 2^31-1. nghttp2 surfaces NGHTTP2_ERR_FLOW_CONTROL and
+                // node tears the session down, so escalate to a connection error for parity.
                 if s.send_window.increase(increment).is_err() {
                     self.local_connection_error(
                         sink,
@@ -963,9 +959,7 @@ impl Connection {
             );
             return true;
         }
-        // §5.1 (nghttp2 session_detect_idle_stream): a client only receives HEADERS on a stream it
-        // opened itself or one the server reserved via PUSH_PROMISE; anything else is idle and a
-        // connection PROTOCOL_ERROR.
+        // §5.1: a client only receives HEADERS on a stream it opened or one PUSH_PROMISE reserved.
         if is_new && !self.is_server && self.is_idle_stream_id(sink, hdr.stream_id) {
             self.send_go_away(sink, ErrorCode::ProtocolError, b"HEADERS on idle stream");
             return true;
@@ -1121,9 +1115,8 @@ impl Connection {
         let mut informational = false;
         let mut content_length: Option<u64> = None;
         while off < block.len() {
-            // RFC 7541 §4.2: a dynamic-table-size-update (top 3 bits 001) must be the first thing
-            // in a header block. lshpack accepts one at the start of every decode() call so the
-            // position rule is enforced here.
+            // RFC 7541 §4.2: a §6.3 table-size-update must lead the block; lshpack accepts one at
+            // the start of every decode() call, so the position rule is enforced here.
             if field_count > 0 && (block[off] & 0xe0) == 0x20 {
                 self.send_go_away(
                     sink,
@@ -1171,10 +1164,8 @@ impl Connection {
                                 b"protocol" => pseudo::PROTOCOL,
                                 _ => pseudo::UNKNOWN,
                             };
-                            // §8.3.1/§8.3.2: requests never carry :status and responses carry only
-                            // :status (PUSH_PROMISE's request block is `is_request`, not a
-                            // response, so the request pseudo-headers it legitimately carries are
-                            // accepted).
+                            // §8.3.1/§8.3.2: requests never carry :status; responses carry only
+                            // :status. A PUSH_PROMISE block is `is_request`, not `is_response`.
                             let wrong_direction = (self.is_server && rest == b"status")
                                 || (is_response && bit != pseudo::STATUS);
                             // RFC 8441 §4: :protocol is only valid when SETTINGS_ENABLE_CONNECT_PROTOCOL
@@ -1281,9 +1272,7 @@ impl Connection {
                     || (extended_connect && (!saw_connect || (seen_pseudo & AUTHORITY) == 0))
             };
         }
-        // §8.3.2 (nghttp2_http_on_response_headers): a response block must carry exactly one
-        // :status. Duplicates and the request pseudo-headers were rejected as wrong_direction
-        // above, so this is the presence check.
+        // §8.3.2: a response block must carry :status (duplicates were rejected above).
         if is_response && !rejected && !malformed && (seen_pseudo & pseudo::STATUS) == 0 {
             malformed = true;
         }
@@ -1524,8 +1513,8 @@ impl Connection {
             FlowControlViolation,
             Deliver(u32),
         }
-        // §5.1: DATA on an idle stream is a connection PROTOCOL_ERROR (an unknown but non-idle id
-        // — one at or below the high-water marks — stays a STREAM_CLOSED stream error below).
+        // §5.1: DATA on an idle stream is a connection PROTOCOL_ERROR; a non-idle unknown id stays
+        // a STREAM_CLOSED stream error below.
         if self.is_idle_stream_id(sink, hdr.stream_id) {
             self.send_go_away(sink, ErrorCode::ProtocolError, b"DATA on idle stream");
             return true;

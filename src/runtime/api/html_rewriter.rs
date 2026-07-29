@@ -669,11 +669,7 @@ impl BufferOutputSink {
                 document_content_handlers,
                 encoding: lol_html::AsciiCompatibleEncoding::utf_8(),
                 memory_settings: lol_html::MemorySettings {
-                    // lol_html debug-asserts preallocated < max_allowed.
-                    // `input_size` is `MAX_SIZE` for an unknown-size body and
-                    // is peer-supplied `Content-Length` for a fetched body, so
-                    // cap it; this buffer only holds the incomplete-token tail
-                    // between `write()` calls, not the whole document.
+                    // `input_size` may be unknown (`MAX_SIZE`) or peer-supplied; cap it.
                     preallocated_parsing_buffer_size: if input_size as u64
                         >= webcore::blob::MAX_SIZE
                     {

@@ -1456,10 +1456,7 @@ impl<'a> Formatter<'a> {
                     let name = expect::mock::JSMockFunction__getName(value);
                     let name_slice = name.to_slice(self.global_this)?;
                     let name_bytes = name_slice.slice();
-                    let show_name = !name_bytes.is_empty()
-                        && name_bytes != b"jest.fn()"
-                        && name_bytes != b"mockConstructor"
-                        && name_bytes != b"mockedFunction";
+                    let show_name = !name_bytes.is_empty() && name_bytes != b"jest.fn()";
 
                     let calls = expect::mock::JSMockFunction__getCalls(self.global_this, value)?;
                     let has_calls =

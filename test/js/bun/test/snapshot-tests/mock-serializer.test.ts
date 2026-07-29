@@ -18,6 +18,9 @@ describe("mock function serializer", () => {
       expect({ cb: jest.fn() }).toMatchInlineSnapshot();
 
       expect(jest.spyOn({ x: 1 }, "x")).toMatchInlineSnapshot();
+      expect(jest.spyOn({ greet() {} }, "greet")).toMatchInlineSnapshot();
+      function impl() { return 2; }
+      expect(jest.fn(impl)).toMatchInlineSnapshot();
 
       expect(fn).toMatchSnapshot();
       expect(jest.fn().mockName("myNamed")).toMatchSnapshot();
@@ -42,6 +45,8 @@ describe("mock function serializer", () => {
     expect({ stderr, src }).not.toEqual(expect.objectContaining({ src: expect.stringContaining("[Function") }));
     expect(src).not.toContain("mockedFunction");
     expect(src).not.toContain("mockConstructor");
+    expect(src).not.toContain("[MockFunction greet]");
+    expect(src).not.toContain("[MockFunction impl]");
 
     expect(src).toContain("toMatchInlineSnapshot(`[MockFunction]`)");
     expect(src).toContain("toMatchInlineSnapshot(`[MockFunction myNamed]`)");

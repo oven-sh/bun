@@ -3011,7 +3011,7 @@ pub mod mock {
         })
     }
 
-    /// Mock's `getMockName()` string, or `undefined` when `value` is not a `JSMockFunction`.
+    /// Name set via `.mockName()` (empty until then), or `undefined` when `value` is not a `JSMockFunction`.
     #[allow(non_snake_case)]
     #[inline]
     pub(crate) fn JSMockFunction__getName(value: JSValue) -> JSValue {

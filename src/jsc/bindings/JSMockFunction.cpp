@@ -274,6 +274,7 @@ public:
     JSC::Weak<JSObject> spyTarget;
     JSC::Identifier spyIdentifier;
     unsigned spyAttributes = 0;
+    bool m_mockNameWasSet { false };
 
     static constexpr unsigned SpyAttributeESModuleNamespace = 1 << 30;
 
@@ -1037,8 +1038,10 @@ extern "C" [[ZIG_EXPORT(nothrow)]] JSC::EncodedJSValue JSMockFunction__getName(E
 {
     JSValue value = JSValue::decode(encodedValue);
     if (auto* mock = tryJSDynamicCast<JSMockFunction*>(value)) {
-        if (auto* name = mock->jsName())
-            return JSValue::encode(name);
+        if (mock->m_mockNameWasSet) {
+            if (auto* name = mock->jsName())
+                return JSValue::encode(name);
+        }
         return JSValue::encode(jsEmptyString(mock->vm()));
     }
     return encodedJSUndefined();
@@ -1175,6 +1178,7 @@ JSC_DEFINE_HOST_FUNCTION(jsMockFunctionMockName, (JSC::JSGlobalObject * globalOb
         WTF::String name = callframe->argument(0).toWTFString(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
         thisObject->setName(name);
+        thisObject->m_mockNameWasSet = true;
     } else {
         RETURN_IF_EXCEPTION(scope, {});
     }

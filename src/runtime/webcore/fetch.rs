@@ -253,7 +253,7 @@ fn blob_scheme_fetch(
         ));
     };
 
-    if blob.size.get() == blob::MAX_SIZE {
+    if blob.size.get() == blob::MAX_SIZE && !blob.is_s3() {
         blob.resolve_size();
     }
     let full_length = blob.size.get();

@@ -1265,15 +1265,8 @@ impl WebWorker {
             // Embedded socket groups must drain while JSC is still alive —
             // closeAll() fires on_close → JS callbacks. RareData.deinit() runs
             // after teardownJSCVM and only deinit()s (asserts empty in debug).
-            if let Some(rare) = vm.rare_data.as_deref_mut() {
-                // reshaped for borrowck — `close_all_socket_groups`
-                // wants `&VirtualMachine` while `rare` is `&mut` borrowed from
-                // `vm`. Re-derive `vm` through the raw ptr (sole owner).
-
-                // SAFETY: `vm_ptr` was unpublished under `vm_lock` above, so this
-                // thread is the sole owner; the JSC VM is still alive (teardown
-                // is step 3 below).
-                rare.close_all_socket_groups(unsafe { &*vm_ptr });
+            if vm.rare_data.is_some() {
+                vm.close_all_socket_groups();
             }
             // Destroy the per-VM c-ares channel now: `ares_destroy()` fires
             // every pending query callback with `ARES_EDESTRUCTION` and then

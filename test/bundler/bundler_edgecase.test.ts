@@ -2858,6 +2858,71 @@ describe("bundler", () => {
       expect(out).not.toContain("require_foo\u2014bar");
     },
   });
+
+  // When the parser folds an expression to an undefined/NaN/Infinity value and
+  // the printer re-materializes it as the bare identifier, a user binding of
+  // that name captures it. The printer must fall back to `void 0` / `0/0` /
+  // `1/0` for any file that declares such a binding.
+  for (const minifySyntax of [false, true]) {
+    const suffix = minifySyntax ? "MinifySyntax" : "";
+    itBundled(`edgecase/ShadowedUndefined${suffix}`, {
+      files: {
+        "/entry.js": /* js */ `
+          (function (undefined) {
+            // void 0 folds to EUndefined; must not print as the identifier 'undefined'.
+            console.log(void 0 === undefined, typeof void 0);
+          })(42);
+        `,
+      },
+      minifySyntax,
+      run: { stdout: "false undefined" },
+    });
+    itBundled(`edgecase/ShadowedNaN${suffix}`, {
+      files: {
+        "/entry.js": /* js */ `
+          (function (NaN) {
+            // 0/0 folds to an f64 NaN; must not print as the identifier 'NaN'.
+            const f = () => { return 0 / 0; };
+            console.log(Number.isNaN(0 / 0), 0 / 0 === NaN, Number.isNaN(f()));
+          })(5);
+        `,
+      },
+      minifySyntax,
+      run: { stdout: "true false true" },
+    });
+    itBundled(`edgecase/ShadowedInfinity${suffix}`, {
+      files: {
+        "/entry.js": /* js */ `
+          (function (Infinity) {
+            // 1e999 parses directly to f64 +Infinity with no identifier reference.
+            console.log(1 / 0 === 1e999, 1e999 === Infinity, -1e999 * 2);
+          })(7);
+        `,
+      },
+      minifySyntax,
+      run: { stdout: "true false -Infinity" },
+    });
+  }
+
+  // The runtime transpiler (`bun run`) enables inlining, which folds `0/0` to a
+  // NaN value; the printer must not emit the identifier `NaN` for it when the
+  // file shadows that name. Covers the non-bundler print path (`print_ast`).
+  test.concurrent("edgecase/ShadowedNaN runtime transpiler", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `(function (NaN) { console.log(Number.isNaN(0 / 0), 0 / 0 === NaN); })(5);` +
+          ` { const NaN = 6; console.log(Number.isNaN(0 / 0)); }`,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("true false\ntrue\n");
+    expect(exitCode).toBe(0);
+  });
 });
 
 for (const backend of ["api", "cli"] as const) {

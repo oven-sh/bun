@@ -1034,6 +1034,11 @@ pub struct Options<'a> {
     pub inline_require_and_import_errors: bool,
     pub has_run_symbol_renamer: bool,
 
+    /// Per [`compute_shadowed_globals`]; when set, print `void 0`/`0/0`/`1/0` instead of the identifier.
+    pub shadows_undefined: bool,
+    pub shadows_nan: bool,
+    pub shadows_infinity: bool,
+
     pub require_or_import_meta_for_source_callback: RequireOrImportMetaCallback,
 
     /// The module type of the importing file (after linking), used to determine interop helper behavior.
@@ -1104,6 +1109,9 @@ impl<'a> Default for Options<'a> {
             transform_only: false,
             inline_require_and_import_errors: true,
             has_run_symbol_renamer: false,
+            shadows_undefined: false,
+            shadows_nan: false,
+            shadows_infinity: false,
             require_or_import_meta_for_source_callback: RequireOrImportMetaCallback::default(),
             input_module_type: bundle_opts::ModuleType::Unknown,
             module_type: bundle_opts::Format::Esm,
@@ -1210,6 +1218,24 @@ fn is_identifier_or_numeric_constant_or_property_access(expr: &js_ast::Expr) -> 
         ExprData::EIdentifier(_) | ExprData::EDot(_) | ExprData::EIndex(_) => true,
         ExprData::ENumber(e) => e.value().is_infinite() || e.value().is_nan(),
         _ => false,
+    }
+}
+
+/// Sets [`Options::shadows_undefined`]/`_nan`/`_infinity` from one file's symbol table.
+pub fn compute_shadowed_globals<'s>(
+    opts: &mut Options<'_>,
+    symbols: impl Iterator<Item = &'s js_ast::symbol::Symbol>,
+) {
+    for sym in symbols {
+        if sym.kind == js_ast::symbol::Kind::Unbound {
+            continue;
+        }
+        match sym.original_name.slice() {
+            b"undefined" => opts.shadows_undefined = true,
+            b"NaN" => opts.shadows_nan = true,
+            b"Infinity" => opts.shadows_infinity = true,
+            _ => {}
+        }
     }
 }
 
@@ -1798,7 +1824,7 @@ pub mod __gated_printer {
 
         #[inline]
         pub fn print_undefined(&mut self, loc: bun_ast::Loc, level: Level) {
-            if self.options.minify_syntax {
+            if self.options.minify_syntax || self.options.shadows_undefined {
                 if level.gte(Level::Prefix) {
                     self.add_source_mapping(loc);
                     self.print(b"(void 0)");
@@ -4223,8 +4249,11 @@ pub mod __gated_printer {
         /// something that is not a valid property name (e.g. "-1", "1/0", "1 / 0").
         pub fn number_property_key_must_be_computed(&self, value: f64) -> bool {
             value.is_sign_negative()
+                || (value.is_nan() && self.options.shadows_nan)
                 || (value == f64::INFINITY
-                    && (self.options.minify_syntax || !self.options.has_run_symbol_renamer))
+                    && (self.options.minify_syntax
+                        || !self.options.has_run_symbol_renamer
+                        || self.options.shadows_infinity))
         }
 
         /// `E::ObjectJSON` (JSON-only): always printed in JSON shape.
@@ -6285,12 +6314,32 @@ pub mod __gated_printer {
         pub fn print_number(&mut self, value: f64, level: Level) {
             let abs_value = value.abs();
             if value.is_nan() {
-                self.print_space_before_identifier();
-                self.print(b"NaN");
+                if !IS_JSON && self.options.shadows_nan {
+                    let wrap = level.gte(Level::Multiply);
+                    if wrap {
+                        self.print(b"(");
+                    } else {
+                        self.print_space_before_identifier();
+                    }
+                    if self.options.minify_whitespace {
+                        self.print(b"0/0");
+                    } else {
+                        self.print(b"0 / 0");
+                    }
+                    if wrap {
+                        self.print(b")");
+                    }
+                } else {
+                    self.print_space_before_identifier();
+                    self.print(b"NaN");
+                }
             } else if value.is_infinite() {
                 let is_neg_inf = value.is_sign_negative();
-                let wrap = ((!self.options.has_run_symbol_renamer || self.options.minify_syntax)
-                    && level.gte(Level::Multiply))
+                let use_identifier = IS_JSON
+                    || (!self.options.minify_syntax
+                        && self.options.has_run_symbol_renamer
+                        && !self.options.shadows_infinity);
+                let wrap = (!use_identifier && level.gte(Level::Multiply))
                     || (is_neg_inf && level.gte(Level::Prefix));
 
                 if wrap {
@@ -6304,8 +6353,7 @@ pub mod __gated_printer {
                     self.print_space_before_identifier();
                 }
 
-                // If we are not running the symbol renamer, we must not print "Infinity".
-                if IS_JSON || (!self.options.minify_syntax && self.options.has_run_symbol_renamer) {
+                if use_identifier {
                     self.print(b"Infinity");
                 } else if self.options.minify_whitespace {
                     self.print(b"1/0");
@@ -7193,6 +7241,9 @@ pub fn print_ast<'a, W: WriterTrait, const ASCII_ONLY: bool, const GENERATE_SOUR
     let _restore =
         bun_crash_handler::scoped_action(bun_crash_handler::Action::Print(source.path.text));
 
+    let mut opts = opts;
+    compute_shadowed_globals(&mut opts, symbols.symbols_for_source.iter().flatten());
+
     // `Renamer<'r,'src>` is invariant in `'src` (it holds `&'r mut`
     // NoOpRenamer<'src>`), so the two arms must agree on `'src`; constructing the
     // `MinifyRenamer` variant inline (rather than via `to_renamer() ->
@@ -7303,7 +7354,6 @@ pub fn print_ast<'a, W: WriterTrait, const ASCII_ONLY: bool, const GENERATE_SOUR
     // backing `Vec`. Cheap no-op on a reused (already-grown) writer.
     let _ = writer.reserve(source.contents().len() as u64);
 
-    let mut opts = opts;
     let source_map_builder = get_source_map_builder::<ASCII_ONLY>(
         GenerateSourceMap::lazy_if(GENERATE_SOURCE_MAP),
         &mut opts,
@@ -7555,6 +7605,7 @@ pub fn print_with_writer_and_platform<
         Printer<'a, W, /*ASCII_ONLY=*/ B, B, false, G>;
     let module_type = opts.module_type;
     let mut opts = opts;
+    compute_shadowed_globals(&mut opts, ast.symbols.iter());
     let source_map_builder = get_source_map_builder::<IS_BUN_PLATFORM>(
         GenerateSourceMap::eager_if(GENERATE_SOURCE_MAPS),
         &mut opts,

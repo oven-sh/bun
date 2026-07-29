@@ -2268,10 +2268,22 @@ fn path_template_print_tolerates_malformed_brackets() {
     assert_eq!(run(b"[dir]/[name].[ext]"), b"D/N.E");
 
     // The up-front validator agrees with the printer on what is unterminated.
-    assert_eq!(find_unterminated_placeholder(b"[name"), Some((0, b"[name".as_slice())));
-    assert_eq!(find_unterminated_placeholder(b"foo["), Some((3, b"[".as_slice())));
-    assert_eq!(find_unterminated_placeholder(b"[name]-[ext"), Some((7, b"[ext".as_slice())));
-    assert_eq!(find_unterminated_placeholder(b"a[b.js"), Some((1, b"[b.js".as_slice())));
+    assert_eq!(
+        find_unterminated_placeholder(b"[name"),
+        Some((0, b"[name".as_slice()))
+    );
+    assert_eq!(
+        find_unterminated_placeholder(b"foo["),
+        Some((3, b"[".as_slice()))
+    );
+    assert_eq!(
+        find_unterminated_placeholder(b"[name]-[ext"),
+        Some((7, b"[ext".as_slice()))
+    );
+    assert_eq!(
+        find_unterminated_placeholder(b"a[b.js"),
+        Some((1, b"[b.js".as_slice()))
+    );
     assert_eq!(find_unterminated_placeholder(b""), None);
     assert_eq!(find_unterminated_placeholder(b"[dir]/[name].[ext]"), None);
     assert_eq!(find_unterminated_placeholder(b"[foo]-[name].[ext]"), None);

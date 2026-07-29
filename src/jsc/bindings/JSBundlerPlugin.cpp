@@ -77,14 +77,8 @@ void BundlerPlugin::NamespaceList::append(JSC::VM& vm, JSC::RegExp* filter, Stri
     nsGroup->append(WTF::move(filter_regexp));
 }
 
-static bool anyMatchesForNamespace(JSC::VM& vm, BundlerPlugin::NamespaceList& list, BunString* namespaceStr, BunString* path)
+static bool anyMatchesForNamespace(JSC::VM& vm, BundlerPlugin::NamespaceList& list, const String& namespaceString, const String& pathString)
 {
-    auto namespaceString = namespaceStr ? namespaceStr->transferToWTFString() : String();
-    auto pathString = path->transferToWTFString();
-
-    if (list.fileNamespace.isEmpty() && list.namespaces.isEmpty())
-        return false;
-
     unsigned index = 0;
     auto* group = list.group(namespaceString, index);
     if (group == nullptr) {
@@ -103,11 +97,29 @@ static bool anyMatchesForNamespace(JSC::VM& vm, BundlerPlugin::NamespaceList& li
 }
 bool BundlerPlugin::anyMatchesCrossThread(JSC::VM& vm, BunString* namespaceStr, BunString* path, bool isOnLoad)
 {
-    if (isOnLoad) {
-        return anyMatchesForNamespace(vm, this->onLoad, namespaceStr, path);
-    } else {
-        return anyMatchesForNamespace(vm, this->onResolve, namespaceStr, path);
+    auto& list = isOnLoad ? this->onLoad : this->onResolve;
+    if (list.fileNamespace.isEmpty() && list.namespaces.isEmpty())
+        return false;
+
+    auto namespaceString = namespaceStr ? namespaceStr->transferToWTFString() : String();
+    auto pathString = path->transferToWTFString();
+
+    if (anyMatchesForNamespace(vm, list, namespaceString, pathString))
+        return true;
+
+    // For onResolve, an import like "virt:x" from a file-namespace source
+    // should also be offered to onResolve({ namespace: "virt" }) with the
+    // stripped path, matching the runtime's dispatch.
+    if (!isOnLoad && (namespaceString.isEmpty() || namespaceString == "file"_s) && !list.namespaces.isEmpty()) {
+        if (auto colon = pathString.find(':'); colon != WTF::notFound && colon != 0 && !(colon == 1 && isASCIIAlpha(pathString[0]))) {
+            auto prefixNamespace = pathString.left(colon);
+            auto afterNamespace = pathString.substring(colon + 1);
+            if (anyMatchesForNamespace(vm, list, prefixNamespace, afterNamespace))
+                return true;
+        }
     }
+
+    return false;
 }
 
 static const HashTableValue JSBundlerPluginHashTable[] = {

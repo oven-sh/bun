@@ -941,11 +941,11 @@ impl<'a> Parser<'a> {
                         let should_move = !p.options.bundle && class.class.can_be_moved();
 
                         let sliced = arena.alloc_slice_copy(&[*stmt]);
-                        p.append_part(&mut parts, sliced)?;
+                        let appended = p.append_part(&mut parts, sliced)?;
 
-                        if should_move {
+                        if should_move && appended {
                             // `Part` isn't `Copy`; pop+push instead of last+truncate.
-                            before.push(parts.pop().expect("unreachable"));
+                            before.push(parts.pop().expect("infallible: part was appended"));
                         }
                     }
                     js_ast::StmtData::SExportDefault(value) => {
@@ -954,10 +954,10 @@ impl<'a> Parser<'a> {
                         // https://github.com/oven-sh/bun/issues/1961
                         let should_move = !p.options.bundle && value.can_be_moved();
                         let sliced = arena.alloc_slice_copy(&[*stmt]);
-                        p.append_part(&mut parts, sliced)?;
+                        let appended = p.append_part(&mut parts, sliced)?;
 
-                        if should_move {
-                            before.push(parts.pop().expect("unreachable"));
+                        if should_move && appended {
+                            before.push(parts.pop().expect("infallible: part was appended"));
                         }
                     }
                     js_ast::StmtData::SEnum(_) => {

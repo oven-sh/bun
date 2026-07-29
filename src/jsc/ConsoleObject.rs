@@ -3848,7 +3848,11 @@ pub mod formatter {
                 let number_value: &[u8] = if inner.is_nan() {
                     b"NaN"
                 } else if inner.is_infinite() {
-                    if inner > 0.0 { b"Infinity" } else { b"-Infinity" }
+                    if inner > 0.0 {
+                        b"Infinity"
+                    } else {
+                        b"-Infinity"
+                    }
                 } else {
                     bun_core::fmt::FormatDouble::dtoa_with_negative_zero(&mut buf, inner)
                 };

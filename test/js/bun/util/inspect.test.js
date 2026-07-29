@@ -889,11 +889,7 @@ describe("boxed primitives and RegExp with overridden conversion hooks", () => {
       env: { ...bunEnv, NO_COLOR: "1" },
       stderr: "pipe",
     });
-    const [stdout, stderr, exitCode] = await Promise.all([
-      proc.stdout.text(),
-      proc.stderr.text(),
-      proc.exited,
-    ]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
     expect(normalizeBunSnapshot(stdout)).toMatchInlineSnapshot(`
       "[Number: 5]

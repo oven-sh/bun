@@ -7105,7 +7105,7 @@ JSValue SerializedScriptValue::deserialize(JSGlobalObject& lexicalGlobalObject, 
                                       ,
         WTF::move(m_serializedVideoChunks), WTF::move(m_serializedVideoFrames)
 #endif
-            ,
+                                                ,
         m_forTransfer);
     if (didFail)
         *didFail = result.second != SerializationReturnCode::SuccessfullyCompleted;

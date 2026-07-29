@@ -3245,7 +3245,7 @@ impl RunCommand {
             else {
                 return false;
             };
-            let embedded_v4 = v6.to_ipv4();
+            let embedded_v4 = v6.to_ipv4_mapped();
             if let Some(v4) = embedded_v4 {
                 return !(v4.is_loopback()
                     || v4.is_unspecified()

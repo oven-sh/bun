@@ -1493,22 +1493,20 @@ impl FFI {
 
         let dylib: bun_sys::DynLib = 'brk: {
             // First try using the name directly
-            let mut last_err = match bun_sys::DynLib::open(name) {
-                Ok(d) => break 'brk d,
-                Err(e) => e,
-            };
+            if let Ok(d) = bun_sys::DynLib::open(name) {
+                break 'brk d;
+            }
             // if that fails, try resolving the filepath relative to the current working directory
             let mut backup_buf = bun_paths::path_buffer_pool::get();
             if let Some(backup_name) =
                 Fs::FileSystem::instance().abs_buf_checked(&[name], &mut backup_buf[..])
+                && let Ok(d) = bun_sys::DynLib::open(backup_name)
             {
-                match bun_sys::DynLib::open(backup_name) {
-                    Ok(d) => break 'brk d,
-                    Err(e) => last_err = e,
-                }
+                break 'brk d;
             }
-            // ENAMETOOLONG never reached the loader: dlerror()/GetLastError() is stale.
-            let dlerror_msg = if last_err == bun_errno::SystemErrno::ENAMETOOLONG {
+            // `DynLib::open` short-circuits ENAMETOOLONG without calling the
+            // loader, so dlerror()/GetLastError() is stale iff `name` was too long.
+            let dlerror_msg = if name.len() >= bun_paths::MAX_PATH_BYTES {
                 Box::<[u8]>::from(b"file name too long".as_slice())
             } else {
                 get_dl_error()

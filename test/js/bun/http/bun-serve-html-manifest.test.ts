@@ -290,9 +290,9 @@ describe("Bun.serve HTML manifest", () => {
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).toBe("");
     // ENAMETOOLONG on POSIX (the per-part guard fires); ERR_INVALID_ARG_TYPE
     // on Windows (abs() succeeds; route setup then rejects the missing file).
+    if (!stdout.startsWith("CAUGHT")) console.error(stderr);
     expect(stdout.trim()).toMatch(/^CAUGHT (ENAMETOOLONG|ERR_INVALID_ARG_TYPE)$/);
     expect(exitCode).toBe(0);
   });

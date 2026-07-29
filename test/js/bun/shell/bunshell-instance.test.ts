@@ -12,10 +12,9 @@ test("new $.Shell() inherits process.env and throws on non-zero exit by default"
     const fromDefault = (await $\`echo \$BUN_SHELL_INSTANCE_MARKER\`.quiet()).stdout.toString().trim();
     const fromFresh = (await inst\`echo \$BUN_SHELL_INSTANCE_MARKER\`.quiet()).stdout.toString().trim();
 
-    let threwDefault = false;
-    let threwFresh = false;
-    try { await $\`false\`.quiet(); } catch { threwDefault = true; }
-    try { await inst\`false\`.quiet(); } catch { threwFresh = true; }
+    let threwDefault, threwFresh;
+    try { await $\`false\`.quiet(); } catch (e) { threwDefault = { isShellError: e instanceof $.ShellError, exitCode: e.exitCode }; }
+    try { await inst\`false\`.quiet(); } catch (e) { threwFresh = { isShellError: e instanceof $.ShellError, exitCode: e.exitCode }; }
 
     console.log(JSON.stringify({ fromDefault, fromFresh, threwDefault, threwFresh }));
   `;
@@ -31,8 +30,8 @@ test("new $.Shell() inherits process.env and throws on non-zero exit by default"
   expect(JSON.parse(stdout)).toEqual({
     fromDefault: "hello",
     fromFresh: "hello",
-    threwDefault: true,
-    threwFresh: true,
+    threwDefault: { isShellError: true, exitCode: 1 },
+    threwFresh: { isShellError: true, exitCode: 1 },
   });
   expect(exitCode).toBe(0);
 });

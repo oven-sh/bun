@@ -176,3 +176,53 @@ test.skipIf(!isASAN)(
   },
   timeout,
 );
+
+// Regression: Bun.serve() inside a worker, streaming a JS ReadableStream body,
+// then worker.terminate() mid-stream. Worker shutdown stops the server which
+// tears down the in-flight HTTPResponseSink and fires its JS onClose/onPull
+// hook via AsyncContextFrame::call while the VM's sticky TerminationException
+// is still pending, tripping Interpreter::executeCallImpl's
+// scope.assertNoException() and SIGABRTing the whole process. Release WebKit
+// compiles that ASSERT out, so this is debug/ASAN only.
+test.skipIf(!isDebug)(
+  "terminate() while Bun.serve is streaming a ReadableStream body does not trip assertNoException()",
+  async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const { Worker } = require("node:worker_threads");
+        const src = 'const server = Bun.serve({ port: 0, fetch() { let i = 0;' +
+          '  return new Response(new ReadableStream({ async pull(c) {' +
+          '    c.enqueue(new Uint8Array(8192).fill(i++));' +
+          '    if (i > 20000) c.close();' +
+          '    await Bun.sleep(0);' +
+          '  } })); } });' +
+          'require("node:worker_threads").parentPort.postMessage(server.port);';
+        for (let i = 0; i < 8; i++) {
+          const w = new Worker(src, { eval: true });
+          const port = await new Promise(r => w.once("message", r));
+          const res = await fetch("http://127.0.0.1:" + port + "/");
+          const rd = res.body.getReader();
+          await rd.read();
+          const done = new Promise(r => w.once("exit", r));
+          w.terminate();
+          await done;
+          rd.cancel().catch(() => {});
+        }
+        console.log("survived");
+      `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).not.toContain("ASSERTION FAILED");
+    expect(stdout).toBe("survived\n");
+    expect(exitCode).toBe(0);
+  },
+  timeout,
+);

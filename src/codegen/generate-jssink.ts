@@ -400,7 +400,17 @@ JSC_DEFINE_HOST_FUNCTION(${controller}__close, (JSC::JSGlobalObject * lexicalGlo
     ${name}__controllerDetached(ptr, JSC::JSValue::encode(controller));
     controller->m_sinkPtr = nullptr;
 
-    ${name}__close(lexicalGlobalObject, ptr);
+    // close() with no argument is normal completion: flush buffered bytes and
+    // terminate like end(). close(error) is the readStreamIntoSink abrupt
+    // path (rsisSinkClose always appends exactly one argument, even when the
+    // reason is undefined): the sink is torn down without a clean terminator
+    // so the peer observes truncation, and the pump's promise rejection
+    // drives handle_reject_stream.
+    if (callFrame->argumentCount() == 0) {
+        ${name}__endWithSink(ptr, lexicalGlobalObject);
+    } else {
+        ${name}__close(lexicalGlobalObject, ptr);
+    }
 
     // detach() must still fire onClose (it transitions the direct
     // ReadableStream to closed/errored and calls underlyingSource.cancel())

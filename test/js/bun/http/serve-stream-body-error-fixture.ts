@@ -73,6 +73,20 @@ const sources: Record<string, () => ReadableStream> = {
         throw new Error("boom");
       },
     }),
+  // Same, but controller.error() with no argument: the stored error is
+  // undefined (WHATWG default). The sink's abort close still receives exactly
+  // one (undefined) argument from rsisSinkClose, and the connection must be
+  // force-closed without a clean chunked terminator.
+  "mid-stream-nullish-error": () =>
+    new ReadableStream({
+      async pull(c) {
+        const { promise, resolve } = Promise.withResolvers<void>();
+        midStreamResolve = resolve;
+        c.enqueue("chunk-a");
+        await promise;
+        c.error();
+      },
+    }),
   // The client aborts the download mid-stream, which makes Bun cancel the body
   // stream; the source's cancel() then throws. That rejection belongs to a
   // promise Bun created internally and must not surface as unhandledRejection.

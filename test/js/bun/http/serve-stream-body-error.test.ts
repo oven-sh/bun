@@ -98,6 +98,25 @@ test.concurrent("mid-stream error: the chunked body is not terminated as complet
   });
 });
 
+// controller.error() with no argument stores `undefined` as the reason;
+// rsisSinkClose forwards it to the sink controller's close(reason) with
+// exactly one (undefined) argument. The connection must still be force-closed
+// without a terminator.
+test.concurrent("mid-stream nullish error: the chunked body is not terminated as complete", async () => {
+  const { stdout, exitCode } = await runFixture("mid-stream-nullish-error");
+  expect({ result: JSON.parse(stdout), exitCode }).toEqual({
+    result: {
+      statusLine: "HTTP/1.1 200 OK",
+      cleanChunkedTerminator: false,
+      body: "7\r\nchunk-a\r\n",
+      errorCb: 0,
+      unhandled: 0,
+      secondStatusLine: "HTTP/1.1 200 OK",
+    },
+    exitCode: 0,
+  });
+});
+
 // Under `development: true` (the default for a plain script) the mid-stream
 // error is reported by handle_reject_stream, and the connection must still be
 // aborted: development mode never has a dev_server() for a plain Bun.serve,

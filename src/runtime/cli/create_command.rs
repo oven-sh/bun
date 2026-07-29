@@ -653,9 +653,7 @@ impl CreateCommand {
 
                     let mut conflicts: Vec<Vec<bun_paths::OSPathChar>> = Vec::new();
                     while let Some(entry) = scan_walker.next()? {
-                        // No-follow: a destination symlink counts as the link
-                        // itself, so it conflicts (or is unlinked by --force)
-                        // instead of being written through.
+                        // No-follow: a symlink is never classified as its target.
                         #[cfg(not(windows))]
                         let existing_kind = bun_sys::lstatat(existing_destination.fd, entry.path)
                             .map(|st| bun_sys::kind_from_mode(st.st_mode as _));

@@ -77,6 +77,10 @@ pub use static_route::StaticRoute;
 pub mod file_route;
 pub use file_route::FileRoute;
 
+#[path = "DirectoryRoute.rs"]
+pub mod directory_route;
+pub use directory_route::DirectoryRoute;
+
 #[path = "FileResponseStream.rs"]
 pub mod file_response_stream;
 pub use file_response_stream::FileResponseStream;
@@ -144,6 +148,8 @@ pub enum AnyRoute {
     Static(core::ptr::NonNull<StaticRoute>),
     /// Serve a file from disk
     File(core::ptr::NonNull<FileRoute>),
+    /// Serve a directory tree — `"/static/*": { dir: "./public" }`
+    Directory(core::ptr::NonNull<DirectoryRoute>),
     /// Bundle an HTML import — `import html from "./index.html"; "/": html`
     Html(bun_ptr::RefPtr<html_bundle::Route>),
     /// Use file-system routing — `"/*": { dir: …, style: "nextjs-pages" }`
@@ -161,6 +167,7 @@ impl AnyRoute {
         match self {
             AnyRoute::Static(p) => bun_ptr::BackRef::from(*p).memory_cost(),
             AnyRoute::File(p) => bun_ptr::BackRef::from(*p).memory_cost(),
+            AnyRoute::Directory(p) => bun_ptr::BackRef::from(*p).memory_cost(),
             AnyRoute::Html(r) => r.data().memory_cost(),
             AnyRoute::FrameworkRouter(_) => {
                 core::mem::size_of::<crate::bake::FileSystemRouterType>()
@@ -172,6 +179,7 @@ impl AnyRoute {
         match self {
             AnyRoute::Static(p) => bun_ptr::BackRef::from(*p).ref_(),
             AnyRoute::File(p) => bun_ptr::BackRef::from(*p).ref_(),
+            AnyRoute::Directory(p) => bun_ptr::BackRef::from(*p).ref_(),
             AnyRoute::Html(r) => {
                 // SAFETY: RefPtr keeps the pointee live while held in the route table.
                 unsafe { bun_ptr::RefCount::<html_bundle::Route>::ref_(r.as_ptr()) };
@@ -185,6 +193,8 @@ impl AnyRoute {
             AnyRoute::Static(p) => unsafe { StaticRoute::deref_(p.as_ptr()) },
             // SAFETY: see above.
             AnyRoute::File(p) => unsafe { FileRoute::deref(p.as_ptr()) },
+            // SAFETY: see above.
+            AnyRoute::Directory(p) => unsafe { DirectoryRoute::deref(p.as_ptr()) },
             AnyRoute::Html(r) => r.deref(),
             AnyRoute::FrameworkRouter(_) => {} // not reference counted
         }
@@ -2359,6 +2369,29 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                     if Self::HAS_H3 {
                         if let Some(h3_app) = self.h3_app {
                             server_config::apply_static_route_h3::<FileRoute>(
+                                any_server,
+                                // S008: `h3::App` is an `opaque_ffi!` ZST — safe deref.
+                                bun_opaque::opaque_deref_mut(h3_app),
+                                p.as_ptr(),
+                                &entry.path,
+                                entry.method,
+                                path_has_user_head_route,
+                            );
+                        }
+                    }
+                }
+                AnyRoute::Directory(p) => {
+                    server_config::apply_static_route::<SSL, DirectoryRoute>(
+                        any_server,
+                        app,
+                        p.as_ptr(),
+                        &entry.path,
+                        entry.method,
+                        path_has_user_head_route,
+                    );
+                    if Self::HAS_H3 {
+                        if let Some(h3_app) = self.h3_app {
+                            server_config::apply_static_route_h3::<DirectoryRoute>(
                                 any_server,
                                 // S008: `h3::App` is an `opaque_ffi!` ZST — safe deref.
                                 bun_opaque::opaque_deref_mut(h3_app),

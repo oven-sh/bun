@@ -323,17 +323,17 @@ impl JSValue {
     #[inline]
     pub fn is_big_int_in_int64_range(self, min: i64, max: i64) -> bool {
         unsafe extern "C" {
-            safe fn JSC__isBigIntInInt64Range(this: JSValue, min: i64, max: i64) -> bool;
+            safe fn JSC__isBigIntInInt64Range(this: JSValue, max: i64, min: i64) -> bool;
         }
-        JSC__isBigIntInInt64Range(self, min, max)
+        JSC__isBigIntInInt64Range(self, max, min)
     }
     /// `JSValue.isBigIntInUInt64Range`.
     #[inline]
     pub fn is_big_int_in_uint64_range(self, min: u64, max: u64) -> bool {
         unsafe extern "C" {
-            safe fn JSC__isBigIntInUInt64Range(this: JSValue, min: u64, max: u64) -> bool;
+            safe fn JSC__isBigIntInUInt64Range(this: JSValue, max: u64, min: u64) -> bool;
         }
-        JSC__isBigIntInUInt64Range(self, min, max)
+        JSC__isBigIntInUInt64Range(self, max, min)
     }
     /// `JSValue.isCallable()`.
     #[inline]

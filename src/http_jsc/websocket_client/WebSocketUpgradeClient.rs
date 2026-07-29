@@ -929,19 +929,8 @@ impl<const SSL: bool> HTTPClient<SSL> {
             body = &me.body;
         }
 
-        let is_first = me.body.is_empty();
-        const HTTP_101: &[u8] = b"HTTP/1.1 101 ";
-        if is_first && body.len() > HTTP_101.len() {
-            // fail early if we receive a non-101 status code
-            if !body.starts_with(HTTP_101) {
-                // SAFETY: `me`'s last use is above; no `&mut Self` spans this call.
-                unsafe { Self::terminate(this.as_ptr(), ErrorCode::Expected101StatusCode) };
-                return;
-            }
-        }
-
-        let response = match picohttp::Response::parse(body, &mut me.headers_buf) {
-            Ok(r) => r,
+        match picohttp::Response::parse(body, &mut me.headers_buf) {
+            Ok(_) => {}
             Err(picohttp::ParseResponseError::MalformedHttpResponse) => {
                 // SAFETY: `me`'s last use is above; no `&mut Self` spans this call.
                 unsafe { Self::terminate(this.as_ptr(), ErrorCode::InvalidResponse) };
@@ -963,13 +952,54 @@ impl<const SSL: bool> HTTPClient<SSL> {
             }
         };
 
-        let bytes_read = usize::try_from(response.bytes_read).expect("int cast");
-        // Reshaped for borrowck — copy remain_buf out before mutating self.
-        let remain_buf: Vec<u8> = body[bytes_read..].to_vec();
-        // SAFETY: `me`'s last use is the `body` slice above (now copied out);
-        // no `&mut Self` spans this call.
-        unsafe { Self::process_response(this.as_ptr(), response, &remain_buf) };
+        let full = body.to_vec();
+        Self::process_websocket_upgrade_response(this, &full);
         // `_guard` drops here, balancing the ref above. May free `this`.
+    }
+
+    /// Forward the handshake response to C++ as a `'handshake'` event.
+    fn dispatch_handshake(ws: *mut CppWebSocket, response: &picohttp::Response, body: &[u8]) {
+        let raw_headers: Vec<super::cpp_websocket::RawHeader> = response
+            .headers
+            .list
+            .iter()
+            .map(|h| super::cpp_websocket::RawHeader {
+                name_ptr: h.name().as_ptr(),
+                name_len: h.name().len(),
+                value_ptr: h.value().as_ptr(),
+                value_len: h.value().len(),
+            })
+            .collect();
+        CppWebSocket::opaque_ref(ws).did_receive_handshake_response(
+            u16::try_from(response.status_code).unwrap_or(0),
+            response.status,
+            &raw_headers,
+            body,
+        );
+    }
+
+    /// Caller holds a `ref_guard` and owns `full` (must not borrow `self`).
+    fn process_websocket_upgrade_response(this: ThisPtr<Self>, full: &[u8]) {
+        let mut scratch = [picohttp::Header::ZERO; 128];
+        let Ok(response) = picohttp::Response::parse(full, &mut scratch) else {
+            // SAFETY: forwards to the existing teardown path.
+            return unsafe { Self::terminate(this.as_ptr(), ErrorCode::InvalidResponse) };
+        };
+        let head_len = usize::try_from(response.bytes_read).expect("int cast");
+        let is_101 = response.status_code == 101;
+
+        // 101: one scope across 'upgrade'+'open' so microtasks drain after open.
+        let _scope = is_101
+            .then(|| bun_jsc::virtual_machine::VirtualMachine::get().enter_event_loop_scope());
+
+        if let Some(ws) = this.outgoing_websocket {
+            Self::dispatch_handshake(ws, &response, if is_101 { &[] } else { &full[head_len..] });
+            if this.outgoing_websocket.is_none() {
+                return;
+            }
+        }
+        // SAFETY: forwards to the existing handoff path.
+        unsafe { Self::process_response(this.as_ptr(), response, &full[head_len..]) };
     }
 
     /// Takes `ThisPtr<Self>` because `terminate`/`handle_data` may free `this`.
@@ -1217,10 +1247,13 @@ impl<const SSL: bool> HTTPClient<SSL> {
     /// `terminate`/`process_response` may free `this`; see `fail`.
     pub unsafe fn handle_decrypted_data(this: *mut Self, data: &[u8]) {
         log!("handleDecryptedData: {} bytes", data.len());
+        // SAFETY: caller (proxy tunnel) holds a live ref on `this`.
+        let this = unsafe { ThisPtr::new(this) };
+        let _guard = this.ref_guard();
 
         // SAFETY: short-lived `&mut` for body buffering; no reentrant calls in
         // this region until `terminate`/`process_response` below.
-        let me = unsafe { &mut *this };
+        let me = unsafe { &mut *this.as_ptr() };
 
         // Process as if it came directly from the socket
         let mut body = data;
@@ -1229,22 +1262,11 @@ impl<const SSL: bool> HTTPClient<SSL> {
             body = &me.body;
         }
 
-        let is_first = me.body.is_empty();
-        const HTTP_101: &[u8] = b"HTTP/1.1 101 ";
-        if is_first && body.len() > HTTP_101.len() {
-            // fail early if we receive a non-101 status code
-            if !body.starts_with(HTTP_101) {
-                // SAFETY: `me`'s last use is above; no `&mut Self` spans this call.
-                unsafe { Self::terminate(this, ErrorCode::Expected101StatusCode) };
-                return;
-            }
-        }
-
-        let response = match picohttp::Response::parse(body, &mut me.headers_buf) {
-            Ok(r) => r,
+        match picohttp::Response::parse(body, &mut me.headers_buf) {
+            Ok(_) => {}
             Err(picohttp::ParseResponseError::MalformedHttpResponse) => {
                 // SAFETY: `me`'s last use is above; no `&mut Self` spans this call.
-                unsafe { Self::terminate(this, ErrorCode::InvalidResponse) };
+                unsafe { Self::terminate(this.as_ptr(), ErrorCode::InvalidResponse) };
                 return;
             }
             Err(picohttp::ParseResponseError::ShortRead) => {
@@ -1257,18 +1279,14 @@ impl<const SSL: bool> HTTPClient<SSL> {
                 // WebSocket frames once the header does complete).
                 if me.body.len() > bun_http::max_http_header_size() {
                     // SAFETY: `me`'s last use is above; no `&mut Self` spans this call.
-                    unsafe { Self::terminate(this, ErrorCode::InvalidResponse) };
+                    unsafe { Self::terminate(this.as_ptr(), ErrorCode::InvalidResponse) };
                 }
                 return;
             }
         };
 
-        let bytes_read = usize::try_from(response.bytes_read).expect("int cast");
-        // Reshaped for borrowck — copy remain_buf out before mutating self.
-        let remain_buf: Vec<u8> = body[bytes_read..].to_vec();
-        // SAFETY: `me`'s last use is the `body` slice above (now copied out);
-        // no `&mut Self` spans this call.
-        unsafe { Self::process_response(this, response, &remain_buf) };
+        let full = body.to_vec();
+        Self::process_websocket_upgrade_response(this, &full);
     }
 
     /// Takes `ThisPtr<Self>` because `terminate` may free `this`; see `fail`.

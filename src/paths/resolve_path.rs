@@ -33,7 +33,7 @@ fn tl_buf_mut<const N: usize>(b: &UnsafeCell<[u8; N]>) -> &'static mut [u8; N] {
 }
 
 pub fn z<'a>(input: &[u8], output: &'a mut PathBuffer) -> &'a ZStr {
-    if input.len() > MAX_PATH_BYTES {
+    if input.len() >= MAX_PATH_BYTES {
         if cfg!(debug_assertions) {
             panic!("path too long");
         }

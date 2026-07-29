@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import net from "net";
+import { once } from "node:events";
 import { createServer } from "node:http";
 
 // CVE-2020-8287 style request smuggling tests
@@ -786,8 +787,10 @@ describe("SPILL.TERM - invalid chunk terminators", () => {
     const client = net.connect(server.port, "127.0.0.1");
     client.setNoDelay(true);
 
-    // Attach the data/close listeners BEFORE any write so the response can't
-    // arrive between the write and the listener attach (which would drop it).
+    // Attach the data/close/error listeners BEFORE any write so the response
+    // can't arrive between the write and the listener attach (which would drop
+    // it). `events.once` rejects if `error` fires before `connect`, so a
+    // connect failure under load surfaces instead of leaving the await pending.
     let data = "";
     const responseReady = new Promise<string>((resolve, reject) => {
       client.on("error", reject);
@@ -797,7 +800,7 @@ describe("SPILL.TERM - invalid chunk terminators", () => {
       client.on("close", () => resolve(data));
     });
 
-    await new Promise<void>(connected => client.once("connect", connected));
+    await once(client, "connect");
     client.write(
       "POST / HTTP/1.1\r\n" + "Host: localhost\r\n" + "Transfer-Encoding: chunked\r\n" + "\r\n" + "0\r\n" + "\r", // first half of terminator
     );
@@ -846,7 +849,7 @@ describe("SPILL.TERM - invalid chunk terminators", () => {
     });
     client.on("close", () => bothResponses.resolve(data));
 
-    await new Promise<void>(connected => client.once("connect", connected));
+    await once(client, "connect");
     client.write(
       "POST / HTTP/1.1\r\n" + "Host: localhost\r\n" + "Transfer-Encoding: chunked\r\n" + "\r\n" + "0\r\n" + "\r", // first half of terminator
     );
@@ -1413,7 +1416,10 @@ describe("Host header field values in request.url", () => {
           }
         });
         client.on("data", chunk => chunks.push(chunk));
-        client.on("end", () => resolve({ response: Buffer.concat(chunks).toString() }));
+        // `close` rather than `end`: `close` fires on every teardown path, so a
+        // server that fails to FIN (or a connection reset) still resolves the
+        // promise instead of hanging the test.
+        client.on("close", () => resolve({ response: Buffer.concat(chunks).toString() }));
         // latin1 keeps bytes >= 0x80 as single bytes on the wire (a string write would UTF-8-encode them).
         client.write(Buffer.from(payload, "latin1"));
       });
@@ -1469,16 +1475,14 @@ describe("Host header field values in request.url", () => {
       res.end(String(req.headers.host));
     });
     try {
-      await new Promise<void>(resolve => server.listen(0, resolve));
-      const { port } = server.address() as { port: number };
-      const response = await new Promise<string>((resolve, reject) => {
-        const client = net.connect(port, "127.0.0.1");
-        const chunks: Buffer[] = [];
-        client.on("error", reject);
-        client.on("data", chunk => chunks.push(chunk));
-        client.on("end", () => resolve(Buffer.concat(chunks).toString("latin1")));
-        client.write(`GET / HTTP/1.1\r\nHost:${raw}\r\nConnection: close\r\n\r\n`);
-      });
+      // events.once rejects if `error` fires before `listening`, so a listen
+      // failure under load surfaces instead of hanging the test.
+      server.listen(0, "127.0.0.1");
+      await once(server, "listening");
+      const response = await sendRawRequest(
+        server.address() as { port: number },
+        `GET / HTTP/1.1\r\nHost:${raw}\r\nConnection: close\r\n\r\n`,
+      );
       expect(response).toContain("HTTP/1.1 200");
       const body = response.slice(response.indexOf("\r\n\r\n") + 4);
       expect(body).toBe(received);

@@ -256,7 +256,10 @@ impl Binding {
 
         // SAFETY: re-borrow `vm` mutably; the `slice` borrow is no longer used.
         let vm: &mut VirtualMachine = global.bun_vm().as_mut();
-        if rd_args.recursive {
+        // /$bunfs/ is in-memory; readdir_inner handles it (recursive included).
+        let is_bunfs = bun_standalone_graph::Graph::get().is_some()
+            && bun_standalone_graph::is_bun_standalone_file_path(rd_args.path.slice());
+        if rd_args.recursive && !is_bunfs {
             return Ok(AsyncReaddirRecursiveTask::create(global, rd_args, vm));
         }
         Ok(async_::Readdir::create(global, this, rd_args, vm))

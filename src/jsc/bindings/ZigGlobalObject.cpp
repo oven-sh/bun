@@ -110,6 +110,7 @@
 #include "JSEventTarget.h"
 #include "JSFetchHeaders.h"
 #include "JSFFIFunction.h"
+#include "JSFFICString.h"
 #include "webcore/JSMIMEParams.h"
 #include "webcore/JSMIMEType.h"
 #include "JSMessageChannel.h"
@@ -2737,6 +2738,10 @@ void GlobalObject::finishCreation(VM& vm)
             init.setStructure(structure);
             init.setConstructor(constructor);
         });
+
+    m_JSFFICStringConstructor.initLater([](const Initializer<JSObject>& init) {
+        init.set(Bun::JSFFICStringConstructor::create(init.vm, init.owner));
+    });
 
     m_JSDatabaseSyncClassStructure.initLater(
         [](LazyClassStructure::Initializer& init) {

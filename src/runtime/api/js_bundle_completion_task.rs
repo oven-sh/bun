@@ -321,6 +321,20 @@ impl JSBundleCompletionTask {
         let dirname: &[u8] = paths::dirname(&full_outfile_path).unwrap_or(b".");
         let basename: &[u8] = paths::basename(&full_outfile_path);
 
+        // Key the entry point at /$bunfs/root/<basename> like the CLI (which renames before appending .exe).
+        let entry_key = basename.strip_suffix(b".exe").unwrap_or(basename);
+        output_files[entry_point_index].dest_path = Box::from(entry_key);
+
+        if !compile_options.assets.is_empty() {
+            if let Err(msg) = crate::cli::build_command::collect_compile_assets(
+                &compile_options.assets,
+                entry_key,
+                output_files,
+            ) {
+                return CompileResult::fail_fmt(format_args!("{}", msg));
+            }
+        }
+
         #[cfg(not(windows))]
         let mut root_dir = Dir::cwd();
         #[cfg(windows)]

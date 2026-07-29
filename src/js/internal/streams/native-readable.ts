@@ -253,7 +253,7 @@ function ref(this: NativeReadable) {
 
 function unref(this: NativeReadable) {
   const ptr = this.$bunNativePtr;
-  if (ptr !== undefined && this[kRefCount]-- === 1) {
+  if (ptr !== undefined && this[kRefCount] > 0 && --this[kRefCount] === 0) {
     ptr.updateRef(false);
   }
   return this;

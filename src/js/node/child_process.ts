@@ -1842,6 +1842,7 @@ function getStdinSocket() {
         emitClose: true,
       });
       this[kStdinSink] = undefined;
+      this[kStdinUnrefed] = false;
     };
     $toClass(StdinSocket, "Socket", NetModule.Socket);
     StdinSocket.prototype._write = stdinSocketWrite;

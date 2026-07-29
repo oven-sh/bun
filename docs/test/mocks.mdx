@@ -294,7 +294,27 @@ test("mock.module", async () => {
 
 ### Hoisting & Preloading
 
-To make sure a module is mocked before it's imported, use `--preload` to load your mocks before your tests run.
+Bun automatically hoists top-level `jest.mock()`, `vi.mock()`, and `mock.module()` calls in test files, matching Jest and Vitest. When a test file contains one of these calls at the top level, Bun moves it above the file's static `import` statements and rewrites those imports to evaluate afterwards, so the mock is installed before the module graph runs.
+
+```ts title="user-service.test.ts" icon="/icons/typescript.svg"
+import { test, expect, mock } from "bun:test";
+import { getUser } from "./user-service"; // user-service imports "./api-client"
+
+// Hoisted above the import of ./user-service, so user-service sees the mock.
+mock.module("./api-client", () => ({
+  fetchUser: async (id: string) => ({ id, name: "Mocked" }),
+}));
+
+test("getUser", async () => {
+  expect((await getUser("1")).name).toBe("Mocked");
+});
+```
+
+Only top-level calls are hoisted. Calls inside `describe`, `test`, or other callbacks run where they are written. As in Jest, `jest.doMock()` is never hoisted.
+
+When hoisting applies, the remaining static imports in the test file are rewritten to `await import(...)`. Bun reads named and default bindings through the awaited namespace object, so `mock.module()` re-mocks inside a test still update them. Imports from `bun:test` (and `@jest/globals` / `vitest`), imports with `with { type: ... }` attributes, and `import defer` are left as static imports.
+
+For mocks that should apply to every test file (for example, replacing a database client across the whole suite), use `--preload` to load them before any test file runs:
 
 ```ts title="my-preload.ts" icon="/icons/typescript.svg"
 import { mock } from "bun:test";
@@ -324,7 +344,7 @@ preload = ["./my-preload"]
 
 Mocking a module that's already been imported updates the module cache, so anything that imports it gets the mocked version. The original module has already been evaluated, though, so its side effects have already happened.
 
-To prevent the original module from being evaluated at all, use `--preload` to load your mocks before your tests run.
+To prevent the original module from being evaluated at all, either place the `mock.module()` call at the top level of your test file so it is hoisted, or use `--preload` to load your mocks before any test file runs.
 
 #### Practical Module Mock Examples
 
@@ -519,7 +539,7 @@ Bun resolves the module specifier the same way it resolves an `import`, supporti
 - **When mocking before first import**: No side effects from the original module occur
 - **When mocking after import**: The original module's side effects have already happened
 
-For this reason, use `--preload` for mocks that need to prevent side effects.
+Top-level `jest.mock()` / `vi.mock()` / `mock.module()` calls in a test file are hoisted so they run before that file's imports. For mocks that must apply across many test files, use `--preload`.
 
 ### Live Bindings
 

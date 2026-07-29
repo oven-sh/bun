@@ -1897,6 +1897,12 @@ impl<'a> Parser<'a> {
             }
         }
 
+        // Runs after the bun:test injection so the hoisted part lands after it
+        // in `before`, and before ImportScanner sees the lowered imports.
+        if p.options.features.inject_jest_globals && exports_kind != js_ast::ExportsKind::Cjs {
+            p.hoist_jest_module_mocks(&mut parts, &mut before, p.arena);
+        }
+
         if p.has_called_runtime {
             let mut runtime_imports: [u8; RuntimeImports::ALL.len()] =
                 [0; RuntimeImports::ALL.len()];

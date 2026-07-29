@@ -362,7 +362,7 @@ pub mod Runtime {
         pub fn hash_for_runtime_transpiler(&self, hasher: &mut Wyhash) {
             debug_assert!(self.runtime_transpiler_cache.is_some());
 
-            let bools: [bool; 17] = [
+            let bools: [bool; 18] = [
                 self.top_level_await,
                 self.auto_import_jsx,
                 self.allow_runtime,
@@ -380,7 +380,7 @@ pub mod Runtime {
                 self.standard_decorators,
                 self.lower_using,
                 self.repl_mode,
-                // note that we do not include .inject_jest_globals, as we bail out of the cache entirely if this is true
+                self.inject_jest_globals,
             ];
 
             // `[bool; N]` is N bytes of 0x00/0x01.
@@ -1688,6 +1688,7 @@ pub struct Jest {
     pub after_all: Ref,
     pub jest: Ref,
     pub vi: Ref,
+    pub mock: Ref,
     pub xit: Ref,
     pub xtest: Ref,
     pub xdescribe: Ref,
@@ -1710,6 +1711,7 @@ impl Jest {
         ("afterAll", |j| j.after_all),
         ("jest", |j| j.jest),
         ("vi", |j| j.vi),
+        ("mock", |j| j.mock),
         ("xit", |j| j.xit),
         ("xtest", |j| j.xtest),
         ("xdescribe", |j| j.xdescribe),
@@ -1730,6 +1732,7 @@ impl Default for Jest {
             after_all: Ref::NONE,
             jest: Ref::NONE,
             vi: Ref::NONE,
+            mock: Ref::NONE,
             xit: Ref::NONE,
             xtest: Ref::NONE,
             xdescribe: Ref::NONE,

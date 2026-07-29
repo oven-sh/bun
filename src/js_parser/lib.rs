@@ -22,6 +22,7 @@ pub use parser::*;
 pub mod lexer;
 
 pub mod fold;
+pub mod jest_hoist;
 pub mod lower;
 pub mod p;
 pub mod parse;

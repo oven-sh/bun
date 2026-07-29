@@ -8,7 +8,7 @@ import { createServer } from "node:http";
 import { createSecureServer } from "node:http2";
 import { createServer as createHttpsServer } from "node:https";
 import net from "node:net";
-import { brotliCompressSync, gzipSync, zstdCompressSync } from "node:zlib";
+import { brotliCompressSync, constants as zlibConstants, gzipSync, zstdCompressSync } from "node:zlib";
 
 const CHUNK = 64 * 1024;
 const COUNT = 256; // 16 MiB
@@ -259,6 +259,9 @@ for (const kind of ["h1", "h1-chunked", "h1-gzip", "h1-tls", "h2", "h3"] as Kind
 // so withholding WINDOW_UPDATE only takes effect past that. Asserting a tight
 // RSS bound for h2 needs that window lowered, which is a separate change.
 
+// Serial: six subprocesses each drain 128 MB in ~1 MB pulls under debug+ASAN;
+// running them alongside the concurrent suites above pushed the h3 tests past
+// their default timeout on memory-constrained CI hosts.
 describe("fetch() receive backpressure — compressed body inflates on demand", () => {
   // One socket read (<= 512 KB) of a high-ratio compressed body must not be
   // inflated in full ahead of the reader. Without the output cap, a single read
@@ -274,7 +277,7 @@ describe("fetch() receive backpressure — compressed body inflates on demand", 
   const bombs: { [k: string]: Buffer } = {};
   function bombFor(kind: BombKind) {
     zeros ??= Buffer.alloc(DECOMPRESSED);
-    const q = require("node:zlib").constants.BROTLI_PARAM_QUALITY;
+    const q = zlibConstants.BROTLI_PARAM_QUALITY;
     return (bombs[kind] ??=
       kind === "gzip"
         ? gzipSync(zeros, { level: 1 })

@@ -1279,12 +1279,20 @@ impl CreateCommand {
         let user_skipped_install = create_options.skip_install;
         create_options.skip_install = create_options.skip_install || !has_dependencies;
 
-        // git add/commit on a pre-existing repo would sweep the user's files in.
-        let has_existing_git_repo = bun_sys::Dir::open(destination)
-            .map(|d| bun_sys::directory_exists_at(d.fd, bun_core::zstr!(".git")).unwrap_or(false))
-            .unwrap_or(false);
+        // git add/commit on a pre-existing repo would sweep the user's files
+        // in. `.git` may be a file (worktrees, submodules), so any entry kind
+        // counts, and a failed check skips git rather than committing.
+        if !create_options.skip_git {
+            create_options.skip_git = match bun_sys::Dir::open(destination) {
+                Ok(d) => !matches!(
+                    bun_sys::exists_at_type(d.fd, bun_core::zstr!(".git")),
+                    Err(ref err) if err.get_errno() == bun_sys::E::ENOENT
+                ),
+                Err(_) => false,
+            };
+        }
 
-        if !create_options.skip_git && !has_existing_git_repo {
+        if !create_options.skip_git {
             if !create_options.skip_install {
                 GitHandler::spawn(destination, path_env, create_options.verbose);
             } else {

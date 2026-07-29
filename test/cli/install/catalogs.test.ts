@@ -266,7 +266,11 @@ describe("update", () => {
     const { packageDir } = await registry.createTestDir();
     await createUpdateMonorepo(packageDir, "catalog-update-frozen");
     await runBunInstall(bunEnv, packageDir);
-    await runUpdate(packageDir, "--latest");
+
+    const update = await runUpdate(packageDir, "--latest");
+    expect(update.err).not.toContain("error:");
+    expect(update.exitCode).toBe(0);
+    expect((await file(join(packageDir, "package.json")).json()).workspaces.catalog).toEqual({ "no-deps": "^2.0.0" });
 
     const { stdout, stderr, exited } = spawn({
       cmd: [bunExe(), "install", "--frozen-lockfile"],

@@ -3563,7 +3563,7 @@ impl<'a> HTTPClient<'a> {
         socket: HttpSocket<IS_SSL>,
     ) {
         bun_core::scoped_log!(fetch, "closeAndFail: {:?}", err);
-        if self.has_unsent_request_body() {
+        if self.state.original_request_body.len() > 0 {
             GenHttpContext::<IS_SSL>::fail_socket(socket);
         } else {
             GenHttpContext::<IS_SSL>::terminate_socket(socket);

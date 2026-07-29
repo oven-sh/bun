@@ -310,13 +310,10 @@ impl WatchEventKind {
 pub enum Event {
     Rename(EventPathString),
     Change(EventPathString),
-    /// `close` = whether the watcher closes after emitting. A fatal backend
-    /// failure (inotify `read()` error, libuv status error) closes; a
-    /// subtree-registration failure during a recursive walk (ENOSPC, EACCES)
-    /// keeps the watcher alive so the caller still owns the partial coverage,
-    /// matching node's recursive watcher.
     Error {
         err: bun_sys::Error,
+        /// Fatal backend errors close; partial-coverage errors (recursive
+        /// subtree registration failed) emit and keep the watcher alive.
         close: bool,
     },
     /// An event with no filename, surfaced to JS with `null`, matching node:

@@ -743,11 +743,8 @@ impl Linux {
         let root = watcher.path.clone();
         Linux::add_one(manager, watcher, &root, b"")?;
         if watcher.recursive && !watcher.is_file {
-            // A failure on a subtree (ENOSPC, EACCES) leaves the watcher usable
-            // but with incomplete coverage. Node's recursive watcher emits an
-            // `'error'` event rather than tearing the whole thing down, so the
-            // caller still owns a live FSWatcher and is told coverage is partial.
             if let Some(err) = Linux::walk_and_add(manager, watcher, &root, b"") {
+                // Partial coverage: emit 'error' but keep the watcher, like node.
                 watcher.emit_error(&err, false);
                 watcher.flush();
             }
@@ -773,10 +770,8 @@ impl Linux {
         let rc = unsafe { sys::linux::inotify_add_watch(fd.native(), abs_path.as_ptr(), mask) };
         if rc < 0 {
             let err = sys::Error::from_code_int(sys::last_errno(), Tag::watch);
-            // ENOENT/ENOTDIR on a subpath means the entry vanished between the
-            // readdir and this call; skip. Any other errno (ENOSPC, EACCES,
-            // ENOMEM) means a subtree was not registered and must reach the
-            // caller so it can be surfaced as an `'error'` event.
+            // ENOENT/ENOTDIR during the walk just means we raced; anything else
+            // (ENOSPC, EACCES, ENOMEM) propagates so it reaches the error event.
             if !subpath.is_empty() && matches!(err.get_errno(), E::ENOENT | E::ENOTDIR) {
                 return Ok(());
             }
@@ -817,9 +812,7 @@ impl Linux {
 
     /// Best-effort recursive directory walk. inotify watches are per-directory (events
     /// for files arrive on their parent's wd), so only descend into subdirectories.
-    /// Returns the first non-benign `inotify_add_watch` failure so the caller can
-    /// surface it; the walk continues so any subdirectories that do succeed are
-    /// still registered.
+    /// Returns the first `inotify_add_watch` failure without stopping the walk.
     fn walk_and_add(
         manager: &'static PathWatcherManager,
         watcher: &mut PathWatcher,

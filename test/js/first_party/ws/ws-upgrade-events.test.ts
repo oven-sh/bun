@@ -85,8 +85,10 @@ test.concurrent("ws emits 'unexpected-response' with status, headers and body on
 // "Unexpected server response: <code>" to on('error'). Subscribing to 'error'
 // now arms the handshake bridge so the ws-style message is delivered whether
 // or not the user also subscribed to 'upgrade'.
-test.concurrent("ws on('error') gets 'Unexpected server response: <code>' on non-101 with no other listeners", async () => {
-  const { stdout, exitCode } = await run(/* js */ `
+test.concurrent(
+  "ws on('error') gets 'Unexpected server response: <code>' on non-101 with no other listeners",
+  async () => {
+    const { stdout, exitCode } = await run(/* js */ `
     const { createServer } = require("net");
     const { once } = require("events");
     const { WebSocket } = require("ws");
@@ -112,12 +114,13 @@ test.concurrent("ws on('error') gets 'Unexpected server response: <code>' on non
     server.close();
     process.exit(0);
   `);
-  // Both paths deliver the same ws-style error exactly once.
-  expect(stdout).toMatchInlineSnapshot(
-    `"{"errorOnly":{"count":1,"first":"Unexpected server response: 503"},"withUpgrade":{"count":1,"first":"Unexpected server response: 503"}}"`,
-  );
-  expect(exitCode).toBe(0);
-});
+    // Both paths deliver the same ws-style error exactly once.
+    expect(stdout).toMatchInlineSnapshot(
+      `"{"errorOnly":{"count":1,"first":"Unexpected server response: 503"},"withUpgrade":{"count":1,"first":"Unexpected server response: 503"}}"`,
+    );
+    expect(exitCode).toBe(0);
+  },
+);
 
 test.concurrent("ws emits 'upgrade' with headers before 'open' on 101", async () => {
   const { stdout, exitCode } = await run(/* js */ `

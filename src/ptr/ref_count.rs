@@ -1011,8 +1011,7 @@ struct TrackedDeref;
 // ──────────────────────────────────────────────────────────────────────────
 
 /// Dyn-safe surface of `DebugData<Count>` so `RefPtr<T>` can interact with it
-/// without knowing whether `Count` is `Cell<u32>` or `AtomicU32`. Unconditional
-/// for the same reason as [`AnyRefCounted::rc_debug_data`].
+/// without knowing whether `Count` is `Cell<u32>` or `AtomicU32`.
 pub trait DebugDataOps {
     fn assert_valid_dyn(&self);
     fn acquire(&mut self, return_address: usize) -> TrackedRefId;

@@ -235,12 +235,12 @@ impl<'a> InternalState<'a> {
     }
 
     /// True when a socket close during `in_progress` completes the body rather
-    /// than failing it: chunked decoder already in the trailers state, or a
-    /// close-delimited response (no Content-Length, no Transfer-Encoding).
+    /// than failing it: a close-delimited response (no Content-Length, no
+    /// Transfer-Encoding). A chunked body is self-delimiting (RFC 9112 7.1);
+    /// FIN before the trailer section's terminating CRLF is truncation.
     pub fn is_body_complete_on_close(&self) -> bool {
         if self.is_chunked_encoding() {
-            // 4 = CHUNKED_IN_TRAILERS_LINE_HEAD, 5 = CHUNKED_IN_TRAILERS_LINE_MIDDLE
-            return matches!(self.chunked_decoder._state, 4 | 5);
+            return self.flags.received_last_chunk;
         }
         self.content_length.is_none() && self.response_stage == HTTPStage::Body
     }

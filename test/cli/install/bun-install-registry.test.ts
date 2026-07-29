@@ -3422,6 +3422,96 @@ test("it should install with missing bun.lockb, node_modules, and/or cache", asy
   ]);
 });
 
+// https://github.com/oven-sh/bun/issues/16968
+test("nested dependency is not wiped when its reinstalled parent is downloaded during the install loop", async () => {
+  // has-bin-entries@1.0.0 and @2.0.0 both depend on no-deps@1.0.0.
+  // With no-deps@2.0.0 at the root, no-deps@1.0.0 is hoisted under
+  // node_modules/has-bin-entries/node_modules/no-deps.
+
+  // First produce the "after git pull" lockfile: has-bin-entries@2.0.0.
+  await writeFile(
+    packageJson,
+    JSON.stringify({
+      name: "foo",
+      dependencies: { "has-bin-entries": "2.0.0", "no-deps": "2.0.0" },
+    }),
+  );
+  let { stderr, exited } = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: packageDir,
+    stdout: "ignore",
+    stderr: "pipe",
+    env,
+  });
+  let err = await stderr.text();
+  expect(err).not.toContain("error:");
+  expect(await exited).toBe(0);
+
+  const nested = join(packageDir, "node_modules", "has-bin-entries", "node_modules", "no-deps", "package.json");
+  expect(await file(nested).json()).toMatchObject({ name: "no-deps", version: "1.0.0" });
+
+  // Save the "new" lockfile and package.json.
+  const savedLockb = await file(join(packageDir, "bun.lockb")).arrayBuffer();
+  const savedPkgJson = await file(packageJson).text();
+
+  // Now produce the "before git pull" on-disk state: has-bin-entries@1.0.0.
+  await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+  await rm(join(packageDir, "bun.lockb"), { force: true });
+  await writeFile(
+    packageJson,
+    JSON.stringify({
+      name: "foo",
+      dependencies: { "has-bin-entries": "1.0.0", "no-deps": "2.0.0" },
+    }),
+  );
+  ({ stderr, exited } = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: packageDir,
+    stdout: "ignore",
+    stderr: "pipe",
+    env,
+  }));
+  err = await stderr.text();
+  expect(err).not.toContain("error:");
+  expect(await exited).toBe(0);
+  expect(await file(join(packageDir, "node_modules", "has-bin-entries", "package.json")).json()).toMatchObject({
+    version: "1.0.0",
+  });
+  expect(await file(nested).json()).toMatchObject({ name: "no-deps", version: "1.0.0" });
+
+  // Simulate `git pull`: lockfile and package.json now say has-bin-entries@2.0.0,
+  // but node_modules is still at 1.0.0. Clear the cache so has-bin-entries@2.0.0
+  // must be downloaded during the install loop (the lockfile matches package.json,
+  // so the resolution phase that would otherwise prefetch the tarball is skipped).
+  await writeFile(join(packageDir, "bun.lockb"), new Uint8Array(savedLockb));
+  await writeFile(packageJson, savedPkgJson);
+  await rm(join(packageDir, ".bun-cache"), { recursive: true, force: true });
+
+  ({ stderr, exited } = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: packageDir,
+    stdout: "ignore",
+    stderr: "pipe",
+    env,
+  }));
+  err = await stderr.text();
+  expect(err).not.toContain("error:");
+  expect(err).not.toContain("Saved lockfile");
+  expect(await exited).toBe(0);
+
+  // has-bin-entries was reinstalled (1.0.0 -> 2.0.0), which renames its whole
+  // directory including node_modules/ to .old-*. The nested no-deps@1.0.0 must
+  // have been reinstalled afterwards, not skipped based on the stale verify().
+  expect(await file(join(packageDir, "node_modules", "has-bin-entries", "package.json")).json()).toMatchObject({
+    version: "2.0.0",
+  });
+  expect(await exists(nested)).toBe(true);
+  expect(await file(nested).json()).toMatchObject({ name: "no-deps", version: "1.0.0" });
+
+  const lockfile = parseLockfile(packageDir);
+  expect(lockfile).toMatchNodeModulesAt(packageDir);
+});
+
 describe("hoisting", async () => {
   var tests: any = [
     {

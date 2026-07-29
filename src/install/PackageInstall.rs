@@ -1077,8 +1077,25 @@ impl<'a> PackageInstall<'a> {
                                 sys::Errno::ENOENT => {
                                     return Err(crate::Error::Sys(bun_errno::SystemErrno::ENOENT));
                                 }
-                                // sometimes the downloaded npm package has already node_modules with it, so just ignore exist error here
-                                sys::Errno::EEXIST => {}
+                                // Replace the existing file instead of silently keeping a
+                                // stale one; matches the hardlink backend's EEXIST handling.
+                                sys::Errno::EEXIST => {
+                                    let _ = sys::unlinkat(destination_dir_, path_);
+                                    if let Err(e2) = sys::clonefileat(
+                                        entry.dir,
+                                        basename,
+                                        destination_dir_.fd(),
+                                        path_,
+                                    ) {
+                                        match e2.get_errno() {
+                                            sys::Errno::EEXIST => {}
+                                            sys::Errno::EXDEV | sys::Errno::EOPNOTSUPP => {
+                                                return Err(crate::Error::NotSupported);
+                                            }
+                                            _ => return Err(crate::Error::Unexpected),
+                                        }
+                                    }
+                                }
                                 sys::Errno::EACCES => {
                                     return Err(crate::Error::Sys(bun_errno::SystemErrno::EACCES));
                                 }

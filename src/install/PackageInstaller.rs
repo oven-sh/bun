@@ -814,7 +814,9 @@ impl<'a> PackageInstaller<'a> {
                     self.node_modules.path = context.path;
                     self.current_tree_id = context.tree_id;
 
-                    const NEEDS_VERIFY: bool = false;
+                    // Re-verify: an ancestor's `uninstall_before_install` may have
+                    // deleted this package's directory since it was first checked.
+                    const NEEDS_VERIFY: bool = true;
                     const IS_PENDING_PACKAGE_INSTALL: bool = true;
                     self.install_package_with_name_and_resolution::<NEEDS_VERIFY, IS_PENDING_PACKAGE_INSTALL>(
                         // This id might be different from the id used to enqueue the task. Important
@@ -1489,7 +1491,6 @@ impl<'a> PackageInstaller<'a> {
             || !NEEDS_VERIFY
             || remove_patch
             || !installer.verify(resolution, &self.root_node_modules_folder);
-        self.summary.skipped += (!needs_install) as u32;
 
         if needs_install {
             if resolution.tag.can_enqueue_install_task()
@@ -2109,6 +2110,31 @@ impl<'a> PackageInstaller<'a> {
                 }
             }
         } else {
+            // A pending install in an ancestor tree may later delete this
+            // package's directory via `uninstall_before_install` (which renames
+            // the whole `<parent>/` away including any nested `node_modules/`).
+            // `verify()` above ran against the stale on-disk state, so defer
+            // the skip decision the same way the `needs_install` branch defers
+            // the install; `install_available_packages` re-verifies.
+            if !IS_PENDING_PACKAGE_INSTALL
+                && !Self::can_install_package_for_tree(
+                    &self.completed_trees,
+                    self.lockfile().buffers.trees.as_slice(),
+                    self.current_tree_id,
+                )
+            {
+                self.trees[self.current_tree_id as usize]
+                    .pending_installs
+                    .push(DependencyInstallContext {
+                        dependency_id,
+                        tree_id: self.current_tree_id,
+                        path: self.node_modules.path.clone(),
+                    });
+                return;
+            }
+
+            self.summary.skipped += 1;
+
             if self.bins[package_id as usize].tag != bin::Tag::None {
                 self.trees[self.current_tree_id as usize]
                     .binaries

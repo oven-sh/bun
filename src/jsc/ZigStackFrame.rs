@@ -95,6 +95,16 @@ impl ZigStackFrame {
         }
     }
 
+    /// Placeholder location label for a frame with no source URL, matching the
+    /// `.stack` string (FormatStackTraceForJS.cpp / ErrorStackTrace.cpp).
+    pub fn empty_source_url_label(&self) -> &'static str {
+        if self.code_type == ZigStackFrameCode::WASM {
+            "[wasm code]"
+        } else {
+            "native"
+        }
+    }
+
     pub fn source_url_formatter<'a>(
         &self,
         root_path: &'a [u8],

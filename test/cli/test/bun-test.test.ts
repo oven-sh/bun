@@ -607,6 +607,22 @@ describe("bun test", () => {
       });
       expect(stderr).toMatch(/::error file=.*,line=\d+,col=\d+,title=error: Oops!::/m);
     });
+    test("should annotate JS-builtin frames as (native:...) not bare (N:M)", () => {
+      const stderr = runTest({
+        input: `
+          import { test } from "bun:test";
+          test("fail", () => {
+            [1].forEach(function callback() {
+              throw new Error("boom");
+            });
+          });
+        `,
+        env: { GITHUB_ACTIONS: "true" },
+      });
+      const annotation = stderr.split("\n").find(l => l.startsWith("::error"));
+      expect(annotation).toMatch(/%0A {6}at forEach \(native:\d+:\d+\)/);
+      expect(annotation).not.toMatch(/\(\d+:\d+\)/);
+    });
     test("should annotate an error message containing non-ASCII bytes", () => {
       const stderr = runTest({
         input: `

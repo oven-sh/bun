@@ -13,7 +13,6 @@
 #include "ExtendedDOMClientIsoSubspaces.h"
 #include "ExtendedDOMIsoSubspaces.h"
 #include "BunClientData.h"
-#include "ZigGlobalObject.h"
 
 namespace Bun {
 
@@ -88,8 +87,7 @@ void JSNextTickQueue::drain(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
 
     if (!isEmpty()) {
         RETURN_IF_EXCEPTION(throwScope, );
-        // m_isDrainingNextTickQueue set => an outer processTicksAndRejections owns the async-context restore.
-        if (mustResetContext && !defaultGlobalObject(globalObject)->m_isDrainingNextTickQueue) {
+        if (mustResetContext) {
             globalObject->m_asyncContextData.get()->putInternalField(vm, 0, jsUndefined());
             RETURN_IF_EXCEPTION(throwScope, );
         }

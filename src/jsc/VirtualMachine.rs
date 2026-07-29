@@ -1054,6 +1054,22 @@ impl VirtualMachine {
             || !el.next_immediate_tasks.is_empty()
     }
 
+    /// Count of ref'd handles and outstanding tasks keeping the loop alive.
+    /// The test runner's idle-after-preloads gate only drains a script file
+    /// when this was zero before it loaded (prior handles skip the drain).
+    pub fn active_keepalive_count(&self) -> usize {
+        let el = self.event_loop_shared();
+        let active = self
+            .platform_loop_opt()
+            .map(|h| h.active_count() as usize)
+            .unwrap_or(0);
+        let concurrent = el
+            .concurrent_ref
+            .load(core::sync::atomic::Ordering::SeqCst)
+            .max(0) as usize;
+        active + self.active_tasks + concurrent
+    }
+
     pub fn wakeup(&mut self) {
         self.event_loop_mut().wakeup();
     }
@@ -4509,6 +4525,7 @@ impl VirtualMachine {
     pub fn reload_entry_point_for_test_runner(
         &mut self,
         entry_path: &[u8],
+        after_preloads: impl FnOnce(&Self),
     ) -> crate::CrateResult<*mut JSInternalPromise> {
         self.has_loaded = false;
         self.set_main(entry_path);
@@ -4534,6 +4551,8 @@ impl VirtualMachine {
                 }
             }
         }
+
+        after_preloads(self);
 
         // Note: reshaped for borrowck.
         let global = self.global;
@@ -4565,11 +4584,14 @@ impl VirtualMachine {
     }
 
     /// Loads a test-file entry point and waits for the load promise to settle.
+    /// `after_preloads` runs between preload completion and entry-point
+    /// evaluation so the caller can observe preload-created handles.
     pub fn load_entry_point_for_test_runner(
         &mut self,
         entry_path: &[u8],
+        after_preloads: impl FnOnce(&Self),
     ) -> crate::CrateResult<*mut JSInternalPromise> {
-        let promise = self.reload_entry_point_for_test_runner(entry_path)?;
+        let promise = self.reload_entry_point_for_test_runner(entry_path, after_preloads)?;
 
         // pending_internal_promise can change if hot module reloading is enabled
         if self.is_watcher_enabled() {

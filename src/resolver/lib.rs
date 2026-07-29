@@ -350,6 +350,19 @@ pub mod fs {
             join_abs_string_buf_checked::<platform::Loose>(self.top_level_dir, buf, parts)
         }
 
+        /// Like `abs_buf_checked` but with POSIX separator semantics: a
+        /// backslash stays a literal filename byte instead of acting as a path
+        /// separator. Use this for real on-disk path resolution (e.g.
+        /// realpath), not for module specifiers (those want `Loose`).
+        pub fn abs_buf_checked_posix<'b>(
+            &self,
+            parts: &[&[u8]],
+            buf: &'b mut [u8],
+        ) -> Option<&'b [u8]> {
+            use bun_paths::resolve_path::join_abs_string_buf_checked_posix;
+            join_abs_string_buf_checked_posix(self.top_level_dir, buf, parts)
+        }
+
         /// Like `abs_buf` but writes a
         /// NUL sentinel and returns a `ZStr` borrowing `buf`.
         pub fn abs_buf_z<'b>(&self, parts: &[&[u8]], buf: &'b mut [u8]) -> &'b ZStr {

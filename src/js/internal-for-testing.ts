@@ -473,11 +473,9 @@ export const dnsInternals = {
    * (4 | 6) through the connect-path result packing and returns
    * `family * 1000 + originalIndex` in the order connections are attempted.
    */
-  getaddrinfoInterleave: $newRustFunction(
-    "runtime/dns_jsc/dns.rs",
-    "internal.getaddrinfoInterleaveForTesting",
-    1,
-  ) as (families: number[]) => number[],
+  getaddrinfoInterleave: $newRustFunction("runtime/dns_jsc/dns.rs", "internal.getaddrinfoInterleaveForTesting", 1) as (
+    families: number[],
+  ) => number[],
 };
 
 export const fetchH2Internals = {

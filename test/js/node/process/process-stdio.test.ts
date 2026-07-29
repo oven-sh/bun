@@ -158,11 +158,14 @@ describe.concurrent("process-stdio", () => {
       `hello worldhello again|😋 Get Emoji — All Emojis to ✂️ Copy and 📋 Paste 👌`.repeat(9999),
     );
   });
+});
 
-  // Materializing process.stdout dups fd 1 and flips it to O_NONBLOCK. The
-  // native console writer must not silently drop data on the resulting EAGAIN
-  // when the pipe is full: every console.log line has to survive a slow reader.
-  test.skipIf(isWindows)("console.log is not lossy after process.stdout is touched on a slow pipe", async () => {
+// Materializing process.stdout dups fd 1 and flips it to O_NONBLOCK. The native
+// console writer must not silently drop data on the resulting EAGAIN when the
+// pipe is full. Kept outside the concurrent block so the extra spawned children
+// don't push the already-slow stdin tests past their default timeout.
+describe.skipIf(isWindows)("console.log after process.stdout is materialized on a pipe", () => {
+  test("many lines survive a slow reader", async () => {
     const N = 1500;
     const pad = Buffer.alloc(500, "x").toString();
     using dir = tempDir("stdout-nonblock-loss", {
@@ -191,5 +194,24 @@ describe.concurrent("process-stdio", () => {
     const stdout = await proc.stdout.text();
     const delivered = stdout.split("\n").filter(l => /^O\d+ x+$/.test(l)).length;
     expect(delivered).toBe(N);
+  });
+
+  test("a single 1 MiB line is not truncated", async () => {
+    // A single 1 MiB write into even a fast `| wc -c` reader exceeds the 64 KiB
+    // pipe, so write(2) on the now-nonblocking fd 1 returns a partial count and
+    // then EAGAIN before the reader drains.
+    await using proc = Bun.spawn({
+      cmd: [
+        "/bin/sh",
+        "-c",
+        'exec "$0" -e "void process.stdout.isTTY; console.log(Buffer.alloc(1<<20, 65).toString())" | wc -c',
+        bunExe(),
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    const stdout = (await proc.stdout.text()).trim();
+    expect(Number(stdout)).toBe((1 << 20) + 1);
   });
 });

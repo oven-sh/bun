@@ -173,6 +173,7 @@ private:
 
     void enqueueToWorker(MessageWithMessagePorts&&);
     void drainToParent(ScriptExecutionContext&);
+    void closeTask(int32_t exitCode);
 
     WorkerOptions m_options;
 

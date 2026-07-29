@@ -1,6 +1,6 @@
 import { realpathSync } from "fs";
 import { bunEnv, bunExe } from "harness";
-import { AddressInfo, createServer, Server, Socket } from "net";
+import { AddressInfo, BlockList, connect, createServer, Server, Socket } from "net";
 import { createTest } from "node-harness";
 import { once } from "node:events";
 import { tmpdir } from "os";
@@ -22,14 +22,11 @@ describe("net.createServer listen", () => {
     const { mustCall, mustNotCall } = createCallCheckCtx(done);
 
     const server: Server = createServer();
-    let timeout: Timer;
     const closeAndFail = () => {
-      clearTimeout(timeout);
       server.close();
       mustNotCall()();
     };
     server.on("error", closeAndFail);
-    timeout = setTimeout(closeAndFail, 100);
 
     server.listen(
       0,
@@ -50,14 +47,11 @@ describe("net.createServer listen", () => {
 
     const server: Server = createServer();
 
-    let timeout: Timer;
     const closeAndFail = () => {
-      clearTimeout(timeout);
       server.close();
       mustNotCall()();
     };
     server.on("error", closeAndFail);
-    timeout = setTimeout(closeAndFail, 100);
 
     server.listen(
       0,
@@ -79,9 +73,7 @@ describe("net.createServer listen", () => {
 
     const server: Server = createServer();
 
-    let timeout: Timer;
     const closeAndFail = () => {
-      clearTimeout(timeout);
       server.close();
       mustNotCall()();
     };
@@ -89,13 +81,10 @@ describe("net.createServer listen", () => {
     server.on("error", closeAndFail).on(
       "listening",
       mustCall(() => {
-        clearTimeout(timeout);
         server.close();
         done();
       }),
     );
-
-    timeout = setTimeout(closeAndFail, 100);
 
     server.listen(0, "0.0.0.0");
   });
@@ -106,9 +95,7 @@ describe("net.createServer listen", () => {
     const server: Server = createServer();
     expect(server.listening).toBeFalse();
 
-    let timeout: Timer;
     const closeAndFail = () => {
-      clearTimeout(timeout);
       server.close();
       mustNotCall()();
     };
@@ -117,14 +104,11 @@ describe("net.createServer listen", () => {
       "listening",
       mustCall(() => {
         expect(server.listening).toBeTrue();
-        clearTimeout(timeout);
         server.close();
         expect(server.listening).toBeFalse();
         done();
       }),
     );
-
-    timeout = setTimeout(closeAndFail, 100);
 
     server.listen(0, "0.0.0.0");
   });
@@ -134,14 +118,11 @@ describe("net.createServer listen", () => {
 
     const server: Server = createServer();
 
-    let timeout: Timer;
     const closeAndFail = () => {
-      clearTimeout(timeout);
       server.close();
       mustNotCall()();
     };
     server.on("error", closeAndFail);
-    timeout = setTimeout(closeAndFail, 100);
 
     server.listen(
       0,
@@ -163,14 +144,11 @@ describe("net.createServer listen", () => {
 
     const server: Server = createServer();
 
-    let timeout: Timer;
     const closeAndFail = () => {
-      clearTimeout(timeout);
       server.close();
       mustNotCall()();
     };
     server.on("error", closeAndFail);
-    timeout = setTimeout(closeAndFail, 100);
 
     server.listen(
       0,
@@ -190,14 +168,11 @@ describe("net.createServer listen", () => {
 
     const server: Server = createServer();
 
-    let timeout: Timer;
     const closeAndFail = () => {
-      clearTimeout(timeout);
       server.close();
       mustNotCall()();
     };
     server.on("error", closeAndFail);
-    timeout = setTimeout(closeAndFail, 100);
 
     server.listen(
       mustCall(() => {
@@ -217,14 +192,11 @@ describe("net.createServer listen", () => {
 
     const server: Server = createServer();
 
-    let timeout: Timer;
     const closeAndFail = () => {
-      clearTimeout(timeout);
       server.close();
       mustNotCall()();
     };
     server.on("error", closeAndFail);
-    timeout = setTimeout(closeAndFail, 100);
 
     server.listen(
       socket_domain,
@@ -241,14 +213,11 @@ describe("net.createServer listen", () => {
     const { mustCall, mustNotCall } = createCallCheckCtx(done);
 
     const server: Server = createServer();
-    let timeout: Timer;
     const closeAndFail = () => {
-      clearTimeout(timeout);
       server.close();
       mustNotCall()();
     };
     server.on("error", closeAndFail);
-    timeout = setTimeout(closeAndFail, 100);
 
     server.listen(
       0,
@@ -299,12 +268,10 @@ describe("net.createServer listen", () => {
 describe("net.createServer events", () => {
   it("should receive data", done => {
     const { mustCall, mustNotCall } = createCallCheckCtx(done);
-    let timeout: Timer;
     let client: any = null;
     let is_done = false;
     const onData = mustCall(data => {
       is_done = true;
-      clearTimeout(timeout);
       server.close();
       expect(data.byteLength).toBe(5);
       expect(data.toString("utf8")).toBe("Hello");
@@ -317,16 +284,12 @@ describe("net.createServer events", () => {
 
     const closeAndFail = () => {
       if (is_done) return;
-      clearTimeout(timeout);
       server.close();
       client?.end();
       mustNotCall("no data received")();
     };
 
     server.on("error", closeAndFail);
-
-    //should be faster than 500ms (this was previously 100 but the test was flaky on local machine -@alii)
-    timeout = setTimeout(closeAndFail, 500);
 
     server.listen(
       mustCall(async () => {
@@ -350,11 +313,9 @@ describe("net.createServer events", () => {
 
   it("should call end", done => {
     const { mustCall, mustNotCall } = createCallCheckCtx(done);
-    let timeout: Timer;
     let is_done = false;
     const onEnd = mustCall(() => {
       is_done = true;
-      clearTimeout(timeout);
       server.close();
       done();
     });
@@ -366,13 +327,10 @@ describe("net.createServer events", () => {
 
     const closeAndFail = () => {
       if (is_done) return;
-      clearTimeout(timeout);
       server.close();
       mustNotCall("end not called")();
     };
     server.on("error", closeAndFail);
-
-    timeout = setTimeout(closeAndFail, 500);
 
     server.listen(
       mustCall(async () => {
@@ -401,7 +359,6 @@ describe("net.createServer events", () => {
   it("should call connection and drop", done => {
     const { mustCall, mustNotCall } = createCallCheckCtx(done);
 
-    let timeout: Timer;
     let is_done = false;
     const server = createServer();
     let maxClients = 2;
@@ -409,12 +366,10 @@ describe("net.createServer events", () => {
 
     const closeAndFail = () => {
       if (is_done) return;
-      clearTimeout(timeout);
       server.close();
       mustNotCall("drop not called")();
     };
 
-    timeout = setTimeout(closeAndFail, 500);
     let connection_called = false;
     server
       .on(
@@ -428,7 +383,6 @@ describe("net.createServer events", () => {
         mustCall(data => {
           is_done = true;
           server.close();
-          clearTimeout(timeout);
           expect(data.localPort).toBeDefined();
           expect(data.remotePort).toBeDefined();
           expect(data.remoteFamily).toBeDefined();
@@ -462,6 +416,79 @@ describe("net.createServer events", () => {
       });
   });
 
+  // The server ends the accepted socket in every case below, so waiting for the
+  // client's "close" proves the server already ran its onconnection handler.
+  async function connectToRejectingServer({
+    blockedAddress,
+    maxConnections,
+  }: {
+    blockedAddress: string;
+    maxConnections?: number;
+  }) {
+    const blockList = new BlockList();
+    blockList.addAddress(blockedAddress);
+
+    let connections = 0;
+    const drops: any[] = [];
+    const server = createServer({ blockList }, () => {
+      connections++;
+    });
+    if (maxConnections !== undefined) {
+      server.maxConnections = maxConnections;
+    }
+    server.on("drop", data => drops.push(data));
+
+    try {
+      server.listen(0, "127.0.0.1");
+      await once(server, "listening");
+
+      const { port } = server.address() as AddressInfo;
+      const client = connect({ port, host: "127.0.0.1" });
+      client.on("error", () => {});
+      await once(client, "close");
+
+      return { connections, drops };
+    } finally {
+      server.close();
+    }
+  }
+
+  it("should not emit drop when blockList rejects the connection", async () => {
+    const { connections, drops } = await connectToRejectingServer({ blockedAddress: "127.0.0.1" });
+
+    expect({ connections, drops }).toEqual({ connections: 0, drops: [] });
+  });
+
+  it("should emit drop when maxConnections is reached and a blockList allows the address", async () => {
+    const { connections, drops } = await connectToRejectingServer({
+      blockedAddress: "1.1.1.1",
+      maxConnections: 0,
+    });
+
+    expect(connections).toBe(0);
+    expect(drops.length).toBe(1);
+    expect(Object.keys(drops[0]).sort()).toEqual([
+      "localAddress",
+      "localFamily",
+      "localPort",
+      "remoteAddress",
+      "remoteFamily",
+      "remotePort",
+    ]);
+  });
+
+  // maxConnections is checked before the blockList, so a blocked address still
+  // reports the saturation, matching Node.
+  it("should emit drop when maxConnections is reached and a blockList blocks the address", async () => {
+    const { connections, drops } = await connectToRejectingServer({
+      blockedAddress: "127.0.0.1",
+      maxConnections: 0,
+    });
+
+    expect(connections).toBe(0);
+    expect(drops.length).toBe(1);
+  });
+
   it("should error on an invalid port", () => {
     const server = createServer();
 
@@ -476,22 +503,18 @@ describe("net.createServer events", () => {
     const { mustCall, mustNotCall } = createCallCheckCtx(done);
 
     const controller = new AbortController();
-    let timeout: Timer;
     const server = createServer();
 
     const closeAndFail = () => {
-      clearTimeout(timeout);
       server.close();
       mustNotCall("close not called")();
     };
 
-    timeout = setTimeout(closeAndFail, 500);
-
     server
+      .on("error", closeAndFail)
       .on(
         "close",
         mustCall(() => {
-          clearTimeout(timeout);
           done();
         }),
       )
@@ -502,7 +525,6 @@ describe("net.createServer events", () => {
 
   it("should echo data", done => {
     const { mustNotCall } = createCallCheckCtx(done);
-    let timeout: Timer;
     let client: any = null;
     const server: Server = createServer((socket: Socket) => {
       socket.pipe(socket);
@@ -510,15 +532,12 @@ describe("net.createServer events", () => {
     let is_done = false;
     const closeAndFail = () => {
       if (is_done) return;
-      clearTimeout(timeout);
       server.close();
       client?.end();
       mustNotCall("no data received")();
     };
 
     server.on("error", closeAndFail);
-
-    timeout = setTimeout(closeAndFail, 500);
 
     server.listen(async () => {
       const address = server.address() as AddressInfo;
@@ -531,7 +550,6 @@ describe("net.createServer events", () => {
           },
           data(socket, data) {
             is_done = true;
-            clearTimeout(timeout);
             server.close();
             socket.end();
             expect(data.byteLength).toBe(5);

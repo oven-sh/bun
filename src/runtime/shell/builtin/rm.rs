@@ -37,8 +37,7 @@ pub struct ExecState {
     /// Index into argv where filepath args start.
     pub args_start: usize,
     pub total_tasks: usize,
-    /// Set when any operand was refused up front (`.`/`..` basename, or
-    /// preserve-root); forces exit code 1 even if every task succeeds.
+    /// An operand was refused up front; folded into [`exit_code`].
     pub had_refusal: bool,
     pub err: Option<bun_sys::Error>,
     pub error_signal: AtomicBool,
@@ -249,11 +248,6 @@ impl Rm {
                             (e.args_start, e.args_start + e.total_tasks)
                         };
 
-                        // Per-operand refusals. POSIX: rm must write a
-                        // diagnostic and do nothing to an operand whose last
-                        // path component is `.` or `..`. The preserve-root
-                        // check resolves against the shell instance's cwd (set
-                        // by `$.cwd()` / `cd`), not the host process cwd.
                         let mut refused_msg = Vec::<u8>::new();
                         let mut args_to_run = Vec::<usize>::with_capacity(argc - args_start);
                         for i in args_start..argc {
@@ -311,12 +305,6 @@ impl Rm {
                             // SAFETY: freshly heap-allocated.
                             unsafe { ShellRmTask::schedule(task) };
                         }
-                        // Flush the per-operand refusals after scheduling so the
-                        // completion path (`on_io_writer_chunk` /
-                        // `on_shell_rm_task_done`) sees a consistent
-                        // `output_count` vs `tasks_done`. Task completions
-                        // bounce back to the main thread, so scheduling above
-                        // cannot race this.
                         if !refused_msg.is_empty() {
                             if let Some(safeguard) = Builtin::of(interp, cmd).stderr.needs_io() {
                                 if let RmState::Exec(e) = &mut Self::state_mut(interp, cmd).state {

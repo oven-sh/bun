@@ -823,6 +823,7 @@ impl EventLoop {
         for task in requeue {
             let _ = self.tasks.write_item(task);
         }
+        self.next_iteration_tasks = Vec::new();
         let pending = core::mem::take(&mut self.immediate_tasks);
         let next = core::mem::take(&mut self.next_immediate_tasks);
         if !pending.is_empty() || !next.is_empty() {

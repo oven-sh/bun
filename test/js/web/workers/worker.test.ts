@@ -247,7 +247,7 @@ describe("web worker", () => {
           console.log(JSON.stringify({ recv, fired }));
           process.exit(0);
         }
-        if (Date.now() - t0 > 5000) {
+        if (Date.now() - t0 > 2000) {
           console.log(JSON.stringify({ recv, fired, STARVED: true }));
           process.exit(1);
         }
@@ -268,7 +268,7 @@ describe("web worker", () => {
       immediate: "number",
     });
     expect(exitCode).toBe(0);
-  }, 10_000);
+  });
 
   test("sending 50 messages should just work", done => {
     const worker = new Worker(new URL("worker-fixture-many-messages.js", import.meta.url).href, {});

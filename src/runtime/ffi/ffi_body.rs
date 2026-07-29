@@ -1498,8 +1498,10 @@ impl FFI {
                 Err(e) => e,
             };
             // if that fails, try resolving the filepath relative to the current working directory
-            if name.len() < bun_paths::MAX_PATH_BYTES {
-                let backup_name = Fs::FileSystem::instance().abs(&[name]);
+            let mut backup_buf = bun_paths::path_buffer_pool::get();
+            if let Some(backup_name) =
+                Fs::FileSystem::instance().abs_buf_checked(&[name], &mut backup_buf[..])
+            {
                 match bun_sys::DynLib::open(backup_name) {
                     Ok(d) => break 'brk d,
                     Err(e) => last_err = e,

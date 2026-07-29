@@ -32,20 +32,15 @@ struct LazyJoinBuf(core::cell::Cell<*mut [u8; TL_JOIN_BUF_LEN]>);
 impl LazyJoinBuf {
     const NEW: Self = Self(core::cell::Cell::new(core::ptr::null_mut()));
 
-    /// Borrow the thread-local buffer, allocating on first use. Same
-    /// single-live-borrow-per-thread contract as [`tl_buf_mut`].
+    /// Same single-live-borrow-per-thread contract as [`tl_buf_mut`].
     #[inline]
     fn get(&self) -> &'static mut [u8; TL_JOIN_BUF_LEN] {
         let mut p = self.0.get();
         if p.is_null() {
-            // SAFETY: `new_zeroed` writes every byte to `0`, a valid `u8`, so
-            // the value is fully initialized before `assume_init`.
-            p = bun_core::heap::into_raw(unsafe {
-                Box::<[u8; TL_JOIN_BUF_LEN]>::new_zeroed().assume_init()
-            });
+            p = bun_core::heap::into_raw(bun_core::boxed_zeroed::<[u8; TL_JOIN_BUF_LEN]>());
             self.0.set(p);
         }
-        // SAFETY: non-null after the init branch; thread-local ⇒ sole accessor.
+        // SAFETY: non-null after init; thread-local ⇒ sole accessor.
         unsafe { &mut *p }
     }
 }

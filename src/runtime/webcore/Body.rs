@@ -564,6 +564,8 @@ pub enum Tag {
 pub enum ValueError {
     AbortReason(CommonAbortReason),
     SystemError(SystemError),
+    /// [`SystemError`](Self::SystemError) surfaced as a JS `TypeError`; use over [`TypeError`](Self::TypeError) when callers also rely on the error's `code`.
+    SystemTypeError(SystemError),
     Message(BunString),
     /// Surfaces as a JS `TypeError`. The fetch spec maps every "network
     /// error" to TypeError, so use this for fetch-layer rejections that
@@ -579,6 +581,7 @@ impl ValueError {
         match self {
             // The bun.String fields are dropped by the assignment below.
             ValueError::SystemError(_system_error) => {}
+            ValueError::SystemTypeError(_system_error) => {}
             ValueError::Message(message) => message.deref(),
             ValueError::TypeError(message) => message.deref(),
             ValueError::JSValue(v) => v.deinit(),
@@ -612,6 +615,9 @@ impl ValueError {
             ValueError::SystemError(system_error) => {
                 core::mem::take(system_error).to_error_instance(global_object)
             }
+            ValueError::SystemTypeError(system_error) => {
+                core::mem::take(system_error).to_type_error_instance(global_object)
+            }
             ValueError::Message(message) => message.to_error_instance(global_object),
             ValueError::TypeError(message) => message.to_type_error_instance(global_object),
             // do an early return in this case we don't need to create a new Strong
@@ -628,6 +634,7 @@ impl ValueError {
             // `.clone()` on BunString/SystemError already bumps the refcount (paired
             // with their Drop deref); an extra `.ref_()` here would leak +1 per dupe.
             ValueError::SystemError(e) => ValueError::SystemError(e.clone()),
+            ValueError::SystemTypeError(e) => ValueError::SystemTypeError(e.clone()),
             ValueError::Message(m) => ValueError::Message(m.clone()),
             ValueError::TypeError(m) => ValueError::TypeError(m.clone()),
             ValueError::JSValue(js_ref) => {

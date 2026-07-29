@@ -260,6 +260,9 @@ pub static EXPERIMENTAL_HTTP3_CLIENT_FROM_CLI: AtomicBool = AtomicBool::new(fals
 
 const MAX_REDIRECT_URL_LENGTH: usize = 128 * 1024;
 
+/// <https://fetch.spec.whatwg.org/#http-redirect-fetch> caps redirects at 20; `do_redirect` decrements then checks for 0, so the stored budget is `+1`.
+pub(crate) const DEFAULT_REDIRECT_COUNT: i8 = 20 + 1;
+
 /// The static is exported to
 /// C++ via `BUN_DEFAULT_MAX_HTTP_HEADER_SIZE`; `AtomicUsize` has the same
 /// size/alignment as `usize` so the symbol layout is unchanged.
@@ -2656,8 +2659,7 @@ impl<'a> HTTPClient<'a> {
             self.hostname = None;
         }
 
-        // TODO: should this check be before decrementing the redirect count?
-        // the current logic will allow one less redirect than requested
+        // Decrement-then-check: see `DEFAULT_REDIRECT_COUNT` for why every initializer stores `limit + 1`.
         if self.remaining_redirect_count == 0 {
             self.fail(crate::Error::TooManyRedirects);
             return;

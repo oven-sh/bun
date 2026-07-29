@@ -105,6 +105,34 @@ describe.skipIf(!isWindows)("--windows-hide-console", () => {
     await using _cleanup = cleanup(outfile);
     expect(readPESubsystem(outfile)).toBe(IMAGE_SUBSYSTEM_WINDOWS_GUI);
   }, 30_000);
+
+  test("GUI subsystem survives the rescle metadata pass", async () => {
+    using dir = tempDir("windows-subsystem-gui-rescle", {
+      "app.js": `console.log("gui+metadata");`,
+    });
+    const outfile = join(String(dir), "gui-rescle.exe");
+    await using _cleanup = cleanup(outfile);
+
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "build",
+        "--compile",
+        "--windows-hide-console",
+        "--windows-title",
+        "Hidden Console App",
+        join(String(dir), "app.js"),
+        "--outfile",
+        outfile,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    await expectBuildOk(proc);
+
+    expect(readPESubsystem(outfile)).toBe(IMAGE_SUBSYSTEM_WINDOWS_GUI);
+  }, 30_000);
 });
 
 describe.skipIf(!isWindows).concurrent("Windows compile metadata", () => {

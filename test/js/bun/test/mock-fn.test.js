@@ -1139,22 +1139,6 @@ describe("spyOn", () => {
     expect(target.m()).toBe("orig");
   });
 
-  test("mockRestore propagates a Proxy defineProperty trap exception", () => {
-    let armed = false;
-    const proxy = new Proxy(
-      { m: () => "orig" },
-      {
-        defineProperty(t, k, d) {
-          if (armed) throw new Error("boom-define");
-          return Reflect.defineProperty(t, k, d);
-        },
-      },
-    );
-    const fn = spyOn(proxy, "m");
-    armed = true;
-    expect(() => fn.mockRestore()).toThrow("boom-define");
-  });
-
   test("propagates exceptions from a Proxy get trap", () => {
     const proxy = new Proxy(
       {},
@@ -1168,14 +1152,31 @@ describe("spyOn", () => {
     expect(() => spyOn(proxy, "x")).toThrow("boom-get");
   });
 
-  test("throws when a Proxy reports the property missing", () => {
-    // has trap absent, target empty => [[HasProperty]] is false
-    expect(() => spyOn(new Proxy({}, { get: () => 1 }), "x")).toThrow(
-      "Property `x` does not exist in the provided object",
-    );
-  });
-
   if (isBun) {
+    test("throws when a Proxy reports the property missing", () => {
+      // has trap absent, target empty => [[HasProperty]] is false; jest reads via
+      // [[Get]] here and throws a different error for the non-function value.
+      expect(() => spyOn(new Proxy({}, { get: () => 1 }), "x")).toThrow(
+        "Property `x` does not exist in the provided object",
+      );
+    });
+
+    test("mockRestore propagates a Proxy defineProperty trap exception", () => {
+      let armed = false;
+      const proxy = new Proxy(
+        { m: () => "orig" },
+        {
+          defineProperty(t, k, d) {
+            if (armed) throw new Error("boom-define");
+            return Reflect.defineProperty(t, k, d);
+          },
+        },
+      );
+      const fn = spyOn(proxy, "m");
+      armed = true;
+      expect(() => fn.mockRestore()).toThrow("boom-define");
+    });
+
     test("spies on a non-function value through a Proxy", () => {
       const target = { n: 42 };
       const proxy = new Proxy(target, {});
@@ -1192,6 +1193,17 @@ describe("spyOn", () => {
         configurable: true,
       });
       expect(fn).not.toHaveBeenCalled();
+    });
+
+    test("restores a Proxy spy after the Proxy itself is collected", () => {
+      const target = { m: () => "orig" };
+      (() => {
+        spyOn(new Proxy(target, {}), "m").mockReturnValue("MRV");
+      })();
+      Bun.gc(true);
+      expect(target.m()).toBe("MRV");
+      jest.restoreAllMocks();
+      expect(target.m()).toBe("orig");
     });
   }
 

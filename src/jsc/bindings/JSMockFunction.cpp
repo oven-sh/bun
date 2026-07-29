@@ -273,6 +273,9 @@ public:
     mutable JSC::WriteBarrier<JSC::JSArray> returnValues;
 
     JSC::Weak<JSObject> spyTarget;
+    // For Proxy spies the write lands on the proxy's underlying target, so the proxy must
+    // outlive the spy for restore to route back through it.
+    mutable JSC::WriteBarrier<JSObject> spyStrongTarget;
     JSC::Identifier spyIdentifier;
     unsigned spyAttributes = 0;
 
@@ -395,6 +398,7 @@ public:
         }
 
         this->spyTarget.clear();
+        this->spyStrongTarget.clear();
         this->spyIdentifier = JSC::Identifier();
         this->spyAttributes = 0;
     }
@@ -490,6 +494,7 @@ void JSMockFunction::visitAdditionalChildrenInGCThread(Visitor& visitor)
     visitor.append(fn->returnValues);
     visitor.append(fn->invocationCallOrder);
     visitor.append(fn->spyOriginal);
+    visitor.append(fn->spyStrongTarget);
     fn->mock.visit(visitor);
 }
 
@@ -647,13 +652,14 @@ static void forEachMockInSet(JSC::Strong<JSC::Unknown>& mockSet, const Functor& 
 
 extern "C" void JSMock__resetSpies(Zig::GlobalObject* globalObject)
 {
-    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(globalObject->vm());
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
     forEachMockInSet(globalObject->mockModule.activeSpies, [&](JSMockFunction* spy) {
         if (scope.exception()) [[unlikely]]
             return;
         spy->clearSpy();
     });
     globalObject->mockModule.activeSpies.clear();
+    scope.release();
 }
 
 extern "C" void JSMock__clearAllMocks(Zig::GlobalObject* globalObject)
@@ -1549,6 +1555,8 @@ BUN_DEFINE_HOST_FUNCTION(JSMock__jsSpyOn, (JSC::JSGlobalObject * lexicalGlobalOb
 
         auto* mock = JSMockFunction::create(vm, globalObject, globalObject->mockModule.mockFunctionStructure.getInitializedOnMainThread(globalObject), CallbackKind::GetterSetter);
         mock->spyTarget = JSC::Weak<JSObject>(object, &weakValueHandleOwner(), nullptr);
+        if (isProxy)
+            mock->spyStrongTarget.set(vm, mock, object);
         mock->spyIdentifier = propertyKey.isSymbol() ? Identifier::fromUid(vm, propertyKey.uid()) : Identifier::fromString(vm, propertyKey.publicName());
         mock->spyAttributes = slot.attributes();
         unsigned attributes = slot.attributes();

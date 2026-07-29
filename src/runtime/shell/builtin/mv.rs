@@ -486,8 +486,13 @@ impl ShellMvBatchedTask {
     ) -> Result<(), bun_sys::Error> {
         match bun_sys::renameat(src_dir, src, dst_dir, dst) {
             Err(e) if e.get_errno() == bun_sys::E::EXDEV => {
-                Self::move_across_devices(src_dir, src, dst_dir, dst)
-                    .map_err(|e| e.with_path(src.as_bytes()))
+                Self::move_across_devices(src_dir, src, dst_dir, dst).map_err(|e| {
+                    if e.path.is_empty() {
+                        e.with_path(src.as_bytes())
+                    } else {
+                        e
+                    }
+                })
             }
             r => r,
         }
@@ -596,7 +601,11 @@ impl ShellMvBatchedTask {
         let out_fd = match bun_sys::openat(
             dst_dir,
             dst,
-            bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::TRUNC | bun_sys::O::CLOEXEC,
+            bun_sys::O::WRONLY
+                | bun_sys::O::CREAT
+                | bun_sys::O::TRUNC
+                | bun_sys::O::CLOEXEC
+                | bun_sys::O::NOFOLLOW,
             mode & 0o7777,
         ) {
             Ok(fd) => fd,

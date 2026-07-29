@@ -7661,16 +7661,12 @@ impl NodeFS {
     ) -> Maybe<ret::Realpath> {
         #[cfg(windows)]
         {
+            let path = args
+                .path
+                .slice_z_sys(&mut self.sync_error_buf, sys::Tag::realpath)?;
             let mut req = UvFsReq::new();
             let rc = unsafe {
-                uv::uv_fs_realpath(
-                    bun_io::Loop::get(),
-                    &mut *req,
-                    args.path
-                        .slice_z_sys(&mut self.sync_error_buf, sys::Tag::realpath)?
-                        .as_ptr(),
-                    None,
-                )
+                uv::uv_fs_realpath(bun_io::Loop::get(), &mut *req, path.as_ptr(), None)
             };
             if let Some(errno) = rc.errno() {
                 return Err(sys::Error {
@@ -8182,14 +8178,15 @@ impl NodeFS {
     pub fn utimes(&mut self, args: &args::Utimes, _: Flavor) -> Maybe<ret::Utimes> {
         #[cfg(windows)]
         {
+            let path = args
+                .path
+                .slice_z_sys(&mut self.sync_error_buf, sys::Tag::utime)?;
             let mut req = UvFsReq::new();
             let rc = unsafe {
                 uv::uv_fs_utime(
                     bun_io::Loop::get(),
                     &mut *req,
-                    args.path
-                        .slice_z_sys(&mut self.sync_error_buf, sys::Tag::utime)?
-                        .as_ptr(),
+                    path.as_ptr(),
                     args.atime,
                     args.mtime,
                     None,
@@ -8222,14 +8219,15 @@ impl NodeFS {
     pub fn lutimes(&mut self, args: &args::Lutimes, _: Flavor) -> Maybe<ret::Lutimes> {
         #[cfg(windows)]
         {
+            let path = args
+                .path
+                .slice_z_sys(&mut self.sync_error_buf, sys::Tag::lutime)?;
             let mut req = UvFsReq::new();
             let rc = unsafe {
                 uv::uv_fs_lutime(
                     bun_io::Loop::get(),
                     &mut *req,
-                    args.path
-                        .slice_z_sys(&mut self.sync_error_buf, sys::Tag::lutime)?
-                        .as_ptr(),
+                    path.as_ptr(),
                     args.atime,
                     args.mtime,
                     None,

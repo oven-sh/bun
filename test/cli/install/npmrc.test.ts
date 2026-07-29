@@ -133,6 +133,62 @@ registry = http://localhost:${registry.port}/
       .throws(true);
   });
 
+  it("falls back to $HOME/.npmrc when XDG_CONFIG_HOME is set but has no .npmrc", async () => {
+    // GitHub Actions exports XDG_CONFIG_HOME=~/.config while npm login writes ~/.npmrc;
+    // npm itself ignores XDG_CONFIG_HOME entirely. https://github.com/oven-sh/bun/issues/24124
+    using dir = tempDir("npmrc-xdg-fallback", {
+      "xdg/.keep": "",
+      "home/.npmrc": `registry=http://localhost:1/\n//localhost:1/:_authToken=from-home\n`,
+      "pkg/package.json": JSON.stringify({ name: "npmrc-xdg-fallback-pkg", version: "0.0.1" }),
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "publish", "--dry-run"],
+      cwd: join(String(dir), "pkg"),
+      env: {
+        ...env,
+        XDG_CONFIG_HOME: join(String(dir), "xdg"),
+        HOME: join(String(dir), "home"),
+        USERPROFILE: join(String(dir), "home"),
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(err).not.toContain("missing authentication");
+    expect(out).toContain("Registry: http://localhost:1/");
+    expect(out).toContain("(dry-run)");
+    expect(exitCode).toBe(0);
+  });
+
+  it("prefers $XDG_CONFIG_HOME/.npmrc over $HOME/.npmrc when both exist", async () => {
+    using dir = tempDir("npmrc-xdg-wins", {
+      "xdg/.npmrc": `registry=http://localhost:1/\n//localhost:1/:_authToken=from-xdg\n`,
+      "home/.npmrc": `registry=http://localhost:2/\n`,
+      "pkg/package.json": JSON.stringify({ name: "npmrc-xdg-wins-pkg", version: "0.0.1" }),
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "publish", "--dry-run"],
+      cwd: join(String(dir), "pkg"),
+      env: {
+        ...env,
+        XDG_CONFIG_HOME: join(String(dir), "xdg"),
+        HOME: join(String(dir), "home"),
+        USERPROFILE: join(String(dir), "home"),
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(err).not.toContain("missing authentication");
+    expect(out).toContain("Registry: http://localhost:1/");
+    expect(out).toContain("(dry-run)");
+    expect(exitCode).toBe(0);
+  });
+
   it("works with two configs", async () => {
     const { packageDir, packageJson } = await registry.createTestDir();
 

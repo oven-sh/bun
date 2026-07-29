@@ -6463,7 +6463,7 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
         const plain = createClient(connectionType);
         await plain.connect();
         try {
-          expect(async () => await plain.send("SUBSCRIBE", [])).toThrow();
+          await expect(plain.send("SUBSCRIBE", [])).rejects.toThrow();
           expect(await plain.send("PING", [])).toBe("PONG");
           expect(plain.connected).toBe(true);
         } finally {

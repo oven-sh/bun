@@ -173,6 +173,15 @@ impl<'a> DataURL<'a> {
     /// MIME type for a `data:` URL: by extension, else a binary-byte sniff.
     pub fn guess_mime_type(path: &[u8], contents: &[u8]) -> Vec<u8> {
         let ext = strings::trim_leading_char(bun_paths::extension(path), b'.');
+        let mut lower = [0u8; 32];
+        let ext: &[u8] = if ext.len() <= lower.len() {
+            for (i, &b) in ext.iter().enumerate() {
+                lower[i] = b.to_ascii_lowercase();
+            }
+            &lower[..ext.len()]
+        } else {
+            ext
+        };
         if let Some(mime) = bun_http_types::MimeType::by_extension_no_default(ext) {
             let value = &*mime.value;
             if strings::has_prefix_comptime(value, b"text/")

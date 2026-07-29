@@ -358,6 +358,12 @@ describe("base64 / dataurl", () => {
     { type: "base64", file: "u16.foo", contents: Buffer.from([0xff, 0xfe, 0x41, 0x00]), expected: "//5BAA==" },
     { type: "base64", file: "u8.foo", contents: Buffer.from([0xef, 0xbb, 0xbf, 0x41]), expected: "77u/QQ==" },
     { type: "dataurl", file: "style.css", contents: "ABC", expected: "data:text/css;charset=utf-8,ABC" },
+    {
+      type: "dataurl",
+      file: "IMG.PNG",
+      contents: Buffer.from("89504e470d0a1a0a", "hex"),
+      expected: "data:image/png;base64,iVBORw0KGgo=",
+    },
     { type: "dataurl", file: "text.foo", contents: "ABC", expected: "data:text/plain;charset=utf-8,ABC" },
     {
       type: "dataurl",
@@ -418,6 +424,25 @@ describe("base64 / dataurl", () => {
       expect(exitCode).toBe(0);
     });
   }
+
+  test.concurrent("data: URL specifier preserves its declared MIME", async () => {
+    const { stdout, stderr, exitCode } = await run(
+      [
+        bunExe(),
+        "-e",
+        `import png from "data:image/png;base64,iVBORw0KGgo=" with { type: "dataurl" };
+         import b64 from "data:application/json,ABC" with { type: "base64" };
+         console.log(JSON.stringify({ png, b64 }));`,
+      ],
+      process.cwd(),
+    );
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({
+      png: "data:image/png;base64,iVBORw0KGgo=",
+      b64: "QUJD",
+    });
+    expect(exitCode).toBe(0);
+  });
 });
 
 describe("?raw", () => {

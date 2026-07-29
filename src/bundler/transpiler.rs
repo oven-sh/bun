@@ -2166,7 +2166,10 @@ fn parse_base64_or_dataurl_loader<'a>(
     let encoded: Vec<u8> = if matches!(loader, options::Loader::Base64) {
         bun_base64::encode_alloc(contents)
     } else {
-        let mime = DataURL::guess_mime_type(path.text, contents);
+        let mime = match DataURL::parse(path.text) {
+            Ok(Some(u)) if !u.mime_type.is_empty() => u.mime_type.to_vec(),
+            _ => DataURL::guess_mime_type(path.text, contents),
+        };
         DataURL::encode_string_as_shortest_data_url(&mime, contents)
     };
     // SAFETY: ARENA — `arena` outlives the returned `ParseResult.ast` (the AST

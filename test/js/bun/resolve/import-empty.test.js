@@ -75,8 +75,6 @@ it("importing empty file returns module with path as default export", async () =
   const other_types = [
     "wasm",
     // "napi", // marked unreachable in src/jsc/ModuleLoader.zig:1956:22
-    "base64",
-    "dataurl",
   ];
 
   for (const type of other_types) {
@@ -84,6 +82,18 @@ it("importing empty file returns module with path as default export", async () =
 
     const empty_file_module = await import("./empty-file", { with: { type } });
     expect(empty_file_module.default).toEqual(empty_file_path);
+  }
+});
+
+it("importing empty base64/dataurl file returns the encoded empty string", async () => {
+  for (const [type, expected] of [
+    ["base64", ""],
+    ["dataurl", "data:text/plain;charset=utf-8,"],
+  ]) {
+    delete require.cache[require.resolve(`./empty-file`)];
+
+    const empty_file_module = await import("./empty-file", { with: { type } });
+    expect(empty_file_module.default).toEqual(expected);
   }
 });
 

@@ -62,7 +62,7 @@ async function run(forms: "A" | "B" | "AB") {
 }
 
 describe("onResolve namespace-prefix dispatch is consistent between runtime and Bun.build", () => {
-  test("onResolve({ filter: /^virt:/ }) resolves `import \"virt:x\"` at runtime and in Bun.build", async () => {
+  test('onResolve({ filter: /^virt:/ }) resolves `import "virt:x"` at runtime and in Bun.build', async () => {
     const { stdout, stderr, exitCode } = await run("A");
     expect(stderr).toBe("");
     const out = JSON.parse(stdout);
@@ -86,7 +86,7 @@ describe("onResolve namespace-prefix dispatch is consistent between runtime and 
     expect(exitCode).toBe(0);
   });
 
-  test("registering both forms resolves `import \"virt:x\"` at runtime and in Bun.build", async () => {
+  test('registering both forms resolves `import "virt:x"` at runtime and in Bun.build', async () => {
     const { stdout, stderr, exitCode } = await run("AB");
     expect(stderr).toBe("");
     const out = JSON.parse(stdout);

@@ -1,5 +1,6 @@
 import { fileURLToPath, Loader } from "bun";
-import { describe, expect } from "bun:test";
+import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import fs, { readdirSync } from "node:fs";
 import { join } from "path";
 import { itBundled } from "./expectBundled";
@@ -381,6 +382,171 @@ describe("bundler", async () => {
         },
       });
     }
+  });
+
+  // Windows cannot represent ", \, \n in filenames.
+  describe.skipIf(isWindows)("file loader escapes asset path in JS output", () => {
+    const assetContent = "asset-bytes";
+    const cases: Array<[label: string, name: string]> = [
+      ["double quote injection", 'x";process.exit(42);"y.txt'],
+      ["newline", "nl\nname.txt"],
+      ["carriage return", "cr\rname.txt"],
+      ["line separator U+2028", "ls\u2028name.txt"],
+    ];
+
+    for (const [label, name] of cases) {
+      test.concurrent(`bundle: ${label}`, async () => {
+        using dir = tempDir("file-loader-escape", {
+          "entry.ts":
+            `import p from ${JSON.stringify("./" + name)} with { type: "file" };\n` +
+            `import path from "node:path";\n` +
+            `import fs from "node:fs";\n` +
+            `const abs = path.resolve(import.meta.dir, p);\n` +
+            `console.log(JSON.stringify({ path: p, content: fs.readFileSync(abs, "utf8") }));\n`,
+        });
+        fs.writeFileSync(join(String(dir), name), assetContent);
+
+        {
+          await using proc = Bun.spawn({
+            cmd: [bunExe(), "build", "--target=bun", "./entry.ts", "--outdir=./out"],
+            env: bunEnv,
+            cwd: String(dir),
+            stdout: "pipe",
+            stderr: "pipe",
+          });
+          const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+          expect(stderr).not.toContain("error:");
+          expect(exitCode).toBe(0);
+        }
+
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "./out/entry.js"],
+          env: bunEnv,
+          cwd: String(dir),
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect({ stdout: stdout.trim(), exitCode }).toEqual({
+          stdout: expect.stringContaining(`"content":"${assetContent}"`),
+          exitCode: 0,
+        });
+        expect(stderr).not.toContain("SyntaxError");
+        const emitted = JSON.parse(stdout).path as string;
+        expect(fs.existsSync(join(String(dir), "out", emitted))).toBe(true);
+      });
+    }
+
+    for (const [label, name] of [
+      ["double quote injection", 'x";process.exit(42);"y.txt'],
+      ["newline in filename", "nl\nname.txt"],
+    ] as const) {
+      test(`compile: ${label}`, async () => {
+        using dir = tempDir("file-loader-escape-compile", {
+          "entry.ts":
+            `import p from ${JSON.stringify("./" + name)} with { type: "file" };\n` +
+            `console.log(JSON.stringify({ path: p, content: await Bun.file(p).text() }));\n`,
+        });
+        fs.writeFileSync(join(String(dir), name), assetContent);
+        const outfile = join(String(dir), "exe");
+
+        {
+          await using proc = Bun.spawn({
+            cmd: [bunExe(), "build", "--compile", "./entry.ts", "--outfile", outfile],
+            env: bunEnv,
+            cwd: String(dir),
+            stdout: "pipe",
+            stderr: "pipe",
+          });
+          const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+          expect(stderr).not.toContain("error:");
+          expect(exitCode).toBe(0);
+        }
+
+        await using proc = Bun.spawn({
+          cmd: [outfile],
+          env: bunEnv,
+          cwd: String(dir),
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect({ stdout: stdout.trim(), exitCode }).toEqual({
+          stdout: expect.stringContaining(`"content":"${assetContent}"`),
+          exitCode: 0,
+        });
+        expect(stderr).not.toContain("SyntaxError");
+      });
+    }
+
+    test.concurrent("bundle: public-path with double quote and backslash", async () => {
+      using dir = tempDir("file-loader-escape-public-path", {
+        "entry.ts":
+          `import p from "./asset.txt" with { type: "file" };\n` + `console.log(JSON.stringify({ path: p }));\n`,
+        "asset.txt": assetContent,
+      });
+
+      {
+        await using proc = Bun.spawn({
+          cmd: [
+            bunExe(),
+            "build",
+            "--target=bun",
+            '--public-path=";process.exit(42);\\"/',
+            "./entry.ts",
+            "--outdir=./out",
+          ],
+          env: bunEnv,
+          cwd: String(dir),
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect(stderr).not.toContain("error:");
+        expect(exitCode).toBe(0);
+      }
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "./out/entry.js"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout: stdout.trim(), exitCode }).toEqual({
+        stdout: expect.stringContaining('{"path":'),
+        exitCode: 0,
+      });
+      expect(stderr).not.toContain("SyntaxError");
+      expect(JSON.parse(stdout).path).toStartWith('";process.exit(42);\\"/asset-');
+    });
+  });
+
+  // Count pass and write pass must agree on the substituted bytes; on Windows
+  // the write pass posix-normalizes `\` -> `/` before escaping, so the count
+  // pass must too. A subdir in --asset-naming is enough to put a separator in
+  // dest_path; the output must be parseable and contain no trailing NUL bytes.
+  itBundled("bun/loader-file-asset-naming-subdir", {
+    target: "bun",
+    outdir: "/out",
+    assetNaming: "assets/[name]-[hash].[ext]",
+    files: {
+      "/entry.ts": /* js */ `
+        import p from "./data.txt" with { type: "file" };
+        console.log(JSON.stringify({ path: p }));
+      `,
+      "/data.txt": "asset-bytes",
+    },
+    run: {
+      validate({ stdout }) {
+        expect(JSON.parse(stdout).path).toMatch(/^\.\/assets\/data-[a-z0-9]+\.txt$/);
+      },
+    },
+    onAfterBundle(api) {
+      const out = api.readFile("out/entry.js");
+      expect(out).not.toContain("\0");
+    },
   });
 
   // Lazy-export modules (JSON, TOML, CSS modules, ...) used to crash the

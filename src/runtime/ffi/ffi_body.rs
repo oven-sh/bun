@@ -1505,9 +1505,7 @@ impl FFI {
                     Err(e) => last_err = e,
                 }
             }
-            // Then, if that fails, report an error with the library name and
-            // system error. `DynLib::open` returns ENAMETOOLONG without calling
-            // the loader, so dlerror()/GetLastError() would be stale there.
+            // ENAMETOOLONG never reached the loader: dlerror()/GetLastError() is stale.
             let dlerror_msg = if last_err == bun_errno::SystemErrno::ENAMETOOLONG {
                 Box::<[u8]>::from(b"file name too long".as_slice())
             } else {

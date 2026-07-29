@@ -330,6 +330,7 @@ void us_internal_handle_low_priority_sockets(struct us_loop_t *loop) {
 
     for (s = loop_data->low_prio_head; s && loop_data->low_prio_budget > 0; s = loop_data->low_prio_head, loop_data->low_prio_budget--) {
         /* Unlink this socket from the low-priority queue */
+        if (s == loop_data->low_prio_iterator) loop_data->low_prio_iterator = s->next;
         loop_data->low_prio_head = s->next;
         if (s->next) s->next->prev = 0;
         s->next = 0;

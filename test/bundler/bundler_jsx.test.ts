@@ -1,5 +1,5 @@
-import { describe, expect } from "bun:test";
-import { normalizeBunSnapshot } from "harness";
+import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, normalizeBunSnapshot, tempDir } from "harness";
 import { BundlerTestInput, itBundled } from "./expectBundled";
 
 const helpers = {
@@ -921,6 +921,51 @@ describe("bundler", () => {
           console.log(jsxDEV(Fragment, {}, undefined, false, undefined, this));"
         `);
       },
+    });
+
+    // `--jsx-side-effects` must take effect even when it is the only --jsx-* flag
+    // on the command line. Previously the CLI only materialized the JSX options
+    // when one of factory/fragment/import-source/runtime was set, so passing the
+    // flag alone was a silent no-op and JSX calls kept their pure annotation.
+    // The bunfig row covers the merge-with-bunfig arm in Arguments.rs (any bunfig
+    // populates opts.jsx before CLI flags are applied).
+    describe.each([
+      ["no bunfig", undefined, "react/jsx-dev-runtime"],
+      ["bunfig (no jsx keys)", 'logLevel = "error"\n', "react/jsx-dev-runtime"],
+      ['bunfig jsx = "react-jsx"', 'jsx = "react-jsx"\n', "react/jsx-runtime"],
+    ] as const)("cli: --jsx-side-effects alone [%s]", (_label, bunfig, expectedRuntime) => {
+      test("drops the pure annotation without changing the runtime", async () => {
+        const files: Record<string, string> = {
+          "a.jsx": "export const a = <div />;\n",
+          "tsconfig.json": "{}",
+        };
+        if (bunfig !== undefined) files["bunfig.toml"] = bunfig;
+        using dir = tempDir("jsx-cli-side-effects", files);
+        const build = async (args: readonly string[]) => {
+          await using proc = Bun.spawn({
+            cmd: [bunExe(), "build", "--no-bundle", ...args, "a.jsx"],
+            env: bunEnv,
+            cwd: String(dir),
+            stdout: "pipe",
+            stderr: "pipe",
+          });
+          const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+          expect(stderr).toBe("");
+          expect(exitCode).toBe(0);
+          return stdout;
+        };
+
+        // Baseline: without the flag, JSX calls are annotated pure.
+        const baseline = await build([]);
+        expect(baseline).toContain("/* @__PURE__ */");
+        expect(baseline).toContain(expectedRuntime);
+
+        // With only --jsx-side-effects (no other --jsx-* flags), the annotation
+        // is dropped and the runtime selection is unchanged.
+        const withFlag = await build(["--jsx-side-effects"]);
+        expect(withFlag).not.toContain("@__PURE__");
+        expect(withFlag).toContain(expectedRuntime);
+      });
     });
   });
 });

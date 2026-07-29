@@ -653,14 +653,21 @@ impl CreateCommand {
 
                     let mut conflicts: Vec<Vec<bun_paths::OSPathChar>> = Vec::new();
                     while let Some(entry) = scan_walker.next()? {
+                        // No-follow: a destination symlink counts as the link
+                        // itself, so it conflicts (or is unlinked by --force)
+                        // instead of being written through.
                         #[cfg(not(windows))]
-                        let existing_kind =
-                            bun_sys::exists_at_type(existing_destination.fd, entry.path);
+                        let existing_kind = bun_sys::lstatat(existing_destination.fd, entry.path)
+                            .map(|st| bun_sys::kind_from_mode(st.st_mode as _));
                         #[cfg(windows)]
                         let existing_kind = bun_sys::exists_at_type_w(
                             existing_destination.fd,
                             entry.path.as_slice(),
-                        );
+                        )
+                        .map(|k| match k {
+                            bun_sys::ExistsAtType::Directory => bun_sys::FileKind::Directory,
+                            bun_sys::ExistsAtType::File => bun_sys::FileKind::File,
+                        });
                         let existing_kind = match existing_kind {
                             Ok(k) => k,
                             // ENOTDIR: a parent component is a file, already a conflict.
@@ -692,16 +699,16 @@ impl CreateCommand {
                         if create_options.overwrite {
                             let mismatch = match entry.kind {
                                 bun_sys::FileKind::File => {
-                                    existing_kind == bun_sys::ExistsAtType::Directory
+                                    existing_kind != bun_sys::FileKind::File
                                 }
                                 bun_sys::FileKind::Directory => {
-                                    existing_kind != bun_sys::ExistsAtType::Directory
+                                    existing_kind != bun_sys::FileKind::Directory
                                 }
                                 _ => false,
                             };
                             if mismatch {
                                 #[cfg(not(windows))]
-                                let removed = if existing_kind == bun_sys::ExistsAtType::Directory {
+                                let removed = if existing_kind == bun_sys::FileKind::Directory {
                                     existing_destination.delete_tree(entry.path.as_bytes())
                                 } else {
                                     bun_sys::unlinkat(&existing_destination, entry.path)
@@ -712,7 +719,7 @@ impl CreateCommand {
                                         Vec::new(),
                                         entry.path.as_slice(),
                                     );
-                                    if existing_kind == bun_sys::ExistsAtType::Directory {
+                                    if existing_kind == bun_sys::FileKind::Directory {
                                         existing_destination.delete_tree(&utf8)
                                     } else {
                                         utf8.push(0);
@@ -745,7 +752,7 @@ impl CreateCommand {
                             bun_sys::FileKind::File => true,
                             // Merging into an existing directory is fine.
                             bun_sys::FileKind::Directory => {
-                                existing_kind != bun_sys::ExistsAtType::Directory
+                                existing_kind != bun_sys::FileKind::Directory
                             }
                             _ => false,
                         };
@@ -753,9 +760,9 @@ impl CreateCommand {
                             continue;
                         }
 
-                        // A directory in the way conflicts even for these names.
+                        // A directory or symlink in the way conflicts even for these names.
                         if entry.kind == bun_sys::FileKind::File
-                            && existing_kind != bun_sys::ExistsAtType::Directory
+                            && existing_kind == bun_sys::FileKind::File
                         {
                             #[cfg(not(windows))]
                             let never_conflict = NEVER_CONFLICT

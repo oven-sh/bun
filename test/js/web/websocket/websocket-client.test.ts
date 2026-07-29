@@ -1,11 +1,12 @@
 import type { Subprocess } from "bun";
 import { spawn } from "bun";
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, nodeExe } from "harness";
+import { bunEnv, bunExe, nodeExe, tls as tlsCerts } from "harness";
 import { createHash } from "node:crypto";
 import { once } from "node:events";
 import { createServer } from "node:net";
 import * as path from "node:path";
+import { createServer as createTlsServer } from "node:tls";
 import { WebSocket as NodeWS, WebSocketServer } from "ws";
 function test(
   label: string,
@@ -616,6 +617,160 @@ describe.concurrent("WebSocket ping()/pong() payload size limit", () => {
     } finally {
       ws.terminate();
     }
+  });
+});
+
+// RFC 6455 §7.1.7: when the client fails the connection because of a protocol
+// error in a received frame, it SHOULD send a Close frame carrying the status
+// code (1002/1007/1009) before closing TCP. Without it the server only ever
+// sees an abnormal 1006.
+describe.concurrent("WebSocket client writes a Close frame when failing on a bad server frame", () => {
+  const GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
+
+  type WireResult = { bytes: number; opcode: number; masked: boolean; code: number };
+
+  function hostileServer(frame: Buffer, tls = false) {
+    const received = Promise.withResolvers<WireResult>();
+    const sockets = new Set<import("node:net").Socket>();
+    const makeServer = tls
+      ? (h: (s: import("node:net").Socket) => void) => createTlsServer({ key: tlsCerts.key, cert: tlsCerts.cert }, h)
+      : createServer;
+    const server = makeServer(sock => {
+      sockets.add(sock);
+      let buf = Buffer.alloc(0);
+      let shaken = false;
+      let got = Buffer.alloc(0);
+      sock.on("error", () => {});
+      sock.on("data", chunk => {
+        if (shaken) {
+          got = Buffer.concat([got, chunk]);
+          return;
+        }
+        buf = Buffer.concat([buf, chunk]);
+        const i = buf.indexOf("\r\n\r\n");
+        if (i < 0) return;
+        const key = /sec-websocket-key: *([^\r\n]+)/i.exec(buf.toString("latin1"))![1];
+        const accept = createHash("sha1")
+          .update(key + GUID)
+          .digest("base64");
+        sock.write(
+          "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n" +
+            `Sec-WebSocket-Accept: ${accept}\r\n\r\n`,
+        );
+        shaken = true;
+        sock.write(frame);
+      });
+      sock.on("close", () => {
+        sockets.delete(sock);
+        let code = 0;
+        // client frames are masked: 2-byte header + 4-byte mask + 2-byte status
+        if (got.length >= 8 && (got[1] & 0x80) === 0x80) {
+          code = ((got[6] ^ got[2]) << 8) | (got[7] ^ got[3]);
+        }
+        received.resolve({
+          bytes: got.length,
+          opcode: got.length >= 1 ? got[0] & 0x0f : -1,
+          masked: got.length >= 2 && (got[1] & 0x80) === 0x80,
+          code,
+        });
+      });
+    });
+    return {
+      server,
+      received: received.promise,
+      close: () =>
+        new Promise<void>(r => {
+          for (const s of sockets) s.destroy();
+          server.close(() => r());
+        }),
+    };
+  }
+
+  async function run(frame: Buffer, tls = false) {
+    const { server, received, close } = hostileServer(frame, tls);
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const port = (server.address() as import("node:net").AddressInfo).port;
+    const closed = Promise.withResolvers<{ code: number; wasClean: boolean }>();
+    const messages: unknown[] = [];
+    const scheme = tls ? "wss" : "ws";
+    const ws = new WebSocket(`${scheme}://127.0.0.1:${port}/`, { tls: { rejectUnauthorized: false } });
+    try {
+      ws.onmessage = e => messages.push(e.data);
+      ws.onclose = e => closed.resolve({ code: e.code, wasClean: e.wasClean });
+      ws.onerror = () => {};
+      const [wire, js] = await Promise.all([received, closed.promise]);
+      return { wire, js, messages };
+    } finally {
+      ws.terminate();
+      await close();
+    }
+  }
+
+  it("masked TEXT from server → Close(1002)", async () => {
+    // §5.1: a server MUST NOT mask; a client MUST fail the connection on a
+    // masked server frame.
+    const { wire, js } = await run(Buffer.from([0x81, 0x82, 1, 2, 3, 4, 0x68 ^ 1, 0x69 ^ 2]));
+    expect(wire).toEqual({ bytes: 8, opcode: 8, masked: true, code: 1002 });
+    expect(js).toEqual({ code: 1002, wasClean: false });
+  });
+
+  it("reserved opcode 3 → Close(1002)", async () => {
+    const { wire, js } = await run(Buffer.from([0x83, 0x00]));
+    expect(wire).toEqual({ bytes: 8, opcode: 8, masked: true, code: 1002 });
+    expect(js).toEqual({ code: 1002, wasClean: false });
+  });
+
+  it("RSV1 set with no extension negotiated → Close(1002)", async () => {
+    const { wire, js } = await run(Buffer.from([0xc1, 0x02, 0x68, 0x69]));
+    expect(wire).toEqual({ bytes: 8, opcode: 8, masked: true, code: 1002 });
+    // JS-side code for this case is owned by WebSocket.cpp; only assert the
+    // wire half here.
+    expect(js.code).toBeGreaterThan(0);
+  });
+
+  it("126-byte Ping (oversized control payload) → Close(1002)", async () => {
+    const { wire, js } = await run(Buffer.concat([Buffer.from([0x89, 0x7e, 0x00, 0x7e]), Buffer.alloc(126, 0x41)]));
+    expect(wire).toEqual({ bytes: 8, opcode: 8, masked: true, code: 1002 });
+    expect(js).toEqual({ code: 1002, wasClean: false });
+  });
+
+  it("invalid UTF-8 in a TEXT frame → Close(1007)", async () => {
+    const { wire, js } = await run(Buffer.from([0x81, 0x02, 0xc3, 0x28]));
+    expect(wire).toEqual({ bytes: 8, opcode: 8, masked: true, code: 1007 });
+    expect(js).toEqual({ code: 1007, wasClean: false });
+  });
+
+  it("declared payload > 128 MiB → Close(1009)", async () => {
+    // recv_body checks the header-declared length before reading, so a 10-byte
+    // frame with an 8-byte extended length of 128 MiB + 1 trips MessageTooBig.
+    const { wire, js } = await run(Buffer.from([0x82, 0x7f, 0x00, 0x00, 0x00, 0x00, 0x08, 0x00, 0x00, 0x01]));
+    expect(wire).toEqual({ bytes: 8, opcode: 8, masked: true, code: 1009 });
+    expect(js).toEqual({ code: 1009, wasClean: false });
+  });
+
+  it("masked TEXT over wss:// → Close(1002) and the client closes the TLS socket", async () => {
+    // shutdown_after_close_frame is a no-op for SSL; the client must still
+    // close the transport itself (§7.1.1) so this does not hang on a hostile
+    // server that never sends close_notify.
+    const { wire, js } = await run(Buffer.from([0x81, 0x82, 1, 2, 3, 4, 0x68 ^ 1, 0x69 ^ 2]), true);
+    expect(wire).toEqual({ bytes: 8, opcode: 8, masked: true, code: 1002 });
+    expect(js).toEqual({ code: 1002, wasClean: false });
+  });
+
+  it("frames trailing the protocol error in the same read are dropped", async () => {
+    // §7.1.7: once failed, the endpoint MUST NOT continue to process data
+    // from the peer. A valid TEXT and a Ping packed after the bad frame must
+    // not dispatch onmessage or put a Pong on the wire after the Close.
+    const { wire, js, messages } = await run(
+      Buffer.concat([
+        Buffer.from([0x81, 0x02, 0xc3, 0x28]), // TEXT with invalid UTF-8
+        Buffer.from([0x81, 0x02, 0x68, 0x69]), // TEXT "hi"
+        Buffer.from([0x89, 0x00]), // Ping
+      ]),
+    );
+    expect(messages).toEqual([]);
+    expect(wire).toEqual({ bytes: 8, opcode: 8, masked: true, code: 1007 });
+    expect(js).toEqual({ code: 1007, wasClean: false });
   });
 });
 

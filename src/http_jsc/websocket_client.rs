@@ -82,10 +82,8 @@ pub struct WebSocket<const SSL: bool> {
     /// A Ping/Pong/Close payload is mid-accumulation in `ping_frame_bytes`.
     pub control_frame_started: Cell<bool>,
     pub close_received: Cell<bool>,
-    /// `Some` once `send_close_with_body` has enqueued the close frame: blocks
-    /// further outbound writes and drives `clear_data` + `dispatch_close` once
-    /// the frame is fully flushed (or the socket dies).
-    pub close_dispatch_pending: RefCell<Option<(u16, bun_core::String)>>,
+    /// Set once a Close frame is enqueued; drives teardown + JS dispatch after it drains.
+    pub close_dispatch_pending: RefCell<Option<PendingClose>>,
 
     pub receive_body_remain: Cell<usize>,
     pub receive_buffer: RefCell<LinearFifo<u8, DynamicBuffer<u8>>>,
@@ -167,8 +165,9 @@ impl<const SSL: bool> WebSocket<SSL> {
         self.clear_send_buffers(true);
         self.control_frame_started.set(false);
         self.ping_len.set(0);
-        if let Some((_, reason)) = self.close_dispatch_pending.take() {
-            reason.deref();
+        match self.close_dispatch_pending.take() {
+            Some(PendingClose::Clean { reason, .. }) => reason.deref(),
+            Some(PendingClose::Failed(_)) | None => {}
         }
         self.receiving_compressed.set(false);
         self.message_is_compressed.set(false);
@@ -312,13 +311,11 @@ impl<const SSL: bool> WebSocket<SSL> {
     pub fn handle_close(&self, _socket: Socket<SSL>, _code: c_int, _reason: *mut c_void) {
         log!("onClose");
         jsc::mark_binding!();
-        if let Some((code, mut reason)) = self.close_dispatch_pending.take() {
-            // The socket closed while our close frame was mid-flush; the peer
-            // either got it or didn't, but JS should still see the
-            // user-initiated code/reason (not an abrupt 1006).
+        if let Some(pending) = self.close_dispatch_pending.take() {
+            // Socket died mid-flush; JS still sees the original code, not 1006.
             self.detach_tcp();
             self.clear_data();
-            self.dispatch_close(code, &mut reason);
+            self.dispatch_pending_close(pending);
             // For the socket.
             // SAFETY: this is the terminal release of the socket's
             // I/O-layer ref.
@@ -338,7 +335,49 @@ impl<const SSL: bool> WebSocket<SSL> {
 
     pub fn terminate(&self, code: ErrorCode) {
         log!("terminate");
+        // RFC 6455 §7.1.7: send a Close frame with the status code before failing.
+        if let Some(wire_code) = code.close_frame_code() {
+            if self.outgoing_websocket.get().is_none() || self.has_pending_close_dispatch() {
+                // Already failing; don't fall through to fail() → RST the queued Close.
+                return;
+            }
+            if self.has_tcp() {
+                if !self.write_close_frame(wire_code, &[]) {
+                    // enqueue_encoded_bytes → terminate(FailedToWrite) already tore down.
+                    return;
+                }
+                self.close_received.set(true);
+                // Dispatch now so C++ → CLOSED and later ws.send() is a no-op.
+                self.dispatch_abrupt_close(code);
+                if self.send_buffer.borrow().readable_length() == 0 {
+                    self.close_tcp_after_failed_close();
+                } else {
+                    self.close_dispatch_pending
+                        .replace(Some(PendingClose::Failed(code)));
+                }
+                return;
+            }
+        }
         self.fail(code);
+    }
+
+    /// Enqueue a masked Close frame carrying `code` and an optional UTF-8 reason.
+    fn write_close_frame(&self, code: u16, body: &[u8]) -> bool {
+        debug_assert!(body.len() <= MAX_CLOSE_REASON);
+        let payload_len = 2 + body.len();
+        let mut frame = [0u8; CONTROL_HEADER_SIZE + 2 + MAX_CLOSE_REASON];
+        let header = WebsocketHeader::new((payload_len & 0x7F) as u8, true, Opcode::Close);
+        frame[..2].copy_from_slice(&header.slice());
+        frame[CONTROL_HEADER_SIZE..][..2].copy_from_slice(&code.to_be_bytes());
+        frame[CONTROL_HEADER_SIZE + 2..][..body.len()].copy_from_slice(body);
+        {
+            let (head, payload) = frame.split_at_mut(CONTROL_HEADER_SIZE);
+            let mask_buf: &mut [u8; 4] = (&mut head[2..CONTROL_HEADER_SIZE])
+                .try_into()
+                .expect("infallible: size matches");
+            Mask::fill_in_place(&self.global_this, mask_buf, &mut payload[..payload_len]);
+        }
+        self.enqueue_encoded_bytes(&frame[..CONTROL_HEADER_SIZE + payload_len])
     }
 
     fn clear_receive_buffers(&self, free: bool) {
@@ -615,6 +654,7 @@ impl<const SSL: bool> WebSocket<SSL> {
                 ReceiveState::Fail => self.recv_failed(ErrorCode::UnsupportedControlFrame),
             };
             match step {
+                Step::Continue if self.close_received.get() => break true,
                 Step::Continue => {}
                 Step::NeedMoreData => break false,
                 Step::Terminated => break true,
@@ -1117,6 +1157,10 @@ impl<const SSL: bool> WebSocket<SSL> {
     }
 
     fn send_pong(&self) -> bool {
+        if self.has_pending_close_dispatch() {
+            // §5.5.1: nothing follows a Close frame on the wire.
+            return true;
+        }
         if !self.has_tcp() {
             self.dispatch_abrupt_close(ErrorCode::Ended);
             return false;
@@ -1161,40 +1205,19 @@ impl<const SSL: bool> WebSocket<SSL> {
             self.clear_data();
             return;
         }
-        // shutdown_read/shutdown are deferred to shutdown_after_close_frame()
-        // so the close frame can finish writing first: SHUT_RD on Linux makes
-        // the socket immediately readable (recv → 0), and the resulting on_end
-        // → terminate → cancel(Failure) would RST and discard the buffered
-        // frame.
-        let mut frame = [0u8; CONTROL_HEADER_SIZE + 2 + MAX_CLOSE_REASON];
-        let header = WebsocketHeader::new(((body_len + 2) & 0x7F) as u8, true, Opcode::Close);
-        frame[..2].copy_from_slice(&header.slice());
-        // the 4-byte masking key lives at frame[2..6]
-        frame[CONTROL_HEADER_SIZE..][..2].copy_from_slice(&code.to_be_bytes());
 
-        let mut reason = bun_core::String::empty();
-        if body_len > 0 {
-            let body = &body[..body_len];
-            // close is always utf8
-            if !strings::is_valid_utf8(body) {
-                self.terminate(ErrorCode::InvalidUtf8);
-                return;
-            }
-            reason = bun_core::String::clone_utf8(body);
-            frame[CONTROL_HEADER_SIZE + 2..][..body_len].copy_from_slice(body);
+        let body = &body[..body_len];
+        if body_len > 0 && !strings::is_valid_utf8(body) {
+            self.terminate(ErrorCode::InvalidUtf8);
+            return;
         }
 
-        // we must mask the code (and the reason, if any)
-        let frame_len = CONTROL_HEADER_SIZE + 2 + body_len;
-        {
-            let (head, payload) = frame.split_at_mut(CONTROL_HEADER_SIZE);
-            let mask_buf: &mut [u8; 4] = (&mut head[2..CONTROL_HEADER_SIZE])
-                .try_into()
-                .expect("infallible: size matches");
-            Mask::fill_in_place(&self.global_this, mask_buf, &mut payload[..2 + body_len]);
-        }
-
-        if self.enqueue_encoded_bytes(&frame[..frame_len]) {
+        if self.write_close_frame(code, body) {
+            let mut reason = if body_len > 0 {
+                bun_core::String::clone_utf8(body)
+            } else {
+                bun_core::String::empty()
+            };
             let dispatch_code = dispatch_code.unwrap_or(code);
             if self.send_buffer.borrow().readable_length() == 0 {
                 self.shutdown_after_close_frame();
@@ -1206,7 +1229,10 @@ impl<const SSL: bool> WebSocket<SSL> {
                 // proxy_tunnel needed to flush it), so defer teardown until
                 // handle_writable drains the buffer or the socket dies.
                 self.close_dispatch_pending
-                    .replace(Some((dispatch_code, reason)));
+                    .replace(Some(PendingClose::Clean {
+                        code: dispatch_code,
+                        reason,
+                    }));
             }
         }
     }
@@ -1224,11 +1250,33 @@ impl<const SSL: bool> WebSocket<SSL> {
         }
     }
 
+    /// §7.1.1: after failing, close the transport ourselves rather than waiting on the peer.
+    fn close_tcp_after_failed_close(&self) {
+        self.shutdown_after_close_frame();
+        self.clear_data();
+        if SSL {
+            // shutdown_after_close_frame is a no-op for SSL; match cancel()'s SSL branch.
+            self.tcp.get().close(uws::CloseKind::Normal);
+        }
+    }
+
     fn finish_pending_close(&self) {
-        if let Some((code, mut reason)) = self.close_dispatch_pending.take() {
-            self.shutdown_after_close_frame();
-            self.clear_data();
-            self.dispatch_close(code, &mut reason);
+        match self.close_dispatch_pending.take() {
+            Some(PendingClose::Clean { code, mut reason }) => {
+                self.shutdown_after_close_frame();
+                self.clear_data();
+                self.dispatch_close(code, &mut reason);
+            }
+            Some(PendingClose::Failed(_)) => self.close_tcp_after_failed_close(),
+            None => {}
+        }
+    }
+
+    #[allow(clippy::needless_pass_by_value)] // `reason` is transferred to C++ via &mut
+    fn dispatch_pending_close(&self, pending: PendingClose) {
+        match pending {
+            PendingClose::Clean { code, mut reason } => self.dispatch_close(code, &mut reason),
+            PendingClose::Failed(code) => self.dispatch_abrupt_close(code),
         }
     }
 
@@ -1315,6 +1363,9 @@ impl<const SSL: bool> WebSocket<SSL> {
         // SAFETY: called from C++ with a valid pointer; guarded above.
         let this = unsafe { &*this_ptr };
 
+        if this.has_pending_close_dispatch() {
+            return;
+        }
         if !this.has_tcp() || op > 0xF {
             this.dispatch_abrupt_close(ErrorCode::Ended);
             return;
@@ -1366,6 +1417,9 @@ impl<const SSL: bool> WebSocket<SSL> {
         // SAFETY: called from C++ with a valid pointer; guarded above.
         let this = unsafe { &*this_ptr };
 
+        if this.has_pending_close_dispatch() {
+            return;
+        }
         if !this.has_tcp() || op > 0xF {
             this.dispatch_abrupt_close(ErrorCode::Ended);
             return;
@@ -1405,6 +1459,9 @@ impl<const SSL: bool> WebSocket<SSL> {
 
         // SAFETY: str_ is a valid pointer from C++
         let str = unsafe { &*str_ };
+        if this.has_pending_close_dispatch() {
+            return;
+        }
         if !this.has_tcp() {
             this.dispatch_abrupt_close(ErrorCode::Ended);
             return;
@@ -2032,6 +2089,61 @@ pub enum ErrorCode {
     ProxyConnectionRefused = 35,
     ProxyTunnelFailed = 36,
     UnexpectedRsv1 = 37,
+}
+
+impl ErrorCode {
+    /// RFC 6455 §7.4.1 wire status code for this failure; `None` for transport errors.
+    fn close_frame_code(self) -> Option<u16> {
+        use ErrorCode::*;
+        match self {
+            ControlFrameIsFragmented
+            | InvalidControlFrame
+            | CompressionUnsupported
+            | InvalidCompressedData
+            | CompressionFailed
+            | UnexpectedMaskFromServer
+            | ExpectedControlFrame
+            | UnsupportedControlFrame
+            | UnexpectedOpcode
+            | UnexpectedRsv1
+            | ProtocolError => Some(1002),
+            InvalidUtf8 => Some(1007),
+            MessageTooBig => Some(1009),
+            // Handshake / transport / proxy failures: nothing to write a Close frame to.
+            Cancel
+            | InvalidResponse
+            | Expected101StatusCode
+            | MissingUpgradeHeader
+            | MissingConnectionHeader
+            | MissingWebsocketAcceptHeader
+            | InvalidUpgradeHeader
+            | InvalidConnectionHeader
+            | InvalidWebsocketVersion
+            | MismatchWebsocketAcceptHeader
+            | MissingClientProtocol
+            | MismatchClientProtocol
+            | Timeout
+            | Closed
+            | FailedToWrite
+            | FailedToConnect
+            | HeadersTooLarge
+            | Ended
+            | FailedToAllocateMemory
+            | TlsHandshakeFailed
+            | ProxyConnectFailed
+            | ProxyAuthenticationRequired
+            | ProxyConnectionRefused
+            | ProxyTunnelFailed => None,
+        }
+    }
+}
+
+/// Deferred JS dispatch for a Close frame that is still draining.
+pub enum PendingClose {
+    /// Close handshake — JS sees `did_close` (wasClean = true).
+    Clean { code: u16, reason: bun_core::String },
+    /// §7.1.7 failure — JS sees `did_abrupt_close` (wasClean = false).
+    Failed(ErrorCode),
 }
 
 // ──────────────────────────────────────────────────────────────────────────

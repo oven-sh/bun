@@ -503,9 +503,8 @@ function makeZip(cfg: Config, name: string, files: string[]): string {
  * after download.
  *
  * rust-and-link runs in parallel with build-cpp (no depends_on), so it
- * POLLS `buildkite-agent step get outcome` for the cpp step until it passes
- * before attempting the download. link-only has depends_on and skips the
- * poll.
+ * POLLS `buildkite-agent step get` for the cpp step until it passes before
+ * attempting the download. link-only has depends_on and skips the poll.
  *
  * Call BEFORE ninja — the downloaded files are ninja's link inputs.
  */
@@ -602,53 +601,93 @@ function runAsync(argv: string[], cwd: string): Promise<void> {
 }
 
 /**
- * Poll `buildkite-agent step get outcome --step <key>` until the step
- * reaches a terminal state. Returns on "passed"; throws on any failure
- * outcome so the caller exits 1 with a message that points at the real
- * failing step (rather than a downstream "artifact not found").
+ * Poll `buildkite-agent step get` until `<stepKey>` reaches a terminal state.
+ * Returns on "passed"; throws on a terminal failure so the caller exits 1 with
+ * a message that points at the real failing step (rather than a downstream
+ * "artifact not found").
+ *
+ * `outcome` alone is not enough: Buildkite reports the last *completed* job's
+ * outcome, so an earlier attempt that errored/expired reads as `errored` even
+ * while an automatic or manual retry is queued or running. `state` tracks the
+ * latest job (it's what depends_on gates on), so a failure outcome is only
+ * believed once `state` is terminal too. See build 84838: windows-x64-build-bun
+ * bailed on `outcome: errored [0s]` while windows-x64-build-cpp's retry was
+ * sitting in the queue.
+ *
+ * Exported for test/internal/ci-sibling-wait.test.ts; pollMs is only for that
+ * test (CI keeps the default 3s).
  */
-async function waitForStepOutcome(stepKey: string): Promise<void> {
-  const failed = new Set(["hard_failed", "soft_failed", "errored", "canceled", "cancelled"]);
+export async function waitForStepOutcome(stepKey: string, pollMs = 3000): Promise<void> {
+  const failedOutcome = new Set(["hard_failed", "soft_failed", "errored", "canceled", "cancelled"]);
+  // Job states that mean "a retry is in flight / the step isn't done". Anything
+  // in this set keeps the poll going even when `outcome` already shows a
+  // failure from an earlier attempt. Unknown values fall through to the
+  // outcome check, preserving the pre-retry-aware behaviour.
+  const liveState = new Set([
+    "pending",
+    "waiting",
+    "blocked",
+    "unblocked",
+    "limiting",
+    "limited",
+    "scheduled",
+    "assigned",
+    "accepted",
+    "running",
+  ]);
   const sleep = (ms: number) => new Promise<void>(r => setTimeout(r, ms));
+  const get = (attr: string) => {
+    const r = spawnSync("buildkite-agent", ["step", "get", attr, "--step", stepKey], { encoding: "utf8" });
+    return { ok: !r.error && r.status === 0, out: (r.stdout ?? "").trim(), err: (r.stderr ?? "").trim() };
+  };
   const start = Date.now();
   const deadlineMs = 60 * 60 * 1000;
   let last = "";
+  let terminalReads = 0;
   console.log(`Waiting for ${stepKey} to finish...`);
   for (;;) {
-    const result = spawnSync("buildkite-agent", ["step", "get", "outcome", "--step", stepKey], { encoding: "utf8" });
-    if (result.error) {
-      throw new BuildError(`Failed to spawn buildkite-agent`, { cause: result.error });
-    }
-    if (result.status !== 0) {
-      const err = (result.stderr ?? "").trim();
-      if (err !== last) {
-        console.log(`  buildkite-agent step get exited ${result.status}: ${err}`);
-        last = err;
+    const outcome = get("outcome");
+    if (!outcome.ok) {
+      if (outcome.err !== last) {
+        console.log(`  buildkite-agent step get outcome failed: ${outcome.err}`);
+        last = outcome.err;
       }
       if (Date.now() - start > deadlineMs) {
-        throw new BuildError(`buildkite-agent step get kept failing for ${stepKey}`, { hint: err });
+        throw new BuildError(`buildkite-agent step get kept failing for ${stepKey}`, { hint: outcome.err });
       }
-      await sleep(3000);
+      await sleep(pollMs);
       continue;
     }
-    const outcome = (result.stdout ?? "").trim();
-    if (outcome !== last) {
+    // `state` is advisory: if the agent/API doesn't return it, fall back to
+    // outcome-only (the original behaviour).
+    const state = get("state");
+    const stateVal = state.ok ? state.out : "";
+    const display = `${outcome.out || "(none)"}${stateVal ? ` / state=${stateVal}` : ""}`;
+    if (display !== last) {
       const elapsed = Math.round((Date.now() - start) / 1000);
-      console.log(`  ${stepKey} outcome: ${outcome || "(running)"} [${elapsed}s]`);
-      last = outcome;
+      console.log(`  ${stepKey} outcome=${display} [${elapsed}s]`);
+      last = display;
     }
-    if (outcome === "passed") return;
-    if (failed.has(outcome)) {
-      throw new BuildError(`Sibling step ${stepKey} ${outcome} — nothing to link`, {
-        hint: `See the ${stepKey} job for the real error; this step only downloads its artifacts.`,
-      });
+    if (outcome.out === "passed") return;
+    if (failedOutcome.has(outcome.out) && !liveState.has(stateVal)) {
+      // Two consecutive terminal reads before giving up: a retry job is
+      // created ~1s after its predecessor finishes, so a single poll can land
+      // in the gap where attempt N is `expired` and attempt N+1 isn't
+      // `scheduled` yet.
+      if (++terminalReads >= 2) {
+        throw new BuildError(`Sibling step ${stepKey} ${outcome.out} — nothing to link`, {
+          hint: `See the ${stepKey} job for the real error; this step only downloads its artifacts.`,
+        });
+      }
+    } else {
+      terminalReads = 0;
     }
     if (Date.now() - start > deadlineMs) {
       throw new BuildError(`Timed out after 60m waiting for ${stepKey}`, {
         hint: `${stepKey} never reached a terminal outcome; check that job for a hang.`,
       });
     }
-    await sleep(3000);
+    await sleep(pollMs);
   }
 }
 

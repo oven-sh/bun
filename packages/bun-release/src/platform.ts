@@ -146,10 +146,13 @@ function isLinuxMusl(): boolean {
     if (process.report) {
       const excludeNetwork = process.report.excludeNetwork;
       process.report.excludeNetwork = true;
-      const report = process.report.getReport() as { header?: { glibcVersionRuntime?: string } };
-      process.report.excludeNetwork = excludeNetwork;
-      if (report && report.header) {
-        return !report.header.glibcVersionRuntime;
+      try {
+        const report = process.report.getReport() as { header?: { glibcVersionRuntime?: string } };
+        if (report && report.header) {
+          return !report.header.glibcVersionRuntime;
+        }
+      } finally {
+        process.report.excludeNetwork = excludeNetwork;
       }
     }
   } catch (error) {

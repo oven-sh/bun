@@ -244,6 +244,10 @@ pub(crate) fn reset_between_files(global: &JSGlobalObject) {
     if all.is_null() {
         return;
     }
+    // Runs from a `scopeguard::defer!` with no enclosing host call, so a throw
+    // scope (`set_fake_timer_marker` → `deleteProperty`) needs an explicit
+    // catch here to satisfy exception-scope validation.
+    bun_jsc::top_scope!(scope, global);
     // SAFETY: `timer_all()` is the live per-thread `All`; single JS thread.
     if unsafe { (*all).fake_timers.is_active() } {
         drain_to_real_timers(global);
@@ -251,6 +255,7 @@ pub(crate) fn reset_between_files(global: &JSGlobalObject) {
         // `setSystemTime()` writes `overridenDateNow` without activating fake timers.
         CURRENT_TIME.clear(global);
     }
+    scope.clear_exception();
 }
 
 // ===

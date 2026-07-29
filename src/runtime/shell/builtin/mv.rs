@@ -520,11 +520,13 @@ impl ShellMvBatchedTask {
         }
 
         if bun_sys::S::ISDIR(mode) {
-            match bun_sys::mkdirat(dst_dir, dst, mode & 0o7777) {
-                Ok(()) => {}
-                Err(e) if e.get_errno() == bun_sys::E::EEXIST => {}
+            // Create writable/searchable so children can be written; the source
+            // mode is stamped via fchmod once the tree is in place.
+            let created = match bun_sys::mkdirat(dst_dir, dst, (mode & 0o7777) | 0o700) {
+                Ok(()) => true,
+                Err(e) if e.get_errno() == bun_sys::E::EEXIST => false,
                 Err(e) => return Err(e),
-            }
+            };
             let src_fd = shell_openat(src_dir, src, bun_sys::O::RDONLY | bun_sys::O::DIRECTORY, 0)?;
             let dst_fd =
                 match shell_openat(dst_dir, dst, bun_sys::O::RDONLY | bun_sys::O::DIRECTORY, 0) {
@@ -557,6 +559,9 @@ impl ShellMvBatchedTask {
                     Err(e) => break Err(e),
                 }
             };
+            if created && result.is_ok() {
+                let _ = bun_sys::fchmod(dst_fd, mode & 0o7777);
+            }
             closefd(dst_fd);
             closefd(src_fd);
             result?;

@@ -2,6 +2,9 @@ import { $ } from "bun";
 import { describe, expect, test } from "bun:test";
 import { isPosix } from "harness";
 import {
+  accessSync,
+  chmodSync,
+  constants,
   existsSync,
   mkdirSync,
   readFileSync,
@@ -70,9 +73,11 @@ describe("mv", async () => {
     function findCrossDeviceDir(): string | undefined {
       if (!isPosix) return undefined;
       const refDev = statSync(tmp).dev;
-      for (const candidate of ["/dev/shm", "/tmp", "/run"]) {
+      for (const candidate of ["/dev/shm", "/tmp"]) {
         try {
-          if (statSync(candidate).dev !== refDev) return candidate;
+          if (statSync(candidate).dev === refDev) continue;
+          accessSync(candidate, constants.W_OK | constants.X_OK);
+          return candidate;
         } catch {}
       }
       return undefined;
@@ -97,12 +102,14 @@ describe("mv", async () => {
         const srcFile = join(src, "f.txt");
         const dstFile = join(dst, "f.txt");
         writeFileSync(srcFile, "payload\n");
+        chmodSync(srcFile, 0o640);
 
         const r = await $`mv ${srcFile} ${dstFile}`.quiet();
         expect(r.stderr.toString()).toBe("");
         expect(r.exitCode).toBe(0);
         expect(existsSync(srcFile)).toBe(false);
         expect(readFileSync(dstFile, "utf8")).toBe("payload\n");
+        expect(statSync(dstFile).mode & 0o777).toBe(0o640);
       } finally {
         rmSync(src, { recursive: true, force: true });
         rmSync(dst, { recursive: true, force: true });

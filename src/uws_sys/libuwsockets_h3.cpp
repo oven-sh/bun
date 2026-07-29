@@ -53,6 +53,10 @@ void uws_h3_app_destroy(uws_h3_app_t* app) { delete (H3App*)app; }
 bool uws_h3_constructor_failed(uws_h3_app_t* app) { return !app || ((H3App*)app)->constructorFailed(); }
 void uws_h3_app_close(uws_h3_app_t* app) { ((H3App*)app)->close(); }
 void uws_h3_app_clear_routes(uws_h3_app_t* app) { ((H3App*)app)->clearRoutes(); }
+void uws_h3_app_set_slash_normalization(uws_h3_app_t* app, bool ignore_trailing_slash, bool ignore_duplicate_slashes)
+{
+    ((H3App*)app)->setSlashNormalization(ignore_trailing_slash, ignore_duplicate_slashes);
+}
 void* uws_h3_get_native_handle(uws_h3_app_t* app) { return ((H3App*)app)->getNativeHandle(); }
 
 bool uws_h3_app_add_server_name(uws_h3_app_t* app, const char* hostname,

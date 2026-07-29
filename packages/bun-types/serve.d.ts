@@ -711,6 +711,20 @@ declare module "bun" {
       maxRequestBodySize?: number;
 
       /**
+       * Match routes while ignoring a trailing slash, so `/api/users/` matches a
+       * route registered as `/api/users`. A lone root `/` is preserved.
+       * @default false
+       */
+      ignoreTrailingSlash?: boolean;
+
+      /**
+       * Match routes while collapsing duplicate slashes, so `//api//users`
+       * matches a route registered as `/api/users`.
+       * @default false
+       */
+      ignoreDuplicateSlashes?: boolean;
+
+      /**
        * Whether to render contextual errors with Bun's error page
        * @default process.env.NODE_ENV !== 'production'
        */
@@ -789,20 +803,6 @@ declare module "bun" {
        * @default false
        */
       ipv6Only?: boolean;
-
-      /**
-       * Match routes while ignoring a trailing slash, so `/api/users/` matches a
-       * route registered as `/api/users`. A lone root `/` is preserved.
-       * @default false
-       */
-      ignoreTrailingSlash?: boolean;
-
-      /**
-       * Match routes while collapsing duplicate slashes, so `//api//users`
-       * matches a route registered as `/api/users`.
-       * @default false
-       */
-      ignoreDuplicateSlashes?: boolean;
 
       /**
        * Also listen for HTTP/3 (QUIC) on the same port. Requires {@link tls}.

@@ -1073,9 +1073,9 @@ describe("ignoreTrailingSlash", () => {
     expect(await res.text()).toBe("/api/users");
   });
 
-  it("matches a trailing slash", async () => {
+  it("matches a trailing slash and keeps the raw request.url", async () => {
     const res = await fetch(new URL("/api/users/", server.url).href);
-    expect(await res.text()).not.toBe("fallback");
+    expect(await res.text()).toBe("/api/users/");
   });
 
   it("matches a static Response route with a trailing slash", async () => {
@@ -1086,11 +1086,6 @@ describe("ignoreTrailingSlash", () => {
   it("matches a param route with a trailing slash", async () => {
     const res = await fetch(new URL("/posts/123/", server.url).href);
     expect(await res.text()).toBe("123");
-  });
-
-  it("keeps the raw request.url (trailing slash preserved for the handler)", async () => {
-    const res = await fetch(new URL("/api/users/", server.url).href);
-    expect(await res.text()).toBe("/api/users/");
   });
 
   it("keeps the root route working", async () => {
@@ -1123,14 +1118,9 @@ describe("ignoreDuplicateSlashes", () => {
     server.stop(true);
   });
 
-  it("collapses duplicate slashes", async () => {
+  it("collapses duplicate slashes and keeps the raw request.url", async () => {
     const res = await fetch(`${server.url.origin}//api//users`);
-    expect(await res.text()).not.toBe("fallback");
-  });
-
-  it("keeps the raw request.url (duplicate slashes preserved for the handler)", async () => {
-    const res = await fetch(`${server.url.origin}//api//users`);
-    expect(await res.text()).toContain("//users");
+    expect(await res.text()).toBe("/api//users");
   });
 
   it("does not trim a trailing slash (that flag is off)", async () => {
@@ -1193,16 +1183,9 @@ describe("ignoreTrailingSlash + ignoreDuplicateSlashes", () => {
     server.stop(true);
   });
 
-  it("matches messy duplicate and trailing slashes together", async () => {
+  it("matches messy duplicate and trailing slashes together and keeps the raw request.url", async () => {
     const res = await fetch(`${server.url.origin}//api//users//`);
-    expect(await res.text()).not.toBe("fallback");
-  });
-
-  it("keeps the raw request.url (messy slashes preserved for the handler)", async () => {
-    const res = await fetch(`${server.url.origin}//api//users//`);
-    const pathname = await res.text();
-    expect(pathname).toContain("//users");
-    expect(pathname.endsWith("//")).toBe(true);
+    expect(await res.text()).toBe("/api//users//");
   });
 
   it("persists across server.reload()", async () => {

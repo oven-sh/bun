@@ -564,6 +564,8 @@ pub enum Tag {
 pub enum ValueError {
     AbortReason(CommonAbortReason),
     SystemError(SystemError),
+    /// `SystemError` surfaced as a JS `TypeError` (fetch network errors).
+    SystemTypeError(SystemError),
     Message(BunString),
     /// Surfaces as a JS `TypeError`. The fetch spec maps every "network
     /// error" to TypeError, so use this for fetch-layer rejections that
@@ -578,7 +580,7 @@ impl ValueError {
     pub fn reset(&mut self) {
         match self {
             // The bun.String fields are dropped by the assignment below.
-            ValueError::SystemError(_system_error) => {}
+            ValueError::SystemError(_) | ValueError::SystemTypeError(_) => {}
             ValueError::Message(message) => message.deref(),
             ValueError::TypeError(message) => message.deref(),
             ValueError::JSValue(v) => v.deinit(),
@@ -612,6 +614,9 @@ impl ValueError {
             ValueError::SystemError(system_error) => {
                 core::mem::take(system_error).to_error_instance(global_object)
             }
+            ValueError::SystemTypeError(system_error) => {
+                core::mem::take(system_error).to_type_error_instance(global_object)
+            }
             ValueError::Message(message) => message.to_error_instance(global_object),
             ValueError::TypeError(message) => message.to_type_error_instance(global_object),
             // do an early return in this case we don't need to create a new Strong
@@ -628,6 +633,7 @@ impl ValueError {
             // `.clone()` on BunString/SystemError already bumps the refcount (paired
             // with their Drop deref); an extra `.ref_()` here would leak +1 per dupe.
             ValueError::SystemError(e) => ValueError::SystemError(e.clone()),
+            ValueError::SystemTypeError(e) => ValueError::SystemTypeError(e.clone()),
             ValueError::Message(m) => ValueError::Message(m.clone()),
             ValueError::TypeError(m) => ValueError::TypeError(m.clone()),
             ValueError::JSValue(js_ref) => {
@@ -1358,6 +1364,9 @@ impl Value {
                 Value::Locked(l) => core::mem::take(l),
                 _ => unreachable!(),
             };
+            let was_disturbed = !locked.action.is_none()
+                || locked.promise.is_some()
+                || locked.readable.is_disturbed(global);
             *self = Value::Error(err);
             let Value::Error(err_ref) = self else {
                 unreachable!()
@@ -1398,6 +1407,10 @@ impl Value {
                 // `task` is the live request-ctx pointer registered alongside
                 // this callback.
                 on_receive_value(locked.task.unwrap(), self);
+            }
+
+            if was_disturbed {
+                *self = Value::Used;
             }
 
             return Ok(());
@@ -2245,7 +2258,9 @@ fn handle_body_error(value: &mut Value, global_object: &JSGlobalObject) -> Optio
     let Value::Error(err) = value else {
         return None;
     };
-    Some(JSPromise::rejected_promise(global_object, err.to_js(global_object)).to_js())
+    let js = err.to_js(global_object);
+    *value = Value::Used;
+    Some(JSPromise::rejected_promise(global_object, js).to_js())
 }
 
 // ────────────────────────────────────────────────────────────────────────────

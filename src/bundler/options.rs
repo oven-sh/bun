@@ -2085,12 +2085,8 @@ pub(crate) fn path_template_needs(data: &[u8], field: PlaceholderField) -> bool 
     strings::contains(data, needle)
 }
 
-/// Returns `Some((byte_index, tail))` when `template` contains a `[` with no
-/// matching `]`, where `byte_index` is the position of that `[` and `tail` is
-/// the slice from that `[` to the end. Balanced templates return `None`.
-///
-/// The scan mirrors [`path_template_print`]'s depth-counting so the two agree
-/// on what is "unterminated".
+/// `Some((byte_index_of_open_bracket, &template[byte_index..]))` when a `[`
+/// has no matching `]` (same depth-counting as [`path_template_print`]).
 pub fn find_unterminated_placeholder(template: &[u8]) -> Option<(usize, &[u8])> {
     let mut remain = template;
     while let Some(j) = strings::index_of_char(remain, b'[') {
@@ -2153,8 +2149,7 @@ pub(crate) fn path_template_print<W: bun_io::Write>(
         }
 
         if count != 0 {
-            // No matching `]` exists: the `[` and everything after it is literal.
-            // `remain` is written after the loop.
+            // No matching `]`: emit `[` and fall through to write `remain` literally.
             writer.write_all(b"[")?;
             break;
         }
@@ -2256,8 +2251,7 @@ fn path_template_print_tolerates_malformed_brackets() {
         path_template_print(&mut out, template, b"D", b"N", b"E", Some(0), b"T", false).unwrap();
         out
     }
-    // A known placeholder name with no closing `]` must not slice past the end
-    // (used to panic with "range start index 5 out of range for slice of length 4").
+    // Unterminated known placeholder: used to slice one past the end.
     assert_eq!(run(b"[name"), b"[name");
     assert_eq!(run(b"[dir"), b"[dir");
     assert_eq!(run(b"[hash"), b"[hash");

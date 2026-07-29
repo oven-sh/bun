@@ -313,6 +313,8 @@ describe.concurrent("bun test --isolate", () => {
         import { test, vi } from "bun:test";
         test("leak fake timers", () => {
           vi.useFakeTimers();
+          setTimeout(() => {}, 1000);
+          AbortSignal.timeout(1000);
           // intentionally never calling vi.useRealTimers()
         });
       `,

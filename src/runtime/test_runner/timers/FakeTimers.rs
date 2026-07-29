@@ -6,7 +6,7 @@ use bun_core::Environment;
 use bun_core::Timespec;
 use bun_jsc::{CallFrame, JSFunction, JSGlobalObject, JSHostFn, JSValue, JsResult};
 use crate::timer::{
-    ElTimespec, EventLoopTimer, EventLoopTimerState, EventLoopTimerTag, InHeap,
+    AbortSignalTimeout, ElTimespec, EventLoopTimer, EventLoopTimerState, EventLoopTimerTag, InHeap,
     TimerObjectInternals, TimeoutObject, TimerHeap,
 };
 
@@ -142,16 +142,30 @@ impl FakeTimers {
     fn clear(&mut self) -> Vec<core::ptr::NonNull<TimerObjectInternals>> {
         let mut pinned = Vec::new();
         while let Some(timer) = self.timers.delete_min() {
-            // SAFETY: `delete_min` returned a live node; the `TimeoutObject`
-            // it belongs to stays live until the caller's release pass.
+            // SAFETY: `delete_min` returned a live node; the parent box stays
+            // live until the caller's release pass / the signal unref below.
             unsafe {
                 (*timer).in_heap = InHeap::None;
                 (*timer).state = EventLoopTimerState::CANCELLED;
-                if (*timer).tag == EventLoopTimerTag::TimeoutObject {
-                    let parent = TimeoutObject::from_timer_ptr(timer);
-                    pinned.push(core::ptr::NonNull::new_unchecked(
-                        core::ptr::addr_of_mut!((*parent).internals),
-                    ));
+                match (*timer).tag {
+                    EventLoopTimerTag::TimeoutObject => {
+                        let parent = TimeoutObject::from_timer_ptr(timer);
+                        pinned.push(core::ptr::NonNull::new_unchecked(
+                            core::ptr::addr_of_mut!((*parent).internals),
+                        ));
+                    }
+                    EventLoopTimerTag::AbortSignalTimeout => {
+                        // Break the AbortSignal <-> Timeout refcount cycle the
+                        // same way `All::cancel_all_timeout_objects` does, so
+                        // `~AbortSignal` -> `cancelTimer()` can free the box.
+                        let t = AbortSignalTimeout::from_timer_ptr(timer);
+                        let signal = (*t).signal;
+                        (*t).signal = core::ptr::null_mut();
+                        if !signal.is_null() {
+                            crate::jsc::abort_signal::AbortSignal::opaque_ref(signal).unref();
+                        }
+                    }
+                    _ => {}
                 }
             }
         }

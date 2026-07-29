@@ -172,13 +172,6 @@ pub trait Sink {
     fn is_local_stream(&self, _stream_id: u32) -> bool {
         false
     }
-    /// Highest stream id the embedder has ever registered, in either direction. Monotonic across
-    /// stream eviction: ids at or below it have existed (closed at worst, never idle), which the
-    /// engine cannot tell on its own for locally-initiated streams whose HEADERS it never sent
-    /// (nghttp2's session_detect_idle_stream uses the same allocation high-water marks).
-    fn highest_started_stream_id(&self) -> u32 {
-        0
-    }
     /// Highest locally-initiated stream id the embedder has allocated (own parity only: odd on a
     /// client, even on a server). Powers the parity-aware §5.1 idle test.
     fn highest_local_stream_id(&self) -> u32 {

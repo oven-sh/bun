@@ -5892,12 +5892,6 @@ impl crate::api::h2::connection::Sink for H2FrameParser {
         self.streams.get().contains_key(&stream_id)
     }
 
-    fn highest_started_stream_id(&self) -> u32 {
-        // handle_received_stream_id raises this for every stream registered on this side
-        // (including locally-initiated ones) and eviction never lowers it.
-        self.last_stream_id.get()
-    }
-
     fn highest_local_stream_id(&self) -> u32 {
         self.last_local_stream_id.get()
     }

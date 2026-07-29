@@ -183,7 +183,8 @@ describe.concurrent("compile --asset and /$bunfs/ directory semantics", () => {
       `,
       });
       await compile(dir);
-      const { stdout, code } = await run(dir);
+      const { stdout, stderr, code } = await run(dir);
+      expect(stderr.trim()).toBe("");
       const r = JSON.parse(stdout.trim());
       expect(r.code).toBe("ENOENT");
       expect(r.exists).toBe(false);
@@ -276,4 +277,26 @@ describe.concurrent("compile --asset and /$bunfs/ directory semantics", () => {
     },
     TIMEOUT,
   );
+
+  test.each([
+    [["build", "./index.ts", "--asset", "./public"], "--asset requires --compile"],
+    [["build", "--compile", "--target=browser", "./index.html", "--asset", "./public"], "--target browser with --asset"],
+    [["build", "--compile", "./index.ts", "--outfile", "app", "--asset", "./does-not-exist"], "failed to read --asset"],
+  ])("rejects %j", async (args, expected) => {
+    const dir = tempDirWithFiles("bunfs-asset-reject", {
+      "index.ts": `console.log("x");`,
+      "index.html": `<!doctype html>`,
+      "public/a.txt": `a`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), ...args],
+      cwd: dir,
+      env: bunEnv,
+      stdout: "ignore",
+      stderr: "pipe",
+    });
+    const [stderr, code] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain(expected);
+    expect(code).not.toBe(0);
+  });
 });

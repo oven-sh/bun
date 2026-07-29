@@ -1258,7 +1258,13 @@ fn collect_compile_assets(
     let mut seen: StringArrayHashMap<()> = StringArrayHashMap::new();
     for f in out.iter() {
         if f.output_kind.is_file_in_standalone_mode() {
-            let _ = seen.put(strings::remove_leading_dot_slash(&f.dest_path), ());
+            let key = strings::remove_leading_dot_slash(&f.dest_path);
+            #[cfg(windows)]
+            let key: Vec<u8> = key
+                .iter()
+                .map(|&b| if b == b'\\' { b'/' } else { b })
+                .collect();
+            let _ = seen.put(&key[..], ());
         }
     }
     let mut push =

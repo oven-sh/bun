@@ -155,3 +155,43 @@ test("Bun.file().json() with UTF-8 BOM does not free an interior pointer", async
   });
   expect(exitCode).toBe(0);
 });
+
+test("Bun.file(relativePath) resolves against cwd at construction, not at read time", async () => {
+  using dir = tempDir("bun-file-relcwd", {
+    "a/rel.txt": "FROM-A",
+    "b/rel.txt": "FROM-B",
+    "b/only-b.txt": "ONLY-B",
+    "run.ts": `
+      import fs from "node:fs";
+      import path from "node:path";
+      const root = process.argv[2];
+      process.chdir(path.join(root, "a"));
+      const f = Bun.file("rel.txt");
+      const g = Bun.file("only-b.txt");
+      process.chdir(path.join(root, "b"));
+      console.log(JSON.stringify({
+        text: await f.text(),
+        nameIsAbsolute: path.isAbsolute(f.name),
+        nameResolves: fs.realpathSync(f.name) === fs.realpathSync(path.join(root, "a", "rel.txt")),
+        exists: await g.exists(),
+      }));
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), join(String(dir), "run.ts"), String(dir)],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toBe("");
+  expect(JSON.parse(stdout)).toEqual({
+    text: "FROM-A",
+    nameIsAbsolute: true,
+    nameResolves: true,
+    exists: false,
+  });
+  expect(exitCode).toBe(0);
+});

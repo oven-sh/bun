@@ -3743,7 +3743,32 @@ impl BlobExt for Blob {
                     }
                 }
 
-                path_or_fd.to_thread_safe();
+                // Resolve relative paths against the current working directory
+                // now, at construction time. The BunFile is a long-lived handle
+                // whose reads happen later; keeping the raw relative string and
+                // resolving at read time means a `process.chdir()` in between
+                // silently retargets the handle to a different file.
+                let slice = path_or_fd.path().slice();
+                let resolved = if !slice.is_empty() && !bun_paths::is_absolute(slice) {
+                    let mut buf = bun_paths::path_buffer_pool::get();
+                    let cwd = global_this.bun_vm().top_level_dir();
+                    bun_paths::resolve_path::join_abs_string_buf_checked::<
+                        bun_paths::platform::Auto,
+                    >(cwd, &mut buf[..], &[slice])
+                    .map(|abs| {
+                        bun_core::handle_oom(bun_ptr::cow_slice::CowSlice::init_dupe(abs))
+                    })
+                } else {
+                    None
+                };
+                match resolved {
+                    Some(abs) => {
+                        *path_or_fd = PathOrFileDescriptor::Path(
+                            crate::webcore::node_types::PathLike::String(abs),
+                        );
+                    }
+                    None => path_or_fd.to_thread_safe(),
+                }
                 core::mem::replace(
                     path_or_fd,
                     PathOrFileDescriptor::Path(crate::webcore::node_types::PathLike::String(

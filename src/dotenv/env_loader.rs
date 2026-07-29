@@ -1207,7 +1207,7 @@ impl<'a> Parser<'a> {
         Ok(Some(self.value_buffer.as_slice()))
     }
 
-    fn _parse<const OVERRIDE: bool, const IS_PROCESS: bool, const EXPAND: bool>(
+    fn parse<const OVERRIDE: bool, const IS_PROCESS: bool, const EXPAND: bool>(
         &mut self,
         map: &mut Map,
     ) -> Result<(), AllocError> {
@@ -1236,7 +1236,7 @@ impl<'a> Parser<'a> {
         if !IS_PROCESS && EXPAND {
             // borrowck — index-based iteration: clone the value bytes, run
             // expansion against an immutable `&Map`, then write back via
-            // `values_mut()`. Values are dupe'd by `_parse` above, so length
+            // `values_mut()`. Values are dupe'd by `parse` above, so length
             // is bounded by file size.
             let total = map.map.count();
             let mut idx = count;
@@ -1272,7 +1272,7 @@ impl<'a> Parser<'a> {
             src: strings::without_utf8_bom(src),
             value_buffer,
         };
-        parser._parse::<OVERRIDE, IS_PROCESS, EXPAND>(map)
+        parser.parse::<OVERRIDE, IS_PROCESS, EXPAND>(map)
     }
 }
 

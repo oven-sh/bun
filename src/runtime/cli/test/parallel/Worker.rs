@@ -361,7 +361,7 @@ impl Worker {
         // SAFETY: coord backref valid; frame mutation — see `coord` field doc (provenance caveats).
         let f = unsafe { &mut (*self.coord.cast_mut()).frame };
         f.begin(frame::Kind::Run);
-        f.u32_(file_idx);
+        f.u32(file_idx);
         f.str(file);
         self.ipc.send(f.finish());
         self.inflight = Some(file_idx);
@@ -374,7 +374,7 @@ impl Worker {
         f.begin(frame::Kind::Shutdown);
         self.ipc.send(f.finish());
         // Leave the channel open so the reader drains trailing
-        // repeat_bufs/junit_file/coverage_file frames; the worker exits on
+        // repeat_bufs / junit_chunk / coverage_chunk frames; the worker exits on
         // `.shutdown` and its exit closes the peer end.
     }
 }

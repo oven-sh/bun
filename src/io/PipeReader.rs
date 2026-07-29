@@ -389,6 +389,11 @@ impl PosixBufferedReader {
     /// embedding `self` (the shell `PipeReader` does exactly that), so the
     /// caller must not touch `self` again after a `false` return.
     pub fn register_poll(&mut self) -> bool {
+        // pause() may land from inside on_read_chunk's JS re-entry while the
+        // loop's own re-arm is still ahead on the stack.
+        if self.flags.contains(PosixFlags::IS_PAUSED) {
+            return true;
+        }
         // Hoist vtable-derived scalars and
         // normalize self.handle to Poll before taking the single &mut borrow,
         // so no raw-pointer escape is needed.
@@ -453,11 +458,17 @@ impl PosixBufferedReader {
 
     // Exists for consistently with Windows.
     pub fn has_pending_read(&self) -> bool {
-        matches!(&self.handle, PollOrFd::Poll(poll) if poll.is_registered())
+        // `is_watching()` (registered && !needs-rearm) rather than
+        // `is_registered()`: a one-shot poll that has fired but not been
+        // re-armed will not deliver another callback, so callers that skip
+        // `read()` on "pending" must not be told one is in flight.
+        matches!(&self.handle, PollOrFd::Poll(poll) if poll.is_watching())
     }
 
     pub fn watch(&mut self) {
-        if self.flags.contains(PosixFlags::POLLABLE) {
+        if self.flags.contains(PosixFlags::POLLABLE)
+            && !matches!(&self.handle, PollOrFd::Poll(poll) if poll.is_watching())
+        {
             self.register_poll();
         }
     }
@@ -503,6 +514,9 @@ impl PosixBufferedReader {
     }
 
     pub fn on_poll(parent: &mut PosixBufferedReader, size_hint: isize, received_hup: bool) {
+        if parent.flags.contains(PosixFlags::IS_PAUSED) {
+            return;
+        }
         let fd = parent.get_fd();
         bun_sys::syslog!("onPoll({}) = {}", fd, size_hint);
 
@@ -662,7 +676,7 @@ impl PosixBufferedReader {
 
                         if streaming {
                             // Stream this chunk and register for next cycle
-                            let _ = parent.vtable.on_read_chunk(
+                            let keep_going = parent.vtable.on_read_chunk(
                                 &stack_buffer[..bytes_read],
                                 if received_hup && bytes_read < stack_buffer.len() {
                                     ReadState::Eof
@@ -670,6 +684,15 @@ impl PosixBufferedReader {
                                     ReadState::Progress
                                 },
                             );
+                            // Re-entrant JS inside on_read_chunk can close the
+                            // reader (nested on_pull -> read -> EOF); the
+                            // captured `fd` is then stale regardless of HUP.
+                            if parent.is_done() {
+                                return;
+                            }
+                            if !keep_going && !received_hup && !over_budget {
+                                return;
+                            }
                         } else {
                             parent
                                 ._buffer
@@ -725,6 +748,9 @@ impl PosixBufferedReader {
                                         ReadState::Progress
                                     },
                                 );
+                                if parent.is_done() {
+                                    return;
+                                }
                                 // Closing for `over_budget` outranks the
                                 // consumer asking us to stop: it must still
                                 // happen, or nothing ever caps the pipe.
@@ -886,15 +912,21 @@ impl PosixBufferedReader {
                                 // Once HUP is set the kernel
                                 // returns the remaining bytes then 0, so
                                 // draining to `bytes_read == 0` is bounded.
-                                if !parent.vtable.on_read_chunk(
+                                let keep_going = parent.vtable.on_read_chunk(
                                     &event_loop.pipe_read_buffer_mut()[..head_start],
                                     if received_hup {
                                         ReadState::Eof
                                     } else {
                                         ReadState::Progress
                                     },
-                                ) && !received_hup
-                                {
+                                );
+                                // Re-entrant close (nested on_pull -> read ->
+                                // EOF) invalidates the captured `fd`; stop
+                                // before the next recv regardless of HUP.
+                                if parent.is_done() {
+                                    return;
+                                }
+                                if !keep_going && !received_hup {
                                     return;
                                 }
                                 head_start = 0;
@@ -935,15 +967,18 @@ impl PosixBufferedReader {
                 }
 
                 if head_start > 0 {
-                    if !parent.vtable.on_read_chunk(
+                    let keep_going = parent.vtable.on_read_chunk(
                         &event_loop.pipe_read_buffer_mut()[..head_start],
                         if received_hup {
                             ReadState::Eof
                         } else {
                             ReadState::Progress
                         },
-                    ) && !received_hup
-                    {
+                    );
+                    if parent.is_done() {
+                        return;
+                    }
+                    if !keep_going && !received_hup {
                         return;
                     }
                 }
@@ -1034,7 +1069,7 @@ impl PosixBufferedReader {
                                 .vtable
                                 .on_read_chunk(&parent._buffer, ReadState::Progress);
                             parent._buffer.clear();
-                            if !keep_going {
+                            if parent.is_done() || !keep_going {
                                 return;
                             }
                             continue;
@@ -1261,7 +1296,7 @@ impl WindowsBufferedReader {
         MaxBuf::on_read_bytes(maxbuf, bytes_read as u64)
     }
 
-    fn _on_read_chunk(&mut self, buf: &[u8], has_more: ReadState) -> bool {
+    fn on_read_chunk(&mut self, buf: &[u8], has_more: ReadState) -> bool {
         if has_more == ReadState::Eof {
             self.flags.insert(WindowsFlags::RECEIVED_EOF);
         }
@@ -1888,7 +1923,7 @@ impl WindowsBufferedReader {
 
         let over_budget = self.charge_max_buffer(amount_result);
 
-        let should_continue = self._on_read_chunk(slice, has_more);
+        let should_continue = self.on_read_chunk(slice, has_more);
 
         // Streaming parents (shell IOReader, subprocess) cannot re-derive
         // `&mut Self` from inside the vtable callback to restart the pipe
@@ -1898,7 +1933,14 @@ impl WindowsBufferedReader {
         // grows by `amount_result` every chunk and never resets, so a 1 GB
         // `cat` holds 1 GB resident instead of ~64 KB. Clear it here, after
         // the streaming consumer has finished with `slice`.
-        if should_continue && has_more != ReadState::Eof && self.vtable.is_streaming_enabled() {
+        // `should_continue` no longer gates the clear: FileReader may say
+        // stop at its highwater mark while uv keeps delivering, and leaving
+        // `_buffer` uncleared would double-buffer (here + FileReader.buffered).
+        // Parents that want the reader paused call `reader().pause()`
+        // themselves; stopping here could free a parent whose caller still
+        // holds `this` (FileResponseStream on abort).
+        let _ = should_continue;
+        if has_more != ReadState::Eof && self.vtable.is_streaming_enabled() {
             self._buffer.clear();
         }
 

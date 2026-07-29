@@ -108,10 +108,10 @@ fn http_thread_timer_read() -> u64 {
     crate::http_thread().timer.elapsed().as_nanos() as u64
 }
 
-/// Build the `Proxy-Authorization: Basic <b64(user[:pass])>` header value.
+/// Build the `Proxy-Authorization: Basic <b64(user:pass)>` header value.
 /// Returns `None` (and logs) if percent-decoding fails.
 pub(crate) fn build_proxy_authorization(proxy: &URL<'_>) -> Option<Vec<u8>> {
-    if proxy.username.is_empty() {
+    if proxy.username.is_empty() && proxy.password.is_empty() {
         return None;
     }
 
@@ -123,24 +123,17 @@ pub(crate) fn build_proxy_authorization(proxy: &URL<'_>) -> Option<Vec<u8>> {
         }
     };
 
-    let auth: Vec<u8> = if !proxy.password.is_empty() {
-        let password = match PercentEncoding::decode_alloc(proxy.password) {
-            Ok(p) => p,
-            Err(err) => {
-                bun_core::scoped_log!(AsyncHTTP, "failed to decode proxy password: {:?}", err);
-                return None;
-            }
-        };
-        // concat user and password
-        let mut auth: Vec<u8> = Vec::with_capacity(username.len() + 1 + password.len());
-        auth.extend_from_slice(&username);
-        auth.push(b':');
-        auth.extend_from_slice(&password);
-        auth
-    } else {
-        // only use user
-        username.into_vec()
+    let password = match PercentEncoding::decode_alloc(proxy.password) {
+        Ok(p) => p,
+        Err(err) => {
+            bun_core::scoped_log!(AsyncHTTP, "failed to decode proxy password: {:?}", err);
+            return None;
+        }
     };
+    let mut auth: Vec<u8> = Vec::with_capacity(username.len() + 1 + password.len());
+    auth.extend_from_slice(&username);
+    auth.push(b':');
+    auth.extend_from_slice(&password);
 
     let size = bun_base64::encode_len_from_size(auth.len());
     let mut buf = vec![0u8; size + b"Basic ".len()];
@@ -608,7 +601,9 @@ fn send_sync_callback(
     if let Some(mut real) = async_http.real {
         // SAFETY: `real` outlives the HTTP-thread copy by construction.
         let real = unsafe { real.as_mut() };
-        real.response = async_http.response;
+        // `response` aliases the metadata `send_sync` hands to the caller; a
+        // stored copy would dangle once that metadata is dropped.
+        real.response = None;
         real.err = async_http.err;
         real.elapsed = async_http.elapsed;
         real.response_buffer = async_http.response_buffer;
@@ -623,7 +618,7 @@ fn send_sync_callback(
 }
 
 impl<'a> AsyncHTTP<'a> {
-    pub fn send_sync(&mut self) -> crate::Result<picohttp::Response<'static>> {
+    pub fn send_sync(&mut self) -> crate::Result<crate::HTTPResponseMetadata> {
         crate::http_thread::init(&Default::default());
 
         // Note: `Box::leak` is forbidden (PORTING.md §Forbidden);
@@ -653,11 +648,7 @@ impl<'a> AsyncHTTP<'a> {
             // a network error rather than panicking on network-driven state.
             return Err(crate::Error::ConnectionClosed);
         };
-        // The returned `Response` borrows `metadata.owned_buf` (status text +
-        // header slices); suppress Drop so the borrowed buffer outlives the
-        // call. `send_sync` is one-shot CLI.
-        let metadata = core::mem::ManuallyDrop::new(metadata);
-        Ok(metadata.response)
+        Ok(metadata)
     }
 
     // ──────────────────────────────────────────────────────────────────────

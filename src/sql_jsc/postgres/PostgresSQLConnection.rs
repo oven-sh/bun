@@ -971,7 +971,9 @@ impl PostgresSQLConnection {
         self.ref_();
         self.update_flags(|f| f.insert(ConnectionFlags::IS_PROCESSING_DATA));
 
-        self.disable_connection_timeout();
+        if self.status.get() == Status::Connected {
+            self.disable_connection_timeout();
+        }
 
         let event_loop = self.event_loop();
         event_loop.enter();
@@ -1060,8 +1062,9 @@ impl PostgresSQLConnection {
         }
         self.update_flags(|f| f.remove(ConnectionFlags::IS_PROCESSING_DATA));
 
-        // reset the connection timeout after we're done processing the data
-        self.reset_connection_timeout();
+        if self.status.get() == Status::Connected {
+            self.reset_connection_timeout();
+        }
         // SAFETY: `self` is a live Box-allocated connection; this releases one ref.
         unsafe { Self::deref(self.as_ctx_ptr()) };
     }
@@ -1302,7 +1305,7 @@ pub struct SocketHandler<const SSL: bool>;
 pub type SocketType<const SSL: bool> = uws::NewSocketHandler<SSL>;
 
 impl<const SSL: bool> SocketHandler<SSL> {
-    fn _socket(s: SocketType<SSL>) -> Socket {
+    fn socket(s: SocketType<SSL>) -> Socket {
         // `NewSocketHandler<SSL>` has identical layout for any `SSL`; rebuild the
         // monomorphic variant from the inner `InternalSocket`.
         if SSL {
@@ -1326,10 +1329,10 @@ impl<const SSL: bool> SocketHandler<SSL> {
     }
 
     pub fn on_open(this: &PostgresSQLConnection, socket: SocketType<SSL>) {
-        Self::guarded(this, |t| t.on_open(Self::_socket(socket)));
+        Self::guarded(this, |t| t.on_open(Self::socket(socket)));
     }
 
-    fn on_handshake_(
+    fn on_handshake(
         this: &PostgresSQLConnection,
         _: SocketType<SSL>,
         success: i32,
@@ -1338,10 +1341,9 @@ impl<const SSL: bool> SocketHandler<SSL> {
         Self::guarded(this, |t| t.on_handshake(success, ssl_error));
     }
 
-    // pub const onHandshake = if (ssl) onHandshake_ else null;
     pub const ON_HANDSHAKE: Option<
         fn(&PostgresSQLConnection, SocketType<SSL>, i32, uws::us_bun_verify_error_t),
-    > = if SSL { Some(Self::on_handshake_) } else { None };
+    > = if SSL { Some(Self::on_handshake) } else { None };
 
     pub fn on_close(
         this: &PostgresSQLConnection,
@@ -2648,13 +2650,16 @@ impl PostgresSQLConnection {
 
                 match &auth {
                     protocol::Authentication::SASL => {
+                        // libpq: "duplicate SASL authentication request".
                         if !matches!(
                             self.authentication_state.get(),
-                            AuthenticationState::Sasl(_)
+                            AuthenticationState::Pending
                         ) {
-                            self.authentication_state
-                                .set(AuthenticationState::Sasl(Default::default()));
+                            debug!("duplicate AuthenticationSASL");
+                            return Err(AnyPostgresError::UnexpectedMessage);
                         }
+                        self.authentication_state
+                            .set(AuthenticationState::Sasl(Default::default()));
 
                         let mut mechanism_buf = [0u8; 128];
                         // `sasl` borrow ends before `self.writer()`/`self.flush_data()`
@@ -2873,17 +2878,33 @@ impl PostgresSQLConnection {
                     }
 
                     protocol::Authentication::ClearTextPassword => {
+                        if !matches!(
+                            self.authentication_state.get(),
+                            AuthenticationState::Pending
+                        ) {
+                            debug!("duplicate AuthenticationCleartextPassword");
+                            return Err(AnyPostgresError::UnexpectedMessage);
+                        }
                         debug!("ClearTextPassword");
                         let response = protocol::PasswordMessage {
                             // password is a valid slice into options_buf.
                             password: Data::Temporary(self.password),
                         };
 
+                        self.authentication_state
+                            .set(AuthenticationState::ClearText);
                         response.write_internal(&mut self.writer())?;
                         self.flush_data();
                     }
 
                     protocol::Authentication::MD5Password { salt } => {
+                        if !matches!(
+                            self.authentication_state.get(),
+                            AuthenticationState::Pending
+                        ) {
+                            debug!("duplicate AuthenticationMD5Password");
+                            return Err(AnyPostgresError::UnexpectedMessage);
+                        }
                         debug!("MD5Password");
                         // Format is: md5 + md5(md5(password + username) + salt)
                         let mut first_hash_buf: [u8; 16] = Default::default();

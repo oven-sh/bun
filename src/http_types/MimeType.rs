@@ -432,7 +432,7 @@ pub fn by_extension(ext_without_leading_dot: &[u8]) -> MimeType {
 }
 
 pub fn by_extension_no_default(ext_without_leading_dot: &[u8]) -> Option<MimeType> {
-    if let Some(entry) = EXTENSIONS.get(ext_without_leading_dot) {
+    if let Some(entry) = EXTENSIONS.get_ascii_case_insensitive(ext_without_leading_dot) {
         return Some(Compact::from(*entry).to_mime_type());
     }
     None

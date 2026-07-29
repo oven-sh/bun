@@ -534,6 +534,27 @@ impl<const SSL: bool> StaticRouteLike<SSL> for super::FileRoute {
     }
 }
 
+impl<const SSL: bool> StaticRouteLike<SSL> for super::DirectoryRoute {
+    unsafe fn set_server(this: *mut Self, server: AnyServer) {
+        // SAFETY: caller guarantees `this` is live.
+        unsafe { (*this).set_server(Some(server)) };
+    }
+    unsafe fn on_request(
+        this: *mut Self,
+        req: bun_uws_sys::AnyRequest,
+        resp: bun_uws_sys::AnyResponse,
+    ) {
+        Self::on_request(this, req, resp)
+    }
+    unsafe fn on_head_request(
+        this: *mut Self,
+        req: bun_uws_sys::AnyRequest,
+        resp: bun_uws_sys::AnyResponse,
+    ) {
+        Self::on_head_request(this, req, resp)
+    }
+}
+
 impl<const SSL: bool> StaticRouteLike<SSL> for super::html_bundle::Route {
     unsafe fn set_server(this: *mut Self, server: AnyServer) {
         // SAFETY: caller guarantees `this` is live.

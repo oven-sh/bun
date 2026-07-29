@@ -298,7 +298,7 @@ bun_output::declare_scope!(PackageManager, hidden);
 // ──────────────────────────────────────────────────────────────────────────
 
 pub struct PackageManager {
-    pub cache_directory_: Option<bun_sys::Dir>,
+    pub cache_directory: Option<bun_sys::Dir>,
     pub cache_directory_path: ZBox, // owned; process lifetime via the leaked singleton
     pub root_dir: &'static mut fs::DirEntry,
     // allocator dropped per §Allocators (was `bun.default_allocator`). For the
@@ -423,6 +423,9 @@ pub struct PackageManager {
     //
     // dependency name -> original version information
     pub updating_packages: StringArrayHashMap<PackageUpdateInfo>,
+
+    // (catalog name, dependency name) -> original version literal
+    pub updating_catalogs: Vec<CatalogUpdateInfo>,
 
     pub patched_dependencies_to_remove:
         ArrayHashMap<PackageNameAndVersionHash, () /* , ArrayIdentityContext::U64, false */>,
@@ -573,6 +576,14 @@ pub struct PackageUpdateInfo {
     pub is_alias: bool,
     pub original_version_string_buf: Box<[u8]>,
     pub original_version: Option<Semver::Version>,
+}
+
+pub struct CatalogUpdateInfo {
+    /// Catalog group name; empty for the default catalog.
+    pub catalog_name: Box<[u8]>,
+    pub dep_name: Box<[u8]>,
+    pub original_version_literal: Box<[u8]>,
+    pub is_alias: bool,
 }
 
 #[derive(Default)]
@@ -1855,7 +1866,7 @@ pub fn init(
             (*p).preallocated_resolve_tasks
         ));
 
-        wr!(cache_directory_, None);
+        wr!(cache_directory, None);
         wr!(cache_directory_path, ZBox::from_bytes(b""));
         wr!(options, options);
         wr!(
@@ -1953,6 +1964,7 @@ pub fn init(
         wr!(trusted_deps_to_add_to_package_json, Vec::new());
         wr!(any_failed_to_install, false);
         wr!(updating_packages, StringArrayHashMap::default());
+        wr!(updating_catalogs, Vec::new());
         wr!(patched_dependencies_to_remove, ArrayHashMap::default());
         wr!(last_reported_slow_lifecycle_script_at, 0);
         wr!(cached_tick_for_slow_lifecycle_script_logging, 0);
@@ -2281,7 +2293,7 @@ pub(crate) fn init_with_runtime_once(
             (*p).preallocated_resolve_tasks
         ));
 
-        wr!(cache_directory_, None);
+        wr!(cache_directory, None);
         wr!(cache_directory_path, ZBox::from_bytes(b""));
         wr!(
             options,
@@ -2390,6 +2402,7 @@ pub(crate) fn init_with_runtime_once(
             WorkspacePackageJSONCache::default()
         );
         wr!(updating_packages, StringArrayHashMap::default());
+        wr!(updating_catalogs, Vec::new());
         wr!(patched_dependencies_to_remove, ArrayHashMap::default());
         wr!(last_reported_slow_lifecycle_script_at, 0);
         wr!(cached_tick_for_slow_lifecycle_script_logging, 0);

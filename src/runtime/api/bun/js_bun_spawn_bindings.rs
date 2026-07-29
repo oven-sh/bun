@@ -539,7 +539,11 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
                     // `from_js` returns a live FFI handle owned by JS.
                     // `AbortSignal` is an `opaque_ffi!` ZST handle; `opaque_ref`
                     // is the centralised non-null deref proof.
-                    **abort_signal = Some(WebCore::AbortSignal::opaque_ref(signal).ref_());
+                    let sig = WebCore::AbortSignal::opaque_ref(signal);
+                    if let Some(abort_error) = sig.node_abort_error_if_aborted(global_this) {
+                        return Err(global_this.throw_value(abort_error));
+                    }
+                    **abort_signal = Some(sig.ref_());
                 } else {
                     return Err(global_this.throw_invalid_argument_type_value(
                         b"signal",

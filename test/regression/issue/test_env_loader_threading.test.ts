@@ -1,9 +1,9 @@
 import { spawn } from "bun";
 import { expect, test } from "bun:test";
-import { bunExe, tempDirWithFiles } from "harness";
+import { bunExe, tempDir } from "harness";
 
 test("env_loader should not have allocator threading issues with BUN_INSPECT_CONNECT_TO", async () => {
-  const dir = tempDirWithFiles("env-loader-threading", {
+  await using dir = tempDir("env-loader-threading", {
     ".env": "TEST_ENV_VAR=hello_world",
     "index.js": `console.log(process.env.TEST_ENV_VAR || 'undefined');`,
   });

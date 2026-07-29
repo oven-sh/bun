@@ -1498,7 +1498,7 @@ mod _async_tasks {
             let mut node_fs = NodeFS::default();
 
             let args = &parent.args;
-            let result = node_fs._copy_single_file_sync(
+            let result = node_fs.copy_single_file_sync(
                 self.src(),
                 self.dest(),
                 constants::Copyfile::from_raw(if args.flags.error_on_exist || !args.flags.force {
@@ -1802,7 +1802,7 @@ mod _async_tasks {
         }
 
         /// Directory scanning + clonefile will block this thread, then each individual file copy (what the sync version
-        /// calls "_copySingleFileSync") will be dispatched as a separate task.
+        /// calls "copy_single_file_sync") will be dispatched as a separate task.
         pub fn cp_async(nodefs: &mut NodeFS, this: *mut Self) {
             // The directory-scan task holds one reference in `subtask_count`
             // (initialized to 1 in create*). Drop it on return. `runFromJSThread`
@@ -1812,7 +1812,7 @@ mod _async_tasks {
             // once every reference (including this one) has been dropped.
             let _done = scopeguard::guard(this, Self::on_subtask_done);
             // SAFETY: same pointer as above; valid for the duration of this fn.
-            // Shared borrow only — once `_cp_async_directory` spawns `CpSingleTask`s,
+            // Shared borrow only — once `cp_async_directory` spawns `CpSingleTask`s,
             // other workpool threads concurrently hold `&Self` to this same allocation.
             let this = unsafe { &**_done };
 
@@ -1856,13 +1856,13 @@ mod _async_tasks {
                 let file_or_symlink = (attributes & bun_sys::c::FILE_ATTRIBUTE_DIRECTORY) == 0
                     || (attributes & bun_sys::c::FILE_ATTRIBUTE_REPARSE_POINT) != 0;
                 if file_or_symlink {
-                    let r = nodefs._copy_single_file_sync(
+                    let r = nodefs.copy_single_file_sync(
                         src,
                         dest,
                         if IS_SHELL {
                             // Shell always forces copy (overwrite allowed).
                             // `Copyfile::force` is `COPYFILE_FICLONE_FORCE`, and
-                            // `_copy_single_file_sync` has an ENOSYS guard for
+                            // `copy_single_file_sync` has an ENOSYS guard for
                             // `is_force_clone()` on Windows (see the comment at
                             // the top of that branch), so passing `FORCE` would
                             // make every shell `cp file dest` fail with ENOSYS.
@@ -1908,7 +1908,7 @@ mod _async_tasks {
 
                 if !sys::S::ISDIR(stat_.st_mode as _) {
                     // This is the only file, there is no point in dispatching subtasks
-                    let r = nodefs._copy_single_file_sync(
+                    let r = nodefs.copy_single_file_sync(
                         src,
                         dest,
                         constants::Copyfile::from_raw(
@@ -1947,7 +1947,7 @@ mod _async_tasks {
             // are slices into `src_buf`/`dest_buf` and must end their borrow first.
             let src_len = PathInt::try_from(src.len()).expect("int cast");
             let dest_len = PathInt::try_from(dest.len()).expect("int cast");
-            let _ = Self::_cp_async_directory(
+            let _ = Self::cp_async_directory(
                 nodefs,
                 args.flags,
                 // Pass the raw `*mut Self` (Box::leak provenance) so spawned
@@ -1962,7 +1962,7 @@ mod _async_tasks {
         }
 
         // returns boolean `should_continue`
-        pub(super) fn _cp_async_directory(
+        pub(super) fn cp_async_directory(
             nodefs: &mut NodeFS,
             args: args::CpFlags,
             this: *mut Self,
@@ -2106,7 +2106,7 @@ mod _async_tasks {
                         dest_buf[dd] = paths::SEP as OSPathChar;
                         dest_buf[dd + 1 + cname.len()] = 0;
 
-                        let should_continue = Self::_cp_async_directory(
+                        let should_continue = Self::cp_async_directory(
                             nodefs,
                             args,
                             this,
@@ -4737,6 +4737,19 @@ fn encode_path_result(bytes: &[u8], encoding: Encoding) -> StringOrBuffer {
 
 impl NodeFS {
     pub fn access(&mut self, args: &args::Access, _: Flavor) -> Maybe<ret::Access> {
+        if let Some(graph) = standalone_module_graph_get() {
+            // SAFETY: see `standalone_module_graph_get`.
+            let graph = unsafe { &mut *graph };
+            let p = args.path.slice();
+            let is_dir = graph.find_dir(p);
+            if is_dir || graph.find(p).is_some() {
+                let mode = args.mode.as_int();
+                if (mode & sys::posix::W_OK) != 0 || ((mode & sys::posix::X_OK) != 0 && !is_dir) {
+                    return Err(sys::Error::from_code(E::EACCES, sys::Tag::access).with_path(p));
+                }
+                return Ok(Null);
+            }
+        }
         // The `bun_sys::access` Windows
         // arm takes `&ZStr` and performs the kernel32 widening internally
         // (sys/lib.rs `windows_impl::access`), so feed it the UTF-8 path on
@@ -5421,7 +5434,8 @@ impl NodeFS {
             // SAFETY: see `standalone_module_graph_get` — exclusive lookup on
             // the per-process singleton; `find` only mutates lazy per-`File`
             // fields.
-            if unsafe { &mut *graph }.find(path.slice()).is_some() {
+            let graph = unsafe { &mut *graph };
+            if graph.find(path.slice()).is_some() || graph.find_dir(path.slice()) {
                 return Ok(true);
             }
         }
@@ -5642,6 +5656,15 @@ impl NodeFS {
 
     pub fn lstat(&mut self, args: &args::Lstat, _: Flavor) -> Maybe<ret::Lstat> {
         let path = args.path.slice_z(&mut self.sync_error_buf);
+        if let Some(graph) = standalone_module_graph_get() {
+            // SAFETY: see `standalone_module_graph_get`.
+            if let Some(result) = unsafe { &mut *graph }.stat(path.as_bytes()) {
+                return Ok(StatOrNotFound::Stats(Box::new(Stats::init(
+                    &PosixStat::init(&result),
+                    args.big_int,
+                ))));
+            }
+        }
         #[cfg(any(target_os = "linux", target_os = "android"))]
         if sys::SUPPORTS_STATX_ON_LINUX.load(Ordering::Relaxed) {
             return match sys::lstatx(path, sys::STATX_MASK_FOR_STATS) {
@@ -6371,10 +6394,12 @@ impl NodeFS {
     }
 
     pub fn readdir(&mut self, args: &args::Readdir, flavor: Flavor) -> Maybe<ret::Readdir> {
-        if flavor != Flavor::Sync {
-            if args.recursive {
-                panic!("Assertion failure: this code path should never be reached.");
-            }
+        if flavor != Flavor::Sync && args.recursive {
+            debug_assert!(
+                standalone_module_graph_get().is_some()
+                    && bun_standalone_graph::is_bun_standalone_file_path(args.path.slice()),
+                "async recursive readdir must go through AsyncReaddirRecursiveTask"
+            );
         }
         let maybe = match args.tag() {
             ret::ReaddirTag::Buffers => Self::readdir_inner::<Buffer>(
@@ -6926,6 +6951,75 @@ impl NodeFS {
     ) -> Maybe<ret::Readdir> {
         let path = args.path.slice_z(buf);
 
+        if let Some(graph) = standalone_module_graph_get() {
+            if bun_standalone_graph::is_bun_standalone_file_path(path.as_bytes()) {
+                // SAFETY: see `standalone_module_graph_get`.
+                let graph = unsafe { &mut *graph };
+                let Some(list) = graph.readdir(path.as_bytes(), recursive) else {
+                    let code = if graph.find_assume_standalone_path(path.as_bytes()).is_some() {
+                        E::ENOTDIR
+                    } else {
+                        E::ENOENT
+                    };
+                    return Err(
+                        sys::Error::from_code(code, sys::Tag::scandir).with_path(args.path.slice())
+                    );
+                };
+                let mut entries: Vec<T> = Vec::with_capacity(list.len());
+                let root_path = if T::IS_DIRENT {
+                    BunString::clone_utf8(args.path.slice())
+                } else {
+                    BunString::empty()
+                };
+                let mut joined: Vec<u8> = Vec::new();
+                #[allow(unused_mut)]
+                for (mut name, is_dir) in list {
+                    let kind = if is_dir {
+                        sys::FileKind::Directory
+                    } else {
+                        sys::FileKind::File
+                    };
+                    if recursive {
+                        #[cfg(windows)]
+                        for b in name.iter_mut() {
+                            if *b == b'/' {
+                                *b = paths::SEP;
+                            }
+                        }
+                        let (base, parent) = match strings::last_index_of_char(&name, paths::SEP) {
+                            Some(i) => (&name[i + 1..], &name[..i]),
+                            None => (&name[..], b"".as_slice()),
+                        };
+                        let dirent_path = if T::IS_DIRENT && !parent.is_empty() {
+                            joined.clear();
+                            joined.extend_from_slice(args.path.slice());
+                            if !matches!(joined.last(), Some(&b'/') | Some(&b'\\')) {
+                                joined.push(paths::SEP);
+                            }
+                            joined.extend_from_slice(parent);
+                            BunString::clone_utf8(&joined)
+                        } else {
+                            root_path.dupe_ref()
+                        };
+                        T::append_entry_recursive(
+                            &mut entries,
+                            base,
+                            &name,
+                            &dirent_path,
+                            kind,
+                            args.encoding,
+                            flavor == Flavor::Sync,
+                        );
+                        dirent_path.deref();
+                    } else {
+                        T::append_entry(&mut entries, &name, &root_path, kind, args.encoding);
+                    }
+                }
+                root_path.deref();
+                return Ok(T::into_readdir(entries));
+            }
+        }
+
         if recursive && flavor == Flavor::Sync {
             let mut buf_to_pass = PathBuffer::uninit();
             let mut entries: Vec<T> = Vec::new();
@@ -7036,7 +7130,8 @@ impl NodeFS {
 
                 if let Some(graph) = standalone_module_graph_get() {
                     // SAFETY: see `standalone_module_graph_get`.
-                    if let Some(file) = unsafe { &mut *graph }.find(path.as_bytes()) {
+                    let graph = unsafe { &mut *graph };
+                    if let Some(file) = graph.find(path.as_bytes()) {
                         let contents: &[u8] = file.contents.as_bytes();
                         return if args.encoding == Encoding::Buffer {
                             // PORTING.md §Forbidden bans `Vec::leak()`; round-trip through
@@ -7062,6 +7157,11 @@ impl NodeFS {
                                 bun_core::ZBox::from_vec_with_nul(z),
                             ))
                         };
+                    }
+                    if graph.find_dir(path.as_bytes()) {
+                        return Err(
+                            sys::Error::from_code(E::EISDIR, sys::Tag::read).with_path(p.slice())
+                        );
                     }
                 }
 
@@ -8252,7 +8352,7 @@ impl NodeFS {
             if attributes & sys::c::FILE_ATTRIBUTE_DIRECTORY == 0
                 || attributes & sys::c::FILE_ATTRIBUTE_REPARSE_POINT != 0
             {
-                let r = self._copy_single_file_sync(
+                let r = self.copy_single_file_sync(
                     src,
                     dest,
                     constants::Copyfile::from_raw(if cp_flags.error_on_exist || !cp_flags.force {
@@ -8281,7 +8381,7 @@ impl NodeFS {
                 }
             };
             if !sys::S::ISDIR(stat_.st_mode as _) {
-                let r = self._copy_single_file_sync(
+                let r = self.copy_single_file_sync(
                     src,
                     dest,
                     constants::Copyfile::from_raw(if cp_flags.error_on_exist || !cp_flags.force {
@@ -8407,7 +8507,7 @@ impl NodeFS {
                     // NUL written at [len] above; `from_buf` debug-asserts it.
                     let src_z = OSPathSliceZ::from_buf(&src_buf[..], sd + 1 + name_slice.len());
                     let dest_z = OSPathSliceZ::from_buf(&dest_buf[..], dd + 1 + name_slice.len());
-                    let r = self._copy_single_file_sync(
+                    let r = self.copy_single_file_sync(
                         src_z,
                         dest_z,
                         constants::Copyfile::from_raw(
@@ -8466,7 +8566,8 @@ impl NodeFS {
         result
     }
 
-    fn _cp_symlink(&mut self, src: &ZStr, dest: &ZStr) -> Maybe<ret::CopyFile> {
+    #[cfg_attr(any(windows, target_os = "macos"), allow(dead_code))]
+    fn cp_symlink(&mut self, src: &ZStr, dest: &ZStr) -> Maybe<ret::CopyFile> {
         let mut target_buf = PathBuffer::uninit();
         // `bun_sys::readlink` returns the byte length on every
         // platform (the `Syscall` alias = `sys_uv` on Windows would return the
@@ -8516,7 +8617,7 @@ impl NodeFS {
     }
 
     /// This is `copyFile`, but it copies symlinks as-is
-    pub fn _copy_single_file_sync(
+    pub fn copy_single_file_sync(
         &mut self,
         src: &OSPathSliceZ,
         dest: &OSPathSliceZ,
@@ -8609,7 +8710,7 @@ impl NodeFS {
                 }
 
                 let dest_fd =
-                    Self::_cp_open_dest_with_mkdir(self, dest, flags, stat_.st_mode as Mode)?;
+                    Self::cp_open_dest_with_mkdir(self, dest, flags, stat_.st_mode as Mode)?;
                 let _close_dest =
                     scopeguard::guard((dest_fd, stat_.st_mode, &wrote), |(fd, m, wrote)| {
                         let _ = Syscall::ftruncate(fd, (wrote.get() & ((1u64 << 63) - 1)) as i64);
@@ -8676,7 +8777,7 @@ impl NodeFS {
                     if err.get_errno() == E::ELOOP {
                         // ELOOP is returned when you open a symlink with NOFOLLOW.
                         // as in, it does not actually let you open it.
-                        return self._cp_symlink(src, dest);
+                        return self.cp_symlink(src, dest);
                     }
                     return Err(err);
                 }
@@ -8702,7 +8803,7 @@ impl NodeFS {
                 flags |= sys::O::EXCL;
             }
 
-            let dest_fd = Self::_cp_open_dest_with_mkdir(self, dest, flags, stat_.st_mode as Mode)?;
+            let dest_fd = Self::cp_open_dest_with_mkdir(self, dest, flags, stat_.st_mode as Mode)?;
 
             let mut size: usize = stat_.st_size.max(0) as usize;
 
@@ -8848,7 +8949,7 @@ impl NodeFS {
                     // open(2) returns EMLINK for this case, though POSIX
                     // specifies ELOOP; accept either.
                     if matches!(err.get_errno(), E::EMLINK | E::ELOOP) {
-                        return self._cp_symlink(src, dest);
+                        return self.cp_symlink(src, dest);
                     }
                     return Err(err);
                 }
@@ -8874,7 +8975,7 @@ impl NodeFS {
             }
 
             let dest_fd =
-                match Self::_cp_open_dest_with_mkdir(self, dest, flags, stat_.st_mode as Mode) {
+                match Self::cp_open_dest_with_mkdir(self, dest, flags, stat_.st_mode as Mode) {
                     Ok(fd) => fd,
                     Err(e) => return Err(e),
                 };
@@ -9115,12 +9216,13 @@ impl NodeFS {
     }
 
     /// Shared `dest_fd:` block from the mac/linux/freebsd branches of
-    /// `_copy_single_file_sync`.
+    /// `copy_single_file_sync`.
     /// Tries `open(dest, flags, mode)`; on ENOENT creates the
     /// parent directory and retries once. Any other error is annotated with
     /// `dest` copied into `sync_error_buf`.
-    fn _cp_open_dest_with_mkdir(&mut self, dest: &ZStr, flags: i32, mode: Mode) -> Maybe<FD> {
-        // PORT: extracted from the mac/linux/freebsd arms of `_copySingleFileSync`
+    #[cfg_attr(windows, allow(dead_code))]
+    fn cp_open_dest_with_mkdir(&mut self, dest: &ZStr, flags: i32, mode: Mode) -> Maybe<FD> {
+        // PORT: extracted from the mac/linux/freebsd arms of `copy_single_file_sync`
         // only — there `OSPathSliceZ == ZStr`. Taking `&ZStr` keeps the body
         // monomorphic (and lets it type-check on Windows where it's dead code).
         match Syscall::open(dest, flags, mode) {
@@ -9150,27 +9252,6 @@ impl NodeFS {
                 Err(err.with_path(&self.sync_error_buf[..dest.len()]))
             }
         }
-    }
-
-    // returns boolean `should_continue`
-    fn _cp_async_directory(
-        &mut self,
-        args: args::CpFlags,
-        task: *mut AsyncCpTask,
-        src_buf: &mut OSPathBuffer,
-        src_dir_len: PathInt,
-        dest_buf: &mut OSPathBuffer,
-        dest_dir_len: PathInt,
-    ) -> bool {
-        AsyncCpTask::_cp_async_directory(
-            self,
-            args,
-            task,
-            src_buf,
-            src_dir_len,
-            dest_buf,
-            dest_dir_len,
-        )
     }
 
     /// Const-generic dispatch from `NodeFSFunctionEnum` to the matching

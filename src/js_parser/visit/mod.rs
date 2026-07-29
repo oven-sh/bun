@@ -1637,13 +1637,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     let last: &mut Decl = &mut local.decls.slice_mut()[last_idx];
                     let Some(replacement) = last.value else { break };
 
-                    // The declaration site is a NamedEvaluation context: an anonymous
-                    // function/arrow/class initializer picks up the binding name as its
-                    // ".name". Substituting it into the use site drops that and makes the
-                    // name observably "". The block-level function-declaration lowering
-                    // above produces exactly this shape ("let f = function() {}"), so a
-                    // "{ function f() {} }" in source would otherwise lose its name at
-                    // runtime when used once.
+                    // "let f = () => {}" gives the value ".name" via NamedEvaluation;
+                    // substituting it away would make the name observably "".
                     if replacement.is_anonymous_named() {
                         break;
                     }

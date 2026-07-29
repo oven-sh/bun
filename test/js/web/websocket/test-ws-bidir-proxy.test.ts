@@ -4,12 +4,20 @@ import { once } from "node:events";
 import http from "node:http";
 import net from "node:net";
 
-// Regression test: sendBuffer() was writing directly to this.tcp (which is
-// detached in proxy tunnel mode) instead of routing through the tunnel's TLS
-// layer. Under bidirectional traffic, backpressure pushes writes through the
-// sendBuffer slow path, corrupting the TLS stream and killing the connection
-// (close code 1006) before a single pong arrived.
-test("bidirectional ping/pong through TLS proxy", async () => {
+// Regression test for #27433: send_buffer_out() was writing directly to
+// this.tcp (detached in proxy tunnel mode) instead of routing through the
+// tunnel's TLS layer, so a frame that took the send-buffer path on a wss://
+// connection through an HTTP CONNECT proxy never reached the peer. A frame
+// takes that path when its encoded size >= STACK_FRAME_SIZE (1024 B); the 2 KB
+// payloads below guarantee it on every client send.
+test("bidirectional traffic through TLS proxy routes large frames via the tunnel", async () => {
+  // NO_PROXY applies to explicit proxies too; an ambient
+  // NO_PROXY=localhost,127.0.0.1,... would silently bypass the proxy here.
+  const prevNoProxy = process.env.NO_PROXY;
+  const prevNoProxyLower = process.env.no_proxy;
+  process.env.NO_PROXY = "";
+  process.env.no_proxy = "";
+
   const intervals: ReturnType<typeof setInterval>[] = [];
   const clearIntervals = () => {
     for (const i of intervals) clearInterval(i);
@@ -28,7 +36,7 @@ test("bidirectional ping/pong through TLS proxy", async () => {
         ws.send("echo:" + msg);
       },
       open(ws) {
-        // Server pushes data and pings continuously so traffic is bidirectional.
+        // Server pushes data and pings so traffic is bidirectional.
         intervals.push(
           setInterval(() => {
             if (ws.readyState === 1) {
@@ -45,11 +53,13 @@ test("bidirectional ping/pong through TLS proxy", async () => {
   });
 
   // HTTP CONNECT proxy
+  let proxyConnects = 0;
   const proxy = http.createServer((req, res) => {
     res.writeHead(400);
     res.end();
   });
   proxy.on("connect", (req, clientSocket, head) => {
+    proxyConnects++;
     const [host, port] = req.url!.split(":");
     const serverSocket = net.createConnection({ host: host!, port: parseInt(port!) }, () => {
       clientSocket.write("HTTP/1.1 200 Connection Established\r\n\r\n");
@@ -70,6 +80,10 @@ test("bidirectional ping/pong through TLS proxy", async () => {
   } as any);
 
   const REQUIRED = 5;
+  // Payloads >= ~1016 bytes skip the inline fast path and go through
+  // send_buffer_out(); 2 KB keeps us clearly above that threshold.
+  const PADDING = Buffer.alloc(2048, "x").toString();
+  const payload = (i: number) => `data:${i}:${PADDING}`;
   const echoes: string[] = [];
   let pushes = 0;
   let pongs = 0;
@@ -82,13 +96,11 @@ test("bidirectional ping/pong through TLS proxy", async () => {
   };
 
   ws.addEventListener("open", () => {
-    // Client pings and writes data continuously (bidirectional traffic drives
-    // writes through the sendBuffer slow path, which is the code under test).
     intervals.push(
       setInterval(() => {
         if (ws.readyState === WebSocket.OPEN) {
           (ws as any).ping?.();
-          ws.send("data:" + seq++);
+          ws.send(payload(seq++));
         }
       }, 20),
     );
@@ -119,9 +131,12 @@ test("bidirectional ping/pong through TLS proxy", async () => {
     await ready;
     clearIntervals();
 
-    // Every data frame that round-tripped must carry the exact payload we sent,
-    // in order: the tunnel's TLS stream stayed intact under bidirectional load.
-    expect(echoes.slice(0, REQUIRED)).toEqual(Array.from({ length: REQUIRED }, (_, i) => `data:${i}`));
+    // Guard against a silent proxy bypass (ambient NO_PROXY or a future change
+    // that short-circuits loopback targets).
+    expect(proxyConnects).toBe(1);
+    // Every large frame that round-tripped must carry the exact payload we
+    // sent, in order: the tunnel's TLS stream stayed intact.
+    expect(echoes.slice(0, REQUIRED)).toEqual(Array.from({ length: REQUIRED }, (_, i) => payload(i)));
     expect(pongs).toBeGreaterThanOrEqual(REQUIRED);
     expect(pushes).toBeGreaterThanOrEqual(REQUIRED);
 
@@ -131,5 +146,9 @@ test("bidirectional ping/pong through TLS proxy", async () => {
     clearIntervals();
     ws.close();
     proxy.close();
+    if (prevNoProxy === undefined) delete process.env.NO_PROXY;
+    else process.env.NO_PROXY = prevNoProxy;
+    if (prevNoProxyLower === undefined) delete process.env.no_proxy;
+    else process.env.no_proxy = prevNoProxyLower;
   }
-}, 10000);
+});

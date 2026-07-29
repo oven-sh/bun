@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, tempDir } from "harness";
 import inspector from "node:inspector";
 import inspectorPromises from "node:inspector/promises";
 
@@ -684,5 +684,112 @@ describe("node:inspector/promises", () => {
     expect(inspectorPromises.open).toBe(inspector.open);
     expect(inspectorPromises.close).toBe(inspector.close);
     expect(inspectorPromises.waitForDebugger).toBe(inspector.waitForDebugger);
+  });
+});
+
+// JSC's BasicBlockLocation::getExecutedRanges() computes the executed
+// sub-ranges of a basic block by splitting it around one gap per enclosed
+// function body. It used to do that with a selection sort (repeated min-scan
+// plus Vector::removeAt), so a module with N top-level functions made
+// Profiler.takePreciseCoverage cost O(N^2). The function-gap list interleaves
+// declarations and expressions (decls are inserted first, then exprs), so the
+// fixture below also exercises the sort on unsorted input.
+const manyFunctionsCoverageFixture = `
+import { Session } from "node:inspector/promises";
+import vm from "node:vm";
+
+const N = Number(process.argv[2]);
+let src = "";
+for (let i = 0; i < N; i++) {
+  if (i % 3 === 1) src += \`var fn\${i} = function(a){ if(a>\${i}) return a*\${i}; return -a; };\\n\`;
+  else src += \`function fn\${i}(a){ if(a>\${i}) return a*\${i}; return -a; }\\n\`;
+}
+src += "({ fn0, fn1, fn2 });\\n";
+
+const session = new Session();
+session.connect();
+await session.post("Profiler.enable");
+await session.post("Profiler.startPreciseCoverage", { callCount: true, detailed: true });
+
+const url = "file:///many-functions.js";
+const exported = vm.runInThisContext(src, { filename: url });
+exported.fn0(0);
+exported.fn1(0);
+exported.fn2(5);
+
+// Repeated takes cost the same and keep the script entry, so summing a few
+// keeps the small-N baseline measurable without a floor on the denominator.
+const reps = 5;
+let elapsed = 0;
+let coverage;
+for (let k = 0; k < reps; k++) {
+  const t0 = performance.now();
+  coverage = await session.post("Profiler.takePreciseCoverage");
+  elapsed += performance.now() - t0;
+}
+
+await session.post("Profiler.stopPreciseCoverage");
+session.disconnect();
+
+const entry = coverage.result.find(s => s.url === url);
+// The entry with the most block-level ranges is the one whose BasicBlockLocation
+// spans the whole script body with one gap per enclosed function; its ranges[1..]
+// are the getExecutedRanges() output this test is exercising.
+let topLevel = entry.functions[0];
+for (const f of entry.functions) if (f.ranges.length > topLevel.ranges.length) topLevel = f;
+process.stdout.write(
+  JSON.stringify({
+    elapsed,
+    functions: entry.functions.length,
+    topLevelRanges: topLevel.ranges.length,
+  }),
+);
+`;
+
+async function runManyFunctionsCoverage(n: number) {
+  using dir = tempDir("inspector-many-fns", { "run.mjs": manyFunctionsCoverageFixture });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "run.mjs", String(n)],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(exitCode).toBe(0);
+  return JSON.parse(stdout) as {
+    elapsed: number;
+    functions: number;
+    topLevelRanges: number;
+  };
+}
+
+describe("Profiler.takePreciseCoverage with many top-level functions", () => {
+  test("splits the enclosing block around every function body", async () => {
+    const N = 120;
+    const out = await runManyFunctionsCoverage(N);
+    // One entry per user function plus at least the whole-script entry.
+    expect(out.functions).toBeGreaterThanOrEqual(N + 1);
+    // getExecutedRanges() returns gaps+1 sub-ranges; buildScriptCoverageList
+    // prepends one function-level range and filters end<start, so the
+    // top-level entry carries ~N+1 block ranges. A broken comparator would
+    // emit mostly end<start ranges and leave only a handful here.
+    expect(out.topLevelRanges).toBeGreaterThanOrEqual(N);
+  });
+
+  // Under a debug+ASAN build the linear per-item cost of JSON serialisation
+  // and buildScriptCoverageList dominates at these sizes, so the ratio sits
+  // near 4 with or without the quadratic term; only release builds see it.
+  test.skipIf(isDebug || isASAN)("scales sub-quadratically in top-level function count", async () => {
+    const small = await runManyFunctionsCoverage(4_000);
+    const large = await runManyFunctionsCoverage(16_000);
+    // A 4x increase in functions grows a quadratic term 16x. The selection
+    // sort in getExecutedRanges() made the release-build ratio here ~12;
+    // with an O(n log n) sort the remaining work is linear and the ratio
+    // sits near 4. elapsed sums 5 takes, so the denominator stays tens of
+    // milliseconds even on fast hardware.
+    const ratio = large.elapsed / small.elapsed;
+    expect({ small: small.elapsed, large: large.elapsed, ratio }).toSatisfy(r => r.ratio < 8);
   });
 });

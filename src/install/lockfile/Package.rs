@@ -905,6 +905,7 @@ pub struct DiffSummary {
     pub update: u32,
     pub overrides_changed: bool,
     pub catalogs_changed: bool,
+    pub workspace_versions_changed: bool,
 
     pub added_trusted_dependencies:
         ArrayHashMap<TruncatedPackageNameHash, AddedTrustedDependency, ArrayIdentityContext>,
@@ -921,6 +922,7 @@ impl DiffSummary {
             || self.update > 0
             || self.overrides_changed
             || self.catalogs_changed
+            || self.workspace_versions_changed
             || self.added_trusted_dependencies.count() > 0
             || self.removed_trusted_dependencies.count() > 0
             || self.patched_dependencies_changed
@@ -1283,6 +1285,29 @@ impl Diff {
             }
             false
         };
+
+        if is_root {
+            summary.workspace_versions_changed = 'workspace_versions_changed: {
+                if from_lockfile.workspace_versions.count()
+                    != to_lockfile.workspace_versions.count()
+                {
+                    break 'workspace_versions_changed true;
+                }
+                for (key, to_version) in to_lockfile.workspace_versions.iter() {
+                    match from_lockfile.workspace_versions.get(key) {
+                        Some(from_version) => {
+                            if !from_version.eql(*to_version)
+                                || from_version.tag.build.hash != to_version.tag.build.hash
+                            {
+                                break 'workspace_versions_changed true;
+                            }
+                        }
+                        None => break 'workspace_versions_changed true,
+                    }
+                }
+                false
+            };
+        }
 
         for (i, from_dep) in from_deps.iter().enumerate() {
             let found = 'found: {

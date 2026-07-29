@@ -231,7 +231,10 @@ test.skipIf(isWindows)("fetch rejects when the Bun.file body is truncated mid-up
     expect(err?.code).toBe("RequestBodyTruncated");
 
     // The client must close the connection so the origin is not left
-    // holding a half-sent body.
+    // holding a half-sent body. On macOS the server's read side does not
+    // observe the client's RST on its own, so write a byte the way a real
+    // origin would try to respond; that surfaces ECONNRESET and 'close'.
+    socket!.write("\r\n");
     await socketClosed.promise;
   } finally {
     socket?.destroy();

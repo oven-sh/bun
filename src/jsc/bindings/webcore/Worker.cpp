@@ -96,6 +96,9 @@ void WebWorker__releaseParentPollRef(void* worker);
 // Free the native WebWorker struct. Called from ~Worker.
 void WebWorker__destroy(void* worker);
 
+// Has self.close() been called inside this worker's VM?
+bool WebWorker__isCloseRequested(void* bunVM);
+
 } // extern "C"
 // -------------------------------------------------------------------------------------------------
 
@@ -308,12 +311,14 @@ static inline bool drainInbox(Worker::MessageInbox& inbox, Zig::GlobalObject* gl
 
             auto ports = MessagePort::entanglePorts(context, WTF::move(message.transferredPorts));
             auto event = MessageEvent::create(*context.jsGlobalObject(), message.message.releaseNonNull(), nullptr, WTF::move(ports));
-            dispatch(event.event);
+            bool keepGoing = dispatch(event.event);
 
-            if (globalObject->drainMicrotasks()) {
-                // Termination pending. Drop the rest — dispatch is a no-op
-                // once m_terminateRequested is set (drainToParent), and the
-                // worker thread is tearing down (drainToWorker).
+            if (globalObject->drainMicrotasks() || !keepGoing) {
+                // Termination pending, or the receiver asked us to stop
+                // (drainToWorker: self.close() inside the handler). Drop the
+                // rest — dispatch is a no-op once m_terminateRequested is set
+                // (drainToParent), and the worker thread is tearing down
+                // (drainToWorker).
                 return false;
             }
         }
@@ -340,6 +345,7 @@ void Worker::drainToWorker(ScriptExecutionContext& context)
     }
     bool reschedule = drainInbox(m_toWorker, globalObject, context, [&](Event& event) {
         globalObject->globalEventScope->dispatchEvent(event);
+        return !WebWorker__isCloseRequested(globalObject->bunVM());
     });
     if (reschedule) {
         ScriptExecutionContext::postTaskTo(m_clientIdentifier, [protectedThis = Ref { *this }](ScriptExecutionContext& ctx) {
@@ -358,6 +364,7 @@ void Worker::drainToParent(ScriptExecutionContext& context)
     }
     bool reschedule = drainInbox(m_toParent, globalObject, context, [&](Event& event) {
         dispatchEvent(event);
+        return true;
     });
     if (reschedule) {
         postTaskToParent([protectedThis = Ref { *this }](ScriptExecutionContext& c) {

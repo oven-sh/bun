@@ -418,6 +418,12 @@ pub(crate) extern "C" fn WebWorker__requestClose(vm: &VirtualMachine) {
     }
 }
 
+#[unsafe(no_mangle)]
+pub(crate) extern "C" fn WebWorker__isCloseRequested(vm: &VirtualMachine) -> bool {
+    vm.worker_ref()
+        .is_some_and(|w| w.close_requested.load(Ordering::Relaxed))
+}
+
 impl WebWorker {
     pub fn has_requested_terminate(&self) -> bool {
         self.requested_terminate.load(Ordering::Acquire)
@@ -1168,7 +1174,9 @@ impl WebWorker {
         // `cpp_worker` is the opaque C++-owned handle round-tripped via `safe fn`;
         // `vm.global()` yields the live `&JSGlobalObject` published in start_vm.
         WebWorker__dispatchOnline(self.cpp_worker, vm.global());
-        WebWorker__fireEarlyMessages(self.cpp_worker, vm.global());
+        if !self.should_exit_loop() {
+            WebWorker__fireEarlyMessages(self.cpp_worker, vm.global());
+        }
         self.set_status(Status::Running);
 
         // don't run the GC if we don't actually need to

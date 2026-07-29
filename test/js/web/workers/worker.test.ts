@@ -398,6 +398,27 @@ describe("web worker", () => {
     expect(await promise).toContain("boom");
   });
 
+  test("self.close() during top-level await with a live handle exits", async () => {
+    const src = `setInterval(() => postMessage("tick"), 1e6); self.close(); postMessage("closing"); await new Promise(() => {});`;
+    const worker = new Worker("data:text/javascript," + encodeURIComponent(src));
+    const messages: any[] = [];
+    worker.addEventListener("message", e => messages.push(e.data));
+    worker.onerror = e => messages.push("error: " + e.message);
+    await once(worker, "close");
+    expect(messages).toEqual(["closing"]);
+  });
+
+  test("self.close() from onmessage drops the rest of the batch", async () => {
+    const src = `self.onmessage = e => { postMessage(e.data); if (e.data === 0) self.close(); };`;
+    const worker = new Worker("data:text/javascript," + encodeURIComponent(src));
+    await once(worker, "open");
+    for (let i = 0; i < 5; i++) worker.postMessage(i);
+    const messages: any[] = [];
+    worker.addEventListener("message", e => messages.push(e.data));
+    await once(worker, "close");
+    expect(messages).toEqual([0]);
+  });
+
   test("close and name are not defined on the main-thread global", () => {
     expect("close" in globalThis).toBe(false);
     expect("name" in globalThis).toBe(false);

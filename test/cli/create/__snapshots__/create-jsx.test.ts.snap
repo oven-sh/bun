@@ -256,3 +256,35 @@ exports[`development: false shadcn/ui dev server 2`] = `
 <div id="root"><div class="min-h-screen bg-gradient-to-b from-background to-slate-900"><div class="container mx-auto px-4 py-16"><section class="text-center mb-16 space-y-6"><span data-slot="badge" class="inline-flex items-center justify-center rounded-md border px-2 py-0.5 text-xs font-medium w-fit whitespace-nowrap shrink-0 [&amp;>svg]:size-3 gap-1 [&amp;>svg]:pointer-events-none focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-[3px] aria-invalid:ring-destructive/20 dark:aria-invalid:ring-destructive/40 aria-invalid:border-destructive transition-[color,box-shadow] overflow-auto border-transparent bg-secondary text-secondary-foreground [a&amp;]:hover:bg-secondary/90 mb-2">New in Bun*.*.*</span><h1 class="text-4xl md:text-6xl font-bold tracking-tight">From Component to App in<span class="text-primary"> Seconds</span></h1><p class="text-xl text-muted-foreground max-w-2xl mx-auto">Start a complete dev server from a single React component. No config needed.</p><div class="flex flex-wrap justify-center gap-4 pt-4"><button data-slot="button" class="inline-flex items-center justify-center gap-2 whitespace-nowrap text-sm font-medium transition-[color,box-shadow] disabled:pointer-events-none disabled:opacity-50 [&amp;_svg]:pointer-events-none [&amp;_svg:not([class*='size-'])]:size-4 [&amp;_svg]:shrink-0 outline-none focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-[3px] aria-invalid:ring-destructive/20 dark:aria-invalid:ring-destructive/40 aria-invalid:border-destructive bg-primary text-primary-foreground shadow-sm hover:bg-primary/90 h-10 rounded-md px-6 has-[>svg]:px-4 min-w-[140px]">Get Started</button><button data-slot="button" class="inline-flex items-center justify-center gap-2 whitespace-nowrap text-sm font-medium transition-[color,box-shadow] disabled:pointer-events-none disabled:opacity-50 [&amp;_svg]:pointer-events-none [&amp;_svg:not([class*='size-'])]:size-4 [&amp;_svg]:shrink-0 outline-none focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-[3px] aria-invalid:ring-destructive/20 dark:aria-invalid:ring-destructive/40 aria-invalid:border-destructive border border-input bg-background shadow-xs hover:bg-accent hover:text-accent-foreground h-10 rounded-md px-6 has-[>svg]:px-4 min-w-[140px]">Documentation</button></div></section><div data-slot="card" class="text-card-foreground flex flex-col gap-6 rounded-xl border shadow-sm bg-slate-900 p-6 mb-16"><div class="overflow-x-auto"><pre class="text-green-400 text-sm md:text-base"><code>$ bun create ./MyComponent.tsx<br>📦 Installing dependencies...<br>🔍 Detected Tailwind CSS<br>🎨 Detected shadcn/ui<br>✨ Dev server running at http://localhost:3000</code></pre></div></div><section class="grid md:grid-cols-3 gap-8 mb-16"><div data-slot="card" class="bg-card text-card-foreground flex flex-col gap-6 rounded-xl border shadow-sm p-6 hover:shadow-lg transition-shadow duration-200"><div class="flex items-center gap-2 mb-4"><svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-circle-check-big h-5 w-5 text-primary shrink-0"><path d="M21.801 10A10 10 0 1 1 17 3.335"></path><path d="m9 11 3 3L22 4"></path></svg><h3 class="font-semibold text-lg">Auto Dependencies</h3></div><p class="text-muted-foreground">Automatically detects and installs required dependencies for your component</p></div><div data-slot="card" class="bg-card text-card-foreground flex flex-col gap-6 rounded-xl border shadow-sm p-6 hover:shadow-lg transition-shadow duration-200"><div class="flex items-center gap-2 mb-4"><svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-circle-check-big h-5 w-5 text-primary shrink-0"><path d="M21.801 10A10 10 0 1 1 17 3.335"></path><path d="m9 11 3 3L22 4"></path></svg><h3 class="font-semibold text-lg">Tool Detection</h3></div><p class="text-muted-foreground">Seamlessly integrates with Tailwind CSS, shadcn/ui, and other popular tools</p></div><div data-slot="card" class="bg-card text-card-foreground flex flex-col gap-6 rounded-xl border shadow-sm p-6 hover:shadow-lg transition-shadow duration-200"><div class="flex items-center gap-2 mb-4"><svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-circle-check-big h-5 w-5 text-primary shrink-0"><path d="M21.801 10A10 10 0 1 1 17 3.335"></path><path d="m9 11 3 3L22 4"></path></svg><h3 class="font-semibold text-lg">Zero Config</h3></div><p class="text-muted-foreground">No setup required. Start developing instantly with hot reload enabled</p></div></section><section class="text-center"><div data-slot="card" class="text-card-foreground flex flex-col gap-6 rounded-xl border shadow-sm p-8 bg-primary/5 border-primary/10"><h2 class="text-2xl md:text-3xl font-bold mb-4">Ready to streamline your React development?</h2><p class="text-muted-foreground mb-6">Get started with Bun's powerful component development workflow today.</p><button data-slot="button" class="inline-flex items-center justify-center gap-2 whitespace-nowrap text-sm font-medium transition-[color,box-shadow] disabled:pointer-events-none disabled:opacity-50 [&amp;_svg]:pointer-events-none [&amp;_svg:not([class*='size-'])]:size-4 [&amp;_svg]:shrink-0 outline-none focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-[3px] aria-invalid:ring-destructive/20 dark:aria-invalid:ring-destructive/40 aria-invalid:border-destructive bg-primary text-primary-foreground shadow-sm hover:bg-primary/90 h-10 rounded-md px-6 has-[>svg]:px-4 min-w-[160px]">Install Bun</button></div></section></div></div></div>
 </body></html>"
 `;
+
+exports[`development: true react spa (no tailwind) (unnamed) 1`] = `""`;
+
+exports[`development: true react spa (no tailwind) (unnamed) 2`] = `
+"create  index.build.ts     build
+create  index.css          css
+create  index.html         html
+create  index.client.tsx   bun
+create  package.json       npm
+📦 Auto-installing 6 detected dependencies
+$ bun --only-missing install -- classnames react-dom@19 react@19
+bun add *.*.*
+installed classnames@*.*.*
+installed react-dom@*.*.*
+installed react@*.*.*
+4 packages installed [*ms]
+$ bun --only-missing add -d @types/bun @types/react@19 @types/react-dom@19
+bun add *.*.*
+installed @types/bun@*.*.*
+installed @types/react@*.*.*
+installed @types/react-dom@*.*.*
+7 packages installed [*ms]
+--------------------------------
+✨ React project configured
+Development - frontend dev server with hot reload
+bun dev
+Production - build optimized assets
+bun run build
+Happy bunning! 🐇
+Bun v*.*.* dev server ready in *.** ms
+url: http://[SERVER_URL]/"
+`;

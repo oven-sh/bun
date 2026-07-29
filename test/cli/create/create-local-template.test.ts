@@ -3,10 +3,6 @@ import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "path";
 
 // https://github.com/oven-sh/bun/issues/36341
-// `bun create <local-template> <dest>` used to `rm -rf` the destination
-// before copying, silently destroying pre-existing files (including the
-// entire cwd when dest was "."). It must preserve unrelated files and
-// refuse to overwrite conflicting ones unless --force is passed.
 
 function createEnv(templatesDir: string) {
   return { ...bunEnv, BUN_CREATE_DIR: templatesDir };
@@ -26,7 +22,7 @@ test.concurrent("bun create from local template preserves unrelated files in des
     stdout: "pipe",
     stderr: "pipe",
   });
-  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited, proc.stdout.text()]);
 
   expect(await Bun.file(join(String(dir), "proj", "important.txt")).text()).toBe("IMPORTANT DATA");
   expect(await Bun.file(join(String(dir), "proj", "subdir", "data.txt")).text()).toBe("more data");
@@ -48,7 +44,7 @@ test.concurrent("bun create from local template refuses to overwrite conflicting
     stdout: "pipe",
     stderr: "pipe",
   });
-  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited, proc.stdout.text()]);
 
   expect(stderr).toContain("contains files that could conflict");
   expect(stderr).toContain("index.ts");
@@ -70,7 +66,7 @@ test.concurrent("bun create from local template overwrites conflicting files wit
     stdout: "pipe",
     stderr: "pipe",
   });
-  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited, proc.stdout.text()]);
 
   expect(await Bun.file(join(String(dir), "proj", "index.ts")).text()).toBe("template version");
   // --force overwrites conflicts but must not delete unrelated files
@@ -92,7 +88,7 @@ test.concurrent("bun create from local template into existing named directory pr
     stdout: "pipe",
     stderr: "pipe",
   });
-  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited, proc.stdout.text()]);
 
   expect(await Bun.file(join(String(dir), "dest", "keep.txt")).text()).toBe("keep me");
   expect(await Bun.file(join(String(dir), "dest", "tpl.txt")).text()).toBe("template file");
@@ -116,7 +112,7 @@ test.concurrent("bun create from local template ignores README.md and .gitignore
     stdout: "pipe",
     stderr: "pipe",
   });
-  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited, proc.stdout.text()]);
 
   expect(stderr).not.toContain("contains files that could conflict");
   expect(await Bun.file(join(String(dir), "proj", "tpl.txt")).text()).toBe("template file");

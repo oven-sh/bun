@@ -600,73 +600,101 @@ impl CreateCommand {
                     }
                 };
 
-                if !create_options.overwrite
-                    && let Ok(existing_destination) = bun_sys::Dir::open(destination)
-                {
-                    // Walk a separate handle: the walker consumes the fd's
-                    // directory stream, and `template_dir` is walked again
-                    // below for the copy.
-                    if let Ok(scan_dir) = bun_sys::Dir::open(abs_template_path) {
-                        let mut scan_walker =
-                            bun_sys::walker_skippable::walk(scan_dir.fd, SKIP_FILES, SKIP_DIRS)?;
-
-                        let mut conflicts: Vec<Vec<bun_paths::OSPathChar>> = Vec::new();
-                        while let Some(entry) = scan_walker.next()? {
-                            if entry.kind != bun_sys::FileKind::File {
-                                continue;
-                            }
-
-                            #[cfg(not(windows))]
-                            let exists = bun_sys::exists_at(existing_destination.fd, entry.path);
-                            #[cfg(windows)]
-                            let exists = bun_sys::exists_at_type_w(
-                                existing_destination.fd,
-                                entry.path.as_slice(),
-                            )
-                            .is_ok();
-                            if !exists {
-                                continue;
-                            }
-
-                            #[cfg(not(windows))]
-                            let never_conflict = NEVER_CONFLICT
-                                .iter()
-                                .any(|p| strings::eql(entry.path.as_bytes(), p));
-                            #[cfg(windows)]
-                            let never_conflict = NEVER_CONFLICT
-                                .iter()
-                                .any(|p| strings::eql_comptime_utf16(entry.path.as_slice(), p));
-                            if never_conflict {
-                                continue;
-                            }
-
-                            #[cfg(not(windows))]
-                            conflicts.push(entry.path.as_bytes().to_vec());
-                            #[cfg(windows)]
-                            conflicts.push(entry.path.as_slice().to_vec());
-                        }
-
-                        if !conflicts.is_empty() {
+                let existing_destination = if create_options.overwrite {
+                    None
+                } else {
+                    match bun_sys::Dir::open(destination) {
+                        Ok(d) => Some(d),
+                        Err(err) if err.get_errno() == bun_sys::E::ENOENT => None,
+                        Err(err) => {
                             node.end();
                             progress.refresh();
 
                             pretty_errorln!(
-                                "<r>\n<red>error<r><d>: <r>The directory <b><blue>{}<r>/ contains files that could conflict:\n\n",
-                                bstr::BStr::new(bun_paths::basename(destination)),
+                                "<r><red>{}<r>: opening dir {}",
+                                bstr::BStr::new(err.name()),
+                                bstr::BStr::new(destination),
                             );
-                            for path in &conflicts {
-                                pretty_errorln!(
-                                    "<r>  {}",
-                                    bun_core::fmt::fmt_os_path(path.as_slice(), Default::default())
-                                );
-                            }
+                            Global::exit(1);
+                        }
+                    }
+                };
+                if let Some(existing_destination) = existing_destination {
+                    // The walker consumes the fd's directory stream, so the
+                    // copy below needs its own handle on the template.
+                    let scan_dir = match bun_sys::Dir::open(abs_template_path) {
+                        Ok(d) => d,
+                        Err(err) => {
+                            node.end();
+                            progress.refresh();
 
                             pretty_errorln!(
-                                "<r>\n<d>To copy {} anyway, use --force<r>",
+                                "<r><red>{}<r>: opening dir {}",
+                                bstr::BStr::new(err.name()),
                                 bstr::BStr::new(template),
                             );
                             Global::exit(1);
                         }
+                    };
+                    let mut scan_walker =
+                        bun_sys::walker_skippable::walk(scan_dir.fd, SKIP_FILES, SKIP_DIRS)?;
+
+                    let mut conflicts: Vec<Vec<bun_paths::OSPathChar>> = Vec::new();
+                    while let Some(entry) = scan_walker.next()? {
+                        if entry.kind != bun_sys::FileKind::File {
+                            continue;
+                        }
+
+                        #[cfg(not(windows))]
+                        let exists = bun_sys::exists_at(existing_destination.fd, entry.path);
+                        #[cfg(windows)]
+                        let exists = bun_sys::exists_at_type_w(
+                            existing_destination.fd,
+                            entry.path.as_slice(),
+                        )
+                        .is_ok();
+                        if !exists {
+                            continue;
+                        }
+
+                        #[cfg(not(windows))]
+                        let never_conflict = NEVER_CONFLICT
+                            .iter()
+                            .any(|p| strings::eql(entry.path.as_bytes(), p));
+                        #[cfg(windows)]
+                        let never_conflict = NEVER_CONFLICT
+                            .iter()
+                            .any(|p| strings::eql_comptime_utf16(entry.path.as_slice(), p));
+                        if never_conflict {
+                            continue;
+                        }
+
+                        #[cfg(not(windows))]
+                        conflicts.push(entry.path.as_bytes().to_vec());
+                        #[cfg(windows)]
+                        conflicts.push(entry.path.as_slice().to_vec());
+                    }
+
+                    if !conflicts.is_empty() {
+                        node.end();
+                        progress.refresh();
+
+                        pretty_errorln!(
+                            "<r>\n<red>error<r><d>: <r>The directory <b><blue>{}<r>/ contains files that could conflict:\n\n",
+                            bstr::BStr::new(bun_paths::basename(destination)),
+                        );
+                        for path in &conflicts {
+                            pretty_errorln!(
+                                "<r>  {}",
+                                bun_core::fmt::fmt_os_path(path.as_slice(), Default::default())
+                            );
+                        }
+
+                        pretty_errorln!(
+                            "<r>\n<d>To copy {} anyway, use --force<r>",
+                            bstr::BStr::new(template),
+                        );
+                        Global::exit(1);
                     }
                 }
 

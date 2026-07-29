@@ -28,7 +28,7 @@ async function runInstall(cwd: string, extra: string[] = []) {
   return { stdout, stderr, exitCode };
 }
 
-describe("bun.lock workspace version tracks package.json version", () => {
+describe.concurrent("bun.lock workspace version tracks package.json version", () => {
   async function setup(prefix: string, pkgAVersion = "1.0.0") {
     const dir = tempDir(prefix, {
       "package.json": JSON.stringify({

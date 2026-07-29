@@ -303,10 +303,7 @@ pub mod prompt {
             });
 
         // 7. Pause while waiting for the user's response.
-        // Unbuffered byte-at-a-time reader (same as alert/confirm). A buffered
-        // read here would pull bytes past the terminating '\n' out of the
-        // kernel pipe and strand them where Bun.stdin / process.stdin / a
-        // stdin:"inherit" child can no longer see them.
+        // Unbuffered so nothing past '\n' is pulled out of the pipe.
         let mut reader = Output::stdin_reader();
         let mut second_byte: Option<u8> = None;
         let Ok(first_byte) = reader.read_byte() else {

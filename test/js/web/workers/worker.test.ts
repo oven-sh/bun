@@ -414,14 +414,12 @@ describe("web worker", () => {
       const call = defer === "sync" ? "self.close()" : "queueMicrotask(() => self.close())";
       const src = `self.onmessage = e => { postMessage(e.data); if (e.data === 0) ${call}; };`;
       const worker = new Worker("data:text/javascript," + encodeURIComponent(src));
-      worker.onerror = e => {
-        throw e.message ?? e;
-      };
-      await once(worker, "open");
+      const errored = new Promise<never>((_, r) => (worker.onerror = e => r(e.message ?? e)));
+      await Promise.race([once(worker, "open"), errored]);
       for (let i = 0; i < 5; i++) worker.postMessage(i);
       const messages: any[] = [];
       worker.addEventListener("message", e => messages.push(e.data));
-      await once(worker, "close");
+      await Promise.race([once(worker, "close"), errored]);
       expect(messages).toEqual([0]);
     });
   }

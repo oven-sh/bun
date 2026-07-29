@@ -1295,7 +1295,7 @@ struct HttpResponseData;
                 if constexpr (!ConsumeMinimally) {
                     /* Go ahead and parse it (todo: better heuristics for emitting FIN to the app level) */
                     std::string_view dataToConsume(data, length);
-                    for (auto chunk : uWS::ChunkIterator(&dataToConsume, &remainingStreamingBytes, false, chunkedExtensionsByteCount, nodeHttpRequestTrailers, maxBufferedHeaderSize)) {
+                    for (auto chunk : uWS::ChunkIterator(&dataToConsume, &remainingStreamingBytes, chunkedExtensionsByteCount, nodeHttpRequestTrailers, maxBufferedHeaderSize)) {
                         /* llhttp errors at the offending extension byte, before any body bytes from
                          * that chunk reach the application; check before every dispatch. */
                         if (*chunkedExtensionsByteCount > MAX_CHUNK_EXTENSION_SIZE) [[unlikely]] {
@@ -1380,7 +1380,7 @@ public:
             } else if (isParsingChunkedEncoding(remainingStreamingBytes)) {
                  /* It's either chunked or with a content-length */
                 std::string_view dataToConsume(data, length);
-                for (auto chunk : uWS::ChunkIterator(&dataToConsume, &remainingStreamingBytes, false, chunkedExtensionsByteCount, nodeHttpRequestTrailers, maxFallbackSize)) {
+                for (auto chunk : uWS::ChunkIterator(&dataToConsume, &remainingStreamingBytes, chunkedExtensionsByteCount, nodeHttpRequestTrailers, maxFallbackSize)) {
                     if (*chunkedExtensionsByteCount > MAX_CHUNK_EXTENSION_SIZE) [[unlikely]] {
                         return HttpParserResult::error(HTTP_ERROR_413_PAYLOAD_TOO_LARGE, HTTP_PARSER_ERROR_CHUNK_EXTENSIONS_OVERFLOW);
                     }
@@ -1465,7 +1465,7 @@ public:
                     } else if (isParsingChunkedEncoding(remainingStreamingBytes)) {
                         /* It's either chunked or with a content-length */
                         std::string_view dataToConsume(data, length);
-                        for (auto chunk : uWS::ChunkIterator(&dataToConsume, &remainingStreamingBytes, false, chunkedExtensionsByteCount, nodeHttpRequestTrailers, maxFallbackSize)) {
+                        for (auto chunk : uWS::ChunkIterator(&dataToConsume, &remainingStreamingBytes, chunkedExtensionsByteCount, nodeHttpRequestTrailers, maxFallbackSize)) {
                             if (*chunkedExtensionsByteCount > MAX_CHUNK_EXTENSION_SIZE) [[unlikely]] {
                                 return HttpParserResult::error(HTTP_ERROR_413_PAYLOAD_TOO_LARGE, HTTP_PARSER_ERROR_CHUNK_EXTENSIONS_OVERFLOW);
                             }

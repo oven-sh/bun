@@ -375,7 +375,12 @@ describe("bundler", () => {
 
 // Bun.build({ naming: "[name" }) used to SIGABRT; validation now rejects it.
 describe("bundler", () => {
-  for (const naming of [`"[name"`, `{ chunk: "[name]-[hash" }`, `{ asset: "pre[post" }`]) {
+  for (const [naming, option] of [
+    [`"[name"`, "naming"],
+    [`{ entry: "[dir]/[name" }`, "naming.entry"],
+    [`{ chunk: "[name]-[hash" }`, "naming.chunk"],
+    [`{ asset: "pre[post" }`, "naming.asset"],
+  ] as const) {
     test(`naming/UnterminatedPlaceholderAPI ${naming}`, async () => {
       using dir = tempDir("naming-unterminated", {
         "e.ts": `console.log("hi");`,
@@ -397,8 +402,7 @@ describe("bundler", () => {
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       expect(stderr).toBe("");
-      expect(stdout).toContain("SURVIVED");
-      expect(stdout).toContain(`unterminated "[`);
+      expect(stdout).toContain(`${option}: unterminated "[`);
       expect(stdout).toContain(`(missing "]")`);
       expect(exitCode).toBe(0);
     });

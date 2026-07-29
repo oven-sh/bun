@@ -1311,8 +1311,9 @@ impl<const SSL: bool> Handler<SSL> {
             return client.on_timeout::<SSL>(socket);
         }
         if let Some(session) = tagged.session_mut() {
-            HTTPContext::<SSL>::mark_socket_as_dead(socket);
+            HTTPContext::<SSL>::fail_socket(socket);
             session.on_close(crate::Error::Timeout);
+            return;
         }
 
         HTTPContext::<SSL>::terminate_socket(socket);

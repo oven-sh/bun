@@ -40,9 +40,7 @@ pub struct StandaloneModuleGraph {
     /// them under Stacked/Tree Borrows and make the later foreign write UB.
     pub bytes: *const [u8],
     pub files: StringArrayHashMap<File>,
-    /// Every directory prefix that appears in `files` (no trailing separator,
-    /// normalized to `/`). Lets `node:fs` answer `existsSync` / `statSync` /
-    /// `readdirSync` for virtual directories under `/$bunfs/`.
+    /// Directory prefixes derived from `files` keys (no trailing `/`, always posix-separated).
     pub dirs: StringArrayHashMap<()>,
     pub entry_point_id: u32,
     pub compile_exec_argv: &'static [u8],
@@ -175,9 +173,6 @@ impl StandaloneModuleGraph {
         None
     }
 
-    /// Normalizes a path into the form stored in `self.dirs` / `self.files`:
-    /// strips NT prefixes on Windows, maps `\` → `/`, and drops a single
-    /// trailing separator. Returns the borrowed slice (possibly into `buf`).
     fn normalize_dir_path<'a>(name: &'a [u8], buf: &'a mut PathBuffer) -> &'a [u8] {
         #[cfg(windows)]
         let name = {
@@ -202,9 +197,7 @@ impl StandaloneModuleGraph {
         self.dirs.contains_key(name)
     }
 
-    /// Enumerates the virtual directory at `name`, returning `(entry_name, is_dir)`
-    /// pairs. `entry_name` is the immediate child when `recursive` is false, and the
-    /// path relative to `name` (with `/` separators) when `recursive` is true.
+    /// `(entry, is_dir)`; `entry` is the basename, or the `name`-relative path when `recursive`.
     pub fn readdir(&self, name: &[u8], recursive: bool) -> Option<Vec<(Box<[u8]>, bool)>> {
         if !is_bun_standalone_file_path(name) {
             return None;
@@ -732,9 +725,7 @@ impl StandaloneModuleGraph {
 
         modules.lock_pointers(); // make the pointers stable forever
 
-        // Derive every directory prefix that appears in a file path so `node:fs`
-        // can answer exists/stat/readdir for them. Keys are already normalized to
-        // `/` (see `to_bytes`), so a byte-wise rfind is sufficient on all platforms.
+        // Keys are posix-separated already (see `to_bytes`), so byte-scan for `/`.
         let mut dirs = StringArrayHashMap::<()>::new();
         for key in modules.keys() {
             let mut rest: &[u8] = key;

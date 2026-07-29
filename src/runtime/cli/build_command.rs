@@ -1231,9 +1231,6 @@ fn print_summary(
     bun_core::prettyln!("  <green>bundle<r>  {} modules", reachable_file_count);
 }
 
-/// Walks each `--asset` path and appends an `OutputFile` per on-disk file so
-/// `to_bytes` embeds it under `/$bunfs/root/<basename-of-asset>/...` with its
-/// original relative path.
 fn collect_compile_assets(
     assets: &[Box<[u8]>],
     out: &mut Vec<options::OutputFile>,

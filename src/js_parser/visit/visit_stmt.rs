@@ -1345,7 +1345,17 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             _ => {}
         }
 
+        // Annex B.3.2: keep `label: function f(){}` bare on the no-renamer
+        // path; `stmts_to_single_stmt` would otherwise block-wrap it.
+        let was_bare_fn = !p.will_use_renamer() && matches!(data.stmt.data, StmtData::SFunction(_));
         data.stmt = p.visit_single_stmt(data.stmt, StmtsKind::None);
+        if was_bare_fn
+            && let StmtData::SBlock(b) = data.stmt.data
+            && let [inner] = b.stmts.slice()
+            && matches!(inner.data, StmtData::SFunction(_))
+        {
+            data.stmt = *inner;
+        }
         p.pop_scope();
 
         stmts.push(*stmt);

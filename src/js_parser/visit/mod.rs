@@ -1272,8 +1272,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             // This is only done for function declarations that are not generators
                             // or async functions, since this is a backwards-compatibility hack from
                             // Annex B of the JavaScript standard.
+                            //
+                            // The `var` alias this emits needs a renamer; without one the output
+                            // context matches the source, so leave the declaration for the engine.
                             // SAFETY: current_scope is a valid arena ptr for the parse.
-                            if !p.current_scope().kind_stops_hoisting()
+                            if p.will_use_renamer()
+                                && !p.current_scope().kind_stops_hoisting()
                                 && p.symbols[data.func.name.unwrap().ref_.inner_index() as usize]
                                     .kind
                                     == SymbolKind::HoistedFunction

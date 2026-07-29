@@ -2921,7 +2921,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.runtime_imports.put(b"__require", ref_);
     }
 
-    fn will_use_renamer(&self) -> bool {
+    pub(crate) fn will_use_renamer(&self) -> bool {
         self.options.bundle || self.options.features.minify_identifiers
     }
 

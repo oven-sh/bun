@@ -293,11 +293,34 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
         std::set_terminate([]() { Zig__GlobalObject__onCrash(); });
         WTF::initializeMainThread();
 
+#if ASAN_ENABLED && OS(LINUX)
+        // JSC's notifyOptionsChanged() string-matches getenv("ASAN_OPTIONS") for
+        // "allow_user_segv_handler=1" (or "handle_segv=0") and otherwise disables
+        // useWasmFaultSignalHandler, which in turn makes WebAssembly.Memory
+        // silently ignore {shared:true}. __asan_default_options() already opts
+        // the runtime in; mirror it into the env var so JSC's check sees it. A
+        // value explicitly containing "allow_user_segv_handler=" is left alone
+        // so a caller can still force it off.
+        {
+            const char* asanOptions = getenv("ASAN_OPTIONS");
+            if (!asanOptions || !*asanOptions) {
+                setenv("ASAN_OPTIONS", "allow_user_segv_handler=1", 1);
+            } else if (!strstr(asanOptions, "allow_user_segv_handler=") && !strstr(asanOptions, "handle_segv=0")) {
+                size_t n = strlen(asanOptions);
+                char* merged = static_cast<char*>(malloc(n + sizeof(":allow_user_segv_handler=1")));
+                memcpy(merged, asanOptions, n);
+                memcpy(merged + n, ":allow_user_segv_handler=1", sizeof(":allow_user_segv_handler=1"));
+                setenv("ASAN_OPTIONS", merged, 1);
+                free(merged);
+            }
+        }
+#endif
+
         // Use JSC::initialize with a callback to set Options during initialization.
         // The callback runs BEFORE IPInt::initialize() so we can configure WASM options early.
-        // Under ASAN+Linux, JSC's notifyOptionsChanged() already disables
-        // useWasmFaultSignalHandler/FastMemory when ASAN_OPTIONS lacks
-        // allow_user_segv_handler=1, so we don't force it off here.
+        // Under ASAN+Linux, JSC's notifyOptionsChanged() gates
+        // useWasmFaultSignalHandler/FastMemory on ASAN_OPTIONS containing
+        // allow_user_segv_handler=1; the setenv above supplies that default.
         JSC::initialize([&] {
             JSC::Options::useWasm() = true;
             JSC::Options::useJIT() = true;

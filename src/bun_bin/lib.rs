@@ -74,6 +74,10 @@ pub extern "C" fn __asan_default_options() -> *const core::ffi::c_char {
     //   JSC's conservative GC scan and `StackBounds::contains` see them.
     // detect_leaks=0: off by default (Linux defaults it on); CI opts in via
     //   ASAN_OPTIONS with a suppressions file.
+    // allow_user_segv_handler=1: JSC's wasm fault handler needs its own
+    //   SIGSEGV/SIGBUS sigaction. JSC also string-matches this flag in
+    //   getenv("ASAN_OPTIONS") before enabling the handler; JSCInitialize
+    //   mirrors it into the env var for that check.
     //
     // Do NOT add `symbolize=0`
     // here — LSAN's function-name suppression matching (`test/leaksan.supp`)
@@ -81,7 +85,7 @@ pub extern "C" fn __asan_default_options() -> *const core::ffi::c_char {
     // `leak:uws_create_app` silently stops matching and CI reports the
     // suppressed allocations as leaks. If local debug crashes feel slow to
     // print, set `ASAN_OPTIONS=symbolize=0` in your shell instead.
-    c"detect_stack_use_after_return=0:detect_leaks=0".as_ptr()
+    c"detect_stack_use_after_return=0:detect_leaks=0:allow_user_segv_handler=1".as_ptr()
 }
 
 /// LSAN built-in suppressions, merged with whatever `LSAN_OPTIONS=suppressions=`

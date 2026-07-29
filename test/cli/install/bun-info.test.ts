@@ -1,6 +1,7 @@
 import { spawn } from "bun";
 import { describe, expect, it, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, tempDirWithFiles } from "harness";
+import { join } from "node:path";
 
 describe.concurrent("bun info", () => {
   let i = 0;
@@ -371,13 +372,9 @@ describe.concurrent("bun info", () => {
   });
 });
 
-// `send_sync` used to wrap the returned HTTPResponseMetadata in ManuallyDrop,
-// leaking the cloned response-header buffer and its backing string storage on
-// every sync CLI request. LSan's default conservative scan only catches it when
-// no idle thread happens to park with a stale pointer in a callee-saved
-// register, so exclude registers as roots to make the check deterministic and
-// look for the clone_metadata allocation site. A local registry keeps this
-// hermetic.
+// LSan's default conservative scan only flags the `send_sync` response-metadata
+// leak when no idle thread parks with a stale pointer in a callee-saved
+// register; excluding registers as roots makes the check deterministic.
 test.skipIf(!isASAN)(
   "bun info does not leak the sync response metadata",
   async () => {
@@ -413,7 +410,7 @@ test.skipIf(!isASAN)(
         HTTP_PROXY: "",
         HTTPS_PROXY: "",
         ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=1"].filter(Boolean).join(":"),
-        LSAN_OPTIONS: "use_registers=0:print_suppressions=0",
+        LSAN_OPTIONS: `use_registers=0:print_suppressions=0:suppressions=${join(import.meta.dirname, "../../leaksan.supp")}`,
       },
       stdout: "pipe",
       stderr: "pipe",

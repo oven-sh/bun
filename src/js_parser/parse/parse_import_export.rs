@@ -195,6 +195,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             name,
                             original_name: original_name.into(),
                         });
+                    } else {
+                        // "import { type as }"
+                        had_type_only_imports = true;
                     }
                 } else {
                     let is_identifier_inner = p.lexer.token == T::TIdentifier;

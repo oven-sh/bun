@@ -1350,15 +1350,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
                 p.lexer.expect_or_insert_semicolon()?;
 
-                if Self::IS_TYPESCRIPT_ENABLED {
-                    // export {type Foo};
-                    // ->
-                    // nothing
-                    // https://www.typescriptlang.org/play?useDefineForClassFields=true&esModuleInterop=false&declaration=false&target=99&isolatedModules=false&ts=4.5.4#code/KYDwDg9gTgLgBDAnmYcDeAxCEC+cBmUEAtnAOQBGAhlGQNwBQQA
-                    if export_clause.clauses.is_empty() && export_clause.had_type_only_exports {
-                        return Ok(p.s(S::TypeScript {}, loc));
-                    }
-                }
+                // Note: do not remove empty export statements since TypeScript uses them
+                // as module markers ("export { type Foo }" becomes "export {}").
                 p.has_es_module_syntax = true;
                 Ok(p.s(
                     S::ExportClause {

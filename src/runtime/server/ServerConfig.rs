@@ -970,8 +970,11 @@ impl ServerConfig {
                                 }
                             } else {
                                 let ty_str = function.js_type_string(global).to_slice(global);
-                                let received: &[u8] =
-                                    if function.is_null() { b"null" } else { ty_str.slice() };
+                                let received: &[u8] = if function.is_null() {
+                                    b"null"
+                                } else {
+                                    ty_str.slice()
+                                };
                                 return Err(global.throw_invalid_arguments(format_args!(
                                     "Invalid value for route {} method {}: received {}. Expected a function, Response, HTMLBundle, BunFile, or false.",
                                     bun_fmt::quote(&path),

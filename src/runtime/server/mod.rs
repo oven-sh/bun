@@ -2290,8 +2290,12 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                     if Self::HAS_H3 {
                         if let Some(h3_app) = self.h3_app {
                             // S008: `h3::App` is an `opaque_ffi!` ZST — safe deref.
-                            bun_opaque::opaque_deref_mut(h3_app)
-                                .method(m, p, self_ptr, Self::on_h3_request);
+                            bun_opaque::opaque_deref_mut(h3_app).method(
+                                m,
+                                p,
+                                self_ptr,
+                                Self::on_h3_request,
+                            );
                         }
                     }
                 }

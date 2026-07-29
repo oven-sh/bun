@@ -1142,6 +1142,16 @@ struct HttpResponseData;
         data[length + 1] = 'a'; /* Anything that is not \n, to trigger "invalid request" */
         req->ancientHttp = false;
         for (;length;) {
+            /* RFC 9112 9.6: a prior request forbade keep-alive, so everything
+             * after it is never parsed. Bun.serve discards it so onData's tail
+             * closes after the final response; node:http raises
+             * HPE_CLOSED_CONNECTION ('clientError') like Node's own parser. */
+            if (sawConnectionClose) {
+                if constexpr (IsNodeHttp) {
+                    return HttpParserResult::error(HTTP_ERROR_400_BAD_REQUEST, HTTP_PARSER_ERROR_CLOSED_CONNECTION);
+                }
+                return HttpParserResult::success(consumedTotal + length, user);
+            }
             /* node:http server compat: an accepted Upgrade request whose body just
              * finished parsing switched this connection into tunnel mode (the data
              * handler set isConnectRequest when it saw the body fin). Everything
@@ -1198,18 +1208,8 @@ struct HttpResponseData;
             for (HttpRequest::Header *h = req->headers; (++h)->key.length(); ) {
                 req->bf.add(h->key);
             }
-            /* A pipelined request behind one that forbade keep-alive is never
-             * dispatched (RFC 9112 9.6 MUST NOT). node:http raises
-             * HPE_CLOSED_CONNECTION ('clientError') on further bytes like Node's
-             * parser; Bun.serve discards them so HttpContext's onData tail closes
-             * the connection after the final response flushes. The predicate
-             * mirrors the one that marks the connection for close at dispatch. */
-            if (sawConnectionClose) {
-                if constexpr (IsNodeHttp) {
-                    return HttpParserResult::error(HTTP_ERROR_400_BAD_REQUEST, HTTP_PARSER_ERROR_CLOSED_CONNECTION);
-                }
-                return HttpParserResult::success(consumedTotal + length, user);
-            }
+            /* Latch for the loop-top sawConnectionClose gate: mirrors the
+             * predicate that marks the connection for close at dispatch. */
             if (req->isAncient() || req->hasConnectionClose()) {
                 sawConnectionClose = true;
             }

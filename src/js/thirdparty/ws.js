@@ -429,10 +429,6 @@ class BunWebSocket extends EventEmitter {
           once,
         );
       } else if (event === "error") {
-        // Arm the handshake bridge so #onHandshake can emit the ws-style
-        // "Unexpected server response: <code>" error for an error-only
-        // subscriber; #unexpectedResponseEmitted then suppresses the native
-        // "Expected 101" follow-up below.
         this.#ensureHandshakeListener();
         this.#ws.addEventListener(
           "error",

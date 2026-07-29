@@ -364,6 +364,7 @@ public:
         this->implementation.clear();
         this->fallbackImplmentation.clear();
         this->tail.clear();
+        this->m_mockNameWasSet = false;
     }
 
     void clearSpy()

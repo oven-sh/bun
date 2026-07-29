@@ -2146,15 +2146,6 @@ fn parse_build_command_options(
     }
 
     if args.flag(b"--windows-hide-console") {
-        // --windows-hide-console technically doesnt depend on WinAPI, but since since --windows-icon
-        // does, all of these customization options have been gated to windows-only
-        if !cfg!(windows) {
-            Output::err_generic(
-                "Using --windows-hide-console is only available when compiling on Windows",
-                (),
-            );
-            Global::crash();
-        }
         if ctx.bundler_options.compile_target.os != OperatingSystem::Windows {
             Output::err_generic(
                 "--windows-hide-console requires a Windows compile target",

@@ -1116,8 +1116,8 @@ impl WebWorker {
                     (*promise).result(vm.jsc_vm()),
                     true,
                 );
-                // `handled` only covers process.on('uncaughtException'); a self.onerror
-                // preventDefault() instead leaves has_requested_terminate() unset.
+                // `handled` is false without termination armed only on the
+                // re-entrant (quiet-hook) path; shut down once it is armed.
                 if !handled && self.has_requested_terminate() {
                     // exit_code is already 1 from uncaught_exception; re-setting it here
                     // would clobber a process.on('exit') change to process.exitCode.
@@ -1499,7 +1499,7 @@ fn on_unhandled_rejection(
     vm: &mut VirtualMachine,
     global_object: &JSGlobalObject,
     error_instance_or_exception: JSValue,
-) {
+) -> bool {
     // Prevent recursion
     vm.on_unhandled_rejection = VirtualMachine::on_quiet_unhandled_rejection_handler_capture_value;
 
@@ -1577,12 +1577,10 @@ fn on_unhandled_rejection(
         }
     };
     if handled {
-        // preventDefault(): undo uncaught_exception's side-effects (hook,
-        // counter, exit code) so the worker keeps running.
+        // preventDefault(): restore the hook so the next uncaught error
+        // dispatches again; the caller skips its fatal bookkeeping.
         vm.on_unhandled_rejection = on_unhandled_rejection;
-        vm.unhandled_error_counter = vm.unhandled_error_counter.saturating_sub(1);
-        vm.exit_handler.exit_code = 0;
-        return;
+        return true;
     }
     // node runs the worker's process 'exit' handlers on an uncaught exception (code 1;
     // they may change process.exitCode). Run them before arming termination — a pending
@@ -1611,6 +1609,7 @@ fn on_unhandled_rejection(
     // `global_object`); `notify_need_termination` is documented thread-safe
     // (VMTraps).
     vm.jsc_vm().notify_need_termination();
+    false
 }
 
 /// Resolve a worker entry-point specifier to a path the module loader can

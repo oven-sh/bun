@@ -57,7 +57,10 @@ pub use bun_core::STRING_ALLOCATION_LIMIT;
 // Type aliases
 // ──────────────────────────────────────────────────────────────────────────
 
-pub(crate) type OnUnhandledRejection = fn(&mut VirtualMachine, &JSGlobalObject, JSValue);
+/// Returns true when a handler consumed the error (e.g. a worker's
+/// `self.onerror` listener called `preventDefault()`); the caller must then
+/// skip its fatal bookkeeping (unhandled counter, exit code).
+pub(crate) type OnUnhandledRejection = fn(&mut VirtualMachine, &JSGlobalObject, JSValue) -> bool;
 pub(crate) type MacroMap = bun_collections::ArrayHashMap<i32, JSValue>;
 /// `api::JsException` lives in
 /// [`crate::schema_api`] (not `bun_options_types::schema::api`) because its
@@ -1062,13 +1065,14 @@ impl VirtualMachine {
         this: &mut VirtualMachine,
         _: &JSGlobalObject,
         value: JSValue,
-    ) {
+    ) -> bool {
         this.unhandled_error_counter += 1;
         value.ensure_still_alive();
         if let Some(ptr) = this.unhandled_pending_rejection_to_capture {
             // SAFETY: caller passed &mut stack_var (see LIFETIMES.tsv)
             unsafe { *ptr = value };
         }
+        false
     }
 
     pub fn unhandled_rejection_scope(&self) -> UnhandledRejectionScope {
@@ -1090,12 +1094,13 @@ impl VirtualMachine {
         this: &mut VirtualMachine,
         _: &JSGlobalObject,
         value: JSValue,
-    ) {
+    ) -> bool {
         // SAFETY: BORROW_PARAM ptr set by caller; outlives this call.
         let list = this
             .on_unhandled_rejection_exception_list
             .map(|mut p| unsafe { p.as_mut() });
         this.run_error_handler(value, list);
+        false
     }
 
     #[cold]
@@ -1359,8 +1364,9 @@ impl VirtualMachine {
         }
 
         if isBunTest.load(core::sync::atomic::Ordering::Relaxed) {
-            self.unhandled_error_counter += 1;
-            (self.on_unhandled_rejection)(self, global_object, err);
+            if !(self.on_unhandled_rejection)(self, global_object, err) {
+                self.unhandled_error_counter += 1;
+            }
             return true;
         }
 
@@ -1373,7 +1379,7 @@ impl VirtualMachine {
                 // normal path; process_exit() RETURNS on a worker, so the
                 // main-thread process_exit(7)+panic below would crash.
                 self.exit_handler.exit_code = 1;
-                (self.on_unhandled_rejection)(self, global_object, err);
+                let _ = (self.on_unhandled_rejection)(self, global_object, err);
                 return false;
             }
             self.run_error_handler(err, None);
@@ -1383,7 +1389,7 @@ impl VirtualMachine {
             panic!("Uncaught exception while handling uncaught exception");
         }
         self.is_handling_uncaught_exception = true;
-        let handled = Bun__handleUncaughtException(
+        let mut handled = Bun__handleUncaughtException(
             global_object,
             err.to_error().unwrap_or(err),
             if is_rejection { 1 } else { 0 },
@@ -1405,9 +1411,19 @@ impl VirtualMachine {
                 panic!("made it past process.exit()");
             }
             // TODO maybe we want a separate code path for uncaught exceptions
-            self.unhandled_error_counter += 1;
+            // exit_code is set to 1 BEFORE the hook so 'exit' listeners run by a
+            // terminating worker observe it (node parity).
+            let prior_exit_code = self.exit_handler.exit_code;
             self.exit_handler.exit_code = 1;
-            (self.on_unhandled_rejection)(self, global_object, err);
+            handled = (self.on_unhandled_rejection)(self, global_object, err);
+            if handled {
+                // Restore the exit code unless the error handler changed it.
+                if self.exit_handler.exit_code == 1 {
+                    self.exit_handler.exit_code = prior_exit_code;
+                }
+            } else {
+                self.unhandled_error_counter += 1;
+            }
         }
         // Note: this reset must cover BOTH the FFI call and the
         // `onUnhandledRejection` callback above. The flag must stay raised
@@ -3299,8 +3315,9 @@ impl VirtualMachine {
         }
 
         if isBunTest.load(core::sync::atomic::Ordering::Relaxed) {
-            self.unhandled_error_counter += 1;
-            (self.on_unhandled_rejection)(self, global_object, reason);
+            if !(self.on_unhandled_rejection)(self, global_object, reason) {
+                self.unhandled_error_counter += 1;
+            }
             return;
         }
 
@@ -3384,8 +3401,9 @@ impl VirtualMachine {
                 }
             }
         }
-        self.unhandled_error_counter += 1;
-        (self.on_unhandled_rejection)(self, global_object, reason);
+        if !(self.on_unhandled_rejection)(self, global_object, reason) {
+            self.unhandled_error_counter += 1;
+        }
     }
 
     /// After a hot reload, surfaces the entry-point promise's rejection (if any) and re-arms the watcher.

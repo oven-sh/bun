@@ -447,6 +447,69 @@ describe("web worker", () => {
       expect(stdout).toContain("CLOSE:0");
       expect(exitCode).toBe(0);
     });
+
+    test("error event fires once per rejection under --unhandled-rejections=throw", async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "--unhandled-rejections=throw",
+          "-e",
+          `
+          const script = [
+            "self.addEventListener('error', e => { e.preventDefault(); postMessage('errorevent'); });",
+            "self.onmessage = () => postMessage('pong');",
+            "Promise.reject(new Error('rejected-once'));",
+          ].join("\\n");
+          const w = new Worker(URL.createObjectURL(new Blob([script], { type: "text/javascript" })));
+          const events = [];
+          w.onmessage = e => {
+            events.push(e.data);
+            if (e.data === "errorevent") w.postMessage("ping");
+            if (e.data === "pong") { console.log(JSON.stringify(events)); w.terminate(); process.exit(0); }
+          };
+          w.addEventListener("close", e => { console.log("CLOSE:" + e.code); process.exit(1); });
+          `,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      // A second "errorevent" here means the same rejection was dispatched twice.
+      expect(stdout.trim()).toBe('["errorevent","pong"]');
+      expect(exitCode).toBe(0);
+    });
+
+    test("preventDefault() preserves a user-set process.exitCode", async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
+          const script = [
+            "process.exitCode = 42;",
+            "self.addEventListener('error', e => {",
+            "  e.preventDefault();",
+            "  queueMicrotask(() => postMessage(process.exitCode));",
+            "});",
+            "throw new Error('thrown-and-handled');",
+          ].join("\\n");
+          const w = new Worker(URL.createObjectURL(new Blob([script], { type: "text/javascript" })));
+          w.onmessage = e => { console.log("EXITCODE:" + e.data); w.terminate(); process.exit(e.data === 42 ? 0 : 1); };
+          w.onerror = e => { console.log("PARENT-ERROR:" + e.message); process.exit(1); };
+          w.addEventListener("close", e => { console.log("CLOSE:" + e.code); process.exit(1); });
+          `,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(stdout).toContain("EXITCODE:42");
+      expect(exitCode).toBe(0);
+    });
   });
 });
 

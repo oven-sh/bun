@@ -16,15 +16,19 @@ pub enum Kind {
     FileDone,
     /// 3 × str: failures, skips, todos (verbatim repeat-buffer bytes)
     RepeatBufs,
-    /// str path
-    JunitFile,
-    /// str path
-    CoverageFile,
     // coordinator → worker
     /// u32 file_idx, str path
     Run,
     /// (empty)
     Shutdown,
+    /// u32 file_idx, str xml — one file's completed <testsuite> element(s).
+    /// Workers never write reports to disk; the coordinator files chunks by
+    /// index and emits them in the run's canonical file order, so the merged
+    /// document is identical regardless of which worker finishes first.
+    JunitChunk,
+    /// str lcov — this worker's coverage data, sent at exit; the coordinator
+    /// merges every worker's into the one report it writes.
+    CoverageChunk,
 }
 
 impl TryFrom<u8> for Kind {
@@ -37,10 +41,10 @@ impl TryFrom<u8> for Kind {
             2 => Kind::TestDone,
             3 => Kind::FileDone,
             4 => Kind::RepeatBufs,
-            5 => Kind::JunitFile,
-            6 => Kind::CoverageFile,
-            7 => Kind::Run,
-            8 => Kind::Shutdown,
+            5 => Kind::Run,
+            6 => Kind::Shutdown,
+            7 => Kind::JunitChunk,
+            8 => Kind::CoverageChunk,
             _ => return Err(()),
         })
     }

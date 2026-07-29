@@ -1,13 +1,13 @@
 import { file, spawn } from "bun";
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "node:path";
 
 const xml2js = require("xml2js");
 
 describe("junit reporter", () => {
   it.each([false, true])("should generate valid junit xml for passing tests %s", async withCIEnvironmentVariables => {
-    const tmpDir = tempDirWithFiles("junit", {
+    await using tmpDir = tempDir("junit", {
       "package.json": "{}",
       "passing.test.js": `
         describe("root describe", () => {
@@ -151,7 +151,7 @@ describe("junit reporter", () => {
   });
 
   it("more scenarios", async () => {
-    const tmpDir = tempDirWithFiles("junit-comprehensive", {
+    await using tmpDir = tempDir("junit-comprehensive", {
       "package.json": "{}",
       "comprehensive.test.js": `
         import { test, expect, describe } from "bun:test";
@@ -317,7 +317,7 @@ describe("junit reporter", () => {
   });
 
   it("should report only the final result for a retried test", async () => {
-    const tmpDir = tempDirWithFiles("junit-retry", {
+    await using tmpDir = tempDir("junit-retry", {
       "package.json": "{}",
       "flaky.test.js": `
         import { test, expect } from "bun:test";
@@ -390,7 +390,7 @@ describe("junit reporter", () => {
   });
 
   it("produces well-formed XML when test names contain control characters", async () => {
-    const tmpDir = tempDirWithFiles("junit-ctrl", {
+    await using tmpDir = tempDir("junit-ctrl", {
       "package.json": "{}",
       "ctrl.test.js":
         'import { test } from "bun:test";\n' +
@@ -430,7 +430,7 @@ describe("junit reporter", () => {
   });
 
   it("escapes the classname attribute exactly once", async () => {
-    const tmpDir = tempDirWithFiles("junit-escape", {
+    await using tmpDir = tempDir("junit-escape", {
       "package.json": "{}",
       "escape.test.js": `
         import { describe, test } from "bun:test";
@@ -472,7 +472,7 @@ describe("junit reporter", () => {
   });
 
   it("keeps the test body's error in <failure> when afterEach also throws", async () => {
-    const tmpDir = tempDirWithFiles("junit-aftereach", {
+    await using tmpDir = tempDir("junit-aftereach", {
       "package.json": "{}",
       "after.test.js": `
         import { test, afterEach } from "bun:test";
@@ -504,7 +504,7 @@ describe("junit reporter", () => {
   });
 
   it("includes the error type, message and stack in <failure>", async () => {
-    const tmpDir = tempDirWithFiles("junit-failure", {
+    await using tmpDir = tempDir("junit-failure", {
       "package.json": "{}",
       "fail.test.js": `
         import { test, expect } from "bun:test";

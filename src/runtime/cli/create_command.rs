@@ -960,8 +960,7 @@ impl CreateCommand {
         {
             let parent_dir = bun_sys::Dir::open(destination)?;
             if template_has_gitignore {
-                // rename replaces an existing .gitignore; linkat fails EEXIST.
-                // Only a directory can block the rename; --force clears it.
+                // rename replaces files; only a directory blocks it (--force clears it).
                 if create_options.overwrite
                     && bun_sys::directory_exists_at(
                         parent_dir.fd(),

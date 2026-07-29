@@ -1798,7 +1798,9 @@ type Loader =
   | "file"
   | "napi"
   | "wasm"
-  | "html";
+  | "html"
+  | "base64"
+  | "dataurl";
 
 interface BuildOutput {
   outputs: BuildArtifact[];

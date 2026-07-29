@@ -6624,44 +6624,34 @@ describe.concurrent("bun-install", () => {
           }),
         );
 
-        let { stderr, exited } = spawn({
-          cmd: [bunExe(), "install"],
-          cwd: ctx.package_dir,
-          stdout: "ignore",
-          stdin: "ignore",
-          stderr: "pipe",
-          env,
-        });
-        let err = await stderr.text();
+        async function install(args: string[] = []) {
+          const proc = spawn({
+            cmd: [bunExe(), "install", ...args],
+            cwd: ctx.package_dir,
+            stdout: "ignore",
+            stdin: "ignore",
+            stderr: "pipe",
+            env,
+          });
+          const [err, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+          return { err, exitCode };
+        }
+
+        let { err, exitCode } = await install();
         expect(err).not.toContain("error:");
-        expect(await exited).toBe(0);
+        expect(exitCode).toBe(0);
 
         const lockfile = await file(join(ctx.package_dir, "bun.lock")).text();
 
-        ({ stderr, exited } = spawn({
-          cmd: [bunExe(), "install", "--frozen-lockfile"],
-          cwd: ctx.package_dir,
-          stdout: "ignore",
-          stdin: "ignore",
-          stderr: "pipe",
-          env,
-        }));
-        err = await stderr.text();
+        ({ err, exitCode } = await install(["--frozen-lockfile"]));
         expect(err).not.toContain("lockfile had changes");
         expect(err).not.toContain("error:");
-        expect(await exited).toBe(0);
+        expect(exitCode).toBe(0);
+        expect(await file(join(ctx.package_dir, "bun.lock")).text()).toBe(lockfile);
 
-        ({ stderr, exited } = spawn({
-          cmd: [bunExe(), "install"],
-          cwd: ctx.package_dir,
-          stdout: "ignore",
-          stdin: "ignore",
-          stderr: "pipe",
-          env,
-        }));
-        err = await stderr.text();
+        ({ err, exitCode } = await install());
         expect(err).not.toContain("error:");
-        expect(await exited).toBe(0);
+        expect(exitCode).toBe(0);
 
         expect(await file(join(ctx.package_dir, "bun.lock")).text()).toBe(lockfile);
         expect(lockfile).not.toContain("pkg-a/baz");

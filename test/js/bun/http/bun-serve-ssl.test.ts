@@ -207,6 +207,39 @@ describe("Bun.serve reload({tls})", () => {
     server.reload({ tls: { ...certB, serverName: "example.test" }, fetch: fetchHandler });
     expect(await servedCN(port)).toBe("localhost");
     expect(await servedCN(port, "example.test")).toBe("localhost");
+
+    // The SNI-tree key is whatever listen() registered; a reload that omits
+    // serverName must keep matching it.
+    server.reload({ tls: { ...certA }, fetch: fetchHandler });
+    expect(await servedCN(port, "example.test")).toBe("server-bun");
+    server.reload({ tls: { ...certB }, fetch: fetchHandler });
+    expect(await servedCN(port, "example.test")).toBe("localhost");
+  });
+
+  test("routes through the reloaded handler after rotating tls with serverName", async () => {
+    // After the SNI-tree entry and the default context converge on the same
+    // SSL_CTX, that context must not carry the per-domain router as ex_data:
+    // reload() rebuilds self.user_routes, so the per-domain router's entries
+    // now point at freed UserRoute slots. Every client has to hit the freshly
+    // reloaded default router instead.
+    await using server = Bun.serve({
+      port: 0,
+      tls: { ...certA, serverName: "example.test" },
+      routes: { "/api": () => new Response("v1") },
+      fetch: () => new Response("fallback"),
+    });
+    const port = server.port;
+    server.reload({
+      tls: { ...certB, serverName: "example.test" },
+      routes: { "/api": () => new Response("v2") },
+      fetch: () => new Response("fallback"),
+    });
+    const get = (serverName?: string) =>
+      fetch(`https://127.0.0.1:${port}/api`, { tls: { rejectUnauthorized: false, serverName } } as any).then(r =>
+        r.text(),
+      );
+    expect(await get()).toBe("v2");
+    expect(await get("example.test")).toBe("v2");
   });
 
   test("rejects an unusable certificate and keeps serving the previous one", async () => {

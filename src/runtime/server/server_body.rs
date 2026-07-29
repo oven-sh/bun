@@ -2338,13 +2338,12 @@ where
         if let Some(ctx) = new_ssl_ctx {
             // The listen socket up_refs the new context and releases the
             // retiring one; connections already accepted keep the certificate
-            // they handshook with via their own `SSL_new` ref.
-            let server_name = self
-                .config
-                .ssl_config
-                .as_ref()
-                .and_then(|c| c.server_name_cstr())
-                .filter(|n| !n.to_bytes().is_empty());
+            // they handshook with via their own `SSL_new` ref. The SNI-tree key
+            // is whatever `listen()` registered and never changes.
+            let server_name = self.sni_server_name.as_deref().map(|bytes| {
+                // SAFETY: stored NUL-terminated in `listen()`.
+                unsafe { core::ffi::CStr::from_ptr(bytes.as_ptr().cast()) }
+            });
             let swapped = self
                 .listener
                 .map(|ls| bun_opaque::opaque_deref_mut(ls).set_ssl_ctx(ctx, server_name))

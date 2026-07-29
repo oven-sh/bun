@@ -2853,13 +2853,13 @@ int us_listen_socket_set_ssl_ctx(struct us_listen_socket_t *ls, SSL_CTX *ctx,
     /* Bun.listen() registers `old` itself in the tree, so the entry belongs to
      * us iff `node->ctx == old` (a node:tls addContext() on the same name is
      * the caller's and stays). uWS/Bun.serve registers a separate domainCtx,
-     * so `force_sni` moves the entry unconditionally (node->user survives). */
+     * so `force_sni` moves the entry unconditionally. node->user stays on the
+     * node; do not stamp it onto ctx via ex_data (ctx is now also ls->ssl_ctx,
+     * so that would route no-SNI clients via that per-domain router). */
     if (node && (force_sni || node->ctx == old)) {
       SSL_CTX_up_ref(ctx);
       SSL_CTX_free(node->ctx);
       node->ctx = ctx;
-      us_ex_idx_ensure();
-      SSL_CTX_set_ex_data(ctx, us_sni_ex_idx, node->user);
     }
   }
 

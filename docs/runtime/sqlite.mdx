@@ -651,7 +651,7 @@ db.loadExtension("myext");
 
 </Note>
 
-### `.fileControl(cmd: number, value: any)`
+### `.fileControl(cmd: number, value?: number)`
 
 To use the advanced `sqlite3_file_control` API, call `.fileControl(cmd, value)` on your `Database` instance. See [WAL sidecar file cleanup](#wal-sidecar-file-cleanup) for a practical example.
 
@@ -664,11 +664,7 @@ const db = new Database();
 db.fileControl(constants.SQLITE_FCNTL_PERSIST_WAL, 0);
 ```
 
-`value` can be:
-
-- `number`
-- `TypedArray`
-- `undefined` or `null`
+`value` is a `number` when the opcode takes one, or omitted otherwise; Bun allocates any scratch storage the opcode needs. Only opcodes with a safe JavaScript mapping are accepted. Opcodes that produce a value return it (a `number`, or a `string` for `SQLITE_FCNTL_VFSNAME` and `SQLITE_FCNTL_TEMPFILENAME`), and return `undefined` if the VFS reports `SQLITE_NOTFOUND`. Opcodes without an output value return the `sqlite3_file_control` status code. Opcodes that exchange raw C pointers (`SQLITE_FCNTL_FILE_POINTER`, `SQLITE_FCNTL_VFS_POINTER`, `SQLITE_FCNTL_BUSYHANDLER`, ...) throw a `TypeError`.
 
 ---
 

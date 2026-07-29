@@ -1953,46 +1953,134 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementFcntlFunction, (JSC::JSGlobalObject * lex
         RETURN_IF_EXCEPTION(scope, {});
     }
 
-    int64_t resultInt = -1;
-    void* resultPtr = nullptr;
-    if (resultValue.isObject()) {
-        if (auto* view = dynamicDowncast<JSC::JSArrayBufferView>(resultValue.getObject())) {
-            if (view->isDetached()) {
-                throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "TypedArray is detached"_s));
-                return {};
-            }
+    if (!resultValue.isUndefinedOrNull() && !resultValue.isNumber()) {
+        throwException(lexicalGlobalObject, scope, createTypeError(lexicalGlobalObject, "fileControl: argument must be a number or omitted"_s));
+        return {};
+    }
 
-            if (view->byteLength() < sizeof(int64_t)) {
-                throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "TypedArray must be at least 8 bytes"_s));
-                return {};
-            }
+    const char* zDbName = fileNameStr.isNull() ? nullptr : fileNameStr.data();
 
-            resultPtr = view->vector();
-            if (resultPtr == nullptr) {
-                throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "Expected buffer"_s));
-                return {};
-            }
+    auto issue = [&](void* arg) -> int {
+        int rc = sqlite3_file_control(db, zDbName, op, arg);
+        if (rc == SQLITE_ERROR) {
+            throwException(lexicalGlobalObject, scope, createSQLiteError(lexicalGlobalObject, db));
         }
-    } else if (resultValue.isNumber()) {
-        resultInt = resultValue.toInt32(lexicalGlobalObject);
+        return rc;
+    };
+
+    // Opcodes are grouped by the type their pArg contract expects. The scratch
+    // storage always lives on this stack frame; JavaScript-supplied memory is
+    // never handed to SQLite.
+    switch (op) {
+    // int* in/out: -1 queries, 0/1 (or a count) sets. Returns the resulting int.
+    case SQLITE_FCNTL_PERSIST_WAL:
+    case SQLITE_FCNTL_POWERSAFE_OVERWRITE:
+    case SQLITE_FCNTL_LOCK_TIMEOUT:
+    case SQLITE_FCNTL_RESERVE_BYTES: {
+        int scratch = resultValue.isNumber() ? resultValue.toInt32(lexicalGlobalObject) : -1;
         RETURN_IF_EXCEPTION(scope, {});
-
-        resultPtr = &resultInt;
-    } else if (resultValue.isNull()) {
-
-    } else {
-        throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "Expected result to be a number, null or a TypedArray"_s));
-        return {};
+        int rc = issue(&scratch);
+        RETURN_IF_EXCEPTION(scope, {});
+        return JSValue::encode(rc == SQLITE_OK ? jsNumber(scratch) : jsUndefined());
     }
 
-    int statusCode = sqlite3_file_control(db, fileNameStr.isNull() ? nullptr : fileNameStr.data(), op, resultPtr);
-
-    if (statusCode == SQLITE_ERROR) {
-        throwException(lexicalGlobalObject, scope, createSQLiteError(lexicalGlobalObject, db));
-        return {};
+    // int* out only. Returns the resulting int.
+    case SQLITE_FCNTL_LOCKSTATE:
+    case SQLITE_FCNTL_LAST_ERRNO:
+    case SQLITE_FCNTL_HAS_MOVED:
+    case SQLITE_FCNTL_EXTERNAL_READER: {
+        int scratch = 0;
+        int rc = issue(&scratch);
+        RETURN_IF_EXCEPTION(scope, {});
+        return JSValue::encode(rc == SQLITE_OK ? jsNumber(scratch) : jsUndefined());
     }
 
-    return JSValue::encode(jsNumber(statusCode));
+    // unsigned int* out. Returns the resulting counter.
+    case SQLITE_FCNTL_DATA_VERSION: {
+        unsigned int scratch = 0;
+        int rc = issue(&scratch);
+        RETURN_IF_EXCEPTION(scope, {});
+        return JSValue::encode(rc == SQLITE_OK ? jsNumber(scratch) : jsUndefined());
+    }
+
+    // int* in only. Returns rc.
+    case SQLITE_FCNTL_CHUNK_SIZE: {
+        if (!resultValue.isNumber()) {
+            throwException(lexicalGlobalObject, scope, createTypeError(lexicalGlobalObject, "fileControl: SQLITE_FCNTL_CHUNK_SIZE requires a numeric argument"_s));
+            return {};
+        }
+        int scratch = resultValue.toInt32(lexicalGlobalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        int rc = issue(&scratch);
+        RETURN_IF_EXCEPTION(scope, {});
+        return JSValue::encode(jsNumber(rc));
+    }
+
+    // sqlite3_int64* in only. Returns rc.
+    case SQLITE_FCNTL_SIZE_HINT: {
+        if (!resultValue.isNumber()) {
+            throwException(lexicalGlobalObject, scope, createTypeError(lexicalGlobalObject, "fileControl: SQLITE_FCNTL_SIZE_HINT requires a numeric argument"_s));
+            return {};
+        }
+        double raw = resultValue.asNumber();
+        sqlite3_int64 scratch = raw >= 0 && raw <= static_cast<double>(std::numeric_limits<sqlite3_int64>::max())
+            ? static_cast<sqlite3_int64>(raw)
+            : 0;
+        int rc = issue(&scratch);
+        RETURN_IF_EXCEPTION(scope, {});
+        return JSValue::encode(jsNumber(rc));
+    }
+
+    // sqlite3_int64* in/out. Negative queries. Returns the resulting int64.
+    case SQLITE_FCNTL_MMAP_SIZE:
+    case SQLITE_FCNTL_SIZE_LIMIT: {
+        sqlite3_int64 scratch = -1;
+        if (resultValue.isNumber()) {
+            double raw = resultValue.asNumber();
+            if (raw >= 0 && raw <= static_cast<double>(std::numeric_limits<sqlite3_int64>::max()))
+                scratch = static_cast<sqlite3_int64>(raw);
+            else if (raw < 0)
+                scratch = -1;
+        }
+        int rc = issue(&scratch);
+        RETURN_IF_EXCEPTION(scope, {});
+        return JSValue::encode(rc == SQLITE_OK ? jsNumber(static_cast<double>(scratch)) : jsUndefined());
+    }
+
+    // char** out, obtained from sqlite3_malloc(). Returns the string and frees it.
+    case SQLITE_FCNTL_VFSNAME:
+    case SQLITE_FCNTL_TEMPFILENAME: {
+        char* out = nullptr;
+        int rc = issue(&out);
+        RETURN_IF_EXCEPTION(scope, {});
+        if (rc != SQLITE_OK || out == nullptr) {
+            if (out) sqlite3_free(out);
+            return JSValue::encode(jsUndefined());
+        }
+        JSString* str = JSC::jsString(vm, WTF::String::fromUTF8(out));
+        sqlite3_free(out);
+        return JSValue::encode(str);
+    }
+
+    // pArg unused. Returns rc.
+    case SQLITE_FCNTL_RESET_CACHE:
+    case SQLITE_FCNTL_NULL_IO: {
+        int rc = issue(nullptr);
+        RETURN_IF_EXCEPTION(scope, {});
+        return JSValue::encode(jsNumber(rc));
+    }
+
+    default:
+        // Opcodes that exchange raw pointers with the VFS (FILE_POINTER,
+        // VFS_POINTER, JOURNAL_POINTER, WIN32_GET_HANDLE, BUSYHANDLER, PRAGMA,
+        // TRACE, WIN32_SET_HANDLE, PDB, CKSM_FILE, RBU, ZIPVFS, SET_LOCKPROXYFILE,
+        // GET_LOCKPROXYFILE, FILESTAT, WIN32_AV_RETRY, SYNC) and opcodes the
+        // SQLite docs mark as internal/app-should-not-call (SYNC_OMITTED,
+        // COMMIT_PHASETWO, WAL_BLOCK, CKPT_START, CKPT_DONE, OVERWRITE,
+        // BEGIN/COMMIT/ROLLBACK_ATOMIC_WRITE, BLOCK_ON_CONNECT) are rejected.
+        throwException(lexicalGlobalObject, scope, createTypeError(lexicalGlobalObject, makeString("fileControl: opcode "_s, op, " has no safe JavaScript mapping"_s)));
+        return {};
+    }
 }
 
 /* Hash table for constructor */

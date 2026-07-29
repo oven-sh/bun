@@ -312,13 +312,11 @@ test("mysql: a prepare-OK claiming 60000 columns is rejected instead of allocati
   // num_columns is server-controlled and drives both the ColumnDefinition41
   // Vec allocation and how many follow-up packets the client waits for.
   // MySQL caps a result set at 4096 columns (MAX_FIELDS); a prepare-OK
-  // claiming more is a hostile 12-byte packet.
+  // claiming more is a hostile 12-byte packet. num_params is NOT capped:
+  // MySQL accepts up to 65535 placeholders (ER_PS_MANY_PARAM fires only at
+  // the u16 boundary), and large IN-lists / bulk inserts legitimately exceed
+  // 4096.
   const got = await runPrepared({ prepareReply: mysqlStmtPrepareOk(1, 1, 60000, 0) });
-  expect(got).toEqual({ err: "ERR_MYSQL_INVALID_PREPARE_OK_PACKET" });
-});
-
-test("mysql: a prepare-OK claiming 60000 params is rejected instead of allocating and waiting forever", async () => {
-  const got = await runPrepared({ prepareReply: mysqlStmtPrepareOk(1, 1, 0, 60000) });
   expect(got).toEqual({ err: "ERR_MYSQL_INVALID_PREPARE_OK_PACKET" });
 });
 

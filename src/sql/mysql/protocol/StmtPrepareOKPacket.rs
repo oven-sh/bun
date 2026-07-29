@@ -29,12 +29,13 @@ impl StmtPrepareOKPacket {
             return Err(AnyMySQLError::InvalidPrepareOKPacket);
         }
         self.num_columns = reader.int::<u16>()?;
-        self.num_params = reader.int::<u16>()?;
-        // Both counts size a Vec<ColumnDefinition41> and how many follow-up
-        // packets the client waits for; MySQL's MAX_FIELDS is 4096.
-        if self.num_columns > 4096 || self.num_params > 4096 {
+        // num_columns sizes a Vec<ColumnDefinition41> and how many follow-up
+        // packets the client waits for; MySQL's MAX_FIELDS is 4096. num_params
+        // is already bounded by its u16 wire type (ER_PS_MANY_PARAM at 65535).
+        if self.num_columns > 4096 {
             return Err(AnyMySQLError::InvalidPrepareOKPacket);
         }
+        self.num_params = reader.int::<u16>()?;
         let _ = reader.int::<u8>()?; // reserved_1
         if self.packet_length >= 12 {
             self.warning_count = reader.int::<u16>()?;

@@ -7437,14 +7437,14 @@ impl NodeFS {
             },
         );
 
-        if args.aborted() {
+        let has_signal = flavor == Flavor::Async && args.signal.is_some();
+        if has_signal && args.aborted() {
             return Err(abort_err());
         }
 
         let mut buf = args.data.slice();
         #[cfg(not(windows))]
         let mut written: usize = 0;
-        let has_signal = flavor == Flavor::Async && args.signal.is_some();
 
         // Attempt to pre-allocate large files
         // Worthwhile after 6 MB at least on ext4 linux

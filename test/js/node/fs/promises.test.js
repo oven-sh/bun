@@ -492,9 +492,9 @@ describe("AbortSignal rejections use node's AbortError shape", () => {
     }
   });
 
-  test("appendFileSync ignores an AbortSignal", async () => {
-    await using dir = tempDir("fs-abort-appendfilesync", { "f.txt": "" });
-    fs.appendFileSync(join(dir, "f.txt"), "data", { signal: AbortSignal.abort() });
+  test.each(["writeFileSync", "appendFileSync"])("%s ignores an AbortSignal", async method => {
+    await using dir = tempDir(`fs-abort-${method}`, { "f.txt": "" });
+    fs[method](join(dir, "f.txt"), "data", { signal: AbortSignal.abort() });
     expect(fs.readFileSync(join(dir, "f.txt"), "utf8")).toBe("data");
   });
 

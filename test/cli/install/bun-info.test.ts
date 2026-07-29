@@ -412,16 +412,19 @@ test.skipIf(!isASAN)(
         https_proxy: "",
         HTTP_PROXY: "",
         HTTPS_PROXY: "",
-        ASAN_OPTIONS: "allow_user_segv_handler=1:disable_coredump=0:detect_leaks=1",
-        LSAN_OPTIONS: "use_registers=0:exitcode=0:print_suppressions=0",
+        ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=1"].filter(Boolean).join(":"),
+        LSAN_OPTIONS: "use_registers=0:print_suppressions=0",
       },
       stdout: "pipe",
       stderr: "pipe",
       stdin: "ignore",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).not.toContain("clone_metadata");
-    expect({ stdout: stdout.trim(), exitCode }).toEqual({ stdout: "leakpkg", exitCode: 0 });
+    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+      stdout: "leakpkg",
+      stderr: expect.not.stringContaining("LeakSanitizer: detected memory leaks"),
+      exitCode: 0,
+    });
     // Timeout: a detected leak makes llvm-symbolizer load the full DWARF of the
     // test binary before the assertion above can run; the no-leak path is < 1s.
   },

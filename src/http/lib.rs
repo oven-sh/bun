@@ -130,14 +130,25 @@ impl Default for HTTPResponseMetadata {
     }
 }
 
-// Lets `send_sync` callers keep reading `Response` fields. CAUTION: the target
-// is typed `'static` but its slices borrow the sibling `owned_buf` / header
-// slice that `Drop` frees; do not let a slice escape the metadata's scope.
-impl core::ops::Deref for HTTPResponseMetadata {
-    type Target = bun_picohttp::Response<'static>;
-
-    fn deref(&self) -> &Self::Target {
-        &self.response
+impl HTTPResponseMetadata {
+    /// Accessors tied to `&self`: `response` is typed `'static` but its slices
+    /// borrow the sibling `owned_buf` / header slice that `Drop` frees, so
+    /// hand out reborrows that cannot outlive this metadata.
+    #[inline]
+    pub fn status_code(&self) -> u32 {
+        self.response.status_code
+    }
+    #[inline]
+    pub fn status_text(&self) -> &[u8] {
+        self.response.status
+    }
+    #[inline]
+    pub fn header(&self, name: &[u8]) -> Option<&[u8]> {
+        self.response.headers.get(name)
+    }
+    #[inline]
+    pub fn header_if_other_is_absent(&self, name: &[u8], other: &[u8]) -> Option<&[u8]> {
+        self.response.headers.get_if_other_is_absent(name, other)
     }
 }
 

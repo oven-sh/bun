@@ -92,6 +92,8 @@ BUN_WATCHER_USE_POLLING=1 bun --watch index.ts
 
 The poll interval defaults to 100 ms and can be changed with `BUN_WATCHER_POLL_INTERVAL` (in milliseconds). Polling uses more CPU than native watching; set `BUN_WATCHER_USE_POLLING=0` to disable it if Bun enables it and you prefer native events.
 
+Polling tracks changes to files that are already in the module graph. Creating a new file that satisfies a previously failing import is not detected until a watched file is edited or the process is restarted.
+
 ---
 
 ## `--hot` mode

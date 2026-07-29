@@ -492,6 +492,12 @@ describe("AbortSignal rejections use node's AbortError shape", () => {
     }
   });
 
+  test("appendFileSync ignores an AbortSignal", async () => {
+    await using dir = tempDir("fs-abort-appendfilesync", { "f.txt": "" });
+    fs.appendFileSync(join(dir, "f.txt"), "data", { signal: AbortSignal.abort() });
+    expect(fs.readFileSync(join(dir, "f.txt"), "utf8")).toBe("data");
+  });
+
   test("writeFile with a pre-aborted signal", async () => {
     await using dir = tempDir("fs-abort-writefile", {});
     const signal = AbortSignal.abort();
@@ -531,7 +537,7 @@ describe("AbortSignal rejections use node's AbortError shape", () => {
           try { await promise; } catch (e) { name = e?.name; code = e?.code; }
           const size = fs.statSync(p).size;
           fs.unlinkSync(p);
-          if (size < SIZE || attempt === 19) {
+          if ((size > 0 && size < SIZE) || attempt === 19) {
             console.log(JSON.stringify({ name, code, size, attempt }));
             process.exit(0);
           }

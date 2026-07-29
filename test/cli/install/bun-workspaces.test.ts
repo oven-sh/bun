@@ -123,17 +123,11 @@ test("dependency on workspace without version in package.json", async () => {
     "kjwoehcojrgjoj", // dist-tag does not exist, should choose local workspace
     "*.1.*",
     "*-pre",
-  ];
-  const shouldNotWork: string[] = [
-    "1",
-    "1.*",
-    "1.1.*",
-    "1.1.0",
-    "*-pre+build",
-    "*+build",
-    "latest", // dist-tag exists, should choose package from npm
+    // dist-tags link the local workspace (bun-specific; npm only does this for "", #4830)
+    "latest",
     "",
   ];
+  const shouldNotWork: string[] = ["1", "1.*", "1.1.*", "1.1.0", "*-pre+build", "*+build"];
 
   for (const version of shouldWork) {
     writeFileSync(
@@ -274,8 +268,53 @@ test("dependency on same name as workspace and dist-tag", async () => {
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     expect.stringContaining("bun install v1."),
     "",
-    "3 packages installed",
+    "2 packages installed",
   ]);
+  expect(await file(join(packageDir, "node_modules", "no-deps", "package.json")).json()).toEqual({
+    name: "no-deps",
+    version: "4.17.21",
+  });
+  expect(await exists(join(packageDir, "packages", "bar", "node_modules", "no-deps"))).toBeFalse();
+});
+
+test.concurrent("aliased dist-tag whose alias matches a workspace name fetches the alias target", async () => {
+  using ctx = await setupTest();
+  const { packageDir, env } = ctx;
+  await Promise.all([
+    write(
+      join(packageDir, "package.json"),
+      JSON.stringify({
+        name: "foo",
+        workspaces: ["packages/*"],
+      }),
+    ),
+    write(
+      join(packageDir, "packages", "pkg1", "package.json"),
+      JSON.stringify({
+        name: "pkg1",
+        version: "9.9.9",
+      }),
+    ),
+    write(
+      join(packageDir, "packages", "consumer", "package.json"),
+      JSON.stringify({
+        name: "consumer",
+        version: "1.0.0",
+        dependencies: {
+          // alias key "pkg1" collides with workspace "pkg1", but the target is
+          // registry package "no-deps" and must be fetched, not linked.
+          "pkg1": "npm:no-deps@latest",
+        },
+      }),
+    ),
+  ]);
+
+  await runBunInstall(env, packageDir);
+
+  expect(await file(join(packageDir, "packages", "consumer", "node_modules", "pkg1", "package.json")).json()).toEqual({
+    name: "no-deps",
+    version: "2.0.0",
+  });
 });
 
 test.concurrent("successfully installs workspace when path already exists in node_modules", async () => {
@@ -2040,6 +2079,93 @@ registry = "${verdaccio.registryUrl()}"
 
     // Verify that the dependency linked to the bar package is the workspace version (using the workspace: prefix), not the npm version
     expect(lockfile.packages.find(p => p.id === barDependency?.package_id).resolution.tag).toEqual("workspace");
+  });
+
+  test.concurrent("linkWorkspacePackages = false with dist-tag uses registry", async () => {
+    using ctx = await setupTest();
+    const { packageDir, env } = ctx;
+    const bunfigPath = await setupWorkspace(packageDir);
+    await Promise.all([
+      write(
+        bunfigPath,
+        `
+[install]
+linkWorkspacePackages = false
+registry = "${verdaccio.registryUrl()}"
+`,
+      ),
+
+      write(
+        join(packageDir, "packages", "bar", "package.json"),
+        JSON.stringify({
+          name: "bar",
+          version: "1.0.0",
+          dependencies: {
+            "no-deps": "latest",
+          },
+        }),
+      ),
+    ]);
+
+    const { stderr, exited } = spawn({
+      cmd: [bunExe(), `-c=${bunfigPath}`, "install"],
+      cwd: packageDir,
+      stdout: "ignore",
+      stderr: "pipe",
+      env,
+    });
+
+    const err = await stderr.text();
+    expect(err).not.toContain("error:");
+    expect(err).toContain("Saved lockfile");
+    expect(await exited).toBe(0);
+    const lockfile = parseLockfile(packageDir);
+
+    const barPackage = lockfile.packages.find(p => p.name === "bar");
+    expect(barPackage.dependencies.length).toEqual(1);
+    const barDependency = lockfile.dependencies.find(p => p.id === barPackage.dependencies[0]);
+    expect(barDependency).toBeDefined();
+
+    expect(lockfile.packages.find(p => p.id === barDependency?.package_id).resolution.tag).toEqual("npm");
+  });
+
+  test.concurrent("linkWorkspacePackages = false with unknown dist-tag fails (no workspace fallback)", async () => {
+    using ctx = await setupTest();
+    const { packageDir, env } = ctx;
+    const bunfigPath = await setupWorkspace(packageDir);
+    await Promise.all([
+      write(
+        bunfigPath,
+        `
+[install]
+linkWorkspacePackages = false
+registry = "${verdaccio.registryUrl()}"
+`,
+      ),
+      write(
+        join(packageDir, "packages", "bar", "package.json"),
+        JSON.stringify({
+          name: "bar",
+          version: "1.0.0",
+          dependencies: {
+            "no-deps": "kjwoehcojrgjoj",
+          },
+        }),
+      ),
+    ]);
+
+    const { stderr, exited } = spawn({
+      cmd: [bunExe(), `-c=${bunfigPath}`, "install"],
+      cwd: packageDir,
+      stdout: "ignore",
+      stderr: "pipe",
+      env,
+    });
+
+    const err = await stderr.text();
+    expect(err).toContain("kjwoehcojrgjoj");
+    expect(err).toContain("failed to resolve");
+    expect(await exited).not.toBe(0);
   });
 });
 

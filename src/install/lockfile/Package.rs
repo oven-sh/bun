@@ -1685,6 +1685,10 @@ impl Package<u64> {
                 let npm_name = dependency_version.npm().name;
                 semver::string::Builder::string_hash(npm_name.slice(buf))
             }
+            dependency::version::Tag::DistTag => {
+                let dist_tag_name = dependency_version.dist_tag().name;
+                semver::string::Builder::string_hash(dist_tag_name.slice(buf))
+            }
             dependency::version::Tag::Workspace => {
                 if strings::has_prefix(sliced.slice, b"workspace:") {
                     'brk: {
@@ -1755,6 +1759,25 @@ impl Package<u64> {
                 // if relative is empty, we are linking the package to itself
                 dependency_version.value.folder = string_builder
                     .append::<String>(if relative.is_empty() { b"." } else { relative });
+            }
+            dependency::version::Tag::DistTag => {
+                if let Some(wp) = workspace_path
+                    && pm.options.link_workspace_packages
+                {
+                    let path = wp.sliced(buf);
+                    if let Some(mut dep) = dependency::parse_with_tag(
+                        external_alias.value,
+                        Some(external_alias.hash),
+                        path.slice,
+                        dependency::version::Tag::Workspace,
+                        &path,
+                        Some(&mut *log),
+                        Some(&mut *pm),
+                    ) {
+                        dep.literal = dependency_version.literal;
+                        dependency_version = dep;
+                    }
+                }
             }
             dependency::version::Tag::Npm => {
                 if let Some(workspace_version) = workspace_version {

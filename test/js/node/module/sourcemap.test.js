@@ -246,3 +246,140 @@ test("error.stack of // @bun code with a truncated VLQ in sourceMappingURL warns
   expect(stdout).toBe("");
   expect(exitCode).toBe(1);
 });
+
+// `module.findSourceMap()` answers only once source maps are enabled, like
+// Node. Each case runs in its own process because the switch is per-VM.
+function fixture(lib, body) {
+  return `
+import { findSourceMap, SourceMap } from "node:module";
+import { pathToFileURL } from "node:url";
+import path from "node:path";
+const lib = path.join(import.meta.dirname, ${JSON.stringify(lib)});
+${body}
+`;
+}
+
+async function runFixture(dir) {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "fixture.mjs"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  return { stdout, stderr, exitCode };
+}
+
+test.concurrent("findSourceMap returns undefined until process.setSourceMapsEnabled(true)", async () => {
+  using dir = tempDir("findsourcemap-gate", {
+    "lib.ts": "export const q: number = 42;\n",
+    "fixture.mjs": fixture(
+      "lib.ts",
+      `
+await import(lib);
+console.log("disabled:", String(findSourceMap(lib)));
+process.setSourceMapsEnabled(true);
+console.log("enabled:", findSourceMap(lib)?.constructor.name);
+process.setSourceMapsEnabled(false);
+console.log("disabled again:", String(findSourceMap(lib)));
+`,
+    ),
+  });
+
+  expect(await runFixture(dir)).toEqual({
+    stdout: "disabled: undefined\nenabled: SourceMap\ndisabled again: undefined\n",
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
+test.concurrent("findSourceMap maps a transpiled file back to its original source", async () => {
+  using dir = tempDir("findsourcemap-transpiled", {
+    "lib.ts": "export const q: number = 42;\n",
+    "fixture.mjs": fixture(
+      "lib.ts",
+      `
+process.setSourceMapsEnabled(true);
+await import(lib);
+const sourceMap = findSourceMap(lib);
+console.log(JSON.stringify(sourceMap.findEntry(0, 13)));
+console.log(JSON.stringify(sourceMap.findOrigin(0, 13)));
+// A file:// specifier resolves to the same entry as the path.
+const href = pathToFileURL(lib).href;
+console.log(findSourceMap(href).findEntry(0, 13).originalSource === href);
+// The payload is a conformant v3 document: it round-trips through the public
+// SourceMap constructor and yields the same entry.
+const payload = sourceMap.payload;
+console.log(payload.version, JSON.stringify(payload.sources), JSON.stringify(payload.names));
+console.log(JSON.stringify(new SourceMap(payload).findEntry(0, 13)));
+`,
+    ),
+  });
+
+  const href = Bun.pathToFileURL(`${dir}/lib.ts`).href;
+  const entry = { generatedLine: 0, generatedColumn: 13, originalLine: 0, originalColumn: 13, originalSource: href };
+  const { stdout, stderr, exitCode } = await runFixture(dir);
+  expect(stderr).toBe("");
+  expect(stdout.split("\n")).toEqual([
+    JSON.stringify(entry),
+    JSON.stringify({ line: 0, column: 13, fileName: href }),
+    "true",
+    `3 ${JSON.stringify([href])} []`,
+    JSON.stringify(entry),
+    "",
+  ]);
+  expect(exitCode).toBe(0);
+});
+
+test.concurrent("findSourceMap resolves an inline sourceMappingURL against the module", async () => {
+  const map = { version: 3, sources: ["nested/orig.ts"], names: [], mappings: "AAAA", sourcesContent: ["// orig\n"] };
+  const inline = Buffer.from(JSON.stringify(map)).toString("base64");
+  using dir = tempDir("findsourcemap-inline", {
+    // `// @bun` marks the file as already bundled, so Bun uses the map the file
+    // carries rather than one it generated while transpiling.
+    "lib.mjs": `// @bun\nexport const q = 42;\n//# sourceMappingURL=data:application/json;base64,${inline}\n`,
+    "fixture.mjs": fixture(
+      "lib.mjs",
+      `
+process.setSourceMapsEnabled(true);
+await import(lib);
+const sourceMap = findSourceMap(lib);
+console.log(sourceMap.findEntry(0, 0).originalSource);
+console.log(JSON.stringify(sourceMap.payload));
+`,
+    ),
+  });
+
+  // Relative `sources` resolve against the generated file, exactly as Node does.
+  const original = new URL("nested/orig.ts", Bun.pathToFileURL(`${dir}/lib.mjs`)).href;
+  const { stdout, stderr, exitCode } = await runFixture(dir);
+  expect(stderr).toBe("");
+  expect(stdout.split("\n")).toEqual([
+    original,
+    JSON.stringify({ version: 3, sources: [original], names: [], mappings: "AAAA" }),
+    "",
+  ]);
+  expect(exitCode).toBe(0);
+});
+
+test.concurrent("findSourceMap ignores builtins and specifiers with no map", async () => {
+  using dir = tempDir("findsourcemap-misses", {
+    "lib.ts": "export const q: number = 42;\n",
+    "fixture.mjs": fixture(
+      "lib.ts",
+      `
+process.setSourceMapsEnabled(true);
+await import(lib);
+for (const specifier of ["node:fs", "bun:jsc", "data:text/javascript,0", "nope.ts", 42, undefined]) {
+  console.log(String(findSourceMap(specifier)));
+}
+`,
+    ),
+  });
+
+  const { stdout, stderr, exitCode } = await runFixture(dir);
+  expect(stderr).toBe("");
+  expect(stdout).toBe("undefined\n".repeat(6));
+  expect(exitCode).toBe(0);
+});

@@ -163,6 +163,7 @@ JSC_DECLARE_HOST_FUNCTION(Process_functionCwd);
 extern "C" uint8_t Bun__getExitCode(void*);
 extern "C" uint8_t Bun__setExitCode(void*, uint8_t);
 extern "C" bool Bun__closeChildIPC(JSGlobalObject*);
+extern "C" void Bun__VM__setSourceMapsEnabled(void*, bool);
 
 extern "C" bool Bun__GlobalObject__connectedIPC(JSGlobalObject*);
 extern "C" bool Bun__GlobalObject__hasIPC(JSGlobalObject*);
@@ -3882,7 +3883,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_setSourceMapsEnabled, (JSC::JSGlobalObject * le
         return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "enabled"_s, "boolean"_s, arg0);
     }
 
-    globalObject->processObject()->m_sourceMapsEnabled = arg0.toBoolean(globalObject);
+    Bun__VM__setSourceMapsEnabled(globalObject->bunVM(), arg0.asBoolean());
     return JSValue::encode(jsUndefined());
 }
 

@@ -1,12 +1,11 @@
 //! This implements the JavaScript SourceMap class from Node.js.
 
-use core::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use bstr::BStr;
 
 use bun_core::{self as bstring, strings};
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, StringJsc as _, bun_string_jsc};
+use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, StringJsc as _, URL, bun_string_jsc};
 use bun_sourcemap::{Mapping, Ordinal, ParseResult, ParsedSourceMap, mapping};
 
 // generate-classes.ts does not emit Rust accessors yet, so the
@@ -14,22 +13,54 @@ use bun_sourcemap::{Mapping, Ordinal, ParseResult, ParsedSourceMap, mapping};
 // symbols by hand.
 pub struct JSSourceMap {
     pub sourcemap: Arc<ParsedSourceMap>,
-    pub sources: Box<[bstring::String]>,
-    pub names: Box<[bstring::String]>,
+    /// `bun.String` is `Copy`, so both slices hold `OwnedString`: the `+1` each
+    /// element carries is released by `Drop`, on the GC finalize path and on
+    /// every `?` unwind out of [`JSSourceMap::constructor`].
+    pub sources: Box<[bstring::OwnedString]>,
+    pub names: Box<[bstring::OwnedString]>,
 }
 
-/// TODO: when we implement --enable-source-map CLI flag, set this to true.
-// Mutable global; AtomicBool for safe mutation.
-pub(crate) static ENABLE_SOURCE_MAPS: AtomicBool = AtomicBool::new(false);
+/// Node resolves a cached map's `sources` against the generated file's URL
+/// before handing it to `findSourceMap()`; Bun stores them as the map declared
+/// them, so do the same resolution here.
+fn resolve_sources(
+    source_map: &ParsedSourceMap,
+    generated_file: bstring::String,
+    generated_file_utf8: &[u8],
+) -> Box<[bstring::OwnedString]> {
+    // Both arms hand the `+1` to `base`.
+    let base = bstring::OwnedString::new(if strings::contains(generated_file_utf8, b"://") {
+        generated_file.dupe_ref()
+    } else {
+        URL::file_url_from_string(generated_file)
+    });
+
+    // Bun generates a map for every file it transpiles; those carry no
+    // `sources`, because the original source is the file itself.
+    if source_map.external_source_names.is_empty() {
+        return Box::new([base]);
+    }
+
+    source_map
+        .external_source_names
+        .iter()
+        .map(|name| {
+            let joined = URL::join(base.get(), bstring::String::borrow_utf8(name));
+            bstring::OwnedString::new(if joined.is_dead() {
+                bstring::String::clone_utf8(name)
+            } else {
+                joined
+            })
+        })
+        .collect()
+}
 
 #[bun_jsc::host_fn(export = "Bun__JSSourceMap__find")]
 pub(crate) fn find_source_map(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    // Node.js doesn't enable source maps by default.
-    // In Bun, we do use them for almost all files since we transpile almost all files
-    // If we enable this by default, we don't have a `payload` object since we don't internally create one.
-    // This causes Next.js to emit errors like the below on start:
-    //       .next/server/chunks/ssr/[root-of-the-server]__012ba519._.js: Invalid source map. Only conformant source maps can be used to filter stack frames. Cause: TypeError: payload is not an Object. (evaluating '"sections" in payload')
-    if !ENABLE_SOURCE_MAPS.load(Ordering::Relaxed) {
+    // Node.js only caches source maps once they're enabled. Bun has a map for
+    // nearly every file it transpiles, so answering unconditionally would break
+    // tooling that reads a hit as "this file came out of a bundler".
+    if !global.bun_vm().source_maps_enabled {
         return Ok(JSValue::UNDEFINED);
     }
 
@@ -38,9 +69,10 @@ pub(crate) fn find_source_map(global: &JSGlobalObject, frame: &CallFrame) -> JsR
         return Ok(JSValue::UNDEFINED);
     }
 
-    // reshaped for borrowck — `source_url_slice` borrows `source_url_string`;
-    // explicit deref/deinit calls become Drop on reassignment.
-    let mut source_url_string = bun_string_jsc::from_js(source_url_value, global)?;
+    // `source_url_slice` borrows `source_url_string`, so it has to be dropped
+    // before the reassignment below releases the string it points into.
+    let mut source_url_string =
+        bstring::OwnedString::new(bun_string_jsc::from_js(source_url_value, global)?);
     let mut source_url_slice = source_url_string.to_utf8();
 
     {
@@ -55,7 +87,7 @@ pub(crate) fn find_source_map(global: &JSGlobalObject, frame: &CallFrame) -> JsR
 
     if let Some(source_url_index) = strings::index_of(source_url_slice.slice(), b"://") {
         if &source_url_slice.slice()[..source_url_index] == b"file" {
-            let path = bun_jsc::URL::path_from_file_url(source_url_string.dupe_ref());
+            let path = URL::path_from_file_url(source_url_string.get());
 
             if path.is_dead() {
                 return Err(global.throw_value(global.err_invalid_url(format_args!(
@@ -66,7 +98,7 @@ pub(crate) fn find_source_map(global: &JSGlobalObject, frame: &CallFrame) -> JsR
 
             // Replace the file:// URL with the absolute path.
             drop(source_url_slice);
-            source_url_string = path;
+            source_url_string = bstring::OwnedString::new(path);
             source_url_slice = source_url_string.to_utf8();
         }
     }
@@ -78,14 +110,13 @@ pub(crate) fn find_source_map(global: &JSGlobalObject, frame: &CallFrame) -> JsR
     let Some(source_map) = vm.source_mappings().get(source_url) else {
         return Ok(JSValue::UNDEFINED);
     };
-    // Box allocation aborts on OOM (handleOom semantics).
-    let fake_sources_array: Box<[bstring::String]> = Box::new([source_url_string.dupe_ref()]);
+    let sources = resolve_sources(&source_map, source_url_string.get(), source_url);
 
     // `SavedSourceMap::get` hands back a +1 ref as an `Arc<ParsedSourceMap>`;
     // `Drop` on the field releases it — no manual `deref_()` needed.
     let this = Box::new(JSSourceMap {
         sourcemap: source_map,
-        sources: fake_sources_array,
+        sources,
         names: Box::default(),
     });
     Ok(JSSourceMap::to_js(this, global))
@@ -124,15 +155,15 @@ impl JSSourceMap {
 
         let mappings_str = mappings_value.to_utf8();
 
-        // errdefer blocks deleted: Vec<bun_core::String> drops each element (deref) on `?` unwind.
-        let mut names: Vec<bstring::String> = Vec::new();
-        let mut sources: Vec<bstring::String> = Vec::new();
+        // `OwnedString` so the `+1` on each element is released on `?` unwind.
+        let mut names: Vec<bstring::OwnedString> = Vec::new();
+        let mut sources: Vec<bstring::OwnedString> = Vec::new();
 
         if let Some(sources_value) = payload_arg.get_array(global, b"sources")? {
             let mut iter = sources_value.array_iterator(global)?;
             while let Some(source) = iter.next()? {
                 let source_str = source.to_bun_string(global)?;
-                sources.push(source_str);
+                sources.push(bstring::OwnedString::new(source_str));
             }
         }
 
@@ -140,7 +171,7 @@ impl JSSourceMap {
             let mut iter = names_value.array_iterator(global)?;
             while let Some(name) = iter.next()? {
                 let name_str = name.to_bun_string(global)?;
-                names.push(name_str);
+                names.push(bstring::OwnedString::new(name_str));
             }
         }
 
@@ -219,7 +250,7 @@ impl JSSourceMap {
 
     pub fn memory_cost(&self) -> usize {
         core::mem::size_of::<JSSourceMap>()
-            + self.sources.len() * core::mem::size_of::<bstring::String>()
+            + self.sources.len() * core::mem::size_of::<bstring::OwnedString>()
             + self.sourcemap.memory_cost()
     }
 
@@ -227,9 +258,23 @@ impl JSSourceMap {
         self.memory_cost()
     }
 
-    // The cached value should handle this.
-    pub fn get_payload(&self, _global: &JSGlobalObject) -> JsResult<JSValue> {
-        Ok(JSValue::UNDEFINED)
+    /// Only runs for maps from `module.findSourceMap()`: the constructor caches
+    /// the payload it was handed. Bun keeps the decoded mappings rather than the
+    /// JSON they came from, so re-encode them into a conformant v3 document.
+    pub fn get_payload(&self, global: &JSGlobalObject) -> JsResult<JSValue> {
+        let sources =
+            JSValue::create_array_from_iter(global, self.sources.iter(), |s| s.to_js(global))?;
+        // `write_vlqs` never emits the optional name index, so `names` stays empty.
+        let names = JSValue::create_empty_array(global, 0)?;
+        let mappings = format!("{}", self.sourcemap.format_vlqs());
+        let mappings = bun_string_jsc::create_utf8_for_js(global, mappings.as_bytes())?;
+
+        let payload = JSValue::create_empty_object(global, 4);
+        payload.put(global, b"version", JSValue::js_number(3.0));
+        payload.put(global, b"sources", sources);
+        payload.put(global, b"names", names);
+        payload.put(global, b"mappings", mappings);
+        Ok(payload)
     }
 
     // The cached value should handle this.

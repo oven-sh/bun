@@ -114,8 +114,34 @@ test.concurrent("bun create from local template ignores README.md and .gitignore
   const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited, proc.stdout.text()]);
 
   expect(await Bun.file(join(String(dir), "proj", "tpl.txt")).text()).toBe("template file");
+  // never-conflict files are replaced by the template's versions
+  expect(await Bun.file(join(String(dir), "proj", "README.md")).text()).toBe("template readme");
+  expect(await Bun.file(join(String(dir), "proj", ".gitignore")).text()).toBe("node_modules");
   expect({ exitCode, stderr }).toEqual({
     exitCode: 0,
     stderr: expect.not.stringContaining("contains files that could conflict"),
+  });
+});
+
+test.concurrent("bun create from local template refuses when a template directory collides with a file", async () => {
+  using dir = tempDir("create-local-dir-conflict", {
+    "templates/mytpl/sub/nested.txt": "template nested",
+    "proj/sub": "I am a file named sub",
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "create", "mytpl", "."],
+    env: createEnv(join(String(dir), "templates")),
+    cwd: join(String(dir), "proj"),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited, proc.stdout.text()]);
+
+  expect(stderr).toContain("sub");
+  expect(await Bun.file(join(String(dir), "proj", "sub")).text()).toBe("I am a file named sub");
+  expect({ exitCode, stderr }).toEqual({
+    exitCode: 1,
+    stderr: expect.stringContaining("contains files that could conflict"),
   });
 });

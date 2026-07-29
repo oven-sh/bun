@@ -150,7 +150,7 @@ Bun then:
 
 ## From a local template
 
-Like remote templates, `bun create` with a local template refuses to overwrite existing files in the destination folder unless the `--force` flag is passed.
+Like remote templates, `bun create` with a local template refuses to overwrite existing files in the destination folder unless the `--force` flag is passed. `README.md` and `.gitignore` are the exception: they never count as conflicts and are replaced by the template's versions.
 
 You can define custom templates on your local file system. Put them in one of the following directories:
 

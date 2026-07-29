@@ -641,32 +641,45 @@ impl CreateCommand {
 
                     let mut conflicts: Vec<Vec<bun_paths::OSPathChar>> = Vec::new();
                     while let Some(entry) = scan_walker.next()? {
-                        if entry.kind != bun_sys::FileKind::File {
-                            continue;
-                        }
-
                         #[cfg(not(windows))]
-                        let exists = bun_sys::exists_at(existing_destination.fd, entry.path);
+                        let existing_kind =
+                            bun_sys::exists_at_type(existing_destination.fd, entry.path);
                         #[cfg(windows)]
-                        let exists = bun_sys::exists_at_type_w(
+                        let existing_kind = bun_sys::exists_at_type_w(
                             existing_destination.fd,
                             entry.path.as_slice(),
-                        )
-                        .is_ok();
-                        if !exists {
+                        );
+                        let Ok(existing_kind) = existing_kind else {
                             continue;
+                        };
+
+                        match entry.kind {
+                            // Any existing entry at a template file path would
+                            // be overwritten.
+                            bun_sys::FileKind::File => {}
+                            // A directory only conflicts when the destination
+                            // has a non-directory in its place; merging into an
+                            // existing directory is fine.
+                            bun_sys::FileKind::Directory => {
+                                if existing_kind == bun_sys::ExistsAtType::Directory {
+                                    continue;
+                                }
+                            }
+                            _ => continue,
                         }
 
-                        #[cfg(not(windows))]
-                        let never_conflict = NEVER_CONFLICT
-                            .iter()
-                            .any(|p| strings::eql(entry.path.as_bytes(), p));
-                        #[cfg(windows)]
-                        let never_conflict = NEVER_CONFLICT
-                            .iter()
-                            .any(|p| strings::eql_comptime_utf16(entry.path.as_slice(), p));
-                        if never_conflict {
-                            continue;
+                        if entry.kind == bun_sys::FileKind::File {
+                            #[cfg(not(windows))]
+                            let never_conflict = NEVER_CONFLICT
+                                .iter()
+                                .any(|p| strings::eql(entry.path.as_bytes(), p));
+                            #[cfg(windows)]
+                            let never_conflict = NEVER_CONFLICT
+                                .iter()
+                                .any(|p| strings::eql_comptime_utf16(entry.path.as_slice(), p));
+                            if never_conflict {
+                                continue;
+                            }
                         }
 
                         #[cfg(not(windows))]

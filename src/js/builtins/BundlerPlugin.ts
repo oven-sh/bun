@@ -433,7 +433,7 @@ export function runOnResolvePlugins(this: BundlerPlugin, specifier, inputNamespa
             continue;
           }
 
-          var { path, namespace: userNamespace = matchNamespace, external } = result;
+          var { path, namespace: userNamespace = inputNamespace, external } = result;
           if (path !== undefined && typeof path !== "string") {
             throw new TypeError("onResolve plugins 'path' field must be a string if provided");
           }
@@ -447,7 +447,7 @@ export function runOnResolvePlugins(this: BundlerPlugin, specifier, inputNamespa
           }
 
           if (!userNamespace) {
-            userNamespace = matchNamespace;
+            userNamespace = inputNamespace;
           }
           if (typeof external !== "boolean" && !$isUndefinedOrNull(external)) {
             throw new TypeError('onResolve plugins "external" field must be boolean or unspecified');
@@ -490,11 +490,15 @@ export function runOnResolvePlugins(this: BundlerPlugin, specifier, inputNamespa
     // Also offer "ns:rest" to onResolve({ namespace: "ns" }) with the stripped path.
     if (inputNamespace === "file") {
       var colon = inputPath.indexOf(":");
-      if (
-        colon > 0 &&
-        !(colon === 1 && (inputPath.charCodeAt(0) | 0x20) >= 97 && (inputPath.charCodeAt(0) | 0x20) <= 122)
-      ) {
-        if (await tryNamespace(inputPath.slice(0, colon), inputPath.slice(colon + 1))) {
+      if (colon > 0) {
+        var isDriveLetter =
+          process.platform === "win32" &&
+          colon === 1 &&
+          inputPath.length > 2 &&
+          (inputPath.charCodeAt(0) | 0x20) >= 97 &&
+          (inputPath.charCodeAt(0) | 0x20) <= 122 &&
+          (inputPath.charCodeAt(2) === 47 || inputPath.charCodeAt(2) === 92);
+        if (!isDriveLetter && (await tryNamespace(inputPath.slice(0, colon), inputPath.slice(colon + 1)))) {
           return null;
         }
       }

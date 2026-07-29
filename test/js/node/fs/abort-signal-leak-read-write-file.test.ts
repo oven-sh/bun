@@ -1,7 +1,7 @@
 import { heapStats } from "bun:jsc";
 import { expect, test } from "bun:test";
 import fs from "fs";
-import { isASAN, isDebug, tempDir } from "harness";
+import { expectMaxObjectTypeCount, isASAN, isDebug, tempDir } from "harness";
 import { join } from "path";
 
 // https://github.com/oven-sh/bun/pull/16788
@@ -35,6 +35,7 @@ test("fs.promises readFile/writeFile does not leak AbortSignal", async () => {
   // a no-op listener: if readFile/writeFile forget to drop the pending-activity
   // ref they take, every one of these wrappers survives GC and the object count
   // below climbs with ITERATIONS instead of staying flat.
+  const baseline = heapStats().objectTypeCounts.AbortSignal ?? 0;
   const ITERATIONS = isDebug || isASAN ? 100 : 2_000;
   for (let i = 0; i < ITERATIONS; i++) {
     const controller = new AbortController();
@@ -43,7 +44,5 @@ test("fs.promises readFile/writeFile does not leak AbortSignal", async () => {
     await fs.promises.readFile(target, { signal: controller.signal });
   }
 
-  Bun.gc(true);
-  const numAbortSignalObjects = heapStats().objectTypeCounts.AbortSignal ?? 0;
-  expect(numAbortSignalObjects).toBeLessThanOrEqual(10);
+  await expectMaxObjectTypeCount(expect, "AbortSignal", baseline + 10);
 });

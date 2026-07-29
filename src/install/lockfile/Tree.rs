@@ -815,6 +815,7 @@ impl Tree {
                             hoist_root_id,
                             pkg_id,
                             dep_id,
+                            resolution_list,
                             builder,
                         )?;
                     }
@@ -835,6 +836,7 @@ impl Tree {
                     hoist_root_id,
                     pkg_id,
                     dep_id,
+                    resolution_list,
                     builder,
                 )?
             };
@@ -969,6 +971,7 @@ impl Tree {
         hoist_root_id: Id,
         package_id: PackageID,
         input_dep_id: DependencyID,
+        input_dep_range: DependencyIDSlice,
         builder: &mut Builder<'_, METHOD>,
     ) -> Result<HoistDependencyResult, SubtreeError> {
         // Copy the slice ref out of `builder` so subsequent `&mut builder` does not conflict.
@@ -1030,11 +1033,17 @@ impl Tree {
                 return Ok(HoistDependencyResult::Hoisted); // 1
             }
 
-            if AS_DEFINED {
-                if dep.behavior.is_dev() != dependency.behavior.is_dev() {
-                    // will only happen in workspaces and root package because
-                    // dev dependencies won't be included in other types of
-                    // dependencies
+            if dep.behavior.is_dev() != dependency.behavior.is_dev() {
+                // A package listed the same name in both `dependencies` and
+                // `devDependencies`. Only one folder can exist at
+                // `node_modules/<name>`, so merge the second onto the first.
+                //
+                // `AS_DEFINED` covers the root package (its own deps are the
+                // only ones ever placed in the root tree at this point). For a
+                // workspace package the first sibling may already have been
+                // hoisted into a parent tree, so also merge when the found
+                // entry came from the same source package's dependency range.
+                if AS_DEFINED || input_dep_range.contains(dep_id) {
                     return Ok(HoistDependencyResult::Hoisted); // 1
                 }
             }
@@ -1099,6 +1108,7 @@ impl Tree {
                 hoist_root_id,
                 package_id,
                 input_dep_id,
+                input_dep_range,
                 builder,
             ) {
                 Ok(id) => id,

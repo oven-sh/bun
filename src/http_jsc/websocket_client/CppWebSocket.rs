@@ -46,6 +46,7 @@ unsafe extern "C" {
     );
     safe fn WebSocket__didAbruptClose(websocket_context: &CppWebSocket, reason: ErrorCode);
     fn WebSocket__didClose(websocket_context: &CppWebSocket, code: u16, reason: *const BunString);
+    safe fn WebSocket__didStartClosingHandshake(websocket_context: &CppWebSocket);
     fn WebSocket__didReceiveText(
         websocket_context: &CppWebSocket,
         clone: bool,
@@ -76,6 +77,11 @@ impl CppWebSocket {
         event_loop.enter();
         WebSocket__didAbruptClose(self, reason);
         event_loop.exit();
+    }
+
+    /// `m_state = CLOSING` (no JS dispatched); idempotent.
+    pub(crate) fn did_start_closing_handshake(&self) {
+        WebSocket__didStartClosingHandshake(self);
     }
 
     pub(crate) fn did_close(&self, code: u16, reason: &mut BunString) {

@@ -1263,7 +1263,13 @@ WebSocket::State WebSocket::readyState() const
 
 unsigned WebSocket::bufferedAmount() const
 {
-    return saturateAdd(m_bufferedAmount, m_bufferedAmountAfterClose);
+    size_t queued = m_bufferedAmount;
+    if (m_connectedWebSocketKind == ConnectedWebSocketKind::Client) {
+        queued = Bun__WebSocketClient__bufferedAmount(m_connectedWebSocket.client);
+    } else if (m_connectedWebSocketKind == ConnectedWebSocketKind::ClientSSL) {
+        queued = Bun__WebSocketClientTLS__bufferedAmount(m_connectedWebSocket.clientSSL);
+    }
+    return saturateAdd(static_cast<unsigned>(std::min<size_t>(queued, std::numeric_limits<unsigned>::max())), m_bufferedAmountAfterClose);
 }
 
 String WebSocket::protocol() const
@@ -1700,9 +1706,12 @@ void WebSocket::didFailWithErrorCode(Bun::WebSocketErrorCode code)
         return;
 
     this->m_upgradeClient = nullptr;
+    // WHATWG: bufferedAmount "does not reset to zero once the connection closes"; snapshot before nulling.
     if (this->m_connectedWebSocketKind == ConnectedWebSocketKind::ClientSSL) {
+        m_bufferedAmount = static_cast<unsigned>(std::min<size_t>(Bun__WebSocketClientTLS__bufferedAmount(m_connectedWebSocket.clientSSL), std::numeric_limits<unsigned>::max()));
         this->m_connectedWebSocket.clientSSL = nullptr;
     } else if (this->m_connectedWebSocketKind == ConnectedWebSocketKind::Client) {
+        m_bufferedAmount = static_cast<unsigned>(std::min<size_t>(Bun__WebSocketClient__bufferedAmount(m_connectedWebSocket.client), std::numeric_limits<unsigned>::max()));
         this->m_connectedWebSocket.client = nullptr;
     }
     this->m_connectedWebSocketKind = ConnectedWebSocketKind::None;
@@ -1937,6 +1946,10 @@ extern "C" void WebSocket__didConnectWithTunnel(WebCore::WebSocket* webSocket, v
 extern "C" void WebSocket__didAbruptClose(WebCore::WebSocket* webSocket, Bun::WebSocketErrorCode errorCode)
 {
     webSocket->didFailWithErrorCode(errorCode);
+}
+extern "C" void WebSocket__didStartClosingHandshake(WebCore::WebSocket* webSocket)
+{
+    webSocket->didStartClosingHandshake();
 }
 extern "C" void WebSocket__didClose(WebCore::WebSocket* webSocket, uint16_t errorCode, BunString* reason)
 {

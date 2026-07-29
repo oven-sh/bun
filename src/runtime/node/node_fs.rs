@@ -6939,7 +6939,13 @@ impl NodeFS {
 
         if let Some(graph) = standalone_module_graph() {
             if bun_standalone_graph::is_bun_standalone_file_path(path.as_bytes()) {
-                return Self::readdir_standalone::<T>(graph, args, recursive, flavor);
+                return Self::readdir_standalone::<T>(
+                    graph,
+                    path.as_bytes(),
+                    args,
+                    recursive,
+                    flavor,
+                );
             }
         }
 
@@ -6994,26 +7000,28 @@ impl NodeFS {
         }
     }
 
-    /// Caller has already checked `is_bun_standalone_file_path`.
+    /// Caller has already checked `is_bun_standalone_file_path(path)`.
     fn readdir_standalone<T: ReaddirEntry>(
         graph: &bun_standalone_graph::Graph,
+        path: &[u8],
         args: &args::Readdir,
         recursive: bool,
         flavor: Flavor,
     ) -> Maybe<ret::Readdir> {
-        let path = args.path.slice();
         let Some(list) = graph.readdir(path, recursive) else {
             let code = if graph.contains_file(path) {
                 E::ENOTDIR
             } else {
                 E::ENOENT
             };
-            return Err(sys::Error::from_code(code, sys::Tag::scandir).with_path(path));
+            return Err(
+                sys::Error::from_code(code, sys::Tag::scandir).with_path(args.path.slice())
+            );
         };
 
         let mut entries: Vec<T> = Vec::with_capacity(list.len());
         let root_path = if T::IS_DIRENT {
-            BunString::clone_utf8(path)
+            BunString::clone_utf8(args.path.slice())
         } else {
             BunString::empty()
         };
@@ -7038,7 +7046,7 @@ impl NodeFS {
                 };
                 let dirent_path = if T::IS_DIRENT && !parent.is_empty() {
                     joined.clear();
-                    joined.extend_from_slice(path);
+                    joined.extend_from_slice(args.path.slice());
                     if !matches!(joined.last(), Some(&b'/') | Some(&b'\\')) {
                         joined.push(paths::SEP);
                     }

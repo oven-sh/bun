@@ -166,20 +166,21 @@ impl StandaloneModuleGraph {
         self.find_assume_standalone_path(name)
     }
 
+    fn lookup_file(&self, name: &[u8]) -> Option<&File> {
+        #[cfg(windows)]
+        {
+            let mut buf = PathBuffer::uninit();
+            return self.files.get(normalize_file_key(name, &mut buf));
+        }
+        #[cfg(not(windows))]
+        self.files.get(name)
+    }
+
     pub fn find_ref(&self, name: &[u8]) -> Option<&File> {
         if !is_bun_standalone_file_path(name) {
             return None;
         }
-        #[cfg(windows)]
-        {
-            let mut normalized_buf = PathBuffer::uninit();
-            let input = strings::paths::without_nt_prefix::<u8>(name);
-            let normalized =
-                path::resolve_path::platform_to_posix_buf::<u8>(input, &mut normalized_buf);
-            return self.files.get(normalized);
-        }
-        #[cfg(not(windows))]
-        self.files.get(name)
+        self.lookup_file(name)
     }
 
     pub fn contains_file(&self, name: &[u8]) -> bool {
@@ -190,7 +191,7 @@ impl StandaloneModuleGraph {
         if !is_bun_standalone_file_path(name) {
             return None;
         }
-        if let Some(file) = self.find_ref(name) {
+        if let Some(file) = self.lookup_file(name) {
             return Some(file.stat());
         }
         if self.find_dir(name) {
@@ -201,10 +202,7 @@ impl StandaloneModuleGraph {
 
     fn normalize_dir_path<'a>(name: &'a [u8], buf: &'a mut PathBuffer) -> &'a [u8] {
         #[cfg(windows)]
-        let name = {
-            let input = strings::paths::without_nt_prefix::<u8>(name);
-            &*path::resolve_path::platform_to_posix_buf::<u8>(input, buf)
-        };
+        let name = normalize_file_key(name, buf);
         #[cfg(not(windows))]
         let _ = buf;
         let mut name = name;
@@ -268,17 +266,18 @@ impl StandaloneModuleGraph {
     pub fn find_assume_standalone_path(&mut self, name: &[u8]) -> Option<&mut File> {
         #[cfg(windows)]
         {
-            let mut normalized_buf = PathBuffer::uninit();
-            let input = strings::paths::without_nt_prefix::<u8>(name);
-            let normalized =
-                path::resolve_path::platform_to_posix_buf::<u8>(input, &mut normalized_buf);
-            return self.files.get_mut(normalized);
+            let mut buf = PathBuffer::uninit();
+            return self.files.get_mut(normalize_file_key(name, &mut buf));
         }
         #[cfg(not(windows))]
-        {
-            self.files.get_mut(name)
-        }
+        self.files.get_mut(name)
     }
+}
+
+#[cfg(windows)]
+fn normalize_file_key<'a>(name: &'a [u8], buf: &'a mut PathBuffer) -> &'a [u8] {
+    let input = strings::paths::without_nt_prefix::<u8>(name);
+    path::resolve_path::platform_to_posix_buf::<u8>(input, buf)
 }
 
 // SAFETY: the graph is the process-global INSTANCE singleton (set once at
@@ -303,24 +302,11 @@ unsafe impl Sync for StandaloneModuleGraph {}
 /// blob/sourcemap caching path.
 impl bun_resolver::StandaloneModuleGraph for StandaloneModuleGraph {
     fn find_assume_standalone_path(&self, name: &[u8]) -> Option<&[u8]> {
-        #[cfg(windows)]
-        let file = {
-            let mut normalized_buf = PathBuffer::uninit();
-            let input = strings::paths::without_nt_prefix::<u8>(name);
-            let normalized =
-                path::resolve_path::platform_to_posix_buf::<u8>(input, &mut normalized_buf);
-            self.files.get(normalized)
-        };
-        #[cfg(not(windows))]
-        let file = self.files.get(name);
-        file.map(|f| f.name)
+        self.lookup_file(name).map(|f| f.name)
     }
 
     fn find(&self, name: &[u8]) -> Option<&[u8]> {
-        if !is_bun_standalone_file_path(name) {
-            return None;
-        }
-        <Self as bun_resolver::StandaloneModuleGraph>::find_assume_standalone_path(self, name)
+        self.find_ref(name).map(|f| f.name)
     }
 
     fn base_public_path_with_default_suffix(&self) -> &'static [u8] {

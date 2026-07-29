@@ -98,6 +98,24 @@ Bun.serve({
 
 ---
 
+## Trailing and duplicate slashes
+
+By default, route matching is exact: `/api/users` and `/api/users/` are different paths. Set `ignoreTrailingSlash` and/or `ignoreDuplicateSlashes` to make the router lenient:
+
+```ts
+Bun.serve({
+  ignoreTrailingSlash: true, // `/api/users/` matches `/api/users`
+  ignoreDuplicateSlashes: true, // `//api//users` matches `/api/users`
+  routes: {
+    "/api/users": () => new Response("Users"),
+  },
+});
+```
+
+Only the routing key is normalized. `request.url` still contains the path as sent by the client.
+
+---
+
 ## Type-safe route parameters
 
 TypeScript parses route parameters when passed as a string literal, so your editor shows autocomplete when accessing `request.params`.

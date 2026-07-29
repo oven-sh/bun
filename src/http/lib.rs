@@ -339,27 +339,6 @@ pub fn h3_alt_svc_enabled() -> bool {
         .unwrap_or(false)
 }
 
-/// Strips an optional port suffix from a host string (e.g. "example.com:443" -> "example.com").
-/// Handles IPv6 bracket notation correctly (e.g. "[::1]:443" -> "[::1]").
-pub fn strip_port_from_host(host: &[u8]) -> &[u8] {
-    if host.is_empty() {
-        return host;
-    }
-    // IPv6 with brackets: "[::1]:port"
-    if host[0] == b'[' {
-        if let Some(bracket) = host.iter().rposition(|&b| b == b']') {
-            // Return everything up to and including ']'
-            return &host[0..bracket + 1];
-        }
-        return host;
-    }
-    // IPv4 or hostname: find last colon
-    if let Some(colon) = host.iter().rposition(|&b| b == b':') {
-        return &host[0..colon];
-    }
-    host
-}
-
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub enum ShouldContinue {
     ContinueStreaming,
@@ -820,7 +799,6 @@ pub struct HTTPClient<'a> {
     pub pending_h2: Option<NonNull<h2::PendingConnect>>,
     pub signals: Signals,
     pub async_http_id: u32,
-    pub hostname: Option<&'a [u8]>,
     pub unix_socket_path: ZigStringSlice,
     /// `fetch({ compress })` — when set, the body is compressed lazily at
     /// write time (h1: `send_initial_request_payload`; h2/h3: at attach) so
@@ -1195,10 +1173,10 @@ pub(crate) fn unregister_abort_tracker_for_socket(socket: uws::InternalSocket) {
 }
 
 /// Returns the hostname to use for TLS SNI and certificate verification.
-/// Priority: tls_props.server_name > client.hostname > client.url.hostname
-/// The Host header value (client.hostname) may contain a port suffix which
-/// must be stripped because it is not part of the DNS name in certificates.
-fn get_tls_hostname<'c>(client: &'c HTTPClient<'_>, allow_proxy_url: bool) -> &'c [u8] {
+/// Priority: tls_props.server_name > client.url.hostname. The Host request
+/// header is never consulted: a header-forwarding caller must not be able to
+/// steer the peer-identity check.
+pub(crate) fn get_tls_hostname<'c>(client: &'c HTTPClient<'_>, allow_proxy_url: bool) -> &'c [u8] {
     if allow_proxy_url {
         if let Some(proxy) = &client.http_proxy {
             return proxy.hostname;
@@ -1217,10 +1195,6 @@ fn get_tls_hostname<'c>(client: &'c HTTPClient<'_>, allow_proxy_url: bool) -> &'
                 return sn_slice;
             }
         }
-    }
-    // client.hostname comes from the Host header and may include ":port"
-    if let Some(host) = &client.hostname {
-        return strip_port_from_host(host);
     }
     client.url.hostname
 }
@@ -2198,17 +2172,9 @@ impl<'a> HTTPClient<'a> {
 
     /// Hash of the per-request tunnel discriminators beyond the (proxy, target
     /// url.hostname/port, ssl_config) tuple already covered by separate pool-key
-    /// fields. Covers the Host-header SNI override (hostname) plus everything
-    /// writeProxyConnect sends: all proxy_headers entries and the auto-generated
-    /// Proxy-Authorization (if not overridden by a user header). Returns 0 if
-    /// none apply.
-    ///
-    /// target_hostname in the pool stores url.hostname (the CONNECT TCP target
-    /// at writeProxyConnect line 346). But the inner TLS SNI/cert verification
-    /// uses `hostname`, falling back to url.hostname. If a Host header
-    /// override sets hostname != url.hostname, two requests to different IPs
-    /// with the same Host header must NOT share a tunnel — they're physically
-    /// connected to different servers. Hashing hostname here catches that.
+    /// fields. Covers everything writeProxyConnect sends: all proxy_headers
+    /// entries and the auto-generated Proxy-Authorization (if not overridden by
+    /// a user header). Returns 0 if none apply.
     ///
     /// Per-header hashes are combined with wrapping add so insertion order
     /// doesn't matter and duplicate headers don't cancel to zero.
@@ -2216,25 +2182,6 @@ impl<'a> HTTPClient<'a> {
         let mut combined: u64 = 0;
         let mut any = false;
         let mut name_lower_buf = [0u8; 256];
-
-        // SNI override — distinct from url.hostname which is stored separately
-        // as the CONNECT target. Normalize before hashing: strip port (Host
-        // header may include ":443"), lowercase (DNS is case-insensitive per
-        // RFC 1035), and skip if it matches url.hostname (no actual override —
-        // a request with an explicit but identical Host header should hit the
-        // same pool entry as one without).
-        if let Some(sni_raw) = &self.hostname {
-            let sni = strip_port_from_host(sni_raw);
-            if !strings::eql_case_insensitive_ascii(sni, self.url.hostname, true) {
-                let sni_lower: &[u8] = if sni.len() <= name_lower_buf.len() {
-                    strings::copy_lowercase(sni, &mut name_lower_buf[0..sni.len()])
-                } else {
-                    sni
-                };
-                combined = combined.wrapping_add(bun_wyhash::hash(sni_lower));
-                any = true;
-            }
-        }
 
         let mut user_provided_auth = false;
         if let Some(hdrs) = &self.proxy_headers {
@@ -2616,11 +2563,6 @@ impl<'a> HTTPClient<'a> {
         } else if self.state.request_stage == RequestStage::Done
             && self.is_keep_alive_possible()
             && !socket.is_closed_or_has_error()
-            // A direct TLS socket verified against a Host-header override
-            // (get_tls_hostname) must not be pooled here: this.url has already
-            // been repointed at the redirect destination, so proxy_auth_hash()
-            // can no longer compute the correct pool key. Close it instead.
-            && (!IS_SSL || self.http_proxy.is_some() || self.hostname.is_none())
         {
             // request_stage == .done: a 303 to a streaming POST can arrive before
             // the chunked upload's terminating 0\r\n\r\n is written. Pooling that
@@ -2648,13 +2590,6 @@ impl<'a> HTTPClient<'a> {
         // connected_url was the last borrower of the previous hop's URL buffer
         // (handleResponseMetadata already repointed this.url at the new one).
         self.prev_redirect = Vec::new();
-
-        // Deferred until after the pool/close decision above — see
-        // `InternalStateFlags::clear_hostname_on_redirect`.
-        if self.state.flags.clear_hostname_on_redirect {
-            self.state.flags.clear_hostname_on_redirect = false;
-            self.hostname = None;
-        }
 
         // TODO: should this check be before decrementing the redirect count?
         // the current logic will allow one less redirect than requested
@@ -4198,10 +4133,6 @@ impl<'a> HTTPClient<'a> {
                     proxy_tunnel::raw_as_mut(t.as_ptr()).detach_owner(&*self);
                 }
                 let had_tunnel = tunnel.is_some();
-                // target_hostname = url.hostname (the CONNECT TCP target at
-                // writeProxyConnect line 346). The SNI override (hostname) is
-                // hashed into proxyAuthHash separately — both must match, but
-                // they're distinct values when a Host header override is set.
                 Self::ssl_ctx_mut(ctx).release_socket(
                     socket,
                     self.flags.did_have_handshaking_error && !self.flags.reject_unauthorized,
@@ -4216,11 +4147,7 @@ impl<'a> HTTPClient<'a> {
                     } else {
                         0
                     },
-                    if had_tunnel || (IS_SSL && self.http_proxy.is_none()) {
-                        // Direct TLS: the handshake verified the peer against
-                        // the Host-header override (get_tls_hostname), so the
-                        // override hash must be part of the pool key. Matches
-                        // the lookup in HTTPContext::connect.
+                    if had_tunnel {
                         self.proxy_auth_hash()
                     } else {
                         0
@@ -4296,15 +4223,6 @@ impl<'a> HTTPClient<'a> {
     fn do_redirect_multiplexed(&mut self) {
         debug_assert!(self.flags.protocol != Protocol::Http1_1);
         bun_core::scoped_log!(fetch, "doRedirectMultiplexed");
-        // See `do_redirect`: the cross-origin redirect must drop the
-        // per-request Host override before the follow-up connection derives
-        // its SNI / certificate-verification hostname. The h2/h3 path never
-        // reaches `do_redirect`'s consume-and-clear, so mirror it here before
-        // `state.reset()` discards the flag.
-        if self.state.flags.clear_hostname_on_redirect {
-            self.state.flags.clear_hostname_on_redirect = false;
-            self.hostname = None;
-        }
         if matches!(self.state.original_request_body, HTTPRequestBody::Stream(_)) {
             self.flags.is_streaming_request_body = false;
         }
@@ -5238,13 +5156,6 @@ impl<'a> HTTPClient<'a> {
                                     }
                                 }
                             }
-                        }
-
-                        // Cross-origin redirect: re-derive SNI / cert
-                        // verification / Host from the redirect target. See
-                        // `InternalStateFlags::clear_hostname_on_redirect`.
-                        if !is_same_origin {
-                            self.state.flags.clear_hostname_on_redirect = true;
                         }
 
                         // https://fetch.spec.whatwg.org/#concept-http-redirect-fetch

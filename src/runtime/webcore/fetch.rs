@@ -447,8 +447,6 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     // `SignalRef`'s Drop on every early-return path, and disarmed via `take()`
     // when ownership is moved into `FetchOptions`.
     let mut signal = SignalRef(None);
-    // Custom Hostname
-    let mut hostname: Option<Box<[u8]>> = None;
     let mut range: Option<bun_core::ZBox> = None;
     let mut unix_socket_path: ZigStringSlice = ZigStringSlice::empty();
 
@@ -471,7 +469,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     let mut reject_unauthorized = vm.get_tls_reject_unauthorized();
     let mut check_server_identity: JSValue = JSValue::ZERO;
 
-    // signal/unix_socket_path/url_proxy_buffer/headers/body/hostname/range/
+    // signal/unix_socket_path/url_proxy_buffer/headers/body/range/
     // ssl_config are all owning types whose Drop runs on early return
     // (`signal` via `SignalRef`).
 
@@ -1372,9 +1370,6 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             // refcounted via `fetch_headers_to_deref` above). `FetchHeaders` is
             // an opaque ZST FFI handle (S008) — safe `*mut → &mut` deref.
             let headers_ref = bun_opaque::opaque_deref_mut(headers_);
-            if let Some(hostname_) = headers_ref.fast_get(HTTPHeaderName::Host) {
-                hostname = Some(hostname_.to_owned_slice().into_boxed_slice());
-            }
             if url.is_s3() {
                 if let Some(range_) = headers_ref.fast_get(HTTPHeaderName::Range) {
                     range = Some(range_.to_owned_slice_z());
@@ -2085,7 +2080,6 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         signal: signal.take(),
         global_this: Some(global_this.into()),
         ssl_config: ssl_config.take(),
-        hostname: hostname.take(),
         upgraded_connection,
         force_http2,
         force_http3,

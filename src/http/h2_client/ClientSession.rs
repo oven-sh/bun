@@ -52,7 +52,6 @@ pub struct ClientSession {
     /// into the keepalive pool so a strict caller never reuses a session whose
     /// hostname was never validated.
     pub established_with_reject_unauthorized: bool,
-    pub host_header_hash: u64,
 
     /// Queued bytes for the socket; whole frames are written here and
     /// `flush()` drains as much as the socket accepts.
@@ -245,7 +244,6 @@ impl ClientSession {
             ssl_config: client.tls_props.clone(),
             did_have_handshaking_error: client.flags.did_have_handshaking_error,
             established_with_reject_unauthorized: client.flags.reject_unauthorized,
-            host_header_hash: client.proxy_auth_hash(),
             write_buffer: bun_io::StreamBuffer::default(),
             read_buffer: Vec::new(),
             streams: ArrayHashMap::default(),
@@ -292,16 +290,12 @@ impl ClientSession {
         hostname: &[u8],
         port: u16,
         ssl_config: Option<*const ssl_config::SSLConfig>,
-        host_header_hash: u64,
     ) -> bool {
         let mine: Option<*const ssl_config::SSLConfig> = self
             .ssl_config
             .as_ref()
             .map(|p| std::ptr::from_ref(p.get()));
-        self.port == port
-            && mine == ssl_config
-            && self.host_header_hash == host_header_hash
-            && strings::eql_long(&self.hostname, hostname, true)
+        self.port == port && mine == ssl_config && strings::eql_long(&self.hostname, hostname, true)
     }
 
     pub fn adopt(&mut self, client: &mut HTTPClient) {
@@ -951,7 +945,7 @@ impl ClientSession {
                 None,
                 b"",
                 0,
-                self.host_header_hash,
+                0,
                 Some(self_ptr),
             );
         } else {

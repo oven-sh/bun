@@ -14,6 +14,14 @@ import { expiredTls, invalidTls, tls as validTls } from "harness";
 const CERT_LOCALHOST_IP = { ...validTls };
 const CERT_EXPIRED = { ...expiredTls };
 
+// Self-signed leaf, SAN = DNS:example.test only (no iPAddress SAN).
+// openssl req -x509 -newkey rsa:2048 -nodes -keyout key.pem -out cert.pem \
+//   -subj "/CN=example.test" -addext "subjectAltName = DNS:example.test" -days 3650
+const dnsOnlyExampleTestTls = Object.freeze({
+  cert: "-----BEGIN CERTIFICATE-----\nMIIDKDCCAhCgAwIBAgIUVFwKRR7R8tiIrCDxTO4dIURkLokwDQYJKoZIhvcNAQEL\nBQAwFzEVMBMGA1UEAwwMZXhhbXBsZS50ZXN0MB4XDTI2MDcyNjA1NTA1OVoXDTM2\nMDcyMzA1NTA1OVowFzEVMBMGA1UEAwwMZXhhbXBsZS50ZXN0MIIBIjANBgkqhkiG\n9w0BAQEFAAOCAQ8AMIIBCgKCAQEA6xpi13+b1CmKOBB69Q6XvYik7gwVZ7qpZSrD\nQXSe+4W+8spBdLvTtc+AQg0cvE+W2iPrh73KjFEzYFfvKjVPGbaBn6hwQXaaSoJy\nOd2D0kc1Jdod7jOtEbTP6pG3qTBBdXZU0vXsHzoRm5V9L4M56G8y3BOBb1+4HV9t\nKe+lc3AjBrJXbUUG6rnTLyRMhzmMyqVduOIPHHS9bYATPofJ8l1W/Hme4YT0Wzrq\n/5XMVT8HY27UVxAle6n1Y8QqYwLpv4pA5+vGdI/awVkT9zXqlOLGrdm64YF2rWi6\niQBPn1acJHLk5pZJUNIgi9q3lHS/gCdAOR+4zKursORMF/IGSwIDAQABo2wwajAd\nBgNVHQ4EFgQUvCw9JU0FyNu31jFxGvS3pf6p3FQwHwYDVR0jBBgwFoAUvCw9JU0F\nyNu31jFxGvS3pf6p3FQwDwYDVR0TAQH/BAUwAwEB/zAXBgNVHREEEDAOggxleGFt\ncGxlLnRlc3QwDQYJKoZIhvcNAQELBQADggEBAMcm2P6PU+FjoGQ2zmT+QOuucps2\n48GwDO11aQMQkqniYy85ZucKicO6FKKuNGtBMcunNOnEPaWLoC+E1/9ctIT3/6T1\nXKlLbWdb62CD5ItK8sz+kNdxOeOOWnI3MeQC07NRuL+H2INtY294I6Wc20yRUwZJ\n0TGDRc7RiYO5PF9PY+BJYn2ghn0D00/HJvnxyOg6790f83j/acgB4oiRH2D9Q2aI\nbkixIqiVB0bD+OPlkW21FtAhdzss2Oe0R0GaiRIDz9zNWAWofm47Et1wKh99uUsA\nJxkQNjOVaiD2Mq4DO1ff4kWxr1mWop0R5lrp+1vmv7NJ6Xjql15mgjpLeCg=\n-----END CERTIFICATE-----\n",
+  key: "-----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQDrGmLXf5vUKYo4\nEHr1Dpe9iKTuDBVnuqllKsNBdJ77hb7yykF0u9O1z4BCDRy8T5baI+uHvcqMUTNg\nV+8qNU8ZtoGfqHBBdppKgnI53YPSRzUl2h3uM60RtM/qkbepMEF1dlTS9ewfOhGb\nlX0vgznobzLcE4FvX7gdX20p76VzcCMGsldtRQbqudMvJEyHOYzKpV244g8cdL1t\ngBM+h8nyXVb8eZ7hhPRbOur/lcxVPwdjbtRXECV7qfVjxCpjAum/ikDn68Z0j9rB\nWRP3NeqU4sat2brhgXataLqJAE+fVpwkcuTmlklQ0iCL2reUdL+AJ0A5H7jMq6uw\n5EwX8gZLAgMBAAECggEAR3RNDz8nDtwTOMf1fu6Q+teBfSIqDU1Dt84/6vB1c2+q\nYeNL8p01kr/+tNSEY81yxVj+eFKcMXpqeYEwXO033dJE4lAQ0iyoZzXvXpvvOSVQ\nR3FcAG4vTz7bpGjmX6MdegRdcoKw4arF+Dn+gsbI/lZxqEa7Y6y9ahv7MzA1Ynhg\n1kJguf5y01mxuvpHAO54zqgOafCGY6fHyAO5CW1+iEtYwvG/Nw1aXuALAH/aJhkv\nGpJVnxfel0f6Jv/WCvsEVyN+G5SHooLbYrKmYDP7ccmdUj8H7/sNp1YTG5l35L/x\n/RSPOdrMGDb3DREEOkISLlW5I5WOmHb8ELzvLnUQxQKBgQD8GiVtVTU6EapCJ4Lc\n5NdJr+jmjP7e4xt0Mq5L6NCXqyLCZqvsIObzw+m55bSq2s4u5lauIPi9W+cUuTKm\niCgqlHESR0oY/mXJv5BtPxAA4t/23dJyWxAKavCGnv+Qbp7z4Go/wX5XGYmsvfHf\nDUUjei9/qoERmCDHB5k8rjsdxwKBgQDuvPSRqjXR4DGRAiEzpkw197i+bM/fmu2h\nA5ytrFIocUU/RhfNkKa5QETma/0aIJrYOM3VmICOWfzwZdwab4er2wysceEYSJcE\nb8fGvi8h7xJk1MxvtJo73zOIhN3aTLFTDd+NV+lZvDiEt7gUg1OQlFj8tWzKQN3w\nPQmkhWojXQKBgQCzrxMUDVJltCeNBUphlP3ZeHbgtIgIZwivVlwioKrkH0ckFjfd\nkknqXq3dINsXl+KzTNtlOvzvQmy+uY1fYtZ2Gt1IsOUgUVpNZKtVIkiOySXmd45C\nkaMqObR7zyHKWP4URtST4p7hB8O4Cp41Y+juc20danKaDrr2APV4aZqbCwKBgGVf\nLqo7kCbR/7oHIXoA/xNbYMLbCVl1O7nHAtxr82bg0fqQFMNgzKqUs6zz5cEWXym4\n1Q4Bd3T6mQCq/87p1L4QgU0n/eCF0jo8DKRDVVgfX7wY78Xu9h6+I++wG1P6hMEz\nft1RmvBTj9wq9qsfKHiXxUFo+AzZhmPgRxvo2qyxAoGAPEzoO/wZx2x9Dws54fp1\n8rv7zUVrNLq/NZZL1EKjfkiAVxymFyTiZ5cDhe6rl8ILTubgw0xoy566bvvqX2AF\nTydszaxc6aKgTEXQ8ma7IIF+odwQsf7cfmgYmHRJEDByUUJZujpnqayZdLFtx6ZO\n/29DBxZpYtBXrnfzwLkpiCQ=\n-----END PRIVATE KEY-----\n",
+});
+
 // Note: Do not use bun.sh as the example domain
 // Cloudflare sometimes blocks automated requests to it.
 // so it will cause flaky tests.
@@ -29,7 +37,7 @@ async function createServer(cert: TLSOptions, callback: (port: number) => Promis
 }
 
 describe.concurrent("fetch-tls", () => {
-  it("re-derives the Host header and TLS verification hostname from the redirect target on a cross-origin redirect", async () => {
+  it("strips a caller-supplied Host header on a cross-origin redirect and never lets it steer TLS verification", async () => {
     // The redirect target records the Host header it actually receives.
     const receivedHostHeaders: (string | null)[] = [];
     using target = Bun.serve({
@@ -53,15 +61,13 @@ describe.concurrent("fetch-tls", () => {
       },
     });
 
-    // An explicit Host header overrides both the wire Host header and the
-    // hostname used for TLS SNI / certificate verification. checkServerIdentity
-    // receives the verification hostname as its first argument.
-    //
     // fetch() invokes the JS checkServerIdentity callback once per connection
     // in the redirect chain, before that connection's request is written: the
     // request (and any cookies/credentials it carries) must not reach a hop
     // whose certificate the callback has not approved. So a redirect chain
-    // yields one observation per hop, in order.
+    // yields one observation per hop, in order. The verification hostname is
+    // derived from the URL host on every hop: a request-level Host header is
+    // an HTTP field only and is never used as a TLS identity.
     const verifiedHostnames: string[] = [];
     const res = await fetch(`https://127.0.0.1:${origin.port}/`, {
       keepalive: false,
@@ -76,16 +82,57 @@ describe.concurrent("fetch-tls", () => {
     });
     expect(await res.text()).toBe("from-target");
 
-    // The first hop is verified against the explicit Host override
-    // ("localhost"). The Host override names the previous origin, so on a
-    // cross-origin redirect it must be dropped and the verification hostname
-    // re-derived from the redirect target's URL ("127.0.0.1"). The vulnerable
-    // behavior carries the stale override and verifies the second connection
-    // against "localhost" instead.
-    expect(verifiedHostnames).toEqual(["localhost", "127.0.0.1"]);
+    expect(verifiedHostnames).toEqual(["127.0.0.1", "127.0.0.1"]);
     // The redirect target must see a Host header derived from its own URL,
     // not the override that was supplied for the previous origin.
     expect(receivedHostHeaders).toEqual([`127.0.0.1:${target.port}`]);
+  });
+
+  it("does not let a caller-supplied Host header become the certificate-verification target", async () => {
+    // Self-signed leaf whose only SAN is DNS:example.test (no iPAddress SAN),
+    // so a direct connection to 127.0.0.1 must fail hostname verification.
+    // openssl req -x509 -newkey rsa:2048 -nodes -subj "/CN=example.test" \
+    //   -addext "subjectAltName = DNS:example.test" -days 3650
+    const { cert, key } = dnsOnlyExampleTestTls;
+    using server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      tls: { cert, key },
+      fetch: req => new Response("host=" + req.headers.get("host")),
+    });
+    const url = `https://127.0.0.1:${server.port}/`;
+
+    const attempt = (init?: RequestInit & { tls?: object }) =>
+      fetch(url, { keepalive: false, ...init, tls: { ca: cert, ...(init?.tls ?? {}) } }).then(
+        r => ({ ok: true, status: r.status }),
+        e => ({ ok: false, code: e.code }),
+      );
+
+    // Baseline: the certificate has no IP SAN, so verifying against the URL
+    // host (127.0.0.1) must fail.
+    expect(await attempt()).toEqual({ ok: false, code: "ERR_TLS_CERT_ALTNAME_INVALID" });
+
+    // A request-level Host header is an HTTP field only: it must not select the
+    // name the peer certificate is checked against. Letting it through means a
+    // header-forwarding caller (e.g. a reverse proxy passing incoming headers
+    // upstream) would accept whatever certificate matches the client-chosen
+    // Host value. This is the node/undici behaviour.
+    expect(await attempt({ headers: { host: "example.test" } })).toEqual({
+      ok: false,
+      code: "ERR_TLS_CERT_ALTNAME_INVALID",
+    });
+    expect(await attempt({ headers: { host: "evil.test" } })).toEqual({
+      ok: false,
+      code: "ERR_TLS_CERT_ALTNAME_INVALID",
+    });
+
+    // The documented opt-in for a custom TLS identity is tls.servername, and
+    // that continues to work regardless of the Host header.
+    expect(await attempt({ tls: { servername: "example.test" } })).toEqual({ ok: true, status: 200 });
+    expect(await attempt({ headers: { host: "evil.test" }, tls: { servername: "example.test" } })).toEqual({
+      ok: true,
+      status: 200,
+    });
   });
 
   it("can handle multiple requests with non native checkServerIdentity", async () => {

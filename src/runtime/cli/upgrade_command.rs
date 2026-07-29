@@ -267,7 +267,6 @@ impl UpgradeCommand {
             std::ptr::from_mut::<MutableString>(metadata_body),
             b"",
             http_proxy,
-            None,
             HTTP::FetchRedirect::Follow,
         ));
         async_http.client.flags.reject_unauthorized = env_loader.get_tls_reject_unauthorized();
@@ -662,7 +661,6 @@ impl UpgradeCommand {
                 std::ptr::from_mut::<MutableString>(zip_file_buffer),
                 b"",
                 http_proxy,
-                None,
                 HTTP::FetchRedirect::Follow,
             ));
             // `progress` is intentionally leaked (process-lifetime), so the

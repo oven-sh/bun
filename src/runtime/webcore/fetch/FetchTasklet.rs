@@ -115,8 +115,6 @@ pub struct FetchTasklet {
     pub check_server_identity: StrongOptional,
     pub reject_unauthorized: bool,
     pub upgraded_connection: bool,
-    // Custom Hostname
-    pub hostname: Option<Box<[u8]>>,
     pub is_waiting_body: bool,
     pub is_waiting_abort: bool,
     pub is_waiting_request_stream_start: bool,
@@ -447,10 +445,6 @@ impl FetchTasklet {
         bun_output::scoped_log!(FetchTasklet, "clearData ");
         if !self.url_proxy_buffer.is_empty() {
             self.url_proxy_buffer = Box::default();
-        }
-
-        if let Some(_hostname) = self.hostname.take() {
-            // dropped by Box
         }
 
         if let Some(certificate) = self.result.certificate_info.take() {
@@ -1907,7 +1901,6 @@ impl FetchTasklet {
             check_server_identity: fetch_options.check_server_identity,
             reject_unauthorized: fetch_options.reject_unauthorized,
             upgraded_connection: fetch_options.upgraded_connection,
-            hostname: fetch_options.hostname,
             is_waiting_body: false,
             is_waiting_abort: false,
             is_waiting_request_stream_start: false,
@@ -1973,33 +1966,27 @@ impl FetchTasklet {
 
         // This task gets queued on the HTTP thread.
         // `AsyncHTTP::init` takes several `&'static [u8]` borrows
-        // (headers_buf, request_body, hostname) that point into
-        // FetchTasklet-owned storage. The tasklet is heap-pinned via
-        // `heap::alloc`, so erase the borrow lifetimes through raw pointers.
+        // (headers_buf, request_body) that point into FetchTasklet-owned
+        // storage. The tasklet is heap-pinned via `heap::alloc`, so erase the
+        // borrow lifetimes through raw pointers.
         // SAFETY: `fetch_tasklet_ptr` is a stable heap allocation that outlives
         // the AsyncHTTP (dropped together in `deinit`); the slices below borrow
-        // its `request_headers.buf`, `request_body`, `hostname`, and
-        // `response_buffer` fields which are not reallocated for the lifetime
-        // of the request.
+        // its `request_headers.buf`, `request_body`, and `response_buffer`
+        // fields which are not reallocated for the lifetime of the request.
         // SAFETY (`Interned::assume` — Population B, holder-backed):
         // `fetch_tasklet_ptr` is a `heap::alloc`'d `FetchTasklet` whose
-        // `request_headers.buf` / `request_body` / `hostname` fields are not
-        // reallocated for the request's lifetime, and the tasklet is freed in
-        // `deinit` only after the owned `AsyncHTTP` is dropped. NOT
-        // process-lifetime — these should become `RawSlice<u8>` once
-        // `AsyncHTTP::init` accepts holder-lifetime slices; `assume` names the
-        // owner so the widen is grep-able until then.
+        // `request_headers.buf` / `request_body` fields are not reallocated for
+        // the request's lifetime, and the tasklet is freed in `deinit` only
+        // after the owned `AsyncHTTP` is dropped. NOT process-lifetime — these
+        // should become `RawSlice<u8>` once `AsyncHTTP::init` accepts
+        // holder-lifetime slices; `assume` names the owner so the widen is
+        // grep-able until then.
         let headers_buf: &'static [u8] =
             unsafe { bun_ptr::Interned::assume(fetch_tasklet.request_headers.buf.as_slice()) }
                 .as_bytes();
         // SAFETY: see `Interned::assume` note above — same heap-pinned `FetchTasklet` owner.
         let request_body_slice: &'static [u8] =
             unsafe { bun_ptr::Interned::assume(fetch_tasklet.request_body.slice()) }.as_bytes();
-        let hostname: Option<&'static [u8]> = fetch_tasklet
-            .hostname
-            .as_deref()
-            // SAFETY: see block note above — same `FetchTasklet` owner.
-            .map(|s| unsafe { bun_ptr::Interned::assume(s) }.as_bytes());
         let response_buffer: *mut MutableString = &raw mut fetch_tasklet.response_buffer;
         // `MultiArrayList` owns its
         // allocation, so clone; AsyncHTTP::init clones again for the client.
@@ -2028,7 +2015,6 @@ impl FetchTasklet {
                 http_proxy: proxy,
                 proxy_settings,
                 proxy_headers: fetch_options.proxy_headers,
-                hostname,
                 signals: Some(fetch_tasklet.signals),
                 unix_socket_path: Some(fetch_options.unix_socket_path),
                 disable_timeout: Some(fetch_options.disable_timeout),
@@ -2568,8 +2554,6 @@ pub struct FetchOptions {
     pub url_proxy_buffer: Box<[u8]>,
     pub signal: Option<*mut AbortSignal>,
     pub global_this: Option<GlobalRef>,
-    // Custom Hostname
-    pub hostname: Option<Box<[u8]>>,
     pub check_server_identity: StrongOptional,
     pub unix_socket_path: ZigStringSlice,
     pub ssl_config: Option<http::ssl_config::SharedPtr>,
@@ -2605,7 +2589,6 @@ impl Default for FetchOptions {
             url_proxy_buffer: Box::default(),
             signal: None,
             global_this: None,
-            hostname: None,
             check_server_identity: StrongOptional::empty(),
             unix_socket_path: ZigStringSlice::EMPTY,
             ssl_config: None,

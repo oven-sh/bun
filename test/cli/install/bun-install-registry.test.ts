@@ -3471,6 +3471,63 @@ describe("hoisting", async () => {
     expect(lockfile).toMatchNodeModulesAt(packageDir);
   });
 
+  // https://github.com/oven-sh/bun/issues/16968
+  test("nested dependency is preserved when its parent changes version via lockfile", async () => {
+    // has-bin-entries@1.0.0 and @2.0.0 both depend on no-deps@1.0.0. With
+    // no-deps@2.0.0 at the root, no-deps@1.0.0 nests under has-bin-entries.
+
+    // First produce the "after git pull" lockfile: has-bin-entries@2.0.0.
+    await writeFile(
+      packageJson,
+      JSON.stringify({
+        name: "foo",
+        dependencies: { "has-bin-entries": "2.0.0", "no-deps": "2.0.0" },
+      }),
+    );
+    await runBunInstall(env, packageDir);
+
+    const nested = join(packageDir, "node_modules", "has-bin-entries", "node_modules", "no-deps", "package.json");
+    expect(await file(nested).json()).toMatchObject({ name: "no-deps", version: "1.0.0" });
+
+    const savedLockb = await file(join(packageDir, "bun.lockb")).arrayBuffer();
+    const savedPkgJson = await file(packageJson).text();
+
+    // Now produce the "before git pull" on-disk state: has-bin-entries@1.0.0.
+    await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+    await rm(join(packageDir, "bun.lockb"), { force: true });
+    await writeFile(
+      packageJson,
+      JSON.stringify({
+        name: "foo",
+        dependencies: { "has-bin-entries": "1.0.0", "no-deps": "2.0.0" },
+      }),
+    );
+    await runBunInstall(env, packageDir);
+    expect(await file(join(packageDir, "node_modules", "has-bin-entries", "package.json")).json()).toMatchObject({
+      version: "1.0.0",
+    });
+    expect(await file(nested).json()).toMatchObject({ name: "no-deps", version: "1.0.0" });
+
+    // Simulate `git pull`: lockfile + package.json now say 2.0.0, node_modules is
+    // still at 1.0.0. Clear the cache so has-bin-entries@2.0.0 is downloaded
+    // during the install loop (the lockfile matches, so the resolve-phase
+    // prefetch is skipped).
+    await writeFile(join(packageDir, "bun.lockb"), new Uint8Array(savedLockb));
+    await writeFile(packageJson, savedPkgJson);
+    await rm(join(packageDir, ".bun-cache"), { recursive: true, force: true });
+
+    const { err } = await runBunInstall(env, packageDir, { savesLockfile: false });
+    expect(err).not.toContain("Saved lockfile");
+
+    expect(await file(join(packageDir, "node_modules", "has-bin-entries", "package.json")).json()).toMatchObject({
+      version: "2.0.0",
+    });
+    expect(await file(nested).json()).toMatchObject({ name: "no-deps", version: "1.0.0" });
+
+    const lockfile = parseLockfile(packageDir);
+    expect(lockfile).toMatchNodeModulesAt(packageDir);
+  });
+
   var tests: any = [
     {
       situation: "1.0.0 - 1.0.10 is in order",

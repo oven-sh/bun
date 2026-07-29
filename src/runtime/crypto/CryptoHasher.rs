@@ -255,13 +255,9 @@ impl CryptoHasher {
             string_value.get_zig_string(global)?
         };
 
-        // Reading options-object properties (.get) can run user getters, and
-        // decoding a StringObject input can run [Symbol.toPrimitive]. Both are
-        // user-JS re-entry points that may detach or resize a buffer argument.
-        // Do every such read before any raw pointer is captured: option reads
-        // first, then input decode (captures the input pointer), then finally
-        // wrap the output TypedArray (captures the output pointer) with no
-        // user JS in between.
+        // Option getters and input ToPrimitive can run user JS that resizes a
+        // buffer argument, so capture raw pointers last: option reads, then
+        // input decode, then the deferred output-TypedArray wrap.
         let mut output_length: Option<u32> = None;
         let mut deferred_output_buffer: Option<JSValue> = None;
         let mut output: Option<StringOrBuffer> = match arg_at(2) {

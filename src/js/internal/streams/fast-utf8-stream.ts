@@ -454,7 +454,10 @@ class Utf8Stream extends EventEmitter {
       // start
       if ((!this.#writing && this.#len > this.#minLength) || this.#flushPending) {
         this.#actualWrite();
-      } else if (reopening) {
+      } else if (reopening && !this.#writing) {
+        // A 'ready' listener may have called write() synchronously and started
+        // an async fs.write; emitting 'drain' now would signal completion while
+        // that write is still in flight. #release emits 'drain' when it lands.
         process.nextTick(() => this.emit("drain"));
       }
     };

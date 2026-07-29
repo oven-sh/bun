@@ -1721,6 +1721,7 @@ function fdToStdioName(fd: number) {
 // Node's createSocket wraps each piped stdio in a net.Socket; subclass it for
 // `instanceof` but route I/O to the FileSink / native readable that backs Bun's pipes.
 const kStdinSink = Symbol("kStdinSink");
+const kStdinUnrefed = Symbol("kStdinUnrefed");
 let StdinSocket;
 let StdoutSocket;
 
@@ -1735,13 +1736,22 @@ function initStdioSocket(self, options) {
   self._server = null;
 }
 
+// FileSink's own ref counter starts at 1, so treat ref/unref as an idempotent
+// flag (like net.Socket) instead of forwarding every call; spawn's eager
+// ref() loop is then a no-op and one user unref() reaches updateRef(false).
 function stdioSocketRef(this: any) {
-  this[kStdinSink]?.ref?.();
+  if (this[kStdinUnrefed]) {
+    this[kStdinUnrefed] = false;
+    this[kStdinSink]?.ref?.();
+  }
   return this;
 }
 
 function stdioSocketUnref(this: any) {
-  this[kStdinSink]?.unref?.();
+  if (!this[kStdinUnrefed]) {
+    this[kStdinUnrefed] = true;
+    this[kStdinSink]?.unref?.();
+  }
   return this;
 }
 

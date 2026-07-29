@@ -121,6 +121,61 @@ test(
   timeout,
 );
 
+// Regression: ConcurrentCppTask::run_owned (the work-pool wrapper for async
+// WebCrypto ops) dereferenced the raw bunVM pointer captured by the C++
+// EventLoopTaskNoContext to call unref_concurrently() after the crypto body
+// ran. When the creating VM was a worker freed by terminate() while the
+// crypto op was still running on the pool, that read the freed VM
+// allocation. The body itself already posts back via postTaskTo(contextId)
+// and so was safe; only the trailing unref was unfenced.
+test.skipIf(!isASAN)(
+  "terminate() while crypto.subtle async ops are in flight does not UAF in ConcurrentCppTask",
+  async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const { Worker } = require("node:worker_threads");
+        const src = \`
+          const { parentPort } = require("node:worker_threads");
+          const s = crypto.subtle;
+          // Four lanes of PBKDF2 deriveBits on the work pool. The 200k-iteration
+          // SHA-512 body is long enough that terminate() reliably lands while
+          // at least one ConcurrentCppTask is still in run_owned.
+          const k = await s.importKey("raw", new TextEncoder().encode("pw-material-key"), "PBKDF2", false, ["deriveBits"]);
+          for (let i = 0; i < 4; i++) (async () => {
+            for (;;) try { await s.deriveBits({ name: "PBKDF2", salt: new Uint8Array(16), iterations: 200000, hash: "SHA-512" }, k, 512); } catch {}
+          })();
+          parentPort.postMessage("up");
+        \`;
+        for (let r = 0; r < ${rounds}; r++) {
+          const w = new Worker(src, { eval: true });
+          await new Promise((res, rej) => {
+            w.once("message", res);
+            w.once("error", rej);
+            w.once("exit", code => rej(new Error("worker exited early: " + code)));
+          });
+          // The deriveBits tasks are on the work-pool queue as of "up"; give the
+          // pool threads a moment to enter the PBKDF2 body so terminate() frees
+          // the VM mid-op (the condition the fence must handle).
+          await Bun.sleep(60 + ((r * 41) % 220));
+          await w.terminate();
+        }
+        console.log("ok");
+      `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "ok\n", stderr: "", exitCode: 0 });
+  },
+  timeout,
+);
+
 // Regression: the per-VM c-ares channel was destroyed in deinit_runtime_state
 // (RuntimeState drop) AFTER JSC teardown and RareData.file_polls drop.
 // ares_destroy() synchronously fires EDESTRUCTION query callbacks and socket-

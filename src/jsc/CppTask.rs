@@ -10,6 +10,9 @@ unsafe extern "C" {
     safe fn Bun__EventLoopTaskNoContext__createdInBunVm(
         task: &EventLoopTaskNoContext,
     ) -> *mut VirtualMachine;
+    safe fn Bun__EventLoopTaskNoContext__contextIdentifier(task: &EventLoopTaskNoContext) -> u32;
+    // safe: u32 in; resolves under the contexts-map lock, no-op if gone/terminating.
+    safe fn ScriptExecutionContext__unrefEventLoopConcurrently(id: u32);
 }
 
 bun_opaque::opaque_ffi! {
@@ -47,13 +50,14 @@ impl EventLoopTaskNoContext {
         unsafe { Bun__EventLoopTaskNoContext__performTask(this) }
     }
 
-    /// Get the VM that created this task. `VirtualMachine` is process-lifetime
-    /// (PORTING.md §Global mutable state), so a [`BackRef`] is the right
-    /// non-owning handle: callers project `&VirtualMachine` via `Deref` and
-    /// route mutation through the VM's safe interior accessors (e.g.
-    /// `event_loop_shared()`).
+    /// The creating VM. Only safe to dereference on that VM's JS thread.
     pub fn get_vm(&self) -> Option<bun_ptr::BackRef<VirtualMachine>> {
         NonNull::new(Bun__EventLoopTaskNoContext__createdInBunVm(self)).map(bun_ptr::BackRef::from)
+    }
+
+    /// The creating context's identifier, for the checked pool-thread unref.
+    pub fn context_identifier(&self) -> u32 {
+        Bun__EventLoopTaskNoContext__contextIdentifier(self)
     }
 }
 
@@ -73,14 +77,13 @@ impl ConcurrentCppTask {
         let cpp_task = self.cpp_task;
         // `EventLoopTaskNoContext` is an `opaque_ffi!` ZST handle; `opaque_ref`
         // is the centralised non-null deref proof. Valid until `run` consumes it.
-        let maybe_vm = EventLoopTaskNoContext::opaque_ref(cpp_task).get_vm();
+        let context_id = EventLoopTaskNoContext::opaque_ref(cpp_task).context_identifier();
         drop(self);
         // SAFETY: `cpp_task` is the valid C++ handle stored by `ConcurrentCppTask__createAndRun`;
         // `opaque_ref` above proved it non-null and it has not yet been freed — `run` consumes it here.
         unsafe { EventLoopTaskNoContext::run(cpp_task) };
-        if let Some(vm) = maybe_vm {
-            vm.event_loop_shared().unref_concurrently();
-        }
+        // Checked: the creating VM may be a worker freed by terminate() while `run` ran.
+        ScriptExecutionContext__unrefEventLoopConcurrently(context_id);
     }
 }
 
@@ -90,6 +93,7 @@ pub(crate) extern "C" fn ConcurrentCppTask__createAndRun(cpp_task: *mut EventLoo
     // `EventLoopTaskNoContext` is an `opaque_ffi!` ZST handle; `opaque_ref` is
     // the centralised non-null deref proof. C++ just handed it over.
     if let Some(vm) = EventLoopTaskNoContext::opaque_ref(cpp_task).get_vm() {
+        // Runs on the creating VM's JS thread (from `PhonyWorkQueue::dispatch`).
         vm.event_loop_shared().ref_concurrently();
     }
     WorkPool::schedule_new(ConcurrentCppTask {

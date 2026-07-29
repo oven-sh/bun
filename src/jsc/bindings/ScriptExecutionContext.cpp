@@ -308,4 +308,16 @@ extern "C" void ScriptExecutionContext__markTerminating(JSC::JSGlobalObject* glo
         context->markTerminating();
 }
 
+// Checked unref for ConcurrentCppTask's pool-thread completion: the map lock
+// serializes with markTerminating() (called before the worker VM is freed), so
+// a terminated worker's VM is never dereferenced. Same fence as postTaskTo().
+extern "C" void ScriptExecutionContext__unrefEventLoopConcurrently(ScriptExecutionContextIdentifier id)
+{
+    Locker locker { allScriptExecutionContextsMapLock };
+    auto* context = allScriptExecutionContextsMap().get(id);
+    if (!context || context->isTerminating())
+        return;
+    context->unrefEventLoop();
+}
+
 } // namespace WebCore

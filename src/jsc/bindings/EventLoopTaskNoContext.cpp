@@ -12,4 +12,9 @@ extern "C" void* Bun__EventLoopTaskNoContext__createdInBunVm(const EventLoopTask
     return task->createdInBunVm();
 }
 
+extern "C" WebCore::ScriptExecutionContextIdentifier Bun__EventLoopTaskNoContext__contextIdentifier(const EventLoopTaskNoContext* task)
+{
+    return task->contextIdentifier();
+}
+
 } // namespace Bun

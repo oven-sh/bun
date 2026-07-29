@@ -21,7 +21,6 @@ namespace Zig {
 class GlobalObject;
 
 void forEachSourceProvider(WTF::Function<void(JSC::SourceID)>);
-JSC::SourceID sourceIDForSourceURL(const WTF::String& sourceURL);
 void* sourceMappingForSourceURL(const WTF::String& sourceURL);
 JSC::SourceOrigin toSourceOrigin(const String& sourceURL, bool isBuiltin);
 class SourceProvider final : public JSC::SourceProvider {

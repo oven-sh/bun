@@ -36,7 +36,8 @@ describe("FFI error messages", () => {
           `const { dlopen } = require("bun:ffi");` +
             `const name = ${JSON.stringify(prefix)} + Buffer.alloc(${len}, "a").toString() + ".so";` +
             `try { dlopen(name, { f: { args: [], returns: "void" } }); }` +
-            `catch (e) { console.log("CAUGHT", e.code || e.name, String(e.message).slice(0, 30)); }`,
+            `catch (e) { const m = String(e.message);` +
+            `  console.log("CAUGHT", e.code || e.name, m.slice(0, 30), "|", m.slice(-25)); }`,
         ],
         env: bunEnv,
         stderr: "pipe",
@@ -46,6 +47,10 @@ describe("FFI error messages", () => {
         stdout: expect.stringMatching(/^CAUGHT ERR_DLOPEN_FAILED Failed to open library/),
         stderr: "",
       });
+      // 100k exceeds every platform's MAX_PATH_BYTES: the fallback is skipped
+      // and the reported reason is the ENAMETOOLONG from DynLib::open, not a
+      // stale dlerror()/GetLastError() ("unknown error" / "error code 0").
+      if (len === 100_000) expect(stdout).toContain("file name too long");
       expect(exitCode).toBe(0);
     },
   );

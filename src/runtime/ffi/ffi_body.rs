@@ -1493,18 +1493,26 @@ impl FFI {
 
         let dylib: bun_sys::DynLib = 'brk: {
             // First try using the name directly
-            if let Ok(d) = bun_sys::DynLib::open(name) {
-                break 'brk d;
-            }
+            let mut last_err = match bun_sys::DynLib::open(name) {
+                Ok(d) => break 'brk d,
+                Err(e) => e,
+            };
             // if that fails, try resolving the filepath relative to the current working directory
             if name.len() < bun_paths::MAX_PATH_BYTES {
                 let backup_name = Fs::FileSystem::instance().abs(&[name]);
-                if let Ok(d) = bun_sys::DynLib::open(backup_name) {
-                    break 'brk d;
+                match bun_sys::DynLib::open(backup_name) {
+                    Ok(d) => break 'brk d,
+                    Err(e) => last_err = e,
                 }
             }
-            // Then, if that fails, report an error with the library name and system error
-            let dlerror_msg = get_dl_error();
+            // Then, if that fails, report an error with the library name and
+            // system error. `DynLib::open` returns ENAMETOOLONG without calling
+            // the loader, so dlerror()/GetLastError() would be stale there.
+            let dlerror_msg = if last_err == bun_errno::SystemErrno::ENAMETOOLONG {
+                Box::<[u8]>::from(b"file name too long".as_slice())
+            } else {
+                get_dl_error()
+            };
 
             let mut msg = Vec::new();
             write!(

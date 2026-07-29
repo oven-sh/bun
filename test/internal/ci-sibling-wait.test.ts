@@ -13,19 +13,19 @@
 import { describe, expect, test } from "bun:test";
 import { waitForStepOutcome, type StepGetResult } from "../../scripts/build/ci.ts";
 
+type Read = string | { ok: false; err: string };
+const fail = (err: string): Read => ({ ok: false, err });
+
 /** Drive `waitForStepOutcome` through a canned sequence of `outcome`/`state` reads. */
-function run(script: ReadonlyArray<{ outcome: string; state: string } | { ok: false; err: string }>) {
+function run(script: ReadonlyArray<{ outcome: Read; state: Read }>) {
   let i = 0;
-  const get = (_stepKey: string, attr: string): StepGetResult => {
+  const get = (_stepKey: string, attr: "outcome" | "state"): StepGetResult => {
     const entry = script[Math.min(i, script.length - 1)]!;
-    // One poll = outcome then state; advance on state so both reads see the same entry.
-    if (attr === "state") i++;
-    if ("ok" in entry) {
-      // A transient agent failure: the poll retries without reading `state`.
-      if (attr === "outcome") i++;
-      return { ok: false, out: "", err: entry.err };
-    }
-    return { ok: true, out: entry[attr as "outcome" | "state"], err: "" };
+    const v = entry[attr];
+    // One poll is `outcome` then (if outcome was ok) `state`; advance after the
+    // last read in the poll so both reads see the same entry.
+    if (attr === "state" || (attr === "outcome" && typeof v !== "string")) i++;
+    return typeof v === "string" ? { ok: true, out: v, err: "" } : { ok: false, out: "", err: v.err };
   };
   return waitForStepOutcome("linux-x64-build-cpp", { pollMs: 0, get });
 }
@@ -90,7 +90,7 @@ describe.concurrent("waitForStepOutcome", () => {
   });
 
   test("falls back to outcome when state is unavailable", async () => {
-    // An empty/unavailable state must not mask a real failure.
+    // A successful-but-empty state must not mask a real failure.
     await expect(
       run([
         { outcome: "errored", state: "" },
@@ -99,9 +99,20 @@ describe.concurrent("waitForStepOutcome", () => {
     ).rejects.toThrow("linux-x64-build-cpp errored");
   });
 
-  test("retries a transient agent error", async () => {
+  test("treats a failed state read as non-terminal", async () => {
+    // `outcome` read in the same poll succeeded, so the agent is up; a flaky
+    // `state` read must not count as a terminal observation.
     await run([
-      { ok: false, err: "transient 502" },
+      { outcome: "errored", state: fail("502 Bad Gateway") },
+      { outcome: "errored", state: fail("502 Bad Gateway") },
+      { outcome: "errored", state: "ready" },
+      { outcome: "passed", state: "finished" },
+    ]);
+  });
+
+  test("retries a transient agent error on outcome", async () => {
+    await run([
+      { outcome: fail("transient 502"), state: "n/a" },
       { outcome: "passed", state: "finished" },
     ]);
   });

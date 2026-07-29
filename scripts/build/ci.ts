@@ -609,7 +609,9 @@ export interface StepGetResult {
 
 function agentStepGet(stepKey: string, attr: string): StepGetResult {
   const r = spawnSync("buildkite-agent", ["step", "get", attr, "--step", stepKey], { encoding: "utf8" });
-  if (r.error) throw new BuildError(`Failed to spawn buildkite-agent`, { cause: r.error });
+  if (r.error) {
+    throw new BuildError(`Failed to spawn buildkite-agent step get ${attr} --step ${stepKey}`, { cause: r.error });
+  }
   return { ok: r.status === 0, out: (r.stdout ?? "").trim(), err: (r.stderr ?? "").trim() };
 }
 
@@ -663,15 +665,20 @@ export async function waitForStepOutcome(
       continue;
     }
     const state = get(stepKey, "state");
-    const stateVal = state.ok ? state.out : "";
-    const display = `${outcome.out || "(none)"}${stateVal ? ` / state=${stateVal}` : ""}`;
+    const stateVal = state.ok ? state.out : `<${state.err || "error"}>`;
+    const display = `${outcome.out || "(none)"} / state=${stateVal || "(none)"}`;
     if (display !== last) {
       const elapsed = Math.round((Date.now() - start) / 1000);
       console.log(`  ${stepKey} outcome=${display} [${elapsed}s]`);
       last = display;
     }
     if (outcome.out === "passed") return;
-    const stateIsTerminal = stateVal === "" || terminalState.has(stateVal);
+    // A successful-but-empty `state` falls back to outcome-only (pre-change
+    // behaviour). A FAILED `state` read is not evidence of anything — the
+    // outcome read in this same iteration worked, so the agent and API are
+    // reachable; treat it as non-terminal rather than let a flaky second call
+    // undo the retry-awareness this poll exists for.
+    const stateIsTerminal = state.ok && (state.out === "" || terminalState.has(state.out));
     if (failedOutcome.has(outcome.out) && stateIsTerminal) {
       // Two consecutive terminal reads before giving up: a retry job appears
       // ~1s after its predecessor ends, so a single poll can see `finished`

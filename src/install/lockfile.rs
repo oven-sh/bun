@@ -1365,7 +1365,7 @@ fn clean_preprocess_updating_catalogs_cold(
     Lockfile::preprocess_updating_catalogs(old, manager, exact_versions)
 }
 
-pub fn format_catalog_update_literal(
+fn format_catalog_update_literal(
     resolution: &Resolution,
     string_buf: &[u8],
     info: &CatalogUpdateInfo,

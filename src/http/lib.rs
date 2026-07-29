@@ -4013,13 +4013,14 @@ impl<'a> HTTPClient<'a> {
     }
 
     /// Decompressed-output budget per `process_body_buffer` call: capped to
-    /// 1 MB while a streaming reader is attached so one socket read cannot
-    /// inflate a high-ratio body ahead of demand. h3 has no leftover-drain
-    /// hook yet, so it stays unbounded.
+    /// 1 MB while an h1 streaming reader is attached so one socket read
+    /// cannot inflate a high-ratio body ahead of demand. h2/h3 detach the
+    /// stream before any leftover can be drained, so they stay unbounded
+    /// until that path gains a post-detach drain hook.
     #[inline]
     fn decompress_output_cap(&self) -> usize {
         const STREAMING_DECOMPRESS_MAX_OUTPUT: usize = 1024 * 1024;
-        if self.flags.protocol != Protocol::Http3 && self.signals.is_auto_pause() {
+        if self.flags.protocol == Protocol::Http1_1 && self.signals.is_auto_pause() {
             STREAMING_DECOMPRESS_MAX_OUTPUT
         } else {
             usize::MAX
@@ -4081,7 +4082,9 @@ impl<'a> HTTPClient<'a> {
         // Compressed bytes left over from a previous `process_body_buffer`
         // that stopped at the output cap: decode the next bounded chunk now
         // so the JS reader's pull drives the inflate.
+        let mut decoded_pending = false;
         if self.state.has_pending_compressed() {
+            decoded_pending = true;
             let max_output = self.decompress_output_cap();
             let is_final = self.state.is_done();
             let buffer_snap = core::mem::take(&mut self.state.compressed_body.list);
@@ -4098,8 +4101,15 @@ impl<'a> HTTPClient<'a> {
             return;
         };
         if body_out_str.list.is_empty() {
-            // No update! Don't do anything.
-            return;
+            // A leftover that decoded to 0 bytes (stream terminator only) can
+            // flip has_more to false with nothing to deliver; that terminal
+            // callback still has to fire or the reader never completes.
+            if !(decoded_pending
+                && self.state.is_done()
+                && !self.state.has_pending_compressed())
+            {
+                return;
+            }
         }
 
         let ctx = self.get_ssl_ctx::<IS_SSL>();
@@ -4635,7 +4645,10 @@ impl<'a> HTTPClient<'a> {
         incoming_data: &[u8],
     ) -> crate::Result<bool> {
         let small_len = 16 * 1024usize;
-        if incoming_data.len() <= small_len && self.state.get_body_buffer().list.is_empty() {
+        if incoming_data.len() <= small_len
+            && self.state.get_body_buffer().list.is_empty()
+            && !(self.state.encoding.is_compressed() && self.signals.is_auto_pause())
+        {
             self.handle_response_body_chunked_encoding_from_single_packet(incoming_data)
         } else {
             self.handle_response_body_chunked_encoding_from_multiple_packets(incoming_data)

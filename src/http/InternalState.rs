@@ -85,6 +85,10 @@ pub struct InternalStateFlags {
     /// `reset()`/`init()` so each redirect/retry hop re-compresses from the
     /// original uncompressed `original_request_body`.
     pub body_compressed: bool,
+    /// `process_body_buffer` stopped at its `max_output` budget with either
+    /// unconsumed compressed input or a mid-stream decoder. The next
+    /// drain/`on_data` must pump again before the request can finalize.
+    pub decompress_output_pending: bool,
 }
 
 impl InternalStateFlags {
@@ -101,6 +105,7 @@ impl InternalStateFlags {
             is_waiting_for_cert_check: false,
             receive_paused: false,
             body_compressed: false,
+            decompress_output_pending: false,
         }
     }
 }
@@ -234,12 +239,12 @@ impl<'a> InternalState<'a> {
         self.flags.received_last_chunk
     }
 
-    /// Compressed bytes received from the wire but not yet fed through the
-    /// decoder. Non-empty when `process_body_buffer` stopped at
-    /// `max_output`; the next drain/`on_data` picks up where it left off.
+    /// `process_body_buffer` stopped at its output budget with more to
+    /// deliver (unconsumed compressed input or a mid-stream decoder with
+    /// output buffered internally).
     #[inline]
     pub fn has_pending_compressed(&self) -> bool {
-        self.encoding.is_compressed() && !self.compressed_body.list.is_empty()
+        self.flags.decompress_output_pending
     }
 
     /// True when a socket close during `in_progress` completes the body rather
@@ -294,6 +299,7 @@ impl<'a> InternalState<'a> {
             'libdeflate: {
                 use bun_libdeflate_sys::libdeflate as bun_libdeflate;
                 if !(is_final_chunk
+                    && max_output == usize::MAX
                     && !self.flags.is_libdeflate_fast_path_disabled
                     && self.encoding.can_use_lib_deflate()
                     && self.is_done())
@@ -459,6 +465,11 @@ impl<'a> InternalState<'a> {
                     // Retain capacity by returning the (cleared) allocation.
                     buffer.clear();
                 }
+                // Decoder may still hold output internally even with no
+                // unconsumed input (brotli/zlib can read a whole command into
+                // their window and emit it across several calls).
+                self.flags.decompress_output_pending = max_output != usize::MAX
+                    && (!buffer.is_empty() || self.decompressor.is_mid_stream());
                 self.compressed_body.list = buffer;
             }
             _ => {

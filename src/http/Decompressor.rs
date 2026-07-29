@@ -19,6 +19,19 @@ impl Decompressor {
     // explicit `Drop` is unnecessary. Callers that want a mid-lifecycle reset
     // assign `*self = Decompressor::None`.
 
+    /// The underlying decoder has consumed input but not yet reached
+    /// stream-end: a further `decompress_chunk` call may emit more output
+    /// from its internal buffer even with empty input.
+    pub fn is_mid_stream(&self) -> bool {
+        use bun_core::compress::State;
+        match self {
+            Decompressor::Zlib(r) => matches!(r.state, State::Inflating),
+            Decompressor::Brotli(r) => matches!(r.state, State::Inflating),
+            Decompressor::Zstd(r) => matches!(r.state, State::Inflating),
+            Decompressor::None => false,
+        }
+    }
+
     fn init(&mut self, encoding: Encoding, first_chunk: &[u8]) -> crate::Result<()> {
         match encoding {
             Encoding::Gzip | Encoding::Deflate => {

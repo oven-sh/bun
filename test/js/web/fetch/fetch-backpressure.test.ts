@@ -269,20 +269,28 @@ describe("fetch() receive backpressure — compressed body inflates on demand", 
   // below the unfixed behavior.
   const PEAK_LIMIT = (isASAN ? 64 : 48) * 1024 * 1024;
 
+  type BombKind = "gzip" | "br" | "br-hq" | "zstd";
   let zeros: Buffer;
   const bombs: { [k: string]: Buffer } = {};
-  function bombFor(encoding: "gzip" | "br" | "zstd") {
+  function bombFor(kind: BombKind) {
     zeros ??= Buffer.alloc(DECOMPRESSED);
-    return (bombs[encoding] ??=
-      encoding === "gzip"
+    const q = require("node:zlib").constants.BROTLI_PARAM_QUALITY;
+    return (bombs[kind] ??=
+      kind === "gzip"
         ? gzipSync(zeros, { level: 1 })
-        : encoding === "br"
-          ? brotliCompressSync(zeros, { params: { [require("node:zlib").constants.BROTLI_PARAM_QUALITY]: 0 } })
-          : zstdCompressSync(zeros, { level: 1 }));
+        : kind === "br"
+          ? brotliCompressSync(zeros, { params: { [q]: 0 } })
+          : kind === "br-hq"
+            ? // q4 packs 128 MB of zeros into ~200 bytes, so the decoder
+              // consumes all input long before 1 MB of output: exercises the
+              // is_mid_stream() half of has_pending_compressed().
+              brotliCompressSync(zeros, { params: { [q]: 4 } })
+            : zstdCompressSync(zeros, { level: 1 }));
   }
 
-  async function serveBomb(encoding: "gzip" | "br" | "zstd", chunked: boolean) {
-    const bomb = bombFor(encoding);
+  async function serveBomb(kind: BombKind, chunked: boolean) {
+    const bomb = bombFor(kind);
+    const encoding = kind === "br-hq" ? "br" : kind;
     const head = chunked
       ? `HTTP/1.1 200 OK\r\nContent-Encoding: ${encoding}\r\nTransfer-Encoding: chunked\r\n\r\n` +
         `${bomb.length.toString(16)}\r\n`
@@ -325,14 +333,16 @@ describe("fetch() receive backpressure — compressed body inflates on demand", 
     process.stdout.write(JSON.stringify({ peak, total, firstLen: first.value.byteLength }));
   `;
 
-  for (const [encoding, chunked] of [
+  for (const [kind, chunked] of [
     ["gzip", false],
     ["gzip", true],
     ["br", false],
+    ["br-hq", false],
+    ["br-hq", true],
     ["zstd", false],
   ] as const) {
-    test(`${encoding}${chunked ? " chunked" : ""}: one read() does not inflate the whole body`, async () => {
-      await using server = await serveBomb(encoding, chunked);
+    test(`${kind}${chunked ? " chunked" : ""}: one read() does not inflate the whole body`, async () => {
+      await using server = await serveBomb(kind, chunked);
       const { peak, total, firstLen, exitCode } = await spawnClient(server.url, "h1", STALL_AND_DRAIN);
       expect({
         total,

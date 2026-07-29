@@ -6,7 +6,7 @@ use bun_core::Environment;
 use bun_core::Timespec;
 use bun_jsc::{CallFrame, JSFunction, JSGlobalObject, JSHostFn, JSValue, JsResult};
 use crate::timer::{
-    AbortSignalTimeout, ElTimespec, EventLoopTimer, EventLoopTimerState, EventLoopTimerTag, InHeap,
+    ElTimespec, EventLoopTimer, EventLoopTimerState, EventLoopTimerTag, InHeap,
     TimerObjectInternals, TimeoutObject, TimerHeap,
 };
 
@@ -124,7 +124,7 @@ impl FakeTimers {
         CURRENT_TIME.set(global, &Timespec::EPOCH, Some(js_now));
     }
 
-    pub(crate) fn deactivate(
+    fn deactivate(
         &mut self,
         global: &JSGlobalObject,
     ) -> Vec<core::ptr::NonNull<TimerObjectInternals>> {
@@ -132,6 +132,16 @@ impl FakeTimers {
         CURRENT_TIME.clear(global);
         self.active = false;
         pinned
+    }
+
+    /// Restore real timers without draining the fake heap. Used by the
+    /// `--isolate` file boundary so `swap_global_for_test_isolation`'s
+    /// `cancel_all_timeout_objects` (which runs after the outgoing global's
+    /// JS has stopped) can walk the still-populated fake heap and release
+    /// both `TimeoutObject` pins and `AbortSignalTimeout` cycle refs.
+    pub(crate) fn reset_for_isolation(&mut self, global: &JSGlobalObject) {
+        CURRENT_TIME.clear(global);
+        self.active = false;
     }
 
     /// Marking `state = CANCELLED` alone strands the `Box<TimeoutObject>`: its
@@ -142,30 +152,16 @@ impl FakeTimers {
     fn clear(&mut self) -> Vec<core::ptr::NonNull<TimerObjectInternals>> {
         let mut pinned = Vec::new();
         while let Some(timer) = self.timers.delete_min() {
-            // SAFETY: `delete_min` returned a live node; the parent box stays
-            // live until the caller's release pass / the signal unref below.
+            // SAFETY: `delete_min` returned a live node; the `TimeoutObject`
+            // it belongs to stays live until the caller's release pass.
             unsafe {
                 (*timer).in_heap = InHeap::None;
                 (*timer).state = EventLoopTimerState::CANCELLED;
-                match (*timer).tag {
-                    EventLoopTimerTag::TimeoutObject => {
-                        let parent = TimeoutObject::from_timer_ptr(timer);
-                        pinned.push(core::ptr::NonNull::new_unchecked(
-                            core::ptr::addr_of_mut!((*parent).internals),
-                        ));
-                    }
-                    EventLoopTimerTag::AbortSignalTimeout => {
-                        // Break the AbortSignal <-> Timeout refcount cycle the
-                        // same way `All::cancel_all_timeout_objects` does, so
-                        // `~AbortSignal` -> `cancelTimer()` can free the box.
-                        let t = AbortSignalTimeout::from_timer_ptr(timer);
-                        let signal = (*t).signal;
-                        (*t).signal = core::ptr::null_mut();
-                        if !signal.is_null() {
-                            crate::jsc::abort_signal::AbortSignal::opaque_ref(signal).unref();
-                        }
-                    }
-                    _ => {}
+                if (*timer).tag == EventLoopTimerTag::TimeoutObject {
+                    let parent = TimeoutObject::from_timer_ptr(timer);
+                    pinned.push(core::ptr::NonNull::new_unchecked(
+                        core::ptr::addr_of_mut!((*parent).internals),
+                    ));
                 }
             }
         }

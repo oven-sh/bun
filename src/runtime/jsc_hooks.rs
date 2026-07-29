@@ -1648,20 +1648,20 @@ pub(crate) fn close_isolation_handles(vm: &mut VirtualMachine) {
     let _ = vm.event_loop_mut().drain_microtasks();
     // Fake-timer state lives in the per-thread `timer::All`, not the JS
     // global, so a file that leaves it active routes every later file's
-    // `setTimeout` into the never-driven fake heap.
+    // `setTimeout` into the never-driven fake heap. Leave the heap itself
+    // intact: `swap_global_for_test_isolation` runs `cancel_all_timeout_objects`
+    // next, which walks both heaps and releases `TimeoutObject` pins and
+    // `AbortSignalTimeout` cycle refs at a point where no user JS can touch
+    // the outgoing signals.
     {
         let all = timer_all();
         // SAFETY: `state` is non-null so `timer_all()` is non-null; single
         // JS thread, no re-entry while we hold the field borrow.
         if !all.is_null() && unsafe { (*all).fake_timers.is_active() } {
             let global = vm.global();
-            // SAFETY: as above; `deactivate` only touches `fake_timers` and
-            // the `CURRENT_TIME` static.
-            let pinned = unsafe { (*all).fake_timers.deactivate(global) };
-            let vm_ptr: *mut VirtualMachine = vm;
-            for p in pinned {
-                timer::TimerObjectInternals::release_heap_pin(p, vm_ptr);
-            }
+            // SAFETY: as above; only touches `fake_timers.active` and the
+            // `CURRENT_TIME` static.
+            unsafe { (*all).fake_timers.reset_for_isolation(global) };
         }
     }
     loop {

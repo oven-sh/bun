@@ -1201,7 +1201,7 @@ impl Connection {
                             };
                             // §8.3.1/§8.3.2: requests never carry :status; responses carry only
                             // :status. A PUSH_PROMISE block is `is_request`, not `is_response`.
-                            let wrong_direction = (self.is_server && rest == b"status")
+                            let wrong_direction = (is_request && rest == b"status")
                                 || (is_response && bit != pseudo::STATUS);
                             // RFC 8441 §4: :protocol is only valid when SETTINGS_ENABLE_CONNECT_PROTOCOL
                             // has been enabled by this endpoint. nghttp2 (and so node) checks the
@@ -1652,41 +1652,21 @@ impl Connection {
     /// RFC 9113 §6.4 RST_STREAM.
     fn handle_rst_stream(&mut self, sink: &impl Sink, hdr: &FrameHeader, payload: &[u8]) -> bool {
         let code_raw = u32::from_be_bytes([payload[0], payload[1], payload[2], payload[3]]);
-        // §5.1: RST_STREAM on an idle (or never-seen) stream is a connection PROTOCOL_ERROR.
-        let mut on_idle = match self.streams.get_mut(&hdr.stream_id) {
-            Some(s) if s.state != State::Idle => {
-                s.state = State::Closed;
-                false
-            }
-            _ => true,
-        };
-        // Transition shim: a stream the embedder opened locally (legacy outbound) is not idle even
-        // though this engine never saw its HEADERS go out.
-        if on_idle && sink.is_local_stream(hdr.stream_id) {
-            let send_init = self.remote_settings.initial_window_size;
-            let recv_init = self.local_settings.initial_window_size;
-            let s = self
-                .streams
-                .entry(hdr.stream_id)
-                .or_insert_with(|| Stream::new(send_init, recv_init));
-            s.state = State::Closed;
-            on_idle = false;
-        }
-        // §5.1: a stream evicted after full close (per-request memory release) is
-        // closed, not idle — a late RST_STREAM on it MUST be tolerated. Anything at or
-        // below the highest stream id either layer has started has existed; the embedder's
-        // mark covers locally-initiated streams this engine never saw HEADERS for.
-        if on_idle
-            && (hdr.stream_id <= self.last_stream_id
-                || hdr.stream_id <= sink.highest_started_stream_id())
-        {
-            return false;
-        }
-        if on_idle {
+        // §5.1: RST_STREAM on an idle stream is a connection PROTOCOL_ERROR.
+        if self.is_idle_stream_id(sink, hdr.stream_id) {
             self.send_go_away(sink, ErrorCode::ProtocolError, b"RST_STREAM on idle stream");
             return true;
         }
-        sink.on_stream_reset(hdr.stream_id, code_raw);
+        self.track_local_stream(sink, hdr.stream_id);
+        match self.streams.get_mut(&hdr.stream_id) {
+            Some(s) => {
+                s.state = State::Closed;
+                sink.on_stream_reset(hdr.stream_id, code_raw);
+            }
+            // §5.1: a stream evicted after full close is closed, not idle — a late RST_STREAM on it
+            // is tolerated.
+            None => {}
+        }
         false
     }
 

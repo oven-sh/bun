@@ -1148,6 +1148,12 @@ describe("client rejects server-side protocol violations (RFC 9113)", () => {
       ErrorCode.PROTOCOL_ERROR,
     ],
     [
+      "RST_STREAM on idle even stream 2 with two open requests (§5.1)",
+      { requests: 2 },
+      (raw: RawH2Server) => raw.sendFrame(FrameType.RST_STREAM, 0, 2, u32be(ErrorCode.CANCEL)),
+      ErrorCode.PROTOCOL_ERROR,
+    ],
+    [
       "WINDOW_UPDATE on an idle stream (§5.1)",
       {},
       (raw: RawH2Server) => raw.sendFrame(FrameType.WINDOW_UPDATE, 0, 3, u32be(1)),

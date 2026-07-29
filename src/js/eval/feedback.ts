@@ -47,8 +47,9 @@ function openTerminal(): TerminalIO | null {
   const candidates = process.platform === "win32" ? ["CON"] : ["/dev/tty"];
 
   for (const candidate of candidates) {
+    let fd = -1;
     try {
-      const fd = openSync(candidate, "r+");
+      fd = openSync(candidate, "r+");
       const input = new tty.ReadStream(fd);
       const output = new tty.WriteStream(fd);
       input.setEncoding("utf8");
@@ -58,12 +59,15 @@ function openTerminal(): TerminalIO | null {
         cleanup: () => {
           input.destroy();
           output.destroy();
-          try {
-            closeSync(fd);
-          } catch {}
         },
       };
-    } catch {}
+    } catch {
+      if (fd !== -1) {
+        try {
+          closeSync(fd);
+        } catch {}
+      }
+    }
   }
 
   return null;

@@ -338,8 +338,7 @@ pub mod prompt {
             input.push(second);
         }
 
-        // Read until '\n', growing 2048 -> 4096 -> unbounded. EOF ends the
-        // response with the bytes read so far; only EOF-before-first-byte is null.
+        // EOF before '\n' yields the bytes read so far; only EOF-before-first-byte (above) is null.
         'read: {
             match read_until_delimiter_array_list_append_assume_capacity(
                 &mut *reader,

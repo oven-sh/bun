@@ -600,6 +600,19 @@ function runAsync(argv: string[], cwd: string): Promise<void> {
   });
 }
 
+/** One `buildkite-agent step get <attr>` read. */
+export interface StepGetResult {
+  ok: boolean;
+  out: string;
+  err: string;
+}
+
+function agentStepGet(stepKey: string, attr: string): StepGetResult {
+  const r = spawnSync("buildkite-agent", ["step", "get", attr, "--step", stepKey], { encoding: "utf8" });
+  if (r.error) throw new BuildError(`Failed to spawn buildkite-agent`, { cause: r.error });
+  return { ok: r.status === 0, out: (r.stdout ?? "").trim(), err: (r.stderr ?? "").trim() };
+}
+
 /**
  * Poll `buildkite-agent step get` until `<stepKey>` reaches a terminal state.
  * Returns on "passed"; throws on a terminal failure so the caller exits 1 with
@@ -608,46 +621,36 @@ function runAsync(argv: string[], cwd: string): Promise<void> {
  *
  * `outcome` alone is not enough: Buildkite reports the last *completed* job's
  * outcome, so an earlier attempt that errored/expired reads as `errored` even
- * while an automatic or manual retry is queued or running. `state` tracks the
- * latest job (it's what depends_on gates on), so a failure outcome is only
- * believed once `state` is terminal too. See build 84838: windows-x64-build-bun
- * bailed on `outcome: errored [0s]` while windows-x64-build-cpp's retry was
- * sitting in the queue.
+ * while an automatic or manual retry is queued or running. `state` is the
+ * step-level state (`ready`/`running`/`failing`/`finished`/…, distinct from
+ * REST's job states; see https://buildkite.com/docs/agent/v3/cli-step), so a
+ * failure outcome is only believed once `state` is terminal too. Build 84838's
+ * windows-x64-build-bun bailed on `outcome: errored [0s]` while
+ * windows-x64-build-cpp's retry was still queued; build 85043's linux-aarch64
+ * logged the expected `state=running` → `state=finished`.
  *
- * Exported for test/internal/ci-sibling-wait.test.ts; pollMs is only for that
- * test (CI keeps the default 3s).
+ * Exported for test/internal/ci-sibling-wait.test.ts; `opts` is the test seam.
  */
-export async function waitForStepOutcome(stepKey: string, pollMs = 3000): Promise<void> {
+export async function waitForStepOutcome(
+  stepKey: string,
+  opts: { pollMs?: number; get?: (stepKey: string, attr: string) => StepGetResult } = {},
+): Promise<void> {
+  const { pollMs = 3000, get = agentStepGet } = opts;
   const failedOutcome = new Set(["hard_failed", "soft_failed", "errored", "canceled", "cancelled"]);
-  // Job states that mean "a retry is in flight / the step isn't done". Anything
-  // in this set keeps the poll going even when `outcome` already shows a
-  // failure from an earlier attempt. Unknown values fall through to the
-  // outcome check, preserving the pre-retry-aware behaviour.
-  const liveState = new Set([
-    "pending",
-    "waiting",
-    "blocked",
-    "unblocked",
-    "limiting",
-    "limited",
-    "scheduled",
-    "assigned",
-    "accepted",
-    "running",
-  ]);
+  // `step get state` returns step states, not job states. The terminal ones per
+  // Buildkite's glossary are `finished`/`canceled`/`ignored`; everything else
+  // (`waiting_for_dependencies`/`ready`/`running`/`failing`, or a value we
+  // haven't seen) means a job for this step may still produce a pass. An empty
+  // `state` falls back to outcome-only (the pre-retry-aware behaviour).
+  const terminalState = new Set(["finished", "canceled", "cancelled", "ignored"]);
   const sleep = (ms: number) => new Promise<void>(r => setTimeout(r, ms));
-  const get = (attr: string) => {
-    const r = spawnSync("buildkite-agent", ["step", "get", attr, "--step", stepKey], { encoding: "utf8" });
-    if (r.error) throw new BuildError(`Failed to spawn buildkite-agent`, { cause: r.error });
-    return { ok: r.status === 0, out: (r.stdout ?? "").trim(), err: (r.stderr ?? "").trim() };
-  };
   const start = Date.now();
   const deadlineMs = 60 * 60 * 1000;
   let last = "";
   let terminalReads = 0;
   console.log(`Waiting for ${stepKey} to finish...`);
   for (;;) {
-    const outcome = get("outcome");
+    const outcome = get(stepKey, "outcome");
     if (!outcome.ok) {
       if (outcome.err !== last) {
         console.log(`  buildkite-agent step get outcome failed: ${outcome.err}`);
@@ -659,9 +662,7 @@ export async function waitForStepOutcome(stepKey: string, pollMs = 3000): Promis
       await sleep(pollMs);
       continue;
     }
-    // `state` is advisory: if the agent/API doesn't return it, fall back to
-    // outcome-only (the original behaviour).
-    const state = get("state");
+    const state = get(stepKey, "state");
     const stateVal = state.ok ? state.out : "";
     const display = `${outcome.out || "(none)"}${stateVal ? ` / state=${stateVal}` : ""}`;
     if (display !== last) {
@@ -670,11 +671,11 @@ export async function waitForStepOutcome(stepKey: string, pollMs = 3000): Promis
       last = display;
     }
     if (outcome.out === "passed") return;
-    if (failedOutcome.has(outcome.out) && !liveState.has(stateVal)) {
-      // Two consecutive terminal reads before giving up: a retry job is
-      // created ~1s after its predecessor finishes, so a single poll can land
-      // in the gap where attempt N is `expired` and attempt N+1 isn't
-      // `scheduled` yet.
+    const stateIsTerminal = stateVal === "" || terminalState.has(stateVal);
+    if (failedOutcome.has(outcome.out) && stateIsTerminal) {
+      // Two consecutive terminal reads before giving up: a retry job appears
+      // ~1s after its predecessor ends, so a single poll can see `finished`
+      // before the step goes back to `ready` for the retry.
       if (++terminalReads >= 2) {
         throw new BuildError(`Sibling step ${stepKey} ${outcome.out} — nothing to link`, {
           hint: `See the ${stepKey} job for the real error; this step only downloads its artifacts.`,

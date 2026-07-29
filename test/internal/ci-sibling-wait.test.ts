@@ -2,134 +2,107 @@
  * Unit tests for the build-bun → build-cpp sibling poll in
  * scripts/build/ci.ts::waitForStepOutcome().
  *
- * The poll runs inside CI's rust-and-link step, so it can only be exercised by
- * putting a fake `buildkite-agent` on PATH that plays back a canned sequence of
- * `step get outcome` / `step get state` responses. The regression these tests
- * pin down: Buildkite's `outcome` attribute reports the last *completed* job,
- * so an earlier attempt that expired in the queue reads as `errored` even while
- * a retry is scheduled or running. The poll must look at `state` to tell the
- * two apart.
+ * Buildkite's `step get outcome` reports the last *completed* job, so an
+ * earlier attempt that expired in the queue reads as `errored` even while a
+ * retry is queued or running. The poll must consult `step get state` (the
+ * step-level state: `ready`/`running`/`failing`/`finished`/…) and only give up
+ * once that is terminal too. Build 85043's linux-aarch64-build-bun logged
+ * `state=running` → `state=finished`, which is the vocabulary these fixtures
+ * use.
  */
 import { describe, expect, test } from "bun:test";
-import { bunExe, isWindows, tempDir } from "harness";
-import { chmodSync } from "node:fs";
-import { join } from "node:path";
-import { waitForStepOutcome } from "../../scripts/build/ci.ts";
+import { waitForStepOutcome, type StepGetResult } from "../../scripts/build/ci.ts";
 
-/**
- * Install a fake `buildkite-agent` that serves `step get outcome|state` from
- * `script[i]` on the i-th poll (clamped to the last entry), and run `fn` with
- * it on PATH. `waitForStepOutcome` issues one `outcome` read then one `state`
- * read per poll, so each script entry is consumed once per poll.
- */
-async function withFakeAgent<T>(script: Array<{ outcome: string; state: string }>, fn: () => Promise<T>): Promise<T> {
-  using dir = tempDir("fake-bk-agent", {
-    "script.json": JSON.stringify(script),
-    // The real binary is Go; this stub only needs to honour
-    // `step get <attr> --step <key>` and count polls.
-    "buildkite-agent": `#!/usr/bin/env bash
-set -euo pipefail
-attr="\${3:-}"
-n=0
-[ -f "$AGENT_DIR/calls" ] && n=$(cat "$AGENT_DIR/calls")
-# One poll = outcome then state; advance the script cursor on state so both
-# reads in a poll see the same entry.
-if [ "$attr" = "state" ]; then
-  echo $((n+1)) > "$AGENT_DIR/calls"
-fi
-exec "$BUN_EXE" -e '
-  const s = require(process.env.AGENT_DIR + "/script.json");
-  const i = Math.min(+process.argv[1], s.length - 1);
-  process.stdout.write(s[i][process.argv[2]] ?? "");
-' "$n" "$attr"
-`,
-  });
-  chmodSync(join(String(dir), "buildkite-agent"), 0o755);
-  const prev = { PATH: process.env.PATH, AGENT_DIR: process.env.AGENT_DIR, BUN_EXE: process.env.BUN_EXE };
-  process.env.PATH = `${dir}:${prev.PATH}`;
-  process.env.AGENT_DIR = String(dir);
-  process.env.BUN_EXE = bunExe();
-  try {
-    return await fn();
-  } finally {
-    for (const [k, v] of Object.entries(prev)) {
-      if (v === undefined) delete process.env[k];
-      else process.env[k] = v;
+/** Drive `waitForStepOutcome` through a canned sequence of `outcome`/`state` reads. */
+function run(script: ReadonlyArray<{ outcome: string; state: string } | { ok: false; err: string }>) {
+  let i = 0;
+  const get = (_stepKey: string, attr: string): StepGetResult => {
+    const entry = script[Math.min(i, script.length - 1)]!;
+    // One poll = outcome then state; advance on state so both reads see the same entry.
+    if (attr === "state") i++;
+    if ("ok" in entry) {
+      // A transient agent failure: the poll retries without reading `state`.
+      if (attr === "outcome") i++;
+      return { ok: false, out: "", err: entry.err };
     }
-  }
+    return { ok: true, out: entry[attr as "outcome" | "state"], err: "" };
+  };
+  return waitForStepOutcome("linux-x64-build-cpp", { pollMs: 0, get });
 }
 
-// The fake agent is a bash script; the Windows CI lane never runs the
-// rust-and-link poll anyway (all build steps are linux-hosted).
-describe.skipIf(isWindows)("waitForStepOutcome", () => {
+describe.concurrent("waitForStepOutcome", () => {
   test("resolves once the sibling passes", async () => {
-    await withFakeAgent(
-      [
-        { outcome: "", state: "running" },
-        { outcome: "passed", state: "passed" },
-      ],
-      () => waitForStepOutcome("linux-x64-build-cpp", 5),
-    );
+    await run([
+      { outcome: "", state: "running" },
+      { outcome: "passed", state: "finished" },
+    ]);
   });
 
   test("keeps polling while a retry is queued after an earlier error", async () => {
     // Build 84838: attempt 1 expired (outcome=errored), attempt 2 sat in the
-    // queue (state=scheduled). The old outcome-only poll bailed at index 0.
-    await withFakeAgent(
-      [
-        { outcome: "errored", state: "scheduled" },
-        { outcome: "errored", state: "scheduled" },
-        { outcome: "errored", state: "running" },
-        { outcome: "passed", state: "passed" },
-      ],
-      () => waitForStepOutcome("windows-x64-build-cpp", 5),
-    );
+    // queue. The old outcome-only poll bailed at index 0.
+    await run([
+      { outcome: "errored", state: "ready" },
+      { outcome: "errored", state: "ready" },
+      { outcome: "errored", state: "running" },
+      { outcome: "passed", state: "finished" },
+    ]);
+  });
+
+  test("keeps polling through state=failing", async () => {
+    // `failing` is a documented non-terminal step state (a job failed but the
+    // step has not settled); a retry can still turn it around.
+    await run([
+      { outcome: "errored", state: "failing" },
+      { outcome: "errored", state: "failing" },
+      { outcome: "errored", state: "running" },
+      { outcome: "passed", state: "finished" },
+    ]);
+  });
+
+  test("keeps polling through an unknown state value", async () => {
+    // A state we have not enumerated must not be mistaken for terminal; the
+    // 60 min deadline still bounds the wait.
+    await run([
+      { outcome: "errored", state: "limiting" },
+      { outcome: "errored", state: "limiting" },
+      { outcome: "passed", state: "finished" },
+    ]);
   });
 
   test("tolerates the gap between one attempt finishing and its retry appearing", async () => {
     // A retry job is created ~1s after its predecessor ends, so one poll can
-    // land on a terminal state before the next attempt is scheduled.
-    await withFakeAgent(
-      [
-        { outcome: "errored", state: "expired" },
-        { outcome: "errored", state: "scheduled" },
-        { outcome: "passed", state: "passed" },
-      ],
-      () => waitForStepOutcome("darwin-x64-build-cpp", 5),
-    );
+    // land on state=finished before the next attempt takes it back to ready.
+    await run([
+      { outcome: "errored", state: "finished" },
+      { outcome: "errored", state: "ready" },
+      { outcome: "passed", state: "finished" },
+    ]);
   });
 
   test("throws once the sibling is terminally failed with no retry in flight", async () => {
-    const err = await withFakeAgent(
-      [
-        { outcome: "hard_failed", state: "failed" },
-        { outcome: "hard_failed", state: "failed" },
-      ],
-      () =>
-        waitForStepOutcome("linux-x64-build-cpp", 5).then(
-          () => null,
-          e => e as Error,
-        ),
-    );
-    expect(err).not.toBeNull();
-    expect(String(err)).toContain("linux-x64-build-cpp hard_failed");
+    await expect(
+      run([
+        { outcome: "hard_failed", state: "finished" },
+        { outcome: "hard_failed", state: "finished" },
+      ]),
+    ).rejects.toThrow("linux-x64-build-cpp hard_failed");
   });
 
   test("falls back to outcome when state is unavailable", async () => {
-    // `step get state` predates some agent versions returning it; an empty
-    // state must not mask a real failure.
-    const err = await withFakeAgent(
-      [
+    // An empty/unavailable state must not mask a real failure.
+    await expect(
+      run([
         { outcome: "errored", state: "" },
         { outcome: "errored", state: "" },
-      ],
-      () =>
-        waitForStepOutcome("linux-x64-build-cpp", 5).then(
-          () => null,
-          e => e as Error,
-        ),
-    );
-    expect(err).not.toBeNull();
-    expect(String(err)).toContain("errored");
+      ]),
+    ).rejects.toThrow("linux-x64-build-cpp errored");
+  });
+
+  test("retries a transient agent error", async () => {
+    await run([
+      { ok: false, err: "transient 502" },
+      { outcome: "passed", state: "finished" },
+    ]);
   });
 });

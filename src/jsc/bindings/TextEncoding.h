@@ -60,8 +60,6 @@ private:
     char16_t m_backslashAsCurrencySymbol;
 };
 
-inline bool operator==(const TextEncoding& a, const TextEncoding& b) { return a.name() == b.name(); }
-
 PAL_EXPORT const TextEncoding& UTF8Encoding();
 
 inline String TextEncoding::decode(std::span<const uint8_t> characters) const

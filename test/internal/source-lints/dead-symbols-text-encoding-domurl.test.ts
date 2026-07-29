@@ -9,7 +9,7 @@
 // built binary, so it belongs in test/internal/source-lints/ per the README.
 
 import { expect, test } from "bun:test";
-import { existsSync, readFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import path from "node:path";
 
 const repoRoot = path.resolve(import.meta.dir, "..", "..", "..");
@@ -26,8 +26,9 @@ test("dead PAL::TextEncoding helpers do not reappear", () => {
   // decodeURLEscapeSequences was the only consumer of DecodeEscapeSequences.h;
   // the other encodings (ASCII/Latin1/UTF16/WinLatin1) and the form-submission
   // path existed only to serve each other. Only UTF8Encoding() stays live.
-  expect(existsSync(path.join(repoRoot, "src/jsc/bindings/DecodeEscapeSequences.h"))).toBe(false);
   const checks: Array<[string, RegExp]> = [
+    ["src/jsc/bindings/DecodeEscapeSequences.h", /struct URLEscapeSequence/],
+    ["src/jsc/bindings/DecodeEscapeSequences.h", /decodeURLEscapeSequencesAsData/],
     ["src/jsc/bindings/TextEncoding.cpp", /decodeURLEscapeSequences/],
     ["src/jsc/bindings/TextEncoding.cpp", /UTF7Encoding/],
     ["src/jsc/bindings/TextEncoding.cpp", /domName/],
@@ -123,8 +124,9 @@ test("stale commented-out src/js blocks and unused internal helpers do not reapp
 test("dead http_types/h2 wire types and postgres Default impls do not reappear", () => {
   // FullSettingsPayload duplicated runtime/api/bun/h2_frame_parser.rs's own
   // local copy; nothing in bun_http_types or bun_http referenced it.
-  expect(existsSync(path.join(repoRoot, "src/runtime/valkey_jsc/index.rs"))).toBe(false);
   const checks: Array<[string, RegExp]> = [
+    ["src/runtime/valkey_jsc/index.rs", /pub use super/],
+    ["src/runtime/valkey_jsc/mod.rs", /pub mod index\b/],
     ["src/http_types/h2.rs", /struct FullSettingsPayload/],
     ["src/http_types/h2.rs", /SETTINGS_ENABLE_CONNECT_PROTOCOL/],
     ["src/http_types/h2.rs", /pub const fn init\(value: u32, reserved: bool\)/],

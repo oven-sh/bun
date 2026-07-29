@@ -127,9 +127,9 @@ describe("bundler", () => {
         // BaseElement.ts
         var exports_BaseElement = {};
         __export(exports_BaseElement, {
-          listValue: () => listValue,
+          BaseElement: () => BaseElement,
           formValue: () => formValue,
-          BaseElement: () => BaseElement
+          listValue: () => listValue
         });
         function BaseElement() {
           console.log("BaseElement called", BaseElementImport());
@@ -164,7 +164,7 @@ describe("bundler", () => {
         var { AsyncEntryPoint: AsyncEntryPoint2 } = await Promise.resolve().then(() => exports_AsyncEntryPoint);
         AsyncEntryPoint2();
 
-        //# debugId=42062903F19477CF64756E2164756E21
+        //# debugId=19FD1E5354FE6B6564756E2164756E21
         //# sourceMappingURL=out.js.map
         "
       `);
@@ -377,9 +377,9 @@ describe("bundler", () => {
         // BaseElement.ts
         var exports_BaseElement = {};
         __export(exports_BaseElement, {
-          listValue: () => listValue,
+          BaseElement: () => BaseElement,
           formValue: () => formValue,
-          BaseElement: () => BaseElement
+          listValue: () => listValue
         });
         function BaseElement() {
           console.log("BaseElement called", BaseElementImport());
@@ -410,7 +410,7 @@ describe("bundler", () => {
         var { AsyncEntryPoint: AsyncEntryPoint2 } = await Promise.resolve().then(() => exports_AsyncEntryPoint);
         AsyncEntryPoint2();
 
-        //# debugId=BF876FBF618133C264756E2164756E21
+        //# debugId=EA1AA30E1BD7B08E64756E2164756E21
         //# sourceMappingURL=out.js.map
         "
       `);

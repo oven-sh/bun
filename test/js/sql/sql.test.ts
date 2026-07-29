@@ -1,6 +1,6 @@
 import { $, randomUUIDv7, sql, SQL } from "bun";
 import { afterAll, describe, expect, mock, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isCI, isDockerEnabled, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, isASAN, isCI, isDockerEnabled, tempDir, tempDirWithFiles } from "harness";
 import path from "path";
 const postgres = (...args) => new SQL(...args);
 
@@ -12330,7 +12330,7 @@ CREATE TABLE ${table_name} (
         describe("Integration with actual database operations", () => {
           describe("SQLite errors", () => {
             test("SQLite constraint violation throws SQLiteError", async () => {
-              const dir = tempDirWithFiles("sqlite-error-test", {});
+              await using dir = tempDir("sqlite-error-test", {});
               const dbPath = path.join(dir, "test.db");
 
               const db = new SQL({ filename: dbPath, adapter: "sqlite" });
@@ -12358,7 +12358,7 @@ CREATE TABLE ${table_name} (
             });
 
             test("SQLite syntax error throws SQLiteError", async () => {
-              const dir = tempDirWithFiles("sqlite-syntax-error-test", {});
+              await using dir = tempDir("sqlite-syntax-error-test", {});
               const dbPath = path.join(dir, "test.db");
 
               const db = new SQL({ filename: dbPath, adapter: "sqlite" });
@@ -12377,7 +12377,7 @@ CREATE TABLE ${table_name} (
             });
 
             test("SQLite database locked throws SQLiteError", async () => {
-              const dir = tempDirWithFiles("sqlite-locked-test", {});
+              await using dir = tempDir("sqlite-locked-test", {});
               const dbPath = path.join(dir, "test.db");
 
               await using db1 = new SQL({ filename: dbPath, adapter: "sqlite" });
@@ -12516,7 +12516,7 @@ CREATE TABLE ${table_name} (
     // regression corrupts the JS heap of the process that parses the response.
     test("result set following a zero-column result set uses its own column layout", async () => {
       const tableName = `t_${randomUUIDv7("hex").replaceAll("-", "")}`;
-      const fixtureDir = tempDirWithFiles("pg-zero-column-then-wide", {
+      await using fixtureDir = tempDir("pg-zero-column-then-wide", {
         "fixture.ts": `
 import { SQL } from "bun";
 

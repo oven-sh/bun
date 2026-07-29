@@ -192,6 +192,13 @@ void webStreamControllerError(JSC::JSGlobalObject*, JSWritableStream*, JSC::JSVa
 // clearException() anywhere in the subsystem.
 JSC::JSValue takeAbruptCompletion(JSC::JSGlobalObject*, JSC::TopExceptionScope&); // userJS: no — WebStreamsMisc.cpp
 
+// Joins any pending bytes, strips a single leading BOM per stream (ignoreBOM=false), holds
+// back a trailing incomplete sequence (unless `flush`), and decodes the remaining span via
+// Bun's simdutf-backed UTF-8 path (invalid sequences replaced by U+FFFD). Returns nullptr
+// when no complete code points were produced (callers skip the enqueue), or on a decode
+// throw (check the scope).
+JSC::JSString* streamingUTF8Decode(JSC::JSGlobalObject*, std::span<const uint8_t> chunk, StreamingUTF8DecodeState&, bool flush); // userJS: no — WebStreamsMisc.cpp
+
 // ReadableStreamOperations.cpp — stream-level RS ops, reader set-up, controller set-up,
 // tee, from-iterable.
 
@@ -236,6 +243,9 @@ std::pair<JSReadableStream*, JSReadableStream*> readableStreamDefaultTee(JSC::JS
 std::pair<JSReadableStream*, JSReadableStream*> readableByteStreamTee(JSC::JSGlobalObject*, JSReadableStream*); // userJS: yes — ReadableStreamOperations.cpp
 // spec ReadableStreamFromIterable(asyncIterable) — `ReadableStream.from`.
 JSReadableStream* readableStreamFromIterable(JSC::JSGlobalObject*, JSC::JSValue asyncIterable); // userJS: yes — ReadableStreamOperations.cpp
+// Body.textStream() over an existing byte ReadableStream: locks a default reader on
+// `source` and returns a SourceKind::TextDecode stream that UTF-8-decodes each chunk.
+JSReadableStream* readableStreamTextDecodeFrom(JSC::JSGlobalObject*, JSReadableStream* source); // userJS: yes — ReadableStreamOperations.cpp
 
 // Non-JavaScript SourceKind algorithm ARMS owned by THIS file. The controller's pull/cancel
 // dispatch is a TOTAL `switch (m_algorithms.kind)` in JSReadableStreamDefaultController.cpp /
@@ -250,6 +260,13 @@ JSC::JSPromise* byteTeeCancelAlgorithm(JSC::JSGlobalObject*, JSStreamTeeState*, 
 // FromIterable (the controller's algorithmContext is the JSStreamFromIterableContext):
 JSC::JSPromise* fromIterablePullAlgorithm(JSC::JSGlobalObject*, JSReadableStreamDefaultController*); // userJS: yes (iterator `next`) — ReadableStreamOperations.cpp
 JSC::JSPromise* fromIterableCancelAlgorithm(JSC::JSGlobalObject*, JSReadableStreamDefaultController*, JSC::JSValue reason); // userJS: yes (iterator `return`) — ReadableStreamOperations.cpp
+// TextDecode (Body.textStream() reading from an existing byte ReadableStream; the
+// controller's algorithmContext is the source reader, decode state inline on
+// m_algorithms.textDecodeState):
+JSC::JSPromise* textDecodePullAlgorithm(JSC::JSGlobalObject*, JSReadableStreamDefaultController*); // userJS: yes (source pull) — ReadableStreamOperations.cpp
+JSC::JSPromise* textDecodeCancelAlgorithm(JSC::JSGlobalObject*, JSReadableStreamDefaultController*, JSC::JSValue reason); // userJS: yes — ReadableStreamOperations.cpp
+void textDecodeReadRequestChunkSteps(JSC::JSGlobalObject*, JSReadableStreamDefaultController*, JSC::JSValue chunk); // userJS: yes — ReadableStreamOperations.cpp
+void textDecodeReadRequestCloseSteps(JSC::JSGlobalObject*, JSReadableStreamDefaultController*); // userJS: yes — ReadableStreamOperations.cpp
 // (The Transform arm's cross-file targets are transformStreamDefaultSource{Pull,Cancel}Algorithm
 // below; the Native arm's are nativeSource{Start,Pull,Cancel} in the BunStreamSource.cpp
 // section; the CrossRealm arms are with the rest of CrossRealmTransform.cpp.)
@@ -598,7 +615,10 @@ void ReadableStream__detach(JSC::EncodedJSValue possibleReadableStream, Zig::Glo
 JSC::EncodedJSValue ReadableStream__empty(Zig::GlobalObject*); // userJS: no
 JSC::EncodedJSValue ReadableStream__used(Zig::GlobalObject*); // userJS: no
 JSC::EncodedJSValue ReadableStream__errored(Zig::GlobalObject*, JSC::EncodedJSValue reason); // userJS: no
+JSC::EncodedJSValue ReadableStream__fromDecodedText(Zig::GlobalObject*, JSC::EncodedJSValue string); // userJS: no
+JSC::EncodedJSValue ReadableStream__textDecodeFrom(Zig::GlobalObject*, JSC::EncodedJSValue source); // userJS: yes
 JSC::EncodedJSValue ZigGlobalObject__createNativeReadableStream(Zig::GlobalObject*, JSC::EncodedJSValue nativePtr); // userJS: no
+JSC::EncodedJSValue ZigGlobalObject__createNativeTextReadableStream(Zig::GlobalObject*, JSC::EncodedJSValue nativePtr); // userJS: no
 JSC::EncodedJSValue ZigGlobalObject__readableStreamToArrayBuffer(Zig::GlobalObject*, JSC::EncodedJSValue stream); // userJS: yes
 JSC::EncodedJSValue ZigGlobalObject__readableStreamToBytes(Zig::GlobalObject*, JSC::EncodedJSValue stream); // userJS: yes
 JSC::EncodedJSValue ZigGlobalObject__readableStreamToText(Zig::GlobalObject*, JSC::EncodedJSValue stream); // userJS: yes

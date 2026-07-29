@@ -287,6 +287,63 @@ for (const entrypoint of bundledEntryPoints) {
 
 mark("Postprocesss modules");
 
+/**
+ * Physical layout order for the module-source blob: DFS post-order over the
+ * static require() graph, so each module sits contiguous with its transitive
+ * dependencies. Loading any builtin then reads one contiguous run of pages
+ * instead of touching sources scattered across the blob. Roots are visited in
+ * a fixed order (the popular entry modules first) so the layout is
+ * deterministic; the graph over-approximates lazy requires, which only makes
+ * neighbours of things that *might* co-load — free for layout.
+ */
+function layoutOrder(modules: string[], outputs: Map<string, string>): string[] {
+  // The bundled sources already have require() rewritten to registry lookups,
+  // `internalModuleRegistry, <index>` — the index is the position in
+  // `modules`, which makes the edge list unambiguous.
+  const requireRe = /internalModuleRegistry, ?(\d+)/g;
+  const deps = new Map<string, string[]>();
+  for (const id of modules) {
+    const src = outputs.get(id.slice(0, -3).replaceAll("/", path.sep)) ?? "";
+    const edges = new Set<string>();
+    for (const m of src.matchAll(requireRe)) {
+      const dep = modules[Number(m[1])];
+      if (dep && dep !== id) edges.add(dep);
+    }
+    deps.set(id, [...edges]);
+  }
+  const hotRoots = [
+    "node/fs.ts",
+    "node/path.ts",
+    "node/os.ts",
+    "node/util.ts",
+    "node/events.ts",
+    "node/stream.ts",
+    "node/child_process.ts",
+    "node/crypto.ts",
+    "node/http.ts",
+    "node/https.ts",
+    "node/net.ts",
+    "node/url.ts",
+    "node/buffer.ts",
+    "node/tty.ts",
+    "node/worker_threads.ts",
+    "node/zlib.ts",
+    "node/assert.ts",
+    "node/timers.ts",
+  ];
+  const roots = [...hotRoots.filter(r => deps.has(r)), ...modules];
+  const emitted = new Set<string>();
+  const order: string[] = [];
+  const visit = (id: string) => {
+    if (emitted.has(id)) return;
+    emitted.add(id);
+    for (const dep of deps.get(id) ?? []) visit(dep);
+    order.push(id);
+  };
+  for (const root of roots) visit(root);
+  return order;
+}
+
 function idToEnumName(id: string) {
   return id
     .replace(/\.[mc]?[tj]s$/, "")
@@ -357,7 +414,7 @@ let blob: Buffer;
 {
   const chunks: Buffer[] = [Buffer.from(functionsSource + "\0", "latin1")];
   let offset = chunks[0].length;
-  for (const id of moduleList.slice(0, nativeStartIndex)) {
+  for (const id of layoutOrder(moduleList.slice(0, nativeStartIndex), outputs)) {
     const enumName = idToEnumName(id);
     if (debug) {
       moduleSpans.push({ enumName, offset: 0, length: 0 });

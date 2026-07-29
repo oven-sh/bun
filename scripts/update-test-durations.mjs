@@ -2,12 +2,10 @@
 
 /**
  * Regenerate test/expected-durations.json from recent Buildkite runs.
- *
  * The file maps each test path (relative to test/, forward slashes) to its
  * median per-lane cost in ms (see `lanes` below). runner.node.mjs uses it
  * to bin-pack test files across --max-shards so every shard does roughly
  * the same amount of work instead of `index % shards`.
- *
  * Usage: BUILDKITE_API_TOKEN=... node scripts/update-test-durations.mjs [--builds N]
  * Intended to be run by a scheduled Buildkite job on oven-sh/bun; it only
  * reads public build metadata and writes one file in the repo.
@@ -89,6 +87,13 @@ function parseLog(raw) {
       // Retry/error headers (`... - code 1`, `... [attempt #2]`) are not file
       // paths; treat them as a delimiter so the preceding span closes cleanly.
       const title = hdr[2].trim();
+      const timed = /^(.+\.(?:[cm]?[jt]sx?|json)) \((\d+(?:\.\d+)?)s\)$/.exec(title);
+      if (timed) {
+        out.push([timed[1], Math.round(parseFloat(timed[2]) * 1000)]);
+        path = start = null;
+        concurrent = false;
+        continue;
+      }
       const isPath = /\.(?:[cm]?[jt]sx?|json)$/.test(title);
       path = isPath ? title : null;
       start = isPath ? ts : null;

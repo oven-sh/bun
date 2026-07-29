@@ -17,7 +17,7 @@ use bun_core;
 // the print boundary.
 // ──────────────────────────────────────────────────────────────────────────
 pub use bun_js_printer::analyze_transpiled_module::{
-    FetchParameters, ModuleInfo, ModulePhase, StringID, VarKind,
+    FetchParameters, ModuleInfo, ModulePhase, StringID,
 };
 
 /// Downstream name for `FetchParameters` — mirrors how
@@ -50,31 +50,25 @@ unsafe impl bytemuck::Zeroable for RecordKind {}
 unsafe impl bytemuck::Pod for RecordKind {}
 
 impl RecordKind {
-    /// var_name
-    pub const DECLARED_VARIABLE: Self = Self(0);
-    /// let_name
-    pub const LEXICAL_VARIABLE: Self = Self(1);
     /// module_name, import_name, local_name
-    pub const IMPORT_INFO_SINGLE: Self = Self(2);
+    pub const IMPORT_INFO_SINGLE: Self = Self(0);
     /// module_name, import_name, local_name
-    pub const IMPORT_INFO_SINGLE_TYPE_SCRIPT: Self = Self(3);
+    pub const IMPORT_INFO_SINGLE_TYPE_SCRIPT: Self = Self(1);
     /// module_name, import_name = '*', local_name
-    pub const IMPORT_INFO_NAMESPACE: Self = Self(4);
+    pub const IMPORT_INFO_NAMESPACE: Self = Self(2);
     /// export_name, import_name, module_name
-    pub const EXPORT_INFO_INDIRECT: Self = Self(5);
+    pub const EXPORT_INFO_INDIRECT: Self = Self(3);
     /// export_name, local_name, padding (for local => indirect conversion)
-    pub const EXPORT_INFO_LOCAL: Self = Self(6);
+    pub const EXPORT_INFO_LOCAL: Self = Self(4);
     /// export_name, module_name
-    pub const EXPORT_INFO_NAMESPACE: Self = Self(7);
+    pub const EXPORT_INFO_NAMESPACE: Self = Self(5);
     /// module_name
-    pub const EXPORT_INFO_STAR: Self = Self(8);
+    pub const EXPORT_INFO_STAR: Self = Self(6);
     /// module_name, import_name = '*', local_name (ModulePhase::Defer)
-    pub const IMPORT_INFO_NAMESPACE_DEFER: Self = Self(9);
+    pub const IMPORT_INFO_NAMESPACE_DEFER: Self = Self(7);
 
     // PascalCase aliases — `bundler_jsc::analyze_jsc` pattern-matches on these
     // (the SCREAMING_CASE consts above are kept for intra-crate use).
-    pub const DeclaredVariable: Self = Self::DECLARED_VARIABLE;
-    pub const LexicalVariable: Self = Self::LEXICAL_VARIABLE;
     pub const ImportInfoSingle: Self = Self::IMPORT_INFO_SINGLE;
     pub const ImportInfoSingleTypeScript: Self = Self::IMPORT_INFO_SINGLE_TYPE_SCRIPT;
     pub const ImportInfoNamespace: Self = Self::IMPORT_INFO_NAMESPACE;
@@ -86,7 +80,6 @@ impl RecordKind {
 
     pub fn len(self) -> crate::Result<usize> {
         match self {
-            Self::DECLARED_VARIABLE | Self::LEXICAL_VARIABLE => Ok(1),
             Self::IMPORT_INFO_SINGLE => Ok(3),
             Self::IMPORT_INFO_SINGLE_TYPE_SCRIPT => Ok(3),
             Self::IMPORT_INFO_NAMESPACE => Ok(3),

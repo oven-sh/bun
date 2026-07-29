@@ -1,9 +1,9 @@
 import { expect, test } from "bun:test";
-import { tempDirWithFiles } from "harness";
+import { tempDir } from "harness";
 import { join } from "path";
 
 test("dev server html route: non-GET/HEAD requests complete without hanging", async () => {
-  const dir = tempDirWithFiles("html-route-405", {
+  await using dir = tempDir("html-route-405", {
     "index.html": `<!DOCTYPE html><html><head><title>t</title></head><body>hi</body></html>`,
   });
   const { default: html } = await import(join(dir, "index.html"));

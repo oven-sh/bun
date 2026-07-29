@@ -18,8 +18,6 @@ pub(crate) extern "C" fn zig__ModuleInfoDeserialized__toJSModuleRecord(
     vm: &VM,
     module_key: &IdentifierArray,
     source_code: &SourceCode,
-    declared_variables: &mut VariableEnvironment,
-    lexical_variables: &mut VariableEnvironment,
     res: &ModuleInfoDeserialized,
 ) -> *mut JSModuleRecord {
     // Ownership of `res` stays with the caller; this function only reads it.
@@ -81,8 +79,6 @@ pub(crate) extern "C" fn zig__ModuleInfoDeserialized__toJSModuleRecord(
                 return core::ptr::null_mut();
             }
             match k {
-                RecordKind::DeclaredVariable => declared_variables.add(vm, identifiers, buffer[i]),
-                RecordKind::LexicalVariable => lexical_variables.add(vm, identifiers, buffer[i]),
                 RecordKind::ImportInfoSingle
                 | RecordKind::ImportInfoSingleTypeScript
                 | RecordKind::ImportInfoNamespace
@@ -102,8 +98,6 @@ pub(crate) extern "C" fn zig__ModuleInfoDeserialized__toJSModuleRecord(
         vm,
         module_key,
         source_code,
-        declared_variables,
-        lexical_variables,
         res.flags.contains_import_meta(),
         res.flags.is_typescript(),
         res.flags.has_tla(),
@@ -159,7 +153,6 @@ pub(crate) extern "C" fn zig__ModuleInfoDeserialized__toJSModuleRecord(
                 unreachable!(); // handled above
             }
             match k {
-                RecordKind::DeclaredVariable | RecordKind::LexicalVariable => {}
                 RecordKind::ImportInfoSingle => module_record.add_import_entry_single(
                     identifiers,
                     buffer[i + 1],
@@ -216,30 +209,6 @@ pub(crate) extern "C" fn zig__ModuleInfoDeserialized__toJSModuleRecord(
 
 // ─── opaque FFI types ─────────────────────────────────────────────────────────
 
-bun_opaque::opaque_ffi! { pub struct VariableEnvironment; }
-unsafe extern "C" {
-    fn JSC__VariableEnvironment__add(
-        environment: *mut VariableEnvironment,
-        vm: *const VM,
-        identifier_array: *mut IdentifierArray,
-        identifier_index: StringID,
-    );
-}
-impl VariableEnvironment {
-    // Forwards `identifier_array` to C++ without dereferencing; not_unsafe_ptr_arg_deref is a false positive on opaque-token forwarding.
-    #[allow(clippy::not_unsafe_ptr_arg_deref)]
-    #[inline]
-    pub fn add(
-        &mut self,
-        vm: &VM,
-        identifier_array: *mut IdentifierArray,
-        identifier_index: StringID,
-    ) {
-        // SAFETY: self is a valid &mut VariableEnvironment from C++; identifier_array is live (scopeguard).
-        unsafe { JSC__VariableEnvironment__add(self, vm, identifier_array, identifier_index) }
-    }
-}
-
 bun_opaque::opaque_ffi! { pub struct IdentifierArray; }
 unsafe extern "C" {
     fn JSC__IdentifierArray__create(len: usize) -> *mut IdentifierArray;
@@ -284,8 +253,6 @@ unsafe extern "C" {
         vm: *const VM,
         module_key: *const IdentifierArray,
         source_code: *const SourceCode,
-        declared_variables: *mut VariableEnvironment,
-        lexical_variables: *mut VariableEnvironment,
         has_import_meta: bool,
         is_typescript: bool,
         has_tla: bool,
@@ -384,8 +351,6 @@ impl JSModuleRecord {
         vm: &VM,
         module_key: &IdentifierArray,
         source_code: &SourceCode,
-        declared_variables: &mut VariableEnvironment,
-        lexical_variables: &mut VariableEnvironment,
         has_import_meta: bool,
         is_typescript: bool,
         has_tla: bool,
@@ -397,8 +362,6 @@ impl JSModuleRecord {
                 vm,
                 module_key,
                 source_code,
-                declared_variables,
-                lexical_variables,
                 has_import_meta,
                 is_typescript,
                 has_tla,

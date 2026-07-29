@@ -18,6 +18,7 @@ import {
   pgAuthenticationMD5Password,
   pgAuthenticationOk,
   pgAuthenticationSASL,
+  pgRaw,
   pgReadyForQuery,
 } from "./wire-frames";
 
@@ -176,10 +177,7 @@ test("postgres: connectionTimeout bounds the whole handshake, not per packet", a
         phase = 2;
         // Announce an Authentication ('R') message with a huge body so the
         // client buffers indefinitely awaiting bytes that never complete.
-        const header = Buffer.alloc(5);
-        header.write("R", 0);
-        header.writeInt32BE(1 << 20, 1);
-        socket.write(header);
+        socket.write(pgRaw("R", Buffer.alloc(0), 1 << 20));
         id = setInterval(() => {
           if (!socket.destroyed) socket.write(Buffer.from([0]));
         }, 200);

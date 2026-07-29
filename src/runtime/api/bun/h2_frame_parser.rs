@@ -2556,7 +2556,11 @@ impl H2FrameParser {
         if !stream_ctx_arg.is_empty_or_undefined_or_null() && stream_ctx_arg.is_object() {
             stream.set_context(stream_ctx_arg, global_object);
         }
-        self.reject_unencodable_header_block(&mut stream, ErrorCode::FRAME_SIZE_ERROR, encoder_touched);
+        self.reject_unencodable_header_block(
+            &mut stream,
+            ErrorCode::FRAME_SIZE_ERROR,
+            encoder_touched,
+        );
         JSValue::js_number(stream_id as f64)
     }
 

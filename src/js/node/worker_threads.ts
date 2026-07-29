@@ -702,8 +702,6 @@ function packJSTransferablesForMessage(message: unknown, transferList: unknown[]
     }
     return value;
   }
-  // replace() reads property getters and Proxy traps, which can throw after
-  // handles are already neutered; roll back so fds aren't orphaned.
   let newMessage;
   try {
     newMessage = replace(message);
@@ -711,10 +709,7 @@ function packJSTransferablesForMessage(message: unknown, transferList: unknown[]
     restoreNeutered();
     throw e;
   }
-  // A transferred handle never referenced from the message stays detached on
-  // this side (like node) but nothing will deserialize it on the other; close
-  // the orphaned fd so it doesn't leak. Runs only after the native send
-  // succeeds so restore() can still find the fd open on failure.
+  // Close fds transferred but unreferenced from the message (nothing will reconstruct them).
   function finalizeJSTransferables() {
     for (const { 0: item, 1: data } of neutered) {
       if (!usedMarkers.has(item) && typeof (data as any)?.fd === "number" && (data as any).fd >= 0) {
@@ -784,9 +779,7 @@ function callPostMessageWithJSTransferables(nativePost: Function, self: unknown,
   return result;
 }
 
-// Top-level envelope lets the receive side skip the deep walk for ordinary
-// messages. Without a native HostObject hook, only node-style receive paths
-// unwrap it, and a queued-but-never-delivered message leaks the carried fd.
+// No native HostObject hook: only node-style receive paths unwrap this, and a queued-but-dropped message leaks the fd.
 function wrapJSTransferableEnvelope(message: unknown): unknown {
   return { [kJSTransferableMarker]: kJSTransferableEnvelope, m: message };
 }

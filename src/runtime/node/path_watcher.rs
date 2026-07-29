@@ -887,7 +887,7 @@ impl Linux {
                     return;
                 }
             }
-            let n = rc as usize;
+            let mut n = rc as usize;
             if n == 0 {
                 continue;
             }
@@ -982,12 +982,56 @@ impl Linux {
                 let is_dir_child = ev.mask & IN::ISDIR != 0;
                 // Suppress the OpenHarmony creation-labeling ATTRIB (see
                 // `attrib_shadowed_by_create`). `i` already points past this
-                // event, i.e. at the first candidate for the lookahead.
-                if (ev.mask & IN::ATTRIB != 0)
-                    && !name.is_empty()
-                    && attrib_shadowed_by_create(&buf.0[..n], i, ev.watch_descriptor, name)
-                {
-                    continue;
+                // event, i.e. at the first lookahead candidate.
+                if ev.mask & IN::ATTRIB != 0 && !name.is_empty() {
+                    let attrib_wd = ev.watch_descriptor;
+                    let mut shadowed =
+                        attrib_shadowed_by_create(&buf.0[..n], i, attrib_wd, name);
+                    if !shadowed && n < buf.0.len() {
+                        // The labeling CRE is queued by the same syscall as the
+                        // ATTRIB, but on a quiet queue the reader wakes on the
+                        // ATTRIB before the syscall reaches the create hook, so
+                        // same-batch lookahead alone races (observed on-device:
+                        // creates through a symlinked dir still reported
+                        // "change" first). Give the kernel a brief window and
+                        // re-check across the read boundary. Newly read events
+                        // extend this batch (`n` grows), so ordering is intact.
+                        // `ev`/`name` are raw-pointer-derived and the re-read
+                        // only writes the disjoint tail `buf.0[n..]`, so both
+                        // stay valid across it.
+                        let mut pfd = [sys::posix::PollFd {
+                            fd: fd.native(),
+                            events: sys::posix::POLL_IN,
+                            revents: 0,
+                        }];
+                        if matches!(sys::posix::poll(&mut pfd, 2), Ok(rc) if rc > 0) {
+                            // SAFETY: `n < buf.0.len()`, so `buf.0[n..]` is a
+                            // non-empty writable tail of the boxed buffer.
+                            let rc2 = unsafe {
+                                sys::linux::read(
+                                    fd.native(),
+                                    buf.0.as_mut_ptr().add(n),
+                                    buf.0.len() - n,
+                                )
+                            };
+                            let got = match sys::get_errno(rc2) {
+                                E::SUCCESS => rc2 as usize,
+                                _ => 0,
+                            };
+                            if got > 0 {
+                                n += got;
+                                shadowed = attrib_shadowed_by_create(
+                                    &buf.0[..n],
+                                    i,
+                                    attrib_wd,
+                                    name,
+                                );
+                            }
+                        }
+                    }
+                    if shadowed {
+                        continue;
+                    }
                 }
                 let event_type: WatchEventKind = if ev.mask
                     & (IN::CREATE

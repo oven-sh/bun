@@ -539,23 +539,7 @@ fn is_selector_unused(
         match component {
             Component::Class(ident) | Component::Id(ident) => {
                 let actual_ident: &[u8] = ident.as_original_string(symbols);
-                // Look up the borrowed `&[u8]` against the map's owned
-                // `Box<[u8]>` keys without allocating.
-                struct SliceAdapter;
-                impl bun_collections::array_hash_map::ArrayHashAdapter<[u8], Box<[u8]>> for SliceAdapter {
-                    #[inline]
-                    fn hash(&self, key: &[u8]) -> u32 {
-                        use core::hash::{Hash, Hasher};
-                        let mut h = bun_wyhash::Wyhash11::init(0);
-                        key.hash(&mut h);
-                        h.finish() as u32
-                    }
-                    #[inline]
-                    fn eql(&self, a: &[u8], b: &Box<[u8]>, _: usize) -> bool {
-                        a == &**b
-                    }
-                }
-                if unused_symbols.contains_adapted(actual_ident, &SliceAdapter) {
+                if unused_symbols.contains_adapted(actual_ident, &css::css_rules::SliceAdapter) {
                     return true;
                 }
             }

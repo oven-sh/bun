@@ -1,6 +1,6 @@
 import { randomUUIDv7, SQL } from "bun";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, mock, test } from "bun:test";
-import { tempDirWithFiles } from "harness";
+import { tempDir } from "harness";
 import { existsSync } from "node:fs";
 import { rm, stat } from "node:fs/promises";
 import { join } from "node:path";
@@ -30,7 +30,7 @@ describe("Connection & Initialization", () => {
   });
 
   test("should connect to file-based SQLite database", async () => {
-    const dir = tempDirWithFiles("sqlite-db-test", {});
+    await using dir = tempDir("sqlite-db-test", {});
     const dbPath = path.join(dir, "test.db");
 
     const sql = new SQL(`sqlite://${dbPath}`);
@@ -83,7 +83,7 @@ describe("Connection & Initialization", () => {
   });
 
   test("onconnect receives Error when open fails (readonly non-existent)", async () => {
-    const dir = tempDirWithFiles("sqlite-onconnect-error", {});
+    await using dir = tempDir("sqlite-onconnect-error", {});
     const dbPath = join(dir, "missing.db");
 
     const onconnect = mock((err?: any) => {});
@@ -110,7 +110,7 @@ describe("Connection & Initialization", () => {
   });
 
   test("should create database file if it doesn't exist", async () => {
-    const dir = tempDirWithFiles("sqlite-create-test", {});
+    await using dir = tempDir("sqlite-create-test", {});
     const dbPath = path.join(dir, "new.db");
 
     const sql = new SQL(`sqlite://${dbPath}`);
@@ -124,7 +124,7 @@ describe("Connection & Initialization", () => {
   });
 
   test("should work with relative paths", async () => {
-    const dir = tempDirWithFiles("sqlite-test", {});
+    await using dir = tempDir("sqlite-test", {});
     const sql = new SQL({
       adapter: "sqlite",
       filename: path.join(dir, "test.db"),
@@ -158,7 +158,7 @@ describe("Connection & Initialization", () => {
     });
 
     test("should use DATABASE_URL for SQLite when it's a SQLite URL", async () => {
-      const dir = tempDirWithFiles("sqlite-env-test", {});
+      await using dir = tempDir("sqlite-env-test", {});
       const dbPath = path.join(dir, "env-test.db");
 
       Bun.env.DATABASE_URL = `sqlite://${dbPath}`;
@@ -191,7 +191,7 @@ describe("Connection & Initialization", () => {
     });
 
     test("should handle SQLITE_URL env var when specified", async () => {
-      const dir = tempDirWithFiles("sqlite-url-test", {});
+      await using dir = tempDir("sqlite-url-test", {});
       const dbPath = path.join(dir, "sqlite-url.db");
 
       // This doesn't exist in the current implementation but testing anyway
@@ -287,7 +287,7 @@ describe("Connection & Initialization", () => {
 
   describe("file:// Protocol URLs", () => {
     test("should handle file:// URLs", async () => {
-      const dir = tempDirWithFiles("file-protocol-test", {});
+      await using dir = tempDir("file-protocol-test", {});
       const dbPath = path.join(dir, "file-test.db");
 
       const sql = new SQL(`file://${dbPath}`);
@@ -303,7 +303,7 @@ describe("Connection & Initialization", () => {
     });
 
     test("should handle file: URLs without slashes", async () => {
-      const dir = tempDirWithFiles("file-no-slash-test", {});
+      await using dir = tempDir("file-no-slash-test", {});
       const dbPath = path.join(dir, "file-noslash.db");
 
       const sql = new SQL(`file:${dbPath}`);
@@ -328,7 +328,7 @@ describe("Connection & Initialization", () => {
 
   describe("Query Parameters in SQLite URLs", () => {
     test("should handle mode=ro (readonly)", async () => {
-      const dir = tempDirWithFiles("readonly-test", {});
+      await using dir = tempDir("readonly-test", {});
       const dbPath = path.join(dir, "readonly.db");
 
       // First create a database
@@ -355,7 +355,7 @@ describe("Connection & Initialization", () => {
     });
 
     test("should handle mode=rw (read-write)", async () => {
-      const dir = tempDirWithFiles("readwrite-test", {});
+      await using dir = tempDir("readwrite-test", {});
       const dbPath = path.join(dir, "readwrite.db");
 
       // Create database first
@@ -376,7 +376,7 @@ describe("Connection & Initialization", () => {
     });
 
     test("should handle mode=rwc (read-write-create)", async () => {
-      const dir = tempDirWithFiles("rwc-test", {});
+      await using dir = tempDir("rwc-test", {});
       const dbPath = path.join(dir, "rwc.db");
 
       const sql = new SQL(`sqlite://${dbPath}?mode=rwc`);
@@ -394,7 +394,7 @@ describe("Connection & Initialization", () => {
     });
 
     test("should handle multiple query parameters", async () => {
-      const dir = tempDirWithFiles("multi-param-test", {});
+      await using dir = tempDir("multi-param-test", {});
       const dbPath = path.join(dir, "multi.db");
 
       // Note: Only mode is supported for SQLite, other params should be ignored
@@ -408,7 +408,7 @@ describe("Connection & Initialization", () => {
     });
 
     test("should ignore fragment in URL", async () => {
-      const dir = tempDirWithFiles("fragment-test", {});
+      await using dir = tempDir("fragment-test", {});
       const dbPath = path.join(dir, "test#file.db");
 
       // # is a valid filename character in SQLite
@@ -427,7 +427,7 @@ describe("Connection & Initialization", () => {
 
   describe("Special Characters in Filenames", () => {
     test("should handle spaces in filename", async () => {
-      const dir = tempDirWithFiles("space-test", {});
+      await using dir = tempDir("space-test", {});
       const dbPath = path.join(dir, "test database.db");
 
       const sql = new SQL(`sqlite://${dbPath}`);
@@ -443,7 +443,7 @@ describe("Connection & Initialization", () => {
     });
 
     test("should handle special characters # and % in filename", async () => {
-      const dir = tempDirWithFiles("special-chars-test", {});
+      await using dir = tempDir("special-chars-test", {});
       const dbPath = path.join(dir, "test#123%data.db");
 
       const sql = new SQL(`sqlite://${dbPath}`);
@@ -459,7 +459,7 @@ describe("Connection & Initialization", () => {
     });
 
     test("should handle unicode characters in filename", async () => {
-      const dir = tempDirWithFiles("unicode-test", {});
+      await using dir = tempDir("unicode-test", {});
       const dbPath = path.join(dir, "测试数据库.db");
 
       const sql = new SQL(`sqlite://${dbPath}`);
@@ -475,7 +475,7 @@ describe("Connection & Initialization", () => {
     });
 
     test("should handle dots in filename", async () => {
-      const dir = tempDirWithFiles("dots-test", {});
+      await using dir = tempDir("dots-test", {});
       const dbPath = path.join(dir, "my.app.v2.0.db");
 
       const sql = new SQL(`sqlite://${dbPath}`);
@@ -493,7 +493,7 @@ describe("Connection & Initialization", () => {
 
   describe("Path Handling", () => {
     test("should handle absolute paths", async () => {
-      const dir = tempDirWithFiles("absolute-test", {});
+      await using dir = tempDir("absolute-test", {});
       const dbPath = path.resolve(dir, "absolute.db");
 
       const sql = new SQL(`sqlite://${dbPath}`);
@@ -509,11 +509,11 @@ describe("Connection & Initialization", () => {
     });
 
     test("should handle relative paths with ./", async () => {
-      const dir = tempDirWithFiles("relative-dot-test", {});
+      await using dir = tempDir("relative-dot-test", {});
       const originalCwd = process.cwd();
 
       try {
-        process.chdir(dir);
+        process.chdir(String(dir));
 
         const sql = new SQL("sqlite://./test.db");
         expect(sql.options.adapter).toBe("sqlite");
@@ -531,7 +531,7 @@ describe("Connection & Initialization", () => {
     });
 
     test("should handle paths with ../", async () => {
-      const parentDir = tempDirWithFiles("parent-test", {});
+      await using parentDir = tempDir("parent-test", {});
       const childDir = path.join(parentDir, "child");
       await Bun.$`mkdir -p ${childDir}`;
       const originalCwd = process.cwd();
@@ -555,7 +555,7 @@ describe("Connection & Initialization", () => {
     });
 
     test("should handle nested paths", async () => {
-      const dir = tempDirWithFiles("nested-test", {});
+      await using dir = tempDir("nested-test", {});
       const nestedPath = path.join(dir, "data", "databases", "app.db");
       await Bun.$`mkdir -p ${path.dirname(nestedPath)}`;
 
@@ -623,7 +623,7 @@ describe("Connection & Initialization", () => {
 
   describe("Mixed Configurations", () => {
     test("should prefer explicit URL over env var", async () => {
-      const dir = tempDirWithFiles("explicit-test", {});
+      await using dir = tempDir("explicit-test", {});
       const envPath = path.join(dir, "env.db");
       const explicitPath = path.join(dir, "explicit.db");
 
@@ -643,7 +643,7 @@ describe("Connection & Initialization", () => {
     });
 
     test("should prefer options object over URL", async () => {
-      const dir = tempDirWithFiles("options-override-test", {});
+      await using dir = tempDir("options-override-test", {});
       const urlPath = path.join(dir, "url.db");
       const optionsPath = path.join(dir, "options.db");
 
@@ -664,7 +664,7 @@ describe("Connection & Initialization", () => {
     });
 
     test("should handle URL in options object", async () => {
-      const dir = tempDirWithFiles("url-in-options-test", {});
+      await using dir = tempDir("url-in-options-test", {});
       const dbPath = path.join(dir, "url-options.db");
 
       const sql = new SQL({
@@ -699,7 +699,7 @@ describe("Connection & Initialization", () => {
     });
 
     test("SQLite readonly mode creates connection but fails on missing file access", async () => {
-      const dir = tempDirWithFiles("ro-nonexist-test", {});
+      await using dir = tempDir("ro-nonexist-test", {});
       const dbPath = path.join(dir, "nonexistent.db");
 
       const sql = new SQL(`sqlite://${dbPath}?mode=ro`);
@@ -1249,7 +1249,7 @@ describe("SQLite-specific features", () => {
   });
 
   test("ATTACH DATABASE", async () => {
-    const dir = tempDirWithFiles("sqlite-attach-test", {});
+    await using dir = tempDir("sqlite-attach-test", {});
     const attachPath = path.join(dir, "attached.db");
 
     await sql`ATTACH DATABASE ${attachPath} AS attached`;
@@ -1481,7 +1481,7 @@ describe("SQL helpers", () => {
   });
 
   test("file execution", async () => {
-    const dir = tempDirWithFiles("sql-files", {
+    await using dir = tempDir("sql-files", {
       "schema.sql": `
           CREATE TABLE file_test (
             id INTEGER PRIMARY KEY,
@@ -1499,7 +1499,7 @@ describe("SQL helpers", () => {
   });
 
   test("file with parameters", async () => {
-    const dir = tempDirWithFiles("sql-params", {
+    await using dir = tempDir("sql-params", {
       "query.sql": `SELECT ? as param1, ? as param2`,
     });
 
@@ -1961,7 +1961,7 @@ describe("Performance & Edge Cases", () => {
 
 describe("WAL mode and concurrency", () => {
   test("can enable WAL mode", async () => {
-    const dir = tempDirWithFiles("sqlite-wal-test", {});
+    await using dir = tempDir("sqlite-wal-test", {});
     const dbPath = path.join(dir, "wal-test.db");
     const sql = new SQL(`sqlite://${dbPath}`);
 
@@ -2069,7 +2069,7 @@ describe("Memory and resource management", () => {
 
 describe("Connection URL Edge Cases", () => {
   test("handles various file:// URL formats", async () => {
-    const dir = tempDirWithFiles("sqlite-url-test", {});
+    await using dir = tempDir("sqlite-url-test", {});
 
     const dbPath1 = path.join(dir, "test1.db");
     const sql1 = new SQL(`file://${dbPath1}`);
@@ -2104,7 +2104,7 @@ describe("Connection URL Edge Cases", () => {
     ];
 
     for (const name of specialNames) {
-      const dir = tempDirWithFiles(`sqlite-special-${Math.random()}`, {});
+      await using dir = tempDir(`sqlite-special-${Math.random()}`, {});
       const dbPath = path.join(dir, name);
 
       const sql = new SQL(`sqlite://${dbPath}`);
@@ -2122,11 +2122,11 @@ describe("Connection URL Edge Cases", () => {
   });
 
   test("handles relative vs absolute paths", async () => {
-    const dir = tempDirWithFiles("sqlite-path-test", {});
+    await using dir = tempDir("sqlite-path-test", {});
     const originalCwd = process.cwd();
 
     try {
-      process.chdir(dir);
+      process.chdir(String(dir));
 
       const sql1 = new SQL("sqlite://./relative.db");
       await sql1`CREATE TABLE test (id INTEGER)`;
@@ -2147,7 +2147,7 @@ describe("Connection URL Edge Cases", () => {
   });
 
   test("handles readonly mode via URL parameters", async () => {
-    const dir = tempDirWithFiles("sqlite-readonly-test", {});
+    await using dir = tempDir("sqlite-readonly-test", {});
     const dbPath = path.join(dir, "readonly.db");
 
     const sql1 = new SQL(`sqlite://${dbPath}`);
@@ -2173,7 +2173,7 @@ describe("Connection URL Edge Cases", () => {
   });
 
   test("handles URI parameters for cache and other settings", async () => {
-    const dir = tempDirWithFiles("sqlite-uri-test", {});
+    await using dir = tempDir("sqlite-uri-test", {});
     const dbPath = path.join(dir, "uri.db");
 
     const sql = new SQL(`sqlite://${dbPath}?cache=shared&mode=rwc`);
@@ -2575,7 +2575,7 @@ describe("Indexes and Query Optimization", () => {
 
 describe("VACUUM and Database Maintenance", () => {
   test("VACUUM command", async () => {
-    const dir = tempDirWithFiles("sqlite-vacuum-test", {});
+    await using dir = tempDir("sqlite-vacuum-test", {});
     const dbPath = path.join(dir, "vacuum.db");
     const sql = new SQL(`sqlite://${dbPath}`);
 
@@ -2604,7 +2604,7 @@ describe("VACUUM and Database Maintenance", () => {
   });
 
   test("incremental VACUUM with auto_vacuum", async () => {
-    const dir = tempDirWithFiles("sqlite-auto-vacuum-test", {});
+    await using dir = tempDir("sqlite-auto-vacuum-test", {});
     const dbPath = path.join(dir, "auto_vacuum.db");
     const sql = new SQL(`sqlite://${dbPath}`);
 
@@ -2632,7 +2632,7 @@ describe("VACUUM and Database Maintenance", () => {
 
 describe("Backup and Restore Operations", () => {
   test("backup to another file", async () => {
-    const dir = tempDirWithFiles("sqlite-backup-test", {});
+    await using dir = tempDir("sqlite-backup-test", {});
     const sourcePath = path.join(dir, "source.db");
     const backupPath = path.join(dir, "backup.db");
 
@@ -3102,7 +3102,7 @@ describe("WITHOUT ROWID Tables", () => {
 
 describe("Concurrency and Locking", () => {
   test("concurrent reads work correctly", async () => {
-    const dir = tempDirWithFiles("sqlite-concurrent-test", {});
+    await using dir = tempDir("sqlite-concurrent-test", {});
     const dbPath = path.join(dir, "concurrent.db");
 
     const sql1 = new SQL(`sqlite://${dbPath}`);
@@ -3134,7 +3134,7 @@ describe("Concurrency and Locking", () => {
   });
 
   test("write lock prevents concurrent writes", async () => {
-    const dir = tempDirWithFiles("sqlite-write-lock-test", {});
+    await using dir = tempDir("sqlite-write-lock-test", {});
     const dbPath = path.join(dir, "writelock.db");
 
     const sql = new SQL(`sqlite://${dbPath}`);
@@ -3166,7 +3166,7 @@ describe("Concurrency and Locking", () => {
   });
 
   test("busy timeout handling", async () => {
-    const dir = tempDirWithFiles("sqlite-busy-test", {});
+    await using dir = tempDir("sqlite-busy-test", {});
     const dbPath = path.join(dir, "busy.db");
 
     const sql1 = new SQL(`sqlite://${dbPath}`);
@@ -3761,7 +3761,7 @@ describe("System Tables and Introspection", () => {
 
 describe("Error Recovery and Database Integrity", () => {
   test("handles corrupted data gracefully", async () => {
-    const dir = tempDirWithFiles("sqlite-corrupt-test", {});
+    await using dir = tempDir("sqlite-corrupt-test", {});
     const dbPath = path.join(dir, "test.db");
     const sql = new SQL(`sqlite://${dbPath}`);
 
@@ -3852,7 +3852,7 @@ describe("Temp Tables and Attached Databases", () => {
   });
 
   test("cross-database queries with ATTACH", async () => {
-    const dir = tempDirWithFiles("sqlite-attach-cross-test", {});
+    await using dir = tempDir("sqlite-attach-cross-test", {});
     const mainPath = path.join(dir, "main.db");
     const attachPath = path.join(dir, "attached.db");
 
@@ -4888,7 +4888,7 @@ describe("Query Normalization Fuzzing Tests", () => {
 
   describe("Result Modes", () => {
     test("values() mode returns arrays instead of objects", async () => {
-      const dir = tempDirWithFiles("sqlite-values-mode", {});
+      await using dir = tempDir("sqlite-values-mode", {});
       const sql = new SQL(`sqlite://${dir}/test.db`);
 
       await sql`CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT, age INTEGER)`;
@@ -4911,7 +4911,7 @@ describe("Query Normalization Fuzzing Tests", () => {
     });
 
     test("raw() mode returns buffers for SQLite", async () => {
-      const dir = tempDirWithFiles("sqlite-raw-mode", {});
+      await using dir = tempDir("sqlite-raw-mode", {});
       const sql = new SQL(`sqlite://${dir}/test.db`);
 
       await sql`CREATE TABLE test (id INTEGER, name TEXT, data BLOB, score REAL)`;
@@ -4958,7 +4958,7 @@ describe("Query Normalization Fuzzing Tests", () => {
     });
 
     test("values() mode works with PRAGMA commands", async () => {
-      const dir = tempDirWithFiles("sqlite-values-pragma", {});
+      await using dir = tempDir("sqlite-values-pragma", {});
       const sql = new SQL(`sqlite://${dir}/test.db`);
 
       const pragmaValues = await sql`PRAGMA table_info('sqlite_master')`.values();

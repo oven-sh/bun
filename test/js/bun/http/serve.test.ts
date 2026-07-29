@@ -3273,7 +3273,7 @@ describe("request body backpressure", () => {
   // bytes of `fill`, pausing on `drain`. Resolves once the client's `sent`
   // counter has plateaued for 12×25 ms (backpressure engaged) or it finished
   // the whole body (the bug).
-  async function pumpUploadUntilPlateau(port: number, total: number, fill: number) {
+  async function pumpUploadUntilPlateau(port: number, total: number, fill: number, connection = "close") {
     const block = Buffer.alloc(256 * 1024, fill);
     const sock = net.connect(port, "127.0.0.1");
     await new Promise<void>((resolve, reject) => {
@@ -3282,7 +3282,7 @@ describe("request body backpressure", () => {
     });
     sock.on("error", () => {});
     sock.on("data", () => {});
-    sock.write(`PUT /up HTTP/1.1\r\nHost: x\r\nContent-Length: ${total}\r\nConnection: close\r\n\r\n`);
+    sock.write(`PUT /up HTTP/1.1\r\nHost: x\r\nContent-Length: ${total}\r\nConnection: ${connection}\r\n\r\n`);
 
     let sent = 0;
     let drainWaiters = 0;
@@ -3310,7 +3310,7 @@ describe("request body backpressure", () => {
         last = sent;
       }
     }
-    return { sock, sentBeforeGate: sent, drainWaiters };
+    return { sock, sentBeforeGate: sent, drainWaiters, getSent: () => sent };
   }
 
   it("applies backpressure to a streamed request body when the handler reads slowly", async () => {
@@ -3499,9 +3499,13 @@ describe("request body backpressure", () => {
   }
 
   it("releases a paused request body when the handler responds without reading it", async () => {
-    // The handler never touches req.body, so the pre-stream pause engages and is
-    // released by detach_response()'s resume once the response is sent. Without
-    // that resume the socket stays paused and the client never sees the response.
+    // The handler never touches req.body, so the pre-stream pause engages. Once
+    // the response is sent detach_response() resumes the socket; without that the
+    // keep-alive connection would stay paused and the client's upload could never
+    // progress past the plateau. `Connection: close` cannot observe this: uWS
+    // force-closes right after the response, and close() with unread body bytes
+    // in the kernel recv buffer sends RST on macOS, which both EPIPEs the still-
+    // running upload pump and can drop the response before the client reads it.
     const TOTAL = 32 * 1024 * 1024;
     const gate = Promise.withResolvers<void>();
     const serverDone = Promise.withResolvers<void>();
@@ -3520,19 +3524,18 @@ describe("request body backpressure", () => {
       },
     });
 
-    const { sock, sentBeforeGate } = await pumpUploadUntilPlateau(server.port, TOTAL, 2);
+    const { sock, sentBeforeGate, getSent } = await pumpUploadUntilPlateau(server.port, TOTAL, 2, "keep-alive");
     try {
       expect(sentBeforeGate).toBeGreaterThan(0);
       expect(sentBeforeGate).toBeLessThan(TOTAL);
 
-      const response = new Promise<string>((resolve, reject) => {
+      const response = new Promise<string>(resolve => {
         let buf = "";
         sock.removeAllListeners("data");
         sock.on("data", d => {
           buf += d.toString("latin1");
-          if (buf.includes("\r\n\r\n")) resolve(buf);
+          if (buf.includes("ignored")) resolve(buf);
         });
-        sock.once("error", reject);
         sock.once("close", () => resolve(buf));
       });
 
@@ -3541,6 +3544,12 @@ describe("request body backpressure", () => {
       const resp = await response;
       expect(resp).toStartWith("HTTP/1.1 200 ");
       expect(resp).toContain("ignored");
+
+      // The socket was resumed, so the upload pump (still parked on `drain`)
+      // moves past the plateau as the server discards the remaining body.
+      const deadline = Date.now() + 2000;
+      while (getSent() === sentBeforeGate && Date.now() < deadline) await Bun.sleep(25);
+      expect(getSent()).toBeGreaterThan(sentBeforeGate);
     } finally {
       sock.destroy();
     }

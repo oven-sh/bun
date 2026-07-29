@@ -43,7 +43,12 @@ bun_core::declare_scope!(cache, visible);
 /// path reinstates the bug for any previously-cached TLA module (#30887).
 /// Version 23: `jsx.runtime`/`jsx.development` participate in the features hash,
 /// and tsconfig `"jsx": "react-jsx"` now emits the production runtime (#4227).
-const EXPECTED_VERSION: u32 = 23;
+/// Version 24: ModuleInfo drops the DeclaredVariable/LexicalVariable records and
+/// renumbers RecordKind (0 is now ImportInfoSingle). JSC derives module-scope
+/// bindings from the compiled bytecode after the module-loader rewrite, so the
+/// record no longer carries them; blobs written in the old numbering must not
+/// be read back.
+const EXPECTED_VERSION: u32 = 24;
 
 /// Source files smaller than this are not written to / read from the on-disk
 /// transpiler cache. Originally 50 KiB, which excluded almost every file in a

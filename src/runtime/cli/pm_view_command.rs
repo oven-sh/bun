@@ -134,7 +134,7 @@ pub(crate) fn view(
         }
     };
 
-    if res.status_code >= 400 {
+    if res.status_code() >= 400 {
         npm::response_error::<false>(&req, &res, Some((name, version)), &mut response_buf)?;
     }
 

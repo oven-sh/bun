@@ -130,6 +130,28 @@ impl Default for HTTPResponseMetadata {
     }
 }
 
+impl HTTPResponseMetadata {
+    /// Accessors tied to `&self`: `response` is typed `'static` but its slices
+    /// borrow the sibling `owned_buf` / header slice that `Drop` frees, so
+    /// hand out reborrows that cannot outlive this metadata.
+    #[inline]
+    pub fn status_code(&self) -> u32 {
+        self.response.status_code
+    }
+    #[inline]
+    pub fn status_text(&self) -> &[u8] {
+        self.response.status
+    }
+    #[inline]
+    pub fn header(&self, name: &[u8]) -> Option<&[u8]> {
+        self.response.headers.get(name)
+    }
+    #[inline]
+    pub fn header_if_other_is_absent(&self, name: &[u8], other: &[u8]) -> Option<&[u8]> {
+        self.response.headers.get_if_other_is_absent(name, other)
+    }
+}
+
 impl Drop for HTTPResponseMetadata {
     // `owned_buf` is freed by
     // `Box`'s own Drop; `response.headers.list` was `Box::leak`'d in

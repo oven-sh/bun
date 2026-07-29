@@ -114,6 +114,7 @@ describe.concurrent("compile --asset and /$bunfs/ directory semantics", () => {
           nestedCssContent: await Bun.file(nestedCss).text(),
           nestedCssViaReadFile: fs.readFileSync(nestedCss, "utf8"),
           nestedDirIsDir: fs.statSync(path.join(root, "_app", "immutable")).isDirectory(),
+          readFileDirErr: (() => { try { fs.readFileSync(root); return ""; } catch (e: any) { return e.code; } })(),
           recursive,
           recursiveAsync,
           embeddedFileCount: Bun.embeddedFiles.length,
@@ -146,6 +147,7 @@ describe.concurrent("compile --asset and /$bunfs/ directory semantics", () => {
       expect(r.nestedCssContent).toBe("body{margin:0}");
       expect(r.nestedCssViaReadFile).toBe("body{margin:0}");
       expect(r.nestedDirIsDir).toBe(true);
+      expect(r.readFileDirErr).toBe("EISDIR");
 
       // recursive must include both files and intermediate directories, with
       // the platform path separator (same as Node's real-fs recursive readdir).

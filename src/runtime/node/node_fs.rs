@@ -7132,7 +7132,8 @@ impl NodeFS {
 
                 if let Some(graph) = standalone_module_graph_get() {
                     // SAFETY: see `standalone_module_graph_get`.
-                    if let Some(file) = unsafe { &mut *graph }.find(path.as_bytes()) {
+                    let graph = unsafe { &mut *graph };
+                    if let Some(file) = graph.find(path.as_bytes()) {
                         let contents: &[u8] = file.contents.as_bytes();
                         return if args.encoding == Encoding::Buffer {
                             // PORTING.md §Forbidden bans `Vec::leak()`; round-trip through
@@ -7158,6 +7159,10 @@ impl NodeFS {
                                 bun_core::ZBox::from_vec_with_nul(z),
                             ))
                         };
+                    }
+                    if graph.find_dir(path.as_bytes()) {
+                        return Err(sys::Error::from_code(E::EISDIR, sys::Tag::read)
+                            .with_path(p.slice()));
                     }
                 }
 

@@ -85,6 +85,7 @@ const errors: ErrorCodeMapping = [
   ["ERR_HTTP_BODY_NOT_ALLOWED", Error],
   ["ERR_HTTP_HEADERS_SENT", Error],
   ["ERR_HTTP_CONTENT_LENGTH_MISMATCH", Error],
+  ["UND_ERR_REQ_CONTENT_LENGTH_MISMATCH", TypeError],
   ["ERR_HTTP_INVALID_HEADER_VALUE", TypeError],
   ["ERR_HTTP_INVALID_STATUS_CODE", RangeError],
   ["ERR_HTTP_REQUEST_TIMEOUT", Error],

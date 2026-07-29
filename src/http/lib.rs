@@ -432,6 +432,9 @@ pub struct HTTPClientResult<'a> {
     /// Set once ALPN selected h2 so the JS side writes raw bytes into the
     /// streaming-body buffer instead of chunked-encoding them.
     pub is_http2: bool,
+    /// `upgrade_state != None`: an `Upgrade:` offer is on the wire, so the
+    /// streaming-body buffer carries raw bytes, not a chunked-encoded body.
+    pub is_upgrade: bool,
 
     pub fail: Option<crate::Error>,
     /// Raw `getaddrinfo(3)` return code when `fail` is `DNSResolveFailed`;
@@ -502,6 +505,7 @@ impl<'a> HTTPClientResult<'a> {
             redirected: self.redirected,
             can_stream: self.can_stream,
             is_http2: self.is_http2,
+            is_upgrade: self.is_upgrade,
             fail: self.fail,
             dns_error: self.dns_error,
             dns_hostname: self.dns_hostname,
@@ -2358,7 +2362,6 @@ impl<'a> HTTPClient<'a> {
         let mut override_host_header = false;
         let mut override_connection_header = false;
         let mut override_user_agent = false;
-        let mut add_transfer_encoding = true;
         let mut original_content_length: Option<&[u8]> = None;
 
         // Reserve slots for default headers that may be appended after user headers
@@ -2443,13 +2446,8 @@ impl<'a> HTTPClient<'a> {
                     }
                 }
                 h if h == hash_header_const(CHUNKED_ENCODED_HEADER.name()) => {
-                    if !self.flags.is_streaming_request_body {
-                        continue;
-                    }
-                    // We don't want to override chunked encoding header if it was set by the user
-                    if will_append {
-                        add_transfer_encoding = false;
-                    }
+                    // Engine-owned: a caller value never matches the body framing.
+                    continue;
                 }
                 _ => {}
             }
@@ -2493,21 +2491,15 @@ impl<'a> HTTPClient<'a> {
 
         if body_len > 0 || self.method.has_request_body() {
             if self.flags.is_streaming_request_body {
-                if let Some(content_length) = original_content_length {
-                    if add_transfer_encoding {
-                        // User explicitly set Content-Length and did not set Transfer-Encoding;
-                        // preserve Content-Length instead of using chunked encoding.
-                        // This matches Node.js behavior where an explicit Content-Length is always honored.
-                        request_headers_buf[header_count] =
-                            picohttp::Header::new(CONTENT_LENGTH_HEADER_NAME, content_length);
-                        header_count += 1;
-                    }
-                    // If !add_transfer_encoding, the user explicitly set Transfer-Encoding,
-                    // which was already added to request_headers_buf. We respect that and
-                    // do not add Content-Length (they are mutually exclusive per HTTP/1.1).
-                } else if add_transfer_encoding
-                    && self.flags.upgrade_state == HTTPUpgradeState::None
+                // RFC 9110 8.6 `1*DIGIT` caller CL is honoured (FetchTasklet enforces the count).
+                if let Some(content_length) = original_content_length
+                    && content_length.iter().all(u8::is_ascii_digit)
+                    && bun_core::parse_unsigned::<u64>(content_length, 10).is_ok()
                 {
+                    request_headers_buf[header_count] =
+                        picohttp::Header::new(CONTENT_LENGTH_HEADER_NAME, content_length);
+                    header_count += 1;
+                } else if self.flags.upgrade_state == HTTPUpgradeState::None {
                     request_headers_buf[header_count] = CHUNKED_ENCODED_HEADER;
                     header_count += 1;
                 }
@@ -4472,6 +4464,7 @@ impl<'a> HTTPClient<'a> {
                         || self.state.request_stage == RequestStage::ProxyBody)
                         && self.flags.is_streaming_request_body,
                     is_http2: self.flags.protocol != Protocol::Http1_1,
+                    is_upgrade: self.flags.upgrade_state != HTTPUpgradeState::None,
                 };
             }
         }
@@ -4492,6 +4485,7 @@ impl<'a> HTTPClient<'a> {
                 || self.state.request_stage == RequestStage::ProxyBody)
                 && self.flags.is_streaming_request_body,
             is_http2: self.flags.protocol != Protocol::Http1_1,
+            is_upgrade: self.flags.upgrade_state != HTTPUpgradeState::None,
         }
     }
 

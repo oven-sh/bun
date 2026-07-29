@@ -559,11 +559,8 @@ export function runOnLoadPlugins(
               }
             }
             if (hasDefault && keys) {
-              // Match runtime loader: "object" semantics (see ObjectModule.cpp
-              // generateObjectModuleSourceCode): each own enumerable key of
-              // `exports` is a binding of the module namespace, so an explicit
-              // `default` key must become the default import. Falling through to
-              // the JSON loader would bind the whole object as the default.
+              // Runtime (ObjectModule.cpp) binds each key as an export; the JSON
+              // loader would make the whole object the default instead.
               let source = "";
               let clause = "";
               let n = 0;

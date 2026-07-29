@@ -305,9 +305,8 @@ pub fn load_config(
     let config_path = ZStr::from_buf(&config_buf[..], config_path_len);
 
     if let Err(err) = load_config_path(cmd, auto_loaded, config_path, ctx) {
-        // Non-fatal for run-like commands; explicit --config stays fatal.
-        let run_like = cmd == CommandTag::RunCommand || cmd == CommandTag::AutoCommand;
-        if !(auto_loaded && run_like) {
+        // Non-fatal only for `bun run`; `bun -e` and explicit --config stay fatal.
+        if !(auto_loaded && cmd == CommandTag::RunCommand) {
             report_bunfig_load_failure(ctx.log, err);
         }
     }

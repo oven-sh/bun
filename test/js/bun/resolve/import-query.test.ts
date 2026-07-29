@@ -448,6 +448,40 @@ describe("?query on a bare package specifier does not resolve", () => {
     expect(exitCode).toBe(0);
   });
 
+  test.concurrent("import('pkg?v=N') on a package resolved via NODE_PATH", async () => {
+    using dir = tempDir("import-query-bare-nodepath", {
+      "mylibs/npk/package.json": JSON.stringify({ name: "npk", main: "./i.js" }),
+      "mylibs/npk/i.js": "globalThis.__np = (globalThis.__np || 0) + 1; module.exports = { inst: globalThis.__np };",
+      "app/entry.mjs": `
+        const out = { insts: [], errors: [] };
+        out.insts.push((await import("npk")).default.inst);
+        for (const spec of ["npk?v=1", "npk?v=2"]) {
+          try {
+            out.insts.push((await import(spec)).default.inst);
+          } catch (e) {
+            out.errors.push(e.code || e.name);
+          }
+        }
+        out.insts.push((await import("npk")).default.inst);
+        console.log(JSON.stringify(out));
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "entry.mjs"],
+      env: { ...bunEnv, NODE_PATH: join(String(dir), "mylibs") },
+      cwd: join(String(dir), "app"),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout.trim())).toEqual({
+      insts: [1, 1],
+      errors: ["ERR_MODULE_NOT_FOUND", "ERR_MODULE_NOT_FOUND"],
+    });
+    expect(exitCode).toBe(0);
+  });
+
   test.concurrent("?raw on a bare package subpath still loads as text (control)", async () => {
     using dir = tempDir("import-query-bare-raw", {
       "node_modules/tp/package.json": JSON.stringify({ name: "tp", main: "./i.js" }),

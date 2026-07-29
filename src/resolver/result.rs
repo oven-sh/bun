@@ -248,22 +248,6 @@ impl Result {
 
         None
     }
-
-    /// Whether this result was reached through a `node_modules` directory.
-    /// [`ResultFlags::IS_FROM_NODE_MODULES`] alone misses the no-`exports`
-    /// `main`-field success path in `load_node_modules`, and [`Path::text`]
-    /// is the realpath (symlinked packages lose the `node_modules` component),
-    /// so fall back to the pre-realpath location stashed in [`Path::pretty`].
-    pub fn is_node_module(&self) -> bool {
-        if self.flags.is_from_node_modules() {
-            return true;
-        }
-        let Some(path) = self.path_const() else {
-            return false;
-        };
-        path.is_node_module()
-            || (path.is_symlink && bun_paths::fs::Path::init(path.pretty).is_node_module())
-    }
 }
 
 pub struct DirEntryResolveQueueItem {

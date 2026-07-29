@@ -4159,7 +4159,7 @@ impl VirtualMachine {
         if query_string != b"?raw"
             && !query_string.is_empty()
             && bun_paths::is_package_path(normalized_specifier)
-            && result.is_node_module()
+            && result.flags.is_from_node_modules()
         {
             return Err(crate::CrateError::ModuleNotFound);
         }

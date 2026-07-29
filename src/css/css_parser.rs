@@ -5828,10 +5828,11 @@ pub mod color {
     };
     }
 
-    /// Returns the named color with the given name.
+    /// Returns the named color with the given name. Named colors are ASCII
+    /// case-insensitive, like every other CSS keyword.
     /// <https://drafts.csswg.org/css-color-4/#typedef-named-color>
     pub fn parse_named_color(ident: &[u8]) -> Option<(u8, u8, u8)> {
-        NAMED_COLORS.get(ident).copied()
+        NAMED_COLORS.get_ascii_case_insensitive(ident).copied()
     }
 
     /// Parse a color hash, without the leading '#' character.

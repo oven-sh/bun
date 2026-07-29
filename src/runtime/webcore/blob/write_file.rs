@@ -338,35 +338,24 @@ impl WriteFile {
         //
         // On macOS, it is an error to use pwrite() on a
         // non-seekable file.
-        let result: bun_sys::Result<usize> =
-            sys::write(fd, &self.bytes_blob.shared_view()[off..off + len]);
-
-        loop {
-            match &result {
-                bun_sys::Result::Ok(res) => {
-                    *wrote = *res;
-                    self.total_written += *res;
-                }
-                bun_sys::Result::Err(err) => {
-                    if err.get_errno() == io::RETRY {
-                        if !self.could_block {
-                            // regular files cannot use epoll.
-                            // this is fine on kqueue, but not on epoll.
-                            continue;
-                        }
-                        self.wait_for_writable();
-                        return false;
-                    } else {
-                        self.errno = Some(bun_errno::from_errno(err.errno as i32).into());
-                        self.system_error = Some(err.to_system_error().into());
-                        return false;
-                    }
-                }
+        match sys::write(fd, &self.bytes_blob.shared_view()[off..off + len]) {
+            bun_sys::Result::Ok(res) => {
+                *wrote = res;
+                self.total_written += res;
+                true
             }
-            break;
+            bun_sys::Result::Err(err) => {
+                if err.get_errno() == io::RETRY {
+                    // EAGAIN is impossible on a regular file, so the fd is pollable.
+                    self.could_block = true;
+                    self.wait_for_writable();
+                } else {
+                    self.errno = Some(bun_errno::from_errno(err.errno as i32).into());
+                    self.system_error = Some(err.to_system_error().into());
+                }
+                false
+            }
         }
-
-        true
     }
 
     pub fn then(mut this: Box<WriteFile>, _global: &JSGlobalObject) -> Result<(), JsTerminated> {
@@ -414,7 +403,8 @@ impl WriteFile {
     }
 
     pub fn is_allowed_to_close(&self) -> bool {
-        self.file_blob
+        match self
+            .file_blob
             .store
             .get()
             .as_ref()
@@ -422,7 +412,11 @@ impl WriteFile {
             .data
             .as_file()
             .pathlike
-            .is_path()
+        {
+            PathOrFileDescriptor::Path(_) => true,
+            // opened_fd differs from the caller's fd only when run_with_fd duped it.
+            PathOrFileDescriptor::Fd(fd) => self.opened_fd != Fd::INVALID && self.opened_fd != fd,
+        }
     }
 
     #[cfg(not(windows))]
@@ -450,26 +444,37 @@ impl WriteFile {
 
         let fd = self.opened_fd;
 
-        self.could_block = 'brk: {
-            if let Some(store) = self.file_blob.store.get().as_ref() {
-                if let blob::store::Data::File(file) = &store.data {
-                    if file.pathlike.is_fd() {
-                        // If seekable was set, then so was mode
-                        if file.seekable.is_some() {
-                            // This is mostly to handle pipes which were passsed to the process somehow
-                            // such as stderr, stdout. Bun.stdin and Bun.stderr will automatically set `mode` for us.
-                            break 'brk !bun_sys::is_regular_file(file.mode);
-                        }
+        let caller_supplied_fd = match self.file_blob.store.get().as_ref() {
+            Some(store) => match &store.data {
+                blob::store::Data::File(file) => match file.pathlike {
+                    PathOrFileDescriptor::Fd(_) => {
+                        self.could_block = file.mode != 0 && !bun_sys::is_regular_file(file.mode);
+                        true
                     }
+                    PathOrFileDescriptor::Path(_) => {
+                        // Opened with O_NONBLOCK; don't fstat.
+                        self.could_block = false;
+                        false
+                    }
+                },
+                _ => false,
+            },
+            None => false,
+        };
+
+        // The IO thread's epoll/kqueue keys interest by fd number, so concurrent WriteFiles on
+        // one caller-supplied fd would collide; dup so this instance polls a private fd number.
+        if caller_supplied_fd {
+            match bun_sys::dup(fd) {
+                bun_sys::Result::Ok(duped) => self.opened_fd = duped,
+                bun_sys::Result::Err(err) => {
+                    self.errno = Some(bun_errno::from_errno(err.errno as i32).into());
+                    self.system_error = Some(err.to_system_error().into());
+                    self.on_finish();
+                    return;
                 }
             }
-
-            // We opened the file descriptor with O_NONBLOCK, so we
-            // shouldn't have to worry about blocking reads/writes
-            //
-            // We do not call fstat() because that is very expensive.
-            false
-        };
+        }
 
         // We have never supported offset in Bun.write().
         // and properly adding support means we need to also support it

@@ -117,6 +117,87 @@ describe("AbortSignal", () => {
     });
   });
 
+  // A signal's abort algorithms (pipeTo's abort handler, addEventListener({signal})'s
+  // listener-removal callback) must count as abort observers for the wrapper's GC
+  // reachability check. Previously HasAbortEventListener only reflected JS "abort"
+  // listeners and native callbacks, so a timeout/any() signal passed inline with no
+  // other JS reference was collected before it could abort.
+  describe("abort algorithms keep the signal reachable across GC", () => {
+    const stalled = () => new ReadableStream({ pull: () => new Promise(() => {}) });
+    const settle = (p: Promise<unknown>) =>
+      p.then(
+        () => "resolved",
+        e => `rejected:${e?.name ?? e}`,
+      );
+    // Yield before the forced GC so nothing from the synchronous setup frame is
+    // still conservatively rooted on the stack.
+    async function forceGC() {
+      await Bun.sleep(0);
+      Bun.gc(true);
+      await Bun.sleep(0);
+      Bun.gc(true);
+    }
+
+    test("pipeTo({signal: AbortSignal.timeout(n)}) aborts after GC", async () => {
+      const p = settle(stalled().pipeTo(new WritableStream({}), { signal: AbortSignal.timeout(100) }));
+      await forceGC();
+      expect(await Promise.race([p, Bun.sleep(2000).then(() => "STILL-PENDING")])).toBe("rejected:TimeoutError");
+    });
+
+    test("pipeTo({signal: AbortSignal.any([c.signal])}) aborts after GC", async () => {
+      const c = new AbortController();
+      const p = settle(stalled().pipeTo(new WritableStream({}), { signal: AbortSignal.any([c.signal]) }));
+      await forceGC();
+      c.abort(new Error("go"));
+      expect(await Promise.race([p, Bun.sleep(2000).then(() => "STILL-PENDING")])).toBe("rejected:Error");
+    });
+
+    test("pipeTo({signal: AbortSignal.any([AbortSignal.timeout(n)])}) aborts after GC", async () => {
+      const p = settle(
+        stalled().pipeTo(new WritableStream({}), { signal: AbortSignal.any([AbortSignal.timeout(100)]) }),
+      );
+      await forceGC();
+      expect(await Promise.race([p, Bun.sleep(2000).then(() => "STILL-PENDING")])).toBe("rejected:TimeoutError");
+    });
+
+    test("addEventListener({signal: AbortSignal.any([c.signal])}) removes listener after GC", async () => {
+      const et = new EventTarget();
+      let calls = 0;
+      const c = new AbortController();
+      et.addEventListener("x", () => calls++, { signal: AbortSignal.any([c.signal]) });
+      await forceGC();
+      c.abort();
+      et.dispatchEvent(new Event("x"));
+      expect(calls).toBe(0);
+    });
+
+    // Registering/removing an abort algorithm must not disarm a user-held timeout signal.
+    test("timeout still fires after a pipeTo using it completes early", async () => {
+      const s = AbortSignal.timeout(100);
+      await new ReadableStream({ start: c => c.close() }).pipeTo(new WritableStream({}), { signal: s });
+      expect(s.aborted).toBe(false);
+      const result = await Promise.race([
+        new Promise(r => s.addEventListener("abort", () => r("aborted"), { once: true })),
+        Bun.sleep(2000).then(() => "timeout-never-fired"),
+      ]);
+      expect({ result, aborted: s.aborted }).toEqual({ result: "aborted", aborted: true });
+    });
+
+    test("timeout still fires after addEventListener({signal})+removeEventListener", async () => {
+      const s = AbortSignal.timeout(100);
+      const et = new EventTarget();
+      const fn = () => {};
+      et.addEventListener("x", fn, { signal: s });
+      et.removeEventListener("x", fn);
+      expect(s.aborted).toBe(false);
+      const result = await Promise.race([
+        new Promise(r => s.addEventListener("abort", () => r("aborted"), { once: true })),
+        Bun.sleep(2000).then(() => "timeout-never-fired"),
+      ]);
+      expect({ result, aborted: s.aborted }).toEqual({ result: "aborted", aborted: true });
+    });
+  });
+
   // https://wpt.fyi/results/dom/abort/timeout.any.html "AbortSignal timeouts fire in order"
   test("AbortSignal.timeout with equal deadlines fire in creation order", async () => {
     const src = `

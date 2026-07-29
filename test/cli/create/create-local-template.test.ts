@@ -5,7 +5,13 @@ import { join } from "path";
 // https://github.com/oven-sh/bun/issues/36341
 
 function createEnv(templatesDir: string) {
-  return { ...bunEnv, BUN_CREATE_DIR: templatesDir };
+  return {
+    ...bunEnv,
+    BUN_CREATE_DIR: templatesDir,
+    // The conflict path exits via Global::exit; LSan's conservative scan
+    // flags in-flight CLI allocations at that point and aborts with 134.
+    ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=0"].filter(Boolean).join(":"),
+  };
 }
 
 test.concurrent("bun create from local template preserves unrelated files in destination", async () => {
@@ -127,6 +133,52 @@ test.concurrent("bun create from local template ignores README.md and .gitignore
     exitCode: 0,
     stderr: expect.not.stringContaining("contains files that could conflict"),
   });
+});
+
+test.concurrent("bun create from local template leaves the user's package.json alone when the template has none", async () => {
+  const userPackageJson = JSON.stringify({ name: "mine", version: "9.9.9" });
+  using dir = tempDir("create-local-pkgjson", {
+    "templates/mytpl/tpl.txt": "template file",
+    "proj/package.json": userPackageJson,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "create", "mytpl", ".", "--no-install"],
+    env: createEnv(join(String(dir), "templates")),
+    cwd: join(String(dir), "proj"),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited, proc.stdout.text()]);
+
+  expect(await Bun.file(join(String(dir), "proj", "package.json")).text()).toBe(userPackageJson);
+  expect(await Bun.file(join(String(dir), "proj", "tpl.txt")).text()).toBe("template file");
+  expect({ exitCode, stderr }).toEqual({ exitCode: 0, stderr: expect.not.stringContaining("error") });
+});
+
+test.concurrent("bun create from local template does not run git in a pre-existing repository", async () => {
+  using dir = tempDir("create-local-git", {
+    "templates/mytpl/tpl.txt": "template file",
+    "proj/.git/KEEP.txt": "keep",
+    "proj/existing.txt": "user file",
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "create", "mytpl", "."],
+    env: createEnv(join(String(dir), "templates")),
+    cwd: join(String(dir), "proj"),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited, proc.stdout.text()]);
+
+  expect(await Bun.file(join(String(dir), "proj", ".git", "KEEP.txt")).text()).toBe("keep");
+  // git init/add/commit must not have touched the pre-existing repo
+  expect(await Array.fromAsync(new Bun.Glob("*").scan({ cwd: join(String(dir), "proj", ".git"), dot: true }))).toEqual(
+    ["KEEP.txt"],
+  );
+  expect(await Bun.file(join(String(dir), "proj", "tpl.txt")).text()).toBe("template file");
+  expect({ exitCode, stderr }).toEqual({ exitCode: 0, stderr: expect.not.stringContaining("error") });
 });
 
 test.concurrent("bun create from local template refuses when a template directory collides with a file", async () => {

@@ -800,9 +800,16 @@ impl CreateCommand {
                     &mut template_path_buf,
                 )?;
 
-                package_json_file = destination_dir
-                    .open_file(b"package.json", bun_sys::O::RDWR, 0)
-                    .ok();
+                // Only a template-derived package.json may be rewritten below;
+                // a template without one must leave the user's file untouched.
+                package_json_file =
+                    if bun_sys::exists_at(template_dir.fd, bun_core::zstr!("package.json")) {
+                        destination_dir
+                            .open_file(b"package.json", bun_sys::O::RDWR, 0)
+                            .ok()
+                    } else {
+                        None
+                    };
 
                 'read_package_json: {
                     if let Some(ref pkg) = package_json_file {
@@ -1224,7 +1231,15 @@ impl CreateCommand {
         let user_skipped_install = create_options.skip_install;
         create_options.skip_install = create_options.skip_install || !has_dependencies;
 
-        if !create_options.skip_git {
+        // `git add`/`git commit` on a pre-existing repository would sweep the
+        // user's files into a new commit.
+        let has_existing_git_repo = bun_sys::Dir::open(destination)
+            .map(|d| {
+                bun_sys::directory_exists_at(d.fd, bun_core::zstr!(".git")).unwrap_or(false)
+            })
+            .unwrap_or(false);
+
+        if !create_options.skip_git && !has_existing_git_repo {
             if !create_options.skip_install {
                 GitHandler::spawn(destination, path_env, create_options.verbose);
             } else {

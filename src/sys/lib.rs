@@ -2066,10 +2066,26 @@ mod posix_impl {
         }
     }
     pub fn fstat(fd: Fd) -> Maybe<Stat> {
-        #[cfg(any(target_os = "linux", target_os = "android"))]
+        #[cfg(all(
+            any(target_os = "linux", target_os = "android"),
+            not(target_env = "ohos")
+        ))]
         {
             return super::linux_syscall::fstat(fd)
                 .map_err(|e| Error::from_code_int(e, Tag::fstat));
+        }
+        #[cfg(target_env = "ohos")]
+        {
+            // OHOS seccomp blocks fstat(2) on pipe fds with EACCES.
+            // Return a zeroed stat instead of crashing the caller so that
+            // spawn child processes with pipe stdio survive initialization.
+            match super::linux_syscall::fstat(fd) {
+                Ok(s) => return Ok(s),
+                Err(e) if e as i32 == libc::EACCES => {
+                    return Ok(unsafe { core::mem::zeroed() });
+                }
+                Err(e) => return Err(Error::from_code_int(e, Tag::fstat)),
+            }
         }
         #[cfg(not(any(target_os = "linux", target_os = "android")))]
         {

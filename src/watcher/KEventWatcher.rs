@@ -52,7 +52,7 @@ pub(crate) fn watch_event_from_kevent(kevent: &libc::kevent) -> WatchEvent {
 
 pub(crate) fn watch_loop_cycle(this: &mut Watcher) -> bun_sys::Result<()> {
     let _flush = Output::flush_guard();
-    let fd = this.platform.fd;
+    let fd = this.platform.native_mut().fd;
 
     let mut changelist: [libc::kevent; CHANGELIST_COUNT] = bun_core::ffi::zeroed();
 

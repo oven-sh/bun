@@ -9,6 +9,7 @@ use bun_sys::{self as sys, Fd};
 use bun_threading::Mutex;
 
 use crate::Loader;
+use crate::polling_watcher::{self as polling, PollingWatcher};
 use crate::watcher_trace as WatcherTrace;
 
 // Android: same kernel inotify ABI as glibc/musl Linux, so list both.
@@ -27,6 +28,9 @@ bun_core::define_scoped_log!(log, watcher, visible);
 
 pub const MAX_COUNT: usize = 128;
 
+/// Prefer [`Watcher::requires_file_descriptors`] when a `Watcher` is in scope;
+/// this compile-time value is `true` on kqueue platforms even when the polling
+/// backend (which needs no fds) is active.
 #[cfg(any(target_os = "macos", target_os = "freebsd"))]
 pub const REQUIRES_FILE_DESCRIPTORS: bool = true;
 #[cfg(not(any(target_os = "macos", target_os = "freebsd")))]
@@ -85,6 +89,33 @@ impl AnyResolveWatcher {
 // ideally, the constants above can be inlined
 pub(crate) type Platform = platform::Platform;
 
+/// Runtime-selected watch backend: the compile-time native impl or the
+/// stat-polling fallback for mounts without native change events.
+// `Watcher` is `Box`'d and per-process; the variant size skew is one heap slot.
+#[allow(clippy::large_enum_variant)]
+pub enum Backend {
+    Native(Platform),
+    Polling(PollingWatcher),
+}
+
+impl Backend {
+    /// Only reached from paths `watch_loop()` dispatches when `self` is Native.
+    #[inline]
+    pub(crate) fn native_mut(&mut self) -> &mut Platform {
+        match self {
+            Backend::Native(p) => p,
+            Backend::Polling(_) => unreachable!("native_mut() on polling backend"),
+        }
+    }
+
+    fn stop(&mut self) {
+        match self {
+            Backend::Native(p) => p.stop(),
+            Backend::Polling(p) => p.stop(),
+        }
+    }
+}
+
 /// `?[:0]u8` — name of a changed file inside a watched directory, borrowed
 /// from the platform's event buffer (inotify event names / kqueue udata).
 /// Ownership stays with the platform buffer for the duration of one
@@ -100,7 +131,7 @@ pub struct Watcher {
     pub changed_filepaths: [ChangedFilePath; MAX_COUNT],
 
     /// The platform-specific implementation of the watcher
-    pub platform: Platform,
+    pub platform: Backend,
 
     pub watchlist: WatchList,
     pub mutex: Mutex,
@@ -187,6 +218,27 @@ impl Watcher {
             ctx.on_watch_error(err);
         }
 
+        let use_polling = match bun_core::env_var::BUN_WATCHER_USE_POLLING::get() {
+            Some(v) => v,
+            None if polling::should_auto_poll(top_level_dir) => {
+                bun_core::note!(
+                    "<b>{}<r> is on a filesystem that does not report file changes; falling back to polling for <b>--watch<r>/<b>--hot<r>. Set <b>BUN_WATCHER_USE_POLLING=0<r> to disable.",
+                    bstr::BStr::new(top_level_dir),
+                );
+                true
+            }
+            None => false,
+        };
+        let platform = if use_polling {
+            let interval = bun_core::env_var::BUN_WATCHER_POLL_INTERVAL
+                .get()
+                .unwrap_or(polling::DEFAULT_INTERVAL_MS);
+            log!("using polling backend (interval={}ms)", interval);
+            Backend::Polling(PollingWatcher::new(interval))
+        } else {
+            Backend::Native(Platform::new(top_level_dir)?)
+        };
+
         let this = Box::new(Watcher {
             watchlist: WatchList::default(),
             mutex: Mutex::default(),
@@ -194,7 +246,7 @@ impl Watcher {
             ctx: ctx.cast::<()>(),
             on_file_update: on_file_update_wrapped::<T>,
             on_error: on_error_wrapped::<T>,
-            platform: Platform::new(top_level_dir)?,
+            platform,
             watch_events: vec![WatchEvent::default(); MAX_COUNT].into_boxed_slice(),
             changed_filepaths: [const { None }; MAX_COUNT],
             watchloop_handle: bun_core::AtomicCell::new(false),
@@ -296,6 +348,14 @@ impl Watcher {
 
     pub fn get_hash(filepath: &[u8]) -> HashType {
         bun_wyhash::hash(filepath) as HashType
+    }
+
+    /// Runtime check: the kqueue backend watches by fd, so callers must open
+    /// one per file; inotify/Windows/polling watch by path and pass
+    /// `Fd::INVALID`.
+    #[inline]
+    pub fn requires_file_descriptors(&self) -> bool {
+        REQUIRES_FILE_DESCRIPTORS && matches!(self.platform, Backend::Native(_))
     }
 
     /// # Safety
@@ -417,6 +477,9 @@ impl Watcher {
             if item == last_item || self.watchlist.len() <= item as usize {
                 continue;
             }
+            if let Backend::Polling(p) = &mut self.platform {
+                p.unregister(self.watchlist.items_hash()[item as usize]);
+            }
             self.watchlist.swap_remove(item as usize);
 
             // swapRemove put a different entry at `item`, but its kqueue registration still
@@ -424,7 +487,7 @@ impl Watcher {
             // route to the right module; EV_ADD on an existing (ident, filter) replaces in
             // place. See #29524.
             #[cfg(any(target_os = "macos", target_os = "freebsd"))]
-            {
+            if matches!(self.platform, Backend::Native(_)) {
                 if (item as usize) < self.watchlist.len() {
                     let moved_fd = self.watchlist.items_fd()[item as usize];
                     if moved_fd.is_valid() {
@@ -442,7 +505,10 @@ impl Watcher {
     fn watch_loop(&mut self) -> sys::Result<()> {
         while self.running.load() {
             // individual platform implementation will call onFileUpdate
-            platform::watch_loop_cycle(self)?;
+            match self.platform {
+                Backend::Native(_) => platform::watch_loop_cycle(self)?,
+                Backend::Polling(_) => polling::watch_loop_cycle(self)?,
+            }
         }
         Ok(())
     }
@@ -483,7 +549,7 @@ impl Watcher {
         // Basically:
         // - We register the event here.
         // our while(true) loop above receives notification of changes to any of the events created here.
-        let _ = bun_sys::kevent(self.platform.fd, &[event], &mut [], None);
+        let _ = bun_sys::kevent(self.platform.native_mut().fd, &[event], &mut [], None);
     }
 
     fn append_file_assume_capacity<const CLONE_FILE_PATH: bool>(
@@ -523,10 +589,15 @@ impl Watcher {
             Cow::Borrowed(unsafe { bun_collections::detach_lifetime(file_path) })
         };
 
+        if let Backend::Polling(p) = &mut self.platform {
+            p.register(hash, file_path);
+        }
         #[cfg(any(target_os = "macos", target_os = "freebsd"))]
-        self.add_file_descriptor_to_kqueue_without_checks(fd, watchlist_id);
+        if matches!(self.platform, Backend::Native(_)) {
+            self.add_file_descriptor_to_kqueue_without_checks(fd, watchlist_id);
+        }
         #[cfg(any(target_os = "linux", target_os = "android"))]
-        let eventlist_index = {
+        let eventlist_index = if let Backend::Native(p) = &mut self.platform {
             // inotify needs a trailing NUL. When
             // CLONE_FILE_PATH is true the caller's `file_path` is NOT NUL-terminated,
             // so we must copy into a NUL-terminated scratch buffer (mirrors the
@@ -542,7 +613,9 @@ impl Watcher {
                 // interned in `bun.fs.FileSystem` with a NUL sentinel at [len].
                 unsafe { ZStr::from_raw(file_path.as_ptr(), file_path.len()) }
             };
-            self.platform.watch_path(slice)?
+            p.watch_path(slice)?
+        } else {
+            0
         };
 
         self.watchlist.append_assume_capacity(WatchItem {
@@ -603,9 +676,11 @@ impl Watcher {
         let watchlist_id = self.watchlist.len();
 
         #[cfg(any(target_os = "macos", target_os = "freebsd"))]
-        self.add_file_descriptor_to_kqueue_without_checks(fd, watchlist_id);
+        if matches!(self.platform, Backend::Native(_)) {
+            self.add_file_descriptor_to_kqueue_without_checks(fd, watchlist_id);
+        }
         #[cfg(any(target_os = "linux", target_os = "android"))]
-        let eventlist_index = {
+        let eventlist_index = if let Backend::Native(p) = &mut self.platform {
             let mut buf = bun_paths::path_buffer_pool::get();
             let path: &ZStr = if CLONE_FILE_PATH
                 && !file_path.is_empty()
@@ -625,9 +700,9 @@ impl Watcher {
                 ZStr::from_buf(&buf[..], trailing_slash.len())
             };
 
-            self.platform
-                .watch_dir(path)
-                .map_err(|e| e.with_path(file_path))?
+            p.watch_dir(path).map_err(|e| e.with_path(file_path))?
+        } else {
+            0
         };
 
         self.watchlist.append_assume_capacity(WatchItem {
@@ -803,8 +878,7 @@ impl Watcher {
         }
 
         // Only open fd if we might need it
-        #[cfg(any(target_os = "macos", target_os = "freebsd"))]
-        let fd: Fd = {
+        let fd: Fd = if self.requires_file_descriptors() {
             let mut path_z = bun_paths::PathBuffer::uninit();
             if file_path.len() >= path_z.len() {
                 return false;
@@ -818,9 +892,9 @@ impl Watcher {
                 Ok(opened) => opened,
                 Err(_) => return false,
             }
+        } else {
+            Fd::INVALID
         };
-        #[cfg(not(any(target_os = "macos", target_os = "freebsd")))]
-        let fd: Fd = Fd::INVALID;
 
         let res = self.add_file::<true>(fd, file_path, hash, loader, Fd::INVALID, None);
         match res {

@@ -1,0 +1,250 @@
+//! Stat-polling fallback for filesystems where native change notifications
+//! don't fire (Docker/WSL bind mounts, NFS/SMB, virtiofs/9p). Enabled via
+//! `BUN_WATCHER_USE_POLLING=1`, or automatically on Linux when the project
+//! root is on such a filesystem; interval via `BUN_WATCHER_POLL_INTERVAL` (ms).
+
+use std::time::Duration;
+
+use bun_collections::{HashMap, IdentityContext};
+use bun_core::ZStr;
+use bun_sys::{self as sys, stat_mtime};
+
+use crate::watcher_impl::{
+    Backend, HashType, MAX_COUNT, Op, WatchEvent, WatchItemColumns, WatchItemIndex, WatchItemKind,
+    Watcher,
+};
+
+bun_core::declare_scope!(watcher, visible);
+
+pub const DEFAULT_INTERVAL_MS: u64 = 100;
+
+/// Returns `true` when `root` is on a Linux filesystem whose inotify watches
+/// are accepted but never emit events for remote changes, so the polling
+/// backend should be selected even without `BUN_WATCHER_USE_POLLING=1`.
+/// Deliberately conservative: overlayfs and FUSE are excluded because the
+/// common Docker/local case works; users on those can opt in explicitly.
+/// Constants from `include/uapi/linux/magic.h`.
+pub(crate) fn should_auto_poll(root: &[u8]) -> bool {
+    #[cfg(target_os = "linux")]
+    {
+        const V9FS_MAGIC: i64 = 0x0102_1997; // WSL2 drvfs (/mnt/*)
+        const SMB_MAGIC: i64 = 0x517B;
+        const SMB2_MAGIC: i64 = 0xFE53_4D42;
+        const CIFS_MAGIC: i64 = 0xFF53_4D42;
+        const NFS_MAGIC: i64 = 0x6969;
+        const PRL_FS_MAGIC: i64 = 0x7C7C_6673; // Parallels shared folders
+
+        let mut buf = bun_paths::path_buffer_pool::get();
+        let len = root.len().min(buf.len() - 1);
+        buf[..len].copy_from_slice(&root[..len]);
+        buf[len] = 0;
+        let zpath = ZStr::from_buf(&buf[..], len);
+        if let Ok(st) = sys::statfs(zpath) {
+            let ty = st.f_type as i64;
+            return matches!(
+                ty,
+                V9FS_MAGIC | SMB_MAGIC | SMB2_MAGIC | CIFS_MAGIC | NFS_MAGIC | PRL_FS_MAGIC
+            );
+        }
+    }
+    let _ = root;
+    false
+}
+
+#[derive(Clone, Copy, Default)]
+struct Snapshot {
+    mtime_sec: i64,
+    mtime_nsec: i64,
+    size: u64,
+    ino: u64,
+    /// last stat succeeded
+    exists: bool,
+}
+
+impl Snapshot {
+    fn differs(&self, other: &Snapshot) -> bool {
+        self.exists != other.exists
+            || self.mtime_sec != other.mtime_sec
+            || self.mtime_nsec != other.mtime_nsec
+            || self.size != other.size
+            || self.ino != other.ino
+    }
+}
+
+pub struct PollingWatcher {
+    pub interval: Duration,
+    /// Keyed by `WatchItem.hash`; guarded by `Watcher.mutex`.
+    snapshots: HashMap<HashType, Snapshot, IdentityContext<HashType>>,
+    /// Watcher-thread-only scratch, reused across cycles.
+    scratch_idx: Vec<(WatchItemIndex, HashType)>,
+    scratch_path: Vec<Vec<u8>>,
+    scratch_stat: Vec<Option<Snapshot>>,
+}
+
+impl PollingWatcher {
+    pub fn new(interval_ms: u64) -> Self {
+        Self {
+            interval: Duration::from_millis(interval_ms.max(1)),
+            snapshots: HashMap::default(),
+            scratch_idx: Vec::new(),
+            scratch_path: Vec::new(),
+            scratch_stat: Vec::new(),
+        }
+    }
+
+    /// Baseline stat at registration time so a write between `add_file` and
+    /// the first poll cycle is detected. Caller holds `Watcher.mutex`.
+    pub(crate) fn register(&mut self, hash: HashType, path: &[u8]) {
+        self.snapshots
+            .insert(hash, stat_path(path).unwrap_or_default());
+    }
+
+    /// Caller holds `Watcher.mutex`.
+    pub(crate) fn unregister(&mut self, hash: HashType) {
+        self.snapshots.remove(&hash);
+    }
+
+    pub fn stop(&mut self) {}
+}
+
+/// `None` = transient errno (ESTALE/EIO/…); caller keeps the previous snapshot.
+fn stat_path(path: &[u8]) -> Option<Snapshot> {
+    let mut buf = bun_paths::path_buffer_pool::get();
+    if path.len() >= buf.len() {
+        return Some(Snapshot::default());
+    }
+    buf[..path.len()].copy_from_slice(path);
+    buf[path.len()] = 0;
+    let z = ZStr::from_buf(&buf[..], path.len());
+    match sys::stat(z) {
+        Ok(st) => {
+            let mt = stat_mtime(&st);
+            #[cfg(unix)]
+            let (size, ino) = (st.st_size as u64, st.st_ino as u64);
+            #[cfg(windows)]
+            let (size, ino) = (st.st_size, st.st_ino);
+            Some(Snapshot {
+                mtime_sec: mt.sec,
+                mtime_nsec: mt.nsec,
+                size,
+                ino,
+                exists: true,
+            })
+        }
+        Err(err) => match err.get_errno() {
+            sys::E::ENOENT | sys::E::ENOTDIR => Some(Snapshot::default()),
+            _ => None,
+        },
+    }
+}
+
+/// One polling cycle: sleep, snapshot the watchlist under the mutex, stat each
+/// file, diff against the previous snapshot, emit events.
+pub(crate) fn watch_loop_cycle(this: &mut Watcher) -> sys::Result<()> {
+    let _flush = bun_core::output::flush_guard();
+
+    let interval = match &this.platform {
+        Backend::Polling(p) => p.interval,
+        Backend::Native(_) => unreachable!(),
+    };
+
+    // Sleep in short slices so `shutdown()` (which clears `running`) doesn't
+    // have to wait out a long interval.
+    let mut remaining = interval;
+    let slice = Duration::from_millis(20);
+    while remaining > Duration::ZERO {
+        if !this.running.load() {
+            return Ok(());
+        }
+        let step = remaining.min(slice);
+        std::thread::sleep(step);
+        remaining = remaining.saturating_sub(step);
+    }
+    if !this.running.load() {
+        return Ok(());
+    }
+
+    let Backend::Polling(poll) = &mut this.platform else {
+        unreachable!()
+    };
+    let mut scratch_idx = core::mem::take(&mut poll.scratch_idx);
+    let mut scratch_path = core::mem::take(&mut poll.scratch_path);
+    let mut scratch_stat = core::mem::take(&mut poll.scratch_stat);
+    scratch_idx.clear();
+    scratch_path.clear();
+    scratch_stat.clear();
+
+    // Snapshot (index, hash, path) under the mutex. Between unlock and
+    // `dispatch_file_updates`' re-lock the JS thread can only append, so
+    // indices stay valid.
+    {
+        let _guard = this.mutex.lock_guard();
+        let paths = this.watchlist.items_file_path();
+        let hashes = this.watchlist.items_hash();
+        let kinds = this.watchlist.items_kind();
+        scratch_idx.reserve(paths.len());
+        scratch_path.reserve(paths.len());
+        for i in 0..paths.len() {
+            if kinds[i] != WatchItemKind::File {
+                continue;
+            }
+            scratch_idx.push((i as WatchItemIndex, hashes[i]));
+            scratch_path.push(paths[i].to_vec());
+        }
+    }
+
+    for path in &scratch_path {
+        scratch_stat.push(stat_path(path));
+    }
+
+    // Diff under the mutex so `register()` from the JS thread can't interleave.
+    let mut event_id: usize = 0;
+    {
+        let _guard = this.mutex.lock_guard();
+        let Backend::Polling(poll) = &mut this.platform else {
+            unreachable!()
+        };
+        for (k, &(index, hash)) in scratch_idx.iter().enumerate() {
+            let Some(now) = scratch_stat[k] else { continue };
+            let op = match poll.snapshots.get(&hash) {
+                Some(prev) if now.differs(prev) => {
+                    if now.exists {
+                        Op::WRITE
+                    } else {
+                        Op::DELETE
+                    }
+                }
+                Some(_) => continue,
+                None => {
+                    poll.snapshots.insert(hash, now);
+                    continue;
+                }
+            };
+            // Only advance the baseline when the event is actually emitted, so
+            // changes past MAX_COUNT in one cycle surface on the next cycle
+            // instead of being silently swallowed.
+            if event_id >= MAX_COUNT {
+                break;
+            }
+            poll.snapshots.insert(hash, now);
+            this.watch_events[event_id] = WatchEvent {
+                index,
+                op,
+                name_off: 0,
+                name_len: 0,
+            };
+            event_id += 1;
+        }
+    }
+
+    if event_id > 0 {
+        this.dispatch_file_updates(event_id, 0);
+    }
+
+    if let Backend::Polling(poll) = &mut this.platform {
+        poll.scratch_idx = scratch_idx;
+        poll.scratch_path = scratch_path;
+        poll.scratch_stat = scratch_stat;
+    }
+    Ok(())
+}

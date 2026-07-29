@@ -4362,10 +4362,11 @@ pub mod bv2_impl {
                                 break 'add_watchers;
                             }
 
+                            let bun_watcher = this.bun_watcher_mut().unwrap();
                             // TODO: support explicit watchFiles array. this is not done
                             // right now because DevServer requires a table to map
                             // watched files and dirs to their respective dependants.
-                            let fd = if bun_watcher::REQUIRES_FILE_DESCRIPTORS {
+                            let fd = if bun_watcher.requires_file_descriptors() {
                                 let mut buf = bun_paths::path_buffer_pool::get();
                                 // On kqueue platforms paths are already
                                 // posix-separated so `z()` alone suffices.
@@ -4382,7 +4383,7 @@ pub mod bv2_impl {
                             };
 
                             // Failures to watch are intentionally ignored.
-                            let _ = this.bun_watcher_mut().unwrap().add_file::<true>(
+                            let _ = bun_watcher.add_file::<true>(
                                 fd,
                                 &load.path,
                                 bun_wyhash::hash(load.path.as_ref()) as u32,

@@ -3337,9 +3337,14 @@ fn transpile_source_code_inner(
                 {
                     break 'auto_watch;
                 }
+                // SAFETY: `bun_watcher` is the `*mut ImportWatcher`
+                // set when `is_watcher_enabled()`; cast recovers the concrete
+                // type.
+                let watcher =
+                    unsafe { &mut *(*jsc_vm).bun_watcher.cast::<bun_jsc::ImportWatcher>() };
                 // kqueue watchers need a file descriptor to receive event
-                // notifications on it; inotify/win32 watch by path.
-                let input_fd = if bun_watcher::REQUIRES_FILE_DESCRIPTORS {
+                // notifications on it; inotify/win32/polling watch by path.
+                let input_fd = if watcher.requires_file_descriptors() {
                     let mut buf = bun_paths::path_buffer_pool::get();
                     if path.text.len() >= buf.len() {
                         break 'auto_watch;
@@ -3353,11 +3358,6 @@ fn transpile_source_code_inner(
                     bun_sys::Fd::INVALID
                 };
                 let hash = bun_watcher::Watcher::get_hash(path.text);
-                // SAFETY: `bun_watcher` is the `*mut ImportWatcher`
-                // set when `is_watcher_enabled()`; cast recovers the concrete
-                // type.
-                let watcher =
-                    unsafe { &mut *(*jsc_vm).bun_watcher.cast::<bun_jsc::ImportWatcher>() };
                 if watcher
                     .add_file::<true>(
                         input_fd,

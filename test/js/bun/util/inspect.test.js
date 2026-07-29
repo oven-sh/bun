@@ -843,6 +843,8 @@ describe("boxed primitives and RegExp with overridden conversion hooks", () => {
     expect(Bun.inspect(n)).toBe("[Number: 5]");
     expect(Bun.inspect(nan)).toBe("[Number: NaN]");
     expect(Bun.inspect(inf)).toBe("[Number: Infinity]");
+    expect(Bun.inspect(new Number(-Infinity))).toBe("[Number: -Infinity]");
+    expect(Bun.inspect(new Number(-0))).toBe("[Number: -0]");
     expect(Bun.inspect(bFalse)).toBe("[Boolean: false]");
     expect(Bun.inspect(bTrue)).toBe("[Boolean: true]");
     expect(Bun.inspect(s)).toBe('"hello"');

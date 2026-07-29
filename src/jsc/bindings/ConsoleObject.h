@@ -3,20 +3,9 @@
 #include "root.h"
 
 #include <JavaScriptCore/ConsoleClient.h>
-#include <wtf/Vector.h>
 #include <wtf/text/WTFString.h>
 
-#include <JavaScriptCore/InspectorConsoleAgent.h>
-
-namespace Inspector {
-class InspectorConsoleAgent;
-class InspectorDebuggerAgent;
-class InspectorScriptProfilerAgent;
-} // namespace Inspector
 namespace Bun {
-using InspectorConsoleAgent = Inspector::InspectorConsoleAgent;
-using InspectorDebuggerAgent = Inspector::InspectorDebuggerAgent;
-using InspectorScriptProfilerAgent = Inspector::InspectorScriptProfilerAgent;
 using namespace JSC;
 
 class ConsoleObject final : public JSC::ConsoleClient {

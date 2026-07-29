@@ -25,12 +25,6 @@ JSC::SourceOrigin toSourceOrigin(const String& sourceURL, bool isBuiltin);
 class SourceProvider final : public JSC::SourceProvider {
     WTF_DEPRECATED_MAKE_FAST_ALLOCATED(SourceProvider);
     using Base = JSC::SourceProvider;
-    using BytecodeCacheGenerator = JSC::BytecodeCacheGenerator;
-    using UnlinkedFunctionExecutable = JSC::UnlinkedFunctionExecutable;
-    using CachedBytecode = JSC::CachedBytecode;
-    using UnlinkedFunctionCodeBlock = JSC::UnlinkedFunctionCodeBlock;
-    using SourceCode = JSC::SourceCode;
-    using CodeSpecializationKind = JSC::CodeSpecializationKind;
     using SourceOrigin = JSC::SourceOrigin;
 
 public:

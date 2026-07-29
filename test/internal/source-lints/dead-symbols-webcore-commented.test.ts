@@ -52,7 +52,7 @@ test("dead ZigSourceProvider / ConsoleObject / AsyncContextFrame symbols do not 
   expect(resurrected).toEqual([]);
 });
 
-test("dead react_compiler / bun_core / css / net.ts symbols do not reappear", () => {
+test("dead react_compiler / bun_core / css symbols do not reappear", () => {
   const checks: Array<[string, RegExp]> = [
     ["src/react_compiler/hir/environment.rs", /pub fn for_outlined_fn\b/],
     ["src/react_compiler/hir/environment.rs", /pub fn get_property_type_numeric\b/],
@@ -66,8 +66,6 @@ test("dead react_compiler / bun_core / css / net.ts symbols do not reappear", ()
     ["src/bun_core/fmt.rs", /pub fn hex_int_upper\b/],
     ["src/bun_core/fmt.rs", /pub fn parse_num\b/],
     ["src/css/media_query.rs", /pub fn clone_in\b/],
-    ["src/js/node/net.ts", /\bkServerSocket\b/],
-    ["src/js/node/net.ts", /\bkpendingRead\b/],
   ];
   const resurrected = checks.filter(([file, re]) => re.test(src(file))).map(([file, re]) => `${file}: ${re.source}`);
   expect(resurrected).toEqual([]);

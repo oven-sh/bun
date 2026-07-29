@@ -6,7 +6,6 @@
 #include "MimallocWTFMalloc.h"
 #include "BunAnalyzeTranspiledModule.h"
 
-#include <JavaScriptCore/BytecodeCacheError.h>
 #include "ZigGlobalObject.h"
 #include "wtf/Assertions.h"
 
@@ -20,13 +19,8 @@
 
 namespace Zig {
 
-using Base = JSC::SourceProvider;
-using BytecodeCacheGenerator = JSC::BytecodeCacheGenerator;
-using UnlinkedFunctionExecutable = JSC::UnlinkedFunctionExecutable;
 using CachedBytecode = JSC::CachedBytecode;
-using UnlinkedFunctionCodeBlock = JSC::UnlinkedFunctionCodeBlock;
 using SourceCode = JSC::SourceCode;
-using CodeSpecializationKind = JSC::CodeSpecializationKind;
 using SourceOrigin = JSC::SourceOrigin;
 using String = WTF::String;
 using SourceProviderSourceType = JSC::SourceProviderSourceType;

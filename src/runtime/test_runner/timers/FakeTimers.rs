@@ -124,7 +124,7 @@ impl FakeTimers {
         CURRENT_TIME.set(global, &Timespec::EPOCH, Some(js_now));
     }
 
-    fn deactivate(
+    pub(crate) fn deactivate(
         &mut self,
         global: &JSGlobalObject,
     ) -> Vec<core::ptr::NonNull<TimerObjectInternals>> {

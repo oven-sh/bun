@@ -1646,6 +1646,24 @@ pub(crate) fn close_isolation_handles(vm: &mut VirtualMachine) {
     // handles when it runs. Drain first so they land in the registry before
     // it empties — matches the swap's own drain-before-teardown ordering.
     let _ = vm.event_loop_mut().drain_microtasks();
+    // Fake-timer state lives in the per-thread `timer::All`, not the JS
+    // global, so a file that leaves it active routes every later file's
+    // `setTimeout` into the never-driven fake heap.
+    {
+        let all = timer_all();
+        // SAFETY: `state` is non-null so `timer_all()` is non-null; single
+        // JS thread, no re-entry while we hold the field borrow.
+        if !all.is_null() && unsafe { (*all).fake_timers.is_active() } {
+            let global = vm.global();
+            // SAFETY: as above; `deactivate` only touches `fake_timers` and
+            // the `CURRENT_TIME` static.
+            let pinned = unsafe { (*all).fake_timers.deactivate(global) };
+            let vm_ptr: *mut VirtualMachine = vm;
+            for p in pinned {
+                timer::TimerObjectInternals::release_heap_pin(p, vm_ptr);
+            }
+        }
+    }
     loop {
         // SAFETY: live boxed per-thread `RuntimeState`; the borrow ends before
         // the close below re-enters JS.

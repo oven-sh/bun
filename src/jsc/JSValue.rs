@@ -2287,6 +2287,22 @@ impl JSValue {
     pub fn unwrap_boxed_primitive(self, global: &JSGlobalObject) -> JsResult<JSValue> {
         host_fn::from_js_host_call(global, || JSC__JSValue__unwrapBoxedPrimitive(global, self))
     }
+    /// Reads the internal `[[PrimitiveValue]]` slot of a `Number` / `String` /
+    /// `Boolean` / `Symbol` / `BigInt` wrapper object directly, bypassing
+    /// `ToPrimitive` (and thus any user-defined `toString` / `valueOf` /
+    /// `Symbol.toPrimitive`). Returns `self` unchanged for anything that is
+    /// not a `JSWrapperObject`. Never throws and never runs JS.
+    pub fn wrapper_internal_value(self) -> JSValue {
+        JSC__JSValue__getWrapperInternalValue(self)
+    }
+    /// Formats a `RegExp` object as `/source/flags` from its internal record,
+    /// bypassing `RegExp.prototype.toString`. Returns an empty string for
+    /// anything that is not a `RegExpObject`. Never throws and never runs JS.
+    pub fn regexp_display_string(self) -> bun_core::String {
+        let mut out = bun_core::String::default();
+        JSC__JSValue__getRegExpDisplayString(self, &mut out);
+        out
+    }
     /// `JSValue.getPrototype`.
     pub fn get_prototype(self, global: &JSGlobalObject) -> JSValue {
         JSC__JSValue__getPrototype(self, global)
@@ -2674,6 +2690,8 @@ unsafe extern "C" {
     safe fn Bun__JSValue__toNumber(this: JSValue, global: &JSGlobalObject) -> f64;
     safe fn JSC__JSValue__toObject(this: JSValue, global: &JSGlobalObject) -> *mut JSObject;
     safe fn JSC__JSValue__unwrapBoxedPrimitive(global: &JSGlobalObject, this: JSValue) -> JSValue;
+    safe fn JSC__JSValue__getWrapperInternalValue(this: JSValue) -> JSValue;
+    safe fn JSC__JSValue__getRegExpDisplayString(this: JSValue, out: &mut bun_core::String);
     safe fn JSC__JSValue__getPrototype(this: JSValue, global: &JSGlobalObject) -> JSValue;
     safe fn JSC__JSValue__getName(
         this: JSValue,

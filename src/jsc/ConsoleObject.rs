@@ -3648,7 +3648,25 @@ pub mod formatter {
         ) -> JsResult<()> {
             // This is called from the '%s' formatter, so it can actually be any value
             use crate::StringJsc as _;
-            let str = OwnedString::new(BunString::from_js(value, self.global_this)?);
+            // For boxed strings and RegExp objects read the internal slot directly;
+            // `BunString::from_js` on the wrapper would dispatch through ToPrimitive
+            // and run user-defined toString / valueOf / Symbol.toPrimitive.
+            let (str, inner) = match js_type {
+                jsc::JSType::StringObject | jsc::JSType::DerivedStringObject => {
+                    let inner = value.wrapper_internal_value();
+                    (
+                        OwnedString::new(BunString::from_js(inner, self.global_this)?),
+                        inner,
+                    )
+                }
+                jsc::JSType::RegExpObject => {
+                    (OwnedString::new(value.regexp_display_string()), value)
+                }
+                _ => (
+                    OwnedString::new(BunString::from_js(value, self.global_this)?),
+                    value,
+                ),
+            };
             let mut writer = WrappedWriter {
                 ctx: writer_,
                 failed: false,
@@ -3673,7 +3691,7 @@ pub mod formatter {
                     if writer.failed {
                         self.failed = true;
                     }
-                    self.print_as::<C>(Tag::JSON, writer_, value, jsc::JSType::StringObject)?;
+                    self.print_as::<C>(Tag::JSON, writer_, inner, jsc::JSType::StringObject)?;
                     if C {
                         let _ = writer_.write_all(pfmt!("<r>", true).as_bytes());
                     }
@@ -3702,7 +3720,7 @@ pub mod formatter {
                     if writer.failed {
                         self.failed = true;
                     }
-                    self.print_as::<C>(Tag::JSON, writer_, value, jsc::JSType::StringObject)?;
+                    self.print_as::<C>(Tag::JSON, writer_, inner, jsc::JSType::StringObject)?;
                     writer = WrappedWriter {
                         ctx: writer_,
                         failed: false,
@@ -3825,12 +3843,20 @@ pub mod formatter {
                 let mut number_name = ZigString::EMPTY;
                 value.get_class_name(self.global_this, &mut number_name)?;
 
-                let mut number_value = ZigString::EMPTY;
-                value.to_zig_string(&mut number_value, self.global_this)?;
+                let inner = value.wrapper_internal_value().as_number();
+                let mut buf = [0u8; 124];
+                let number_value: &[u8] = if inner.is_nan() {
+                    b"NaN"
+                } else if inner.is_infinite() {
+                    if inner > 0.0 { b"Infinity" } else { b"-Infinity" }
+                } else {
+                    bun_core::fmt::FormatDouble::dtoa_with_negative_zero(&mut buf, inner)
+                };
+                let number_value = bstr::BStr::new(number_value);
 
                 if number_name.slice() != b"Number" {
                     writer.add_for_new_line(
-                        number_name.len + number_value.len + "[Number ():]".len(),
+                        number_name.len + number_value.len() + "[Number ():]".len(),
                     );
                     writer.print(format_args!(
                         "{}[Number ({}): {}]{}",
@@ -3845,7 +3871,7 @@ pub mod formatter {
                     return Ok(());
                 }
 
-                writer.add_for_new_line(number_name.len + number_value.len + 4);
+                writer.add_for_new_line(number_name.len + number_value.len() + 4);
                 writer.print(format_args!(
                     "{}[{}: {}]{}",
                     pf!("<r><yellow>"),
@@ -4232,12 +4258,16 @@ pub mod formatter {
             if value.is_cell() {
                 let mut bool_name = ZigString::EMPTY;
                 value.get_class_name(self.global_this, &mut bool_name)?;
-                let mut bool_value = ZigString::EMPTY;
-                value.to_zig_string(&mut bool_value, self.global_this)?;
+                let bool_value: &str = if value.wrapper_internal_value().to_boolean() {
+                    "true"
+                } else {
+                    "false"
+                };
 
                 if bool_name.slice() != b"Boolean" {
-                    writer
-                        .add_for_new_line(bool_value.len + bool_name.len + "[Boolean (): ]".len());
+                    writer.add_for_new_line(
+                        bool_value.len() + bool_name.len + "[Boolean (): ]".len(),
+                    );
                     writer.print(format_args!(
                         "{}[Boolean ({}): {}]{}",
                         pf!("<r><yellow>"),
@@ -4250,7 +4280,7 @@ pub mod formatter {
                     }
                     return Ok(());
                 }
-                writer.add_for_new_line(bool_value.len + "[Boolean: ]".len());
+                writer.add_for_new_line(bool_value.len() + "[Boolean: ]".len());
                 writer.print(format_args!(
                     "{}[Boolean: {}]{}",
                     pf!("<r><yellow>"),

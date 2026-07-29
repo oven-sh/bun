@@ -2284,6 +2284,34 @@ BunString WebCore__DOMURL__fileSystemPath(WebCore::DOMURL* arg0, int* errorCode)
     return BunString { BunStringTag::Dead, nullptr };
 }
 
+// Reads the internal [[PrimitiveValue]] slot of a wrapper object without
+// invoking any user-observable conversion (no ToPrimitive, no getters).
+// Used by the native formatter so that console.log / Bun.inspect cannot be
+// spoofed by overriding toString / valueOf / Symbol.toPrimitive on a boxed
+// primitive, and so that a throwing hook does not abort printing.
+extern "C" JSC::EncodedJSValue JSC__JSValue__getWrapperInternalValue(EncodedJSValue encodedValue)
+{
+    JSValue value = JSValue::decode(encodedValue);
+    if (!value.isObject())
+        return encodedValue;
+    if (auto* wrapper = dynamicDowncast<JSWrapperObject>(asObject(value)))
+        return JSValue::encode(wrapper->internalValue());
+    return encodedValue;
+}
+
+// Formats a RegExp as `/source/flags` from its internal RegExp record, never
+// calling into JS (RegExp.prototype.toString / .source / .flags are all
+// user-overridable).
+extern "C" void JSC__JSValue__getRegExpDisplayString(EncodedJSValue encodedValue, BunString* out)
+{
+    JSValue value = JSValue::decode(encodedValue);
+    if (auto* object = dynamicDowncast<RegExpObject>(value)) {
+        *out = Bun::toStringRef(object->regExp()->toSourceString());
+        return;
+    }
+    *out = BunString { BunStringTag::Dead, nullptr };
+}
+
 // Taken from unwrapBoxedPrimitive in JSONObject.cpp in WebKit
 extern "C" JSC::EncodedJSValue JSC__JSValue__unwrapBoxedPrimitive(JSGlobalObject* globalObject, EncodedJSValue encodedValue)
 {

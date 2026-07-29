@@ -694,8 +694,7 @@ impl CreateCommand {
                             };
                             if mismatch {
                                 #[cfg(not(windows))]
-                                let removed = if existing_kind == bun_sys::ExistsAtType::Directory
-                                {
+                                let removed = if existing_kind == bun_sys::ExistsAtType::Directory {
                                     existing_destination.delete_tree(entry.path.as_bytes())
                                 } else {
                                     bun_sys::unlinkat(&existing_destination, entry.path)
@@ -727,10 +726,7 @@ impl CreateCommand {
                                     pretty_errorln!(
                                         "<r><red>{}<r>: removing {}",
                                         bstr::BStr::new(err.name()),
-                                        bun_core::fmt::fmt_os_path(
-                                            entry_path,
-                                            Default::default()
-                                        ),
+                                        bun_core::fmt::fmt_os_path(entry_path, Default::default()),
                                     );
                                     Global::exit(1);
                                 }

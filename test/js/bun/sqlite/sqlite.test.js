@@ -2329,5 +2329,16 @@ it("binds statements with more than 65535 parameters without truncating the coun
   expect(ins.run(Array(N).fill(42)).changes).toBe(N);
   expect(db.query("SELECT count(*) c FROM t WHERE a IS NULL").get()).toEqual({ c: 0 });
 
+  // Numbered parameters: a lone ?70000 makes sqlite3_bind_parameter_count return
+  // 70000 through the same truncated field (previously reported as 70000 % 65536
+  // = 4464 required values).
+  const M = 70000;
+  const numbered = db.prepare(`SELECT ?${M} AS v`);
+  expect(numbered.paramsCount).toBe(M);
+  expect(() => numbered.get([7])).toThrow(`SQLite query expected ${M} values, received 1`);
+  const numberedValues = Array(M).fill(null);
+  numberedValues[M - 1] = 7;
+  expect(numbered.get(numberedValues)).toEqual({ v: 7 });
+
   db.close();
 });

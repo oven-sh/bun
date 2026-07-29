@@ -89,8 +89,37 @@ test.concurrent.skipIf(isWindows)("a JS SIGINT listener takes priority over the 
   const buf = await readUntil(reader, "ready");
   proc.kill("SIGINT");
   await readUntil(reader, "user handler fired", buf);
-  expect(await proc.exited).toBe(42);
   expect(await proc.stderr.text()).not.toContain(KEYBOARD_INTERRUPT);
+  expect(await proc.exited).toBe(42);
+});
+
+// When stdio is a TTY, bun installs a SIGINT handler that restores termios
+// before dying (onExitSignal). The trace handler must chain to it, not
+// replace it with SIG_DFL.
+test.concurrent.skipIf(isWindows)("trace fires when stdio is a TTY", async () => {
+  let output = "";
+  const trace = Promise.withResolvers<void>();
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      "require('node:util').setTraceSigInt(true); setInterval(() => {}, 1000); console.log('ready');",
+    ],
+    env: bunEnv,
+    terminal: {
+      data(_t, chunk) {
+        output += new TextDecoder().decode(chunk);
+        if (output.includes("ready")) proc.kill("SIGINT");
+        if (output.includes(KEYBOARD_INTERRUPT)) trace.resolve();
+      },
+      exit() {
+        trace.reject(new Error("exited without trace; output=" + JSON.stringify(output)));
+      },
+    },
+  });
+  await trace.promise;
+  await proc.exited;
+  expect(proc.signalCode).toBe("SIGINT");
 });
 
 test.concurrent.skipIf(isWindows)("removing the last SIGINT listener re-arms the trace", async () => {

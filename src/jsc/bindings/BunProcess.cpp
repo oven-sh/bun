@@ -1410,17 +1410,19 @@ __attribute__((noinline)) static void forwardSignal(int signalNumber)
 // the signal (exit code 128 + SIGINT).
 static std::atomic<bool> s_traceSigintEnabled { false };
 
+// Disposition that was active before the trace handler took over, e.g. the
+// termios-restoring onExitSignal installed for TTYs (c-bindings.cpp). The
+// trace handler re-raises through it and disabling restores it, so the trace
+// stays transparent to whatever handler was there first.
+static struct sigaction s_previousSigintAction;
+
 static void traceSigintHandler(int)
 {
     // Async-signal-safe only: write(2), sigaction(2), raise(3).
     constexpr char message[] = "KEYBOARD_INTERRUPT: Script execution was interrupted by `SIGINT`\n";
     ssize_t rc = write(STDERR_FILENO, message, sizeof(message) - 1);
     (void)rc;
-    struct sigaction action;
-    memset(&action, 0, sizeof(action));
-    action.sa_handler = SIG_DFL;
-    sigemptyset(&action.sa_mask);
-    sigaction(SIGINT, &action, nullptr);
+    sigaction(SIGINT, &s_previousSigintAction, nullptr);
     raise(SIGINT);
 }
 
@@ -1430,9 +1432,8 @@ static void installTraceSigintHandler()
     memset(&action, 0, sizeof(action));
     action.sa_handler = traceSigintHandler;
     sigemptyset(&action.sa_mask);
-    sigaddset(&action.sa_mask, SIGINT);
     action.sa_flags = SA_RESTART;
-    sigaction(SIGINT, &action, nullptr);
+    sigaction(SIGINT, &action, &s_previousSigintAction);
 }
 #endif
 
@@ -1446,16 +1447,13 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionSetTraceSigInt, (JSC::JSGlobalObject * global
     memset(&current, 0, sizeof(current));
     sigaction(SIGINT, nullptr, &current);
     if (enable) {
-        // A JS 'SIGINT' listener takes priority over the trace, matching node:
-        // only take over when process.on('SIGINT') has not installed a handler.
-        if (current.sa_handler != forwardSignal)
+        // A JS 'SIGINT' listener takes priority over the trace, matching node.
+        // Skipping a redundant enable keeps s_previousSigintAction pointing at
+        // the real previous disposition instead of the trace handler itself.
+        if (current.sa_handler != forwardSignal && current.sa_handler != traceSigintHandler)
             installTraceSigintHandler();
     } else if (current.sa_handler == traceSigintHandler) {
-        struct sigaction action;
-        memset(&action, 0, sizeof(action));
-        action.sa_handler = SIG_DFL;
-        sigemptyset(&action.sa_mask);
-        sigaction(SIGINT, &action, nullptr);
+        sigaction(SIGINT, &s_previousSigintAction, nullptr);
     }
 #else
     UNUSED_PARAM(globalObject);

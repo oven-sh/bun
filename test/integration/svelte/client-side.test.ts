@@ -1,9 +1,13 @@
 import { Subprocess } from "bun";
-import { bunEnv, bunExe, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, tmpdirSync } from "harness";
 import { promises as fs, statSync } from "node:fs";
 import path from "node:path";
 
 const fixturePath = (...segs: string[]): string => path.join(import.meta.dirname, "fixtures", ...segs);
+
+// Running the real Svelte compiler (in-process Bun.build and via the spawned
+// dev server) takes ~8-11s under debug+ASAN; the workload can't be shrunk.
+const svelteCompileTimeout = isDebug || isASAN ? 30_000 : undefined;
 
 beforeAll(async () => {
   const pluginDir = path.resolve(import.meta.dirname, "..", "..", "..", "packages", "bun-plugin-svelte");
@@ -35,7 +39,7 @@ describe("generating client-side code", () => {
     } finally {
       await fs.rm(outdir, { force: true, recursive: true });
     }
-  }, 30_000);
+  }, svelteCompileTimeout);
 
   describe("Using Svelte components in Bun's dev server", () => {
     let server: Subprocess<"ignore", "pipe", "inherit">;
@@ -78,6 +82,6 @@ describe("generating client-side code", () => {
       expect(body).toContain("<title>Svelte App</title>");
       expect(response.status).toBe(200);
       expect(response.headers.get("content-type")).toMatch("text/html");
-    }, 30_000);
+    }, svelteCompileTimeout);
   });
 });

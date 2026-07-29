@@ -1010,6 +1010,138 @@ describe("Bun.Image", () => {
       expect(h).toBe(8);
     });
 
+    test("fit:'outside' preserves aspect ratio with the box as a lower bound", async () => {
+      const out = await new Bun.Image(gradientPng) // 16×16
+        .resize(8, 32, { fit: "outside" })
+        .png()
+        .bytes();
+      const { w, h } = decodePngRaw(out);
+      // 16×16 into an 8×32 box → scale = max(8/16, 32/16) = 2 → 32×32.
+      expect(w).toBe(32);
+      expect(h).toBe(32);
+    });
+
+    test("fit:'cover' matches the box exactly and center-crops overflow", async () => {
+      // 4×2 stripes so the crop is observable: column 0 = red, 1 = green,
+      // 2 = blue, 3 = white. A 4×2 → box 2×2 cover scales to 4×2 (max scale
+      // = max(2/4, 2/2) = 1) then crops the middle 2×2 → columns 1..2 of
+      // the source should survive.
+      const stripes = makePng(4, 2, x => {
+        if (x === 0) return [255, 0, 0, 255];
+        if (x === 1) return [0, 255, 0, 255];
+        if (x === 2) return [0, 0, 255, 255];
+        return [255, 255, 255, 255];
+      });
+      const out = await new Bun.Image(stripes).resize(2, 2, { fit: "cover" }).png().bytes();
+      const { w, h, data } = decodePngRaw(out);
+      expect(w).toBe(2);
+      expect(h).toBe(2);
+      // Center columns (1 and 2 in source) land in the crop.
+      expect(rgbaAt(data, 2, 0, 0)).toEqual([0, 255, 0, 255]);
+      expect(rgbaAt(data, 2, 1, 0)).toEqual([0, 0, 255, 255]);
+    });
+
+    test("fit:'contain' matches the box exactly and letterboxes with background", async () => {
+      // 2×2 all-red source into a 4×2 box → contain scales to 2×2 (min
+      // scale = min(4/2, 2/2) = 1) then pads 1 px on each side horizontally
+      // with the requested background.
+      const red = makePng(2, 2, () => [255, 0, 0, 255]);
+      const out = await new Bun.Image(red)
+        .resize(4, 2, { fit: "contain", background: { r: 0, g: 255, b: 0, alpha: 1 } })
+        .png()
+        .bytes();
+      const { w, h, data } = decodePngRaw(out);
+      expect(w).toBe(4);
+      expect(h).toBe(2);
+      // Left strip = green pad, middle = red source, right strip = green pad.
+      expect(rgbaAt(data, 4, 0, 0)).toEqual([0, 255, 0, 255]);
+      expect(rgbaAt(data, 4, 1, 0)).toEqual([255, 0, 0, 255]);
+      expect(rgbaAt(data, 4, 2, 0)).toEqual([255, 0, 0, 255]);
+      expect(rgbaAt(data, 4, 3, 0)).toEqual([0, 255, 0, 255]);
+    });
+
+    test("fit:'contain' default background is transparent black", async () => {
+      const red = makePng(2, 2, () => [255, 0, 0, 255]);
+      const out = await new Bun.Image(red).resize(4, 2, { fit: "contain" }).png().bytes();
+      const { data } = decodePngRaw(out);
+      // Untouched letterbox pixels → alpha = 0, RGB = 0.
+      expect(rgbaAt(data, 4, 0, 0)).toEqual([0, 0, 0, 0]);
+      expect(rgbaAt(data, 4, 3, 0)).toEqual([0, 0, 0, 0]);
+    });
+
+    test("fit:'contain' background alpha rounds to the nearest step like Sharp", async () => {
+      const red = makePng(2, 2, () => [255, 0, 0, 255]);
+      const out = await new Bun.Image(red)
+        .resize(4, 2, { fit: "contain", background: { r: 10, g: 20, b: 30, alpha: 0.5 } })
+        .png()
+        .bytes();
+      const { data } = decodePngRaw(out);
+      // Math.round(0.5 × 255) = 128 — truncation would store 127.
+      expect(rgbaAt(data, 4, 0, 0)).toEqual([10, 20, 30, 128]);
+    });
+
+    test("fit:'contain' background without alpha is opaque like Sharp", async () => {
+      // Passing a background means the caller wants a visible fill —
+      // alpha defaults to 1 like Sharp's Color({r, g, b}), not to the
+      // transparent omitted-background default.
+      const red = makePng(2, 2, () => [255, 0, 0, 255]);
+      const out = await new Bun.Image(red)
+        .resize(4, 2, { fit: "contain", background: { r: 255, g: 255, b: 255 } })
+        .png()
+        .bytes();
+      const { data } = decodePngRaw(out);
+      expect(rgbaAt(data, 4, 0, 0)).toEqual([255, 255, 255, 255]);
+    });
+
+    test.each(["cover", "contain"] as const)("fit:'%s' with square-into-square is a no-op on dims", async fit => {
+      const out = await new Bun.Image(gradientPng).resize(8, 8, { fit }).png().bytes();
+      const { w, h } = decodePngRaw(out);
+      expect({ fit, w, h }).toEqual({ fit, w: 8, h: 8 });
+    });
+
+    test.each(["outside", "cover"] as const)(
+      "fit:'%s' tall-thin overshoot rejects with maxPixels, not a crash",
+      async fit => {
+        // 1×100000 source into a 50000×1 box → max scale = 50000, so the
+        // off-axis side wants 100000×50000 = 5e9 (past u32). Must surface
+        // as the maxPixels error, never a panic or a silently distorted
+        // canvas.
+        const tall = makePng(1, 100000, () => [255, 0, 0, 255]);
+        await expect(new Bun.Image(tall).resize(50000, 1, { fit }).png().bytes()).rejects.toThrow(/maxPixels/);
+      },
+    );
+
+    test("fit:'cover' tall-thin overshoot in the small-box window still rejects, never distorts", async () => {
+      // A 100×100 box keeps every pixel-count guard under the default
+      // maxPixels if the scaled side were clamped to the per-side cap
+      // (100×262143 ≈ 26M < 268M), so a clamp here would silently emit a
+      // ~38× vertically squished image. The honest scaled canvas is
+      // 100×10000000 = 1e9 pixels, which must reject.
+      const tall = makePng(1, 100000, () => [255, 0, 0, 255]);
+      await expect(new Bun.Image(tall).resize(100, 100, { fit: "cover" }).png().bytes()).rejects.toThrow(/maxPixels/);
+    });
+
+    test("fit:'outside' overshoot past i32 dims rejects even with raised maxPixels, not a crash", async () => {
+      // 1×100000 into a 30000×1 box wants 30000×3000000000 — the off-axis
+      // side exceeds i32::MAX, which the resize kernel can never represent,
+      // and maxPixels: 1e15 lets the pixel-count guards pass. Must reject,
+      // never panic at the kernel's int cast.
+      const tall = makePng(1, 100000, () => [255, 0, 0, 255]);
+      await expect(
+        new Bun.Image(tall, { maxPixels: 1e15 }).resize(30000, 1, { fit: "outside" }).png().bytes(),
+      ).rejects.toThrow(/maxPixels/);
+    });
+
+    test("fit:'outside' overshoot under the pixel budget resizes with the honest aspect ratio", async () => {
+      // 1×100000 into a 4×1 box → 4×400000. The off-axis side exceeds the
+      // 0x3FFFF direct-input cap but fits i32 and the default maxPixels
+      // budget (4×400000 = 1.6M), so it must succeed at full aspect — not
+      // clamp to 4×262143.
+      const tall = makePng(1, 100000, () => [255, 0, 0, 255]);
+      const out = await new Bun.Image(tall).resize(4, 1, { fit: "outside" }).png().bytes();
+      expect(await new Bun.Image(out).metadata()).toEqual({ width: 4, height: 400000, format: "png" });
+    });
+
     test("modulate({saturation:0}) greyscales: R=G=B per pixel", async () => {
       const out = await new Bun.Image(cornersPng).modulate({ saturation: 0 }).png().bytes();
       const { data } = decodePngRaw(out);
@@ -1069,6 +1201,45 @@ describe("Bun.Image", () => {
       const { w, h } = decodePngRaw(out);
       expect(w).toBe(4);
       expect(h).toBe(3);
+    });
+
+    test("withoutEnlargement + fit:'cover' passes a both-axes-smaller source through unchanged", async () => {
+      // The resize resets to the source dims, and cover's output clamps to
+      // min(box, resized) — nothing left to crop when the source fits the
+      // box on both axes.
+      const out = await new Bun.Image(cornersPng) // 4×3
+        .resize(100, 100, { fit: "cover", withoutEnlargement: true })
+        .png()
+        .bytes();
+      const { w, h } = decodePngRaw(out);
+      expect({ w, h }).toEqual({ w: 4, h: 3 });
+    });
+
+    test("withoutEnlargement + fit:'cover' still crops an axis that exceeds the box", async () => {
+      // The short axis would need enlarging (scale > 1), so the resize
+      // resets to the source dims — but the long axis still center-crops
+      // down to the box, matching Sharp's reset-then-crop semantics.
+      const wide = makePng(200, 3, () => [255, 0, 0, 255]);
+      const out = await new Bun.Image(wide).resize(100, 100, { fit: "cover", withoutEnlargement: true }).png().bytes();
+      const { w, h } = decodePngRaw(out);
+      expect({ w, h }).toEqual({ w: 100, h: 3 });
+    });
+
+    test("withoutEnlargement + fit:'contain' still pads the canvas to the box", async () => {
+      // Only the image itself is never enlarged; the letterbox canvas is
+      // still the requested box, with the source centered.
+      const red = makePng(2, 2, () => [255, 0, 0, 255]);
+      const out = await new Bun.Image(red)
+        .resize(6, 4, { fit: "contain", withoutEnlargement: true, background: { r: 0, g: 255, b: 0, alpha: 1 } })
+        .png()
+        .bytes();
+      const { w, h, data } = decodePngRaw(out);
+      expect({ w, h }).toEqual({ w: 6, h: 4 });
+      // Source is centered at (2,1)..(3,2); corners are background.
+      expect(rgbaAt(data, 6, 0, 0)).toEqual([0, 255, 0, 255]);
+      expect(rgbaAt(data, 6, 2, 1)).toEqual([255, 0, 0, 255]);
+      expect(rgbaAt(data, 6, 3, 2)).toEqual([255, 0, 0, 255]);
+      expect(rgbaAt(data, 6, 5, 3)).toEqual([0, 255, 0, 255]);
     });
 
     test("new Response(image) encodes and sets Content-Type", async () => {

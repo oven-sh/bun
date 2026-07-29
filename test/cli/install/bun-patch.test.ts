@@ -299,6 +299,78 @@ describe("bun patch <pkg>", async () => {
       }
     });
 
+    // https://github.com/oven-sh/bun/issues/12200
+    // https://github.com/oven-sh/bun/issues/12882
+    describe("inside workspace package, committing with the path bun suggested", async () => {
+      const files = {
+        "package.json": JSON.stringify({
+          name: "root",
+          private: true,
+          workspaces: ["packages/*"],
+        }),
+        packages: {
+          server: {
+            "package.json": JSON.stringify({
+              name: "server",
+              version: "1.0.0",
+              dependencies: { "is-odd": "3.0.1" },
+            }),
+          },
+        },
+      };
+
+      async function prepare(tempdir: string) {
+        const subdir = join(tempdir, "packages", "server");
+        await $`${bunExe()} i`.env(bunEnv).cwd(subdir);
+
+        const prep = await $`${bunExe()} patch is-odd`.env(bunEnv).cwd(subdir);
+        expect(prep.stderr.toString()).not.toContain("error");
+        const suggested = prep.stdout.toString().match(/bun patch --commit '([^']+)'/);
+        expect(suggested).not.toBeNull();
+        const absPath = suggested![1];
+        expect(absPath).toContain("node_modules");
+
+        await Bun.write(join(tempdir, "node_modules", "is-odd", "index.js"), "module.exports = () => 'patched';\n");
+        return { subdir, absPath };
+      }
+
+      async function check(tempdir: string, commit: ShellOutput) {
+        expect(commit.stderr.toString()).not.toContain("ENOENT");
+        expect(commit.stderr.toString()).not.toContain("error");
+        expect(commit.exitCode).toBe(0);
+
+        expect((await $`cat package.json`.cwd(tempdir).env(bunEnv).json()).patchedDependencies).toEqual({
+          "is-odd@3.0.1": "patches/is-odd@3.0.1.patch",
+        });
+        const patch = await Bun.file(join(tempdir, "patches", "is-odd@3.0.1.patch")).text();
+        expect(patch).not.toContain("new file mode 120000");
+        expect(patch).not.toContain("deleted file mode");
+        expect(patch).toContain("patched");
+      }
+
+      // On Windows the suggested path is a drive-letter absolute path like
+      // `C:\tmp\.../node_modules/is-odd`. Previously this was treated as
+      // relative and joined onto `packages/server/`, producing
+      // `packages\server\C:\...\package.json` → ENOENT.
+      test("absolute path", async () => {
+        await using tempdir = tempDir("patch-ws-abs", files);
+        const { subdir, absPath } = await prepare(String(tempdir));
+        const commit = await $`${bunExe()} patch --commit ${absPath}`.env(bunEnv).cwd(subdir).throws(false);
+        await check(String(tempdir), commit);
+      });
+
+      // With the isolated linker `packages/server/node_modules/is-odd` is a
+      // symlink into `.bun/`. `bun patch is-odd` placed the editable copy at
+      // the root `node_modules/is-odd`, so committing `node_modules/is-odd`
+      // from the subdir must diff the root copy, not the symlink.
+      test("relative node_modules/<pkg>", async () => {
+        await using tempdir = tempDir("patch-ws-rel", files);
+        const { subdir } = await prepare(String(tempdir));
+        const commit = await $`${bunExe()} patch --commit node_modules/is-odd`.env(bunEnv).cwd(subdir).throws(false);
+        await check(String(tempdir), commit);
+      });
+    });
+
     describe("inside ROOT workspace package", async () => {
       const args = [
         [

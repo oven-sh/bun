@@ -101,25 +101,36 @@ pub fn do_patch_commit(
         .get(&lockfile, manager.workspace_name_hash);
     let not_in_workspace_root = workspace_package_id != 0;
     // reshaped for borrowck — owned buffer kept separately so `argument` can borrow it
-    let argument_owned: Option<Box<[u8]>>;
+    let mut argument_owned: Option<Box<[u8]>> = None;
     let argument: &[u8] = if arg_kind == PatchArgKind::Path
         && not_in_workspace_root
-        && (!Platform::Posix.is_absolute(argument)
-            || (cfg!(windows) && !Platform::Windows.is_absolute(argument)))
+        && !Platform::AUTO.is_absolute(argument)
     {
         if let Some(rel_path) = path_argument_relative_to_root_workspace_package(
             &lockfile,
             workspace_package_id,
             argument,
         ) {
-            argument_owned = Some(rel_path);
-            argument_owned.as_deref().unwrap()
+            // `bun patch` always leaves the editable copy as a real directory
+            // (any symlink is detached first). If the workspace-prefixed path
+            // is a symlink or missing but the argument taken relative to the
+            // workspace root is a real directory, that is where `bun patch`
+            // actually prepared the package, so diff that instead of the
+            // symlink (which `git diff --no-index` would record as a single
+            // mode-120000 file and then fail to apply).
+            if !is_real_dir_not_symlink(&rel_path) && is_real_dir_not_symlink(argument) {
+                argument
+            } else {
+                argument_owned = Some(rel_path);
+                argument_owned.as_deref().unwrap()
+            }
         } else {
             argument
         }
     } else {
         argument
     };
+    let _ = &argument_owned;
 
     // Attempt to open the existing node_modules folder
     let root_node_modules: Dir = match sys::openat_os_path(
@@ -738,8 +749,7 @@ pub fn prepare_patch(manager: &mut PackageManager) -> Result<(), crate::Error> {
     let argument_owned: Option<Box<[u8]>>;
     let argument: &[u8] = if arg_kind == PatchArgKind::Path
         && not_in_workspace_root
-        && (!Platform::Posix.is_absolute(argument)
-            || (cfg!(windows) && !Platform::Windows.is_absolute(argument)))
+        && !Platform::AUTO.is_absolute(argument)
     {
         if let Some(rel_path) = path_argument_relative_to_root_workspace_package(
             &manager.lockfile,
@@ -1029,6 +1039,42 @@ pub fn prepare_patch(manager: &mut PackageManager) -> Result<(), crate::Error> {
     }
 
     Ok(())
+}
+
+fn is_real_dir_not_symlink(path: &[u8]) -> bool {
+    #[cfg(windows)]
+    let mut native_buf = PathBuffer::uninit();
+    #[cfg(windows)]
+    let native: &[u8] = {
+        if path.len() > native_buf.len() {
+            return false;
+        }
+        native_buf[0..path.len()].copy_from_slice(path);
+        let slice = &mut native_buf[0..path.len()];
+        resolve_path::posix_to_platform_in_place::<u8>(slice);
+        &*slice
+    };
+    #[cfg(not(windows))]
+    let native: &[u8] = path;
+
+    let Ok(mut p) = bun_paths::Path::<u8>::from(native) else {
+        return false;
+    };
+
+    #[cfg(windows)]
+    {
+        match sys::get_file_attributes(p.slice_z()) {
+            Some(attrs) => attrs.is_directory && !attrs.is_reparse_point,
+            None => false,
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        match sys::lstat(p.slice_z()) {
+            Ok(st) => sys::posix::s_isdir(st.st_mode as u32),
+            Err(_) => false,
+        }
+    }
 }
 
 fn detach_module_folder_from_shared_store(module_folder: &[u8]) {

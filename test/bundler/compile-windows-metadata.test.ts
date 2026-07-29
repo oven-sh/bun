@@ -40,7 +40,7 @@ async function expectBuildOk(proc: Bun.Subprocess<"ignore", "pipe", "pipe">) {
 }
 
 // https://github.com/oven-sh/bun/issues/19916
-describe.skipIf(!isWindows)("--windows-hide-console", () => {
+describe.skipIf(!isWindows).concurrent("--windows-hide-console", () => {
   test("default build is a console subsystem", async () => {
     using dir = tempDir("windows-subsystem-default", {
       "app.js": `console.log("cui");`,

@@ -648,9 +648,7 @@ function SocketEmitEndNT(self, _err?) {
     }
     return;
   }
-  // A close on an already-destroyed socket is our own teardown, not the peer
-  // finishing: Node only emits 'end' / sets readableEnded when EOF is actually
-  // read, and a destroy()ed handle never reads one - it just emits 'close'.
+  // A close driven by our own destroy() is not a peer EOF; Node emits only 'close' there.
   if (!self[kended] && !self.destroyed) {
     finishSocketEnd(self);
     if (!self.allowHalfOpen && self[kReaderInterest] === false) {
@@ -1362,9 +1360,7 @@ const SocketHandlers2: SocketHandler<NonNullable<import("node:net").Socket["_han
       }
       return;
     }
-    // Same destroyed guard as SocketEmitEndNT: a close driven by our own
-    // destroy() is not a graceful EOF, so it must not emit 'end' or set
-    // readableEnded the way a peer FIN does.
+    // Same destroyed guard as SocketEmitEndNT: our own destroy() is not a peer EOF.
     if (!self.destroyed && !deferEndForOnreadTail(self)) finishSocketEnd(self);
     // A write that was waiting on the native drain can never complete once the
     // socket is gone - fail it so 'finish'/destroy are not stuck behind it

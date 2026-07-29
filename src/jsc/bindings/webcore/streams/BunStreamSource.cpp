@@ -38,7 +38,6 @@
 #include <JavaScriptCore/SourceCode.h>
 #include <JavaScriptCore/SubspaceInlines.h>
 #include <JavaScriptCore/TopExceptionScope.h>
-#include <JavaScriptCore/WeakInlines.h>
 #include <wtf/text/MakeString.h>
 
 namespace WebCore {
@@ -51,13 +50,6 @@ const ClassInfo JSNativeStreamSourceAdapter::s_info = { "NativeStreamSourceAdapt
 JSNativeStreamSourceAdapter::JSNativeStreamSourceAdapter(VM& vm, Structure* structure)
     : Base(vm, structure)
 {
-}
-
-JSNativeStreamSourceAdapter::~JSNativeStreamSourceAdapter() = default;
-
-void JSNativeStreamSourceAdapter::destroy(JSCell* cell)
-{
-    static_cast<JSNativeStreamSourceAdapter*>(cell)->JSNativeStreamSourceAdapter::~JSNativeStreamSourceAdapter();
 }
 
 void JSNativeStreamSourceAdapter::finishCreation(VM& vm)
@@ -98,6 +90,7 @@ void JSNativeStreamSourceAdapter::visitChildrenImpl(JSCell* cell, Visitor& visit
     visitor.appendHidden(thisObject->m_pendingView);
     visitor.appendHidden(thisObject->m_closer);
     visitor.appendHidden(thisObject->m_drainValue);
+    visitor.appendHidden(thisObject->m_controller);
 }
 
 DEFINE_VISIT_CHILDREN(JSNativeStreamSourceAdapter);
@@ -111,6 +104,7 @@ void JSNativeStreamSourceAdapter::analyzeHeap(JSCell* cell, HeapAnalyzer& analyz
     analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_pendingView, "pendingView"_s);
     analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_closer, "closer"_s);
     analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_drainValue, "drainValue"_s);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_controller, "controller"_s);
 }
 
 const ClassInfo JSDirectSinkCloseState::s_info = { "DirectSinkCloseState"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSDirectSinkCloseState) };
@@ -454,6 +448,7 @@ static void nativeSourceSever(JSGlobalObject* globalObject, JSNativeStreamSource
 static void nativeSourceCallClose(JSC::VM& vm, JSGlobalObject* globalObject, JSNativeStreamSourceAdapter* adapter)
 {
     auto* controller = adapter->m_controller.get();
+    adapter->m_controller.clear();
     if (controller && readableStreamDefaultControllerCanCloseOrEnqueue(controller)) {
         auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
         if (adapter->m_textMode)
@@ -671,7 +666,7 @@ JSValue nativeSourceStart(JSGlobalObject* globalObject, JSReadableStreamDefaultC
     if (!drainValue.isEmpty()) {
         adapter->m_drainValue.clear();
         if (!adapter->m_controller)
-            adapter->m_controller = JSC::Weak<JSReadableStreamDefaultController>(controller);
+            adapter->m_controller.set(vm, adapter, controller);
         if (adapter->m_textMode) {
             if (auto* drainView = dynamicDowncast<JSC::JSArrayBufferView>(drainValue))
                 nativeEnqueueTextChunk(globalObject, controller, adapter->m_textState, drainView->span(), /* flush */ false);
@@ -687,7 +682,7 @@ static JSPromise* nativeSourcePullImpl(JSC::VM& vm, JSGlobalObject* globalObject
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (!adapter->m_controller)
-        adapter->m_controller = JSC::Weak<JSReadableStreamDefaultController>(controller);
+        adapter->m_controller.set(vm, adapter, controller);
 
     JSObject* handle = adapter->m_handle.get();
     if (!handle || adapter->m_closed) {
@@ -776,6 +771,7 @@ JSPromise* nativeSourceCancel(JSGlobalObject* globalObject, JSReadableStreamDefa
     {
         auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
         adapter->m_pendingView.clear();
+        adapter->m_controller.clear();
         if (JSObject* handle = adapter->m_handle.get())
             invokeNativeHandleCancel(vm, globalObject, handle, reason);
         if (!catchScope.exception())

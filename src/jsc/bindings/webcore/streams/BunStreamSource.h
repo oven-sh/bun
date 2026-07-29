@@ -2,35 +2,28 @@
 // NativeReadableStreamSource JS class. Its .cpp also owns materializeNativeSource and the
 // SourceKind::Native pull/cancel/start algorithm arms.
 //
-// DESTRUCTIBLE: it owns a JSC::Weak (a non-trivially-destructible member).
-// The Weak member is THE one sanctioned JSC::Weak in the whole subsystem: a STRONG back-edge
-// would let Rust's external Strong root on the native handle pin the entire abandoned JS
-// consumer graph forever.
-// Internal cell: no prototype, no constructor, never exposed to JS.
+// Internal cell: no prototype, no constructor, never exposed to JS. Non-destructible.
 #pragma once
 
 #include "root.h"
 #include "StreamsForward.h"
 
 #include "JSReadableStreamDefaultController.h"
-#include <JavaScriptCore/JSDestructibleObject.h>
-#include <JavaScriptCore/Weak.h>
+#include <JavaScriptCore/JSObject.h>
 
 namespace WebCore {
 
-class JSNativeStreamSourceAdapter final : public JSC::JSDestructibleObject {
+class JSNativeStreamSourceAdapter final : public JSC::JSNonFinalObject {
 public:
-    using Base = JSC::JSDestructibleObject;
+    using Base = JSC::JSNonFinalObject;
     static constexpr unsigned StructureFlags = Base::StructureFlags;
-    static constexpr JSC::DestructionMode needsDestruction = JSC::NeedsDestruction;
+    static constexpr JSC::DestructionMode needsDestruction = JSC::DoesNotNeedDestruction;
 
     static JSNativeStreamSourceAdapter* create(JSC::VM&, JSC::Structure*);
-    static void destroy(JSC::JSCell*);
     static JSC::Structure* createStructure(JSC::VM&, JSC::JSGlobalObject*, JSC::JSValue prototype);
 
     DECLARE_INFO;
-    // visitChildrenImpl MUST visit: m_handle, m_pendingView, m_closer, m_drainValue.
-    // m_controller is a JSC::Weak and MUST NOT be visited (that is the whole point).
+    // visitChildrenImpl MUST visit: m_handle, m_pendingView, m_closer, m_drainValue, m_controller.
     DECLARE_VISIT_CHILDREN;
     static void analyzeHeap(JSCell*, JSC::HeapAnalyzer&);
 
@@ -53,9 +46,12 @@ public:
     // the drain value returned by handle.start()/drain(), enqueued by the Native
     // startAlgorithm and then cleared.
     JSC::WriteBarrier<JSC::Unknown> m_drainValue;
-    // THE ONE SANCTIONED JSC::Weak in the subsystem. Null-check EVERY read: null ⇒ the JS
-    // consumer side was collected ⇒ drop the data / no-op. Assigned lazily — never eagerly.
-    JSC::Weak<JSReadableStreamDefaultController> m_controller;
+    // Visited: with the adapter queued as a reaction context (onNativePull*), this edge
+    // keeps the controller (and the whole downstream consumer graph) rooted across
+    // FetchTasklet's Strong release. Cleared by nativeSourceSever on every terminal path;
+    // controller->algorithmContext is cleared by readableStreamDefaultControllerClearAlgorithms,
+    // so the abandoned case is an ordinary intra-heap cycle.
+    JSC::WriteBarrier<JSReadableStreamDefaultController> m_controller;
     // adaptive chunk size (256 KiB default, doubled once up to 2 MiB).
     size_t m_chunkSize { 0 };
     // #hasResized — the one-shot chunk-size adaptation already happened.
@@ -68,7 +64,6 @@ public:
 
 private:
     JSNativeStreamSourceAdapter(JSC::VM&, JSC::Structure*);
-    ~JSNativeStreamSourceAdapter();
     void finishCreation(JSC::VM&);
 };
 

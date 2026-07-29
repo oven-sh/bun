@@ -532,14 +532,15 @@ impl<'a> Coordinator<'a> {
             // the exit status reflects the crash. SIGKILL is treated as a
             // regular failure (commonly the OOM killer or the user).
             let panicked = is_panic_status(status);
-            if self.bailed {
+            let was_bailed = self.bailed;
+            if was_bailed && !panicked {
                 self.account_unfinished(idx, b"aborted: sibling worker panicked");
             } else {
                 self.account_crash(idx, status);
             }
             Output::flush();
             w.inflight = None;
-            if panicked && !self.bailed {
+            if panicked {
                 self.abort_on_worker_panic(idx, status);
             }
         }

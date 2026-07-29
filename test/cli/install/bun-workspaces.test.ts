@@ -1211,6 +1211,101 @@ test.concurrent("it should detect duplicate workspace dependencies", async () =>
   expect(await exited).toBe(1);
 });
 
+// The duplicate-workspace-name check keys on a wyhash truncated to u32.
+// "@demo/app-03511" and "@demo/app-13215" are distinct names whose hashes
+// share the low 32 bits (0x66dff920), so before the real-name confirm was
+// added they were falsely rejected as duplicates (#36386).
+const collidingA = "@demo/app-03511";
+const collidingB = "@demo/app-13215";
+
+test.concurrent("workspace names that collide in the truncated name hash are not duplicates", async () => {
+  using ctx = await setupTest();
+  const { packageDir, packageJson, env } = ctx;
+  await write(
+    packageJson,
+    JSON.stringify({
+      name: "foo",
+      workspaces: ["packages/*"],
+    }),
+  );
+
+  await write(join(packageDir, "packages", "a", "package.json"), JSON.stringify({ name: collidingA }));
+  await write(join(packageDir, "packages", "b", "package.json"), JSON.stringify({ name: collidingB }));
+
+  const { stderr, exited } = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: packageDir,
+    stdout: "pipe",
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  });
+
+  const err = await stderr.text();
+  expect(err).not.toContain("already exists");
+  expect(await exited).toBe(0);
+});
+
+test.concurrent("hash-colliding workspace name plus a true duplicate of the first still errors", async () => {
+  using ctx = await setupTest();
+  const { packageDir, packageJson, env } = ctx;
+  await write(
+    packageJson,
+    JSON.stringify({
+      name: "foo",
+      workspaces: ["packages/*"],
+    }),
+  );
+
+  await write(join(packageDir, "packages", "a", "package.json"), JSON.stringify({ name: collidingA }));
+  await write(join(packageDir, "packages", "b", "package.json"), JSON.stringify({ name: collidingB }));
+  await write(join(packageDir, "packages", "c", "package.json"), JSON.stringify({ name: collidingA }));
+
+  const { stderr, exited } = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: packageDir,
+    stdout: "pipe",
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  });
+
+  const err = await stderr.text();
+  expect(err).toContain(`Workspace name "${collidingA}" already exists`);
+  expect(err).not.toContain(`Workspace name "${collidingB}" already exists`);
+  expect(await exited).toBe(1);
+});
+
+test.concurrent("hash-colliding workspace name plus a true duplicate of the second still errors", async () => {
+  using ctx = await setupTest();
+  const { packageDir, packageJson, env } = ctx;
+  await write(
+    packageJson,
+    JSON.stringify({
+      name: "foo",
+      workspaces: ["packages/*"],
+    }),
+  );
+
+  await write(join(packageDir, "packages", "a", "package.json"), JSON.stringify({ name: collidingA }));
+  await write(join(packageDir, "packages", "b", "package.json"), JSON.stringify({ name: collidingB }));
+  await write(join(packageDir, "packages", "c", "package.json"), JSON.stringify({ name: collidingB }));
+
+  const { stderr, exited } = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: packageDir,
+    stdout: "pipe",
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  });
+
+  const err = await stderr.text();
+  expect(err).toContain(`Workspace name "${collidingB}" already exists`);
+  expect(err).not.toContain(`Workspace name "${collidingA}" already exists`);
+  expect(await exited).toBe(1);
+});
+
 const versions = ["workspace:1.0.0", "workspace:*", "workspace:^1.0.0", "1.0.0", "*"];
 
 for (const rootVersion of versions) {

@@ -210,9 +210,11 @@ impl DirectoryRoute {
             resp.write_header(b"last-modified", lm);
         }
         resp.write_header(b"etag", etag);
-        if let Some(srv) = this.server.get() {
-            if let Some(alt) = srv.h3_alt_svc() {
-                resp.write_header(b"alt-svc", alt);
+        if !matches!(resp, AnyResponse::H3(_)) {
+            if let Some(srv) = this.server.get() {
+                if let Some(alt) = srv.h3_alt_svc() {
+                    resp.write_header(b"alt-svc", alt);
+                }
             }
         }
 
@@ -557,7 +559,10 @@ fn resolve_subpath(url: &[u8], url_prefix: &[u8], out: &mut [u8]) -> Option<(usi
     if decoded.iter().filter(|&&b| b == b'/').count() != raw_slashes {
         return None;
     }
-    let had_trailing_slash = decoded_len > 0 && decoded[decoded_len - 1] == b'/';
+    if decoded_len == 0 {
+        return Some((0, false));
+    }
+    let had_trailing_slash = decoded[decoded_len - 1] == b'/';
     let end = decoded_len - usize::from(had_trailing_slash);
     let mut seg_start = 0;
     let mut i = 0;
@@ -565,9 +570,6 @@ fn resolve_subpath(url: &[u8], url_prefix: &[u8], out: &mut [u8]) -> Option<(usi
         if i == end || decoded[i] == b'/' {
             let seg = &decoded[seg_start..i];
             if seg.is_empty() || seg == b"." || seg == b".." {
-                if i == 0 && end == 0 {
-                    return Some((0, had_trailing_slash));
-                }
                 return None;
             }
             seg_start = i + 1;
@@ -666,6 +668,8 @@ mod tests {
         assert_eq!(resolve(b"/static/a%2fb.txt", b"/static/"), None);
         assert_eq!(resolve(b"/static//a/b.txt", b"/static/"), None);
         assert_eq!(resolve(b"/static/a//b.txt", b"/static/"), None);
+        assert_eq!(resolve(b"/static//", b"/static/"), None);
+        assert_eq!(resolve(b"//", b"/"), None);
         assert_eq!(resolve(b"/static/./a.txt", b"/static/"), None);
         assert_eq!(resolve(b"/static/a/./b.txt", b"/static/"), None);
         assert_eq!(resolve(b"/static/a/../b.txt", b"/static/"), None);

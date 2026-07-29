@@ -1351,18 +1351,18 @@ pub(crate) fn inject(
                     return Fd::INVALID;
                 }
             };
-            // Always strip authenticode when adding .bun section for --compile
-            if let Err(e) = pe_file.add_bun_section(bytes, bun_pe::StripMode::StripAlways) {
-                bun_core::pretty_errorln!("Error adding Bun section to PE file: {}", e);
-                cleanup(zname, cloned_executable_fd);
-                return Fd::INVALID;
-            }
             if inject_options.hide_console {
                 if let Err(e) = pe_file.set_subsystem(bun_pe::IMAGE_SUBSYSTEM_WINDOWS_GUI) {
                     bun_core::pretty_errorln!("Error setting PE subsystem: {}", e);
                     cleanup(zname, cloned_executable_fd);
                     return Fd::INVALID;
                 }
+            }
+            // Always strip authenticode when adding .bun section for --compile
+            if let Err(e) = pe_file.add_bun_section(bytes, bun_pe::StripMode::StripAlways) {
+                bun_core::pretty_errorln!("Error adding Bun section to PE file: {}", e);
+                cleanup(zname, cloned_executable_fd);
+                return Fd::INVALID;
             }
             drop(input_bytes);
 

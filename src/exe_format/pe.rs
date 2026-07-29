@@ -690,14 +690,13 @@ impl PEFile {
         Ok(())
     }
 
-    /// Set the Windows subsystem field in the optional header (`--windows-hide-console`).
+    /// Set the Windows subsystem field in the optional header. Does not recompute the checksum.
     pub fn set_subsystem(&mut self, subsystem: u16) -> Result<(), Error> {
         let opt = self.get_optional_header_mut()?;
         // SAFETY: opt points into self.data at validated offset
         unsafe {
             (*opt).subsystem = subsystem;
         }
-        self.recompute_pe_checksum()?;
         Ok(())
     }
 

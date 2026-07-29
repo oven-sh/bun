@@ -57,7 +57,7 @@ describe.skipIf(!isWindows).concurrent("--windows-hide-console", () => {
     await expectBuildOk(proc);
 
     expect(readPESubsystem(outfile)).toBe(IMAGE_SUBSYSTEM_WINDOWS_CUI);
-  }, 30_000);
+  });
 
   test("CLI flag sets GUI subsystem", async () => {
     using dir = tempDir("windows-subsystem-gui-cli", {
@@ -91,7 +91,7 @@ describe.skipIf(!isWindows).concurrent("--windows-hide-console", () => {
     const [, , runExit] = await Promise.all([run.stdout.text(), run.stderr.text(), run.exited]);
     expect(await Bun.file(marker).text()).toBe("ran");
     expect(runExit).toBe(0);
-  }, 30_000);
+  });
 
   test("Bun.build() hideConsole sets GUI subsystem", async () => {
     using dir = tempDir("windows-subsystem-gui-api", {
@@ -112,7 +112,7 @@ describe.skipIf(!isWindows).concurrent("--windows-hide-console", () => {
     const outfile = result.outputs[0].path;
     await using _cleanup = cleanup(outfile);
     expect(readPESubsystem(outfile)).toBe(IMAGE_SUBSYSTEM_WINDOWS_GUI);
-  }, 30_000);
+  });
 
   test("GUI subsystem survives the rescle metadata pass", async () => {
     using dir = tempDir("windows-subsystem-gui-rescle", {
@@ -140,7 +140,7 @@ describe.skipIf(!isWindows).concurrent("--windows-hide-console", () => {
     await expectBuildOk(proc);
 
     expect(readPESubsystem(outfile)).toBe(IMAGE_SUBSYSTEM_WINDOWS_GUI);
-  }, 30_000);
+  });
 });
 
 describe.skipIf(!isWindows).concurrent("Windows compile metadata", () => {

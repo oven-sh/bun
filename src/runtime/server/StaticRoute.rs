@@ -214,9 +214,13 @@ impl StaticRoute {
                 }
             };
 
+            let body_decoded = response.body_decoded();
             if let Some(h) = response.get_init_headers_mut() {
                 h.fast_remove(HTTPHeaderName::TransferEncoding);
                 h.fast_remove(HTTPHeaderName::ContentLength);
+                if body_decoded {
+                    h.fast_remove(HTTPHeaderName::ContentEncoding);
+                }
             }
 
             // Consuming the body left a plain `Blob` behind, which no longer implies

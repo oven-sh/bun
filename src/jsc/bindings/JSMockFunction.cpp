@@ -276,6 +276,7 @@ public:
     unsigned spyAttributes = 0;
 
     static constexpr unsigned SpyAttributeESModuleNamespace = 1 << 30;
+    static constexpr unsigned SpyAttributeNotOwn = 1 << 29;
 
     JSString* jsName()
     {
@@ -380,6 +381,11 @@ public:
                 if (auto* moduleNamespaceObject = tryJSDynamicCast<JSModuleNamespaceObject*>(target)) {
                     moduleNamespaceObject->overrideExportValue(moduleNamespaceObject->globalObject(), this->spyIdentifier, implValue);
                 }
+            } else if (this->spyAttributes & SpyAttributeNotOwn) {
+                // The spied property was inherited from the prototype chain (or absent) before spying.
+                // Jest deletes the own shadow so the target re-inherits from its prototype.
+                DeletePropertySlot deleteSlot;
+                JSObject::deleteProperty(target, globalObject(), this->spyIdentifier, deleteSlot);
             } else if (auto index = parseIndex(this->spyIdentifier)) {
                 // Use putDirectIndex for numeric property keys (e.g., spyOn(arr, 0))
                 target->putDirectIndex(globalObject(), *index, implValue, this->spyAttributes, PutDirectIndexLikePutDirect);
@@ -1516,12 +1522,15 @@ BUN_DEFINE_HOST_FUNCTION(JSMock__jsSpyOn, (JSC::JSGlobalObject * lexicalGlobalOb
     // easymode: regular property or missing property
     if (!hasValue || slot.isValue()) {
         JSValue value = jsUndefined();
+        bool hasOwnValue = false;
         if (hasValue) {
             if (slot.isTaintedByOpaqueObject()) [[unlikely]] {
                 // if it's a Proxy or JSModuleNamespaceObject
                 value = object->get(globalObject, propertyKey);
+                hasOwnValue = true;
             } else {
                 value = slot.getValue(globalObject, propertyKey);
+                hasOwnValue = slot.slotBase() == object;
             }
 
             if (dynamicDowncast<JSMockFunction>(value)) {
@@ -1533,6 +1542,9 @@ BUN_DEFINE_HOST_FUNCTION(JSMock__jsSpyOn, (JSC::JSGlobalObject * lexicalGlobalOb
         mock->spyTarget = JSC::Weak<JSObject>(object, &weakValueHandleOwner(), nullptr);
         mock->spyIdentifier = propertyKey.isSymbol() ? Identifier::fromUid(vm, propertyKey.uid()) : Identifier::fromString(vm, propertyKey.publicName());
         mock->spyAttributes = hasValue ? slot.attributes() : 0;
+        if (!hasOwnValue) {
+            mock->spyAttributes |= JSMockFunction::SpyAttributeNotOwn;
+        }
         unsigned attributes = 0;
 
         if (hasValue && ((slot.attributes() & PropertyAttribute::Function) != 0 || (value.isCell() && value.isCallable()))) {

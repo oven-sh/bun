@@ -1081,12 +1081,30 @@ impl JSValkeyClient {
         Ok(promise)
     }
 
+    /// `--redis-preconnect`: best-effort, no event-loop ref, failure is silent.
+    pub fn do_preconnect(
+        &self,
+        global_object: &JSGlobalObject,
+        this_value: JSValue,
+    ) -> JsResult<()> {
+        self.client_mut().flags.is_preconnecting = true;
+        let promise = self.do_connect(global_object, this_value)?;
+        if let Some(p) = promise.as_promise() {
+            JSPromise::opaque_mut(p).set_handled();
+        }
+        Ok(())
+    }
+
     #[bun_jsc::host_fn(method)]
     pub fn js_connect(
         &self,
         global_object: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
+        if self.client.get().flags.is_preconnecting {
+            self.client_mut().flags.is_preconnecting = false;
+            self.update_poll_ref();
+        }
         self.do_connect(global_object, callframe.this())
     }
 
@@ -1193,10 +1211,13 @@ impl JSValkeyClient {
         let _guard = self.ref_scope();
 
         // Ref the poll to keep event loop alive during connection
+        let is_preconnecting = self.client.get().flags.is_preconnecting;
         self.poll_ref.with_mut(|r| {
             r.disable();
             *r = KeepAlive::default();
-            r.ref_(vm_event_loop_ctx());
+            if !is_preconnecting {
+                r.ref_(vm_event_loop_ctx());
+            }
         });
 
         if let Err(err) = self.connect() {
@@ -1606,6 +1627,8 @@ impl JSValkeyClient {
         // the host-fn shim passes a bare `&self` with no ref of its own.
         let _guard = self.ref_scope();
 
+        self.client_mut().flags.is_preconnecting = false;
+
         if self.client.get().flags.needs_to_open_socket {
             bun_core::hint::cold();
 
@@ -1708,11 +1731,14 @@ impl JSValkeyClient {
                 .has_subscriptions(&self.global_object)
                 .unwrap_or(false);
 
-        let has_activity =
-            has_pending_commands || !subs_deletable || self.client.get().flags.is_reconnecting;
+        let keep_alive_for_connect = !self.client.get().flags.is_preconnecting
+            && (self.client.get().flags.is_reconnecting
+                || self.client.get().status == valkey::Status::Connecting);
+
+        let has_activity = has_pending_commands || !subs_deletable || keep_alive_for_connect;
 
         // There's a couple cases to handle here:
-        if has_activity || self.client.get().status == valkey::Status::Connecting {
+        if has_activity {
             // If we currently have pending activity or we are connecting, we need to keep the
             // event loop alive.
             self.poll_ref.with_mut(|r| r.ref_(vm_event_loop_ctx()));

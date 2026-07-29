@@ -41,6 +41,8 @@ pub struct ConnectionFlags {
     pub failed: bool,
     pub enable_auto_pipelining: bool,
     pub finalized: bool,
+    /// `--redis-preconnect` started this connect; suppresses the event-loop ref.
+    pub is_preconnecting: bool,
     // This flag is a slight hack to allow returning the client instance in the
     // promise which resolves when the connection is established. There are two
     // modes through which a client may connect:
@@ -66,6 +68,7 @@ impl Default for ConnectionFlags {
             failed: false,
             enable_auto_pipelining: true,
             finalized: false,
+            is_preconnecting: false,
             connection_promise_returns_client: false,
         }
     }

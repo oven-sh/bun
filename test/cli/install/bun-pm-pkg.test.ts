@@ -64,6 +64,7 @@ function createTestPackageJson(overrides = {}) {
       private: false,
       testBoolean: true,
       testNumber: 42,
+      testFloat: 3.14,
       testNull: null,
       ...overrides,
     },
@@ -548,9 +549,9 @@ describe.concurrent("bun pm pkg", () => {
       mkdirSync(deepDir, { recursive: true });
 
       const [root, ui, deep] = await Promise.all([
-        runPmPkg(["get", "name"], dir),
-        runPmPkg(["get", "name"], uiDir),
-        runPmPkg(["get", "name"], deepDir),
+        runPmPkg(["get", "name"], dir, false),
+        runPmPkg(["get", "name"], uiDir, false),
+        runPmPkg(["get", "name"], deepDir, false),
       ]);
 
       expect(root.output.trim()).toBe('"root-package"');
@@ -581,6 +582,7 @@ describe.concurrent("bun pm pkg", () => {
       const testCases = [
         ["testBoolean", "true"],
         ["testNumber", "42"],
+        ["testFloat", "3.14"],
         ["testNull", "null"],
         ["name", '"test-package"'],
       ] as const;
@@ -642,7 +644,7 @@ describe.concurrent("bun pm pkg", () => {
         "nested[array][0][prop]",
         "nested[array].0.prop",
       ];
-      const results = await Promise.all(testCases.map(n => runPmPkg(["get", n], dir)));
+      const results = await Promise.all(testCases.map(n => runPmPkg(["get", n], dir, false)));
       for (const [i, notation] of testCases.entries()) {
         expect({ notation, output: results[i].output.trim() }).toEqual({ notation, output: '"value1"' });
         expect(results[i].code).toBe(0);
@@ -667,11 +669,13 @@ describe.concurrent("bun pm pkg", () => {
       using dir = makeTestDir();
 
       const [arr0, arr1] = await Promise.all([
-        runPmPkg(["get", "keywords.0"], dir),
-        runPmPkg(["get", "keywords.1"], dir),
+        runPmPkg(["get", "keywords.0"], dir, false),
+        runPmPkg(["get", "keywords.1"], dir, false),
       ]);
       expect(arr0.output.trim()).toBe('"test"');
+      expect(arr0.code).toBe(0);
       expect(arr1.output.trim()).toBe('"package"');
+      expect(arr1.code).toBe(0);
 
       const { code: setCode } = await runPmPkg(["set", "config.0=zero-value"], dir);
       expect(setCode).toBe(0);
@@ -758,7 +762,7 @@ describe.concurrent("bun pm pkg", () => {
         ["dependencies[@types/node]", '"^20.0.0"'],
         ["publishConfig[registry]", '"https://npm.pkg.github.com"'],
       ] as const;
-      const results = await Promise.all(testCases.map(([n]) => runPmPkg(["get", n], realWorldDir)));
+      const results = await Promise.all(testCases.map(([n]) => runPmPkg(["get", n], realWorldDir, false)));
       for (const [i, [notation, expected]] of testCases.entries()) {
         expect({ notation, output: results[i].output.trim() }).toEqual({ notation, output: expected });
         expect(results[i].code).toBe(0);

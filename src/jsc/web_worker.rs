@@ -227,7 +227,7 @@ unsafe extern "C" {
         cpp_worker: *mut c_void,
         message: &mut BunString,
         err: JSValue,
-    );
+    ) -> bool;
 }
 
 /// Process-global registry of worker threads that have been spawned and
@@ -1116,7 +1116,11 @@ impl WebWorker {
                     (*promise).result(vm.jsc_vm()),
                     true,
                 );
-                if !handled {
+                // `handled` reflects process.on('uncaughtException'). The
+                // self.onerror preventDefault() path instead returns from
+                // on_unhandled_rejection without arming termination, so also
+                // consult has_requested_terminate() before shutting down.
+                if !handled && self.has_requested_terminate() {
                     // exit_code is already 1 from uncaught_exception; re-setting it here
                     // would clobber a process.on('exit') change to process.exitCode.
                     return self.shutdown();
@@ -1473,7 +1477,7 @@ impl WebWorker {
         let mut str = bun_core::OwnedString::new(str);
         let dispatch = jsc::host_fn::from_js_host_call_generic(global, || {
             // `cpp_worker` is the opaque C++-owned handle; `str` reffed for the call.
-            WebWorker__dispatchError(global, self.cpp_worker, &mut str, err)
+            WebWorker__dispatchError(global, self.cpp_worker, &mut str, err);
         });
         if let Err(e) = dispatch {
             // `take_exception` on a `JsError` always returns an Exception
@@ -1523,6 +1527,9 @@ fn on_unhandled_rejection(
     // `&mut`) — see worker-thread `&self` note.
     let worker = vm.worker_ref().expect("Assertion failure: no worker");
 
+    // Fallback ErrorEvent.message for values C++ can't summarize (not a
+    // JSC::ErrorInstance). C++ replaces it with `sanitizedToString` when the
+    // thrown value is an ErrorInstance.
     let format_result = jsc::console_object::format2(
         jsc::console_object::MessageLevel::Debug,
         global_object,
@@ -1546,6 +1553,7 @@ fn on_unhandled_rejection(
         error_instance = global_object.try_take_exception().unwrap();
     }
     jsc::mark_binding();
+    let mut error_message = bun_core::OwnedString::new(BunString::clone_utf8(&array));
     // We RETURN through
     // the live C++ frames after dispatching (see the note below), so the
     // simulated throw of the C++ `DECLARE_THROW_SCOPE` inside
@@ -1555,20 +1563,30 @@ fn on_unhandled_rejection(
     // `verifyExceptionCheckNeedIsSatisfied`. Wrap in `from_js_host_call_generic`
     // (declares + checks a TopExceptionScope around the FFI call, same as
     // `flush_logs` above) and discard any actual exception: we are already the
-    // last-resort error handler and about to arm termination.
-    let mut error_message = bun_core::OwnedString::new(BunString::clone_utf8(&array));
-    if jsc::host_fn::from_js_host_call_generic(global_object, || {
+    // last-resort error handler.
+    let handled = match jsc::host_fn::from_js_host_call_generic(global_object, || {
         // `cpp_worker` is the opaque C++-owned handle round-tripped via `safe fn`.
         WebWorker__dispatchError(
             global_object,
             worker.cpp_worker,
             &mut error_message,
             error_instance,
-        );
-    })
-    .is_err()
-    {
-        let _ = global_object.try_take_exception();
+        )
+    }) {
+        Ok(handled) => handled,
+        Err(_) => {
+            let _ = global_object.try_take_exception();
+            false
+        }
+    };
+    if handled {
+        // self.onerror called preventDefault(): undo uncaught_exception's
+        // side-effects so the worker continues running. Restoring the hook
+        // lets a subsequent uncaught error run through this path again.
+        vm.on_unhandled_rejection = on_unhandled_rejection;
+        vm.unhandled_error_counter = vm.unhandled_error_counter.saturating_sub(1);
+        vm.exit_handler.exit_code = 0;
+        return;
     }
     // node runs the worker's process 'exit' handlers on an uncaught exception (code 1;
     // they may change process.exitCode). Run them before arming termination — a pending

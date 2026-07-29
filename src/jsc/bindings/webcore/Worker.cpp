@@ -33,8 +33,10 @@
 #include "Event.h"
 #include "EventNames.h"
 #include "StructuredSerializeOptions.h"
+#include <JavaScriptCore/ErrorInstance.h>
 #include <JavaScriptCore/IteratorOperations.h>
 #include <JavaScriptCore/ScriptCallStack.h>
+#include <JavaScriptCore/TopExceptionScope.h>
 #include <wtf/TZoneMallocInlines.h>
 #include <wtf/Scope.h>
 #include "SerializedScriptValue.h"
@@ -517,14 +519,29 @@ void Worker::fireEarlyMessages(Zig::GlobalObject* workerGlobalObject)
     }
 }
 
-void Worker::dispatchErrorWithMessage(WTF::String message)
+void Worker::dispatchError(WTF::String message, WTF::String filename, unsigned lineno, unsigned colno, RefPtr<SerializedScriptValue>&& serializedError)
 {
-    postTaskToParent([protectedThis = Ref { *this }, message = message.isolatedCopy()](ScriptExecutionContext&) {
+    postTaskToParent([protectedThis = Ref { *this }, message = message.isolatedCopy(), filename = filename.isolatedCopy(), lineno, colno, serializedError = WTF::move(serializedError)](ScriptExecutionContext& context) {
+        auto* globalObject = context.globalObject();
+        auto& vm = JSC::getVM(globalObject);
+        auto scope = DECLARE_THROW_SCOPE(vm);
+
         ErrorEvent::Init init;
         init.message = message;
+        init.filename = filename;
+        init.lineno = lineno;
+        init.colno = colno;
+        init.cancelable = true;
+        if (serializedError) {
+            JSValue deserialized = serializedError->deserialize(*globalObject, globalObject, SerializationErrorMode::NonThrowing);
+            CLEAR_IF_EXCEPTION(scope);
+            if (deserialized)
+                init.error = deserialized;
+        }
 
         auto event = ErrorEvent::create(eventNames().errorEvent, init, EventIsTrusted::Yes);
         protectedThis->dispatchEvent(event);
+        CLEAR_IF_EXCEPTION(scope);
     });
 }
 
@@ -724,27 +741,68 @@ extern "C" void WebWorker__fireEarlyMessages(Worker* worker, Zig::GlobalObject* 
     worker->fireEarlyMessages(globalObject);
 }
 
-extern "C" void WebWorker__dispatchError(Zig::GlobalObject* globalObject, Worker* worker, BunString* message, JSC::EncodedJSValue errorValue)
+extern "C" bool WebWorker__dispatchError(Zig::GlobalObject* globalObject, Worker* worker, BunString* message, JSC::EncodedJSValue errorValue)
 {
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+
     JSValue error = JSC::JSValue::decode(errorValue);
     WTF::String messageStr = message->transferToWTFString();
+
+    WTF::String filename;
+    unsigned lineno = 0;
+    unsigned colno = 0;
+    if (auto* errorInstance = dynamicDowncast<JSC::ErrorInstance>(error)) {
+        // materializeErrorInfoIfNeeded runs Bun's computeErrorInfo, which
+        // remaps the throw position through any source map and exposes it via
+        // line()/column() and the sourceURL own-property.
+        errorInstance->materializeErrorInfoIfNeeded(vm);
+        lineno = errorInstance->line();
+        colno = errorInstance->column();
+        if (JSValue sourceURLValue = errorInstance->getDirect(vm, vm.propertyNames->sourceURL); sourceURLValue && sourceURLValue.isString())
+            filename = sourceURLValue.toWTFString(globalObject);
+        scope.clearExceptionExceptTermination();
+        // The ErrorEvent message is a short description ("TypeError: foo"),
+        // not the multi-line console dump the caller may have passed.
+        WTF::String sanitized = errorInstance->sanitizedToString(globalObject);
+        scope.clearExceptionExceptTermination();
+        if (!sanitized.isEmpty())
+            messageStr = WTF::move(sanitized);
+    }
+
     ErrorEvent::Init init;
-    init.message = messageStr.isolatedCopy();
+    init.message = messageStr;
+    init.filename = filename;
+    init.lineno = lineno;
+    init.colno = colno;
     init.error = error;
-    init.cancelable = false;
+    init.cancelable = true;
     init.bubbles = false;
 
-    globalObject->globalEventScope->dispatchEvent(ErrorEvent::create(eventNames().errorEvent, init, EventIsTrusted::Yes));
+    auto workerScopeEvent = ErrorEvent::create(eventNames().errorEvent, init, EventIsTrusted::Yes);
+    globalObject->globalEventScope->dispatchEvent(workerScopeEvent);
+    scope.clearExceptionExceptTermination();
+    if (workerScopeEvent->defaultPrevented())
+        return true;
+
     switch (worker->options().kind) {
-    case WorkerOptions::Kind::Web:
-        return worker->dispatchErrorWithMessage(WTF::move(messageStr));
+    case WorkerOptions::Kind::Web: {
+        // Browsers leave `error` null on the parent event; Bun clones it so
+        // callers have structured data instead of only the message. Falls
+        // back to null if the value is not cloneable.
+        auto serialized = SerializedScriptValue::create(*globalObject, error, SerializationForStorage::No, SerializationErrorMode::NonThrowing);
+        scope.clearExceptionExceptTermination();
+        worker->dispatchError(WTF::move(messageStr), WTF::move(filename), lineno, colno, WTF::move(serialized));
+        return false;
+    }
     case WorkerOptions::Kind::Node:
         if (!worker->dispatchErrorWithValue(globalObject, error)) {
             // If serialization threw an error, use the string instead
-            worker->dispatchErrorWithMessage(WTF::move(messageStr));
+            worker->dispatchError(WTF::move(messageStr), WTF::move(filename), lineno, colno, nullptr);
         }
-        return;
+        return false;
     }
+    return false;
 }
 
 extern "C" WebCore::Worker* WebWorker__getParentWorker(void* bunVM);

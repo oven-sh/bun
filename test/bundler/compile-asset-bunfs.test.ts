@@ -1,6 +1,6 @@
 // https://github.com/oven-sh/bun/issues/15734
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { join, sep } from "path";
 
 // `bun build --compile` copies + rewrites the whole bun binary (~1GB under
@@ -11,7 +11,7 @@ const exe = process.platform === "win32" ? ".exe" : "";
 async function compile(dir: string, extraArgs: string[] = []) {
   await using proc = Bun.spawn({
     cmd: [bunExe(), "build", "--compile", "./index.ts", "--outfile", "app", ...extraArgs],
-    cwd: dir,
+    cwd: String(dir),
     env: bunEnv,
     stdout: "pipe",
     stderr: "pipe",
@@ -37,7 +37,7 @@ describe.concurrent("compile --asset and /$bunfs/ directory semantics", () => {
   test(
     "existsSync/statSync/readdirSync on embedded-file parent directories",
     async () => {
-      const dir = tempDirWithFiles("bunfs-dirsem", {
+      using dir = tempDir("bunfs-dirsem", {
         "index.ts": /* ts */ `
         import asset from "./data.txt" with { type: "file" };
         import fs from "node:fs";
@@ -60,8 +60,8 @@ describe.concurrent("compile --asset and /$bunfs/ directory semantics", () => {
         "data.txt": "hello",
       });
 
-      await compile(dir);
-      const { stdout, stderr, code } = await run(dir);
+      await compile(String(dir));
+      const { stdout, stderr, code } = await run(String(dir));
       expect(stderr.trim()).toBe("");
       const r = JSON.parse(stdout.trim());
       expect(r.assetExists).toBe(true);
@@ -81,7 +81,7 @@ describe.concurrent("compile --asset and /$bunfs/ directory semantics", () => {
   test(
     "--asset embeds a directory tree with original paths, enumerable via fs and readable via Bun.file",
     async () => {
-      const dir = tempDirWithFiles("bunfs-asset-flag", {
+      using dir = tempDir("bunfs-asset-flag", {
         "index.ts": /* ts */ `
         import fs from "node:fs";
         import path from "node:path";
@@ -127,8 +127,8 @@ describe.concurrent("compile --asset and /$bunfs/ directory semantics", () => {
         "client/_app/immutable/chunks/entry.js": "export default 1;",
       });
 
-      await compile(dir, ["--asset", "./client"]);
-      const { stdout, stderr, code } = await run(dir);
+      await compile(String(dir), ["--asset", "./client"]);
+      const { stdout, stderr, code } = await run(String(dir));
       expect(stderr.trim()).toBe("");
       const r = JSON.parse(stdout.trim());
 
@@ -171,7 +171,7 @@ describe.concurrent("compile --asset and /$bunfs/ directory semantics", () => {
   test(
     "readdirSync on a non-existent /$bunfs/ path throws ENOENT",
     async () => {
-      const dir = tempDirWithFiles("bunfs-enoent", {
+      using dir = tempDir("bunfs-enoent", {
         "index.ts": /* ts */ `
         import fs from "node:fs";
         import path from "node:path";
@@ -184,8 +184,8 @@ describe.concurrent("compile --asset and /$bunfs/ directory semantics", () => {
         }
       `,
       });
-      await compile(dir);
-      const { stdout, stderr, code } = await run(dir);
+      await compile(String(dir));
+      const { stdout, stderr, code } = await run(String(dir));
       expect(stderr.trim()).toBe("");
       const r = JSON.parse(stdout.trim());
       expect(r.code).toBe("ENOENT");
@@ -198,7 +198,7 @@ describe.concurrent("compile --asset and /$bunfs/ directory semantics", () => {
   test(
     "--asset on a single file",
     async () => {
-      const dir = tempDirWithFiles("bunfs-asset-file", {
+      using dir = tempDir("bunfs-asset-file", {
         "index.ts": /* ts */ `
         import fs from "node:fs";
         import path from "node:path";
@@ -213,8 +213,8 @@ describe.concurrent("compile --asset and /$bunfs/ directory semantics", () => {
       `,
         "config.json": `{"ok":true}`,
       });
-      await compile(dir, ["--asset", "./config.json"]);
-      const { stdout, stderr, code } = await run(dir);
+      await compile(String(dir), ["--asset", "./config.json"]);
+      const { stdout, stderr, code } = await run(String(dir));
       expect(stderr.trim()).toBe("");
       const r = JSON.parse(stdout.trim());
       expect(r.exists).toBe(true);
@@ -228,7 +228,7 @@ describe.concurrent("compile --asset and /$bunfs/ directory semantics", () => {
   test(
     "--asset errors on colliding embedded paths",
     async () => {
-      const dir = tempDirWithFiles("bunfs-asset-collide", {
+      using dir = tempDir("bunfs-asset-collide", {
         "index.ts": `console.log("unreachable");`,
         "a/config.json": `1`,
         "b/config.json": `2`,
@@ -246,7 +246,7 @@ describe.concurrent("compile --asset and /$bunfs/ directory semantics", () => {
           "--asset",
           "./b/config.json",
         ],
-        cwd: dir,
+        cwd: String(dir),
         env: bunEnv,
         stdout: "ignore",
         stderr: "pipe",
@@ -262,13 +262,13 @@ describe.concurrent("compile --asset and /$bunfs/ directory semantics", () => {
   test(
     "--asset errors when its basename matches --outfile",
     async () => {
-      const dir = tempDirWithFiles("bunfs-asset-entry", {
+      using dir = tempDir("bunfs-asset-entry", {
         "index.ts": `console.log("unreachable");`,
         "client/index.html": `x`,
       });
       await using proc = Bun.spawn({
         cmd: [bunExe(), "build", "--compile", "./index.ts", "--outfile", "./dist/client", "--asset", "./client"],
-        cwd: dir,
+        cwd: String(dir),
         env: bunEnv,
         stdout: "ignore",
         stderr: "pipe",
@@ -296,14 +296,14 @@ describe.concurrent("compile --asset and /$bunfs/ directory semantics", () => {
           ] as const,
         ]),
   ])("rejects %j", async (args, expected) => {
-    const dir = tempDirWithFiles("bunfs-asset-reject", {
+    using dir = tempDir("bunfs-asset-reject", {
       "index.ts": `console.log("x");`,
       "index.html": `<!doctype html>`,
       "public/a.txt": `a`,
     });
     await using proc = Bun.spawn({
       cmd: [bunExe(), ...args],
-      cwd: dir,
+      cwd: String(dir),
       env: bunEnv,
       stdout: "ignore",
       stderr: "pipe",

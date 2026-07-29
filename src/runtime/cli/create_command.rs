@@ -961,12 +961,18 @@ impl CreateCommand {
             let parent_dir = bun_sys::Dir::open(destination)?;
             if template_has_gitignore {
                 // rename replaces an existing .gitignore; linkat fails EEXIST.
-                let _ = bun_sys::renameat(
+                if let Err(err) = bun_sys::renameat(
                     parent_dir.fd(),
                     bun_core::zstr!("gitignore"),
                     parent_dir.fd(),
                     bun_core::zstr!(".gitignore"),
-                );
+                ) {
+                    pretty_errorln!(
+                        "<r><red>{}<r>: renaming gitignore to .gitignore",
+                        bstr::BStr::new(err.name()),
+                    );
+                    Global::exit(1);
+                }
             }
             if template_has_npmignore {
                 let _ = bun_sys::unlinkat(&parent_dir, bun_core::zstr!(".npmignore"));

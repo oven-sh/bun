@@ -308,6 +308,28 @@ test
     expect({ exitCode, stderr }).toEqual({ exitCode: 0, stderr: expect.not.stringContaining("error") });
   });
 
+test.concurrent("bun create reports a failed gitignore rename instead of claiming success", async () => {
+  using dir = tempDir("create-local-gitignore-dir", {
+    "templates/mytpl/gitignore": "node_modules",
+    "proj/.gitignore/inner.txt": "keep",
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "create", "mytpl", "."],
+    env: createEnv(join(String(dir), "templates"), { expectConflictExit: true }),
+    cwd: join(String(dir), "proj"),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited, proc.stdout.text()]);
+
+  expect(await Bun.file(join(String(dir), "proj", ".gitignore", "inner.txt")).text()).toBe("keep");
+  expect({ exitCode, stderr }).toEqual({
+    exitCode: 1,
+    stderr: expect.stringContaining("renaming gitignore to .gitignore"),
+  });
+});
+
 test.concurrent("bun create from local template flags a directory named README.md as a conflict", async () => {
   using dir = tempDir("create-local-readme-dir", {
     "templates/mytpl/README.md": "template readme",

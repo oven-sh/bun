@@ -404,20 +404,27 @@ describe("web worker", () => {
     const messages: any[] = [];
     worker.addEventListener("message", e => messages.push(e.data));
     worker.onerror = e => messages.push("error: " + e.message);
-    await once(worker, "close");
+    const [close] = await once(worker, "close");
     expect(messages).toEqual(["closing"]);
+    expect(close.code).toBe(0);
   });
 
-  test("self.close() from onmessage drops the rest of the batch", async () => {
-    const src = `self.onmessage = e => { postMessage(e.data); if (e.data === 0) self.close(); };`;
-    const worker = new Worker("data:text/javascript," + encodeURIComponent(src));
-    await once(worker, "open");
-    for (let i = 0; i < 5; i++) worker.postMessage(i);
-    const messages: any[] = [];
-    worker.addEventListener("message", e => messages.push(e.data));
-    await once(worker, "close");
-    expect(messages).toEqual([0]);
-  });
+  for (const defer of ["sync", "microtask"] as const) {
+    test(`self.close() from onmessage (${defer}) drops the rest of the batch`, async () => {
+      const call = defer === "sync" ? "self.close()" : "queueMicrotask(() => self.close())";
+      const src = `self.onmessage = e => { postMessage(e.data); if (e.data === 0) ${call}; };`;
+      const worker = new Worker("data:text/javascript," + encodeURIComponent(src));
+      worker.onerror = e => {
+        throw e.message ?? e;
+      };
+      await once(worker, "open");
+      for (let i = 0; i < 5; i++) worker.postMessage(i);
+      const messages: any[] = [];
+      worker.addEventListener("message", e => messages.push(e.data));
+      await once(worker, "close");
+      expect(messages).toEqual([0]);
+    });
+  }
 
   test("close and name are not defined on the main-thread global", () => {
     expect("close" in globalThis).toBe(false);

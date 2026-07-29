@@ -311,9 +311,9 @@ static inline bool drainInbox(Worker::MessageInbox& inbox, Zig::GlobalObject* gl
 
             auto ports = MessagePort::entanglePorts(context, WTF::move(message.transferredPorts));
             auto event = MessageEvent::create(*context.jsGlobalObject(), message.message.releaseNonNull(), nullptr, WTF::move(ports));
-            bool keepGoing = dispatch(event.event);
+            dispatch(event.event);
 
-            if (globalObject->drainMicrotasks() || !keepGoing) {
+            if (globalObject->drainMicrotasks() || WebWorker__isCloseRequested(globalObject->bunVM())) {
                 // Termination pending, or the receiver's self.close() asked us
                 // to stop. Drop the rest: dispatch is a no-op past this point.
                 return false;
@@ -342,7 +342,6 @@ void Worker::drainToWorker(ScriptExecutionContext& context)
     }
     bool reschedule = drainInbox(m_toWorker, globalObject, context, [&](Event& event) {
         globalObject->globalEventScope->dispatchEvent(event);
-        return !WebWorker__isCloseRequested(globalObject->bunVM());
     });
     if (reschedule) {
         ScriptExecutionContext::postTaskTo(m_clientIdentifier, [protectedThis = Ref { *this }](ScriptExecutionContext& ctx) {
@@ -361,7 +360,6 @@ void Worker::drainToParent(ScriptExecutionContext& context)
     }
     bool reschedule = drainInbox(m_toParent, globalObject, context, [&](Event& event) {
         dispatchEvent(event);
-        return true;
     });
     if (reschedule) {
         postTaskToParent([protectedThis = Ref { *this }](ScriptExecutionContext& c) {

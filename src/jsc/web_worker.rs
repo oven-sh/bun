@@ -1150,7 +1150,9 @@ impl WebWorker {
                     // would clobber a process.on('exit') change to process.exitCode.
                     return self.shutdown();
                 }
-            } else if status == jsc::js_promise::Status::Pending {
+            } else if status == jsc::js_promise::Status::Pending
+                && !self.close_requested.load(Ordering::Relaxed)
+            {
                 // Unsettled top-level await (loop drained, entry promise still
                 // pending): node exits the worker with code 13, but only if the
                 // user hasn't set a nonzero process.exitCode.
@@ -1159,7 +1161,7 @@ impl WebWorker {
                 }
                 self.flush_logs(vm);
                 return self.shutdown();
-            } else {
+            } else if status == jsc::js_promise::Status::Fulfilled {
                 let _ = (*promise).result(vm.jsc_vm());
             }
         }

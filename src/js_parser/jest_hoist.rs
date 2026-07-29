@@ -102,7 +102,13 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
                         kept.push(*stmt);
                         continue;
                     }
-                    self.lower_import_to_await_import(&import_data, path, stmt.loc, &mut kept, bump);
+                    self.lower_import_to_await_import(
+                        &import_data,
+                        path,
+                        stmt.loc,
+                        &mut kept,
+                        bump,
+                    );
                     continue;
                 }
                 kept.push(*stmt);
@@ -189,7 +195,13 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
                 );
                 let mut decls = G::DeclList::init_capacity(1);
                 decls.append_assume_capacity(G::Decl {
-                    binding: Binding::alloc(bump, B::Identifier { r#ref: default.ref_ }, default.loc),
+                    binding: Binding::alloc(
+                        bump,
+                        B::Identifier {
+                            r#ref: default.ref_,
+                        },
+                        default.loc,
+                    ),
                     value: Some(dot),
                 });
                 out.push(self.s(
@@ -227,7 +239,12 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
                 },
                 loc,
             );
-            let value = self.b(B::Identifier { r#ref: default.ref_ }, default.loc);
+            let value = self.b(
+                B::Identifier {
+                    r#ref: default.ref_,
+                },
+                default.loc,
+            );
             props.push(B::Property {
                 flags: bun_ast::flags::PROPERTY_NONE,
                 key,
@@ -244,7 +261,12 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
                 },
                 loc,
             );
-            let value = self.b(B::Identifier { r#ref: item.name.ref_ }, item.name.loc);
+            let value = self.b(
+                B::Identifier {
+                    r#ref: item.name.ref_,
+                },
+                item.name.loc,
+            );
             props.push(B::Property {
                 flags: bun_ast::flags::PROPERTY_NONE,
                 key,

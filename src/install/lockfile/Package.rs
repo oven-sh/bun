@@ -2610,8 +2610,6 @@ impl Package<u64> {
                     let gop = seen_workspace_names
                         .get_or_put(semver::string::Builder::string_hash(&entry.name)
                             as TruncatedPackageNameHash)?;
-                    // The truncated hash can collide for distinct names, so
-                    // confirm with a real name comparison.
                     let is_duplicate = gop.found_existing
                         && workspace_names
                             .values()

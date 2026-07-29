@@ -15187,7 +15187,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "11323404221389353756",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/@alloc/quick-lru/-/quick-lru-5.2.0.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "5.2.0",
       },
@@ -15207,7 +15207,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "6188048000334411082",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/@babel/code-frame/-/code-frame-7.29.0.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "7.29.0",
       },
@@ -15223,7 +15223,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "1733861246342732998",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/@babel/compat-data/-/compat-data-7.29.0.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "7.29.0",
       },
@@ -15255,7 +15255,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "13303211708922132916",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/@babel/core/-/core-7.29.0.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "7.29.0",
       },
@@ -15277,7 +15277,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "11472420913358269163",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/@babel/generator/-/generator-7.29.1.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "7.29.1",
       },
@@ -15299,7 +15299,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "16047025803657837620",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/@babel/helper-compilation-targets/-/helper-compilation-targets-7.28.6.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "7.28.6",
       },
@@ -15315,7 +15315,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "17699714412310852923",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/@babel/helper-globals/-/helper-globals-7.28.0.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "7.28.0",
       },
@@ -15334,7 +15334,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "9879384990246033758",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/@babel/helper-module-imports/-/helper-module-imports-7.28.6.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "7.28.6",
       },
@@ -15355,7 +15355,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "12600532952622070361",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/@babel/helper-module-transforms/-/helper-module-transforms-7.28.6.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "7.28.6",
       },
@@ -15371,7 +15371,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "318096579404154149",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/@babel/helper-string-parser/-/helper-string-parser-7.27.1.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "7.27.1",
       },
@@ -15387,7 +15387,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "13229699169636733158",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/@babel/helper-validator-identifier/-/helper-validator-identifier-7.28.5.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "7.28.5",
       },
@@ -15403,7 +15403,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "13159468215021448171",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/@babel/helper-validator-option/-/helper-validator-option-7.27.1.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "7.27.1",
       },
@@ -15422,7 +15422,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "13382377205052269127",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/@babel/helpers/-/helpers-7.28.6.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "7.28.6",
       },
@@ -15442,7 +15442,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "4102001973917008655",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/@babel/parser/-/parser-7.29.0.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "7.29.0",
       },
@@ -15462,7 +15462,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "13732475051965763394",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/@babel/template/-/template-7.28.6.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "7.28.6",
       },
@@ -15486,7 +15486,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "9953601319647180826",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/@babel/traverse/-/traverse-7.29.0.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "7.29.0",
       },
@@ -15505,7 +15505,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "13927531554313474838",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/@babel/types/-/types-7.29.0.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "7.29.0",
       },
@@ -15524,7 +15524,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "3084725397801271262",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/@emnapi/core/-/core-1.4.5.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "1.4.5",
       },
@@ -15542,7 +15542,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "4977061119926641513",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/@emnapi/runtime/-/runtime-1.9.0.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "1.9.0",
       },
@@ -15560,7 +15560,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "3630253028170596237",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/@emnapi/wasi-threads/-/wasi-threads-1.0.4.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "1.0.4",
       },
@@ -15579,7 +15579,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "17370105237013380211",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/@eslint-community/eslint-utils/-/eslint-utils-4.7.0.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "4.7.0",
       },
@@ -15595,7 +15595,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "633405221675698401",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/@eslint-community/regexpp/-/regexpp-4.12.1.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "4.12.1",
       },
@@ -15615,7 +15615,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "148122951212409310",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/@eslint/config-array/-/config-array-0.21.0.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "0.21.0",
       },
@@ -15631,7 +15631,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "12452179834098898295",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/@eslint/config-helpers/-/config-helpers-0.3.1.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "0.3.1",
       },
@@ -15649,7 +15649,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "10697782061904102937",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/@eslint/core/-/core-0.15.2.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "0.15.2",
       },
@@ -15675,7 +15675,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "12097048422266797669",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/@eslint/eslintrc/-/eslintrc-3.3.1.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "3.3.1",
       },
@@ -15691,7 +15691,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "14520481844909638934",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/@eslint/js/-/js-9.33.0.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "9.33.0",
       },
@@ -15707,7 +15707,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "5330299593139805259",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/@eslint/object-schema/-/object-schema-2.1.6.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "2.1.6",
       },
@@ -15726,7 +15726,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "9620325835045817459",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/@eslint/plugin-kit/-/plugin-kit-0.3.5.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "0.3.5",
       },
@@ -15742,7 +15742,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "13919944181421575122",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/@humanfs/core/-/core-0.19.1.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "0.19.1",
       },
@@ -15761,7 +15761,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "14264788128209405786",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/@humanfs/node/-/node-0.16.6.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "0.16.6",
       },
@@ -15777,7 +15777,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "12456817044413428026",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/@humanwhocodes/module-importer/-/module-importer-1.0.1.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "1.0.1",
       },
@@ -15793,7 +15793,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "4603709753412279028",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/@humanwhocodes/retry/-/retry-0.4.3.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "0.4.3",
       },
@@ -15809,7 +15809,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "988153979748745243",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/@img/colour/-/colour-1.1.0.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "1.1.0",
       },
@@ -15833,7 +15833,7 @@ exports[`ssr works for 100-ish requests 1`] = `
         "darwin",
       ],
       "resolution": {
-        "resolved": "https://registry.npmjs.org/@img/sharp-darwin-arm64/-/sharp-darwin-arm64-0.34.5.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "0.34.5",
       },
@@ -15857,7 +15857,7 @@ exports[`ssr works for 100-ish requests 1`] = `
         "darwin",
       ],
       "resolution": {
-        "resolved": "https://registry.npmjs.org/@img/sharp-darwin-x64/-/sharp-darwin-x64-0.34.5.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "0.34.5",
       },
@@ -15879,7 +15879,7 @@ exports[`ssr works for 100-ish requests 1`] = `
         "darwin",
       ],
       "resolution": {
-        "resolved": "https://registry.npmjs.org/@img/sharp-libvips-darwin-arm64/-/sharp-libvips-darwin-arm64-1.2.4.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "1.2.4",
       },
@@ -15901,7 +15901,7 @@ exports[`ssr works for 100-ish requests 1`] = `
         "darwin",
       ],
       "resolution": {
-        "resolved": "https://registry.npmjs.org/@img/sharp-libvips-darwin-x64/-/sharp-libvips-darwin-x64-1.2.4.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "1.2.4",
       },
@@ -15923,7 +15923,7 @@ exports[`ssr works for 100-ish requests 1`] = `
         "linux",
       ],
       "resolution": {
-        "resolved": "https://registry.npmjs.org/@img/sharp-libvips-linux-arm/-/sharp-libvips-linux-arm-1.2.4.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "1.2.4",
       },
@@ -15945,7 +15945,7 @@ exports[`ssr works for 100-ish requests 1`] = `
         "linux",
       ],
       "resolution": {
-        "resolved": "https://registry.npmjs.org/@img/sharp-libvips-linux-arm64/-/sharp-libvips-linux-arm64-1.2.4.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "1.2.4",
       },
@@ -15967,7 +15967,7 @@ exports[`ssr works for 100-ish requests 1`] = `
         "linux",
       ],
       "resolution": {
-        "resolved": "https://registry.npmjs.org/@img/sharp-libvips-linux-ppc64/-/sharp-libvips-linux-ppc64-1.2.4.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "1.2.4",
       },
@@ -15987,7 +15987,7 @@ exports[`ssr works for 100-ish requests 1`] = `
         "linux",
       ],
       "resolution": {
-        "resolved": "https://registry.npmjs.org/@img/sharp-libvips-linux-riscv64/-/sharp-libvips-linux-riscv64-1.2.4.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "1.2.4",
       },
@@ -16009,7 +16009,7 @@ exports[`ssr works for 100-ish requests 1`] = `
         "linux",
       ],
       "resolution": {
-        "resolved": "https://registry.npmjs.org/@img/sharp-libvips-linux-s390x/-/sharp-libvips-linux-s390x-1.2.4.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "1.2.4",
       },
@@ -16031,7 +16031,7 @@ exports[`ssr works for 100-ish requests 1`] = `
         "linux",
       ],
       "resolution": {
-        "resolved": "https://registry.npmjs.org/@img/sharp-libvips-linux-x64/-/sharp-libvips-linux-x64-1.2.4.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "1.2.4",
       },
@@ -16053,7 +16053,7 @@ exports[`ssr works for 100-ish requests 1`] = `
         "linux",
       ],
       "resolution": {
-        "resolved": "https://registry.npmjs.org/@img/sharp-libvips-linuxmusl-arm64/-/sharp-libvips-linuxmusl-arm64-1.2.4.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "1.2.4",
       },
@@ -16075,7 +16075,7 @@ exports[`ssr works for 100-ish requests 1`] = `
         "linux",
       ],
       "resolution": {
-        "resolved": "https://registry.npmjs.org/@img/sharp-libvips-linuxmusl-x64/-/sharp-libvips-linuxmusl-x64-1.2.4.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "1.2.4",
       },
@@ -16099,7 +16099,7 @@ exports[`ssr works for 100-ish requests 1`] = `
         "linux",
       ],
       "resolution": {
-        "resolved": "https://registry.npmjs.org/@img/sharp-linux-arm/-/sharp-linux-arm-0.34.5.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "0.34.5",
       },
@@ -16123,7 +16123,7 @@ exports[`ssr works for 100-ish requests 1`] = `
         "linux",
       ],
       "resolution": {
-        "resolved": "https://registry.npmjs.org/@img/sharp-linux-arm64/-/sharp-linux-arm64-0.34.5.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "0.34.5",
       },
@@ -16147,7 +16147,7 @@ exports[`ssr works for 100-ish requests 1`] = `
         "linux",
       ],
       "resolution": {
-        "resolved": "https://registry.npmjs.org/@img/sharp-linux-ppc64/-/sharp-linux-ppc64-0.34.5.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "0.34.5",
       },
@@ -16169,7 +16169,7 @@ exports[`ssr works for 100-ish requests 1`] = `
         "linux",
       ],
       "resolution": {
-        "resolved": "https://registry.npmjs.org/@img/sharp-linux-riscv64/-/sharp-linux-riscv64-0.34.5.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "0.34.5",
       },
@@ -16193,7 +16193,7 @@ exports[`ssr works for 100-ish requests 1`] = `
         "linux",
       ],
       "resolution": {
-        "resolved": "https://registry.npmjs.org/@img/sharp-linux-s390x/-/sharp-linux-s390x-0.34.5.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "0.34.5",
       },
@@ -16217,7 +16217,7 @@ exports[`ssr works for 100-ish requests 1`] = `
         "linux",
       ],
       "resolution": {
-        "resolved": "https://registry.npmjs.org/@img/sharp-linux-x64/-/sharp-linux-x64-0.34.5.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "0.34.5",
       },
@@ -16241,7 +16241,7 @@ exports[`ssr works for 100-ish requests 1`] = `
         "linux",
       ],
       "resolution": {
-        "resolved": "https://registry.npmjs.org/@img/sharp-linuxmusl-arm64/-/sharp-linuxmusl-arm64-0.34.5.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "0.34.5",
       },
@@ -16265,7 +16265,7 @@ exports[`ssr works for 100-ish requests 1`] = `
         "linux",
       ],
       "resolution": {
-        "resolved": "https://registry.npmjs.org/@img/sharp-linuxmusl-x64/-/sharp-linuxmusl-x64-0.34.5.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "0.34.5",
       },
@@ -16284,7 +16284,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "16458642903935599072",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/@img/sharp-wasm32/-/sharp-wasm32-0.34.5.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "0.34.5",
       },
@@ -16306,7 +16306,7 @@ exports[`ssr works for 100-ish requests 1`] = `
         "win32",
       ],
       "resolution": {
-        "resolved": "https://registry.npmjs.org/@img/sharp-win32-arm64/-/sharp-win32-arm64-0.34.5.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "0.34.5",
       },
@@ -16328,7 +16328,7 @@ exports[`ssr works for 100-ish requests 1`] = `
         "win32",
       ],
       "resolution": {
-        "resolved": "https://registry.npmjs.org/@img/sharp-win32-ia32/-/sharp-win32-ia32-0.34.5.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "0.34.5",
       },
@@ -16350,7 +16350,7 @@ exports[`ssr works for 100-ish requests 1`] = `
         "win32",
       ],
       "resolution": {
-        "resolved": "https://registry.npmjs.org/@img/sharp-win32-x64/-/sharp-win32-x64-0.34.5.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "0.34.5",
       },
@@ -16373,7 +16373,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "9642792940339374750",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/@isaacs/cliui/-/cliui-8.0.2.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "8.0.2",
       },
@@ -16392,7 +16392,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "7763226208333403547",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/@jridgewell/gen-mapping/-/gen-mapping-0.3.12.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "0.3.12",
       },
@@ -16411,7 +16411,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "12003282552511141184",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/@jridgewell/remapping/-/remapping-2.3.5.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "2.3.5",
       },
@@ -16427,7 +16427,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "15732631652601645408",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/@jridgewell/resolve-uri/-/resolve-uri-3.1.2.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "3.1.2",
       },
@@ -16443,7 +16443,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "11082572525356782073",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/@jridgewell/sourcemap-codec/-/sourcemap-codec-1.5.4.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "1.5.4",
       },
@@ -16462,7 +16462,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "9132244357866713465",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/@jridgewell/trace-mapping/-/trace-mapping-0.3.29.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "0.3.29",
       },
@@ -16482,7 +16482,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "13076711666448912917",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/@napi-rs/wasm-runtime/-/wasm-runtime-0.2.12.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "0.2.12",
       },
@@ -16498,7 +16498,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "14533567151760189614",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/@next/env/-/env-16.1.6.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "16.1.6",
       },
@@ -16516,7 +16516,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "12150179697604729174",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/@next/eslint-plugin-next/-/eslint-plugin-next-16.1.6.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "16.1.6",
       },
@@ -16538,7 +16538,7 @@ exports[`ssr works for 100-ish requests 1`] = `
         "darwin",
       ],
       "resolution": {
-        "resolved": "https://registry.npmjs.org/@next/swc-darwin-arm64/-/swc-darwin-arm64-16.1.6.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "16.1.6",
       },
@@ -16560,7 +16560,7 @@ exports[`ssr works for 100-ish requests 1`] = `
         "darwin",
       ],
       "resolution": {
-        "resolved": "https://registry.npmjs.org/@next/swc-darwin-x64/-/swc-darwin-x64-16.1.6.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "16.1.6",
       },
@@ -16582,7 +16582,7 @@ exports[`ssr works for 100-ish requests 1`] = `
         "linux",
       ],
       "resolution": {
-        "resolved": "https://registry.npmjs.org/@next/swc-linux-arm64-gnu/-/swc-linux-arm64-gnu-16.1.6.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "16.1.6",
       },
@@ -16604,7 +16604,7 @@ exports[`ssr works for 100-ish requests 1`] = `
         "linux",
       ],
       "resolution": {
-        "resolved": "https://registry.npmjs.org/@next/swc-linux-arm64-musl/-/swc-linux-arm64-musl-16.1.6.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "16.1.6",
       },
@@ -16626,7 +16626,7 @@ exports[`ssr works for 100-ish requests 1`] = `
         "linux",
       ],
       "resolution": {
-        "resolved": "https://registry.npmjs.org/@next/swc-linux-x64-gnu/-/swc-linux-x64-gnu-16.1.6.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "16.1.6",
       },
@@ -16648,7 +16648,7 @@ exports[`ssr works for 100-ish requests 1`] = `
         "linux",
       ],
       "resolution": {
-        "resolved": "https://registry.npmjs.org/@next/swc-linux-x64-musl/-/swc-linux-x64-musl-16.1.6.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "16.1.6",
       },
@@ -16670,7 +16670,7 @@ exports[`ssr works for 100-ish requests 1`] = `
         "win32",
       ],
       "resolution": {
-        "resolved": "https://registry.npmjs.org/@next/swc-win32-arm64-msvc/-/swc-win32-arm64-msvc-16.1.6.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "16.1.6",
       },
@@ -16692,7 +16692,7 @@ exports[`ssr works for 100-ish requests 1`] = `
         "win32",
       ],
       "resolution": {
-        "resolved": "https://registry.npmjs.org/@next/swc-win32-x64-msvc/-/swc-win32-x64-msvc-16.1.6.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "16.1.6",
       },
@@ -16711,7 +16711,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "3021833276702395597",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/@nodelib/fs.scandir/-/fs.scandir-2.1.5.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "2.1.5",
       },
@@ -16727,7 +16727,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "16125660444744770699",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/@nodelib/fs.stat/-/fs.stat-2.0.5.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "2.0.5",
       },
@@ -16746,7 +16746,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "5339111073806757055",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/@nodelib/fs.walk/-/fs.walk-1.2.8.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "1.2.8",
       },
@@ -16762,7 +16762,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "3066512081474605472",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/@nolyfill/is-core-module/-/is-core-module-1.0.39.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "1.0.39",
       },
@@ -16778,7 +16778,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "4691519579619228072",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/@pkgjs/parseargs/-/parseargs-0.11.0.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "0.11.0",
       },
@@ -16805,7 +16805,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "6318517029770692415",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/@puppeteer/browsers/-/browsers-2.10.6.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "2.10.6",
       },
@@ -16821,7 +16821,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "4934525605118031543",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/@rtsao/scc/-/scc-1.1.0.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "1.1.0",
       },
@@ -16839,7 +16839,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "6882297182432941771",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/@swc/helpers/-/helpers-0.5.15.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "0.5.15",
       },
@@ -16855,7 +16855,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "5414003337280545145",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/@tootallnate/quickjs-emscripten/-/quickjs-emscripten-0.23.0.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "0.23.0",
       },
@@ -16873,7 +16873,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "2270914686908960835",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/@tybys/wasm-util/-/wasm-util-0.10.0.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "0.10.0",
       },
@@ -16889,7 +16889,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "16071358967237991998",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/@types/estree/-/estree-1.0.8.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "1.0.8",
       },
@@ -16905,7 +16905,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "17068273657227569608",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/@types/json-schema/-/json-schema-7.0.15.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "7.0.15",
       },
@@ -16921,7 +16921,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "7880870305537908928",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/@types/json5/-/json5-0.0.29.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "0.0.29",
       },
@@ -16939,7 +16939,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "4124652010926124945",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/@types/node/-/node-25.0.0.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "25.0.0",
       },
@@ -16957,7 +16957,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "14723150644049679642",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/@types/react/-/react-19.2.14.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "19.2.14",
       },
@@ -16975,7 +16975,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "3229493356298419080",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/@types/react-dom/-/react-dom-19.2.3.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "19.2.3",
       },
@@ -16993,7 +16993,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "10273980999870455328",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/@types/yauzl/-/yauzl-2.10.3.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "2.10.3",
       },
@@ -17021,7 +17021,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "3341196050094279880",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/@typescript-eslint/eslint-plugin/-/eslint-plugin-8.57.0.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "8.57.0",
       },
@@ -17045,7 +17045,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "16517001479467293030",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/@typescript-eslint/parser/-/parser-8.57.0.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "8.57.0",
       },
@@ -17066,7 +17066,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "11078410380934603815",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/@typescript-eslint/project-service/-/project-service-8.57.0.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "8.57.0",
       },
@@ -17085,7 +17085,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "4117654371883490926",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/@typescript-eslint/scope-manager/-/scope-manager-8.57.0.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "8.57.0",
       },
@@ -17103,7 +17103,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "152941379738456850",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/@typescript-eslint/tsconfig-utils/-/tsconfig-utils-8.57.0.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "8.57.0",
       },
@@ -17127,7 +17127,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "9813662900668315537",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/@typescript-eslint/type-utils/-/type-utils-8.57.0.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "8.57.0",
       },
@@ -17143,7 +17143,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "9755027355340495761",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/@typescript-eslint/types/-/types-8.57.0.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "8.57.0",
       },
@@ -17170,7 +17170,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "17745786537991019945",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/@typescript-eslint/typescript-estree/-/typescript-estree-8.57.0.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "8.57.0",
       },
@@ -17193,7 +17193,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "4822837813978025479",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/@typescript-eslint/utils/-/utils-8.57.0.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "8.57.0",
       },
@@ -17212,7 +17212,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "7940841856001563650",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/@typescript-eslint/visitor-keys/-/visitor-keys-8.57.0.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "8.57.0",
       },
@@ -17234,7 +17234,7 @@ exports[`ssr works for 100-ish requests 1`] = `
         "android",
       ],
       "resolution": {
-        "resolved": "https://registry.npmjs.org/@unrs/resolver-binding-android-arm-eabi/-/resolver-binding-android-arm-eabi-1.11.1.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "1.11.1",
       },
@@ -17256,7 +17256,7 @@ exports[`ssr works for 100-ish requests 1`] = `
         "android",
       ],
       "resolution": {
-        "resolved": "https://registry.npmjs.org/@unrs/resolver-binding-android-arm64/-/resolver-binding-android-arm64-1.11.1.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "1.11.1",
       },
@@ -17278,7 +17278,7 @@ exports[`ssr works for 100-ish requests 1`] = `
         "darwin",
       ],
       "resolution": {
-        "resolved": "https://registry.npmjs.org/@unrs/resolver-binding-darwin-arm64/-/resolver-binding-darwin-arm64-1.11.1.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "1.11.1",
       },
@@ -17300,7 +17300,7 @@ exports[`ssr works for 100-ish requests 1`] = `
         "darwin",
       ],
       "resolution": {
-        "resolved": "https://registry.npmjs.org/@unrs/resolver-binding-darwin-x64/-/resolver-binding-darwin-x64-1.11.1.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "1.11.1",
       },
@@ -17322,7 +17322,7 @@ exports[`ssr works for 100-ish requests 1`] = `
         "freebsd",
       ],
       "resolution": {
-        "resolved": "https://registry.npmjs.org/@unrs/resolver-binding-freebsd-x64/-/resolver-binding-freebsd-x64-1.11.1.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "1.11.1",
       },
@@ -17344,7 +17344,7 @@ exports[`ssr works for 100-ish requests 1`] = `
         "linux",
       ],
       "resolution": {
-        "resolved": "https://registry.npmjs.org/@unrs/resolver-binding-linux-arm-gnueabihf/-/resolver-binding-linux-arm-gnueabihf-1.11.1.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "1.11.1",
       },
@@ -17366,7 +17366,7 @@ exports[`ssr works for 100-ish requests 1`] = `
         "linux",
       ],
       "resolution": {
-        "resolved": "https://registry.npmjs.org/@unrs/resolver-binding-linux-arm-musleabihf/-/resolver-binding-linux-arm-musleabihf-1.11.1.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "1.11.1",
       },
@@ -17388,7 +17388,7 @@ exports[`ssr works for 100-ish requests 1`] = `
         "linux",
       ],
       "resolution": {
-        "resolved": "https://registry.npmjs.org/@unrs/resolver-binding-linux-arm64-gnu/-/resolver-binding-linux-arm64-gnu-1.11.1.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "1.11.1",
       },
@@ -17410,7 +17410,7 @@ exports[`ssr works for 100-ish requests 1`] = `
         "linux",
       ],
       "resolution": {
-        "resolved": "https://registry.npmjs.org/@unrs/resolver-binding-linux-arm64-musl/-/resolver-binding-linux-arm64-musl-1.11.1.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "1.11.1",
       },
@@ -17432,7 +17432,7 @@ exports[`ssr works for 100-ish requests 1`] = `
         "linux",
       ],
       "resolution": {
-        "resolved": "https://registry.npmjs.org/@unrs/resolver-binding-linux-ppc64-gnu/-/resolver-binding-linux-ppc64-gnu-1.11.1.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "1.11.1",
       },
@@ -17452,7 +17452,7 @@ exports[`ssr works for 100-ish requests 1`] = `
         "linux",
       ],
       "resolution": {
-        "resolved": "https://registry.npmjs.org/@unrs/resolver-binding-linux-riscv64-gnu/-/resolver-binding-linux-riscv64-gnu-1.11.1.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "1.11.1",
       },
@@ -17472,7 +17472,7 @@ exports[`ssr works for 100-ish requests 1`] = `
         "linux",
       ],
       "resolution": {
-        "resolved": "https://registry.npmjs.org/@unrs/resolver-binding-linux-riscv64-musl/-/resolver-binding-linux-riscv64-musl-1.11.1.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "1.11.1",
       },
@@ -17494,7 +17494,7 @@ exports[`ssr works for 100-ish requests 1`] = `
         "linux",
       ],
       "resolution": {
-        "resolved": "https://registry.npmjs.org/@unrs/resolver-binding-linux-s390x-gnu/-/resolver-binding-linux-s390x-gnu-1.11.1.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "1.11.1",
       },
@@ -17516,7 +17516,7 @@ exports[`ssr works for 100-ish requests 1`] = `
         "linux",
       ],
       "resolution": {
-        "resolved": "https://registry.npmjs.org/@unrs/resolver-binding-linux-x64-gnu/-/resolver-binding-linux-x64-gnu-1.11.1.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "1.11.1",
       },
@@ -17538,7 +17538,7 @@ exports[`ssr works for 100-ish requests 1`] = `
         "linux",
       ],
       "resolution": {
-        "resolved": "https://registry.npmjs.org/@unrs/resolver-binding-linux-x64-musl/-/resolver-binding-linux-x64-musl-1.11.1.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "1.11.1",
       },
@@ -17557,7 +17557,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "4055229202496667240",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/@unrs/resolver-binding-wasm32-wasi/-/resolver-binding-wasm32-wasi-1.11.1.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "1.11.1",
       },
@@ -17579,7 +17579,7 @@ exports[`ssr works for 100-ish requests 1`] = `
         "win32",
       ],
       "resolution": {
-        "resolved": "https://registry.npmjs.org/@unrs/resolver-binding-win32-arm64-msvc/-/resolver-binding-win32-arm64-msvc-1.11.1.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "1.11.1",
       },
@@ -17601,7 +17601,7 @@ exports[`ssr works for 100-ish requests 1`] = `
         "win32",
       ],
       "resolution": {
-        "resolved": "https://registry.npmjs.org/@unrs/resolver-binding-win32-ia32-msvc/-/resolver-binding-win32-ia32-msvc-1.11.1.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "1.11.1",
       },
@@ -17623,7 +17623,7 @@ exports[`ssr works for 100-ish requests 1`] = `
         "win32",
       ],
       "resolution": {
-        "resolved": "https://registry.npmjs.org/@unrs/resolver-binding-win32-x64-msvc/-/resolver-binding-win32-x64-msvc-1.11.1.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "1.11.1",
       },
@@ -17642,7 +17642,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "17430233180242180057",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/acorn/-/acorn-8.15.0.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "8.15.0",
       },
@@ -17660,7 +17660,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "1754355278825952408",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/acorn-jsx/-/acorn-jsx-5.3.2.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "5.3.2",
       },
@@ -17676,7 +17676,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "17689920659035782501",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/agent-base/-/agent-base-7.1.4.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "7.1.4",
       },
@@ -17697,7 +17697,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "4704814928422522869",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/ajv/-/ajv-6.12.6.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "6.12.6",
       },
@@ -17713,7 +17713,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "8115476937249128794",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/ansi-regex/-/ansi-regex-5.0.1.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "5.0.1",
       },
@@ -17731,7 +17731,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "1496261712670764878",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/ansi-styles/-/ansi-styles-4.3.0.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "4.3.0",
       },
@@ -17747,7 +17747,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "992496519212496549",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/any-promise/-/any-promise-1.3.0.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "1.3.0",
       },
@@ -17766,7 +17766,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "13083778620000400888",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/anymatch/-/anymatch-3.1.3.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "3.1.3",
       },
@@ -17782,7 +17782,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "2472924048160638220",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/arg/-/arg-5.0.2.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "5.0.2",
       },
@@ -17798,7 +17798,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "14330104742551621378",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/argparse/-/argparse-2.0.1.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "2.0.1",
       },
@@ -17814,7 +17814,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "506127023625643336",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/aria-query/-/aria-query-5.3.2.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "5.3.2",
       },
@@ -17833,7 +17833,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "9975978122018604356",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/array-buffer-byte-length/-/array-buffer-byte-length-1.0.2.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "1.0.2",
       },
@@ -17858,7 +17858,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "4525275494838245397",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/array-includes/-/array-includes-3.1.9.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "3.1.9",
       },
@@ -17881,7 +17881,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "1818731707851809687",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/array.prototype.findlast/-/array.prototype.findlast-1.2.5.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "1.2.5",
       },
@@ -17905,7 +17905,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "12218267642355334154",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/array.prototype.findlastindex/-/array.prototype.findlastindex-1.2.6.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "1.2.6",
       },
@@ -17926,7 +17926,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "13419566320551684202",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/array.prototype.flat/-/array.prototype.flat-1.3.3.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "1.3.3",
       },
@@ -17947,7 +17947,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "4112999450230342125",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/array.prototype.flatmap/-/array.prototype.flatmap-1.3.3.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "1.3.3",
       },
@@ -17969,7 +17969,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "6050988382768901310",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/array.prototype.tosorted/-/array.prototype.tosorted-1.1.4.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "1.1.4",
       },
@@ -17993,7 +17993,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "11166998714227851504",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/arraybuffer.prototype.slice/-/arraybuffer.prototype.slice-1.0.4.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "1.0.4",
       },
@@ -18011,7 +18011,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "4997596490212765360",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/ast-types/-/ast-types-0.13.4.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "0.13.4",
       },
@@ -18027,7 +18027,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "3772215945262775731",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/ast-types-flow/-/ast-types-flow-0.0.8.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "0.0.8",
       },
@@ -18043,7 +18043,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "16742661738329866645",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/async-function/-/async-function-1.0.0.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "1.0.0",
       },
@@ -18070,7 +18070,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "8637312893797281270",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/autoprefixer/-/autoprefixer-10.4.21.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "10.4.21",
       },
@@ -18088,7 +18088,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "16267035547686705519",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/available-typed-arrays/-/available-typed-arrays-1.0.7.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "1.0.7",
       },
@@ -18104,7 +18104,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "13988195930258765777",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/axe-core/-/axe-core-4.10.3.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "4.10.3",
       },
@@ -18120,7 +18120,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "9344054106894956572",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/axobject-query/-/axobject-query-4.1.0.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "4.1.0",
       },
@@ -18136,7 +18136,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "10649709558693226266",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/b4a/-/b4a-1.6.7.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "1.6.7",
       },
@@ -18152,7 +18152,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "16269801611404267863",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/balanced-match/-/balanced-match-1.0.2.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "1.0.2",
       },
@@ -18168,7 +18168,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "4035129451839648869",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/bare-events/-/bare-events-2.6.1.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "2.6.1",
       },
@@ -18189,7 +18189,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "15205712258788157948",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/bare-fs/-/bare-fs-4.1.6.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "4.1.6",
       },
@@ -18205,7 +18205,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "6865937522145537276",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/bare-os/-/bare-os-3.6.1.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "3.6.1",
       },
@@ -18223,7 +18223,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "12654746909665824402",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/bare-path/-/bare-path-3.0.0.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "3.0.0",
       },
@@ -18243,7 +18243,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "17753182882008442002",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/bare-stream/-/bare-stream-2.6.5.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "2.6.5",
       },
@@ -18262,7 +18262,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "8619482971283861639",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/baseline-browser-mapping/-/baseline-browser-mapping-2.10.7.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "2.10.7",
       },
@@ -18278,7 +18278,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "3294105759639631117",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/basic-ftp/-/basic-ftp-5.0.5.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "5.0.5",
       },
@@ -18294,7 +18294,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "17194422772331613284",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/binary-extensions/-/binary-extensions-2.3.0.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "2.3.0",
       },
@@ -18313,7 +18313,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "2949258092693339993",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/brace-expansion/-/brace-expansion-1.1.12.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "1.1.12",
       },
@@ -18331,7 +18331,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "2299021338542085312",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/braces/-/braces-3.0.3.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "3.0.3",
       },
@@ -18355,7 +18355,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "10902238872969648239",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/browserslist/-/browserslist-4.25.1.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "4.25.1",
       },
@@ -18371,7 +18371,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "4553253441045318076",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/buffer-crc32/-/buffer-crc32-0.2.13.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "0.2.13",
       },
@@ -18390,7 +18390,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "2516125195587546235",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/bun-types/-/bun-types-1.2.19.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "1.2.19",
       },
@@ -18411,7 +18411,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "12438735438837079615",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/call-bind/-/call-bind-1.0.8.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "1.0.8",
       },
@@ -18430,7 +18430,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "10960924737339985185",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/call-bind-apply-helpers/-/call-bind-apply-helpers-1.0.2.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "1.0.2",
       },
@@ -18449,7 +18449,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "9610631972647442100",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/call-bound/-/call-bound-1.0.4.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "1.0.4",
       },
@@ -18465,7 +18465,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "3613437260212473067",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/callsites/-/callsites-3.1.0.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "3.1.0",
       },
@@ -18481,7 +18481,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "11196719252326564430",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/camelcase-css/-/camelcase-css-2.0.1.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "2.0.1",
       },
@@ -18497,7 +18497,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "9052408705322291763",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/caniuse-lite/-/caniuse-lite-1.0.30001733.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "1.0.30001733",
       },
@@ -18516,7 +18516,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "15590360526536958927",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/chalk/-/chalk-4.1.2.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "4.1.2",
       },
@@ -18541,7 +18541,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "13416011201726038119",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/chokidar/-/chokidar-3.6.0.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "3.6.0",
       },
@@ -18561,7 +18561,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "17738832193826713561",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/chromium-bidi/-/chromium-bidi-7.2.0.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "7.2.0",
       },
@@ -18577,7 +18577,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "8802229738477874888",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/client-only/-/client-only-0.0.1.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "0.0.1",
       },
@@ -18597,7 +18597,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "5778858105899329304",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/cliui/-/cliui-8.0.1.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "8.0.1",
       },
@@ -18615,7 +18615,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "4039459761306235234",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/color-convert/-/color-convert-2.0.1.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "2.0.1",
       },
@@ -18631,7 +18631,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "16546212153853106385",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/color-name/-/color-name-1.1.4.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "1.1.4",
       },
@@ -18647,7 +18647,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "5281338156924866262",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/commander/-/commander-4.1.1.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "4.1.1",
       },
@@ -18663,7 +18663,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "8706867752641269193",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/concat-map/-/concat-map-0.0.1.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "0.0.1",
       },
@@ -18679,7 +18679,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "5531316803463735531",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/convert-source-map/-/convert-source-map-2.0.0.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "2.0.0",
       },
@@ -18701,7 +18701,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "6870876620368412607",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/cosmiconfig/-/cosmiconfig-9.0.0.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "9.0.0",
       },
@@ -18721,7 +18721,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "12444485756966960720",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/cross-spawn/-/cross-spawn-7.0.6.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "7.0.6",
       },
@@ -18740,7 +18740,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "11039868621287934035",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/cssesc/-/cssesc-3.0.0.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "3.0.0",
       },
@@ -18756,7 +18756,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "10489861045436610105",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/csstype/-/csstype-3.2.3.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "3.2.3",
       },
@@ -18772,7 +18772,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "15167018638538311401",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/damerau-levenshtein/-/damerau-levenshtein-1.0.8.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "1.0.8",
       },
@@ -18788,7 +18788,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "14979328150197748023",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/data-uri-to-buffer/-/data-uri-to-buffer-6.0.2.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "6.0.2",
       },
@@ -18808,7 +18808,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "15944719431260154058",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/data-view-buffer/-/data-view-buffer-1.0.2.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "1.0.2",
       },
@@ -18828,7 +18828,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "5338396469217736400",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/data-view-byte-length/-/data-view-byte-length-1.0.2.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "1.0.2",
       },
@@ -18848,7 +18848,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "9075261318428197850",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/data-view-byte-offset/-/data-view-byte-offset-1.0.1.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "1.0.1",
       },
@@ -18866,7 +18866,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "14324291119347696526",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/debug/-/debug-4.4.1.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "4.4.1",
       },
@@ -18882,7 +18882,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "4678193845338186713",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/deep-is/-/deep-is-0.1.4.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "0.1.4",
       },
@@ -18902,7 +18902,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "11872812789934333141",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/define-data-property/-/define-data-property-1.1.4.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "1.1.4",
       },
@@ -18922,7 +18922,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "6291091409189323848",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/define-properties/-/define-properties-1.2.1.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "1.2.1",
       },
@@ -18942,7 +18942,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "8612146826381285798",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/degenerator/-/degenerator-5.0.1.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "5.0.1",
       },
@@ -18958,7 +18958,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "5167105436045605224",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/detect-libc/-/detect-libc-2.1.2.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "2.1.2",
       },
@@ -18974,7 +18974,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "12159960943916763407",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/devtools-protocol/-/devtools-protocol-0.0.1475386.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "0.0.1475386",
       },
@@ -18990,7 +18990,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "3290316626148068785",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/didyoumean/-/didyoumean-1.2.2.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "1.2.2",
       },
@@ -19006,7 +19006,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "6290291366792823487",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/dlv/-/dlv-1.1.3.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "1.1.3",
       },
@@ -19024,7 +19024,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "17204823894354646410",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/doctrine/-/doctrine-2.1.0.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "2.1.0",
       },
@@ -19044,7 +19044,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "10035763608711245746",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/dunder-proto/-/dunder-proto-1.0.1.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "1.0.1",
       },
@@ -19060,7 +19060,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "17075761832414070361",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/eastasianwidth/-/eastasianwidth-0.2.0.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "0.2.0",
       },
@@ -19076,7 +19076,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "670529235028360171",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/electron-to-chromium/-/electron-to-chromium-1.5.199.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "1.5.199",
       },
@@ -19092,7 +19092,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "4954026511424972012",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/emoji-regex/-/emoji-regex-9.2.2.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "9.2.2",
       },
@@ -19110,7 +19110,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "17455588742510412071",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/end-of-stream/-/end-of-stream-1.4.5.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "1.4.5",
       },
@@ -19126,7 +19126,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "763024076902060186",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/env-paths/-/env-paths-2.2.1.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "2.2.1",
       },
@@ -19144,7 +19144,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "10994745590019451357",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/error-ex/-/error-ex-1.3.2.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "1.3.2",
       },
@@ -19215,7 +19215,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "18149169871844198539",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/es-abstract/-/es-abstract-1.24.0.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "1.24.0",
       },
@@ -19231,7 +19231,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "3626708926058962712",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/es-define-property/-/es-define-property-1.0.1.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "1.0.1",
       },
@@ -19247,7 +19247,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "1431088895329652005",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/es-errors/-/es-errors-1.3.0.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "1.3.0",
       },
@@ -19280,7 +19280,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "6828621610707932693",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/es-iterator-helpers/-/es-iterator-helpers-1.2.1.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "1.2.1",
       },
@@ -19298,7 +19298,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "6220468241073126446",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/es-object-atoms/-/es-object-atoms-1.1.1.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "1.1.1",
       },
@@ -19319,7 +19319,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "6364566058234691598",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/es-set-tostringtag/-/es-set-tostringtag-2.1.0.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "2.1.0",
       },
@@ -19337,7 +19337,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "9491299634916711255",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/es-shim-unscopables/-/es-shim-unscopables-1.1.0.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "1.1.0",
       },
@@ -19357,7 +19357,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "5511149163085325549",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/es-to-primitive/-/es-to-primitive-1.3.0.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "1.3.0",
       },
@@ -19373,7 +19373,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "6879348821336485116",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/escalade/-/escalade-3.2.0.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "3.2.0",
       },
@@ -19389,7 +19389,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "6183299340420948366",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/escape-string-regexp/-/escape-string-regexp-4.0.0.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "4.0.0",
       },
@@ -19413,7 +19413,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "7568564790816534200",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/escodegen/-/escodegen-2.1.0.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "2.1.0",
       },
@@ -19469,7 +19469,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "17917589463370847417",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/eslint/-/eslint-9.33.0.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "9.33.0",
       },
@@ -19497,7 +19497,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "7198338977897397487",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/eslint-config-next/-/eslint-config-next-16.1.6.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "16.1.6",
       },
@@ -19517,7 +19517,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "7112252065464945765",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/eslint-import-resolver-node/-/eslint-import-resolver-node-0.3.9.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "0.3.9",
       },
@@ -19544,7 +19544,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "15133821067886250480",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/eslint-import-resolver-typescript/-/eslint-import-resolver-typescript-3.10.1.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "3.10.1",
       },
@@ -19562,7 +19562,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "8461306141657248779",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/eslint-module-utils/-/eslint-module-utils-2.12.1.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "2.12.1",
       },
@@ -19599,7 +19599,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "8508429259951498502",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/eslint-plugin-import/-/eslint-plugin-import-2.32.0.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "2.32.0",
       },
@@ -19632,7 +19632,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "17038906309846806775",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/eslint-plugin-jsx-a11y/-/eslint-plugin-jsx-a11y-6.10.2.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "6.10.2",
       },
@@ -19668,7 +19668,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "15811917473959571682",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/eslint-plugin-react/-/eslint-plugin-react-7.37.5.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "7.37.5",
       },
@@ -19691,7 +19691,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "14057422571669714006",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/eslint-plugin-react-hooks/-/eslint-plugin-react-hooks-7.0.1.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "7.0.1",
       },
@@ -19710,7 +19710,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "17629221228476930459",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/eslint-scope/-/eslint-scope-8.4.0.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "8.4.0",
       },
@@ -19726,7 +19726,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "17830281265467207399",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/eslint-visitor-keys/-/eslint-visitor-keys-4.2.1.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "4.2.1",
       },
@@ -19746,7 +19746,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "3641367103187261350",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/espree/-/espree-10.4.0.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "10.4.0",
       },
@@ -19765,7 +19765,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "16070041258147025859",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/esprima/-/esprima-4.0.1.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "4.0.1",
       },
@@ -19783,7 +19783,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "7289272869223478230",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/esquery/-/esquery-1.6.0.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "1.6.0",
       },
@@ -19801,7 +19801,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "17661314847727534689",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/esrecurse/-/esrecurse-4.3.0.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "4.3.0",
       },
@@ -19817,7 +19817,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "14401618193000185195",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/estraverse/-/estraverse-5.3.0.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "5.3.0",
       },
@@ -19833,7 +19833,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "7981716078883515000",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/esutils/-/esutils-2.0.3.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "2.0.3",
       },
@@ -19857,7 +19857,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "8810061046982445994",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/extract-zip/-/extract-zip-2.0.1.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "2.0.1",
       },
@@ -19873,7 +19873,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "12371535360781568025",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/fast-deep-equal/-/fast-deep-equal-3.1.3.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "3.1.3",
       },
@@ -19889,7 +19889,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "1244249015522350723",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/fast-fifo/-/fast-fifo-1.3.2.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "1.3.2",
       },
@@ -19911,7 +19911,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "1878427088820911921",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/fast-glob/-/fast-glob-3.3.3.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "3.3.3",
       },
@@ -19927,7 +19927,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "5172613188748066692",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/fast-json-stable-stringify/-/fast-json-stable-stringify-2.1.0.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "2.1.0",
       },
@@ -19943,7 +19943,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "12342460047873653112",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/fast-levenshtein/-/fast-levenshtein-2.0.6.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "2.0.6",
       },
@@ -19961,7 +19961,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "6741130188853797494",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/fastq/-/fastq-1.19.1.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "1.19.1",
       },
@@ -19979,7 +19979,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "10851489456408334660",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/fd-slicer/-/fd-slicer-1.1.0.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "1.1.0",
       },
@@ -19997,7 +19997,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "5540502524252407757",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/fdir/-/fdir-6.4.6.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "6.4.6",
       },
@@ -20015,7 +20015,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "7451434054063451186",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/file-entry-cache/-/file-entry-cache-8.0.0.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "8.0.0",
       },
@@ -20033,7 +20033,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "7508926416461820733",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/fill-range/-/fill-range-7.1.1.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "7.1.1",
       },
@@ -20052,7 +20052,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "8309621910990874126",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/find-up/-/find-up-5.0.0.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "5.0.0",
       },
@@ -20071,7 +20071,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "1109822261564484039",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/flat-cache/-/flat-cache-4.0.1.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "4.0.1",
       },
@@ -20087,7 +20087,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "12258717572737769681",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/flatted/-/flatted-3.3.3.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "3.3.3",
       },
@@ -20105,7 +20105,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "10867395407301386752",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/for-each/-/for-each-0.3.5.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "0.3.5",
       },
@@ -20124,7 +20124,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "15280470906188730905",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/foreground-child/-/foreground-child-3.3.1.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "3.3.1",
       },
@@ -20140,7 +20140,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "8226692764887072839",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/fraction.js/-/fraction.js-4.3.7.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "4.3.7",
       },
@@ -20159,7 +20159,7 @@ exports[`ssr works for 100-ish requests 1`] = `
         "darwin",
       ],
       "resolution": {
-        "resolved": "https://registry.npmjs.org/fsevents/-/fsevents-2.3.3.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "2.3.3",
       },
@@ -20175,7 +20175,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "844545262680185243",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/function-bind/-/function-bind-1.1.2.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "1.1.2",
       },
@@ -20198,7 +20198,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "4695092674110180958",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/function.prototype.name/-/function.prototype.name-1.1.8.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "1.1.8",
       },
@@ -20214,7 +20214,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "2705786889099279986",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/functions-have-names/-/functions-have-names-1.2.3.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "1.2.3",
       },
@@ -20230,7 +20230,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "14774998231461861984",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/gensync/-/gensync-1.0.0-beta.2.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "1.0.0-beta.2",
       },
@@ -20246,7 +20246,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "1638769084888476079",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/get-caller-file/-/get-caller-file-2.0.5.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "2.0.5",
       },
@@ -20273,7 +20273,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "2906428234746671084",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/get-intrinsic/-/get-intrinsic-1.3.0.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "1.3.0",
       },
@@ -20292,7 +20292,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "18317051033996390512",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/get-proto/-/get-proto-1.0.1.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "1.0.1",
       },
@@ -20310,7 +20310,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "13254119490064412968",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/get-stream/-/get-stream-5.2.0.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "5.2.0",
       },
@@ -20330,7 +20330,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "9231308723607962639",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/get-symbol-description/-/get-symbol-description-1.1.0.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "1.1.0",
       },
@@ -20348,7 +20348,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "4239972350118399509",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/get-tsconfig/-/get-tsconfig-4.10.1.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "4.10.1",
       },
@@ -20368,7 +20368,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "4377287927338690314",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/get-uri/-/get-uri-6.0.5.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "6.0.5",
       },
@@ -20394,7 +20394,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "4994027009006720870",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/glob/-/glob-10.4.5.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "10.4.5",
       },
@@ -20412,7 +20412,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "11965780159102682782",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/glob-parent/-/glob-parent-6.0.2.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "6.0.2",
       },
@@ -20428,7 +20428,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "15143409006866382382",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/globals/-/globals-16.4.0.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "16.4.0",
       },
@@ -20447,7 +20447,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "13441561870904786738",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/globalthis/-/globalthis-1.0.4.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "1.0.4",
       },
@@ -20463,7 +20463,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "11067429752147099645",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/gopd/-/gopd-1.2.0.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "1.2.0",
       },
@@ -20479,7 +20479,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "8902287851533908224",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/has-bigints/-/has-bigints-1.1.0.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "1.1.0",
       },
@@ -20495,7 +20495,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "14617373831546330259",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/has-flag/-/has-flag-4.0.0.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "4.0.0",
       },
@@ -20513,7 +20513,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "4664477375836720802",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/has-property-descriptors/-/has-property-descriptors-1.0.2.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "1.0.2",
       },
@@ -20531,7 +20531,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "14548784663137950749",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/has-proto/-/has-proto-1.2.0.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "1.2.0",
       },
@@ -20547,7 +20547,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "11738213668566965255",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/has-symbols/-/has-symbols-1.1.0.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "1.1.0",
       },
@@ -20565,7 +20565,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "13213170068840407891",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/has-tostringtag/-/has-tostringtag-1.0.2.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "1.0.2",
       },
@@ -20583,7 +20583,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "15051111907103293256",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/hasown/-/hasown-2.0.2.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "2.0.2",
       },
@@ -20599,7 +20599,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "6881967681145790028",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/hermes-estree/-/hermes-estree-0.25.1.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "0.25.1",
       },
@@ -20617,7 +20617,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "8266106851005391373",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/hermes-parser/-/hermes-parser-0.25.1.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "0.25.1",
       },
@@ -20636,7 +20636,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "9762732492936976178",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/http-proxy-agent/-/http-proxy-agent-7.0.2.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "7.0.2",
       },
@@ -20655,7 +20655,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "6012108288334718116",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/https-proxy-agent/-/https-proxy-agent-7.0.6.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "7.0.6",
       },
@@ -20671,7 +20671,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "7684941795926889194",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/ignore/-/ignore-5.3.2.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "5.3.2",
       },
@@ -20690,7 +20690,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "11575749002643879646",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/import-fresh/-/import-fresh-3.3.1.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "3.3.1",
       },
@@ -20706,7 +20706,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "16912020589681053487",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/imurmurhash/-/imurmurhash-0.1.4.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "0.1.4",
       },
@@ -20726,7 +20726,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "5294586439646401067",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/internal-slot/-/internal-slot-1.1.0.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "1.1.0",
       },
@@ -20745,7 +20745,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "5841623577927749136",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/ip-address/-/ip-address-9.0.5.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "9.0.5",
       },
@@ -20765,7 +20765,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "14032760764897204845",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/is-array-buffer/-/is-array-buffer-3.0.5.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "3.0.5",
       },
@@ -20781,7 +20781,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "2568751720667967222",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/is-arrayish/-/is-arrayish-0.2.1.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "0.2.1",
       },
@@ -20803,7 +20803,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "7396704721306843003",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/is-async-function/-/is-async-function-2.1.1.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "2.1.1",
       },
@@ -20821,7 +20821,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "15395120181649760746",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/is-bigint/-/is-bigint-1.1.0.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "1.1.0",
       },
@@ -20839,7 +20839,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "10002650304558927684",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/is-binary-path/-/is-binary-path-2.1.0.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "2.1.0",
       },
@@ -20858,7 +20858,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "977724548377731595",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/is-boolean-object/-/is-boolean-object-1.2.2.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "1.2.2",
       },
@@ -20876,7 +20876,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "6618435337515878945",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/is-bun-module/-/is-bun-module-2.0.0.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "2.0.0",
       },
@@ -20892,7 +20892,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "8145804842618902795",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/is-callable/-/is-callable-1.2.7.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "1.2.7",
       },
@@ -20910,7 +20910,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "2115564247595772579",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/is-core-module/-/is-core-module-2.16.1.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "2.16.1",
       },
@@ -20930,7 +20930,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "9883274985744387088",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/is-data-view/-/is-data-view-1.0.2.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "1.0.2",
       },
@@ -20949,7 +20949,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "2234586858061383196",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/is-date-object/-/is-date-object-1.1.0.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "1.1.0",
       },
@@ -20965,7 +20965,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "3738840382836940042",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/is-extglob/-/is-extglob-2.1.1.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "2.1.1",
       },
@@ -20983,7 +20983,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "3324291948921067566",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/is-finalizationregistry/-/is-finalizationregistry-1.1.1.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "1.1.1",
       },
@@ -20999,7 +20999,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "11413228031333986220",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/is-fullwidth-code-point/-/is-fullwidth-code-point-3.0.0.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "3.0.0",
       },
@@ -21020,7 +21020,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "6389681397246265335",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/is-generator-function/-/is-generator-function-1.1.0.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "1.1.0",
       },
@@ -21038,7 +21038,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "3852072119137895543",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/is-glob/-/is-glob-4.0.3.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "4.0.3",
       },
@@ -21054,7 +21054,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "13285296637631486371",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/is-map/-/is-map-2.0.3.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "2.0.3",
       },
@@ -21070,7 +21070,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "15976851243871524828",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/is-negative-zero/-/is-negative-zero-2.0.3.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "2.0.3",
       },
@@ -21086,7 +21086,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "17443668381655379754",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/is-number/-/is-number-7.0.0.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "7.0.0",
       },
@@ -21105,7 +21105,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "17734215349587891459",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/is-number-object/-/is-number-object-1.1.1.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "1.1.1",
       },
@@ -21126,7 +21126,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "5347229372705359543",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/is-regex/-/is-regex-1.2.1.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "1.2.1",
       },
@@ -21142,7 +21142,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "711008573234634940",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/is-set/-/is-set-2.0.3.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "2.0.3",
       },
@@ -21160,7 +21160,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "16404740693320828184",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/is-shared-array-buffer/-/is-shared-array-buffer-1.0.4.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "1.0.4",
       },
@@ -21179,7 +21179,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "17134972543368483860",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/is-string/-/is-string-1.1.1.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "1.1.1",
       },
@@ -21199,7 +21199,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "17261375015506057632",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/is-symbol/-/is-symbol-1.1.1.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "1.1.1",
       },
@@ -21217,7 +21217,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "9705410882361152938",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/is-typed-array/-/is-typed-array-1.1.15.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "1.1.15",
       },
@@ -21233,7 +21233,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "6846802860855249568",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/is-weakmap/-/is-weakmap-2.0.2.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "2.0.2",
       },
@@ -21251,7 +21251,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "16457982703851476953",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/is-weakref/-/is-weakref-1.1.1.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "1.1.1",
       },
@@ -21270,7 +21270,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "15512317874752413182",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/is-weakset/-/is-weakset-2.0.4.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "2.0.4",
       },
@@ -21286,7 +21286,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "1313190527457156627",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/isarray/-/isarray-2.0.5.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "2.0.5",
       },
@@ -21302,7 +21302,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "15558268014059531432",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/isexe/-/isexe-2.0.0.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "2.0.0",
       },
@@ -21325,7 +21325,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "2087250667608616513",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/iterator.prototype/-/iterator.prototype-1.1.5.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "1.1.5",
       },
@@ -21344,7 +21344,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "16168027919126698688",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/jackspeak/-/jackspeak-3.4.3.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "3.4.3",
       },
@@ -21363,7 +21363,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "13838530331656232073",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/jiti/-/jiti-1.21.7.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "1.21.7",
       },
@@ -21379,7 +21379,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "8072375596980283624",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/js-tokens/-/js-tokens-4.0.0.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "4.0.0",
       },
@@ -21400,7 +21400,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "192709174173096334",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/js-yaml/-/js-yaml-4.1.0.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "4.1.0",
       },
@@ -21416,7 +21416,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "14311822655393200441",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/jsbn/-/jsbn-1.1.0.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "1.1.0",
       },
@@ -21435,7 +21435,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "16956867246016844523",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/jsesc/-/jsesc-3.1.0.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "3.1.0",
       },
@@ -21451,7 +21451,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "5720297936225446253",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/json-buffer/-/json-buffer-3.0.1.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "3.0.1",
       },
@@ -21467,7 +21467,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "13977239420854766139",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/json-parse-even-better-errors/-/json-parse-even-better-errors-2.3.1.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "2.3.1",
       },
@@ -21483,7 +21483,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "686899269284038873",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/json-schema-traverse/-/json-schema-traverse-0.4.1.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "0.4.1",
       },
@@ -21499,7 +21499,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "14534225541412166230",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/json-stable-stringify-without-jsonify/-/json-stable-stringify-without-jsonify-1.0.1.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "1.0.1",
       },
@@ -21520,7 +21520,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "8623012563386528314",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/json5/-/json5-1.0.2.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "1.0.2",
       },
@@ -21541,7 +21541,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "7365668162252757844",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/jsx-ast-utils/-/jsx-ast-utils-3.3.5.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "3.3.5",
       },
@@ -21559,7 +21559,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "11030851470615570686",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/keyv/-/keyv-4.5.4.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "4.5.4",
       },
@@ -21575,7 +21575,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "15962551382548022065",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/language-subtag-registry/-/language-subtag-registry-0.3.23.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "0.3.23",
       },
@@ -21593,7 +21593,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "3625175203997363083",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/language-tags/-/language-tags-1.0.9.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "1.0.9",
       },
@@ -21612,7 +21612,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "9969646077825321011",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/levn/-/levn-0.4.1.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "0.4.1",
       },
@@ -21628,7 +21628,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "17464546908434930808",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/lilconfig/-/lilconfig-3.1.3.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "3.1.3",
       },
@@ -21644,7 +21644,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "8731744980636261242",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/lines-and-columns/-/lines-and-columns-1.2.4.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "1.2.4",
       },
@@ -21662,7 +21662,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "14390144719475396950",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/locate-path/-/locate-path-6.0.0.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "6.0.0",
       },
@@ -21678,7 +21678,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "1968752870223903086",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/lodash.merge/-/lodash.merge-4.6.2.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "4.6.2",
       },
@@ -21699,7 +21699,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "3112622411417245442",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/loose-envify/-/loose-envify-1.4.0.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "1.4.0",
       },
@@ -21715,7 +21715,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "15261810304153928944",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/lru-cache/-/lru-cache-7.18.3.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "7.18.3",
       },
@@ -21731,7 +21731,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "14074613555891021206",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/math-intrinsics/-/math-intrinsics-1.1.0.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "1.1.0",
       },
@@ -21747,7 +21747,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "10405164528992167668",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/merge2/-/merge2-1.4.1.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "1.4.1",
       },
@@ -21766,7 +21766,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "14650745430569414123",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/micromatch/-/micromatch-4.0.8.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "4.0.8",
       },
@@ -21784,7 +21784,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "8137703609956696607",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/minimatch/-/minimatch-3.1.2.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "3.1.2",
       },
@@ -21800,7 +21800,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "3523651443977674137",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/minimist/-/minimist-1.2.8.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "1.2.8",
       },
@@ -21816,7 +21816,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "8663404386276345459",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/minipass/-/minipass-7.1.2.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "7.1.2",
       },
@@ -21832,7 +21832,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "8939019029139500810",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/mitt/-/mitt-3.0.1.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "3.0.1",
       },
@@ -21848,7 +21848,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "5228634868375925924",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/ms/-/ms-2.1.3.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "2.1.3",
       },
@@ -21868,7 +21868,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "4860889167171965650",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/mz/-/mz-2.7.0.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "2.7.0",
       },
@@ -21887,7 +21887,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "10076454668178771807",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/nanoid/-/nanoid-3.3.11.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "3.3.11",
       },
@@ -21906,7 +21906,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "3553043838689631137",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/napi-postinstall/-/napi-postinstall-0.3.2.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "0.3.2",
       },
@@ -21922,7 +21922,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "10983874298500943893",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/natural-compare/-/natural-compare-1.4.0.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "1.4.0",
       },
@@ -21938,7 +21938,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "16100660929392435651",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/netmask/-/netmask-2.0.2.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "2.0.2",
       },
@@ -21979,7 +21979,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "11339591345958603137",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/next/-/next-16.1.6.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "16.1.6",
       },
@@ -21995,7 +21995,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "16500855680207755447",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/node-releases/-/node-releases-2.0.19.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "2.0.19",
       },
@@ -22011,7 +22011,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "7972932911556789884",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/normalize-path/-/normalize-path-3.0.0.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "3.0.0",
       },
@@ -22027,7 +22027,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "2450824346687386237",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/normalize-range/-/normalize-range-0.1.2.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "0.1.2",
       },
@@ -22043,7 +22043,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "741501977461426514",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/object-assign/-/object-assign-4.1.1.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "4.1.1",
       },
@@ -22059,7 +22059,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "14333069055553598090",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/object-hash/-/object-hash-3.0.0.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "3.0.0",
       },
@@ -22075,7 +22075,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "956383507377191237",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/object-inspect/-/object-inspect-1.13.4.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "1.13.4",
       },
@@ -22091,7 +22091,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "17064657543629771811",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/object-keys/-/object-keys-1.1.1.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "1.1.1",
       },
@@ -22114,7 +22114,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "3382096865825279030",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/object.assign/-/object.assign-4.1.7.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "4.1.7",
       },
@@ -22135,7 +22135,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "9232336923373250807",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/object.entries/-/object.entries-1.1.9.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "1.1.9",
       },
@@ -22156,7 +22156,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "58142230756561331",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/object.fromentries/-/object.fromentries-2.0.8.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "2.0.8",
       },
@@ -22176,7 +22176,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "11641877674072745532",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/object.groupby/-/object.groupby-1.0.3.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "1.0.3",
       },
@@ -22197,7 +22197,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "17183857510284531499",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/object.values/-/object.values-1.2.1.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "1.2.1",
       },
@@ -22215,7 +22215,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "748011609921859784",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/once/-/once-1.4.0.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "1.4.0",
       },
@@ -22238,7 +22238,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "13855909686375249440",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/optionator/-/optionator-0.9.4.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "0.9.4",
       },
@@ -22258,7 +22258,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "13717800481095398987",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/own-keys/-/own-keys-1.0.1.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "1.0.1",
       },
@@ -22276,7 +22276,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "3083404427706523125",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/p-limit/-/p-limit-3.1.0.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "3.1.0",
       },
@@ -22294,7 +22294,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "9693850335197275095",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/p-locate/-/p-locate-5.0.0.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "5.0.0",
       },
@@ -22319,7 +22319,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "818729749152565950",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/pac-proxy-agent/-/pac-proxy-agent-7.2.0.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "7.2.0",
       },
@@ -22338,7 +22338,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "12373948793919354804",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/pac-resolver/-/pac-resolver-7.0.1.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "7.0.1",
       },
@@ -22354,7 +22354,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "3807023826782784682",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/package-json-from-dist/-/package-json-from-dist-1.0.1.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "1.0.1",
       },
@@ -22372,7 +22372,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "2665996815938625963",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/parent-module/-/parent-module-1.0.1.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "1.0.1",
       },
@@ -22393,7 +22393,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "10803339664298030440",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/parse-json/-/parse-json-5.2.0.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "5.2.0",
       },
@@ -22409,7 +22409,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "12097053851796077639",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/path-exists/-/path-exists-4.0.0.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "4.0.0",
       },
@@ -22425,7 +22425,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "665497923999462354",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/path-key/-/path-key-3.1.1.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "3.1.1",
       },
@@ -22441,7 +22441,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "13352954276207767683",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/path-parse/-/path-parse-1.0.7.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "1.0.7",
       },
@@ -22460,7 +22460,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "11241411746102775941",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/path-scurry/-/path-scurry-1.11.1.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "1.11.1",
       },
@@ -22476,7 +22476,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "11550940272933590184",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/pend/-/pend-1.2.0.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "1.2.0",
       },
@@ -22492,7 +22492,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "8945456956643510643",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/picocolors/-/picocolors-1.1.1.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "1.1.1",
       },
@@ -22508,7 +22508,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "17753630613781110869",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/picomatch/-/picomatch-2.3.1.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "2.3.1",
       },
@@ -22524,7 +22524,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "516088454160206643",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/pify/-/pify-2.3.0.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "2.3.0",
       },
@@ -22540,7 +22540,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "11463431525122174591",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/pirates/-/pirates-4.0.7.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "4.0.7",
       },
@@ -22556,7 +22556,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "4610919488398457019",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/possible-typed-array-names/-/possible-typed-array-names-1.1.0.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "1.1.0",
       },
@@ -22576,7 +22576,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "9297766010604904796",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/postcss/-/postcss-8.5.6.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "8.5.6",
       },
@@ -22597,7 +22597,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "3854262770217217840",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/postcss-import/-/postcss-import-15.1.0.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "15.1.0",
       },
@@ -22616,7 +22616,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "51201709044640027",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/postcss-js/-/postcss-js-4.0.1.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "4.0.1",
       },
@@ -22637,7 +22637,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "11124459238108428623",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/postcss-load-config/-/postcss-load-config-4.0.2.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "4.0.2",
       },
@@ -22656,7 +22656,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "13580188021191584601",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/postcss-nested/-/postcss-nested-6.2.0.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "6.2.0",
       },
@@ -22675,7 +22675,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "8882225543017639620",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/postcss-selector-parser/-/postcss-selector-parser-6.1.2.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "6.1.2",
       },
@@ -22691,7 +22691,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "4513255719471974821",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/postcss-value-parser/-/postcss-value-parser-4.2.0.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "4.2.0",
       },
@@ -22707,7 +22707,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "2714658211020917171",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/prelude-ls/-/prelude-ls-1.2.1.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "1.2.1",
       },
@@ -22723,7 +22723,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "11283104389794780362",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/progress/-/progress-2.0.3.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "2.0.3",
       },
@@ -22743,7 +22743,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "2288456573804260909",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/prop-types/-/prop-types-15.8.1.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "15.8.1",
       },
@@ -22768,7 +22768,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "9904923658574585845",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/proxy-agent/-/proxy-agent-6.5.0.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "6.5.0",
       },
@@ -22784,7 +22784,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "1270194980615207566",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/proxy-from-env/-/proxy-from-env-1.1.0.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "1.1.0",
       },
@@ -22803,7 +22803,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "7040703475696644678",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/pump/-/pump-3.0.3.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "3.0.3",
       },
@@ -22819,7 +22819,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "6702779252101758505",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/punycode/-/punycode-2.3.1.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "2.3.1",
       },
@@ -22845,7 +22845,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "13072297456933147981",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/puppeteer/-/puppeteer-24.16.0.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "24.16.0",
       },
@@ -22868,7 +22868,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "10954685796294859150",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/puppeteer-core/-/puppeteer-core-24.16.0.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "24.16.0",
       },
@@ -22884,7 +22884,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "5425309755386634043",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/queue-microtask/-/queue-microtask-1.2.3.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "1.2.3",
       },
@@ -22900,7 +22900,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "10719851453835962256",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/react/-/react-19.2.4.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "19.2.4",
       },
@@ -22919,7 +22919,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "7373667379151837307",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/react-dom/-/react-dom-19.2.4.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "19.2.4",
       },
@@ -22935,7 +22935,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "2565568243106125199",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/react-is/-/react-is-16.13.1.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "16.13.1",
       },
@@ -22953,7 +22953,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "10142894349910084417",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/read-cache/-/read-cache-1.0.0.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "1.0.0",
       },
@@ -22971,7 +22971,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "10039124027740987170",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/readdirp/-/readdirp-3.6.0.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "3.6.0",
       },
@@ -22996,7 +22996,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "16421047821568888832",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/reflect.getprototypeof/-/reflect.getprototypeof-1.0.10.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "1.0.10",
       },
@@ -23019,7 +23019,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "1450419609126993699",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/regexp.prototype.flags/-/regexp.prototype.flags-1.5.4.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "1.5.4",
       },
@@ -23035,7 +23035,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "6781837652461215204",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/require-directory/-/require-directory-2.1.1.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "2.1.1",
       },
@@ -23058,7 +23058,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "17831413505788817704",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/resolve/-/resolve-1.22.10.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "1.22.10",
       },
@@ -23074,7 +23074,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "3749267992243009772",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/resolve-from/-/resolve-from-4.0.0.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "4.0.0",
       },
@@ -23090,7 +23090,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "2492033107302429470",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/resolve-pkg-maps/-/resolve-pkg-maps-1.0.0.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "1.0.0",
       },
@@ -23106,7 +23106,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "6641847649693934607",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/reusify/-/reusify-1.1.0.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "1.1.0",
       },
@@ -23124,7 +23124,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "12083900303949760391",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/run-parallel/-/run-parallel-1.2.0.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "1.2.0",
       },
@@ -23146,7 +23146,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "16724726882203544952",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/safe-array-concat/-/safe-array-concat-1.1.3.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "1.1.3",
       },
@@ -23165,7 +23165,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "3088663611126869727",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/safe-push-apply/-/safe-push-apply-1.0.0.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "1.0.0",
       },
@@ -23185,7 +23185,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "7551602408075273083",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/safe-regex-test/-/safe-regex-test-1.1.0.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "1.1.0",
       },
@@ -23201,7 +23201,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "6246319597786948434",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/scheduler/-/scheduler-0.27.0.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "0.27.0",
       },
@@ -23220,7 +23220,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "16367367531761322261",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/semver/-/semver-6.3.1.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "6.3.1",
       },
@@ -23243,7 +23243,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "4099692491438602224",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/set-function-length/-/set-function-length-1.2.2.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "1.2.2",
       },
@@ -23264,7 +23264,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "15255527540049710000",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/set-function-name/-/set-function-name-2.0.2.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "2.0.2",
       },
@@ -23284,7 +23284,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "5539138235452565614",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/set-proto/-/set-proto-1.0.0.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "1.0.0",
       },
@@ -23328,7 +23328,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "17986250525618200534",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/sharp/-/sharp-0.34.5.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "0.34.5",
       },
@@ -23346,7 +23346,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "9009661312948442432",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/shebang-command/-/shebang-command-2.0.0.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "2.0.0",
       },
@@ -23362,7 +23362,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "18053981199157160202",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/shebang-regex/-/shebang-regex-3.0.0.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "3.0.0",
       },
@@ -23384,7 +23384,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "9070404613470426637",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/side-channel/-/side-channel-1.1.0.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "1.1.0",
       },
@@ -23403,7 +23403,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "15263912227612184438",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/side-channel-list/-/side-channel-list-1.0.0.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "1.0.0",
       },
@@ -23424,7 +23424,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "457403750046431270",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/side-channel-map/-/side-channel-map-1.0.1.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "1.0.1",
       },
@@ -23446,7 +23446,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "18185774379565256169",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/side-channel-weakmap/-/side-channel-weakmap-1.0.2.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "1.0.2",
       },
@@ -23462,7 +23462,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "10435964049369420478",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/signal-exit/-/signal-exit-4.1.0.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "4.1.0",
       },
@@ -23478,7 +23478,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "9798348771309838398",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/smart-buffer/-/smart-buffer-4.2.0.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "4.2.0",
       },
@@ -23497,7 +23497,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "16884970381877539768",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/socks/-/socks-2.8.6.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "2.8.6",
       },
@@ -23517,7 +23517,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "11921171134012595164",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/socks-proxy-agent/-/socks-proxy-agent-8.0.5.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "8.0.5",
       },
@@ -23533,7 +23533,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "15131286332489002212",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/source-map/-/source-map-0.6.1.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "0.6.1",
       },
@@ -23549,7 +23549,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "6679519744659543339",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/source-map-js/-/source-map-js-1.2.1.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "1.2.1",
       },
@@ -23565,7 +23565,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "13547290882791134867",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/sprintf-js/-/sprintf-js-1.1.3.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "1.1.3",
       },
@@ -23581,7 +23581,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "6858963058861241182",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/stable-hash/-/stable-hash-0.0.5.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "0.0.5",
       },
@@ -23600,7 +23600,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "13156428730743498326",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/stop-iteration-iterator/-/stop-iteration-iterator-1.1.0.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "1.1.0",
       },
@@ -23620,7 +23620,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "74555136203185339",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/streamx/-/streamx-2.22.1.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "2.22.1",
       },
@@ -23640,7 +23640,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "15727733666069179645",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/string-width/-/string-width-4.2.3.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "4.2.3",
       },
@@ -23660,7 +23660,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "8625986987242944922",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/string.prototype.includes/-/string.prototype.includes-2.0.1.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "2.0.1",
       },
@@ -23690,7 +23690,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "3859254092910215586",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/string.prototype.matchall/-/string.prototype.matchall-4.0.12.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "4.0.12",
       },
@@ -23709,7 +23709,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "7230189073520488940",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/string.prototype.repeat/-/string.prototype.repeat-1.0.0.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "1.0.0",
       },
@@ -23733,7 +23733,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "13195996988681286312",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/string.prototype.trim/-/string.prototype.trim-1.2.10.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "1.2.10",
       },
@@ -23754,7 +23754,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "1025553805644415088",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/string.prototype.trimend/-/string.prototype.trimend-1.0.9.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "1.0.9",
       },
@@ -23774,7 +23774,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "2565522221466854936",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/string.prototype.trimstart/-/string.prototype.trimstart-1.0.8.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "1.0.8",
       },
@@ -23792,7 +23792,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "13340235767065158173",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/strip-ansi/-/strip-ansi-6.0.1.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "6.0.1",
       },
@@ -23808,7 +23808,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "10409965272767959480",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/strip-bom/-/strip-bom-3.0.0.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "3.0.0",
       },
@@ -23824,7 +23824,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "3826326773345398095",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/strip-json-comments/-/strip-json-comments-3.1.1.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "3.1.1",
       },
@@ -23843,7 +23843,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "3150382730046383618",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/styled-jsx/-/styled-jsx-5.1.6.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "5.1.6",
       },
@@ -23870,7 +23870,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "8220562023141918134",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/sucrase/-/sucrase-3.35.0.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "3.35.0",
       },
@@ -23888,7 +23888,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "8283007902753735493",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/supports-color/-/supports-color-7.2.0.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "7.2.0",
       },
@@ -23904,7 +23904,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "7228670803640303868",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/supports-preserve-symlinks-flag/-/supports-preserve-symlinks-flag-1.0.0.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "1.0.0",
       },
@@ -23946,7 +23946,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "6098981126968834122",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/tailwindcss/-/tailwindcss-3.4.17.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "3.4.17",
       },
@@ -23967,7 +23967,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "14440968244754303214",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/tar-fs/-/tar-fs-3.1.0.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "3.1.0",
       },
@@ -23987,7 +23987,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "14255302179190904139",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/tar-stream/-/tar-stream-3.1.7.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "3.1.7",
       },
@@ -24005,7 +24005,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "16075354394561303825",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/text-decoder/-/text-decoder-1.2.3.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "1.2.3",
       },
@@ -24023,7 +24023,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "10214550608932566002",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/thenify/-/thenify-3.3.1.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "3.3.1",
       },
@@ -24041,7 +24041,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "3497577183623575301",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/thenify-all/-/thenify-all-1.6.0.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "1.6.0",
       },
@@ -24060,7 +24060,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "17953343526787576883",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/tinyglobby/-/tinyglobby-0.2.14.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "0.2.14",
       },
@@ -24078,7 +24078,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "14243204250463262724",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/to-regex-range/-/to-regex-range-5.0.1.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "5.0.1",
       },
@@ -24096,7 +24096,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "16747467150637667790",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/ts-api-utils/-/ts-api-utils-2.4.0.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "2.4.0",
       },
@@ -24112,7 +24112,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "9090669025631097322",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/ts-interface-checker/-/ts-interface-checker-0.1.13.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "0.1.13",
       },
@@ -24133,7 +24133,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "9484880556576660029",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/tsconfig-paths/-/tsconfig-paths-3.15.0.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "3.15.0",
       },
@@ -24149,7 +24149,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "17922945129469812550",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/tslib/-/tslib-2.8.1.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "2.8.1",
       },
@@ -24167,7 +24167,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "14488857500191659576",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/type-check/-/type-check-0.4.0.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "0.4.0",
       },
@@ -24187,7 +24187,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "12632345045689166547",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/typed-array-buffer/-/typed-array-buffer-1.0.3.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "1.0.3",
       },
@@ -24209,7 +24209,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "15839092223363072276",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/typed-array-byte-length/-/typed-array-byte-length-1.0.3.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "1.0.3",
       },
@@ -24233,7 +24233,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "4363148948656071809",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/typed-array-byte-offset/-/typed-array-byte-offset-1.0.4.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "1.0.4",
       },
@@ -24256,7 +24256,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "11116743844802335237",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/typed-array-length/-/typed-array-length-1.0.7.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "1.0.7",
       },
@@ -24272,7 +24272,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "1682387182588818719",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/typed-query-selector/-/typed-query-selector-2.12.0.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "2.12.0",
       },
@@ -24291,7 +24291,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "7090219608841397663",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/typescript/-/typescript-5.9.2.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "5.9.2",
       },
@@ -24314,7 +24314,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "15225614635980846018",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/typescript-eslint/-/typescript-eslint-8.57.0.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "8.57.0",
       },
@@ -24335,7 +24335,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "5619034830996442352",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/unbox-primitive/-/unbox-primitive-1.1.0.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "1.1.0",
       },
@@ -24351,7 +24351,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "13518207300296011529",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/undici-types/-/undici-types-7.16.0.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "7.16.0",
       },
@@ -24388,7 +24388,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "63729141773646509",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/unrs-resolver/-/unrs-resolver-1.11.1.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "1.11.1",
       },
@@ -24411,7 +24411,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "6664421840286510928",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/update-browserslist-db/-/update-browserslist-db-1.1.3.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "1.1.3",
       },
@@ -24429,7 +24429,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "9694608825335680295",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/uri-js/-/uri-js-4.4.1.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "4.4.1",
       },
@@ -24445,7 +24445,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "4033437044928033698",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/util-deprecate/-/util-deprecate-1.0.2.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "1.0.2",
       },
@@ -24466,7 +24466,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "5112236092670504396",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/which/-/which-2.0.2.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "2.0.2",
       },
@@ -24488,7 +24488,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "16054727932152155669",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/which-boxed-primitive/-/which-boxed-primitive-1.1.1.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "1.1.1",
       },
@@ -24518,7 +24518,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "5638101803141645512",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/which-builtin-type/-/which-builtin-type-1.2.1.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "1.2.1",
       },
@@ -24539,7 +24539,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "14526135543217104595",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/which-collection/-/which-collection-1.0.2.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "1.0.2",
       },
@@ -24563,7 +24563,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "15299409777186876504",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/which-typed-array/-/which-typed-array-1.1.19.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "1.1.19",
       },
@@ -24579,7 +24579,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "17394224781186240192",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/word-wrap/-/word-wrap-1.2.5.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "1.2.5",
       },
@@ -24599,7 +24599,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "6417752039399150421",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/wrap-ansi/-/wrap-ansi-7.0.0.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "7.0.0",
       },
@@ -24615,7 +24615,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "18119806661187706052",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/wrappy/-/wrappy-1.0.2.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "1.0.2",
       },
@@ -24634,7 +24634,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "14644737011329074183",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/ws/-/ws-8.18.3.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "8.18.3",
       },
@@ -24650,7 +24650,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "13867919047397601860",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/y18n/-/y18n-5.0.8.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "5.0.8",
       },
@@ -24666,7 +24666,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "17447362886122903538",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/yallist/-/yallist-3.1.1.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "3.1.1",
       },
@@ -24685,7 +24685,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "6823399114509449780",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/yaml/-/yaml-2.8.1.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "2.8.1",
       },
@@ -24709,7 +24709,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "18153588124555602831",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/yargs/-/yargs-17.7.2.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "17.7.2",
       },
@@ -24725,7 +24725,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "2624058701233809213",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/yargs-parser/-/yargs-parser-21.1.1.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "21.1.1",
       },
@@ -24744,7 +24744,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "7329914562904170092",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/yauzl/-/yauzl-2.10.0.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "2.10.0",
       },
@@ -24760,7 +24760,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "9034931028572940079",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/yocto-queue/-/yocto-queue-0.1.0.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "0.1.0",
       },
@@ -24776,7 +24776,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "13942938047053248045",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/zod/-/zod-3.25.76.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "3.25.76",
       },
@@ -24794,7 +24794,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "16817077954781993621",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/zod-validation-error/-/zod-validation-error-4.0.2.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "4.0.2",
       },
@@ -24813,7 +24813,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "8623012563386528314",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/json5/-/json5-2.2.3.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "2.2.3",
       },
@@ -24831,7 +24831,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "15261810304153928944",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/lru-cache/-/lru-cache-5.1.1.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "5.1.1",
       },
@@ -24847,7 +24847,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "17830281265467207399",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/eslint-visitor-keys/-/eslint-visitor-keys-3.4.3.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "3.4.3",
       },
@@ -24863,7 +24863,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "15143409006866382382",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/globals/-/globals-14.0.0.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "14.0.0",
       },
@@ -24879,7 +24879,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "4603709753412279028",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/@humanwhocodes/retry/-/retry-0.3.1.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "0.3.1",
       },
@@ -24899,7 +24899,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "15727733666069179645",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/string-width/-/string-width-5.1.2.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "5.1.2",
       },
@@ -24917,7 +24917,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "13340235767065158173",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/strip-ansi/-/strip-ansi-7.1.0.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "7.1.0",
       },
@@ -24937,7 +24937,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "6417752039399150421",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/wrap-ansi/-/wrap-ansi-8.1.0.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "8.1.0",
       },
@@ -24955,7 +24955,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "4977061119926641513",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/@emnapi/runtime/-/runtime-1.4.5.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "1.4.5",
       },
@@ -24977,7 +24977,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "1878427088820911921",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/fast-glob/-/fast-glob-3.3.1.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "3.3.1",
       },
@@ -24996,7 +24996,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "16367367531761322261",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/semver/-/semver-7.7.2.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "7.7.2",
       },
@@ -25014,7 +25014,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "4124652010926124945",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/@types/node/-/node-24.2.1.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "24.2.1",
       },
@@ -25030,7 +25030,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "633405221675698401",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/@eslint-community/regexpp/-/regexpp-4.12.2.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "4.12.2",
       },
@@ -25046,7 +25046,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "7684941795926889194",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/ignore/-/ignore-7.0.5.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "7.0.5",
       },
@@ -25064,7 +25064,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "14324291119347696526",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/debug/-/debug-4.4.3.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "4.4.3",
       },
@@ -25082,7 +25082,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "8137703609956696607",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/minimatch/-/minimatch-10.2.4.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "10.2.4",
       },
@@ -25101,7 +25101,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "16367367531761322261",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/semver/-/semver-7.7.4.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "7.7.4",
       },
@@ -25120,7 +25120,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "17953343526787576883",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/tinyglobby/-/tinyglobby-0.2.15.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "0.2.15",
       },
@@ -25139,7 +25139,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "17370105237013380211",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/@eslint-community/eslint-utils/-/eslint-utils-4.9.1.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "4.9.1",
       },
@@ -25155,7 +25155,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "17830281265467207399",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/eslint-visitor-keys/-/eslint-visitor-keys-5.0.1.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "5.0.1",
       },
@@ -25173,7 +25173,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "11965780159102682782",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/glob-parent/-/glob-parent-5.1.2.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "5.1.2",
       },
@@ -25191,7 +25191,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "14324291119347696526",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/debug/-/debug-3.2.7.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "3.2.7",
       },
@@ -25214,7 +25214,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "17831413505788817704",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/resolve/-/resolve-2.0.0-next.5.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "2.0.0-next.5",
       },
@@ -25232,7 +25232,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "8137703609956696607",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/minimatch/-/minimatch-9.0.5.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "9.0.5",
       },
@@ -25252,7 +25252,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "9297766010604904796",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/postcss/-/postcss-8.4.31.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "8.4.31",
       },
@@ -25272,7 +25272,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "6188048000334411082",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/@babel/code-frame/-/code-frame-7.27.1.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "7.27.1",
       },
@@ -25288,7 +25288,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "15261810304153928944",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/lru-cache/-/lru-cache-10.4.3.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "10.4.3",
       },
@@ -25304,7 +25304,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "4954026511424972012",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/emoji-regex/-/emoji-regex-8.0.0.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "8.0.0",
       },
@@ -25320,7 +25320,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "17753630613781110869",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/picomatch/-/picomatch-4.0.3.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "4.0.3",
       },
@@ -25336,7 +25336,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "8115476937249128794",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/ansi-regex/-/ansi-regex-6.1.0.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "6.1.0",
       },
@@ -25352,7 +25352,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "1496261712670764878",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/ansi-styles/-/ansi-styles-6.2.1.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "6.2.1",
       },
@@ -25368,7 +25368,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "13518207300296011529",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/undici-types/-/undici-types-7.10.0.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "7.10.0",
       },
@@ -25386,7 +25386,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "2949258092693339993",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/brace-expansion/-/brace-expansion-5.0.4.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "5.0.4",
       },
@@ -25404,7 +25404,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "5540502524252407757",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/fdir/-/fdir-6.5.0.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "6.5.0",
       },
@@ -25422,7 +25422,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "2949258092693339993",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/brace-expansion/-/brace-expansion-2.0.2.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "2.0.2",
       },
@@ -25438,7 +25438,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "13229699169636733158",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/@babel/helper-validator-identifier/-/helper-validator-identifier-7.27.1.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "7.27.1",
       },
@@ -25454,7 +25454,7 @@ exports[`ssr works for 100-ish requests 1`] = `
       "name_hash": "16269801611404267863",
       "origin": "npm",
       "resolution": {
-        "resolved": "https://registry.npmjs.org/balanced-match/-/balanced-match-4.0.4.tgz",
+        "resolved": "",
         "tag": "npm",
         "value": "4.0.4",
       },

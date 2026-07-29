@@ -100,6 +100,21 @@ pub(crate) fn build_url(
     )
 }
 
+/// Append the canonical registry tarball URL to `out`, materializing the
+/// `""` resolved shorthand a `bun.lock` entry may carry.
+pub(crate) fn build_url_into_vec(
+    out: &mut Vec<u8>,
+    registry: &[u8],
+    full_name: &StringOrTinyString,
+    version: Version,
+    string_buf: &[u8],
+) -> Result<(), std::io::Error> {
+    build_url_with_printer(registry, full_name, version, string_buf, |args| {
+        use std::io::Write;
+        out.write_fmt(args)
+    })
+}
+
 /// Generic URL builder; the closure carries its own context.
 pub(crate) fn build_url_with_printer<R, E>(
     registry_: &[u8],

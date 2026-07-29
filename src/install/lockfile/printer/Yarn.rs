@@ -208,11 +208,22 @@ fn packages(this: &mut Printer, writer: &mut impl bun_io::Write) -> Result<(), c
 
             writer.write_all(b"  resolved ")?;
 
-            let url_formatter = resolution.fmt_url(string_buf);
-
             // Resolved URL is always quoted
             quoted_buf.clear();
-            url_formatter.write_to(&mut quoted_buf)?;
+            if resolution.tag == bun_install::resolution::Tag::Npm
+                && resolution.npm().url.slice(string_buf).is_empty()
+            {
+                // yarn.lock has no `""` shorthand, so materialize the URL.
+                crate::extract_tarball::build_url_into_vec(
+                    &mut quoted_buf,
+                    this.options.scope_for_package_name(name).url.href(),
+                    &strings::StringOrTinyString::init(name),
+                    resolution.npm().version,
+                    string_buf,
+                )?;
+            } else {
+                resolution.fmt_url(string_buf).write_to(&mut quoted_buf)?;
+            }
             writeln!(
                 writer,
                 "{}",

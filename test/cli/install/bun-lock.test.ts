@@ -7,6 +7,7 @@ import {
   isWindows,
   readdirSorted,
   runBunInstall,
+  tempDir,
   toBeValidBin,
   VerdaccioRegistry,
 } from "harness";
@@ -869,3 +870,143 @@ it("prints an actionable error for a lockfile version newer than this build supp
   expect(err).not.toContain("Unknown lockfile version");
   expect(await exited).toBe(0);
 });
+
+// https://github.com/oven-sh/bun/issues/35524
+it("keeps empty resolved fields of already-locked packages when updating the lockfile", async () => {
+  const pkgsDir = join(__dirname, "registry", "packages");
+  const versions: Record<string, string> = { "no-deps": "1.0.0", "a-dep": "1.0.1" };
+  const tarballs: Record<string, Uint8Array> = {};
+  const integrities: Record<string, string> = {};
+  for (const [name, version] of Object.entries(versions)) {
+    const bytes = await file(join(pkgsDir, name, `${name}-${version}.tgz`)).bytes();
+    tarballs[name] = bytes;
+    integrities[name] = "sha512-" + Buffer.from(await crypto.subtle.digest("SHA-512", bytes)).toString("base64");
+  }
+
+  // A minimal registry whose manifests report tarball URLs on its own host,
+  // like a registry that rewrites dist.tarball.
+  await using server = Bun.serve({
+    port: 0,
+    fetch(req) {
+      const { pathname } = new URL(req.url);
+      for (const [name, version] of Object.entries(versions)) {
+        if (pathname === `/${name}/-/${name}-${version}.tgz`) {
+          return new Response(tarballs[name]);
+        }
+        if (pathname === `/${name}`) {
+          return Response.json({
+            name,
+            "dist-tags": { latest: version },
+            versions: {
+              [version]: {
+                name,
+                version,
+                dist: {
+                  integrity: integrities[name],
+                  tarball: `http://127.0.0.1:${server.port}/${name}/-/${name}-${version}.tgz`,
+                },
+              },
+            },
+          });
+        }
+      }
+      return new Response("Not found", { status: 404 });
+    },
+  });
+
+  using dir = tempDir("keep-empty-resolved", {
+    "package.json": JSON.stringify({
+      name: "keep-empty-resolved",
+      dependencies: {
+        "no-deps": "1.0.0",
+      },
+    }),
+    "bunfig.toml": `[install]\nregistry = "http://127.0.0.1:${server.port}/"\n\n[install.security]\nscanner = "./scanner.ts"\n`,
+    // Security scanners are documented to receive the tarball URL bun
+    // downloads, so entries with the `""` shorthand must be materialized.
+    "scanner.ts": `export const scanner = {
+      version: "1",
+      scan: async ({ packages }) => {
+        await Bun.write(new URL("./scan-payload.json", import.meta.url), JSON.stringify(packages));
+        return [];
+      },
+    };`,
+    // A committed lockfile using the registry-agnostic `""` resolved shorthand.
+    "bun.lock": JSON.stringify({
+      lockfileVersion: 2,
+      configVersion: 1,
+      workspaces: {
+        "": {
+          name: "keep-empty-resolved",
+          dependencies: {
+            "no-deps": "1.0.0",
+          },
+        },
+      },
+      packages: {
+        "no-deps": ["no-deps@1.0.0", "", {}, integrities["no-deps"]],
+      },
+    }),
+  });
+
+  const install = (...args: string[]) =>
+    spawn({
+      cmd: [bunExe(), "install", ...args],
+      cwd: String(dir),
+      env: { ...env, BUN_INSTALL_CACHE_DIR: join(String(dir), ".cache") },
+      stdout: "ignore",
+      stderr: "pipe",
+    });
+
+  // The empty URL resolves against the configured registry at download time.
+  {
+    const { exited, stderr } = install("--yarn");
+    const err = await stderr.text();
+    expect(err).not.toContain("error:");
+    expect(await exited).toBe(0);
+    expect(await file(join(String(dir), "node_modules", "no-deps", "package.json")).json()).toMatchObject({
+      name: "no-deps",
+      version: "1.0.0",
+    });
+
+    const payload = await file(join(String(dir), "scan-payload.json")).json();
+    expect(payload).toContainEqual(
+      expect.objectContaining({
+        name: "no-deps",
+        tarball: `http://127.0.0.1:${server.port}/no-deps/-/no-deps-1.0.0.tgz`,
+      }),
+    );
+
+    // yarn.lock has no `""` shorthand, so the printer materializes the URL.
+    const yarnLock = await file(join(String(dir), "yarn.lock")).text();
+    expect(yarnLock).toContain(`resolved "http://127.0.0.1:${server.port}/no-deps/-/no-deps-1.0.0.tgz"`);
+    expect(yarnLock).not.toContain('resolved ""');
+  }
+
+  // Update the lockfile by adding a dependency. The already-locked entry must
+  // keep its `""` resolved field instead of being rewritten to an absolute URL
+  // on the configured registry; only the new package records the tarball URL
+  // its manifest reported.
+  await write(
+    join(String(dir), "package.json"),
+    JSON.stringify({
+      name: "keep-empty-resolved",
+      dependencies: {
+        "no-deps": "1.0.0",
+        "a-dep": "1.0.1",
+      },
+    }),
+  );
+
+  {
+    const { exited, stderr } = install();
+    const err = await stderr.text();
+    expect(err).not.toContain("error:");
+    expect(await exited).toBe(0);
+  }
+
+  const lockfile = await file(join(String(dir), "bun.lock")).text();
+  expect(lockfile).toContain('"no-deps": ["no-deps@1.0.0", ""');
+  expect(lockfile).not.toContain("no-deps/-/no-deps-1.0.0.tgz");
+  expect(lockfile).toContain(`"a-dep": ["a-dep@1.0.1", "http://127.0.0.1:${server.port}/a-dep/-/a-dep-1.0.1.tgz"`);
+}, 30_000);

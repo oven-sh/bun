@@ -2072,6 +2072,41 @@ pub enum PlaceholderField {
     Target,
 }
 
+/// `[dir]` placeholder value: relativize `source_dir` against `root_dir`.
+/// Canonicalizes `source_dir` via `get_fd_path` only when the plain string
+/// relativization falls outside `root_dir` and `on_disk` is set.
+pub(crate) fn source_dir_relative_to_root(
+    source_dir: &[u8],
+    root_dir: &[u8],
+    on_disk: bool,
+) -> Result<Box<[u8]>, bun_alloc::AllocError> {
+    use bun_paths::resolve_path;
+    // Empty for a bare-filename entry (`bun build hi.ts --external '*'`
+    // with no leading `./`); openat needs "." not "".
+    let source_dir: &[u8] = if source_dir.is_empty() {
+        b"."
+    } else {
+        source_dir
+    };
+    let rel = resolve_path::relative_platform::<resolve_path::platform::Auto, false>(
+        root_dir, source_dir,
+    );
+    if on_disk && rel.starts_with(b"..") {
+        let mut buf = bun_paths::path_buffer_pool::get();
+        if let Ok(f) = bun_sys::File::openat(
+            bun_sys::Fd::cwd(),
+            source_dir,
+            bun_sys::O::PATH | bun_sys::O::DIRECTORY,
+            0,
+        ) {
+            if let Ok(p) = f.get_path(&mut buf) {
+                return resolve_path::relative_alloc(root_dir, p);
+            }
+        }
+    }
+    Ok(Box::<[u8]>::from(rel))
+}
+
 // Shared body for PathTemplate::needs / PathTemplateConst::needs (D064).
 #[inline]
 pub(crate) fn path_template_needs(data: &[u8], field: PlaceholderField) -> bool {

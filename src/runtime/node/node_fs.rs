@@ -682,9 +682,7 @@ mod _async_tasks {
             self.global_object.get()
         }
 
-        /// Skip the libuv round-trip: store `err` and enqueue `run_from_js_thread`
-        /// directly so the promise rejects on the next tick (same path the
-        /// Writev empty-bufs arm uses for its early `Ok`).
+        /// Reject `task.promise` on the next tick without dispatching to libuv.
         fn complete_early_err(task: &mut Self, err: sys::Error) -> JSValue {
             task.result = Err(err);
             let task_ptr: *mut Self = task;

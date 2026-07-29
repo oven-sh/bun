@@ -89,6 +89,10 @@ pub trait Accessor {
     /// Like statat but does not follow symlinks.
     fn lstatat(handle: Self::Handle, path: &ZStr) -> Maybe<Stat>;
     fn close(handle: Self::Handle) -> Option<SysError>;
+    /// Independent handle to the same open directory.
+    fn dup(handle: Self::Handle) -> Maybe<Self::Handle> {
+        Ok(handle)
+    }
 }
 
 pub trait AccessorDirIter {
@@ -205,6 +209,10 @@ impl Accessor for SyscallAccessor {
     fn close(handle: SyscallHandle) -> Option<SysError> {
         handle.value.close_allowing_bad_file_descriptor(None)
     }
+
+    fn dup(handle: SyscallHandle) -> Maybe<SyscallHandle> {
+        Syscall::dup(handle.value).map(|fd| SyscallHandle { value: fd })
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -266,6 +274,9 @@ pub struct GlobWalker<A: Accessor, const SENTINEL: bool> {
     pub workbuf: Vec<WorkItem<A>>,
 
     followed_links: Vec<FollowedLink>,
+    /// Parallel to `followed_links`: open handle to each followed target and
+    /// the logical-path prefix it covers; see [`Iterator::openat_anchored`].
+    link_anchors: Vec<LinkAnchor<A::Handle>>,
 
     is_ignored: IgnoreFilterFn,
 
@@ -358,6 +369,9 @@ pub struct Iterator<'a, A: Accessor, const SENTINEL: bool> {
     /// directory being iterated on.
     #[cfg(debug_assertions)]
     pub fds_open: usize,
+    /// Dup'd [`GlobWalker::link_anchors`] handles currently live.
+    #[cfg(debug_assertions)]
+    anchors_open: usize,
 
     #[cfg(windows)]
     pub nt_filter_buf: [u16; 256],
@@ -376,6 +390,8 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
             cwd_fd: A::Handle::EMPTY,
             #[cfg(debug_assertions)]
             fds_open: 0,
+            #[cfg(debug_assertions)]
+            anchors_open: 0,
             #[cfg(windows)]
             nt_filter_buf: [0; 256],
         }
@@ -550,6 +566,54 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
         }
     }
 
+    /// Open `full_path` relative to the deepest [`GlobWalker::link_anchors`]
+    /// handle (suffix past its prefix), so each open resolves at most one
+    /// symlink rather than every link accumulated in `full_path` relative to
+    /// `cwd_fd`, which the kernel caps at `MAXSYMLINKS` with `ELOOP`.
+    fn openat_anchored(&self, full_path_z: &ZStr) -> Result<Maybe<A::Handle>, Error> {
+        if let Some(&(anchor_fd, prefix_len)) = self
+            .walker
+            .link_anchors
+            .iter()
+            .rev()
+            .find_map(Option::as_ref)
+        {
+            let full = full_path_z.as_bytes();
+            let prefix_len = prefix_len as usize;
+            if full.len() > prefix_len {
+                let mut off = prefix_len;
+                if full[off] == b'/' || (IS_WINDOWS && full[off] == b'\\') {
+                    off += 1;
+                }
+                // SAFETY: `full_path_z` is NUL-terminated at `full.len()`, so
+                // `full[off..]` is NUL-terminated at its own length; `off` is
+                // in `1..=full.len()`.
+                let suffix_z = unsafe { ZStr::from_raw(full.as_ptr().add(off), full.len() - off) };
+                return A::openat(anchor_fd, suffix_z);
+            }
+        }
+        A::openat(self.cwd_fd, full_path_z)
+    }
+
+    fn close_anchor(&mut self, fd: A::Handle) {
+        let _ = A::close(fd);
+        if count_fds::<A>() {
+            #[cfg(debug_assertions)]
+            {
+                self.anchors_open -= 1;
+            }
+        }
+    }
+
+    fn truncate_followed_links(&mut self, len: usize) {
+        while self.walker.link_anchors.len() > len {
+            if let Some((fd, _)) = self.walker.link_anchors.pop().flatten() {
+                self.close_anchor(fd);
+            }
+        }
+        self.walker.followed_links.truncate(len);
+    }
+
     fn transition_to_dir_iter_state<const ROOT: bool>(
         &mut self,
         work_item: WorkItem<A>,
@@ -629,7 +693,7 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
             }
             if ROOT {
                 if had_dot_dot {
-                    break 'fd match A::openat(self.cwd_fd, dir_path)? {
+                    break 'fd match self.openat_anchored(dir_path)? {
                         Err(err) => {
                             return Ok(Err(self.walker.handle_sys_err_with_path(&err, dir_path)));
                         }
@@ -644,7 +708,7 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
                 break 'fd self.cwd_fd;
             }
 
-            match A::openat(self.cwd_fd, dir_path)? {
+            match self.openat_anchored(dir_path)? {
                 Err(err) => {
                     return Ok(Err(self.walker.handle_sys_err_with_path(&err, dir_path)));
                 }
@@ -803,11 +867,10 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
                     let mut work_item = self.walker.workbuf.pop().unwrap();
                     // The workbuf is LIFO, so `followed_links_len` restores the
                     // exact followed-link ancestor chain of this work item.
-                    self.walker
-                        .followed_links
-                        .truncate(work_item.followed_links_len);
+                    self.truncate_followed_links(work_item.followed_links_len);
                     if let Some(link) = work_item.followed_link.take() {
                         self.walker.followed_links.push(link);
+                        self.walker.link_anchors.push(work_item.link_anchor.take());
                     }
                     match work_item.kind {
                         WorkItemKind::Directory => {
@@ -823,6 +886,7 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
                             // NUL in `.len()`; drop it (see `work_item_logical_path`) so the
                             // NUL re-written at `[len]` below isn't left embedded in the path.
                             let work_item_path: &[u8] = work_item_logical_path(&work_item.path);
+                            let anchor_prefix_len = work_item_path.len() as u32;
                             if work_item_path.len() >= MAX_PATH_BYTES {
                                 return Ok(Err(SysError::from_code(
                                     E::ENAMETOOLONG,
@@ -888,35 +952,35 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
                             };
 
                             self.iter_state = IterState::GetNext;
-                            let maybe_dir_fd: Option<A::Handle> =
-                                match A::openat(self.cwd_fd, symlink_full_path_z)? {
-                                    Err(err) => 'brk: {
-                                        if err.get_errno() == E::ENOTDIR {
-                                            break 'brk None;
-                                        }
-                                        if self.walker.error_on_broken_symlinks {
-                                            return Ok(Err(self.walker.handle_sys_err_with_path(
-                                                &err,
-                                                symlink_full_path_z,
-                                            )));
-                                        }
-                                        if !self.walker.only_files
-                                            && self.walker.eval_file(&active, entry_name)
-                                        {
-                                            match self.walker.prepare_matched_path_symlink(
-                                                symlink_full_path_z.as_bytes(),
-                                            )? {
-                                                Some(p) => return Ok(Ok(Some(p))),
-                                                None => continue 'outer,
-                                            }
-                                        }
-                                        continue 'outer;
+                            let maybe_dir_fd: Option<A::Handle> = match self
+                                .openat_anchored(symlink_full_path_z)?
+                            {
+                                Err(err) => 'brk: {
+                                    if err.get_errno() == E::ENOTDIR {
+                                        break 'brk None;
                                     }
-                                    Ok(fd) => {
-                                        self.bump_open_fds();
-                                        Some(fd)
+                                    if self.walker.error_on_broken_symlinks {
+                                        return Ok(Err(self
+                                            .walker
+                                            .handle_sys_err_with_path(&err, symlink_full_path_z)));
                                     }
-                                };
+                                    if !self.walker.only_files
+                                        && self.walker.eval_file(&active, entry_name)
+                                    {
+                                        match self.walker.prepare_matched_path_symlink(
+                                            symlink_full_path_z.as_bytes(),
+                                        )? {
+                                            Some(p) => return Ok(Ok(Some(p))),
+                                            None => continue 'outer,
+                                        }
+                                    }
+                                    continue 'outer;
+                                }
+                                Ok(fd) => {
+                                    self.bump_open_fds();
+                                    Some(fd)
+                                }
+                            };
 
                             let Some(dir_fd) = maybe_dir_fd else {
                                 // Symlink target is a file
@@ -963,6 +1027,16 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
                                     }
                                 };
                             if descend {
+                                let link_anchor = followed_link
+                                    .is_some()
+                                    .then(|| A::dup(dir_fd).ok().map(|fd| (fd, anchor_prefix_len)))
+                                    .flatten();
+                                if count_fds::<A>() && link_anchor.is_some() {
+                                    #[cfg(debug_assertions)]
+                                    {
+                                        self.anchors_open += 1;
+                                    }
+                                }
                                 self.walker.push_work_item(
                                     WorkItem::new_with_fd(
                                         work_item.path,
@@ -971,6 +1045,7 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
                                         dir_fd,
                                     ),
                                     followed_link,
+                                    link_anchor,
                                 );
                             } else {
                                 self.close_disallowing_cwd(dir_fd);
@@ -1062,6 +1137,7 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
                                             WorkItemKind::Directory,
                                         ),
                                         followed_link,
+                                        None,
                                     );
                                 }
                             }
@@ -1157,6 +1233,7 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
                                                 WorkItemKind::Directory,
                                             ),
                                             None,
+                                            None,
                                         );
                                     }
                                     if add_dir && !self.walker.only_files {
@@ -1227,11 +1304,18 @@ impl<'a, A: Accessor, const SENTINEL: bool> Drop for Iterator<'a, A, SENTINEL> {
             if let Some(fd) = work_item.fd {
                 self.close_disallowing_cwd(fd);
             }
+            if let Some((fd, _)) = work_item.link_anchor {
+                self.close_anchor(fd);
+            }
         }
+        self.truncate_followed_links(0);
 
         if count_fds::<A>() {
             #[cfg(debug_assertions)]
-            debug_assert!(self.fds_open == 0);
+            {
+                debug_assert!(self.fds_open == 0);
+                debug_assert!(self.anchors_open == 0);
+            }
         }
     }
 }
@@ -1268,6 +1352,9 @@ impl FollowedLink {
     }
 }
 
+/// See [`GlobWalker::link_anchors`].
+type LinkAnchor<H> = Option<(H, u32)>;
+
 pub struct WorkItem<A: Accessor> {
     pub path: Box<[u8]>,
     /// Bitmask of active component indices.
@@ -1281,6 +1368,8 @@ pub struct WorkItem<A: Accessor> {
     /// The followed link this item descends into, pushed onto `followed_links`
     /// (after the truncation above) when it is popped.
     followed_link: Option<FollowedLink>,
+    /// Pushed onto [`GlobWalker::link_anchors`] alongside `followed_link`.
+    link_anchor: LinkAnchor<A::Handle>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -1299,6 +1388,7 @@ impl<A: Accessor> WorkItem<A> {
             fd: None,
             followed_links_len: 0,
             followed_link: None,
+            link_anchor: None,
         }
     }
 
@@ -1458,6 +1548,7 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
             path_buf: Box::new(PathBuffer::uninit()),
             workbuf: Vec::new(),
             followed_links: Vec::new(),
+            link_anchors: Vec::new(),
             is_ignored: ignore_filter_fn.unwrap_or(dummy_filter_false),
             _accessor: core::marker::PhantomData,
         };
@@ -1984,15 +2075,23 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
         self.push_work_item(
             WorkItem::new_symlink(subdir_entry_name, active, entry_start),
             None,
+            None,
         );
         Ok(())
     }
 
     /// Single push site: snapshots the followed-link ancestor chain (and the
     /// link `item` itself descends into) so the pop site can restore it.
-    fn push_work_item(&mut self, mut item: WorkItem<A>, followed_link: Option<FollowedLink>) {
+    fn push_work_item(
+        &mut self,
+        mut item: WorkItem<A>,
+        followed_link: Option<FollowedLink>,
+        link_anchor: LinkAnchor<A::Handle>,
+    ) {
+        debug_assert_eq!(self.followed_links.len(), self.link_anchors.len());
         item.followed_links_len = self.followed_links.len();
         item.followed_link = followed_link;
+        item.link_anchor = link_anchor;
         self.workbuf.push(item);
     }
 

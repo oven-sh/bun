@@ -1127,6 +1127,41 @@ describe.skipIf(!canCreateDirSymlink)("literal path segment through a symlinked 
   });
 });
 
+// An acyclic symlink chain (`nK/next -> ../nK+1`) must be followed to any
+// depth. Opening each followed link by its full accumulated path relative to
+// the cwd fd re-resolves every ancestor link on every open, so the kernel's
+// per-resolution MAXSYMLINKS limit (40 on Linux, 32 on macOS) fires on a
+// healthy tree, truncating results and misreporting the cutoff as a broken
+// link. `find -L` walks the same tree unbounded because each open resolves at
+// most one link relative to its parent.
+// Windows symlinks resolve through a different limit (63 reparse points) and
+// relative directory symlinks are not reliably creatable in CI; covered by the
+// POSIX lanes only.
+test.skipIf(isWindows || !canCreateDirSymlink)(
+  "followSymlinks walks an acyclic symlink chain past the kernel's MAXSYMLINKS limit",
+  () => {
+    const chainDepth = 90;
+    const files: Record<string, string> = {};
+    for (let i = 0; i <= chainDepth; i++) files[`n${i}/f${i}.txt`] = "";
+    files[`n50/real/sub.txt`] = "";
+    using dir = tempDir("glob-scan-symlink-chain", files);
+    for (let i = 0; i < chainDepth; i++) {
+      fs.symlinkSync(path.join("..", `n${i + 1}`), path.join(String(dir), `n${i}`, "next"), "dir");
+    }
+    const cwd = path.join(String(dir), "n0");
+
+    const matched = Array.from(new Glob("**/*.txt").scanSync({ cwd, followSymlinks: true }));
+    const filesOnChain = matched.filter(p => /f\d+\.txt$/.test(p));
+    expect(filesOnChain).toHaveLength(chainDepth + 1);
+    const nextPrefix = "next/".repeat(50);
+    expect(matched).toContain(path.join(nextPrefix, "real", "sub.txt"));
+
+    expect(() =>
+      Array.from(new Glob("**/*.txt").scanSync({ cwd, followSymlinks: true, throwErrorOnBrokenSymlink: true })),
+    ).not.toThrow();
+  },
+);
+
 // A directory the user can read but not write (RX-only grant) must still be
 // descended by the scanner: directory opens used to request FILE_ADD_FILE and
 // fail ACCESS_DENIED there. Elevated tokens bypass the ACL; the precondition

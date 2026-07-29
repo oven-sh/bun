@@ -18,6 +18,7 @@ const script = `
     oldViewLength: view.length,
     oldViewDetached: view.buffer.byteLength === 0,
     maxRequiredError,
+    asanOptions: process.env.ASAN_OPTIONS ?? null,
   }));
 `;
 
@@ -38,14 +39,14 @@ test("WebAssembly.Memory shared:true yields a SharedArrayBuffer", async () => {
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(stderr).toBe("");
-  expect(JSON.parse(stdout)).toEqual(expected);
+  expect(JSON.parse(stdout)).toEqual({ ...expected, asanOptions: bunEnv.ASAN_OPTIONS ?? null });
   expect(exitCode).toBe(0);
 });
 
 // JSC gates useWasmFaultSignalHandler on a substring of getenv("ASAN_OPTIONS")
 // under ASAN+Linux. When the env var is unset (or set without the flag),
 // WebAssembly.Memory must not silently drop {shared:true}; the binary should
-// enable the handler on its own.
+// enable the handler on its own without leaking into process.env.
 test.skipIf(!(isASAN && isLinux))(
   "WebAssembly.Memory shared:true works on ASAN builds without ASAN_OPTIONS in env",
   async () => {
@@ -60,7 +61,7 @@ test.skipIf(!(isASAN && isLinux))(
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       expect(stderr).toBe("");
-      expect(JSON.parse(stdout)).toEqual(expected);
+      expect(JSON.parse(stdout)).toEqual({ ...expected, asanOptions: override ?? null });
       expect(exitCode).toBe(0);
     }
   },

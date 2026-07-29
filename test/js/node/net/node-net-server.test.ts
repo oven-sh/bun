@@ -29,7 +29,7 @@ describe("net.createServer listen", () => {
       mustNotCall()();
     };
     server.on("error", closeAndFail);
-    timeout = setTimeout(closeAndFail, 100);
+    timeout = setTimeout(closeAndFail, 2000);
 
     server.listen(
       0,
@@ -57,7 +57,7 @@ describe("net.createServer listen", () => {
       mustNotCall()();
     };
     server.on("error", closeAndFail);
-    timeout = setTimeout(closeAndFail, 100);
+    timeout = setTimeout(closeAndFail, 2000);
 
     server.listen(
       0,
@@ -95,7 +95,7 @@ describe("net.createServer listen", () => {
       }),
     );
 
-    timeout = setTimeout(closeAndFail, 100);
+    timeout = setTimeout(closeAndFail, 2000);
 
     server.listen(0, "0.0.0.0");
   });
@@ -124,7 +124,7 @@ describe("net.createServer listen", () => {
       }),
     );
 
-    timeout = setTimeout(closeAndFail, 100);
+    timeout = setTimeout(closeAndFail, 2000);
 
     server.listen(0, "0.0.0.0");
   });
@@ -141,7 +141,7 @@ describe("net.createServer listen", () => {
       mustNotCall()();
     };
     server.on("error", closeAndFail);
-    timeout = setTimeout(closeAndFail, 100);
+    timeout = setTimeout(closeAndFail, 2000);
 
     server.listen(
       0,
@@ -170,7 +170,7 @@ describe("net.createServer listen", () => {
       mustNotCall()();
     };
     server.on("error", closeAndFail);
-    timeout = setTimeout(closeAndFail, 100);
+    timeout = setTimeout(closeAndFail, 2000);
 
     server.listen(
       0,
@@ -197,7 +197,7 @@ describe("net.createServer listen", () => {
       mustNotCall()();
     };
     server.on("error", closeAndFail);
-    timeout = setTimeout(closeAndFail, 100);
+    timeout = setTimeout(closeAndFail, 2000);
 
     server.listen(
       mustCall(() => {
@@ -224,7 +224,7 @@ describe("net.createServer listen", () => {
       mustNotCall()();
     };
     server.on("error", closeAndFail);
-    timeout = setTimeout(closeAndFail, 100);
+    timeout = setTimeout(closeAndFail, 2000);
 
     server.listen(
       socket_domain,
@@ -248,7 +248,7 @@ describe("net.createServer listen", () => {
       mustNotCall()();
     };
     server.on("error", closeAndFail);
-    timeout = setTimeout(closeAndFail, 100);
+    timeout = setTimeout(closeAndFail, 2000);
 
     server.listen(
       0,

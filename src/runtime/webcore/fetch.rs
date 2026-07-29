@@ -1427,7 +1427,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                         match referrer::parse_init_referrer(&raw) {
                             Some(stored) => break 'extract_referrer stored,
                             None => {
-                                return Err(global_this.throw(format_args!(
+                                return Err(global_this.throw_type_error(format_args!(
                                     "fetch() referrer is not a valid URL: \"{}\"",
                                     raw.get()
                                 )));

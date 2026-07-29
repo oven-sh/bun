@@ -40,9 +40,10 @@ describe.concurrent("fetch referrer and referrerPolicy", () => {
 
   it("Request constructor rejects an invalid referrer or referrerPolicy", () => {
     const url = "http://example.com/a";
+    expect(() => new Request(url, { referrer: "ht tp://x" })).toThrow(TypeError);
     expect(() => new Request(url, { referrer: "ht tp://x" })).toThrow(/referrer/i);
     // there is no base URL to resolve a relative referrer against
-    expect(() => new Request(url, { referrer: "/relative" })).toThrow(/referrer/i);
+    expect(() => new Request(url, { referrer: "/relative" })).toThrow(TypeError);
     // @ts-expect-error deliberately invalid enum value
     expect(() => new Request(url, { referrerPolicy: "bogus" })).toThrow(/referrerPolicy/);
   });

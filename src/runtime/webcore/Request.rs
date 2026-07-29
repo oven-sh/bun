@@ -1482,7 +1482,7 @@ impl Request {
                         );
                         match referrer::parse_init_referrer(&raw) {
                             Some(stored) => req.referrer.set(stored),
-                            None => bail!(Err(global_this.throw(format_args!(
+                            None => bail!(Err(global_this.throw_type_error(format_args!(
                                 "Failed to construct 'Request': Invalid referrer \"{}\"",
                                 raw.get()
                             )))),

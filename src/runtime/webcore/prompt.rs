@@ -126,8 +126,7 @@ fn confirm(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         }
         b'y' | b'Y' => {
             let Ok(next_byte) = reader.take_byte() else {
-                // EOF after 'y' with no newline (e.g. `printf y | bun ...`) is a
-                // completed positive response, not an abort.
+                // EOF after 'y' is a completed "yes", not an abort.
                 return Ok(JSValue::TRUE);
             };
 
@@ -339,15 +338,8 @@ pub mod prompt {
             input.push(second);
         }
 
-        // All of this code basically just first tries to load the input into a
-        // buffer of size 2048. If that is too small, then increase the buffer
-        // size to 4096. If that is too small, then just dynamically allocate
-        // the rest.
-        //
-        // Reaching EOF before a newline is a completed response (the bytes read
-        // so far), not an abort: `printf answer | bun` and a TTY user typing
-        // text then Ctrl-D both produce this shape. Only EOF before the first
-        // byte (handled above) returns null.
+        // Read until '\n', growing 2048 -> 4096 -> unbounded. EOF ends the
+        // response with the bytes read so far; only EOF-before-first-byte is null.
         'read: {
             match read_until_delimiter_array_list_append_assume_capacity(
                 &mut *reader,

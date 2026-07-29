@@ -632,18 +632,18 @@ pub fn bindgen_node_os_dispatch_uptime(global: &JSGlobalObject, out: *mut f64) -
 }
 
 /// # Safety
-/// `arg_options` must be a valid C++ stack local.
+/// `arg_encoding` must be a valid C++ stack local.
 // HOST_EXPORT(bindgen_Node_os_dispatchUserInfo1, c)
 // Called only from the generated `extern "C"` thunk; C++ guarantees non-null stack locals.
 #[allow(clippy::not_unsafe_ptr_arg_deref)]
 pub fn bindgen_node_os_dispatch_user_info(
     global: &JSGlobalObject,
-    arg_options: *const crate::node::os::gen_::UserInfoOptions,
+    arg_encoding: *const bun_core::String,
 ) -> JSValue {
-    // SAFETY: `arg_options` is a valid C++ stack local; `UserInfoOptions` is
-    // `#[repr(C)]` matching the bindgen `extern struct`.
-    let options = unsafe { core::ptr::read(arg_options) };
-    bun_jsc::host_fn::to_js_host_call(global, || node_os::user_info(global, &options))
+    // SAFETY: `arg_encoding` is a valid C++ stack local, borrowed (not owned)
+    // for the duration of the call.
+    let encoding = unsafe { &*arg_encoding };
+    bun_jsc::host_fn::to_js_host_call(global, || node_os::user_info(global, encoding))
 }
 
 // HOST_EXPORT(bindgen_Node_os_dispatchVersion1, c)

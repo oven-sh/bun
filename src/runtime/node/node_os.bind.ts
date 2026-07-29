@@ -57,13 +57,13 @@ export const uptime = fn({
   },
   ret: t.f64,
 });
-export const UserInfoOptions = t.dictionary({
-  encoding: t.DOMString.default(""),
-});
+// The `options` object itself is unwrapped in `src/js/node/os.ts`, matching
+// node's `lib/os.js` + `GetUserInfo`: non-object options and non-string
+// `encoding` values are ignored rather than rejected.
 export const userInfo = fn({
   args: {
     global: t.globalObject,
-    options: UserInfoOptions.default({}),
+    encoding: t.DOMString.default(""),
   },
   ret: t.any,
 });

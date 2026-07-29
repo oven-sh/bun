@@ -19,13 +19,14 @@ import { join } from "node:path";
 
 const cargo = which("cargo");
 const repoRoot = join(import.meta.dir, "..", "..");
+const codegenDir = join(repoRoot, "build", "debug", "codegen");
 // Same prerequisite check as rust-windows-sys-link.test.ts / linear-fifo.test.ts:
 // cargo parses the whole workspace manifest (including path deps) before
 // applying -p, and test-only CI lanes run a prebuilt binary without
 // vendor/lolhtml or the codegen tree on disk.
 const workspaceResolvable =
   existsSync(join(repoRoot, "vendor", "lolhtml", "Cargo.toml")) &&
-  existsSync(join(repoRoot, "build", "debug", "codegen", "build_options.rs"));
+  existsSync(join(codegenDir, "build_options.rs"));
 
 test.skipIf(!cargo || !workspaceResolvable)(
   "cargo test --release --doc -p bun_http compiles the ref-count derives",
@@ -33,7 +34,7 @@ test.skipIf(!cargo || !workspaceResolvable)(
     await using proc = Bun.spawn({
       cmd: [cargo!, "test", "--locked", "--release", "--doc", "-p", "bun_http", "--quiet"],
       cwd: repoRoot,
-      env: { ...process.env, CARGO_TERM_COLOR: "never" },
+      env: { ...process.env, CARGO_TERM_COLOR: "never", BUN_CODEGEN_DIR: codegenDir },
       stdout: "pipe",
       stderr: "pipe",
     });

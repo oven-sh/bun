@@ -95,6 +95,8 @@ The second argument is the data to write. It can be any of the following:
 - `ArrayBuffer` or `SharedArrayBuffer`
 - `TypedArray` (`Uint8Array`, et. al.)
 - `Response`
+- `ReadableStream`
+- `AsyncIterable` (including async generators)
 
 Bun handles each combination with the fastest available system call on the current platform.
 
@@ -279,7 +281,15 @@ interface Bun {
 
   write(
     destination: string | number | BunFile | URL,
-    input: string | Blob | ArrayBuffer | SharedArrayBuffer | TypedArray | Response,
+    input:
+      | string
+      | Blob
+      | ArrayBuffer
+      | SharedArrayBuffer
+      | TypedArray
+      | Response
+      | ReadableStream
+      | AsyncIterable<string | ArrayBuffer | ArrayBufferView>,
   ): Promise<number>;
 }
 

@@ -727,4 +727,300 @@ int posix_fadvise(int fd, off_t offset, off_t len, int advice) {
 
     expect(f.name).toBe(filePath);
   });
+
+  // https://github.com/oven-sh/bun/issues/31681
+  describe("ReadableStream source", () => {
+    it("writes the bytes of a fetch response body stream", async () => {
+      using dir = tempDir("bun-write-fetch-body-stream", {});
+      const filePath = join(String(dir), "out.bin");
+      await using server = Bun.serve({
+        port: 0,
+        fetch: () => new Response(Buffer.alloc(256 * 1024, 0x5a)),
+      });
+      const res = await fetch(server.url);
+
+      const written = await Bun.write(filePath, res.body);
+      expect(written).toBe(256 * 1024);
+      expect(await Bun.file(filePath).bytes()).toEqual(new Uint8Array(256 * 1024).fill(0x5a));
+    });
+
+    it("writes the bytes of a plain ReadableStream", async () => {
+      using dir = tempDir("bun-write-plain-stream", {});
+      const filePath = join(String(dir), "out.bin");
+      const stream = new ReadableStream({
+        start(controller) {
+          controller.enqueue(new Uint8Array([1, 2, 3]));
+          controller.enqueue(new Uint8Array([4, 5]));
+          controller.close();
+        },
+      });
+
+      const written = await Bun.write(filePath, stream);
+      expect(written).toBe(5);
+      expect(await Bun.file(filePath).bytes()).toEqual(new Uint8Array([1, 2, 3, 4, 5]));
+    });
+
+    it("writes a multi-chunk pull-based stream", async () => {
+      using dir = tempDir("bun-write-pull-stream", {});
+      const filePath = join(String(dir), "out.bin");
+      let chunk = 0;
+      const stream = new ReadableStream({
+        pull(controller) {
+          if (chunk === 8) {
+            controller.close();
+            return;
+          }
+          controller.enqueue(new Uint8Array(1024).fill(chunk++));
+        },
+      });
+
+      const written = await Bun.write(filePath, stream);
+      expect(written).toBe(8 * 1024);
+      const bytes = await Bun.file(filePath).bytes();
+      const expected = new Uint8Array(8 * 1024);
+      for (let i = 0; i < 8; i++) expected.fill(i, i * 1024, (i + 1) * 1024);
+      expect(bytes).toEqual(expected);
+    });
+
+    it("writes a direct ReadableStream", async () => {
+      using dir = tempDir("bun-write-direct-stream", {});
+      const filePath = join(String(dir), "out.bin");
+      const stream = new ReadableStream({
+        type: "direct",
+        async pull(controller) {
+          controller.write(new Uint8Array(4096).fill(7));
+          await controller.flush();
+          controller.close();
+        },
+      });
+
+      const written = await Bun.write(filePath, stream);
+      expect(written).toBe(4096);
+      expect(await Bun.file(filePath).bytes()).toEqual(new Uint8Array(4096).fill(7));
+    });
+
+    it("writes a direct ReadableStream with a synchronous pull", async () => {
+      using dir = tempDir("bun-write-direct-sync-stream", {});
+      const filePath = join(String(dir), "out.bin");
+      const stream = new ReadableStream({
+        type: "direct",
+        pull(controller) {
+          controller.write(new Uint8Array(4096).fill(8));
+          controller.close();
+        },
+      });
+
+      const written = await Bun.write(filePath, stream);
+      expect(written).toBe(4096);
+      expect(await Bun.file(filePath).bytes()).toEqual(new Uint8Array(4096).fill(8));
+    });
+
+    it("counts lone surrogates as their replacement-character bytes", async () => {
+      using dir = tempDir("bun-write-lone-surrogate", {});
+      const filePath = join(String(dir), "out.bin");
+      const stream = new ReadableStream({
+        type: "direct",
+        pull(controller) {
+          controller.write("a\uD800b"); // the lone surrogate encodes as U+FFFD
+          controller.close();
+        },
+      });
+
+      expect(await Bun.write(filePath, stream)).toBe(5);
+      expect(await Bun.file(filePath).bytes()).toEqual(new Uint8Array([0x61, 0xef, 0xbf, 0xbd, 0x62]));
+    });
+
+    it("works through Bun.file().write()", async () => {
+      using dir = tempDir("bun-file-write-stream", {});
+      const filePath = join(String(dir), "out.txt");
+      const stream = new ReadableStream({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode("hello from a stream"));
+          controller.close();
+        },
+      });
+
+      const written = await Bun.file(filePath).write(stream);
+      expect(written).toBe("hello from a stream".length);
+      expect(await Bun.file(filePath).text()).toBe("hello from a stream");
+    });
+
+    it("replaces the previous contents of the destination", async () => {
+      using dir = tempDir("bun-write-stream-truncate", {});
+      const filePath = join(String(dir), "out.bin");
+      await Bun.write(filePath, Buffer.alloc(1000, 0x41));
+      const stream = new ReadableStream({
+        start(controller) {
+          controller.enqueue(new Uint8Array([0x42, 0x42]));
+          controller.close();
+        },
+      });
+
+      expect(await Bun.write(filePath, stream)).toBe(2);
+      expect(await Bun.file(filePath).text()).toBe("BB");
+    });
+
+    it("writes an empty stream as an empty file", async () => {
+      using dir = tempDir("bun-write-empty-stream", {});
+      const filePath = join(String(dir), "out.bin");
+      const stream = new ReadableStream({
+        start(controller) {
+          controller.close();
+        },
+      });
+
+      expect(await Bun.write(filePath, stream)).toBe(0);
+      expect(await Bun.file(filePath).exists()).toBe(true);
+      expect(await Bun.file(filePath).bytes()).toEqual(new Uint8Array(0));
+    });
+
+    it("writes the values of an async iterable", async () => {
+      using dir = tempDir("bun-write-async-iterable", {});
+      const filePath = join(String(dir), "out.bin");
+      async function* chunks() {
+        yield new Uint8Array([10, 20]);
+        yield new Uint8Array([30]);
+      }
+
+      const written = await Bun.write(filePath, chunks());
+      expect(written).toBe(3);
+      expect(await Bun.file(filePath).bytes()).toEqual(new Uint8Array([10, 20, 30]));
+    });
+
+    it("writes the values of an async generator function", async () => {
+      using dir = tempDir("bun-write-async-gen-fn", {});
+      const filePath = join(String(dir), "out.bin");
+
+      const written = await Bun.write(filePath, async function* () {
+        yield new Uint8Array([40, 50]);
+        yield new Uint8Array([60]);
+      });
+      expect(written).toBe(3);
+      expect(await Bun.file(filePath).bytes()).toEqual(new Uint8Array([40, 50, 60]));
+    });
+
+    it("throws on an already-used stream", async () => {
+      using dir = tempDir("bun-write-used-stream", {});
+      const filePath = join(String(dir), "out.bin");
+      const stream = new ReadableStream({
+        start(controller) {
+          controller.enqueue(new Uint8Array([1]));
+          controller.close();
+        },
+      });
+      const reader = stream.getReader();
+      await reader.read();
+      reader.releaseLock();
+
+      expect(() => Bun.write(filePath, stream)).toThrow("ReadableStream has already been used");
+    });
+
+    it("throws on a locked stream without touching the destination", async () => {
+      using dir = tempDir("bun-write-locked-stream", {});
+      const filePath = join(String(dir), "out.bin");
+      await Bun.write(filePath, "precious contents");
+      const stream = new ReadableStream({
+        start(controller) {
+          controller.enqueue(new Uint8Array([1]));
+          controller.close();
+        },
+      });
+      stream.getReader();
+
+      expect(() => Bun.write(filePath, stream)).toThrow("ReadableStream is locked");
+      // the destination must not have been created-or-truncated first
+      expect(await Bun.file(filePath).text()).toBe("precious contents");
+    });
+
+    it("rejects a locked stream even when the public locked getter is shadowed", async () => {
+      using dir = tempDir("bun-write-locked-stream-shadowed", {});
+      const filePath = join(String(dir), "out.bin");
+      await Bun.write(filePath, "precious contents");
+      const stream = new ReadableStream({
+        start(controller) {
+          controller.enqueue(new Uint8Array([1]));
+          controller.close();
+        },
+      });
+      stream.getReader();
+      // shadowing the web-standard getter must not bypass the lock check
+      Object.defineProperty(stream, "locked", { value: false });
+
+      expect(() => Bun.write(filePath, stream)).toThrow("ReadableStream is locked");
+      expect(await Bun.file(filePath).text()).toBe("precious contents");
+    });
+
+    it("creates parent directories by default", async () => {
+      using dir = tempDir("bun-write-stream-createpath", {});
+      const filePath = join(String(dir), "made", "up", "dirs", "out.bin");
+      const stream = new ReadableStream({
+        start(controller) {
+          controller.enqueue(new Uint8Array([1, 2, 3]));
+          controller.close();
+        },
+      });
+
+      expect(await Bun.write(filePath, stream)).toBe(3);
+      expect(await Bun.file(filePath).bytes()).toEqual(new Uint8Array([1, 2, 3]));
+    });
+
+    it("rejects with ENOENT when createPath is false", async () => {
+      using dir = tempDir("bun-write-stream-no-createpath", {});
+      const filePath = join(String(dir), "does", "not", "exist", "out.bin");
+      const stream = new ReadableStream({
+        start(controller) {
+          controller.enqueue(new Uint8Array([1]));
+          controller.close();
+        },
+      });
+
+      try {
+        await Bun.write(filePath, stream, { createPath: false });
+        expect.unreachable();
+      } catch (e) {
+        expect(e.code).toBe("ENOENT");
+      }
+    });
+
+    it.skipIf(isWindows)("applies the mode option to a newly created file", async () => {
+      using dir = tempDir("bun-write-stream-mode", {});
+      const filePath = join(String(dir), "out.bin");
+      const stream = new ReadableStream({
+        start(controller) {
+          controller.enqueue(new Uint8Array([1]));
+          controller.close();
+        },
+      });
+
+      expect(await Bun.write(filePath, stream, { mode: 0o600 })).toBe(1);
+      expect(fs.statSync(filePath).mode & 0o777).toBe(0o600);
+    });
+
+    it("rejects when the stream errors", async () => {
+      using dir = tempDir("bun-write-errored-stream", {});
+      const filePath = join(String(dir), "out.bin");
+      const stream = new ReadableStream({
+        pull(controller) {
+          controller.error(new Error("stream go boom"));
+        },
+      });
+
+      await expect(Bun.write(filePath, stream)).rejects.toThrow("stream go boom");
+    });
+
+    it("rejects an already-errored stream without touching the destination", async () => {
+      using dir = tempDir("bun-write-preerrored-stream", {});
+      const filePath = join(String(dir), "out.bin");
+      await Bun.write(filePath, "precious contents");
+      const stream = new ReadableStream({
+        start(controller) {
+          controller.error(new Error("errored before write"));
+        },
+      });
+
+      await expect(Bun.write(filePath, stream)).rejects.toThrow("errored before write");
+      // the destination must not have been created-or-truncated first
+      expect(await Bun.file(filePath).text()).toBe("precious contents");
+    });
+  });
 });

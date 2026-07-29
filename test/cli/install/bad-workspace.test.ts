@@ -59,6 +59,7 @@ test("non-string workspaces entry prints the error without literal markup", asyn
 });
 
 test("distinct workspace names with colliding truncated name hashes are not duplicates", async () => {
+  // https://github.com/oven-sh/bun/issues/36386
   // Wyhash11("@demo/app-03511") and Wyhash11("@demo/app-13215") agree in their
   // low 32 bits, so duplicate detection must compare names, not truncated hashes.
   using dir = tempDir("workspace-name-hash-collision", {

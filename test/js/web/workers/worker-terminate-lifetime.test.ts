@@ -183,8 +183,10 @@ test.skipIf(!isASAN)(
 // via AsyncContextFrame::call while the VM's sticky TerminationException is
 // still pending, tripping Interpreter::executeCallImpl's
 // scope.assertNoException() and SIGABRTing the whole process. Release WebKit
-// compiles that ASSERT out, so this is debug/ASAN only. Three cells cover the
-// sink classes and stream shapes the shutdown drain reaches.
+// compiles that ASSERT out, so this is debug/ASAN only. Two cells cover
+// HTTPResponseSink and HTTPSResponseSink; the type:"direct" shape hits a
+// separate pre-existing VMTraps::deferTerminationSlow assert and is tracked
+// separately.
 describe.skipIf(!isDebug)(
   "terminate() while Bun.serve is streaming a ReadableStream body does not trip assertNoException()",
   () => {

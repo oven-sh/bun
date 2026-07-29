@@ -173,7 +173,7 @@ test.concurrent("bun create from local template does not run git in a pre-existi
     stdout: "pipe",
     stderr: "pipe",
   });
-  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited, proc.stdout.text()]);
+  const [stderr, exitCode, stdout] = await Promise.all([proc.stderr.text(), proc.exited, proc.stdout.text()]);
 
   expect(await Bun.file(join(String(dir), "proj", ".git", "KEEP.txt")).text()).toBe("keep");
   // git init/add/commit must not have touched the pre-existing repo
@@ -181,6 +181,7 @@ test.concurrent("bun create from local template does not run git in a pre-existi
     "KEEP.txt",
   ]);
   expect(await Bun.file(join(String(dir), "proj", "tpl.txt")).text()).toBe("template file");
+  expect(stdout).not.toContain("local git repository was created");
   expect({ exitCode, stderr }).toEqual({ exitCode: 0, stderr: expect.not.stringContaining("error") });
 });
 

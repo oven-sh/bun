@@ -268,17 +268,18 @@ describe("update", () => {
     await runBunInstall(bunEnv, packageDir);
     await runUpdate(packageDir, "--latest");
 
-    const { exited, stderr } = spawn({
+    const { stdout, stderr, exited } = spawn({
       cmd: [bunExe(), "install", "--frozen-lockfile"],
       cwd: packageDir,
       stdout: "pipe",
       stderr: "pipe",
       env: bunEnv,
     });
-    const err = stderrForInstall(await stderr.text());
+    const [, errText, exitCode] = await Promise.all([stdout.text(), stderr.text(), exited]);
+    const err = stderrForInstall(errText);
     expect(err).not.toContain("lockfile had changes");
     expect(err).not.toContain("error:");
-    expect(await exited).toBe(0);
+    expect(exitCode).toBe(0);
   });
 
   test("--latest run from inside a workspace package updates the root catalog", async () => {

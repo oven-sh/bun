@@ -856,6 +856,19 @@ pub trait PathLikeExt {
     fn slice_z<'a>(&'a self, buf: &'a mut PathBuffer) -> &'a ZStr
     where
         Self: Sized;
+    /// [`Self::slice_z`] for `node:fs` syscall dispatch: when the path would
+    /// not fit `PathBuffer` (which is `PATH_MAX` bytes on POSIX), return the
+    /// `ENAMETOOLONG` the kernel would have returned, tagged with the caller's
+    /// syscall and carrying the full path. This is what lets `fs.stat(big, cb)`
+    /// deliver the error via `cb` (the check happens in dispatch, not in
+    /// argument parsing) and with `err.syscall`/`err.path` populated.
+    fn slice_z_sys<'a>(
+        &'a self,
+        buf: &'a mut PathBuffer,
+        syscall: bun_sys::Tag,
+    ) -> bun_sys::Maybe<&'a ZStr>
+    where
+        Self: Sized;
     fn slice_w<'a>(&'a self, buf: &'a mut WPathBuffer) -> Result<&'a WStr, NameTooLong>
     where
         Self: Sized;
@@ -1019,6 +1032,24 @@ impl PathLikeExt for PathLike {
     }
 
     #[inline]
+    fn slice_z_sys<'a>(
+        &'a self,
+        buf: &'a mut PathBuffer,
+        syscall: bun_sys::Tag,
+    ) -> bun_sys::Maybe<&'a ZStr> {
+        let sliced = self.slice();
+        if sliced.len() >= MAX_PATH_BYTES {
+            return Err(bun_sys::Error {
+                errno: bun_sys::E::ENAMETOOLONG as _,
+                syscall,
+                path: sliced.into(),
+                ..Default::default()
+            });
+        }
+        Ok(self.slice_z_with_force_copy::<false>(buf))
+    }
+
+    #[inline]
     fn slice_w<'a>(&'a self, buf: &'a mut WPathBuffer) -> Result<&'a WStr, NameTooLong> {
         let sliced = self.slice();
         if !strings::fits_in_wide_path_buffer(sliced) {
@@ -1035,6 +1066,9 @@ impl PathLikeExt for PathLike {
         }
         #[cfg(not(windows))]
         {
+            if self.slice().len() >= MAX_PATH_BYTES {
+                return Err(NameTooLong);
+            }
             Ok(self.slice_z_with_force_copy::<false>(buf))
         }
     }
@@ -1122,6 +1156,9 @@ impl PathLikeExt for PathLike {
 
         #[cfg(not(windows))]
         {
+            if self.slice().len() >= MAX_PATH_BYTES {
+                return Err(NameTooLong);
+            }
             Ok(self.slice_z_with_force_copy::<false>(buf))
         }
     }
@@ -1245,9 +1282,6 @@ impl PathLikeExt for PathLike {
             let sliced = str.to_thread_safe_slice();
             let sliced = scopeguard::guard(sliced, |s| s.deinit());
 
-            // Validate the UTF-8 byte length after conversion, since the path
-            // will be stored in a fixed-size PathBuffer.
-            Valid::path_string_length(sliced.slice().len(), global)?;
             Valid::path_null_bytes(sliced.slice(), global)?;
 
             let mut sliced = scopeguard::ScopeGuard::into_inner(sliced);
@@ -1261,9 +1295,6 @@ impl PathLikeExt for PathLike {
             let sliced = str.to_slice();
             let sliced = scopeguard::guard(sliced, |s| s.deinit());
 
-            // Validate the UTF-8 byte length after conversion, since the path
-            // will be stored in a fixed-size PathBuffer.
-            Valid::path_string_length(sliced.slice().len(), global)?;
             Valid::path_null_bytes(sliced.slice(), global)?;
 
             let mut sliced = scopeguard::ScopeGuard::into_inner(sliced);
@@ -1291,39 +1322,13 @@ impl PathLikeExt for PathLike {
 pub struct Valid;
 
 impl Valid {
-    pub fn path_string_length(len: usize, ctx: &JSGlobalObject) -> JsResult<()> {
-        match len {
-            // Exclusive: `PathBuffer` is `[u8; MAX_PATH_BYTES]` and
-            // `slice_z_with_force_copy` needs `len + NUL ≤ MAX_PATH_BYTES`.
-            0..MAX_PATH_BYTES => Ok(()),
-            _ => {
-                let mut system_error =
-                    bun_sys::Error::from_code(bun_sys::E::ENAMETOOLONG, bun_sys::Tag::open)
-                        .to_system_error();
-                system_error.syscall = bun_core::String::DEAD.into();
-                Err(ctx.throw_value(system_error.to_error_instance(ctx)))
-            }
-        }
-    }
-
     pub fn path_buffer(buffer: &Buffer, ctx: &JSGlobalObject) -> JsResult<()> {
-        let slice = buffer.slice();
-        match slice.len() {
-            0 => {
-                Err(ctx
-                    .throw_invalid_arguments(format_args!("Invalid path buffer: can't be empty")))
-            }
-            // Exclusive: `PathBuffer` is `[u8; MAX_PATH_BYTES]` and
-            // `slice_z_with_force_copy` needs `len + NUL ≤ MAX_PATH_BYTES`.
-            1..MAX_PATH_BYTES => Ok(()),
-            _ => {
-                let mut system_error =
-                    bun_sys::Error::from_code(bun_sys::E::ENAMETOOLONG, bun_sys::Tag::open)
-                        .to_system_error();
-                system_error.syscall = bun_core::String::DEAD.into();
-                Err(ctx.throw_value(system_error.to_error_instance(ctx)))
-            }
+        if buffer.slice().is_empty() {
+            return Err(
+                ctx.throw_invalid_arguments(format_args!("Invalid path buffer: can't be empty"))
+            );
         }
+        Ok(())
     }
 
     pub fn path_null_bytes(slice: &[u8], global: &JSGlobalObject) -> JsResult<()> {

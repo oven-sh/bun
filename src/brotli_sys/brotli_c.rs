@@ -264,8 +264,6 @@ unsafe extern "C" {
         total_out: *mut usize,
     ) -> c_int;
     // Query fns: opaque handle by reference + scalars only.
-    pub safe fn BrotliEncoderIsFinished(state: &BrotliEncoder) -> c_int;
-    pub safe fn BrotliEncoderTakeOutput(state: &mut BrotliEncoder, size: &mut usize) -> *const u8;
     pub safe fn BrotliEncoderEstimatePeakMemoryUsage(
         quality: c_int,
         lgwin: c_int,

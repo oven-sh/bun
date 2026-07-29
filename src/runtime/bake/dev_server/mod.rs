@@ -375,13 +375,13 @@ pub struct HotReloadEvent {
     /// BACKREF (LIFETIMES.tsv): element of `WatcherAtomics.events: [3]`.
     /// Nulled by `Drop for DevServer` when an event is still queued; `run`
     /// checks for null before dereferencing.
-    pub owner: *mut DevServer,
+    pub(crate) owner: *mut DevServer,
     /// BACKREF to the owning `Box<WatcherAtomics>`; `run` reclaims it when
     /// `owner` has been nulled.
-    pub atomics: *mut WatcherAtomics,
-    pub concurrent_task: bun_event_loop::ConcurrentTask::ConcurrentTask,
-    pub files: StringArrayHashMap<()>,
-    pub dirs: StringArrayHashMap<()>,
+    pub(crate) atomics: *mut WatcherAtomics,
+    pub(crate) concurrent_task: bun_event_loop::ConcurrentTask::ConcurrentTask,
+    pub(crate) files: StringArrayHashMap<()>,
+    pub(crate) dirs: StringArrayHashMap<()>,
     /// NUL-joined absolute paths.
     pub(crate) extra_files: Vec<u8>,
     pub(crate) timer: std::time::Instant,
@@ -421,7 +421,7 @@ impl HotReloadEvent {
     /// held. Centralises the back-ref deref so the call sites in
     /// `watcher_acquire_event` / `watcher_release_and_submit_event` stay safe.
     #[inline]
-    pub fn assert_watcher_thread_locked(&self) {
+    pub(crate) fn assert_watcher_thread_locked(&self) {
         // SAFETY: BACKREF — `owner` is the live DevServer whose `watcher_atomics`
         // holds this event; only reached from the watcher thread while
         // `Watcher.mutex` is held, so `owner` has not been nulled. Raw place
@@ -616,7 +616,7 @@ impl HotReloadEvent {
     /// `WatcherAtomics`. `(*first).owner` is either the live owning
     /// `DevServer` or null (set by `Drop for DevServer` while this event was
     /// still queued). Must run on the DevServer thread.
-    pub unsafe fn run(first: *mut HotReloadEvent) {
+    pub(crate) unsafe fn run(first: *mut HotReloadEvent) {
         // SAFETY: caller contract — `first` is a live slot in a heap
         // `WatcherAtomics`; `owner` is either the live DevServer or null.
         let dev: *mut DevServer = unsafe { (*first).owner };

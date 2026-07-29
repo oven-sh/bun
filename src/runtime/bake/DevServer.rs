@@ -367,13 +367,13 @@ pub struct DevServer {
     // `ReadDirectoryChangesW` against the inline `DirWatcher.buf`/`overlapped`).
     // `ManuallyDrop` so `Drop for DevServer` can hand the raw pointer to
     // `Watcher::shutdown` instead.
-    pub bun_watcher: ::core::mem::ManuallyDrop<Box<Watcher>>,
-    pub directory_watchers: DirectoryWatchStore,
+    pub(crate) bun_watcher: ::core::mem::ManuallyDrop<Box<Watcher>>,
+    pub(crate) directory_watchers: DirectoryWatchStore,
     /// Heap-owned via `heap::into_raw` so a still-queued
     /// `HotReloadEvent.concurrent_task` can outlive `DevServer`; see the
     /// `next_event` check in `Drop`.
-    pub watcher_atomics: ::core::ptr::NonNull<WatcherAtomics>,
-    pub testing_batch_events: TestingBatchEvents,
+    pub(crate) watcher_atomics: ::core::ptr::NonNull<WatcherAtomics>,
+    pub(crate) testing_batch_events: TestingBatchEvents,
 
     /// Number of bundles that have been executed. This is currently not read, but
     /// will be used later to determine when to invoke graph garbage collection.

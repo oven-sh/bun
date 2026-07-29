@@ -1307,8 +1307,6 @@ pub mod bv2_impl {
     bun_core::declare_scope!(Bundle, visible);
     bun_core::declare_scope!(scan_counter, visible);
     bun_core::declare_scope!(ReachableFiles, visible);
-    bun_core::declare_scope!(TreeShake, hidden);
-    bun_core::declare_scope!(PartRanges, hidden);
     bun_core::declare_scope!(watcher, visible);
 
     pub use bun_js_printer::MangledProps;

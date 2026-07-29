@@ -406,7 +406,7 @@ pub struct PackageManager {
     // (catalog name, dependency name) -> original version literal
     pub updating_catalogs: Vec<CatalogUpdateInfo>,
 
-    pub patched_dependencies_to_remove:
+    pub(crate) patched_dependencies_to_remove:
         ArrayHashMap<PackageNameAndVersionHash, () /* , ArrayIdentityContext::U64, false */>,
 
     pub(crate) active_lifecycle_scripts: crate::lifecycle_script_runner::List<'static>,

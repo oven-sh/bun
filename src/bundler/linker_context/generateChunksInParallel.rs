@@ -36,8 +36,6 @@ use crate::linker_context_mod::{GenerateChunkCtx, PendingPartRange};
 /// Bytecode output file extension (also defined in `writeOutputFilesToDisk.rs`).
 const BYTECODE_EXTENSION: &str = ".jsc";
 
-bun_core::declare_scope!(PartRanges, hidden);
-
 // `Chunk.final_rel_path` / `metafile_chunk_json` are owned
 // `Box<[u8]>`; assignments
 // below move the boxed buffer directly — no lifetime promotion needed.

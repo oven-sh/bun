@@ -209,7 +209,7 @@ impl ABIType {
         matches!(self, ABIType::Double | ABIType::Float)
     }
 
-    pub fn to_c(self, symbol: &[u8]) -> ToCFormatter<'_> {
+    pub(crate) fn to_c(self, symbol: &[u8]) -> ToCFormatter<'_> {
         ToCFormatter { tag: self, symbol }
     }
 
@@ -236,8 +236,8 @@ impl ABIType {
 }
 
 pub struct ToCFormatter<'a> {
-    pub symbol: &'a [u8],
-    pub tag: ABIType,
+    pub(crate) symbol: &'a [u8],
+    pub(crate) tag: ABIType,
 }
 
 impl fmt::Display for ToCFormatter<'_> {

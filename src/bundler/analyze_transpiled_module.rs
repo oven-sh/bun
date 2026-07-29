@@ -51,21 +51,21 @@ unsafe impl bytemuck::Pod for RecordKind {}
 
 impl RecordKind {
     /// module_name, import_name, local_name
-    pub const IMPORT_INFO_SINGLE: Self = Self(0);
+    pub(crate) const IMPORT_INFO_SINGLE: Self = Self(0);
     /// module_name, import_name, local_name
-    pub const IMPORT_INFO_SINGLE_TYPE_SCRIPT: Self = Self(1);
+    pub(crate) const IMPORT_INFO_SINGLE_TYPE_SCRIPT: Self = Self(1);
     /// module_name, import_name = '*', local_name
-    pub const IMPORT_INFO_NAMESPACE: Self = Self(2);
+    pub(crate) const IMPORT_INFO_NAMESPACE: Self = Self(2);
     /// export_name, import_name, module_name
-    pub const EXPORT_INFO_INDIRECT: Self = Self(3);
+    pub(crate) const EXPORT_INFO_INDIRECT: Self = Self(3);
     /// export_name, local_name, padding (for local => indirect conversion)
-    pub const EXPORT_INFO_LOCAL: Self = Self(4);
+    pub(crate) const EXPORT_INFO_LOCAL: Self = Self(4);
     /// export_name, module_name
-    pub const EXPORT_INFO_NAMESPACE: Self = Self(5);
+    pub(crate) const EXPORT_INFO_NAMESPACE: Self = Self(5);
     /// module_name
-    pub const EXPORT_INFO_STAR: Self = Self(6);
+    pub(crate) const EXPORT_INFO_STAR: Self = Self(6);
     /// module_name, import_name = '*', local_name (ModulePhase::Defer)
-    pub const IMPORT_INFO_NAMESPACE_DEFER: Self = Self(7);
+    pub(crate) const IMPORT_INFO_NAMESPACE_DEFER: Self = Self(7);
 
     // PascalCase aliases — `bundler_jsc::analyze_jsc` pattern-matches on these
     // (the SCREAMING_CASE consts above are kept for intra-crate use).

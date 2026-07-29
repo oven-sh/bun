@@ -615,10 +615,8 @@ pub fn compute_chunks(this: &mut LinkerContext, unique_key: u64) -> crate::Resul
             }
         }
 
-        // `entry_point_id()` is only meaningful when `is_entry_point()` is true;
-        // shared split chunks carry a zeroed id. For those, `[name]` stays the
-        // literal "chunk" (already set by `PathTemplate::CHUNK.into()` above),
-        // matching esbuild.
+        // Shared split chunks have no entry point; `[name]`/`[dir]` stay at the
+        // `PathTemplate::CHUNK` defaults ("chunk" / ".") like esbuild.
         let pathname: Option<bun_fs::PathName<'_>> =
             chunk.entry_point.is_entry_point().then(|| {
                 bun_fs::PathName::init(

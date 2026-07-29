@@ -215,7 +215,18 @@ impl Watcher {
             ctx.on_watch_error(err);
         }
 
-        let platform = if bun_core::env_var::BUN_WATCHER_USE_POLLING::get().unwrap_or(false) {
+        let use_polling = match bun_core::env_var::BUN_WATCHER_USE_POLLING::get() {
+            Some(v) => v,
+            None if polling::should_auto_poll(top_level_dir) => {
+                bun_core::note!(
+                    "<b>{}<r> is on a filesystem that does not report file changes; falling back to polling for <b>--watch<r>/<b>--hot<r>. Set <b>BUN_WATCHER_USE_POLLING=0<r> to disable.",
+                    bstr::BStr::new(top_level_dir),
+                );
+                true
+            }
+            None => false,
+        };
+        let platform = if use_polling {
             let interval = bun_core::env_var::BUN_WATCHER_POLL_INTERVAL
                 .get()
                 .unwrap_or(polling::DEFAULT_INTERVAL_MS);

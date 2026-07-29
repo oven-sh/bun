@@ -1,6 +1,7 @@
 //! Stat-polling fallback for filesystems where native change notifications
 //! don't fire (Docker/WSL bind mounts, NFS/SMB, virtiofs/9p). Enabled via
-//! `BUN_WATCHER_USE_POLLING=1`; interval via `BUN_WATCHER_POLL_INTERVAL` (ms).
+//! `BUN_WATCHER_USE_POLLING=1`, or automatically on Linux when the project
+//! root is on such a filesystem; interval via `BUN_WATCHER_POLL_INTERVAL` (ms).
 
 use std::time::Duration;
 
@@ -16,6 +17,39 @@ use crate::watcher_impl::{
 bun_core::declare_scope!(watcher, visible);
 
 pub const DEFAULT_INTERVAL_MS: u64 = 100;
+
+/// Returns `true` when `root` is on a Linux filesystem whose inotify watches
+/// are accepted but never emit events for remote changes, so the polling
+/// backend should be selected even without `BUN_WATCHER_USE_POLLING=1`.
+/// Deliberately conservative: overlayfs and FUSE are excluded because the
+/// common Docker/local case works; users on those can opt in explicitly.
+/// Constants from `include/uapi/linux/magic.h`.
+pub(crate) fn should_auto_poll(root: &[u8]) -> bool {
+    #[cfg(target_os = "linux")]
+    {
+        const V9FS_MAGIC: i64 = 0x0102_1997; // WSL2 drvfs (/mnt/*)
+        const SMB_MAGIC: i64 = 0x517B;
+        const SMB2_MAGIC: i64 = 0xFE53_4D42;
+        const CIFS_MAGIC: i64 = 0xFF53_4D42;
+        const NFS_MAGIC: i64 = 0x6969;
+        const PRL_FS_MAGIC: i64 = 0x7C7C_6673; // Parallels shared folders
+
+        let mut buf = bun_paths::path_buffer_pool::get();
+        let len = root.len().min(buf.len() - 1);
+        buf[..len].copy_from_slice(&root[..len]);
+        buf[len] = 0;
+        let zpath = ZStr::from_buf(&buf[..], len);
+        if let Ok(st) = sys::statfs(zpath) {
+            let ty = st.f_type as i64;
+            return matches!(
+                ty,
+                V9FS_MAGIC | SMB_MAGIC | SMB2_MAGIC | CIFS_MAGIC | NFS_MAGIC | PRL_FS_MAGIC
+            );
+        }
+    }
+    let _ = root;
+    false
+}
 
 #[derive(Clone, Copy, Default)]
 struct Snapshot {

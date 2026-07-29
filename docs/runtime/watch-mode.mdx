@@ -84,13 +84,13 @@ Bun's watcher relies on the operating system's native file-change APIs (inotify 
 - WSL paths under `/mnt/c/...`
 - NFS, SMB, and other network shares
 
-If edits on the host are not picked up inside the container, set `BUN_WATCHER_USE_POLLING=1` to switch `--watch` and `--hot` to a polling backend that periodically `stat()`s each watched file:
+On Linux, Bun automatically falls back to polling when it detects that the project root is on one of these filesystems (9p, NFS, SMB/CIFS) and prints a note. For other setups, or to force the behavior, set `BUN_WATCHER_USE_POLLING=1` to switch `--watch` and `--hot` to a polling backend that periodically `stat()`s each watched file:
 
 ```bash terminal icon="terminal"
 BUN_WATCHER_USE_POLLING=1 bun --watch index.ts
 ```
 
-The poll interval defaults to 100 ms and can be changed with `BUN_WATCHER_POLL_INTERVAL` (in milliseconds). Polling uses more CPU than native watching, so only enable it when native events are unavailable.
+The poll interval defaults to 100 ms and can be changed with `BUN_WATCHER_POLL_INTERVAL` (in milliseconds). Polling uses more CPU than native watching; set `BUN_WATCHER_USE_POLLING=0` to disable it if Bun enables it and you prefer native events.
 
 ---
 

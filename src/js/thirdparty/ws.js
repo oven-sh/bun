@@ -100,6 +100,42 @@ function emitWarning(type, message) {
   console.warn("[bun] Warning:", message);
 }
 
+// ws emits `upgrade` / `unexpected-response` with an `http.IncomingMessage` for
+// the handshake response. We bypass node:http, so build a minimal
+// IncomingMessage-shaped Readable from the status + rawHeaders the native
+// WebSocket parsed. Lazily pull in node:stream the first time it's needed.
+let lazyReadable;
+function makeHandshakeResponse(statusCode, statusMessage, rawHeaders, body) {
+  lazyReadable ??= require("node:stream").Readable;
+  const res = new lazyReadable({ read() {} });
+  // Match node's http.IncomingMessage.headers: a plain object that inherits
+  // from Object.prototype (so `res.headers.hasOwnProperty(...)` works). Use
+  // Object.hasOwn for the dup-check so a header literally named "constructor"
+  // is not confused with Object.prototype.constructor.
+  const headers = (res.headers = {});
+  res.rawHeaders = rawHeaders;
+  for (let i = 0; i < rawHeaders.length; i += 2) {
+    const lower = rawHeaders[i].toLowerCase();
+    const value = rawHeaders[i + 1];
+    const seen = Object.hasOwn(headers, lower);
+    if (lower === "set-cookie") {
+      if (!seen) headers[lower] = [value];
+      else headers[lower].push(value);
+    } else {
+      headers[lower] = !seen ? value : headers[lower] + ", " + value;
+    }
+  }
+  res.statusCode = statusCode;
+  res.statusMessage = statusMessage;
+  res.httpVersion = "1.1";
+  res.httpVersionMajor = 1;
+  res.httpVersionMinor = 1;
+  res.socket = res.connection = null;
+  if (body && body.length) res.push(body);
+  res.push(null);
+  return res;
+}
+
 // TODO: add private method on WebSocket to avoid these allocations
 function normalizeData(data, opts) {
   const isBinary = opts?.binary;
@@ -134,6 +170,15 @@ class BunWebSocket extends EventEmitter {
   #paused = false;
   #fragments = false;
   #binaryType = "nodebuffer";
+  #handshakeListenerRegistered = false;
+  // npm ws skips emitErrorAndClose when an `unexpected-response` listener
+  // handles a non-101; set here when that path fires so the native `error`
+  // forwarder can drop the subsequent "Expected 101" error.
+  #suppressNextError = false;
+  // Minimal ClientRequest shim passed as the first arg to
+  // `unexpected-response`. Stored from the `finishRequest` path when present,
+  // else lazily built on demand.
+  #clientRequest;
   // Bitset to track whether event handlers are set.
   #eventId = 0;
 
@@ -251,6 +296,7 @@ class BunWebSocket extends EventEmitter {
         _last: null,
       };
       EventEmitter.$call(nodeHttpClientRequestSimulated);
+      this.#clientRequest = nodeHttpClientRequestSimulated;
       finishRequest(nodeHttpClientRequestSimulated);
       if (!didCallEnd) {
         this.#createWebSocket(url, protocols, headers, method, proxy, tlsOptions, disableDeflate);
@@ -277,84 +323,139 @@ class BunWebSocket extends EventEmitter {
     }
     let ws = (this.#ws = new WebSocket(url, wsOptions));
     ws.binaryType = "nodebuffer";
+    // The native 'handshake' listener is registered lazily (from
+    // #armNativeBridge when the user subscribes to 'upgrade' or
+    // 'unexpected-response') so callers that only listen to
+    // 'open'/'message'/'close' never exercise the handshake-dispatch path.
 
     return ws;
   }
 
-  #onOrOnce(event, listener, once) {
-    if (event === "unexpected-response" || event === "upgrade" || event === "redirect") {
+  #ensureHandshakeListener() {
+    if (this.#handshakeListenerRegistered) return;
+    this.#handshakeListenerRegistered = true;
+    this.#ws.addEventListener("handshake", event => this.#onHandshake(event.data), onceObject);
+  }
+
+  #ensureClientRequest() {
+    let req = this.#clientRequest;
+    if (req) return req;
+    const ws = this.#ws;
+    req = this.#clientRequest = {
+      __proto__: Object.create(EventEmitter.prototype),
+      method: "GET",
+      path: ws?.url,
+      aborted: false,
+      headersSent: true,
+      abort() {
+        this.aborted = true;
+        try {
+          ws?.terminate();
+        } catch {}
+      },
+      destroy() {
+        this.abort();
+      },
+      setHeader() {},
+      getHeader() {},
+      removeHeader() {},
+      getHeaders() {
+        return {};
+      },
+      hasHeader() {
+        return false;
+      },
+      [Symbol.toStringTag]: "ClientRequest",
+    };
+    EventEmitter.$call(req);
+    return req;
+  }
+
+  #onHandshake(data) {
+    const { statusCode, statusMessage, rawHeaders, body } = data;
+    if (statusCode === 101) {
+      // On a 101, bytes after the header block are the first WebSocket frame
+      // (not an HTTP body) and the native client forwards them to the protocol
+      // reader on connect, so the handshake event carries no body.
+      const res = makeHandshakeResponse(statusCode, statusMessage, rawHeaders, null);
+      // ws emits `upgrade` with `(response)`, right before `open`.
+      this.emit("upgrade", res);
+      return;
+    }
+    // Non-101: npm ws emits `unexpected-response` with (req, res) when a
+    // listener is registered; otherwise it emits `error` with
+    // "Unexpected server response: <code>" and then `close`. The native client
+    // always tears the socket down after this event, so the `body` here is
+    // whatever arrived in the same read as the headers.
+    const res = makeHandshakeResponse(statusCode, statusMessage, rawHeaders, body);
+    if (this.emit("unexpected-response", this.#ensureClientRequest(), res)) {
+      this.#suppressNextError = true;
+    }
+  }
+
+  // Arm one persistent native forwarder per ws event; EventEmitter fans the
+  // single emit out to every on/once listener. A `{once:true}` forwarder would
+  // auto-remove and let a later on() add a second, double-firing every emit.
+  #armNativeBridge(event) {
+    if (event === "redirect") {
       emitWarning(event, "ws.WebSocket '" + event + "' event is not implemented in bun");
+      return;
     }
-    const mask = 1 << eventIds[event];
-    const hasPersistentListener = mask && (this.#eventId & mask) === mask;
-    // Add a native listener if:
-    // 1. For `on()`: no native listener exists yet (will be persistent)
-    // 2. For `once()`: no persistent `on()` listener exists (otherwise the persistent one forwards events)
-    //    If only `once()` listeners exist, each needs its own native listener since they auto-remove
-    if (mask && !hasPersistentListener) {
-      // Only set the eventId bit for persistent `on` listeners, not for `once`
-      if (!once) {
-        this.#eventId |= mask;
-      }
-      if (event === "open") {
-        this.#ws.addEventListener(
-          "open",
-          () => {
-            this.emit("open");
-          },
-          once,
-        );
-      } else if (event === "close") {
-        this.#ws.addEventListener(
-          "close",
-          ({ code, reason, wasClean }) => {
-            this.emit("close", code, reason, wasClean);
-          },
-          once,
-        );
-      } else if (event === "message") {
-        this.#ws.addEventListener(
-          "message",
-          ({ data }) => {
-            const isBinary = typeof data !== "string";
-            if (isBinary) {
-              this.emit("message", this.#fragments ? [data] : data, isBinary);
-            } else {
-              let encoded = encoder.encode(data);
-              if (this.#binaryType !== "arraybuffer") {
-                encoded = Buffer.from(encoded.buffer, encoded.byteOffset, encoded.byteLength);
-              }
-              this.emit("message", this.#fragments ? [encoded] : encoded, isBinary);
-            }
-          },
-          once,
-        );
-      } else if (event === "error") {
-        this.#ws.addEventListener(
-          "error",
-          err => {
-            this.emit("error", err);
-          },
-          once,
-        );
-      } else if (event === "ping") {
-        this.#ws.addEventListener(
-          "ping",
-          ({ data }) => {
-            this.emit("ping", data);
-          },
-          once,
-        );
-      } else if (event === "pong") {
-        this.#ws.addEventListener(
-          "pong",
-          ({ data }) => {
-            this.emit("pong", data);
-          },
-          once,
-        );
-      }
+    if (event === "upgrade" || event === "unexpected-response") {
+      // Lazily wire the native handshake listener; `upgrade` and
+      // `unexpected-response` are emitted from #onHandshake.
+      this.#ensureHandshakeListener();
+      return;
     }
+    const id = eventIds[event];
+    // Not a native ws event (e.g. a user-defined one); EventEmitter handles it.
+    if (id === undefined) return;
+    const mask = 1 << id;
+    // Forwarder already armed for this event; the single emit reaches every listener.
+    if ((this.#eventId & mask) === mask) return;
+    this.#eventId |= mask;
+    if (event === "open") {
+      this.#ws.addEventListener("open", () => {
+        this.emit("open");
+      });
+    } else if (event === "close") {
+      this.#ws.addEventListener("close", ({ code, reason, wasClean }) => {
+        this.emit("close", code, reason, wasClean);
+      });
+    } else if (event === "message") {
+      this.#ws.addEventListener("message", ({ data }) => {
+        const isBinary = typeof data !== "string";
+        if (isBinary) {
+          this.emit("message", this.#fragments ? [data] : data, isBinary);
+        } else {
+          let encoded = encoder.encode(data);
+          if (this.#binaryType !== "arraybuffer") {
+            encoded = Buffer.from(encoded.buffer, encoded.byteOffset, encoded.byteLength);
+          }
+          this.emit("message", this.#fragments ? [encoded] : encoded, isBinary);
+        }
+      });
+    } else if (event === "error") {
+      this.#ws.addEventListener("error", err => {
+        if (this.#suppressNextError) {
+          this.#suppressNextError = false;
+          return;
+        }
+        this.emit("error", err);
+      });
+    } else if (event === "ping") {
+      this.#ws.addEventListener("ping", ({ data }) => {
+        this.emit("ping", data);
+      });
+    } else if (event === "pong") {
+      this.#ws.addEventListener("pong", ({ data }) => {
+        this.emit("pong", data);
+      });
+    }
+  }
+
+  #onOrOnce(event, listener, once) {
+    this.#armNativeBridge(event);
     return once ? super.once(event, listener) : super.on(event, listener);
   }
 
@@ -364,6 +465,26 @@ class BunWebSocket extends EventEmitter {
 
   once(event, listener) {
     return this.#onOrOnce(event, listener, onceObject);
+  }
+
+  // `addListener` is an alias of `on`; `prependListener`/`prependOnceListener`
+  // add to the front of the listener list. ws / EventEmitter consumers reach
+  // for all of these, so each must arm the native bridge too — otherwise the
+  // handler sits on the EventEmitter list but the native event that drives
+  // `this.emit(...)` is never wired up and the callback silently never fires
+  // (e.g. `ws.addListener("upgrade", cb)`).
+  addListener(event, listener) {
+    return this.#onOrOnce(event, listener, undefined);
+  }
+
+  prependListener(event, listener) {
+    this.#armNativeBridge(event);
+    return super.prependListener(event, listener);
+  }
+
+  prependOnceListener(event, listener) {
+    this.#armNativeBridge(event);
+    return super.prependOnceListener(event, listener);
   }
 
   send(data, opts, cb) {

@@ -122,13 +122,7 @@ test("registry path without trailing slash is preserved (--registry)", async () 
   );
 
   await using proc = Bun.spawn({
-    cmd: [
-      bunExe(),
-      "install",
-      "--no-cache",
-      "--registry",
-      `http://${hostname}:${port}/artifactory/api/npm/npm-stuff`,
-    ],
+    cmd: [bunExe(), "install", "--no-cache", "--registry", `http://${hostname}:${port}/artifactory/api/npm/npm-stuff`],
     env,
     cwd: package_dir,
     stdout: "pipe",
@@ -211,10 +205,7 @@ test("project .npmrc registry takes precedence over user .npmrc", async () => {
   });
 
   const fakeHome = join(package_dir, "home");
-  await Bun.write(
-    join(fakeHome, ".npmrc"),
-    `registry=http://${userServer.hostname}:${userServer.port}/from-user/\n`,
-  );
+  await Bun.write(join(fakeHome, ".npmrc"), `registry=http://${userServer.hostname}:${userServer.port}/from-user/\n`);
   await Bun.write(
     join(package_dir, ".npmrc"),
     `registry=http://${localServer.hostname}:${localServer.port}/from-local/\n`,
@@ -244,18 +235,9 @@ test("bunfig.toml install.cache takes precedence over .npmrc cache", async () =>
   const bunfigCache = join(package_dir, "bunfig-cache");
   const npmrcCache = join(package_dir, "npmrc-cache");
 
-  await Bun.write(
-    join(package_dir, "bunfig.toml"),
-    `[install.cache]\ndir = "${bunfigCache.replaceAll("\\", "/")}"\n`,
-  );
-  await Bun.write(
-    join(package_dir, ".npmrc"),
-    `cache=${npmrcCache.replaceAll("\\", "/")}\n`,
-  );
-  await Bun.write(
-    join(package_dir, "package.json"),
-    JSON.stringify({ name: "test", version: "0.0.0" }),
-  );
+  await Bun.write(join(package_dir, "bunfig.toml"), `[install.cache]\ndir = "${bunfigCache.replaceAll("\\", "/")}"\n`);
+  await Bun.write(join(package_dir, ".npmrc"), `cache=${npmrcCache.replaceAll("\\", "/")}\n`);
+  await Bun.write(join(package_dir, "package.json"), JSON.stringify({ name: "test", version: "0.0.0" }));
 
   await using proc = Bun.spawn({
     cmd: [bunExe(), "pm", "cache"],
@@ -265,11 +247,7 @@ test("bunfig.toml install.cache takes precedence over .npmrc cache", async () =>
     stderr: "pipe",
     stdin: "ignore",
   });
-  const [stdout, stderr, exitCode] = await Promise.all([
-    proc.stdout.text(),
-    proc.stderr.text(),
-    proc.exited,
-  ]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect(stderr).toBe("");
   expect(stdout.trim()).toBe(bunfigCache);

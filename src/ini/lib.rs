@@ -1389,8 +1389,7 @@ mod draft {
                 if let Some(str_) = query.expr.as_utf8_string_literal() {
                     install.ca = Some(bun_api::Ca::Str(Box::<[u8]>::from(str_)));
                 } else if let ExprData::EArray(arr) = &query.expr.data {
-                    let mut list: Vec<Box<[u8]>> =
-                        Vec::with_capacity(arr.items.len_u32() as usize);
+                    let mut list: Vec<Box<[u8]>> = Vec::with_capacity(arr.items.len_u32() as usize);
                     for item in arr.items.slice() {
                         if let Some(s) = item.as_string_cloned(bump)? {
                             list.push(Box::<[u8]>::from(s));

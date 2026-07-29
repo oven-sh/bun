@@ -335,7 +335,8 @@ describe("?query on a bare package root does not resolve", () => {
       "package.json": JSON.stringify({ name: "app", type: "module", imports: { "#hot/*": "./src/*" } }),
       "src/config.js": "globalThis.__wc = (globalThis.__wc || 0) + 1; export const inst = globalThis.__wc;",
       "node_modules/wp/package.json": JSON.stringify({ name: "wp", type: "module", exports: { "./*": "./dist/*" } }),
-      "node_modules/wp/dist/foo.js": "globalThis.__wp = (globalThis.__wp || 0) + 1; export const inst = globalThis.__wp;",
+      "node_modules/wp/dist/foo.js":
+        "globalThis.__wp = (globalThis.__wp || 0) + 1; export const inst = globalThis.__wp;",
       "entry.mjs": `
         const out = [];
         for (const spec of ["#hot/config.js", "#hot/config.js?v=1", "#hot/config.js?v=2"]) {

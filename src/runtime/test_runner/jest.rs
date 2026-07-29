@@ -514,7 +514,10 @@ pub mod Jest {
 }
 
 /// Reached only from `node:test`, through `$newRustFunction` rather than the
-/// public `bun:test` module object. Returns 0 outside `bun test`.
+/// public `bun:test` module object. Returns 0 outside `bun test`. Also marks
+/// the active file for the post-Done event-loop drain so the flag is set from
+/// any node:test entry point (`getRootNode()` is on every public-API path), not
+/// only from `addTest`/`addSuite`.
 pub(crate) fn js_file_generation(
     _global: &JSGlobalObject,
     _callframe: &CallFrame,
@@ -523,9 +526,169 @@ pub(crate) fn js_file_generation(
     // registration, and an exclusive `&mut TestRunner` would invalidate the
     // `bun_test_root` pointer `test_command.rs` keeps live across the file run.
     // SAFETY: same invariant as `runner()` — RUNNER is only read on the JS thread.
-    let generation =
-        Jest::runner_ptr().map_or(0, |p| unsafe { (*p.as_ptr()).bun_test_root.file_generation });
+    let generation = Jest::runner_ptr().map_or(0, |p| unsafe {
+        let root = core::ptr::addr_of_mut!((*p.as_ptr()).bun_test_root);
+        if let Some(active) = (*root).active_file.as_ref() {
+            active.get().node_test_drain = true;
+        }
+        (*root).file_generation
+    });
     Ok(JSValue::from(generation))
+}
+
+/// Reached only from `node:test` on each top-level `test()`/`describe()`
+/// registration. Marks the file so the per-file loop drains the event loop
+/// after `Phase::Done` (Node keeps running while a ref'd timer is pending and
+/// accepts late registrations), and tells the shim which phase bun:test is in
+/// so it can register with bun:test during collection, queue inline execution
+/// behind collection-phase tests during execution, and run inline once done.
+/// Returns 0 = collection (or no active file), 1 = execution, 2 = done.
+pub(crate) fn js_node_test_want_drain(
+    _global: &JSGlobalObject,
+    _callframe: &CallFrame,
+) -> JsResult<JSValue> {
+    let Some(buntest_strong) = bun_test::clone_active_strong() else {
+        return Ok(JSValue::from(0i32));
+    };
+    // SAFETY: single-threaded JS VM; the strong is dropped before any re-borrow.
+    let buntest = unsafe { bun_test::buntest_as_mut(&buntest_strong) };
+    buntest.node_test_drain = true;
+    let phase = match buntest.phase {
+        bun_test::Phase::Collection => 0i32,
+        bun_test::Phase::Execution => 1i32,
+        bun_test::Phase::Done => 2i32,
+    };
+    Ok(JSValue::from(phase))
+}
+
+/// Reached only from `node:test` when a top-level test is registered after
+/// collection: brackets the inline run so the drain loop keeps spinning while
+/// the (possibly async) body is pending.
+pub(crate) fn js_node_test_late_begin(
+    _global: &JSGlobalObject,
+    _callframe: &CallFrame,
+) -> JsResult<JSValue> {
+    if let Some(buntest_strong) = bun_test::clone_active_strong() {
+        // SAFETY: single-threaded JS VM; the strong is dropped before any re-borrow.
+        let buntest = unsafe { bun_test::buntest_as_mut(&buntest_strong) };
+        buntest.node_test_pending_late += 1;
+        buntest.wants_wakeup = true;
+    }
+    Ok(JSValue::UNDEFINED)
+}
+
+/// Reached only from `node:test` when a late top-level test finishes: prints
+/// the per-test line, dumps the failure (if any), and bumps the summary so the
+/// run's pass/fail counts and exit code reflect it.
+pub(crate) fn js_node_test_late_report(
+    global: &JSGlobalObject,
+    callframe: &CallFrame,
+) -> JsResult<JSValue> {
+    let [name_arg, error_arg, mode_arg] = callframe.arguments_as_array::<3>();
+    let Some(buntest_strong) = bun_test::clone_active_strong() else {
+        return Ok(JSValue::UNDEFINED);
+    };
+    // SAFETY: single-threaded JS VM; the strong is dropped before any re-borrow.
+    let buntest = unsafe { bun_test::buntest_as_mut(&buntest_strong) };
+    // Paired with js_node_test_late_begin; the debug_assert surfaces an unpaired
+    // call in debug builds. Release saturates rather than wrapping so an
+    // imbalance cannot leave the drain loop spinning on u32::MAX.
+    debug_assert!(buntest.node_test_pending_late > 0, "unpaired node:test lateReport");
+    buntest.node_test_pending_late = buntest.node_test_pending_late.saturating_sub(1);
+
+    let Some(reporter_ptr) = buntest.reporter else {
+        return Ok(JSValue::UNDEFINED);
+    };
+    let name_str = name_arg.to_bun_string(global)?;
+    let name = name_str.to_utf8();
+    let name_bytes = bstr::BStr::new(name.slice());
+    let failed = !error_arg.is_undefined_or_null();
+    // 0 = normal (pass/fail by error), 1 = skip, 2 = todo.
+    let mode = mode_arg.to_int32();
+
+    // SAFETY: `BunTest.reporter` is `NonNull<CommandLineReporter>` with write
+    // provenance from `enter_file`'s `&mut`; single-threaded; reporter outlives
+    // every BunTest. Scoped read so the SharedReadOnly tag is dead before the
+    // full-line arm's `on_before_print()` derives `&CommandLineReporter` from
+    // the same `NonNull` (stacked-borrows hygiene, see handle_test_completed).
+    let (dots, only_failures, worker_idx) = {
+        let r: &CommandLineReporter = unsafe { &*reporter_ptr.as_ptr() };
+        (r.reporters.dots, r.reporters.only_failures, r.worker_ipc_file_idx)
+    };
+
+    let colors = Output::enable_ansi_colors_stderr();
+    let mut line: Vec<u8> = Vec::new();
+    let is_dot = dots && (!failed || mode != 0);
+    if is_dot {
+        if mode == 1 {
+            let _ = bun_core::write_pretty!(&mut line, colors, "<r><yellow>.<d>");
+        } else if mode == 2 {
+            let _ = bun_core::write_pretty!(&mut line, colors, "<r><magenta>.<r>");
+        } else {
+            let _ = bun_core::write_pretty!(&mut line, colors, "<r><green>.<r>");
+        }
+        // SAFETY: same NonNull; `last_printed_dot` is a `Cell` so a shared
+        // borrow is enough and no Unique tag is pushed.
+        unsafe { &*reporter_ptr.as_ptr() }.last_printed_dot.set(true);
+    } else if only_failures && !failed {
+        // suppressed
+    } else {
+        // Full-line output only: on_before_print breaks the dots row with a
+        // newline and prints the deferred file header (handle_test_completed
+        // calls it in the same position).
+        buntest.bun_test_root.on_before_print();
+        if mode == 1 {
+            let _ = bun_core::write_pretty!(&mut line, colors, "<r><yellow>(skip)<d> {}<r>\n", name_bytes);
+        } else if mode == 2 {
+            let _ = bun_core::write_pretty!(&mut line, colors, "<r><magenta>(todo)<r> {}\n", name_bytes);
+        } else if failed {
+            let _ = bun_core::write_pretty!(&mut line, colors, "<r><red>(fail)<r> {}\n", name_bytes);
+        } else {
+            let _ = bun_core::write_pretty!(&mut line, colors, "<r><green>(pass)<r> {}\n", name_bytes);
+        }
+    }
+    if let Some(idx) = worker_idx {
+        crate::cli::test::parallel_runner::worker_emit_test_done(idx, &line);
+    } else {
+        let _ = Output::error_writer().write_all(&line);
+    }
+
+    // SAFETY: re-derived after `on_before_print()` (which creates a sibling
+    // `&CommandLineReporter`) so the Unique tag is live for the writes below.
+    let reporter: &mut CommandLineReporter = unsafe { &mut *reporter_ptr.as_ptr() };
+    let fill_repeat = !dots && !only_failures;
+    if mode == 1 {
+        reporter.summary().skip += 1;
+        if fill_repeat {
+            reporter.skips_to_repeat_buf.extend_from_slice(&line);
+        }
+    } else if mode == 2 {
+        reporter.summary().todo += 1;
+        if fill_repeat {
+            reporter.todos_to_repeat_buf.extend_from_slice(&line);
+        }
+    } else if failed {
+        reporter.summary().fail += 1;
+        if fill_repeat {
+            reporter.failures_to_repeat_buf.extend_from_slice(&line);
+        }
+        global.bun_vm().as_mut().run_error_handler(error_arg, None);
+        if reporter.summary().fail == reporter.jest.bail {
+            reporter.print_summary();
+            bun_core::pretty_error!(
+                "\nBailed out after {} failure{}<r>\n",
+                reporter.jest.bail,
+                if reporter.jest.bail == 1 { "" } else { "s" }
+            );
+            Output::flush();
+            reporter.write_junit_report_if_needed();
+            bun_core::Global::exit(1);
+        }
+    } else {
+        reporter.summary().pass += 1;
+    }
+    Output::flush();
+    Ok(JSValue::UNDEFINED)
 }
 
 /// Reached only from `node:test` (`t.skip()` / `t.todo()` at runtime): overrides

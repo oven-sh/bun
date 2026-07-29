@@ -648,6 +648,14 @@ pub struct BunTest {
     /// Only the Box header may be freed in `Drop` — fields alias `DescribeScope` originals.
     pub cloned_hook_entries: Vec<*mut ExecutionEntry>,
     pub wants_wakeup: bool,
+    /// Set on the first node:test top-level registration in this file. Tells the
+    /// per-file loop to keep ticking the event loop after `Phase::Done` so a
+    /// ref'd timer that registers more tests can fire (Node runs those).
+    pub node_test_drain: bool,
+    /// Late node:test top-level tests (registered after collection) that are
+    /// still running inline. The drain loop spins while this is nonzero so an
+    /// async late body is awaited even when nothing else refs the event loop.
+    pub node_test_pending_late: u32,
 
     pub phase: Phase,
     pub collection: Collection,
@@ -685,6 +693,8 @@ impl BunTest {
             // `next = EPOCH, state = PENDING`.
             timer: EventLoopTimer::init_paused(EventLoopTimerTag::BunTest),
             wants_wakeup: false,
+            node_test_drain: false,
+            node_test_pending_late: 0,
         }
     }
 

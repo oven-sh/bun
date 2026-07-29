@@ -1628,6 +1628,18 @@ const fileGeneration = $newRustFunction("jest.rs", "jsFileGeneration", 0);
 // `done` binds the intended sequence so a late call after the bun:test watchdog
 // moved on cannot write onto the currently-running test.
 const markCurrentResult = $newRustFunction("jest.rs", "jsNodeTestMarkResult", 2);
+// Marks the file so the runner drains the event loop after tests finish (Node
+// keeps running late-registered top-level tests). Returns bun:test's phase
+// (0 collection, 1 execution, 2 done) so the shim registers with bun:test
+// during collection and runs inline once past it, gated on the execution phase
+// finishing so late bodies never overlap collection-phase tests.
+const wantDrainAndPhase = $newRustFunction("jest.rs", "jsNodeTestWantDrain", 0);
+const lateBegin = $newRustFunction("jest.rs", "jsNodeTestLateBegin", 0);
+const lateReport = $newRustFunction("jest.rs", "jsNodeTestLateReport", 3);
+// Mark the file that first evaluates this module so a test file whose only
+// registrations arrive from a macrotask still drains. Subsequent files are
+// marked via `fileGeneration()` on their first node:test call.
+wantDrainAndPhase();
 
 let rootNode: TestNode | undefined;
 let rootGeneration = -1;
@@ -2499,6 +2511,66 @@ function bunTest() {
   return jest(Bun.main);
 }
 
+// Top-level tests registered after bun:test left the collection phase (from a
+// macrotask: setTimeout, callback-driven fixture list) cannot be handed to
+// bun:test, so run them here. Node's root serializes late subtests; chain them
+// through one promise so overlapping late registrations do not interleave, and
+// seed the chain per file on a gate that opens at Phase::Done so a late body
+// never overlaps a collection-phase test that is still awaiting.
+const realSetImmediate = setImmediate;
+let lateChain: Promise<void> = Promise.resolve();
+let lateChainGeneration = -1;
+
+function seedLateChain(): void {
+  const generation = fileGeneration();
+  if (lateChainGeneration === generation) return;
+  lateChainGeneration = generation;
+  lateChain = (async function awaitDone() {
+    // node_test_pending_late > 0 (set by lateBegin below) keeps the per-file
+    // loop spinning, so one setImmediate per tick is enough to observe Done.
+    while (wantDrainAndPhase() === 1) {
+      await new Promise<void>(resolve => realSetImmediate(resolve));
+    }
+  })();
+}
+
+// lateReport's third argument: matches the summary counter the native hook
+// bumps. "pass" is implicit (mode 0 with failure undefined).
+const kLateModeSkip = 1;
+const kLateModeTodo = 2;
+
+function runLateTopLevel(node: TestNode, fn: TestFn, declaredMode: "skip" | "todo" | undefined): Promise<undefined> {
+  seedLateChain();
+  lateBegin();
+  const run = async () => {
+    let failure: unknown;
+    // Node runs todo bodies (and the collection-phase path hands them to
+    // test.todo so --todo runs them); a declared skip never runs the body.
+    if (declaredMode !== "skip") {
+      try {
+        failure = await executeTestNode(node, fn);
+      } catch (err) {
+        failure = err ?? makeTestFailure("test failed");
+      }
+    }
+    // Runtime t.skip()/t.todo() override the outcome the same way the
+    // collection-phase path does via markCurrentResult.
+    let mode = 0;
+    if (node.skipped || declaredMode === "skip") {
+      mode = kLateModeSkip;
+      failure = undefined;
+    } else if (node.todoFlag || declaredMode === "todo") {
+      mode = kLateModeTodo;
+      failure = undefined;
+    }
+    lateReport(node.fullName, failure, mode);
+  };
+  // executeTestNode never rejects (it returns the failure); guard anyway so a
+  // thrown value cannot poison the chain and strand a later late test.
+  lateChain = lateChain.then(run, run);
+  return lateChain.then(() => undefined);
+}
+
 function bunTestOptions(options: TestOptions) {
   // The node-style timeout is enforced by executeTestNode itself so that a
   // tiny timeout (e.g. 1ms) with a synchronous body still passes like in Node.
@@ -2592,6 +2664,14 @@ function addTest(
   const parent = currentCollectionParent();
   const node = new TestNode(name, parent, options, false, false);
   node.ownTags = ownTags;
+
+  // A top-level test() registered from a macrotask after module evaluation
+  // reaches here (no ALS context), but bun:test would throw "inside a test" /
+  // "after the test run has completed". Node runs it as a root subtest.
+  if (wantDrainAndPhase() !== 0) {
+    const declaredMode = mode ?? (options.todo ? "todo" : options.skip ? "skip" : undefined);
+    return runLateTopLevel(node, fn, declaredMode);
+  }
 
   const { test } = bunTest();
   const passOptions = bunTestOptions(options);
@@ -2712,6 +2792,71 @@ function addSuite(
   const suiteNode = new TestNode(name, parent, options, true, false);
   suiteNode.ownTags = ownTags;
 
+  // A late top-level describe() is built and run inline like a suite subtest
+  // of the root so its children's failures reach the summary.
+  if (wantDrainAndPhase() !== 0) {
+    const declaredMode = mode ?? (options.todo ? "todo" : options.skip ? "skip" : undefined);
+    seedLateChain();
+    if (declaredMode === "skip") {
+      lateBegin();
+      const run = () => void lateReport(suiteNode.fullName, undefined, kLateModeSkip);
+      lateChain = lateChain.then(run, run);
+      return lateChain.then(() => undefined);
+    }
+    if (declaredMode === "todo") suiteNode.todoFlag = true;
+    suiteNode.isExecutionPhase = true;
+    lateBegin();
+    // Seed the suite's own chain on lateChain so children collected by the
+    // callback queue behind earlier late tests (same gating as the inline-suite
+    // path's `suite.subtestChain = runningNode.subtestChain.then(...)` above).
+    const gate = Promise.withResolvers<void>();
+    suiteNode.subtestChain = lateChain.then(() => gate.promise);
+    let build: unknown;
+    try {
+      build = runWithNode(suiteNode, () => fn(suiteNode.getSuiteCtx()));
+    } catch (err) {
+      recordSuiteFailure(suiteNode, err);
+    }
+    if (build != null && typeof (build as PromiseLike<unknown>).then === "function") {
+      (build as Promise<unknown>).then(gate.resolve, gate.resolve);
+    } else {
+      gate.resolve();
+      build = undefined;
+    }
+    const run = async () => {
+      if (build !== undefined) {
+        try {
+          await build;
+        } catch (err) {
+          recordSuiteFailure(suiteNode, err);
+        }
+      }
+      try {
+        await runOwnBeforeHooks(suiteNode);
+      } catch (err) {
+        recordSuiteFailure(suiteNode, err);
+      }
+      await drainSubtestChain(suiteNode);
+      for (const hook of suiteNode.hooks.after) {
+        try {
+          await runHook(hook, suiteNode, suiteNode.getSuiteCtx());
+        } catch (err) {
+          recordSuiteFailure(suiteNode, err);
+        }
+      }
+      suiteNode.finished = true;
+      suiteNode.passed = suiteNode.failedSubtests === 0;
+      const failed = suiteNode.failedSubtests > 0 && !suiteNode.todoFlag;
+      lateReport(
+        suiteNode.fullName,
+        failed ? suiteNode.firstSubtestError : undefined,
+        suiteNode.todoFlag ? kLateModeTodo : 0,
+      );
+    };
+    lateChain = lateChain.then(run, run);
+    return lateChain.then(() => undefined);
+  }
+
   const { describe } = bunTest();
 
   // Node merges .todo()/.skip() into the options and checks skip first, so
@@ -2796,7 +2941,11 @@ function hookArgFor(node: TestNode) {
 function before(arg0: unknown, arg1: unknown) {
   const hook = createHook(arg0, arg1);
   const owner = hookOwner();
-  if (owner.isRunning()) {
+  // Registered from a macrotask after collection: bunTest().beforeAll would
+  // throw and abort the callback before later test() calls in it register.
+  // Push to the root so the registration succeeds (same acknowledged ordering
+  // limitation as a sync-registered after(): the hook may not run).
+  if (owner.isRunning() || (owner.parent === undefined && wantDrainAndPhase() !== 0)) {
     owner.hooks.before.push(hook);
     if (owner.started && !owner.finished) {
       scheduleImmediateBeforeHook(owner, hook, hookArgFor(owner));
@@ -2815,7 +2964,7 @@ function before(arg0: unknown, arg1: unknown) {
 function after(arg0: unknown, arg1: unknown) {
   const hook = createHook(arg0, arg1);
   const owner = hookOwner();
-  if (owner.isRunning()) {
+  if (owner.isRunning() || (owner.parent === undefined && wantDrainAndPhase() !== 0)) {
     owner.hooks.after.push(hook);
     return;
   }

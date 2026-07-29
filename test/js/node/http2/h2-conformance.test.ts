@@ -1232,9 +1232,9 @@ describe("client request terminator with waitForTrailers", () => {
     // noTrailers(); the state is HALF_CLOSED_LOCAL at that point so a can_send_data()-style
     // guard would skip the terminating DATA and leave the peer's stream open.
     const raw = await RawH2Server.listen();
+    const client = http2.connect(`http://127.0.0.1:${raw.port}`);
+    client.on("error", () => {});
     try {
-      const client = http2.connect(`http://127.0.0.1:${raw.port}`);
-      client.on("error", () => {});
       const req = client.request({ ":path": "/" }, { waitForTrailers: true });
       req.on("error", () => {});
       req.end();
@@ -1252,8 +1252,8 @@ describe("client request terminator with waitForTrailers", () => {
         .filter(f => f.streamId === 1)
         .map(f => ({ type: f.type, endStream: (f.flags & 0x1) !== 0 }));
       expect({ halfClosed: closer !== null, stream1 }).toMatchObject({ halfClosed: true });
-      client.destroy();
     } finally {
+      client.destroy();
       raw.close();
     }
   });

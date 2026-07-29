@@ -3692,22 +3692,6 @@ impl<'a> Resolver<'a> {
                         let ends_with_star = esm_resolution.status == Status::ExactEndsWithStar;
                         esm_resolution.status = Status::ModuleNotFound;
 
-                        // When the exports/imports target came from a wildcard expansion
-                        // like `"./*": "./dist/*"` and the substituted path doesn't
-                        // exist as-is, try a couple of friendly fallbacks that bundlers
-                        // (TypeScript `moduleResolution: "bundler"`, Vite, webpack)
-                        // already do:
-                        //
-                        //   1. Append a configured extension (`.js`, `.mjs`, `.ts`, ...) —
-                        //      makes `@modelcontextprotocol/sdk/server/stdio` resolve
-                        //      to `stdio.js` when the wildcard target has no extension
-                        //      (oven-sh/bun#29679).
-                        //   2. Rewrite a trailing `.js`/`.jsx`/`.mjs` in the target to
-                        //      `.ts`/`.tsx`/`.mts` — makes `#app/*` → `./app/*.js` pick
-                        //      up `app/main.ts` (oven-sh/bun#10001). Same rewrite is
-                        //      applied to plain file loads in `load_as_file` below.
-                        //
-                        // Exact (non-wildcard) keys are untouched.
                         if ends_with_star
                             && self.probe_wildcard_extensions(
                                 entries,
@@ -3837,19 +3821,7 @@ impl<'a> Resolver<'a> {
         }
     }
 
-    /// Probe the filesystem for a file that a wildcard `exports`/`imports`
-    /// pattern almost named. Called when the substituted path doesn't exist
-    /// on disk as-is. Writes into `out` and returns `true` on a hit. Two cases:
-    ///
-    ///   * Target has no extension (`"./*": "./dist/*"`) → append each
-    ///     configured extension and return the first hit.
-    ///   * Target ends with `.js`/`.jsx`/`.mjs` (`"#foo/*": "./foo/*.js"`) →
-    ///     swap it for the TypeScript counterpart and return the first hit,
-    ///     same rewrite `load_as_file` applies to plain file loads. The
-    ///     `.mjs` arm is skipped under `node_modules` (oven-sh/bun#5426).
-    ///
-    /// Caller has already confirmed the resolution came from a wildcard
-    /// expansion (`.ExactEndsWithStar`).
+    /// Wildcard `exports`/`imports` target isn't a file: probe extensions like `load_as_file` does.
     fn probe_wildcard_extensions<'e>(
         &mut self,
         entries: &'e Fs::file_system::DirEntry,
@@ -3861,11 +3833,7 @@ impl<'a> Resolver<'a> {
     ) -> bool {
         let rfs = self.rfs_ptr();
 
-        // Case 1: target has no extension (`"./*": "./dist/*"`) → append
-        // extension_order. Gated on the substituted basename actually being
-        // extensionless so `"./*": "./dist/*.js"` doesn't chase
-        // `./dist/foo.js.ts`, `./dist/foo.js.js`, etc. when `foo.js` is
-        // missing — the literal `.js`→`.ts` rewrite is Case 2's job.
+        // Extensionless target (`"./*": "./dist/*"`): append extension_order (oven-sh/bun#29679).
         if bun_paths::extension(base).is_empty() {
             let buf = bufs!(load_as_file);
             buf[..base.len()].copy_from_slice(base);
@@ -3898,12 +3866,7 @@ impl<'a> Resolver<'a> {
             }
         }
 
-        // Case 2: `.js`/`.jsx`/`.mjs` → `.ts`/`.tsx`/`.mts`. Mirrors the
-        // TypeScript rewrite `load_as_file` does for plain file loads
-        // (oven-sh/bun#10001). Only fires for wildcard keys — users writing an
-        // explicit `"./foo": "./foo.js"` target get exactly what they asked
-        // for. The `.mjs` arm is skipped under node_modules (oven-sh/bun#5426),
-        // matching `load_as_file`.
+        // `.js`/`.jsx`/`.mjs` → `.ts`/`.tsx`/`.mts`: same rewrite as `load_as_file` (oven-sh/bun#10001).
         if let Some(last_dot) = strings::last_index_of_char(base, b'.') {
             let ext = &base[last_dot..];
             let ts_exts: &[&[u8]] = if ext == b".js" || ext == b".jsx" {

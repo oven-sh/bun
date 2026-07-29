@@ -2070,12 +2070,7 @@ impl<'a> ESModule<'a> {
                         };
                     }
 
-                    // Mark any wildcard-pattern expansion with `.ExactEndsWithStar` so
-                    // the resolver knows this result came from a `"./*"`-style
-                    // expansion key. When the target has no extension (e.g.
-                    // `"./*": { "import": "./dist/*" }`), the resolver then probes
-                    // for `*.js`, `*.mjs`, etc. the same way it does for bare paths.
-                    // See oven-sh/bun#29679.
+                    // Wildcard expansion: tag for `probe_wildcard_extensions` (oven-sh/bun#29679, #10001).
                     dedent!();
                     return Resolution {
                         path: Box::<[u8]>::from(result),

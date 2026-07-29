@@ -3412,10 +3412,9 @@ fn edit_root_package_json(
                                             bstr::BStr::new(prefix),
                                             bstr::BStr::new(version),
                                         )
-                                    } else if let Some(workspace_version) =
-                                        lockfile.workspace_versions.get(
-                                            &Semver::string::Builder::string_hash(dependency_name),
-                                        )
+                                    } else if let Some(workspace_version) = lockfile
+                                        .workspace_versions
+                                        .get(&Semver::string::Builder::string_hash(dependency_name))
                                     {
                                         format!(
                                             "{}{}",

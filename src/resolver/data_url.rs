@@ -170,10 +170,7 @@ impl<'a> DataURL<'a> {
         bun_http_types::MimeType::MimeType::init(self.mime_type, false, None)
     }
 
-    /// Derive the MIME type string for a `data:` URL from the file extension,
-    /// falling back to a whatwg binary-byte content sniff when the extension
-    /// is unknown. `text/*` types without an explicit charset are suffixed
-    /// with `;charset=utf-8` (esbuild parity).
+    /// MIME type for a `data:` URL: by extension, else a binary-byte sniff.
     pub fn guess_mime_type(path: &[u8], contents: &[u8]) -> Vec<u8> {
         let ext = strings::trim_leading_char(bun_paths::extension(path), b'.');
         if let Some(mime) = bun_http_types::MimeType::by_extension_no_default(ext) {

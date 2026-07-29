@@ -1422,6 +1422,37 @@ impl<'a> Transpiler<'a> {
                 break 'brk bun_ast::Source::init_path_string(path.text, contents);
             }
 
+            // `read_file_with_allocator` strips/transcodes BOMs; the raw-binary
+            // loaders need the file bytes verbatim.
+            if matches!(loader, options::Loader::Base64 | options::Loader::Dataurl) {
+                let read = match file_descriptor {
+                    Some(fd) => bun_sys::lseek(fd, 0, libc::SEEK_SET)
+                        .and_then(|_| bun_sys::File::borrow(&fd).read_to_end()),
+                    None => bun_sys::File::read_from(FD::cwd(), path.text),
+                };
+                let body = match read {
+                    Ok(b) => b,
+                    Err(err) => {
+                        let _ = log.add_error_fmt(
+                            None,
+                            bun_ast::Loc::EMPTY,
+                            format_args!(
+                                "{} reading \"{}\"",
+                                bstr::BStr::new(err.name()),
+                                bstr::BStr::new(path.text),
+                            ),
+                        );
+                        return None;
+                    }
+                };
+                source_backing = resolver::cache::Contents::from(body);
+                // SAFETY: `source_backing` outlives every read through
+                // `source.contents` (moved into the returned `ParseResult`).
+                let contents: &'static [u8] =
+                    unsafe { bun_ptr::detach_lifetime_ref::<[u8]>(source_backing.as_slice()) };
+                break 'brk bun_ast::Source::init_path_string(path.text, contents);
+            }
+
             // Thread
             // `this_parse.arena` (the per-call `MimallocArena` from
             // `RuntimeTranspilerStore`) so the source bytes land in the

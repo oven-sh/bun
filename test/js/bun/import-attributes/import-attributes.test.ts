@@ -355,6 +355,9 @@ describe("base64 / dataurl", () => {
     { type: "base64", file: "png.png", contents: Buffer.from("89504e470d0a1a0a", "hex"), expected: "iVBORw0KGgo=" },
     { type: "base64", file: "bin.foo", contents: Buffer.from([0x00, 0xff, 0x80, 0x7f]), expected: "AP+Afw==" },
     { type: "base64", file: "empty.foo", contents: "", expected: "" },
+    { type: "base64", file: "u16.foo", contents: Buffer.from([0xff, 0xfe, 0x41, 0x00]), expected: "//5BAA==" },
+    { type: "base64", file: "u8.foo", contents: Buffer.from([0xef, 0xbb, 0xbf, 0x41]), expected: "77u/QQ==" },
+    { type: "dataurl", file: "style.css", contents: "ABC", expected: "data:text/css;charset=utf-8,ABC" },
     { type: "dataurl", file: "text.foo", contents: "ABC", expected: "data:text/plain;charset=utf-8,ABC" },
     {
       type: "dataurl",
@@ -399,21 +402,19 @@ describe("base64 / dataurl", () => {
     });
   }
 
-  for (const loader of ["base64", "dataurl"] as const) {
-    test.concurrent(`bun build --no-bundle --loader .bin:${loader}`, async () => {
-      using dir = tempDir("no-bundle-b64", {
-        "entry.bin": loader === "base64" ? "ABC" : Buffer.from("89504e470d0a1a0a", "hex"),
-      });
+  for (const [loader, contents, expected] of [
+    ["base64", "ABC", `export default "QUJD";`],
+    ["base64", Buffer.from([0xff, 0xfe, 0x41, 0x00]), `export default "//5BAA==";`],
+    ["dataurl", Buffer.from("89504e470d0a1a0a", "hex"), `export default "data:image/png;base64,iVBORw0KGgo=";`],
+  ] as const) {
+    test.concurrent(`bun build --no-bundle --loader .png:${loader} (${expected})`, async () => {
+      using dir = tempDir("no-bundle-b64", { "entry.png": contents });
       const { stdout, stderr, exitCode } = await run(
-        [bunExe(), "build", "--no-bundle", "--loader", `.bin:${loader}`, "entry.bin"],
+        [bunExe(), "build", "--no-bundle", "--loader", `.png:${loader}`, "entry.png"],
         String(dir),
       );
       expect(stderr).toBe("");
-      expect(stdout).toContain(
-        loader === "base64"
-          ? `export default "QUJD";`
-          : `export default "data:application/octet-stream;base64,iVBORw0KGgo=";`,
-      );
+      expect(stdout).toContain(expected);
       expect(exitCode).toBe(0);
     });
   }

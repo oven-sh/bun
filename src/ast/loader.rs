@@ -233,6 +233,8 @@ impl Loader {
     pub fn side_effects(self) -> SideEffects {
         match self {
             Loader::Text
+            | Loader::Base64
+            | Loader::Dataurl
             | Loader::Json
             | Loader::Jsonc
             | Loader::Toml

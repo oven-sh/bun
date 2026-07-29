@@ -6,6 +6,7 @@ import {
   chmodSync,
   constants,
   existsSync,
+  lstatSync,
   mkdirSync,
   readFileSync,
   readlinkSync,
@@ -142,7 +143,7 @@ describe("mv", async () => {
         const r = await $`mv ${srcLink} ${dst}`.quiet();
         expect(r.stderr.toString()).toBe("");
         expect(r.exitCode).toBe(0);
-        expect(existsSync(srcLink)).toBe(false);
+        expect(lstatSync(srcLink, { throwIfNoEntry: false })).toBeUndefined();
         expect(readlinkSync(join(dst, "link"))).toBe("does-not-exist");
       } finally {
         rmSync(src, { recursive: true, force: true });
@@ -164,6 +165,43 @@ describe("mv", async () => {
         expect(existsSync(srcDir)).toBe(false);
         expect(readFileSync(join(dst, "tree", "a.txt"), "utf8")).toBe("A\n");
         expect(readFileSync(join(dst, "tree", "sub", "b.txt"), "utf8")).toBe("B\n");
+      } finally {
+        rmSync(src, { recursive: true, force: true });
+        rmSync(dst, { recursive: true, force: true });
+      }
+    });
+
+    test.skipIf(skip)("directory onto non-empty directory across devices fails", async () => {
+      const [src, dst] = crossDevicePair("notempty");
+      try {
+        const srcDir = join(src, "d");
+        mkdirSync(srcDir);
+        writeFileSync(join(srcDir, "f.txt"), "new\n");
+        mkdirSync(join(dst, "d"));
+        writeFileSync(join(dst, "d", "f.txt"), "precious\n");
+
+        const r = await $`mv ${srcDir} ${dst}`.quiet();
+        expect(r.stderr.toString()).toContain("not empty");
+        expect(r.exitCode).not.toBe(0);
+        expect(readFileSync(join(dst, "d", "f.txt"), "utf8")).toBe("precious\n");
+        expect(readFileSync(join(srcDir, "f.txt"), "utf8")).toBe("new\n");
+      } finally {
+        rmSync(src, { recursive: true, force: true });
+        rmSync(dst, { recursive: true, force: true });
+      }
+    });
+
+    test.skipIf(skip)("FIFO across devices fails fast", async () => {
+      const [src, dst] = crossDevicePair("fifo");
+      try {
+        const fifo = join(src, "pipe");
+        const { exitCode: mk } = Bun.spawnSync({ cmd: ["mkfifo", fifo] });
+        expect(mk).toBe(0);
+
+        const r = await $`mv ${fifo} ${dst}`.quiet();
+        expect(r.exitCode).not.toBe(0);
+        expect(lstatSync(fifo).isFIFO()).toBe(true);
+        expect(lstatSync(join(dst, "pipe"), { throwIfNoEntry: false })).toBeUndefined();
       } finally {
         rmSync(src, { recursive: true, force: true });
         rmSync(dst, { recursive: true, force: true });

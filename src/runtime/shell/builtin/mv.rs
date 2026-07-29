@@ -520,13 +520,18 @@ impl ShellMvBatchedTask {
         }
 
         if bun_sys::S::ISDIR(mode) {
-            // Create writable/searchable so children can be written; the source
-            // mode is stamped via fchmod once the tree is in place.
-            let created = match bun_sys::mkdirat(dst_dir, dst, (mode & 0o7777) | 0o700) {
-                Ok(()) => true,
-                Err(e) if e.get_errno() == bun_sys::E::EEXIST => false,
+            // 0o700 so children can be written into a dest whose source mode
+            // is e.g. 0o500; the real mode is stamped via fchmod below.
+            match bun_sys::mkdirat(dst_dir, dst, (mode & 0o7777) | 0o700) {
+                Ok(()) => {}
+                Err(e) if e.get_errno() == bun_sys::E::EEXIST => {
+                    // Same-device renameat() onto a non-empty dir fails with
+                    // ENOTEMPTY; match that instead of silently merging.
+                    bun_sys::rmdirat(dst_dir, dst)?;
+                    bun_sys::mkdirat(dst_dir, dst, (mode & 0o7777) | 0o700)?;
+                }
                 Err(e) => return Err(e),
-            };
+            }
             let src_fd = shell_openat(src_dir, src, bun_sys::O::RDONLY | bun_sys::O::DIRECTORY, 0)?;
             let dst_fd =
                 match shell_openat(dst_dir, dst, bun_sys::O::RDONLY | bun_sys::O::DIRECTORY, 0) {
@@ -536,12 +541,13 @@ impl ShellMvBatchedTask {
                         return Err(e);
                     }
                 };
-            let mut iter = bun_sys::dir_iterator::iterate(src_fd);
+            // Boxed: `WrappedIterator` embeds an 8 KB inline readdir buffer.
+            let mut iter = Box::new(bun_sys::dir_iterator::iterate(src_fd));
+            let mut nbuf = bun_paths::path_buffer_pool::get();
             let result: Result<(), bun_sys::Error> = loop {
                 match iter.next() {
                     Ok(Some(entry)) => {
                         let name = entry.name.slice_u8();
-                        let mut nbuf = bun_paths::path_buffer_pool::get();
                         if name.len() >= bun_paths::MAX_PATH_BYTES {
                             break Err(bun_sys::Error::from_code(
                                 bun_sys::E::ENAMETOOLONG,
@@ -559,13 +565,22 @@ impl ShellMvBatchedTask {
                     Err(e) => break Err(e),
                 }
             };
-            if created && result.is_ok() {
+            if result.is_ok() {
                 let _ = bun_sys::fchmod(dst_fd, mode & 0o7777);
             }
             closefd(dst_fd);
             closefd(src_fd);
             result?;
             return bun_sys::rmdirat(src_dir, src);
+        }
+
+        if !bun_sys::S::ISREG(mode) {
+            // Opening a FIFO O_RDONLY without O_NONBLOCK blocks forever; refuse
+            // special files rather than hang the worker thread.
+            return Err(bun_sys::Error::from_code(
+                bun_sys::E::ENOTSUP,
+                bun_sys::Tag::rename,
+            ));
         }
 
         let in_fd = bun_sys::openat(src_dir, src, bun_sys::O::RDONLY | bun_sys::O::CLOEXEC, 0)?;

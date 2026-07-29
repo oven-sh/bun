@@ -41,7 +41,9 @@ async function runCase(kind: "js" | "wasm" | "wasmcall", warmMs: number, capMs: 
     const w = new Worker(${JSON.stringify(workerSourceFor(kind))}, { eval: true });
     let exited = -1;
     w.on("exit", code => { exited = code; });
-    await new Promise(r => w.on("message", r));
+    await new Promise((resolve, reject) => { w.on("message", resolve); w.on("error", reject); });
+    // Let the loop tier up past IPInt before terminate(); once spin() is entered there is no
+    // observable readiness signal (a pure Wasm loop has no JS re-entry to postMessage from).
     await new Promise(r => setTimeout(r, ${warmMs}));
     const t0 = performance.now();
     const outcome = await Promise.race([

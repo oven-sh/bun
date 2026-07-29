@@ -1666,6 +1666,46 @@ describe("deno_task", () => {
     TestBuilder.command`BUN_DEBUG_QUIET_LOGS=1 ${BUN} -e ${code} > /dev/null`
       .quiet()
       .runAsTest("bunception redirect /dev/null");
+
+    describe("ReadableStream as redirect target throws instead of panicking", () => {
+      test.concurrent.each([
+        ["stdin to subprocess", `$\`\${process.execPath} -e 0 < \${stream}\``],
+        ["stdin to subprocess (Response.body)", `$\`\${process.execPath} -e 0 < \${new Response("x").body}\``],
+        ["stdout from subprocess", `$\`\${process.execPath} -e 0 > \${stream}\``],
+        ["stderr from subprocess", `$\`\${process.execPath} -e 0 2> \${stream}\``],
+        ["in pipeline", `$\`\${process.execPath} -e 0 | \${process.execPath} -e 0 < \${stream}\``],
+        ["first in pipeline", `$\`\${process.execPath} -e 0 < \${stream} | \${process.execPath} -e 0\``],
+        [
+          "both sides of pipeline",
+          `$\`\${process.execPath} -e 0 < \${stream} | \${process.execPath} -e 0 < \${stream}\``,
+        ],
+        ["after && (async re-entry)", `$\`\${process.execPath} -e 0 && \${process.execPath} -e 0 < \${stream}\``],
+      ])("%s", async (_, shellExpr) => {
+        const script = /* ts */ `
+          import { $ } from "bun";
+          const stream = new ReadableStream({ start(c) { c.close(); } });
+          try {
+            await ${shellExpr}.quiet();
+            console.log("no throw");
+          } catch (e) {
+            console.log("caught:", e.message);
+          }
+          Bun.gc(true);
+        `;
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "-e", script],
+          env: bunEnv,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect({ stdout: stdout.trim(), exitCode, signalCode: proc.signalCode }).toEqual({
+          stdout: "caught: Unknown JS value used in shell: [object ReadableStream]",
+          exitCode: 0,
+          signalCode: null,
+        });
+      });
+    });
   });
 
   describe("pwd", async () => {

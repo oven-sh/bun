@@ -171,9 +171,7 @@ pub enum RouteMethod {
     Specific(Method),
 }
 
-/// A `false` route value: register the path (or one method at the path) so it
-/// dispatches to the default handler ladder instead of being caught by a
-/// wildcard route.
+/// A `false` route value: claim the path (or one method) for the default handler.
 pub struct NegativeRoute {
     pub path: ZBox,
     pub method: RouteMethod,
@@ -193,10 +191,7 @@ pub struct StaticRouteEntry {
     pub path: Box<[u8]>,
     pub route: AnyRoute,
     pub method: MethodOptional,
-    /// Set when the per-method route object this entry came from also declared
-    /// `HEAD` (as a handler, a static value, or `false`). `apply_static_route`
-    /// uses it to skip the implicit GET→HEAD registration so the sibling
-    /// declaration is not displaced.
+    /// The path's per-method route object declared `HEAD`, so don't derive one.
     pub skip_implicit_head: bool,
 }
 
@@ -933,6 +928,7 @@ impl ServerConfig {
                     // HEAD must behave like GET without a body (RFC 9110 section 9.3.2),
                     // so a route object with a GET handler and no HEAD entry also answers HEAD.
                     let mut derived_head_route: Option<UserRouteBuilder> = None;
+                    let mut derived_head_negative = false;
                     let mut has_head_route = false;
                     let static_routes_start = init_ctx.user_routes.len();
                     for method in METHODS {
@@ -944,8 +940,10 @@ impl ServerConfig {
                             found = true;
 
                             if function == JSValue::FALSE {
-                                if method == Method::HEAD {
-                                    has_head_route = true;
+                                match method {
+                                    Method::HEAD => has_head_route = true,
+                                    Method::GET => derived_head_negative = true,
+                                    _ => {}
                                 }
                                 args.negative_routes.push(NegativeRoute {
                                     path: ZBox::from_bytes(&*path),
@@ -1001,10 +999,15 @@ impl ServerConfig {
                                 entry.skip_implicit_head = true;
                             }
                         }
-                    }
-                    if let Some(builder) = derived_head_route {
-                        if !has_head_route {
+                    } else {
+                        if let Some(builder) = derived_head_route {
                             args.user_routes_to_build.push(builder);
+                        }
+                        if derived_head_negative {
+                            args.negative_routes.push(NegativeRoute {
+                                path: ZBox::from_bytes(&*path),
+                                method: RouteMethod::Specific(Method::HEAD),
+                            });
                         }
                     }
 

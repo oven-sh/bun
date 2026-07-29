@@ -2327,10 +2327,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
 
             // An explicit HEAD handler route must stay the HEAD handler for its
             // path: uWS keeps the last registration for a method and path, and
-            // static routes register after user routes. `skip_implicit_head`
-            // carries the same signal for sibling per-method declarations that
-            // the callable-route scan cannot see (a static `HEAD` value or
-            // `HEAD: false`).
+            // static routes register after user routes.
             let path_has_user_head_route = entry.skip_implicit_head
                 || self
                     .user_routes

@@ -306,6 +306,32 @@ describe("implicit HEAD for per-method route objects", () => {
     });
   });
 
+  test("GET: false derives a negative HEAD past a /* sibling (RFC 9110 symmetry)", async () => {
+    await using server = Bun.serve({
+      port: 0,
+      routes: {
+        "/x": { GET: false },
+        "/y": { GET: false, HEAD: new Response(null, { headers: { "x-from": "own-head" } }) },
+        "/*": new Response("star", { headers: { "x-from": "star" } }),
+      },
+      fetch: req => new Response(null, { status: 299, headers: { "x-from": "fetch", "x-method": req.method } }),
+    });
+
+    const [gx, hx, gy, hy] = await Promise.all([
+      fetch(new URL("/x", server.url)),
+      fetch(new URL("/x", server.url), { method: "HEAD" }),
+      fetch(new URL("/y", server.url)),
+      fetch(new URL("/y", server.url), { method: "HEAD" }),
+    ]);
+    expect({
+      x: { get: gx.headers.get("x-from"), head: hx.headers.get("x-from") },
+      y: { get: gy.headers.get("x-from"), head: hy.headers.get("x-from") },
+    }).toEqual({
+      x: { get: "fetch", head: "fetch" },
+      y: { get: "fetch", head: "own-head" },
+    });
+  });
+
   test("HEAD: false on one path does not affect the implicit HEAD on another", async () => {
     await using server = Bun.serve({
       port: 0,

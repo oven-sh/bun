@@ -87,7 +87,7 @@ public:
     void signalAbort(JSC::JSValue reason);
     void signalFollow(AbortSignal&);
 
-    bool aborted() const { return m_flags & static_cast<uint8_t>(AbortSignalFlags::Aborted); }
+    bool aborted() const { return m_flags.load(std::memory_order_relaxed) & static_cast<uint8_t>(AbortSignalFlags::Aborted); }
     void markAborted(JSC::JSValue reason);
     void runAbortSteps();
 
@@ -103,8 +103,8 @@ public:
     }
 
     bool hasActiveTimeoutTimer() const { return m_timeout != nullptr; }
-    bool hasAbortEventListener() const { return m_flags & static_cast<uint8_t>(AbortSignalFlags::HasAbortEventListener); }
-    bool isFiringEventListeners() const { return m_flags & static_cast<uint8_t>(AbortSignalFlags::IsFiringEventListeners); }
+    bool hasAbortEventListener() const { return m_flags.load(std::memory_order_relaxed) & static_cast<uint8_t>(AbortSignalFlags::HasAbortEventListener); }
+    bool isFiringEventListeners() const { return m_flags.load(std::memory_order_relaxed) & static_cast<uint8_t>(AbortSignalFlags::IsFiringEventListeners); }
 
     using RefCounted::deref;
     using RefCounted::ref;
@@ -132,7 +132,7 @@ public:
     void incrementPendingActivityCount() { ++pendingActivityCount; }
     void decrementPendingActivityCount() { --pendingActivityCount; }
     bool hasPendingActivity() const { return pendingActivityCount > 0; }
-    bool isDependent() const { return m_flags & static_cast<uint8_t>(AbortSignalFlags::Dependent); }
+    bool isDependent() const { return m_flags.load(std::memory_order_relaxed) & static_cast<uint8_t>(AbortSignalFlags::Dependent); }
 
     size_t memoryCost() const;
 
@@ -150,39 +150,18 @@ private:
     void addDependentSignal(AbortSignal&);
     void cancelTimer();
 
-    void applyFlags(uint8_t flags) { m_flags |= flags; }
-    void setIsDependent(bool isDependent)
+    void applyFlags(uint8_t flags) { m_flags.fetch_or(flags, std::memory_order_relaxed); }
+    void setFlag(AbortSignalFlags flag, bool value)
     {
-        if (isDependent) {
-            m_flags |= static_cast<uint8_t>(AbortSignalFlags::Dependent);
-        } else {
-            m_flags &= ~static_cast<uint8_t>(AbortSignalFlags::Dependent);
-        }
+        if (value)
+            m_flags.fetch_or(static_cast<uint8_t>(flag), std::memory_order_relaxed);
+        else
+            m_flags.fetch_and(static_cast<uint8_t>(~static_cast<uint8_t>(flag)), std::memory_order_relaxed);
     }
-    void setAborted(bool aborted)
-    {
-        if (aborted) {
-            m_flags |= static_cast<uint8_t>(AbortSignalFlags::Aborted);
-        } else {
-            m_flags &= ~static_cast<uint8_t>(AbortSignalFlags::Aborted);
-        }
-    }
-    void setHasAbortEventListener(bool hasAbortEventListener)
-    {
-        if (hasAbortEventListener) {
-            m_flags |= static_cast<uint8_t>(AbortSignalFlags::HasAbortEventListener);
-        } else {
-            m_flags &= ~static_cast<uint8_t>(AbortSignalFlags::HasAbortEventListener);
-        }
-    }
-    void setIsFiringEventListeners(bool isFiringEventListeners)
-    {
-        if (isFiringEventListeners) {
-            m_flags |= static_cast<uint8_t>(AbortSignalFlags::IsFiringEventListeners);
-        } else {
-            m_flags &= ~static_cast<uint8_t>(AbortSignalFlags::IsFiringEventListeners);
-        }
-    }
+    void setIsDependent(bool v) { setFlag(AbortSignalFlags::Dependent, v); }
+    void setAborted(bool v) { setFlag(AbortSignalFlags::Aborted, v); }
+    void setHasAbortEventListener(bool v) { setFlag(AbortSignalFlags::HasAbortEventListener, v); }
+    void setIsFiringEventListeners(bool v) { setFlag(AbortSignalFlags::IsFiringEventListeners, v); }
 
     // EventTarget.
     EventTargetInterface eventTargetInterface() const final { return AbortSignalEventTargetInterfaceType; }
@@ -208,7 +187,8 @@ private:
     std::atomic<uint32_t> pendingActivityCount { 0 };
     uint32_t m_algorithmIdentifier { 0 };
     AbortSignalTimeout m_timeout { nullptr };
-    uint8_t m_flags { 0 };
+    // Atomic so aborted() may be polled from thread-pool workers (fs readFile/writeFile).
+    std::atomic<uint8_t> m_flags { 0 };
 };
 
 WebCoreOpaqueRoot root(AbortSignal*);

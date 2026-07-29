@@ -435,6 +435,9 @@ fn err_from_static(name: &'static str) -> crate::Error {
 const PREALLOCATE_SUPPORTED: bool = cfg!(any(target_os = "linux", target_os = "android"));
 const PREALLOCATE_LENGTH: usize = 2048 * 1024;
 
+/// Node's `kWriteFileMaxChunkSize`: AbortSignal is polled between writes of this size.
+const WRITE_FILE_CHUNK_SIZE: usize = 512 * 1024;
+
 /// `CLONE_NOFOLLOW` from `<sys/clonefile.h>` — not re-exported by `bun_sys::c`
 /// (or the `libc` crate), so define it locally. `clonefile(2)` then clones a
 /// symbolic-link `src` itself rather than the file it points to.
@@ -4765,27 +4768,44 @@ impl NodeFS {
         }
     }
 
-    pub fn append_file(&mut self, args: &args::AppendFile, _: Flavor) -> Maybe<ret::AppendFile> {
+    pub fn append_file(
+        &mut self,
+        args: &args::AppendFile,
+        flavor: Flavor,
+    ) -> Maybe<ret::AppendFile> {
         let mut data = args.data.slice();
-        match &args.file {
-            PathOrFileDescriptor::Fd(fd) => {
-                while !data.is_empty() {
-                    let written = Syscall::write(*fd, data)?;
-                    data = &data[written..];
-                }
-                Ok(())
-            }
+        let has_signal = flavor == Flavor::Async && args.signal.is_some();
+        let fd = match &args.file {
+            PathOrFileDescriptor::Fd(fd) => *fd,
             PathOrFileDescriptor::Path(path_) => {
                 let path = path_.slice_z(&mut self.sync_error_buf);
-                let fd = Syscall::open(path, FileSystemFlags::A.as_int(), args.mode)?;
-                let _close = scopeguard::guard(fd, |fd| fd.close());
-                while !data.is_empty() {
-                    let written = Syscall::write(fd, data)?;
-                    data = &data[written..];
-                }
-                Ok(())
+                Syscall::open(path, FileSystemFlags::A.as_int(), args.mode)?
             }
+        };
+        let _close = scopeguard::guard(
+            (fd, matches!(args.file, PathOrFileDescriptor::Path(_))),
+            |(fd, owned)| {
+                if owned {
+                    fd.close();
+                }
+            },
+        );
+        while !data.is_empty() {
+            let chunk = if has_signal {
+                if args.aborted() {
+                    return Err(abort_err());
+                }
+                &data[..data.len().min(WRITE_FILE_CHUNK_SIZE)]
+            } else {
+                data
+            };
+            let written = Syscall::write(fd, chunk)?;
+            if written == 0 {
+                break;
+            }
+            data = &data[written..];
         }
+        Ok(())
     }
 
     pub fn close(&mut self, args: &args::Close, _: Flavor) -> Maybe<ret::Close> {
@@ -7489,6 +7509,7 @@ impl NodeFS {
     pub fn write_file_with_path_buffer(
         pathbuf: &mut PathBuffer,
         args: &args::WriteFile,
+        flavor: Flavor,
     ) -> Maybe<ret::WriteFile> {
         let fd = match &args.file {
             PathOrFileDescriptor::Path(p) => {
@@ -7516,7 +7537,8 @@ impl NodeFS {
             },
         );
 
-        if args.aborted() {
+        let has_signal = flavor == Flavor::Async && args.signal.is_some();
+        if has_signal && args.aborted() {
             return Err(abort_err());
         }
 
@@ -7526,7 +7548,7 @@ impl NodeFS {
 
         // Attempt to pre-allocate large files
         // Worthwhile after 6 MB at least on ext4 linux
-        if PREALLOCATE_SUPPORTED && buf.len() >= PREALLOCATE_LENGTH {
+        if PREALLOCATE_SUPPORTED && !has_signal && buf.len() >= PREALLOCATE_LENGTH {
             'preallocate: {
                 let is_path = matches!(args.file, PathOrFileDescriptor::Path(_));
                 // Preallocating grows the file, so skip it when the kernel picks
@@ -7565,7 +7587,16 @@ impl NodeFS {
         // the bytes that did land.
         let mut write_err: Option<sys::Error> = None;
         while !buf.is_empty() {
-            match sys::write(fd, buf) {
+            let chunk = if has_signal {
+                if args.aborted() {
+                    write_err = Some(abort_err());
+                    break;
+                }
+                &buf[..buf.len().min(WRITE_FILE_CHUNK_SIZE)]
+            } else {
+                buf
+            };
+            match sys::write(fd, chunk) {
                 Err(err) => {
                     write_err = Some(err);
                     break;
@@ -7621,8 +7652,8 @@ impl NodeFS {
         Ok(())
     }
 
-    pub fn write_file(&mut self, args: &args::WriteFile, _: Flavor) -> Maybe<ret::WriteFile> {
-        Self::write_file_with_path_buffer(&mut self.sync_error_buf, args)
+    pub fn write_file(&mut self, args: &args::WriteFile, flavor: Flavor) -> Maybe<ret::WriteFile> {
+        Self::write_file_with_path_buffer(&mut self.sync_error_buf, args, flavor)
     }
 
     pub fn readlink(&mut self, args: &args::Readlink, _: Flavor) -> Maybe<ret::Readlink> {

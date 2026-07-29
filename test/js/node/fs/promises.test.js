@@ -1,4 +1,4 @@
-import { tempDir, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, tempDir, tempDirWithFiles } from "harness";
 import { join } from "path";
 const assert = require("assert");
 const os = require("os");
@@ -480,6 +480,24 @@ describe("AbortSignal rejections use node's AbortError shape", () => {
     }
   });
 
+  test("FileHandle#appendFile with a pre-aborted signal", async () => {
+    await using dir = tempDir("fs-abort-fh-appendfile", { "f.txt": "" });
+    const signal = AbortSignal.abort();
+    await using fh = await fsPromises.open(join(dir, "f.txt"), "a");
+    expect.assertions(4);
+    try {
+      await fh.appendFile("data", { signal });
+    } catch (err) {
+      expectNodeAbortError(err, signal.reason);
+    }
+  });
+
+  test.each(["writeFileSync", "appendFileSync"])("%s ignores an AbortSignal", async method => {
+    await using dir = tempDir(`fs-abort-${method}`, { "f.txt": "" });
+    fs[method](join(dir, "f.txt"), "data", { signal: AbortSignal.abort() });
+    expect(fs.readFileSync(join(dir, "f.txt"), "utf8")).toBe("data");
+  });
+
   test("writeFile with a pre-aborted signal", async () => {
     await using dir = tempDir("fs-abort-writefile", {});
     const signal = AbortSignal.abort();
@@ -490,6 +508,55 @@ describe("AbortSignal rejections use node's AbortError shape", () => {
       expectNodeAbortError(err, signal.reason);
     }
   });
+
+  // Aborting while a large buffer is being written must stop the write mid-stream.
+  // Node checks the signal between 512 KiB chunks (kWriteFileMaxChunkSize); a
+  // one-shot write that commits the whole buffer and only then rejects tells the
+  // caller the operation failed while leaving the full payload on disk. This
+  // runs in a dedicated subprocess so the busy-poll on the JS thread and the
+  // thread-pool writer are not contending with the test runner's parallel batch.
+  test.each(["writeFile", "appendFile"])(
+    "%s aborted mid-write stops before the full buffer is committed",
+    async method => {
+      await using dir = tempDir("fs-abort-writefile-midwrite", {});
+      const SIZE = 128 * 1024 * 1024;
+      const script = `
+        const fs = require("node:fs");
+        const fsp = require("node:fs/promises");
+        const SIZE = ${SIZE};
+        const buf = Buffer.alloc(SIZE, 7);
+        for (let attempt = 0; attempt < 20; attempt++) {
+          const p = require("node:path").join(${JSON.stringify(String(dir))}, "big-" + attempt + ".bin");
+          const ac = new AbortController();
+          const promise = fsp[${JSON.stringify(method)}](p, buf, { signal: ac.signal });
+          for (let i = 0; !fs.existsSync(p); i++) {
+            if (i > 1_000_000) { console.log(JSON.stringify({ err: "worker never opened" })); process.exit(1); }
+          }
+          ac.abort();
+          let name, code;
+          try { await promise; } catch (e) { name = e?.name; code = e?.code; }
+          const size = fs.statSync(p).size;
+          fs.unlinkSync(p);
+          if ((size > 0 && size < SIZE) || attempt === 19) {
+            console.log(JSON.stringify({ name, code, size, attempt }));
+            process.exit(0);
+          }
+        }
+      `;
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", script],
+        env: bunEnv,
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      const result = JSON.parse(stdout.trim());
+      expect({ name: result.name, code: result.code }).toEqual({ name: "AbortError", code: "ABORT_ERR" });
+      expect(result.size).toBeGreaterThan(0);
+      expect(result.size).toBeLessThan(SIZE);
+      expect(exitCode).toBe(0);
+    },
+  );
 
   test("writeFile of an async iterable with a pre-aborted signal", async () => {
     await using dir = tempDir("fs-abort-writefile-iter", {});

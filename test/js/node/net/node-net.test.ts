@@ -1144,8 +1144,8 @@ describe("net.Server accepted-socket buffering", () => {
       const events: string[] = [];
       sock.on("end", () => events.push("end"));
       sock.on("close", hadError => events.push("close:" + hadError));
-      // Wait for the peer FIN to reach the server's readable stream: push(null)
-      // flips _readableState.ended. Then yield past the teardown's setImmediate.
+      // Wait for the peer FIN to mark the readable side ended, then let any
+      // FIN-time lifecycle work settle before asserting the socket stayed open.
       while (!sock._readableState?.ended) await new Promise<void>(r => setImmediate(r));
       await new Promise<void>(r => setImmediate(r));
       await new Promise<void>(r => setImmediate(r));

@@ -3096,10 +3096,10 @@ mod posix_impl {
             let rc = unsafe { safe_libc::lseek(fd.native(), offset, whence) };
             if rc < 0 {
                 let raw_errno = crate::last_errno();
-                if raw_errno == libc::ESPIPE as u16 {
+                if raw_errno == libc::ESPIPE as i32 {
                     return Ok(0);
                 }
-                return Err(Error::from_code(raw_errno, Tag::lseek));
+                return Err(Error::from_code_int(raw_errno, Tag::lseek));
             }
             Ok(rc)
         }

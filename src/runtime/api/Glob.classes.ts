@@ -5,7 +5,6 @@ export default [
     name: "Glob",
     construct: true,
     finalize: true,
-    hasPendingActivity: true,
     configurable: false,
     klass: {},
     JSType: "0b11101110",
@@ -33,6 +32,30 @@ export default [
       match: {
         fn: "match",
         length: 1,
+      },
+    },
+  }),
+  define({
+    name: "GlobScanIterator",
+    noConstructor: true,
+    construct: false,
+    finalize: true,
+    hasPendingActivity: true,
+    configurable: false,
+    klass: {},
+    JSType: "0b11101110",
+    proto: {
+      nextSync: {
+        fn: "nextSync",
+        length: 0,
+      },
+      pull: {
+        fn: "pull",
+        length: 0,
+      },
+      close: {
+        fn: "close",
+        length: 0,
       },
     },
   }),

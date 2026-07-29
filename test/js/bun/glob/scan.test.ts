@@ -24,7 +24,7 @@ import { Glob, GlobScanOptions } from "bun";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { execSync } from "child_process";
 import fg from "fast-glob";
-import { bunEnv, bunExe, isWindows, tempDir, tempDirWithFiles, tmpdirSync } from "harness";
+import { bunEnv, bunExe, getFDCount, isWindows, tempDir, tempDirWithFiles, tmpdirSync } from "harness";
 import * as fs from "node:fs";
 import * as path from "path";
 import { createTempDirectoryWithBrokenSymlinks, prepareEntries, tempFixturesDir } from "./util";
@@ -616,6 +616,112 @@ describe("literal fast path", async () => {
     const glob = new Glob("packages/foo");
     const entries = await Array.fromAsync(glob.scan({ cwd: tempdir }));
     expect(entries.sort()).toEqual([`packages${path.sep}foo`].sort());
+  });
+});
+
+describe("lazy iteration", () => {
+  // scanSync()/scan() drive the directory walk incrementally rather than
+  // materialising the whole result set before the first value is yielded.
+  // A file created inside a subdirectory *after* the iterator has produced
+  // its first match (but before the walker has descended there) is observed
+  // by a lazy walk and missed by an eager one, giving a deterministic
+  // fail-before signal that does not depend on timing.
+
+  test("scanSync: subdirectories are read when reached, not upfront", () => {
+    using dir = tempDir("glob-lazy-sync", {
+      "first.txt": "",
+      "sub/original.txt": "",
+    });
+    const it = new Glob("**/*.txt").scanSync({ cwd: String(dir) });
+    // Root-level files are yielded before the walker descends into `sub`,
+    // regardless of readdir order (subdirectories are queued and processed
+    // only once the current directory is exhausted).
+    expect(it.next()).toEqual({ value: "first.txt", done: false });
+    fs.writeFileSync(path.join(String(dir), "sub", "added.txt"), "");
+    const rest = [...it].sort();
+    expect(rest).toEqual([`sub${path.sep}added.txt`, `sub${path.sep}original.txt`]);
+  });
+
+  test("scan: subdirectories are read when reached, not upfront", async () => {
+    // The async walker pulls matches off the thread pool in bounded chunks.
+    // Put enough root-level files in front of `sub/` that the first chunk
+    // cannot reach it.
+    const files: Record<string, string> = { "sub/original.txt": "" };
+    for (let i = 0; i < 200; i++) files[`f${i}.txt`] = "";
+    using dir = tempDir("glob-lazy-async", files);
+    const it = new Glob("**/*.txt").scan({ cwd: String(dir) })[Symbol.asyncIterator]();
+    const first = await it.next();
+    expect(first.done).toBeFalse();
+    expect(first.value).not.toStartWith("sub" + path.sep);
+    fs.writeFileSync(path.join(String(dir), "sub", "added.txt"), "");
+    const rest: string[] = [];
+    for (let r = await it.next(); !r.done; r = await it.next()) rest.push(r.value);
+    expect(rest).toContain(`sub${path.sep}added.txt`);
+    expect(rest).toContain(`sub${path.sep}original.txt`);
+    expect(rest.length + 1).toBe(202);
+  });
+
+  test("scanSync: breaking early releases the directory fd", () => {
+    using dir = tempDir("glob-lazy-fd", { "a/b.txt": "", "a/c.txt": "" });
+    const before = getFDCount();
+    for (let i = 0; i < 64; i++) {
+      for (const entry of new Glob("**/*.txt").scanSync({ cwd: String(dir) })) {
+        expect(entry).toStartWith("a" + path.sep);
+        break;
+      }
+    }
+    // If `break` leaves the walker's dirfd open, each of the 64 iterations
+    // above adds one (no GC between them). On POSIX an open dirfd doesn't
+    // block `rmSync`, so count fds instead.
+    if (isWindows) {
+      fs.rmSync(path.join(String(dir), "a"), { recursive: true });
+      expect(fs.existsSync(path.join(String(dir), "a"))).toBeFalse();
+    } else {
+      expect(getFDCount() - before).toBeLessThan(8);
+    }
+  });
+
+  test("scan: breaking early releases the directory fd", async () => {
+    // The async close() path is gated on has_pending_activity == 0, which the
+    // sync variant never touches. More than ASYNC_CHUNK files under `a/` means
+    // the first chunk returns with the walker still inside `a`, so `break`
+    // actually has a live dirfd to release.
+    const files: Record<string, string> = {};
+    for (let i = 0; i < 100; i++) files[`a/f${i}.txt`] = "";
+    using dir = tempDir("glob-lazy-fd-async", files);
+    const before = getFDCount();
+    const held: unknown[] = [];
+    for (let i = 0; i < 64; i++) {
+      const it = new Glob("**/*.txt").scan({ cwd: String(dir) });
+      held.push(it);
+      for await (const entry of it) {
+        expect(entry).toStartWith("a" + path.sep);
+        break;
+      }
+    }
+    if (isWindows) {
+      fs.rmSync(path.join(String(dir), "a"), { recursive: true });
+      expect(fs.existsSync(path.join(String(dir), "a"))).toBeFalse();
+    } else {
+      expect(getFDCount() - before).toBeLessThan(8);
+    }
+    held.length = 0;
+  });
+
+  test("scanSync: never-iterated result holds no fd", () => {
+    using dir = tempDir("glob-lazy-fd-noiter", { "a/b.txt": "" });
+    const before = getFDCount();
+    const held: unknown[] = [];
+    for (let i = 0; i < 64; i++) {
+      held.push(new Glob("**/*.txt").scanSync({ cwd: String(dir) }));
+    }
+    if (isWindows) {
+      fs.rmSync(path.join(String(dir), "a"), { recursive: true });
+      expect(fs.existsSync(path.join(String(dir), "a"))).toBeFalse();
+    } else {
+      expect(getFDCount() - before).toBeLessThan(8);
+    }
+    held.length = 0;
   });
 });
 

@@ -4,18 +4,35 @@ interface Glob {
 }
 
 export function scan(this: Glob, opts) {
-  const valuesPromise = this.$pull(opts);
+  const scanner = this.$pull(opts);
   async function* iter() {
-    const values = (await valuesPromise) || [];
-    yield* values;
+    if (!scanner) return;
+    try {
+      let chunk;
+      while ((chunk = scanner.pull()) !== null) {
+        chunk = await chunk;
+        if (chunk === null) return;
+        yield* chunk;
+      }
+    } finally {
+      scanner.close();
+    }
   }
   return iter();
 }
 
 export function scanSync(this: Glob, opts) {
-  const arr = this.$resolveSync(opts) || [];
+  const scanner = this.$resolveSync(opts);
   function* iter() {
-    yield* arr;
+    if (!scanner) return;
+    try {
+      let value;
+      while ((value = scanner.nextSync()) !== null) {
+        yield value;
+      }
+    } finally {
+      scanner.close();
+    }
   }
   return iter();
 }

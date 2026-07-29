@@ -280,7 +280,10 @@ describe.concurrent("compile --asset and /$bunfs/ directory semantics", () => {
 
   test.each([
     [["build", "./index.ts", "--asset", "./public"], "--asset requires --compile"],
-    [["build", "--compile", "--target=browser", "./index.html", "--asset", "./public"], "--target browser with --asset"],
+    [
+      ["build", "--compile", "--target=browser", "./index.html", "--asset", "./public"],
+      "--target browser with --asset",
+    ],
     [["build", "--compile", "./index.ts", "--outfile", "app", "--asset", "./does-not-exist"], "failed to read --asset"],
   ])("rejects %j", async (args, expected) => {
     const dir = tempDirWithFiles("bunfs-asset-reject", {

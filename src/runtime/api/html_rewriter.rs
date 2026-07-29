@@ -668,15 +668,21 @@ impl BufferOutputSink {
                 element_content_handlers,
                 document_content_handlers,
                 encoding: lol_html::AsciiCompatibleEncoding::utf_8(),
-                memory_settings: lol_html::MemorySettings {
-                    preallocated_parsing_buffer_size: if input_size as u64
-                        == webcore::blob::MAX_SIZE
-                    {
-                        1024
-                    } else {
-                        input_size.max(1024) as usize
-                    },
-                    max_allowed_memory_usage: u32::MAX as usize,
+                memory_settings: {
+                    let max_allowed_memory_usage = u32::MAX as usize;
+                    lol_html::MemorySettings {
+                        // lol_html debug-asserts preallocated < max_allowed, so
+                        // clamp. `MAX_SIZE` is the "unknown size" sentinel from
+                        // `Body::size()`; treat anything that large as unknown.
+                        preallocated_parsing_buffer_size: if input_size as u64
+                            >= webcore::blob::MAX_SIZE
+                        {
+                            1024
+                        } else {
+                            input_size.clamp(1024, max_allowed_memory_usage - 1)
+                        },
+                        max_allowed_memory_usage,
+                    }
                 },
                 strict: false,
                 enable_esi_tags: false,

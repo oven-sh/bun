@@ -721,7 +721,10 @@ impl Value {
 
     pub fn size(&mut self) -> blob::SizeType {
         match self {
-            Value::Blob(b) => b.get_size_for_bindings() as blob::SizeType,
+            // `get_size_for_bindings()` returns `u64::MAX` for unknown size; map
+            // that to this module's "unknown" sentinel (`MAX_SIZE`). Zig used
+            // `@truncate(u52, …)` which did this implicitly.
+            Value::Blob(b) => b.get_size_for_bindings().min(blob::MAX_SIZE),
             Value::InternalBlob(b) => b.slice_const().len() as blob::SizeType,
             Value::WTFStringImpl(s) => wtf_impl(s).utf8_byte_length() as blob::SizeType,
             Value::Locked(l) => l.size_hint(),

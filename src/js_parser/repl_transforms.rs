@@ -251,6 +251,7 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
                     //   import X from 'mod'      -> var X = (await import('mod')).default
                     //   import { a, b } from 'mod' -> var {a, b} = await import('mod')
                     //   import * as X from 'mod'   -> var X = await import('mod')
+                    //   import defer * as X from 'mod' -> var X = await import.defer('mod')
                     //   import 'mod'              -> await import('mod')
                     let path_str: &'static [u8] = self.import_records.items()
                         [import_data.import_record_index as usize]
@@ -268,6 +269,7 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
                             expr: str_expr,
                             options: Expr::EMPTY,
                             import_record_index: u32::MAX,
+                            phase_defer: import_data.phase_defer,
                         },
                         stmt.loc,
                     );

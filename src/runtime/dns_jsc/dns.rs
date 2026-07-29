@@ -819,6 +819,7 @@ impl GetHostByAddrInfoRequest {
         // SAFETY: this is the heap-allocated request c-ares calls back with
         unsafe {
             if let Some(resolver) = (*this).resolver_for_caching {
+                scopeguard::defer! { (*resolver).request_completed() };
                 if (*this).cache.pending_cache() {
                     (*resolver).drain_pending_addr_cares(
                         (*this).cache.pos_in_pending(),
@@ -1437,6 +1438,7 @@ impl GetAddrInfoRequest {
             }
 
             if let Some(resolver) = (*this).resolver_for_caching {
+                scopeguard::defer! { (*resolver).request_completed() };
                 if (*this).cache.pending_cache() {
                     (*resolver).drain_pending_host_native(
                         (*this).cache.pos_in_pending(),
@@ -1493,6 +1495,7 @@ impl GetAddrInfoRequest {
                     // at the end of whichever callee receives `any`.
                     let any = GetAddrInfoResultAny::List(result);
                     if let Some(resolver) = (*this).resolver_for_caching {
+                        scopeguard::defer! { (*resolver).request_completed() };
                         if (*this).cache.pending_cache() {
                             (*resolver).drain_pending_host_native(
                                 (*this).cache.pos_in_pending(),
@@ -1542,6 +1545,7 @@ impl GetAddrInfoRequest {
         // `resolver` (if set) is the live intrusive-RC ctx stored at init time.
         unsafe {
             if let Some(resolver) = (*this).resolver_for_caching {
+                scopeguard::defer! { (*resolver).request_completed() };
                 if (*this).cache.pending_cache() {
                     (*resolver).drain_pending_host_cares(
                         (*this).cache.pos_in_pending(),
@@ -2141,9 +2145,7 @@ impl Resolver {
             // SAFETY: `channel` is the live handle from `ares_init_options`, owned by this resolver.
             unsafe { c_ares::Channel::destroy(channel) };
         }
-        // `GetAddrInfoRequest`'s EDESTRUCTION path does not call
-        // `request_completed()`, so the c-ares timeout timer (and its +1 ref on
-        // this resolver plus the uws active-handle bump) can still be linked.
+        // Native-backend lookups aren't cancelled by `ares_destroy`; drop the timer ref explicitly.
         self.remove_timer();
     }
 }
@@ -4167,6 +4169,7 @@ impl Resolver {
         false
     }
 
+    /// Arm the retransmit timer. Call *before* c-ares dispatch: it may fire the completion callback synchronously.
     fn request_sent(&self, _vm: &VirtualMachine) {
         let _ = self.add_timer(None);
     }
@@ -5152,14 +5155,16 @@ impl Resolver {
 
         // SAFETY: `request` just heap-allocated in `init()`; `tail` points at its inline `head`.
         let promise = unsafe { (*(*request).tail).promise.value() };
+
+        // Before dispatch — see `request_sent` doc for the ordering constraint.
+        // SAFETY: `bun_vm()` returns the live VM back-ptr.
+        self.request_sent(global_this.bun_vm());
+
         // SAFETY: `request` is the heap-allocated GetHostByAddrInfoRequest; channel
         // stores it as the c-ares ctx and calls back via HostentHandler::on_hostent.
         unsafe {
             (*channel).get_host_by_addr(ip, &mut *request);
         }
-
-        // SAFETY: `bun_vm()` returns the live VM back-ptr.
-        self.request_sent(global_this.bun_vm());
         Ok(promise)
     }
 
@@ -5452,14 +5457,15 @@ impl Resolver {
         // SAFETY: `request` just heap-allocated in `init()`; `tail` points at its inline `head`.
         let promise = unsafe { (*(*request).tail).promise.value() };
 
+        // Before dispatch — see `request_sent` doc for the ordering constraint.
+        // SAFETY: bun_vm() returns a live VM pointer for the duration of the call.
+        self.request_sent(global_this.bun_vm());
+
         // SAFETY: `channel` is the live c-ares channel owned by `self`; `request`
         // is the freshly heap-allocated ResolveInfoRequest. c-ares stores the ctx
         // pointer and calls `T::RAW_CALLBACK` (→ `on_cares_complete`) which
         // consumes the request, so the `&mut` borrow is not held past this call.
         unsafe { (*channel).resolve(name, &mut *request) };
-
-        // SAFETY: bun_vm() returns a live VM pointer for the duration of the call.
-        self.request_sent(global_this.bun_vm());
         Ok(promise)
     }
 
@@ -5507,15 +5513,16 @@ impl Resolver {
         // SAFETY: `request` just heap-allocated in `init()`; `tail` points at its inline `head`.
         let promise = unsafe { (*(*request).tail).promise.value() };
 
+        // Before dispatch — see `request_sent` doc for the ordering constraint.
+        // SAFETY: bun_vm() returns a live VM pointer for the duration of the call.
+        self.request_sent(global_this.bun_vm());
+
         // SAFETY: `channel` is the live c-ares channel owned by `self`; `request`
         // is the freshly heap-allocated GetAddrInfoRequest. c-ares stores the ctx
         // pointer and calls `AddrInfo::callback_wrapper::<GetAddrInfoRequest>`
         // (→ `on_cares_complete`) which consumes the request, so the `&mut`
         // borrow is not held past this call.
         unsafe { (*channel).get_addr_info(&query.name, query.port, &hints_buf, &mut *request) };
-
-        // SAFETY: bun_vm() returns a live VM pointer for the duration of the call.
-        self.request_sent(global_this.bun_vm());
         Ok(promise)
     }
 
@@ -6029,6 +6036,11 @@ impl Resolver {
 
         // SAFETY: `request` just heap-allocated in `init()`; `tail` points at its inline `head`.
         let promise = unsafe { (*(*request).tail).promise.value() };
+
+        // Before dispatch — see `request_sent` doc for the ordering constraint.
+        // SAFETY: bun_vm() returns a live VM pointer for the duration of the call.
+        resolver.request_sent(global_this.bun_vm());
+
         // SAFETY: `channel` is the live c-ares channel; `sa` is a valid
         // sockaddr_storage reborrowed as sockaddr; `request` was just
         // `heap::alloc`'d and is owned by c-ares until the callback fires.
@@ -6040,9 +6052,6 @@ impl Resolver {
                 &mut *request,
             );
         }
-
-        // SAFETY: bun_vm() returns a live VM pointer for the duration of the call.
-        resolver.request_sent(global_this.bun_vm());
         Ok(promise)
     }
 

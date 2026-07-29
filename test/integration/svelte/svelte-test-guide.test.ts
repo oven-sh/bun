@@ -56,9 +56,10 @@ test("docs/guides/test/svelte-test.mdx: loader + happy-dom preload compiles the 
     stderr: "pipe",
   });
 
-  const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const output = `${stdout}\n${stderr}`;
 
-  expect(stderr).toContain("1 pass");
-  expect(stderr).not.toContain("fail)");
+  expect(output).toContain("1 pass");
+  expect(output).not.toContain("fail)");
   expect(exitCode).toBe(0);
 }, 60_000);

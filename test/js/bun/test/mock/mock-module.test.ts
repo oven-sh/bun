@@ -175,27 +175,36 @@ test("a factory that throws re-throws on every require()", () => {
   });
 
   expect(() => require("throwing-mock-factory-require")).toThrow("factory-boom");
-  // Previously the second require() returned an empty Module {} instead of throwing.
   expect(() => require("throwing-mock-factory-require")).toThrow("factory-boom");
   expect(() => require("throwing-mock-factory-require")).toThrow("factory-boom");
   expect(calls).toBe(3);
 });
 
 test("a factory that throws re-throws on every import()", async () => {
+  let calls = 0;
   mock.module("throwing-mock-factory-import", () => {
+    calls++;
     throw new Error("factory-boom");
   });
 
   await expect(import("throwing-mock-factory-import")).rejects.toThrow("factory-boom");
   await expect(import("throwing-mock-factory-import")).rejects.toThrow("factory-boom");
   expect(() => require("throwing-mock-factory-import")).toThrow("factory-boom");
+  expect(calls).toBe(3);
 });
 
-test("a factory returning a non-object re-throws on every load", () => {
-  mock.module("non-object-mock-factory", () => null as any);
+test("a factory returning a non-object re-throws on every load", async () => {
+  let calls = 0;
+  mock.module("non-object-mock-factory", () => {
+    calls++;
+    return null as any;
+  });
 
   expect(() => require("non-object-mock-factory")).toThrow("requires a function that returns an object");
   expect(() => require("non-object-mock-factory")).toThrow("requires a function that returns an object");
+  await expect(import("non-object-mock-factory")).rejects.toThrow("requires a function that returns an object");
+  await expect(import("non-object-mock-factory")).rejects.toThrow("requires a function that returns an object");
+  expect(calls).toBe(4);
 });
 
 test("a factory that throws once then succeeds is re-invoked", () => {

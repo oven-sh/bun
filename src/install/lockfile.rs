@@ -855,8 +855,6 @@ impl Lockfile {
         Ok(())
     }
 
-    /// Rewrite `old.catalogs` with the resolved literal for each catalog entry
-    /// `bun update` touched, so the saved lockfile matches package.json.
     fn preprocess_updating_catalogs(
         old: &mut Lockfile,
         manager: &mut PackageManager,
@@ -1367,8 +1365,6 @@ fn clean_preprocess_updating_catalogs_cold(
     Lockfile::preprocess_updating_catalogs(old, manager, exact_versions)
 }
 
-/// Resolved npm version with the entry's original `^`/`~`/exact pin and
-/// `npm:<name>@` alias prefix preserved (exact under `--save-exact`).
 pub fn format_catalog_update_literal(
     resolution: &Resolution,
     string_buf: &[u8],

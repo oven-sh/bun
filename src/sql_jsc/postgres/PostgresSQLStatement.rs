@@ -29,6 +29,10 @@ pub struct PostgresSQLStatement {
     pub error_response: Option<Error>,
     pub needs_duplicate_check: bool,
     pub fields_flags: DataCellFlags,
+    /// LRU stamp from the owning connection's statement clock, bumped each
+    /// time a later query reuses this cached statement; never-reused
+    /// statements keep 0 and are evicted first.
+    pub last_used: Cell<u64>,
 }
 
 impl Default for PostgresSQLStatement {
@@ -45,6 +49,7 @@ impl Default for PostgresSQLStatement {
             error_response: None,
             needs_duplicate_check: true,
             fields_flags: DataCellFlags::default(),
+            last_used: Cell::new(0),
         }
     }
 }
@@ -81,6 +86,14 @@ impl PostgresSQLStatement {
     pub fn init_exact_refs(&mut self, n: u32) {
         debug_assert!(n > 0);
         self.ref_count.set(n);
+    }
+
+    /// Whether the caller holds the only outstanding ref. The statement cache
+    /// only evicts statements it is the sole owner of (no `PostgresSQLQuery`
+    /// left that could still bind to the server-side statement name).
+    #[inline]
+    pub(crate) fn has_one_ref(&self) -> bool {
+        bun_ptr::CellRefCounted::ref_count(self).get() == 1
     }
 
     pub fn check_for_duplicate_fields(&mut self) {

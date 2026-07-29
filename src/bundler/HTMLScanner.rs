@@ -31,7 +31,12 @@ impl<'a> HTMLScanner<'a> {
 }
 
 impl<'a> HTMLScanner<'a> {
-    fn create_import_record(&mut self, input_path: &[u8], kind: ImportKind) -> Result<(), Error> {
+    fn create_import_record(
+        &mut self,
+        input_path: &[u8],
+        kind: ImportKind,
+        is_resource_hint: bool,
+    ) -> Result<(), Error> {
         // In HTML, sometimes people do /src/index.js
         // In that case, we don't want to use the absolute filesystem path, we want to use the path relative to the project root
         let path_to_use: &[u8] = if input_path.len() > 1 && input_path[0] == b'/' {
@@ -69,6 +74,11 @@ impl<'a> HTMLScanner<'a> {
 
         let owned: &'static [u8] =
             Box::leak(AstAlloc::vec_from_slice(path_to_use).into_boxed_slice());
+        let mut flags = ImportRecordFlags::default();
+        if is_resource_hint {
+            flags.insert(ImportRecordFlags::WAS_HTML_RESOURCE_HINT);
+            flags.insert(ImportRecordFlags::HANDLES_IMPORT_ERRORS);
+        }
         let record = ImportRecord {
             path: FsPath::init(owned),
             kind,
@@ -77,7 +87,7 @@ impl<'a> HTMLScanner<'a> {
             loader: None,
             source_index: AstIndex::default(),
             original_path: b"",
-            flags: ImportRecordFlags::default(),
+            flags,
         };
 
         self.import_records.push(record);
@@ -96,15 +106,8 @@ impl<'a> HTMLScanner<'a> {
             .add_error(Some(self.source), Loc::EMPTY, message.to_vec());
     }
 
-    pub(crate) fn on_tag(
-        &mut self,
-        _element: &mut Element<'_, '_>,
-        path: &[u8],
-        url_attribute: &[u8],
-        kind: ImportKind,
-    ) {
-        let _ = url_attribute;
-        let _ = self.create_import_record(path, kind);
+    pub(crate) fn on_tag(&mut self, _element: &mut Element<'_, '_>, path: &[u8], tag: TagHandler) {
+        let _ = self.create_import_record(path, tag.kind, tag.is_resource_hint);
     }
 
     pub(crate) fn scan(&mut self, input: &[u8]) -> Result<(), Error> {
@@ -120,13 +123,7 @@ type Processor<'a> = HTMLProcessor<HTMLScanner<'a>, false>;
 
 /// Trait capturing the methods `HTMLProcessor` calls on `T`.
 pub(crate) trait HTMLProcessorHandler {
-    fn on_tag(
-        &mut self,
-        element: &mut Element<'_, '_>,
-        path: &[u8],
-        url_attribute: &[u8],
-        kind: ImportKind,
-    );
+    fn on_tag(&mut self, element: &mut Element<'_, '_>, path: &[u8], tag: TagHandler);
     fn on_write_html(&mut self, bytes: &[u8]);
     fn on_html_parse_error(&mut self, message: &[u8]);
 
@@ -145,14 +142,8 @@ pub(crate) trait HTMLProcessorHandler {
 }
 
 impl<'a> HTMLProcessorHandler for HTMLScanner<'a> {
-    fn on_tag(
-        &mut self,
-        element: &mut Element<'_, '_>,
-        path: &[u8],
-        url_attribute: &[u8],
-        kind: ImportKind,
-    ) {
-        HTMLScanner::on_tag(self, element, path, url_attribute, kind)
+    fn on_tag(&mut self, element: &mut Element<'_, '_>, path: &[u8], tag: TagHandler) {
+        HTMLScanner::on_tag(self, element, path, tag)
     }
     fn on_write_html(&mut self, bytes: &[u8]) {
         HTMLScanner::on_write_html(self, bytes)
@@ -172,6 +163,8 @@ pub struct TagHandler {
     pub url_attribute: &'static str,
     /// The kind of import to create
     pub kind: ImportKind,
+    /// Sets `ImportRecordFlags::WAS_HTML_RESOURCE_HINT` on the record.
+    pub is_resource_hint: bool,
 }
 
 impl TagHandler {
@@ -180,11 +173,21 @@ impl TagHandler {
             selector,
             url_attribute,
             kind,
+            is_resource_hint: false,
+        }
+    }
+
+    const fn hint(selector: &'static str, url_attribute: &'static str, kind: ImportKind) -> Self {
+        Self {
+            selector,
+            url_attribute,
+            kind,
+            is_resource_hint: true,
         }
     }
 }
 
-pub(crate) const TAG_HANDLERS: [TagHandler; 16] = [
+pub(crate) const TAG_HANDLERS: [TagHandler; 20] = [
     // Module scripts with src
     TagHandler::new("script[src]", "src", ImportKind::Stmt),
     // CSS Stylesheets
@@ -215,6 +218,18 @@ pub(crate) const TAG_HANDLERS: [TagHandler; 16] = [
         "href",
         ImportKind::Url,
     ),
+    // Generic preload targets (fetch/track/document/embed/object)
+    TagHandler::hint(
+        "link[as='fetch'][href], link[as='track'][href], link[as='document'][href], link[as='embed'][href], link[as='object'][href]",
+        "href",
+        ImportKind::Url,
+    ),
+    // Preloaded scripts (<link rel="preload" as="script">)
+    TagHandler::hint("link[as='script'][href]", "href", ImportKind::Url),
+    // Module preloads (<link rel="modulepreload">)
+    TagHandler::hint("link[rel='modulepreload'][href]", "href", ImportKind::Url),
+    // Prefetch hints (<link rel="prefetch">)
+    TagHandler::hint("link[rel='prefetch'][href]", "href", ImportKind::Url),
     // Images with src
     TagHandler::new("img[src]", "src", ImportKind::Url),
     // Images with srcset
@@ -289,12 +304,7 @@ impl<T: HTMLProcessorHandler, const VISIT_DOCUMENT_TAGS: bool>
                             // which is not reborrowed while the rewriter — the only
                             // holder of these closures — is alive.
                             unsafe {
-                                (*this_ptr).on_tag(
-                                    element,
-                                    value.as_bytes(),
-                                    tag_info.url_attribute.as_bytes(),
-                                    tag_info.kind,
-                                );
+                                (*this_ptr).on_tag(element, value.as_bytes(), tag_info);
                             }
                         }
                     }

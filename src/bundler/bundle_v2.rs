@@ -6273,6 +6273,15 @@ pub mod bv2_impl {
                             && (import_record.loader.is_none()
                                 || import_record.loader.unwrap() == Loader::Html)
                         {
+                            if import_record
+                                .flags
+                                .contains(bun_ast::ImportRecordFlags::WAS_HTML_RESOURCE_HINT)
+                            {
+                                // <link rel="prefetch" href="./page2.html"> and similar
+                                // hints are fetch-only; leave the href untouched.
+                                import_record.path.is_disabled = true;
+                                continue 'outer;
+                            }
                             // This use case is currently not supported. This error
                             // blocks an assertion failure because the DevServer
                             // reserves the HTML file's spot in IncrementalGraph for the
@@ -6359,7 +6368,10 @@ pub mod bv2_impl {
                         && !resolved_loader.should_copy_for_bundling()
                         && !resolved_loader.is_javascript_like()
                         && !resolved_loader.is_css()
-                        && resolved_loader != Loader::Html
+                        && (resolved_loader != Loader::Html
+                            || import_record
+                                .flags
+                                .contains(bun_ast::ImportRecordFlags::WAS_HTML_RESOURCE_HINT))
                     {
                         break 'brk Loader::File;
                     }
@@ -6372,7 +6384,15 @@ pub mod bv2_impl {
                     && self.dev_server.is_none();
 
                 if let Some(id) = self.path_to_source_index_map(target).get(path.text) {
-                    if self.dev_server.is_some() && loader != Loader::Html {
+                    if import_record
+                        .flags
+                        .contains(bun_ast::ImportRecordFlags::WAS_HTML_RESOURCE_HINT)
+                        && self.graph.input_files.items_loader()[id as usize] == Loader::Html
+                    {
+                        // A hint pointing at another HTML entry point must not
+                        // add a reachability edge: leave the href untouched.
+                        import_record.path.is_disabled = true;
+                    } else if self.dev_server.is_some() && loader != Loader::Html {
                         import_record.path =
                             self.graph.input_files.items_source()[id as usize].path;
                     } else {
@@ -6645,6 +6665,9 @@ pub mod bv2_impl {
             // so borrowck sees it as disjoint from `self.graph.input_files` above.
             let path_to_source_index_map = &mut self.graph.build_graphs[ctx.target];
             for (i, record) in import_records.as_mut_slice().iter_mut().enumerate() {
+                if record.path.is_disabled {
+                    continue;
+                }
                 if let Some(source_index) = path_to_source_index_map.get_path(&record.path) {
                     if save_import_record_source_index
                         || input_file_loaders[source_index as usize].is_css()

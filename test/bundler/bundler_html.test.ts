@@ -1011,4 +1011,178 @@ body {
       expect(htmlContent).toMatch(/href=".*\.webmanifest"/);
     },
   });
+
+  // <link rel="prefetch">, <link rel="modulepreload"> and <link rel="preload"> with
+  // as={script,fetch,track,document,embed,object} must not ship dangling source-path
+  // hrefs. Non-code targets are emitted + hashed; JS/CSS targets are bundled and
+  // the hint tag is dropped (nothing separate to preload once bundled).
+  itBundled("html/link-preload-prefetch", {
+    outdir: "out/",
+    files: {
+      "/index.html": `
+<!DOCTYPE html>
+<html>
+  <head>
+    <link rel="prefetch" href="./hero.png">
+    <link rel="modulepreload" href="./dep.js">
+    <link rel="preload" as="script" href="./preloaded.js">
+    <link rel="preload" as="fetch" href="./data.json" crossorigin>
+    <link rel="preload" as="track" href="./captions.vtt">
+  </head>
+  <body>
+    <img src="./hero.png">
+    <script type="module" src="./main.js"></script>
+  </body>
+</html>`,
+      "/main.js": `import { x } from "./dep.js"; console.log("main", x);`,
+      "/dep.js": `export const x = 42; console.log("dep");`,
+      "/preloaded.js": `console.log("preloaded");`,
+      "/hero.png": "PNG",
+      "/data.json": `{"k":1}`,
+      "/captions.vtt": "WEBVTT",
+    },
+    entryPoints: ["/index.html"],
+    onAfterBundle(api) {
+      const html = api.readFile("out/index.html");
+
+      // No raw source paths should survive in the output; every one of these
+      // would have been a guaranteed 404 before.
+      expect(html).not.toContain('href="./hero.png"');
+      expect(html).not.toContain('href="./dep.js"');
+      expect(html).not.toContain('href="./preloaded.js"');
+      expect(html).not.toContain('href="./data.json"');
+      expect(html).not.toContain('href="./captions.vtt"');
+
+      // prefetch / preload of non-code assets: copied + hashed and href rewritten.
+      expect(html).toMatch(/<link rel="prefetch" href="[^"]*hero-[a-z0-9]+\.png">/);
+      expect(html).toMatch(/<link rel="preload" as="fetch" href="[^"]*data-[a-z0-9]+\.json" crossorigin>/);
+      expect(html).toMatch(/<link rel="preload" as="track" href="[^"]*captions-[a-z0-9]+\.vtt">/);
+
+      // JS hints are bundled and the hint tag is dropped.
+      expect(html).not.toMatch(/rel="modulepreload"/);
+      expect(html).not.toMatch(/as="script"/);
+
+      const hero = html.match(/href="(?:\.\/|\/)?(hero-[a-z0-9]+\.png)"/);
+      const data = html.match(/href="(?:\.\/|\/)?(data-[a-z0-9]+\.json)"/);
+      const vtt = html.match(/href="(?:\.\/|\/)?(captions-[a-z0-9]+\.vtt)"/);
+      expect(hero).not.toBeNull();
+      expect(data).not.toBeNull();
+      expect(vtt).not.toBeNull();
+      api.expectFile("out/" + hero![1]).toBe("PNG");
+      api.expectFile("out/" + data![1]).toBe(`{"k":1}`);
+      api.expectFile("out/" + vtt![1]).toBe("WEBVTT");
+
+      // modulepreload of a transitive dep: dep.js is reached via both the hint
+      // and main.js's import. It must be bundled as JS (not pinned to a file
+      // loader), so `import { x } from "./dep.js"` resolves.
+      const js = html.match(/src="(?:\.\/|\/)?(index-[a-z0-9]+\.js)"/);
+      expect(js).not.toBeNull();
+      const jsContent = api.readFile("out/" + js![1]);
+      expect(jsContent).toContain('"main"');
+      expect(jsContent).toContain('"dep"');
+      expect(jsContent).toContain('"preloaded"');
+    },
+  });
+
+  // A resource hint targeting a local .html file must be emitted as a raw asset,
+  // not parsed as a nested HTML entry (which would pull its scripts into the
+  // entry chunk).
+  itBundled("html/link-hint-local-html", {
+    outdir: "out/",
+    files: {
+      "/index.html": `
+<!DOCTYPE html>
+<html>
+  <head>
+    <link rel="prefetch" href="./page2.html">
+    <link rel="preload" as="document" href="./frame.html">
+  </head>
+  <body><h1>Index</h1></body>
+</html>`,
+      "/page2.html": `<!doctype html><script src="./page2-script.js"></script><h1>Page 2</h1>`,
+      "/frame.html": `<!doctype html><h1>Frame</h1>`,
+      "/page2-script.js": `console.log("PAGE2_SCRIPT");`,
+    },
+    entryPoints: ["/index.html"],
+    onAfterBundle(api) {
+      const html = api.readFile("out/index.html");
+      expect(html).not.toContain('href="./page2.html"');
+      expect(html).not.toContain('href="./frame.html"');
+      expect(html).toMatch(/<link rel="prefetch" href="[^"]*page2-[a-z0-9]+\.html">/);
+      expect(html).toMatch(/<link rel="preload" as="document" href="[^"]*frame-[a-z0-9]+\.html">/);
+
+      // page2.html's <script> must not leak into index.html's entry chunk.
+      const js = html.match(/src="(?:\.\/|\/)?(index-[a-z0-9]+\.js)"/);
+      expect(js).not.toBeNull();
+      expect(api.readFile("out/" + js![1])).not.toContain("PAGE2_SCRIPT");
+
+      const page2 = html.match(/href="(?:\.\/|\/)?(page2-[a-z0-9]+\.html)"/);
+      expect(page2).not.toBeNull();
+      api.expectFile("out/" + page2![1]).toContain("<h1>Page 2</h1>");
+    },
+  });
+
+  // A resource hint targeting a sibling HTML entry point must not add a
+  // reachability edge that pulls the sibling's scripts into this entry's chunk.
+  itBundled("html/link-hint-sibling-entry", {
+    outdir: "out/",
+    files: {
+      "/index.html": `
+<!DOCTYPE html>
+<html>
+  <head>
+    <link rel="prefetch" href="./page2.html">
+    <link rel="prefetch" href="/page3.html">
+  </head>
+  <body><script src="./index-script.js"></script></body>
+</html>`,
+      "/page2.html": `<!doctype html><script src="./page2-script.js"></script><h1>Page 2</h1>`,
+      "/page3.html": `<!doctype html><script src="./page3-script.js"></script><h1>Page 3</h1>`,
+      "/index-script.js": `console.log("INDEX_SCRIPT");`,
+      "/page2-script.js": `console.log("PAGE2_SCRIPT");`,
+      "/page3-script.js": `console.log("PAGE3_SCRIPT");`,
+    },
+    entryPoints: ["/index.html", "/page2.html", "/page3.html"],
+    onAfterBundle(api) {
+      const html = api.readFile("out/index.html");
+      const js = html.match(/src="(?:\.\/|\/)?(index-[a-z0-9]+\.js)"/);
+      expect(js).not.toBeNull();
+      const jsContent = api.readFile("out/" + js![1]);
+      expect(jsContent).toContain("INDEX_SCRIPT");
+      expect(jsContent).not.toContain("PAGE2_SCRIPT");
+      expect(jsContent).not.toContain("PAGE3_SCRIPT");
+      // page2.html/page3.html are emitted under their own entry-point names,
+      // so the original hrefs are already valid output paths.
+      expect(html).toContain('<link rel="prefetch" href="./page2.html">');
+      expect(html).toContain('<link rel="prefetch" href="/page3.html">');
+    },
+  });
+
+  // Resource-hint hrefs that do not resolve to a local file (navigation routes,
+  // API endpoints, external URLs) pass through untouched instead of failing the
+  // build.
+  itBundled("html/link-hint-unresolved", {
+    outdir: "out/",
+    files: {
+      "/index.html": `
+<!DOCTYPE html>
+<html>
+  <head>
+    <link rel="prefetch" href="/dashboard">
+    <link rel="preload" as="fetch" href="/api/user" crossorigin>
+    <link rel="preload" as="document" href="/settings">
+    <link rel="modulepreload" href="https://cdn.example.com/lib.js">
+  </head>
+  <body></body>
+</html>`,
+    },
+    entryPoints: ["/index.html"],
+    onAfterBundle(api) {
+      const html = api.readFile("out/index.html");
+      expect(html).toContain('<link rel="prefetch" href="/dashboard">');
+      expect(html).toContain('<link rel="preload" as="fetch" href="/api/user" crossorigin>');
+      expect(html).toContain('<link rel="preload" as="document" href="/settings">');
+      expect(html).toContain('<link rel="modulepreload" href="https://cdn.example.com/lib.js">');
+    },
+  });
 });

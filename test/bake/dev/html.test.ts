@@ -370,3 +370,29 @@ devTest("error report endpoint blanks stray non-text bytes in reported frames", 
     await dev.fetch("/").expect.toInclude("<h1>Frame Bytes</h1>");
   },
 });
+
+devTest("resource-hint links pass through in dev server", {
+  htmlFiles: ["index.html"],
+  files: {
+    "index.html": `
+      <!DOCTYPE html><html><head>
+      <link rel="prefetch" href="./page2.html">
+      <link rel="prefetch" href="/some-route">
+      <link rel="modulepreload" href="/cdn/lib.js">
+      </head><body><h1>Hints</h1></body></html>
+    `,
+    "page2.html": "<!doctype html><h1>Page 2</h1>",
+  },
+  async test(dev) {
+    // Before the WAS_HTML_RESOURCE_HINT carve-out in bundle_v2.rs, the local
+    // ./page2.html hint hit the "Browser builds cannot import HTML files"
+    // dev-server guard and failed the build.
+    const html = await (await dev.fetch("/")).text();
+    expect(html).toInclude("<h1>Hints</h1>");
+    expect(html).toInclude('<link rel="prefetch" href="./page2.html">');
+    // Unresolved hint hrefs pass through untouched rather than being dropped.
+    expect(html).toInclude('<link rel="prefetch" href="/some-route">');
+    expect(html).toInclude('<link rel="modulepreload" href="/cdn/lib.js">');
+    expect(html).not.toInclude("Browser builds cannot import HTML files");
+  },
+});

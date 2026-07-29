@@ -538,8 +538,14 @@ impl FsIoRing {
             this.inflight = this.inflight.saturating_sub(1);
             let req = cqe.UserData as *mut uv::fs_t;
             debug_assert!(!req.is_null());
+            // `ERROR_HANDLE_EOF`: ioring reports a positional read at/past EOF
+            // as a Win32 error, unlike `ReadFile` which succeeds with 0 bytes.
+            // libuv's `fs__read` applies the same normalisation.
+            const HRESULT_HANDLE_EOF: HRESULT = 0x8007_0026u32 as HRESULT;
             let rc: i64 = if cqe.ResultCode == S_OK {
                 cqe.Information as i64
+            } else if cqe.ResultCode == HRESULT_HANDLE_EOF {
+                0
             } else {
                 hresult_to_uv_err(cqe.ResultCode) as i64
             };

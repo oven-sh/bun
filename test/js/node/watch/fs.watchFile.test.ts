@@ -51,6 +51,62 @@ describe("fs.watchFile", () => {
     expect(entries[0][1].size).toBe(0);
     expect(entries[0][1].mtimeMs).toBe(0);
   });
+
+  // https://nodejs.org/api/fs.html#fswatchfilefilename-options-listener
+  // "When a file being watched by fs.watchFile() disappears and reappears, the
+  // contents of previous in the second callback event (the file's reappearance)
+  // will be the same as the contents of previous in the first callback event
+  // (its disappearance)."
+  test("previous keeps the last real stat when the file disappears and reappears", async () => {
+    const file = path.join(testDir, "reappear.txt");
+    const calls: { curr: fs.Stats; prev: fs.Stats }[] = [];
+    let notify = () => {};
+    // Resolves the next time `predicate` holds, so each step waits on the
+    // watcher instead of on a timer.
+    const until = (predicate: () => boolean) => {
+      const { promise, resolve } = Promise.withResolvers<void>();
+      notify = () => {
+        if (predicate()) resolve();
+      };
+      notify();
+      return promise;
+    };
+    const isZeroed = (stats: fs.Stats) => stats.size === 0 && stats.mtimeMs === 0;
+
+    fs.watchFile(file, { interval: 20 }, (curr, prev) => {
+      calls.push({ curr, prev });
+      notify();
+    });
+
+    try {
+      // The file does not exist yet, so the first callback is the zeroed one.
+      await until(() => calls.length > 0);
+      // Create, delete, then recreate it, waiting for each event in turn.
+      updateFile(file, "aaa");
+      await until(() => calls.at(-1)!.curr.size === 3);
+      fs.unlinkSync(file);
+      await until(() => isZeroed(calls.at(-1)!.curr));
+      updateFile(file, "bb");
+      await until(() => calls.at(-1)!.curr.size === 2);
+    } finally {
+      fs.unwatchFile(file);
+    }
+
+    const goneIndex = calls.findIndex((call, i) => i > 0 && isZeroed(call.curr));
+    const gone = calls[goneIndex];
+    const back = calls[goneIndex + 1];
+
+    // Only `current` is zeroed while the file is gone.
+    expect({ size: gone.curr.size, mtimeMs: gone.curr.mtimeMs }).toEqual({ size: 0, mtimeMs: 0 });
+    expect(gone.prev.size).toBe(3);
+    expect(back.curr.size).toBe(2);
+    expect({ ino: back.prev.ino, size: back.prev.size, mtimeMs: back.prev.mtimeMs }).toEqual({
+      ino: gone.prev.ino,
+      size: gone.prev.size,
+      mtimeMs: gone.prev.mtimeMs,
+    });
+  });
+
   test("it watches a file", async () => {
     let { promise, resolve } = Promise.withResolvers<void>();
     let entries: any = [];

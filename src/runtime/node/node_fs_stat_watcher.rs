@@ -564,7 +564,9 @@ pub struct StatWatcher {
 
     poll_ref: JsCell<KeepAlive>,
 
-    last_stat: Guarded<PosixStat>,
+    /// The most recent `stat()` result, or `None` when it failed (the file
+    /// does not exist). JS sees a zeroed stat object as `current` for `None`.
+    last_stat: Guarded<Option<PosixStat>>,
 
     scheduler: RefPtr<StatWatcherScheduler>,
 }
@@ -708,18 +710,18 @@ impl StatWatcher {
         self.ctx.event_loop_shared().enqueue_task_concurrent(task);
     }
 
-    /// Copy the last stat by value.
+    /// Copy the last stat by value. `None` when the last `stat()` failed.
     ///
     /// This field is sometimes set from aonther thread, so we should copy by
     /// value instead of referencing by pointer.
-    pub(crate) fn get_last_stat(&self) -> PosixStat {
+    pub(crate) fn get_last_stat(&self) -> Option<PosixStat> {
         let value = self.last_stat.lock();
         *value
         // unlock on Drop of guard
     }
 
-    /// Set the last stat.
-    pub(crate) fn set_last_stat(&self, stat: &PosixStat) {
+    /// Set the last stat. `None` when the `stat()` failed.
+    pub(crate) fn set_last_stat(&self, stat: &Option<PosixStat>) {
         let mut value = self.last_stat.lock();
         *value = *stat;
         // unlock on Drop of guard
@@ -870,8 +872,12 @@ impl StatWatcher {
         // so swallowing it here leaves the VM with an exception pending and
         // the next queued task re-enters JS under a
         // `scope.assertNoException()` RELEASE_ASSERT.
-        let jsvalue = stat_to_js_stats(global_this, &this_ref.get_last_stat(), this_ref.bigint)
-            .map_err(Into::<bun_event_loop::ErasedJsError>::into)?;
+        let jsvalue = stat_to_js_stats(
+            global_this,
+            &stat_for_js(&this_ref.get_last_stat()),
+            this_ref.bigint,
+        )
+        .map_err(Into::<bun_event_loop::ErasedJsError>::into)?;
         js::gc::prev_stat::set(js_this, global_this, jsvalue);
 
         // SAFETY: scheduler is live (`RefPtr`); `this` is live (ref'd, guard above).
@@ -896,8 +902,12 @@ impl StatWatcher {
             return Ok(());
         };
         let global_this = this_ref.global_this();
-        let jsvalue = stat_to_js_stats(global_this, &this_ref.get_last_stat(), this_ref.bigint)
-            .map_err(Into::<bun_event_loop::ErasedJsError>::into)?;
+        let jsvalue = stat_to_js_stats(
+            global_this,
+            &stat_for_js(&this_ref.get_last_stat()),
+            this_ref.bigint,
+        )
+        .map_err(Into::<bun_event_loop::ErasedJsError>::into)?;
         js::gc::prev_stat::set(js_this, global_this, jsvalue);
 
         let result = js::listener_get_cached(js_this).unwrap().call(
@@ -925,34 +935,15 @@ impl StatWatcher {
     /// Called from any thread
     pub(crate) fn restat(&self) {
         log!("recalling stat");
-        let stat = restat_impl(&self.path);
-        let res = match stat {
-            Ok(res) => res,
-            // SAFETY: all-zero is a valid PosixStat (POD #[repr(C)])
-            Err(_) => bun_core::ffi::zeroed::<PosixStat>(),
-        };
-
+        let res = restat_impl(&self.path).ok();
         let last_stat = self.get_last_stat();
 
-        // Ignore atime changes when comparing stats
-        // Compare field-by-field to avoid false positives from padding bytes
-        if res.dev == last_stat.dev
-            && res.ino == last_stat.ino
-            && res.mode == last_stat.mode
-            && res.nlink == last_stat.nlink
-            && res.uid == last_stat.uid
-            && res.gid == last_stat.gid
-            && res.rdev == last_stat.rdev
-            && res.size == last_stat.size
-            && res.blksize == last_stat.blksize
-            && res.blocks == last_stat.blocks
-            && res.mtim.sec == last_stat.mtim.sec
-            && res.mtim.nsec == last_stat.mtim.nsec
-            && res.ctim.sec == last_stat.ctim.sec
-            && res.ctim.nsec == last_stat.ctim.nsec
-            && res.birthtim.sec == last_stat.birthtim.sec
-            && res.birthtim.nsec == last_stat.birthtim.nsec
-        {
+        let unchanged = match (&res, &last_stat) {
+            (None, None) => true,
+            (Some(res), Some(last_stat)) => stats_eq(res, last_stat),
+            _ => false,
+        };
+        if unchanged {
             return;
         }
 
@@ -984,10 +975,16 @@ impl StatWatcher {
         };
         let global_this = this_ref.global_this();
         let prev_jsvalue = js::gc::prev_stat::get(js_this).unwrap_or(JSValue::UNDEFINED);
+        let last_stat = this_ref.get_last_stat();
         let current_jsvalue =
-            stat_to_js_stats(global_this, &this_ref.get_last_stat(), this_ref.bigint)
+            stat_to_js_stats(global_this, &stat_for_js(&last_stat), this_ref.bigint)
                 .map_err(Into::<bun_event_loop::ErasedJsError>::into)?;
-        js::gc::prev_stat::set(js_this, global_this, current_jsvalue);
+        // Only a successful stat advances `previous`: a file that disappears
+        // and reappears reports the stat from before it vanished, like libuv
+        // leaving `poll_ctx.statbuf` untouched on a failed stat.
+        if last_stat.is_some() {
+            js::gc::prev_stat::set(js_this, global_this, current_jsvalue);
+        }
 
         // Propagate to the dispatcher: `report_error_or_terminate` reports a
         // regular throw as uncaught and stops the tick loop on termination.
@@ -1045,8 +1042,7 @@ impl StatWatcher {
             this_value: JsCell::new(JsRef::empty()),
             poll_ref: JsCell::new(KeepAlive::default()),
             // InitStatTask is responsible for setting this
-            // SAFETY: all-zero is a valid PosixStat (POD #[repr(C)])
-            last_stat: Guarded::init(bun_core::ffi::zeroed::<PosixStat>()),
+            last_stat: Guarded::init(None),
             scheduler: Self::lazy_scheduler(vm),
         });
         let this_ptr = bun_core::heap::into_raw(this);
@@ -1089,6 +1085,33 @@ impl StatWatcher {
 
         Ok(scopeguard::ScopeGuard::into_inner(guard))
     }
+}
+
+/// The stat JS sees: a zeroed stat while the file cannot be stat'd, which is
+/// what node reports as `current` for a missing file.
+fn stat_for_js(last_stat: &Option<PosixStat>) -> PosixStat {
+    last_stat.unwrap_or_else(bun_core::ffi::zeroed)
+}
+
+/// Ignores atime changes, like libuv's `statbuf_eq`.
+/// Compares field-by-field to avoid false positives from padding bytes.
+fn stats_eq(a: &PosixStat, b: &PosixStat) -> bool {
+    a.dev == b.dev
+        && a.ino == b.ino
+        && a.mode == b.mode
+        && a.nlink == b.nlink
+        && a.uid == b.uid
+        && a.gid == b.gid
+        && a.rdev == b.rdev
+        && a.size == b.size
+        && a.blksize == b.blksize
+        && a.blocks == b.blocks
+        && a.mtim.sec == b.mtim.sec
+        && a.mtim.nsec == b.mtim.nsec
+        && a.ctim.sec == b.ctim.sec
+        && a.ctim.nsec == b.ctim.nsec
+        && a.birthtim.sec == b.birthtim.sec
+        && a.birthtim.nsec == b.birthtim.nsec
 }
 
 // Shared by InitialStatTask::work_pool_callback and StatWatcher::restat — identical logic.
@@ -1232,9 +1255,9 @@ impl InitialStatTask {
 
         let stat = restat_impl(&this_ref.path);
         match stat {
-            Ok(ref res) => {
+            Ok(res) => {
                 // we store the stat, but do not call the callback
-                this_ref.set_last_stat(res);
+                this_ref.set_last_stat(&Some(res));
                 this_ref.enqueue_task_concurrent(ConcurrentTask::from_callback(
                     this,
                     StatWatcher::initial_stat_success_on_main_thread,
@@ -1243,8 +1266,7 @@ impl InitialStatTask {
             Err(_) => {
                 // on enoent, eperm, we call cb with two zeroed stat objects
                 // and store previous stat as a zeroed stat object, and then call the callback.
-                // SAFETY: all-zero is a valid PosixStat (POD #[repr(C)])
-                this_ref.set_last_stat(&bun_core::ffi::zeroed::<PosixStat>());
+                this_ref.set_last_stat(&None);
                 this_ref.enqueue_task_concurrent(ConcurrentTask::from_callback(
                     this,
                     StatWatcher::initial_stat_error_on_main_thread,

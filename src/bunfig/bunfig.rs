@@ -826,6 +826,25 @@ impl<'a> Parser<'a> {
                 }
             }
 
+            if matches!(
+                self.ctx.runtime_options.fetch_store,
+                bun_options_types::context::FetchStoreConfig::None
+            ) {
+                if let Some(fetch_expr) = json.get(b"fetch") {
+                    if let Some(cache) = fetch_expr.get(b"cache") {
+                        let value = cache
+                            .as_string(self.bump)
+                            .or_else(|| cache.get(b"path").and_then(|e| e.as_string(self.bump)));
+                        if let Some(value) = value {
+                            self.ctx.runtime_options.fetch_store =
+                                bun_options_types::context::FetchStoreConfig::parse(value);
+                        } else {
+                            self.add_error(cache.loc, b"Expected string or { path }")?;
+                        }
+                    }
+                }
+            }
+
             if let Some(console_expr) = json.get(b"console") {
                 if let Some(depth) = console_expr.get(b"depth") {
                     if let Some(n) = depth.as_number() {

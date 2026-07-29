@@ -67,6 +67,7 @@
 #include "JSDOMURL.h"
 #include "headers.h"
 #include "ObjectBindings.h"
+#include "../ErrorCode.h"
 
 namespace WebCore {
 using namespace JSC;
@@ -300,10 +301,12 @@ static inline JSC::EncodedJSValue constructJSWebSocket3(JSGlobalObject* lexicalG
                     JSC::JSObject* proxyOptions = proxyValue.getObject();
                     auto proxyUrlValue = Bun::getOwnPropertyIfExists(globalObject, proxyOptions, PropertyName(Identifier::fromString(vm, "url"_s)));
                     RETURN_IF_EXCEPTION(throwScope, {});
-                    if (proxyUrlValue && !proxyUrlValue.isUndefinedOrNull()) {
-                        proxyUrl = convert<IDLUSVString>(*lexicalGlobalObject, proxyUrlValue);
-                        RETURN_IF_EXCEPTION(throwScope, {});
+                    if (!proxyUrlValue || proxyUrlValue.isUndefinedOrNull()) {
+                        return Bun::throwError(lexicalGlobalObject, throwScope, Bun::ErrorCode::ERR_INVALID_ARG_TYPE,
+                            "WebSocket proxy must be a string, URL, or an object with a \"url\" property."_s);
                     }
+                    proxyUrl = convert<IDLUSVString>(*lexicalGlobalObject, proxyUrlValue);
+                    RETURN_IF_EXCEPTION(throwScope, {});
 
                     auto proxyHeadersValue = Bun::getOwnPropertyIfExists(globalObject, proxyOptions, builtinnames.headersPublicName());
                     RETURN_IF_EXCEPTION(throwScope, {});
@@ -324,6 +327,9 @@ static inline JSC::EncodedJSValue constructJSWebSocket3(JSGlobalObject* lexicalG
                             RETURN_IF_EXCEPTION(throwScope, {});
                         }
                     }
+                } else {
+                    return Bun::throwError(lexicalGlobalObject, throwScope, Bun::ErrorCode::ERR_INVALID_ARG_TYPE,
+                        "WebSocket proxy must be a string, URL, or an object with a \"url\" property."_s);
                 }
             }
         }

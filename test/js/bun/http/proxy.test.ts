@@ -461,6 +461,55 @@ describe("proxy option validation", () => {
       expect(await response.text()).toBe("shape-check");
     }
   });
+
+  test("WebSocket: rejects wrong-typed values instead of silently going direct", async () => {
+    let directHit = false;
+    await using origin = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch(req, server) {
+        if (server.upgrade(req)) return;
+        return new Response("no", { status: 400 });
+      },
+      websocket: {
+        open(ws) {
+          directHit = true;
+          ws.close();
+        },
+        message() {},
+      },
+    });
+
+    const invalid: Array<[string, unknown]> = [
+      ["number", 42],
+      ["array", [httpProxyServer.url]],
+      ["boolean true", true],
+      ["boolean false", false],
+      ["object without url", { headers: {} }],
+      ["object with null url", { url: null }],
+    ];
+    for (const [label, value] of invalid) {
+      expect(() => new WebSocket(`ws://127.0.0.1:${origin.port}/`, { proxy: value } as any), label).toThrowError(
+        expect.objectContaining({
+          name: "TypeError",
+          code: "ERR_INVALID_ARG_TYPE",
+        }),
+      );
+    }
+    expect(directHit).toBe(false);
+
+    // null / empty string / undefined remain the "no proxy" sentinels: the
+    // constructor must not throw and the socket must reach the origin directly.
+    for (const value of [null, "", undefined]) {
+      const { promise, resolve } = Promise.withResolvers<void>();
+      const ws = new WebSocket(`ws://127.0.0.1:${origin.port}/`, { proxy: value } as any);
+      ws.onopen = () => ws.close();
+      ws.onclose = () => resolve();
+      ws.onerror = () => resolve();
+      await promise;
+    }
+    expect(directHit).toBe(true);
+  });
 });
 
 /**

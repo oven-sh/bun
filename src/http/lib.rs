@@ -1033,8 +1033,9 @@ const PRINT_EVERY: usize = 0;
 static PRINT_EVERY_I: AtomicUsize = AtomicUsize::new(0);
 
 // we always rewrite the entire HTTP request when write() returns EAGAIN
-// so we can reuse this buffer
-const MAX_REQUEST_HEADERS: usize = 256;
+// so we can reuse this buffer. Sized so `MAX_USER_HEADERS` (this minus
+// `MAX_DEFAULT_HEADERS` in `build_request`) stays at the user-facing 250.
+const MAX_REQUEST_HEADERS: usize = 257;
 static SHARED_REQUEST_HEADERS_BUF: bun_core::RacyCell<[picohttp::Header; MAX_REQUEST_HEADERS]> =
     bun_core::RacyCell::new([picohttp::Header::ZERO; MAX_REQUEST_HEADERS]);
 
@@ -4911,6 +4912,14 @@ impl<'a> HTTPClient<'a> {
                     location = header.value();
                 }
                 h if h == hash_header_const(b"Referrer-Policy") => {
+                    // A proxy's CONNECT reply must not influence the referrer
+                    // policy of the tunneled request.
+                    if self.flags.proxy_tunneling
+                        && self.proxy_tunnel.is_none()
+                        && response.status_code == 200
+                    {
+                        continue;
+                    }
                     // https://fetch.spec.whatwg.org/#http-redirect-fetch step 19
                     if let Some(policy) = ReferrerPolicy::from_response_header(header.value()) {
                         self.referrer_policy = policy;

@@ -1,8 +1,16 @@
 // fetch() referrer / referrerPolicy
 // https://fetch.spec.whatwg.org/#dom-request-referrer
 // https://w3c.github.io/webappsec-referrer-policy/#determine-requests-referrer
-import { describe, expect, it } from "bun:test";
-import { rmSync } from "fs";
+import { afterAll, beforeAll, describe, expect, it } from "bun:test";
+import { tmpdirSync } from "harness";
+import { join } from "path";
+import {
+  clearProxyEnv,
+  createAdversarialOrigin,
+  createAdversarialProxy,
+  laxTls,
+  restoreProxyEnv,
+} from "../../bun/http/proxy-stress-helpers";
 
 // Each test binds its own server and reads only its own `received` map.
 describe.concurrent("fetch referrer and referrerPolicy", () => {
@@ -256,33 +264,29 @@ describe.concurrent("fetch referrer and referrerPolicy", () => {
   // connection still reaches a local server.
   it("strict policies drop the Referer on a trustworthy -> untrustworthy downgrade", async () => {
     const received: Record<string, string | null> = {};
-    const unix = `.fetch-referrer-${Math.random().toString(36).slice(2)}.sock`;
+    const unix = join(tmpdirSync(), "fetch-referrer.sock");
     await using server = referrerServer(received, { unix });
-    try {
-      const referrer = "https://secure.example/page?q=1";
-      const base = "http://insecure.example";
+    const referrer = "https://secure.example/page?q=1";
+    const base = "http://insecure.example";
 
-      await fetch(`${base}/nrwd`, { unix, referrer, referrerPolicy: "no-referrer-when-downgrade" });
-      await fetch(`${base}/strict-origin`, { unix, referrer, referrerPolicy: "strict-origin" });
-      await fetch(`${base}/socwo`, { unix, referrer, referrerPolicy: "strict-origin-when-cross-origin" });
-      // a domain whose first label is "127" is not an IPv4 loopback, so this is
-      // still a downgrade
-      await fetch(`http://127.example.com/domain-127`, { unix, referrer, referrerPolicy: "strict-origin" });
-      // the non-strict equivalents still send it
-      await fetch(`${base}/origin`, { unix, referrer, referrerPolicy: "origin" });
-      await fetch(`${base}/unsafe-url`, { unix, referrer, referrerPolicy: "unsafe-url" });
+    await fetch(`${base}/nrwd`, { unix, referrer, referrerPolicy: "no-referrer-when-downgrade" });
+    await fetch(`${base}/strict-origin`, { unix, referrer, referrerPolicy: "strict-origin" });
+    await fetch(`${base}/socwo`, { unix, referrer, referrerPolicy: "strict-origin-when-cross-origin" });
+    // a domain whose first label is "127" is not an IPv4 loopback, so this is
+    // still a downgrade
+    await fetch(`http://127.example.com/domain-127`, { unix, referrer, referrerPolicy: "strict-origin" });
+    // the non-strict equivalents still send it
+    await fetch(`${base}/origin`, { unix, referrer, referrerPolicy: "origin" });
+    await fetch(`${base}/unsafe-url`, { unix, referrer, referrerPolicy: "unsafe-url" });
 
-      expect(received).toEqual({
-        "/nrwd": null,
-        "/strict-origin": null,
-        "/socwo": null,
-        "/domain-127": null,
-        "/origin": "https://secure.example/",
-        "/unsafe-url": "https://secure.example/page?q=1",
-      });
-    } finally {
-      rmSync(unix, { force: true });
-    }
+    expect(received).toEqual({
+      "/nrwd": null,
+      "/strict-origin": null,
+      "/socwo": null,
+      "/domain-127": null,
+      "/origin": "https://secure.example/",
+      "/unsafe-url": "https://secure.example/page?q=1",
+    });
   });
 
   // A real 127/8 loopback target IS potentially trustworthy, so an https
@@ -451,5 +455,47 @@ describe.concurrent("fetch referrer and referrerPolicy", () => {
         "B ?c=none": null,
       });
     });
+  });
+});
+
+// A proxy's CONNECT reply must not influence the referrer policy of the
+// tunneled request: the Referrer-Policy response header only applies on a
+// redirect (fetch spec HTTP-redirect fetch, step 19), and a CONNECT 200 is
+// not one. Isolated from the concurrent block so clearProxyEnv cannot race.
+describe("fetch referrer through a CONNECT proxy", () => {
+  let savedEnv: Record<string, string | undefined>;
+  beforeAll(() => {
+    savedEnv = clearProxyEnv();
+  });
+  afterAll(() => {
+    restoreProxyEnv(savedEnv);
+  });
+
+  it("ignores a Referrer-Policy header on the proxy's CONNECT reply", async () => {
+    await using origin = await createAdversarialOrigin({ tls: true });
+    await using proxy = await createAdversarialProxy({
+      connectReplyHeaders: { "Referrer-Policy": "unsafe-url" },
+    });
+
+    // the caller's no-referrer policy must survive the tunnel intact
+    const res = await fetch(origin.url, {
+      proxy: proxy.url,
+      tls: laxTls,
+      referrer: "https://app.example/secret?token=xyz",
+      referrerPolicy: "no-referrer",
+    });
+    expect(await res.text()).toBe("ok");
+    expect(origin.requests[0].headers["referer"]).toBeUndefined();
+
+    // and unsafe-url still works end to end through the same tunnel setup
+    await using origin2 = await createAdversarialOrigin({ tls: true });
+    const res2 = await fetch(origin2.url, {
+      proxy: proxy.url,
+      tls: laxTls,
+      referrer: "https://app.example/secret?token=xyz",
+      referrerPolicy: "unsafe-url",
+    });
+    expect(await res2.text()).toBe("ok");
+    expect(origin2.requests[0].headers["referer"]).toBe("https://app.example/secret?token=xyz");
   });
 });

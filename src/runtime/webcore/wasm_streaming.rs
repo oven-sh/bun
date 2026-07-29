@@ -11,7 +11,7 @@ use core::ffi::c_void;
 use bun_core::strings;
 use bun_jsc::{ErrorCode, JSGlobalObject, JSValue, JsError, JsResult};
 
-use crate::webcore::blob::{self, Any as AnyBlob, Blob, BlobExt};
+use crate::webcore::blob::{Any as AnyBlob, Blob, BlobExt};
 use crate::webcore::body::{BodyMixin as _, Value as BodyValue};
 use crate::webcore::{ReadableStream, Response, response};
 
@@ -121,11 +121,10 @@ pub(crate) fn get_body_stream_or_bytes_for_wasm_streaming(
         _ => body.use_as_any_blob(),
     };
 
-    // `Any::store()` only yields `Some` for the `Blob` variant; non-`Bytes` data means
-    // a file/S3-backed store that must go through a ReadableStream.
+    // File/S3-backed stores must go through a ReadableStream.
     if any_blob
         .store()
-        .is_some_and(|store| !matches!(store.data, blob::store::Data::Bytes(_)))
+        .is_some_and(|store| !store.data.is_memory_backed())
     {
         // This is a file or an S3 object, which aren't accessible synchronously.
         // (using any_blob.slice() would return a bogus empty slice)

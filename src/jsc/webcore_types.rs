@@ -327,6 +327,7 @@ impl Blob {
         if self.size.get() == 0 {
             return b"";
         }
+        store.flatten_if_rope();
         let mut slice = store.shared_view();
         if slice.is_empty() {
             return b"";
@@ -336,6 +337,20 @@ impl Blob {
         let off = (self.offset.get() as usize).min(slice.len());
         slice = &slice[off..];
         &slice[..slice.len().min(self.size.get() as usize)]
+    }
+
+    /// `shared_view().len()` without flattening a rope.
+    pub fn shared_view_len(&self) -> SizeType {
+        let Some(store) = self.store() else { return 0 };
+        if self.size.get() == 0 {
+            return 0;
+        }
+        let store_len = store.size();
+        if store_len == MAX_SIZE {
+            return 0;
+        }
+        let off = self.offset.get().min(store_len);
+        (store_len - off).min(self.size.get())
     }
 
     /// Release the store ref without
@@ -410,7 +425,7 @@ impl Blob {
         match &self.store()?.data {
             store::Data::File(file) => Some(&file.mime_type.value),
             store::Data::S3(s3) => Some(&s3.mime_type.value),
-            store::Data::Bytes(_) => None,
+            store::Data::Bytes(_) | store::Data::Rope(_) => None,
         }
     }
 
@@ -439,6 +454,10 @@ impl Blob {
         match &self.store.get().as_deref()?.data {
             store::Data::Bytes(bytes) => {
                 let n = &bytes.stored_name[..];
+                if n.is_empty() { None } else { Some(n) }
+            }
+            store::Data::Rope(rope) => {
+                let n = &rope.stored_name[..];
                 if n.is_empty() { None } else { Some(n) }
             }
             store::Data::File(file) => match &file.pathlike {
@@ -537,6 +556,9 @@ pub mod store {
         Bytes(Bytes),
         File(File),
         S3(S3),
+        /// Windows into other in-memory `Store`s; built for Blob-typed ctor
+        /// parts, flattened to `Bytes` on the first contiguous read.
+        Rope(Rope),
     }
 
     /// Discriminant-only tag for `Data`.
@@ -545,12 +567,20 @@ pub mod store {
         Bytes,
         File,
         S3,
+        Rope,
     }
 
     impl Data {
         bun_core::enum_unwrap!(pub Data, File  => fn as_file  / as_file_mut  -> File);
         bun_core::enum_unwrap!(pub Data, S3    => fn as_s3    / as_s3_mut    -> S3);
         bun_core::enum_unwrap!(pub Data, Bytes => fn as_bytes / as_bytes_mut -> Bytes);
+        bun_core::enum_unwrap!(pub Data, Rope  => fn as_rope  / as_rope_mut  -> Rope);
+
+        /// In-memory backing (no async I/O needed to materialise bytes).
+        #[inline]
+        pub fn is_memory_backed(&self) -> bool {
+            matches!(self, Data::Bytes(_) | Data::Rope(_))
+        }
     }
 
     #[repr(u8)]
@@ -738,6 +768,84 @@ pub mod store {
         }
     }
 
+    // ────────────────────────────────────────────────────────────────────
+    // Rope
+    // ────────────────────────────────────────────────────────────────────
+
+    /// Immutable windows into other `Store`s, held alive by `StoreRef`.
+    #[derive(Default)]
+    pub struct Rope {
+        pub segments: Vec<RopeSegment>,
+        /// Σ `segments[i].len`.
+        pub len: SizeType,
+        /// Same role as [`Bytes::stored_name`].
+        pub stored_name: Box<[u8]>,
+    }
+
+    pub struct RopeSegment {
+        pub store: StoreRef,
+        pub offset: SizeType,
+        pub len: SizeType,
+    }
+
+    impl RopeSegment {
+        /// Flattened, clamped `&[u8]` window this segment names. JS thread only.
+        pub fn view(&self) -> &[u8] {
+            self.store.flatten_if_rope();
+            let view = self.store.shared_view();
+            let off = (self.offset as usize).min(view.len());
+            let end = off + (self.len as usize).min(view.len() - off);
+            &view[off..end]
+        }
+    }
+
+    impl Rope {
+        #[inline]
+        pub fn len(&self) -> SizeType {
+            self.len
+        }
+
+        /// Splices a rope-backed `store` so the result stays one level deep.
+        pub fn push(&mut self, store: StoreRef, offset: SizeType, len: SizeType) {
+            if len == 0 {
+                return;
+            }
+            if let Data::Rope(inner) = &store.data {
+                let mut skip = offset;
+                let mut take = len;
+                for seg in &inner.segments {
+                    if take == 0 {
+                        break;
+                    }
+                    if skip >= seg.len {
+                        skip -= seg.len;
+                        continue;
+                    }
+                    let piece = (seg.len - skip).min(take);
+                    self.segments.push(RopeSegment {
+                        store: seg.store.clone(),
+                        offset: seg.offset + skip,
+                        len: piece,
+                    });
+                    self.len += piece;
+                    take -= piece;
+                    skip = 0;
+                }
+                return;
+            }
+            self.len += len;
+            self.segments.push(RopeSegment { store, offset, len });
+        }
+
+        pub fn join(&self) -> Vec<u8> {
+            let mut out = Vec::<u8>::with_capacity(self.len as usize);
+            for seg in &self.segments {
+                out.extend_from_slice(seg.view());
+            }
+            out
+        }
+    }
+
     impl Drop for Bytes {
         fn drop(&mut self) {
             // `stored_name` is a `Box<[u8]>`, so its field `Drop` frees it;
@@ -885,10 +993,24 @@ pub mod store {
             }))
         }
 
+        /// Takes ownership of `rope`. Returns a +1-ref heap `Store`.
+        pub fn init_rope(rope: Rope) -> StoreRef {
+            StoreRef::from(Store::new(Store {
+                data: Data::Rope(rope),
+                mime_type: bun_http_types::MimeType::NONE,
+                ref_count: bun_ptr::ThreadSafeRefCount::init(),
+                is_all_ascii: None,
+            }))
+        }
+
         pub fn get_path(&self) -> Option<&[u8]> {
             match &self.data {
                 Data::Bytes(bytes) => {
                     let n = &bytes.stored_name[..];
+                    if n.is_empty() { None } else { Some(n) }
+                }
+                Data::Rope(rope) => {
+                    let n = &rope.stored_name[..];
                     if n.is_empty() { None } else { Some(n) }
                 }
                 Data::File(file) => {
@@ -907,6 +1029,10 @@ pub mod store {
                 core::mem::size_of::<Self>()
                     + match &self.data {
                         Data::Bytes(bytes) => bytes.len() as usize,
+                        Data::Rope(rope) => {
+                            rope.len() as usize
+                                + rope.segments.len() * core::mem::size_of::<RopeSegment>()
+                        }
                         Data::File(_) => 0,
                         Data::S3(s3) => s3.estimated_size(),
                     }
@@ -919,6 +1045,7 @@ pub mod store {
         pub fn size(&self) -> SizeType {
             match &self.data {
                 Data::Bytes(b) => b.len(),
+                Data::Rope(r) => r.len(),
                 Data::File(_) | Data::S3(_) => MAX_SIZE,
             }
         }
@@ -928,6 +1055,10 @@ pub mod store {
             if let Data::Bytes(bytes) = &self.data {
                 return bytes.slice();
             }
+            assert!(
+                !matches!(self.data, Data::Rope(_)),
+                "Store::shared_view on an unflattened rope; call StoreRef::flatten_if_rope first"
+            );
             &[]
         }
 
@@ -1037,6 +1168,19 @@ pub mod store {
             // SAFETY: caller guarantees no other `&mut` to this `Store` is
             // live; see doc comment.
             unsafe { &mut (*self.as_ptr()).data }
+        }
+
+        /// Collapse a `Rope` into `Bytes` in place. JS thread only: same
+        /// single-threaded interior-mutation rule as [`StoreRef::data_mut`].
+        pub fn flatten_if_rope(&self) {
+            if !matches!((**self).data, Data::Rope(_)) {
+                return;
+            }
+            let data = self.data_mut();
+            let Data::Rope(rope) = data else { return };
+            let mut bytes = Bytes::init(rope.join());
+            bytes.stored_name = core::mem::take(&mut rope.stored_name);
+            *data = Data::Bytes(bytes);
         }
     }
 

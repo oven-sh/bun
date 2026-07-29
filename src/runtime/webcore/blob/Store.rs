@@ -30,7 +30,7 @@ use super::SizeType;
 // ──────────────────────────────────────────────────────────────────────────
 
 pub use bun_jsc::webcore_types::store::{
-    Bytes, Data, DataTag, File, S3, SerializeTag, Store, StoreRef,
+    Bytes, Data, DataTag, File, Rope, RopeSegment, S3, SerializeTag, Store, StoreRef,
 };
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -215,6 +215,15 @@ impl StoreExt for Store {
 
                 writer.write_int_le::<u32>(bytes.stored_name.len() as u32)?;
                 writer.write_all(&bytes.stored_name)?;
+            }
+            Data::Rope(rope) => {
+                writer.write_int_le::<u32>(rope.len() as u32)?;
+                for seg in &rope.segments {
+                    writer.write_all(seg.view())?;
+                }
+
+                writer.write_int_le::<u32>(rope.stored_name.len() as u32)?;
+                writer.write_all(&rope.stored_name)?;
             }
         }
         Ok(())

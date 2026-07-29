@@ -39,6 +39,9 @@ const _: fn() = || {
 
 impl Entry {
     pub fn init(blob: &Blob) -> Box<Entry> {
+        if let Some(store) = blob.store() {
+            store.flatten_if_rope();
+        }
         Box::new(Entry {
             blob: blob.dupe_with_content_type(true),
         })

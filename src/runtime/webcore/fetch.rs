@@ -1002,13 +1002,18 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         for obj in objects_to_try {
             if !obj.is_empty() {
                 if let Some(proxy_arg) = obj.get(global_this, "proxy")? {
+                    // `null` and the empty string are explicit "no proxy" sentinels.
+                    if proxy_arg.is_null()
+                        || (proxy_arg.is_string() && proxy_arg.get_length(ctx)? == 0)
+                    {
+                        break 'extract_proxy url_proxy_buffer;
+                    }
                     // A URL instance has no `.url` own property, so the `{url, headers}`
                     // branch below would silently ignore it. Treat it as its href here.
                     let is_url_instance =
                         bun_jsc::DOMURL::cast_(proxy_arg, global_this.vm()).is_some();
                     // Handle string format: proxy: "http://proxy.example.com:8080"
-                    if is_url_instance || (proxy_arg.is_string() && proxy_arg.get_length(ctx)? > 0)
-                    {
+                    if is_url_instance || proxy_arg.is_string() {
                         // `href_from_js` returns a +1 WTFStringImpl ref; `bun_core::String`
                         // is `Copy` with no `Drop`, so wrap in `OwnedString` for scope-exit
                         // deref (mirrors `defer href.deref()` in fetch.zig).
@@ -1043,7 +1048,6 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                         break 'extract_proxy buffer;
                     }
                     // Handle object format: proxy: { url: "http://proxy.example.com:8080", headers?: Headers }
-                    // If the proxy object doesn't have a 'url' property, ignore it.
                     if proxy_arg.is_object() {
                         // Get the URL from the proxy object
                         if let Some(proxy_url_arg) = proxy_arg.get(global_this, "url")? {
@@ -1111,6 +1115,21 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                             }
                         }
                     }
+                    // Fall through: a value that is neither a URL string, a `URL`
+                    // instance, nor a `{url}` object. Fail closed rather than
+                    // silently connecting directly to the origin.
+                    let err = ctx.to_type_error(
+                        jsc::ErrorCode::INVALID_ARG_TYPE,
+                        format_args!(
+                            "fetch() proxy must be a string, URL, or an object with a \"url\" property."
+                        ),
+                    );
+                    return Ok(
+                        JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
+                            global_this,
+                            err,
+                        ),
+                    );
                 }
 
                 if global_this.has_exception() {

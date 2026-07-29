@@ -490,9 +490,16 @@ JSObject* JSModuleMock::executeOnce(JSC::JSGlobalObject* lexicalGlobalObject)
 
     JSObject* callback = callbackValue.getObject();
     JSC::JSValue result = JSC::profiledCall(lexicalGlobalObject, ProfilingReason::API, callback, JSC::getCallData(callback), JSC::jsUndefined(), ArgList());
-    RETURN_IF_EXCEPTION(scope, {});
+    if (scope.exception()) [[unlikely]] {
+        // Don't cache a failed invocation: keep the callback so the next
+        // require()/import() re-invokes it and re-throws instead of silently
+        // returning the callback function as the module's exports.
+        hasCalledModuleMock = false;
+        return nullptr;
+    }
 
     if (!result.isObject()) {
+        hasCalledModuleMock = false;
         scope.throwException(lexicalGlobalObject, JSC::createTypeError(lexicalGlobalObject, "mock(module, fn) requires a function that returns an object"_s));
         return nullptr;
     }

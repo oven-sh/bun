@@ -698,7 +698,7 @@ describe("accepted socket event-loop hold matches Node (per-connection KeepAlive
 });
 
 describe("net.createServer options.highWaterMark", () => {
-  it("normalizes a negative value to the default so accepted connections work", async () => {
+  it.concurrent("normalizes a negative value to the default so accepted connections work", async () => {
     // Node's Server ctor validates highWaterMark with validateNumber and maps
     // negative values to the default. Without that, the accepted Socket's
     // Duplex ctor throws before kAttach, the 'connection' listener never runs,
@@ -724,14 +724,14 @@ describe("net.createServer options.highWaterMark", () => {
 
   it("rejects a non-number value synchronously", () => {
     // https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L1859
-    for (const value of ["4096", {}, true, () => {}]) {
+    for (const value of ["4096", {}, true, null, () => {}]) {
       expect(() => createServer({ highWaterMark: value as any })).toThrow(
         expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }),
       );
     }
   });
 
-  it("surfaces an accept-time Socket ctor throw as uncaughtException without corrupting the server", async () => {
+  it.concurrent("surfaces an accept-time Socket ctor throw as uncaughtException without corrupting the server", async () => {
     // NaN passes validateNumber so it reaches the accepted Socket's Duplex
     // ctor, which throws ERR_INVALID_ARG_VALUE before kAttach reassigns
     // socket.data. The accept-error path used to assume socket.data was a

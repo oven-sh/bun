@@ -852,6 +852,17 @@ describe("File prototype chain", () => {
     }
   });
 
+  test("multipart part with filename=\"\" round-trips as a File", async () => {
+    const body = '--b\r\nContent-Disposition: form-data; name="f"; filename=""\r\n\r\nhi\r\n--b--\r\n';
+    const fd = await new Response(body, {
+      headers: { "content-type": "multipart/form-data; boundary=b" },
+    }).formData();
+    const v = fd.get("f");
+    expect(v instanceof File).toBe(true);
+    expect((v as File).constructor).toBe(File);
+    expect(await (v as File).text()).toBe("hi");
+  });
+
   test("Object.getPrototypeOf(File) is Blob", () => {
     expect(Object.getPrototypeOf(File)).toBe(Blob);
   });

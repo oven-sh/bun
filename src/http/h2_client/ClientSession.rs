@@ -72,9 +72,7 @@ pub struct ClientSession {
     pub next_stream_id: u31,
     /// Stream id whose CONTINUATION sequence is in progress; 0 = none.
     pub expecting_continuation: u31,
-    /// CONTINUATION frames seen in the current header block; reset when a new
-    /// HEADERS starts a block. Bounds the zero-length-frame flood that the
-    /// byte-size cap cannot (see `LOCAL_MAX_CONTINUATIONS`).
+    /// CONTINUATION frames seen so far in the current header block.
     pub continuation_count: u32,
 
     /// Cold-start coalesced requests parked until the server's first SETTINGS

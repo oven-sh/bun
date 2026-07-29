@@ -6,9 +6,8 @@ use core::ptr::NonNull;
 use crate::MAX_ALIGN_T as MAX_ALIGN;
 use crate::{Alignment, Allocator};
 
-/// The returned pointer must be aligned to `max_align_t`. Rust `Vec<u8>`
-/// allocates with align 1, which would violate the `alignment <= MAX_ALIGN`
-/// contract. Store a raw `MAX_ALIGN`-aligned buffer instead.
+/// Owns a single raw `MAX_ALIGN`-aligned buffer (a `Vec<u8>` would allocate
+/// with align 1, violating the `alignment <= MAX_ALIGN` contract).
 pub struct MaxHeapAllocator {
     ptr: Option<NonNull<u8>>,
     capacity: usize,
@@ -87,8 +86,8 @@ impl Allocator for MaxHeapAllocator {}
 impl Drop for MaxHeapAllocator {
     fn drop(&mut self) {
         if let Some(ptr) = self.ptr.take() {
-            // SAFETY: `ptr`/`capacity` were produced by `alloc`/`realloc` above
-            // with `MAX_ALIGN` alignment.
+            // SAFETY: `ptr`/`capacity` describe this allocator's own buffer,
+            // allocated with `MAX_ALIGN` alignment.
             unsafe {
                 std::alloc::dealloc(
                     ptr.as_ptr(),

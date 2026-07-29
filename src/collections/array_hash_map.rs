@@ -658,9 +658,10 @@ impl<K, V, C, A: MapAllocator> ArrayHashMap<K, V, C, A> {
         }
     }
 
+    /// See [`lock_pointers`](Self::lock_pointers). No-op in release.
     #[inline]
-    #[cfg(debug_assertions)]
     pub fn unlock_pointers(&self) {
+        #[cfg(debug_assertions)]
         self.pointer_stability
             .store(false, core::sync::atomic::Ordering::Relaxed);
     }

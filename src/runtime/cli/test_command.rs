@@ -242,15 +242,15 @@ fn push_stripping_ansi(out: &mut Vec<u8>, input: &[u8]) {
 // - Add timestamp field to the JUnit report
 #[derive(Default)]
 pub struct JunitReporter {
-    pub contents: Vec<u8>,
-    pub total_metrics: Metrics,
-    pub offset_of_testsuites_value: usize,
-    pub current_file: Box<[u8]>,
-    pub sent_upto: usize,
-    pub elements_only: bool,
-    pub file_start_ns: u64,
-    pub file_end_ns: u64,
-    pub properties_list_to_repeat_in_every_test_suite: Option<Box<[u8]>>,
+    pub(crate) contents: Vec<u8>,
+    pub(crate) total_metrics: Metrics,
+    pub(crate) offset_of_testsuites_value: usize,
+    pub(crate) current_file: Box<[u8]>,
+    pub(crate) sent_upto: usize,
+    pub(crate) elements_only: bool,
+    pub(crate) file_start_ns: u64,
+    pub(crate) file_end_ns: u64,
+    pub(crate) properties_list_to_repeat_in_every_test_suite: Option<Box<[u8]>>,
 
     pub(crate) suite_stack: Vec<SuiteInfo>,
     pub(crate) current_depth: u32,
@@ -265,11 +265,10 @@ pub struct JunitReporter {
 #[derive(Default)]
 pub struct SuiteInfo {
     pub name: Box<[u8]>,
-    pub offset_of_attributes: usize,
-    pub metrics: Metrics,
-    pub is_file_suite: bool,
-    pub line_number: u32,
-    pub started_ns: u64,
+    pub(crate) offset_of_attributes: usize,
+    pub(crate) metrics: Metrics,
+    pub(crate) is_file_suite: bool,
+    pub(crate) started_ns: u64,
 }
 
 // We dupe the name unconditionally in begin_test_suite_with_line, so the
@@ -584,7 +583,6 @@ impl JunitReporter {
             offset_of_attributes,
             metrics: Metrics::default(),
             is_file_suite,
-            line_number,
             started_ns: if is_file_suite { self.file_start_ns } else { 0 },
         });
 
@@ -1598,7 +1596,7 @@ impl CommandLineReporter {
         )
     }
 
-    pub fn render_lcov(
+    pub(crate) fn render_lcov(
         &mut self,
         vm: &mut VirtualMachine,
         opts: &CodeCoverageOptions,

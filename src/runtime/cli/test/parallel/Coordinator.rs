@@ -39,26 +39,26 @@ pub struct Coordinator<'a> {
     /// and BUN_TEST_WORKER_ID appended.
     pub(crate) envps: Vec<bun_dotenv::NullDelimitedEnvMap>,
 
-    pub workers: &'a mut [Worker],
-    pub junit_chunks: Vec<Option<Box<[u8]>>>,
-    pub junit_totals: super::aggregate::JunitTotals,
-    pub coverage_chunks: Vec<Box<[u8]>>,
+    pub(crate) workers: &'a mut [Worker],
+    pub(crate) junit_chunks: Vec<Option<Box<[u8]>>>,
+    pub(crate) junit_totals: super::aggregate::JunitTotals,
+    pub(crate) coverage_chunks: Vec<Box<[u8]>>,
     /// File index whose `path:` header was most recently written. Result lines
     /// from concurrent workers interleave; whenever the source file changes the
     /// header is re-emitted so every line has visible context. None at start.
     pub(crate) last_header_idx: Option<u32>,
     pub frame: Frame,
-    pub parallel_limit: u32,
-    pub scale_up_after_ms: i64,
-    pub bail: u32,
-    pub dots: bool,
-    pub files_done: u32,
-    pub spawned_count: u32,
-    pub live_workers: u32,
-    pub crashed_files: Vec<u32>,
-    pub aborted: Option<u32>,
-    pub bailed: bool,
-    pub last_printed_dot: bool,
+    pub(crate) parallel_limit: u32,
+    pub(crate) scale_up_after_ms: i64,
+    pub(crate) bail: u32,
+    pub(crate) dots: bool,
+    pub(crate) files_done: u32,
+    pub(crate) spawned_count: u32,
+    pub(crate) live_workers: u32,
+    pub(crate) crashed_files: Vec<u32>,
+    pub(crate) aborted: Option<u32>,
+    pub(crate) bailed: bool,
+    pub(crate) last_printed_dot: bool,
     /// Kill-on-close Job Object so the OS reaps workers if the coordinator dies
     /// without running its signal handler (e.g. SIGKILL / TerminateProcess).
     #[cfg(windows)]

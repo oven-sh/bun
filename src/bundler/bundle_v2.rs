@@ -40,8 +40,6 @@ use crate::transpiler::Transpiler;
 use crate::{Index, IndexInt, LinkerContext};
 
 // ── re-exports so callers can reference these via `bundle_v2::…` ──
-/// `BundleThread` — owns the worker pool + completion
-/// queue for `BundleV2`. Re-exported so callers reference `bundle_v2::BundleThread`.
 pub use crate::ParseTask;
 
 /// `jsc::api::JSBundler::Plugin` — re-exported from the canonical def below.

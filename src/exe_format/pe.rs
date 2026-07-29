@@ -40,21 +40,6 @@ pub enum Error {
     InsufficientSpace,
 }
 
-#[derive(Copy, Clone)]
-pub struct StripOpts {
-    pub(crate) require_overlay: bool,
-    pub(crate) recompute_checksum: bool,
-}
-
-impl Default for StripOpts {
-    fn default() -> Self {
-        Self {
-            require_overlay: true,
-            recompute_checksum: true,
-        }
-    }
-}
-
 /// Windows PE Binary manipulation for codesigning standalone executables
 pub struct PEFile {
     pub(crate) data: Vec<u8>,
@@ -357,7 +342,7 @@ impl PEFile {
     // deinit: Drop is automatic — Vec<u8> field freed; Box<PEFile> dropped by caller.
 
     /// Strip Authenticode signatures from the PE file
-    pub(crate) fn strip_authenticode(&mut self, opts: StripOpts) -> Result<(), Error> {
+    pub(crate) fn strip_authenticode(&mut self) -> Result<(), Error> {
         let opt = view_at_mut::<OptionalHeader64>(&mut self.data, self.optional_header_offset)?;
 
         // Read Security directory (index 4)
@@ -390,7 +375,7 @@ impl PEFile {
         if sec_off >= file_len || sec_size == 0 {
             return Err(Error::InvalidSecurityDirectory);
         }
-        if opts.require_overlay && sec_off < last_raw_end as usize {
+        if sec_off < last_raw_end as usize {
             return Err(Error::SecurityDirInsideImage);
         }
 
@@ -432,9 +417,7 @@ impl PEFile {
         }
 
         // Recompute checksum (recommended)
-        if opts.recompute_checksum {
-            self.recompute_pe_checksum()?;
-        }
+        self.recompute_pe_checksum()?;
 
         // After strip, ensure no remaining overlay beyond last section
         let after_strip_len = self.data.len();
@@ -485,10 +468,7 @@ impl PEFile {
     /// Add a new section to the PE file for storing Bun module data
     pub fn add_bun_section(&mut self, data_to_embed: &[u8]) -> Result<(), Error> {
         // 1. Strip Authenticode (before any addition)
-        self.strip_authenticode(StripOpts {
-            require_overlay: true,
-            recompute_checksum: true,
-        })?;
+        self.strip_authenticode()?;
 
         // 2. Re-read PE/Optional (pointers may have moved due to resize in strip)
         let opt = self.get_optional_header_mut()?;

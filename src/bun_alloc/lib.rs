@@ -332,7 +332,11 @@ pub mod default_alloc {
     /// `ptr` must be null or a live allocation from the default allocator with the given `align`.
     #[cfg(bun_asan)]
     #[inline]
-    pub unsafe fn realloc_aligned(ptr: *mut c_void, new_size: usize, align: usize) -> *mut c_void {
+    pub(crate) unsafe fn realloc_aligned(
+        ptr: *mut c_void,
+        new_size: usize,
+        align: usize,
+    ) -> *mut c_void {
         if align <= crate::MAX_ALIGN_T {
             return unsafe { libc::realloc(ptr, new_size) };
         }
@@ -1656,7 +1660,7 @@ macro_rules! bss_string_list {
     };
 }
 
-/// Declare a `BSSMapInner<T, COUNT, RM_SLASH>` (`store_keys=false`) singleton accessor.
+/// Declare a `BSSMapInner<T, COUNT, RM_SLASH>` singleton accessor.
 #[macro_export]
 macro_rules! bss_map_inner {
     ($(#[$m:meta])* $vis:vis $name:ident : $value_ty:ty, $count:expr, $rm_slash:expr) => {

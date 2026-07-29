@@ -4,14 +4,14 @@ import { join } from "path";
 
 // https://github.com/oven-sh/bun/issues/36341
 
-function createEnv(templatesDir: string) {
-  return {
-    ...bunEnv,
-    BUN_CREATE_DIR: templatesDir,
+function createEnv(templatesDir: string, opts: { expectConflictExit?: boolean } = {}) {
+  const env: Record<string, string | undefined> = { ...bunEnv, BUN_CREATE_DIR: templatesDir };
+  if (opts.expectConflictExit) {
     // The conflict path exits via Global::exit; LSan's conservative scan
     // flags in-flight CLI allocations at that point and aborts with 134.
-    ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=0"].filter(Boolean).join(":"),
-  };
+    env.ASAN_OPTIONS = [bunEnv.ASAN_OPTIONS, "detect_leaks=0"].filter(Boolean).join(":");
+  }
+  return env;
 }
 
 test.concurrent("bun create from local template preserves unrelated files in destination", async () => {
@@ -50,7 +50,7 @@ test.concurrent("bun create from local template refuses to overwrite conflicting
 
   await using proc = Bun.spawn({
     cmd: [bunExe(), "create", "mytpl", "."],
-    env: createEnv(join(String(dir), "templates")),
+    env: createEnv(join(String(dir), "templates"), { expectConflictExit: true }),
     cwd: join(String(dir), "proj"),
     stdout: "pipe",
     stderr: "pipe",
@@ -199,11 +199,12 @@ test.concurrent("bun create from local template does not run git when .git is a 
     stdout: "pipe",
     stderr: "pipe",
   });
-  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited, proc.stdout.text()]);
+  const [stderr, exitCode, stdout] = await Promise.all([proc.stderr.text(), proc.exited, proc.stdout.text()]);
 
   // the worktree pointer file must survive untouched
   expect(await Bun.file(join(String(dir), "proj", ".git")).text()).toBe("gitdir: /somewhere/else/.git/worktrees/proj");
   expect(await Bun.file(join(String(dir), "proj", "tpl.txt")).text()).toBe("template file");
+  expect(stdout).not.toContain("local git repository was created");
   expect({ exitCode, stderr }).toEqual({ exitCode: 0, stderr: expect.not.stringContaining("error") });
 });
 
@@ -215,7 +216,7 @@ test.concurrent("bun create from local template flags a directory named README.m
 
   await using proc = Bun.spawn({
     cmd: [bunExe(), "create", "mytpl", "."],
-    env: createEnv(join(String(dir), "templates")),
+    env: createEnv(join(String(dir), "templates"), { expectConflictExit: true }),
     cwd: join(String(dir), "proj"),
     stdout: "pipe",
     stderr: "pipe",
@@ -261,7 +262,7 @@ test.concurrent("bun create from local template refuses when a template director
 
   await using proc = Bun.spawn({
     cmd: [bunExe(), "create", "mytpl", "."],
-    env: createEnv(join(String(dir), "templates")),
+    env: createEnv(join(String(dir), "templates"), { expectConflictExit: true }),
     cwd: join(String(dir), "proj"),
     stdout: "pipe",
     stderr: "pipe",

@@ -988,8 +988,7 @@ impl Tree {
             (s.as_ptr(), s.len())
         };
 
-        // Stop hoisting at an ancestor that holds a different version of one
-        // of `package_id`'s peer dependencies.
+        // Stop hoisting at an ancestor holding a different version of one of `package_id`'s peers.
         if !AS_DEFINED && package_id != invalid_package_id {
             let pkg_deps = builder.resolution_lists[package_id as usize];
             'peers: for peer_dep_id in pkg_deps.begin()..pkg_deps.end() {

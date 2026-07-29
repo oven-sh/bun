@@ -1169,13 +1169,14 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
             let _ = bun_http::OVERRIDDEN_DEFAULT_USER_AGENT.set(user_agent);
         }
 
-        ctx.debug.offline_mode_setting = Some(if args.flag(b"--prefer-offline") {
-            bun_options_types::offline_mode::OfflineMode::Offline
+        // Leave a bunfig "[install].prefer" intact when neither flag is set.
+        if args.flag(b"--prefer-offline") {
+            ctx.debug.offline_mode_setting =
+                Some(bun_options_types::offline_mode::OfflineMode::Offline);
         } else if args.flag(b"--prefer-latest") {
-            bun_options_types::offline_mode::OfflineMode::Latest
-        } else {
-            bun_options_types::offline_mode::OfflineMode::Online
-        });
+            ctx.debug.offline_mode_setting =
+                Some(bun_options_types::offline_mode::OfflineMode::Latest);
+        }
 
         if args.flag(b"--no-install") {
             ctx.debug.global_cache = options::GlobalCache::disable;
@@ -1206,7 +1207,10 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
             ctx.runtime_options.eval.script = script.into();
         }
         ctx.runtime_options.if_present = args.flag(b"--if-present");
-        ctx.runtime_options.smol = args.flag(b"--smol");
+        // "smol" in bunfig.toml (loaded above) must survive the flag's absence.
+        if args.flag(b"--smol") {
+            ctx.runtime_options.smol = true;
+        }
         // node's `-i` is an alias for --interactive; elsewhere `-i` is --install=fallback.
         ctx.runtime_options.interactive = args.flag(b"--interactive")
             || (cmd == CommandTag::RunAsNodeCommand && args.flag(b"-i"));

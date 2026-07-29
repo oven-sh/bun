@@ -145,12 +145,8 @@ pub struct Subprocess<'a> {
 
     /// `None` indicates all of the IPC data is uninitialized.
     pub ipc_data: JsCell<Option<IPC::SendQueue>>,
-    /// Parent-side IPC channel keepalive for `node:child_process` semantics:
-    /// an established IPC channel keeps the event loop alive independently of
-    /// the process poller, so `subprocess.unref()` alone does not let the
-    /// parent exit while the channel is open. Node's `channel.ref()` /
-    /// `channel.unref()` toggle this. Inactive by default; `node:child_process`
-    /// activates it on spawn and `handle_ipc_close` disables it.
+    /// Node `channel.ref()`/`unref()` keepalive. Independent of the process
+    /// poller; engaged by `node:child_process`, disabled in `handle_ipc_close`.
     pub ipc_channel_ref: JsCell<bun_io::KeepAlive>,
     pub flags: Cell<Flags>,
 

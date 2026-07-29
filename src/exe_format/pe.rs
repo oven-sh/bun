@@ -186,9 +186,7 @@ const IMAGE_SCN_MEM_READ: u32 = 0x4000_0000;
 const IMAGE_DIRECTORY_ENTRY_SECURITY: usize = 4;
 const IMAGE_DLLCHARACTERISTICS_FORCE_INTEGRITY: u16 = 0x0080;
 
-// Subsystem values for OptionalHeader64.subsystem
 pub const IMAGE_SUBSYSTEM_WINDOWS_GUI: u16 = 2;
-pub const IMAGE_SUBSYSTEM_WINDOWS_CUI: u16 = 3;
 
 // Section name constant for exact comparison
 const BUN_SECTION_NAME: [u8; 8] = [b'.', b'b', b'u', b'n', 0, 0, 0, 0];

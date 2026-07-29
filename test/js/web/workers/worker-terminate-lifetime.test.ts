@@ -209,7 +209,7 @@ test.skipIf(!isDebug)(
           const done = new Promise(r => w.once("exit", r));
           w.terminate();
           await done;
-          rd.cancel().catch(() => {});
+          await rd.cancel().catch(() => {});
         }
         console.log("survived");
       `,

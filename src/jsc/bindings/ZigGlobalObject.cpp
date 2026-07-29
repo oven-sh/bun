@@ -294,13 +294,10 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
         WTF::initializeMainThread();
 
 #if ASAN_ENABLED && OS(LINUX)
-        // JSC's notifyOptionsChanged() string-matches getenv("ASAN_OPTIONS") for
-        // "allow_user_segv_handler=1" (or "handle_segv=0") and otherwise disables
-        // useWasmFaultSignalHandler, which in turn makes WebAssembly.Memory
-        // silently ignore {shared:true}. __asan_default_options() already opts
-        // the runtime in; mirror it into the env var so JSC's check sees it. A
-        // value explicitly containing "allow_user_segv_handler=" is left alone
-        // so a caller can still force it off.
+        // JSC's notifyOptionsChanged() clears useWasmFaultSignalHandler (and with
+        // it WebAssembly shared memory) unless getenv("ASAN_OPTIONS") contains
+        // this flag. __asan_default_options() already sets it for the runtime;
+        // mirror it into the env var. Leave an explicit user value alone.
         {
             const char* asanOptions = getenv("ASAN_OPTIONS");
             if (!asanOptions || !*asanOptions) {
@@ -318,9 +315,6 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
 
         // Use JSC::initialize with a callback to set Options during initialization.
         // The callback runs BEFORE IPInt::initialize() so we can configure WASM options early.
-        // Under ASAN+Linux, JSC's notifyOptionsChanged() gates
-        // useWasmFaultSignalHandler/FastMemory on ASAN_OPTIONS containing
-        // allow_user_segv_handler=1; the setenv above supplies that default.
         JSC::initialize([&] {
             JSC::Options::useWasm() = true;
             JSC::Options::useJIT() = true;

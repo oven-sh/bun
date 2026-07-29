@@ -80,14 +80,12 @@ test("fetch does not reuse a pooled TLS connection for a request with a differen
 // so the pool can't leak into other tests. The server here keeps the socket
 // open and answers every request on it, so the connection count is exactly
 // how many times bun dialed (pooled reuse => 1, correct => 4).
-test.each([200, 400, 413, 500])(
-  "a %d response with Connection: close is not pooled",
-  async status => {
-    await using proc = Bun.spawn({
-      cmd: [
-        bunExe(),
-        "-e",
-        `
+test.each([200, 400, 413, 500])("a %d response with Connection: close is not pooled", async status => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
         import net from "node:net";
         let connections = 0;
         const server = net.createServer(sock => {
@@ -114,20 +112,19 @@ test.each([200, 400, 413, 500])(
         console.log(JSON.stringify({ statuses, connections }));
         process.exit(0);
         `,
-      ],
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
 
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    const result = stdout.startsWith("{") ? JSON.parse(stdout.trim()) : { stdout, stderr };
-    expect({ result, exitCode }).toEqual({
-      result: { statuses: [status, status, status, status], connections: 4 },
-      exitCode: 0,
-    });
-  },
-);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const result = stdout.startsWith("{") ? JSON.parse(stdout.trim()) : { stdout, stderr };
+  expect({ result, exitCode }).toEqual({
+    result: { statuses: [status, status, status, status], connections: 4 },
+    exitCode: 0,
+  });
+});
 
 // A reused keep-alive connection reset during a streaming PUT must reject with
 // ECONNRESET, not retry: the stream body is already consumed, and the retry

@@ -576,6 +576,12 @@ for (const { body, fn } of bodyTypes) {
         expect((await p2).done).toBe(true);
         expect(source.locked).toBe(false);
       });
+      const writeChunk = async (sock: net.Socket, bytes: number[]) => {
+        sock.write(bytes.length.toString(16) + "\r\n");
+        sock.write(Uint8Array.from(bytes));
+        sock.write("\r\n");
+        await new Promise(r => setImmediate(r));
+      };
       if (body === Response) {
         test("streams a fetch response body", async () => {
           await using server = Bun.serve({
@@ -607,6 +613,66 @@ for (const { body, fn } of bodyTypes) {
           const res = await fetch(server.url);
           // The native-handle buffered fast path must not bypass the decode.
           expect(await res.textStream().text()).toBe("a\ufffdb");
+        });
+        // A native pull whose bytes all decode to the empty string (held back
+        // as an incomplete UTF-8 sequence or a BOM prefix) must keep the pull
+        // loop going. Each non-empty enqueue (and the initial read) banks one
+        // re-pull via m_pullAgain, so the stall appears once two consecutive
+        // pulls decode to nothing.
+        const rawChunkedServer = async (body: (sock: net.Socket) => Promise<void>) => {
+          const listening = Promise.withResolvers<void>();
+          const server = net.createServer(sock => {
+            sock.on("error", () => {});
+            sock.once("data", async () => {
+              sock.write("HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n");
+              await body(sock);
+            });
+          });
+          server.listen(0, "127.0.0.1", () => listening.resolve());
+          await listening.promise;
+          return {
+            port: (server.address() as net.AddressInfo).port,
+            [Symbol.asyncDispose]: () => new Promise<void>(r => server.close(() => r())),
+          };
+        };
+        test.each([
+          ["leading 4-byte char split 2-way", [[0xf0, 0x9f], [0xab, 0xa0], [0x42]], "🫠B"],
+          ["leading 4-byte char split 3-way", [[0xf0], [0x9f, 0xab], [0xa0], [0x42]], "🫠B"],
+          ["leading 3-byte char split 2-way", [[0xe4], [0xb8, 0xad], [0x42]], "中B"],
+          ["4-byte char as [lead][cont][cont cont]", [[0x41], [0xf0], [0x9f], [0xab, 0xa0], [0x42]], "A🫠B"],
+          ["4-byte char byte-at-a-time", [[0x41], [0xf0], [0x9f], [0xab], [0xa0], [0x42]], "A🫠B"],
+          ["3-byte char byte-at-a-time", [[0x41], [0xe4], [0xb8], [0xad], [0x42]], "A中B"],
+          ["BOM byte-at-a-time then text", [[0xef], [0xbb], [0xbf], [0x68], [0x69]], "hi"],
+          ["incomplete tail only then close", [[0xf0], [0x9f]], "\ufffd"],
+          ["text then incomplete tail then close", [[0x41], [0xf0], [0x9f]], "A\ufffd"],
+          ["BOM prefix only then close", [[0xef], [0xbb]], "\ufffd"],
+        ])(
+          "completes a fetch textStream() when consecutive chunks decode to nothing: %s",
+          async (_, parts, expected) => {
+            await using server = await rawChunkedServer(async sock => {
+              for (const p of parts) await writeChunk(sock, p);
+              sock.end("0\r\n\r\n");
+            });
+            const res = await fetch(`http://127.0.0.1:${server.port}/`);
+            const chunks = await Array.fromAsync(res.textStream());
+            for (const chunk of chunks) expect(typeof chunk).toBe("string");
+            expect(chunks.join("")).toBe(expected);
+          },
+        );
+        test("rejects a fetch textStream() when the connection drops after an empty decode", async () => {
+          await using server = await rawChunkedServer(async sock => {
+            for (const p of [[0x41], [0xf0], [0x9f]]) await writeChunk(sock, p);
+            sock.destroy();
+          });
+          const res = await fetch(`http://127.0.0.1:${server.port}/`);
+          let received = "";
+          let error: any;
+          try {
+            for await (const ch of res.textStream()) received += ch;
+          } catch (e) {
+            error = e;
+          }
+          expect({ code: error?.code, received }).toEqual({ code: "ECONNRESET", received: "A" });
         });
       }
       if (body === Request) {
@@ -651,6 +717,32 @@ for (const { body, fn } of bodyTypes) {
           expect(result.chunks.join("")).toBe("hello world 🫠");
           expect(result.bodyUsedAfter).toBe(true);
           expect(result.secondCallThrew).toBe(true);
+        });
+        test("completes server-side when a multi-byte character is split across upload chunks", async () => {
+          const done = Promise.withResolvers<string>();
+          await using server = Bun.serve({
+            port: 0,
+            async fetch(req) {
+              try {
+                done.resolve((await Array.fromAsync(req.textStream())).join(""));
+              } catch (e: any) {
+                done.reject(e);
+              }
+              return new Response("ok");
+            },
+          });
+          const connected = Promise.withResolvers<void>();
+          const sock = net.connect(server.port, "127.0.0.1", () => connected.resolve());
+          sock.on("error", () => {});
+          await connected.promise;
+          try {
+            sock.write("POST / HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n");
+            for (const p of [[0x41], [0xf0], [0x9f], [0xab, 0xa0], [0x42]]) await writeChunk(sock, p);
+            sock.write("0\r\n\r\n");
+            expect(await done.promise).toBe("A🫠B");
+          } finally {
+            sock.end();
+          }
         });
         test("rejects when the client aborts mid-upload server-side", async () => {
           const firstChunk = Promise.withResolvers<void>();

@@ -74,6 +74,12 @@ let isQuiet = false;
 const cwd = import.meta.dirname ? dirname(import.meta.dirname) : process.cwd();
 const testsPath = join(cwd, "test");
 
+const runnerStartedAt = Date.now();
+const jobBudgetMs = () => {
+  const minutes = parseInt(process.env.BUILDKITE_TIMEOUT || "", 10);
+  if (!Number.isFinite(minutes) || minutes <= 0) return Infinity;
+  return minutes * 60_000 - (Date.now() - runnerStartedAt);
+};
 const spawnTimeout = 5_000;
 const spawnBunTimeout = 20_000; // when running with ASAN/LSAN bun can take a bit longer to exit, not a bug.
 const testTimeout = 3 * 60_000;
@@ -363,6 +369,30 @@ const skipsForLeaksan = (() => {
     .filter(line => !line.startsWith("#") && line.length > 0);
 })();
 
+const parallelAllowlist = (() => {
+  try {
+    const { dirs, excludeFiles } = JSON.parse(readFileSync(join(cwd, "test", "parallel-allowlist.json"), "utf-8"));
+    return { dirs: new Set(dirs), excludeFiles: new Set(excludeFiles) };
+  } catch (error) {
+    console.warn("test/parallel-allowlist.json not loaded:", error?.message || error);
+    return { dirs: new Set(), excludeFiles: new Set() };
+  }
+})();
+
+const isParallelAllowlisted = testPath => {
+  const path = testPath.replaceAll("\\", "/");
+  const slash = path.lastIndexOf("/");
+  return (
+    parallelAllowlist.dirs.has(slash === -1 ? "" : path.slice(0, slash)) && !parallelAllowlist.excludeFiles.has(path)
+  );
+};
+
+const dockerServicePrefixes = Object.keys(dockerPrestartMap);
+const needsDockerService = testPath => {
+  const path = testPath.replaceAll("\\", "/");
+  return dockerServicePrefixes.some(prefix => path.startsWith(prefix));
+};
+
 /**
  * Returns whether we should validate exception checks running the given test
  * @param {string} test
@@ -594,16 +624,20 @@ async function runTests() {
   // finished, so no parallel-safe process ever overlaps a serial test (an
   // overlap surfaced new flakes in tight-timeout / port-bind tests such as
   // dns-tcp-bidirectional-poll and test-https-timeout). `--parallel` already
-  // widens `limit` above and supersedes this split. Windows caps lower
-  // because process creation is heavier there.
-  const parallelSafeCap = isWindows ? 2 : 4;
-  const parallelSafeWidth = parallelism > 1 ? parallelism : Math.min(parallelSafeCap, availableParallelism());
+  // widens `limit` above and supersedes this split. macOS is capped at 4: the
+  // Intel minis are 6-core i7-8700B (12 HT threads => width 11), and each
+  // M2 Ultra host runs two 18-vCPU tart VMs (width 17 apiece, 34 on 24
+  // cores when both are busy); both hit the 45-minute job timeout uncapped.
+  const parallelSafeCap = isMacOS ? 4 : Infinity;
+  const parallelSafeWidth =
+    parallelism > 1 ? parallelism : Math.min(parallelSafeCap, Math.max(availableParallelism() - 1, 1));
   const parallelSafeLimit = parallelism > 1 ? limit : pLimit(parallelSafeWidth);
   const isParallelSafeTest = testPath => {
     const p = testPath.replaceAll("\\", "/");
     return p.includes("js/node/test/parallel/") || p.includes("js/bun/test/parallel/");
   };
   console.log("parallel-safe width", parallelSafeWidth);
+  const validationApplies = basename(execPath).includes("asan") || !isCI;
 
   /**
    * @param {string} title
@@ -714,6 +748,30 @@ async function runTests() {
     }
   }
 
+  const isNapiAddonTest = t => /napi[\\/]node-napi-tests[\\/].*[\\/]do\.test\.ts$/.test(t);
+  const napiAddonDirs = [...new Set(tests.filter(isNapiAddonTest).map(t => dirname(join(testsPath, t))))];
+  let napiPrebuild = null;
+  if (napiAddonDirs.length) {
+    let output = "";
+    const started = Date.now();
+    napiPrebuild = spawnBun(execPath, {
+      args: [join(testsPath, "napi/node-napi-tests/prebuild.ts"), ...napiAddonDirs],
+      cwd,
+      timeout: integrationTimeout,
+      stdout: chunk => (output += chunk),
+      stderr: chunk => (output += chunk),
+    }).then(({ ok, error }) => ({ ok, error, output, seconds: (Date.now() - started) / 1000 }));
+  }
+  const awaitNapiPrebuild = async testPath => {
+    if (napiPrebuild && isNapiAddonTest(testPath)) {
+      const { ok, error, output, seconds } = await napiPrebuild;
+      napiPrebuild = null;
+      startGroup(`napi prebuild: ${napiAddonDirs.length} addon(s), ${seconds.toFixed(1)}s`);
+      process.stdout.write(output);
+      if (!ok) console.warn("napi prebuild failed; each do.test.ts builds its own addon:", error);
+    }
+  };
+
   if (!failedResults.length) {
     // TODO: remove windows exclusion here
     if (isCI && !isWindows) {
@@ -756,7 +814,8 @@ async function runTests() {
       }
     }
 
-    const runOneTest = (testPath, concurrent) => {
+    const runOneTest = async (testPath, concurrent) => {
+      await awaitNapiPrebuild(testPath);
       const absoluteTestPath = join(testsPath, testPath);
       const title = relative(cwd, absoluteTestPath).replaceAll(sep, "/");
       if (isNodeTest(testPath)) {
@@ -885,12 +944,209 @@ async function runTests() {
       }
     };
 
-    // Phase 1: every non-parallel-safe test, one at a time (or `--parallel`
-    // wide). Phase 2: the parallel-safe set, N-wide. The phases do not
-    // overlap so a parallel-safe process never contends with a serial test.
+    const runParallelBucket = async bucketFiles => {
+      for (const t of bucketFiles) await awaitNapiPrebuild(t);
+      const width = parallelSafeWidth;
+      const label = `${bucketFiles.length} files in parallel (${width}×)`;
+      const range = `${getAnsi("gray")}[${i + 1}-${i + bucketFiles.length}/${total}]${getAnsi("reset")}`;
+      const junitPath = join(
+        cwd,
+        `parallel-bucket-junit-${(options["step"] || getOs()).replace(/[^a-zA-Z0-9._-]/g, "_")}-shard${options["shard"] ?? 0}.xml`,
+      );
+      const isAsan = basename(execPath).includes("asan");
+      const perTestTimeout = Math.ceil(testTimeout / 2) * (isAsan ? 3 : 1);
+      const env = {};
+      if (validationApplies) {
+        env.BUN_JSC_validateExceptionChecks = "1";
+        env.BUN_JSC_dumpSimulatedThrows = "1";
+        env.BUN_DESTRUCT_VM_ON_EXIT = "1";
+        env.ASAN_OPTIONS = "allow_user_segv_handler=1:disable_coredump=0:detect_leaks=1:abort_on_error=1";
+        env.LSAN_OPTIONS = `malloc_context_size=30:print_suppressions=0:suppressions=${process.cwd()}/test/leaksan.supp`;
+      }
+      if (isAsan) env.BUN_FEATURE_FLAG_NO_ORPHANS = "1";
+
+      const byPath = new Map(bucketFiles.map(t => [join("test", t).replaceAll("\\", "/"), t]));
+      const norm = p =>
+        byPath.get(
+          p
+            .trim()
+            .replace(/:$/, "")
+            .replace(/ \(\d+s\)$/, "")
+            .replaceAll("\\", "/"),
+        );
+
+      const { ok, error, stdout, crashes } = await startGroup(`${range} ${label}`, () =>
+        spawnBun(execPath, {
+          args: [
+            "test",
+            `--parallel=${width}`,
+            `--timeout=${perTestTimeout}`,
+            "--dots",
+            "--reporter=junit",
+            `--reporter-outfile=${junitPath}`,
+            ...bucketFiles.map(t => join(testsPath, t)),
+          ],
+          cwd,
+          timeout: Math.max(
+            60_000,
+            Math.min(Math.max(10 * 60_000, bucketFiles.length * 5_000), jobBudgetMs() - 5 * 60_000),
+          ),
+          idleTimeout: parseInt(process.env.BUN_RUNNER_BATCH_IDLE_MS || "", 10) || 4 * 60_000,
+          gracefulTimeout: true,
+          env,
+          stdout: chunk => pipeTestStdout(process.stdout, chunk),
+          stderr: chunk => pipeTestStdout(process.stderr, chunk),
+        }),
+      );
+      if (crashes) process.stderr.write(crashes);
+
+      const suites = new Map(); // repo-relative path -> { failures, seconds, cases: [{name, message}] }
+      const unescapeXml = str =>
+        str
+          .replace(/&#(\d+);/g, (_, code) => String.fromCharCode(Number(code)))
+          .replace(/&quot;/g, '"')
+          .replace(/&apos;/g, "'")
+          .replace(/&lt;/g, "<")
+          .replace(/&gt;/g, ">")
+          .replace(/&amp;/g, "&");
+      try {
+        const xml = readFileSync(junitPath, "utf-8");
+        for (const [, attrs] of xml.matchAll(/<testsuite\b([^>]*)>/g)) {
+          const file = /\bfile="([^"]+)"/.exec(attrs)?.[1];
+          const failures = Number(/\bfailures="(\d+)"/.exec(attrs)?.[1] ?? 0);
+          const seconds = Number(/\btime="([\d.]+)"/.exec(attrs)?.[1] ?? 0);
+          if (file) suites.set(unescapeXml(file).replaceAll("\\", "/"), { failures, seconds, cases: [] });
+        }
+        for (const [, caseAttrs, failureAttrs] of xml.matchAll(/<testcase\b([^>]*)>\s*<failure\b([^>]*)>/g)) {
+          const file = /\bfile="([^"]+)"/.exec(caseAttrs)?.[1];
+          const entry = file && suites.get(unescapeXml(file).replaceAll("\\", "/"));
+          if (!entry) continue;
+          entry.cases.push({
+            name: unescapeXml(/\bname="([^"]*)"/.exec(caseAttrs)?.[1] ?? "(unnamed)"),
+            message: unescapeXml(/\bmessage="([^"]*)"/.exec(failureAttrs)?.[1] ?? ""),
+          });
+        }
+      } catch {}
+      if (suites.size && isBuildkite) uploadArtifactsToBuildKite(junitPath);
+      else rmSync(junitPath, { force: true });
+
+      const failed = new Set(); // ran and failed (or hung) — a solo pass is a parallel-mode flake
+      const incomplete = new Set(); // never finished/started — re-run quietly
+      let evidence = suites.size > 0;
+      if (!ok && suites.size) {
+        for (const t of bucketFiles) {
+          const suite = suites.get(join("test", t).replaceAll("\\", "/"));
+          if (suite === undefined) incomplete.add(t);
+          else if (suite.failures > 0) failed.add(t);
+        }
+      } else if (!ok) {
+        let list = null; // "running" | "not-started" while inside an interrupt report list
+        for (const line of stripAnsi(stdout).split(/\r?\n/)) {
+          if (line.startsWith("Interrupted while still running:")) {
+            list = "running";
+            continue;
+          }
+          if (/^\d+ file\(s\) had not started:$/.test(line)) {
+            list = "not-started";
+            continue;
+          }
+          if (list && /^ {2}\S/.test(line)) {
+            const testPath = norm(line);
+            if (testPath) (list === "running" ? failed : incomplete).add(testPath);
+            continue;
+          }
+          list = null;
+          const ended = /^✗ (.+?) \((worker crashed|aborted:|no live workers)/.exec(line);
+          const testPath = ended && norm(ended[1]);
+          if (testPath) (ended[2] === "worker crashed" ? failed : incomplete).add(testPath);
+        }
+        evidence = failed.size + incomplete.size > 0;
+      }
+      const rerun = !ok && !evidence ? [...bucketFiles] : [...failed, ...incomplete];
+      const rerunSet = new Set(rerun);
+
+      for (const t of bucketFiles) {
+        if (rerunSet.has(t)) continue;
+        const title = join("test", t).replaceAll("\\", "/");
+        const seconds = suites.get(title)?.seconds;
+        const timing = seconds === undefined ? "" : ` ${getAnsi("gray")}(${seconds.toFixed(2)}s)${getAnsi("reset")}`;
+        console.log(`${getAnsi("gray")}[${++i}/${total}]${getAnsi("reset")} ${title}${timing}`);
+        okResults.push({
+          testPath: title,
+          ok: true,
+          status: "pass",
+          tests: [],
+          errors: [],
+          stdout: "",
+          stdoutPreview: "",
+        });
+      }
+      for (const t of bucketFiles) {
+        if (!failed.has(t)) continue;
+        const title = join("test", t).replaceAll("\\", "/");
+        const suite = suites.get(title);
+        if (!suite?.cases.length) continue;
+        startGroup(
+          `${title} - ${suite.failures} failing in the parallel batch ${getAnsi("gray")}(${suite.seconds.toFixed(2)}s)${getAnsi("reset")}`,
+          () => {
+            for (const { name, message } of suite.cases) {
+              console.log(`${getAnsi("red")}✗${getAnsi("reset")} ${name}`);
+              if (message) console.log(message.replace(/^/gm, "    "));
+            }
+          },
+        );
+      }
+      if (rerun.length) {
+        console.log(
+          `${getAnsi("yellow")}parallel bucket: ${evidence ? `retrying ${failed.size} failed and ${incomplete.size} unfinished file(s)${suites.size ? "" : " (from streamed output; no junit)"}` : `no junit and no streamed evidence, re-running all ${rerun.length} file(s)`} one at a time${getAnsi("reset")}`,
+        );
+        for (const testPath of rerun) {
+          const result = await runOneTest(testPath, false);
+          if (result?.ok && failed.has(testPath) && isBuildkite) {
+            const title = join("test", testPath).replaceAll("\\", "/");
+            const cases = suites.get(title)?.cases ?? [];
+            const first = cases[0];
+            const firstError = first ? `${first.name} — ${first.message.split("\n")[0]}` : "";
+            const reason = firstError
+              ? escapeHtml(firstError.length > 100 ? `${firstError.slice(0, 97)}…` : firstError)
+              : "failed in the parallel batch";
+            const detail = cases.length
+              ? `\n\n\`\`\`terminal\n${cases.map(({ name, message }) => `✗ ${name}\n${message}`).join("\n\n")}\n\`\`\`\n\n`
+              : "";
+            reportAnnotationToBuildKite({
+              context: "flaky",
+              label: title,
+              style: "warning",
+              content: `<details><summary><a href="${getFileUrl(title)}"><code>${title}</code></a> - ${reason} <i>(in the parallel batch on ${getBuildLabel()}; passed alone)</i></summary>${detail}</details>`,
+            });
+          }
+        }
+      }
+    };
+
+    const modifiedTests = new Set(
+      allFiles.filter(filename => filename.startsWith("test/")).map(filename => filename.slice("test/".length)),
+    );
+    const isModified = t => modifiedTests.has(t.replaceAll("\\", "/"));
+    const isBucketCandidate = t =>
+      parallelism === 1 &&
+      isTestStrict(t) &&
+      !isNodeTest(t) &&
+      !/stress/i.test(t) &&
+      isParallelAllowlisted(t) &&
+      !needsDockerService(t) &&
+      (!validationApplies || (shouldValidateExceptions(t) && shouldValidateLeakSan(t)));
+
     const serialTests = tests.filter(t => !isParallelSafeTest(t));
     const parallelSafeTests = tests.filter(t => isParallelSafeTest(t));
-    await Promise.all(serialTests.map(t => limit(() => runOneTest(t, parallelism > 1))));
+    const modifiedSerialTests = serialTests.filter(t => isModified(t));
+    const bucketCandidates = serialTests.filter(t => !isModified(t) && isBucketCandidate(t));
+    const bucketable = bucketCandidates.length >= 8 ? new Set(bucketCandidates) : new Set();
+    const restSerialTests = serialTests.filter(t => !isModified(t) && !bucketable.has(t));
+
+    await Promise.all(modifiedSerialTests.map(t => limit(() => runOneTest(t, parallelism > 1))));
+    await Promise.all(restSerialTests.map(t => limit(() => runOneTest(t, parallelism > 1))));
+    if (bucketable.size) await runParallelBucket(bucketCandidates);
     // Concurrent tests log their title without opening a group (interleaved
     // output can't nest), so give the phase its own group instead of letting
     // the log viewer fold every line under the last serial test's group.
@@ -1193,9 +1449,13 @@ async function spawnSafe(options) {
   let signalCode;
   let spawnError;
   let timestamp;
+  let timedOut = false;
+  let idledOut = false;
   let duration;
   let subprocess;
   let timer;
+  let idleTimer;
+  let armIdleTimer;
   let buffer = "";
   let doneCalls = 0;
   const beforeDone = resolve => {
@@ -1208,6 +1468,7 @@ async function spawnSafe(options) {
     if (timer) {
       clearTimeout(timer);
     }
+    clearTimeout(idleTimer);
     subprocess.stderr.unref();
     subprocess.stdout.unref();
     subprocess.unref();
@@ -1243,13 +1504,36 @@ async function spawnSafe(options) {
       }
       subprocess = spawn(command, args, {
         stdio: ["ignore", "pipe", "pipe"],
-        timeout,
+        timeout: options.gracefulTimeout ? undefined : timeout,
         cwd,
         env,
       });
       subprocess.on("spawn", () => {
         timestamp = Date.now();
-        timer = setTimeout(() => done(resolve), timeout);
+        const expire = () => {
+          timedOut = true;
+          clearTimeout(idleTimer);
+          if (options.gracefulTimeout && !isWindows) {
+            subprocess.kill("SIGTERM");
+            timer = setTimeout(() => {
+              subprocess.kill(9);
+              done(resolve);
+            }, 15_000);
+            return;
+          }
+          done(resolve);
+        };
+        timer = setTimeout(expire, timeout);
+        if (options.idleTimeout) {
+          armIdleTimer = () => {
+            clearTimeout(idleTimer);
+            idleTimer = setTimeout(() => {
+              idledOut = true;
+              expire();
+            }, options.idleTimeout);
+          };
+          armIdleTimer();
+        }
       });
       subprocess.on("error", error => {
         spawnError = error;
@@ -1269,11 +1553,13 @@ async function spawnSafe(options) {
         beforeDone(resolve);
       });
       subprocess.stdout.on("data", chunk => {
+        armIdleTimer?.();
         const text = chunk.toString("utf-8");
         stdout?.(text);
         buffer += text;
       });
       subprocess.stderr.on("data", chunk => {
+        armIdleTimer?.();
         const text = chunk.toString("utf-8");
         stderr?.(text);
         buffer += text;
@@ -1321,6 +1607,36 @@ async function spawnSafe(options) {
       error += ` thrown from ${thrown[1]} @ ${repoRel(thrown[2])}`;
     }
     if (count > 1) error += ` +${count - 1} more`;
+  } else if (/LeakSanitizer: detected memory leaks/.test(buffer)) {
+    error = "leak";
+    const leak =
+      /(Direct|Indirect) leak of (\d+) byte\(s\) in (\d+) object\(s\) allocated from:\s*\n((?:\s*#\d+[^\n]*\n)+)/.exec(
+        buffer,
+      );
+    if (leak) {
+      const [, kind, bytes, objects, stack] = leak;
+      error = `${kind.toLowerCase()} leak of ${bytes}b${objects === "1" ? "" : ` in ${objects} objects`}`;
+      const frames = stack
+        .split("\n")
+        .map(line => /#\d+ 0x[0-9a-f]+ in ([^\n]+)/i.exec(line)?.[1]?.trim())
+        .filter(Boolean);
+      const isAlloc = f =>
+        /^(?:__interceptor_|__sanitizer|_?malloc\b|_?malloc_zone|calloc|realloc|posix_memalign|operator new|mi_|bmalloc|bun_alloc|WTF::fast(?:Zeroed)?Malloc|WTF::Malloc)/i.test(
+          f,
+        );
+      const ownTree = f => {
+        const loc = /(\S+):\d+$/.exec(f)?.[1];
+        return !!loc && loc.replace(/^(?:\.\.?[\\/])+/, "").startsWith("src/");
+      };
+      const where = frames.find(f => !isAlloc(f) && ownTree(f)) ?? frames.find(f => !isAlloc(f));
+      if (where) {
+        const [, symbol, loc] = /^(.*?)\s+(\S+:\d+)$/.exec(where) ?? [null, where, ""];
+        const file = loc.replace(/^(?:\.\.?[\\/])+/, "");
+        error += ` in ${symbol.replace(/\(.*$/, "")}${file ? ` (${file})` : ""}`.slice(0, 160);
+      }
+    }
+    const leaks = buffer.match(/(?:Direct|Indirect) leak of/g)?.length ?? 1;
+    if (leaks > 1) error += ` +${leaks - 1} more`;
   } else if (
     (error = /thread \d+ panic: (.*)(?:\r\n|\r|\n|\\n)/i.exec(buffer)) ||
     (error = /panic\(.*\): (.*)(?:\r\n|\r|\n|\\n)/i.exec(buffer)) ||
@@ -1349,6 +1665,32 @@ async function spawnSafe(options) {
     } else {
       error = "code 1";
     }
+    const lines = stripAnsi(buffer).split(/\r?\n/);
+    const failAt = lines.findIndex(line => /^\(fail\) /.test(line.trim()));
+    if (failAt === -1) {
+      const at = lines.findIndex(
+        (line, k) => k > 0 && /^\s+at /.test(line) && lines[k - 1].trim() && !/^\s+at /.test(lines[k - 1]),
+      );
+      if (at !== -1) {
+        const message = lines[at - 1].trim();
+        error += `: ${message.length > 100 ? `${message.slice(0, 97)}…` : message}`;
+      }
+    } else {
+      const name = lines[failAt]
+        .trim()
+        .replace(/^\(fail\) /, "")
+        .replace(/ \[[\d.]+m?s\]$/, "");
+      let reason = "";
+      for (let k = failAt - 1; k >= Math.max(0, failAt - 40); k--) {
+        const m = /^\s*error: (.+)$/.exec(lines[k]);
+        if (m) {
+          reason = m[1].trim();
+          break;
+        }
+      }
+      const first = reason ? `${name} — ${reason}` : name;
+      error += `: ${first.length > 100 ? `${first.slice(0, 97)}…` : first}`;
+    }
   } else if (exitCode === undefined) {
     error = "timeout";
   } else if (exitCode !== 0) {
@@ -1360,6 +1702,8 @@ async function spawnSafe(options) {
     }
     error = `code ${exitCode}`;
   }
+  if (timedOut && (!error || error === signalCode || /^code \d+$/.test(error)))
+    error = idledOut ? "stalled" : "timeout";
   return {
     ok: exitCode === 0 && !signalCode && !spawnError,
     error,
@@ -1409,7 +1753,7 @@ function getCombinedPath(execPath) {
  * @param {SpawnOptions} options
  * @returns {Promise<SpawnBunResult>}
  */
-async function spawnBun(execPath, { args, cwd, timeout, env, stdout, stderr }) {
+async function spawnBun(execPath, { args, cwd, timeout, gracefulTimeout, idleTimeout, env, stdout, stderr }) {
   const path = getCombinedPath(execPath);
   const tmpdirPath = mkdtempSync(join(tmpdir(), "buntmp-"));
   const { username, homedir } = userInfo();
@@ -1463,6 +1807,8 @@ async function spawnBun(execPath, { args, cwd, timeout, env, stdout, stderr }) {
       args,
       cwd,
       timeout,
+      gracefulTimeout,
+      idleTimeout,
       env: bunEnv,
       stdout,
       stderr,
@@ -1589,7 +1935,6 @@ async function spawnBun(execPath, { args, cwd, timeout, env, stdout, stderr }) {
  */
 
 /**
- *
  * @param {string} execPath
  * @param {string} testPath
  * @param {object} [opts]
@@ -1600,9 +1945,6 @@ async function spawnBun(execPath, { args, cwd, timeout, env, stdout, stderr }) {
  */
 async function spawnBunTest(execPath, testPath, opts = { cwd }) {
   const timeout = getTestTimeout(testPath);
-  // ASAN builds run 5-10x slower (instrumentation + the agent only exposes
-  // 2 of its 8 vCPUs); without a wider per-test timeout, install/git tests
-  // that spawn many subprocesses time out on otherwise-healthy runs.
   const isAsan = basename(execPath).includes("asan");
   const perTestTimeout = Math.ceil(timeout / 2) * (isAsan ? 3 : 1);
   const absPath = join(opts["cwd"], testPath);
@@ -2263,11 +2605,6 @@ function getRelevantTests(cwd, testModifiers, testExpectations) {
   // init overlap with real test work instead of being paid as wall time
   // inside the first docker test's beforeAll. Stable sort: relative order is
   // otherwise preserved, and sharding above is unaffected.
-  const dockerPrefixes = Object.keys(dockerPrestartMap);
-  const needsDockerService = testPath => {
-    const normalized = testPath.replaceAll("\\", "/");
-    return dockerPrefixes.some(prefix => normalized.startsWith(prefix));
-  };
   filteredTests.sort((a, b) => Number(needsDockerService(a)) - Number(needsDockerService(b)));
 
   // Prioritize modified test files

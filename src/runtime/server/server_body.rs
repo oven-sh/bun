@@ -772,19 +772,48 @@ impl AnyRoute {
             if let Some(dir) = argument.get_optional_slice(global, b"dir")? {
                 let relative_root = init_ctx.js_string_allocations.track(dir);
 
-                let style: FrameworkRouter::Style =
-                    if let Some(style_js) = argument.get(global, b"style")? {
-                        FrameworkRouter::Style::from_js(style_js, global)?
-                    } else {
-                        FrameworkRouter::Style::NextjsPages
-                    };
-                // Style impls Drop; `?` drops it on the error path.
-
                 if !strings::ends_with(path, b"/*") {
                     return Err(global.throw_invalid_arguments(format_args!(
                         "To mount a directory, make sure the path ends in `/*`"
                     )));
                 }
+
+                let style_js = argument.get(global, b"style")?;
+                if style_js.is_none() {
+                    if strings::index_of_char(path, b':').is_some() {
+                        return Err(global.throw_invalid_arguments(format_args!(
+                            "Directory routes do not support :parameters; use a fixed prefix ending in `/*`"
+                        )));
+                    }
+                    if strings::contains(path, b"//") {
+                        return Err(global.throw_invalid_arguments(format_args!(
+                            "Directory route paths cannot contain empty segments"
+                        )));
+                    }
+                    // `{ dir }` without `style` serves the directory tree
+                    // verbatim; `{ dir, style }` opts into framework routing.
+                    let url_prefix: &[u8] = if path.len() == 2 {
+                        b"/"
+                    } else {
+                        &path[..path.len() - 1]
+                    };
+                    let stat_cache = argument
+                        .get_boolean_loose(global, b"statCache")?
+                        .unwrap_or(true);
+                    let route = super::DirectoryRoute::create(
+                        global,
+                        relative_root,
+                        url_prefix,
+                        stat_cache,
+                    )?;
+                    return Ok(Some(AnyRoute::Directory(NonNull::new(route).expect(
+                        "DirectoryRoute::create returns a fresh heap allocation",
+                    ))));
+                }
+
+                let style: FrameworkRouter::Style =
+                    FrameworkRouter::Style::from_js(style_js.unwrap(), global)?;
+                // Style impls Drop; `?` drops it on the error path.
 
                 // trim the /*
                 // NOTE: `FileSystemRouterType` fields are `Cow<'static,[u8]>`.
@@ -2159,6 +2188,17 @@ where
         upgrader.upgrade_context = Some(usize::MAX as *mut WebSocketUpgradeContext);
         let signal = upgrader.signal.take();
         upgrader.resp = None;
+
+        // Snapshot lazy url/headers before detaching (mirrors to_async_without_abort_handler).
+        if request.ensure_url().is_err() {
+            request.url.set(BunString::empty());
+        }
+        if !request.has_fetch_headers() {
+            if let Some(req_ptr) = upgrader.req {
+                request.set_fetch_headers(Some(HeadersRef::create_from_uws(req_ptr)));
+            }
+        }
+
         request.request_context = AnyRequestContext::NULL;
         upgrader.request_weakref.deref();
 

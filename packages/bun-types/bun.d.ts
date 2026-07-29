@@ -1939,6 +1939,11 @@ declare module "bun" {
 
     write(chunk: string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer): number;
     /**
+     * Write multiple chunks of data in order.
+     * @returns Number of bytes written
+     */
+    writev(chunks: ArrayBufferView[]): number;
+    /**
      * Flush the internal buffer.
      *
      * - If {@link ArrayBufferSink.start} was passed a `stream` option, this returns an `ArrayBuffer`.

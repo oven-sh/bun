@@ -480,6 +480,7 @@ BUN_DECLARE_HOST_FUNCTION(ArrayBufferSink__flush);
 BUN_DECLARE_HOST_FUNCTION(ArrayBufferSink__start);
 ZIG_DECL void ArrayBufferSink__updateRef(void* arg0, bool arg1);
 BUN_DECLARE_HOST_FUNCTION(ArrayBufferSink__write);
+BUN_DECLARE_HOST_FUNCTION(ArrayBufferSink__writev);
 
 #endif
 CPP_DECL JSC::EncodedJSValue HTTPSResponseSink__assignToStream(JSC::JSGlobalObject* arg0, JSC::EncodedJSValue JSValue1, void* arg2, void** arg3);
@@ -499,6 +500,7 @@ BUN_DECLARE_HOST_FUNCTION(HTTPSResponseSink__flush);
 BUN_DECLARE_HOST_FUNCTION(HTTPSResponseSink__start);
 ZIG_DECL void HTTPSResponseSink__updateRef(void* arg0, bool arg1);
 BUN_DECLARE_HOST_FUNCTION(HTTPSResponseSink__write);
+BUN_DECLARE_HOST_FUNCTION(HTTPSResponseSink__writev);
 
 #endif
 CPP_DECL JSC::EncodedJSValue HTTPResponseSink__assignToStream(JSC::JSGlobalObject* arg0, JSC::EncodedJSValue JSValue1, void* arg2, void** arg3);
@@ -518,6 +520,7 @@ BUN_DECLARE_HOST_FUNCTION(HTTPResponseSink__flush);
 BUN_DECLARE_HOST_FUNCTION(HTTPResponseSink__start);
 ZIG_DECL void HTTPResponseSink__updateRef(void* arg0, bool arg1);
 BUN_DECLARE_HOST_FUNCTION(HTTPResponseSink__write);
+BUN_DECLARE_HOST_FUNCTION(HTTPResponseSink__writev);
 
 #endif
 CPP_DECL JSC::EncodedJSValue FileSink__assignToStream(JSC::JSGlobalObject* arg0, JSC::EncodedJSValue JSValue1, void* arg2, void** arg3);
@@ -537,6 +540,7 @@ BUN_DECLARE_HOST_FUNCTION(FileSink__flush);
 BUN_DECLARE_HOST_FUNCTION(FileSink__start);
 ZIG_DECL void FileSink__updateRef(void* arg0, bool arg1);
 BUN_DECLARE_HOST_FUNCTION(FileSink__write);
+BUN_DECLARE_HOST_FUNCTION(FileSink__writev);
 
 #endif
 
@@ -557,6 +561,7 @@ BUN_DECLARE_HOST_FUNCTION(FileSink__flush);
 BUN_DECLARE_HOST_FUNCTION(FileSink__start);
 ZIG_DECL void FileSink__updateRef(void* arg0, bool arg1);
 BUN_DECLARE_HOST_FUNCTION(FileSink__write);
+BUN_DECLARE_HOST_FUNCTION(FileSink__writev);
 
 #endif
 CPP_DECL JSC::EncodedJSValue NetworkSink__assignToStream(JSC::JSGlobalObject* arg0, JSC::EncodedJSValue JSValue1, void* arg2, void** arg3);
@@ -577,6 +582,7 @@ BUN_DECLARE_HOST_FUNCTION(NetworkSink__flush);
 BUN_DECLARE_HOST_FUNCTION(NetworkSink__start);
 ZIG_DECL void NetworkSink__updateRef(void* arg0, bool arg1);
 BUN_DECLARE_HOST_FUNCTION(NetworkSink__write);
+BUN_DECLARE_HOST_FUNCTION(NetworkSink__writev);
 #endif
 
 CPP_DECL JSC::EncodedJSValue H3ResponseSink__assignToStream(JSC::JSGlobalObject* arg0, JSC::EncodedJSValue JSValue1, void* arg2, void** arg3);
@@ -597,6 +603,7 @@ BUN_DECLARE_HOST_FUNCTION(H3ResponseSink__flush);
 BUN_DECLARE_HOST_FUNCTION(H3ResponseSink__start);
 ZIG_DECL void H3ResponseSink__updateRef(void* arg0, bool arg1);
 BUN_DECLARE_HOST_FUNCTION(H3ResponseSink__write);
+BUN_DECLARE_HOST_FUNCTION(H3ResponseSink__writev);
 #endif
 
 #ifdef __cplusplus

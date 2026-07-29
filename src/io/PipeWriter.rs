@@ -67,15 +67,12 @@ pub trait PosixPipeWriter {
     fn try_write(&self, force_sync: bool, buf: &[u8]) -> WriteResult {
         // PERF: try_write_with_write_fn is not monomorphized per FileType —
         // profile if hot.
-        let ft = if !force_sync {
-            self.get_file_type()
-        } else {
-            FileType::File
-        };
-        match ft {
-            FileType::NonblockingPipe | FileType::File => {
-                self.try_write_with_write_fn(buf, sys::write)
-            }
+        if force_sync {
+            return self.try_write_with_write_fn(buf, sys::write);
+        }
+        match self.get_file_type() {
+            FileType::NonblockingPipe => self.try_write_with_write_fn(buf, sys::write),
+            FileType::File => self.try_write_with_write_fn(buf, sys::write_nonblocking),
             FileType::Pipe => self.try_write_with_write_fn(buf, write_to_blocking_pipe),
             FileType::Socket => self.try_write_with_write_fn(buf, sys::send_non_block),
         }
@@ -604,6 +601,7 @@ pub struct PosixStreamingWriter<Parent: PosixStreamingWriterParent> {
     pub is_done: bool,
     pub closed_without_reporting: bool,
     pub force_sync: bool,
+    pub close_fd: bool,
 }
 
 impl<Parent: PosixStreamingWriterParent> Default for PosixStreamingWriter<Parent> {
@@ -615,6 +613,7 @@ impl<Parent: PosixStreamingWriterParent> Default for PosixStreamingWriter<Parent
             is_done: false,
             closed_without_reporting: false,
             force_sync: false,
+            close_fd: true,
         }
     }
 }
@@ -766,7 +765,8 @@ impl<Parent: PosixStreamingWriterParent> PosixStreamingWriter<Parent> {
         if self.get_fd() != Fd::INVALID {
             debug_assert!(!self.closed_without_reporting);
             self.closed_without_reporting = true;
-            self.handle.close(None, None::<fn(*mut c_void)>);
+            self.handle
+                .close_impl(None, None::<fn(*mut c_void)>, self.close_fd);
         }
     }
 
@@ -946,6 +946,125 @@ impl<Parent: PosixStreamingWriterParent> PosixStreamingWriter<Parent> {
         rc
     }
 
+    fn writev_buffered(&mut self, bufs: &[&[u8]], total: usize) -> WriteResult {
+        if self.outgoing.ensure_unused_capacity(total).is_err() {
+            return WriteResult::Err(sys::Error::oom());
+        }
+        for b in bufs {
+            self.outgoing.write_assume_capacity(b);
+        }
+        self.maybe_write_newly_buffered_data(total)
+    }
+
+    #[cfg(unix)]
+    fn buffer_tail(&mut self, bufs: &[&[u8]], mut skip: usize, remaining: usize) -> Result<(), ()> {
+        if self.outgoing.ensure_unused_capacity(remaining).is_err() {
+            return Err(());
+        }
+        for b in bufs {
+            if skip >= b.len() {
+                skip -= b.len();
+                continue;
+            }
+            self.outgoing.write_assume_capacity(&b[skip..]);
+            skip = 0;
+        }
+        Ok(())
+    }
+
+    pub fn writev(&mut self, bufs: &[&[u8]]) -> WriteResult {
+        if self.is_done || self.closed_without_reporting {
+            return WriteResult::Done(0);
+        }
+        let mut total: usize = 0;
+        for b in bufs {
+            total += b.len();
+        }
+        if total == 0 {
+            return WriteResult::Wrote(0);
+        }
+        #[cfg(not(unix))]
+        {
+            self.writev_buffered(bufs, total)
+        }
+        #[cfg(unix)]
+        {
+            const IOV_MAX: usize = 1024;
+            if self.outgoing.size() > 0 || self.should_buffer(total) || bufs.len() > IOV_MAX {
+                return self.writev_buffered(bufs, total);
+            }
+
+            let fd = self.get_fd();
+            if fd == Fd::INVALID {
+                return WriteResult::Done(0);
+            }
+            let file_type = if self.force_sync {
+                FileType::File
+            } else {
+                self.get_file_type()
+            };
+            if matches!(file_type, FileType::Pipe) {
+                return self.writev_buffered(bufs, total);
+            }
+
+            let mut iov: Vec<libc::iovec> = Vec::with_capacity(bufs.len());
+            for b in bufs {
+                if b.is_empty() {
+                    continue;
+                }
+                iov.push(libc::iovec {
+                    iov_base: b.as_ptr().cast_mut().cast::<core::ffi::c_void>(),
+                    iov_len: b.len(),
+                });
+            }
+
+            let mut offset: usize = 0;
+            let mut start: usize = 0;
+            loop {
+                let rc = if matches!(file_type, FileType::File) && !self.force_sync {
+                    sys::writev_nonblocking(fd, &iov[start..])
+                } else {
+                    sys::writev(fd, &iov[start..])
+                };
+                let wrote = match rc {
+                    sys::Result::Err(err) => {
+                        if err.is_retry() {
+                            if self.buffer_tail(bufs, offset, total - offset).is_err() {
+                                return WriteResult::Err(sys::Error::oom());
+                            }
+                            self.parent_on_write(offset, WriteStatus::Pending);
+                            Self::register_poll(self);
+                            return WriteResult::Pending(offset);
+                        }
+                        return WriteResult::Err(err);
+                    }
+                    sys::Result::Ok(n) => n,
+                };
+                offset += wrote;
+                if wrote == 0 {
+                    self.parent_on_write(offset, WriteStatus::EndOfFile);
+                    return WriteResult::Done(offset);
+                }
+                if offset == total {
+                    self.parent_on_write(offset, WriteStatus::Drained);
+                    return WriteResult::Wrote(offset);
+                }
+                let mut consumed = wrote;
+                while start < iov.len() && consumed >= iov[start].iov_len {
+                    consumed -= iov[start].iov_len;
+                    start += 1;
+                }
+                if start < iov.len() && consumed > 0 {
+                    // SAFETY: `consumed < iov[start].iov_len`, so the advanced
+                    // base stays within the original live buffer.
+                    iov[start].iov_base =
+                        unsafe { iov[start].iov_base.cast::<u8>().add(consumed) }.cast();
+                    iov[start].iov_len -= consumed;
+                }
+            }
+        }
+    }
+
     pub fn flush(&mut self) -> WriteResult {
         if self.closed_without_reporting || self.is_done {
             return WriteResult::Done(0);
@@ -1026,10 +1145,11 @@ impl<Parent: PosixStreamingWriterParent> PosixStreamingWriter<Parent> {
         }
 
         let parent = self.parent;
-        self.handle.close(
+        self.handle.close_impl(
             Some(parent.cast()),
             // SAFETY: parent was set via set_parent with a *mut Parent.
             Some(|ctx: *mut c_void| unsafe { Parent::on_close(ctx.cast::<Parent>()) }),
+            self.close_fd,
         );
     }
 
@@ -2443,6 +2563,62 @@ impl<Parent: WindowsStreamingWriterParent> WindowsStreamingWriter<Parent> {
         self.write_internal_u8(buffer, WriteKind::Bytes)
     }
 
+    pub fn writev(&mut self, bufs: &[&[u8]]) -> WriteResult {
+        if self.is_done {
+            return WriteResult::Done(0);
+        }
+        let mut total: usize = 0;
+        for b in bufs {
+            total += b.len();
+        }
+        if total == 0 {
+            return WriteResult::Wrote(0);
+        }
+        let had_buffered_data = self.outgoing.is_not_empty();
+        if self.outgoing.ensure_unused_capacity(total).is_err() {
+            return WriteResult::Err(sys::Error::oom());
+        }
+        for b in bufs {
+            self.outgoing.write_assume_capacity(b);
+        }
+
+        if matches!(self.source, Some(Source::SyncFile(_))) {
+            let result = (|| {
+                let remain = self.outgoing.slice();
+                let initial_len = remain.len();
+                let mut remain = remain;
+                let fd = Fd::from_uv(match &self.source {
+                    Some(Source::SyncFile(f)) => f.file,
+                    _ => unreachable!(),
+                });
+                while remain.len() > 0 {
+                    match sys::write(fd, remain) {
+                        sys::Result::Err(err) => return WriteResult::Err(err),
+                        sys::Result::Ok(wrote) => {
+                            remain = &remain[wrote..];
+                            if wrote == 0 {
+                                break;
+                            }
+                        }
+                    }
+                }
+                let wrote = initial_len - remain.len();
+                if wrote == 0 {
+                    return WriteResult::Done(wrote);
+                }
+                WriteResult::Wrote(wrote)
+            })();
+            self.outgoing.reset();
+            return result;
+        }
+
+        if had_buffered_data {
+            return WriteResult::Pending(0);
+        }
+        self.process_send();
+        self.last_write_result.clone()
+    }
+
     pub fn flush(&mut self) -> WriteResult {
         if self.is_done {
             return WriteResult::Done(0);
@@ -2464,7 +2640,8 @@ impl<Parent: WindowsStreamingWriterParent> WindowsStreamingWriter<Parent> {
         self.is_done = true;
 
         if !self.has_pending_data() {
-            if !self.owns_fd {
+            if !self.owns_fd && !matches!(self.source, Some(Source::File(_) | Source::SyncFile(_)))
+            {
                 return;
             }
             self.close();

@@ -6,7 +6,9 @@ use core::sync::atomic::{AtomicI32, Ordering};
 use bun_io::pipe_writer::BaseWindowsPipeWriter as _;
 use bun_io::{self, WriteResult, WriteStatus};
 use bun_jsc::JsCell;
-use bun_sys::{self as sys, Fd, FdExt as _};
+#[cfg(windows)]
+use bun_sys::FdExt as _;
+use bun_sys::{self as sys, Fd};
 
 use crate::api::bun::process::Status as SpawnStatus;
 use crate::webcore::jsc::{CallFrame, EventLoopHandle, JSGlobalObject, JSValue, JsResult};
@@ -644,6 +646,37 @@ impl FileSink {
             sys::Result::Ok(fd) => fd,
         };
 
+        let borrowed = matches!(&options.input_path, PathOrFileDescriptor::Fd(_));
+        #[allow(unused_mut)]
+        let mut owns_fd = !borrowed;
+        self.fd.set(fd);
+        // Pollable fds need a per-sink epoll entry; dup those, adopt the rest.
+        #[cfg(unix)]
+        let fd = if borrowed && self.pollable.get() {
+            let dup = bun_sys::dup_with_flags(fd, 0)?;
+            owns_fd = true;
+            dup
+        } else {
+            fd
+        };
+        // uv_pipe_open adopts the handle; dup so the caller keeps their fd.
+        #[cfg(windows)]
+        let fd = if borrowed
+            && !self.force_sync.get()
+            && matches!(
+                uv::uv_guess_handle(fd.uv()),
+                uv::HandleType::NamedPipe | uv::HandleType::Tty
+            ) {
+            use bun_sys::FdExt as _;
+            let dup = bun_sys::dup(fd)?.make_lib_uv_owned_for_syscall(
+                bun_sys::Tag::dup,
+                bun_sys::ErrorCase::CloseOnFail,
+            )?;
+            owns_fd = true;
+            dup
+        } else {
+            fd
+        };
         #[cfg(windows)]
         {
             if self.force_sync.get() {
@@ -653,10 +686,13 @@ impl FileSink {
                     .with_mut(|w| w.start_sync(fd, self.pollable.get()))
                 {
                     sys::Result::Err(err) => {
-                        fd.close();
+                        if owns_fd {
+                            fd.close();
+                        }
                         return sys::Result::Err(err);
                     }
                     sys::Result::Ok(()) => {
+                        self.writer.with_mut(|w| w.owns_fd = owns_fd);
                         self.writer
                             .with_mut(|w| w.update_ref(self.io_evtloop(), false));
                     }
@@ -668,10 +704,21 @@ impl FileSink {
         // SAFETY(JsCell): `start` is pure I/O setup; no JS.
         match self.writer.with_mut(|w| w.start(fd, self.pollable.get())) {
             sys::Result::Err(err) => {
-                fd.close();
+                // POSIX start() may have set handle; let Drop own the close.
+                #[cfg(unix)]
+                self.writer.with_mut(|w| w.close_fd = owns_fd);
+                // Windows start() leaves source = None on failure; close here.
+                #[cfg(windows)]
+                if owns_fd {
+                    fd.close();
+                }
                 return sys::Result::Err(err);
             }
             sys::Result::Ok(()) => {
+                #[cfg(unix)]
+                self.writer.with_mut(|w| w.close_fd = owns_fd);
+                #[cfg(windows)]
+                self.writer.with_mut(|w| w.owns_fd = owns_fd);
                 // Only keep the event loop ref'd while there's a pending write in progress.
                 // If there's no pending write, no need to keep the event loop ref'd.
                 self.writer
@@ -816,7 +863,7 @@ impl FileSink {
     pub unsafe fn on_auto_flush(this: *mut FileSink) -> bool {
         // SAFETY: caller contract — `this` is live with write+dealloc provenance.
         unsafe {
-            if (*this).done.get() || !(*this).writer.get().has_pending_data() {
+            if !(*this).writer.get().has_pending_data() {
                 (*this).update_ref(false);
                 (*this).auto_flusher.with_mut(|a| a.registered.set(false));
                 return false;
@@ -824,6 +871,7 @@ impl FileSink {
 
             let _guard = FileSinkRef::new_ref(this);
 
+            let done = (*this).done.get();
             let amount_buffered = (*this).writer.get().outgoing.size();
 
             // SAFETY(JsCell): `IOWriter::flush` is pure I/O; the `on_write`
@@ -850,11 +898,17 @@ impl FileSink {
                 }
                 WriteResult::Done(_) => {
                     (*this).update_ref(false);
+                    if done {
+                        (*this).writer.with_mut(|w| w.end());
+                    }
                     (*this).run_pending_later();
                 }
                 WriteResult::Wrote(amount_drained) => {
                     if amount_drained == amount_buffered {
                         (*this).update_ref(false);
+                        if done {
+                            (*this).writer.with_mut(|w| w.end());
+                        }
                         (*this).run_pending_later();
                     }
                 }
@@ -1015,6 +1069,16 @@ impl FileSink {
     #[inline]
     pub fn write_bytes(&self, data: &streams::Result) -> streams::Writable {
         self.write(data)
+    }
+
+    pub fn writev_bytes(&self, bufs: &[&[u8]]) -> streams::Writable {
+        if self.done.get() {
+            return streams::Writable::Done;
+        }
+        let buffered_before = self.writer.get().buffered_len();
+        let rc = self.writer.with_mut(|w| w.writev(bufs));
+        let accepted = self.bytes_accepted(buffered_before, &rc);
+        self.to_result(rc, accepted)
     }
 
     pub fn write_latin1(&self, data: &streams::Result) -> streams::Writable {
@@ -1273,6 +1337,9 @@ impl crate::webcore::sink::JsSinkType for FileSink {
     }
     fn write_bytes(&mut self, data: &streams::Result) -> streams::result::Writable {
         Self::write(self, data)
+    }
+    fn writev_bytes(&mut self, bufs: &[&[u8]]) -> streams::result::Writable {
+        Self::writev_bytes(self, bufs)
     }
     fn write_utf16(&mut self, data: &streams::Result) -> streams::result::Writable {
         Self::write_utf16(self, data)

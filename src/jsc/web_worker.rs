@@ -976,6 +976,9 @@ impl WebWorker {
         unsafe {
             let b = &mut (*vm).transpiler;
             b.resolver.env_loader = NonNull::new(b.env);
+            // Match run_command.rs: no `process.env.X` dot-read inlining at runtime.
+            b.options.env.behavior =
+                bun_options_types::schema::api::DotEnvBehavior::LoadAllWithoutInlining;
 
             if let Some(graph) = parent.standalone_module_graph {
                 (hooks.apply_standalone_runtime_flags)(b, graph);

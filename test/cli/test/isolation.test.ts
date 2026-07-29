@@ -328,7 +328,8 @@ describe.concurrent("bun test --isolate", () => {
           expect(fired).toBe(true);
 
           const server = createServer();
-          const listened = await new Promise<boolean>(resolve => {
+          const listened = await new Promise<boolean>((resolve, reject) => {
+            server.once("error", reject);
             server.listen(0, "127.0.0.1", () => resolve(true));
           });
           server.close();

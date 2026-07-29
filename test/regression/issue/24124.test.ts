@@ -24,7 +24,7 @@ async function publishDryRun(dir: string) {
   return { out, err, exitCode };
 }
 
-test("falls back to $HOME/.npmrc when $XDG_CONFIG_HOME is set but has no .npmrc", async () => {
+test.concurrent("falls back to $HOME/.npmrc when $XDG_CONFIG_HOME is set but has no .npmrc", async () => {
   using dir = tempDir("npmrc-xdg-fallback", {
     "xdg/.keep": "",
     "home/.npmrc": `registry=http://localhost:1/\n//localhost:1/:_authToken=from-home\n`,
@@ -39,7 +39,7 @@ test("falls back to $HOME/.npmrc when $XDG_CONFIG_HOME is set but has no .npmrc"
   expect(exitCode).toBe(0);
 });
 
-test("prefers $XDG_CONFIG_HOME/.npmrc over $HOME/.npmrc when both exist", async () => {
+test.concurrent("prefers $XDG_CONFIG_HOME/.npmrc over $HOME/.npmrc when both exist", async () => {
   using dir = tempDir("npmrc-xdg-wins", {
     "xdg/.npmrc": `registry=http://localhost:1/\n//localhost:1/:_authToken=from-xdg\n`,
     "home/.npmrc": `registry=http://localhost:2/\n`,

@@ -15,7 +15,7 @@ pub struct OutputFile {
     pub loader: Loader,
     pub input_loader: Loader,
     pub src_path: fs::Path<'static>,
-    pub(crate) owned_src_path_text: Box<[u8]>,
+    pub owned_src_path_text: Box<[u8]>,
     pub value: Value,
     pub size: usize,
     pub size_without_sourcemap: usize,
@@ -38,7 +38,7 @@ pub struct OutputFile {
 
 impl OutputFile {
     // Not a `const` because `Box`/`fs::Path` aren't const-constructible.
-    pub(crate) fn zero_value() -> OutputFile {
+    pub fn zero_value() -> OutputFile {
         OutputFile {
             loader: Loader::File,
             input_loader: Loader::Js,

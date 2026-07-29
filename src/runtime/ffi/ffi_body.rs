@@ -2543,7 +2543,7 @@ static WORKAROUND: MyFunctionSStructWorkAround = MyFunctionSStructWorkAround {
 /// `js2native` codegen can resolve it as `crate::ffi::ffi::bun__ffi__cc`.
 #[allow(non_snake_case)]
 #[inline]
-pub fn bun__ffi__cc(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+pub(crate) fn bun__ffi__cc(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
     FFI::bun_ffi_cc(global, callframe)
 }
 

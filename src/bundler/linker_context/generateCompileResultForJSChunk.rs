@@ -26,7 +26,7 @@ use super::generate_code_for_file_in_chunk_js::generate_code_for_file_in_chunk_j
 /// `task` must be the intrusive `task` field of a live `PendingPartRange`
 /// scheduled by `generate_chunks_in_parallel`. Matches the
 /// `Task::callback: unsafe fn(*mut Task)` contract.
-pub unsafe fn generate_compile_result_for_js_chunk(task: *mut ThreadPoolLib::Task) {
+pub(crate) unsafe fn generate_compile_result_for_js_chunk(task: *mut ThreadPoolLib::Task) {
     // SAFETY: `task` is the intrusive `task` field of a `PendingPartRange`
     // scheduled by `generate_chunks_in_parallel`; see the helper's contract.
     let (part_range, c_ptr, chunk_ptr, mut worker) =

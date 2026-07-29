@@ -223,6 +223,53 @@ describe("URL IDNA", () => {
   });
 });
 
+describe("Intl.Locale", () => {
+  // A -u- keyword written without a type has the implied value "true" (UTS #35
+  // §3.6.1), and -xx-true canonicalizes to -xx. The getters must expose that
+  // value, not ICU's internal "yes" sentinel that uloc_forLanguageTag stores.
+  // caseFirst is the lone outlier: "true" is not in its value set
+  // {"upper","lower","false"}, so it surfaces as "" (matches V8 and test262).
+  test("keyword getters normalize the no-type sentinel to 'true' (caseFirst: '')", () => {
+    const keys = [
+      ["ca", "calendar"],
+      ["co", "collation"],
+      ["hc", "hourCycle"],
+      ["nu", "numberingSystem"],
+      ["fw", "firstDayOfWeek"],
+    ] as const;
+    const probe = (tag: string) =>
+      Object.fromEntries([["kf", "caseFirst"] as const, ...keys].map(([, g]) => [g, (new Intl.Locale(tag) as any)[g]]));
+
+    for (const suffix of ["", "-true", "-yes"]) {
+      const tag = "en-u" + [["kf", ""] as const, ...keys].map(([k]) => `-${k}${suffix}`).join("");
+      expect({ [suffix || "(bare)"]: probe(tag) }).toEqual({
+        [suffix || "(bare)"]: {
+          caseFirst: "",
+          calendar: "true",
+          collation: "true",
+          hourCycle: "true",
+          numberingSystem: "true",
+          firstDayOfWeek: "true",
+        },
+      });
+    }
+
+    // Real values and false must be unaffected.
+    expect(new Intl.Locale("en-u-kf-upper").caseFirst).toBe("upper");
+    expect(new Intl.Locale("en-u-kf-false").caseFirst).toBe("false");
+    expect(new Intl.Locale("en-u-ca-gregory").calendar).toBe("gregory");
+  });
+
+  test("keyword getters survive a toString() round-trip", () => {
+    for (const tag of ["en-u-ca-co-fw-hc-kf-nu", "en-u-kf-true", "en-u-ca-gregory-kf-upper"]) {
+      const a = new Intl.Locale(tag);
+      const b = new Intl.Locale(a.toString());
+      for (const g of ["calendar", "caseFirst", "collation", "firstDayOfWeek", "hourCycle", "numberingSystem"] as const)
+        expect({ tag, [g]: (b as any)[g] }).toEqual({ tag, [g]: (a as any)[g] });
+    }
+  });
+});
+
 describe("Intl.getCanonicalLocales", () => {
   test("deprecated BCP-47 tags map to modern equivalents", () => {
     // ICU ships .res bundles under the deprecated tag names; canonicalization

@@ -93,7 +93,7 @@ for (const [configFile, contents] of [
       cmd: [bunExe(), "install", "--no-cache"],
       env,
       cwd: package_dir,
-      stdout: "pipe",
+      stdout: "ignore",
       stderr: "pipe",
       stdin: "ignore",
     });
@@ -125,7 +125,7 @@ test("registry path without trailing slash is preserved (--registry)", async () 
     cmd: [bunExe(), "install", "--no-cache", "--registry", `http://${hostname}:${port}/artifactory/api/npm/npm-stuff`],
     env,
     cwd: package_dir,
-    stdout: "pipe",
+    stdout: "ignore",
     stderr: "pipe",
     stdin: "ignore",
   });
@@ -172,7 +172,7 @@ test("bunfig.toml registry takes precedence over .npmrc registry", async () => {
     cmd: [bunExe(), "install", "--no-cache"],
     env,
     cwd: package_dir,
-    stdout: "pipe",
+    stdout: "ignore",
     stderr: "pipe",
     stdin: "ignore",
   });
@@ -219,7 +219,7 @@ test("project .npmrc registry takes precedence over user .npmrc", async () => {
     cmd: [bunExe(), "install", "--no-cache"],
     env: { ...env, XDG_CONFIG_HOME: fakeHome, HOME: fakeHome, USERPROFILE: fakeHome },
     cwd: package_dir,
-    stdout: "pipe",
+    stdout: "ignore",
     stderr: "pipe",
     stdin: "ignore",
   });

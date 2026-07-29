@@ -477,8 +477,7 @@ impl ShellMvBatchedTask {
         // Bounce-back is posted by `shell_task_trampoline`.
     }
 
-    /// `renameat()` with a POSIX `mv` cross-device fallback: on EXDEV the
-    /// source hierarchy is duplicated at the destination and then removed.
+    /// `renameat()`, falling through to [`Self::move_across_devices`] on EXDEV.
     fn do_rename(
         src_dir: bun_sys::Fd,
         src: &ZStr,
@@ -494,8 +493,7 @@ impl ShellMvBatchedTask {
         }
     }
 
-    /// EXDEV fallback: copy the source to the destination, then remove the
-    /// source. The source is only removed once the copy has fully succeeded.
+    /// EXDEV fallback: copy `src` to `dst`, then (only on success) remove `src`.
     fn move_across_devices(
         src_dir: bun_sys::Fd,
         src: &ZStr,

@@ -629,14 +629,39 @@ describe("Bun.build", () => {
       expect(result).toEqual({ d: { a: 1, b: 2 }, named: "NAMED" });
     });
 
+    test.concurrent.each([
+      ["zero", 0],
+      ["null", null],
+      ["empty string", ""],
+    ])("falsy exports.default (%s) is kept as the default binding", async (label, value) => {
+      const result = await bundleAndRun(
+        "object-loader-default-falsy-" + label.replace(" ", "-"),
+        { default: value, named: "NAMED" },
+        `import d, { named } from "objdiv:x";
+         console.log(JSON.stringify({ d, named }));`,
+      );
+      expect(result).toEqual({ d: value, named: "NAMED" });
+    });
+
     test.concurrent("__esModule alongside default does not alter the default binding", async () => {
       const result = await bundleAndRun(
         "object-loader-default-esmodule",
         { default: "DEF", named: "NAMED", __esModule: true },
         `import d, { named } from "objdiv:x";
-         console.log(JSON.stringify({ d, named }));`,
+         import * as ns from "objdiv:x";
+         console.log(JSON.stringify({ d, named, hasEsModule: Object.hasOwn(ns, "__esModule") }));`,
       );
-      expect(result).toEqual({ d: "DEF", named: "NAMED" });
+      expect(result).toEqual({ d: "DEF", named: "NAMED", hasEsModule: false });
+    });
+
+    test.concurrent("non-identifier export name is preserved", async () => {
+      const result = await bundleAndRun(
+        "object-loader-default-non-identifier",
+        { default: "DEF", "not-an-identifier": "X" },
+        `import d, { "not-an-identifier" as notId } from "objdiv:x";
+         console.log(JSON.stringify({ d, notId }));`,
+      );
+      expect(result).toEqual({ d: "DEF", notId: "X" });
     });
 
     test.concurrent("no default key: default import is the whole exports object", async () => {

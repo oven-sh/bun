@@ -445,18 +445,23 @@ test.concurrent.skipIf(!isPosix || !hasPerl)(
 // Same daemon shape but the outer and the intermediate exit *immediately* —
 // no spinning on the pidfile (that spin is what made the proc_listallpids
 // scan() pass: it gave the wait loop's NOTE_FORK time to fire and observe
-// each link). With NOTE_TRACK xnu attaches to the intermediate inside fork1()
-// before it's schedulable, recursively, so the daemon is captured even if both
-// ancestors are gone before the wait loop drains a single event. Linux:
-// subreaper is also armed pre-spawn, and `killSubreaperAdoptees()` in the
-// disarm defer kills any ppid==bun adoptee that wasn't a pre-arm sibling
-// before subreaper drops, so the daemon can't escape in the disarm →
-// `onProcessExit` window.
+// each link). Linux: subreaper is armed pre-spawn, and
+// `killSubreaperAdoptees()` in the disarm defer kills any ppid==bun adoptee
+// that wasn't a pre-arm sibling before subreaper drops, so the daemon can't
+// escape in the disarm → `onProcessExit` window.
+//
+// macOS: NOTE_TRACK (which attached atomically inside fork1()) has been
+// ENOTSUP since 10.5; the replacement NOTE_FORK + p_puniqueid scan (#30100)
+// has a documented unfixable-from-userspace race where a fast-exit
+// intermediate dies before the scan records its uniqueid, leaving the
+// daemon's p_puniqueid unlinkable. setsid() also moves it out of the script
+// pgroup, so kill(-pgid) misses it. That race loses under CI load on the x64
+// macs in particular, so this test is Linux-only.
 //
 // `bun run` may finish before the daemon writes its pidfile. Poll for the
 // file from the *test*; if it never appears the daemon was reaped before it
 // could write — also a pass. Only fail if the file appears AND the pid lives.
-test.concurrent.skipIf(!isPosix || !hasPerl)(
+test.concurrent.skipIf(!isLinux || !hasPerl)(
   "bun run --no-orphans (perl): fast-exit intermediate (no pidfile spin) — daemon still reaped",
   async () => {
     using dir = tempDir("no-orphans-fast-daemon", {

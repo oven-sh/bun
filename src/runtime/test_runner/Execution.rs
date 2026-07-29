@@ -167,6 +167,9 @@ pub struct ExecutionSequence {
     /// Expectation set by expect.hasAssertions() or expect.assertions(n).
     pub expect_assertions: ExpectAssertions,
     pub maybe_skip: bool,
+    /// Skip/todo reason set at runtime (node:test `t.skip('reason')` /
+    /// `t.todo('reason')`); shadows `ExecutionEntry.note` when reporting.
+    pub note: Option<Box<[u8]>>,
 }
 
 impl ExecutionSequence {
@@ -189,6 +192,7 @@ impl ExecutionSequence {
             expect_call_count: 0,
             expect_assertions: ExpectAssertions::NotSet,
             maybe_skip: false,
+            note: None,
         }
     }
 

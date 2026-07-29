@@ -1905,6 +1905,9 @@ pub struct ExecutionEntry {
     pub retry_count: u32,
     /// Number of times to repeat a test (0 = run once, 1 = run twice, etc.)
     pub repeat_count: u32,
+    /// Skip/todo reason supplied at declaration time (node:test `{skip:'reason'}`
+    /// / `{todo:'reason'}`); surfaced as `<skipped message="...">` in JUnit.
+    pub note: Option<Box<[u8]>>,
 
     pub next: Option<*mut ExecutionEntry>,
     /// if this entry fails, go to the entry 'failure_skip_past.next'
@@ -1928,6 +1931,7 @@ impl ExecutionEntry {
             added_in_phase: phase,
             retry_count: cfg.retry_count,
             repeat_count: cfg.repeat_count,
+            note: None,
             timespec: Timespec::EPOCH,
             next: None,
             failure_skip_past: None,

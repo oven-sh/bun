@@ -49,6 +49,33 @@ pub enum MessageType {
 /// The PostgreSQL wire protocol uses 16-bit integers for parameter and column counts.
 const MAX_PARAMETERS: usize = u16::MAX as usize;
 
+/// Parameter tags that the value-writing `match` below encodes in PG's binary
+/// format. `Tag::is_binary_format_supported` is wider (it also covers tags we
+/// only *decode* binary, e.g. `numeric`, `float4`); using it for the parameter
+/// format code would advertise binary but send text.
+fn has_binary_param_encoder(tag: types::Tag) -> bool {
+    matches!(
+        tag,
+        types::Tag::bool
+            | types::Tag::timestamp
+            | types::Tag::timestamptz
+            | types::Tag::bytea
+            | types::Tag::int4
+            | types::Tag::int4_array
+            | types::Tag::float8
+    )
+}
+
+/// A non-integer JS number bound to a PG-inferred `int4` target must not be
+/// silently truncated by `coerce::<i32>`; send the decimal text so PG errors
+/// cleanly. `float8` / `timestamp` / `timestamptz` stay binary because their
+/// encoders accept arbitrary f64 (including ±Infinity, see `date::from_js`).
+fn number_needs_text(tag: types::Tag, value: JSValue) -> bool {
+    matches!(tag, types::Tag::int4 | types::Tag::int4_array)
+        && value.is_number()
+        && !value.is_any_int()
+}
+
 pub fn write_bind<Context: WriterContext>(
     name: &[u8],
     cursor_name: BunString,
@@ -92,17 +119,17 @@ pub fn write_bind<Context: WriterContext>(
         };
 
         let force_text = is_custom_type
-            || (tag.is_binary_format_supported()
-                && 'brk: {
-                    iter.to(i as u32);
-                    if let Some(value) = iter.next().map_err(js_error_to_postgres)? {
-                        break 'brk value.is_string();
-                    }
-                    if iter.any_failed() {
-                        return Err(AnyPostgresError::InvalidQueryBinding);
-                    }
-                    break 'brk false;
-                });
+            || !has_binary_param_encoder(tag)
+            || 'brk: {
+                iter.to(i as u32);
+                if let Some(value) = iter.next().map_err(js_error_to_postgres)? {
+                    break 'brk value.is_string() || number_needs_text(tag, value);
+                }
+                if iter.any_failed() {
+                    return Err(AnyPostgresError::InvalidQueryBinding);
+                }
+                break 'brk false;
+            };
 
         if force_text {
             // If they pass a value as a string, let's avoid attempting to
@@ -114,7 +141,7 @@ pub fn write_bind<Context: WriterContext>(
             continue;
         }
 
-        writer.short(tag.format_code())?;
+        writer.short(1)?;
     }
 
     // The number of parameter values that follow (possibly zero). This
@@ -159,7 +186,8 @@ pub fn write_bind<Context: WriterContext>(
         // for mistakes on our end, such as stripping the timezone
         // differently than what Postgres does when given a timestamp with
         // timezone.
-        let effective_tag = if tag.is_binary_format_supported() && value.is_string() {
+        let as_text = value.is_string() || number_needs_text(tag, value);
+        let effective_tag = if tag.is_binary_format_supported() && as_text {
             types::Tag::text
         } else {
             tag

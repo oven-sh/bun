@@ -1736,9 +1736,7 @@ function initStdioSocket(self, options) {
   self._server = null;
 }
 
-// FileSink's own ref counter starts at 1, so treat ref/unref as an idempotent
-// flag (like net.Socket) instead of forwarding every call; spawn's eager
-// ref() loop is then a no-op and one user unref() reaches updateRef(false).
+// Idempotent flag like net.Socket; FileSink's counter already starts at 1.
 function stdioSocketRef(this: any) {
   if (this[kStdinUnrefed]) {
     this[kStdinUnrefed] = false;

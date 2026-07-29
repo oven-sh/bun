@@ -286,8 +286,7 @@ function unescapeUnixSocketUrl(href: string) {
 
 class Debugger {
   #url?: URL;
-  // Hostname as the user wrote it in --inspect; the Host-header allowlist must keep accepting it
-  // after #url.hostname is rewritten to the numeric bound address.
+  // Kept for the Host-header allowlist after #url.hostname is rewritten to the bound IP.
   #requestedHostname?: string;
   #createBackend: (refEventLoop: boolean, receive: (...messages: string[]) => void) => Backend;
   // node:inspector mode: connections speak the V8 Chrome DevTools Protocol and
@@ -379,9 +378,7 @@ class Debugger {
       });
 
       this.#server = server;
-      // Bun.serve walks every getaddrinfo result for `hostname`, so `localhost` may bind [::1] on
-      // one system and 127.0.0.1 on another. Print the address that actually bound so the banner
-      // URL is reachable regardless of how the client resolves the name.
+      // server.hostname echoes the requested name; server.address is getsockname.
       const { address: boundIp, family } =
         (server as { address?: { address?: string; family?: string } }).address ?? {};
       if (typeof boundIp === "string" && boundIp) {
@@ -787,9 +784,7 @@ function bufferedWriter(writer: Writer): Writer {
   };
 }
 
-// Match Node's --inspect default: an IPv4 literal avoids the IPv4/IPv6 lottery that `localhost`
-// creates between Bun.serve (binds whichever family getaddrinfo returns first) and clients such
-// as browsers, IDEs, and WSL's localhost forwarding (which only relays 127.0.0.1).
+// Node's --inspect default; `localhost` would bind a resolver-dependent loopback family.
 const defaultHostname = "127.0.0.1";
 const defaultPort = 6499;
 

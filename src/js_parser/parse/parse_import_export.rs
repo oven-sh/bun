@@ -1,3 +1,4 @@
+use crate::Error;
 use crate::lexer::{self as js_lexer, T};
 use crate::p::P;
 use crate::parser::{ExportClauseResult, ImportClause, is_eval_or_arguments};
@@ -6,7 +7,6 @@ use bun_ast::LexerLog as _;
 use bun_ast::expr::Data as ExprData;
 use bun_ast::op::Level;
 use bun_ast::{ClauseItem, E, Expr, LocRef};
-use bun_core::Error;
 
 impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
     /// Note: The caller has already parsed the "import" keyword
@@ -123,7 +123,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             let alias = p.parse_clause_alias(b"import")?;
             let mut name = LocRef {
                 loc: alias_loc,
-                ref_: p.store_name_in_ref(alias)?,
+                ref_: p.store_name_in_ref(alias),
             };
             let mut original_name = alias;
             p.lexer.next()?;
@@ -147,7 +147,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         original_name = p.lexer.identifier;
                         name = LocRef {
                             loc: p.lexer.loc(),
-                            ref_: p.store_name_in_ref(original_name)?,
+                            ref_: p.store_name_in_ref(original_name),
                         };
                         p.lexer.next()?;
 
@@ -173,7 +173,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         original_name = p.lexer.identifier;
                         name = LocRef {
                             loc: p.lexer.loc(),
-                            ref_: p.store_name_in_ref(original_name)?,
+                            ref_: p.store_name_in_ref(original_name),
                         };
                         p.lexer.expect(T::TIdentifier)?;
 
@@ -222,7 +222,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     original_name = p.lexer.identifier;
                     name = LocRef {
                         loc: alias_loc,
-                        ref_: p.store_name_in_ref(original_name)?,
+                        ref_: p.store_name_in_ref(original_name),
                     };
                     p.lexer.expect(T::TIdentifier)?;
                 } else if !is_identifier {
@@ -296,7 +296,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
             let name = LocRef {
                 loc: alias_loc,
-                ref_: p.store_name_in_ref(alias).expect("unreachable"),
+                ref_: p.store_name_in_ref(alias),
             };
             let original_name = alias;
 
@@ -454,7 +454,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     bstr::BStr::new(p.source.text_for_range(r))
                 ),
             )?;
-            return Err(bun_core::err!("SyntaxError"));
+            return Err(crate::Error::SyntaxError);
         }
 
         Ok(ExportClauseResult {

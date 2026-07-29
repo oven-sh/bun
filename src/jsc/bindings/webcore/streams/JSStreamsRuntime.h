@@ -134,8 +134,8 @@ class JSDirectStreamController;
     V(onWSSinkWriteRejected)
 
 // owner: TransformStreamOperations.cpp. context = the JSTransformStream, EXCEPT
-// onTSSinkWriteBackpressureChangeFulfilled, whose context is an
-// InternalFieldTuple{transformStream, chunk}.
+// onTSSinkAbortCancel{Fulfilled,Rejected} and onTSSourceCancel{Fulfilled,Rejected},
+// whose context is an InternalFieldTuple{transformStream, reason}.
 #define FOR_EACH_WEB_STREAMS_REACTION_HANDLER_TS_OPERATIONS(V) \
     V(onTSSinkWriteBackpressureChangeFulfilled)                \
     V(onTSSinkAbortCancelFulfilled)                            \
@@ -165,17 +165,18 @@ class JSDirectStreamController;
     V(onNativePullRejected)                                 \
     V(onNativeSourceCallCloseMicrotask)                     \
     V(onReadStreamIntoSinkReadManyFulfilled)                \
-    V(onReadStreamIntoSinkReadFulfilled)                    \
+    V(onReadStreamIntoSinkChunk)                            \
+    V(onReadStreamIntoSinkClose)                            \
     V(onReadStreamIntoSinkFlushFulfilled)                   \
     V(onReadStreamIntoSinkRejected)                         \
-    V(onResumableSinkReadFulfilled)                         \
+    V(onResumableSinkChunk)                                 \
+    V(onResumableSinkClose)                                 \
     V(onResumableSinkReadRejected)                          \
     V(onResumableSinkEndMicrotask)
 
 // owner: JSDirectStreamController.cpp. context = the JSDirectStreamController.
-// onDirectPullRejected is THE one reaction registered WITH a real (fresh, unhandled) result
-// promise — the unhandledRejection is load-bearing.
 #define FOR_EACH_WEB_STREAMS_REACTION_HANDLER_DIRECT_CONTROLLER(V) \
+    V(onDirectPullFulfilled)                                       \
     V(onDirectPullRejected)
 
 // owner: JSReadableStreamDefaultReader.cpp (readMany). context = the reader.
@@ -356,6 +357,7 @@ public:
     // two size-function LazyProperties, and every LazyProperty in
     // FOR_EACH_WEB_STREAMS_INTERNAL_STRUCTURE.
     DECLARE_VISIT_CHILDREN;
+    static void analyzeHeap(JSCell*, JSC::HeapAnalyzer&);
 
     template<typename, JSC::SubspaceAccess mode>
     static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)

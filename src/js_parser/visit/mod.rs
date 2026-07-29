@@ -10,8 +10,8 @@ use crate::lexer as js_lexer;
 use crate::p::{LowerUsingDeclarationsContext, P};
 use crate::parser::{
     ExprIn, FnOnlyDataVisit, FnOrArrowDataVisit, ImportItemForNamespaceMap, PrependTempRefsOpts,
-    Ref, RelocateVarsMode, ScopeOrder, StmtsKind, StrictModeFeature, StringVoidMap, TempRef,
-    VisitArgsOpts, is_eval_or_arguments,
+    Ref, RelocateVarsMode, ScopeOrder, StmtsKind, StrictModeFeature, StringVoidMap, VisitArgsOpts,
+    is_eval_or_arguments,
 };
 use bun_alloc::{ArenaVec as BumpVec, ArenaVecExt as _};
 use bun_ast as js_ast;
@@ -48,7 +48,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         &mut self,
         stmts: &mut ListManaged<'a, Stmt>,
         opts: &mut PrependTempRefsOpts,
-    ) -> Result<(), bun_core::Error> {
+    ) -> Result<(), crate::Error> {
         debug_assert!(
             !SCAN_ONLY,
             "only_scan_imports_and_do_not_visit must not run this."
@@ -58,18 +58,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.temp_refs_to_declare = BumpVec::new_in(self.arena);
 
         self.visit_stmts(stmts, opts.kind)?;
-
-        // Prepend values for "this" and "arguments"
-        if let Some(fn_body_loc) = opts.fn_body_loc {
-            // Capture "this"
-            if let Some(ref_) = self.fn_only_data_visit.this_capture_ref {
-                let value = self.new_expr(E::This {}, fn_body_loc);
-                self.temp_refs_to_declare.push(TempRef {
-                    r#ref: ref_,
-                    value: Some(value),
-                });
-            }
-        }
         Ok(())
     }
 
@@ -140,7 +128,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         stmts.extend_from_slice(body_stmts);
         let mut temp_opts = PrependTempRefsOpts {
             kind: StmtsKind::FnBody,
-            fn_body_loc: Some(body_loc),
         };
         let rc_binding = self.react_compiler_candidate_name.take();
         if rc_binding.is_some() {
@@ -777,9 +764,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 .expect("unreachable");
         }
 
+        let old_is_inside_single_stmt_body = self.is_inside_single_stmt_body;
+        self.is_inside_single_stmt_body = true;
+
         let mut stmts = BumpVec::with_capacity_in(1, self.arena);
         stmts.push(stmt);
         self.visit_stmts(&mut stmts, kind).expect("unreachable");
+
+        self.is_inside_single_stmt_body = old_is_inside_single_stmt_body;
 
         if has_if_scope {
             self.pop_scope();
@@ -847,9 +839,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             } else {
                 b"_default"
             };
-            let new_ref = self
-                .new_symbol(SymbolKind::Constant, name_str)
-                .expect("unreachable");
+            let new_ref = self.new_symbol(SymbolKind::Constant, name_str);
             shadow_ref.set(new_ref);
         }
 
@@ -874,7 +864,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     self.fn_or_arrow_data_visit = FnOrArrowDataVisit::default();
                     self.fn_only_data_visit = FnOnlyDataVisit {
                         is_this_nested: true,
-                        is_new_target_allowed: true,
                         class_name_ref: Some(shadow_ref),
 
                         // TODO: down transpilation
@@ -930,7 +919,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 let old_is_this_captured = self.fn_only_data_visit.is_this_nested;
                 let old_class_name_ref = self.fn_only_data_visit.class_name_ref.take();
                 self.fn_only_data_visit.is_this_nested = true;
-                self.fn_only_data_visit.is_new_target_allowed = true;
                 self.fn_only_data_visit.class_name_ref = Some(shadow_ref);
                 // defer p.fn_only_data_visit.is_this_nested = old_is_this_captured;
                 // defer p.fn_only_data_visit.class_name_ref = old_class_name_ref;
@@ -1199,7 +1187,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         &mut self,
         stmts: &mut ListManaged<'a, Stmt>,
         kind: StmtsKind,
-    ) -> Result<(), bun_core::Error> {
+    ) -> Result<(), crate::Error> {
         debug_assert!(
             !SCAN_ONLY,
             "only_scan_imports_and_do_not_visit must not run this."
@@ -1256,9 +1244,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
                 }
             }
-
-            // `p.macro.prepend_stmts` is write-only (nothing ever reads it),
-            // so the backref is intentionally not wired here.
 
             // visit all statements first
             let mut visited: ListManaged<'a, Stmt> =
@@ -1790,8 +1775,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         let prev_stmt = output[prev_idx];
                         if let StmtData::SExpr(prev_expr) = prev_stmt.data {
                             if !prev_stmt.is_super_call() {
-                                s_switch.test_ =
-                                    Expr::join_with_comma(prev_expr.value, s_switch.test_);
+                                s_switch.test =
+                                    Expr::join_with_comma(prev_expr.value, s_switch.test);
                                 output.truncate(prev_idx);
                             }
                         }
@@ -1805,7 +1790,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         let prev_stmt = output[prev_idx];
                         if let StmtData::SExpr(prev_expr) = prev_stmt.data {
                             if !prev_stmt.is_super_call() {
-                                s_if.test_ = Expr::join_with_comma(prev_expr.value, s_if.test_);
+                                s_if.test = Expr::join_with_comma(prev_expr.value, s_if.test);
                                 output.truncate(prev_idx);
                             }
                         }

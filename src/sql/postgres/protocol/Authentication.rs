@@ -10,7 +10,6 @@ pub enum Authentication {
     ClearTextPassword,
     MD5Password { salt: [u8; 4] },
     KerberosV5,
-    SCMCredential,
     GSS,
     GSSContinue { data: Data },
     SSPI,
@@ -32,8 +31,8 @@ pub struct SASLContinue {
 }
 
 impl SASLContinue {
-    pub fn iteration_count(&self) -> Result<u32, bun_core::Error> {
-        bun_core::fmt::parse_int(self.i.slice(), 10).map_err(|_| bun_core::err!("InvalidCharacter"))
+    pub fn iteration_count(&self) -> crate::Result<u32> {
+        bun_core::fmt::parse_int(self.i.slice(), 10).map_err(|_| crate::Error::InvalidCharacter)
     }
 }
 
@@ -182,11 +181,5 @@ impl Authentication {
 
             _ => Ok(Authentication::Unknown),
         }
-    }
-
-    pub fn decode<Container: super::new_reader::ReaderContext>(
-        context: Container,
-    ) -> Result<Self, AnyPostgresError> {
-        Self::decode_internal(&mut NewReader { wrapped: context })
     }
 }

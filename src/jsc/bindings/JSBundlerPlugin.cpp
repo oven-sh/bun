@@ -196,6 +196,7 @@ void JSBundlerPlugin::visitAdditionalChildrenInGCThread(Visitor& visitor)
     this->onResolveFunction.visit(visitor);
     this->setupFunction.visit(visitor);
     this->plugin.deferredPromises.visit(this, visitor);
+    this->plugin.onBeforeParseExternals.visit(this, visitor);
 }
 
 template<typename Visitor>
@@ -403,6 +404,7 @@ JSC_DEFINE_HOST_FUNCTION(jsBundlerPluginFunction_onBeforeParse, (JSC::JSGlobalOb
             Bun::throwError(globalObject, scope, ErrorCode::ERR_INVALID_ARG_TYPE, "Expected external (3rd argument) to be a NAPI external"_s);
             return {};
         }
+        thisObject->plugin.onBeforeParseExternals.append(vm, thisObject, externalPtr);
     }
 
     thisObject->plugin.onBeforeParse.append(vm, newRegexp, namespaceStr, callback, native_plugin_name ? *native_plugin_name : nullptr, externalPtr);

@@ -296,7 +296,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
             flags.wrap,
             &ast,
         ) {
-            return PrintResult::Err(err);
+            return PrintResult::Err(err.into());
         }
 
         match flags.wrap {
@@ -497,7 +497,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
             flags.wrap,
             &ast,
         ) {
-            return PrintResult::Err(err);
+            return PrintResult::Err(err.into());
         }
     }
 

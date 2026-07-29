@@ -80,23 +80,23 @@ mod sizes {
     const _: () = assert!(ALIGN_TYPE_0 == align_of::<&[Tree]>());
 }
 
-pub fn read_array<T: Copy>(stream: &mut Stream) -> Result<Vec<T>, bun_core::Error> {
+pub fn read_array<T: Copy>(stream: &mut Stream) -> crate::Result<Vec<T>> {
     let start_pos = stream.read_int_le::<u64>()?;
 
     // If its 0xDEADBEEF, then that means the value was never written in the lockfile.
     if start_pos == 0xDEAD_BEEF {
-        return Err(bun_core::err!("CorruptLockfile"));
+        return Err(crate::Error::CorruptLockfile);
     }
 
     // These are absolute numbers, it shouldn't be zero.
     // There's a prefix before any of the arrays, so it can never be zero here.
     if start_pos == 0 {
-        return Err(bun_core::err!("CorruptLockfile"));
+        return Err(crate::Error::CorruptLockfile);
     }
 
     // We shouldn't be going backwards.
     if start_pos < (stream.pos as u64).saturating_sub(size_of::<u64>() as u64) {
-        return Err(bun_core::err!("CorruptLockfile"));
+        return Err(crate::Error::CorruptLockfile);
     }
 
     let end_pos = stream.read_int_le::<u64>()?;
@@ -104,22 +104,22 @@ pub fn read_array<T: Copy>(stream: &mut Stream) -> Result<Vec<T>, bun_core::Erro
     // If its 0xDEADBEEF, then that means the value was never written in the lockfile.
     // That shouldn't happen.
     if end_pos == 0xDEAD_BEEF {
-        return Err(bun_core::err!("CorruptLockfile"));
+        return Err(crate::Error::CorruptLockfile);
     }
 
     // These are absolute numbers, it shouldn't be zero.
     if end_pos == 0 {
-        return Err(bun_core::err!("CorruptLockfile"));
+        return Err(crate::Error::CorruptLockfile);
     }
 
     // Prevent integer overflow.
     if start_pos > end_pos {
-        return Err(bun_core::err!("CorruptLockfile"));
+        return Err(crate::Error::CorruptLockfile);
     }
 
     // Prevent buffer overflow.
     if end_pos > stream.buffer.len() as u64 {
-        return Err(bun_core::err!("CorruptLockfile"));
+        return Err(crate::Error::CorruptLockfile);
     }
 
     let byte_len = end_pos - start_pos;
@@ -134,7 +134,7 @@ pub fn read_array<T: Copy>(stream: &mut Stream) -> Result<Vec<T>, bun_core::Erro
     }
 
     if start_pos % core::mem::align_of::<T>() as u64 != 0 || byte_len % size_of::<T>() as u64 != 0 {
-        return Err(bun_core::err!("CorruptLockfile"));
+        return Err(crate::Error::CorruptLockfile);
     }
 
     let start_pos = start_pos as usize;
@@ -151,11 +151,7 @@ pub fn read_array<T: Copy>(stream: &mut Stream) -> Result<Vec<T>, bun_core::Erro
     Ok(misaligned.to_vec())
 }
 
-pub fn write_array<S, T>(
-    stream: &mut S,
-    array: &[T],
-    prefix: &'static str,
-) -> Result<(), bun_core::Error>
+pub fn write_array<S, T>(stream: &mut S, array: &[T], prefix: &'static str) -> crate::Result<()>
 where
     // One type plays both the positional-stream and append-writer roles —
     // `StreamType` impls both `PositionalStream` (get_pos/pwrite) and
@@ -217,7 +213,7 @@ pub fn save<S>(
     lockfile: &Lockfile,
     options: &PackageManagerOptions,
     stream: &mut S,
-) -> Result<(), bun_core::Error>
+) -> crate::Result<()>
 where
     // See `write_array` — a single bound avoids two `&mut` to the same object.
     S: lockfile::PositionalStream + bun_io::Write,
@@ -380,7 +376,7 @@ impl Buffers {
         &self,
         dependency_visited: Option<&mut Bitset>,
         package_id: PackageID,
-    ) -> Result<DependencyID, bun_core::Error> {
+    ) -> crate::Result<DependencyID> {
         match package_id {
             0 => return Ok(tree::ROOT_DEP_ID),
             id if id == invalid_package_id => return Ok(invalid_package_id),
@@ -401,7 +397,7 @@ impl Buffers {
                 }
             }
         }
-        Err(bun_core::err!("Lockfile is missing resolution data"))
+        Err(crate::Error::LockfileIsMissingResolutionData)
     }
 }
 
@@ -409,7 +405,7 @@ pub(crate) fn load(
     stream: &mut Stream,
     log: &mut bun_ast::Log,
     pm_: Option<&mut PackageManager>,
-) -> Result<Buffers, bun_core::Error> {
+) -> crate::Result<Buffers> {
     let mut this = Buffers::default();
     let external_dependency_list_: Vec<dependency::External>;
 

@@ -6,6 +6,7 @@ use core::sync::atomic::AtomicU8;
 #[cfg(not(windows))]
 use core::sync::atomic::Ordering;
 
+use crate::Error;
 use crate::webcore::Lifetime;
 #[cfg(not(windows))]
 use crate::webcore::blob::ClosingState;
@@ -14,8 +15,8 @@ use crate::webcore::blob::{Blob, FileCloser, FileOpener, MAX_SIZE, SizeType, Sto
 use crate::webcore::node_types::PathOrFileDescriptor;
 #[cfg(windows)]
 use bun_collections::ByteVecExt as _;
+use bun_core;
 use bun_core::String as BunString;
-use bun_core::{self, Error};
 use bun_io::{self as io, FileAction};
 #[cfg(windows)]
 // `bun_jsc::EventLoop` is the *module*; the struct is one level deeper.
@@ -213,7 +214,7 @@ impl FileOpener for ReadFile {
     fn set_opened_fd(&mut self, fd: Fd) {
         self.opened_fd = fd;
     }
-    fn set_errno(&mut self, e: bun_core::Error) {
+    fn set_errno(&mut self, e: crate::Error) {
         self.errno = Some(e);
     }
     fn set_system_error(&mut self, e: jsc::SystemError) {
@@ -250,9 +251,6 @@ impl FileCloser for ReadFile {
     }
     fn close_after_io(&self) -> bool {
         self.close_after_io
-    }
-    fn set_close_after_io(&mut self, v: bool) {
-        self.close_after_io = v;
     }
     fn state(&self) -> &AtomicU8 {
         &self.state
@@ -426,7 +424,7 @@ impl ReadFile {
 
     pub fn on_io_error(&mut self, err: &bun_sys::Error) {
         bloblog!("ReadFile.onIOError");
-        self.errno = Some(bun_core::errno_to_zig_err(err.errno as i32));
+        self.errno = Some(bun_errno::from_errno(err.errno as i32).into());
         self.system_error = Some(err.to_system_error().into());
         self.task = WorkPoolTask {
             node: Default::default(),
@@ -479,45 +477,38 @@ impl ReadFile {
         }
     }
 
-    /// Returns a raw `(ptr, len)` into either `stack_buffer` or
-    /// `self.buffer`'s spare capacity. Raw (not `&mut [u8]`) so the caller in
-    /// `do_read_loop` can carry it across the `&mut self` `do_read` call
-    /// without two live `&mut` covering overlapping memory (Stacked-Borrows
-    /// UB). The slice is materialised only at the syscall boundary.
+    /// Pick the read target: `buffer`'s spare capacity if it is at least as
+    /// large as `stack_buffer`, otherwise `stack_buffer`; capped by
+    /// `max_length - read_off`. Returns `(use_stack, target)` so the caller
+    /// keys its `extend_from_slice`/`commit_spare` decision off the same
+    /// branch taken here.
     #[cfg(not(windows))]
-    fn remaining_buffer(&mut self, stack_buffer: &mut [u8]) -> (*mut u8, usize) {
-        // `spare_capacity_mut()` is the safe spelling of
-        // `as_mut_ptr().add(len) .. as_mut_ptr().add(cap)`; we immediately
-        // decay it to a raw `(ptr, len)` so the borrow does not outlive this
-        // call (the caller carries the raw pair across `&mut self`).
-        let spare = self.buffer.spare_capacity_mut();
-        let (ptr, len) = if spare.len() < stack_buffer.len() {
-            (stack_buffer.as_mut_ptr(), stack_buffer.len())
+    fn remaining_buffer<'a>(
+        buffer: &'a mut Vec<u8>,
+        stack_buffer: &'a mut [u8],
+        max_length: SizeType,
+        read_off: SizeType,
+    ) -> (bool, &'a mut [u8]) {
+        let cap = (max_length.saturating_sub(read_off)) as usize;
+        let spare = buffer.spare_capacity_mut();
+        if spare.len() < stack_buffer.len() {
+            let n = stack_buffer.len().min(cap);
+            (true, &mut stack_buffer[..n])
         } else {
-            (spare.as_mut_ptr().cast::<u8>(), spare.len())
-        };
-        let cap = len.min((self.max_length.saturating_sub(self.read_off)) as usize);
-        (ptr, cap)
+            let n = spare.len().min(cap);
+            // SAFETY: `spare` is `&mut [MaybeUninit<u8>]` over the Vec's spare
+            // capacity. The bytes are only written by the `read()`/`recv()`
+            // syscall below and `commit_spare` advances `len` by exactly the
+            // kernel-reported initialized count; no uninit byte is ever read.
+            let target =
+                unsafe { core::slice::from_raw_parts_mut(spare.as_mut_ptr().cast::<u8>(), n) };
+            (false, target)
+        }
     }
 
-    /// `buffer` is passed raw because it may point into `self.buffer`'s spare
-    /// capacity; holding it as `&mut [u8]` alongside `&mut self` would be two
-    /// live `&mut` to overlapping memory. `do_read` never touches
-    /// `self.buffer`, so the disjoint access is sound — we just keep the
-    /// pointer raw across the `&mut self` borrow and materialise the slice
-    /// only for the syscall.
-    pub fn do_read(
-        &mut self,
-        buffer: (*mut u8, usize),
-        read_len: &mut usize,
-        retry: &mut bool,
-    ) -> bool {
+    /// Never touches `self.buffer`; the caller moves it out for the duration.
+    pub fn do_read(&mut self, buf: &mut [u8], read_len: &mut usize, retry: &mut bool) -> bool {
         let result: bun_sys::Result<usize> = 'brk: {
-            // SAFETY: `buffer.0` points at either a stack array or this Vec's
-            // spare capacity (write-valid via `as_mut_ptr()`); both are
-            // exclusively owned by the caller for `buffer.1` bytes and outlive
-            // this call. We never access `self.buffer` here, so no aliasing.
-            let buf = unsafe { core::slice::from_raw_parts_mut(buffer.0, buffer.1) };
             if bun_sys::S::ISSOCK(self.file_store.mode) {
                 break 'brk bun_sys::recv_non_block(self.opened_fd, buf);
             }
@@ -543,7 +534,7 @@ impl ReadFile {
                             return true;
                         }
                         _ => {
-                            self.errno = Some(bun_core::errno_to_zig_err(err.errno as i32));
+                            self.errno = Some(bun_errno::from_errno(err.errno as i32).into());
                             self.system_error = Some(err.to_system_error().into());
                             if self.system_error.as_ref().unwrap().path.is_empty() {
                                 self.system_error.as_mut().unwrap().path =
@@ -551,8 +542,9 @@ impl ReadFile {
                                         BunString::clone_utf8(
                                             self.file_store.pathlike.path().slice(),
                                         )
+                                        .into()
                                     } else {
-                                        BunString::EMPTY
+                                        BunString::EMPTY.into()
                                     };
                             }
                             return false;
@@ -584,9 +576,10 @@ impl ReadFile {
             cb(
                 cb_ctx,
                 ReadFileResultType::Err(SystemError {
-                    code: BunString::static_("INTERNAL_ERROR"),
-                    message: BunString::static_("assertion failure - store should not be null"),
-                    syscall: BunString::static_("read"),
+                    code: BunString::static_("INTERNAL_ERROR").into(),
+                    message: BunString::static_("assertion failure - store should not be null")
+                        .into(),
+                    syscall: BunString::static_("read").into(),
                     ..Default::default()
                 }),
             );
@@ -672,7 +665,7 @@ impl ReadFile {
         let stat: Stat = match bun_sys::fstat(fd) {
             Ok(result) => result,
             Err(err) => {
-                self.errno = Some(bun_core::errno_to_zig_err(err.errno as i32));
+                self.errno = Some(bun_errno::from_errno(err.errno as i32).into());
                 self.system_error = Some(err.to_system_error().into());
                 return;
             }
@@ -686,16 +679,16 @@ impl ReadFile {
         }
 
         if bun_sys::S::ISDIR(stat.st_mode as _) {
-            self.errno = Some(bun_core::err!("EISDIR"));
+            self.errno = Some(crate::Error::Sys(bun_errno::SystemErrno::EISDIR));
             self.system_error = Some(SystemError {
-                code: BunString::static_("EISDIR"),
+                code: BunString::static_("EISDIR").into(),
                 path: if self.file_store.pathlike.is_path() {
-                    BunString::clone_utf8(self.file_store.pathlike.path().slice())
+                    BunString::clone_utf8(self.file_store.pathlike.path().slice()).into()
                 } else {
-                    BunString::EMPTY
+                    BunString::EMPTY.into()
                 },
-                message: BunString::static_("Directories cannot be read like files"),
-                syscall: BunString::static_("read"),
+                message: BunString::static_("Directories cannot be read like files").into(),
+                syscall: BunString::static_("read").into(),
                 ..Default::default()
             });
             return;
@@ -749,7 +742,7 @@ impl ReadFile {
             let want = (self.size as usize).saturating_add(16);
             let mut v = Vec::<u8>::new();
             if v.try_reserve_exact(want).is_err() {
-                self.errno = Some(bun_core::err!("OutOfMemory"));
+                self.errno = Some(crate::Error::Alloc(bun_alloc::AllocError));
                 self.system_error = Some(
                     bun_sys::Error::from_code(bun_sys::E::ENOMEM, bun_sys::Tag::read)
                         .to_system_error()
@@ -806,39 +799,42 @@ impl ReadFile {
             // syscall, and avoids the `MaybeUninit<u8>` → `&mut [u8]` cast (uninit
             // bytes behind a `&[u8]` is technically UB even when never read).
             let mut stack_buffer = [0u8; 64 * 1024];
+            // `do_read` never touches `self.buffer`; move it out so the read
+            // target slice (which may point into its spare capacity) can be
+            // held as a safe `&mut [u8]` across the `&mut self` call.
+            let mut buffer = core::mem::take(&mut self.buffer);
             while self.state.load(Ordering::Relaxed) == ClosingState::Running as u8 {
-                // reshaped for borrowck — keep the read target as a raw
-                // (ptr, len) across the `&mut self` `do_read` call; no `&mut [u8]`
-                // to `self.buffer`'s spare capacity is ever live alongside
-                // `&mut self`.
-                let stack_ptr = stack_buffer.as_mut_ptr();
-                let (buf_ptr, buf_len) = self.remaining_buffer(&mut stack_buffer);
+                let (use_stack, buf) = Self::remaining_buffer(
+                    &mut buffer,
+                    &mut stack_buffer,
+                    self.max_length,
+                    self.read_off,
+                );
 
-                if buf_len > 0 && self.errno.is_none() && !self.read_eof {
+                if !buf.is_empty() && self.errno.is_none() && !self.read_eof {
                     let mut read_amount: usize = 0;
                     let mut retry = false;
-                    let continue_reading =
-                        self.do_read((buf_ptr, buf_len), &mut read_amount, &mut retry);
+                    let continue_reading = self.do_read(buf, &mut read_amount, &mut retry);
 
                     // We might read into the stack buffer, so we need to copy it into the heap.
-                    if buf_ptr == stack_ptr {
+                    if use_stack {
                         // `do_read` wrote `read_amount` initialized bytes at
                         // `stack_buffer[..read_amount]`; the stack array is live
                         // for this iteration.
                         let read = &stack_buffer[..read_amount];
-                        if self.buffer.capacity() == 0 {
+                        if buffer.capacity() == 0 {
                             // We need to allocate a new buffer
                             // In this case, we want to use `ensureTotalCapacityPrecise` so that it's an exact amount
                             // We want to avoid over-allocating incase it's a large amount of data sent in a single chunk followed by a 0 byte chunk.
-                            self.buffer.reserve_exact(read.len());
+                            buffer.reserve_exact(read.len());
                         } else {
-                            self.buffer.reserve(read.len());
+                            buffer.reserve(read.len());
                         }
-                        self.buffer.extend_from_slice(read);
+                        buffer.extend_from_slice(read);
                     } else {
                         // record the amount of data read
                         // SAFETY: read() wrote `read_amount` initialized bytes into spare capacity.
-                        unsafe { bun_core::vec::commit_spare(&mut self.buffer, read_amount) };
+                        unsafe { bun_core::vec::commit_spare(&mut buffer, read_amount) };
                     }
                     // - If they DID set a max length, we should stop
                     //   reading after that.
@@ -846,7 +842,7 @@ impl ReadFile {
                     // - If they DID NOT set a max_length, then it will
                     //   be Blob.max_size which is an impossibly large
                     //   amount to read.
-                    if !self.read_eof && self.buffer.len() >= self.max_length as usize {
+                    if !self.read_eof && buffer.len() >= self.max_length as usize {
                         break;
                     }
 
@@ -883,6 +879,7 @@ impl ReadFile {
                             }
                         }
                         self.read_eof = false;
+                        self.buffer = buffer;
                         self.wait_for_readable();
 
                         return;
@@ -895,6 +892,7 @@ impl ReadFile {
                 // -- We are done reading.
                 break;
             }
+            self.buffer = buffer;
 
             if self.system_error.is_some() {
                 self.buffer = Vec::new(); // clearAndFree
@@ -950,7 +948,7 @@ impl<'a> FileOpener for ReadFileUV<'a> {
     fn set_opened_fd(&mut self, fd: Fd) {
         self.opened_fd = fd;
     }
-    fn set_errno(&mut self, e: bun_core::Error) {
+    fn set_errno(&mut self, e: crate::Error) {
         self.errno = Some(e);
     }
     fn set_system_error(&mut self, e: jsc::SystemError) {
@@ -992,9 +990,6 @@ impl<'a> FileCloser for ReadFileUV<'a> {
     // code paths.
     fn close_after_io(&self) -> bool {
         false
-    }
-    fn set_close_after_io(&mut self, _: bool) {
-        unreachable!("@hasField(ReadFileUV, \"io_request\") == false")
     }
     fn state(&self) -> &AtomicU8 {
         unreachable!("@hasField(ReadFileUV, \"io_request\") == false")
@@ -1175,7 +1170,7 @@ impl<'a> ReadFileUV<'a> {
             )
         };
         if let Some(errno) = rc.err_enum_e() {
-            self.errno = Some(bun_core::errno_to_zig_err(errno as i32));
+            self.errno = Some(bun_errno::from_errno(errno as i32).into());
             self.system_error = Some(
                 bun_sys::Error::from_code(errno, bun_sys::Tag::fstat)
                     .to_system_error()
@@ -1196,7 +1191,7 @@ impl<'a> ReadFileUV<'a> {
         // `req` aliases `this.req`; once `&mut ReadFileUV` exists, going through the
         // raw `req` pointer would violate Stacked Borrows. Read via `this.req` instead.
         if let Some(errno) = this.req.result.err_enum_e() {
-            this.errno = Some(bun_core::errno_to_zig_err(errno as i32));
+            this.errno = Some(bun_errno::from_errno(errno as i32).into());
             this.system_error = Some(
                 bun_sys::Error::from_code(errno, bun_sys::Tag::fstat)
                     .to_system_error()
@@ -1217,16 +1212,17 @@ impl<'a> ReadFileUV<'a> {
         }
 
         if bun_sys::S::ISDIR(u32::try_from(stat.mode()).expect("int cast")) {
-            this.errno = Some(bun_core::err!("EISDIR"));
+            this.errno = Some(crate::Error::Sys(bun_errno::SystemErrno::EISDIR));
             this.system_error = Some(SystemError {
-                code: BunString::static_("EISDIR"),
+                code: BunString::static_("EISDIR").into(),
                 path: if this.file_store.pathlike.is_path() {
                     BunString::clone_utf8(this.file_store.pathlike.path().slice())
                 } else {
                     BunString::EMPTY
-                },
-                message: BunString::static_("Directories cannot be read like files"),
-                syscall: BunString::static_("read"),
+                }
+                .into(),
+                message: BunString::static_("Directories cannot be read like files").into(),
+                syscall: BunString::static_("read").into(),
                 ..Default::default()
             });
             this.on_finish();
@@ -1267,7 +1263,7 @@ impl<'a> ReadFileUV<'a> {
         }
         // Out of memory we can't read more than 4GB at a time (ULONG) on Windows
         if this.size as usize > bun_sys::windows::ULONG::MAX as usize {
-            this.errno = Some(bun_core::errno_to_zig_err(bun_sys::E::NOMEM as i32));
+            this.errno = Some(bun_errno::from_errno(bun_sys::E::NOMEM as i32).into());
             this.system_error = Some(
                 bun_sys::Error::from_code(bun_sys::E::NOMEM, bun_sys::Tag::read)
                     .to_system_error()
@@ -1280,7 +1276,7 @@ impl<'a> ReadFileUV<'a> {
         let want =
             ((this.size as usize).saturating_add(16)).min(bun_sys::windows::ULONG::MAX as usize);
         if this.buffer.try_reserve_exact(want).is_err() {
-            this.errno = Some(bun_core::err!("OutOfMemory"));
+            this.errno = Some(crate::Error::Alloc(bun_alloc::AllocError));
             this.system_error = Some(
                 bun_sys::Error::from_code(bun_sys::E::NOMEM, bun_sys::Tag::read)
                     .to_system_error()
@@ -1324,7 +1320,7 @@ impl<'a> ReadFileUV<'a> {
                 // theres at least 4096 bytes of free space. there has already
                 // been an initial allocation done for us
                 if self.buffer.try_reserve(4096).is_err() {
-                    self.errno = Some(bun_core::err!("OutOfMemory"));
+                    self.errno = Some(crate::Error::Alloc(bun_alloc::AllocError));
                     self.system_error = Some(
                         bun_sys::Error::from_code(bun_sys::E::NOMEM, bun_sys::Tag::read)
                             .to_system_error()
@@ -1364,7 +1360,7 @@ impl<'a> ReadFileUV<'a> {
             };
             self.req.data = core::ptr::from_mut(self).cast::<c_void>();
             if let Some(errno) = res.err_enum_e() {
-                self.errno = Some(bun_core::errno_to_zig_err(errno as i32));
+                self.errno = Some(bun_errno::from_errno(errno as i32).into());
                 self.system_error = Some(
                     bun_sys::Error::from_code(errno, bun_sys::Tag::read)
                         .to_system_error()
@@ -1391,7 +1387,7 @@ impl<'a> ReadFileUV<'a> {
         let result = this.req.result;
 
         if let Some(errno) = result.err_enum_e() {
-            this.errno = Some(bun_core::errno_to_zig_err(errno as i32));
+            this.errno = Some(bun_errno::from_errno(errno as i32).into());
             this.system_error = Some(
                 bun_sys::Error::from_code(errno, bun_sys::Tag::read)
                     .to_system_error()

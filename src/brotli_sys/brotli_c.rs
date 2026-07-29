@@ -9,10 +9,8 @@ pub type brotli_alloc_func =
 pub type brotli_free_func = Option<unsafe extern "C" fn(opaque: *mut c_void, address: *mut c_void)>;
 
 bun_opaque::opaque_ffi! { pub struct struct_BrotliSharedDictionaryStruct; }
-pub type BrotliSharedDictionary = struct_BrotliSharedDictionaryStruct;
 
 pub const BROTLI_SHARED_DICTIONARY_RAW: c_int = 0;
-pub const BROTLI_SHARED_DICTIONARY_SERIALIZED: c_int = 1;
 pub type enum_BrotliSharedDictionaryType = c_uint;
 pub type BrotliSharedDictionaryType = enum_BrotliSharedDictionaryType;
 
@@ -96,23 +94,6 @@ impl BrotliDecoder {
         unsafe { BrotliDecoderDestroyInstance(state) }
     }
 
-    pub fn decompress(encoded: &[u8], decoded: &mut &mut [u8]) -> BrotliDecoderResult {
-        let mut decoded_size = decoded.len();
-        let decoded_ptr = decoded.as_mut_ptr();
-        // SAFETY: encoded/decoded are valid slices; decoded_size is in-out
-        let result = unsafe {
-            BrotliDecoderDecompress(
-                encoded.len(),
-                encoded.as_ptr(),
-                &raw mut decoded_size,
-                decoded_ptr,
-            )
-        };
-        // SAFETY: decoded_ptr points to the same allocation; decoded_size <= original len per brotli contract
-        *decoded = unsafe { core::slice::from_raw_parts_mut(decoded_ptr, decoded_size) };
-        result
-    }
-
     pub fn decompress_stream(
         state: &mut BrotliDecoder,
         available_in: &mut usize,
@@ -136,40 +117,12 @@ impl BrotliDecoder {
         }
     }
 
-    pub fn has_more_output(state: &BrotliDecoder) -> bool {
-        BrotliDecoderHasMoreOutput(state) != 0
-    }
-
-    pub fn take_output(state: &mut BrotliDecoder) -> &[u8] {
-        let mut max_size: usize = usize::MAX;
-        let ptr = BrotliDecoderTakeOutput(state, &mut max_size);
-        if ptr.is_null() {
-            return b"";
-        }
-        // SAFETY: brotli returns a pointer to an internal buffer of `max_size` bytes,
-        // valid until the next decoder call
-        unsafe { core::slice::from_raw_parts(ptr, max_size) }
-    }
-
-    pub fn is_used(state: &BrotliDecoder) -> bool {
-        BrotliDecoderIsUsed(state) != 0
-    }
-
     pub fn is_finished(state: &BrotliDecoder) -> bool {
         BrotliDecoderIsFinished(state) != 0
     }
 
     pub fn get_error_code(state: &BrotliDecoder) -> BrotliDecoderErrorCode {
         BrotliDecoderGetErrorCode(state)
-    }
-
-    pub fn error_string(c: BrotliDecoderErrorCode) -> &'static core::ffi::CStr {
-        let ptr = BrotliDecoderErrorString(c);
-        if ptr.is_null() {
-            return c"";
-        }
-        // SAFETY: ptr is a valid NUL-terminated static string from brotli
-        unsafe { core::ffi::CStr::from_ptr(ptr) }
     }
 
     pub fn version() -> u32 {
@@ -230,9 +183,6 @@ pub enum BrotliDecoderErrorCode2 {
     ERROR_UNREACHABLE = -31,
 }
 
-pub const BROTLI_DECODER_PARAM_DISABLE_RING_BUFFER_REALLOCATION: c_int = 0;
-pub const BROTLI_DECODER_PARAM_LARGE_WINDOW: c_int = 1;
-
 #[repr(u32)]
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
 pub enum BrotliDecoderParameter {
@@ -240,17 +190,8 @@ pub enum BrotliDecoderParameter {
     LARGE_WINDOW = 1,
 }
 
-pub const BROTLI_UINT32_MAX: u32 = !0u32;
-pub const BROTLI_SIZE_MAX: usize = !0usize;
-pub const BROTLI_LAST_ERROR_CODE: c_int = BrotliDecoderErrorCode2::ERROR_UNREACHABLE as c_int;
-pub type BrotliSharedDictionaryStruct = struct_BrotliSharedDictionaryStruct;
-
 bun_opaque::opaque_ffi! { pub struct struct_BrotliEncoderPreparedDictionaryStruct; }
 pub type BrotliEncoderPreparedDictionary = struct_BrotliEncoderPreparedDictionaryStruct;
-
-pub const BROTLI_MODE_GENERIC: c_int = 0;
-pub const BROTLI_MODE_TEXT: c_int = 1;
-pub const BROTLI_MODE_FONT: c_int = 2;
 
 #[repr(u32)]
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
@@ -259,22 +200,6 @@ pub enum BrotliEncoderMode {
     text = 1,
     font = 2,
 }
-
-pub const BROTLI_OPERATION_PROCESS: c_int = 0;
-pub const BROTLI_OPERATION_FLUSH: c_int = 1;
-pub const BROTLI_OPERATION_FINISH: c_int = 2;
-pub const BROTLI_OPERATION_EMIT_METADATA: c_int = 3;
-
-pub const BROTLI_PARAM_MODE: c_int = 0;
-pub const BROTLI_PARAM_QUALITY: c_int = 1;
-pub const BROTLI_PARAM_LGWIN: c_int = 2;
-pub const BROTLI_PARAM_LGBLOCK: c_int = 3;
-pub const BROTLI_PARAM_DISABLE_LITERAL_CONTEXT_MODELING: c_int = 4;
-pub const BROTLI_PARAM_SIZE_HINT: c_int = 5;
-pub const BROTLI_PARAM_LARGE_WINDOW: c_int = 6;
-pub const BROTLI_PARAM_NPOSTFIX: c_int = 7;
-pub const BROTLI_PARAM_NDIRECT: c_int = 8;
-pub const BROTLI_PARAM_STREAM_OFFSET: c_int = 9;
 
 #[repr(u32)]
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
@@ -385,10 +310,6 @@ impl<'a> Default for CompressionResult<'a> {
     }
 }
 
-// `BrotliEncoder.Operation` is a module-level alias because inherent
-// associated types are unstable in Rust.
-pub type Operation = BrotliEncoderOperation;
-
 impl BrotliEncoder {
     /// # Safety
     /// `opaque` is forwarded to brotli's allocator hooks; it must be valid for
@@ -406,18 +327,6 @@ impl BrotliEncoder {
     pub fn destroy_instance(state: &mut BrotliEncoder) {
         // SAFETY: state is a valid &mut BrotliEncoder allocated by create_instance
         unsafe { BrotliEncoderDestroyInstance(state) }
-    }
-
-    pub fn take_output(state: &mut BrotliEncoder) -> &[u8] {
-        let mut size: usize = 0;
-        let ptr = BrotliEncoderTakeOutput(state, &mut size);
-        if !ptr.is_null() {
-            // SAFETY: brotli returns a pointer to an internal buffer of `size` bytes,
-            // valid until the next encoder call
-            return unsafe { core::slice::from_raw_parts(ptr, size) };
-        }
-
-        b""
     }
 
     // https://github.com/google/brotli/blob/2ad58d8603294f5ee33d23bb725e0e6a17c1de50/go/cbrotli/writer.go#L23-L40
@@ -462,27 +371,8 @@ impl BrotliEncoder {
             has_more: BrotliEncoderHasMoreOutput(state) > 0,
         }
     }
-
-    pub fn set_parameter(
-        state: &mut BrotliEncoder,
-        param: BrotliEncoderParameter,
-        value: u32,
-    ) -> bool {
-        BrotliEncoderSetParameter(state, param as c_uint, value) > 0
-    }
 }
 
-pub const SHARED_BROTLI_MIN_DICTIONARY_WORD_LENGTH: c_int = 4;
-pub const SHARED_BROTLI_MAX_DICTIONARY_WORD_LENGTH: c_int = 31;
-pub const SHARED_BROTLI_NUM_DICTIONARY_CONTEXTS: c_int = 64;
-pub const SHARED_BROTLI_MAX_COMPOUND_DICTS: c_int = 15;
-pub const BROTLI_MIN_WINDOW_BITS: c_int = 10;
-pub const BROTLI_MAX_WINDOW_BITS: c_int = 24;
-pub const BROTLI_LARGE_MAX_WINDOW_BITS: c_int = 30;
-pub const BROTLI_MIN_INPUT_BLOCK_BITS: c_int = 16;
-pub const BROTLI_MAX_INPUT_BLOCK_BITS: c_int = 24;
 pub const BROTLI_MIN_QUALITY: c_int = 0;
 pub const BROTLI_MAX_QUALITY: c_int = 11;
-pub const BROTLI_DEFAULT_QUALITY: c_int = 11;
 pub const BROTLI_DEFAULT_WINDOW: c_int = 22;
-pub const BROTLI_DEFAULT_MODE: c_int = BROTLI_MODE_GENERIC;

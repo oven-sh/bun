@@ -50,7 +50,7 @@ impl Pipeline {
         io: IO,
     ) -> NodeId {
         interp.alloc_node(Node::Pipeline(Pipeline {
-            base: Base::new(StateKind::Pipeline, parent, shell),
+            base: Base::new(parent, shell),
             node: bun_ptr::BackRef::new(node),
             io,
             exited_count: 0,

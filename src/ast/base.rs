@@ -40,11 +40,6 @@ impl IntoIndexInt for i32 {
 
 impl Index {
     #[inline]
-    pub fn set(&mut self, val: IndexInt) {
-        self.0 = val;
-    }
-
-    #[inline]
     pub const fn value(self) -> IndexInt {
         self.0
     }

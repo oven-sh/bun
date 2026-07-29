@@ -31,7 +31,7 @@ enum HttpError {
 #ifndef UWS_HTTPRESPONSE_NO_WRITEMARK
 
 /* Returned parser errors match this LUT. */
-static const std::string_view httpErrorResponses[] = {
+inline constexpr std::string_view httpErrorResponses[] = {
     "", /* Zeroth place is no error so don't use it */
     "HTTP/1.1 505 HTTP Version Not Supported\r\nConnection: close\r\n\r\n<h1>HTTP Version Not Supported</h1><p>This server does not support HTTP/1.0.</p><hr><i>uWebSockets/20 Server</i>",
     "HTTP/1.1 431 Request Header Fields Too Large\r\nConnection: close\r\n\r\n<h1>Request Header Fields Too Large</h1><hr><i>uWebSockets/20 Server</i>",
@@ -40,7 +40,7 @@ static const std::string_view httpErrorResponses[] = {
 
 #else
 /* Anonymized pages */
-static const std::string_view httpErrorResponses[] = {
+inline constexpr std::string_view httpErrorResponses[] = {
     "", /* Zeroth place is no error so don't use it */
     "HTTP/1.1 505 HTTP Version Not Supported\r\nConnection: close\r\n\r\n",
     "HTTP/1.1 431 Request Header Fields Too Large\r\nConnection: close\r\n\r\n",

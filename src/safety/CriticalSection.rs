@@ -148,22 +148,6 @@ impl State {
         }
     }
 
-    /// Acquire the lock for shared (read-only) access.
-    fn lock_shared(&mut self) {
-        let current_id = current_thread_id();
-        let owner_id = self.get_or_become_owner();
-        if owner_id == current_id {
-            self.owned_count += 1;
-        } else if self.count.fetch_add(1, Ordering::Relaxed) == Self::EXCLUSIVE {
-            self.show_trace();
-            panic!(
-                "race condition: thread {} tried to read data being modified by {}",
-                current_id,
-                OptionalThreadId::init(owner_id),
-            );
-        }
-    }
-
     /// Acquire the lock for exclusive (read/write) access.
     fn lock_exclusive(&mut self) {
         let current_id = current_thread_id();
@@ -243,13 +227,6 @@ impl CriticalSection {
     pub fn begin(&mut self) {
         #[cfg(debug_assertions)]
         self.internal_state.lock_exclusive();
-    }
-
-    /// Marks the beginning of a critical section which performs read-only accesses on shared data.
-    /// Calls to this function can be nested; each must be paired with a call to `end`.
-    pub fn begin_read_only(&mut self) {
-        #[cfg(debug_assertions)]
-        self.internal_state.lock_shared();
     }
 
     /// Marks the end of a critical section started by `begin` or `begin_read_only`.

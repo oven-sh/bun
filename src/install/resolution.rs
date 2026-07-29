@@ -152,10 +152,6 @@ impl<SemverInt: VersionInt> ResolutionType<SemverInt> {
         unsafe { &(*core::ptr::from_ref(&self.value)).git }
     }
 
-    pub fn is_git(&self) -> bool {
-        self.tag.is_git()
-    }
-
     pub fn can_enqueue_install_task(&self) -> bool {
         self.tag.can_enqueue_install_task()
     }
@@ -1006,8 +1002,6 @@ pub enum FromTextLockfileError {
 
 bun_core::oom_from_alloc!(FromTextLockfileError);
 
-bun_core::named_error_set!(FromTextLockfileError);
-
 #[derive(thiserror::Error, Debug, strum::IntoStaticStr)]
 pub enum FromPnpmLockfileError {
     #[error("out of memory")]
@@ -1017,5 +1011,3 @@ pub enum FromPnpmLockfileError {
 }
 
 bun_core::oom_from_alloc!(FromPnpmLockfileError);
-
-bun_core::named_error_set!(FromPnpmLockfileError);

@@ -74,6 +74,9 @@ export const bunEnv: NodeJS.Dict<string> = {
   CI: "1",
   BUN_RUNTIME_TRANSPILER_CACHE_PATH: "0",
   BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING: "1",
+  // Tests drive `bun update --interactive` by writing keystrokes to a pipe;
+  // the real command refuses on non-TTY stdin. Bypass that gate under test.
+  BUN_INTERNAL_INTERACTIVE_ASSUME_TTY: "1",
   BUN_GARBAGE_COLLECTOR_LEVEL: process.env.BUN_GARBAGE_COLLECTOR_LEVEL || "0",
   BUN_FEATURE_FLAG_EXPERIMENTAL_BAKE: "1",
   BUN_DEBUG_linkerctx: "0",
@@ -312,9 +315,8 @@ export async function expectMaxObjectTypeCount(
 
 // we must ensure that finalizers are run
 // so that the reference-counting logic is exercised
-export function gcTick(trace = false) {
-  trace && console.trace("");
-  // console.trace("hello");
+export function gcTick(traceForDebugging = false) {
+  traceForDebugging && console.trace("");
   gc();
   return Bun.sleep(0);
 }
@@ -1190,11 +1192,11 @@ export async function describeWithContainer(
       _port = info.ports[servicePort];
       console.log(`Container ready via docker-compose: ${image} at ${_host}:${_port}`);
       readyResolver!();
-      // Cold container start is bounded by `compose up --wait-timeout 60` plus
+      // Cold container start is bounded by `compose up --wait-timeout 180` plus
       // a `compose build` step; the default 5s hook timeout fires first and the
       // runner's auto-killer then SIGTERMs the in-flight compose subprocesses,
       // surfacing as bogus `Failed to start service X: ... Creating` errors.
-    }, 120_000);
+    }, 240_000);
 
     fn(containerDescriptor);
   });
@@ -1757,9 +1759,14 @@ export function assertManifestsPopulated(absCachePath: string, registryUrl: stri
   }
 }
 
-// Make it easier to run some node tests.
+// Make it easier to run some node tests. Node's --expose-gc gc() is a
+// synchronous full collection, so force must default to true here: a bare
+// Bun.gc would take the async path, whose conservative scan can land on a
+// stack state that pins dead objects forever under gc()-polling loops.
 Object.defineProperty(globalThis, "gc", {
-  value: Bun.gc,
+  value: function gc(force = true) {
+    return Bun.gc(force);
+  },
   writable: true,
   enumerable: false,
   configurable: true,

@@ -183,7 +183,7 @@ impl History {
         }
     }
 
-    pub(crate) fn load(&mut self) -> Result<(), bun_core::Error> {
+    pub(crate) fn load(&mut self) -> Result<(), crate::Error> {
         let Some(home_path) = env_var::HOME.get() else {
             return Ok(());
         };
@@ -840,7 +840,6 @@ pub(super) struct Repl<'a> {
     is_tty: bool,
     use_colors: bool,
     terminal_width: u16,
-    terminal_height: u16,
     ctrl_c_pressed: bool,
 
     // Buffered stdin
@@ -861,6 +860,10 @@ pub(super) struct Repl<'a> {
     // Windows: saved console mode for restoration
     #[cfg(windows)]
     original_windows_mode: Option<bun_sys::windows::DWORD>,
+
+    // POSIX: the REPL's own stdin raw-mode state
+    #[cfg(unix)]
+    tty_state: tty::State,
 }
 
 impl<'a> Repl<'a> {
@@ -876,7 +879,6 @@ impl<'a> Repl<'a> {
             is_tty: false,
             use_colors: false,
             terminal_width: 80,
-            terminal_height: 24,
             ctrl_c_pressed: false,
             stdin_buf: [0u8; 256],
             stdin_buf_start: 0,
@@ -889,6 +891,8 @@ impl<'a> Repl<'a> {
             last_error: ProtectedJSValue::adopt(JSValue::UNDEFINED),
             #[cfg(windows)]
             original_windows_mode: None,
+            #[cfg(unix)]
+            tty_state: tty::State::new(),
         }
     }
 
@@ -921,13 +925,12 @@ impl<'a> Repl<'a> {
         let ts = Output::TERMINAL_SIZE.load();
         if ts.col > 0 {
             self.terminal_width = ts.col;
-            self.terminal_height = ts.row;
         }
 
         // Enable raw mode
         #[cfg(unix)]
         {
-            let _ = tty::set_mode(0, tty::Mode::Raw);
+            let _ = self.tty_state.set_mode(0, tty::Mode::Raw);
         }
         #[cfg(windows)]
         {
@@ -947,7 +950,7 @@ impl<'a> Repl<'a> {
     fn restore_terminal(&mut self) {
         #[cfg(unix)]
         {
-            let _ = tty::set_mode(0, tty::Mode::Normal);
+            let _ = self.tty_state.set_mode(0, tty::Mode::Normal);
         }
         #[cfg(windows)]
         {
@@ -972,7 +975,7 @@ impl<'a> Repl<'a> {
         #[cfg(unix)]
         {
             // Switch to normal terminal mode (has ISIG) so Ctrl+C generates SIGINT
-            let _ = tty::set_mode(0, tty::Mode::Normal);
+            let _ = self.tty_state.set_mode(0, tty::Mode::Normal);
 
             // Install SIGINT handler
             // SAFETY: zeroed `sigaction` is a valid empty mask + null restorer; we set
@@ -994,7 +997,7 @@ impl<'a> Repl<'a> {
         #[cfg(unix)]
         {
             // Back to raw mode
-            let _ = tty::set_mode(0, tty::Mode::Raw);
+            let _ = self.tty_state.set_mode(0, tty::Mode::Raw);
 
             // Restore default SIGINT handling
             // SAFETY: zeroed `sigaction` is a valid empty mask + null restorer; SIG_DFL
@@ -1735,7 +1738,7 @@ impl<'a> Repl<'a> {
     }
 
     /// Write text to clipboard using OSC 52 escape sequence.
-    fn copy_to_clipboard_osc52(&self, text: &[u8]) -> Result<(), bun_core::Error> {
+    fn copy_to_clipboard_osc52(&self, text: &[u8]) -> Result<(), crate::Error> {
         let mut it = strings::ANSIIterator::init(text);
         let Some(first) = it.next() else {
             return Ok(());
@@ -1969,7 +1972,7 @@ impl<'a> Repl<'a> {
     pub(super) fn run_with_vm(
         &mut self,
         vm: Option<&'a VirtualMachine>,
-    ) -> Result<(), bun_core::Error> {
+    ) -> Result<(), crate::Error> {
         self.vm = vm;
         if let Some(v) = vm {
             self.global = Some(v.global());
@@ -2130,7 +2133,7 @@ impl<'a> Repl<'a> {
         Ok(())
     }
 
-    fn handle_enter(&mut self) -> Result<(), bun_core::Error> {
+    fn handle_enter(&mut self) -> Result<(), crate::Error> {
         self.print(format_args!("\n"));
 
         // Note: reshaped for borrowck — copy line out so we can call &mut self methods

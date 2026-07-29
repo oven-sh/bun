@@ -60,7 +60,7 @@ impl SendFile {
                     return Status::Done;
                 }
 
-                return Status::Err(bun_core::errno_to_zig_err(errcode as i32));
+                return Status::Err(bun_errno::from_errno(errcode as i32).into());
             }
         }
 
@@ -89,7 +89,7 @@ impl SendFile {
                 if errcode == bun_sys::E::SUCCESS {
                     return Status::Done;
                 }
-                return Status::Err(bun_core::errno_to_zig_err(errcode as i32));
+                return Status::Err(bun_errno::from_errno(errcode as i32).into());
             }
         }
 
@@ -121,7 +121,7 @@ impl SendFile {
                     return Status::Done;
                 }
 
-                return Status::Err(bun_core::errno_to_zig_err(errcode as i32));
+                return Status::Err(bun_errno::from_errno(errcode as i32).into());
             }
         }
 
@@ -136,6 +136,6 @@ impl SendFile {
 
 pub enum Status {
     Done,
-    Err(bun_core::Error),
+    Err(crate::Error),
     Again,
 }

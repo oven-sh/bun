@@ -1,5 +1,6 @@
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 
+use super::throw;
 use super::DiffFormatter;
 use super::Expect;
 
@@ -13,8 +14,7 @@ impl Expect {
         let (this, value, not) =
             self.matcher_prelude(global, frame.this(), "toEqual", "<green>expected<r>")?;
 
-        let _arguments = frame.arguments_old::<1>();
-        let arguments: &[JSValue] = _arguments.slice();
+        let arguments = frame.arguments();
 
         if arguments.len() < 1 {
             return Err(global.throw_invalid_arguments(format_args!("toEqual() requires 1 argument")));
@@ -42,10 +42,10 @@ impl Expect {
 
         if not {
             let signature: &str = Expect::get_signature("toEqual", "<green>expected<r>", true);
-            return this.throw(global, signature, format_args!("\n\n{}\n", diff_formatter));
+            return throw!(this, global, signature, "\n\n{}\n", diff_formatter);
         }
 
         let signature: &str = Expect::get_signature("toEqual", "<green>expected<r>", false);
-        this.throw(global, signature, format_args!("\n\n{}\n", diff_formatter))
+        throw!(this, global, signature, "\n\n{}\n", diff_formatter)
     }
 }

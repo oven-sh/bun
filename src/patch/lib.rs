@@ -2,6 +2,10 @@
 
 #![allow(non_snake_case, non_camel_case_types, non_upper_case_globals)]
 #![warn(unused_must_use)]
+
+pub mod error;
+pub use error::{Error, Result};
+
 use core::mem;
 
 use bun_collections::bit_set::ArrayBitSet;
@@ -17,9 +21,6 @@ bun_core::declare_scope!(Patch, visible);
 type ByteBitSet = ArrayBitSet<256, 4>;
 
 const WHITESPACE: &[u8] = b" \t\n\r";
-
-// TODO: calculate this for different systems
-const PAGE_SIZE: usize = 16384;
 
 // ──────────────────────────────────────────────────────────────────────────
 // PatchFilePart / PatchFile
@@ -174,9 +175,6 @@ impl<'a> PatchFile<'a> {
                         total
                     };
 
-                    // PERF: small (<= PAGE_SIZE) allocations could use an arena.
-                    let _ = PAGE_SIZE;
-
                     // TODO: this additional allocation is probably not necessary in all cases and should be avoided or use stack buffer
                     let file_contents: Vec<u8> = {
                         let mut contents = vec![0u8; count];
@@ -288,12 +286,6 @@ fn apply_patch(patch: &FilePatch<'_>, patch_dir: Fd, state: &mut ApplyState) -> 
     #[cfg(unix)]
     let _ = state; // suppress unused on posix
 
-    // Purposefully use `bun.default_allocator` here because if the file size is big like
-    // 1gb we don't want to have 1gb hanging around in memory until arena is cleared
-    //
-    // But if the file size is small, like less than a single page, it's probably ok
-    // to use the arena
-    let _use_arena: bool = stat.st_size as usize <= PAGE_SIZE;
     let filebuf: Vec<u8> = match read_file_alloc(patch_dir, &file_path, 1024 * 1024 * 1024 * 4) {
         Ok(b) => b,
         Err(_) => {
@@ -531,7 +523,7 @@ pub struct PatchMutationPart<'a> {
 
 /// Ensure context, insertion, deletion values are in sync with HunkLineType enum
 #[repr(u8)]
-#[derive(Copy, Clone, PartialEq, Eq, Default, strum::IntoStaticStr)]
+#[derive(Copy, Clone, PartialEq, Eq, Default)]
 pub enum PartType {
     #[default]
     Context = 0,
@@ -884,12 +876,6 @@ pub enum ParseErr {
     no_path_given_for_file_creation,
     #[error("bad_file_mode")]
     bad_file_mode,
-}
-
-impl From<ParseErr> for bun_core::Error {
-    fn from(e: ParseErr) -> Self {
-        bun_core::err!(from e)
-    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -1572,19 +1558,12 @@ fn parse_diff_hashes(line: &[u8]) -> Option<(&[u8], &[u8])> {
     if b_part_start >= line.len() {
         return None;
     }
-    let lmao_bro = &line[b_part_start..];
-    core::hint::black_box(lmao_bro);
     let b_part_end = match strings::index_of_any(&line[b_part_start..], b" \n\r\t") {
         Some(pos) => pos + b_part_start,
         None => line.len(),
     };
 
     let b_part = &line[b_part_start..b_part_end];
-    for &c in a_part {
-        if !valid_chars.is_set(c as usize) {
-            return None;
-        }
-    }
     for &c in b_part {
         if !valid_chars.is_set(c as usize) {
             return None;
@@ -1648,7 +1627,7 @@ pub fn spawn_opts(
     new_folder: &[u8],
     cwd: &ZStr,
     git: &ZStr,
-    loop_: &mut bun_event_loop::AnyEventLoop<'static>,
+    loop_: &mut bun_event_loop::AnyEventLoop,
 ) -> (bun_spawn::sync::Options, Vec<*const core::ffi::c_char>) {
     let argv: Vec<Box<[u8]>> = {
         const ARGV: &[&[u8]] = &[
@@ -1727,7 +1706,7 @@ pub fn diff_post_process(
     result: &mut bun_spawn::sync::Result,
     old_folder: &[u8],
     new_folder: &[u8],
-) -> Result<core::result::Result<Vec<u8>, Vec<u8>>, bun_core::Error> {
+) -> crate::Result<core::result::Result<Vec<u8>, Vec<u8>>> {
     let mut stdout: Vec<u8> = Vec::new();
     let mut stderr: Vec<u8> = Vec::new();
 
@@ -1746,26 +1725,12 @@ pub fn diff_post_process(
     Ok(Ok(stdout))
 }
 
-// Returns owned `Vec<u8>` pairs (NUL-appended when SENTINEL).
-pub fn git_diff_preprocess_paths<const SENTINEL: bool>(
-    old_folder_: &[u8],
-    new_folder_: &[u8],
-) -> [Vec<u8>; 2] {
-    let bump: usize = if SENTINEL { 1 } else { 0 };
-
+pub fn git_diff_preprocess_paths(old_folder_: &[u8], new_folder_: &[u8]) -> [Vec<u8>; 2] {
     #[cfg(windows)]
     let old_folder: Vec<u8> = {
-        // backslash in the path fucks everything up
-        let mut cpy = vec![0u8; old_folder_.len() + bump];
-        cpy[..old_folder_.len()].copy_from_slice(old_folder_);
+        // Normalize Windows separators before passing paths to `git diff`.
+        let mut cpy = old_folder_.to_vec();
         paths::slashes_to_posix_in_place(&mut cpy[..]);
-        if SENTINEL {
-            cpy[old_folder_.len()] = 0;
-            // The sentinel slice's `.len` excludes the NUL. Truncate so
-            // `Vec::len()` matches; the NUL byte stays in
-            // spare capacity for callers that need a C string via `.as_ptr()`.
-            cpy.truncate(old_folder_.len());
-        }
         cpy
     };
     #[cfg(not(windows))]
@@ -1773,39 +1738,22 @@ pub fn git_diff_preprocess_paths<const SENTINEL: bool>(
 
     #[cfg(windows)]
     let new_folder: Vec<u8> = {
-        let mut cpy = vec![0u8; new_folder_.len() + bump];
-        cpy[..new_folder_.len()].copy_from_slice(new_folder_);
+        let mut cpy = new_folder_.to_vec();
         paths::slashes_to_posix_in_place(&mut cpy[..]);
-        if SENTINEL {
-            cpy[new_folder_.len()] = 0;
-            // `.len` excludes the sentinel.
-            cpy.truncate(new_folder_.len());
-        }
         cpy
     };
     #[cfg(not(windows))]
     let new_folder: Vec<u8> = new_folder_.to_vec();
 
-    #[cfg(unix)]
-    if SENTINEL {
-        // Append NUL.
-        let mut o = old_folder;
-        o.push(0);
-        let mut n = new_folder;
-        n.push(0);
-        return [o, n];
-    }
-
-    let _ = bump;
     [old_folder, new_folder]
 }
 
 pub fn git_diff_internal(
     old_folder_: &[u8],
     new_folder_: &[u8],
-    loop_: &mut bun_event_loop::AnyEventLoop<'static>,
-) -> Result<core::result::Result<Vec<u8>, Vec<u8>>, bun_core::Error> {
-    let paths = git_diff_preprocess_paths::<false>(old_folder_, new_folder_);
+    loop_: &mut bun_event_loop::AnyEventLoop,
+) -> crate::Result<core::result::Result<Vec<u8>, Vec<u8>>> {
+    let paths = git_diff_preprocess_paths(old_folder_, new_folder_);
     let old_folder = &paths[0][..];
     let new_folder = &paths[1][..];
 
@@ -1818,7 +1766,7 @@ pub fn git_diff_internal(
         b"",
         b"git",
     )
-    .ok_or_else(|| bun_core::err!(FileNotFound))?;
+    .ok_or(crate::Error::Sys(bun_errno::SystemErrno::ENOENT))?;
 
     const ARGV: &[&[u8]] = &[
         b"-c",
@@ -1934,7 +1882,7 @@ fn git_diff_postprocess(
     stdout: &mut Vec<u8>,
     old_folder: &[u8],
     new_folder: &[u8],
-) -> Result<(), bun_core::Error> {
+) -> crate::Result<()> {
     let old_folder_trimmed = strings::trim(old_folder, b"/");
     let new_folder_trimmed = strings::trim(new_folder, b"/");
 

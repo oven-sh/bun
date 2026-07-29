@@ -234,7 +234,8 @@ describe("Bun.stripANSI", () => {
 
     // Nested-looking sequences (not actually nested)
     ["\x1b[31m\x1b in text\x1b[39m", "n text"], // ESC SP <x> is a two-byte sequence
-    ["\x1b]0;\x1b[31mred\x1b[39m\x07text", "text"],
+    // ESC aborts an in-progress sequence (VT500): the OSC ends at the inner ESC.
+    ["\x1b]0;\x1b[31mred\x1b[39m\x07text", "red\x07text"],
 
     // Control characters mixed with ANSI
     "\x1b[31m\x08\x09\x0a\x0d\x1b[39m",
@@ -258,7 +259,7 @@ describe("Bun.stripANSI", () => {
 
     // Invalid OSC sequences (missing terminator)
     ["\x1b]0;title", ""], // No terminator, consumes rest
-    ["\x1b]2;test\x1bother", ""], // Incomplete ESC terminator
+    ["\x1b]2;test\x1bother", "ther"], // ESC aborts an in-progress sequence (VT500); ESC o is a two-byte escape
 
     // Complex prefix combinations
     ["\x1b[[[31mtext", "[31mtext"], // [ terminates CSI
@@ -439,6 +440,26 @@ describe("Bun.stripANSI", () => {
 
     // Strip a single escape character
     ["\x1b", ""],
+
+    // The rest of the ECMA-48 grammar (npm strip-ansi does not remove these)
+    ["\x1b7hi\x1b8", "hi"], // Fp: DECSC / DECRC
+    ["ab\x1bcd", "abd"], // Fs: RIS
+    ["ab\x1b(Bcd", "abcd"], // nF: charset designation
+    ["ab\x1b#8d", "abd"], // nF: DECALN
+    ["a\x1bP+q544e\x1b\\b", "ab"], // DCS ... ST
+    ["a\x1b_apc payload\x1b\\b", "ab"], // APC ... ST
+    ["\x1b[31mre\x1b\x1b[0md", "red"], // ESC re-introduces a sequence
+    ["a\x1b中b", "a中b"], // ESC followed by a non-ASCII char is not a sequence
+    ["\x9B31mhi\x9B39m", "hi"], // C1 CSI
+    ["\x9D8;;url\x9Clink\x9D8;;\x9C", "link"], // C1 OSC ... C1 ST
+    ["a\x90dcs\x9Cb", "ab"], // C1 DCS ... C1 ST
+
+    // ESC / CAN / C1 ST abort an in-progress sequence (VT500)
+    ["text\x1b[3\x1b[0mmore", "textmore"], // ESC inside CSI parameters
+    ["\x1b]0;title\x1b[31mtext\x1b[0m", "text"], // ESC inside an OSC payload
+    ["ab\x1b[31\x18mcd", "abmcd"], // CAN inside CSI parameters (CAN is consumed)
+    ["ab\x1b[31\x9cmcd", "abmcd"], // C1 ST inside CSI parameters (0x9C is consumed)
+    ["a\x1b\x9cb", "ab"], // C1 ST right after ESC aborts to ground (both consumed)
   ];
 
   for (const testCase of testCases) {
@@ -505,6 +526,33 @@ describe("Bun.stripANSI", () => {
       expect(result).toBe(input);
       expect(after).toBe(before); // no copy made
     });
+
+    // A standalone C1 ST (0x9C) stops the escape scan but introduces
+    // nothing, so nothing is stripped and the input must come back as the
+    // same object — including when it is the last byte, and across the
+    // 1 KB dispatch threshold.
+    const bigA = Buffer.alloc(2048, "a").toString();
+    const bigB = Buffer.alloc(2048, "b").toString();
+    for (const [label, input] of [
+      ["trailing", "abc\x9c"],
+      ["mid-string", "abc\x9cdef"],
+      ["trailing, past the dispatch threshold", bigA + "\x9c"],
+      ["mid-string, past the dispatch threshold", bigA + "\x9c" + bigB],
+    ] as const) {
+      test(`standalone C1 ST is not stripped (${label}): returns the same object`, () => {
+        Bun.stripANSI(input);
+        Bun.gc(true);
+
+        const before = heapStats().objectTypeCounts.string;
+        const result = Bun.stripANSI(input);
+        const after = heapStats().objectTypeCounts.string;
+        expect(result).toBe(input);
+        // A copy would hold `after` above `before` (the copy is rooted by
+        // `result`). The reverse — GC collecting something between the two
+        // heapStats() calls — is fine, so the check is one-sided.
+        expect(after).toBeLessThanOrEqual(before);
+      });
+    }
 
     // Dispatched path matches the inlined path for a variety of sequences: the
     // long no-escape prefix is skipped identically, so stripping the prefixed

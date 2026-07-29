@@ -3,7 +3,7 @@ use core::marker::PhantomData;
 use core::mem::{ManuallyDrop, align_of, size_of};
 use core::ptr::NonNull;
 
-use crate::{self as jsc, JSValue, Strong};
+use crate::{self as jsc, Strong};
 use bun_core::{WTFString, WTFStringImplStruct};
 use bun_ptr::{ExternalShared, ExternalSharedDescriptor, ExternalSharedOptional};
 
@@ -57,18 +57,6 @@ impl<T> Bindgen for BindgenTrivial<T> {
         extern_value
     }
 }
-
-pub type BindgenBool = BindgenTrivial<bool>;
-pub type BindgenU8 = BindgenTrivial<u8>;
-pub type BindgenI8 = BindgenTrivial<i8>;
-pub type BindgenU16 = BindgenTrivial<u16>;
-pub type BindgenI16 = BindgenTrivial<i16>;
-pub type BindgenU32 = BindgenTrivial<u32>;
-pub type BindgenI32 = BindgenTrivial<i32>;
-pub type BindgenU64 = BindgenTrivial<u64>;
-pub type BindgenI64 = BindgenTrivial<i64>;
-pub type BindgenF64 = BindgenTrivial<f64>;
-pub type BindgenRawAny = BindgenTrivial<JSValue>;
 
 // ──────────────────────────────────────────────────────────────────────────
 
@@ -192,7 +180,6 @@ impl BindgenOptionalRepr for BindgenString {
 // The bindgen TS codegen emits a concrete `enum` + `#[repr(C)]` union pair
 // per call site rather than a generic Rust combinator (see
 // `src/jsc/generated.rs`). This marker type exists for documentation parity.
-pub struct BindgenUnion;
 
 /// `extern struct { data: ExternUnion(field_types), tag: u8 }`
 ///
@@ -395,5 +382,4 @@ impl<T: ExternalSharedDescriptor> BindgenOptionalRepr for BindgenExternalShared<
     }
 }
 
-pub type BindgenArrayBuffer = BindgenExternalShared<jsc::JSCArrayBuffer>;
 pub type BindgenBlob = BindgenExternalShared<crate::webcore::Blob>;

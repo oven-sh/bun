@@ -115,8 +115,11 @@ using namespace JSC;
     macro(internalRequire) \
     macro(isAbortSignal) \
     macro(isAbsolute) \
+    macro(isUncloneable) \
+    macro(isUntransferable) \
     macro(join) \
     macro(json) \
+    macro(kResistStopPropagation) \
     macro(key) \
     macro(lazy) \
     macro(lineText) \
@@ -198,6 +201,7 @@ using namespace JSC;
     macro(vmErrorDecorated) \
     macro(warning) \
     macro(webStreamClosedPromise) \
+    macro(webStreamControllerError) \
     macro(writable) \
     macro(writableType) \
     macro(write) \

@@ -116,10 +116,6 @@ impl SideEffects {
     pub fn typeof_(data: &ExprData) -> Option<&'static [u8]> {
         data.to_typeof()
     }
-    #[inline(always)]
-    pub fn to_type_of(data: &ExprData) -> Option<&'static [u8]> {
-        data.to_typeof()
-    }
 
     pub fn is_primitive_to_reorder(data: &ExprData) -> bool {
         matches!(
@@ -192,14 +188,14 @@ impl SideEffects {
 
                 // "foo() ? 1 : 2" => "foo()"
                 if ternary.yes.is_empty() && ternary.no.is_empty() {
-                    return Self::simplify_unused_expr(p, ternary.test_);
+                    return Self::simplify_unused_expr(p, ternary.test);
                 }
 
                 // "foo() ? 1 : bar()" => "foo() || bar()"
                 if ternary.yes.is_empty() {
                     return Some(Expr::join_with_left_associative_op(
                         Op::Code::BinLogicalOr,
-                        ternary.test_,
+                        ternary.test,
                         ternary.no,
                     ));
                 }
@@ -208,7 +204,7 @@ impl SideEffects {
                 if ternary.no.is_empty() {
                     return Some(Expr::join_with_left_associative_op(
                         Op::Code::BinLogicalAnd,
-                        ternary.test_,
+                        ternary.test,
                         ternary.yes,
                     ));
                 }
@@ -670,7 +666,7 @@ impl SideEffects {
                 if Self::should_keep_stmts_in_dead_control_flow(try_stmt.body, bump) {
                     return true;
                 }
-                if let Some(catch_stmt) = &try_stmt.catch_ {
+                if let Some(catch_stmt) = &try_stmt.catch {
                     if Self::should_keep_stmts_in_dead_control_flow(catch_stmt.body, bump) {
                         return true;
                     }
@@ -912,11 +908,11 @@ impl SideEffects {
                 ok: true,
             },
             ExprData::EBigInt(e) => {
-                let v = e.value.slice();
+                let equal = E::BigInt::check_equality(&e.value, b"0");
                 Result {
-                    value: !bun_core::eql_comptime(v, b"0"),
+                    value: equal == Some(false),
                     side_effects: SideEffects::NoSideEffects,
-                    ok: true,
+                    ok: equal.is_some(),
                 }
             }
             ExprData::EString(e) => Result {

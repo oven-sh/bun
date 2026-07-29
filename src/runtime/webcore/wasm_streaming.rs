@@ -8,6 +8,7 @@
 
 use core::ffi::c_void;
 
+use bun_core::strings;
 use bun_jsc::{ErrorCode, JSGlobalObject, JSValue, JsError, JsResult};
 
 use crate::webcore::blob::{self, Any as AnyBlob, Blob, BlobExt};
@@ -39,6 +40,8 @@ pub(crate) fn get_body_stream_or_bytes_for_wasm_streaming(
         None => {
             return Err(this.throw_invalid_argument_type_value2(
                 b"source",
+                // "an Promise" is byte-for-byte what Node's ERR_INVALID_ARG_TYPE
+                // formatter emits for an uppercase-initial non-class entry.
                 b"an instance of Response or an Promise resolving to Response",
                 response_value,
             ));
@@ -52,7 +55,10 @@ pub(crate) fn get_body_stream_or_bytes_for_wasm_streaming(
             None => b"null",
         };
 
-        if content_type != b"application/wasm" {
+        // https://webassembly.github.io/spec/web-api/#compile-a-potential-webassembly-response
+        // requires a byte-case-insensitive match for `application/wasm`. Parameters
+        // are disallowed, so this is a whole-value compare, not an essence check.
+        if !strings::eql_case_insensitive_ascii(content_type, b"application/wasm", true) {
             return Err(this
                 .err(
                     ErrorCode::WEBASSEMBLY_RESPONSE,

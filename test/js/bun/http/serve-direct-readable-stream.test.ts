@@ -367,6 +367,87 @@ test.skipIf(!isASAN)(
   60_000,
 );
 
+// A direct stream's pull() that throws synchronously reaches handle_reject
+// AFTER do_render_stream already wrote the 200 status+headers. handle_reject
+// gated only on has_responded() (response ended), not has_written_status(),
+// so the server's error() handler was asked to produce a second Response and
+// render_metadata wrote its status/headers into the in-flight body. Debug
+// builds hit the !has_written_status assert in do_write_status and aborted;
+// release builds spliced the error() header block into the chunked body.
+describe("sync pull() throw after status is written does not re-render error()", () => {
+  function fixture(pullBody: string) {
+    return `
+      const net = require("node:net");
+      let errorHandlerCalls = 0;
+      const server = Bun.serve({
+        port: 0,
+        hostname: "127.0.0.1",
+        development: false,
+        error() {
+          errorHandlerCalls++;
+          return new Response("FROM-ERROR-HANDLER", { status: 500, headers: { "x-err": "1" } });
+        },
+        fetch() {
+          return new Response(new ReadableStream({
+            type: "direct",
+            pull(c) { ${pullBody} },
+          }));
+        },
+      });
+      const wire = await new Promise(resolve => {
+        let buf = "";
+        const s = net.connect(server.port, "127.0.0.1", () => {
+          s.write("GET / HTTP/1.1\\r\\nHost: x\\r\\nConnection: close\\r\\n\\r\\n");
+        });
+        s.on("data", d => (buf += d.toString("latin1")));
+        s.on("close", () => resolve(buf));
+        s.on("error", () => resolve(buf));
+      });
+      server.stop(true);
+      console.log(JSON.stringify({ wire, errorHandlerCalls }));
+    `;
+  }
+
+  test("body bytes already flushed: connection is force-closed", async () => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture(`c.write("PARTIAL-BYTES"); c.flush(); throw new Error("boom");`)],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain("error: boom");
+    const { wire, errorHandlerCalls } = JSON.parse(stdout);
+    // error() cannot replace a response whose status is committed; the
+    // connection is force-closed so the client observes failure instead of
+    // the error() header block spliced where a chunk-size line belongs.
+    expect(wire).not.toContain("x-err");
+    expect(wire).not.toContain("FROM-ERROR-HANDLER");
+    expect(wire).not.toContain("Something went wrong");
+    expect(errorHandlerCalls).toBe(0);
+    expect(exitCode).toBe(0);
+  });
+
+  test("no body bytes flushed: stream is ended without splicing error() headers", async () => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture(`throw new Error("boom");`)],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain("error: boom");
+    const { wire, errorHandlerCalls } = JSON.parse(stdout);
+    // Status 200 was already written; the stream is ended empty. The error()
+    // response's status (500), headers, and body must not appear on the wire.
+    expect(wire).not.toContain("x-err");
+    expect(wire).not.toContain("FROM-ERROR-HANDLER");
+    expect(wire.startsWith("HTTP/1.1 200 OK\r\n")).toBe(true);
+    expect(errorHandlerCalls).toBe(0);
+    expect(exitCode).toBe(0);
+  });
+});
+
 // https://github.com/oven-sh/bun/issues/32137
 // react-dom/server.bun's renderToReadableStream returns a direct ReadableStream
 // whose pull() writes the shell, captures the controller, and returns

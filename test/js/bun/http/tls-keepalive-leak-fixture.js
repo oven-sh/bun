@@ -4,11 +4,13 @@
 // Usage: bun --smol tls-keepalive-leak-fixture.js
 // Env: TLS_CERT, TLS_KEY - PEM cert/key for the server
 //      NUM_REQUESTS - number of requests to make (default 50000)
+//      WARMUP_REQUESTS - warmup iterations to stabilize the RSS baseline (default 20000)
 //      MODE - "same" (same TLS config) or "distinct" (unique configs)
 
 const cert = process.env.TLS_CERT;
 const key = process.env.TLS_KEY;
 const numRequests = parseInt(process.env.NUM_REQUESTS || "50000", 10);
+const warmupRequests = parseInt(process.env.WARMUP_REQUESTS || "20000", 10);
 const mode = process.env.MODE || "same";
 
 if (!cert || !key) {
@@ -26,8 +28,8 @@ using server = Bun.serve({
 
 const url = `https://127.0.0.1:${server.port}`;
 
-// Warmup
-for (let i = 0; i < 20_000; i++) {
+// Warmup — only needs to stabilize the RSS baseline (JIT, allocator first-touch)
+for (let i = 0; i < warmupRequests; i++) {
   await fetch(url, {
     tls: { ca: cert, rejectUnauthorized: false },
     keepalive: true,

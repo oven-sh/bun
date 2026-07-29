@@ -47,10 +47,10 @@ fn spawn_windows_options() -> crate::api::bun::process::WindowsOptions {
 // the un-exported `fs_full` module. Shim it locally — open
 // `RealFS::tmpdir_path()` as a `sys::Dir`, mirroring `RealFS::open_tmp_dir`.
 pub(crate) trait FileSystemTmpdirExt {
-    fn tmpdir(&mut self) -> Result<sys::Dir, bun_core::Error>;
+    fn tmpdir(&mut self) -> crate::Result<sys::Dir>;
 }
 impl FileSystemTmpdirExt for fs::FileSystem {
-    fn tmpdir(&mut self) -> Result<sys::Dir, bun_core::Error> {
+    fn tmpdir(&mut self) -> crate::Result<sys::Dir> {
         sys::Dir::open(fs::RealFS::tmpdir_path()).map_err(Into::into)
     }
 }
@@ -113,19 +113,10 @@ impl Version {
     } else {
         ""
     };
-    const SUFFIX_CPU: &'static str = if Environment::BASELINE {
-        "-baseline"
-    } else {
-        ""
-    };
-    const SUFFIX: &'static str = const_format::concatcp!(Version::SUFFIX_ABI, Version::SUFFIX_CPU);
+    const SUFFIX: &'static str = Version::SUFFIX_ABI;
     pub const FOLDER_NAME: &'static str =
         const_format::concatcp!("bun-", Version::TRIPLET, Version::SUFFIX);
-    pub const BASELINE_FOLDER_NAME: &'static str =
-        const_format::concatcp!("bun-", Version::TRIPLET, "-baseline");
     pub const ZIP_FILENAME: &'static str = const_format::concatcp!(Version::FOLDER_NAME, ".zip");
-    pub const BASELINE_ZIP_FILENAME: &'static str =
-        const_format::concatcp!(Version::BASELINE_FOLDER_NAME, ".zip");
 
     pub const PROFILE_FOLDER_NAME: &'static str =
         const_format::concatcp!("bun-", Version::TRIPLET, Version::SUFFIX, "-profile");
@@ -134,17 +125,6 @@ impl Version {
 
     const CURRENT_VERSION: &'static str =
         const_format::concatcp!("bun-v", Global::package_json_version);
-
-    pub const BUN__GITHUB_BASELINE_URL: &'static ZStr = {
-        const S: &str = const_format::concatcp!(
-            "https://github.com/oven-sh/bun/releases/download/bun-v",
-            Global::package_json_version,
-            "/",
-            Version::BASELINE_ZIP_FILENAME,
-            "\0"
-        );
-        ZStr::from_static(S.as_bytes())
-    };
 
     pub fn is_current(&self) -> bool {
         &*self.tag == Self::CURRENT_VERSION.as_bytes()
@@ -161,7 +141,7 @@ impl Version {
             tag: IntegrityTag::SHA256,
             ..Default::default()
         };
-        for (i, pair) in buf[PREFIX.len()..].chunks_exact(2).enumerate() {
+        for (i, pair) in buf[PREFIX.len()..].as_chunks::<2>().0.iter().enumerate() {
             match bun_fmt::hex_pair_value(pair[0], pair[1]) {
                 Some(byte) => digest.value[i] = byte,
                 None => return Integrity::default(),
@@ -169,10 +149,6 @@ impl Version {
         }
 
         digest
-    }
-
-    pub fn export() {
-        // force-reference — drop in Rust (linker keeps #[no_mangle])
     }
 }
 
@@ -199,8 +175,6 @@ pub(crate) static Bun__githubURL: SyncCStr = SyncCStr(
 pub struct UpgradeCommand;
 
 impl UpgradeCommand {
-    pub const BUN__GITHUB_BASELINE_URL: &'static ZStr = Version::BUN__GITHUB_BASELINE_URL;
-
     const DEFAULT_GITHUB_HEADERS: &'static [u8] = b"Acceptapplication/vnd.github.v3+json";
 
     pub fn get_latest_version<const SILENT: bool>(
@@ -208,7 +182,7 @@ impl UpgradeCommand {
         refresher: Option<&mut Progress::Progress>,
         mut progress: Option<&mut Progress::Node>,
         use_profile: bool,
-    ) -> Result<Option<Version>, bun_core::Error> {
+    ) -> crate::Result<Option<Version>> {
         let mut headers_buf: Vec<u8> = Self::DEFAULT_GITHUB_HEADERS.to_vec();
 
         let mut header_entries: headers::EntryList = headers::EntryList::default();
@@ -307,12 +281,12 @@ impl UpgradeCommand {
         let response = async_http.send_sync()?;
 
         match response.status_code {
-            404 => return Err(bun_core::err!("HTTP404")),
-            403 => return Err(bun_core::err!("HTTPForbidden")),
-            429 => return Err(bun_core::err!("HTTPTooManyRequests")),
-            499..=599 => return Err(bun_core::err!("GitHubIsDown")),
+            404 => return Err(crate::Error::HTTP404),
+            403 => return Err(crate::Error::HTTPForbidden),
+            429 => return Err(crate::Error::HTTPTooManyRequests),
+            499..=599 => return Err(crate::Error::GitHubIsDown),
             200 => {}
-            _ => return Err(bun_core::err!("HTTPError")),
+            _ => return Err(crate::Error::HTTPError),
         }
 
         let mut log = bun_ast::Log::init();
@@ -535,7 +509,7 @@ impl UpgradeCommand {
     };
 
     #[cold]
-    pub fn exec(ctx: Command::Context) -> Result<(), bun_core::Error> {
+    pub fn exec(ctx: Command::Context) -> crate::Result<()> {
         let args = bun_core::argv();
         if args.len() > 2 {
             for arg in args.iter().skip(2) {
@@ -563,15 +537,12 @@ impl UpgradeCommand {
         Ok(())
     }
 
-    fn _exec(ctx: Command::Context) -> Result<(), bun_core::Error> {
+    fn _exec(ctx: Command::Context) -> crate::Result<()> {
         HTTP::http_thread::init(&Default::default());
 
         // SAFETY: FileSystem::init returns the process-global singleton; valid for 'static.
         let filesystem = unsafe { &mut *fs::FileSystem::init(None)? };
-        let mut env_loader: DotEnv::Loader = {
-            // Allocate in the process-lifetime CLI arena.
-            DotEnv::Loader::init(crate::cli::cli_arena().alloc(DotEnv::Map::init()))
-        };
+        let mut env_loader = DotEnv::Loader::init();
         env_loader.load_process()?;
 
         let use_canary: bool = 'brk: {
@@ -712,14 +683,17 @@ impl UpgradeCommand {
                         Global::exit(1);
                     }
 
-                    return Err(bun_core::err!("HTTP404"));
+                    return Err(crate::Error::HTTP404);
                 }
-                403 => return Err(bun_core::err!("HTTPForbidden")),
-                429 => return Err(bun_core::err!("HTTPTooManyRequests")),
-                499..=599 => return Err(bun_core::err!("GitHubIsDown")),
+                403 => return Err(crate::Error::HTTPForbidden),
+                429 => return Err(crate::Error::HTTPTooManyRequests),
+                499..=599 => return Err(crate::Error::GitHubIsDown),
                 200 => {}
-                _ => return Err(bun_core::err!("HTTPError")),
+                _ => return Err(crate::Error::HTTPError),
             }
+            // Release the immutable borrow of `env_loader` (via `http_proxy`)
+            // before the map mutations below.
+            drop(async_http);
 
             let bytes = zip_file_buffer.slice();
 
@@ -1030,7 +1004,7 @@ impl UpgradeCommand {
                         ..Default::default()
                     });
                     // Any spawn-time failure (allocator/OOM surfaces as
-                    // `bun_core::Error`, posix_spawn surfaces as
+                    // `crate::Error`, posix_spawn surfaces as
                     // `bun_sys::Error`) → same diagnostic + cleanup.
                     let err_name: &'static [u8] = match spawned {
                         Ok(Ok(r)) => break 'spawn r,
@@ -1114,7 +1088,7 @@ impl UpgradeCommand {
             // used everywhere else.
             #[cfg_attr(not(windows), allow(unused_variables))]
             let destination_executable_z: &ZStr = bun_core::self_exe_path()
-                .map_err(|_| bun_core::err!("UpgradeFailedMissingExecutable"))?;
+                .map_err(|_| crate::Error::UpgradeFailedMissingExecutable)?;
             let destination_executable: &[u8] = destination_executable_z.as_bytes();
             // Reshaped for borrowck — use stack-local buffer.
             // Stacked Borrows: take ONE `*mut u8` over the buffer up front and
@@ -1147,7 +1121,7 @@ impl UpgradeCommand {
                 )
             };
             let target_dir_ = bun_core::dirname(destination_executable)
-                .ok_or_else(|| bun_core::err!("UpgradeFailedBecauseOfMissingExecutableDir"))?;
+                .ok_or(crate::Error::UpgradeFailedBecauseOfMissingExecutableDir)?;
             // safe because the slash will no longer be in use
             let target_dir_len = target_dir_.len();
             // SAFETY: in-bounds; write is at the separator byte between dirname

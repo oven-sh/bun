@@ -68,9 +68,6 @@ pub struct FrameworkRouter {
     ///    length of the entire allocation. So we'll just allocate everything in
     ///    this arena to ensure that everything gets freed.
     pub pattern_string_arena: Arena,
-
-    pub edges: Vec<RouteEdge>,
-    pub freed_edges: Vec<RouteEdgeIndex>,
 }
 
 pub type StaticRouteMap = StringArrayHashMap<RouteIndex>;
@@ -87,7 +84,6 @@ pub struct Route {
 
     pub parent: Option<RouteIndex>,
     pub first_child: Option<RouteIndex>,
-    pub prev_sibling: Option<RouteIndex>,
     pub next_sibling: Option<RouteIndex>,
 
     // Note: A route may be associated with no files, in which it is just a
@@ -122,13 +118,6 @@ pub enum FileKind {
 
 pub enum RouteMarker {}
 pub type RouteIndex = bun_core::GenericIndex<u32, RouteMarker>;
-
-/// Referenced only by the dead `new_edge` free-list helper.
-#[derive(Copy, Clone, Debug, Default)]
-pub struct RouteEdge;
-
-pub enum RouteEdgeMarker {}
-pub(crate) type RouteEdgeIndex = bun_core::GenericIndex<u32, RouteEdgeMarker>;
 
 /// Native code for `FrameworkFileSystemRouterType`
 pub struct Type {
@@ -191,7 +180,6 @@ impl FrameworkRouter {
                 part: Part::Text(b""),
                 r#type: TypeIndex::init(u8::try_from(type_index).expect("int cast")),
                 parent: None,
-                prev_sibling: None,
                 next_sibling: None,
                 first_child: None,
                 file_page: None,
@@ -207,8 +195,6 @@ impl FrameworkRouter {
             dynamic_routes: DynamicRouteMap::default(),
             static_routes: StaticRouteMap::default(),
             pattern_string_arena: Arena::new(),
-            edges: Vec::new(),
-            freed_edges: Vec::new(),
         })
     }
 }
@@ -249,11 +235,6 @@ pub struct EncodedPattern {
 }
 
 impl EncodedPattern {
-    /// `/` is represented by zero bytes
-    pub const ROOT: EncodedPattern = EncodedPattern {
-        data: bun_ptr::RawSlice::EMPTY,
-    };
-
     #[inline]
     fn data(&self) -> &[u8] {
         self.data.slice()
@@ -288,14 +269,6 @@ impl EncodedPattern {
             pattern: self.data(),
             offset: 0,
         }
-    }
-
-    pub fn part_at(&self, byte_offset: usize) -> Option<Part<'_>> {
-        EncodedPatternIterator {
-            pattern: self.data(),
-            offset: byte_offset,
-        }
-        .peek()
     }
 
     pub fn effective_url_hash(&self) -> usize {
@@ -424,13 +397,6 @@ impl<'a> EncodedPatternIterator<'a> {
             PartTag::Group => Part::Group(payload),
         };
         (part, size_of::<u32>() + header.len())
-    }
-
-    pub(crate) fn peek(&self) -> Option<Part<'a>> {
-        if self.offset >= self.pattern.len() {
-            return None;
-        }
-        Some(self.read_with_size().0)
     }
 }
 
@@ -573,10 +539,7 @@ impl<'a> Part<'a> {
         }
     }
 
-    pub fn write_as_serialized(
-        &self,
-        writer: &mut impl bun_io::Write,
-    ) -> Result<(), bun_core::Error> {
+    pub fn write_as_serialized(&self, writer: &mut impl bun_io::Write) -> crate::Result<()> {
         if let Part::Text(text) = self {
             debug_assert!(!text.is_empty());
             debug_assert!(strings::index_of_char(text, b'/').is_none());
@@ -705,7 +668,7 @@ impl Style {
         log: &mut TinyLog,
         allow_layouts: bool,
         arena: &'bump Arena,
-    ) -> Result<Option<ParsedPattern<'bump>>, bun_core::Error> {
+    ) -> crate::Result<Option<ParsedPattern<'bump>>> {
         debug_assert!(file_path[0] == b'/');
 
         match self {
@@ -742,7 +705,7 @@ impl Style {
         log: &mut TinyLog,
         allow_layouts: bool,
         arena: &'bump Arena,
-    ) -> Result<Option<ParsedPattern<'bump>>, bun_core::Error> {
+    ) -> crate::Result<Option<ParsedPattern<'bump>>> {
         let mut file_path = &file_path_raw[0..file_path_raw.len() - ext.len()];
         let mut kind = ParsedPatternKind::Page;
         if file_path.ends_with(b"/index") {
@@ -771,7 +734,7 @@ impl Style {
         log: &mut TinyLog,
         allow_layouts: bool,
         arena: &'bump Arena,
-    ) -> Result<Option<ParsedPattern<'bump>>, bun_core::Error> {
+    ) -> crate::Result<Option<ParsedPattern<'bump>>> {
         let without_ext = &file_path_raw[0..file_path_raw.len() - ext.len()];
         let basename = paths::basename(without_ext);
         let Some(loader) = bun_ast::Loader::from_string(ext) else {
@@ -828,7 +791,7 @@ impl Style {
         route_segment: &'bump [u8],
         log: &mut TinyLog,
         arena: &'bump Arena,
-    ) -> Result<&'bump [Part<'bump>], bun_core::Error> {
+    ) -> crate::Result<&'bump [Part<'bump>]> {
         let mut i: usize = 1;
         let mut parts: ArenaVec<'bump, Part<'bump>> = ArenaVec::new_in(arena);
         let stop_chars: &[u8] = match CONVENTIONS {
@@ -1119,7 +1082,6 @@ impl FrameworkRouter {
                     r#type: ty,
                     parent: Some(route_index),
                     first_child: None,
-                    prev_sibling: next,
                     next_sibling: None,
                     file_page: None,
                     file_layout: None,
@@ -1143,7 +1105,6 @@ impl FrameworkRouter {
                         r#type: ty,
                         parent: Some(new_route_index),
                         first_child: None,
-                        prev_sibling: next,
                         next_sibling: None,
                         file_page: None,
                         file_layout: None,
@@ -1322,9 +1283,11 @@ pub enum PatternParseError {
     InvalidRoutePattern,
 }
 
-impl From<PatternParseError> for bun_core::Error {
+impl From<PatternParseError> for crate::Error {
     fn from(e: PatternParseError) -> Self {
-        bun_core::Error::intern(<&'static str>::from(&e))
+        match e {
+            PatternParseError::InvalidRoutePattern => crate::Error::InvalidRoutePattern,
+        }
     }
 }
 
@@ -1433,11 +1396,7 @@ impl TinyLog {
 }
 
 /// Local shim — `bun_core::io::Writer` exposes only `write_all`/`print`.
-fn writer_splat_byte_all(
-    w: &mut bun_core::io::Writer,
-    byte: u8,
-    n: usize,
-) -> Result<(), bun_core::Error> {
+fn writer_splat_byte_all(w: &mut bun_core::io::Writer, byte: u8, n: usize) -> crate::Result<()> {
     let chunk = [byte; 256];
     let mut remain = n;
     while remain > 0 {
@@ -1452,7 +1411,7 @@ fn writer_splat_bytes_all(
     w: &mut bun_core::io::Writer,
     bytes: &str,
     n: usize,
-) -> Result<(), bun_core::Error> {
+) -> crate::Result<()> {
     for _ in 0..n {
         w.write_all(bytes.as_bytes())?;
     }
@@ -2024,7 +1983,7 @@ impl JSFrameworkRouter {
             true,
             &arena,
         ) {
-            Err(e) if e == bun_core::err!("InvalidRoutePattern") => {
+            Err(crate::Error::InvalidRoutePattern) => {
                 return Err(global.throw(format_args!(
                     "{} ({}:{})",
                     bstr::BStr::new(log.msg.slice()),

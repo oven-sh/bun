@@ -26,6 +26,7 @@ public:
     DECLARE_INFO;
     // visitChildrenImpl MUST visit: m_reader, m_chunks, m_result.
     DECLARE_VISIT_CHILDREN;
+    static void analyzeHeap(JSCell*, JSC::HeapAnalyzer&);
 
     template<typename, JSC::SubspaceAccess mode>
     static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)

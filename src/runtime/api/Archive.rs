@@ -88,13 +88,13 @@ impl Archive {
         &self,
         formatter: &mut F,
         writer: &mut W,
-    ) -> Result<(), bun_core::Error>
+    ) -> crate::Result<()>
     where
         F: bun_jsc::ConsoleFormatter,
         W: core::fmt::Write,
     {
         let data = self.store.shared_view();
-        let fmt_err = |_: core::fmt::Error| bun_core::err!("FormatError");
+        let fmt_err = |_: core::fmt::Error| crate::Error::FormatError;
 
         writeln!(
             writer,
@@ -119,7 +119,7 @@ impl Archive {
                     JSValue::js_number(f64::from(count_files_in_archive(data))),
                     jsc::JSType::NumberObject,
                 )
-                .map_err(|_| bun_core::err!("JSError"))?;
+                .map_err(|_| crate::Error::JSError)?;
         }
         writer.write_str("\n").map_err(fmt_err)?;
         formatter.write_indent(writer).map_err(fmt_err)?;
@@ -1433,13 +1433,13 @@ fn extract_to_disk_filtered(
     file_buffer: &[u8],
     root: &[u8],
     glob_patterns: Option<&[Box<[u8]>]>,
-) -> Result<u32, bun_core::Error> {
+) -> crate::Result<u32> {
     use libarchive::lib;
     let archive = lib::ReadArchive::new();
     configure_archive_reader(&archive);
 
     if archive.read_open_memory(file_buffer) != lib::Result::Ok {
-        return Err(bun_core::err!("ReadError"));
+        return Err(crate::Error::ReadError);
     }
 
     // Open/create target directory using bun.sys
@@ -1449,7 +1449,7 @@ fn extract_to_disk_filtered(
         if bun_paths::is_absolute(root) {
             break 'brk match bun_sys::open_a(root, bun_sys::O::RDONLY | bun_sys::O::DIRECTORY, 0) {
                 Ok(fd) => fd,
-                Err(_) => return Err(bun_core::err!("OpenError")),
+                Err(_) => return Err(crate::Error::OpenError),
             };
         } else {
             break 'brk match bun_sys::openat_a(
@@ -1459,7 +1459,7 @@ fn extract_to_disk_filtered(
                 0,
             ) {
                 Ok(fd) => fd,
-                Err(_) => return Err(bun_core::err!("OpenError")),
+                Err(_) => return Err(crate::Error::OpenError),
             };
         }
     };
@@ -1475,7 +1475,8 @@ fn extract_to_disk_filtered(
         let pathname_z = entry_ref.pathname();
         #[cfg(windows)]
         let pathname_zbox = ZBox::from_vec_with_nul(
-            entry_pathname_utf8(entry_ref).map_err(|_| bun_core::err!("OutOfMemory"))?,
+            entry_pathname_utf8(entry_ref)
+                .map_err(|_| crate::Error::Alloc(bun_alloc::AllocError))?,
         );
         #[cfg(windows)]
         let pathname_z = pathname_zbox.as_zstr();
@@ -1502,7 +1503,7 @@ fn extract_to_disk_filtered(
             bun_sys::FileKind::Directory => {
                 match dir_fd.make_path(pathname) {
                     // Directory already exists - don't count as extracted
-                    Err(e) if e == bun_core::err!("PathAlreadyExists") => continue,
+                    Err(e) if e.get_errno() == bun_sys::E::EEXIST => continue,
                     Err(_) => continue,
                     Ok(()) => {}
                 }
@@ -1522,9 +1523,9 @@ fn extract_to_disk_filtered(
                 if let Some(parent_dir) = bun_core::dirname(pathname) {
                     match dir_fd.make_path(parent_dir) {
                         // Expected: directory already exists
-                        Err(e) if e == bun_core::err!("PathAlreadyExists") => {}
+                        Err(e) if e.get_errno() == bun_sys::E::EEXIST => {}
                         // Permission errors: skip this file, will fail at openat
-                        Err(e) if e == bun_core::err!("AccessDenied") => {}
+                        Err(e) if e.get_errno() == bun_sys::E::EACCES => {}
                         // Other errors: skip, will fail at openat
                         Err(_) => {}
                         Ok(()) => {}

@@ -29,7 +29,7 @@ impl Default for CompileTarget {
         Self {
             os: Environment::OS,
             arch: Environment::ARCH,
-            baseline: !Environment::ENABLE_SIMD,
+            baseline: false,
             version: Version {
                 major: Environment::VERSION.major as _, // @truncate
                 minor: Environment::VERSION.minor as _, // @truncate
@@ -111,7 +111,7 @@ impl CompileTarget {
         self.eql(&CompileTarget::default())
     }
 
-    pub fn to_npm_registry_url<'a>(&self, buf: &'a mut [u8]) -> Result<&'a [u8], bun_core::Error> {
+    pub fn to_npm_registry_url<'a>(&self, buf: &'a mut [u8]) -> crate::Result<&'a [u8]> {
         if let Some(url) = env_var::BUN_COMPILE_TARGET_TARBALL_URL.get() {
             if strings::has_prefix(url, b"http://") || strings::has_prefix(url, b"https://") {
                 // The env var slice is `&'static [u8]`,
@@ -127,10 +127,10 @@ impl CompileTarget {
         &self,
         buf: &'a mut [u8],
         registry_url: &[u8],
-    ) -> Result<&'a [u8], bun_core::Error> {
+    ) -> crate::Result<&'a [u8]> {
         // Validate the target is supported before building URL
         if !self.is_supported() {
-            return Err(bun_core::err!("UnsupportedTarget"));
+            return Err(crate::Error::UnsupportedTarget);
         }
 
         // Runtime concat is fine for a one-shot URL build.
@@ -174,9 +174,9 @@ impl CompileTarget {
             Err(e) => {
                 // Catch buffer overflow or other formatting errors
                 if e.kind() == std::io::ErrorKind::WriteZero {
-                    return Err(bun_core::err!("BufferTooSmall"));
+                    return Err(crate::Error::BufferTooSmall);
                 }
-                Err(bun_core::err!("NoSpaceLeft"))
+                Err(crate::Error::Sys(bun_errno::SystemErrno::ENOSPC))
             }
         }
     }
@@ -185,7 +185,7 @@ impl CompileTarget {
         &self,
         buf: &'a mut PathBuffer,
         version_str: &'a ZStr,
-        _env: &mut bun_dotenv::Loader<'_>,
+        _env: &mut bun_dotenv::Loader,
         needs_download: &mut bool,
     ) -> &'a ZStr {
         if self.is_default() {
@@ -402,55 +402,37 @@ impl CompileTarget {
         }
     }
 
-    // Exists for consistentcy with values.
-    pub fn define_keys(&self) -> &'static [&'static [u8]] {
-        &[
+    pub fn define_keys(&self) -> [&'static [u8]; 3] {
+        [
             b"process.platform",
             b"process.arch",
             b"process.versions.bun",
         ]
     }
 
-    pub fn define_values(&self) -> &'static [&'static [u8]] {
-        // Could generate static tables via macro_rules! or
-        // const_format::concatcp! over OperatingSystem::name_string().
-        macro_rules! table {
-            ($platform:literal, $arch:literal) => {{
-                const VALUES: &[&[u8]] = &[
-                    $platform,
-                    $arch,
-                    const_format::concatcp!("\"", bun_core::Global::package_json_version, "\"")
-                        .as_bytes(),
-                ];
-                VALUES
-            }};
-        }
-
-        // Use inline else to avoid extra allocations.
-        match self.arch {
-            Architecture::X64 => match self.libc {
-                // process.platform: Node reports "android" on Android, not "linux".
-                Libc::Android => table!(b"\"android\"", b"\"x64\""),
-                _ => match self.os {
-                    OperatingSystem::Mac => table!(b"\"darwin\"", b"\"x64\""),
-                    OperatingSystem::Linux => table!(b"\"linux\"", b"\"x64\""),
-                    OperatingSystem::Windows => table!(b"\"win32\"", b"\"x64\""),
-                    OperatingSystem::Freebsd => table!(b"\"freebsd\"", b"\"x64\""),
-                    OperatingSystem::Wasm => table!(b"\"wasm\"", b"\"x64\""),
-                },
+    pub fn define_values(&self) -> [&'static [u8]; 3] {
+        // Each axis gets its own exhaustive match so that adding a variant to
+        // `OperatingSystem` / `Architecture` / `Libc` is a compile error here,
+        // not a runtime panic behind a wildcard arm.
+        let platform: &'static [u8] = match self.libc {
+            // process.platform: Node reports "android" on Android, not "linux".
+            Libc::Android => b"\"android\"",
+            Libc::Default | Libc::Musl => match self.os {
+                OperatingSystem::Mac => b"\"darwin\"",
+                OperatingSystem::Linux => b"\"linux\"",
+                OperatingSystem::Windows => b"\"win32\"",
+                OperatingSystem::Freebsd => b"\"freebsd\"",
+                OperatingSystem::Wasm => b"\"wasm\"",
             },
-            Architecture::Arm64 => match self.libc {
-                Libc::Android => table!(b"\"android\"", b"\"arm64\""),
-                _ => match self.os {
-                    OperatingSystem::Mac => table!(b"\"darwin\"", b"\"arm64\""),
-                    OperatingSystem::Linux => table!(b"\"linux\"", b"\"arm64\""),
-                    OperatingSystem::Windows => table!(b"\"win32\"", b"\"arm64\""),
-                    OperatingSystem::Freebsd => table!(b"\"freebsd\"", b"\"arm64\""),
-                    OperatingSystem::Wasm => table!(b"\"wasm\"", b"\"arm64\""),
-                },
-            },
-            _ => panic!("TODO"),
-        }
+        };
+        let arch: &'static [u8] = match self.arch {
+            Architecture::X64 => b"\"x64\"",
+            Architecture::Arm64 => b"\"arm64\"",
+            Architecture::Wasm => b"\"wasm\"",
+        };
+        const VERSION: &[u8] =
+            const_format::concatcp!("\"", bun_core::Global::package_json_version, "\"").as_bytes();
+        [platform, arch, VERSION]
     }
 }
 

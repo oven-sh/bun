@@ -31,13 +31,13 @@
 namespace uWS {
 
 /* We should not overcomplicate these */
-const std::string_view ERR_TOO_BIG_MESSAGE("Received too big message");
-const std::string_view ERR_WEBSOCKET_TIMEOUT("WebSocket timed out from inactivity");
-const std::string_view ERR_INVALID_TEXT("Received invalid UTF-8");
-const std::string_view ERR_TOO_BIG_MESSAGE_INFLATION("Received too big message, or other inflation error");
-const std::string_view ERR_INVALID_CLOSE_PAYLOAD("Received invalid close payload");
-const std::string_view ERR_INVALID_MASKING("Received an incorrectly masked frame");
-const std::string_view ERR_INVALID_RSV1("Received unexpected RSV1 bit");
+inline constexpr std::string_view ERR_TOO_BIG_MESSAGE("Received too big message");
+inline constexpr std::string_view ERR_WEBSOCKET_TIMEOUT("WebSocket timed out from inactivity");
+inline constexpr std::string_view ERR_INVALID_TEXT("Received invalid UTF-8");
+inline constexpr std::string_view ERR_TOO_BIG_MESSAGE_INFLATION("Received too big message, or other inflation error");
+inline constexpr std::string_view ERR_INVALID_CLOSE_PAYLOAD("Received invalid close payload");
+inline constexpr std::string_view ERR_INVALID_MASKING("Received an incorrectly masked frame");
+inline constexpr std::string_view ERR_INVALID_RSV1("Received unexpected RSV1 bit");
 
 enum OpCode : unsigned char {
     CONTINUATION = 0,
@@ -57,9 +57,9 @@ enum {
 template <bool isServer>
 struct WebSocketState {
 public:
-    static const unsigned int SHORT_MESSAGE_HEADER = isServer ? 6 : 2;
-    static const unsigned int MEDIUM_MESSAGE_HEADER = isServer ? 8 : 4;
-    static const unsigned int LONG_MESSAGE_HEADER = isServer ? 14 : 10;
+    static constexpr unsigned int SHORT_MESSAGE_HEADER = isServer ? 6 : 2;
+    static constexpr unsigned int MEDIUM_MESSAGE_HEADER = isServer ? 8 : 4;
+    static constexpr unsigned int LONG_MESSAGE_HEADER = isServer ? 14 : 10;
 
     // 16 bytes
     struct State {
@@ -230,9 +230,9 @@ static inline size_t formatMessage(char *dst, const char *src, size_t length, Op
 template <const bool isServer, typename Impl>
 struct WebSocketProtocol {
 public:
-    static const unsigned int SHORT_MESSAGE_HEADER = isServer ? 6 : 2;
-    static const unsigned int MEDIUM_MESSAGE_HEADER = isServer ? 8 : 4;
-    static const unsigned int LONG_MESSAGE_HEADER = isServer ? 14 : 10;
+    static constexpr unsigned int SHORT_MESSAGE_HEADER = isServer ? 6 : 2;
+    static constexpr unsigned int MEDIUM_MESSAGE_HEADER = isServer ? 8 : 4;
+    static constexpr unsigned int LONG_MESSAGE_HEADER = isServer ? 14 : 10;
 
 protected:
     static inline bool isFin(char *frame) {return *((unsigned char *) frame) & 128;}
@@ -462,8 +462,8 @@ public:
         }
     }
 
-    static const int CONSUME_POST_PADDING = 4;
-    static const int CONSUME_PRE_PADDING = LONG_MESSAGE_HEADER - 1;
+    static constexpr int CONSUME_POST_PADDING = 4;
+    static constexpr int CONSUME_PRE_PADDING = LONG_MESSAGE_HEADER - 1;
 };
 
 }

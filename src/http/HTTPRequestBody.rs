@@ -54,8 +54,6 @@ impl Stream {
 // `HTTPRequestBody::deinit()` is explicit instead.
 
 impl<'a> HTTPRequestBody<'a> {
-    pub const EMPTY: HTTPRequestBody<'static> = HTTPRequestBody::Bytes(b"");
-
     /// `HTTPRequestBody.deinit()` — only the `Stream` arm owns a ref.
     pub fn deinit(&mut self) {
         if let HTTPRequestBody::Stream(stream) = self {

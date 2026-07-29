@@ -7,7 +7,6 @@
 
 use core::ffi::c_void;
 use core::ptr::NonNull;
-use std::rc::Rc;
 
 use crate::node::fs as node_fs;
 use crate::node::types::PathOrFileDescriptorSerializeTag;
@@ -19,7 +18,6 @@ use crate::webcore::s3::client::{
     S3Credentials, S3CredentialsWithOptions, S3DeleteResult, S3ListObjectsOptions,
     S3ListObjectsResult,
 };
-use bun_collections::HashMap;
 use bun_core::{ZigString, strings};
 use bun_http_types::MimeType::MimeType;
 use bun_url::URL;
@@ -35,8 +33,6 @@ pub use bun_jsc::webcore_types::store::{
     Bytes, Data, DataTag, File, S3, SerializeTag, Store, StoreRef,
 };
 
-pub type Map = HashMap<u64, *mut Store>;
-
 // ──────────────────────────────────────────────────────────────────────────
 // Extension traits — `bun_runtime`-tier behaviour layered on the `bun_jsc`
 // data types. Inherent data-only methods (`size`/`shared_view`/`ref_`/`deref`/
@@ -45,34 +41,24 @@ pub type Map = HashMap<u64, *mut Store>;
 
 pub trait StoreExt {
     fn to_any_blob(&mut self) -> Option<super::Any>;
-    fn init_s3_with_referenced_credentials(
-        pathlike: PathLike,
-        mime_type: Option<MimeType>,
-        credentials: Rc<S3Credentials>,
-    ) -> Result<Box<Store>, bun_core::Error>
-    where
-        Self: Sized;
     fn init_s3(
         pathlike: PathLike,
         mime_type: Option<MimeType>,
         credentials: S3Credentials,
-    ) -> Result<Box<Store>, bun_core::Error>
+    ) -> Result<Box<Store>, crate::Error>
     where
         Self: Sized;
     fn init_file(
         pathlike: PathOrFileDescriptor,
         mime_type: Option<MimeType>,
-    ) -> Result<Box<Store>, bun_core::Error>
+    ) -> Result<Box<Store>, crate::Error>
     where
         Self: Sized;
     #[cfg(unix)]
     fn init_mmap(slice: &'static mut [u8]) -> StoreRef
     where
         Self: Sized;
-    fn serialize(&self, writer: &mut impl bun_io::Write) -> Result<(), bun_core::Error>;
-    fn from_array_list(list: Vec<u8>) -> Result<StoreRef, bun_core::Error>
-    where
-        Self: Sized;
+    fn serialize(&self, writer: &mut impl bun_io::Write) -> Result<(), crate::Error>;
 }
 
 pub trait S3Ext {
@@ -109,9 +95,6 @@ pub trait BytesExt {
     fn init_mmap(slice: &'static mut [u8]) -> Bytes
     where
         Self: Sized;
-    fn from_array_list(list: Vec<u8>) -> Result<Bytes, bun_core::Error>
-    where
-        Self: Sized;
     fn to_internal_blob(&mut self) -> super::Internal;
 }
 
@@ -139,36 +122,11 @@ impl StoreExt for Store {
         None
     }
 
-    fn init_s3_with_referenced_credentials(
-        pathlike: PathLike,
-        mime_type: Option<MimeType>,
-        credentials: Rc<S3Credentials>,
-    ) -> Result<Box<Store>, bun_core::Error> {
-        let mut path = pathlike;
-        // this actually protects/refs the pathlike
-        path.to_thread_safe();
-
-        // Compute the extension-derived fallback before moving `path` into the
-        // Store so we don't need to clone the owned PathLike.
-        let mime_type = mime_type.or_else(|| mime_from_path_ext(path.slice()));
-
-        Ok(Store::new(Store {
-            data: Data::S3(S3::init_with_referenced_credentials(
-                path,
-                mime_type,
-                credentials,
-            )),
-            mime_type: bun_http_types::MimeType::NONE,
-            ref_count: bun_ptr::ThreadSafeRefCount::init(),
-            is_all_ascii: None,
-        }))
-    }
-
     fn init_s3(
         pathlike: PathLike,
         mime_type: Option<MimeType>,
         credentials: S3Credentials,
-    ) -> Result<Box<Store>, bun_core::Error> {
+    ) -> Result<Box<Store>, crate::Error> {
         let mut path = pathlike;
         // this actually protects/refs the pathlike
         path.to_thread_safe();
@@ -188,7 +146,7 @@ impl StoreExt for Store {
     fn init_file(
         pathlike: PathOrFileDescriptor,
         mime_type: Option<MimeType>,
-    ) -> Result<Box<Store>, bun_core::Error> {
+    ) -> Result<Box<Store>, crate::Error> {
         // Compute the extension-derived fallback before moving `pathlike` into
         // the Store so we don't need to clone the owned PathOrFileDescriptor.
         let mime_type = mime_type.or_else(|| match &pathlike {
@@ -216,7 +174,7 @@ impl StoreExt for Store {
         }))
     }
 
-    fn serialize(&self, writer: &mut impl bun_io::Write) -> Result<(), bun_core::Error> {
+    fn serialize(&self, writer: &mut impl bun_io::Write) -> Result<(), crate::Error> {
         match &self.data {
             Data::File(file) => {
                 let pathlike_tag: PathOrFileDescriptorSerializeTag =
@@ -260,10 +218,6 @@ impl StoreExt for Store {
             }
         }
         Ok(())
-    }
-
-    fn from_array_list(list: Vec<u8>) -> Result<StoreRef, bun_core::Error> {
-        Ok(Store::init(list))
     }
 }
 
@@ -544,11 +498,6 @@ impl BytesExt for Bytes {
                 },
             )
         }
-    }
-
-    fn from_array_list(list: Vec<u8>) -> Result<Bytes, bun_core::Error> {
-        // `Bytes` is returned by value — the caller decides where it lives.
-        Ok(Bytes::init(list))
     }
 
     fn to_internal_blob(&mut self) -> super::Internal {

@@ -454,9 +454,16 @@ impl S3HttpSimpleTask {
         // HTTP thread until enqueued back to the JS thread below.
         let this = unsafe { &mut *this };
         let is_done = !result.has_more;
+        // `metadata` is handed over exactly once, on the first callback carrying response headers.
+        // A close-delimited body (no Content-Length, no Transfer-Encoding) reports progress again
+        // at EOF with `metadata: None`, so carry the earlier one across the assignment below.
+        let previous_metadata = this.result.metadata.take();
         // SAFETY: `result.body` (the only borrowed field) points at `this.response_buffer`, which
         // lives for the task's lifetime — extending to `'static` here is sound for self-reference.
         this.result = unsafe { result.detach_lifetime() };
+        if this.result.metadata.is_none() {
+            this.result.metadata = previous_metadata;
+        }
         // `AsyncHTTP` transitively owns Drop types (`HTTPClient`, header
         // `EntryList`s), so a plain `=` here would (a) drop the old `this.http`, freeing heap
         // buffers that `*async_http` (a bitwise clone created by the HTTP thread) still aliases,

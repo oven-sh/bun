@@ -1,40 +1,17 @@
 use crate::Command;
-use bun_core::{Global, Output, err};
+use bun_core::{Global, Output};
 use bun_install::lockfile::LoadResult;
-use bun_install::package_manager::{self, security_scanner};
-use bun_install::{CommandLineArguments, Lockfile, PackageManager, Subcommand};
+use bun_install::package_manager::security_scanner;
+use bun_install::{Lockfile, PackageManager};
 
 pub struct ScanCommand;
 
 impl ScanCommand {
-    pub fn exec(ctx: Command::Context) -> Result<(), bun_core::Error> {
-        let cli = CommandLineArguments::parse(Subcommand::Scan)?;
-
-        let (manager, original_cwd) = match package_manager::init(&mut *ctx, cli, Subcommand::Scan)
-        {
-            Ok(v) => v,
-            Err(e) => {
-                if e == err!("MissingPackageJSON") {
-                    Output::err_generic(
-                        "No package.json found. 'bun pm scan' requires a lockfile to analyze dependencies.",
-                        (),
-                    );
-                    bun_core::note!("Run \"bun install\" first to generate a lockfile");
-                    Global::exit(1);
-                }
-                return Err(e);
-            }
-        };
-        // `defer ctx.allocator.free(cwd)` — `original_cwd: Box<[u8]>` drops at scope exit.
-
-        Self::exec_with_manager(ctx, manager, &original_cwd)
-    }
-
     pub fn exec_with_manager(
         ctx: Command::Context,
         manager: &mut PackageManager,
         original_cwd: &[u8],
-    ) -> Result<(), bun_core::Error> {
+    ) -> crate::Result<()> {
         if manager.options.security_scanner.is_none() {
             bun_core::pretty_errorln!("<r><red>error<r>: no security scanner configured");
             bun_core::pretty!(

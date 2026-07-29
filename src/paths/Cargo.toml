@@ -21,6 +21,7 @@ bitflags.workspace = true
 bytemuck = "1"
 bun_alloc.workspace = true
 bun_core.workspace = true
+bun_errno.workspace = true
 
 thiserror.workspace = true
 

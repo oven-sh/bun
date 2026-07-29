@@ -589,7 +589,8 @@ impl JSMySQLConnection {
                     // `this` (a `ParentRef`) is not used past this point, so no
                     // borrow outlives the `heap::take` inside `deinit`.
                     unsafe { Self::deref(ptr) };
-                    return Err(global_object.throw_error(e.into(), "failed to connect to mysql"));
+                    return Err(global_object
+                        .throw_error(bun_jsc::CrateError::from(e), "failed to connect to mysql"));
                 }
             };
             this.connection_mut()
@@ -947,7 +948,7 @@ pub struct SocketHandler<const SSL: bool>;
 // (`feature(inherent_associated_types)`), so spell out
 // `NewSocketHandler<SSL>` at every use site instead.
 impl<const SSL: bool> SocketHandler<SSL> {
-    fn _socket(s: NewSocketHandler<SSL>) -> AnySocket {
+    fn socket(s: NewSocketHandler<SSL>) -> AnySocket {
         if SSL {
             AnySocket::SocketTls(s.assume_ssl())
         } else {
@@ -956,7 +957,7 @@ impl<const SSL: bool> SocketHandler<SSL> {
     }
 
     pub fn on_open(this: &JSMySQLConnection, s: NewSocketHandler<SSL>) {
-        let socket = Self::_socket(s);
+        let socket = Self::socket(s);
         let is_tcp = matches!(socket, AnySocket::SocketTcp(_));
         this.connection_mut().set_socket(socket);
 
@@ -972,7 +973,7 @@ impl<const SSL: bool> SocketHandler<SSL> {
         this.update_reference_type();
     }
 
-    fn on_handshake_(
+    fn on_handshake(
         this: &JSMySQLConnection,
         _: NewSocketHandler<SSL>,
         success: i32,
@@ -993,10 +994,9 @@ impl<const SSL: bool> SocketHandler<SSL> {
         }
     }
 
-    // pub const onHandshake = if (ssl) onHandshake_ else null;
     pub const ON_HANDSHAKE: Option<
         fn(&JSMySQLConnection, NewSocketHandler<SSL>, i32, uws::us_bun_verify_error_t),
-    > = if SSL { Some(Self::on_handshake_) } else { None };
+    > = if SSL { Some(Self::on_handshake) } else { None };
 
     pub fn on_close(
         this: &JSMySQLConnection,
@@ -1079,7 +1079,6 @@ pub enum OnResultRowError {
     JSError,
 }
 bun_core::impl_tag_error!(OnResultRowError);
-bun_core::named_error_set!(OnResultRowError);
 impl From<OnResultRowError> for AnyMySQLErrorT {
     fn from(e: OnResultRowError) -> Self {
         match e {
@@ -1101,5 +1100,3 @@ use bun_sql::shared::sql_query_result_mode::SQLQueryResultMode as ResultMode;
 /// `my_sql_connection`). Surface the alias here so `super::js_mysql_connection::
 /// MySQLConnection` resolves to this type, not the protocol-layer struct.
 pub use JSMySQLConnection as MySQLConnection;
-
-pub type Writer = my_sql_connection::Writer;

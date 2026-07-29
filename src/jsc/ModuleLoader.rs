@@ -13,8 +13,8 @@ use bun_options_types::LoaderExt as _;
 
 use crate::virtual_machine::VirtualMachine;
 use crate::{
-    self as jsc, ErrorableResolvedSource, ErrorableString, JSGlobalObject, JSInternalPromise,
-    JSValue, JsError, JsResult, ResolvedSource,
+    self as jsc, ErrorCode, ErrorableResolvedSource, ErrorableString, JSGlobalObject,
+    JSInternalPromise, JSValue, ResolvedSource,
 };
 
 // Re-exports.
@@ -22,21 +22,14 @@ pub use crate::runtime_transpiler_store::RuntimeTranspilerStore;
 pub use bun_resolve_builtins::HardcodedModule;
 pub use bun_resolver::node_fallbacks;
 
-// LAYERING: re-export from the crate-level mount (`crate::async_module`)
-// instead of `#[path]`-mounting `AsyncModule.rs` a second time. A duplicate
-// mount compiles two distinct `Queue` types — `VirtualMachine.modules` is
-// typed against `crate::async_module::Queue`, so a second copy here would be
-// a different (incompatible) type and double-emits the
-// `Bun__onFulfillAsyncModule` extern.
-pub use crate::async_module;
-pub use crate::async_module::{AsyncModule, Queue as AsyncModuleQueue};
-
 bun_core::declare_scope!(ModuleLoader, hidden);
 
 #[derive(Default)]
 pub struct ModuleLoader {
     pub transpile_source_code_arena: Option<Box<ArenaAllocator>>,
     pub eval_source: Option<Box<bun_ast::Source>>,
+    /// User's `-e` bytes under `--interactive` (see `Eval::interactive_script`).
+    pub interactive_eval_script: Option<Box<[u8]>>,
 }
 
 pub static IS_ALLOWED_TO_USE_INTERNAL_TESTING_APIS: core::sync::atomic::AtomicBool =
@@ -316,47 +309,6 @@ pub(crate) fn fetch_builtin_module(
     unsafe { (hooks.fetch_builtin_module)(jsc_vm, global.as_ptr(), specifier, referrer, out) }
 }
 
-/// because the §Dispatch fn-ptr signature must be monomorphic across the crate
-/// boundary. The branch is a single length-check / `dirWithTrailingSlash` —
-/// the fn-ptr indirection is one call per `import` / `require.resolve`,
-/// dominated by the resolver's dir-cache walk.
-pub fn resolve_maybe_needs_trailing_slash(
-    res: &mut ErrorableString,
-    global: &mut JSGlobalObject,
-    specifier: bun_core::String,
-    source: bun_core::String,
-    query_string: Option<&mut bun_core::String>,
-    is_esm: bool,
-    is_a_file_path: bool,
-    is_user_require_resolve: bool,
-) -> JsResult<()> {
-    let Some(hooks) = loader_hooks() else {
-        // No high tier (unit tests) — fail closed with ModuleNotFound so
-        // callers surface a real ResolveMessage rather than `undefined`.
-        *res = ErrorableString::err(bun_core::err!("ModuleNotFound"), JSValue::UNDEFINED);
-        return Ok(());
-    };
-    let qs = query_string
-        .map(std::ptr::from_mut::<bun_core::String>)
-        .unwrap_or(core::ptr::null_mut());
-    // SAFETY: hook contract — `global` is the live JS-thread global
-    // (mutable: hook may throw on it); `res`/`qs` are valid
-    // out-params for the call (single-threaded, no aliasing).
-    let ok = unsafe {
-        (hooks.resolve)(
-            res,
-            global,
-            specifier,
-            source,
-            qs,
-            is_esm,
-            is_a_file_path,
-            is_user_require_resolve,
-        )
-    };
-    if ok { Ok(()) } else { Err(JsError::Thrown) }
-}
-
 /// `VirtualMachine.processFetchLog(global, specifier, referrer, log, &errorable,
 /// err)` — synthesizes a JS error from the parser/resolve `log` and writes it
 /// into `errorable` so the C++ side (`Bun__onFulfillAsyncModule`,
@@ -372,7 +324,7 @@ pub fn process_fetch_log(
     referrer: bun_core::String,
     log: &mut bun_ast::Log,
     errorable: &mut ErrorableResolvedSource,
-    err: bun_core::Error,
+    err: crate::CrateError,
 ) {
     crate::virtual_machine::process_fetch_log(global, specifier, referrer, log, errorable, err)
 }
@@ -398,8 +350,10 @@ pub(crate) unsafe extern "C" fn Bun__transpileFile(
     let Some(hooks) = loader_hooks() else {
         // SAFETY: C++ passed a valid out-param.
         unsafe {
-            *ret =
-                ErrorableResolvedSource::err(bun_core::err!("ModuleNotFound"), JSValue::UNDEFINED)
+            *ret = ErrorableResolvedSource::err(
+                ErrorCode(ErrorCode::JS_ERROR_OBJECT),
+                JSValue::UNDEFINED,
+            )
         };
         return core::ptr::null_mut();
     };
@@ -470,6 +424,19 @@ fn bun_aliases_get(name: &[u8]) -> Option<bun_resolve_builtins::Alias> {
     None
 }
 
+/// Node's `--expose-internals`.
+pub fn exposed_internal_tag(spec: &[u8]) -> Option<(Vec<u8>, crate::ResolvedSourceTag)> {
+    let rest = spec.strip_prefix(b"internal/")?;
+    if !bun_resolve_builtins::expose_internals_enabled() {
+        return None;
+    }
+    let mut name = Vec::with_capacity(b"internal:".len() + rest.len());
+    name.extend_from_slice(b"internal:");
+    name.extend_from_slice(rest);
+    let tag = crate::ResolvedSourceTag::try_from_name(&name)?;
+    Some((name, tag))
+}
+
 /// C++ entry point: if `specifier` names a builtin module, writes its resolved source into `ret` and returns `true`.
 #[unsafe(no_mangle)]
 pub(crate) unsafe extern "C" fn Bun__resolveAndFetchBuiltinModule(
@@ -481,6 +448,19 @@ pub(crate) unsafe extern "C" fn Bun__resolveAndFetchBuiltinModule(
     // SAFETY: C++ passed valid pointers; `jsc_vm` is the live per-thread VM.
     let specifier = unsafe { &*specifier };
     let spec_utf8 = specifier.to_utf8();
+    if let Some((name, tag)) = exposed_internal_tag(spec_utf8.slice()) {
+        let resolved = ResolvedSource {
+            source_code: bun_core::String::empty(),
+            specifier: *specifier,
+            source_url: bun_core::String::clone_utf8(&name),
+            tag,
+            source_code_needs_deref: false,
+            ..ResolvedSource::default()
+        };
+        // SAFETY: C++ passed a valid out-param.
+        unsafe { *ret = ErrorableResolvedSource::ok(resolved) };
+        return true;
+    }
     let Some(alias) = bun_aliases_get(spec_utf8.slice()) else {
         return false;
     };
@@ -530,7 +510,7 @@ pub(crate) unsafe extern "C" fn Bun__resolveEmbeddedNodeFile(
 pub(crate) unsafe extern "C" fn ModuleLoader__isBuiltin(data: *const u8, len: usize) -> bool {
     // SAFETY: C++ guarantees `data[..len]` is a valid UTF-8 specifier slice.
     let str = unsafe { bun_core::ffi::slice(data, len) };
-    bun_aliases_get(str).is_some()
+    bun_aliases_get(str).is_some() || exposed_internal_tag(str).is_some()
 }
 
 // The pure byte-string
@@ -592,8 +572,10 @@ pub(crate) unsafe extern "C" fn Bun__transpileVirtualModule(
     let Some(hooks) = loader_hooks() else {
         // SAFETY: C++ passed a valid out-param.
         unsafe {
-            *ret =
-                ErrorableResolvedSource::err(bun_core::err!("ModuleNotFound"), JSValue::UNDEFINED);
+            *ret = ErrorableResolvedSource::err(
+                ErrorCode(ErrorCode::JS_ERROR_OBJECT),
+                JSValue::UNDEFINED,
+            );
         }
         return true;
     };

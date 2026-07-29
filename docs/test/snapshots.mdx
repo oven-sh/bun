@@ -33,7 +33,7 @@ your-project/
 The snapshot file contains:
 
 ```ts title="__snapshots__/snap.test.ts.snap" icon="file-code"
-// Bun Snapshot v1, https://bun.com/docs/test/snapshots
+// Bun Snapshot v1, https://bun.sh/docs/test/snapshots
 
 exports[`snap 1`] = `"foo"`;
 ```
@@ -236,29 +236,6 @@ exports[`snapshot with dynamic values 1`] = `
 `;
 ```
 
-## Custom Serializers
-
-You can customize how objects are serialized in snapshots:
-
-```ts title="test.ts" icon="/icons/typescript.svg"
-import { test, expect } from "bun:test";
-
-// Custom serializer for Date objects
-expect.addSnapshotSerializer({
-  test: val => val instanceof Date,
-  serialize: val => `"${val.toISOString()}"`,
-});
-
-test("custom serializer", () => {
-  const event = {
-    name: "Meeting",
-    date: new Date("2024-01-01T10:00:00Z"),
-  };
-
-  expect(event).toMatchSnapshot();
-});
-```
-
 ## Best Practices
 
 ### Keep Snapshots Small
@@ -360,17 +337,6 @@ bun test --update-snapshots
 git add __snapshots__/
 git commit -m "Update snapshots after UI changes"
 ```
-
-### Cleaning Up Unused Snapshots
-
-Bun warns about unused snapshots:
-
-```txt title="warning" icon="warning"
-Warning: 1 unused snapshot found:
-  my-test.test.ts.snap: "old test that no longer exists 1"
-```
-
-Remove unused snapshots by deleting them from the snapshot files or by running tests with cleanup flags if available.
 
 ### Organizing Large Snapshot Files
 

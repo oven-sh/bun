@@ -2,8 +2,8 @@ use core::cell::Cell;
 use core::ptr::{NonNull, addr_of, addr_of_mut};
 use core::sync::atomic::Ordering;
 
+use crate::Error;
 use bun_core::scoped_log;
-use bun_core::{Error, err};
 use bun_uws as uws;
 
 use crate::http_cert_error::HTTPCertError;
@@ -69,7 +69,7 @@ impl Default for ProxyTunnel {
     fn default() -> Self {
         Self {
             wrapper: None,
-            shutdown_err: Cell::new(err!(ConnectionClosed)),
+            shutdown_err: Cell::new(crate::Error::ConnectionClosed),
             socket: Socket::None,
             write_buffer: bun_io::StreamBuffer::default(),
             did_have_handshaking_error: false,
@@ -290,9 +290,8 @@ fn on_data(ctx: *mut HTTPClient, decoded_data: &[u8]) {
     // arriving here is unexpected.
     if this.state.flags.is_waiting_for_cert_check {
         scoped_log!(http_proxy_tunnel, "ProxyTunnel onData while parked");
-        this.state.pending_response = None;
         // SAFETY: `this` dead (NLL); reenter via raw ptr.
-        ProxyTunnel::close_from_callback(proxy_nn, err!(UnexpectedData));
+        ProxyTunnel::close_from_callback(proxy_nn, crate::Error::UnexpectedData);
         return;
     }
     match this.state.response_stage {
@@ -354,9 +353,8 @@ fn on_data(ctx: *mut HTTPClient, decoded_data: &[u8]) {
         }
         _ => {
             scoped_log!(http_proxy_tunnel, "ProxyTunnel onData unexpected data");
-            this.state.pending_response = None;
             // SAFETY: `this` dead (NLL); reenter via raw ptr.
-            ProxyTunnel::close_from_callback(proxy_nn, err!(UnexpectedData));
+            ProxyTunnel::close_from_callback(proxy_nn, crate::Error::UnexpectedData);
         }
     }
 }
@@ -411,7 +409,7 @@ fn on_handshake(
             let ssl = unsafe { &mut *ssl_ptr.as_ptr() };
             match ProxyTunnel::socket_of(proxy_nn) {
                 &Socket::Ssl(socket) => {
-                    if !this.check_server_identity::<true>(socket, handshake_error, ssl, false) {
+                    if !this.check_server_identity::<true>(socket, ssl, false) {
                         scoped_log!(
                             http_proxy_tunnel,
                             "ProxyTunnel onHandshake checkServerIdentity failed"
@@ -424,7 +422,7 @@ fn on_handshake(
                     }
                 }
                 &Socket::Tcp(socket) => {
-                    if !this.check_server_identity::<false>(socket, handshake_error, ssl, false) {
+                    if !this.check_server_identity::<false>(socket, ssl, false) {
                         scoped_log!(
                             http_proxy_tunnel,
                             "ProxyTunnel onHandshake checkServerIdentity failed"
@@ -463,7 +461,7 @@ fn on_handshake(
         }
         // if handshake_success it self is false, this means that the connection was rejected
         // SAFETY: `this` dead (NLL); reenter via raw ptr.
-        ProxyTunnel::close_from_callback(proxy_nn, err!(ConnectionRefused));
+        ProxyTunnel::close_from_callback(proxy_nn, crate::Error::ConnectionRefused);
         return;
     }
 }
@@ -540,35 +538,23 @@ fn on_close(ctx: *mut HTTPClient) {
     let in_progress = this.state.stage != Stage::Done
         && this.state.stage != Stage::Fail
         && !this.state.flags.is_redirect_pending;
-    if in_progress {
-        if this.state.is_chunked_encoding() {
-            // 4 = CHUNKED_IN_TRAILERS_LINE_HEAD, 5 = CHUNKED_IN_TRAILERS_LINE_MIDDLE
-            // (`phr_chunked_decoder._state` is a raw `c_char`.)
-            match this.state.chunked_decoder._state {
-                4 | 5 => {
-                    this.state.flags.received_last_chunk = true;
-                    // `this` dead (NLL); reborrow via `client_from_ctx` inside.
-                    progress_update_for_proxy_socket(ctx, proxy_nn);
-                    // Drop our temporary ref asynchronously to avoid freeing within callback
-                    crate::http_thread().schedule_proxy_deref(proxy_ptr);
-                    return;
-                }
-                _ => {}
+    let mut fail_err: Option<crate::Error> = None;
+    if in_progress && this.state.is_body_complete_on_close() {
+        match this.state.finalize_body_on_eof() {
+            Ok(()) => {
+                // `this` dead (NLL); reborrow via `client_from_ctx` inside.
+                progress_update_for_proxy_socket(ctx, proxy_nn);
+                crate::http_thread().schedule_proxy_deref(proxy_ptr);
+                return;
             }
-        } else if this.state.content_length.is_none()
-            && this.state.response_stage == HTTPStage::Body
-        {
-            this.state.flags.received_last_chunk = true;
-            // `this` dead (NLL); reborrow via `client_from_ctx` inside.
-            progress_update_for_proxy_socket(ctx, proxy_nn);
-            // Balance the ref we took asynchronously
-            crate::http_thread().schedule_proxy_deref(proxy_ptr);
-            return;
+            Err(e) => fail_err = Some(e),
         }
     }
 
-    // Otherwise, treat as failure.
-    let err = ProxyTunnel::shutdown_err_of(proxy_nn).get();
+    // Otherwise, treat as failure. `close_and_fail` de-tags the outer socket
+    // before `fail()` frees the AsyncHTTP that embeds `self` (the uSockets ext
+    // still points here until then).
+    let err = fail_err.unwrap_or_else(|| ProxyTunnel::shutdown_err_of(proxy_nn).get());
     match ProxyTunnel::socket_of(proxy_nn) {
         &Socket::Ssl(socket) => {
             this.close_and_fail::<true>(err, socket);
@@ -576,7 +562,11 @@ fn on_close(ctx: *mut HTTPClient) {
         &Socket::Tcp(socket) => {
             this.close_and_fail::<false>(err, socket);
         }
-        Socket::None => {}
+        Socket::None => {
+            if fail_err.is_some() {
+                this.fail(err);
+            }
+        }
     }
     ProxyTunnel::set_socket(proxy_nn, Socket::None);
     // Deref after returning to the event loop to avoid lifetime hazards.
@@ -640,7 +630,7 @@ impl ProxyTunnel {
 
                 // invalid TLS Options
                 proxy_tunnel_ref.detach_and_deref();
-                this.close_and_fail::<IS_SSL>(err!(ConnectionRefused), socket);
+                this.close_and_fail::<IS_SSL>(crate::Error::ConnectionRefused, socket);
                 return;
             }
         }
@@ -665,13 +655,6 @@ impl ProxyTunnel {
             scoped_log!(http_proxy_tunnel, "proxy tunnel start");
             wrapper.start();
         }
-    }
-
-    pub fn close(&mut self, err: Error) {
-        // `&mut self` was derived from the heap::alloc pointer; the receiver is
-        // never used again after this line so the raw call's disjoint field
-        // projections do not alias it.
-        Self::close_raw(NonNull::from(&mut *self), err);
     }
 
     /// Raw-pointer close: sets `shutdown_err` then drives `wrapper.shutdown()`.
@@ -761,12 +744,12 @@ impl ProxyTunnel {
     pub fn write(&mut self, buf: &[u8]) -> Result<usize, Error> {
         if let Some(wrapper) = &mut self.wrapper {
             return wrapper.write_data(buf).map_err(|e| match e {
-                WriteDataError::ConnectionClosed => err!(ConnectionClosed),
-                WriteDataError::WantRead => err!(WantRead),
-                WriteDataError::WantWrite => err!(WantWrite),
+                WriteDataError::ConnectionClosed => crate::Error::ConnectionClosed,
+                WriteDataError::WantRead => crate::Error::WantRead,
+                WriteDataError::WantWrite => crate::Error::WantWrite,
             });
         }
-        Err(err!(ConnectionClosed))
+        Err(crate::Error::ConnectionClosed)
     }
 
     #[inline]

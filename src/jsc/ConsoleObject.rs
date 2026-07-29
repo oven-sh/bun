@@ -40,7 +40,7 @@ mod JSPrinter {
         input: &[u8],
         writer: &mut (impl bun_io::Write + ?Sized),
         encoding: Encoding,
-    ) -> Result<(), bun_core::Error> {
+    ) -> bun_js_printer::Result<()> {
         match encoding {
             Encoding::Latin1 => {
                 bun_js_printer::write_json_string::<_, { Encoding::Latin1 }>(input, writer)
@@ -1811,7 +1811,7 @@ pub mod formatter {
                 // SAFETY: `node` was obtained from `Pool::get_node()` and is
                 // exclusively owned by this formatter; `Map::INIT` is `Some`,
                 // so `data` is initialized. Ownership returns to the pool.
-                unsafe { visited::Pool::release(node.as_mut()) };
+                unsafe { visited::Pool::release(node.as_ptr()) };
             }
         }
     }
@@ -2058,15 +2058,6 @@ pub mod formatter {
         pub fn get(value: JSValue, global_this: &JSGlobalObject) -> JsResult<TagResult> {
             Tag::get(value, global_this)
         }
-        /// Delegates to `Tag::get_advanced`.
-        #[inline]
-        pub fn get_advanced(
-            value: JSValue,
-            global_this: &JSGlobalObject,
-            opts: TagOptions,
-        ) -> JsResult<TagResult> {
-            Tag::get_advanced(value, global_this, opts)
-        }
         pub fn is_primitive(self) -> bool {
             self.tag().is_primitive()
         }
@@ -2303,13 +2294,7 @@ pub mod formatter {
 
             if js_type == jsc::JSType::GlobalProxy {
                 if !opts.contains(TagOptions::HIDE_GLOBAL) {
-                    // SAFETY: `value` is a cell with `js_type == GlobalProxy`,
-                    // so `as_object_ref()` is a valid `JSObjectRef` for the
-                    // C API call.
-                    let target = JSValue::c(unsafe {
-                        jsc::C::JSObjectGetProxyTarget(value.as_object_ref())
-                    });
-                    return Tag::get(target, global_this);
+                    return Tag::get(value.get_proxy_target(), global_this);
                 }
                 return Ok(TagResult {
                     tag: TagPayload::GlobalObject,
@@ -2746,8 +2731,6 @@ pub mod formatter {
     }
 
     impl<'w> WrappedWriter<'w> {
-        pub const IS_WRAPPED_WRITER: bool = true;
-
         /// Mirror of `Formatter::add_for_new_line` routed through the borrowed
         /// `estimated_line_length` so callers don't need a second `&mut self`
         /// on the parent `Formatter` while a `WrappedWriter` is live.
@@ -2828,34 +2811,6 @@ pub mod formatter {
             if self.ctx.write_fmt(args).is_err() {
                 self.failed = true;
             }
-        }
-
-        pub fn write_latin1(&mut self, buf: &[u8]) {
-            let mut remain = buf;
-            while !remain.is_empty() {
-                if let Some(i) = strings::first_non_ascii(remain) {
-                    if i > 0 {
-                        if self.ctx.write_all(&remain[0..i as usize]).is_err() {
-                            self.failed = true;
-                            return;
-                        }
-                    }
-                    if self
-                        .ctx
-                        .write_all(&strings::latin1_to_codepoint_bytes_assume_not_ascii(
-                            remain[i as usize],
-                        ))
-                        .is_err()
-                    {
-                        self.failed = true;
-                    }
-                    remain = &remain[i as usize + 1..];
-                } else {
-                    break;
-                }
-            }
-
-            let _ = self.ctx.write_all(remain);
         }
 
         #[inline]
@@ -3954,8 +3909,7 @@ pub mod formatter {
                     C,
                 )
             })?;
-            // Strings are printed directly, otherwise we recurse. It is
-            // possible to end up in an infinite loop.
+            // Strings are printed directly, otherwise we recurse.
             if result.is_string() {
                 if writer_
                     .write_fmt(format_args!("{}", result.fmt_string(self.global_this)))
@@ -3964,12 +3918,15 @@ pub mod formatter {
                     self.failed = true;
                 }
             } else {
-                self.format::<C>(
-                    Tag::get(result, self.global_this)?,
-                    writer_,
-                    result,
-                    self.global_this,
-                )?;
+                // A custom inspector that returns its own `this` would recurse
+                // forever; re-tag without the custom hook so it falls through to
+                // default formatting (mirrors util.inspect's `ret !== context`).
+                let tag = if result == self.custom_formatted_object.this {
+                    Tag::get_advanced(result, self.global_this, TagOptions::DISABLE_INSPECT_CUSTOM)?
+                } else {
+                    Tag::get(result, self.global_this)?
+                };
+                self.format::<C>(tag, writer_, result, self.global_this)?;
             }
             Ok(())
         }
@@ -4241,8 +4198,7 @@ pub mod formatter {
 
             // `JSPromise` is an `opaque_ffi!` ZST handle; `opaque_ref` is the
             // centralised non-null deref proof (Tag::Promise ⇒ value is a cell).
-            let promise: &JSPromise =
-                JSPromise::opaque_ref(value.as_object_ref() as *const JSPromise);
+            let promise: &JSPromise = JSPromise::opaque_ref(value.encoded() as *const JSPromise);
             match promise.status() {
                 jsc::js_promise::Status::Pending => writer.write_all(b"<pending>"),
                 jsc::js_promise::Status::Fulfilled => writer.write_all(b"<resolved>"),
@@ -5805,7 +5761,6 @@ pub mod formatter {
     /// Abstracts over `{d}` vs `{f}` and `n`-suffix for `write_typed_array`.
     pub trait TypedArrayElement: Copy {
         const IS_BIGINT: bool;
-        const IS_FLOAT: bool;
         type Display: core::fmt::Display;
         fn display(self) -> Self::Display;
     }
@@ -5813,7 +5768,6 @@ pub mod formatter {
         ($($t:ty),*) => { $(
             impl TypedArrayElement for $t {
                 const IS_BIGINT: bool = false;
-                const IS_FLOAT: bool = false;
                 type Display = $t;
                 fn display(self) -> Self::Display { self }
             }
@@ -5824,7 +5778,6 @@ pub mod formatter {
         ($($t:ty),*) => { $(
             impl TypedArrayElement for $t {
                 const IS_BIGINT: bool = true;
-                const IS_FLOAT: bool = false;
                 type Display = $t;
                 fn display(self) -> Self::Display { self }
             }
@@ -5835,7 +5788,6 @@ pub mod formatter {
         ($($t:ty),*) => { $(
             impl TypedArrayElement for $t {
                 const IS_BIGINT: bool = false;
-                const IS_FLOAT: bool = true;
                 type Display = bun_core::fmt::DoubleFormatter;
                 fn display(self) -> Self::Display { bun_core::fmt::double(f64::from(self)) }
             }
@@ -5848,7 +5800,6 @@ pub mod formatter {
     // primitive — but the body is identical.
     impl TypedArrayElement for bun_core::f16 {
         const IS_BIGINT: bool = false;
-        const IS_FLOAT: bool = true;
         type Display = bun_core::fmt::DoubleFormatter;
         fn display(self) -> Self::Display {
             bun_core::fmt::double(f64::from(self))
@@ -5945,7 +5896,7 @@ pub extern "C" fn Bun__ConsoleObject__time(
     PENDING_TIME_LOGS.with_borrow_mut(|map| {
         let result = map.get_or_put(id).expect("unreachable");
         if !result.found_existing || result.value_ptr.is_none() {
-            *result.value_ptr = Some(bun_core::time::Timer::start().expect("unreachable"));
+            *result.value_ptr = Some(bun_core::time::Timer::start());
         }
     });
 }

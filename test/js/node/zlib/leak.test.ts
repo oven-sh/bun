@@ -8,6 +8,10 @@ for (let i = 0; i < input.length; i++) input[i] = Math.random();
 
 const upper = 1024 * 1024 * (isASAN ? 20 : 10);
 
+// The leak assertion (RSS stable across iterations) is quality-agnostic; the
+// default quality (11) makes each brotli test take multiple seconds in CI.
+const brotliOpts = { params: { [zlib.constants.BROTLI_PARAM_QUALITY]: 2 } };
+
 describe("zlib compression does not leak memory", () => {
   beforeAll(() => {
     for (let index = 0; index < 10_000; index++) {
@@ -65,12 +69,12 @@ describe("zlib compression does not leak memory", () => {
 
   test("brotliCompress", async () => {
     for (let index = 0; index < 1_000; index++) {
-      await promisify(zlib.brotliCompress)(input);
+      await promisify(zlib.brotliCompress)(input, brotliOpts);
     }
     const baseline = process.memoryUsage.rss();
     console.log(baseline);
     for (let index = 0; index < 1_000; index++) {
-      await promisify(zlib.brotliCompress)(input);
+      await promisify(zlib.brotliCompress)(input, brotliOpts);
     }
     Bun.gc(true);
     const after = process.memoryUsage.rss();
@@ -82,12 +86,12 @@ describe("zlib compression does not leak memory", () => {
 
   test("brotliCompressSync", async () => {
     for (let index = 0; index < 1_000; index++) {
-      zlib.brotliCompressSync(input);
+      zlib.brotliCompressSync(input, brotliOpts);
     }
     const baseline = process.memoryUsage.rss();
     console.log(baseline);
     for (let index = 0; index < 1_000; index++) {
-      zlib.brotliCompressSync(input);
+      zlib.brotliCompressSync(input, brotliOpts);
     }
     Bun.gc(true);
     const after = process.memoryUsage.rss();

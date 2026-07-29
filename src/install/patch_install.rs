@@ -208,7 +208,7 @@ impl PatchTask {
         &mut self,
         manager: &mut PackageManager,
         log_level: LogLevel,
-    ) -> Result<(), bun_core::Error> {
+    ) -> Result<(), crate::Error> {
         bun_output::scoped_log!(
             InstallPatch,
             "runFromThreadMainThread {}",
@@ -257,7 +257,7 @@ impl PatchTask {
         &mut self,
         manager: &mut PackageManager,
         log_level: LogLevel,
-    ) -> Result<(), bun_core::Error> {
+    ) -> Result<(), crate::Error> {
         // TODO only works for npm package
         // need to switch on version.tag and handle each case appropriately
         let Callback::CalcHash(calc_hash) = &mut self.callback else {
@@ -726,19 +726,6 @@ impl PatchTask {
         }
 
         Some(hasher.final_())
-    }
-
-    pub fn notify(&mut self) {
-        // Push, then wake. No early returns.
-        let mgr = self.manager.as_ptr();
-        // SAFETY: `self.manager` is a long-lived BACKREF;
-        // only touches the lock-free queue and event-loop wake atomics.
-        unsafe {
-            (*mgr)
-                .patch_task_queue
-                .push(core::ptr::NonNull::from(&mut *self));
-            PackageManager::wake_raw(mgr);
-        }
     }
 
     pub fn schedule(&mut self, batch: &mut Batch) {

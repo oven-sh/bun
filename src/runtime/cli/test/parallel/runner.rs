@@ -7,13 +7,12 @@ use core::ffi::c_char;
 use core::ptr::NonNull;
 use std::io::Write as _;
 
-use bun_core::ZBox;
 use bun_core::{Global, Output};
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_options_types::context::MacroOptions;
 use bun_ptr::Interned;
-use bun_resolver::fs::{FileSystem, RealFS};
-use bun_sys::{Fd, FdDirExt, FdExt};
+use bun_resolver::fs::FileSystem;
+use bun_sys::Fd;
 
 use super::aggregate;
 use super::channel::{Channel, ChannelOwner};
@@ -22,49 +21,14 @@ use super::file_range::FileRange;
 use super::frame::{self, Frame};
 use super::worker::{PipeRole, Worker, WorkerPipe};
 use crate::Command;
-#[cfg(unix)]
-use crate::api::bun::process::PosixStdio as Stdio;
-#[cfg(not(unix))]
-use crate::api::bun::process::WindowsStdio as Stdio;
 use crate::test_command::{self, CommandLineReporter, TestCommand};
 use crate::test_runner::bun_test::FirstLast;
 use bun_options_types::code_coverage_options::CodeCoverageOptions;
-
-// Local helper: formats args into a Vec<u8>. The `unwrap` cannot fail —
-// `Write for Vec<u8>` is infallible.
-macro_rules! format_bytes {
-    ($($arg:tt)*) => {{
-        let mut __v: Vec<u8> = Vec::new();
-        ::std::io::Write::write_fmt(&mut __v, format_args!($($arg)*)).unwrap();
-        __v
-    }};
-}
 
 /// All workers are busy for at least this long before another is spawned.
 /// Overridable via BUN_TEST_PARALLEL_SCALE_MS for tests, where debug-build
 /// module load alone can exceed the production 5ms threshold.
 pub(crate) const DEFAULT_SCALE_UP_AFTER_MS: i64 = 5;
-
-/// Owns the coordinator-side per-run worker temp directory path bytes;
-/// recursively removes it on drop. Stores the bare path with no trailing NUL
-/// so `path()`/Drop hand the exact same bytes to `delete_tree` that
-/// `make_path` created.
-struct WorkerTmpdir(Option<Box<[u8]>>);
-
-impl WorkerTmpdir {
-    #[inline]
-    fn path(&self) -> Option<&[u8]> {
-        self.0.as_deref()
-    }
-}
-
-impl Drop for WorkerTmpdir {
-    fn drop(&mut self) {
-        if let Some(d) = &self.0 {
-            let _ = Fd::cwd().delete_tree(d);
-        }
-    }
-}
 
 /// Returns true if files were actually run via the worker pool, false if it
 /// fell back to the sequential path (≤1 effective worker). The caller uses
@@ -75,7 +39,7 @@ pub fn run_as_coordinator(
     files: &[Interned],
     ctx: Command::Context,
     coverage_opts: &mut CodeCoverageOptions,
-) -> Result<bool, bun_core::Error> {
+) -> crate::Result<bool> {
     // SAFETY: caller guarantees `vm` is a valid live VM pointer for the duration.
     // Kept as a raw pointer; dereferenced at each use site to sidestep borrowck
     // around the self-referential Coordinator/Worker graph.
@@ -94,51 +58,18 @@ pub fn run_as_coordinator(
         return Ok(false);
     }
 
-    // Owned path bytes. ZStr is a borrow header; we must own the backing
-    // storage here. Drop recursively removes the directory once the run
-    // finishes.
-    let mut worker_tmpdir = WorkerTmpdir(None);
     // Workers' stderr is a pipe; have them format with ANSI when we will be
     // rendering to a color terminal so streamed lines match serial output.
     if Output::enable_ansi_colors_stderr() {
         let _ = env.map.put(b"FORCE_COLOR", b"1");
     }
-    if ctx.test_options.reporters.junit || coverage_opts.enabled {
-        let pid: i64 = {
-            #[cfg(windows)]
-            {
-                bun_sys::windows::GetCurrentProcessId() as i64
-            }
-            #[cfg(not(windows))]
-            {
-                // SAFETY: getpid is always safe
-                unsafe { libc::getpid() as i64 }
-            }
-        };
-        let dir: Box<[u8]> = format_bytes!(
-            "{}/bun-test-worker-{}",
-            bstr::BStr::new(RealFS::get_default_temp_dir()),
-            pid
-        )
-        .into_boxed_slice();
-        let dir_bytes: &[u8] = &dir;
-        if let Err(e) = Fd::cwd().make_path(dir_bytes) {
-            Output::err(
-                e,
-                "failed to create worker temp dir {}",
-                &[&bstr::BStr::new(dir_bytes)],
-            );
-            Global::exit(1);
-        }
-        let _ = env.map.put(b"BUN_TEST_WORKER_TMP", dir_bytes);
+    if ctx.test_options.reporters.junit {
         // Coordinator's own JunitReporter would otherwise produce an empty
         // document and overwrite the merged one in writeJUnitReportIfNeeded.
         if let Some(jr) = reporter.reporters.junit.take() {
             let _ = env.map.put(b"BUN_TEST_WORKER_JUNIT", b"1");
             drop(jr);
-            // reporter.reporters.junit already None via .take()
         }
-        worker_tmpdir.0 = Some(dir);
     }
     // Each worker gets a unique JEST_WORKER_ID / BUN_TEST_WORKER_ID (1-indexed,
     // matching Jest) so tests can pick distinct ports/databases. Serialize the
@@ -187,7 +118,6 @@ pub fn run_as_coordinator(
             captured: Vec::new(),
             alive: false,
             exit_status: None,
-            extra_fd_stdio: [Stdio::Ignore],
         });
         let w: *mut Worker = workers.last_mut().unwrap();
         // SAFETY: w points into workers; Vec will not reallocate (capacity == k)
@@ -214,7 +144,6 @@ pub fn run_as_coordinator(
         // backref to the Coordinator; the raw pointers (never a second `&mut`)
         // are what keep this sound. See the backref patch loop below.
         workers: &mut workers,
-        worker_tmpdir: worker_tmpdir.path(),
         parallel_limit: k,
         scale_up_after_ms: if let Some(d) = ctx.test_options.parallel_delay_ms {
             i64::from(d)
@@ -227,14 +156,16 @@ pub fn run_as_coordinator(
         },
         bail: ctx.test_options.bail,
         dots: ctx.test_options.reporters.dots,
-        junit_fragments: Vec::new(),
-        coverage_fragments: Vec::new(),
+        junit_chunks: (0..n).map(|_| None).collect(),
+        junit_totals: Default::default(),
+        coverage_chunks: Vec::new(),
         last_header_idx: None,
         frame: Frame::default(),
         files_done: 0,
         spawned_count: 0,
         live_workers: 0,
         crashed_files: Vec::new(),
+        aborted: None,
         bailed: false,
         last_printed_dot: false,
         #[cfg(windows)]
@@ -263,6 +194,7 @@ pub fn run_as_coordinator(
     unsafe { (*(*vm_ptr).event_loop()).ensure_waker() };
     // SAFETY: see vm_ptr note above.
     unsafe { &*vm_ptr }.run_with_api_lock(|| coord.drive());
+    coord.end_group();
 
     if ctx.test_options.reporters.junit {
         if let Some(outfile) = &ctx.test_options.reporter_outfile {
@@ -276,16 +208,16 @@ pub fn run_as_coordinator(
         }
     }
     if coverage_opts.enabled {
-        let frags: Vec<&[u8]> = coord
-            .coverage_fragments
-            .iter()
-            .map(|b| b.as_ref())
-            .collect();
+        let frags: Vec<&[u8]> = coord.coverage_chunks.iter().map(|b| b.as_ref()).collect();
         if Output::enable_ansi_colors_stderr() {
             aggregate::merge_coverage_fragments::<true>(&frags, coverage_opts);
         } else {
             aggregate::merge_coverage_fragments::<false>(&frags, coverage_opts);
         }
+    }
+    if let Some(code) = coord.aborted {
+        Output::flush();
+        Global::exit(code);
     }
     Ok(true)
 }
@@ -297,19 +229,17 @@ pub fn run_as_coordinator(
 /// (`--path-ignore-patterns`, `--changed`), `--reporter`/`--reporter-outfile`,
 /// `--pass-with-no-tests`, `--parallel` itself — are intentionally not
 /// forwarded.
-fn build_worker_argv(
-    ctx: &Command::ContextData,
-) -> Result<Box<[bun_spawn::CStrPtr]>, bun_core::Error> {
+fn build_worker_argv(ctx: &Command::ContextData) -> crate::Result<Box<[bun_spawn::CStrPtr]>> {
     // Null-sentinel slice of C-string pointers. String storage routes through
     // the process-lifetime CLI arena (bulk-freed on exit).
     let mut argv: Vec<bun_spawn::CStrPtr> = Vec::new();
     let opts = &ctx.test_options;
 
     // Helper: format → NUL-terminated, return raw ptr (arena-owned).
-    let print_z = |args: core::fmt::Arguments<'_>| -> Result<*const c_char, bun_core::Error> {
+    let print_z = |args: core::fmt::Arguments<'_>| -> crate::Result<*const c_char> {
         let mut buf = Vec::<u8>::new();
         buf.write_fmt(args)
-            .map_err(|_| bun_core::err!("FormatFailed"))?;
+            .map_err(|_| crate::Error::FormatFailed)?;
         Ok(crate::cli::cli_dupe_z(&buf))
     };
     let dupe_z = |s: &[u8]| -> *const c_char { crate::cli::cli_dupe_z(s) };
@@ -317,7 +247,7 @@ fn build_worker_argv(
 
     argv.push(
         bun_core::self_exe_path()
-            .map_err(|_| bun_core::err!("SelfExePathFailed"))?
+            .map_err(|_| crate::Error::SelfExePathFailed)?
             .as_ptr(),
     );
     argv.push(lit(b"test\0"));
@@ -543,7 +473,7 @@ impl ChannelOwner for WorkerCommands {
     fn on_channel_frame(&mut self, kind: frame::Kind, rd: &mut frame::Reader<'_>) {
         match kind {
             frame::Kind::Run => {
-                self.pending_idx = Some(rd.u32_());
+                self.pending_idx = Some(rd.u32());
                 self.pending_path.clear();
                 self.pending_path.extend_from_slice(rd.str());
             }
@@ -598,7 +528,7 @@ impl<'a> WorkerLoop<'a> {
 
             self.reporter.worker_ipc_file_idx = Some(idx);
             wf.begin(frame::Kind::FileStart);
-            wf.u32_(idx);
+            wf.u32(idx);
             self.cmds.send(wf.finish());
 
             let before = *self.reporter.summary();
@@ -615,7 +545,7 @@ impl<'a> WorkerLoop<'a> {
                     last: true,
                 },
             ) {
-                test_command::handle_top_level_test_error_before_javascript_start(err);
+                test_command::handle_top_level_test_error_before_javascript_start(&err);
             }
             crate::jsc_hooks::close_isolation_handles(vm);
             vm.swap_global_for_test_isolation();
@@ -624,6 +554,20 @@ impl<'a> WorkerLoop<'a> {
                 .bun_test_root
                 .reset_hook_scope_for_test_isolation();
             self.reporter.jest.default_timeout_override = u32::MAX;
+
+            if let Some(junit) = &mut self.reporter.reporters.junit {
+                while !junit.suite_stack.is_empty() {
+                    let _ = junit.end_test_suite();
+                }
+                junit.current_file = Box::default();
+                if junit.contents.len() > junit.sent_upto {
+                    wf.begin(frame::Kind::JunitChunk);
+                    wf.u32(idx);
+                    wf.str(&junit.contents[junit.sent_upto..]);
+                    self.cmds.send(wf.finish());
+                    junit.sent_upto = junit.contents.len();
+                }
+            }
 
             let after = *self.reporter.summary();
             wf.begin(frame::Kind::FileDone);
@@ -638,7 +582,7 @@ impl<'a> WorkerLoop<'a> {
                 after.files - before.files,
                 self.reporter.jest.unhandled_errors_between_tests - before_unhandled,
             ] {
-                wf.u32_(v);
+                wf.u32(v);
             }
             self.cmds.send(wf.finish());
         }
@@ -676,9 +620,12 @@ pub fn run_as_worker(
     // vm.allocator = arena.arena(); — allocator params dropped in Rust
 
     let env = vm_ref.env_loader();
-    let worker_tmp = env.get(b"BUN_TEST_WORKER_TMP");
-    if env.get(b"BUN_TEST_WORKER_JUNIT").is_some() && reporter.reporters.junit.is_none() {
-        reporter.reporters.junit = Some(test_command::JunitReporter::init());
+    if let Some(junit) = reporter.reporters.junit.as_mut() {
+        junit.elements_only = true;
+    } else if env.get(b"BUN_TEST_WORKER_JUNIT").is_some() {
+        let mut junit = test_command::JunitReporter::init();
+        junit.elements_only = true;
+        reporter.reporters.junit = Some(junit);
     }
 
     let mut wloop = WorkerLoop {
@@ -694,9 +641,9 @@ pub fn run_as_worker(
     };
     vm_ref.run_with_api_lock(|| wloop.begin());
 
-    worker_flush_aggregates(wloop.reporter, vm_ref, ctx, worker_tmp, &mut wloop.cmds);
+    worker_flush_aggregates(wloop.reporter, vm_ref, ctx, &mut wloop.cmds);
     // Drain any backpressure-buffered frames before exit so the coordinator
-    // sees repeat_bufs/junit_file/coverage_file.
+    // sees repeat_bufs / junit_chunk / coverage_chunk.
     while wloop.cmds.channel.has_pending_writes() && !wloop.cmds.channel.done {
         // SAFETY: event_loop pointer is valid while vm lives.
         unsafe { (*vm_ref.event_loop()).tick() };
@@ -723,7 +670,6 @@ fn worker_flush_aggregates(
     reporter: &mut CommandLineReporter,
     vm: &mut VirtualMachine,
     ctx: &Command::ContextData,
-    worker_tmp: Option<&[u8]>,
     cmds: &mut WorkerCommands,
 ) {
     // Snapshots flush lazily when the next file opens its snapshot file; the
@@ -742,57 +688,17 @@ fn worker_flush_aggregates(
     wf.str(reporter.todos_to_repeat_buf.as_slice());
     cmds.send(wf.finish());
 
-    if let Some(dir) = worker_tmp {
-        let id: i64 = {
-            #[cfg(windows)]
-            {
-                i64::from(bun_sys::windows::GetCurrentProcessId())
-            }
-            #[cfg(not(windows))]
-            {
-                // SAFETY: getpid is always safe
-                i64::from(unsafe { libc::getpid() })
-            }
-        };
-        if let Some(junit) = &mut reporter.reporters.junit {
-            let path =
-                ZBox::from_bytes(format_bytes!("{}/w{}.xml", bstr::BStr::new(dir), id).as_slice());
-            if !junit.current_file.is_empty() {
-                let _ = junit.end_test_suite();
-            }
-            match junit.write_to_file(&path) {
-                Ok(_) => {
-                    wf.begin(frame::Kind::JunitFile);
-                    wf.str(path.as_bytes());
-                    cmds.send(wf.finish());
-                }
-                Err(e) => {
-                    Output::err(
-                        e,
-                        "failed to write JUnit fragment to {}",
-                        &[&bstr::BStr::new(path.as_bytes())],
-                    );
-                }
-            }
+    if let Some(junit) = &mut reporter.reporters.junit {
+        while !junit.suite_stack.is_empty() {
+            let _ = junit.end_test_suite();
         }
-        if ctx.test_options.coverage.enabled {
-            let path = ZBox::from_bytes(
-                format_bytes!("{}/cov{}.lcov", bstr::BStr::new(dir), id).as_slice(),
-            );
-            match reporter.write_lcov_only(vm, &ctx.test_options.coverage, &path) {
-                Ok(_) => {
-                    wf.begin(frame::Kind::CoverageFile);
-                    wf.str(path.as_bytes());
-                    cmds.send(wf.finish());
-                }
-                Err(e) => {
-                    Output::err(
-                        e,
-                        "failed to write coverage fragment to {}",
-                        &[&bstr::BStr::new(path.as_bytes())],
-                    );
-                }
-            }
+        junit.current_file = Box::default();
+    }
+    if ctx.test_options.coverage.enabled {
+        if let Some(lcov) = reporter.render_lcov(vm, &ctx.test_options.coverage) {
+            wf.begin(frame::Kind::CoverageChunk);
+            wf.str(&lcov);
+            cmds.send(wf.finish());
         }
     }
 }
@@ -823,7 +729,7 @@ pub fn worker_emit_test_done(file_idx: u32, formatted_line: &[u8]) {
     // SAFETY: single-threaded worker; WORKER_FRAME is a process-global scratch buffer.
     let wf = unsafe { &mut *WORKER_FRAME.get() };
     wf.begin(frame::Kind::TestDone);
-    wf.u32_(file_idx);
+    wf.u32(file_idx);
     wf.str(formatted_line);
     cmds.send(wf.finish());
 }

@@ -223,8 +223,9 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
     pub fn replace_package_manager_run(
         copy_script: &mut Vec<u8>,
         script: &[u8],
-    ) -> Result<(), bun_core::Error> {
+    ) -> crate::Result<()> {
         bun_install::lifecycle_script_runner::replace_package_manager_run(copy_script, script)
+            .map_err(Into::into)
     }
 
     /// Spawns the script body via the bun-shell or system shell and exits on
@@ -236,11 +237,11 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         original_script: &[u8],
         name: &[u8],
         cwd: &[u8],
-        env: &mut DotEnv::Loader<'_>,
+        env: &mut DotEnv::Loader,
         passthrough: &[Box<[u8]>],
         silent: bool,
         use_system_shell: bool,
-    ) -> Result<(), bun_core::Error> {
+    ) -> crate::Result<()> {
         Self::run_package_script_foreground_with_shell_path(
             ctx,
             original_script,
@@ -261,15 +262,15 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         original_script: &[u8],
         name: &[u8],
         cwd: &[u8],
-        env: &mut DotEnv::Loader<'_>,
+        env: &mut DotEnv::Loader,
         passthrough: &[Box<[u8]>],
         silent: bool,
         use_system_shell: bool,
         shell_path: Option<&[u8]>,
-    ) -> Result<(), bun_core::Error> {
+    ) -> crate::Result<()> {
         let shell_search_path = shell_path.unwrap_or_else(|| env.get(b"PATH").unwrap_or(b""));
-        let shell_bin = Self::find_shell(shell_search_path, cwd)
-            .ok_or_else(|| bun_core::err!("MissingShell"))?;
+        let shell_bin =
+            Self::find_shell(shell_search_path, cwd).ok_or(crate::Error::MissingShell)?;
         env.map
             .put(b"npm_lifecycle_event", name)
             .expect("unreachable");
@@ -291,7 +292,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         for part in passthrough {
             copy_script.push(b' ');
             if needs_escape_utf8_ascii_latin1(part) {
-                escape_8bit::<true>(part, &mut copy_script).unwrap_or_oom();
+                escape_8bit::<true, false>(part, &mut copy_script).unwrap_or_oom();
                 continue;
             }
             copy_script.extend_from_slice(part);
@@ -307,13 +308,8 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         if !use_system_shell {
             // SAFETY: `MiniEventLoop` stores `env` as a raw `*mut`; the loader
             // outlives the call (process-lifetime in `configure_env_for_run`).
-            // Erase the loader's borrowed lifetime to `'static` for the
-            // singleton handoff.
             let mini = bun_event_loop::MiniEventLoop::init_global(
-                Some(unsafe {
-                    &mut *std::ptr::from_mut::<DotEnv::Loader<'_>>(env)
-                        .cast::<DotEnv::Loader<'static>>()
-                }),
+                Some(unsafe { &mut *std::ptr::from_mut::<DotEnv::Loader>(env) }),
                 Some(cwd),
             );
             // SAFETY: `init_global` returns the thread-local singleton as a raw
@@ -395,12 +391,8 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             windows: crate::api::bun_process::WindowsOptions {
                 loop_: bun_jsc::EventLoopHandle::init_mini(
                     bun_event_loop::MiniEventLoop::init_global(
-                        // SAFETY: same lifetime erasure as the `!use_system_shell`
-                        // branch above — `env` outlives the mini event loop.
-                        Some(unsafe {
-                            &mut *::core::ptr::from_mut::<DotEnv::Loader<'_>>(env)
-                                .cast::<DotEnv::Loader<'static>>()
-                        }),
+                        // SAFETY: `env` outlives the mini event loop.
+                        Some(unsafe { &mut *::core::ptr::from_mut::<DotEnv::Loader>(env) }),
                         None,
                     ),
                 ),
@@ -537,10 +529,10 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
     pub fn configure_env_for_run(
         ctx: &mut ContextData,
         this_transpiler: &mut ::core::mem::MaybeUninit<Transpiler<'static>>,
-        env: Option<*mut DotEnv::Loader<'static>>,
+        env: Option<*mut DotEnv::Loader>,
         log_errors: bool,
         store_root_fd: bool,
-    ) -> Result<bun_resolver::DirInfoRef, bun_core::Error> {
+    ) -> crate::Result<bun_resolver::DirInfoRef> {
         Self::configure_env_for_run_impl(ctx, this_transpiler, env, log_errors, store_root_fd, true)
     }
 
@@ -551,10 +543,10 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
     pub fn configure_env_for_run_without_linker(
         ctx: &mut ContextData,
         this_transpiler: &mut ::core::mem::MaybeUninit<Transpiler<'static>>,
-        env: Option<*mut DotEnv::Loader<'static>>,
+        env: Option<*mut DotEnv::Loader>,
         log_errors: bool,
         store_root_fd: bool,
-    ) -> Result<bun_resolver::DirInfoRef, bun_core::Error> {
+    ) -> crate::Result<bun_resolver::DirInfoRef> {
         Self::configure_env_for_run_impl(
             ctx,
             this_transpiler,
@@ -583,11 +575,11 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
     fn configure_env_for_run_impl(
         ctx: &mut ContextData,
         this_transpiler: &mut ::core::mem::MaybeUninit<Transpiler<'static>>,
-        env: Option<*mut DotEnv::Loader<'static>>,
+        env: Option<*mut DotEnv::Loader>,
         log_errors: bool,
         store_root_fd: bool,
         with_linker: bool,
-    ) -> Result<bun_resolver::DirInfoRef, bun_core::Error> {
+    ) -> crate::Result<bun_resolver::DirInfoRef> {
         let args = ctx.args.clone();
         let env_is_none = env.is_none();
         // Process-lifetime arena singleton for the runner's transpiler;
@@ -623,7 +615,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             match this_transpiler.resolver.read_dir_info(top_level_dir) {
                 Err(err) => {
                     if !log_errors {
-                        return Err(bun_core::err!("CouldntReadCurrentDirectory"));
+                        return Err(crate::Error::CouldntReadCurrentDirectory);
                     }
                     // SAFETY: `ctx.log` set in `create_context_data` (single-
                     // threaded CLI startup), process-lifetime.
@@ -638,7 +630,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
                         },
                     );
                     Output::flush();
-                    return Err(err);
+                    return Err(err.into());
                 }
                 Ok(None) => {
                     // SAFETY: see `Err` arm above.
@@ -647,7 +639,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
                     ));
                     pretty_errorln!("error loading current directory");
                     Output::flush();
-                    return Err(bun_core::err!("CouldntReadCurrentDirectory"));
+                    return Err(crate::Error::CouldntReadCurrentDirectory);
                 }
                 Ok(Some(info)) => info,
             };
@@ -886,7 +878,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
     fn boot_bun_shell(
         ctx: &mut ContextData,
         entry_path: &[u8],
-    ) -> Result<crate::shell::ExitCode, bun_core::Error> {
+    ) -> crate::Result<crate::shell::ExitCode> {
         // Dummy transpiler so we can load .env.
         let mut args = ctx.args.clone();
         args.write = Some(false);
@@ -898,9 +890,8 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         let top_level_dir: &[u8] = ctx.args.absolute_working_dir.as_deref().unwrap_or(b"");
         let mini = bun_event_loop::MiniEventLoop::init_global(
             // SAFETY: `bundle.env` points to the process-lifetime DotEnv
-            // singleton (set by `Transpiler::init`); erasing the borrowed
-            // lifetime mirrors the `run_package_script_foreground` handoff.
-            Some(unsafe { &mut *bundle.env.cast::<DotEnv::Loader<'static>>() }),
+            // singleton (set by `Transpiler::init`).
+            Some(unsafe { &mut *bundle.env }),
             None,
         );
         // SAFETY: `init_global` returns the thread-local singleton; single-
@@ -925,7 +916,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         ctx: &mut ContextData,
         entry_path: Box<[u8]>,
         loader: Option<Loader>,
-    ) -> Result<(), bun_core::Error> {
+    ) -> crate::Result<()> {
         if !ctx.debug.loaded_bunfig {
             arguments::load_config_path(
                 CommandTag::RunCommand,
@@ -995,6 +986,8 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             };
             vm.module_loader.eval_source =
                 Some(Box::new(bun_ast::Source::init_path_string(entry, script)));
+            vm.module_loader.interactive_eval_script =
+                ctx.runtime_options.eval.interactive_script.take();
             if ctx.runtime_options.eval.eval_and_print {
                 vm.transpiler.options.dead_code_elimination = false;
             }
@@ -1076,8 +1069,6 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         vm.is_main_thread = true;
         bun_jsc::virtual_machine::IS_MAIN_THREAD_VM.set(true);
 
-        vm.env_loader().load_tracy();
-
         bun_http::EXPERIMENTAL_HTTP2_CLIENT_FROM_CLI.store(
             ctx.runtime_options.experimental_http2_fetch,
             ::core::sync::atomic::Ordering::Relaxed,
@@ -1136,7 +1127,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         ctx: &mut ContextData,
         entry_path: Box<[u8]>,
         graph: &mut bun_standalone_graph::Graph,
-    ) -> Result<(), bun_core::Error> {
+    ) -> crate::Result<()> {
         use bun_standalone_graph::StandaloneModuleGraph::Flags as GraphFlags;
 
         bun_jsc::initialize(false);
@@ -1518,14 +1509,12 @@ impl Run {
                     // When --hot/--watch is on (or a user
                     // `uncaughtException` handler swallowed the error), keep the
                     // process alive instead of hard-exiting on a rejected entry.
+                    // The core run-loop below does the actual waiting.
                     if vm.hot_reload != 0 || handled {
                         vm.add_main_to_watcher_if_needed();
                         // SAFETY: `event_loop` is a self-pointer into this VM;
                         // uniquely accessed here.
                         vm.event_loop_ref().tick();
-                        // SAFETY: as above — `event_loop` is a self-pointer into
-                        // this VM; uniquely accessed here.
-                        vm.event_loop_ref().tick_possibly_forever();
                     } else {
                         exit_with_unhandled_note(vm);
                     }
@@ -1539,7 +1528,7 @@ impl Run {
                     log_clear_msgs(vm);
                 }
             }
-            Err(err) => entry_point_load_failed(vm, err),
+            Err(err) => entry_point_load_failed(vm, &err.into()),
         }
 
         // don't run the GC if we don't actually need to
@@ -1723,7 +1712,7 @@ fn exit_with_unhandled_note(vm: &mut VirtualMachine) -> ! {
     any(target_os = "linux", target_os = "android"),
     unsafe(link_section = ".text.unlikely")
 )]
-fn entry_point_load_failed(vm: &mut VirtualMachine, err: bun_core::Error) -> ! {
+fn entry_point_load_failed(vm: &mut VirtualMachine, err: &crate::Error) -> ! {
     if log_has_msgs(vm) {
         dump_build_error(vm);
         log_clear_msgs(vm);
@@ -1752,9 +1741,9 @@ fn print_unhandled_version_note(vm: &mut VirtualMachine) {
 }
 
 impl RunCommand {
-    /// `_bootAndHandleError` — duplicate `path` to a process-lifetime buffer,
-    /// boot the VM, and on failure print the formatted error + `exit(1)`.
-    fn _boot_and_handle_error(ctx: &mut ContextData, path: &[u8], loader: Option<Loader>) -> bool {
+    /// Duplicate `path` to a process-lifetime buffer, boot the VM, and on
+    /// failure print the formatted error + `exit(1)`.
+    fn boot_and_handle_error(ctx: &mut ContextData, path: &[u8], loader: Option<Loader>) -> bool {
         if matches!(
             loader.or_else(|| Self::default_loader_for(path)),
             Some(Loader::Md)
@@ -1788,7 +1777,7 @@ impl RunCommand {
         any(target_os = "linux", target_os = "android"),
         unsafe(link_section = ".text.unlikely")
     )]
-    fn boot_failed_exit(ctx: &mut ContextData, display_name: &[u8], err: &bun_core::Error) -> ! {
+    fn boot_failed_exit(ctx: &mut ContextData, display_name: &[u8], err: &crate::Error) -> ! {
         // SAFETY: `ctx.log` was set in `create_context_data` (single-threaded
         // CLI startup) and is process-lifetime.
         //
@@ -1821,7 +1810,7 @@ impl RunCommand {
 
     /// Returns the path to the
     /// fake `node` shim that points back at the running `bun` binary.
-    pub fn bun_node_file_utf8() -> Result<&'static ZStr, bun_core::Error> {
+    pub fn bun_node_file_utf8() -> crate::Result<&'static ZStr> {
         #[cfg(not(windows))]
         {
             const BUN_NODE_DIR_Z: &str = const_format::concatcp!(RunCommand::BUN_NODE_DIR, "\0");
@@ -1841,7 +1830,7 @@ impl RunCommand {
                 )
             };
             if len == 0 {
-                return Err(bun_core::err!("FailedToGetTempPath"));
+                return Err(crate::Error::FailedToGetTempPath);
             }
 
             let converted = strings::convert_utf16_to_utf8_in_buffer(
@@ -1886,8 +1875,9 @@ impl RunCommand {
     pub fn create_fake_temporary_node_executable(
         path: &mut Vec<u8>,
         optional_bun_path: &mut &[u8],
-    ) -> Result<(), bun_core::Error> {
+    ) -> crate::Result<()> {
         bun_install::RunCommand::create_fake_temporary_node_executable(path, optional_bun_path)
+            .map_err(Into::into)
     }
 
     /// Prepends workspace
@@ -1900,7 +1890,7 @@ impl RunCommand {
         original_path: Option<&mut Vec<u8>>,
         cwd: &[u8],
         force_using_bun: bool,
-    ) -> Result<(), bun_core::Error> {
+    ) -> crate::Result<()> {
         let mut package_json_dir: &[u8] = b"";
 
         if let Some(package_json) = root_dir_info.enclosing_package_json {
@@ -1938,7 +1928,7 @@ impl RunCommand {
         original_path: Option<&mut Vec<u8>>,
         cwd: &[u8],
         force_using_bun: bool,
-    ) -> Result<Vec<u8>, bun_core::Error> {
+    ) -> crate::Result<Vec<u8>> {
         let env_loader = this_transpiler.env_mut();
         // Snapshot PATH up front. The env
         // map owns `Box<[u8]>` values, so a borrow would dangle once the
@@ -1952,8 +1942,8 @@ impl RunCommand {
         }
 
         let bun_node_exe = Self::bun_node_file_utf8()?;
-        let bun_node_dir_win = bun_paths::dirname(bun_node_exe.as_bytes())
-            .ok_or_else(|| bun_core::err!("FailedToGetTempPath"))?;
+        let bun_node_dir_win =
+            bun_paths::dirname(bun_node_exe.as_bytes()).ok_or(crate::Error::FailedToGetTempPath)?;
         let found_node = env_loader
             .load_node_js_config(
                 bun_paths::fs::FileSystem::instance(),
@@ -2000,7 +1990,7 @@ impl RunCommand {
                 &mut optional_bun_self_path,
             ) {
                 Ok(()) => {}
-                Err(e) if e == bun_core::err!("OutOfMemory") => bun_core::out_of_memory(),
+                Err(crate::Error::Alloc(bun_alloc::AllocError)) => bun_core::out_of_memory(),
                 Err(other) => panic!(
                     "unexpected error from createFakeTemporaryNodeExecutable: {}",
                     other.name()
@@ -2082,10 +2072,10 @@ impl RunCommand {
         executable: &[u8],
         executable_z: &ZStr,
         cwd: &[u8],
-        env: &mut DotEnv::Loader<'static>,
+        env: &mut DotEnv::Loader,
         passthrough: &[Box<[u8]>],
         original_script_for_bun_run: Option<&[u8]>,
-    ) -> Result<::core::convert::Infallible, bun_core::Error> {
+    ) -> crate::Result<::core::convert::Infallible> {
         // Attempt to find a ".bunx" file on disk, and run it, skipping the
         // wrapper exe.  we build the full exe path even though we could do
         // a relative lookup, because in the case we do find it, we have to
@@ -2137,10 +2127,10 @@ impl RunCommand {
         executable: &[u8],
         executable_z: &ZStr,
         cwd: &[u8],
-        env: &mut DotEnv::Loader<'static>,
+        env: &mut DotEnv::Loader,
         passthrough: &[Box<[u8]>],
         original_script_for_bun_run: Option<&[u8]>,
-    ) -> Result<::core::convert::Infallible, bun_core::Error> {
+    ) -> crate::Result<::core::convert::Infallible> {
         use crate::api::bun_process::{Status as SpawnStatus, sync};
 
         let mut argv: Vec<Box<[u8]>> = Vec::with_capacity(1 + passthrough.len());
@@ -2168,12 +2158,8 @@ impl RunCommand {
             windows: crate::api::bun_process::WindowsOptions {
                 loop_: bun_jsc::EventLoopHandle::init_mini(
                     bun_event_loop::MiniEventLoop::init_global(
-                        Some(unsafe {
-                            // SAFETY: env loader is process-lifetime; erase
-                            // borrowed lifetime for the singleton handoff.
-                            &mut *::core::ptr::from_mut::<DotEnv::Loader<'_>>(env)
-                                .cast::<DotEnv::Loader<'static>>()
-                        }),
+                        // SAFETY: env loader is process-lifetime.
+                        Some(unsafe { &mut *::core::ptr::from_mut::<DotEnv::Loader>(env) }),
                         None,
                     ),
                 ),
@@ -2352,11 +2338,11 @@ impl RunCommand {
     /// `--if-present` (suppresses missing-script errors) and the Auto-command
     /// fast-path-by-extension behave as expected.
     #[inline]
-    pub fn exec(ctx: &mut ContextData, cfg: ExecCfg) -> Result<bool, bun_core::Error> {
+    pub fn exec(ctx: &mut ContextData, cfg: ExecCfg) -> crate::Result<bool> {
         Self::exec_with_cfg(ctx, cfg)
     }
 
-    pub fn exec_with_cfg(ctx: &mut ContextData, cfg: ExecCfg) -> Result<bool, bun_core::Error> {
+    pub fn exec_with_cfg(ctx: &mut ContextData, cfg: ExecCfg) -> crate::Result<bool> {
         let bin_dirs_only = cfg.bin_dirs_only;
         let log_errors = cfg.log_errors;
 
@@ -2444,7 +2430,7 @@ impl RunCommand {
             root_dir_info.abs_path,
             force_using_bun,
         )?;
-        let env_loader: &mut DotEnv::Loader<'static> = this_transpiler.env_mut();
+        let env_loader: &mut DotEnv::Loader = this_transpiler.env_mut();
         env_loader
             .map
             .put(b"npm_command", b"run-script")
@@ -2576,7 +2562,7 @@ impl RunCommand {
         );
         // Temporarily honor `--preserve-symlinks-main` / NODE_PRESERVE_SYMLINKS_MAIN
         // for this one resolve.
-        let resolution: ::core::result::Result<bun_resolver::Result, bun_core::Error> = {
+        let resolution: ::core::result::Result<bun_resolver::Result, bun_resolver::Error> = {
             let saved_preserve = this_transpiler.resolver.opts.preserve_symlinks;
             this_transpiler.resolver.opts.preserve_symlinks =
                 ctx.runtime_options.preserve_symlinks_main
@@ -2621,10 +2607,10 @@ impl RunCommand {
                     .unwrap_or(Loader::Tsx);
                 if loader.can_be_run_by_bun() || loader == Loader::Html || loader == Loader::Md {
                     bun_core::scoped_log!(RUN_LOG, "Resolved to: `{}`", bstr::BStr::new(path.text));
-                    // borrowck — `_boot_and_handle_error` takes
+                    // borrowck — `boot_and_handle_error` takes
                     // `&mut ctx`; copy `path.text` out of the resolver borrow.
                     let text: Box<[u8]> = path.text.to_vec().into_boxed_slice();
-                    return Ok(Self::_boot_and_handle_error(ctx, &text, Some(loader)));
+                    return Ok(Self::boot_and_handle_error(ctx, &text, Some(loader)));
                 } else {
                     bun_core::scoped_log!(
                         RUN_LOG,
@@ -2641,7 +2627,7 @@ impl RunCommand {
                 if strings::has_suffix_comptime(target_name, b".html")
                     && strings::contains_char(target_name, b'*')
                 {
-                    return Ok(Self::_boot_and_handle_error(
+                    return Ok(Self::boot_and_handle_error(
                         ctx,
                         target_name,
                         Some(Loader::Html),
@@ -2898,12 +2884,12 @@ impl RunCommand {
         };
         let _ = bun_sys::close(fd);
 
-        Self::_boot_and_handle_error(ctx, &absolute_script_path, None)
+        Self::boot_and_handle_error(ctx, &absolute_script_path, None)
     }
 
     /// `bun run -` — read script from stdin into `ctx.runtime_options.eval`
     /// and boot the VM with the synthetic `[stdin]` path.
-    fn exec_stdin(ctx: &mut ContextData) -> Result<bool, bun_core::Error> {
+    fn exec_stdin(ctx: &mut ContextData) -> crate::Result<bool> {
         bun_core::scoped_log!(RUN_LOG, "Executing from stdin");
 
         // read from stdin
@@ -2938,7 +2924,7 @@ impl RunCommand {
         passthrough_list.append(&mut ctx.passthrough);
         ctx.passthrough = passthrough_list;
 
-        // NOT routed through `_boot_and_handle_error` — the
+        // NOT routed through `boot_and_handle_error` — the
         // stdin path skips the
         // `configure_allocator(long_running=true)` / `.md` checks and prints
         // `basename(target_name)` (= "-"), not `basename(entry_path)`
@@ -2950,12 +2936,30 @@ impl RunCommand {
         Ok(true)
     }
 
+    /// `bun --interactive` — boots the embedded `eval/node-repl.ts` script,
+    /// the Node.js-compatible REPL (node:repl). Distinct from `bun repl`,
+    /// which is Bun's own native REPL.
+    pub fn exec_node_repl(ctx: &mut ContextData) -> crate::Result<()> {
+        // Every caller has already established there's no user script target;
+        // any remaining positionals are dispatch artifacts (e.g. RunCommand's
+        // leading "run"), not user data — keep them out of `process.argv`.
+        ctx.positionals.clear();
+        let bootstrap = bun_core::runtime_embed_file!(Codegen, "eval/node-repl.ts").as_bytes();
+        // Stash the user's `-e` (so `process._eval` is correct) and boot the
+        // bootstrap via `[eval]`; it runs `process._eval` like Node's
+        // internal/main/repl.js — no source splicing.
+        ctx.runtime_options.eval.interactive_script =
+            Some(::core::mem::take(&mut ctx.runtime_options.eval.script));
+        ctx.runtime_options.eval.script = bootstrap.to_vec().into_boxed_slice();
+        Self::exec_eval(ctx)
+    }
+
     /// Synthetic `cwd/[eval]`
     /// entry point + boot. `Arguments::parse` has already stashed the script
     /// in `ctx.runtime_options.eval.script`. Public so `Command::start` can
     /// route the `-e`/`-p` AutoCommand path here without re-implementing the
     /// path-buffer dance.
-    pub fn exec_eval(ctx: &mut ContextData) -> Result<(), bun_core::Error> {
+    pub fn exec_eval(ctx: &mut ContextData) -> crate::Result<()> {
         // prepend positionals into the existing passthrough vec
         // (cold path, single allocation).
         if !ctx.positionals.is_empty() {
@@ -2980,10 +2984,19 @@ impl RunCommand {
     }
 
     /// `node` argv0 emulation. Port of `execAsIfNode`.
-    pub fn exec_as_if_node(ctx: &mut ContextData) -> Result<(), bun_core::Error> {
+    pub fn exec_as_if_node(ctx: &mut ContextData) -> crate::Result<()> {
         // SAFETY: single-threaded CLI startup; `PRETEND_TO_BE_NODE` is set in
         // `Command::which()` before dispatch.
         debug_assert!(crate::cli::PRETEND_TO_BE_NODE.load(::core::sync::atomic::Ordering::Relaxed));
+
+        // `node --interactive [-e code]`: same gate as AutoCommand — a script
+        // positional wins, and `-p` currently bypasses the REPL (see mod.rs).
+        if ctx.runtime_options.interactive
+            && !ctx.runtime_options.eval.eval_and_print
+            && ctx.positionals.is_empty()
+        {
+            return Self::exec_node_repl(ctx);
+        }
 
         if !ctx.runtime_options.eval.script.is_empty() {
             // synthetic `[eval]` path under cwd
@@ -3001,10 +3014,17 @@ impl RunCommand {
         }
 
         if ctx.positionals.is_empty() {
+            // Node: bare `node` on a TTY starts the REPL. Only in emulation
+            // mode; bun's own `bun` with no args stays the help text. Use
+            // Output's cached stdio flag (set at startup via libuv's handle
+            // probe), which is the same check `bun update --interactive` uses.
+            if Output::is_stdin_tty() {
+                return Self::exec_node_repl(ctx);
+            }
             Self::exec_as_if_node_missing_script();
         }
 
-        // borrowck — `_boot_and_handle_error` takes `&mut ctx`, so
+        // borrowck — `boot_and_handle_error` takes `&mut ctx`, so
         // dupe the positional out before the call.
         let filename: Box<[u8]> = ctx.positionals[0].clone();
 
@@ -3029,7 +3049,7 @@ impl RunCommand {
         };
 
         // This arm calls `Run::boot`
-        // directly — NOT `_boot_and_handle_error` — so it (a) does not call
+        // directly — NOT `boot_and_handle_error` — so it (a) does not call
         // `Global::configure_allocator` and (b) uses the
         // `Output.err(err, "Failed to run script \"...\"")` form.
         let basename: Box<[u8]> = paths::basename(&normalized).to_vec().into_boxed_slice();
@@ -3047,7 +3067,7 @@ impl RunCommand {
     )]
     fn exec_as_if_node_missing_script() -> ! {
         Output::err_generic(
-            "Missing script to execute. Bun's provided 'node' cli wrapper does not support a repl.",
+            "Missing script to execute. Pass --interactive to start the Node.js-compatible REPL.",
             (),
         );
         Global::exit(1);
@@ -3059,11 +3079,7 @@ impl RunCommand {
         any(target_os = "linux", target_os = "android"),
         unsafe(link_section = ".text.unlikely")
     )]
-    fn exec_as_if_node_boot_failed(
-        ctx: &mut ContextData,
-        basename: &[u8],
-        err: bun_core::Error,
-    ) -> ! {
+    fn exec_as_if_node_boot_failed(ctx: &mut ContextData, basename: &[u8], err: crate::Error) -> ! {
         // SAFETY: `ctx.log` set in `create_context_data` (single-threaded
         // CLI startup), process-lifetime.
         let _ = unsafe { ctx.log() }.print(std::ptr::from_mut::<bun_core::io::Writer>(
@@ -3171,22 +3187,8 @@ impl RemoteImageDownload {
 }
 
 impl RunCommand {
-    pub fn ls(ctx: &mut ContextData) -> Result<(), bun_core::Error> {
-        let args = ctx.args.clone();
-
-        let arena: &'static bun_alloc::Arena = runner_arena();
-        let mut this_transpiler = Transpiler::init(arena, ctx.log, args, None)?;
-        this_transpiler.options.env.behavior = api::DotEnvBehavior::LoadAll;
-        this_transpiler.options.env.prefix = Box::default();
-
-        this_transpiler.resolver.care_about_bin_folder = true;
-        this_transpiler.resolver.care_about_scripts = true;
-        this_transpiler.configure_linker();
-        Ok(())
-    }
-
     /// `bun feedback` — boots the embedded `eval/feedback.ts` script.
-    fn bun_feedback(ctx: &mut ContextData) -> Result<::core::convert::Infallible, bun_core::Error> {
+    fn bun_feedback(ctx: &mut ContextData) -> crate::Result<::core::convert::Infallible> {
         let mut entry_point_buf = [0u8; MAX_PATH_BYTES + EVAL_TRIGGER.len()];
         // SAFETY: bun_paths::PathBuffer and bun_core::PathBuffer are
         // layout-identical newtypes over [u8; MAX_PATH_BYTES].
@@ -3589,7 +3591,7 @@ impl RunCommand {
         ctx: &mut ContextData,
         default_completions: Option<&'static [&'static [u8]]>,
         reject_list: &[&[u8]],
-    ) -> Result<ShellCompletions, bun_core::Error> {
+    ) -> crate::Result<ShellCompletions> {
         let mut shell_out = ShellCompletions::default();
         if FILTER != Filter::ScriptExclude {
             if let Some(defaults) = default_completions {
@@ -4011,7 +4013,7 @@ impl BunXFastPath {
     pub fn try_launch(
         ctx: &mut ContextData,
         path_len: usize,
-        env: &mut DotEnv::Loader<'static>,
+        env: &mut DotEnv::Loader,
         passthrough: &[Box<[u8]>],
     ) {
         if !bun_core::FeatureFlags::WINDOWS_BUNX_FAST_PATH {

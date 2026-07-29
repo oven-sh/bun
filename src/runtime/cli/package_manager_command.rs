@@ -74,14 +74,14 @@ impl PackageManagerCommand {
     }
 
     #[cold]
-    pub fn print_hash(ctx: Command::Context, file: &File) -> Result<(), bun_core::Error> {
+    pub fn print_hash(ctx: Command::Context, file: &File) -> crate::Result<()> {
         let cli = CommandLineArguments::parse(Subcommand::Pm)?;
         let (pm, _cwd) = PackageManager::init(ctx, cli, Subcommand::Pm)?;
 
         let bytes = match file.read_to_end() {
             Ok(bytes) => bytes,
             Err(err) => {
-                Output::err(bun_core::Error::from(err), "failed to read lockfile", ());
+                Output::err(crate::Error::from(err), "failed to read lockfile", ());
                 Global::crash();
             }
         };
@@ -189,7 +189,7 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
         Output::flush();
     }
 
-    pub fn exec(ctx: Command::Context) -> Result<(), bun_core::Error> {
+    pub fn exec(ctx: Command::Context) -> crate::Result<()> {
         // `bun_core::argv()` includes argv[0]; skip it and collect into a
         // borrowed-slice Vec so `&[&[u8]]` callers (TrustCommand/UntrustedCommand,
         // `left_has_any_in_right`) keep their shape.
@@ -205,7 +205,7 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
         let (pm, cwd) = match PackageManager::init(&mut *ctx, cli, Subcommand::Pm) {
             Ok(v) => v,
             Err(err) => {
-                if err == bun_core::err!(MissingPackageJSON) {
+                if err == bun_install::Error::MissingPackageJSON {
                     let mut cwd_buf = PathBuffer::uninit();
                     match bun_sys::getcwd(&mut cwd_buf[..]) {
                         Ok(len) => {
@@ -221,7 +221,7 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
                     bun_core::note!("Run \"bun init\" to initialize a project");
                     Global::exit(1);
                 }
-                return Err(err);
+                return Err(err.into());
             }
         };
 
@@ -372,15 +372,17 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
             {
                 let mut had_err = false;
 
-                let mut env_map = bun_dotenv::Map::init();
-                let mut process_env = bun_dotenv::Loader::init(&mut env_map);
+                let mut process_env = bun_dotenv::Loader::init();
                 process_env.load_process()?;
                 let cache_dir = fetch_cache_directory_path(&mut process_env, None);
                 let mut rm_buf = PathBuffer::uninit();
                 let rm_dir = match Dir::cwd().make_open_path(&cache_dir.path, Default::default()) {
                     Ok(d) => d,
                     Err(err) => {
-                        bun_core::pretty_errorln!("{} getting cache directory", err.name());
+                        bun_core::pretty_errorln!(
+                            "{} getting cache directory",
+                            crate::Error::from(err).name(),
+                        );
                         Global::crash();
                     }
                 };
@@ -389,7 +391,7 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
                     Err(err) => {
                         bun_core::pretty_errorln!(
                             "{} getting cache directory",
-                            bun_core::Error::from(err).name(),
+                            crate::Error::from(err).name(),
                         );
                         Global::crash();
                     }
@@ -408,7 +410,7 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
                         Ok(d) => d,
                         Err(err) => {
                             Output::err(
-                                bun_core::Error::from(err),
+                                crate::Error::from(err),
                                 "Could not open {s}",
                                 (bstr::BStr::new(tmp),),
                             );
@@ -439,7 +441,7 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
                             Ok(None) => break,
                             Err(err) => {
                                 Output::err(
-                                    bun_core::Error::from(err),
+                                    crate::Error::from(err),
                                     "Could not read {s}",
                                     (bstr::BStr::new(tmp),),
                                 );
@@ -472,7 +474,7 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
                 Err(err) => {
                     bun_core::pretty_errorln!(
                         "{} getting cache directory",
-                        bun_core::Error::from(err).name(),
+                        crate::Error::from(err).name(),
                     );
                     Global::crash();
                 }
@@ -728,7 +730,7 @@ fn print_node_modules_folder_structure(
     directories: &mut Vec<NodeModulesFolder>,
     lockfile: &Lockfile,
     more_packages: &mut [bool],
-) -> Result<(), bun_core::Error> {
+) -> crate::Result<()> {
     let resolutions = lockfile.packages.items_resolution();
     let string_bytes = lockfile.buffers.string_bytes.as_slice();
 

@@ -8,11 +8,13 @@
 #include "JSDOMWrapperCache.h"
 #include "JSStreamsRuntime.h"
 #include "WebCoreJSClientData.h"
+#include "WebStreamsInspectCustom.h"
 #include "WebStreamsInternals.h"
 #include "ZigGlobalObject.h"
 #include <JavaScriptCore/Error.h>
 #include <JavaScriptCore/FunctionPrototype.h>
 #include <JavaScriptCore/JSCInlines.h>
+#include <JavaScriptCore/ObjectConstructor.h>
 #include <JavaScriptCore/SlotVisitorMacros.h>
 #include <JavaScriptCore/SubspaceInlines.h>
 
@@ -24,6 +26,7 @@ using namespace Bun::WebStreams;
 static JSC_DECLARE_CUSTOM_GETTER(jsCountQueuingStrategyPrototypeGetter_constructor);
 static JSC_DECLARE_CUSTOM_GETTER(jsCountQueuingStrategyPrototypeGetter_highWaterMark);
 static JSC_DECLARE_CUSTOM_GETTER(jsCountQueuingStrategyPrototypeGetter_size);
+static JSC_DECLARE_HOST_FUNCTION(jsCountQueuingStrategyPrototype_inspectCustom);
 
 class JSCountQueuingStrategyPrototype final : public JSC::JSNonFinalObject {
 public:
@@ -109,18 +112,6 @@ template<> void JSCountQueuingStrategyConstructor::finishCreation(VM& vm, JSDOMG
     m_instanceStructure.set(vm, this, getDOMStructure<JSCountQueuingStrategy>(vm, globalObject));
 }
 
-static Structure* structureForNewTarget(JSC::VM& vm, JSCountQueuingStrategyConstructor* constructor, JSGlobalObject* lexicalGlobalObject, JSObject* newTarget)
-{
-    if (newTarget == constructor) [[likely]]
-        return constructor->instanceStructure();
-
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    auto* newTargetGlobalObject = JSC::getFunctionRealm(lexicalGlobalObject, newTarget);
-    RETURN_IF_EXCEPTION(scope, nullptr);
-    auto* baseStructure = getDOMStructure<JSCountQueuingStrategy>(vm, *uncheckedDowncast<JSDOMGlobalObject>(newTargetGlobalObject));
-    RELEASE_AND_RETURN(scope, JSC::InternalFunction::createSubclassStructure(lexicalGlobalObject, newTarget, baseStructure));
-}
-
 // `QueuingStrategyInit init` — `highWaterMark` is a required `unrestricted double` member.
 static double convertQueuingStrategyInit(JSC::VM& vm, JSGlobalObject* globalObject, JSValue init)
 {
@@ -170,10 +161,24 @@ static const HashTableValue JSCountQueuingStrategyPrototypeTableValues[] = {
 
 const ClassInfo JSCountQueuingStrategyPrototype::s_info = { "CountQueuingStrategy"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSCountQueuingStrategyPrototype) };
 
+JSC_DEFINE_HOST_FUNCTION(jsCountQueuingStrategyPrototype_inspectCustom, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue thisValue = callFrame->thisValue();
+    auto* thisObject = dynamicDowncast<JSCountQueuingStrategy>(thisValue);
+    if (!thisObject) [[unlikely]]
+        return JSValue::encode(thisValue);
+    JSObject* data = constructEmptyObject(lexicalGlobalObject);
+    data->putDirect(vm, Identifier::fromString(vm, "highWaterMark"_s), jsNumber(thisObject->m_highWaterMark), 0);
+    RELEASE_AND_RETURN(scope, Bun::WebStreams::customInspect(lexicalGlobalObject, callFrame, thisValue, "CountQueuingStrategy"_s, data));
+}
+
 void JSCountQueuingStrategyPrototype::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
     reifyStaticProperties(vm, JSCountQueuingStrategy::info(), JSCountQueuingStrategyPrototypeTableValues, *this);
+    Bun::WebStreams::installInspectCustom(vm, this, jsCountQueuingStrategyPrototype_inspectCustom);
     JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
 }
 

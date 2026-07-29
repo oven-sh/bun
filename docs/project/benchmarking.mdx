@@ -150,7 +150,7 @@ Bun.gc(true); // synchronous
 Bun.gc(false); // asynchronous
 ```
 
-Heap snapshots show which objects are not being freed. Use the `bun:jsc` module to take a heap snapshot, then view it with Safari or WebKit GTK developer tools. To generate a heap snapshot:
+Heap snapshots show which objects are not being freed. Use `Bun.generateHeapSnapshot()` to take a heap snapshot, then view it with Safari or WebKit GTK developer tools. To generate a heap snapshot:
 
 ```ts
 import { generateHeapSnapshot } from "bun";
@@ -187,10 +187,10 @@ Once imported, you should see something like this:
 
 ### Native heap stats
 
-Bun uses mimalloc for the other heap. To print a summary of non-JavaScript memory usage on exit, set the `MIMALLOC_SHOW_STATS=1` environment variable.
+Bun uses mimalloc for the other heap. To print a summary of non-JavaScript memory usage, call `Bun.unsafe.mimallocDump()`.
 
-```sh terminal icon="terminal"
-MIMALLOC_SHOW_STATS=1 bun script.js
+```ts
+Bun.unsafe.mimallocDump();
 ```
 
 ```txt

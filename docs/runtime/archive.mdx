@@ -146,7 +146,7 @@ console.log(`Extracted ${count} entries`);
 
 ### Filtering Extracted Files
 
-Use glob patterns to extract only specific files. Patterns are matched against archive entry paths normalized to use forward slashes (`/`). Positive patterns specify what to include, and negative patterns (prefixed with `!`) specify what to exclude. Negative patterns are applied after positive patterns, so **using only negative patterns matches nothing** (you must include a positive pattern like `**` first):
+Use glob patterns to extract only specific files. Patterns are matched against archive entry paths normalized to use forward slashes (`/`). Positive patterns specify what to include, and negative patterns (prefixed with `!`) specify what to exclude. When only negative patterns are provided, all entries that don't match them are included:
 
 ```ts
 const tarball = await Bun.file("package.tar.gz").bytes();
@@ -290,7 +290,7 @@ Supported glob patterns (subset of [Bun.Glob](/docs/api/glob) syntax):
 - `?` - Match single character
 - `[abc]` - Match character set
 - `{a,b}` - Match alternatives
-- `!pattern` - Exclude files matching pattern (negation). Must be combined with positive patterns; using only negative patterns matches nothing.
+- `!pattern` - Exclude files matching pattern (negation). When only negative patterns are provided, all files not matching them are included.
 
 See [Bun.Glob](/docs/api/glob) for the full glob syntax including escaping and advanced patterns.
 

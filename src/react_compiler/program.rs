@@ -730,7 +730,7 @@ fn returns_non_node_in_stmt(stmt: &Stmt, result: &mut bool) {
             for s in try_stmt.body.slice() {
                 returns_non_node_in_stmt(s, result);
             }
-            if let Some(handler) = &try_stmt.catch_ {
+            if let Some(handler) = &try_stmt.catch {
                 for s in handler.body.slice() {
                     returns_non_node_in_stmt(s, result);
                 }
@@ -768,7 +768,7 @@ fn calls_hooks_or_creates_jsx_in_stmt(host: &dyn Host, stmt: &Stmt) -> bool {
         }),
         StmtData::SBlock(b) => calls_hooks_or_creates_jsx_in_stmts(host, b.stmts.slice()),
         StmtData::SIf(i) => {
-            calls_hooks_or_creates_jsx_in_expr(host, &i.test_)
+            calls_hooks_or_creates_jsx_in_expr(host, &i.test)
                 || calls_hooks_or_creates_jsx_in_stmt(host, &i.yes)
                 || i.no
                     .as_ref()
@@ -778,7 +778,7 @@ fn calls_hooks_or_creates_jsx_in_stmt(host: &dyn Host, stmt: &Stmt) -> bool {
             f.init
                 .as_ref()
                 .is_some_and(|s| calls_hooks_or_creates_jsx_in_stmt(host, s))
-                || f.test_
+                || f.test
                     .as_ref()
                     .is_some_and(|e| calls_hooks_or_creates_jsx_in_expr(host, e))
                 || f.update
@@ -787,12 +787,12 @@ fn calls_hooks_or_creates_jsx_in_stmt(host: &dyn Host, stmt: &Stmt) -> bool {
                 || calls_hooks_or_creates_jsx_in_stmt(host, &f.body)
         }
         StmtData::SWhile(w) => {
-            calls_hooks_or_creates_jsx_in_expr(host, &w.test_)
+            calls_hooks_or_creates_jsx_in_expr(host, &w.test)
                 || calls_hooks_or_creates_jsx_in_stmt(host, &w.body)
         }
         StmtData::SDoWhile(d) => {
             calls_hooks_or_creates_jsx_in_stmt(host, &d.body)
-                || calls_hooks_or_creates_jsx_in_expr(host, &d.test_)
+                || calls_hooks_or_creates_jsx_in_expr(host, &d.test)
         }
         StmtData::SForIn(f) => {
             calls_hooks_or_creates_jsx_in_expr(host, &f.value)
@@ -803,7 +803,7 @@ fn calls_hooks_or_creates_jsx_in_stmt(host: &dyn Host, stmt: &Stmt) -> bool {
                 || calls_hooks_or_creates_jsx_in_stmt(host, &f.body)
         }
         StmtData::SSwitch(s) => {
-            if calls_hooks_or_creates_jsx_in_expr(host, &s.test_) {
+            if calls_hooks_or_creates_jsx_in_expr(host, &s.test) {
                 return true;
             }
             for case in s.cases.slice() {
@@ -823,7 +823,7 @@ fn calls_hooks_or_creates_jsx_in_stmt(host: &dyn Host, stmt: &Stmt) -> bool {
         StmtData::SThrow(t) => calls_hooks_or_creates_jsx_in_expr(host, &t.value),
         StmtData::STry(t) => {
             calls_hooks_or_creates_jsx_in_stmts(host, t.body.slice())
-                || t.catch_
+                || t.catch
                     .as_ref()
                     .is_some_and(|c| calls_hooks_or_creates_jsx_in_stmts(host, c.body.slice()))
                 || t.finally
@@ -867,7 +867,7 @@ fn calls_hooks_or_creates_jsx_in_expr(host: &dyn Host, expr: &Expr) -> bool {
                 || calls_hooks_or_creates_jsx_in_expr(host, &b.right)
         }
         ExprData::EIf(c) => {
-            calls_hooks_or_creates_jsx_in_expr(host, &c.test_)
+            calls_hooks_or_creates_jsx_in_expr(host, &c.test)
                 || calls_hooks_or_creates_jsx_in_expr(host, &c.yes)
                 || calls_hooks_or_creates_jsx_in_expr(host, &c.no)
         }
@@ -1174,10 +1174,6 @@ impl ReactCompilerState {
             any_compiled: false,
             did_lazy_init: false,
         }
-    }
-
-    pub fn any_compiled(&self) -> bool {
-        self.any_compiled
     }
 
     fn lazy_init(&mut self, host: &dyn Host) {

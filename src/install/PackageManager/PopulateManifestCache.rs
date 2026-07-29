@@ -35,11 +35,11 @@ impl From<crate::network_task::ForManifestError> for StartManifestTaskError {
         }
     }
 }
-impl From<StartManifestTaskError> for bun_core::Error {
+impl From<StartManifestTaskError> for crate::Error {
     fn from(e: StartManifestTaskError) -> Self {
         match e {
-            StartManifestTaskError::OutOfMemory => bun_core::err!(OutOfMemory),
-            StartManifestTaskError::InvalidURL => bun_core::err!(InvalidURL),
+            StartManifestTaskError::OutOfMemory => crate::Error::Alloc(bun_alloc::AllocError),
+            StartManifestTaskError::InvalidURL => crate::Error::InvalidURL,
         }
     }
 }
@@ -118,7 +118,7 @@ impl RunTasksCallbacks for ManifestsOnlyCallbacks {
 pub fn populate_manifest_cache(
     manager: &mut PackageManager,
     packages: Packages<'_>,
-) -> Result<(), bun_core::Error> {
+) -> crate::Result<()> {
     let log_level = manager.options.log_level;
 
     // heavy borrowck overlap — slices into
@@ -281,7 +281,7 @@ pub fn populate_manifest_cache(
             // `sleep_until` also receives this raw pointer, so storing
             // `&mut PackageManager` here would alias under Stacked Borrows.
             manager: *mut PackageManager,
-            err: Option<bun_core::Error>,
+            err: Option<crate::Error>,
         }
         impl RunClosure {
             pub(crate) fn is_done(closure: &mut Self) -> bool {

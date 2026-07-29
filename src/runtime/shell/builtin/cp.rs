@@ -698,7 +698,6 @@ impl ShellCpTask {
                 recursive: self.opts.recursive,
                 force: true,
                 error_on_exist: false,
-                deinit_paths: false,
             },
         };
 
@@ -769,42 +768,12 @@ impl crate::shell::interpreter::ShellTaskCtx for ShellCpTask {
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Default)]
 pub struct Opts {
-    /// `-f` — if the destination cannot be opened, remove and recreate it
-    pub remove_and_create_new_file_if_not_found: bool,
-    /// `-H` — dereference symlinks named on the command line
-    pub dereference_command_line_symlinks: bool,
-    /// `-i` — prompt before overwriting
-    pub interactive: bool,
-    /// `-L` — dereference all symlinks
-    pub dereference_all_symlinks: bool,
-    /// `-P` — preserve symlinks
-    pub preserve_symlinks: bool,
-    /// `-p` — preserve mtimes/uid/gid/mode
-    pub preserve_file_attributes: bool,
     /// `-R` — copy file hierarchies
     pub recursive: bool,
     /// `-v` — verbose
     pub verbose: bool,
-    /// `-n` — do not overwrite an existing file
-    pub overwrite_existing_file: bool,
-}
-
-impl Default for Opts {
-    fn default() -> Self {
-        Self {
-            remove_and_create_new_file_if_not_found: false,
-            dereference_command_line_symlinks: false,
-            interactive: false,
-            dereference_all_symlinks: false,
-            preserve_symlinks: false,
-            preserve_file_attributes: false,
-            recursive: false,
-            verbose: false,
-            overwrite_existing_file: true,
-        }
-    }
 }
 
 impl FlagParser for Opts {
@@ -828,11 +797,7 @@ impl FlagParser for Opts {
                 self.verbose = true;
                 Some(ParseFlagResult::ContinueParsing)
             }
-            b'n' => {
-                self.overwrite_existing_file = true;
-                self.remove_and_create_new_file_if_not_found = false;
-                Some(ParseFlagResult::ContinueParsing)
-            }
+            b'n' => Some(ParseFlagResult::ContinueParsing),
             _ => Some(ParseFlagResult::IllegalOption(&raw const smallflags[i..])),
         }
     }

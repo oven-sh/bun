@@ -359,6 +359,10 @@ describe("over-PATH_MAX path goes to the callback with full error identity (#256
   for (const [name, fn] of [
     ["Bun.file()", () => Bun.file(BIG)],
     ["Bun.write() destination", () => Bun.write(BIG, "x")],
+    [
+      "Bun.serve HTMLImportManifest path",
+      () => Bun.serve({ port: 0, routes: { "/": { index: "x", files: [{ path: BIG, headers: {} }] } } as any }),
+    ],
   ] as const) {
     it(`${name} throws ENAMETOOLONG with syscall/path for an over-PATH_MAX path`, () => {
       let err!: NodeJS.ErrnoException;

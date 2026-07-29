@@ -540,7 +540,7 @@ void readableStreamReaderGenericRelease(JSGlobalObject* globalObject, JSReadable
         // Bun: drop the native handle's event-loop ref when its consumer releases the lock.
         if (stream->m_nativePtr && controller->m_algorithms.kind == SourceKind::Native) {
             const auto* adapter = uncheckedDowncast<WebCore::JSNativeStreamSourceAdapter>(controller->m_algorithms.algorithmContext.get());
-            if (auto* handle = adapter->m_handle.get()) {
+            if (auto* handle = adapter->handle()) {
                 JSValue updateRef = handle->getIfPropertyExists(globalObject, builtinNames(vm).updateRefPublicName());
                 RETURN_IF_EXCEPTION(scope, void());
                 if (updateRef && updateRef.isCallable()) {

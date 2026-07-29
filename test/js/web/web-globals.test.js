@@ -357,7 +357,7 @@ async function runWithPipedStdin(script, input) {
     cmd: [bunExe(), "-e", script],
     stdin: "pipe",
     stderr: "pipe",
-    stdout: "pipe",
+    stdout: "ignore",
     env: bunEnv,
   });
   proc.stdin.write(input);

@@ -2820,12 +2820,6 @@ pub fn buffered_stdin() -> *mut BufferedStdin {
     BUFFERED_STDIN.get()
 }
 
-/// `bun.Output.buffered_stdin.reader()` — same accessor as [`buffered_stdin`].
-#[inline]
-pub fn buffered_stdin_reader() -> *mut BufferedStdin {
-    buffered_stdin()
-}
-
 /// Convenience for `bun.Output.buffered_stdin.reader().readUntilDelimiterArrayList`.
 #[inline]
 pub fn buffered_stdin_read_until_delimiter(

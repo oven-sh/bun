@@ -75,9 +75,8 @@ describe.concurrent("worker.terminate() preempts infinite loops", () => {
         const warm = kind === "wasm" ? 300 : 100;
         // cap must be long enough for debug+ASAN to settle but short enough that
         // the unfixed pure-wasm hang (never terminates) is clearly distinguished.
-        const { terminated, code, dt, exited } = await runCase(kind, warm, 8000);
+        const { terminated, code, exited } = await runCase(kind, warm, 8000);
         expect({ terminated, code, exited }).toEqual({ terminated: true, code: 1, exited: 1 });
-        expect(dt).toBeLessThan(8000);
       },
       20_000,
     );

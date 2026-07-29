@@ -261,12 +261,23 @@ pub mod reader {
         if arguments.is_empty() || !arguments[0].is_number() {
             return Err(global_object.throw_invalid_arguments(format_args!("Expected a pointer")));
         }
-        let off = if arguments.len() > 1 {
-            usize::try_from(arguments[1].to_int32()).expect("int cast")
-        } else {
-            0usize
-        };
-        Ok(arguments[0].as_ptr_address() + off)
+        let mut addr = arguments[0].as_ptr_address();
+        if arguments.len() > 1 {
+            let byte_off = arguments[1];
+            if !byte_off.is_empty_or_undefined_or_null() {
+                if !byte_off.is_number() {
+                    return Err(global_object
+                        .throw_invalid_arguments(format_args!("Expected number for byteOffset")));
+                }
+                let off = byte_off.to_int64();
+                if off < 0 {
+                    addr = addr.saturating_sub(off.unsigned_abs() as usize);
+                } else {
+                    addr = addr.saturating_add(off as usize);
+                }
+            }
+        }
+        Ok(addr)
     }
 
     /// Read a `T` from a user-supplied raw address (unaligned).
@@ -447,17 +458,17 @@ fn ptr_(global_this: &JSGlobalObject, value: JSValue, byte_offset: Option<JSValu
                 return global_this
                     .to_invalid_arguments(format_args!("Expected number for byteOffset"));
             }
-        }
 
-        let bytei64 = off.to_int64();
-        if bytei64 < 0 {
-            addr = addr.saturating_sub(usize::try_from(-bytei64).expect("int cast"));
-        } else {
-            addr += usize::try_from(bytei64).expect("int cast");
-        }
+            let bytei64 = off.to_int64();
+            if bytei64 < 0 {
+                addr = addr.saturating_sub(bytei64.unsigned_abs() as usize);
+            } else {
+                addr = addr.saturating_add(bytei64 as usize);
+            }
 
-        if addr > array_buffer.ptr as usize + array_buffer.byte_len as usize {
-            return global_this.to_invalid_arguments(format_args!("byteOffset out of bounds"));
+            if addr > array_buffer.ptr as usize + array_buffer.byte_len as usize {
+                return global_this.to_invalid_arguments(format_args!("byteOffset out of bounds"));
+            }
         }
     }
 
@@ -521,9 +532,9 @@ fn get_ptr_slice(
         if byte_off.is_number() {
             let off = byte_off.to_int64();
             if off < 0 {
-                addr = addr.saturating_sub(usize::try_from(-off).expect("int cast"));
+                addr = addr.saturating_sub(off.unsigned_abs() as usize);
             } else {
-                addr = addr.saturating_add(usize::try_from(off).expect("int cast"));
+                addr = addr.saturating_add(off as usize);
             }
 
             if addr == 0 {

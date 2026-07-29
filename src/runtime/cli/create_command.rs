@@ -746,8 +746,7 @@ impl CreateCommand {
                             continue;
                         }
 
-                        // The bypass only applies when the copy can actually
-                        // overwrite: a directory in the way still conflicts.
+                        // A directory in the way conflicts even for these names.
                         if entry.kind == bun_sys::FileKind::File
                             && existing_kind != bun_sys::ExistsAtType::Directory
                         {

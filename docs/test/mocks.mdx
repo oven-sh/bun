@@ -312,6 +312,8 @@ test("getUser", async () => {
 
 Only top-level calls are hoisted. Calls inside `describe`, `test`, or other callbacks run where they are written. As in Jest, `jest.doMock()` is never hoisted.
 
+Because the remaining static imports in the test file are rewritten to `await import(...)` when hoisting applies, the bindings they introduce are ordinary variables rather than live ESM bindings within that file. This matches what Jest and Vitest do. Imports from `bun:test` (and `@jest/globals` / `vitest`) and imports that use `with { type: ... }` attributes or `import defer` are left as static imports.
+
 For mocks that should apply to every test file (for example, replacing a database client across the whole suite), use `--preload` to load them before any test file runs:
 
 ```ts title="my-preload.ts" icon="/icons/typescript.svg"

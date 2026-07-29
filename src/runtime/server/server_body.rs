@@ -9,6 +9,7 @@ use crate::bake::dev_server::DevServer;
 use crate::bake::framework_router as FrameworkRouter;
 use crate::bake::{self as bake};
 use crate::node::types::PathLikeExt as _;
+use bun_jsc::SysErrorJsc as _;
 use crate::webcore::BlobExt;
 use crate::webcore::body::Value as BodyValue;
 use crate::webcore::fetch as Fetch;
@@ -546,11 +547,18 @@ impl AnyRoute {
             return Ok(None);
         };
         let mut path_string = BunString::from_js(path_js, init_ctx.global)?;
-        let mut path = Node::PathOrFileDescriptor::Path(Node::PathLike::from_bun_string(
-            init_ctx.global,
-            &mut path_string,
-            false,
-        )?);
+        let path_like = Node::PathLike::from_bun_string(init_ctx.global, &mut path_string, false)?;
+        if path_like.slice().len() >= bun_paths::MAX_PATH_BYTES {
+            let err = bun_sys::Error {
+                errno: bun_sys::E::ENAMETOOLONG as _,
+                syscall: bun_sys::Tag::open,
+                path: path_like.slice().into(),
+                ..Default::default()
+            };
+            path_string.deref();
+            return Err(init_ctx.global.throw_value(err.to_js(init_ctx.global)));
+        }
+        let mut path = Node::PathOrFileDescriptor::Path(path_like);
         // NOTE: `from_bun_string` clones
         // the bytes (or bumps the WTF ref) into the PathLike payload, so we can
         // release the source ref immediately — `bun_core::String` has no `Drop`.

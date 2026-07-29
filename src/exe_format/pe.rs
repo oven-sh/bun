@@ -40,13 +40,6 @@ pub enum Error {
     InsufficientSpace,
 }
 
-// Enums for strip modes and options
-#[derive(Copy, Clone, Eq, PartialEq)]
-pub enum StripMode {
-    StripIfSigned,
-    StripAlways,
-}
-
 #[derive(Copy, Clone)]
 pub struct StripOpts {
     pub(crate) require_overlay: bool,
@@ -241,10 +234,6 @@ impl PEFile {
     // Helper methods to safely access headers using unaligned pointers
     fn get_pe_header_mut(&mut self) -> Result<*mut PEHeader, Error> {
         view_at_mut::<PEHeader>(&mut self.data, self.pe_header_offset)
-    }
-
-    fn get_optional_header(&self) -> Result<*const OptionalHeader64, Error> {
-        view_at_const::<OptionalHeader64>(&self.data, self.optional_header_offset)
     }
 
     fn get_optional_header_mut(&mut self) -> Result<*mut OptionalHeader64, Error> {
@@ -494,25 +483,12 @@ impl PEFile {
     }
 
     /// Add a new section to the PE file for storing Bun module data
-    pub fn add_bun_section(&mut self, data_to_embed: &[u8], strip: StripMode) -> Result<(), Error> {
-        // 1. Optional strip (before any addition)
-        if strip == StripMode::StripAlways {
-            self.strip_authenticode(StripOpts {
-                require_overlay: true,
-                recompute_checksum: true,
-            })?;
-        } else if strip == StripMode::StripIfSigned {
-            // Read Security directory to check if signed
-            let opt = self.get_optional_header()?;
-            // SAFETY: opt points into self.data at validated offset
-            let dd = unsafe { (*opt).data_directories[IMAGE_DIRECTORY_ENTRY_SECURITY] };
-            if dd.virtual_address != 0 || dd.size != 0 {
-                self.strip_authenticode(StripOpts {
-                    require_overlay: true,
-                    recompute_checksum: true,
-                })?;
-            }
-        }
+    pub fn add_bun_section(&mut self, data_to_embed: &[u8]) -> Result<(), Error> {
+        // 1. Strip Authenticode (before any addition)
+        self.strip_authenticode(StripOpts {
+            require_overlay: true,
+            recompute_checksum: true,
+        })?;
 
         // 2. Re-read PE/Optional (pointers may have moved due to resize in strip)
         let opt = self.get_optional_header_mut()?;

@@ -76,7 +76,6 @@ pub enum Start {
     FileSink(FileSinkOptions),
     Ready,
     OwnedAndDone(Vec<u8>),
-    Done(Vec<u8>),
 }
 
 #[repr(u8)]
@@ -110,9 +109,6 @@ impl Start {
                 let mut list = core::mem::ManuallyDrop::new(list);
                 let ab = ArrayBuffer::from_bytes(list.slice_mut(), JSType::Uint8Array);
                 ab.to_js(global_this)
-            }
-            Start::Done(list) => {
-                ArrayBuffer::create::<{ JSType::Uint8Array }>(global_this, list.slice())
             }
             _ => Ok(JSValue::UNDEFINED),
         }

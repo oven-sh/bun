@@ -1376,12 +1376,6 @@ function generateClassHeader(typeName, obj: ClassDefinition) {
       }
       `;
   }
-  var suffix = "";
-
-  if (obj.getInternalProperties) {
-    suffix += `JSC::JSValue getInternalProperties(JSC::VM &vm, JSC::JSGlobalObject *globalObject, ${name}*);`;
-  }
-
   const final = obj.final ?? true;
 
   return `
@@ -1507,7 +1501,6 @@ function generateClassHeader(typeName, obj: ClassDefinition) {
         ${callbacks ? renderCallbacksHeader(typeName, obj.callbacks) : ""}
         ${obj.valuesArray ? "WTF::FixedVector<JSC::WriteBarrier<JSC::Unknown>> jsvalueArray;" : ""}
     };
-    ${suffix}
   `.trim();
 }
 
@@ -1536,7 +1529,6 @@ function generateClassImpl(typeName, obj: ClassDefinition) {
     construct,
     estimatedSize,
     hasPendingActivity = false,
-    getInternalProperties = false,
     callbacks = {},
     own,
   } = obj;
@@ -1633,17 +1625,6 @@ ${renderCallbacksCppImpl(typeName, callbacks)}
         return ${symbolName(typeName, "hasPendingActivity")}(ctx);
     }
 `;
-  }
-
-  if (getInternalProperties) {
-    externs += `extern JSC_CALLCONV JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES ${symbolName(typeName, "getInternalProperties")}(void* ptr, JSC::JSGlobalObject *globalObject, JSC::EncodedJSValue thisValue);`;
-    output += `
-    JSC::JSValue getInternalProperties(JSC::VM &, JSC::JSGlobalObject *globalObject, ${name}* castedThis)
-    {
-      return JSValue::decode(${symbolName(typeName, "getInternalProperties")}(castedThis->impl(), globalObject, JSValue::encode(castedThis)));
-    }
-
-    `;
   }
 
   if (obj.hasOwnProperties()) {
@@ -2233,7 +2214,6 @@ function generateRust(
     values = [],
     hasPendingActivity = false,
     structuredClone = false,
-    getInternalProperties = false,
     rustPath,
     sharedThis = true,
   } = {} as ClassDefinition,
@@ -2282,8 +2262,8 @@ function generateRust(
   // host-fn now receives `&${T}` (no `noalias` on the LLVM arg, so re-entrant
   // JS that re-derives `&Self` from the wrapper's `m_ctx` cannot miscompile).
   // `sharedThis: false` remains an explicit opt-out for types that have not
-  // yet migrated their fields to `Cell`/`JsCell`. `_shared` helpers live in
-  // `src/jsc/host_fn.rs` alongside the legacy `&mut` originals.
+  // yet migrated their fields to `Cell`/`JsCell`; only the `_getter`/`_setter`
+  // (no `this`) `&mut` helpers survive in `src/jsc/host_fn.rs` for it.
   const recv = sharedThis ? `&${T}` : `&mut ${T}`;
   const helper = (base: string) => (sharedThis ? `host_fn::${base}_shared` : `host_fn::${base}`);
 
@@ -2340,14 +2320,6 @@ function generateRust(
     );
   }
 
-  if (getInternalProperties) {
-    thunk(
-      symbolName(typeName, "getInternalProperties"),
-      `(this: ${recv}, global: &JSGlobalObject, this_value: JSValue) -> JSValue`,
-      `    ${helper("host_fn_internal_props")}(this, global, this_value, |t, g, v| ${T}::get_internal_properties(t, g, v))`,
-    );
-  }
-
   // ── proto getters / setters / fns ────────────────────────────────────────
   // Closure form (`|t, g, c| T::method(t, g, c)`) rather than bare `T::method`
   // so `&mut T → &T` autoref/coercion applies — many user impls take `&self`.
@@ -2360,13 +2332,17 @@ function generateRust(
       const g = accessor ? accessor.getter : getter;
       const s = accessor ? accessor.setter : setter;
 
+      if (thisValue && !sharedThis && (names.getter || names.setter)) {
+        throw new Error(`${typeName}.${name}: \`this: true\` accessors require \`sharedThis: true\``);
+      }
+
       if (names.getter) {
         const id = rustSnakeIdent(g);
         thunk(
           names.getter,
           `(this: ${recv}, ${thisValue ? "this_value: JSValue, " : ""}global: &JSGlobalObject) -> JSValue`,
           thisValue
-            ? `    ${helper("host_fn_getter_this")}(this, this_value, global, |t, v, g| ${T}::${id}(t, v, g))`
+            ? `    host_fn::host_fn_getter_this_shared(this, this_value, global, |t, v, g| ${T}::${id}(t, v, g))`
             : `    ${helper("host_fn_getter")}(this, global, |t, g| ${T}::${id}(t, g))`,
         );
       }
@@ -2377,7 +2353,7 @@ function generateRust(
           names.setter,
           `(this: ${recv}, ${thisValue ? "this_value: JSValue, " : ""}global: &JSGlobalObject, value: JSValue) -> bool`,
           thisValue
-            ? `    ${helper("host_fn_setter_this")}(this, this_value, global, value, |t, tv, g, v| ${T}::${id}(t, tv, g, v))`
+            ? `    host_fn::host_fn_setter_this_shared(this, this_value, global, value, |t, tv, g, v| ${T}::${id}(t, tv, g, v))`
             : `    ${helper("host_fn_setter")}(this, global, value, |t, g, v| ${T}::${id}(t, g, v))`,
         );
       }

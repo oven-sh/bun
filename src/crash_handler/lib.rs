@@ -700,16 +700,15 @@ mod draft {
 
     #[derive(Clone, Copy)]
     pub enum Action {
-        Parse(&'static [u8]),
-        Visit(&'static [u8]),
-        Print(&'static [u8]),
         // These slices are stored in the `CURRENT_ACTION` thread-local, so they
         // are typed `'static`. Callers pass `Source.path` data whose
         // `Path<'static>` is itself an upstream `into_static()` lifetime
-        // erasure of arena/resolver-owned bytes (see paths/lib.rs); the data
-        // is not truly `'static`. Correctness relies on the `scoped_action`
-        // RAII guard restoring the thread-local before the owning arena or
-        // resolver storage is freed.
+        // erasure of arena-owned bytes (see paths/lib.rs); the data is not
+        // truly `'static`. Correctness relies on the `scoped_action` RAII
+        // guard restoring the thread-local before the owning arena is freed.
+        Parse(&'static [u8]),
+        Visit(&'static [u8]),
+        Print(&'static [u8]),
         Resolver,
         Dlopen(&'static [u8]),
     }

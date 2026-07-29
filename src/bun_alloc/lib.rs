@@ -133,7 +133,7 @@ impl Default for StdAllocator {
 impl StdAllocator {
     #[inline]
     pub(crate) fn raw_free(&self, buf: &mut [u8], alignment: Alignment, ra: usize) {
-        // SAFETY: see `raw_alloc`.
+        // SAFETY: vtable invariant — `free` callee respects the (ptr, buf, alignment, ra) contract.
         unsafe { (self.vtable.free)(self.ptr, buf, alignment, ra) }
     }
     /// `raw_free` with `ret_addr = 0`, byte-aligned.
@@ -302,7 +302,7 @@ pub mod default_alloc {
 
     #[cfg(bun_asan)]
     #[inline]
-    pub fn malloc_aligned(size: usize, align: usize) -> *mut c_void {
+    pub(crate) fn malloc_aligned(size: usize, align: usize) -> *mut c_void {
         if align <= crate::MAX_ALIGN_T {
             return unsafe { libc::malloc(size) };
         }
@@ -310,19 +310,6 @@ pub mod default_alloc {
         let align = align.max(core::mem::size_of::<*mut c_void>());
         if unsafe { libc::posix_memalign(&mut p, align, size) } != 0 {
             return core::ptr::null_mut();
-        }
-        p
-    }
-
-    #[cfg(bun_asan)]
-    #[inline]
-    pub fn zalloc_aligned(size: usize, align: usize) -> *mut c_void {
-        if align <= crate::MAX_ALIGN_T {
-            return unsafe { libc::calloc(1, size) };
-        }
-        let p = malloc_aligned(size, align);
-        if !p.is_null() {
-            unsafe { core::ptr::write_bytes(p.cast::<u8>(), 0, size) };
         }
         p
     }
@@ -692,10 +679,10 @@ unsafe impl core::alloc::GlobalAlloc for Mimalloc {
     }
 }
 
-/// Raw-pointer variant of [`realloc_slice`] for callers that cannot soundly
-/// materialize a `&mut [u8]` over their buffer (e.g. it contains uninitialized
-/// or padding bytes). Returns the new base pointer; `min(old_size, new_size)`
-/// prefix bytes are preserved.
+/// Resize a mimalloc-owned buffer, taking a raw pointer for callers that
+/// cannot soundly materialize a `&mut [u8]` over their buffer (e.g. it contains
+/// uninitialized or padding bytes). Returns the new base pointer;
+/// `min(old_size, new_size)` prefix bytes are preserved.
 ///
 /// # Safety
 /// `ptr` must be a live allocation from the default (mimalloc) allocator with
@@ -1380,7 +1367,7 @@ pub enum ItemStatus {
 // ──────────────────────────────────────────────────────────────────────────
 // BSSList / BSSStringList / BSSMapInner — real method bodies follow below.
 // Per-monomorphization statics are emitted at the declare site via the
-// `bss_list!` / `bss_string_list!` / `bss_map_inner!` / `bss_map!` macros
+// `bss_list!` / `bss_string_list!` / `bss_map_inner!` macros
 // (`SyncUnsafeCell<MaybeUninit<Self>>` + `Once` + `init_at`). `init()` is a
 // thin heap-allocating wrapper for callers that manage their own once-guard.
 // ──────────────────────────────────────────────────────────────────────────
@@ -1467,7 +1454,7 @@ macro_rules! bss_singleton {
 
 /// Heap-allocate a fresh `T` via mimalloc and run its in-place `init_at` initializer.
 ///
-/// Shared body of the `BSSList`/`BSSStringList`/`BSSMapInner`/`BSSMap` `init()` shims.
+/// Shared body of the `BSSList`/`BSSStringList`/`BSSMapInner` `init()` shims.
 /// The once-guard is the *caller's* responsibility; use the `bss_*!` macros
 /// for the canonical per-monomorphization singleton.
 #[doc(hidden)] // Public only for the `bss_singleton!` macro expansion in dependent crates.
@@ -1677,21 +1664,12 @@ macro_rules! bss_map_inner {
     };
 }
 
-/// Declare a `BSSMap<T, COUNT, EST_KEY_LEN, RM_SLASH>` (`store_keys=true`) singleton accessor.
-#[macro_export]
-macro_rules! bss_map {
-    ($(#[$m:meta])* $vis:vis $name:ident : $value_ty:ty, $count:expr, $est_key_len:expr, $rm_slash:expr) => {
-        $crate::bss_singleton!($(#[$m])* $vis fn $name() -> $crate::BSSMap<$value_ty, { $count }, { $est_key_len }, { $rm_slash }>);
-    };
-}
-
 // Compile-time smoke test for the declare-site macros (no runtime cost; the
 // statics live in BSS and the accessors are dead-stripped if unused).
 mod __bss_macro_smoke {
     crate::bss_list! { _l  : u32, 4 }
     crate::bss_string_list! { _sl : 4, 8 }
     crate::bss_map_inner! { _mi : u32, 4, true }
-    crate::bss_map! { _m  : u32, 4, 8, false }
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -2552,14 +2530,8 @@ impl<const COUNT: usize, const ITEM_LENGTH: usize> BSSStringList<COUNT, ITEM_LEN
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// BSSMap<ValueType, COUNT, STORE_KEYS, ESTIMATED_KEY_LENGTH, REMOVE_TRAILING_SLASHES>
+// BSSMapInner<ValueType, COUNT, REMOVE_TRAILING_SLASHES>
 // ──────────────────────────────────────────────────────────────────────────
-
-// Two different struct shapes depending on `store_keys`.
-// Rust cannot return different types from one generic; we expose both:
-//   - `BSSMapInner<V, COUNT, RM_SLASH>` (the `store_keys = false` shape)
-//   - `BSSMap<V, COUNT, EST_KEY_LEN, RM_SLASH>` (the `store_keys = true` wrapper)
-// Callers that passed `store_keys=false` should name `BSSMapInner` directly.
 
 pub struct BSSMapInner<ValueType, const COUNT: usize, const REMOVE_TRAILING_SLASHES: bool> {
     pub(crate) index: IndexMap,
@@ -2725,57 +2697,6 @@ impl<ValueType, const COUNT: usize, const REMOVE_TRAILING_SLASHES: bool>
     }
 }
 
-/// `store_keys = true` wrapper.
-pub struct BSSMap<
-    ValueType,
-    const COUNT: usize,
-    const ESTIMATED_KEY_LENGTH: usize,
-    const REMOVE_TRAILING_SLASHES: bool,
-> {
-    // Inner map lives in its own `bss_heap_init` mapping (lazy-faulted; its
-    // inline `[MaybeUninit<ValueType>; COUNT]` + 32 KiB overflow ptrs stay
-    // uncommitted until written). Process-lifetime → never freed → raw
-    // `NonNull` rather than `Box` (avoids tying mmap storage to the global
-    // allocator's `dealloc`).
-    map: NonNull<BSSMapInner<ValueType, COUNT, REMOVE_TRAILING_SLASHES>>,
-    // Indexed by the *absolute* index (not overflow-relative).
-    pub key_list_overflow: Vec<&'static [u8]>,
-}
-
-impl<
-    ValueType,
-    const COUNT: usize,
-    const ESTIMATED_KEY_LENGTH: usize,
-    const REMOVE_TRAILING_SLASHES: bool,
-> BSSMap<ValueType, COUNT, ESTIMATED_KEY_LENGTH, REMOVE_TRAILING_SLASHES>
-{
-    /// In-place field initialization into uninitialized storage.
-    ///
-    /// SAFETY: `slot` must point to writable, properly-aligned, uninitialized
-    /// storage of `size_of::<Self>()` bytes that lives for `'static`.
-    pub unsafe fn init_at(slot: *mut Self) {
-        // SAFETY: caller contract — `slot` is a valid, exclusive, aligned `*mut Self`.
-        unsafe {
-            // Inner map in its own lazy mapping so its inline backing_buf +
-            // overflow ptrs fault on demand.
-            addr_of_mut!((*slot).map).write(bss_heap_init(BSSMapInner::init_at));
-            addr_of_mut!((*slot).key_list_overflow).write(Vec::new());
-        }
-    }
-
-    /// Heap-allocate and initialize a fresh instance. Once-guard is the caller's
-    /// responsibility — use `bss_map!` for the canonical singleton.
-    pub fn init() -> NonNull<Self> {
-        bss_heap_init(Self::init_at)
-    }
-
-    // Process-lifetime; never freed.
-
-    // There's two parts to this.
-    // 1. Storing the underlying string.
-    // 2. Making the key accessible at the index.
-}
-
 // ──────────────────────────────────────────────────────────────────────────
 // Allocator-trait surface — OBSOLETE per PORTING.md §Allocators
 // ──────────────────────────────────────────────────────────────────────────
@@ -2794,19 +2715,7 @@ impl<
 // entirely.
 
 /// Legacy allocator marker trait. See module note.
-///
-/// Provides a `type_id()` hook so `is_instance`-style vtable-identity checks
-/// can be expressed as concrete-type identity
-/// on the trait object — every implementor gets a default `type_id()` that
-/// returns its monomorphized `TypeId`.
-pub trait Allocator: 'static {
-    #[inline]
-    fn type_id(&self) -> core::any::TypeId {
-        core::any::TypeId::of::<Self>()
-    }
-}
-
-impl dyn Allocator {}
+pub trait Allocator: 'static {}
 
 /// Legacy default-allocator ZST. With `#[global_allocator]` set,
 /// this is just a unit marker.

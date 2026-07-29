@@ -132,15 +132,12 @@ pub fn parse(possibly_encoded_pathname_: &[u8]) -> Result<URLPath, bun_url::Deco
     };
     let mut path: &[u8] = &decoded_pathname[1.min(path_end)..path_end];
 
-    let is_source_map = extname == b"map";
-    if is_source_map && path.len() > b".map".len() {
-        if let Some(j) = path[0..path.len() - b".map".len()]
-            .iter()
-            .rposition(|&b| b == b'.')
-        {
-            let mut backup_extname = &path[j + 1..];
-            backup_extname = &backup_extname[0..backup_extname.len() - b".map".len()];
-            path = &path[0..j + backup_extname.len() + 1];
+    // For a source map (`foo.js.map`), strip the trailing `.map` so the path
+    // names the mapped file — but only when an inner extension exists.
+    if extname == b"map" && path.len() > b".map".len() {
+        let stripped = &path[0..path.len() - b".map".len()];
+        if stripped.contains(&b'.') {
+            path = stripped;
         }
     }
 

@@ -9886,6 +9886,38 @@ mod normalize_path_windows_tests {
     }
 
     #[test]
+    fn colon_components_flow_through() {
+        let _g = crate::file::tests::FD_TEST_LOCK.lock();
+        let tree = TempTree::new("nt_norm_colon");
+        std::fs::create_dir_all(tree.0.join("child")).unwrap();
+        let dir = scopeguard::guard(open_dir_handle(&tree.0), |fd| {
+            let _ = close(fd);
+        });
+        let base = normalize(*dir, ".");
+        // Colon components survive normalization verbatim — running under
+        // debug_assertions, these ARE the no-panic proof; the invalid stream
+        // spelling is NtCreateFile's to reject at open time.
+        assert_eq!(normalize(*dir, ":\\x"), format!("{base}\\:\\x"));
+        assert_eq!(normalize(*dir, ":a.b"), format!("{base}\\:a.b"));
+        assert_eq!(normalize(*dir, ".\\:\\x"), format!("{base}\\:\\x"));
+        assert_eq!(normalize(*dir, "a\\:\\x"), format!("{base}\\a\\:\\x"));
+        // `..` collapse promoting `:` toward the front of the output.
+        let child = scopeguard::guard(open_dir_handle(&tree.0.join("child")), |fd| {
+            let _ = close(fd);
+        });
+        assert_eq!(normalize(*child, "..\\:\\x"), format!("{base}\\:\\x"));
+        // All the way to the clamp floor: `\:\x` directly after the device.
+        let floored = normalize(*dir, &format!("{}:\\x", "..\\".repeat(floor_depth(*dir))));
+        assert!(floored.ends_with("\\:\\x"), "{floored}");
+        assert!(
+            base.starts_with(floored.strip_suffix(":\\x").unwrap()),
+            "{floored} vs {base}"
+        );
+        // Bare ADS names (no separator or dot) still pass through verbatim.
+        assert_eq!(normalize(Fd::INVALID, ":stream"), ":stream");
+    }
+
+    #[test]
     fn drive_relative_dotdot_resolves_into_parent() {
         let _g = crate::file::tests::FD_TEST_LOCK.lock();
         let tree = TempTree::new("nt_norm_drive_dotdot");

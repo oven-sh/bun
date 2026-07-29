@@ -354,6 +354,11 @@ mod tests {
         let parts = collect(b"\\\\server\\share\\dir", PathFormat::Windows);
         assert_eq!(parts, vec![(&b"dir"[..], &b"\\\\server\\share\\dir"[..])]);
 
+        // Drive-relative root: the first component's `.path` starts at byte 2,
+        // i.e. `windows_root_end` returned 2 for the bare `C:` prefix.
+        let parts = collect(b"C:foo", PathFormat::Windows);
+        assert_eq!(parts, vec![(&b"foo"[..], &b"C:foo"[..])]);
+
         assert!(ComponentIterator::<u8>::init(b"\\\\?\\C:\\", PathFormat::Windows).is_err());
         assert!(ComponentIterator::<u8>::init(b"\\??\\C:\\", PathFormat::Windows).is_err());
         assert!(ComponentIterator::<u8>::init(b"\\\\\\x", PathFormat::Windows).is_err());

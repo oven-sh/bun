@@ -2422,6 +2422,7 @@ describe("fileControl", () => {
 
     expect(() => db.fileControl(constants.SQLITE_FCNTL_CHUNK_SIZE)).toThrow(TypeError);
     expect(() => db.fileControl(constants.SQLITE_FCNTL_SIZE_HINT)).toThrow(TypeError);
+    expect(() => db.fileControl(constants.SQLITE_FCNTL_LOCK_TIMEOUT)).toThrow(TypeError);
 
     db.close();
   });

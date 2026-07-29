@@ -1972,9 +1972,21 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementFcntlFunction, (JSC::JSGlobalObject * lex
     // int* in/out: -1 queries, 0/1 (or a count) sets. Returns the resulting int.
     case SQLITE_FCNTL_PERSIST_WAL:
     case SQLITE_FCNTL_POWERSAFE_OVERWRITE:
-    case SQLITE_FCNTL_LOCK_TIMEOUT:
     case SQLITE_FCNTL_RESERVE_BYTES: {
         int scratch = resultValue.isNumber() ? resultValue.toInt32(lexicalGlobalObject) : -1;
+        RETURN_IF_EXCEPTION(scope, {});
+        int rc = issue(&scratch);
+        RETURN_IF_EXCEPTION(scope, {});
+        return JSValue::encode(rc == SQLITE_OK ? jsNumber(scratch) : jsUndefined());
+    }
+
+    // int* in (sets, returns the previous value); no query mode.
+    case SQLITE_FCNTL_LOCK_TIMEOUT: {
+        if (!resultValue.isNumber()) {
+            throwException(lexicalGlobalObject, scope, createTypeError(lexicalGlobalObject, "fileControl: SQLITE_FCNTL_LOCK_TIMEOUT requires a numeric argument"_s));
+            return {};
+        }
+        int scratch = resultValue.toInt32(lexicalGlobalObject);
         RETURN_IF_EXCEPTION(scope, {});
         int rc = issue(&scratch);
         RETURN_IF_EXCEPTION(scope, {});
@@ -2060,8 +2072,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementFcntlFunction, (JSC::JSGlobalObject * lex
     }
 
     // pArg unused. Returns rc.
-    case SQLITE_FCNTL_RESET_CACHE:
-    case SQLITE_FCNTL_NULL_IO: {
+    case SQLITE_FCNTL_RESET_CACHE: {
         int rc = issue(nullptr);
         RETURN_IF_EXCEPTION(scope, {});
         return JSValue::encode(jsNumber(rc));

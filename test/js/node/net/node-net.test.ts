@@ -1082,7 +1082,7 @@ describe("net.Server accepted-socket buffering", () => {
       await listening.promise;
       client = createConnection({ port: (server.address() as import("node:net").AddressInfo).port, host: "127.0.0.1" });
       client.on("error", received.reject);
-      while (!client._readableState?.ended) await new Promise<void>(r => setImmediate(r));
+      while (!client._readableState?.ended && !client.destroyed) await new Promise<void>(r => setImmediate(r));
       await new Promise<void>(r => setImmediate(r));
       await new Promise<void>(r => setImmediate(r));
       expect(client.destroyed).toBe(false);
@@ -1148,7 +1148,7 @@ describe("net.Server accepted-socket buffering", () => {
       sock.on("close", hadError => events.push("close:" + hadError));
       // Wait for the peer FIN to mark the readable side ended, then let any
       // FIN-time lifecycle work settle before asserting the socket stayed open.
-      while (!sock._readableState?.ended) await new Promise<void>(r => setImmediate(r));
+      while (!sock._readableState?.ended && !sock.destroyed) await new Promise<void>(r => setImmediate(r));
       await new Promise<void>(r => setImmediate(r));
       await new Promise<void>(r => setImmediate(r));
       expect({

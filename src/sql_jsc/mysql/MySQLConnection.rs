@@ -215,6 +215,11 @@ impl MySQLConnection {
     }
 
     #[inline]
+    pub fn in_transaction(&self) -> bool {
+        self.status_flags.has(StatusFlag::SERVER_STATUS_IN_TRANS)
+    }
+
+    #[inline]
     pub fn enqueue_request(&mut self, request: *mut JSMySQLQuery) {
         self.queue.add(request);
     }

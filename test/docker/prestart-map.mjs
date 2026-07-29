@@ -18,6 +18,7 @@ export const prestartMap = {
   "js/sql/postgres-binary-numeric": ["postgres_plain"],
   "js/sql/postgres-multi-statement-fields": ["postgres_plain"],
   "js/sql/postgres-simple-query-pipeline": ["postgres_plain"],
+  "js/sql/postgres-pool-transaction-reset": ["postgres_plain"],
   "js/sql/sql-onconnect-onclose-throw": ["postgres_plain", "mysql_plain"],
   "js/sql/sql-prepare-false": ["postgres_plain"],
   "js/valkey/": ["redis_unified"],

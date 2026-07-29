@@ -1,4 +1,4 @@
-import type { Query as QueryType } from "./query";
+import type { BaseQueryHandle, Query as QueryType } from "./query";
 
 const PublicArray = globalThis.Array;
 const {
@@ -581,6 +581,8 @@ const enum PooledConnectionFlags {
   reserved = 1 << 1,
   /// preReserved is used to indicate that the connection will be reserved in the future when queryCount drops to 0
   preReserved = 1 << 2,
+  /// release() is rolling back a leaked transaction on this slot; gates re-entry of the reset path
+  resetting = 1 << 3,
 }
 export type { PooledConnectionState };
 
@@ -620,6 +622,10 @@ abstract class BasePooledConnection<ConnectionHandle extends { close(): void; fl
   protected abstract startConnection(): Promise<void>;
   /** Wraps a driver error options object into the driver's Error class. */
   protected abstract wrapError(error: any): Error;
+  /** Whether the server reports this connection is still inside a transaction block. */
+  needsReset(): boolean {
+    return false;
+  }
   /** Whether the given error code is an authentication-style error that retrying cannot fix. */
   protected abstract isNonRetryableError(code: string | undefined): boolean;
   /**
@@ -762,8 +768,14 @@ abstract class BasePooledConnection<ConnectionHandle extends { close(): void; fl
       this.adapter.readyConnections.delete(this);
       const queries = new Set(this.queries);
       this.queries?.clear?.();
+      const resettingFlag = PooledConnectionFlags.resetting;
+      if (this.flags & resettingFlag) {
+        // balance the synthetic reset slot release() opened; its own done() will see the cleared flag and stop
+        this.adapter.totalQueries--;
+      }
       this.queryCount = 0;
       this.flags &= ~PooledConnectionFlags.reserved;
+      this.flags &= ~resettingFlag;
 
       // notify all queries that the connection is closed
       for (const onClose of queries) {
@@ -943,6 +955,11 @@ abstract class BaseSQLAdapter<PooledConnection extends BasePooledConnection, Con
   abstract unsafeTransactionError(): Error;
   abstract getHelperCommand(query: string): SQLCommand;
 
+  /** Statement that rolls back a leaked transaction on release; null disables the reset. */
+  resetQuery(): string | null {
+    return null;
+  }
+
   placeholder(_index: number): string {
     return "?";
   }
@@ -1067,6 +1084,27 @@ abstract class BaseSQLAdapter<PooledConnection extends BasePooledConnection, Con
       connection.flags &= ~PooledConnectionFlags.reserved;
       connection.flags &= ~PooledConnectionFlags.preReserved;
     }
+
+    const resettingFlag = PooledConnectionFlags.resetting;
+    if (
+      currentQueryCount === 0 &&
+      !this.closed &&
+      connection.state === PooledConnectionState.connected &&
+      !(connection.flags & resettingFlag) &&
+      connection.needsReset()
+    ) {
+      const reset = this.resetQuery();
+      if (reset !== null) {
+        connection.flags |= resettingFlag;
+        // take the slot off the scheduler while the reset runs; graceful close() waits via totalQueries
+        this.readyConnections.delete(connection);
+        connection.queryCount++;
+        this.totalQueries++;
+        this.#resetConnection(connection, reset);
+        return;
+      }
+    }
+
     if (this.onAllQueriesFinished) {
       // we are waiting for all queries to finish, lets check if we can call it
       if (!this.hasPendingQueries()) {
@@ -1119,6 +1157,44 @@ abstract class BaseSQLAdapter<PooledConnection extends BasePooledConnection, Con
     }
     this.readyConnections.add(connection);
     this.flushConcurrentQueries();
+  }
+
+  #resetConnection(connection: PooledConnection, sql: string) {
+    const adapter = this;
+    const resettingFlag = PooledConnectionFlags.resetting;
+    function done(err: unknown) {
+      // #finishClose clears the flag and balances totalQueries when the slot dies under the reset
+      if (!(connection.flags & resettingFlag)) return;
+      connection.flags &= ~resettingFlag;
+      connection.queryCount--;
+      adapter.totalQueries--;
+      if (err != null || connection.needsReset()) {
+        connection.close();
+        return;
+      }
+      adapter.release(connection, true);
+    }
+    const query = new Query(
+      sql,
+      [],
+      SQLQueryFlags.allowUnsafeTransaction | SQLQueryFlags.unsafe | SQLQueryFlags.simple,
+      (q: QueryType<any, any>, handle: BaseQueryHandle<any>) => {
+        try {
+          const native = adapter.getConnectionForQuery(connection);
+          const result = handle.run(native, q);
+          if (result && $isPromise(result)) {
+            (result as Promise<void>).catch((err: Error) => q.reject(err));
+          }
+        } catch (err) {
+          q.reject(err as Error);
+        }
+      },
+      this,
+    );
+    query.then(
+      () => done(null),
+      (err: unknown) => done(err),
+    );
   }
 
   hasConnectionsAvailable() {

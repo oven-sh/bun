@@ -33,6 +33,9 @@ for (const type of types) {
         connected: {
           getter: "getConnected",
         },
+        inTransaction: {
+          getter: "getInTransaction",
+        },
         ref: {
           fn: "doRef",
         },

@@ -402,7 +402,6 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
 
             let mut entry_naming: Option<&[u8]> = None;
             let mut chunk_naming: Option<&[u8]> = None;
-            let mut asset_naming: Option<&[u8]> = None;
 
             writeln!(&mut msg, "Multiple files share the same output path")?;
 
@@ -415,16 +414,13 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
             {
                 writeln!(&mut msg, "  {}:", bstr::BStr::new(key))?;
                 for chunk in dup.sources.iter() {
-                    if chunk.entry_point.is_entry_point() {
-                        if kinds[chunk.entry_point.source_index() as usize]
+                    if chunk.entry_point.is_entry_point()
+                        && kinds[chunk.entry_point.source_index() as usize]
                             == EntryPoint::Kind::UserSpecified
-                        {
-                            entry_naming = Some(&chunk.template.data);
-                        } else {
-                            chunk_naming = Some(&chunk.template.data);
-                        }
+                    {
+                        entry_naming = Some(&chunk.template.data);
                     } else {
-                        asset_naming = Some(&chunk.template.data);
+                        chunk_naming = Some(&chunk.template.data);
                     }
 
                     let source_index = chunk.entry_point.source_index();
@@ -440,11 +436,7 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
 
             c.log_mut().add_error(None, bun_ast::Loc::EMPTY, msg);
 
-            for (name, template) in [
-                ("entry", entry_naming),
-                ("chunk", chunk_naming),
-                ("asset", asset_naming),
-            ] {
+            for (name, template) in [("entry", entry_naming), ("chunk", chunk_naming)] {
                 let Some(template) = template else { continue };
 
                 let mut text: Vec<u8> = Vec::new();

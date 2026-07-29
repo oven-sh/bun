@@ -615,10 +615,22 @@ pub fn compute_chunks(this: &mut LinkerContext, unique_key: u64) -> crate::Resul
             }
         }
 
-        let pathname = bun_fs::PathName::init(
-            output_paths[chunk.entry_point.entry_point_id() as usize].slice(),
-        );
-        chunk.template.placeholder.name = pathname.base.to_vec().into_boxed_slice();
+        let pathname: Option<bun_fs::PathName<'_>> = if chunk.entry_point.is_entry_point() {
+            let p = bun_fs::PathName::init(
+                output_paths[chunk.entry_point.entry_point_id() as usize].slice(),
+            );
+            chunk.template.placeholder.name = p.base.to_vec().into_boxed_slice();
+            Some(p)
+        } else {
+            chunk.template.placeholder.name = if chunk.entry_bits.count() == 1 {
+                let ep = chunk.entry_bits.find_first_set().unwrap();
+                let base = bun_fs::PathName::init(output_paths[ep].slice()).base;
+                [base, b"-chunk"].concat().into_boxed_slice()
+            } else {
+                b"shared".to_vec().into_boxed_slice()
+            };
+            None
+        };
         chunk.template.placeholder.ext = chunk.content.ext().to_vec().into_boxed_slice();
 
         if chunk.template.needs(PlaceholderField::Target) {
@@ -633,7 +645,9 @@ pub fn compute_chunks(this: &mut LinkerContext, unique_key: u64) -> crate::Resul
             };
         }
 
-        if chunk.template.needs(PlaceholderField::Dir) {
+        if let Some(ref pathname) = pathname
+            && chunk.template.needs(PlaceholderField::Dir)
+        {
             // this if check is a specific fix for `bun build hi.ts --external '*'`, without leading `./`
             let dir_path: &[u8] = if !pathname.dir.is_empty() {
                 pathname.dir

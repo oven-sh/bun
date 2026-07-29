@@ -1,4 +1,5 @@
-import { describe } from "bun:test";
+import { describe, expect } from "bun:test";
+import { readdirSync } from "node:fs";
 import { ESBUILD, itBundled } from "./expectBundled";
 
 describe("bundler", () => {
@@ -301,6 +302,68 @@ describe("bundler", () => {
         stdout: "3",
       },
     ],
+  });
+  // A non-entry split chunk's `[name]` is the owning entry point's basename
+  // plus `-chunk` when exactly one entry reaches it, or `shared` otherwise,
+  // never the first-listed entrypoint. Dynamic-import chunks are entry points
+  // and keep their own source basename.
+  for (const order of ["MainFirst", "ModnameFirst"] as const) {
+    itBundled(`naming/ChunkNamePlaceholderSharedChunk${order}`, {
+      files: {
+        "/src/main.js": /* js */ `
+          import { v } from "./sub/modname.js";
+          import("./lazy.js").then(m => console.log(v, m.z));
+        `,
+        "/src/sub/modname.js": /* js */ `
+          export const v = "V";
+        `,
+        "/src/lazy.js": /* js */ `
+          export const z = "Z";
+        `,
+      },
+      entryPointsRaw:
+        order === "MainFirst" ? ["./src/main.js", "./src/sub/modname.js"] : ["./src/sub/modname.js", "./src/main.js"],
+      outdir: "/out",
+      splitting: true,
+      chunkNaming: "chunks/[name]-[hash].[ext]",
+      onAfterBundle(api) {
+        const chunks = readdirSync(api.outdir + "/chunks").sort();
+        const lazy = chunks.filter(f => f.startsWith("lazy-"));
+        const shared = chunks.filter(f => !f.startsWith("lazy-"));
+        expect(lazy.length).toBe(1);
+        expect(shared.length).toBeGreaterThan(0);
+        for (const f of shared) {
+          expect(f).toMatch(/^shared-[a-z0-9]+\.js$/);
+        }
+      },
+      run: {
+        file: "/out/main.js",
+        stdout: "V Z",
+      },
+    });
+  }
+  itBundled("naming/ChunkNamingCollisionHint", {
+    backend: "api",
+    files: {
+      "/src/main.js": /* js */ `
+        import { v } from "./sub/modname.js";
+        import("./lazy.js").then(m => console.log(v, m.z));
+      `,
+      "/src/sub/modname.js": `export const v = "V";`,
+      "/src/lazy.js": `export const z = "Z";`,
+    },
+    entryPointsRaw: ["./src/main.js", "./src/sub/modname.js"],
+    outdir: "/out",
+    splitting: true,
+    chunkNaming: "chunks/[name].[ext]",
+    bundleErrors: {
+      "<bun>": ["Multiple files share the same output path"],
+    },
+    onAfterApiBundle(build) {
+      const text = build.logs.map(l => l.message).join("\n");
+      expect(text).toContain("chunk naming is");
+      expect(text).not.toContain("asset naming is");
+    },
   });
   // A non-ASCII ID_Continue basename char is preserved in the generated
   // CommonJS wrapper symbol, not replaced per-code-point (nor per-UTF-8-byte,

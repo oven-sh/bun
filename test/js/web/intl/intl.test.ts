@@ -86,9 +86,7 @@ describe("Intl.NumberFormat", () => {
   // literal decorations are locale-shaped and covered by the string check.
   describe("style:'percent' formatRange identity (ICU-23110)", () => {
     const numeric = (parts: Intl.NumberFormatPart[]) =>
-      parts
-        .filter(p => p.type !== "approximatelySign" && p.type !== "literal")
-        .map(p => `${p.type}:${p.value}`);
+      parts.filter(p => p.type !== "approximatelySign" && p.type !== "literal").map(p => `${p.type}:${p.value}`);
 
     test.each(["en", "de", "ja", "ar"])("%s", loc => {
       const nf = new Intl.NumberFormat(loc, { style: "percent" });

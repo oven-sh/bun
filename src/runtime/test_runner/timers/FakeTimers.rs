@@ -253,7 +253,11 @@ pub(crate) fn reset_between_files(global: &JSGlobalObject) {
         // `setSystemTime()` writes `overridenDateNow` without activating fake timers.
         CURRENT_TIME.clear(global);
     }
-    scope.clear_exception();
+    if let Some(e) = scope.exception() {
+        if !JSValue::from_cell(e.as_ptr()).is_termination_exception() {
+            scope.clear_exception();
+        }
+    }
 }
 
 // ===

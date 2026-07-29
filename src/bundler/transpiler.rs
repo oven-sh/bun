@@ -1786,6 +1786,16 @@ impl<'a> Transpiler<'a> {
             options::Loader::Text => {
                 return parse_text_loader(source, loader, input_fd, source_backing, arena);
             }
+            options::Loader::Base64 | options::Loader::Dataurl => {
+                return parse_base64_or_dataurl_loader(
+                    source,
+                    loader,
+                    input_fd,
+                    source_backing,
+                    arena,
+                    &path,
+                );
+            }
             options::Loader::Md => {
                 return parse_md_loader(source, loader, input_fd, source_backing, arena, log);
             }
@@ -1804,8 +1814,6 @@ impl<'a> Transpiler<'a> {
             options::Loader::Css => {}
             options::Loader::File
             | options::Loader::Napi
-            | options::Loader::Base64
-            | options::Loader::Dataurl
             | options::Loader::Bunsh
             | options::Loader::Sqlite
             | options::Loader::SqliteEmbedded
@@ -2083,6 +2091,57 @@ fn parse_text_loader<'a>(
         bun_ast::E::EString::init(&source.contents),
         bun_ast::Loc::EMPTY,
     );
+    let stmt = bun_ast::Stmt::alloc(
+        bun_ast::S::ExportDefault {
+            value: bun_ast::StmtOrExpr::Expr(expr),
+            default_name: bun_ast::LocRef {
+                loc: bun_ast::Loc::default(),
+                ref_: bun_ast::Ref::NONE,
+            },
+        },
+        bun_ast::Loc { start: 0 },
+    );
+    let stmts = bun_ast::StoreSlice::new_mut(arena.alloc_slice_copy(&[stmt]));
+    let parts: Box<[bun_ast::Part]> = Box::new([bun_ast::Part {
+        stmts,
+        ..Default::default()
+    }]);
+
+    return Some(ParseResult {
+        ast: bun_ast::Ast::from_parts(parts, arena),
+        source: source.clone(),
+        loader,
+        input_fd,
+        already_bundled: AlreadyBundled::None,
+        pending_imports: Default::default(),
+        runtime_transpiler_cache: None,
+        empty: false,
+        source_contents_backing: source_backing,
+    });
+}
+
+#[cold]
+#[inline(never)]
+fn parse_base64_or_dataurl_loader<'a>(
+    source: &bun_ast::Source,
+    loader: options::Loader,
+    input_fd: Option<FD>,
+    source_backing: resolver::cache::Contents,
+    arena: &'a Arena,
+    path: &bun_paths::fs::Path<'static>,
+) -> Option<ParseResult<'a>> {
+    use bun_resolver::data_url::DataURL;
+    let contents = &source.contents;
+    let encoded: Vec<u8> = if matches!(loader, options::Loader::Base64) {
+        bun_base64::encode_alloc(contents)
+    } else {
+        let mime = DataURL::guess_mime_type(path.text, contents);
+        DataURL::encode_string_as_shortest_data_url(&mime, contents)
+    };
+    // SAFETY: ARENA — `arena` outlives the returned `ParseResult.ast` (the AST
+    // crate's `Str` convention erases `'bump` to `'static` for `E::String.data`).
+    let encoded: &'static [u8] = unsafe { bun_ptr::detach_lifetime(arena.alloc_slice_copy(&encoded)) };
+    let expr = bun_ast::Expr::init(bun_ast::E::EString::init(encoded), bun_ast::Loc::EMPTY);
     let stmt = bun_ast::Stmt::alloc(
         bun_ast::S::ExportDefault {
             value: bun_ast::StmtOrExpr::Expr(expr),
@@ -2846,6 +2905,8 @@ impl<'a> Transpiler<'a> {
             | options::Loader::Yaml
             | options::Loader::Json5
             | options::Loader::Text
+            | options::Loader::Base64
+            | options::Loader::Dataurl
             | options::Loader::Md => {
                 // borrowck — `parse` consumes `&mut self`, so capture
                 // the option fields needed for `ParseOptions` first.
@@ -2940,9 +3001,6 @@ impl<'a> Transpiler<'a> {
                 output_file.value = crate::output_file::Value::Buffer {
                     bytes: writer.ctx.written().to_vec().into_boxed_slice(),
                 };
-            }
-            options::Loader::Dataurl | options::Loader::Base64 => {
-                bun_core::Output::panic(format_args!("TODO: dataurl, base64"));
             }
             options::Loader::Css => {
                 match self.build_css_output(

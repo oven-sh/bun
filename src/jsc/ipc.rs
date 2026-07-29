@@ -372,7 +372,14 @@ mod advanced {
                 }
 
                 let message = &data[HEADER_LENGTH..][..message_len as usize];
-                let deserialized = JSValue::deserialize(message, global)?;
+                let deserialized = match JSValue::deserialize(message, global) {
+                    Ok(v) => v,
+                    Err(JsError::Thrown) => {
+                        global.clear_exception();
+                        return Err(IPCDecodeError::InvalidFormat);
+                    }
+                    Err(e) => return Err(e.into()),
+                };
 
                 Ok(DecodeIPCMessageResult {
                     bytes_consumed: HEADER_LENGTH_U32 + message_len,

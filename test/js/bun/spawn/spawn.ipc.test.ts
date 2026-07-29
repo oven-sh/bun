@@ -157,6 +157,40 @@ describe("ipc mode advanced", () => {
       expect(exitCode).toBe(0);
     },
   );
+
+  it("a malformed SerializedScriptValue payload closes the channel without leaving an uncaught TypeError", async () => {
+    // type=SerializedMessage (0x02), len=4, payload = SSV version 0xFFFFFFFF (> CurrentVersion)
+    // so CloneDeserializer throws TypeError("Unable to deserialize data."). The decoder must
+    // clear that exception and treat the frame as InvalidFormat; previously it left the
+    // exception pending and the parent saw it as an uncaught error.
+    const parent = `
+      const child = Bun.spawn({
+        cmd: [
+          process.execPath, "-e",
+          'require("fs").writeSync(3, Buffer.from([0x02, 0x04, 0x00, 0x00, 0x00, 0xff, 0xff, 0xff, 0xff]))',
+        ],
+        stdio: ["ignore", "inherit", "inherit"],
+        serialization: "advanced",
+        ipc(msg) { console.error("UNEXPECTED_IPC_MESSAGE", msg); },
+      });
+      await child.exited;
+      console.log("PARENT_OK");
+    `;
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", parent],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stdout.trim()).toBe("PARENT_OK");
+    expect(stderr).not.toContain("Unable to deserialize data");
+    expect(stderr).not.toContain("UNEXPECTED_IPC_MESSAGE");
+    expect(exitCode).toBe(0);
+  });
 });
 
 // getIPCInstance error path: on Windows, windowsConfigureClient can open the

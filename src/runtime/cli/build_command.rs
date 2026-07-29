@@ -310,14 +310,10 @@ impl BuildCommand {
                 // comment. After validating the user's choice, secretly
                 // override it. (Standalone HTML builds keep the user's choice
                 // because browsers do read the comment.)
-                //
-                // Remember whether the user explicitly asked for `external`
-                // before this override so the post-compile sidecar write only
-                // happens when it was requested. Otherwise the embedded map is
-                // sufficient and a stray `<entry>.js.map` on disk is unwanted.
-                compile_sourcemap_sidecar =
-                    this_transpiler.options.source_map == options::SourceMapOption::External;
                 if this_transpiler.options.source_map != options::SourceMapOption::None {
+                    // Only write a .map sidecar when the user asked for it.
+                    compile_sourcemap_sidecar =
+                        this_transpiler.options.source_map == options::SourceMapOption::External;
                     this_transpiler.options.source_map = options::SourceMapOption::External;
                 }
 

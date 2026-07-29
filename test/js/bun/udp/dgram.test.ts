@@ -2,7 +2,7 @@ import { describe, expect, jest, test } from "bun:test";
 import { createSocket } from "dgram";
 import { Worker } from "node:worker_threads";
 
-import { bunEnv, bunExe, disableAggressiveGCScope, isWindows } from "harness";
+import { bunEnv, bunExe, disableAggressiveGCScope, isLinux, isWindows } from "harness";
 import path from "path";
 import { nodeDataCases } from "./testdata";
 
@@ -438,6 +438,47 @@ test("setBroadcast()/setMulticastLoopback() before bind() throw EBADF", () => {
   }
   socket.close();
 });
+
+// IP_RECVERR (Linux) mirrors an ICMP port-unreachable into sk_err, and the next
+// sendmsg consumes it. Node never enables IP_RECVERR, so a send to a healthy
+// peer right after a send to a dead one must succeed with (null, bytes).
+test.skipIf(!isLinux)(
+  "unconnected send() after a bounced datagram delivers to a healthy peer (no stale ECONNREFUSED)",
+  async () => {
+    const got: string[] = [];
+    const live = createSocket("udp4");
+    await new Promise<void>(r => live.bind(0, "127.0.0.1", r));
+    live.on("message", d => got.push(d.toString()));
+    const tmp = createSocket("udp4");
+    await new Promise<void>(r => tmp.bind(0, "127.0.0.1", r));
+    const dead = tmp.address().port;
+    tmp.close();
+
+    try {
+      let cbErr = 0;
+      let lost = 0;
+      for (let t = 0; t < 20 && cbErr === 0 && lost === 0; t++) {
+        const s = createSocket("udp4");
+        s.on("error", () => {});
+        await new Promise<void>(r => s.bind(0, "127.0.0.1", r));
+        s.send("to-dead", dead, "127.0.0.1");
+        const before = got.length;
+        await new Promise<void>(r =>
+          s.send(`victim-${t}`, live.address().port, "127.0.0.1", e => {
+            if (e) cbErr++;
+            r();
+          }),
+        );
+        for (let i = 0; i < 100 && got.length === before; i++) await Bun.sleep(1);
+        if (got.length === before) lost++;
+        s.close();
+      }
+      expect({ cbErr, lost }).toEqual({ cbErr: 0, lost: 0 });
+    } finally {
+      live.close();
+    }
+  },
+);
 
 // An oversized datagram fails send(2) with EMSGSIZE; on the connected path no
 // address/port is known, so the error must match Node's bare `send <code>`.

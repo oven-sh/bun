@@ -1,4 +1,4 @@
-import { describe } from "bun:test";
+import { describe, expect } from "bun:test";
 import { itBundled } from "./expectBundled";
 
 for (let backend of ["api", "cli"] as const) {
@@ -89,6 +89,73 @@ for (let backend of ["api", "cli"] as const) {
             PUBLIC_BAR: "BAD_BAR",
           },
           stdout: "public_value\nanother_public\nundefined\n",
+        },
+      });
+
+    // An explicit `define` entry for process.env.X must win over the
+    // env-option-derived entry for the same X, even when X is set in the
+    // build environment.
+    if (backend === "cli")
+      for (const target of ["browser", "node", "bun"] as const) {
+        itBundled(`env/inline-define-precedence-${target}`, {
+          env: {
+            APP_MODE: "fromenv",
+          },
+          backend,
+          target,
+          dotenv: "inline",
+          define: {
+            "process.env.APP_MODE": '"FROMDEFINE"',
+          },
+          files: {
+            "/a.js": `
+          console.log(process.env.APP_MODE);
+        `,
+          },
+          onAfterBundle(api) {
+            const out = api.readFile("out.js");
+            expect(out).toContain('"FROMDEFINE"');
+            expect(out).not.toContain("fromenv");
+          },
+          run: {
+            env: {
+              APP_MODE: "runtime",
+            },
+            stdout: "FROMDEFINE\n",
+          },
+        });
+      }
+
+    if (backend === "cli")
+      itBundled("env/prefix-define-precedence", {
+        env: {
+          APP_MODE: "fromenv",
+          APP_OTHER: "other_fromenv",
+        },
+        backend,
+        target: "node",
+        dotenv: "APP_*",
+        define: {
+          "process.env.APP_MODE": '"FROMDEFINE"',
+        },
+        files: {
+          "/a.js": `
+        console.log(process.env.APP_MODE);
+        console.log(process.env.APP_OTHER);
+      `,
+        },
+        onAfterBundle(api) {
+          const out = api.readFile("out.js");
+          expect(out).toContain('"FROMDEFINE"');
+          expect(out).not.toContain('"fromenv"');
+          expect(out).toContain('"other_fromenv"');
+        },
+        run: {
+          env: {
+            APP_MODE: "runtime",
+            APP_OTHER: "runtime_other",
+          },
+          stdout: "FROMDEFINE\nother_fromenv\n",
         },
       });
 

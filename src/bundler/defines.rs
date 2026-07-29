@@ -81,8 +81,9 @@ fn env_string_store_put(
 /// dispatching through a vtable — it only reads `loader.map.map.{keys,values}()`,
 /// all of which are public.
 ///
-/// `to_json` is the framework-defaults `RawDefines` map; `to_string` is the
-/// per-env `UserDefinesArray`.
+/// `to_json` is the caller's explicit-`define` `RawDefines` map (framework
+/// defaults are appended into it at the end); `to_string` is the per-env
+/// `UserDefinesArray`.
 pub fn copy_env_for_define(
     env: &bun_dotenv::Loader,
     to_json: &mut RawDefines,
@@ -143,24 +144,32 @@ pub fn copy_env_for_define(
                         key_buf.clear();
                         key_buf.extend_from_slice(PROCESS_ENV);
                         key_buf.extend_from_slice(k);
-                        env_string_store_put(to_string, bump, &key_buf, value)?;
+                        // Explicit user `define` beats the env-derived
+                        // shorthand; `to_json` holds only explicit defines here.
+                        if !to_json.contains_key(&key_buf) {
+                            env_string_store_put(to_string, bump, &key_buf, value)?;
+                        }
                     } else {
                         let hash = bun_wyhash::hash(k);
                         debug_assert!(hash != INVALID_HASH);
                         if let Some(key_i) = string_map_hashes.iter().position(|&h| h == hash) {
-                            env_string_store_put(
-                                to_string,
-                                bump,
-                                framework_defaults_keys[key_i],
-                                value,
-                            )?;
+                            if !to_json.contains_key(framework_defaults_keys[key_i]) {
+                                env_string_store_put(
+                                    to_string,
+                                    bump,
+                                    framework_defaults_keys[key_i],
+                                    value,
+                                )?;
+                            }
                         }
                     }
                 } else {
                     key_buf.clear();
                     key_buf.extend_from_slice(PROCESS_ENV);
                     key_buf.extend_from_slice(k);
-                    env_string_store_put(to_string, bump, &key_buf, value)?;
+                    if !to_json.contains_key(&key_buf) {
+                        env_string_store_put(to_string, bump, &key_buf, value)?;
+                    }
                 }
             }
         }

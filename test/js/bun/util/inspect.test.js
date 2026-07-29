@@ -853,6 +853,27 @@ describe("boxed primitives and RegExp with overridden conversion hooks", () => {
     expect(Bun.inspect({ before: 1, boxed: n, after: 2 })).toBe(
       "{\n  before: 1,\n  boxed: [Number: 5],\n  after: 2,\n}",
     );
+
+    const s16 = new String("日本語");
+    s16.toString = throwing;
+    expect(Bun.inspect(s16)).toBe('"日本語"');
+    expect(Bun.inspect({ x: s16 })).toBe('{\n  x: "日本語",\n}');
+
+    class MyNum extends Number {}
+    const mn = new MyNum(3);
+    mn.toString = throwing;
+    expect(Bun.inspect(mn)).toBe("[Number (MyNum): 3]");
+
+    class MyBool extends Boolean {}
+    const mb = new MyBool(false);
+    mb.toString = throwing;
+    expect(Bun.inspect(mb)).toBe("[Boolean (MyBool): false]");
+
+    class MyStr extends String {}
+    const ms = new MyStr("hi");
+    ms.toString = throwing;
+    expect(Bun.inspect(ms)).toBe('"hi"');
+
     expect(calls).toEqual([]);
   });
 
@@ -884,6 +905,15 @@ describe("boxed primitives and RegExp with overridden conversion hooks", () => {
 
       console.log({ before: 1, boxed: t, re: r, after: 2 });
 
+      // As non-last args (must not be promoted to the %-format string path):
+      console.log(r, "x");
+      console.log(s, "x");
+      console.log(new String("%s"), "arg");
+
+      const s16 = new String("😀日本語");
+      s16.toString = throwing;
+      console.log(s16);
+
       console.log("calls:" + calls.length);
     `;
     await using proc = Bun.spawn({
@@ -905,6 +935,10 @@ describe("boxed primitives and RegExp with overridden conversion hooks", () => {
         re: /abc/gi,
         after: 2,
       }
+      /abc/gi x
+      [String: "hi"] x
+      [String: "%s"] arg
+      [String: "😀日本語"]
       calls:0"
     `);
     expect(exitCode).toBe(0);

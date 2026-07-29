@@ -1520,7 +1520,10 @@ pub fn format2(
             any = true;
 
             tag = formatter::Tag::get(this_value, global)?;
-            if matches!(tag.tag, TagPayload::String) && !fmt.remaining().is_empty() {
+            if matches!(tag.tag, TagPayload::String)
+                && tag.cell == jsc::JSType::String
+                && !fmt.remaining().is_empty()
+            {
                 tag.tag = TagPayload::StringPossiblyFormatted;
             }
 
@@ -1542,7 +1545,10 @@ pub fn format2(
             }
             any = true;
             tag = formatter::Tag::get(this_value, global)?;
-            if matches!(tag.tag, TagPayload::String) && !fmt.remaining().is_empty() {
+            if matches!(tag.tag, TagPayload::String)
+                && tag.cell == jsc::JSType::String
+                && !fmt.remaining().is_empty()
+            {
                 tag.tag = TagPayload::StringPossiblyFormatted;
             }
 

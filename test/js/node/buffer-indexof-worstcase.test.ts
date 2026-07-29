@@ -207,7 +207,10 @@ describe("Buffer#indexOf / lastIndexOf correctness", () => {
   });
 
   test("utf16le indexOf / lastIndexOf still correct", () => {
-    const hay = Buffer.from(Buffer.alloc(1000, "a").toString() + "needle" + Buffer.alloc(1000, "a").toString(), "utf16le");
+    const hay = Buffer.from(
+      Buffer.alloc(1000, "a").toString() + "needle" + Buffer.alloc(1000, "a").toString(),
+      "utf16le",
+    );
     const miss = Buffer.alloc(20, "x").toString();
     // indexOfBuffer → indexOf16 / lastIndexOf16
     const ndl = Buffer.from("needle", "utf16le");

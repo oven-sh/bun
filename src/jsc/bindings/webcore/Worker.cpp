@@ -314,11 +314,8 @@ static inline bool drainInbox(Worker::MessageInbox& inbox, Zig::GlobalObject* gl
             bool keepGoing = dispatch(event.event);
 
             if (globalObject->drainMicrotasks() || !keepGoing) {
-                // Termination pending, or the receiver asked us to stop
-                // (drainToWorker: self.close() inside the handler). Drop the
-                // rest — dispatch is a no-op once m_terminateRequested is set
-                // (drainToParent), and the worker thread is tearing down
-                // (drainToWorker).
+                // Termination pending, or the receiver's self.close() asked us
+                // to stop. Drop the rest: dispatch is a no-op past this point.
                 return false;
             }
         }

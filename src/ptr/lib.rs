@@ -45,6 +45,21 @@ pub use ref_count::{
 // Derive macros — same names as the traits (separate namespace). The derives
 // expand to `::bun_ptr::…` paths, so this crate is the canonical re-export
 // point: `#[derive(bun_ptr::CellRefCounted)]`.
+//
+/// ```
+/// // Regression guard: under `cargo test --release --doc`, rustdoc compiles
+/// // this snippet with `cfg(debug_assertions)` ON but links it against a
+/// // release (`debug_assertions` OFF) `bun_ptr`. The derives must therefore
+/// // not emit anything that only exists in `bun_ptr` under
+/// // `#[cfg(debug_assertions)]`. Previously this failed with
+/// //   E0407 `rc_debug_data` is not a member of trait `AnyRefCounted`
+/// //   E0405 cannot find trait `DebugDataOps`
+/// #[derive(bun_ptr::CellRefCounted)]
+/// struct Cell { ref_count: core::cell::Cell<u32> }
+/// #[derive(bun_ptr::ThreadSafeRefCounted)]
+/// struct Atomic { ref_count: bun_ptr::ThreadSafeRefCount<Atomic> }
+/// let _ = core::mem::size_of::<(Cell, Atomic)>();
+/// ```
 pub use bun_core_macros::{CellRefCounted, RefCounted, ThreadSafeRefCounted};
 
 pub mod parent_ref;

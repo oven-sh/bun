@@ -147,10 +147,22 @@ pub trait AnyRefCounted: Sized {
     /// `this` must point to a live `Self`.
     unsafe fn rc_assert_no_refs(this: *const Self);
 
-    #[cfg(debug_assertions)]
+    /// Debug-build ref-tracking hook for [`RefPtr`]. Returns a no-op stub by
+    /// default; hosts with a real [`DebugData`] override it. All call sites
+    /// are themselves `#[cfg(debug_assertions)]`, so the default is dead code
+    /// in release — but the method and [`DebugDataOps`] are declared
+    /// unconditionally so the derive macros' emitted impls type-check when the
+    /// deriving crate and `bun_ptr` disagree on `cfg(debug_assertions)` (as
+    /// they do under `cargo test --release --doc`, where rustdoc compiles the
+    /// crate-under-test with debug assertions on against release-built deps).
+    ///
     /// # Safety
     /// `this` must point to a live `Self`.
-    unsafe fn rc_debug_data(this: *mut Self) -> *mut dyn DebugDataOps;
+    #[inline]
+    unsafe fn rc_debug_data(this: *mut Self) -> *mut dyn DebugDataOps {
+        let _ = this;
+        noop_debug_data()
+    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -370,10 +382,18 @@ impl<T: RefCounted> AnyRefCounted for T {
         // SAFETY: caller contract — `this` points to a live T
         unsafe { (*T::get_ref_count(this.cast_mut())).assert_no_refs() }
     }
-    #[cfg(debug_assertions)]
+    #[inline]
     unsafe fn rc_debug_data(this: *mut Self) -> *mut dyn DebugDataOps {
-        // SAFETY: caller contract — `this` points to a live T
-        unsafe { &raw mut (*T::get_ref_count(this)).debug }
+        let _ = this;
+        #[cfg(debug_assertions)]
+        {
+            // SAFETY: caller contract — `this` points to a live T
+            unsafe { &raw mut (*T::get_ref_count(this)).debug }
+        }
+        #[cfg(not(debug_assertions))]
+        {
+            noop_debug_data()
+        }
     }
 }
 
@@ -516,11 +536,17 @@ impl<T: ThreadSafeRefCounted> ThreadSafeRefCount<T> {
     /// Type-erased accessor for the embedded debug tracker. Exposed (rather
     /// than the private `debug` field) so `#[derive(ThreadSafeRefCounted)]`
     /// can emit [`AnyRefCounted::rc_debug_data`] from outside this crate.
-    #[cfg(debug_assertions)]
     #[doc(hidden)]
     #[inline]
     pub fn debug_data_ptr(&mut self) -> *mut dyn DebugDataOps {
-        &raw mut self.debug
+        #[cfg(debug_assertions)]
+        {
+            &raw mut self.debug
+        }
+        #[cfg(not(debug_assertions))]
+        {
+            noop_debug_data()
+        }
     }
 
     // `getRefCount` / `is_ref_count` / `ref_count_options` — see
@@ -621,11 +647,9 @@ pub unsafe trait CellRefCounted: Sized {
 /// No-op [`DebugDataOps`] for [`CellRefCounted`] types — they carry no
 /// `DebugData` field, so [`RefPtr`]'s acquire/release tracking degrades to
 /// a stub.
-#[cfg(debug_assertions)]
 #[doc(hidden)]
 pub struct NoopDebugData;
 
-#[cfg(debug_assertions)]
 impl DebugDataOps for NoopDebugData {
     fn assert_valid_dyn(&self) {}
     fn acquire(&mut self, _return_address: usize) -> TrackedRefId {
@@ -634,7 +658,6 @@ impl DebugDataOps for NoopDebugData {
     fn release(&mut self, _id: TrackedRefId, _return_address: usize) {}
 }
 
-#[cfg(debug_assertions)]
 #[doc(hidden)]
 pub fn noop_debug_data() -> *mut dyn DebugDataOps {
     // Per-call leaked stub — `RefPtr` only calls `acquire`/`release` on it,
@@ -977,7 +1000,6 @@ struct TrackedRef;
 #[derive(Copy, Clone, Eq, PartialEq, Hash)]
 pub struct TrackedRefId(u32);
 
-#[cfg(debug_assertions)]
 impl TrackedRefId {
     #[inline]
     const fn new(n: u32) -> Self {
@@ -994,7 +1016,14 @@ struct TrackedDeref;
 
 /// Dyn-safe surface of `DebugData<Count>` so `RefPtr<T>` can interact with it
 /// without knowing whether `Count` is `Cell<u32>` or `AtomicU32`.
-#[cfg(debug_assertions)]
+///
+/// Declared unconditionally (not `#[cfg(debug_assertions)]`) so that
+/// `#[derive(CellRefCounted)]` / `#[derive(ThreadSafeRefCounted)]` expansions
+/// — which name this trait in the emitted `AnyRefCounted::rc_debug_data`
+/// signature — type-check even when the deriving crate's
+/// `cfg(debug_assertions)` differs from `bun_ptr`'s (see the note on
+/// [`AnyRefCounted::rc_debug_data`]). Only [`NoopDebugData`] implements it in
+/// release builds; the real [`DebugData`] storage stays debug-only.
 pub trait DebugDataOps {
     fn assert_valid_dyn(&self);
     fn acquire(&mut self, return_address: usize) -> TrackedRefId;

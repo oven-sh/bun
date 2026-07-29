@@ -20,7 +20,6 @@ use crate::webcore::s3::client::{
 };
 use bun_core::{ZigString, strings};
 use bun_http_types::MimeType::MimeType;
-use bun_url::URL;
 
 #[cfg(unix)]
 use super::SizeType;
@@ -332,15 +331,6 @@ impl S3Ext for S3 {
 
         let promise = bun_jsc::JSPromiseStrong::init(global_this);
         let value = promise.value();
-        // `Transpiler::env_mut` is the safe accessor for the process-singleton
-        // dotenv loader (never null once the VM is initialised).
-        let proxy_url: Option<URL<'_>> = global_this
-            .bun_vm()
-            .as_mut()
-            .transpiler
-            .env_mut()
-            .get_http_proxy(true, None, None);
-        let proxy = proxy_url.as_ref().map(|url| url.href);
         let aws_options = self.get_credentials_with_options(extra_options, global_this)?;
         // `defer aws_options.deinit()` → Drop handles it.
 
@@ -356,7 +346,6 @@ impl S3Ext for S3 {
                 global: bun_ptr::BackRef::new(global_this),
             }))
             .cast::<c_void>(),
-            proxy,
             aws_options.request_payer,
         )?;
 
@@ -427,15 +416,6 @@ impl S3Ext for S3 {
 
         let promise = bun_jsc::JSPromiseStrong::init(global_this);
         let value = promise.value();
-        // `Transpiler::env_mut` is the safe accessor for the process-singleton
-        // dotenv loader (never null once the VM is initialised).
-        let proxy_url: Option<URL<'_>> = global_this
-            .bun_vm()
-            .as_mut()
-            .transpiler
-            .env_mut()
-            .get_http_proxy(true, None, None);
-        let proxy = proxy_url.as_ref().map(|url| url.href);
         let aws_options = self.get_credentials_with_options(extra_options, global_this)?;
         // `defer aws_options.deinit()` → Drop handles it.
 
@@ -462,7 +442,6 @@ impl S3Ext for S3 {
             unsafe { &(*wrapper).resolved_list_options },
             Wrapper::resolve,
             wrapper.cast::<c_void>(),
-            proxy,
         )?;
 
         Ok(value)

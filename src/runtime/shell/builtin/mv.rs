@@ -503,6 +503,14 @@ impl ShellMvBatchedTask {
         let st = bun_sys::lstatat(src_dir, src)?;
         let mode = st.st_mode as bun_core::Mode;
 
+        // Bind mounts can alias one inode through two vfsmounts (renameat()
+        // still returns EXDEV); treat same-inode as the POSIX rename() no-op.
+        if let Ok(dst_st) = bun_sys::lstatat(dst_dir, dst) {
+            if st.st_dev == dst_st.st_dev && st.st_ino == dst_st.st_ino {
+                return Ok(());
+            }
+        }
+
         if bun_sys::S::ISLNK(mode) {
             let mut buf = bun_paths::path_buffer_pool::get();
             let n = bun_sys::readlinkat(src_dir, src, &mut buf[..])?;
@@ -520,13 +528,11 @@ impl ShellMvBatchedTask {
         }
 
         if bun_sys::S::ISDIR(mode) {
-            // 0o700 so children can be written into a dest whose source mode
-            // is e.g. 0o500; the real mode is stamped via fchmod below.
+            // `| 0o700` so children can be written even when the source mode is read-only; restored via `fchmod` below.
             match bun_sys::mkdirat(dst_dir, dst, (mode & 0o7777) | 0o700) {
                 Ok(()) => {}
                 Err(e) if e.get_errno() == bun_sys::E::EEXIST => {
-                    // Same-device renameat() onto a non-empty dir fails with
-                    // ENOTEMPTY; match that instead of silently merging.
+                    // Refuse to merge into a non-empty dest (matches same-device `ENOTEMPTY`).
                     bun_sys::rmdirat(dst_dir, dst)?;
                     bun_sys::mkdirat(dst_dir, dst, (mode & 0o7777) | 0o700)?;
                 }
@@ -575,8 +581,7 @@ impl ShellMvBatchedTask {
         }
 
         if !bun_sys::S::ISREG(mode) {
-            // Opening a FIFO O_RDONLY without O_NONBLOCK blocks forever; refuse
-            // special files rather than hang the worker thread.
+            // Opening a FIFO `O_RDONLY` without `O_NONBLOCK` would block forever.
             return Err(bun_sys::Error::from_code(
                 bun_sys::E::ENOTSUP,
                 bun_sys::Tag::rename,
@@ -584,6 +589,8 @@ impl ShellMvBatchedTask {
         }
 
         let in_fd = bun_sys::openat(src_dir, src, bun_sys::O::RDONLY | bun_sys::O::CLOEXEC, 0)?;
+        // Unlink first so a symlink-at-dest isn't followed by `O_TRUNC`; also avoids ETXTBUSY.
+        let _ = bun_sys::unlinkat(dst_dir, dst);
         let out_fd = match bun_sys::openat(
             dst_dir,
             dst,

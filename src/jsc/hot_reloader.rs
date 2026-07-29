@@ -476,6 +476,11 @@ pub struct NewHotReloader<Ctx, EventLoopType, const RELOAD_IMMEDIATELY: bool> {
 
     pub tombstones: StringHashMap<*mut Fs::EntriesOption>,
 
+    /// Deleted absolute paths (→ watch hash) whose watch entries were
+    /// evicted. `reenqueue_recreated_files` reloads them from the parent
+    /// directory's watch once recreated. Watcher-thread only, like `tombstones`.
+    pub deleted_watched_files: StringHashMap<bun_watcher::HashType>,
+
     _event_loop: PhantomData<*mut EventLoopType>,
 }
 
@@ -720,6 +725,7 @@ where
             pending_count: AtomicU32::new(0),
             main: MainFile::default(),
             tombstones: StringHashMap::default(),
+            deleted_watched_files: StringHashMap::default(),
             _event_loop: PhantomData,
         }));
 
@@ -775,6 +781,7 @@ where
             pending_count: AtomicU32::new(0),
             main: MainFile::init(entry_path.unwrap_or(b"")),
             tombstones: StringHashMap::default(),
+            deleted_watched_files: StringHashMap::default(),
             _event_loop: PhantomData,
         }));
 
@@ -807,6 +814,54 @@ where
     #[cfg(not(windows))]
     fn put_tombstone(&mut self, key: &[u8], value: *mut Fs::EntriesOption) {
         self.tombstones.put(key, value).expect("unreachable");
+    }
+
+    /// Remember an evicted file watch only while its path is gone from disk
+    /// (a still-present path means the reload being enqueued re-watches it).
+    /// The directory arms consume this via [`Self::reenqueue_recreated_files`].
+    fn remember_deleted_watch(&mut self, path: &[u8], hash: bun_watcher::HashType) {
+        if bun_sys::exists(path) {
+            return;
+        }
+        bun_core::handle_oom(self.deleted_watched_files.put(path, hash));
+    }
+
+    /// For every [`Self::remember_deleted_watch`]ed path directly under
+    /// `dir_path` that exists again and has no reload covering it, enqueue
+    /// one and drop the record; the re-import re-adds the per-file watch.
+    fn reenqueue_recreated_files(
+        &mut self,
+        dir_path: &[u8],
+        watchlist_hashes: &[bun_watcher::HashType],
+        task: &mut Task<Ctx, EventLoopType, RELOAD_IMMEDIATELY>,
+    ) {
+        if self.deleted_watched_files.is_empty() {
+            return;
+        }
+        // A queued reload, or one this batch has already buffered, reads the
+        // live filesystem and re-adds every recorded path that has reappeared
+        // by then; appending would only stack a duplicate. Re-check next event.
+        if self.pending_count.load(Ordering::Relaxed) > 0 || task.count > 0 {
+            return;
+        }
+        let dir_no_slash = strings::paths::without_trailing_slash_windows_path(dir_path);
+        self.deleted_watched_files.retain(|deleted_path, hash| {
+            let deleted_path: &[u8] = deleted_path;
+            if bun_core::dirname(deleted_path) != Some(dir_no_slash)
+                || !bun_sys::exists(deleted_path)
+            {
+                return true;
+            }
+            // Exists and re-watched: an earlier reload re-imported it. Keep
+            // this after the filters: same-batch evictions remain in the
+            // watchlist snapshot until flush, so first alone is a false match.
+            if watchlist_hashes.contains(hash) {
+                return false;
+            }
+            record_changed_path(deleted_path);
+            task.append(*hash);
+            false
+        });
     }
 
     #[cfg(not(windows))]
@@ -917,6 +972,10 @@ where
                         || (event.op.contains(WatchOp::RENAME) && IS_KQUEUE)
                     {
                         ctx.remove_at_index(bun_watcher::Kind::File, event.index, 0, &[]);
+                        // kqueue's NOTE_DELETE and Windows' FILE_ACTION_REMOVED
+                        // fire on unlink; Linux holds the source fd open, so
+                        // `rm` reaches us via the directory arm instead.
+                        self.remember_deleted_watch(file_path, current_hash);
                     }
 
                     if self.verbose {
@@ -968,6 +1027,9 @@ where
                         let _ = self.ctx_mut().bust_dir_cache(
                             strings::paths::without_trailing_slash_windows_path(file_path),
                         );
+                        // Exception: a recreated import has no watchlist entry
+                        // left, so no file event matches it. Re-arm it here.
+                        self.reenqueue_recreated_files(file_path, hashes, &mut current_task);
                         continue;
                     }
                     #[cfg(not(windows))]
@@ -1116,26 +1178,18 @@ where
                                 if changed_name != main_basename {
                                     continue;
                                 }
-                                let main_exists = {
-                                    let mut zbuf = PathBuffer::uninit();
-                                    if self.main.file.len() >= zbuf.len() {
-                                        false
-                                    } else {
-                                        zbuf[..self.main.file.len()]
-                                            .copy_from_slice(self.main.file);
-                                        zbuf[self.main.file.len()] = 0;
-                                        // SAFETY: zbuf is NUL-terminated at len.
-                                        let z = ZStr::from_buf(&zbuf[..], self.main.file.len());
-                                        bun_sys::access(z, libc::F_OK).is_ok()
-                                    }
-                                };
-                                if main_exists {
+                                if bun_sys::exists(self.main.file) {
                                     record_changed_path(self.main.file);
                                     current_task.append(self.main.hash);
                                 }
                                 break;
                             }
                         }
+
+                        // Same inode-replacement recovery, generalized to every
+                        // import: its delete evicted the watchlist entry, so the
+                        // `hashes` scan below can't see the recreated file.
+                        self.reenqueue_recreated_files(file_path, hashes, &mut current_task);
 
                         if let Some(dir_ent) = entries_option {
                             // SAFETY: dir_ent points into rfs.entries (or a tombstoned copy);
@@ -1207,6 +1261,13 @@ where
                                                                 entry_id as u16,
                                                                 0,
                                                                 &[],
+                                                            );
+                                                            // `rm` reaches inotify only here:
+                                                            // our source fd pins the unlinked
+                                                            // inode, deferring `IN_DELETE_SELF`.
+                                                            self.remember_deleted_watch(
+                                                                path_string.as_bytes(),
+                                                                hashes[entry_id],
                                                             );
                                                         }
                                                     }

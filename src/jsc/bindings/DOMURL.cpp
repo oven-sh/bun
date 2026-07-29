@@ -29,6 +29,7 @@
 #include "ActiveDOMObject.h"
 // #include "Blob.h"
 // #include "BlobURL.h"
+#include "BunIDNA.h"
 // #include "MemoryCache.h"
 // #include "PublicURLManager.h"
 // #include "ResourceRequest.h"
@@ -55,6 +56,14 @@ static inline String redact(const String& input)
     return makeString('"', input, '"');
 }
 
+// WTF::URLParser skips UTS-46 validation for all-ASCII hosts, so "xn--"
+// (Punycode) labels that are not valid IDNA parse successfully; the URL
+// Standard's host parser requires them to fail. Re-check them here.
+static bool isValidCompleteURL(const URL& url)
+{
+    return url.isValid() && Bun::urlHostIsValidIDNA(url);
+}
+
 inline DOMURL::DOMURL(URL&& completeURL)
     : m_url(WTF::move(completeURL))
     , m_initialURLCostForGC(static_cast<uint16_t>(std::min<size_t>(m_url.string().impl()->costDuringGC(), std::numeric_limits<uint16_t>::max())))
@@ -65,16 +74,17 @@ inline DOMURL::DOMURL(URL&& completeURL)
 ExceptionOr<Ref<DOMURL>> DOMURL::create(const String& url)
 {
     URL completeURL { url };
-    if (!completeURL.isValid())
+    if (!isValidCompleteURL(completeURL))
         return Exception { InvalidURLError, makeString(redact(url), " cannot be parsed as a URL."_s) };
     return adoptRef(*new DOMURL(WTF::move(completeURL)));
 }
 
 ExceptionOr<Ref<DOMURL>> DOMURL::create(const String& url, const URL& base)
 {
-    ASSERT(base.isValid() || base.isNull());
+    // Private overload: create(url, String base), the only caller, already rejected an invalid base.
+    ASSERT(base.isNull() || isValidCompleteURL(base));
     URL completeURL { base, url };
-    if (!completeURL.isValid())
+    if (!isValidCompleteURL(completeURL))
         return Exception { InvalidURLError, makeString(redact(url), " cannot be parsed as a URL."_s) };
     return adoptRef(*new DOMURL(WTF::move(completeURL)));
 }
@@ -82,7 +92,7 @@ ExceptionOr<Ref<DOMURL>> DOMURL::create(const String& url, const URL& base)
 ExceptionOr<Ref<DOMURL>> DOMURL::create(const String& url, const String& base)
 {
     URL baseURL { base };
-    if (!base.isNull() && !baseURL.isValid())
+    if (!base.isNull() && !isValidCompleteURL(baseURL))
         return Exception { InvalidURLError, makeString(redact(url), " cannot be parsed as a URL against "_s, redact(base)) };
     return create(url, baseURL);
 }
@@ -92,9 +102,12 @@ DOMURL::~DOMURL() = default;
 static URL parseInternal(const String& url, const String& base)
 {
     URL baseURL { base };
-    if (!base.isNull() && !baseURL.isValid())
+    if (!base.isNull() && !isValidCompleteURL(baseURL))
         return {};
-    return { baseURL, url };
+    URL completeURL { baseURL, url };
+    if (!isValidCompleteURL(completeURL))
+        return {};
+    return completeURL;
 }
 
 RefPtr<DOMURL> DOMURL::parse(const String& url, const String& base)
@@ -113,10 +126,8 @@ bool DOMURL::canParse(const String& url, const String& base)
 ExceptionOr<void> DOMURL::setHref(const String& url)
 {
     URL completeURL { URL {}, url };
-    if (!completeURL.isValid()) {
-
+    if (!isValidCompleteURL(completeURL))
         return Exception { InvalidURLError, makeString(redact(url), " cannot be parsed as a URL."_s) };
-    }
     m_url = WTF::move(completeURL);
     m_searchParamsDirty = false;
     if (m_searchParams)

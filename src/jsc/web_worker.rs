@@ -1116,10 +1116,8 @@ impl WebWorker {
                     (*promise).result(vm.jsc_vm()),
                     true,
                 );
-                // `handled` reflects process.on('uncaughtException'). The
-                // self.onerror preventDefault() path instead returns from
-                // on_unhandled_rejection without arming termination, so also
-                // consult has_requested_terminate() before shutting down.
+                // `handled` only covers process.on('uncaughtException'); a self.onerror
+                // preventDefault() instead leaves has_requested_terminate() unset.
                 if !handled && self.has_requested_terminate() {
                     // exit_code is already 1 from uncaught_exception; re-setting it here
                     // would clobber a process.on('exit') change to process.exitCode.
@@ -1527,9 +1525,8 @@ fn on_unhandled_rejection(
     // `&mut`) — see worker-thread `&self` note.
     let worker = vm.worker_ref().expect("Assertion failure: no worker");
 
-    // Fallback ErrorEvent.message for values C++ can't summarize (not a
-    // JSC::ErrorInstance). C++ replaces it with `sanitizedToString` when the
-    // thrown value is an ErrorInstance.
+    // Fallback ErrorEvent.message; C++ replaces it with `sanitizedToString`
+    // when the thrown value is an ErrorInstance.
     let format_result = jsc::console_object::format2(
         jsc::console_object::MessageLevel::Debug,
         global_object,
@@ -1580,9 +1577,8 @@ fn on_unhandled_rejection(
         }
     };
     if handled {
-        // self.onerror called preventDefault(): undo uncaught_exception's
-        // side-effects so the worker continues running. Restoring the hook
-        // lets a subsequent uncaught error run through this path again.
+        // preventDefault(): undo uncaught_exception's side-effects (hook,
+        // counter, exit code) so the worker keeps running.
         vm.on_unhandled_rejection = on_unhandled_rejection;
         vm.unhandled_error_counter = vm.unhandled_error_counter.saturating_sub(1);
         vm.exit_handler.exit_code = 0;

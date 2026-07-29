@@ -753,17 +753,14 @@ extern "C" bool WebWorker__dispatchError(Zig::GlobalObject* globalObject, Worker
     unsigned lineno = 0;
     unsigned colno = 0;
     if (auto* errorInstance = dynamicDowncast<JSC::ErrorInstance>(error)) {
-        // materializeErrorInfoIfNeeded runs Bun's computeErrorInfo, which
-        // remaps the throw position through any source map and exposes it via
-        // line()/column() and the sourceURL own-property.
+        // Runs Bun's computeErrorInfo: source-map-remapped line()/column()/sourceURL.
         errorInstance->materializeErrorInfoIfNeeded(vm);
         lineno = errorInstance->line();
         colno = errorInstance->column();
         if (JSValue sourceURLValue = errorInstance->getDirect(vm, vm.propertyNames->sourceURL); sourceURLValue && sourceURLValue.isString())
             filename = sourceURLValue.toWTFString(globalObject);
         scope.clearExceptionExceptTermination();
-        // The ErrorEvent message is a short description ("TypeError: foo"),
-        // not the multi-line console dump the caller may have passed.
+        // ErrorEvent.message is the short "TypeError: foo" form, not the formatted console dump.
         WTF::String sanitized = errorInstance->sanitizedToString(globalObject);
         scope.clearExceptionExceptTermination();
         if (!sanitized.isEmpty())
@@ -787,9 +784,8 @@ extern "C" bool WebWorker__dispatchError(Zig::GlobalObject* globalObject, Worker
 
     switch (worker->options().kind) {
     case WorkerOptions::Kind::Web: {
-        // Browsers leave `error` null on the parent event; Bun clones it so
-        // callers have structured data instead of only the message. Falls
-        // back to null if the value is not cloneable.
+        // Browsers leave `error` null on the parent event; Bun clones the thrown
+        // value (null if it is not cloneable).
         auto serialized = SerializedScriptValue::create(*globalObject, error, SerializationForStorage::No, SerializationErrorMode::NonThrowing);
         scope.clearExceptionExceptTermination();
         worker->dispatchError(WTF::move(messageStr), WTF::move(filename), lineno, colno, WTF::move(serialized));

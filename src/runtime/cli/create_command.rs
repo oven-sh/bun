@@ -1309,7 +1309,7 @@ impl CreateCommand {
                     bun_sys::exists_at_type(d.fd, bun_core::zstr!(".git")),
                     Err(ref err) if err.get_errno() == bun_sys::E::ENOENT
                 ),
-                Err(_) => false,
+                Err(_) => true,
             };
         }
 

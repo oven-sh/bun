@@ -1968,9 +1968,6 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementFcntlFunction, (JSC::JSGlobalObject * lex
         return rc;
     };
 
-    // Opcodes are grouped by the type their pArg contract expects. The scratch
-    // storage always lives on this stack frame; JavaScript-supplied memory is
-    // never handed to SQLite.
     switch (op) {
     // int* in/out: -1 queries, 0/1 (or a count) sets. Returns the resulting int.
     case SQLITE_FCNTL_PERSIST_WAL:
@@ -2070,14 +2067,9 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementFcntlFunction, (JSC::JSGlobalObject * lex
         return JSValue::encode(jsNumber(rc));
     }
 
+    // Every remaining opcode either exchanges a raw pointer with the VFS or is
+    // documented as internal/app-should-not-call.
     default:
-        // Opcodes that exchange raw pointers with the VFS (FILE_POINTER,
-        // VFS_POINTER, JOURNAL_POINTER, WIN32_GET_HANDLE, BUSYHANDLER, PRAGMA,
-        // TRACE, WIN32_SET_HANDLE, PDB, CKSM_FILE, RBU, ZIPVFS, SET_LOCKPROXYFILE,
-        // GET_LOCKPROXYFILE, FILESTAT, WIN32_AV_RETRY, SYNC) and opcodes the
-        // SQLite docs mark as internal/app-should-not-call (SYNC_OMITTED,
-        // COMMIT_PHASETWO, WAL_BLOCK, CKPT_START, CKPT_DONE, OVERWRITE,
-        // BEGIN/COMMIT/ROLLBACK_ATOMIC_WRITE, BLOCK_ON_CONNECT) are rejected.
         throwException(lexicalGlobalObject, scope, createTypeError(lexicalGlobalObject, makeString("fileControl: opcode "_s, op, " has no safe JavaScript mapping"_s)));
         return {};
     }

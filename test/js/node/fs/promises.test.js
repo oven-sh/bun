@@ -552,6 +552,7 @@ describe("AbortSignal rejections use node's AbortError shape", () => {
       expect(stderr).toBe("");
       const result = JSON.parse(stdout.trim());
       expect({ name: result.name, code: result.code }).toEqual({ name: "AbortError", code: "ABORT_ERR" });
+      expect(result.size).toBeGreaterThan(0);
       expect(result.size).toBeLessThan(SIZE);
       expect(exitCode).toBe(0);
     },

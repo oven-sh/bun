@@ -7409,6 +7409,7 @@ impl NodeFS {
     pub fn write_file_with_path_buffer(
         pathbuf: &mut PathBuffer,
         args: &args::WriteFile,
+        flavor: Flavor,
     ) -> Maybe<ret::WriteFile> {
         let fd = match &args.file {
             PathOrFileDescriptor::Path(p) => {
@@ -7443,7 +7444,7 @@ impl NodeFS {
         let mut buf = args.data.slice();
         #[cfg(not(windows))]
         let mut written: usize = 0;
-        let has_signal = args.signal.is_some();
+        let has_signal = flavor == Flavor::Async && args.signal.is_some();
 
         // Attempt to pre-allocate large files
         // Worthwhile after 6 MB at least on ext4 linux
@@ -7551,8 +7552,8 @@ impl NodeFS {
         Ok(())
     }
 
-    pub fn write_file(&mut self, args: &args::WriteFile, _: Flavor) -> Maybe<ret::WriteFile> {
-        Self::write_file_with_path_buffer(&mut self.sync_error_buf, args)
+    pub fn write_file(&mut self, args: &args::WriteFile, flavor: Flavor) -> Maybe<ret::WriteFile> {
+        Self::write_file_with_path_buffer(&mut self.sync_error_buf, args, flavor)
     }
 
     pub fn readlink(&mut self, args: &args::Readlink, _: Flavor) -> Maybe<ret::Readlink> {

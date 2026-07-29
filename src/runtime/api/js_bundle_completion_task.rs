@@ -487,7 +487,11 @@ impl JSBundleCompletionTask {
                         dirfd: root_dir.fd,
                         signal: None,
                     };
-                    match NodeFS::write_file_with_path_buffer(&mut pathbuf, &write_args) {
+                    match NodeFS::write_file_with_path_buffer(
+                        &mut pathbuf,
+                        &write_args,
+                        node_fs::Flavor::Sync,
+                    ) {
                         Err(err) => {
                             bun_core::Output::err(
                                 err,

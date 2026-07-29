@@ -11,10 +11,17 @@ export function patchBundleForFirefox(jsText: string): string {
   // so the call throws and the whole UI fails to initialize. Bail out of the
   // selection fixup when the target doesn't have the method; the createRange()
   // path that follows it assumes an Element too.
-  return jsText.replace(
+  const out = jsText.replace(
     /if\((\w+)\.isInsertionCaretInside\(\)\)return/g,
     'if(typeof $1.isInsertionCaretInside!=="function"||$1.isInsertionCaretInside())return',
   );
+  if (out === jsText) {
+    throw new Error(
+      "Firefox isInsertionCaretInside patch did not apply: the minified shape of " +
+        "WI._focusChanged has changed. Update the pattern in patchBundleForFirefox.",
+    );
+  }
+  return out;
 }
 
 async function main() {
@@ -135,7 +142,7 @@ async function main() {
     minify: true,
   });
   const jsText = patchBundleForFirefox(await jsBundle.outputs[0].text());
-  const jsFilename = "manifest-" + jsBundle.outputs[0].hash + ".js";
+  const jsFilename = "manifest-" + Bun.hash(jsText).toString(36) + ".js";
   // const cssBundle = await build({
   //   bundle: true,
   //   minify: true,

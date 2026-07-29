@@ -9089,11 +9089,15 @@ impl H2FrameParser {
         // too much memory being use
         if this.is_over_session_memory_limit() {
             this.rejected_streams.set(this.rejected_streams.get() + 1);
+            // encoder_touched is intentionally false: the memory budget is a transient condition
+            // (a large upload still draining) and tearing the session down here breaks clients
+            // that retry the refused request (grpc-js). max_rejected_streams below is the
+            // session-level escape hatch.
             this.reject_unencodable_header_block(
                 &mut stream,
                 ErrorCode::ENHANCE_YOUR_CALM,
                 None,
-                encoded_size > 0,
+                false,
             );
             if this.rejected_streams.get() >= this.max_rejected_streams.get() {
                 let global = this.handlers.get().global();

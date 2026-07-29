@@ -11,12 +11,13 @@ const {
   mkdirSync,
   readdirSync,
   readlinkSync,
+  realpathSync,
   statSync,
   symlinkSync,
   unlinkSync,
   utimesSync,
 } = require("node:fs");
-const { dirname, isAbsolute, join, parse, resolve, sep } = require("node:path");
+const { basename, dirname, isAbsolute, join, parse, resolve, sep } = require("node:path");
 
 const { EEXIST, EISDIR, EINVAL, ENOTDIR } = $processBindingConstants.os.errno;
 
@@ -224,27 +225,72 @@ function getStatsSync(src, dest, opts) {
   return { srcStat, destStat };
 }
 
+// Resolve `p` through symlinks. If `p` (or a trailing portion of it) does not
+// exist yet, resolve the deepest existing ancestor and rejoin the missing tail
+// so the result names where `p` would land once created. Any non-ENOENT error
+// falls back to path.resolve; this is a guard, not the copy itself.
+function resolveExistingRealpathSync(p) {
+  let current = resolve(p);
+  const tail: string[] = [];
+  for (;;) {
+    try {
+      current = realpathSync(current);
+      break;
+    } catch (err: any) {
+      if (err?.code !== "ENOENT") return resolve(p);
+      const parent = dirname(current);
+      if (parent === current) break;
+      tail.push(basename(current));
+      current = parent;
+    }
+  }
+  let i = tail.length;
+  while (i > 0) current = join(current, tail[--i]);
+  return current;
+}
+
 function checkParentPathsSync(src, srcStat, dest) {
+  // The string isSrcSubdir check in checkPaths and the inode walk below both
+  // miss a destination reached through a symlink that resolves into a
+  // subdirectory of src: the string check sees the alias, and the inode walk
+  // only matches src itself. Resolve both sides through symlinks and repeat
+  // the prefix check on the real locations so the recursion cannot copy src
+  // back into itself.
+  if (srcStat.isDirectory()) {
+    const resolvedSrc = resolveExistingRealpathSync(src);
+    const resolvedDest = resolveExistingRealpathSync(dest);
+    if (isSrcSubdir(resolvedSrc, resolvedDest)) {
+      throw fsCpEinvalError({
+        message: `cannot copy ${src} to a subdirectory of self ${dest}`,
+        path: dest,
+        syscall: "cp",
+        errno: EINVAL,
+        code: "EINVAL",
+      });
+    }
+  }
   const srcParent = resolve(dirname(src));
-  const destParent = resolve(dirname(dest));
-  if (destParent === srcParent || destParent === parse(destParent).root) return;
-  let destStat;
-  try {
-    destStat = statSync(destParent, { bigint: true });
-  } catch (err: any) {
-    if (err.code === "ENOENT") return;
-    throw err;
+  let destParent = resolve(dirname(dest));
+  for (;;) {
+    if (destParent === srcParent || destParent === parse(destParent).root) return;
+    let destStat;
+    try {
+      destStat = statSync(destParent, { bigint: true });
+    } catch (err: any) {
+      if (err.code === "ENOENT") return;
+      throw err;
+    }
+    if (areIdentical(srcStat, destStat)) {
+      throw fsCpEinvalError({
+        message: `cannot copy ${src} to a subdirectory of self ${dest}`,
+        path: dest,
+        syscall: "cp",
+        errno: EINVAL,
+        code: "EINVAL",
+      });
+    }
+    destParent = resolve(dirname(destParent));
   }
-  if (areIdentical(srcStat, destStat)) {
-    throw fsCpEinvalError({
-      message: `cannot copy ${src} to a subdirectory of self ${dest}`,
-      path: dest,
-      syscall: "cp",
-      errno: EINVAL,
-      code: "EINVAL",
-    });
-  }
-  return checkParentPathsSync(src, srcStat, destParent);
 }
 
 // The native recursive copy (a single clonefile() on macOS) copies symlinks

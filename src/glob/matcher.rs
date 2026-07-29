@@ -565,8 +565,9 @@ fn match_brace_branch(
 /// frames for groups already exited earlier in this attempt (sequential
 /// `{a,b}/{c,d}` keeps A on the stack while matching inside B), and wildcard
 /// backtracks can re-enter a later frame without the count lining up. So scan
-/// the (≤10-entry) stack by range instead. Frames are pushed outer→inner so the
-/// last match when iterating in reverse is the innermost enclosing group.
+/// the (≤10-entry) stack by range instead. Frames are pushed outer→inner, so
+/// iterating in reverse visits inner→outer and the first enclosing frame found
+/// is the innermost.
 fn skip_branch(state: &mut State, glob: &[u8], brace_stack: &BraceStack) -> bool {
     let gi = state.glob_index;
     for frame in brace_stack.as_slice().iter().rev() {

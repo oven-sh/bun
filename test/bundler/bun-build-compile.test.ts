@@ -959,6 +959,47 @@ describe("compile --target executable download", () => {
     expect(existsSync(cachedExecutable)).toBe(false);
     expect(exitCode).toBe(1);
   });
+
+  test("BUN_COMPILE_TARGET_TARBALL_URL skips the manifest lookup and integrity verification", async () => {
+    using dir = tempDir("build-compile-target-url-override", {
+      "app.js": `console.log("hi");`,
+    });
+    const tarball = await makeTarball();
+    let manifestRequests = 0;
+    using server = Bun.serve({
+      port: 0,
+      fetch(req) {
+        const pathname = decodeURIComponent(new URL(req.url).pathname);
+        if (pathname.endsWith(".tgz")) return new Response(tarball);
+        manifestRequests++;
+        return new Response("not found", { status: 404 });
+      },
+    });
+
+    const cacheDir = join(String(dir), "cache");
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "--compile", `--target=${target}`, join(String(dir), "app.js"), "--outfile", "out/app"],
+      env: {
+        ...bunEnv,
+        BUN_CONFIG_REGISTRY: undefined,
+        NPM_CONFIG_REGISTRY: undefined,
+        npm_config_registry: undefined,
+        BUN_COMPILE_TARGET_TARBALL_URL: `${server.url.origin}/${packageName}.tgz`,
+        BUN_INSTALL_CACHE_DIR: cacheDir,
+        HTTP_PROXY: server.url.origin,
+        HTTPS_PROXY: server.url.origin,
+        NO_PROXY: "127.0.0.1,localhost",
+      },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, stderr] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(manifestRequests).toBe(0);
+    expect(stderr).not.toContain("did not match the integrity value");
+    expect(existsSync(join(cacheDir, target))).toBe(true);
+  });
 });
 
 // file command test works well

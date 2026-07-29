@@ -138,6 +138,43 @@ describe("Intl.Collator", () => {
     expect(c.compare("a", "á")).toBe(0);
     expect(c.compare("a", "b")).toBeLessThan(0);
   });
+
+  describe("caseFirst honors the locale's CLDR default", () => {
+    // da and mt tailor [caseFirst upper] in CLDR: uppercase sorts before lowercase
+    // when no caseFirst option / -u-kf- extension is supplied. Previously Bun forced
+    // UCOL_CASE_FIRST=OFF unconditionally, clobbering that default.
+    test.each(["da", "mt"])("%s defaults to caseFirst:'upper'", loc => {
+      const c = new Intl.Collator(loc);
+      expect(c.resolvedOptions().caseFirst).toBe("upper");
+      expect(c.compare("a", "A")).toBe(1);
+      expect(["apple", "Apple", "APPLE"].sort(c.compare)).toEqual(["APPLE", "Apple", "apple"]);
+    });
+
+    test("en still defaults to caseFirst:'false'", () => {
+      const c = new Intl.Collator("en");
+      expect(c.resolvedOptions().caseFirst).toBe("false");
+      expect(c.compare("a", "A")).toBe(-1);
+      expect(["apple", "Apple", "APPLE"].sort(c.compare)).toEqual(["apple", "Apple", "APPLE"]);
+    });
+
+    test("explicit caseFirst option overrides the locale default", () => {
+      expect(new Intl.Collator("da", { caseFirst: "false" }).resolvedOptions().caseFirst).toBe("false");
+      expect(new Intl.Collator("da", { caseFirst: "false" }).compare("a", "A")).toBe(-1);
+      expect(new Intl.Collator("en", { caseFirst: "upper" }).resolvedOptions().caseFirst).toBe("upper");
+      expect(new Intl.Collator("en", { caseFirst: "upper" }).compare("a", "A")).toBe(1);
+    });
+
+    test("-u-kf- extension overrides the locale default", () => {
+      const c = new Intl.Collator("da-u-kf-false");
+      expect(c.resolvedOptions().caseFirst).toBe("false");
+      expect(c.compare("a", "A")).toBe(-1);
+    });
+
+    test("String.prototype.localeCompare picks up the locale default", () => {
+      expect("a".localeCompare("A", "da")).toBe(1);
+      expect("a".localeCompare("A", "en")).toBe(-1);
+    });
+  });
 });
 
 // ---------------------------------------------------------------------------

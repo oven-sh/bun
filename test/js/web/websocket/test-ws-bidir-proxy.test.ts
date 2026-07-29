@@ -108,7 +108,11 @@ test("bidirectional ping/pong through TLS proxy", async () => {
     const code = (e as CloseEvent).code;
     clearIntervals();
     resolveClosed(code);
-    reject(new Error(`Connection closed (${code}) after ${pongs}/${REQUIRED} pongs, ${echoes.length} echoes, ${pushes} pushes`));
+    reject(
+      new Error(
+        `Connection closed (${code}) after ${pongs}/${REQUIRED} pongs, ${echoes.length} echoes, ${pushes} pushes`,
+      ),
+    );
   });
 
   try {

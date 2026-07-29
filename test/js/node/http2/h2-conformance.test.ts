@@ -1241,11 +1241,17 @@ describe("client request terminator with waitForTrailers", () => {
       await raw.waitFor(f => f.streamId === 1 && (f.type === FrameType.HEADERS || f.type === FrameType.DATA));
       raw.sendFrame(FrameType.SETTINGS, 0, 0);
       raw.sendFrame(FrameType.SETTINGS, 0x1, 0);
-      // Wait for the client to half-close stream 1 (END_STREAM on HEADERS or DATA).
-      const closer = await raw.waitFor(
-        f => f.streamId === 1 && (f.type === FrameType.HEADERS || f.type === FrameType.DATA) && (f.flags & 0x1) !== 0,
-      );
-      expect(closer.flags & 0x1).toBe(0x1);
+      // Wait for the client to half-close stream 1 (END_STREAM on HEADERS or DATA); if it never
+      // does the waitFor rejects and this assertion surfaces the actual stream-1 frame sequence.
+      const closer = await raw
+        .waitFor(
+          f => f.streamId === 1 && (f.type === FrameType.HEADERS || f.type === FrameType.DATA) && (f.flags & 0x1) !== 0,
+        )
+        .catch(() => null);
+      const stream1 = raw.frames
+        .filter(f => f.streamId === 1)
+        .map(f => ({ type: f.type, endStream: (f.flags & 0x1) !== 0 }));
+      expect({ halfClosed: closer !== null, stream1 }).toMatchObject({ halfClosed: true });
       client.destroy();
     } finally {
       raw.close();

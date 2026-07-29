@@ -1116,6 +1116,13 @@ impl<'a> Default for Options<'a> {
 
 use bun_ast::{Indentation, IndentationCharacter};
 
+// `is_export` gates whether printing a binding also records an export entry
+// in ModuleInfo; dead-code elimination drops it when MAY_HAVE_MODULE_INFO is false.
+#[derive(Clone, Copy, Default)]
+pub struct TopLevelAndIsExport {
+    pub is_export: bool,
+}
+
 /// Downstream-compat: `print_json` callers pass this. Only the fields any caller actually sets are surfaced
 /// here and forwarded into `Options { .. }` inside `print_json`.
 #[derive(Clone, Copy, Default)]
@@ -1260,42 +1267,6 @@ enum ClauseItemAs {
     Var,
     Export,
     ExportFrom,
-}
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub enum IsTopLevel {
-    Yes,
-    VarOnly,
-    No,
-}
-
-// One shape; dead-code elimination removes the unused fields when
-// MAY_HAVE_MODULE_INFO is false.
-#[derive(Clone, Copy, Default)]
-pub struct TopLevelAndIsExport {
-    pub is_export: bool,
-}
-
-#[derive(Clone, Copy)]
-pub struct TopLevel {
-    pub is_top_level: IsTopLevel,
-}
-
-impl TopLevel {
-    #[inline]
-    pub fn init(is_top_level: IsTopLevel) -> Self {
-        Self { is_top_level }
-    }
-    pub fn sub_var(self) -> Self {
-        if self.is_top_level == IsTopLevel::No {
-            return Self::init(IsTopLevel::No);
-        }
-        Self::init(IsTopLevel::VarOnly)
-    }
-    #[inline]
-    pub fn is_top_level(self) -> bool {
-        self.is_top_level != IsTopLevel::No
-    }
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -1843,31 +1814,26 @@ pub mod __gated_printer {
             }
         }
 
-        pub fn print_body(&mut self, stmt: Stmt, tlmtlo: TopLevel) {
+        pub fn print_body(&mut self, stmt: Stmt) {
             match &stmt.data {
                 StmtData::SBlock(block) => {
                     self.print_space();
-                    self.print_block(
-                        stmt.loc,
-                        slice_of(block.stmts),
-                        Some(block.close_brace_loc),
-                        tlmtlo,
-                    );
+                    self.print_block(stmt.loc, slice_of(block.stmts), Some(block.close_brace_loc));
                     self.print_newline();
                 }
                 _ => {
                     self.print_newline();
                     self.indent();
-                    self.print_stmt(stmt, tlmtlo).expect("unreachable");
+                    self.print_stmt(stmt).expect("unreachable");
                     self.unindent();
                 }
             }
         }
 
-        pub fn print_block_body(&mut self, stmts: &[Stmt], tlmtlo: TopLevel) {
+        pub fn print_block_body(&mut self, stmts: &[Stmt]) {
             for stmt in stmts {
                 self.print_semicolon_if_needed();
-                self.print_stmt(*stmt, tlmtlo).expect("unreachable");
+                self.print_stmt(*stmt).expect("unreachable");
             }
         }
 
@@ -1876,14 +1842,13 @@ pub mod __gated_printer {
             loc: bun_ast::Loc,
             stmts: &[Stmt],
             close_brace_loc: Option<bun_ast::Loc>,
-            tlmtlo: TopLevel,
         ) {
             self.add_source_mapping(loc);
             self.print(b"{");
             if !stmts.is_empty() {
                 self.print_newline();
                 self.indent();
-                self.print_block_body(stmts, tlmtlo);
+                self.print_block_body(stmts);
                 self.unindent();
                 self.print_indent();
             }
@@ -2164,12 +2129,7 @@ pub mod __gated_printer {
                 false,
             );
             self.print_space();
-            self.print_block(
-                func.body.loc,
-                slice_of(func.body.stmts),
-                None,
-                TopLevel::init(IsTopLevel::No),
-            );
+            self.print_block(func.body.loc, slice_of(func.body.stmts), None);
         }
 
         pub fn print_class(&mut self, class: &G::Class) {
@@ -2194,12 +2154,7 @@ pub mod __gated_printer {
                     self.print(b"static");
                     self.print_space();
                     let csb = item.class_static_block_ref().unwrap();
-                    self.print_block(
-                        csb.loc,
-                        csb.stmts.slice(),
-                        None,
-                        TopLevel::init(IsTopLevel::No),
-                    );
+                    self.print_block(csb.loc, csb.stmts.slice(), None);
                     self.print_newline();
                     continue;
                 }
@@ -3450,12 +3405,7 @@ pub mod __gated_printer {
                     }
 
                     if !was_printed {
-                        self.print_block(
-                            e.body.loc,
-                            slice_of(e.body.stmts),
-                            None,
-                            TopLevel::init(IsTopLevel::No),
-                        );
+                        self.print_block(e.body.loc, slice_of(e.body.stmts), None);
                     }
 
                     if wrap {
@@ -4907,7 +4857,7 @@ pub mod __gated_printer {
             }
         }
 
-        pub fn print_stmt(&mut self, stmt: Stmt, tlmtlo: TopLevel) -> crate::Result<()> {
+        pub fn print_stmt(&mut self, stmt: Stmt) -> crate::Result<()> {
             if !self.stack_check.is_safe_to_recurse() {
                 self.stack_overflowed = true;
                 return Ok(());
@@ -5355,14 +5305,13 @@ pub mod __gated_printer {
                 }
                 StmtData::SIf(s) => {
                     self.print_indent();
-                    self.print_if(s, stmt.loc, tlmtlo.sub_var());
+                    self.print_if(s, stmt.loc);
                 }
                 StmtData::SDoWhile(s) => {
                     self.print_indent();
                     self.print_space_before_identifier();
                     self.add_source_mapping(stmt.loc);
                     self.print(b"do");
-                    let sub_var = tlmtlo.sub_var();
                     match s.body.data {
                         StmtData::SBlock(block) => {
                             self.print_space();
@@ -5370,14 +5319,13 @@ pub mod __gated_printer {
                                 s.body.loc,
                                 slice_of(block.stmts),
                                 Some(block.close_brace_loc),
-                                sub_var,
                             );
                             self.print_space();
                         }
                         _ => {
                             self.print_newline();
                             self.indent();
-                            self.print_stmt(s.body, sub_var).expect("unreachable");
+                            self.print_stmt(s.body).expect("unreachable");
                             self.print_semicolon_if_needed();
                             self.unindent();
                             self.print_indent();
@@ -5405,7 +5353,7 @@ pub mod __gated_printer {
                     self.print_space();
                     self.print_expr(s.value, Level::Lowest, ExprFlag::none());
                     self.print(b")");
-                    self.print_body(s.body, tlmtlo.sub_var());
+                    self.print_body(s.body);
                 }
                 StmtData::SForOf(s) => {
                     self.print_indent();
@@ -5425,7 +5373,7 @@ pub mod __gated_printer {
                     self.print_space();
                     self.print_expr(s.value, Level::Comma, ExprFlag::none());
                     self.print(b")");
-                    self.print_body(s.body, tlmtlo.sub_var());
+                    self.print_body(s.body);
                 }
                 StmtData::SWhile(s) => {
                     self.print_indent();
@@ -5436,7 +5384,7 @@ pub mod __gated_printer {
                     self.print(b"(");
                     self.print_expr(s.test, Level::Lowest, ExprFlag::none());
                     self.print(b")");
-                    self.print_body(s.body, tlmtlo.sub_var());
+                    self.print_body(s.body);
                 }
                 StmtData::SWith(s) => {
                     self.print_indent();
@@ -5447,7 +5395,7 @@ pub mod __gated_printer {
                     self.print(b"(");
                     self.print_expr(s.value, Level::Lowest, ExprFlag::none());
                     self.print(b")");
-                    self.print_body(s.body, tlmtlo.sub_var());
+                    self.print_body(s.body);
                 }
                 StmtData::SLabel(s) => {
                     if !self.options.minify_whitespace && self.options.indent.count > 0 {
@@ -5457,7 +5405,7 @@ pub mod __gated_printer {
                     self.add_source_mapping(stmt.loc);
                     self.print_symbol(s.name.ref_);
                     self.print(b":");
-                    self.print_body(s.stmt, tlmtlo.sub_var());
+                    self.print_body(s.stmt);
                 }
                 StmtData::STry(s) => {
                     self.print_indent();
@@ -5465,8 +5413,7 @@ pub mod __gated_printer {
                     self.add_source_mapping(stmt.loc);
                     self.print(b"try");
                     self.print_space();
-                    let sub_var_try = tlmtlo.sub_var();
-                    self.print_block(s.body_loc, slice_of(s.body), None, sub_var_try);
+                    self.print_block(s.body_loc, slice_of(s.body), None);
 
                     if let Some(catch) = &s.catch {
                         self.print_space();
@@ -5479,14 +5426,14 @@ pub mod __gated_printer {
                             self.print(b")");
                         }
                         self.print_space();
-                        self.print_block(catch.body_loc, slice_of(catch.body), None, sub_var_try);
+                        self.print_block(catch.body_loc, slice_of(catch.body), None);
                     }
 
                     if let Some(finally) = &s.finally {
                         self.print_space();
                         self.print(b"finally");
                         self.print_space();
-                        self.print_block(finally.loc, slice_of(finally.stmts), None, sub_var_try);
+                        self.print_block(finally.loc, slice_of(finally.stmts), None);
                     }
 
                     self.print_newline();
@@ -5517,7 +5464,7 @@ pub mod __gated_printer {
                     }
 
                     self.print(b")");
-                    self.print_body(s.body, tlmtlo.sub_var());
+                    self.print_body(s.body);
                 }
                 StmtData::SSwitch(s) => {
                     self.print_indent();
@@ -5546,8 +5493,6 @@ pub mod __gated_printer {
                         }
 
                         self.print(b":");
-
-                        let sub_var_case = tlmtlo.sub_var();
                         let c_body = slice_of(c.body);
                         if c_body.len() == 1 {
                             if let StmtData::SBlock(block) = &c_body[0].data {
@@ -5556,7 +5501,6 @@ pub mod __gated_printer {
                                     c_body[0].loc,
                                     slice_of(block.stmts),
                                     Some(block.close_brace_loc),
-                                    sub_var_case,
                                 );
                                 self.print_newline();
                                 continue;
@@ -5567,7 +5511,7 @@ pub mod __gated_printer {
                         self.indent();
                         for st in c_body.iter() {
                             self.print_semicolon_if_needed();
-                            self.print_stmt(*st, sub_var_case).expect("unreachable");
+                            self.print_stmt(*st).expect("unreachable");
                         }
                         self.unindent();
                     }
@@ -5913,12 +5857,7 @@ pub mod __gated_printer {
                 }
                 StmtData::SBlock(s) => {
                     self.print_indent();
-                    self.print_block(
-                        stmt.loc,
-                        slice_of(s.stmts),
-                        Some(s.close_brace_loc),
-                        tlmtlo.sub_var(),
-                    );
+                    self.print_block(stmt.loc, slice_of(s.stmts), Some(s.close_brace_loc));
                     self.print_newline();
                 }
                 StmtData::SDebugger(_) => {
@@ -6075,7 +6014,7 @@ pub mod __gated_printer {
             }
         }
 
-        pub fn print_if(&mut self, s: &S::If, loc: bun_ast::Loc, tlmtlo: TopLevel) {
+        pub fn print_if(&mut self, s: &S::If, loc: bun_ast::Loc) {
             // `else if` chains recurse here directly without passing through
             // `print_stmt`, so they need their own guard.
             if !self.stack_check.is_safe_to_recurse() {
@@ -6098,7 +6037,6 @@ pub mod __gated_printer {
                         s.yes.loc,
                         slice_of(block.stmts),
                         Some(block.close_brace_loc),
-                        tlmtlo,
                     );
                     if s.no.is_some() {
                         self.print_space();
@@ -6113,7 +6051,7 @@ pub mod __gated_printer {
                         self.print_newline();
 
                         self.indent();
-                        self.print_stmt(s.yes, tlmtlo).expect("unreachable");
+                        self.print_stmt(s.yes).expect("unreachable");
                         self.unindent();
                         self.needs_semicolon = false;
 
@@ -6128,7 +6066,7 @@ pub mod __gated_printer {
                     } else {
                         self.print_newline();
                         self.indent();
-                        self.print_stmt(s.yes, tlmtlo).expect("unreachable");
+                        self.print_stmt(s.yes).expect("unreachable");
                         self.unindent();
 
                         if s.no.is_some() {
@@ -6147,16 +6085,16 @@ pub mod __gated_printer {
                 match &no_block.data {
                     StmtData::SBlock(block) => {
                         self.print_space();
-                        self.print_block(no_block.loc, slice_of(block.stmts), None, tlmtlo);
+                        self.print_block(no_block.loc, slice_of(block.stmts), None);
                         self.print_newline();
                     }
                     StmtData::SIf(s_if) => {
-                        self.print_if(s_if, no_block.loc, tlmtlo);
+                        self.print_if(s_if, no_block.loc);
                     }
                     _ => {
                         self.print_newline();
                         self.indent();
-                        self.print_stmt(*no_block, tlmtlo).expect("unreachable");
+                        self.print_stmt(*no_block).expect("unreachable");
                         self.unindent();
                     }
                 }
@@ -6626,7 +6564,7 @@ pub mod __gated_printer {
                 );
                 self.print(b" => {\n");
                 self.indent();
-                self.print_block_body(slice_of(func.body.stmts), TopLevel::init(IsTopLevel::No));
+                self.print_block_body(slice_of(func.body.stmts));
                 self.unindent();
                 self.print_indent();
                 self.print(b"}, ");
@@ -7419,7 +7357,7 @@ pub fn print_ast<'a, W: WriterTrait, const ASCII_ONLY: bool, const GENERATE_SOUR
 
     for part in tree.parts.iter() {
         for stmt in slice_of(part.stmts).iter() {
-            printer.print_stmt(*stmt, TopLevel::init(IsTopLevel::Yes))?;
+            printer.print_stmt(*stmt)?;
             printer.writer.get_error()?;
             printer.print_semicolon_if_needed();
         }
@@ -7653,7 +7591,7 @@ pub fn print_with_writer_and_platform<
 
         for part in parts {
             for stmt in slice_of(part.stmts).iter() {
-                if let Err(err) = printer.print_stmt(*stmt, TopLevel::init(IsTopLevel::Yes)) {
+                if let Err(err) = printer.print_stmt(*stmt) {
                     return PrintResult::Err(err);
                 }
                 if let Err(err) = printer.writer.get_error() {

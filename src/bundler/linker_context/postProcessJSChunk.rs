@@ -389,7 +389,6 @@ pub fn post_process_js_chunk(
                 code: Box::default(),
                 source_map: None,
             }),
-            decls: Box::default(),
         };
     };
 
@@ -1231,7 +1230,6 @@ pub fn generate_entry_point_tail_js<'a>(
                 code: Box::default(),
                 source_map: None,
             }),
-            decls: Box::default(),
         };
     }
 
@@ -1277,6 +1275,5 @@ pub fn generate_entry_point_tail_js<'a>(
             r,
         ),
         source_index,
-        decls: Box::default(),
     }
 }

@@ -1639,7 +1639,7 @@ describe("bundler", () => {
     run: true,
   });
   itBundled(`extra/FunctionHoistingKeepNames1`, {
-    todo: true, // keepNames requires Object.defineProperty implementation
+    todo: true, // https://github.com/oven-sh/bun/issues/36320
     files: {
       "in.js": `
       var f
@@ -1651,7 +1651,7 @@ describe("bundler", () => {
     run: true,
   });
   itBundled(`extra/FunctionHoistingKeepNames2`, {
-    todo: true, // keepNames requires Object.defineProperty implementation
+    todo: true, // https://github.com/oven-sh/bun/issues/36320
     files: {
       "in.js": `
       var f
@@ -1663,10 +1663,11 @@ describe("bundler", () => {
     run: true,
   });
   itBundled(`extra/FunctionHoistingKeepNames3`, {
-    // --keep-names does not yet emit __name() for the block-level function
-    // lowering, so the bundled output reads f.name as the renamed "f2" (node
-    // agrees). This previously passed by accident because the runtime
-    // transpiler inlined the single-use let back into the var assignment.
+    // https://github.com/oven-sh/bun/issues/36320: --keep-names does not yet
+    // emit __name() for the block-level function lowering, so the bundled
+    // output reads f.name as the renamed "f2" (node agrees). This previously
+    // passed by accident because the runtime transpiler inlined the
+    // single-use let back into the var assignment.
     todo: true,
     files: {
       "in.ts": `
@@ -1687,7 +1688,7 @@ describe("bundler", () => {
     run: true,
   });
   itBundled(`extra/FunctionHoistingKeepNames4`, {
-    todo: true, // same --keep-names gap as FunctionHoistingKeepNames3
+    todo: true, // https://github.com/oven-sh/bun/issues/36320
     files: {
       "in.ts": `
       if (1) {

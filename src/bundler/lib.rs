@@ -46,9 +46,8 @@ pub use options_impl::PathTemplate;
 pub use HTMLImportManifest::html_import_manifest;
 pub use bun_core::cheap_prefix_normalizer;
 pub use bundle_v2::{
-    CompileResult, CompileResultForSourceMap, ContentHasher, DeclInfo, DeclInfoKind, EventLoop,
-    ImportTracker, PartRange, StableRef, WrapKind, generic_path_with_pretty_initialized,
-    target_from_hashbang,
+    CompileResult, CompileResultForSourceMap, ContentHasher, EventLoop, ImportTracker, PartRange,
+    StableRef, WrapKind, generic_path_with_pretty_initialized, target_from_hashbang,
 };
 pub use chunk::{
     CrossChunkImport, CrossChunkImportItem, CrossChunkImportItemList, bun_renamer,

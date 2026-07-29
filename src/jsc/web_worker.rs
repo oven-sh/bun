@@ -1244,12 +1244,9 @@ impl WebWorker {
             // other thread can dereference it now — `&mut` is exclusive.
             let vm = unsafe { &mut *vm_ptr };
             vm.is_shutting_down = true;
-            // dispatchExitInternal's termination guard skips process.on('exit')
-            // on terminate() (node semantics), so the pending
-            // TerminationException may stay in place across on_exit.
+            // on_exit first: dispatchExitInternal skips 'exit' on terminate (node semantics).
             vm.on_exit();
-            // Now clear it so close_all_socket_groups' on_close callbacks can
-            // re-enter JS. teardownJSCVM re-sets the flag for the VM teardown.
+            // Cleared here so close_all_socket_groups can re-enter JS; teardownJSCVM re-sets it.
             vm.global().clear_termination_exception();
             if let Some(hooks) = runtime_hooks() {
                 (hooks.cron_clear_all_teardown)(vm);

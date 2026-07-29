@@ -852,7 +852,7 @@ describe("File prototype chain", () => {
     }
   });
 
-  test("multipart part with filename=\"\" round-trips as a File", async () => {
+  test('multipart part with filename="" round-trips as a File', async () => {
     const body = '--b\r\nContent-Disposition: form-data; name="f"; filename=""\r\n\r\nhi\r\n--b--\r\n';
     const fd = await new Response(body, {
       headers: { "content-type": "multipart/form-data; boundary=b" },

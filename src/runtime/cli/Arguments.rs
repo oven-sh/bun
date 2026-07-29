@@ -578,7 +578,7 @@ pub(crate) const TEST_ONLY_PARAMS: &[ParamType] = &[
         "--bail <NUMBER>?                 Exit the test suite after <NUMBER> failures. If you do not specify a number, it defaults to 1."
     ),
     parse_param!(
-        "-t, --test-name-pattern/--grep <STR>    Run only tests with a name that matches the given regex."
+        "-t, --test-name-pattern/--grep <STR>...    Run only tests with a name that matches the given regex."
     ),
     parse_param!(
         "--reporter <STR>                 Test output reporter format. Available: 'junit' (requires --reporter-outfile), 'dots'. Default: console output."
@@ -1718,8 +1718,10 @@ fn parse_test_command_options(args: &clap::Args<clap::Help>, ctx: Context<'_>) {
         bun_core::pretty_errorln!("<r><red>error<r>: --retry cannot be used with --rerun-each");
         Global::exit(1);
     }
-    if let Some(name_pattern) = args.option(b"--test-name-pattern") {
-        ctx.test_options.test_filter_pattern = Some(name_pattern.into());
+    // Node.js allows `--test-name-pattern` to be repeated; a test matches if
+    // it matches any supplied pattern. Each is compiled to its own regex so
+    // capture-group numbering stays local to the pattern the user wrote.
+    for name_pattern in args.options(b"--test-name-pattern") {
         let regex = match RegularExpression::init(
             bun_core::String::from_bytes(name_pattern),
             RegexFlags::None,
@@ -1733,10 +1735,15 @@ fn parse_test_command_options(args: &clap::Args<clap::Help>, ctx: Context<'_>) {
                 Global::exit(1);
             }
         };
+        ctx.test_options
+            .test_filter_pattern
+            .push(Box::from(*name_pattern));
         // The compiled regex lives in `bun_jsc::RegularExpression` (T6); the
         // T3 `TestOptions` field is type-erased to `NonNull<()>` to break the
         // back-edge. High tier owns construction/destruction.
-        ctx.test_options.test_filter_regex = core::ptr::NonNull::new(regex.cast::<()>());
+        if let Some(ptr) = core::ptr::NonNull::new(regex.cast::<()>()) {
+            ctx.test_options.test_filter_regex.push(ptr);
+        }
     }
     if let Some(since) = args.option(b"--changed") {
         ctx.test_options.changed = Some(since.into());

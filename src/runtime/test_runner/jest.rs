@@ -141,7 +141,7 @@ pub struct TestRunner<'a> {
     /// Raw `*mut` because `RegularExpression::matches` mutates its internal
     /// cursor through C++ — storing `&'a RegularExpression` and casting back to
     /// `*mut` at the use site would launder shared provenance into a write (UB).
-    pub filter_regex: Option<core::ptr::NonNull<RegularExpression>>,
+    pub filter_regex: Box<[core::ptr::NonNull<RegularExpression>]>,
 
     pub unhandled_errors_between_tests: u32,
     pub summary: Summary,

@@ -1035,7 +1035,7 @@ impl BunTest {
 
                 let has_filter = if let Some(reporter) = self.reporter {
                     // SAFETY: reporter outlives every BunTest (see field doc).
-                    unsafe { reporter.as_ref() }.jest.filter_regex.is_some()
+                    !unsafe { reporter.as_ref() }.jest.filter_regex.is_empty()
                 } else {
                     false
                 };

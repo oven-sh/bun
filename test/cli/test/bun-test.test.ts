@@ -1324,6 +1324,48 @@ describe("bun test", () => {
     `);
   });
 
+  test.each([
+    ["-t", "alpha", "-t", "beta"],
+    ["--test-name-pattern", "alpha", "--test-name-pattern", "beta"],
+    ["--grep", "alpha", "-t", "beta"],
+  ])("repeated -t/--test-name-pattern runs the union of matches", (...args) => {
+    const stderr = runTest({
+      args,
+      input: `
+        import { test } from "bun:test";
+        test("alpha one", () => {});
+        test("beta two", () => {});
+        test("gamma three", () => {});
+      `,
+      expectExitCode: 0,
+    });
+    expect(stderr).toContain("(pass) alpha one");
+    expect(stderr).toContain("(pass) beta two");
+    expect(stderr).not.toContain("(pass) gamma three");
+    expect(stderr).toContain("2 pass");
+    expect(stderr).toContain("1 filtered out");
+  });
+
+  test("repeated -t compiles each pattern independently (backreferences stay local)", () => {
+    const stderr = runTest({
+      args: ["-t", "(foo)\\1", "-t", "(bar)\\1"],
+      input: `
+        import { test } from "bun:test";
+        test("foofoo", () => {});
+        test("just bar", () => {});
+        test("barbar", () => {});
+        test("quux", () => {});
+      `,
+      expectExitCode: 0,
+    });
+    expect(stderr).toContain("(pass) foofoo");
+    expect(stderr).toContain("(pass) barbar");
+    expect(stderr).not.toContain("(pass) just bar");
+    expect(stderr).not.toContain("(pass) quux");
+    expect(stderr).toContain("2 pass");
+    expect(stderr).toContain("2 filtered out");
+  });
+
   test("--tsconfig-override works", () => {
     using dir = tempDir("test-tsconfig-override", {
       "math.test.ts": `

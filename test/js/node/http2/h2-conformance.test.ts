@@ -1068,7 +1068,7 @@ async function hostileServerProbe(
     req.on("response", h => (gotResponse = h as Record<string, string>));
     req.on("error", (e: NodeJS.ErrnoException) => (streamError ??= e));
     req.on("close", () => {
-      if (req!.rstCode) streamRstCode = req!.rstCode;
+      streamRstCode = req!.rstCode ?? null;
       reqClosed.resolve();
     });
     req.end();
@@ -1177,12 +1177,14 @@ describe("client rejects server-side protocol violations (RFC 9113)", () => {
     expect(goaway!.payload.readUInt32BE(4)).toBe(wireCode);
   });
 
-  // §8.3.2: a response block is malformed (stream-level PROTOCOL_ERROR, RST_STREAM, no
-  // 'response' event) if :status is missing or a request pseudo-header is present.
+  // §8.3.2/§8.1: a response block is malformed (stream-level PROTOCOL_ERROR, RST_STREAM, no
+  // 'response' event) if :status is missing, a request pseudo-header is present, or a 1xx
+  // status carries END_STREAM.
   test.concurrent.each([
     ["missing :status", hpackField("x-only", "hi")],
     ["with a request pseudo-header (:method)", Buffer.concat([Buffer.from([0x88]), hpackField(":method", "GET")])],
     ["with a request pseudo-header (:path)", Buffer.concat([Buffer.from([0x88]), hpackField(":path", "/")])],
+    ["with a 1xx status and END_STREAM", hpackField(":status", "100")],
   ] as const)("a response block %s is reset with PROTOCOL_ERROR and never delivered (§8.3.2)", async (_, block) => {
     const { sessionError, streamError, streamRstCode, gotResponse, frames } = await hostileServerProbe(raw =>
       raw.sendFrame(FrameType.HEADERS, 0x5, 1, block),

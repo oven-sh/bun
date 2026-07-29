@@ -1192,6 +1192,10 @@ impl Connection {
                             }
                             if rest == b"status" && value_b.len() == 3 && value_b[0] == b'1' {
                                 informational = true;
+                                // §8.1: an informational response carrying END_STREAM is malformed.
+                                if is_response && self.header_end_stream {
+                                    malformed = true;
+                                }
                             }
                             seen_pseudo |= bit;
                             if rest == b"method" && value_b == b"CONNECT" {

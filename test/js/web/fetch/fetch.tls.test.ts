@@ -113,6 +113,30 @@ describe.concurrent("fetch-tls", () => {
     });
   });
 
+  it("fetch honors tls.ciphers when building the client SSL context", async () => {
+    // A TLSv1.2-capped server that reports the cipher it actually negotiated.
+    const server = tls.createServer({ ...CERT_LOCALHOST_IP, maxVersion: "TLSv1.2" }, socket => {
+      const body = JSON.stringify({ negotiated: socket.getCipher().name });
+      socket.on("error", () => {});
+      socket.end(`HTTP/1.1 200 OK\r\nContent-Length: ${body.length}\r\nConnection: close\r\n\r\n${body}`);
+    });
+    await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
+    const port = (server.address() as import("node:net").AddressInfo).port;
+    try {
+      // CHACHA20-POLY1305 is not first in either BoringSSL's "ALL" order or
+      // bun's DEFAULT_CIPHER_LIST, so it will only be negotiated if the client
+      // offers exactly this one suite.
+      const pin = "ECDHE-RSA-CHACHA20-POLY1305";
+      const res = await fetch(`https://localhost:${port}/`, {
+        keepalive: false,
+        tls: { ca: validTls.cert, ciphers: pin },
+      });
+      expect(await res.json()).toEqual({ negotiated: pin });
+    } finally {
+      server.close();
+    }
+  });
+
   it("fetch with valid tls should not throw", async () => {
     await createServer(CERT_LOCALHOST_IP, async port => {
       const urls = [`https://localhost:${port}`, `https://127.0.0.1:${port}`];

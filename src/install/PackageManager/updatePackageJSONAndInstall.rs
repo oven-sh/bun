@@ -548,8 +548,7 @@ fn update_package_json_and_install_with_manager_with_updates(
                 editing_catalogs = true;
 
                 if manager.options.do_.contains(Do::UPDATE_TO_LATEST) {
-                    // catalog entries now hold a temporary `latest`; re-print into the
-                    // cache entry so install resolves those, then re-parse to keep the AST in sync.
+                    // entries now hold a temporary `latest`; refresh the cache so install resolves those.
                     print_package_json_into_cache_entry(root_package_json, root_package_json_root);
                     if let Err(err) = root_package_json.reparse_root(manager.log_mut()) {
                         bun_core::pretty_errorln!(

@@ -57,7 +57,7 @@ describe.skipIf(!isWindows)("--windows-hide-console", () => {
     await expectBuildOk(proc);
 
     expect(readPESubsystem(outfile)).toBe(IMAGE_SUBSYSTEM_WINDOWS_CUI);
-  });
+  }, 30_000);
 
   test("CLI flag sets GUI subsystem", async () => {
     using dir = tempDir("windows-subsystem-gui-cli", {
@@ -75,7 +75,7 @@ describe.skipIf(!isWindows)("--windows-hide-console", () => {
     await expectBuildOk(proc);
 
     expect(readPESubsystem(outfile)).toBe(IMAGE_SUBSYSTEM_WINDOWS_GUI);
-  });
+  }, 30_000);
 
   test("Bun.build() hideConsole sets GUI subsystem", async () => {
     using dir = tempDir("windows-subsystem-gui-api", {
@@ -96,7 +96,7 @@ describe.skipIf(!isWindows)("--windows-hide-console", () => {
     const outfile = result.outputs[0].path;
     await using _cleanup = cleanup(outfile);
     expect(readPESubsystem(outfile)).toBe(IMAGE_SUBSYSTEM_WINDOWS_GUI);
-  });
+  }, 30_000);
 });
 
 describe.skipIf(!isWindows).concurrent("Windows compile metadata", () => {

@@ -1534,12 +1534,12 @@ fn build_msgs_to_worker_error(
         if i > 0 {
             message.push('\n');
         }
-        message.push_str(&std::string::String::from_utf8_lossy(&msg.data.text));
+        let _ = write!(message, "{}", bstr::BStr::new(&msg.data.text));
         if let Some(loc) = &msg.data.location {
             let _ = write!(
                 message,
                 " ({}:{}:{})",
-                std::string::String::from_utf8_lossy(&loc.file),
+                bstr::BStr::new(&loc.file),
                 loc.line,
                 loc.column,
             );

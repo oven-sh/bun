@@ -23,6 +23,13 @@ bun_core::define_scoped_log!(debug, Fs, hidden);
 // `bun_core::strings`; `bun_resolver::fs_full::BOM` re-exports it.
 pub use bun_core::strings::BOM;
 
+/// Whether the host filesystem is assumed case-sensitive. macOS (APFS/HFS+
+/// default) and Windows (NTFS default) are case-insensitive; Linux/FreeBSD
+/// (ext4, xfs, zfs, btrfs) are case-sensitive. This selects how [`DirEntry`]
+/// keys its per-directory entry map and whether a case-mismatched lookup is a
+/// hit (case-insensitive) or a miss (case-sensitive).
+pub const FS_CASE_SENSITIVE: bool = !(cfg!(target_os = "macos") || cfg!(windows));
+
 pub(crate) mod preallocate {
     pub(crate) mod counts {
         pub(crate) const FILES: usize = 4096;
@@ -410,7 +417,11 @@ impl<'a> EntryLookup<'a> {
 pub mod dir_entry {
     use super::{Entry, EntryStoreBacking};
 
-    /// Lowercased-basename → entry-pointer map backing `DirEntry::data`.
+    /// Basename → entry-pointer map backing `DirEntry::data`. Keyed by the
+    /// on-disk basename on case-sensitive filesystems and by its
+    /// ASCII-lowercased form on case-insensitive ones (see
+    /// [`super::FS_CASE_SENSITIVE`]), so two files that differ only in case
+    /// occupy distinct slots where the filesystem distinguishes them.
     pub(crate) type EntryMap = bun_collections::StringHashMap<*mut Entry>;
 
     /// Process-wide append-only store that owns all `Entry` allocations.
@@ -531,14 +542,11 @@ impl DirEntry {
             | DK::EventPort => return Ok(()),
         };
 
-        // Lowercase the entry basename once. The same bytes drive the
-        // previous-generation case-insensitive probe, the new entry's
-        // lowercased key, *and* the insert into `self.data` — and the hash is
-        // computed once here (`name_hash`) rather than re-derived by the probe
-        // and again by the insert. A stack scratch covers the common short
-        // case (matches `DirEntry::get`); only a basename longer than
-        // `MAX_PATH_BYTES` — which `getdents`/`FindNextFile` can't produce —
-        // would touch the heap.
+        // Lowercase the entry basename once. `name_lc` backs the stored
+        // `Entry.base_lowercase_` and, on case-insensitive hosts, the map key.
+        // A stack scratch covers the common short case (matches
+        // `DirEntry::get`); only a basename longer than `MAX_PATH_BYTES` —
+        // which `getdents`/`FindNextFile` can't produce — would touch the heap.
         let mut name_lc_buf = PathBuffer::uninit();
         let name_lc_heap: Option<bun_collections::StringHashMapContext::PrehashedCaseInsensitive> =
             if name_slice.len() <= MAX_PATH_BYTES {
@@ -554,14 +562,21 @@ impl DirEntry {
             Some(p) => &p.input[..],
             None => strings::copy_lowercase_if_needed(name_slice, &mut name_lc_buf[..]),
         };
-        let name_hash = self.data.hash_key(name_lc);
+        // `data` is keyed by the on-disk basename on case-sensitive hosts (so
+        // `mod.js` and `Mod.js` occupy distinct slots) and by the lowercased
+        // form on case-insensitive hosts (where the two cannot coexist and a
+        // case-mismatched lookup must still hit). The same key drives the
+        // prev-generation probe and the insert below; hash once here.
+        let name_key: &[u8] = if FS_CASE_SENSITIVE {
+            name_slice
+        } else {
+            name_lc
+        };
+        let name_hash = self.data.hash_key(name_key);
 
         let stored: *mut Entry = 'brk: {
             if let Some(map) = prev_map {
-                // `data` keys are the lowercased basenames, so an exact match on
-                // `name_lc` is the case-insensitive match — and reuses
-                // `name_hash` instead of re-hashing.
-                if let Some(&existing_ptr) = map.get_hashed(name_hash, name_lc) {
+                if let Some(&existing_ptr) = map.get_hashed(name_hash, name_key) {
                     // SAFETY: EntryStore-owned pointer, valid for lifetime of store
                     let existing = unsafe { &mut *existing_ptr };
                     // `MutexGuard` stores a `BackRef<Mutex>` (lifetime-erased), so
@@ -645,19 +660,24 @@ impl DirEntry {
         // SAFETY: just produced from EntryStore append or prev_map lookup
         let stored_ref = unsafe { &mut *stored };
 
-        // PERF: the
-        // generic `put` here would heap-box a second key copy. `base_lowercase`
-        // points either into the `Entry`'s inline `StringOrTinyString` buffer
-        // (≤31B names) or into the process-static `FilenameStore`; the `Entry`
-        // itself lives in the process-lifetime `EntryStore` BSSList, so in
-        // both cases the bytes are address-stable for the life of the process.
-        // Widen to `'static` and store the slice directly.
+        // PERF: the generic `put` here would heap-box a second key copy.
+        // `base_` / `base_lowercase_` point either into the `Entry`'s inline
+        // `StringOrTinyString` buffer (≤31B names) or into the process-static
+        // `FilenameStore`; the `Entry` itself lives in the process-lifetime
+        // `EntryStore` BSSList, so in both cases the bytes are address-stable
+        // for the life of the process. Widen to `'static` and store the slice
+        // directly.
         // SAFETY: `stored` is an `EntryStore` slot (never freed, never moved);
-        // `base_lowercase_` is never mutated after construction.
-        let key: &'static [u8] =
-            unsafe { &*core::ptr::from_ref::<[u8]>((*stored).base_lowercase()) };
-        // `(*stored).base_lowercase()` equals `name_lc` byte-for-byte (a fresh
-        // entry interned `name_lc`; a recycled one matched it exactly above), so
+        // `base_` / `base_lowercase_` are never mutated after construction.
+        let key: &'static [u8] = unsafe {
+            &*core::ptr::from_ref::<[u8]>(if FS_CASE_SENSITIVE {
+                (*stored).base()
+            } else {
+                (*stored).base_lowercase()
+            })
+        };
+        // `key` equals `name_key` byte-for-byte (a fresh entry interned
+        // `name_slice`/`name_lc`; a recycled one matched exactly above), so
         // `name_hash` is its hash too — insert without re-hashing.
         self.data.put_static_key_hashed(name_hash, key, stored)?;
 
@@ -692,8 +712,20 @@ impl DirEntry {
         if query_.is_empty() || query_.len() > MAX_PATH_BYTES {
             return None;
         }
-        let mut scratch_lookup_buffer = PathBuffer::uninit();
 
+        if FS_CASE_SENSITIVE {
+            // Exact-byte key: a hit is always an exact-case match, and a miss
+            // means the queried spelling does not exist on disk even if a
+            // differently-cased sibling does. Matches Node on ext4/xfs/etc.
+            let &result_ptr = self.data.get(query_)?;
+            return Some(EntryLookup {
+                entry: result_ptr,
+                diff_case: None,
+                _marker: core::marker::PhantomData,
+            });
+        }
+
+        let mut scratch_lookup_buffer = PathBuffer::uninit();
         let query = strings::copy_lowercase_if_needed(query_, &mut scratch_lookup_buffer[..]);
         let &result_ptr = self.data.get(query)?;
         // SAFETY: EntryStore-owned pointer, valid for lifetime of store; read-only
@@ -725,6 +757,9 @@ impl DirEntry {
     /// Looks up a cached entry by name. Takes a `&'static [u8]` that is
     /// already lowercase, so no per-call lowercasing buffer is needed.
     pub fn get_comptime_query<'a>(&'a self, query_lower: &'static [u8]) -> Option<EntryLookup<'a>> {
+        // On case-sensitive hosts `data` is keyed by exact bytes, so this is
+        // an exact-case lookup; on case-insensitive hosts the key is already
+        // lowercase, so the query matches regardless of the on-disk case.
         let &result_ptr = self.data.get(query_lower)?;
         // SAFETY: EntryStore-owned pointer; read-only basename compare.
         let basename = unsafe { &*result_ptr }.base();
@@ -752,6 +787,27 @@ impl DirEntry {
     /// True if a cached entry exists for the given already-lowercase name.
     pub fn has_comptime_query(&self, query_lower: &'static [u8]) -> bool {
         self.data.contains_key(query_lower)
+    }
+
+    /// Error-path helper: on a case-sensitive filesystem, return the on-disk
+    /// basename of an entry whose name matches `query` case-insensitively but
+    /// not exactly. Linear scan (cold path; reached only after a resolve
+    /// failure). `None` on case-insensitive hosts, where [`get`] already folds.
+    pub fn get_case_near_miss(&self, query: &[u8]) -> Option<&'static [u8]> {
+        if !FS_CASE_SENSITIVE || query.is_empty() {
+            return None;
+        }
+        for (_, &ptr) in self.data.iter() {
+            // SAFETY: EntryStore-owned pointer; read-only basename compare.
+            let basename = unsafe { &*ptr }.base();
+            if basename != query
+                && bun_core::strings::eql_case_insensitive_ascii(basename, query, true)
+            {
+                // SAFETY: `basename` borrows EntryStore (process-lifetime).
+                return Some(unsafe { &*core::ptr::from_ref::<[u8]>(basename) });
+            }
+        }
+        None
     }
 }
 

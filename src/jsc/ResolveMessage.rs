@@ -175,6 +175,14 @@ impl ResolveMessage {
                         BStr::new(referrer),
                     )
                     .ok();
+                    if let Some(actual) = Self::case_near_miss(specifier, referrer) {
+                        write!(
+                            &mut out,
+                            ". Did you mean '{}'? File names are case-sensitive on this filesystem.",
+                            BStr::new(actual),
+                        )
+                        .ok();
+                    }
                 }
                 return out;
             }
@@ -221,6 +229,29 @@ impl ResolveMessage {
             .ok();
         }
         out
+    }
+
+    /// Best-effort probe for a differently-cased sibling of a relative
+    /// `specifier` that failed to resolve. Only meaningful on case-sensitive
+    /// filesystems (returns `None` elsewhere) and only for `./`, `../`, or
+    /// absolute specifiers; consults the resolver's already-cached directory
+    /// listing, so a probe for a directory the resolver never visited yields
+    /// `None`.
+    fn case_near_miss(specifier: &[u8], referrer: &[u8]) -> Option<&'static [u8]> {
+        if !(specifier.starts_with(b"./")
+            || specifier.starts_with(b"../")
+            || bun_paths::is_absolute(specifier))
+        {
+            return None;
+        }
+        let source_dir = bun_paths::dirname(referrer)?;
+        let mut buf = bun_paths::path_buffer_pool::get();
+        let target = bun_paths::resolve_path::join_abs_string_buf_checked::<
+            bun_paths::platform::Auto,
+        >(source_dir, &mut buf[..], &[specifier])?;
+        let target_dir = bun_paths::dirname(target)?;
+        let target_base = bun_paths::basename(target);
+        bun_resolver::probe_case_near_miss(target_dir, target_base)
     }
 
     pub fn to_string_fn(&self, global: &JSGlobalObject) -> JSValue {

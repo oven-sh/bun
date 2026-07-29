@@ -37,23 +37,22 @@ describe("udpSocket() receive flags", () => {
   });
 
   // IP_RECVERR is Linux-specific. On BSDs and Windows, ICMP errors on
-  // unconnected UDP sockets either propagate by default or are delivered
-  // through different channels that we don't currently surface.
+  // unconnected UDP sockets are not queued by the kernel at all. The
+  // I/O-after-ICMP round-trip is covered by the reply-server test in
+  // udp_socket.test.ts; Bun.udpSocket exposes no public reconnect to
+  // exercise it on the connected path.
   test.skipIf(!isLinux)(
-    "surfaces ECONNREFUSED from ICMP port unreachable (IP_RECVERR) and keeps the socket usable",
+    "connected socket surfaces ECONNREFUSED from ICMP port unreachable and stays open",
     async () => {
       const { promise: errPromise, resolve: resolveErr } = Promise.withResolvers<Error & { code?: string }>();
-      const { promise: msgPromise, resolve: resolveMsg } = Promise.withResolvers<string>();
 
-      const receiver = await udpSocket({
-        socket: {
-          data(_socket, data) {
-            resolveMsg(data.toString());
-          },
-        },
-      });
+      // Bind then close a probe so the port is known-dead.
+      const probe = await udpSocket({});
+      const deadPort = probe.port;
+      probe.close();
 
       const sender = await udpSocket({
+        connect: { hostname: "127.0.0.1", port: deadPort },
         socket: {
           error(err: Error & { code?: string }) {
             resolveErr(err);
@@ -61,12 +60,10 @@ describe("udpSocket() receive flags", () => {
         },
       });
 
-      // Send to a closed port on localhost. The kernel replies with ICMP
-      // port unreachable; with IP_RECVERR the next recv surfaces ECONNREFUSED.
       let gotError = false;
       function sendDead() {
         if (!gotError && !sender.closed) {
-          sender.send("dead", 1, "127.0.0.1");
+          sender.send("dead");
           setTimeout(sendDead, 10);
         }
       }
@@ -76,20 +73,9 @@ describe("udpSocket() receive flags", () => {
         const err = await errPromise;
         gotError = true;
         expect(err?.code).toBe("ECONNREFUSED");
-        // The sender socket must remain usable after an ICMP error.
         expect(sender.closed).toBe(false);
-
-        function sendAlive() {
-          if (!sender.closed && !receiver.closed) {
-            sender.send("alive", receiver.port, "127.0.0.1");
-            setTimeout(sendAlive, 10);
-          }
-        }
-        sendAlive();
-        expect(await msgPromise).toBe("alive");
       } finally {
         sender.close();
-        receiver.close();
       }
     },
   );

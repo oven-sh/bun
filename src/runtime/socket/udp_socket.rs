@@ -95,9 +95,12 @@ extern "C" fn on_recv_error(socket: *mut uws::udp::Socket, errno: c_int, is_errq
     // Reached on every POSIX platform. `is_errqueue` distinguishes an ICMP
     // errno drained from Linux's MSG_ERRQUEUE from a real recvmmsg failure —
     // which on the BSDs (no error queue) is also how a connected socket's
-    // ICMP error (so_error) arrives. node:dgram must drop only the former on
-    // unconnected sockets, and the errno namespaces overlap.
+    // ICMP error (so_error) arrives. Node never enables IP_RECVERR, so its
+    // kernel drops ICMP for an unconnected socket; do the same here.
     let this: &UDPSocket = UDPSocket::from_uws(socket);
+    if is_errqueue != 0 && this.connect_info.get().is_none() {
+        return;
+    }
     let sys_err = bun_sys::Error::from_code_int(errno, bun_sys::Tag::recv);
     let global_this = this.global_this.get();
     // A callback earlier in the same poll dispatch may have left a
@@ -109,11 +112,7 @@ extern "C" fn on_recv_error(socket: *mut uws::udp::Socket, errno: c_int, is_errq
     if global_this.has_exception() {
         return;
     }
-    let err_value = sys_err.to_js(global_this);
-    if is_errqueue != 0 {
-        err_value.put(global_this, b"errqueue", JSValue::TRUE);
-    }
-    this.call_error_handler(JSValue::ZERO, err_value);
+    this.call_error_handler(JSValue::ZERO, sys_err.to_js(global_this));
 }
 
 extern "C" fn on_drain(socket: *mut uws::udp::Socket) {

@@ -724,12 +724,6 @@ function startBunSocket(self, state, createOptions) {
         },
         error: error => {
           if (error?.syscall === "recv") {
-            // Drop errqueue-origin ICMP errors on unconnected sockets like
-            // Node (which never enables IP_RECVERR); always emit real
-            // recvmmsg failures — the errno namespaces overlap.
-            if (error.errqueue === true && state.connectState !== CONNECT_STATE_CONNECTED) {
-              return;
-            }
             // Node reports receive-path failures as `recvmsg` errors; keep
             // the native error so its code stays platform-correct.
             error.syscall = "recvmsg";

@@ -2,7 +2,7 @@ import { describe, expect, jest, test } from "bun:test";
 import { createSocket } from "dgram";
 import { Worker } from "node:worker_threads";
 
-import { bunEnv, bunExe, disableAggressiveGCScope, isWindows } from "harness";
+import { bunEnv, bunExe, disableAggressiveGCScope, isLinux, isWindows } from "harness";
 import path from "path";
 import { nodeDataCases } from "./testdata";
 
@@ -437,6 +437,51 @@ test("setBroadcast()/setMulticastLoopback() before bind() throw EBADF", () => {
     expect(() => socket[method](true)).toThrow(`${method} EBADF`);
   }
   socket.close();
+});
+
+// An echo server in the Node docs shape (no 'error' listener) must survive a
+// client that sends one datagram and closes before the reply arrives. Linux
+// only: without IP_RECVERR the kernel never sets sk_err for an unconnected
+// socket, so the failure mode this guards does not exist elsewhere.
+test.skipIf(!isLinux)("unconnected echo server without an 'error' listener survives a vanished client", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+      import dgram from "node:dgram";
+      const server = dgram.createSocket("udp4");
+      server.on("message", (msg, rinfo) => server.send(msg, rinfo.port, rinfo.address));
+      await new Promise(r => server.bind(0, "127.0.0.1", r));
+      const port = server.address().port;
+      // First client: send and close immediately so the reply hits a dead port.
+      const c1 = dgram.createSocket("udp4");
+      await new Promise(r => c1.bind(0, "127.0.0.1", r));
+      c1.send("gone", port, "127.0.0.1", () => c1.close());
+      // Second client: must receive its echo after the ICMP.
+      const c2 = dgram.createSocket("udp4");
+      await new Promise(r => c2.bind(0, "127.0.0.1", r));
+      const got = await new Promise((resolve, reject) => {
+        let n = 0;
+        const t = setInterval(() => {
+          if (++n > 400) { clearInterval(t); return reject(new Error("timeout")); }
+          c2.send("probe", port, "127.0.0.1");
+        }, 10);
+        c2.on("message", m => { clearInterval(t); resolve(m.toString()); });
+      });
+      console.log(JSON.stringify({ got }));
+      c2.close();
+      server.close();
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(stdout.trim()).toBe(`{"got":"probe"}`);
+  expect(exitCode).toBe(0);
 });
 
 // An oversized datagram fails send(2) with EMSGSIZE; on the connected path no

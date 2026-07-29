@@ -2,7 +2,7 @@
 
 use bun_jsc::{JSGlobalObject, JSValue, JsResult};
 
-pub fn from_js(global: &JSGlobalObject, input: JSValue) -> JsResult<JSValue> {
+pub(crate) fn from_js(global: &JSGlobalObject, input: JSValue) -> JsResult<JSValue> {
     use bun_ast::Log;
     use bun_install::Subcommand;
     use bun_install::package_manager::update_request::{self, UpdateRequest};

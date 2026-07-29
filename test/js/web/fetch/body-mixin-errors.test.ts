@@ -31,6 +31,10 @@ describe("body-mixin-errors", () => {
   async function withTruncatedBodyServer<T>(fn: (url: string) => Promise<T>): Promise<T> {
     const body = Buffer.alloc(1000, "x").toString();
     const server = net.createServer(socket => {
+      // Drain the inbound request so 'end' can fire once the client closes;
+      // otherwise server.close() below waits on a paused socket with buffered
+      // data forever (Node behaves the same way).
+      socket.resume();
       socket.end(`HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 100000\r\n\r\n${body}`);
     });
     server.listen(0, "127.0.0.1");

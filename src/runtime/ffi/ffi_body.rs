@@ -1446,7 +1446,11 @@ fn invalid_options_arg(global: &JSGlobalObject) -> JSValue {
 }
 
 impl FFI {
-    pub fn open(global: &JSGlobalObject, name_str: ZigString, object_value: JSValue) -> JSValue {
+    pub(crate) fn open(
+        global: &JSGlobalObject,
+        name_str: ZigString,
+        object_value: JSValue,
+    ) -> JSValue {
         jsc::mark_binding();
         let vm = jsc::VirtualMachineRef::get();
         let name_slice = name_str.to_slice();
@@ -1620,7 +1624,7 @@ impl FFI {
         JSValue::UNDEFINED
     }
 
-    pub fn link_symbols(global: &JSGlobalObject, object_value: JSValue) -> JSValue {
+    pub(crate) fn link_symbols(global: &JSGlobalObject, object_value: JSValue) -> JSValue {
         jsc::mark_binding();
 
         if object_value.is_empty_or_undefined_or_null() {
@@ -2539,7 +2543,7 @@ static WORKAROUND: MyFunctionSStructWorkAround = MyFunctionSStructWorkAround {
 /// `js2native` codegen can resolve it as `crate::ffi::ffi::bun__ffi__cc`.
 #[allow(non_snake_case)]
 #[inline]
-pub fn bun__ffi__cc(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+pub(crate) fn bun__ffi__cc(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
     FFI::bun_ffi_cc(global, callframe)
 }
 

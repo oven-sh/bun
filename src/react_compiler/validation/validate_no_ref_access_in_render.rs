@@ -499,7 +499,7 @@ fn guard_check(errors: &mut Vec<CompilerDiagnostic>, operand: &Place, env: &Env)
 
 // --- Main entry point ---
 
-pub fn validate_no_ref_access_in_render(func: &HirFunction, env: &mut Environment) {
+pub(crate) fn validate_no_ref_access_in_render(func: &HirFunction, env: &mut Environment) {
     let mut ref_env = Env::new();
     collect_temporaries_sidemap(
         func,

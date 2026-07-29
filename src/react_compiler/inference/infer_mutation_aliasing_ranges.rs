@@ -456,7 +456,7 @@ fn append_function_errors(env: &mut Environment, function_id: FunctionId) {
 /// params/context-vars, aliasing between params/context-vars/return).
 ///
 /// Corresponds to TS `inferMutationAliasingRanges(fn, {isFunctionExpression})`.
-pub fn infer_mutation_aliasing_ranges(
+pub(crate) fn infer_mutation_aliasing_ranges(
     func: &mut HirFunction,
     env: &mut Environment,
     is_function_expression: bool,

@@ -93,23 +93,21 @@ pub(crate) struct PublishCommand;
 // Const generics cannot vary field types; the script fields and script_env are
 // kept as Option<> in both instantiations and we rely on
 // invariants (always None / never used when DIRECTORY_PUBLISH == false).
-pub struct Context<'a, const DIRECTORY_PUBLISH: bool> {
-    pub manager: &'a mut PackageManager,
-    pub command_ctx: Command::Context<'a>,
+pub(crate) struct Context<'a, const DIRECTORY_PUBLISH: bool> {
+    pub(crate) manager: &'a mut PackageManager,
+    pub(crate) command_ctx: Command::Context<'a>,
 
-    pub package_name: Box<[u8]>,
-    pub package_version: Box<[u8]>,
-    pub abs_tarball_path: Box<ZStr>,
-    pub tarball_bytes: Box<[u8]>,
-    pub shasum: SHA1Digest,
-    pub integrity: SHA512Digest,
-    pub uses_workspaces: bool,
+    pub(crate) package_name: Box<[u8]>,
+    pub(crate) package_version: Box<[u8]>,
+    pub(crate) abs_tarball_path: Box<ZStr>,
+    pub(crate) tarball_bytes: Box<[u8]>,
+    pub(crate) uses_workspaces: bool,
 
-    pub normalized_pkg_info: Box<[u8]>,
+    pub(crate) normalized_pkg_info: Box<[u8]>,
 
-    pub publish_script: Option<Box<[u8]>>,
-    pub postpublish_script: Option<Box<[u8]>>,
-    pub script_env: Option<&'a mut dotenv::Loader>,
+    pub(crate) publish_script: Option<Box<[u8]>>,
+    pub(crate) postpublish_script: Option<Box<[u8]>>,
+    pub(crate) script_env: Option<&'a mut dotenv::Loader>,
 }
 
 #[derive(thiserror::Error, Debug, strum::IntoStaticStr)]
@@ -139,7 +137,7 @@ pub(crate) type FromWorkspaceError = pack::PackError<true>;
 
 impl<'a, const DIRECTORY_PUBLISH: bool> Context<'a, DIRECTORY_PUBLISH> {
     /// Retrieve information for publishing from a tarball path, `bun publish path/to/tarball.tgz`
-    pub fn from_tarball_path(
+    pub(crate) fn from_tarball_path(
         ctx: Command::Context<'a>,
         manager: &'a mut PackageManager,
         tarball_path: &[u8],
@@ -444,8 +442,6 @@ impl<'a, const DIRECTORY_PUBLISH: bool> Context<'a, DIRECTORY_PUBLISH> {
             package_version,
             abs_tarball_path: ZStr::boxed(abs_tarball_path.as_bytes()),
             tarball_bytes: tarball_bytes.into(),
-            shasum,
-            integrity,
             uses_workspaces: false,
             normalized_pkg_info,
             publish_script: None,
@@ -460,7 +456,7 @@ impl<'a, const DIRECTORY_PUBLISH: bool> Context<'a, DIRECTORY_PUBLISH> {
     // valid shape. `'static` matches `pack::pack`'s return —
     // the embedded `&mut PackageManager` / `Command::Context` are process-
     // lifetime singletons reborrowed through raw pointers there.
-    pub fn from_workspace(
+    pub(crate) fn from_workspace(
         ctx: Command::Context<'a>,
         manager: &'a mut PackageManager,
     ) -> Result<Context<'static, true>, FromWorkspaceError> {
@@ -874,7 +870,7 @@ impl PublishCommand {
         false
     }
 
-    pub(crate) fn publish<const DIRECTORY_PUBLISH: bool>(
+    fn publish<const DIRECTORY_PUBLISH: bool>(
         ctx: &Context<'_, DIRECTORY_PUBLISH>,
     ) -> Result<(), PublishError> {
         let registry = ctx.manager.scope_for_package_name(&ctx.package_name);

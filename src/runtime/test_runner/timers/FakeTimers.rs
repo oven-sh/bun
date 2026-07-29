@@ -23,12 +23,12 @@ pub struct FakeTimers {
     /// - peek/takeFirst (provided by TimerHeap)
     /// - peekLast (cannot be implemented efficiently with TimerHeap)
     /// - count (cannot be implemented efficiently with TimerHeap)
-    pub timers: TimerHeap,
+    pub(crate) timers: TimerHeap,
 }
 
 // `date_now_offset` is stored as `AtomicU64` (f64 bits) so the static is `Sync`
 // without `static mut`.
-pub struct CurrentTime {
+pub(crate) struct CurrentTime {
     /// starts at 0. offset in milliseconds.
     offset_raw: RwLock<Timespec>,
     date_now_offset: AtomicU64,
@@ -36,13 +36,13 @@ pub struct CurrentTime {
 
 const MIN_TIMESPEC: Timespec = Timespec { sec: i64::MIN, nsec: i64::MIN };
 
-pub(crate) static CURRENT_TIME: CurrentTime = CurrentTime {
+static CURRENT_TIME: CurrentTime = CurrentTime {
     offset_raw: RwLock::new(MIN_TIMESPEC),
     date_now_offset: AtomicU64::new(0f64.to_bits()),
 };
 
 impl CurrentTime {
-    pub fn get_timespec_now(&self) -> Option<Timespec> {
+    pub(crate) fn get_timespec_now(&self) -> Option<Timespec> {
         let value = *self.offset_raw.read();
         if value.eql(&MIN_TIMESPEC) {
             return None;
@@ -50,7 +50,7 @@ impl CurrentTime {
         Some(value)
     }
 
-    pub fn set(&self, global: &JSGlobalObject, offset: &Timespec, js: Option<f64>) {
+    pub(crate) fn set(&self, global: &JSGlobalObject, offset: &Timespec, js: Option<f64>) {
         let vm = global.bun_vm().as_mut();
         {
             *self.offset_raw.write() = *offset;
@@ -72,7 +72,7 @@ impl CurrentTime {
         vm.overridden_performance_now = Some(offset.ns());
     }
 
-    pub fn clear(&self, global: &JSGlobalObject) {
+    pub(crate) fn clear(&self, global: &JSGlobalObject) {
         let vm = global.bun_vm().as_mut();
         {
             *self.offset_raw.write() = MIN_TIMESPEC;
@@ -93,7 +93,7 @@ impl CurrentTime {
 /// instead of the stale activation-time offset. No-op when fake timers are
 /// inactive or `ms` is NaN (the "clear override" sentinel).
 #[unsafe(no_mangle)]
-pub(crate) extern "C" fn Bun__FakeTimers__setSystemTime(ms: f64) {
+extern "C" fn Bun__FakeTimers__setSystemTime(ms: f64) {
     if ms.is_nan() {
         return;
     }
@@ -115,7 +115,7 @@ fn from_el_timespec(t: &ElTimespec) -> Timespec {
 }
 
 impl FakeTimers {
-    pub fn is_active(&self) -> bool {
+    pub(crate) fn is_active(&self) -> bool {
         self.active
     }
 

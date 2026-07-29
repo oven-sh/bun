@@ -27,7 +27,7 @@ mod options;
 
 pub mod codegen;
 pub mod lowering;
-pub mod pipeline;
+pub(crate) mod pipeline;
 pub mod program;
 
 pub use compile_result::{CompileDiagnostic, CompileOutput};

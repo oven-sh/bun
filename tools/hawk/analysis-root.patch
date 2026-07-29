@@ -1,0 +1,18 @@
+diff --git a/src/bun_bin/Cargo.toml b/src/bun_bin/Cargo.toml
+index 94839e8d1237..dd880fa1fa74 100644
+--- a/src/bun_bin/Cargo.toml
++++ b/src/bun_bin/Cargo.toml
+@@ -11,7 +11,12 @@ edition.workspace = true
+ [lib]
+ name = "bun_rust"
+ path = "lib.rs"
+-crate-type = ["staticlib"]
++crate-type = ["staticlib", "rlib"]
++
++# hawk dead-code linter smoke test: throwaway analysis root. See ../../hawk.toml.
++[[bin]]
++name = "bun_hawk_root"
++path = "hawk_root.rs"
+ 
+ [lints]
+ workspace = true

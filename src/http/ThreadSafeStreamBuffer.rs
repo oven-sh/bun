@@ -5,22 +5,22 @@ use bun_threading::Mutex;
 
 #[derive(bun_ptr::ThreadSafeRefCounted)]
 pub struct ThreadSafeStreamBuffer {
-    pub buffer: StreamBuffer,
-    pub mutex: Mutex,
+    pub(crate) buffer: StreamBuffer,
+    pub(crate) mutex: Mutex,
     /// Intrusive atomic refcount. Starts at 2: 1 for main thread and 1 for http thread.
-    pub ref_count: bun_ptr::ThreadSafeRefCount<ThreadSafeStreamBuffer>,
+    pub(crate) ref_count: bun_ptr::ThreadSafeRefCount<ThreadSafeStreamBuffer>,
     /// callback will be called passing the context for the http callback
     /// this is used to report when the buffer is drained and only if end chunk was not sent/reported
-    pub callback: Option<Callback>,
+    pub(crate) callback: Option<Callback>,
 }
 
 pub struct Callback {
-    pub callback: fn(*mut c_void),
-    pub context: *mut c_void,
+    pub(crate) callback: fn(*mut c_void),
+    pub(crate) context: *mut c_void,
 }
 
 impl Callback {
-    pub fn init<T>(callback: fn(*mut T), context: *mut T) -> Self {
+    pub(crate) fn init<T>(callback: fn(*mut T), context: *mut T) -> Self {
         Self {
             // SAFETY: fn(*mut T) and fn(*mut c_void) have identical ABI;
             // `context` is only ever passed back to this callback, which
@@ -30,7 +30,7 @@ impl Callback {
         }
     }
 
-    pub fn call(&self) {
+    pub(crate) fn call(&self) {
         (self.callback)(self.context);
     }
 }
@@ -75,7 +75,7 @@ impl ThreadSafeStreamBuffer {
         unsafe { bun_ptr::ThreadSafeRefCount::<Self>::deref(this.as_ptr()) };
     }
 
-    pub fn acquire(&mut self) -> &mut StreamBuffer {
+    pub(crate) fn acquire(&mut self) -> &mut StreamBuffer {
         self.mutex.lock();
         // The mutex stays locked until `release()`. Prefer `lock()` (RAII
         // guard) for simple critical sections; this split form remains for
@@ -83,7 +83,7 @@ impl ThreadSafeStreamBuffer {
         &mut self.buffer
     }
 
-    pub fn release(&mut self) {
+    pub(crate) fn release(&mut self) {
         self.mutex.unlock();
     }
 
@@ -108,7 +108,7 @@ impl ThreadSafeStreamBuffer {
 
     /// This is exclusively called from the http thread.
     /// Buffer should be acquired before calling this.
-    pub fn report_drain(&self) {
+    pub(crate) fn report_drain(&self) {
         if self.buffer.is_empty() {
             if let Some(callback) = &self.callback {
                 callback.call();

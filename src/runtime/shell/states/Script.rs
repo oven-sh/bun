@@ -10,14 +10,14 @@ use crate::shell::states::stmt::Stmt;
 use crate::shell::yield_::Yield;
 
 pub struct Script {
-    pub base: Base,
+    pub(crate) base: Base,
     /// Back-reference into the bumpalo-allocated AST (`ShellArgs::__arena`).
     /// The arena outlives every state node (it's dropped only when the
     /// interpreter is finalized), so the BackRef invariant holds. Stored
     /// lifetime-erased to keep `Node` lifetime-free.
     pub node: bun_ptr::BackRef<ast::Script>,
-    pub io: IO,
-    pub state: ScriptState,
+    pub(crate) io: IO,
+    pub(crate) state: ScriptState,
 }
 
 pub enum ScriptState {

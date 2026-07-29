@@ -95,57 +95,14 @@ const eventIds = {
 // Identity-stable placeholder for `#armNativeBridge`.
 function noopBridgeListener() {}
 
-// Headers Node's http.IncomingMessage keeps first-value-only (lib/_http_incoming.js).
-const kSingletonHeaders = new Set([
-  "age",
-  "authorization",
-  "content-length",
-  "content-type",
-  "etag",
-  "expires",
-  "from",
-  "host",
-  "if-modified-since",
-  "if-unmodified-since",
-  "last-modified",
-  "location",
-  "max-forwards",
-  "proxy-authorization",
-  "referer",
-  "retry-after",
-  "server",
-  "user-agent",
-]);
-
-let lazyReadable;
 function makeHandshakeResponse(statusCode, statusMessage, rawHeaders, body) {
-  lazyReadable ??= require("node:stream").Readable;
-  const res = new lazyReadable({ read() {} });
-  const headers = (res.headers = { __proto__: null });
-  res.rawHeaders = rawHeaders;
-  for (let i = 0; i < rawHeaders.length; i += 2) {
-    const lower = rawHeaders[i].toLowerCase();
-    const value = rawHeaders[i + 1];
-    const prev = headers[lower];
-    if (lower === "set-cookie") {
-      if (prev === undefined) headers[lower] = [value];
-      else prev.push(value);
-    } else if (prev === undefined) {
-      headers[lower] = value;
-    } else if (kSingletonHeaders.has(lower)) {
-      // Keep the first occurrence; discard the duplicate.
-    } else if (lower === "cookie") {
-      headers[lower] = prev + "; " + value;
-    } else {
-      headers[lower] = prev + ", " + value;
-    }
-  }
+  const res = new http.IncomingMessage(null);
+  res._addHeaderLines(rawHeaders, rawHeaders.length);
   res.statusCode = statusCode;
   res.statusMessage = statusMessage;
   res.httpVersion = "1.1";
   res.httpVersionMajor = 1;
   res.httpVersionMinor = 1;
-  res.socket = res.connection = null;
   if (body && body.length) res.push(body);
   res.push(null);
   return res;
@@ -393,6 +350,7 @@ class BunWebSocket extends EventEmitter {
       socket: null,
       [Symbol.toStringTag]: "ClientRequest",
     };
+    EventEmitter.$call(req);
     return req;
   }
 

@@ -2085,6 +2085,39 @@ pub(crate) fn path_template_needs(data: &[u8], field: PlaceholderField) -> bool 
     strings::contains(data, needle)
 }
 
+/// Returns `Some((byte_index, tail))` when `template` contains a `[` with no
+/// matching `]`, where `byte_index` is the position of that `[` and `tail` is
+/// the slice from that `[` to the end. Balanced templates return `None`.
+///
+/// The scan mirrors [`path_template_print`]'s depth-counting so the two agree
+/// on what is "unterminated".
+pub fn find_unterminated_placeholder(template: &[u8]) -> Option<(usize, &[u8])> {
+    let mut remain = template;
+    while let Some(j) = strings::index_of_char(remain, b'[') {
+        let j = j as usize;
+        let open_at = template.len() - remain.len() + j;
+        remain = &remain[j + 1..];
+        let mut count: isize = 1;
+        let mut close: Option<usize> = None;
+        for (idx, c) in remain.iter().enumerate() {
+            count += match *c {
+                b'[' => 1,
+                b']' => -1,
+                _ => 0,
+            };
+            if count == 0 {
+                close = Some(idx);
+                break;
+            }
+        }
+        let Some(end) = close else {
+            return Some((open_at, &template[open_at..]));
+        };
+        remain = &remain[end + 1..];
+    }
+    None
+}
+
 // Shared body for PathTemplate::print / PathTemplateConst::print (D064).
 // Writes raw path bytes via a byte-writer free fn (not `core::fmt::Display`).
 pub(crate) fn path_template_print<W: bun_io::Write>(
@@ -2240,6 +2273,15 @@ fn path_template_print_tolerates_malformed_brackets() {
     assert_eq!(run(b""), b"");
     // No change to well-formed templates.
     assert_eq!(run(b"[dir]/[name].[ext]"), b"D/N.E");
+
+    // The up-front validator agrees with the printer on what is unterminated.
+    assert_eq!(find_unterminated_placeholder(b"[name"), Some((0, b"[name".as_slice())));
+    assert_eq!(find_unterminated_placeholder(b"foo["), Some((3, b"[".as_slice())));
+    assert_eq!(find_unterminated_placeholder(b"[name]-[ext"), Some((7, b"[ext".as_slice())));
+    assert_eq!(find_unterminated_placeholder(b"a[b.js"), Some((1, b"[b.js".as_slice())));
+    assert_eq!(find_unterminated_placeholder(b""), None);
+    assert_eq!(find_unterminated_placeholder(b"[dir]/[name].[ext]"), None);
+    assert_eq!(find_unterminated_placeholder(b"[foo]-[name].[ext]"), None);
 }
 
 impl PathTemplate {

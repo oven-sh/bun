@@ -1,4 +1,5 @@
-import { describe } from "bun:test";
+import { describe, test, expect } from "bun:test";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { ESBUILD, itBundled } from "./expectBundled";
 
 describe("bundler", () => {
@@ -327,11 +328,11 @@ describe("bundler", () => {
   // https://github.com/oven-sh/bun/issues/7810
   // An unterminated known placeholder ("[name" with no closing "]") used to
   // panic the whole process with "range start index N out of range" because the
-  // known-placeholder branch advanced one byte past the end of the template.
-  // Run via the CLI backend so a regression crashes the spawned `bun build`,
-  // not the test runner.
-  for (const unterminated of ["[name", "[dir", "[ext", "[hash", "[target"]) {
-    itBundled(`naming/UnterminatedPlaceholderPanic/${unterminated.slice(1)}`, {
+  // known-placeholder branch in path_template_print advanced one byte past the
+  // end of the template. Run via the CLI backend so a regression crashes the
+  // spawned `bun build`, not the test runner.
+  for (const unterminated of ["[name", "[dir", "[ext", "[hash", "[target", "a[b.js", "[name]-[hash.js"]) {
+    itBundled(`naming/UnterminatedPlaceholder/${unterminated}`, {
       backend: "cli",
       files: {
         "/src/entry.js": `console.log(1);`,
@@ -339,26 +340,13 @@ describe("bundler", () => {
       root: "/src",
       entryNaming: unterminated,
       entryPointsRaw: ["./src/entry.js"],
-      onAfterBundle(api) {
-        api.assertFileExists(`/out/${unterminated}`);
+      bundleErrors: {
+        "<bun>": [`--entry-naming: unterminated "[`],
       },
     });
   }
-  itBundled("naming/UnterminatedAfterValidPlaceholder", {
-    backend: "cli",
-    files: {
-      "/src/entry.js": `console.log(1);`,
-    },
-    root: "/src",
-    entryNaming: "[name]-[hash.js",
-    entryPointsRaw: ["./src/entry.js"],
-    onAfterBundle(api) {
-      api.assertFileExists("/out/entry-[hash.js");
-    },
-    run: { file: "/out/entry-[hash.js", stdout: "1" },
-  });
-  // A `[` with no matching `]`, and an unknown `[placeholder]`, are kept as
-  // literal bytes in the output path rather than being silently dropped.
+  // An unknown `[placeholder]` with a matching `]` is kept as literal bytes in
+  // the output path rather than being silently dropped.
   itBundled("naming/UnknownPlaceholderIsLiteral", {
     backend: "cli",
     files: {
@@ -372,17 +360,38 @@ describe("bundler", () => {
     },
     run: { file: "/out/[nonexistent]-entry.js", stdout: "1" },
   });
-  itBundled("naming/StrayOpenBracketIsLiteral", {
-    backend: "cli",
-    files: {
-      "/src/entry.js": `console.log(1);`,
-    },
-    root: "/src",
-    entryNaming: "a[b.js",
-    entryPointsRaw: ["./src/entry.js"],
-    onAfterBundle(api) {
-      api.assertFileExists("/out/a[b.js");
-    },
-    run: { file: "/out/a[b.js", stdout: "1" },
-  });
+});
+
+// Same repro via the JS API: Bun.build({ naming: "[name" }) used to SIGABRT
+// the process (see #7810), so run it in a subprocess. After the fix the config
+// parser rejects the template up front with a catchable error.
+describe("bundler", () => {
+  for (const naming of [`"[name"`, `{ chunk: "[name]-[hash" }`, `{ asset: "pre[post" }`]) {
+    test(`naming/UnterminatedPlaceholderAPI ${naming}`, async () => {
+      using dir = tempDir("naming-unterminated", {
+        "e.ts": `console.log("hi");`,
+        "build.ts": `
+          try {
+            await Bun.build({ entrypoints: ["./e.ts"], outdir: "./out", throw: false, naming: ${naming} });
+            console.log("SURVIVED no-error");
+          } catch (e) {
+            console.log("SURVIVED", String(e));
+          }
+        `,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "build.ts"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).not.toContain("panic:");
+      expect(stdout).toContain("SURVIVED");
+      expect(stdout).toContain(`unterminated "[`);
+      expect(stdout).toContain(`(missing "]")`);
+      expect(exitCode).toBe(0);
+    });
+  }
 });

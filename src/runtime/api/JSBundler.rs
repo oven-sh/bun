@@ -998,23 +998,38 @@ pub mod js_bundler {
                         buf.into_boxed_slice()
                     }
                 };
+                let validate = |key: &str, s: &[u8]| -> JsResult<()> {
+                    if let Some((pos, tail)) = options::find_unterminated_placeholder(s) {
+                        return Err(global_this.throw_invalid_arguments(format_args!(
+                            "naming.{}: unterminated \"{}\" placeholder (missing \"]\") at position {}",
+                            key,
+                            bstr::BStr::new(tail),
+                            pos,
+                        )));
+                    }
+                    Ok(())
+                };
                 if naming.is_string() {
                     if let Some(slice) = config.get_optional_slice(global_this, b"naming")? {
+                        validate("entry", slice.slice())?;
                         this.names.entry_point.data = with_dot_slash(slice.slice());
                         drop(slice);
                     }
                 } else if naming.is_object() {
                     if let Some(slice) = naming.get_optional_slice(global_this, b"entry")? {
+                        validate("entry", slice.slice())?;
                         this.names.entry_point.data = with_dot_slash(slice.slice());
                         drop(slice);
                     }
 
                     if let Some(slice) = naming.get_optional_slice(global_this, b"chunk")? {
+                        validate("chunk", slice.slice())?;
                         this.names.chunk.data = with_dot_slash(slice.slice());
                         drop(slice);
                     }
 
                     if let Some(slice) = naming.get_optional_slice(global_this, b"asset")? {
+                        validate("asset", slice.slice())?;
                         this.names.asset.data = with_dot_slash(slice.slice());
                         drop(slice);
                     }

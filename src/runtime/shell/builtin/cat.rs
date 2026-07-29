@@ -237,7 +237,7 @@ impl Cat {
         err: Option<bun_sys::SystemError>,
     ) -> Yield {
         if let Some(e) = err {
-            let errno = e.get_errno() as ExitCode;
+            let errno = Builtin::status_for(e.get_errno());
             let rchild = ReaderChildPtr {
                 node: cmd,
                 tag: ReaderTag::Cat,
@@ -341,7 +341,7 @@ impl Cat {
         cmd: NodeId,
         err: Option<bun_sys::SystemError>,
     ) -> Yield {
-        let errno: ExitCode = err.map(|e| e.get_errno() as ExitCode).unwrap_or(0);
+        let errno: ExitCode = err.map(|e| Builtin::status_for(e.get_errno())).unwrap_or(0);
         let stdout_needs_io = Builtin::of(interp, cmd).stdout.needs_io().is_some();
         let mut cancel = false;
         let step = match &mut Self::state_mut(interp, cmd).state {

@@ -389,7 +389,7 @@ impl Rm {
             }
             state => {
                 if let Some(err) = &e {
-                    let code = err.get_errno() as ExitCode;
+                    let code = Builtin::status_for(err.get_errno());
                     *state = RmState::Err(code);
                     Some(code)
                 } else {

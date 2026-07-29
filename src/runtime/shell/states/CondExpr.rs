@@ -2,6 +2,7 @@
 
 use crate::shell::ExitCode;
 use crate::shell::ast;
+use crate::shell::builtin::Builtin;
 use crate::shell::interpreter::{Interpreter, Node, NodeId, ShellExecEnv, log};
 use crate::shell::io::IO;
 use crate::shell::states::base::Base;
@@ -162,9 +163,7 @@ impl CondExpr {
         }
     }
 
-    /// IOWriter completion callback for the error message written in
-    /// `WaitingWriteErr`: on write failure finish with the errno as the exit
-    /// code, otherwise finish with exit code 1.
+    /// IOWriter completion for the `WaitingWriteErr` message: always finish 1.
     pub(crate) fn on_io_writer_chunk(
         interp: &Interpreter,
         this: NodeId,
@@ -173,9 +172,7 @@ impl CondExpr {
     ) -> Yield {
         let parent = interp.as_condexpr(this).base.parent;
         if let Some(e) = err {
-            // Recover the positive errno (`to_shell_system_error` negated it).
-            let exit_code: ExitCode = e.errno.unsigned_abs() as ExitCode;
-            return interp.child_done(parent, this, exit_code);
+            return interp.child_done(parent, this, Builtin::status_for(e.get_errno()));
         }
         if matches!(
             interp.as_condexpr(this).state,

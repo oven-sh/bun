@@ -961,6 +961,22 @@ impl CreateCommand {
             let parent_dir = bun_sys::Dir::open(destination)?;
             if template_has_gitignore {
                 // rename replaces an existing .gitignore; linkat fails EEXIST.
+                // Only a directory can block the rename; --force clears it.
+                if create_options.overwrite
+                    && bun_sys::directory_exists_at(
+                        parent_dir.fd(),
+                        bun_core::zstr!(".gitignore"),
+                    )
+                    .unwrap_or(false)
+                {
+                    if let Err(err) = parent_dir.delete_tree(b".gitignore") {
+                        pretty_errorln!(
+                            "<r><red>{}<r>: removing .gitignore",
+                            bstr::BStr::new(err.name()),
+                        );
+                        Global::exit(1);
+                    }
+                }
                 if let Err(err) = bun_sys::renameat(
                     parent_dir.fd(),
                     bun_core::zstr!("gitignore"),

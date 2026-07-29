@@ -328,11 +328,10 @@ impl PackageManager {
                     continue;
                 }
 
-                let features = match pkg_resolutions[parent_id].tag {
-                    ResolutionTag::Root | ResolutionTag::Workspace | ResolutionTag::Folder => {
-                        self.options.local_package_features
-                    }
-                    _ => self.options.remote_package_features,
+                let features = if pkg_resolutions[parent_id].tag.is_local_package() {
+                    self.options.local_package_features
+                } else {
+                    self.options.remote_package_features
                 };
                 // even if optional dependencies are enabled, it's still allowed to fail
                 if failed_dep.behavior.is_optional() || !failed_dep.behavior.is_enabled(features) {

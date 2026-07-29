@@ -962,6 +962,16 @@ impl Tag {
         self == Tag::Git || self == Tag::Github
     }
 
+    /// A local package: the root, a workspace, or a `file:` folder package.
+    /// Their package.jsons are authored by the user (or by files the user
+    /// explicitly points the project at), unlike content fetched from a
+    /// registry, git host, or tarball. Local packages get
+    /// `local_package_features` and their `file:` dependency paths are trusted
+    /// like root dependencies.
+    pub fn is_local_package(self) -> bool {
+        self == Tag::Root || self == Tag::Workspace || self == Tag::Folder
+    }
+
     pub fn can_enqueue_install_task(self) -> bool {
         self == Tag::Npm
             || self == Tag::LocalTarball

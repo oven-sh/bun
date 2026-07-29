@@ -3330,3 +3330,105 @@ describe("TLS handshake callback throw", () => {
     }
   });
 });
+
+it("GC of an unref'd Bun.listen() with live connections does not run the close handler inside the heap sweep", async () => {
+  // The Listener finalizer used to force-close its socket group from inside
+  // the GC sweep, which synchronously dispatched each accepted socket's
+  // on_close and read the JS close handler from a JSC cell mid-sweep,
+  // tripping JSC's validateIsNotSweeping assertion (SIGABRT in release). The
+  // finalizer now defers the group close to the event loop, so the accepted
+  // sockets' close handlers fire normally on the next tick.
+  const src = `
+    let serverClose = 0, serverOpen = 0, clientClose = 0;
+    const accepted = Promise.withResolvers();
+    function makeUnreffedListener() {
+      const srv = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: {
+        data() {}, error() {},
+        open() { if (++serverOpen === 3) accepted.resolve(); },
+        close() { serverClose++; },
+      }});
+      const port = srv.port;
+      srv.unref();
+      return port;
+    }
+    const conns = [];
+    for (let i = 0; i < 3; i++) {
+      const port = makeUnreffedListener();
+      conns.push(await Bun.connect({ hostname: "127.0.0.1", port,
+        socket: { data() {}, open(s) { s.write("x"); }, error() {},
+          close() { clientClose++; } } }));
+    }
+    await accepted.promise;
+    // Drive GC until the finalized listeners have force-closed their accepted
+    // sockets (observed via the server close handler and the client close),
+    // bounded so an unfixed build that SIGABRTs on the first sweep fails the
+    // stdout/exitCode assertions instead of hanging.
+    for (let i = 0; (serverClose < 3 || clientClose < 3) && i < 200; i++) { Bun.gc(true); await Bun.sleep(5); }
+    console.log("serverClose=" + serverClose + " clientClose=" + clientClose);
+    for (const c of conns) c.end();
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", src],
+    env: bunEnv,
+    stderr: "pipe",
+    stdout: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  // The deferred close fires the server's close handler from the event loop
+  // (the accepted sockets are not themselves being finalized), and the client
+  // sees a normal close.
+  expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+    stdout: "serverClose=3 clientClose=3",
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
+it("GC of an unref'd TLS Bun.listen() with live connections does not run the handshake handler inside the heap sweep", async () => {
+  // TLS sibling of the plain-TCP test above. us_internal_ssl_close fires a
+  // synthetic ECONNRESET on_handshake for a socket whose handshake has not
+  // yet completed, on its way to raw-close, so without deferral the
+  // Listener finalizer reaches on_handshake from inside the GC sweep too.
+  const src = `
+    const { key, cert } = JSON.parse(process.env.TLS_JSON);
+    let serverClose = 0, serverOpen = 0, clientClose = 0;
+    const accepted = Promise.withResolvers();
+    const socket = {
+      data() {}, error() {}, handshake() {},
+      open() { if (++serverOpen === 3) accepted.resolve(); },
+      close() { serverClose++; },
+    };
+    const conns = [];
+    async function makeDroppedTlsListenerWithLiveConn() {
+      const srv = Bun.listen({ hostname: "127.0.0.1", port: 0, tls: { key, cert }, socket });
+      const port = srv.port;
+      srv.unref();
+      conns.push(await Bun.connect({ hostname: "127.0.0.1", port,
+        tls: { rejectUnauthorized: false },
+        socket: { data() {}, open() {}, error() {}, handshake() {},
+          close() { clientClose++; } } }));
+      void srv.port;
+    }
+    for (let i = 0; i < 3; i++) await makeDroppedTlsListenerWithLiveConn();
+    await accepted.promise;
+    // Drive GC until the finalized listeners have force-closed their accepted
+    // sockets (observed via the server close handler and the client close),
+    // bounded so an unfixed build SIGABRTs on an early sweep and fails the
+    // assertions instead of hanging.
+    for (let i = 0; (serverClose < 3 || clientClose < 3) && i < 400; i++) { Bun.gc(true); await Bun.sleep(5); }
+    console.log("serverClose=" + serverClose + " clientClose=" + clientClose);
+    for (const c of conns) c.end();
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", src],
+    env: { ...bunEnv, TLS_JSON: JSON.stringify(tls) },
+    stderr: "pipe",
+    stdout: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+    stdout: "serverClose=3 clientClose=3",
+    stderr: "",
+    exitCode: 0,
+  });
+});

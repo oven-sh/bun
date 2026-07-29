@@ -867,7 +867,41 @@ impl Listener {
         }
         // `deinit` frees the allocation itself (`heap::take`); hand ownership
         // back so its existing raw-ptr teardown path stays intact.
-        Self::deinit(Box::into_raw(self));
+        let this = Box::into_raw(self);
+        // SAFETY: just leaked; exclusive until `deinit` reclaims it.
+        let this_ref = unsafe { &*this };
+
+        // Retire the swept wrapper's `JsRef` and the back-pointer now so
+        // nothing between here and the deferred `deinit` can observe the dead
+        // `JSListener` via `socket.listener`. Both writes are plain Rust state
+        // (no JSC heap access); `deinit` repeats them idempotently.
+        this_ref.this_value.with_mut(|r| r.finalize());
+        this_ref.handlers.set_listener(None);
+
+        // With live connections `deinit` force-closes the socket group, which
+        // synchronously dispatches each accepted socket's `on_close` (and for
+        // TLS, `on_handshake`) and reads the JS handler from the
+        // `JSSocketHandlers` cell. Reading a cell from inside the GC sweep
+        // trips JSC's `validateIsNotSweeping` assertion, so defer the whole
+        // teardown to the event loop. The task owns `this` until it runs; the
+        // accepted sockets' own JS wrappers keep the handlers cell alive.
+        if this_ref.handlers.active_connections.get() > 0 {
+            let vm = this_ref.handlers.vm;
+            if vm.is_shutting_down() {
+                // The event loop won't tick again, and running `close_all`
+                // inline would still read the cell mid-sweep. Leak the
+                // Listener; fds are reclaimed either by process exit or by the
+                // worker's `close_all_socket_groups` via the loop's group list.
+                return;
+            }
+            vm.event_loop_mut()
+                .enqueue_task(jsc::ManagedTask::ManagedTask::new(this, |this| {
+                    Self::deinit(this);
+                    Ok(())
+                }));
+            return;
+        }
+        Self::deinit(this);
     }
 
     /// Match Node.js/libuv: unlink the unix socket file before closing the listening fd.

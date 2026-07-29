@@ -5,6 +5,7 @@ const classes = [
   "FileSink",
   "HTTPResponseSink",
   "HTTPSResponseSink",
+  "H2ResponseSink",
   "H3ResponseSink",
   "NetworkSink",
 ];
@@ -1042,6 +1043,7 @@ function rustSink() {
     FileSink: "crate::webcore::file_sink::FileSink",
     HTTPResponseSink: "crate::webcore::streams::HTTPResponseSink",
     HTTPSResponseSink: "crate::webcore::streams::HTTPSResponseSink",
+    H2ResponseSink: "crate::webcore::streams::H2ResponseSink",
     H3ResponseSink: "crate::webcore::streams::H3ResponseSink",
     NetworkSink: "crate::webcore::streams::NetworkSink",
   };

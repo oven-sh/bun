@@ -1,5 +1,6 @@
 use core::ffi::c_ushort;
 
+use crate::h2::Request as H2Request;
 use crate::h3::Request as H3Request;
 
 /// Transport-agnostic request handle. Static/file routes (and RangeRequest)
@@ -8,6 +9,7 @@ use crate::h3::Request as H3Request;
 pub enum AnyRequest {
     H1(*mut Request),
     H3(*mut H3Request),
+    H2(*mut H2Request),
 }
 
 impl AnyRequest {
@@ -18,24 +20,28 @@ impl AnyRequest {
         match self {
             Self::H1(r) => bun_opaque::opaque_deref_mut(*r).header(name),
             Self::H3(r) => bun_opaque::opaque_deref_mut(*r).header(name),
+            Self::H2(r) => bun_opaque::opaque_deref_mut(*r).header(name),
         }
     }
     pub fn method(&self) -> &[u8] {
         match self {
             Self::H1(r) => bun_opaque::opaque_deref_mut(*r).method(),
             Self::H3(r) => bun_opaque::opaque_deref_mut(*r).method(),
+            Self::H2(r) => bun_opaque::opaque_deref_mut(*r).method(),
         }
     }
     pub fn url(&self) -> &[u8] {
         match self {
             Self::H1(r) => bun_opaque::opaque_deref_mut(*r).url(),
             Self::H3(r) => bun_opaque::opaque_deref_mut(*r).url(),
+            Self::H2(r) => bun_opaque::opaque_deref_mut(*r).url(),
         }
     }
     pub fn set_yield(&mut self, y: bool) {
         match self {
             Self::H1(r) => bun_opaque::opaque_deref_mut(*r).set_yield(y),
             Self::H3(r) => bun_opaque::opaque_deref_mut(*r).set_yield(y),
+            Self::H2(r) => bun_opaque::opaque_deref_mut(*r).set_yield(y),
         }
     }
 }

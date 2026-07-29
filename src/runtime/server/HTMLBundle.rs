@@ -285,7 +285,7 @@ impl Route {
                             resp,
                         ));
                     }
-                    AnyRequest::H3(_) => {
+                    AnyRequest::H3(_) | AnyRequest::H2(_) => {
                         resp.write_status(b"503 Service Unavailable");
                         resp.end(b"DevServer HMR is HTTP/1.1 only", true);
                     }

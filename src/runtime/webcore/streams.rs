@@ -76,6 +76,7 @@ pub enum Start {
     FileSink(FileSinkOptions),
     HTTPSResponseSink,
     HTTPResponseSink,
+    H2ResponseSink,
     H3ResponseSink,
     NetworkSink,
     Ready,
@@ -93,6 +94,7 @@ pub enum StartTag {
     FileSink,
     HTTPSResponseSink,
     HTTPResponseSink,
+    H2ResponseSink,
     H3ResponseSink,
     NetworkSink,
     Ready,
@@ -159,6 +161,9 @@ impl Start {
             }
             StartTag::HTTPResponseSink => {
                 Self::from_js_with_tag::<{ StartTag::HTTPResponseSink }>(global_this, value)
+            }
+            StartTag::H2ResponseSink => {
+                Self::from_js_with_tag::<{ StartTag::H2ResponseSink }>(global_this, value)
             }
             StartTag::H3ResponseSink => {
                 Self::from_js_with_tag::<{ StartTag::H3ResponseSink }>(global_this, value)
@@ -277,6 +282,7 @@ impl Start {
             StartTag::NetworkSink
             | StartTag::HTTPSResponseSink
             | StartTag::HTTPResponseSink
+            | StartTag::H2ResponseSink
             | StartTag::H3ResponseSink => {
                 let mut empty = true;
                 let mut chunk_size: BlobSizeType = 2048;
@@ -974,10 +980,10 @@ impl SignalVTable {
 // Selecting the response type from the const generics would require an
 // associated-type trait keyed on them. The pointer is kept opaque at the
 // type level; all dispatch happens at runtime through `any_res()` / `uws::AnyResponse`.
-pub type UwsResponse<const SSL: bool, const HTTP3: bool> = c_void;
+pub type UwsResponse<const SSL: bool, const MUX: u8> = c_void;
 
-pub struct HTTPServerWritable<const SSL: bool, const HTTP3: bool> {
-    pub res: Option<*mut UwsResponse<SSL, HTTP3>>,
+pub struct HTTPServerWritable<const SSL: bool, const MUX: u8> {
+    pub res: Option<*mut UwsResponse<SSL, MUX>>,
     pub buffer: Vec<u8>,
     pub pooled_buffer: Option<NonNull<ByteListPoolNode>>,
     pub offset: BlobSizeType,
@@ -1017,7 +1023,7 @@ pub struct HTTPServerWritable<const SSL: bool, const HTTP3: bool> {
     pub auto_flusher: AutoFlusher,
 }
 
-impl<const SSL: bool, const HTTP3: bool> Default for HTTPServerWritable<SSL, HTTP3> {
+impl<const SSL: bool, const MUX: u8> Default for HTTPServerWritable<SSL, MUX> {
     fn default() -> Self {
         Self {
             res: None,
@@ -1043,7 +1049,7 @@ impl<const SSL: bool, const HTTP3: bool> Default for HTTPServerWritable<SSL, HTT
     }
 }
 
-impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
+impl<const SSL: bool, const MUX: u8> HTTPServerWritable<SSL, MUX> {
     /// Borrow the JS global stored at construction.
     ///
     /// Invariant: `global_this` is set before first use (any auto-flusher
@@ -1065,8 +1071,10 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
         self.buffer.capacity() as usize
     }
 
-    pub const NAME: &'static str = if HTTP3 {
+    pub const NAME: &'static str = if MUX == uws::MUX_H3 {
         "H3ResponseSink"
+    } else if MUX == uws::MUX_H2 {
+        "H2ResponseSink"
     } else if SSL {
         "HTTPSResponseSink"
     } else {
@@ -1077,24 +1085,27 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
 
 /// Per-monomorphization JSSink wrapper alias. Mirrors
 /// `pub const JSSink = Sink.JSSink(@This(), name)`.
-pub type HTTPServerWritableJSSink<const SSL: bool, const HTTP3: bool> =
-    crate::webcore::sink::JSSink<HTTPServerWritable<SSL, HTTP3>>;
+pub type HTTPServerWritableJSSink<const SSL: bool, const MUX: u8> =
+    crate::webcore::sink::JSSink<HTTPServerWritable<SSL, MUX>>;
 
 // `HTTPServerWritable` is exposed to JS via `Sink.JSSink(@This(), name)` where
-// `name` ∈ {HTTPResponseSink, HTTPSResponseSink, H3ResponseSink}. Const-generics
-// can't drive `#[link_name]`, so declare all three extern sets in a private mod
-// and dispatch at call time on `(SSL, HTTP3)`. The branch is on const generics;
-// the optimizer folds it to a direct call per monomorphization.
+// `name` ∈ {HTTPResponseSink, HTTPSResponseSink, H2ResponseSink, H3ResponseSink}.
+// Const-generics can't drive `#[link_name]`, so declare all four extern sets in a
+// private mod and dispatch at call time on `(SSL, MUX)`. The branch is on const
+// generics; the optimizer folds it to a direct call per monomorphization.
 mod http_sink_abi {
     crate::decl_js_sink_externs!("HTTPResponseSink" as http);
     crate::decl_js_sink_externs!("HTTPSResponseSink" as https);
+    crate::decl_js_sink_externs!("H2ResponseSink" as h2);
     crate::decl_js_sink_externs!("H3ResponseSink" as h3);
 }
 
 macro_rules! http_sink_dispatch {
     ($f:ident($($arg:expr),*)) => {
-        if HTTP3 {
+        if MUX == uws::MUX_H3 {
             http_sink_abi::h3::$f($($arg),*)
+        } else if MUX == uws::MUX_H2 {
+            http_sink_abi::h2::$f($($arg),*)
         } else if SSL {
             http_sink_abi::https::$f($($arg),*)
         } else {
@@ -1103,8 +1114,8 @@ macro_rules! http_sink_dispatch {
     };
 }
 
-impl<const SSL: bool, const HTTP3: bool> crate::webcore::sink::JsSinkAbi
-    for HTTPServerWritable<SSL, HTTP3>
+impl<const SSL: bool, const MUX: u8> crate::webcore::sink::JsSinkAbi
+    for HTTPServerWritable<SSL, MUX>
 {
     fn from_js_extern(value: JSValue) -> usize {
         http_sink_dispatch!(from_js(value))
@@ -1138,13 +1149,15 @@ impl<const SSL: bool, const HTTP3: bool> crate::webcore::sink::JsSinkAbi
     }
 }
 
-impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
+impl<const SSL: bool, const MUX: u8> HTTPServerWritable<SSL, MUX> {
     /// Const-generic → runtime dispatch for the type-erased `res` field.
     #[inline]
     fn any_res(&self) -> Option<uws::AnyResponse> {
         let res = self.res?;
-        Some(if HTTP3 {
+        Some(if MUX == uws::MUX_H3 {
             uws::AnyResponse::H3(res.cast::<uws::H3::Response>())
+        } else if MUX == uws::MUX_H2 {
+            uws::AnyResponse::H2(res.cast::<uws::H2::Response>())
         } else if SSL {
             uws::AnyResponse::SSL(res.cast::<uws::Response<true>>())
         } else {
@@ -1337,7 +1350,7 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
         &self.buffer[self.offset as usize..]
     }
 
-    pub fn on_writable(&mut self, write_offset: u64, _res: *mut UwsResponse<SSL, HTTP3>) -> bool {
+    pub fn on_writable(&mut self, write_offset: u64, _res: *mut UwsResponse<SSL, MUX>) -> bool {
         // write_offset is the amount of data that was written not how much we need to write
         bun_core::scoped_log!(HTTPServerWritableLog, "onWritable ({})", write_offset);
         // onWritable reset backpressure state to allow flushing
@@ -1999,13 +2012,15 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
 // `JsSinkType` impl: routes the codegen `${name}__{construct,write,end,flush,
 // start,getInternalFd,memoryCost}` thunks (via `JSSink::<Self>::js_*`) into
 // the inherent streaming methods above. Mirrors `Sink.JSSink(@This(), name)`.
-impl<const SSL: bool, const HTTP3: bool> crate::webcore::sink::JsSinkType
-    for HTTPServerWritable<SSL, HTTP3>
+impl<const SSL: bool, const MUX: u8> crate::webcore::sink::JsSinkType
+    for HTTPServerWritable<SSL, MUX>
 {
     const NAME: &'static str = Self::NAME;
     const HAS_FLUSH_FROM_JS: bool = true;
-    const START_TAG: Option<StartTag> = Some(if HTTP3 {
+    const START_TAG: Option<StartTag> = Some(if MUX == uws::MUX_H3 {
         StartTag::H3ResponseSink
+    } else if MUX == uws::MUX_H2 {
+        StartTag::H2ResponseSink
     } else if SSL {
         StartTag::HTTPSResponseSink
     } else {
@@ -2050,9 +2065,10 @@ impl<const SSL: bool, const HTTP3: bool> crate::webcore::sink::JsSinkType
     }
 }
 
-pub type HTTPSResponseSink = HTTPServerWritable<true, false>;
-pub type HTTPResponseSink = HTTPServerWritable<false, false>;
-pub type H3ResponseSink = HTTPServerWritable<true, true>;
+pub type HTTPSResponseSink = HTTPServerWritable<true, { uws::MUX_H1 }>;
+pub type HTTPResponseSink = HTTPServerWritable<false, { uws::MUX_H1 }>;
+pub type H2ResponseSink = HTTPServerWritable<true, { uws::MUX_H2 }>;
+pub type H3ResponseSink = HTTPServerWritable<true, { uws::MUX_H3 }>;
 
 // ──────────────────────────────────────────────────────────────────────────
 // NetworkSink

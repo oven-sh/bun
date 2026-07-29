@@ -477,6 +477,12 @@ impl StaticRoute {
                 // S008: `h3::Response` is an `opaque_ffi!` ZST — safe deref.
                 bun_opaque::opaque_deref_mut(r).write_status(s);
             }
+            AnyResponse::H2(r) => {
+                let mut b = bun_core::fmt::ItoaBuf::new();
+                let s = bun_core::fmt::itoa(&mut b, status);
+                // S008: `h2::Response` is an `opaque_ffi!` ZST — safe deref.
+                bun_opaque::opaque_deref_mut(r).write_status(s);
+            }
         }
     }
 

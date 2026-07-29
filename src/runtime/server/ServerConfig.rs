@@ -59,6 +59,7 @@ pub struct ServerConfig {
     pub allow_hot: bool,
     pub ipv6_only: bool,
     pub http3: bool,
+    pub http2: bool,
     pub http1: bool,
 
     pub had_routes_object: bool,
@@ -92,6 +93,7 @@ impl Default for ServerConfig {
             allow_hot: true,
             ipv6_only: false,
             http3: false,
+            http2: false,
             http1: true,
             had_routes_object: false,
             static_routes: Vec::new(),
@@ -276,6 +278,7 @@ impl ServerConfig {
             allow_hot: self.allow_hot,
             ipv6_only: self.ipv6_only,
             http3: self.http3,
+            http2: self.http2,
             http1: self.http1,
             had_routes_object: self.had_routes_object,
             static_routes: core::mem::take(&mut self.static_routes),
@@ -466,7 +469,71 @@ pub(crate) fn apply_static_route_h3<T>(
     }
 }
 
-/// Per-route trait that `apply_static_route{,_h3}` monomorphizes over
+/// # Safety
+/// `entry` must be a live route pointer that outlives `app` — it is registered
+/// as the uWS userdata and dereferenced from request callbacks for the lifetime
+/// of the app.
+// Forwards `entry` to `T::set_server` and to uWS as opaque userdata without
+// dereferencing it here; not_unsafe_ptr_arg_deref is a false positive on
+// opaque-token forwarding.
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
+pub(crate) fn apply_static_route_h2<T>(
+    server: AnyServer,
+    app: &mut uws::h2::App,
+    entry: *mut T,
+    path: &[u8],
+    method: http_method::Optional,
+    path_has_user_head_route: bool,
+) where
+    T: StaticRouteLike<false>,
+{
+    // SAFETY: caller passes a live route pointer for the lifetime of the app.
+    unsafe { T::set_server(entry, server) };
+
+    fn handler<T: StaticRouteLike<false>>(
+        route: &mut T,
+        req: &mut uws::h2::Request,
+        resp: &mut uws::h2::Response,
+    ) {
+        // SAFETY: `route` is the `entry` userdata kept alive by the route table.
+        unsafe {
+            T::on_request(
+                route,
+                bun_uws_sys::AnyRequest::H2(req),
+                bun_uws_sys::AnyResponse::H2(resp),
+            )
+        };
+    }
+    fn head<T: StaticRouteLike<false>>(
+        route: &mut T,
+        req: &mut uws::h2::Request,
+        resp: &mut uws::h2::Response,
+    ) {
+        // SAFETY: see `handler` above.
+        unsafe {
+            T::on_head_request(
+                route,
+                bun_uws_sys::AnyRequest::H2(req),
+                bun_uws_sys::AnyResponse::H2(resp),
+            )
+        };
+    }
+
+    if !path_has_user_head_route && serves_head(&method) {
+        app.head(path, entry, head::<T>);
+    }
+    match method {
+        http_method::Optional::Any => app.any(path, entry, handler::<T>),
+        http_method::Optional::Method(m) => {
+            let mut iter = m.iter();
+            while let Some(method_) = iter.next() {
+                app.method(method_, path, entry, handler::<T>);
+            }
+        }
+    }
+}
+
+/// Per-route trait that `apply_static_route{,_h2,_h3}` monomorphizes over
 /// (`StaticRoute`/`FileRoute`/`HTMLBundle.Route`).
 /// Receivers are raw `*mut Self` because the route is registered as the uWS
 /// userdata pointer and the inherent impls (`StaticRoute::on_request` etc.) need
@@ -1293,6 +1360,13 @@ impl ServerConfig {
             return Err(JsError::Thrown);
         }
 
+        if let Some(v) = arg.get(global, "http2")? {
+            args.http2 = v.to_boolean();
+        }
+        if global.has_exception() {
+            return Err(JsError::Thrown);
+        }
+
         if let Some(v) = arg.get(global, "http1")? {
             args.http1 = v.to_boolean();
         }
@@ -1430,6 +1504,16 @@ impl ServerConfig {
             }
         }
 
+        if args.http2 && args.ssl_config.is_none() {
+            return Err(
+                global.throw_invalid_arguments(format_args!("HTTP/2 requires 'tls' to be set"))
+            );
+        }
+        if args.http2 && !args.http1 {
+            return Err(global.throw_invalid_arguments(format_args!(
+                "http2 requires http1 (it shares the TCP listener via ALPN)"
+            )));
+        }
         if args.http3 {
             if args.ssl_config.is_none() {
                 return Err(

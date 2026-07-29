@@ -2130,7 +2130,9 @@ pub mod bv2_impl {
                     &import_record.source_file,
                     &import_record.specifier,
                 ) {
-                    let file_map_result = _file_map_result;
+                    let mut file_map_result = _file_map_result;
+                    // SAFETY: see `transpiler` note above.
+                    file_map_result.jsx = unsafe { &(*transpiler).options.jsx }.clone();
                     let mut path_primary = file_map_result.path_pair.primary;
                     // reshaped for borrowck — `get_or_put` borrows `*self` mutably via
                     // `self.graph`; capture the slot as `*mut u32` so subsequent `self.*` calls
@@ -4661,11 +4663,18 @@ pub mod bv2_impl {
                                     file: bun_sys::Fd::INVALID,
                                 },
                                 side_effects: bun_ast::SideEffects::HasSideEffects,
-                                jsx: this
-                                    .transpiler_for_target(resolve.import_record.original_target)
-                                    .options
-                                    .jsx
-                                    .clone(),
+                                jsx: {
+                                    let t = this.transpiler_for_target(
+                                        resolve.import_record.original_target,
+                                    );
+                                    let mut jsx = t.options.jsx.clone();
+                                    if let Some(dev) =
+                                        t.options.force_node_env.jsx_development_override()
+                                    {
+                                        jsx.development = dev;
+                                    }
+                                    jsx
+                                },
                                 source_index: bun_ast::Index::init(source_index.get()),
                                 module_type: options::ModuleType::Unknown,
                                 loader: Some(loader),

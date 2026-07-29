@@ -970,6 +970,7 @@ impl CompletionStruct for JSBundleCompletionTask {
                 .append_slice(&[b"development"])?;
         }
         if let Some(dev) = config.jsx_development_explicit {
+            transpiler.options.jsx.development = dev;
             transpiler.options.force_node_env = if dev {
                 options::ForceNodeEnv::Development
             } else {

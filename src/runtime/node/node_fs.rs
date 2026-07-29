@@ -339,11 +339,6 @@ fn os_path_literal_empty() -> &'static OSPathSliceZ {
     }
 }
 
-/// `bun.StandaloneModuleGraph::get()` — singleton accessor. Short-circuits
-/// `stat`/`exists`/`readFile`/`readdir` for files embedded in
-/// `bun build --compile` binaries (under `/$bunfs/` / `B:\~BUN\`). Returns
-/// `None` outside a standalone executable. The `node:fs` hooks are read-only
-/// (key lookup + `&File` field reads), so a shared borrow is all we need.
 #[inline]
 fn standalone_module_graph() -> Option<&'static bun_standalone_graph::Graph> {
     bun_standalone_graph::Graph::get_ref()
@@ -6999,9 +6994,7 @@ impl NodeFS {
         }
     }
 
-    /// `readdir` over the in-memory `/$bunfs/` tree embedded in a
-    /// `bun build --compile` binary. Caller has already checked
-    /// `is_bun_standalone_file_path`.
+    /// Caller has already checked `is_bun_standalone_file_path`.
     fn readdir_standalone<T: ReaddirEntry>(
         graph: &bun_standalone_graph::Graph,
         args: &args::Readdir,

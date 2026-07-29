@@ -99,13 +99,9 @@ impl StandaloneModuleGraph {
         INSTANCE.get().map(|cell| cell.0.get())
     }
 
-    /// Shared-borrow accessor for read-only lookups (`contains_file`,
-    /// `find_dir`, `readdir`, `stat`). Callers that need to touch the lazy
-    /// per-`File` caches (`wtf_string`, `cached_blob`, sourcemap) must go
-    /// through `get()` and re-borrow `*mut` themselves.
+    /// Read-only lookups. Use `get()` when mutating per-`File` lazy caches.
     pub fn get_ref() -> Option<&'static StandaloneModuleGraph> {
-        // SAFETY: `Instance` is `Sync` (see the `unsafe impl` above); the
-        // `&self` surface below touches only the immutable key/value tables.
+        // SAFETY: `Instance` is `Sync`; the `&self` methods touch only the immutable tables.
         INSTANCE.get().map(|cell| unsafe { &*cell.0.get() })
     }
 

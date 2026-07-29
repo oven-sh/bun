@@ -2106,145 +2106,6 @@ impl Function {
         Ok(())
     }
 
-||||||| parent of e5da4eabe27e (Broaden robustness pass across install, css, shell, spawn, node compat, and the resolver)
-    pub(crate) fn compile_callback(
-        &mut self,
-        js_context: &JSGlobalObject,
-        js_function: JSValue,
-        is_threadsafe: bool,
-    ) -> crate::Result<()> {
-        jsc::mark_binding();
-        let mut source_code: Vec<u8> = Vec::new();
-        // SAFETY: js_context/js_function are live for the call
-        let ffi_wrapper = unsafe { Bun__createFFICallbackFunction(js_context, js_function) };
-        self.print_callback_source_code(Some(js_context), Some(ffi_wrapper), &mut source_code)?;
-
-        #[cfg(all(debug_assertions, unix))]
-        'debug_write: {
-            // SAFETY: best-effort debug write; failures are swallowed
-            unsafe {
-                let fd = libc::open(
-                    c"/tmp/bun-ffi-callback-source.c".as_ptr(),
-                    libc::O_CREAT | libc::O_WRONLY,
-                    0o644,
-                );
-                if fd < 0 {
-                    break 'debug_write;
-                }
-                let _ = libc::write(fd, source_code.as_ptr().cast::<c_void>(), source_code.len());
-                let _ = libc::ftruncate(fd, source_code.len() as libc::off_t);
-                libc::close(fd);
-            }
-        }
-
-        source_code.push(0);
-        // defer source_code.deinit();
-
-        let tcc_options: &'static ZStr = if cfg!(debug_assertions) {
-            zstr!("-std=c11 -nostdlib -Wl,--export-all-symbols -g")
-        } else {
-            zstr!("-std=c11 -nostdlib -Wl,--export-all-symbols")
-        };
-        let state = match TCC::State::init::<Function, false>(&TCC::Config {
-            options: Some(NonNull::from(tcc_options)),
-            output_type: TCC::OutputFormat::Memory,
-            err: TCC::ConfigErr {
-                ctx: Some(std::ptr::from_mut::<Function>(self)),
-                handler: Self::handle_tcc_error,
-            },
-        }) {
-            Ok(s) => s,
-            Err(TCC::Error::Alloc(bun_alloc::AllocError)) => {
-                return Err(crate::Error::TCCMissing);
-            }
-            // 1. .Memory is always a valid option, so InvalidOptions is
-            //    impossible
-            // 2. other throwable functions arent called, so their errors
-            //    aren't possible
-            Err(_) => unreachable!(),
-        };
-        self.state = Some(state);
-        let _guard = scopeguard::guard(std::ptr::from_mut::<Function>(self), |this_ptr| {
-            // SAFETY: this_ptr is &mut self for the duration of compile_callback()
-            let this = unsafe { &mut *this_ptr };
-            if matches!(this.step, Step::Failed { .. }) {
-                if let Some(s) = this.state.take() {
-                    // SAFETY: we own the state
-                    unsafe { TCC::State::destroy(s.as_ptr()) };
-                }
-            }
-        });
-        // SAFETY: just stored above
-        let state = unsafe { self.state.unwrap().as_mut() };
-
-        if self.needs_napi_env() {
-            if state
-                .add_symbol(
-                    zstr!("Bun__thisFFIModuleNapiEnv"),
-                    js_context.make_napi_env_for_ffi().cast_const(),
-                )
-                .is_err()
-            {
-                self.fail(b"Failed to add NAPI env symbol");
-                return Ok(());
-            }
-        }
-
-        CompilerRT::define(state);
-
-        // SAFETY: source_code was NUL-terminated above
-        if state
-            .compile_string(ZStr::from_slice_with_nul(&source_code[..]))
-            .is_err()
-        {
-            self.fail(b"Failed to compile source code");
-            return Ok(());
-        }
-
-        CompilerRT::inject(state);
-        let callback_sym: *const c_void = if is_threadsafe {
-            FFI_Callback_threadsafe_call as *const c_void
-        } else {
-            // TODO: stage2 - make these ptrs
-            match self.arg_types.len() {
-                0 => FFI_Callback_call_0 as *const c_void,
-                1 => FFI_Callback_call_1 as *const c_void,
-                2 => FFI_Callback_call_2 as *const c_void,
-                3 => FFI_Callback_call_3 as *const c_void,
-                4 => FFI_Callback_call_4 as *const c_void,
-                5 => FFI_Callback_call_5 as *const c_void,
-                6 => FFI_Callback_call_6 as *const c_void,
-                7 => FFI_Callback_call_7 as *const c_void,
-                _ => FFI_Callback_call as *const c_void,
-            }
-        };
-        // `callback_sym` is one of the process-lifetime `FFI_Callback_call*`
-        // extern fns.
-        if state
-            .add_symbol(zstr!("FFI_Callback_call"), callback_sym)
-            .is_err()
-        {
-            self.fail(b"Failed to add FFI callback symbol");
-            return Ok(());
-        }
-        // TinyCC now manages relocation memory internally
-        if dangerously_run_without_jit_protections(|| state.relocate()).is_err() {
-            self.fail(b"tcc_relocate returned a negative value");
-            return Ok(());
-        }
-
-        let Some(symbol) = state.get_symbol(zstr!("my_callback_function")) else {
-            self.fail(b"missing generated symbol in source code");
-            return Ok(());
-        };
-
-        self.step = Step::Compiled(Compiled {
-            ptr: symbol.as_ptr().cast::<c_void>(),
-            ffi_callback_function_wrapper: NonNull::new(ffi_wrapper),
-        });
-        Ok(())
-    }
-
     pub(crate) fn print_source_code(&self, writer: &mut impl std::io::Write) -> crate::Result<()> {
         if !self.arg_types.is_empty() {
             writer.write_all(b"#define HAS_ARGUMENTS\n")?;
@@ -2501,118 +2362,68 @@ impl CompilerRT {
         };
 
         #[cfg(windows)]
-        {
-            let Ok(bun_cc) = tmpdir.make_open_path(b"bun-cc", bun_sys::OpenDirOptions::default())
-            else {
-                return;
-            };
-            if let Some(path) = Self::populate_compiler_rt_dir(&bun_cc) {
-                let _ = COMPILER_RT_DIR.set(path);
-            }
+        let Ok(bun_cc) = tmpdir.make_open_path(b"bun-cc", bun_sys::OpenDirOptions::default())
+        else {
             return;
-        }
-
-        #[cfg(unix)]
-        Self::create_compiler_rt_dir_owned(&tmpdir);
-    }
-
-    #[cfg(unix)]
-    fn create_compiler_rt_dir_owned(tmpdir: &bun_sys::Dir) {
-        let uid = bun_sys::c::getuid();
-        let mut dir_name = Vec::new();
-        if write!(&mut dir_name, "bun-cc-{uid}").is_err() {
-            return;
-        }
-
-        let dir_flags = bun_sys::O::RDONLY | bun_sys::O::CLOEXEC | bun_sys::O::NOFOLLOW;
-        let bun_cc = match tmpdir.open_at_with(&dir_name, dir_flags) {
-            Ok(dir) => Some(dir),
-            Err(err) if err.get_errno() == bun_sys::E::ENOENT => {
-                let name_z = ZBox::from_bytes(&dir_name);
-                match bun_sys::mkdirat(tmpdir.fd(), name_z.as_zstr(), 0o700) {
-                    Ok(()) => {}
-                    Err(err) if err.get_errno() == bun_sys::E::EEXIST => {}
-                    Err(_) => return,
-                }
-                tmpdir.open_at_with(&dir_name, dir_flags).ok()
-            }
-            Err(_) => None,
         };
-        if let Some(path) = bun_cc.and_then(|dir| Self::populate_compiler_rt_dir(&dir, uid)) {
-            let _ = COMPILER_RT_DIR.set(path);
+        #[cfg(unix)]
+        let Some(bun_cc) = Self::open_owned_compiler_rt_dir(&tmpdir) else {
             return;
-        }
+        };
 
-        for _ in 0..8 {
-            let mut name_buf = PathBuffer::uninit();
-            let Ok(name) =
-                Fs::FileSystem::tmpname(b"bun-cc", &mut name_buf.0, bun_core::fast_random())
-            else {
-                return;
-            };
-            match bun_sys::mkdirat(tmpdir.fd(), name, 0o700) {
-                Ok(()) => {}
-                Err(err) if err.get_errno() == bun_sys::E::EEXIST => continue,
-                Err(_) => return,
-            }
-            let Ok(dir) = tmpdir.open_at_with(name.as_bytes(), dir_flags) else {
-                return;
-            };
-            if let Some(path) = Self::populate_compiler_rt_dir(&dir, uid) {
-                let _ = COMPILER_RT_DIR.set(path);
-            }
-            return;
-        }
-    }
-
-    #[cfg(windows)]
-    fn populate_compiler_rt_dir(bun_cc: &bun_sys::Dir) -> Option<ZBox> {
         for (name, source) in CompilerRtSources::SOURCES {
             let name_z = ZBox::from_bytes(name.as_bytes());
             let _ = bun_sys::File::write_file(bun_cc.fd(), name_z.as_zstr(), source);
         }
 
         let mut path_buf = PathBuffer::uninit();
-        let path = bun_sys::get_fd_path(bun_cc.fd(), &mut path_buf).ok()?;
-        Some(ZBox::from_bytes(&*path))
+        let Ok(path) = bun_sys::get_fd_path(bun_cc.fd(), &mut path_buf) else {
+            return;
+        };
+        // `ZBox::from_bytes` panics on OOM.
+        let _ = COMPILER_RT_DIR.set(ZBox::from_bytes(&*path));
+
+        let Ok(node_dir) = bun_cc.make_open_path(b"node", bun_sys::OpenDirOptions::default())
+        else {
+            return;
+        };
+        for (name, source) in CompilerRtSources::NODE_HEADERS {
+            let name_z = ZBox::from_bytes(name.as_bytes());
+            let _ = bun_sys::File::write_file(node_dir.fd(), name_z.as_zstr(), source);
+        }
+        if let Ok(node_path) = bun_sys::get_fd_path(node_dir.fd(), &mut path_buf) {
+            let _ = COMPILER_RT_NODE_DIR.set(ZBox::from_bytes(&*node_path));
+        }
     }
 
+    /// Per-user `bun-cc-<uid>` directory: created 0700, reused only when it
+    /// is a real directory owned by the current user and not writable by
+    /// group or others, so a pre-planted or shared entry is never used to
+    /// stage compiler headers.
     #[cfg(unix)]
-    fn populate_compiler_rt_dir(bun_cc: &bun_sys::Dir, uid: u32) -> Option<ZBox> {
-        let st = bun_sys::fstat(bun_cc.fd()).ok()?;
+    fn open_owned_compiler_rt_dir(tmpdir: &bun_sys::Dir) -> Option<bun_sys::Dir> {
+        let uid = bun_sys::c::getuid();
+        let mut dir_name = Vec::new();
+        write!(&mut dir_name, "bun-cc-{uid}").ok()?;
+        let dir_flags = bun_sys::O::RDONLY | bun_sys::O::CLOEXEC | bun_sys::O::NOFOLLOW;
+        let dir = match tmpdir.open_at_with(&dir_name, dir_flags) {
+            Ok(dir) => dir,
+            Err(err) if err.get_errno() == bun_sys::E::ENOENT => {
+                let name_z = ZBox::from_bytes(&dir_name);
+                match bun_sys::mkdirat(tmpdir.fd(), name_z.as_zstr(), 0o700) {
+                    Ok(()) => {}
+                    Err(err) if err.get_errno() == bun_sys::E::EEXIST => {}
+                    Err(_) => return None,
+                }
+                tmpdir.open_at_with(&dir_name, dir_flags).ok()?
+            }
+            Err(_) => return None,
+        };
+        let st = bun_sys::fstat(dir.fd()).ok()?;
         if st.st_uid != uid || (st.st_mode & (libc::S_IWGRP | libc::S_IWOTH)) != 0 {
             return None;
         }
-
-        for (name, source) in CompilerRtSources::SOURCES {
-            let file = bun_cc
-                .open_file(
-                    name.as_bytes(),
-                    bun_sys::O::WRONLY
-                        | bun_sys::O::CREAT
-                        | bun_sys::O::TRUNC
-                        | bun_sys::O::CLOEXEC
-                        | bun_sys::O::NOFOLLOW,
-                    0o644,
-                )
-                .ok()?;
-            file.write_all(source).ok()?;
-        }
-
-        let mut path_buf = PathBuffer::uninit();
-        let path = bun_sys::get_fd_path(bun_cc.fd(), &mut path_buf).ok()?;
-        // `ZBox::from_bytes` panics on OOM.
-        if let Ok(node_dir) = bun_cc.make_open_path(b"node", bun_sys::OpenDirOptions::default()) {
-            for (name, source) in CompilerRtSources::NODE_HEADERS {
-                let name_z = ZBox::from_bytes(name.as_bytes());
-                let _ = bun_sys::File::write_file(node_dir.fd(), name_z.as_zstr(), source);
-            }
-            let mut node_path_buf = PathBuffer::uninit();
-            if let Ok(node_path) = bun_sys::get_fd_path(node_dir.fd(), &mut node_path_buf) {
-                let _ = COMPILER_RT_NODE_DIR.set(ZBox::from_bytes(&*node_path));
-            }
-        }
-        Some(ZBox::from_bytes(&*path))
+        Some(dir)
     }
 
     pub(crate) fn dir() -> Option<&'static ZStr> {

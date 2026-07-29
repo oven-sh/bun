@@ -533,6 +533,8 @@ pub fn initialize(eval_mode: bool) {
     // The counter lives in `bun_core` so this crate doesn't depend on
     // `bun_analytics`.
     bun_core::analytics::Features::jsc_inc();
+    #[cfg(all(bun_asan, target_os = "linux"))]
+    mirror_asan_segv_handler_into_env();
     let env = bun_sys::environ();
     // One-shot eval invocations (`bun -e ...` / `bun --print ...`) exit before
     // any long-running event loop; tell JSC to skip the worker threads it
@@ -550,6 +552,40 @@ pub fn initialize(eval_mode: bool) {
             one_shot,
         )
     };
+}
+
+/// JSC's `notifyOptionsChanged()` clears `useWasmFaultSignalHandler` (and with
+/// it WebAssembly shared memory) unless `getenv("ASAN_OPTIONS")` contains
+/// `allow_user_segv_handler=1`. `__asan_default_options()` already opts the
+/// runtime in; mirror it into the env var so JSC's check passes. Runs before
+/// `bun_sys::environ()` is captured so the `envp` slice passed to C++ reflects
+/// the final environ array.
+#[cfg(all(bun_asan, target_os = "linux"))]
+#[cold]
+fn mirror_asan_segv_handler_into_env() {
+    use core::ffi::CStr;
+    // SAFETY: single-threaded at this point (before JSC init spawns anything).
+    unsafe {
+        let cur = libc::getenv(c"ASAN_OPTIONS".as_ptr());
+        if cur.is_null() || *cur == 0 {
+            libc::setenv(
+                c"ASAN_OPTIONS".as_ptr(),
+                c"allow_user_segv_handler=1".as_ptr(),
+                1,
+            );
+            return;
+        }
+        let cur = CStr::from_ptr(cur).to_bytes();
+        if bun_core::strings::contains(cur, b"allow_user_segv_handler=")
+            || bun_core::strings::contains(cur, b"handle_segv=0")
+        {
+            return;
+        }
+        let mut merged = Vec::with_capacity(cur.len() + b":allow_user_segv_handler=1\0".len());
+        merged.extend_from_slice(cur);
+        merged.extend_from_slice(b":allow_user_segv_handler=1\0");
+        libc::setenv(c"ASAN_OPTIONS".as_ptr(), merged.as_ptr().cast(), 1);
+    }
 }
 
 /// Whether this process was launched as `bun -e <code>` / `bun --eval <code>` /

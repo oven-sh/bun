@@ -75,7 +75,7 @@ pub extern "C" fn __asan_default_options() -> *const core::ffi::c_char {
     // detect_leaks=0: off by default (Linux defaults it on); CI opts in via
     //   ASAN_OPTIONS with a suppressions file.
     // allow_user_segv_handler=1: permit JSC's wasm SIGSEGV fault handler;
-    //   JSCInitialize mirrors it into the env var for JSC's getenv check.
+    //   bun_jsc::initialize mirrors it into the env var for JSC's getenv check.
     //
     // Do NOT add `symbolize=0`
     // here — LSAN's function-name suppression matching (`test/leaksan.supp`)

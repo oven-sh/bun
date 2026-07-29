@@ -293,26 +293,11 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
         std::set_terminate([]() { Zig__GlobalObject__onCrash(); });
         WTF::initializeMainThread();
 
-#if ASAN_ENABLED && OS(LINUX)
-        // JSC gates useWasmFaultSignalHandler (wasm shared memory) on this flag
-        // in getenv("ASAN_OPTIONS"); mirror __asan_default_options() so it's seen.
-        {
-            const char* asanOptions = getenv("ASAN_OPTIONS");
-            if (!asanOptions || !*asanOptions) {
-                setenv("ASAN_OPTIONS", "allow_user_segv_handler=1", 1);
-            } else if (!strstr(asanOptions, "allow_user_segv_handler=") && !strstr(asanOptions, "handle_segv=0")) {
-                size_t n = strlen(asanOptions);
-                char* merged = static_cast<char*>(malloc(n + sizeof(":allow_user_segv_handler=1")));
-                memcpy(merged, asanOptions, n);
-                memcpy(merged + n, ":allow_user_segv_handler=1", sizeof(":allow_user_segv_handler=1"));
-                setenv("ASAN_OPTIONS", merged, 1);
-                free(merged);
-            }
-        }
-#endif
-
         // Use JSC::initialize with a callback to set Options during initialization.
         // The callback runs BEFORE IPInt::initialize() so we can configure WASM options early.
+        // Under ASAN+Linux, JSC's notifyOptionsChanged() gates useWasmFaultSignalHandler
+        // on ASAN_OPTIONS containing allow_user_segv_handler=1; bun_jsc::initialize()
+        // supplies that default before capturing envp.
         JSC::initialize([&] {
             JSC::Options::useWasm() = true;
             JSC::Options::useJIT() = true;

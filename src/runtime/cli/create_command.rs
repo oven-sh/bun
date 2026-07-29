@@ -338,9 +338,7 @@ impl CreateCommand {
 
         let mut package_json_contents: MutableString = MutableString::default();
         let mut package_json_file: Option<bun_sys::File> = None;
-        // The post-copy cleanup renames `gitignore` and removes `.npmignore`.
-        // Local templates set these from the template's contents so files the
-        // user already had are left alone; tarballs keep the old behavior.
+        // Gate the post-copy gitignore/.npmignore cleanup on template contents.
         let mut template_has_gitignore = true;
         let mut template_has_npmignore = true;
 
@@ -661,9 +659,7 @@ impl CreateCommand {
                         );
                         let existing_kind = match existing_kind {
                             Ok(k) => k,
-                            // ENOTDIR: a parent component is a file, which the
-                            // scan already records as a conflict for that
-                            // component.
+                            // ENOTDIR: a parent component is a file, already a conflict.
                             Err(err)
                                 if matches!(
                                     err.get_errno(),

@@ -158,9 +158,9 @@ describe.concurrent("fetch() HTTP/2 adversarial", () => {
         // Connection should error well before the ~80 MB of CONTINUATION payload
         // accumulates. Allow generous slack for TLS/allocator overhead.
         // ASAN's quarantine retains freed allocations so widen the threshold there.
-        // Either the per-frame-count cap (EnhanceYourCalm) or the byte-size cap
-        // (HeaderListTooLarge) may fire first; both reject the flood.
-        expect(["HTTP2EnhanceYourCalm", "HTTP2HeaderListTooLarge"]).toContain(out.result);
+        // The frame-count cap (8 frames x ~16 KB = ~128 KB) fires before the
+        // 256 KiB byte-size cap for this payload shape.
+        expect(out.result).toBe("HTTP2EnhanceYourCalm");
         expect(out.growth).toBeLessThan((isASAN ? 256 : 64) * 1024 * 1024);
         expect(exitCode).toBe(0);
       },

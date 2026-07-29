@@ -1718,11 +1718,8 @@ function fdToStdioName(fd: number) {
   }
 }
 
-// Node.js wraps each piped stdio fd in a `net.Socket` (see lib/internal/child_process.js
-// createSocket). Bun's stdin/stdout/stderr are backed by a FileSink / native readable
-// rather than a handle net.Socket understands, so use a thin subclass that inherits from
-// net.Socket (so `instanceof net.Socket` holds) but drives Duplex directly and overrides
-// the methods that would otherwise touch net.Socket's `_handle`.
+// Node's createSocket wraps each piped stdio in a net.Socket; subclass it for
+// `instanceof` but route I/O to the FileSink / native readable that backs Bun's pipes.
 const kStdinSink = Symbol("kStdinSink");
 let StdinSocket;
 let StdoutSocket;
@@ -1730,8 +1727,7 @@ let StdoutSocket;
 function initStdioSocket(self, options) {
   const Duplex = require("internal/streams/duplex");
   Duplex.$call(self, options);
-  // Enough of net.Socket's instance shape for its prototype methods to be safe
-  // with no native handle attached.
+  // net.Socket prototype methods read these; there is no native handle here.
   self._handle = null;
   self._parent = null;
   self.connecting = false;
@@ -1867,8 +1863,7 @@ function getStdoutSocket() {
       });
     };
     $toClass(StdoutSocket, "Socket", NetModule.Socket);
-    // constructNativeReadable installs instance _read/_destroy/ref/unref for
-    // live pipes; these cover the already-exited-process fallback.
+    // Live pipes get instance _read/_destroy/ref/unref from constructNativeReadable.
     StdoutSocket.prototype._destroy = stdoutSocketDestroy;
     StdoutSocket.prototype.ref = stdioSocketRef;
     StdoutSocket.prototype.unref = stdioSocketUnref;

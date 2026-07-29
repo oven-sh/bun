@@ -1033,13 +1033,10 @@ impl Tree {
                 return Ok(HoistDependencyResult::Hoisted); // 1
             }
 
-            if dep.behavior.is_dev() != dependency.behavior.is_dev() {
-                // Same name in `dependencies` and `devDependencies`: merge.
-                // `input_dep_range` catches a workspace sibling that was already
-                // hoisted into a parent tree (where AS_DEFINED is false).
-                if AS_DEFINED || input_dep_range.contains(dep_id) {
-                    return Ok(HoistDependencyResult::Hoisted); // 1
-                }
+            let from_same_source_package = AS_DEFINED || input_dep_range.contains(dep_id);
+            if from_same_source_package && dep.behavior.is_dev() != dependency.behavior.is_dev() {
+                // same name in `dependencies` and `devDependencies`: merge
+                return Ok(HoistDependencyResult::Hoisted); // 1
             }
 
             // now we either keep the dependency at this place in the tree,

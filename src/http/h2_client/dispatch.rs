@@ -5,7 +5,7 @@
 
 use super::client_session::{ClientSession, stream_mut};
 use super::stream::{State as StreamState, Stream};
-use super::{LOCAL_MAX_HEADER_LIST_SIZE, WRITE_BUFFER_CONTROL_LIMIT};
+use super::{LOCAL_MAX_CONTINUATIONS, LOCAL_MAX_HEADER_LIST_SIZE, WRITE_BUFFER_CONTROL_LIMIT};
 use crate::h2_frame_parser as wire;
 use bun_picohttp as picohttp;
 
@@ -337,6 +337,7 @@ pub(crate) fn dispatch_frame(
                     decode_discard_orphan(session);
                 } else {
                     session.expecting_continuation = stream_id;
+                    session.continuation_count = 0;
                 }
                 return;
             }
@@ -373,11 +374,17 @@ pub(crate) fn dispatch_frame(
                 decode_header_block(session, stream);
             } else {
                 session.expecting_continuation = stream.id;
+                session.continuation_count = 0;
             }
         }
         FT_CONTINUATION => {
             if session.expecting_continuation == 0 || stream_id != session.expecting_continuation {
                 session.fatal_error = Some(crate::Error::HTTP2ProtocolError);
+                return;
+            }
+            session.continuation_count += 1;
+            if session.continuation_count > LOCAL_MAX_CONTINUATIONS {
+                session.fatal_error = Some(crate::Error::HTTP2EnhanceYourCalm);
                 return;
             }
             if let Some(&stream_ptr) = session.streams.get(&session.expecting_continuation) {

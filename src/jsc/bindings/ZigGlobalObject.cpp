@@ -294,10 +294,8 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
         WTF::initializeMainThread();
 
 #if ASAN_ENABLED && OS(LINUX)
-        // JSC's notifyOptionsChanged() clears useWasmFaultSignalHandler (and with
-        // it WebAssembly shared memory) unless getenv("ASAN_OPTIONS") contains
-        // this flag. __asan_default_options() already sets it for the runtime;
-        // mirror it into the env var. Leave an explicit user value alone.
+        // JSC gates useWasmFaultSignalHandler (wasm shared memory) on this flag
+        // in getenv("ASAN_OPTIONS"); mirror __asan_default_options() so it's seen.
         {
             const char* asanOptions = getenv("ASAN_OPTIONS");
             if (!asanOptions || !*asanOptions) {

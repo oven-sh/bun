@@ -91,10 +91,8 @@ function getStats(src, dest, opts) {
   ]);
 }
 
-// Resolve `p` through symlinks. If `p` (or a trailing portion of it) does not
-// exist yet, resolve the deepest existing ancestor and rejoin the missing tail
-// so the result names where `p` would land once created. Any non-ENOENT error
-// falls back to path.resolve; this is a guard, not the copy itself.
+// realpath(p), walking up past ENOENT and rejoining the missing tail so the
+// result names where p would land once created.
 async function resolveExistingRealpath(p) {
   let current = resolve(p);
   const tail: string[] = [];
@@ -116,12 +114,8 @@ async function resolveExistingRealpath(p) {
 }
 
 async function checkParentPaths(src, srcStat, dest) {
-  // The string isSrcSubdir check in checkPaths and the inode walk below both
-  // miss a destination reached through a symlink that resolves into a
-  // subdirectory of src: the string check sees the alias, and the inode walk
-  // only matches src itself. Resolve both sides through symlinks and repeat
-  // the prefix check on the real locations so the recursion cannot copy src
-  // back into itself.
+  // isSrcSubdir compares path strings and the inode walk below only matches
+  // src itself, so repeat the prefix check on realpath-resolved locations.
   if (srcStat.isDirectory()) {
     const resolvedSrc = await resolveExistingRealpath(src);
     const resolvedDest = await resolveExistingRealpath(dest);

@@ -533,27 +533,35 @@ pub fn initialize(eval_mode: bool) {
     // The counter lives in `bun_core` so this crate doesn't depend on
     // `bun_analytics`.
     bun_core::analytics::Features::jsc_inc();
-    #[cfg(all(bun_asan, target_os = "linux"))]
-    let restore = mirror_asan_segv_handler_into_env();
-    let env = bun_sys::environ();
-    // One-shot eval invocations (`bun -e ...` / `bun --print ...`) exit before
-    // any long-running event loop; tell JSC to skip the worker threads it
-    // otherwise spawns eagerly at VM creation (see `JSCInitialize`).
-    let one_shot = is_one_shot_eval_invocation();
-    // SAFETY: `env` borrows the libc `environ` global for the duration of the
-    // call; `on_jsc_invalid_env_var` is `extern "C"` and only reads the (ptr,len)
-    // it is handed. JSCInitialize is called exactly once at startup.
-    unsafe {
-        JSCInitialize(
-            env.as_ptr(),
-            env.len(),
-            on_jsc_invalid_env_var,
-            eval_mode,
-            one_shot,
-        )
-    };
-    #[cfg(all(bun_asan, target_os = "linux"))]
-    restore_asan_options(restore);
+    // Bundler WorkPool threads (Macro::init, CachedBytecode, RegularExpression)
+    // each call this off the main thread; the C++ `std::call_once` only guards
+    // the FFI body, so serialize the Rust-side env read/write here too.
+    static ONCE: std::sync::Once = std::sync::Once::new();
+    ONCE.call_once(|| {
+        #[cfg(all(bun_asan, target_os = "linux"))]
+        let restore = mirror_asan_segv_handler_into_env();
+        let env = bun_sys::environ();
+        // One-shot eval invocations (`bun -e ...` / `bun --print ...`) exit
+        // before any long-running event loop; tell JSC to skip the worker
+        // threads it otherwise spawns eagerly at VM creation (see
+        // `JSCInitialize`).
+        let one_shot = is_one_shot_eval_invocation();
+        // SAFETY: `env` borrows the libc `environ` global for the duration of
+        // the call; `on_jsc_invalid_env_var` is `extern "C"` and only reads the
+        // (ptr,len) it is handed. Runs under `Once::call_once` so no other
+        // entrant is mutating `environ` concurrently.
+        unsafe {
+            JSCInitialize(
+                env.as_ptr(),
+                env.len(),
+                on_jsc_invalid_env_var,
+                eval_mode,
+                one_shot,
+            )
+        };
+        #[cfg(all(bun_asan, target_os = "linux"))]
+        restore_asan_options(restore);
+    });
 }
 
 /// What [`restore_asan_options`] should do once JSC has read `ASAN_OPTIONS`.
@@ -576,7 +584,7 @@ enum AsanOptionsRestore {
 #[cold]
 fn mirror_asan_segv_handler_into_env() -> AsanOptionsRestore {
     use core::ffi::CStr;
-    // SAFETY: single-threaded at this point (before JSC init spawns anything).
+    // SAFETY: serialized by `initialize`'s `Once::call_once`.
     unsafe {
         let cur = libc::getenv(c"ASAN_OPTIONS".as_ptr());
         if cur.is_null() {
@@ -614,7 +622,7 @@ fn mirror_asan_segv_handler_into_env() -> AsanOptionsRestore {
 #[cfg(all(bun_asan, target_os = "linux"))]
 #[cold]
 fn restore_asan_options(restore: AsanOptionsRestore) {
-    // SAFETY: still single-threaded; JSC's threads start on first VM creation.
+    // SAFETY: serialized by `initialize`'s `Once::call_once`.
     unsafe {
         match restore {
             AsanOptionsRestore::Unchanged => {}

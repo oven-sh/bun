@@ -5044,12 +5044,9 @@ unsafe fn resolve<'a>(
         return Err(crate::Error::ModuleNotFound);
     };
 
-    // Node gives `?` URL-separator meaning only for relative/absolute ESM
-    // specifiers; a bare specifier that resolves into node_modules is not a
-    // URL and Node rejects `pkg?v=1`. Re-appending the split-off query here
-    // would evaluate a fresh instance of the whole package for each distinct
-    // query. A tsconfig `paths` alias resolves outside node_modules, so
-    // `@/util?raw` keeps working.
+    // Node rejects `pkg?v=1`; letting it through here would evaluate a
+    // fresh package instance per distinct query. The `is_node_module`
+    // gate keeps tsconfig `paths` aliases (e.g. `@/util?raw`) working.
     if !query_string.is_empty()
         && bun_paths::is_package_path(specifier)
         && result_path.is_node_module()

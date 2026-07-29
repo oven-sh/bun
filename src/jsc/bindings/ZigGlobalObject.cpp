@@ -3235,7 +3235,7 @@ uint8_t GlobalObject::drainMicrotasks()
     }
     scope.assertNoExceptionExceptTermination();
 
-    if (auto nextTickQueue = this->m_nextTickQueue.get()) {
+    if (auto nextTickQueue = this->m_nextTickQueue.get(); nextTickQueue && !nextTickQueue->isEmpty()) {
         nextTickQueue->drain(vm, this);
         if (auto* exception = scope.exception()) {
             if (vm.isTerminationException(exception)) {

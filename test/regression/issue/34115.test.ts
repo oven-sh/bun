@@ -121,3 +121,42 @@ test.concurrent("Writable.toWeb() close rejects with ABORT_ERR when preload requ
   expect(stdout).toBe("rejected: ABORT_ERR\n");
   expect(exitCode).toBe(0);
 });
+
+// A nextTick callback that spins wait_for_promise re-enters GlobalObject::drainMicrotasks
+// while the hook's re-entrancy guard is held; gating that call on !isEmpty() keeps the
+// nested drain from clearing asyncContextData[0] via the mustResetContext branch.
+test.concurrent("AsyncLocalStorage frame survives a nextTick callback that spins wait_for_promise", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+const { AsyncLocalStorage } = require("node:async_hooks");
+const als = new AsyncLocalStorage();
+als.run("outer-frame", () => {
+  process.nextTick(() => {
+    const before = als.getStore();
+    new HTMLRewriter()
+      .on("*", {
+        async element() {
+          await 0;
+          process.nextTick(() => {});
+          await 0;
+        },
+      })
+      .transform(new Response("<div></div><div></div>"))
+      .text();
+    console.log(before, als.getStore());
+  });
+});
+`,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(stdout).toBe("outer-frame outer-frame\n");
+  expect(exitCode).toBe(0);
+});

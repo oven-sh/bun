@@ -38,7 +38,7 @@ describe("generating client-side code", () => {
   }, 30_000);
 
   describe("Using Svelte components in Bun's dev server", () => {
-    let server: Subprocess<"ignore", "pipe", "pipe">;
+    let server: Subprocess<"ignore", "pipe", "inherit">;
     let baseUrl: string;
 
     beforeAll(async () => {
@@ -49,30 +49,22 @@ describe("generating client-side code", () => {
           NODE_ENV: "development",
         },
         cwd: fixturePath("app"),
-        stdio: ["ignore", "pipe", "pipe"],
+        stdio: ["ignore", "pipe", "inherit"],
       });
 
       const decoder = new TextDecoder();
       let text = "";
-      const reader = server.stdout.getReader();
-      try {
-        while (true) {
-          const { done, value } = await reader.read();
-          if (value) text += decoder.decode(value, { stream: true });
-          const match = text.match(/http:\/\/127\.0\.0\.1:\d+\//);
-          if (match) {
-            baseUrl = match[0];
-            break;
-          }
-          if (done) break;
+      for await (const chunk of server.stdout) {
+        text += decoder.decode(chunk, { stream: true });
+        const match = text.match(/http:\/\/127\.0\.0\.1:\d+\//);
+        if (match) {
+          baseUrl = match[0];
+          break;
         }
-      } finally {
-        reader.releaseLock();
       }
 
       if (!baseUrl) {
-        const stderr = await server.stderr.text();
-        throw new Error("dev server did not print a URL.\nstdout: " + text + "\nstderr: " + stderr);
+        throw new Error("dev server did not print a URL.\nstdout: " + text);
       }
     });
 

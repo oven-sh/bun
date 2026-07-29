@@ -2086,6 +2086,7 @@ pub fn GetEnvironmentVariableW(
 }
 
 pub mod env;
+pub mod ioring;
 
 // ──────────────────────────────────────────────────────────────────────────
 // Additional surface unblocked for dependents.

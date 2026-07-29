@@ -488,8 +488,8 @@ pub fn is_smol_mode() -> bool {
 #[derive(Default)]
 pub struct ExitHandler {
     pub exit_code: u8,
-    /// Bumped on every JS `process.exitCode` write; lets `uncaught_exception`
-    /// tell its own `exit_code = 1` apart from one the error handler set.
+    /// Bumped by [`Self::set_exit_code`]; lets `uncaught_exception` tell its
+    /// own restorable `exit_code = 1` apart from writes that must persist.
     pub writes: u32,
 }
 
@@ -501,8 +501,14 @@ impl ExitHandler {
 
     #[unsafe(no_mangle)]
     pub extern "C" fn Bun__setExitCode(vm: &mut VirtualMachine, code: u8) {
-        vm.exit_handler.exit_code = code;
-        vm.exit_handler.writes = vm.exit_handler.writes.wrapping_add(1);
+        vm.exit_handler.set_exit_code(code);
+    }
+
+    /// Set the exit code and record the write so `uncaught_exception` does not
+    /// undo it when an error handler consumes the error.
+    pub fn set_exit_code(&mut self, code: u8) {
+        self.exit_code = code;
+        self.writes = self.writes.wrapping_add(1);
     }
 
     /// Note: spec calls `this.exit_handler.dispatchOnExit()` from a
@@ -1382,7 +1388,8 @@ impl VirtualMachine {
                 // code 7). Report it to the parent + arm termination via the
                 // normal path; process_exit() RETURNS on a worker, so the
                 // main-thread process_exit(7)+panic below would crash.
-                self.exit_handler.exit_code = 1;
+                // set_exit_code: this write must survive the outer frame's restore.
+                self.exit_handler.set_exit_code(1);
                 let _ = (self.on_unhandled_rejection)(self, global_object, err);
                 return false;
             }

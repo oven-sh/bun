@@ -540,6 +540,36 @@ describe("web worker", () => {
       expect(stdout).toContain("EXITCODE:1");
       expect(exitCode).toBe(0);
     });
+
+    test("a throw after preventDefault() still exits the worker with code 1", async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
+          const script = [
+            "self.addEventListener('error', e => {",
+            "  e.preventDefault();",
+            "  throw new Error('handler-bug');",
+            "});",
+            "throw new Error('original');",
+          ].join("\\n");
+          const w = new Worker(URL.createObjectURL(new Blob([script], { type: "text/javascript" })));
+          let sawError = false;
+          w.onerror = e => { sawError = true; console.log("PARENT-ERROR:" + e.message); };
+          w.addEventListener("close", e => { console.log("CLOSE:" + e.code); process.exit(!sawError && e.code === 1 ? 0 : 1); });
+          `,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(stdout).not.toContain("PARENT-ERROR");
+      expect(stdout).toContain("CLOSE:1");
+      expect(exitCode).toBe(0);
+    });
   });
 });
 

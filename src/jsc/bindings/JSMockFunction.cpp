@@ -1033,6 +1033,16 @@ JSC_DEFINE_CUSTOM_GETTER(jsMockFunctionGetter_protoImpl, (JSC::JSGlobalObject * 
     return JSValue::encode(jsUndefined());
 }
 
+extern "C" [[ZIG_EXPORT(nothrow)]] JSC::EncodedJSValue JSMockFunction__getName(EncodedJSValue encodedValue)
+{
+    JSValue value = JSValue::decode(encodedValue);
+    if (auto* mock = tryJSDynamicCast<JSMockFunction*>(value)) {
+        if (auto* name = mock->jsName())
+            return JSValue::encode(name);
+        return JSValue::encode(jsEmptyString(mock->vm()));
+    }
+    return encodedJSUndefined();
+}
 extern "C" [[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue JSMockFunction__getCalls(JSC::JSGlobalObject* globalThis, EncodedJSValue encodedValue)
 {
     auto scope = DECLARE_THROW_SCOPE(globalThis->vm());

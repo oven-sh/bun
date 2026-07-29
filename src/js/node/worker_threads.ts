@@ -506,8 +506,6 @@ function setupWorkerStdio(stdio) {
 // side where node would deliver it unchanged. That's accepted - it is not a
 // privilege boundary (worker threads share the parent's fd table anyway).
 const kJSTransferableMarker = "__bunNodeWorkerJSTransferable";
-// Distinguishes the postMessage envelope (top-level, value === true) from an
-// individual marker (value is a deserializeInfo string).
 const kJSTransferableEnvelope = true;
 
 function isJSTransferableMarker(value: object): boolean {
@@ -608,12 +606,6 @@ type PackedJSTransferables = {
   finalize: () => void;
 };
 
-// Core of Node's JSTransferable protocol: for each transferList entry that
-// implements kTransfer (FileHandle), neuter it and substitute a cloneable
-// marker object throughout the message graph, and strip it from the list that
-// reaches the native structured-clone path (which only accepts ArrayBuffer and
-// MessagePort). Returns null when no JSTransferable was found so the common
-// path stays zero-overhead.
 function packJSTransferablesForMessage(message: unknown, transferList: unknown[]): PackedJSTransferables | null {
   const { kTransfer, kTransferList, kDeserialize } = require("node:fs").promises.$data;
   let replacements: InstanceType<typeof SafeMap> | undefined;
@@ -643,8 +635,7 @@ function packJSTransferablesForMessage(message: unknown, transferList: unknown[]
             "DataCloneError",
           );
         }
-        // The native untransferable check never sees this entry (it's stripped
-        // from the list that reaches native postMessage), so enforce it here.
+        // Stripped from the native transfer list, so the native check won't see it.
         if (_isMarkedAsUntransferable(item)) {
           throw new DOMException("Cannot transfer object marked as untransferable", "DataCloneError");
         }
@@ -711,10 +702,8 @@ function packJSTransferablesForMessage(message: unknown, transferList: unknown[]
     }
     return value;
   }
-  // replace() reads property getters and Proxy traps (Object.keys,
-  // Object.getPrototypeOf, value[key]) — any of which can throw after
-  // handles are already neutered. Roll back here too so a throwing message
-  // graph doesn't orphan the fds it transferred.
+  // replace() reads property getters and Proxy traps, which can throw after
+  // handles are already neutered; roll back so fds aren't orphaned.
   let newMessage;
   try {
     newMessage = replace(message);
@@ -722,12 +711,10 @@ function packJSTransferablesForMessage(message: unknown, transferList: unknown[]
     restoreNeutered();
     throw e;
   }
-  // A handle in transferList but never referenced from the message is still
-  // detached from this thread (fd === -1, like node), but no marker will
-  // deserialize it on the receiving side - close the orphaned fd instead of
-  // leaking it (node's receiving-side instance is reclaimed by GC). This runs
-  // only after the native send succeeds: if it throws, the rollback must still
-  // find the fd open to restore the handle.
+  // A transferred handle never referenced from the message stays detached on
+  // this side (like node) but nothing will deserialize it on the other; close
+  // the orphaned fd so it doesn't leak. Runs only after the native send
+  // succeeds so restore() can still find the fd open on failure.
   function finalizeJSTransferables() {
     for (const { 0: item, 1: data } of neutered) {
       if (!usedMarkers.has(item) && typeof (data as any)?.fd === "number" && (data as any).fd >= 0) {
@@ -752,8 +739,6 @@ function packJSTransferables(options: NodeWorkerOptions): NodeWorkerOptions {
   if (!transferListHasJSTransferableCandidate(transferList)) return options;
   const packed = packJSTransferablesForMessage(options.workerData, transferList as unknown[]);
   if (!packed) return options;
-  // The options spread reads getters on the user's options object, which can
-  // throw after handles are already neutered; roll back there too.
   let out;
   try {
     out = {
@@ -770,9 +755,6 @@ function packJSTransferables(options: NodeWorkerOptions): NodeWorkerOptions {
   return out;
 }
 
-// Wraps a native postMessage(value, transferList) so JSTransferables in the
-// transfer list are packed into markers before serialization and restored on
-// failure. Accepts both the array form and {transfer: [...]}.
 function callPostMessageWithJSTransferables(nativePost: Function, self: unknown, args: IArguments) {
   if (args.length < 2) return nativePost.$apply(self, args);
   const second = args[1];
@@ -802,15 +784,9 @@ function callPostMessageWithJSTransferables(nativePost: Function, self: unknown,
   return result;
 }
 
-// postMessage wraps a packed message in a top-level envelope so the receive
-// side can tell in O(1) whether to walk the graph, keeping the common path
-// (no JSTransferables) zero-cost for every message. The unwrap only runs in
-// the node-style receive paths (.on('message'), receiveMessageOnPort,
-// Worker 'message'); addEventListener/onmessage deliver the raw envelope
-// because Bun has no native HostObject hook to reconstruct at clone time. A
-// message queued but never delivered (port closed before drain, worker
-// terminated) leaks the transferred fd for the same reason: the cloned
-// marker is a plain object with no finalizer.
+// Top-level envelope lets the receive side skip the deep walk for ordinary
+// messages. Without a native HostObject hook, only node-style receive paths
+// unwrap it, and a queued-but-never-delivered message leaks the carried fd.
 function wrapJSTransferableEnvelope(message: unknown): unknown {
   return { [kJSTransferableMarker]: kJSTransferableEnvelope, m: message };
 }

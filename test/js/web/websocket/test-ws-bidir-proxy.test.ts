@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 import { tls as tlsCerts } from "harness";
+import { once } from "node:events";
 import http from "node:http";
 import net from "node:net";
 
@@ -7,7 +8,7 @@ import net from "node:net";
 // detached in proxy tunnel mode) instead of routing through the tunnel's TLS
 // layer. Under bidirectional traffic, backpressure pushes writes through the
 // sendBuffer slow path, corrupting the TLS stream and killing the connection
-// (close code 1006) within seconds.
+// (close code 1006) before a single pong arrived.
 test("bidirectional ping/pong through TLS proxy", async () => {
   const intervals: ReturnType<typeof setInterval>[] = [];
   const clearIntervals = () => {
@@ -27,17 +28,14 @@ test("bidirectional ping/pong through TLS proxy", async () => {
         ws.send("echo:" + msg);
       },
       open(ws) {
-        // Server pings periodically (like session-ingress's 54s interval, sped up)
+        // Server pushes data and pings continuously so traffic is bidirectional.
         intervals.push(
           setInterval(() => {
-            if (ws.readyState === 1) ws.ping();
-          }, 500),
-        );
-        // Server pushes data continuously
-        intervals.push(
-          setInterval(() => {
-            if (ws.readyState === 1) ws.send("push:" + Date.now());
-          }, 100),
+            if (ws.readyState === 1) {
+              ws.ping();
+              ws.send("push");
+            }
+          }, 20),
         );
       },
       close() {
@@ -62,65 +60,72 @@ test("bidirectional ping/pong through TLS proxy", async () => {
     serverSocket.on("error", () => clientSocket.destroy());
     clientSocket.on("error", () => serverSocket.destroy());
   });
-
-  const { promise: proxyReady, resolve: proxyReadyResolve } = Promise.withResolvers<void>();
-  proxy.listen(0, "127.0.0.1", () => proxyReadyResolve());
-  await proxyReady;
+  proxy.listen(0, "127.0.0.1");
+  await once(proxy, "listening");
   const proxyPort = (proxy.address() as net.AddressInfo).port;
-
-  const { promise, resolve, reject } = Promise.withResolvers<void>();
 
   const ws = new WebSocket(`wss://localhost:${server.port}`, {
     proxy: `http://127.0.0.1:${proxyPort}`,
     tls: { rejectUnauthorized: false },
   } as any);
 
-  const REQUIRED_PONGS = 5;
-  let pongReceived = true;
-  let closeCode: number | undefined;
+  const REQUIRED = 5;
+  const echoes: string[] = [];
+  let pushes = 0;
+  let pongs = 0;
+  let seq = 0;
+
+  const { promise: ready, resolve, reject } = Promise.withResolvers<void>();
+  const { promise: closed, resolve: resolveClosed } = Promise.withResolvers<number>();
+  const maybeResolve = () => {
+    if (pongs >= REQUIRED && echoes.length >= REQUIRED && pushes >= REQUIRED) resolve();
+  };
 
   ws.addEventListener("open", () => {
-    // Client sends pings (like Claude Code's 10s interval, sped up)
+    // Client pings and writes data continuously (bidirectional traffic drives
+    // writes through the sendBuffer slow path, which is the code under test).
     intervals.push(
       setInterval(() => {
-        if (!pongReceived) {
-          reject(new Error("Pong timeout - connection dead"));
-          return;
+        if (ws.readyState === WebSocket.OPEN) {
+          (ws as any).ping?.();
+          ws.send("data:" + seq++);
         }
-        pongReceived = false;
-        (ws as any).ping?.();
-      }, 400),
-    );
-    // Client writes data continuously (bidirectional traffic triggers the bug)
-    intervals.push(
-      setInterval(() => {
-        if (ws.readyState === WebSocket.OPEN) ws.send("data:" + Date.now());
-      }, 50),
+      }, 20),
     );
   });
-
-  // Resolve as soon as enough pongs arrive (condition-based, not timer-gated)
-  let pongCount = 0;
+  ws.addEventListener("message", e => {
+    const data = String(e.data);
+    if (data.startsWith("echo:")) echoes.push(data.slice(5));
+    else if (data === "push") pushes++;
+    maybeResolve();
+  });
   ws.addEventListener("pong", () => {
-    pongCount++;
-    pongReceived = true;
-    if (pongCount >= REQUIRED_PONGS) resolve();
+    pongs++;
+    maybeResolve();
   });
-
+  ws.addEventListener("error", e => reject((e as ErrorEvent).error ?? new Error("WebSocket error")));
   ws.addEventListener("close", e => {
-    closeCode = (e as CloseEvent).code;
+    const code = (e as CloseEvent).code;
     clearIntervals();
-    if (pongCount < REQUIRED_PONGS) {
-      reject(new Error(`Connection closed (${closeCode}) after only ${pongCount}/${REQUIRED_PONGS} pongs`));
-    }
+    resolveClosed(code);
+    reject(new Error(`Connection closed (${code}) after ${pongs}/${REQUIRED} pongs, ${echoes.length} echoes, ${pushes} pushes`));
   });
 
   try {
-    await promise;
-    expect(pongCount).toBeGreaterThanOrEqual(REQUIRED_PONGS);
+    await ready;
+    clearIntervals();
+
+    // Every data frame that round-tripped must carry the exact payload we sent,
+    // in order: the tunnel's TLS stream stayed intact under bidirectional load.
+    expect(echoes.slice(0, REQUIRED)).toEqual(Array.from({ length: REQUIRED }, (_, i) => `data:${i}`));
+    expect(pongs).toBeGreaterThanOrEqual(REQUIRED);
+    expect(pushes).toBeGreaterThanOrEqual(REQUIRED);
+
     ws.close();
+    expect(await closed).toBe(1000);
   } finally {
     clearIntervals();
+    ws.close();
     proxy.close();
   }
 }, 10000);

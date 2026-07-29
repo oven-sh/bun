@@ -384,15 +384,8 @@ public:
                     moduleNamespaceObject->overrideExportValue(moduleNamespaceObject->globalObject(), this->spyIdentifier, implValue);
                 }
             } else if (this->spyAttributes & SpyAttributeProxy) {
-                // Restore via [[DefineOwnProperty]] so the Proxy handler (or its target) sees the
-                // write, and so an accessor we installed is replaced rather than invoked.
-                // clearSpy() has no error return and is also driven from JSMock__resetSpies' loop
-                // with no per-iteration exception check, so a throwing trap is swallowed here.
-                auto catcher = DECLARE_TOP_EXCEPTION_SCOPE(this->vm());
                 JSC::PropertyDescriptor descriptor(implValue, this->spyAttributes & ~SpyAttributeMask);
                 target->methodTable()->defineOwnProperty(target, globalObject(), this->spyIdentifier, descriptor, false);
-                if (catcher.exception()) [[unlikely]]
-                    catcher.clearException();
             } else if (auto index = parseIndex(this->spyIdentifier)) {
                 // Use putDirectIndex for numeric property keys (e.g., spyOn(arr, 0))
                 target->putDirectIndex(globalObject(), *index, implValue, this->spyAttributes & ~SpyAttributeMask, PutDirectIndexLikePutDirect);
@@ -654,7 +647,12 @@ static void forEachMockInSet(JSC::Strong<JSC::Unknown>& mockSet, const Functor& 
 
 extern "C" void JSMock__resetSpies(Zig::GlobalObject* globalObject)
 {
-    forEachMockInSet(globalObject->mockModule.activeSpies, [](JSMockFunction* spy) { spy->clearSpy(); });
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(globalObject->vm());
+    forEachMockInSet(globalObject->mockModule.activeSpies, [&](JSMockFunction* spy) {
+        if (scope.exception()) [[unlikely]]
+            return;
+        spy->clearSpy();
+    });
     globalObject->mockModule.activeSpies.clear();
 }
 
@@ -1562,8 +1560,7 @@ BUN_DEFINE_HOST_FUNCTION(JSMock__jsSpyOn, (JSC::JSGlobalObject * lexicalGlobalOb
                 moduleNamespaceObject->overrideExportValue(globalObject, propertyKey, mock);
                 mock->spyAttributes |= JSMockFunction::SpyAttributeESModuleNamespace;
             } else if (isProxy) {
-                // putDirect() on a ProxyObject writes to the proxy's own storage, which ProxyObject's
-                // [[Get]] never consults. Route through [[Set]] so the handler (or its target) sees it.
+                // putDirect on a ProxyObject is invisible to its [[Get]]; go through [[Set]].
                 PutPropertySlot putSlot(object, true);
                 object->methodTable()->put(object, globalObject, propertyKey, mock, putSlot);
                 mock->spyAttributes |= JSMockFunction::SpyAttributeProxy;

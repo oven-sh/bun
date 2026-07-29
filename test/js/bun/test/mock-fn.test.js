@@ -1139,6 +1139,22 @@ describe("spyOn", () => {
     expect(target.m()).toBe("orig");
   });
 
+  test("mockRestore propagates a Proxy defineProperty trap exception", () => {
+    let armed = false;
+    const proxy = new Proxy(
+      { m: () => "orig" },
+      {
+        defineProperty(t, k, d) {
+          if (armed) throw new Error("boom-define");
+          return Reflect.defineProperty(t, k, d);
+        },
+      },
+    );
+    const fn = spyOn(proxy, "m");
+    armed = true;
+    expect(() => fn.mockRestore()).toThrow("boom-define");
+  });
+
   test("propagates exceptions from a Proxy get trap", () => {
     const proxy = new Proxy(
       {},

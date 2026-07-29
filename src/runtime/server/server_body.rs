@@ -2159,6 +2159,17 @@ where
         upgrader.upgrade_context = Some(usize::MAX as *mut WebSocketUpgradeContext);
         let signal = upgrader.signal.take();
         upgrader.resp = None;
+
+        // Snapshot lazy url/headers before detaching (mirrors to_async_without_abort_handler).
+        if request.ensure_url().is_err() {
+            request.url.set(BunString::empty());
+        }
+        if !request.has_fetch_headers() {
+            if let Some(req_ptr) = upgrader.req {
+                request.set_fetch_headers(Some(HeadersRef::create_from_uws(req_ptr)));
+            }
+        }
+
         request.request_context = AnyRequestContext::NULL;
         upgrader.request_weakref.deref();
 

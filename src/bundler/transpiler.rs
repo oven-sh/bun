@@ -2140,7 +2140,8 @@ fn parse_base64_or_dataurl_loader<'a>(
     };
     // SAFETY: ARENA — `arena` outlives the returned `ParseResult.ast` (the AST
     // crate's `Str` convention erases `'bump` to `'static` for `E::String.data`).
-    let encoded: &'static [u8] = unsafe { bun_ptr::detach_lifetime(arena.alloc_slice_copy(&encoded)) };
+    let encoded: &'static [u8] =
+        unsafe { bun_ptr::detach_lifetime(arena.alloc_slice_copy(&encoded)) };
     let expr = bun_ast::Expr::init(bun_ast::E::EString::init(encoded), bun_ast::Loc::EMPTY);
     let stmt = bun_ast::Stmt::alloc(
         bun_ast::S::ExportDefault {

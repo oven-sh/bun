@@ -440,7 +440,7 @@ describe("worker_threads", () => {
   // of taking out this test runner.
   test("web Worker argv followed by worker_threads Worker does not crash", async () => {
     await using proc = Bun.spawn({
-      cmd: [bunExe(), "test", path.join(import.meta.dir, "worker-argv-cross-thread-fixture.test.ts")],
+      cmd: [bunExe(), "test", path.join(import.meta.dir, "worker-argv-cross-thread-fixture.ts")],
       env: bunEnv,
       stderr: "pipe",
     });

@@ -262,6 +262,25 @@ describe("update", () => {
     });
   }
 
+  test("--frozen-lockfile passes after --latest updates catalogs", async () => {
+    const { packageDir } = await registry.createTestDir();
+    await createUpdateMonorepo(packageDir, "catalog-update-frozen");
+    await runBunInstall(bunEnv, packageDir);
+    await runUpdate(packageDir, "--latest");
+
+    const { exited, stderr } = spawn({
+      cmd: [bunExe(), "install", "--frozen-lockfile"],
+      cwd: packageDir,
+      stdout: "pipe",
+      stderr: "pipe",
+      env: bunEnv,
+    });
+    const err = stderrForInstall(await stderr.text());
+    expect(err).not.toContain("lockfile had changes");
+    expect(err).not.toContain("error:");
+    expect(await exited).toBe(0);
+  });
+
   test("--latest run from inside a workspace package updates the root catalog", async () => {
     const { packageDir } = await registry.createTestDir();
     await createUpdateMonorepo(packageDir, "catalog-update-in-workspace");

@@ -950,10 +950,7 @@ mod _async_tasks {
             task.promise.value()
         }
 
-        /// Completion entry point for I/O ring submissions. Called on the JS
-        /// thread from `FsIoRing::on_async` after it has written `req.result`.
-        /// Identical to `uv_callback` except that libuv never initialised the
-        /// request, so `uv_fs_req_cleanup` is skipped.
+        /// `uv_callback` minus `uv_fs_req_cleanup` (libuv never initialised the request).
         extern "C" fn ioring_callback(req: *mut uv::fs_t) {
             // SAFETY: req.data was set to the Box::leak'd `*mut Self` in create()
             let this: &mut Self = unsafe { bun_ptr::callback_ctx::<Self>((*req).data) };

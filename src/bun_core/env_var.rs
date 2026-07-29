@@ -234,9 +234,7 @@ pub mod feature_flag {
     new_feature_flag!(pub BUN_FEATURE_FLAG_DISABLE_SQL_AUTO_PIPELINING, "BUN_FEATURE_FLAG_DISABLE_SQL_AUTO_PIPELINING", {});
     new_feature_flag!(pub BUN_DISABLE_TRANSPILED_SOURCE_CODE_PREVIEW, "BUN_DISABLE_TRANSPILED_SOURCE_CODE_PREVIEW", {});
     new_feature_flag!(pub BUN_FEATURE_FLAG_DISABLE_UV_FS_COPYFILE, "BUN_FEATURE_FLAG_DISABLE_UV_FS_COPYFILE", {});
-    // Route async `fs.read`/`fs.write` through the Windows I/O Ring API
-    // (KernelBase `CreateIoRing`, Win11 22000+) instead of the libuv
-    // threadpool. Exploratory; off by default. See `src/sys/windows/ioring.rs`.
+    // Exploratory Windows I/O Ring backend for async fs.read/fs.write; see `src/sys/windows/ioring.rs`.
     new_feature_flag!(pub BUN_FEATURE_FLAG_WINDOWS_IORING, "BUN_FEATURE_FLAG_WINDOWS_IORING", {});
     new_feature_flag!(pub BUN_DUMP_STATE_ON_CRASH, "BUN_DUMP_STATE_ON_CRASH", {});
     new_feature_flag!(pub BUN_ENABLE_EXPERIMENTAL_SHELL_BUILTINS, "BUN_ENABLE_EXPERIMENTAL_SHELL_BUILTINS", {});

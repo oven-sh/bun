@@ -1,35 +1,11 @@
-//! Windows I/O Ring (`ioringapi.h`) backend for async file read/write.
+//! Windows I/O Ring (`ioringapi.h`) backend for async `fs.read`/`fs.write`,
+//! gated behind `BUN_FEATURE_FLAG_WINDOWS_IORING`. See `bench/ioring/` for the
+//! measurements and the `FILE_FLAG_OVERLAPPED` caveat.
 //!
-//! Exploratory: gated behind `BUN_FEATURE_FLAG_WINDOWS_IORING`. When enabled
-//! and the OS supports IORING_VERSION_3 with real kernel backing (no user-mode
-//! emulation), `node:fs` async `read`/`write` route through a per-thread ring
-//! instead of the libuv threadpool.
-//!
-//! Integration model (single JS thread owns the ring; no cross-thread ring
-//! access):
-//!
-//!   JS thread    BuildIoRing{Read,Write}File + SubmitIoRing
-//!                      |
-//!   kernel       completes ops, signals the completion HANDLE
-//!                      |
-//!   Win TP thread  RegisterWaitForSingleObject callback -> uv_async_send
-//!                      |
-//!   JS thread    uv_async_cb drains PopIoRingCompletion, dispatches each
-//!                UserData back to the caller-supplied `complete` fn
-//!
-//! HRESULT from the CQE is mapped to a libuv errno via
-//! `uv_translate_sys_error(HRESULT_CODE(hr))` so downstream error handling is
-//! identical to the `uv_fs_*` path.
-//!
-//! The ring is *not* thread-safe; all builder/submit/pop calls happen on the
-//! owning JS thread. The wait callback only touches the `uv_async_t` (which
-//! `uv_async_send` documents as the sole thread-safe libuv entry point).
-//!
-//! Key behavioural note discovered during evaluation: when the file handle was
-//! opened without `FILE_FLAG_OVERLAPPED` (the default for `uv_fs_open`), the
-//! kernel processes the ring's submissions serially, which eliminates the
-//! parallelism benefit and is slower than the threadpool for uncached reads.
-//! See `bench/ioring/` for the measurements this module was built to gather.
+//! Threading: the ring is owned by a single JS thread. Build/Submit/Pop happen
+//! there; the completion `HANDLE` is bridged into the uv loop via
+//! `RegisterWaitForSingleObject` -> `uv_async_send`, and CQEs are drained in
+//! the `uv_async_cb` on that same thread.
 
 #![cfg(windows)]
 #![allow(non_snake_case, non_camel_case_types)]
@@ -44,8 +20,6 @@ use bun_windows_sys::externs::{
     CloseHandle, GetProcAddress, HANDLE, INFINITE, RegisterWaitForSingleObject, WAITORTIMERCALLBACK,
 };
 use bun_windows_sys::kernel32;
-
-use crate::{E, Error, Tag};
 
 bun_core::declare_scope!(ioring, hidden);
 
@@ -154,12 +128,7 @@ pub struct IoRingApi {
 unsafe impl Send for IoRingApi {}
 unsafe impl Sync for IoRingApi {}
 
-/// Runtime-detected API table. `None` if:
-/// - `BUN_FEATURE_FLAG_WINDOWS_IORING` is not set, or
-/// - `QueryIoRingCapabilities` is absent (pre-Win11), or
-/// - `MaxVersion < IORING_VERSION_2`, or
-/// - `IORING_FEATURE_UM_EMULATION` is set (no kernel backing), or
-/// - `IORING_FEATURE_SET_COMPLETION_EVENT` is absent.
+/// Runtime-detected API table; `None` on unsupported OS or when the flag is off.
 pub fn api() -> Option<&'static IoRingApi> {
     static CELL: OnceLock<Option<IoRingApi>> = OnceLock::new();
     CELL.get_or_init(detect).as_ref()
@@ -261,20 +230,12 @@ static WCH_KERNELBASE: &[u16] = &[
 
 // ──────────────────────────── per-thread ring ────────────────────────────
 
-/// Submission `UserData` is a `*mut uv::fs_t`. On completion the drained result
-/// (bytes transferred, or a negative libuv errno) is written to `req.result`
-/// and `req.cb` is invoked on the owning JS thread. This mirrors libuv's own
-/// `uv_fs_*` completion contract so `UVFSRequest` can reuse its existing
-/// `uv_callback` path for result dispatch.
-
 const SQ_SIZE: u32 = 512;
 const CQ_SIZE: u32 = 1024;
 
-/// One I/O ring bound to a single libuv loop thread.
-///
-/// Heap-allocated and leaked on first use (process-lifetime singleton per JS
-/// thread); `Drop` is provided for completeness but not relied upon for
-/// correctness.
+/// One I/O ring bound to a single libuv loop thread. Process-lifetime; leaked
+/// on first use. `UserData` on each submission is a `*mut uv::fs_t`; completion
+/// writes `req.result` and calls `req.cb`, matching the `uv_fs_*` contract.
 pub struct FsIoRing {
     api: &'static IoRingApi,
     ring: HIORING,
@@ -289,8 +250,6 @@ pub struct FsIoRing {
 }
 
 impl FsIoRing {
-    /// Create a ring bound to `loop_`. Returns `None` if any kernel call fails.
-    /// Caller places the returned box at a stable address before use.
     fn new(api: &'static IoRingApi, loop_: *mut uv::Loop) -> Option<Box<Self>> {
         let version = if api.caps.MaxVersion >= IORING_VERSION_3 {
             IORING_VERSION_3
@@ -346,18 +305,13 @@ impl FsIoRing {
             prepare: ptr::null_mut(),
         });
 
-        // uv_async_t must live at a stable heap address for libuv.
         let async_ = Box::leak(Box::new(unsafe { core::mem::zeroed::<uv::uv_async_t>() }));
         async_.init(loop_, Some(Self::on_async));
         async_.data = (&mut *this as *mut Self).cast();
-        // SAFETY: `async_` was just initialised on `loop_`; unreffing keeps the
-        // loop from staying alive solely because a ring exists.
+        // SAFETY: `async_` is live on `loop_`; unref so the ring alone never keeps the loop alive.
         unsafe { uv::uv_unref((async_ as *mut uv::uv_async_t).cast()) };
         this.async_ = async_;
 
-        // uv_prepare_t fires on the JS thread immediately before the loop would
-        // block on IOCP; that is the latest point at which SQEs built during
-        // the preceding JS tick can be submitted in a single syscall.
         let prepare = Box::leak(Box::new(unsafe { core::mem::zeroed::<uv::uv_prepare_t>() }));
         // SAFETY: `prepare` is a stable heap allocation; `loop_` is live.
         unsafe {
@@ -402,10 +356,9 @@ impl FsIoRing {
         Some(this)
     }
 
-    /// Submit a positional read. `offset < 0` means current file position.
-    /// `req.cb` must be set; on completion `req.result` is written and `req.cb`
-    /// is invoked on the JS thread. Returns `false` if the SQ is full or the
-    /// builder rejected the entry; caller falls back to the libuv path.
+    /// Queue a positional read. `req.cb` must be set. Returns `false` (caller
+    /// falls back to libuv) on SQ-full, builder failure, or `offset < 0`
+    /// (ioring has no current-position sentinel).
     pub fn submit_read(
         &mut self,
         handle: HANDLE,
@@ -414,9 +367,6 @@ impl FsIoRing {
         offset: i64,
         req: *mut uv::fs_t,
     ) -> bool {
-        // `BuildIoRingReadFile` takes an absolute `UINT64` offset with no
-        // current-position sentinel; position < 0 (node's `null`) must fall
-        // back to the uv threadpool which honours the handle's file pointer.
         if offset < 0 {
             return false;
         }
@@ -447,7 +397,7 @@ impl FsIoRing {
         true
     }
 
-    /// Submit a positional write. See `submit_read` for the `false` contract.
+    /// Queue a positional write; same `false` contract as `submit_read`.
     pub fn submit_write(
         &mut self,
         handle: HANDLE,
@@ -517,23 +467,20 @@ impl FsIoRing {
         self.pending = 0;
     }
 
-    /// Fires right before the uv loop blocks on IOCP. Submits any SQEs built
-    /// during the preceding JS tick in a single syscall.
+    /// uv_prepare_cb: batch-submit SQEs built during the preceding JS tick.
     unsafe extern "C" fn on_prepare(p: *mut uv::uv_prepare_t) {
         // SAFETY: `data` was set to `*mut Self` in `new()`.
         let this = unsafe { &mut *((*p).data as *mut Self) };
         this.flush();
     }
 
-    /// Windows thread-pool wait callback. Runs off the JS thread; touches only
-    /// the `uv_async_t` (the one libuv entry point documented as thread-safe).
+    /// WAITORTIMERCALLBACK: off-thread; `uv_async_send` is the sole thread-safe uv entry point.
     unsafe extern "system" fn on_wait(ctx: *mut c_void, _timeout: u8) {
         // SAFETY: `ctx` is the `uv_async_t*` registered in `new()`.
         unsafe { uv::uv_async_send(ctx.cast()) };
     }
 
-    /// Runs on the JS thread. Drains the CQ and invokes each `uv::fs_t`'s
-    /// stored `cb` after writing the libuv-shaped result into `req.result`.
+    /// uv_async_cb: drain CQEs, write `req.result`, call `req.cb` (JS thread).
     unsafe extern "C" fn on_async(a: *mut uv::uv_async_t) {
         // SAFETY: `data` was set to `*mut Self` in `new()`.
         let this = unsafe { &mut *((*a).data as *mut Self) };
@@ -547,9 +494,7 @@ impl FsIoRing {
             this.inflight = this.inflight.saturating_sub(1);
             let req = cqe.UserData as *mut uv::fs_t;
             debug_assert!(!req.is_null());
-            // `ERROR_HANDLE_EOF`: ioring reports a positional read at/past EOF
-            // as a Win32 error, unlike `ReadFile` which succeeds with 0 bytes.
-            // libuv's `fs__read` applies the same normalisation.
+            // ioring reports read-at-EOF as ERROR_HANDLE_EOF; map to 0 bytes like `ReadFile`/libuv.
             const HRESULT_HANDLE_EOF: HRESULT = 0x8007_0026u32 as HRESULT;
             let rc: i64 = if cqe.ResultCode == S_OK {
                 cqe.Information as i64
@@ -587,9 +532,7 @@ impl Drop for FsIoRing {
     }
 }
 
-/// `HRESULT_FROM_WIN32` has the shape `0x8007_xxxx`; extract the Win32 code and
-/// map through libuv's table so the libuv-errno result matches the `uv_fs_*`
-/// path exactly. Anything else maps to `UV_EIO`.
+/// Map an `HRESULT_FROM_WIN32`-shaped code to a libuv errno; anything else -> `UV_EIO`.
 fn hresult_to_uv_err(hr: HRESULT) -> i32 {
     const UV_EIO: i32 = -4070;
     if (hr as u32 & 0xFFFF_0000) == 0x8007_0000 {
@@ -602,20 +545,12 @@ fn hresult_to_uv_err(hr: HRESULT) -> i32 {
     }
 }
 
-// Keep the unused-import checker quiet for the error types documented above;
-// they remain part of the public surface even though the hot path goes through
-// the libuv-errno shape.
-const _: fn() -> Error = || Error::new(E::EIO, Tag::read);
-
 // ──────────────────────────── singleton access ───────────────────────────
 
-/// Per-thread ring, leaked on first use. `None` when disabled/unsupported or
-/// if creation fails; once `None` is observed it is never retried.
 static RING: AtomicPtr<FsIoRing> = AtomicPtr::new(ptr::null_mut());
 static INIT: OnceLock<()> = OnceLock::new();
 
-/// Get or lazily create the ring for the current libuv loop. Thread-affine:
-/// called from the JS thread only.
+/// Lazy per-loop ring. Thread-affine: JS thread only.
 pub fn get(loop_: *mut uv::Loop) -> Option<&'static mut FsIoRing> {
     let p = RING.load(Ordering::Relaxed);
     if !p.is_null() {

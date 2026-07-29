@@ -2306,9 +2306,6 @@ impl<'a> PackageInstall<'a> {
             crate::PreinstallState::Done => false,
             _ => 'brk: {
                 if self.patch.is_none() {
-                    // The entry name itself is attacker-predictable
-                    // (name@version@@@N), so refuse a symlink planted there
-                    // before looking for package.json beneath it.
                     if !crate::package_manager_real::directories::cache_entry_is_dir(
                         self.cache_dir,
                         self.cache_dir_subpath,

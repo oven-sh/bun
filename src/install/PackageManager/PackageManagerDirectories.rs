@@ -376,11 +376,8 @@ unsafe fn ensure_cache_directory(this: *mut PackageManager) -> Dir {
     }
 }
 
-/// A shared install cache is trusted only when it is a real directory owned by
-/// the current user and not group/other-writable. The cache-hit path never
-/// re-verifies integrity, so a writable-by-others cache root would let any
-/// co-tenant supply the bytes that end up in node_modules. On failure the
-/// caller falls back to the per-project `node_modules/.cache`.
+/// Cache hits never re-verify integrity, so refuse a shared cache root that
+/// another user can write to; the caller falls back to `node_modules/.cache`.
 #[cfg(unix)]
 fn is_trusted_cache_root(dir: Fd) -> bool {
     match sys::fstat(dir) {
@@ -781,12 +778,10 @@ pub fn cached_tarball_folder_name(
     )
 }
 
-/// `true` iff `subpath` under `dir` is a real directory, not a symlink or
-/// junction. A cache hit short-circuits the tarball download and its integrity
-/// check, so a link planted at the predictable entry name must be treated as
-/// absent and re-fetched. POSIX uses `lstatat` (AT_SYMLINK_NOFOLLOW); on
-/// Windows `lstatat`'s `fstat` never sets `S_IFLNK` for a junction, so query
-/// the attributes directly and refuse `FILE_ATTRIBUTE_REPARSE_POINT`.
+/// `true` iff `subpath` under `dir` is a real directory (not a symlink or
+/// junction), so a link planted at the predictable cache-entry name is treated
+/// as absent and re-fetched. Windows `lstatat` maps junctions to `S_IFDIR`,
+/// hence the explicit `FILE_ATTRIBUTE_REPARSE_POINT` query there.
 pub fn cache_entry_is_dir(dir: Fd, subpath: &ZStr) -> bool {
     #[cfg(windows)]
     {

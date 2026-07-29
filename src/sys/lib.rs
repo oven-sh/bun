@@ -1247,10 +1247,8 @@ pub type Stat = libc::stat;
 #[cfg(windows)]
 pub type Stat = bun_libuv_sys::uv_stat_t;
 
-/// Shared predicate for the "is this a cache root we trust to source bytes
-/// from" checks (the bunx cache, the install extraction cache, the per-sha
-/// `bun --bun` node-symlink dir): a real directory, owned by `uid`, with no
-/// group/other write bits.
+/// Trust predicate shared by the bunx, install, and `bun --bun` cache roots:
+/// real directory, owned by `uid`, no group/other write bits.
 #[cfg(unix)]
 #[inline]
 pub fn stat_is_owner_only_writable_dir(st: &Stat, uid: libc::uid_t) -> bool {

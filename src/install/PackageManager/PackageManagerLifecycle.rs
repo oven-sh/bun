@@ -185,10 +185,8 @@ impl PackageManager {
                     return PreinstallState::Extract;
                 }
 
-                // `--force` means re-fetch and re-verify: the extraction cache
-                // is keyed only on name@version, so a hit proves nothing about
-                // the bytes on disk. Skipping the cache here is what lets
-                // `--force` recover from a tampered or pre-planted entry.
+                // The cache is keyed only on name@version; `--force` must
+                // re-fetch and re-verify instead of trusting a hit.
                 let trust_cache_hit = !self.options.enable.force_install();
 
                 if trust_cache_hit && directories::is_folder_in_cache(self, folder_path) {

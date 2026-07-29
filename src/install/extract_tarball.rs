@@ -608,11 +608,7 @@ impl ExtractTarball {
                                     | sys::Errno::PERM
                                     | sys::Errno::BUSY
                                     | sys::Errno::EXIST
-                                    // A junction/symlink at the destination makes
-                                    // `NtSetInformationFile(FileRenameInformation)`
-                                    // fail with ENOTDIR even with ReplaceIfExists;
-                                    // move it aside and retry like any other
-                                    // occupied destination.
+                                    // Junction/symlink at the destination → ENOTDIR.
                                     | sys::Errno::NOTDIR => {
                                         // before we attempt to delete the destination, let's close the source dir.
                                         let _ = sys::close(dir_to_move);

@@ -2346,11 +2346,8 @@ pub(crate) fn install_isolated_packages(
                     {
                         install::PreinstallState::Done => false,
                         _ if installer.manager().options.enable.force_install() => {
-                            // The derived `<entry>_patch_hash=<h>` cache directory
-                            // is what lands in the store; remove it now so the
-                            // post-download `apply_package_patch` regenerates it
-                            // from the freshly-verified base instead of reusing
-                            // the stale contents.
+                            // Drop the derived `_patch_hash=` entry so
+                            // `apply_package_patch` re-derives from the fresh base.
                             if matches!(patch_info, installer::PatchInfo::Patch(_)) {
                                 let _ = bun_sys::Dir::borrow(&cache_dir)
                                     .delete_tree(pkg_cache_dir_subpath.slice_z().as_bytes());
@@ -2359,9 +2356,6 @@ pub(crate) fn install_isolated_packages(
                         }
                         _ => 'missing_from_cache: {
                             if matches!(patch_info, installer::PatchInfo::None) {
-                                // The cache entry name is attacker-predictable,
-                                // so require a real directory (not a symlink)
-                                // before probing for package.json beneath it.
                                 let exists =
                                     crate::package_manager_real::directories::cache_entry_is_dir(
                                         cache_dir,

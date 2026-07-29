@@ -1,13 +1,7 @@
-// Two-Way substring search (Crochemore & Perrin, 1991): guaranteed O(n + m)
-// time, O(1) extra space. Used as the safety-net fallback for the SIMD
-// substring kernels in highway_strings.cpp when their anchor filter keeps
-// firing (adversarial input where both anchor bytes are common in the
-// haystack), so Buffer#indexOf / includes / lastIndexOf stay linear even on
-// inputs Node's kBMMaxShift-capped Boyer-Moore still goes quadratic on.
-//
-// Based on the public-domain musl libc implementation (src/string/memmem.c),
-// adapted to support 16-bit units and reverse search via the same
-// index-reversing Vector trick Node's SearchString uses.
+// Two-Way substring search (Crochemore & Perrin, 1991): O(n + m) time,
+// O(1) space. Linear-time fallback for the SIMD kernels in highway_strings.cpp.
+// Derived from the public-domain musl libc memmem; templated on Char and
+// driven through an index-reversing Vector so one body serves forward/reverse.
 
 #pragma once
 
@@ -92,9 +86,7 @@ static size_t TwoWay(Vector<Char> haystack, Vector<Char> needle, size_t start_in
         p = p1;
     }
 
-    // Is the needle periodic? (Is needle[0..ms] a prefix of needle[p..p+ms]?)
-    // ms may be (size_t)-1, in which case the prefix is empty and the needle
-    // is trivially periodic with period p.
+    // Periodic if needle[0..ms] == needle[p..p+ms]; ms+1 wraps to 0 for ms == -1.
     bool periodic = true;
     for (size_t i = 0, e = ms + 1; i < e; i++) {
         if (needle[i] != needle[i + p]) {
@@ -135,10 +127,8 @@ static size_t TwoWay(Vector<Char> haystack, Vector<Char> needle, size_t start_in
 
 } // namespace stringsearch
 
-// One-shot entry point matching Node's SearchString in node_buffer.cc.
-// Returns the match index in [0, haystack_length - needle_length], or
-// haystack_length if not found. Preconditions: needle_length > 0 and
-// haystack_length >= needle_length (callers handle empty / oversized needles).
+// Returns the match index, or haystack_length if not found.
+// Requires needle_length > 0 and haystack_length >= needle_length.
 template<typename Char>
 size_t SearchString(const Char* haystack, size_t haystack_length,
     const Char* needle, size_t needle_length,

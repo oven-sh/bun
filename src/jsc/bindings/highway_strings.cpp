@@ -151,21 +151,14 @@ static inline uint64_t MaskBitsBelow(size_t k)
     return k >= 64 ? ~uint64_t { 0 } : ((uint64_t { 1 } << k) - 1);
 }
 
-// --- memmem / memrmem anchor selection -----------------------------------
-//
-// The SIMD substring kernels below verify two needle bytes per candidate
-// position and only memcmp when both line up. Picking those two bytes from the
-// needle's least-frequent values (by a histogram of the needle itself) makes
-// the filter selective on the shapes that used to go quadratic:
-// "aaa…ab" / "baaa…a" / "aa…b…aa" all reduce to zero candidates because the
-// single 'b' becomes an anchor. When every needle byte is equally common the
-// filter degrades to the old behaviour, and a false-positive budget hands off
-// to the Two-Way search in BufferStringSearch.h to keep the worst case
-// linear. The fallback is defined in the HWY_ONCE block.
+// Defined in the HWY_ONCE block (BufferStringSearch.h).
 template<typename Char>
 size_t MemMemTwoWayFallback(const Char* haystack, size_t haystack_len,
     const Char* needle, size_t needle_len, size_t start_index, bool is_forward);
 
+// Two anchor offsets for the SIMD substring filter: the needle's two
+// least-frequent bytes (low byte for uint16_t), first tie earliest / second
+// tie latest, so any distinguishing byte anywhere in the needle is picked.
 template<typename Char>
 static inline void MemMemPickAnchors(const Char* needle, size_t needle_len, size_t* a, size_t* b)
 {
@@ -175,7 +168,6 @@ static inline void MemMemPickAnchors(const Char* needle, size_t needle_len, size
     for (size_t i = 0; i < needle_len; i++)
         histogram[bucket(needle[i])]++;
 
-    // First anchor: rarest byte, ties to the earliest offset.
     size_t p0 = 0;
     uint32_t best = histogram[bucket(needle[0])];
     for (size_t i = 1; i < needle_len; i++) {
@@ -186,8 +178,6 @@ static inline void MemMemPickAnchors(const Char* needle, size_t needle_len, size
         }
     }
 
-    // Second anchor: next-rarest at a different offset, ties to the latest
-    // offset to keep the two apart.
     size_t p1 = (p0 == needle_len - 1) ? 0 : needle_len - 1;
     uint32_t best2 = histogram[bucket(needle[p1])];
     for (size_t i = 0; i < needle_len; i++) {
@@ -921,16 +911,10 @@ size_t IndexOfNeedsEscapeForJavaScriptStringImplQuote(const uint8_t* HWY_RESTRIC
 
 // --- Substring search (memmem / memrmem, 8- and 16-bit) --------------------
 //
-// Two-anchor SIMD filter: a vector is loaded at candidate start + anchor_a and
-// at start + anchor_b, and only positions where both anchor bytes match become
-// memcmp candidates. Anchor offsets are the needle's two rarest bytes
-// (MemMemPickAnchors), which brings the "aaa…ab"-style inputs that defeated a
-// first-byte-only scan down to zero candidates. A budget on false positives
-// keeps memcmp work under ~2·|haystack| and hands the remaining range to the
-// Two-Way search in BufferStringSearch.h (same adaptive strategy Node
-// uses) so the worst case stays linear even when both anchors are common.
-// kNotFound marks a fallback request so the per-target code never instantiates
-// the BM template.
+// Two-anchor SIMD filter: vectors at candidate + anchor_a and + anchor_b are
+// ANDed so only positions where both rare bytes (MemMemPickAnchors) line up
+// are memcmp'd. A false-positive budget bounds memcmp work at ~2·|haystack|
+// and hands the remainder to MemMemTwoWayFallback for a linear worst case.
 static constexpr size_t kNotFound = ~static_cast<size_t>(0);
 static constexpr size_t kFallback = ~static_cast<size_t>(1);
 

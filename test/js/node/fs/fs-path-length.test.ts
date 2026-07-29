@@ -1,6 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import { isLinux, isMacOS, isPosix, isWindows } from "harness";
 import fs from "node:fs";
+import fsp from "node:fs/promises";
 
 // On POSIX systems, MAX_PATH_BYTES is 4096.
 // Path validation must account for the actual UTF-8 byte length of strings,
@@ -209,5 +210,186 @@ describe.if(isWindows)("path length validation against UTF-16 conversion buffers
     const segment = Buffer.alloc(600, "\u4e00").toString();
     const p = "C:\\" + Array(150).fill(segment).join("\\");
     expect(() => fs.copyFileSync(p, "copy-file-dest-does-not-matter.txt")).toThrow("ENOENT");
+  });
+});
+
+// https://github.com/oven-sh/bun/issues/25659
+// A path over PATH_MAX is an OS-level error, not a programmer error: in Node
+// it reaches the callback (never a synchronous throw) and the error carries
+// the per-operation `syscall` plus the full `path`. Bun pre-checked the
+// length during argument parsing and threw synchronously with no `syscall`,
+// no `path`, and a message that hard-coded `open`.
+describe("over-PATH_MAX path goes to the callback with full error identity (#25659)", () => {
+  // Longer than PATH_MAX on every platform (Windows MAX_PATH_BYTES ≈ 98302).
+  const BIG = Buffer.alloc(100_000, "a").toString();
+
+  async function viaCallback<A extends unknown[]>(
+    fn: (...a: [...A, (err: NodeJS.ErrnoException | null) => void]) => void,
+    ...a: A
+  ) {
+    const { promise, resolve } = Promise.withResolvers<{
+      sync: NodeJS.ErrnoException | undefined;
+      cb: NodeJS.ErrnoException | null | undefined;
+    }>();
+    let cb: NodeJS.ErrnoException | null | undefined;
+    try {
+      fn(...a, (err: NodeJS.ErrnoException | null) => {
+        cb = err;
+        resolve({ sync: undefined, cb });
+      });
+    } catch (e) {
+      resolve({ sync: e as NodeJS.ErrnoException, cb });
+    }
+    return promise;
+  }
+
+  // [callback fn, args, expected err.syscall]
+  const ops = [
+    ["stat", fs.stat, [BIG], "stat"],
+    ["lstat", fs.lstat, [BIG], "lstat"],
+    ["open", fs.open, [BIG, "r"], "open"],
+    ["readdir", fs.readdir, [BIG], "scandir"],
+    ["mkdir", fs.mkdir, [BIG], "mkdir"],
+    ["unlink", fs.unlink, [BIG], "unlink"],
+    ["access", fs.access, [BIG], "access"],
+    ["readFile", fs.readFile, [BIG], "open"],
+    ["writeFile", fs.writeFile, [BIG, "x"], "open"],
+    ["appendFile", fs.appendFile, [BIG, "x"], "open"],
+    ["readlink", fs.readlink, [BIG], "readlink"],
+    ["rmdir", fs.rmdir, [BIG], "rmdir"],
+    ["chmod", fs.chmod, [BIG, 0o644], "chmod"],
+    ["chown", fs.chown, [BIG, 0, 0], "chown"],
+    ["lchown", fs.lchown, [BIG, 0, 0], "lchown"],
+    ["utimes", fs.utimes, [BIG, 0, 0], "utime"],
+    ["lutimes", fs.lutimes, [BIG, 0, 0], "lutime"],
+    ["rename (src)", fs.rename, [BIG, "x"], "rename"],
+    ["rename (dest)", fs.rename, ["x", BIG], "rename"],
+    ["link (src)", fs.link, [BIG, "x"], "link"],
+    ["link (dest)", fs.link, ["x", BIG], "link"],
+    ["copyFile (src)", fs.copyFile, [BIG, "x"], "copyfile"],
+    ["copyFile (dest)", fs.copyFile, ["x", BIG], "copyfile"],
+    ["symlink (target)", fs.symlink, [BIG, "x"], "symlink"],
+    ["symlink (path)", fs.symlink, ["x", BIG], "symlink"],
+    ["statfs", fs.statfs, [BIG], "statfs"],
+    ["truncate", fs.truncate, [BIG], "open"],
+    ["mkdtemp", fs.mkdtemp, [BIG], "mkdtemp"],
+    ["rm (recursive)", fs.rm, [BIG, { recursive: true }], "lstat"],
+  ] as const;
+
+  describe.each(ops)("fs.%s", (_name, fn, args, syscall) => {
+    it.concurrent("delivers ENAMETOOLONG via the callback", async () => {
+      const { sync, cb } = await viaCallback(fn as any, ...(args as unknown[]));
+      expect({ sync: sync?.code, cb: cb?.code }).toEqual({ sync: undefined, cb: "ENAMETOOLONG" });
+    });
+    it.concurrent("error carries the caller's syscall and the path", async () => {
+      const { cb } = await viaCallback(fn as any, ...(args as unknown[]));
+      expect({ code: cb?.code, syscall: cb?.syscall, hasPath: "path" in (cb ?? {}) }).toEqual({
+        code: "ENAMETOOLONG",
+        syscall,
+        hasPath: true,
+      });
+    });
+  });
+
+  // watch / watchFile are synchronous and don't fit the callback-form table.
+  // Node's watchFile never throws for a nonexistent/over-long path (it polls),
+  // so only assert that Bun throws a well-formed error rather than panicking.
+  for (const [name, fn] of [
+    ["watch", (p: string) => fs.watch(p, () => {})],
+    ["watchFile", (p: string) => fs.watchFile(p, () => {})],
+  ] as const) {
+    it(`fs.${name} reports ENAMETOOLONG with syscall=watch and path`, () => {
+      let err!: NodeJS.ErrnoException;
+      try {
+        fn(BIG);
+        expect.unreachable();
+      } catch (e) {
+        err = e as NodeJS.ErrnoException;
+      } finally {
+        if (name === "watchFile") fs.unwatchFile(BIG);
+      }
+      expect({ code: err.code, syscall: err.syscall, hasPath: "path" in err }).toEqual({
+        code: "ENAMETOOLONG",
+        syscall: "watch",
+        hasPath: true,
+      });
+    });
+  }
+
+  it("callback form with a Buffer path delivers via the callback", async () => {
+    const { sync, cb } = await viaCallback(fs.stat, Buffer.from(BIG));
+    expect({ sync: sync?.code, cb: cb?.code, syscall: cb?.syscall }).toEqual({
+      sync: undefined,
+      cb: "ENAMETOOLONG",
+      syscall: "stat",
+    });
+  });
+
+  it("sync form error carries syscall/path (not hardcoded 'open')", () => {
+    let err!: NodeJS.ErrnoException;
+    try {
+      fs.statSync(BIG);
+      expect.unreachable();
+    } catch (e) {
+      err = e as NodeJS.ErrnoException;
+    }
+    expect({ code: err.code, syscall: err.syscall, hasPath: "path" in err }).toEqual({
+      code: "ENAMETOOLONG",
+      syscall: "stat",
+      hasPath: true,
+    });
+    expect(err.message).toStartWith("ENAMETOOLONG: name too long, stat '");
+  });
+
+  it("promise form rejects with syscall/path", async () => {
+    let err!: NodeJS.ErrnoException;
+    try {
+      await fsp.stat(BIG);
+      expect.unreachable();
+    } catch (e) {
+      err = e as NodeJS.ErrnoException;
+    }
+    expect({ code: err.code, syscall: err.syscall, hasPath: "path" in err }).toEqual({
+      code: "ENAMETOOLONG",
+      syscall: "stat",
+      hasPath: true,
+    });
+  });
+
+  for (const [name, fn] of [
+    ["Bun.file()", () => Bun.file(BIG)],
+    ["Bun.write() destination", () => Bun.write(BIG, "x")],
+    [
+      "Bun.serve HTMLImportManifest path",
+      () => Bun.serve({ port: 0, routes: { "/": { index: "x", files: [{ path: BIG, headers: {} }] } } as any }),
+    ],
+  ] as const) {
+    it(`${name} throws ENAMETOOLONG with syscall/path for an over-PATH_MAX path`, () => {
+      let err!: NodeJS.ErrnoException;
+      try {
+        fn();
+        expect.unreachable();
+      } catch (e) {
+        err = e as NodeJS.ErrnoException;
+      }
+      expect({ code: err.code, syscall: err.syscall, hasPath: "path" in err }).toEqual({
+        code: "ENAMETOOLONG",
+        syscall: "open",
+        hasPath: true,
+      });
+    });
+  }
+
+  it("type errors and null-byte paths still throw synchronously (matches node)", async () => {
+    // ERR_INVALID_ARG_TYPE: wrong path type
+    {
+      const { sync, cb } = await viaCallback(fs.stat as any, 123 as any);
+      expect({ sync: sync?.code, cb }).toEqual({ sync: "ERR_INVALID_ARG_TYPE", cb: undefined });
+    }
+    // ERR_INVALID_ARG_VALUE: null byte in path
+    {
+      const { sync, cb } = await viaCallback(fs.stat, "foo\0bar");
+      expect({ sync: sync?.code, cb }).toEqual({ sync: "ERR_INVALID_ARG_VALUE", cb: undefined });
+    }
   });
 });

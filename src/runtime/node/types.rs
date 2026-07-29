@@ -856,6 +856,15 @@ pub trait PathLikeExt {
     fn slice_z<'a>(&'a self, buf: &'a mut PathBuffer) -> &'a ZStr
     where
         Self: Sized;
+    /// Fallible [`Self::slice_z`]: returns `ENAMETOOLONG` tagged with
+    /// `syscall` and the full path when the path would not fit `PathBuffer`.
+    fn slice_z_sys<'a>(
+        &'a self,
+        buf: &'a mut PathBuffer,
+        syscall: bun_sys::Tag,
+    ) -> bun_sys::Maybe<&'a ZStr>
+    where
+        Self: Sized;
     fn slice_w<'a>(&'a self, buf: &'a mut WPathBuffer) -> Result<&'a WStr, NameTooLong>
     where
         Self: Sized;
@@ -1019,6 +1028,24 @@ impl PathLikeExt for PathLike {
     }
 
     #[inline]
+    fn slice_z_sys<'a>(
+        &'a self,
+        buf: &'a mut PathBuffer,
+        syscall: bun_sys::Tag,
+    ) -> bun_sys::Maybe<&'a ZStr> {
+        let sliced = self.slice();
+        if sliced.len() >= MAX_PATH_BYTES {
+            return Err(bun_sys::Error {
+                errno: bun_sys::E::ENAMETOOLONG as _,
+                syscall,
+                path: sliced.into(),
+                ..Default::default()
+            });
+        }
+        Ok(self.slice_z_with_force_copy::<false>(buf))
+    }
+
+    #[inline]
     fn slice_w<'a>(&'a self, buf: &'a mut WPathBuffer) -> Result<&'a WStr, NameTooLong> {
         let sliced = self.slice();
         if !strings::fits_in_wide_path_buffer(sliced) {
@@ -1035,6 +1062,9 @@ impl PathLikeExt for PathLike {
         }
         #[cfg(not(windows))]
         {
+            if self.slice().len() >= MAX_PATH_BYTES {
+                return Err(NameTooLong);
+            }
             Ok(self.slice_z_with_force_copy::<false>(buf))
         }
     }
@@ -1047,6 +1077,9 @@ impl PathLikeExt for PathLike {
         #[cfg(windows)]
         {
             let s = self.slice();
+            if s.len() >= MAX_PATH_BYTES {
+                return Err(NameTooLong);
+            }
             let mut b = bun_paths::path_buffer_pool::get();
             // RAII guard puts back on Drop.
 
@@ -1122,6 +1155,9 @@ impl PathLikeExt for PathLike {
 
         #[cfg(not(windows))]
         {
+            if self.slice().len() >= MAX_PATH_BYTES {
+                return Err(NameTooLong);
+            }
             Ok(self.slice_z_with_force_copy::<false>(buf))
         }
     }
@@ -1245,9 +1281,6 @@ impl PathLikeExt for PathLike {
             let sliced = str.to_thread_safe_slice();
             let sliced = scopeguard::guard(sliced, |s| s.deinit());
 
-            // Validate the UTF-8 byte length after conversion, since the path
-            // will be stored in a fixed-size PathBuffer.
-            Valid::path_string_length(sliced.slice().len(), global)?;
             Valid::path_null_bytes(sliced.slice(), global)?;
 
             let mut sliced = scopeguard::ScopeGuard::into_inner(sliced);
@@ -1261,9 +1294,6 @@ impl PathLikeExt for PathLike {
             let sliced = str.to_slice();
             let sliced = scopeguard::guard(sliced, |s| s.deinit());
 
-            // Validate the UTF-8 byte length after conversion, since the path
-            // will be stored in a fixed-size PathBuffer.
-            Valid::path_string_length(sliced.slice().len(), global)?;
             Valid::path_null_bytes(sliced.slice(), global)?;
 
             let mut sliced = scopeguard::ScopeGuard::into_inner(sliced);
@@ -1291,39 +1321,13 @@ impl PathLikeExt for PathLike {
 pub struct Valid;
 
 impl Valid {
-    pub fn path_string_length(len: usize, ctx: &JSGlobalObject) -> JsResult<()> {
-        match len {
-            // Exclusive: `PathBuffer` is `[u8; MAX_PATH_BYTES]` and
-            // `slice_z_with_force_copy` needs `len + NUL ≤ MAX_PATH_BYTES`.
-            0..MAX_PATH_BYTES => Ok(()),
-            _ => {
-                let mut system_error =
-                    bun_sys::Error::from_code(bun_sys::E::ENAMETOOLONG, bun_sys::Tag::open)
-                        .to_system_error();
-                system_error.syscall = bun_core::String::DEAD.into();
-                Err(ctx.throw_value(system_error.to_error_instance(ctx)))
-            }
-        }
-    }
-
     pub fn path_buffer(buffer: &Buffer, ctx: &JSGlobalObject) -> JsResult<()> {
-        let slice = buffer.slice();
-        match slice.len() {
-            0 => {
-                Err(ctx
-                    .throw_invalid_arguments(format_args!("Invalid path buffer: can't be empty")))
-            }
-            // Exclusive: `PathBuffer` is `[u8; MAX_PATH_BYTES]` and
-            // `slice_z_with_force_copy` needs `len + NUL ≤ MAX_PATH_BYTES`.
-            1..MAX_PATH_BYTES => Ok(()),
-            _ => {
-                let mut system_error =
-                    bun_sys::Error::from_code(bun_sys::E::ENAMETOOLONG, bun_sys::Tag::open)
-                        .to_system_error();
-                system_error.syscall = bun_core::String::DEAD.into();
-                Err(ctx.throw_value(system_error.to_error_instance(ctx)))
-            }
+        if buffer.slice().is_empty() {
+            return Err(
+                ctx.throw_invalid_arguments(format_args!("Invalid path buffer: can't be empty"))
+            );
         }
+        Ok(())
     }
 
     pub fn path_null_bytes(slice: &[u8], global: &JSGlobalObject) -> JsResult<()> {
@@ -1842,6 +1846,21 @@ impl PathOrBlob {
         args: &mut ArgumentsSlice,
     ) -> JsResult<PathOrBlob> {
         if let Some(path) = PathOrFileDescriptor::from_js(ctx, args)? {
+            if let PathOrFileDescriptor::Path(ref p) = path {
+                let s = p.slice();
+                if s.len() >= MAX_PATH_BYTES && !s.starts_with(b"s3://") {
+                    return Err(ctx.throw_value(
+                        bun_sys::Error {
+                            errno: bun_sys::E::ENAMETOOLONG as _,
+                            syscall: bun_sys::Tag::open,
+                            path: s.into(),
+                            ..Default::default()
+                        }
+                        .to_system_error()
+                        .to_error_instance(ctx),
+                    ));
+                }
+            }
             return Ok(PathOrBlob::Path(path));
         }
 

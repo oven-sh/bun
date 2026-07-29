@@ -22,6 +22,7 @@ use bun_core::{Output, fmt as bun_fmt};
 use bun_core::{String as BunString, ZigString, strings};
 use bun_http::{self as http, Method, MimeType};
 use bun_jsc::Debugger::DebuggerId;
+use bun_jsc::SysErrorJsc as _;
 use bun_jsc::ZigStringJsc as _;
 use bun_jsc::uuid::UUID;
 use bun_jsc::{
@@ -546,11 +547,18 @@ impl AnyRoute {
             return Ok(None);
         };
         let mut path_string = BunString::from_js(path_js, init_ctx.global)?;
-        let mut path = Node::PathOrFileDescriptor::Path(Node::PathLike::from_bun_string(
-            init_ctx.global,
-            &mut path_string,
-            false,
-        )?);
+        let path_like = Node::PathLike::from_bun_string(init_ctx.global, &mut path_string, false)?;
+        if path_like.slice().len() >= bun_paths::MAX_PATH_BYTES {
+            let err = bun_sys::Error {
+                errno: bun_sys::E::ENAMETOOLONG as _,
+                syscall: bun_sys::Tag::open,
+                path: path_like.slice().into(),
+                ..Default::default()
+            };
+            path_string.deref();
+            return Err(init_ctx.global.throw_value(err.to_js(init_ctx.global)));
+        }
+        let mut path = Node::PathOrFileDescriptor::Path(path_like);
         // NOTE: `from_bun_string` clones
         // the bytes (or bumps the WTF ref) into the PathLike payload, so we can
         // release the source ref immediately — `bun_core::String` has no `Drop`.

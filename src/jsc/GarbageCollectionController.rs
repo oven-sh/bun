@@ -83,10 +83,6 @@ impl GarbageCollectionController {
         self.disabled = env_var::BUN_GC_TIMER_DISABLE::get().unwrap_or(false);
     }
 
-    pub fn bun_vm(&mut self) -> &mut VirtualMachine {
-        VirtualMachine::get().as_mut()
-    }
-
     /// Idempotent. Must run before JSC teardown: `~RunLoop::Timer` frees the
     /// `WTFTimer` nodes sharing the heap, so an unlink afterwards walks freed
     /// siblings.

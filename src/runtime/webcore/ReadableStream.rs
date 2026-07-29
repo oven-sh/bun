@@ -879,13 +879,11 @@ impl<C: SourceContext> NewSource<C> {
         unsafe { &mut *Self::new(init) }
     }
 
-
     pub fn set_ref(&mut self, value: bool) {
         if C::SUPPORTS_REF {
             self.context.set_ref_unref(value);
         }
     }
-
 
     pub fn on_pull_from_js(&mut self, buf: &mut [u8], view: JSValue) -> streams::Result {
         self.context.on_pull(buf, view)

@@ -115,10 +115,6 @@ async function resolveExistingRealpath(p) {
   return current;
 }
 
-// Check if dest parent is a subdirectory of src.
-// It works for all file types including symlinks since it
-// checks the src and dest inodes. It starts from the deepest
-// parent and stops once it reaches the src parent or the root path.
 async function checkParentPaths(src, srcStat, dest) {
   // The string isSrcSubdir check in checkPaths and the inode walk below both
   // miss a destination reached through a symlink that resolves into a

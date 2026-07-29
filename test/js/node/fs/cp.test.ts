@@ -440,6 +440,20 @@ for (const [name, copy] of impls) {
       expect(fs.readdirSync(join(src, "sub"))).toEqual([".keep"]);
     });
 
+    test("rejects relative-symlink-aliased dest that resolves into src", async () => {
+      using dir = tempDir("cp-alias-rel", {
+        "src/sub/.keep": "",
+      });
+      const base = String(dir);
+      const src = join(base, "src");
+      fs.symlinkSync(join("src", "sub"), join(base, "alias"), "junction");
+      const destName = Buffer.alloc(200, "d").toString();
+
+      const err = await copyShouldThrow(src, join(base, "alias", destName), { recursive: true });
+      expect(err.code).toBe("ERR_FS_CP_EINVAL");
+      expect(fs.readdirSync(join(src, "sub"))).toEqual([".keep"]);
+    });
+
     // Negative control: a symlinked dest that lands outside src must still
     // copy normally.
     test("allows symlink-aliased dest that resolves outside src", async () => {
@@ -452,6 +466,21 @@ for (const [name, copy] of impls) {
 
       await copy(join(base, "src"), join(base, "alias", "copy"), { recursive: true });
       expect(fs.readFileSync(join(base, "other", "copy", "file.txt"), "utf8")).toBe("payload");
+    });
+
+    // Negative control: dest reached through a symlink to src's parent lands
+    // as a sibling of src, not inside it; the realpath comparison must not
+    // over-reject this.
+    test("allows symlink-aliased dest that resolves to a sibling of src", async () => {
+      using dir = tempDir("cp-alias-sibling", {
+        "src/file.txt": "payload",
+      });
+      const base = fs.realpathSync(String(dir));
+      fs.symlinkSync(base, join(base, "plink"), "junction");
+
+      await copy(join(base, "src"), join(base, "plink", "pcopy"), { recursive: true });
+      expect(fs.readFileSync(join(base, "pcopy", "file.txt"), "utf8")).toBe("payload");
+      expect(fs.readdirSync(join(base, "src"))).toEqual(["file.txt"]);
     });
 
     test.if(process.platform === "win32")("should not throw EBUSY when copying the same file on windows", async () => {

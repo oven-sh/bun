@@ -1155,9 +1155,6 @@ booga"
       }
     });
 
-    // ENOENT and ENOTDIR previously shared a single match arm, so `cd` to a
-    // nonexistent path misleadingly reported "not a directory" (implying the
-    // path exists but is a file) instead of "no such file or directory".
     test("cd to nonexistent path reports ENOENT, not ENOTDIR", async () => {
       using dir = tempDir("cd-enoent-enotdir", {
         "afile.txt": "",

@@ -47,13 +47,7 @@ pub use ref_count::{
 // point: `#[derive(bun_ptr::CellRefCounted)]`.
 //
 /// ```
-/// // Regression guard: under `cargo test --release --doc`, rustdoc compiles
-/// // this snippet with `cfg(debug_assertions)` ON but links it against a
-/// // release (`debug_assertions` OFF) `bun_ptr`. The derives must therefore
-/// // not emit anything that only exists in `bun_ptr` under
-/// // `#[cfg(debug_assertions)]`. Previously this failed with
-/// //   E0407 `rc_debug_data` is not a member of trait `AnyRefCounted`
-/// //   E0405 cannot find trait `DebugDataOps`
+/// // `cargo test --release --doc` cfg-skew guard (see AnyRefCounted::rc_debug_data).
 /// #[derive(bun_ptr::CellRefCounted)]
 /// struct Cell { ref_count: core::cell::Cell<u32> }
 /// #[derive(bun_ptr::ThreadSafeRefCounted)]

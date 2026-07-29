@@ -368,8 +368,6 @@ pub fn derive_cell_ref_counted(input: TokenStream) -> TokenStream {
                     0,
                 );
             }
-            // `rc_debug_data`: `AnyRefCounted`'s default (no-op) is correct for
-            // `CellRefCounted` types — they carry no `DebugData` field.
         }
         // Inherent forwarders so callers don't need the trait in scope.
         impl #impl_g #name #ty_g #where_g {

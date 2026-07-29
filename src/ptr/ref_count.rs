@@ -147,14 +147,10 @@ pub trait AnyRefCounted: Sized {
     /// `this` must point to a live `Self`.
     unsafe fn rc_assert_no_refs(this: *const Self);
 
-    /// Debug-build ref-tracking hook for [`RefPtr`]. Returns a no-op stub by
-    /// default; hosts with a real [`DebugData`] override it. All call sites
-    /// are themselves `#[cfg(debug_assertions)]`, so the default is dead code
-    /// in release — but the method and [`DebugDataOps`] are declared
-    /// unconditionally so the derive macros' emitted impls type-check when the
-    /// deriving crate and `bun_ptr` disagree on `cfg(debug_assertions)` (as
-    /// they do under `cargo test --release --doc`, where rustdoc compiles the
-    /// crate-under-test with debug assertions on against release-built deps).
+    /// Debug-build ref-tracking hook for [`RefPtr`]; no-op by default. Declared
+    /// unconditionally (with [`DebugDataOps`]) so derive-macro output type-checks
+    /// when a deriving crate and `bun_ptr` disagree on `cfg(debug_assertions)`,
+    /// as under `cargo test --release --doc`.
     ///
     /// # Safety
     /// `this` must point to a live `Self`.
@@ -1015,15 +1011,8 @@ struct TrackedDeref;
 // ──────────────────────────────────────────────────────────────────────────
 
 /// Dyn-safe surface of `DebugData<Count>` so `RefPtr<T>` can interact with it
-/// without knowing whether `Count` is `Cell<u32>` or `AtomicU32`.
-///
-/// Declared unconditionally (not `#[cfg(debug_assertions)]`) so that
-/// `#[derive(CellRefCounted)]` / `#[derive(ThreadSafeRefCounted)]` expansions
-/// — which name this trait in the emitted `AnyRefCounted::rc_debug_data`
-/// signature — type-check even when the deriving crate's
-/// `cfg(debug_assertions)` differs from `bun_ptr`'s (see the note on
-/// [`AnyRefCounted::rc_debug_data`]). Only [`NoopDebugData`] implements it in
-/// release builds; the real [`DebugData`] storage stays debug-only.
+/// without knowing whether `Count` is `Cell<u32>` or `AtomicU32`. Unconditional
+/// for the same reason as [`AnyRefCounted::rc_debug_data`].
 pub trait DebugDataOps {
     fn assert_valid_dyn(&self);
     fn acquire(&mut self, return_address: usize) -> TrackedRefId;

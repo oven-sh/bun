@@ -1049,8 +1049,13 @@ impl<const SSL: bool> SocketHandler<SSL> {
             // `_ref` has not yet dropped, so `*p` is still live; `ParentRef`
             // yields a fresh `&JSMySQLConnection` per access (R-2: every
             // callee is `&self`).
-            // reset the connection timeout after we're done processing the data
-            p.reset_connection_timeout();
+            // connectionTimeout bounds the whole handshake (connect → auth
+            // OK); re-arming it per packet would let a server that trickles
+            // bytes defeat the bound. Once Connected the timer tracks
+            // idle/inactivity and is re-armed here.
+            if p.connection.get().status == my_sql_connection::Status::Connected {
+                p.reset_connection_timeout();
+            }
             p.update_reference_type();
             p.register_auto_flusher();
         }

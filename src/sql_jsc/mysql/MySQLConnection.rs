@@ -70,6 +70,7 @@ pub struct MySQLConnection {
 
     auth_plugin: Option<AuthMethod>,
     _auth_state: AuthState,
+    auth_switched: bool,
 
     auth_data: Vec<u8>,
     // PERF: database/user/password/options could be sub-slices into options_buf
@@ -108,6 +109,7 @@ impl Default for MySQLConnection {
             status_flags: StatusFlags::default(),
             auth_plugin: None,
             _auth_state: AuthState::Pending,
+            auth_switched: false,
             auth_data: Vec::new(),
             database: Box::default(),
             user: Box::default(),
@@ -894,6 +896,17 @@ impl MySQLConnection {
             }
 
             PacketType::AUTH_SWITCH => {
+                // The server may switch the auth plugin once after the
+                // HandshakeResponse. A second AuthSwitchRequest is a protocol
+                // violation; answering it would let a malicious/MITM server
+                // drive an unbounded auth ping-pong. mysql2 and libmysqlclient
+                // refuse a second switch.
+                if self.auth_switched {
+                    bun_core::scoped_log!(MySQLConnection, "duplicate AuthSwitchRequest");
+                    return Err(AnyMySQLError::UnexpectedPacket);
+                }
+                self.auth_switched = true;
+
                 let mut auth_switch = AuthSwitchRequest {
                     packet_size: header_length,
                     ..Default::default()

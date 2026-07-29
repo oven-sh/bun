@@ -495,6 +495,9 @@ pub fn enqueue_dependency_to_root(
                     // below; `sleep_until`/`tick_raw` hold no `&mut` across
                     // this callback, so this is the unique live borrow.
                     let manager = unsafe { &mut *self.manager };
+                    if manager.event_loop.has_termination_request() {
+                        return true;
+                    }
                     if manager.pending_task_count() > 0 {
                         // All callbacks void: `VoidRunTasksCallbacks` (below)
                         // has `Ctx = ()` and every `HAS_* = false`.
@@ -527,6 +530,7 @@ pub fn enqueue_dependency_to_root(
                 this.start_progress_bar_if_none();
             }
 
+            this.event_loop = bun_event_loop::AnyEventLoop::js_current();
             let mgr: *mut PackageManager = this;
             let mut closure = Closure {
                 err: None,

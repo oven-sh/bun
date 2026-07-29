@@ -1288,6 +1288,7 @@ impl WebWorker {
             if let Some(hooks) = runtime_hooks() {
                 (hooks.close_dns_for_terminate)();
             }
+            vm.transpiler.resolver.remove_package_manager_wake();
             // Stop cross-thread posters first: markTerminating() serializes
             // with postTaskTo() on the contexts-map lock, so after this call
             // every task another thread has already enqueued is visible to the

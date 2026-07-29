@@ -3,8 +3,7 @@ use core::ffi::c_void;
 use bun_alloc::Arena as ArenaAllocator;
 use bun_bundler::transpiler::ParseResult;
 use bun_core::{OwnedString, String as BunString, ZigString};
-use bun_install::dependency::Dependency;
-use bun_install::{DependencyID, Resolution};
+use bun_install::Resolution;
 use bun_io::KeepAlive;
 use bun_options_types::LoaderExt as _;
 use bun_options_types::schema::api;
@@ -300,6 +299,7 @@ impl<const PROGRESS: bool> run_tasks::RunTasksCallbacks for QueueRunTasksCallbac
 
 impl Queue {
     pub fn enqueue(&mut self, global_object: &JSGlobalObject, opts: InitOpts<'_>) {
+        let _guard = bun_resolver::auto_install_lock();
         bun_core::scoped_log!(AsyncModule, "enqueue: {}", bstr::BStr::new(opts.specifier));
         let mut module = AsyncModule::init(opts, global_object).expect("unreachable");
         module.poll_ref.ref_(bun_io::posix_event_loop::get_vm_ctx(
@@ -309,59 +309,6 @@ impl Queue {
         // allocator arg dropped (Vec uses global mimalloc).
         self.map.push(module);
         self.vm().package_manager().drain_dependency_list();
-    }
-
-    /// # Safety
-    /// `ctx` must point to a live [`Queue`] (the `WakeHandler::context`
-    /// registered in `runtime::jsc_hooks`).
-    pub unsafe fn on_dependency_error(
-        ctx: *mut c_void,
-        dependency: &Dependency,
-        root_dependency_id: DependencyID,
-        err: &'static str,
-    ) {
-        // SAFETY: ctx was registered as *Queue when installing this callback.
-        let this: &mut Queue = unsafe { bun_ptr::callback_ctx::<Queue>(ctx) };
-        bun_core::scoped_log!(
-            AsyncModule,
-            "onDependencyError: {}",
-            bstr::BStr::new(this.vm().package_manager().lockfile.str(&dependency.name))
-        );
-
-        // retain_mut lets Drop free removed modules.
-        this.map.retain_mut(|module| {
-            for pending in module.parse_result.pending_imports.iter() {
-                if pending.root_dependency_id != root_dependency_id {
-                    continue;
-                }
-                let import_record_id = pending.import_record_id;
-                // S017: per-thread VM singleton (safe accessor) instead of
-                // `container_of`-derived `*mut`; provenance is the original
-                // allocation, disjoint from the `&mut module` borrow above.
-                let vm = VirtualMachine::get().as_mut();
-                // reshaped for borrowck — `lockfile.str()` ties the
-                // returned slice to `&vm`, which conflicts with passing
-                // `&mut vm` to `resolve_error`. The lockfile string buffer is
-                // stable across `resolve_error` (no realloc on the error
-                // path); detach the borrow via raw ptr.
-                let name =
-                    bun_ptr::RawSlice::new(vm.package_manager().lockfile.str(&dependency.name));
-                module
-                    .resolve_error(
-                        vm,
-                        import_record_id,
-                        &PackageResolveError {
-                            name: name.slice(),
-                            err,
-                            url: b"",
-                            version: dependency.version.clone(),
-                        },
-                    )
-                    .expect("unreachable");
-                return false; // continue :outer — drop this module
-            }
-            true
-        });
     }
 
     pub fn on_wake_handler(ctx: *mut c_void, _: *mut c_void) {
@@ -381,9 +328,70 @@ impl Queue {
     }
 
     pub fn on_poll(&mut self) {
+        let _guard = bun_resolver::auto_install_lock();
         bun_core::scoped_log!(AsyncModule, "onPoll");
         self.run_tasks();
+        self.drain_failed_root_dependencies();
         self.poll_modules();
+    }
+
+    fn drain_failed_root_dependencies(&mut self) {
+        let drained = {
+            let pm = VirtualMachine::get().as_mut().package_manager();
+            let mut failed = pm.failed_root_dependencies.lock();
+            if failed.is_empty() {
+                return;
+            }
+            core::mem::take(&mut *failed)
+        };
+        let mut leftover = Vec::new();
+        for (dep_id, err) in drained {
+            let vm = VirtualMachine::get().as_mut();
+            let dep = match vm
+                .package_manager()
+                .lockfile
+                .buffers
+                .dependencies
+                .get(dep_id as usize)
+            {
+                Some(d) => d.clone(),
+                None => continue,
+            };
+            let before = self.map.len();
+            self.map.retain_mut(|module| {
+                for pending in module.parse_result.pending_imports.iter() {
+                    if pending.root_dependency_id != dep_id {
+                        continue;
+                    }
+                    let import_record_id = pending.import_record_id;
+                    let vm = VirtualMachine::get().as_mut();
+                    let name = bun_ptr::RawSlice::new(vm.package_manager().lockfile.str(&dep.name));
+                    module
+                        .resolve_error(
+                            vm,
+                            import_record_id,
+                            &PackageResolveError {
+                                name: name.slice(),
+                                err,
+                                url: b"",
+                                version: dep.version.clone(),
+                            },
+                        )
+                        .expect("unreachable");
+                    return false;
+                }
+                true
+            });
+            if before == self.map.len() {
+                leftover.push((dep_id, err));
+            }
+        }
+        if !leftover.is_empty() {
+            let pm = VirtualMachine::get().as_mut().package_manager();
+            if pm.on_wake.lock().len() > 1 {
+                pm.failed_root_dependencies.lock().extend(leftover);
+            }
+        }
     }
 
     pub fn run_tasks(&mut self) {
@@ -709,6 +717,7 @@ impl AsyncModule {
         let jsc_vm = VirtualMachine::get().as_mut();
         jsc_vm.modules.scheduled -= 1;
         if jsc_vm.modules.scheduled == 0 {
+            let _guard = bun_resolver::auto_install_lock();
             jsc_vm.package_manager().end_progress_bar();
         }
         let mut log = bun_ast::Log::init();
@@ -1223,7 +1232,6 @@ impl AsyncModule {
             (*jsc_vm).transpiler.linker.log = log_ptr;
             (*jsc_vm).transpiler.log = log_ptr;
             (*jsc_vm).transpiler.resolver.log = log_nn;
-            (*jsc_vm).package_manager().log = log_ptr;
         }
         let _restore = scopeguard::guard((jsc_vm, old_log), |(jsc_vm, old_log)| {
             // SAFETY: same per-thread VM; restoring the original log pointers
@@ -1233,7 +1241,6 @@ impl AsyncModule {
                 (*jsc_vm).transpiler.linker.log = old_log_ptr;
                 (*jsc_vm).transpiler.log = old_log_ptr;
                 (*jsc_vm).transpiler.resolver.log = old_log;
-                (*jsc_vm).package_manager().log = old_log_ptr;
             }
         });
 

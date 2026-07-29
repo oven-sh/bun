@@ -53,6 +53,7 @@ bun_dispatch::link_interface! {
         fn tick();
         fn auto_tick();
         fn auto_tick_active();
+        fn has_termination_request() -> bool;
         fn global_object() -> *mut ();
         fn bun_vm() -> *mut ();
         fn stdout() -> *mut ();

@@ -74,6 +74,13 @@ impl AnyEventLoop {
         }
     }
 
+    pub fn has_termination_request(&self) -> bool {
+        match self {
+            AnyEventLoop::Js { owner } => owner.has_termination_request(),
+            AnyEventLoop::Mini(_) => false,
+        }
+    }
+
     /// Convert to an owned [`EventLoopHandle`]. Thin alias for
     /// [`EventLoopHandle::from_any`].
     #[inline]

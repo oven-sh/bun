@@ -391,7 +391,9 @@ pub struct PackageManager {
     pub global_dir: Option<bun_sys::Dir>,
     pub global_link_dir_path: Box<[u8]>,
 
-    pub on_wake: WakeHandler,
+    pub on_wake: bun_core::Mutex<Vec<WakeHandler>>,
+    pub failed_root_dependencies: bun_core::Mutex<Vec<(DependencyID, &'static str)>>,
+    pub runtime_wake_via_handlers: AtomicBool,
 
     pub peer_dependencies: LinearFifo<DependencyID, DynamicBuffer<DependencyID>>,
 
@@ -863,28 +865,22 @@ impl PackageManager {
 
     pub fn fail_root_resolution(
         &mut self,
-        dependency: &Dependency,
+        _dependency: &Dependency,
         dependency_id: DependencyID,
         err: Error,
     ) {
-        if let Some(ctx) = self.on_wake.context {
-            // SAFETY: `ctx` is the `WakeHandler::context` registered alongside
-            // this callback (a live `*mut Queue`); see `runtime::jsc_hooks`.
-            unsafe {
-                (self.on_wake.get_on_dependency_error())(
-                    ctx.as_ptr(),
-                    dependency,
-                    dependency_id,
-                    err.name(),
-                );
-            }
-        }
+        self.failed_root_dependencies
+            .lock()
+            .push((dependency_id, err.name()));
+        let this: *mut Self = self;
+        // SAFETY: `this` names the live singleton; `wake_raw` only forms field pointers.
+        unsafe { Self::wake_raw(this) };
     }
 
     /// Raw-pointer wake for concurrent task-thread callers (see
     /// `isolated_install::Installer::Task::callback`). Never materializes
     /// `&mut PackageManager`, so two task threads finishing simultaneously do
-    /// not hold aliased exclusive borrows. `on_wake` is read-only; the handler
+    /// not hold aliased exclusive borrows. `on_wake` access is locked; the handler
     /// receives the raw `*mut`;
     /// `event_loop.wakeup()` is the cross-thread signal and is
     /// internally synchronized — we reach it via `addr_of_mut!` so the `&mut`
@@ -898,13 +894,14 @@ impl PackageManager {
         // borrow) and `wakeup()` is internally synchronized for cross-thread use.
         unsafe {
             let on_wake = &*core::ptr::addr_of!((*this).on_wake);
-            if let Some(ctx) = on_wake.context {
-                // `WakeHandler.handler`'s second arg is the erased
-                // `*mut PackageManager` (`bun_install_types` cannot name this
-                // type); cast back to `*mut c_void` here.
-                (on_wake.get_handler())(ctx.as_ptr(), this.cast::<c_void>());
+            for h in on_wake.lock().iter() {
+                if let Some(ctx) = h.context {
+                    (h.get_handler())(ctx.as_ptr(), this.cast::<c_void>());
+                }
             }
-            (*core::ptr::addr_of_mut!((*this).event_loop)).wakeup();
+            if !(*core::ptr::addr_of!((*this).runtime_wake_via_handlers)).load(Ordering::Acquire) {
+                (*core::ptr::addr_of_mut!((*this).event_loop)).wakeup();
+            }
         }
     }
 
@@ -1944,7 +1941,9 @@ pub fn init(
         wr!(global_link_dir, None);
         wr!(global_dir, None);
         wr!(global_link_dir_path, Box::default());
-        wr!(on_wake, WakeHandler::default());
+        wr!(on_wake, bun_core::Mutex::new(Vec::new()));
+        wr!(failed_root_dependencies, bun_core::Mutex::new(Vec::new()));
+        wr!(runtime_wake_via_handlers, AtomicBool::new(false));
         wr!(
             peer_dependencies,
             LinearFifo::<DependencyID, DynamicBuffer<DependencyID>>::init()
@@ -2300,14 +2299,20 @@ pub(crate) fn init_with_runtime_once(
             }
         );
         wr!(network_task_fifo, NetworkQueue::init());
-        wr!(log, std::ptr::from_mut(log));
+        wr!(
+            log,
+            bun_core::heap::into_raw(Box::new(bun_ast::Log::default()))
+        );
         wr!(root_dir, root_dir);
         wr!(ast_arena, bun_alloc::Arena::new());
-        // reborrow `&mut *env` so the local stays usable for
-        // the post-construction `BUN_MANIFEST_CACHE` / `options.load`
-        // reads. `BackRef` stores a raw pointer —
-        // ending the reborrow here does not alias the later uses.
-        wr!(env, Some(bun_ptr::BackRef::new_mut(&mut *env)));
+        wr!(
+            env,
+            Some(bun_ptr::BackRef::new_mut(&mut *bun_core::heap::into_raw(
+                Box::new(dot_env::Loader::init_with_map(bun_core::handle_oom(
+                    env.map.clone_with_allocator()
+                ),))
+            )))
+        );
         wr!(
             thread_pool,
             ThreadPool::init(thread_pool::Config {
@@ -2376,7 +2381,9 @@ pub(crate) fn init_with_runtime_once(
         wr!(global_link_dir, None);
         wr!(global_dir, None);
         wr!(global_link_dir_path, Box::default());
-        wr!(on_wake, WakeHandler::default());
+        wr!(on_wake, bun_core::Mutex::new(Vec::new()));
+        wr!(failed_root_dependencies, bun_core::Mutex::new(Vec::new()));
+        wr!(runtime_wake_via_handlers, AtomicBool::new(true));
         wr!(
             peer_dependencies,
             LinearFifo::<DependencyID, DynamicBuffer<DependencyID>>::init()

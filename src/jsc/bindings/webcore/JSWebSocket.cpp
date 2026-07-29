@@ -221,6 +221,7 @@ static inline JSC::EncodedJSValue constructJSWebSocket3(JSGlobalObject* lexicalG
     // Default true — matches Bun's existing behavior of always offering permessage-deflate.
     // ws.WebSocket passes `perMessageDeflate: false` to opt out.
     bool offerPerMessageDeflate = true;
+    size_t maxPayload = WebSocket::kDefaultMaxPayload;
 
     // Proxy options
     String proxyUrl;
@@ -282,6 +283,22 @@ static inline JSC::EncodedJSValue constructJSWebSocket3(JSGlobalObject* lexicalG
             offerPerMessageDeflate = false;
         }
 
+        // Parse maxPayload option (ws-compatible). Mirrors npm ws's
+        // `this._maxPayload = options.maxPayload | 0` where 0 (or negative) disables the limit.
+        JSValue maxPayloadValue = options->getIfPropertyExists(globalObject, Identifier::fromString(vm, "maxPayload"_s));
+        RETURN_IF_EXCEPTION(throwScope, {});
+        if (maxPayloadValue && !maxPayloadValue.isUndefined()) {
+            double n = maxPayloadValue.toNumber(lexicalGlobalObject);
+            RETURN_IF_EXCEPTION(throwScope, {});
+            if (std::isfinite(n) && n >= 1) {
+                maxPayload = n >= static_cast<double>(std::numeric_limits<size_t>::max())
+                    ? std::numeric_limits<size_t>::max()
+                    : static_cast<size_t>(n);
+            } else {
+                maxPayload = 0;
+            }
+        }
+
         // Parse proxy option - can be string or { url, headers }
         auto proxyValue = Bun::getOwnPropertyIfExists(globalObject, options, PropertyName(Identifier::fromString(vm, "proxy"_s)));
         RETURN_IF_EXCEPTION(throwScope, {});
@@ -330,8 +347,8 @@ static inline JSC::EncodedJSValue constructJSWebSocket3(JSGlobalObject* lexicalG
     }
 
     auto object = (rejectUnauthorized == -1)
-        ? WebSocket::create(*context, WTF::move(url), protocols, WTF::move(headersInit), WTF::move(proxyUrl), WTF::move(proxyHeadersInit), WTF::move(sslConfig), offerPerMessageDeflate)
-        : WebSocket::create(*context, WTF::move(url), protocols, WTF::move(headersInit), rejectUnauthorized ? true : false, WTF::move(proxyUrl), WTF::move(proxyHeadersInit), WTF::move(sslConfig), offerPerMessageDeflate);
+        ? WebSocket::create(*context, WTF::move(url), protocols, WTF::move(headersInit), WTF::move(proxyUrl), WTF::move(proxyHeadersInit), WTF::move(sslConfig), offerPerMessageDeflate, maxPayload)
+        : WebSocket::create(*context, WTF::move(url), protocols, WTF::move(headersInit), rejectUnauthorized ? true : false, WTF::move(proxyUrl), WTF::move(proxyHeadersInit), WTF::move(sslConfig), offerPerMessageDeflate, maxPayload);
 
     if constexpr (IsExceptionOr<decltype(object)>)
         RETURN_IF_EXCEPTION(throwScope, {});

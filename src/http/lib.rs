@@ -2102,13 +2102,18 @@ impl<'a> HTTPClient<'a> {
             return;
         }
         bun_core::scoped_log!(fetch, "Timeout  {}\n", BStr::new(self.url.href));
-        // Close (mark dead + close) BEFORE failing, matching
+        // Terminate (mark dead + close) BEFORE failing, matching
         // `close_and_fail`: `fail()` dispatches the final result, which frees
         // the HTTP-thread AsyncHTTP clone that embeds `self`, so nothing may
         // run after it, and the socket must already be de-tagged so the
         // synchronous close callbacks (TLS close fires on_handshake for a
-        // mid-handshake socket) cannot re-enter this client.
-        GenHttpContext::<IS_SSL>::fail_socket(socket);
+        // mid-handshake socket) cannot re-enter this client. RST (not
+        // `fail_socket`'s FIN): a timed-out peer stopped reading, so the FIN
+        // would be undeliverable anyway, and `FastShutdown` on a TLS socket
+        // that owns the write-spill slot with the send buffer full defers the
+        // close behind a writable event that never fires; the idle timer this
+        // path consumed was that case's backstop.
+        GenHttpContext::<IS_SSL>::terminate_socket(socket);
         self.fail(crate::Error::Timeout);
     }
 

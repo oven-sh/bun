@@ -299,7 +299,7 @@ describe.concurrent("Server", () => {
           res.text(),
         );
       } catch {}
-      await Bun.sleep(10);
+      for (let i = 0; !signalOnServer && i < 100; i++) await Bun.sleep(10);
       expect(signalOnServer).toBe(true);
     }
   });
@@ -397,7 +397,7 @@ describe.concurrent("Server", () => {
           res.text(),
         );
       } catch {}
-      await Bun.sleep(10);
+      for (let i = 0; !signalOnServer && i < 100; i++) await Bun.sleep(10);
       expect(signalOnServer).toBe(true);
     }
   });

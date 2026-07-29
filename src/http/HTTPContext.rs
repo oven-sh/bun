@@ -301,16 +301,11 @@ impl<const SSL: bool> HTTPContext<SSL> {
         socket.close(uws::CloseKind::Failure);
     }
 
-    /// Close a socket whose request failed (client-detected error, abort,
-    /// timeout) without arming SO_LINGER{1,0}. A `Failure` close sends RST,
-    /// and with a request body still in the kernel send buffer XNU picks
-    /// `th_seq = snd_nxt` for that RST, which can sit past the peer's
-    /// `rcv_nxt + rcv_wnd` and be dropped as out-of-window (Linux clamps via
-    /// `tcp_acceptable_seq`). The peer's TCB stays ESTABLISHED and it never
-    /// observes the close. A normal FIN (what Node's `socket.destroy()` sends
-    /// on abort) is in-order and reaches a reading peer after the buffered
-    /// body drains. `FastShutdown` keeps the TLS fast path (no wait for the
-    /// peer's close_notify).
+    /// `close_and_fail` close: FIN, not RST. With body bytes still queued,
+    /// XNU's SO_LINGER RST carries `snd_nxt`, which the peer can drop as
+    /// out-of-window and never observe the close; a FIN is in-order and
+    /// matches Node's `socket.destroy()` abort. `FastShutdown` so TLS does
+    /// not wait on the peer's close_notify. Not for `on_timeout` (see there).
     pub(crate) fn fail_socket(socket: HTTPSocket<SSL>) {
         Self::mark_socket_as_dead(socket);
         socket.close(uws::CloseKind::FastShutdown);
@@ -1311,9 +1306,8 @@ impl<const SSL: bool> Handler<SSL> {
             return client.on_timeout::<SSL>(socket);
         }
         if let Some(session) = tagged.session_mut() {
-            HTTPContext::<SSL>::fail_socket(socket);
+            HTTPContext::<SSL>::mark_socket_as_dead(socket);
             session.on_close(crate::Error::Timeout);
-            return;
         }
 
         HTTPContext::<SSL>::terminate_socket(socket);

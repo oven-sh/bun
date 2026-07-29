@@ -39,7 +39,6 @@
 #include <JavaScriptCore/SourceCode.h>
 #include <JavaScriptCore/SubspaceInlines.h>
 #include <JavaScriptCore/TopExceptionScope.h>
-#include <JavaScriptCore/WeakInlines.h>
 #include <wtf/text/MakeString.h>
 
 namespace WebCore {
@@ -436,6 +435,7 @@ static void nativeSourceSever(JSGlobalObject* globalObject, JSNativeStreamSource
 static void nativeSourceCallClose(JSC::VM& vm, JSGlobalObject* globalObject, JSNativeStreamSourceAdapter* adapter)
 {
     auto* controller = adapter->controller();
+    adapter->clearController(vm);
     if (controller && readableStreamDefaultControllerCanCloseOrEnqueue(controller)) {
         auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
         if (adapter->m_textMode)
@@ -758,6 +758,7 @@ JSPromise* nativeSourceCancel(JSGlobalObject* globalObject, JSReadableStreamDefa
     {
         auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
         adapter->clearPendingView(vm);
+        adapter->clearController(vm);
         if (JSObject* handle = adapter->handle())
             invokeNativeHandleCancel(vm, globalObject, handle, reason);
         if (!catchScope.exception())

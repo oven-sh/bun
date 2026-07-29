@@ -70,7 +70,11 @@ test.skipIf(!(isDebug || isASAN))(
 
 // Sibling of the above: on_response's drain_microtasks() driving an async
 // fetch handler that never yields past `await 1`. Same DeferTermination /
-// assertNoException pair, same fix shape.
+// assertNoException pair, same fix shape. Also asserts Node's
+// "process.on('exit') is skipped on terminate()" when terminate lands while
+// JS is on the stack (sab[1] stays 0): in that state the NeedTermination trap
+// has already been consumed, so only the sticky TerminationException guards
+// dispatchExitInternal; clearing it before on_exit would let the handler run.
 test.skipIf(!(isDebug || isASAN))(
   "terminate() while Bun.serve's async fetch is looping in drain_microtasks does not trip DeferTermination",
   async () => {
@@ -80,16 +84,18 @@ test.skipIf(!(isDebug || isASAN))(
         "-e",
         `
         const { Worker } = require("node:worker_threads");
-        const sab = new SharedArrayBuffer(4);
+        const sab = new SharedArrayBuffer(8);
         const flag = new Int32Array(sab);
         const src = 'const { workerData } = require("node:worker_threads");' +
           'const flag = new Int32Array(workerData.sab);' +
+          'process.on("exit", () => Atomics.add(flag, 1, 1));' +
           'const server = Bun.serve({ port: 0, async fetch() {' +
           '  for (;;) { Atomics.add(flag, 0, 1); await 1; }' +
           '} });' +
           'require("node:worker_threads").parentPort.postMessage(server.port);';
         for (let i = 0; i < ${rounds}; i++) {
           Atomics.store(flag, 0, 0);
+          Atomics.store(flag, 1, 0);
           const w = new Worker(src, { eval: true, workerData: { sab } });
           const port = await new Promise(r => w.once("message", r));
           const ac = new AbortController();
@@ -99,6 +105,7 @@ test.skipIf(!(isDebug || isASAN))(
           w.terminate();
           await done;
           ac.abort();
+          if (Atomics.load(flag, 1) !== 0) throw new Error("process.on('exit') fired on terminate");
         }
         console.log("survived");
       `,
@@ -115,11 +122,11 @@ test.skipIf(!(isDebug || isASAN))(
   timeout,
 );
 
-// Node skips the worker's process.on('exit') listeners on worker.terminate().
-// WebWorker::shutdown must leave the TerminationException in place across
-// on_exit so dispatchExitInternal's guard trips; clearing it earlier would let
-// the handler run.
-test("process.on('exit') does not fire on worker.terminate()", async () => {
+// Node skips the worker's process.on('exit') listeners on worker.terminate()
+// when the worker is idle (the NeedTermination trap bit is still armed here,
+// so this is the simpler half of the invariant; the mid-JS half is checked in
+// the async-fetch test above).
+test("process.on('exit') does not fire on worker.terminate() when idle", async () => {
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),

@@ -1,6 +1,6 @@
 import { expect, setDefaultTimeout, test } from "bun:test";
 import fs from "fs";
-import { bunEnv, bunExe, pack, tempDirWithFiles, tmpdirSync } from "harness";
+import { bunEnv, bunExe, pack, tempDir, tmpdirSync } from "harness";
 import { join } from "path";
 
 setDefaultTimeout(1000 * 60 * 5);
@@ -134,7 +134,7 @@ const lockfiles = ["package-lock.json", "yarn.lock", "pnpm-lock.yaml"];
 
 for (const lockfile of lockfiles) {
   test(`should create bun.lock if ${lockfile} migration fails`, async () => {
-    const testDir = tempDirWithFiles("migration-failure", {
+    await using testDir = tempDir("migration-failure", {
       "package.json": JSON.stringify({
         name: "pkg",
         dependencies: {
@@ -175,7 +175,7 @@ test("npm lockfile migration skips extraneous packages that also declare inBundl
     phantomDependencies[`phantom-dep-${i}`] = "1.0.0";
   }
 
-  const testDir = tempDirWithFiles("migrate-extraneous-inbundle", {
+  await using testDir = tempDir("migrate-extraneous-inbundle", {
     "package.json": JSON.stringify({
       name: "extraneous-test",
       workspaces: ["packages/pkg0"],
@@ -233,7 +233,7 @@ test("package-lock.json migration requires integrity for tarball URLs outside th
 
   const offRegistryUrl = `http://localhost:${server.port}/lodash-4.17.21.tgz`;
 
-  const testDir = tempDirWithFiles("migrate-off-registry-tarball", {
+  await using testDir = tempDir("migrate-off-registry-tarball", {
     "package.json": JSON.stringify({
       name: "off-registry-tarball-test",
       version: "1.0.0",
@@ -286,7 +286,7 @@ test("package-lock.json migration requires integrity for tarball URLs outside th
 test("package-lock.json migration rejects git committish values that are not a single path component", async () => {
   // The value after "#" in a git `resolved` field becomes a cache folder name, so migration
   // must only accept a single safe path component (same rule the bun.lock parser applies).
-  const testDir = tempDirWithFiles("migrate-git-committish-validation", {
+  await using testDir = tempDir("migrate-git-committish-validation", {
     "package.json": JSON.stringify({
       name: "git-committish-test",
       version: "1.0.0",
@@ -345,7 +345,7 @@ test("package-lock.json migration keeps dependencies declared as arbitrary tarba
 
   const tarballUrl = `http://localhost:${server.port}/baz-0.0.3.tgz`;
 
-  const testDir = tempDirWithFiles("migrate-arbitrary-tarball-url", {
+  await using testDir = tempDir("migrate-arbitrary-tarball-url", {
     "package.json": JSON.stringify({
       name: "arbitrary-tarball-url-test",
       version: "1.0.0",
@@ -441,7 +441,7 @@ async function install(testDir: string, ...args: string[]) {
 }
 
 test.concurrent("package-lock.json migration does not platform-skip a regular file: folder dependency", async () => {
-  const testDir = tempDirWithFiles(
+  await using testDir = tempDir(
     "migrate-folder-platform",
     filePlatformFixture("a", "vendor/a", [`!${process.platform}`], [`!${process.arch}`]),
   );
@@ -467,7 +467,7 @@ test.concurrent.each([
 ])(
   "package-lock.json migration writes a bun.lock its own parser accepts for file: folder dependency %s at %s",
   async (name, folder) => {
-    const testDir = tempDirWithFiles("migrate-folder-name", filePlatformFixture(name, folder, [], []));
+    await using testDir = tempDir("migrate-folder-name", filePlatformFixture(name, folder, [], []));
 
     const first = await install(testDir);
     expect(first.stderr).toContain("migrated lockfile from package-lock.json");
@@ -489,7 +489,7 @@ test.concurrent("package-lock.json migration does not platform-skip a regular fi
   // the packed package's `os`/`cpu` arrays in its lockfile entry, and a fresh resolve of
   // the same package.json extracts and installs the tarball regardless of them.
   const nonMatching = { os: [`!${process.platform}`], cpu: [`!${process.arch}`] };
-  const testDir = tempDirWithFiles("migrate-tarball-platform", {
+  await using testDir = tempDir("migrate-tarball-platform", {
     "package.json": JSON.stringify({ name: "repro", dependencies: { a: "file:./a-1.0.0.tgz" } }),
     "src-a/package.json": JSON.stringify({ name: "a", version: "1.0.0", ...nonMatching }),
   });
@@ -521,7 +521,7 @@ test.concurrent("pnpm-lock.yaml migration does not platform-skip a regular file:
   // The pnpm migration copied the lockfile's `os`/`cpu` arrays into every package the
   // same way the npm one did. pnpm records them for any `packages:` entry whose manifest
   // declares them, so a `file:` folder dependency was silently dropped on a mismatch.
-  const testDir = tempDirWithFiles("migrate-pnpm-folder-platform", {
+  await using testDir = tempDir("migrate-pnpm-folder-platform", {
     "package.json": JSON.stringify({ name: "repro", dependencies: { a: "file:./vendor/a" } }),
     "vendor/a/package.json": JSON.stringify({
       name: "a",

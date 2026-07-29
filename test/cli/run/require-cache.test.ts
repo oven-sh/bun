@@ -10,7 +10,7 @@ import {
   isMacOS,
   isMusl,
   isWindows,
-  tempDirWithFiles,
+  tempDir,
 } from "harness";
 import { join } from "path";
 
@@ -59,7 +59,7 @@ describe.concurrent("require.cache", () => {
 
       console.log("Text length:", text.length);
 
-      const dir = tempDirWithFiles("require-cache-bug-leak-1", {
+      await using dir = tempDir("require-cache-bug-leak-1", {
         "index.js": text,
         "require-cache-bug-leak-fixture.js": `
           const path = require.resolve("./index.js");
@@ -117,7 +117,7 @@ describe.concurrent("require.cache", () => {
 
       console.log("Text length:", text.length);
 
-      const dir = tempDirWithFiles("require-cache-bug-leak-3", {
+      await using dir = tempDir("require-cache-bug-leak-3", {
         "index.js": text,
         "require-cache-bug-leak-fixture.js": `
           const path = require.resolve("./index.js");
@@ -166,7 +166,7 @@ describe.concurrent("require.cache", () => {
         text += `export const superDuperExtraCrazyLongNameWowSuchNameLongYouveNeverSeenANameThisLongForACommonJSModuleExport${i} = 1;\n`;
       }
 
-      const dir = tempDirWithFiles("require-cache-bug-leak-4", {
+      await using dir = tempDir("require-cache-bug-leak-4", {
         "index.js": text,
         "require-cache-bug-leak-fixture.js": `
           const path = require.resolve("./index.js");
@@ -226,7 +226,7 @@ describe.concurrent("require.cache", () => {
 
         console.log("Text length:", text.length);
 
-        const dir = tempDirWithFiles("require-cache-bug-leak-2", {
+        await using dir = tempDir("require-cache-bug-leak-2", {
           "index.js": text,
           "require-cache-bug-leak-fixture.js": `
           const path = require.resolve("./index.js");

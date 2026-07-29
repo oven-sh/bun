@@ -1081,7 +1081,7 @@ describe("inbound stream lifecycle", () => {
       // needed a retry at 20 passes; collection is late there, not stuck).
       for (let i = 0; i < 50 && refs.some(ref => ref.deref() !== undefined); i++) {
         await new Promise(resolve => setImmediate(resolve));
-        await gcTick(true);
+        await gcTick();
       }
       expect(refs.filter(ref => ref.deref() !== undefined).length).toBe(0);
     } finally {

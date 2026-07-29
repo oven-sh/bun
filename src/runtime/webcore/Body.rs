@@ -777,78 +777,7 @@ impl Value {
                 if let Some(readable) = locked.readable.get(global_this) {
                     return Ok(readable.value);
                 }
-                if locked.promise.is_some() || !locked.action.is_none() {
-                    return ReadableStream::used(global_this);
-                }
-                let mut drain_result = DrainResult::EstimatedSize(0);
-
-                if let Some(drain) = locked.on_start_streaming.take() {
-                    drain_result = drain(locked.task.unwrap());
-                }
-
-                if matches!(drain_result, DrainResult::Empty | DrainResult::Aborted) {
-                    *self = Value::Null;
-                    return ReadableStream::empty(global_this);
-                }
-
-                // `new_mut` centralises the post-allocation deref; ownership of the
-                // heap `NewSource` transfers to the JS wrapper's `m_ctx` in
-                // `to_readable_stream()` below (freed by the GC finalizer).
-                let reader = webcore::readable_stream::NewSource::<ByteStream>::new_mut(
-                    webcore::readable_stream::NewSource {
-                        // `ByteStream::default()` is the post-setup state.
-                        context: ByteStream::default(),
-                        global_this: Some(bun_ptr::BackRef::new(global_this)),
-                        ..Default::default()
-                    },
-                );
-
-                if let Some(task) = locked.task {
-                    if let Some(on_cancelled) = locked.on_stream_cancelled {
-                        reader.cancel_handler.set(Some(on_cancelled));
-                        reader.cancel_ctx.set(Some(task));
-                    }
-                    if let Some(on_drained) = locked.on_stream_drained {
-                        reader.drain_handler.set(Some(on_drained));
-                        reader.drain_ctx.set(Some(task));
-                    }
-                }
-
-                reader.context.setup();
-
-                match drain_result {
-                    DrainResult::EstimatedSize(estimated_size) => {
-                        reader.context.high_water_mark = estimated_size as blob::SizeType;
-                        reader
-                            .context
-                            .size_hint
-                            .set(estimated_size as blob::SizeType);
-                    }
-                    DrainResult::Owned { list, size_hint } => {
-                        reader.context.buffer.set(list);
-                        reader.context.size_hint.set(size_hint as blob::SizeType);
-                    }
-                    _ => {}
-                }
-
-                let context_ptr: *mut ByteStream = &raw mut reader.context;
-                locked.readable = webcore::readable_stream::Strong::init(
-                    ReadableStream {
-                        ptr: webcore::readable_stream::Source::Bytes(context_ptr),
-                        value: reader.to_readable_stream(global_this)?,
-                    },
-                    global_this,
-                );
-
-                if let Some(on_readable_stream_available) = locked.on_readable_stream_available {
-                    on_readable_stream_available(
-                        locked.task.unwrap(),
-                        global_this,
-                        locked.readable.get(global_this).unwrap(),
-                    );
-                }
-
-                Ok(locked.readable.get(global_this).unwrap().value)
+                self.locked_to_native_stream(global_this, false)
             }
             Value::Error(err) => {
                 // Leave `self` as `Error` so the promise-returning readers
@@ -857,6 +786,143 @@ impl Value {
                 ReadableStream::errored(global_this, reason)
             }
         }
+    }
+
+    /// `Body.textStream()`: a `ReadableStream<string>` of the body's UTF-8
+    /// content, decoded directly from the body's backing bytes without
+    /// materializing a separate byte `ReadableStream` for native-backed bodies.
+    /// Returns `NULL` for `Null` (caller substitutes an empty stream).
+    pub fn to_text_readable_stream(&mut self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
+        jsc::mark_binding();
+
+        match self {
+            Value::Used => ReadableStream::used(global_this),
+            Value::Null => Ok(JSValue::NULL),
+            Value::Empty => {
+                *self = Value::Used;
+                ReadableStream::empty(global_this)
+            }
+            Value::InternalBlob(_) | Value::WTFStringImpl(_) => {
+                let mut blob = self.use_as_any_blob_allow_non_utf8_string();
+                let string = blob.to_string(global_this, Lifetime::Transfer);
+                blob.detach();
+                ReadableStream::from_decoded_text(global_this, string?)
+            }
+            Value::Blob(_) => {
+                let stream = {
+                    let blob = scopeguard::guard(self.use_(), |mut b| b.deinit());
+                    blob.resolve_size();
+                    if blob.needs_to_read_file() || blob.is_s3() {
+                        let blob_size = blob.size.get();
+                        let bytes =
+                            ReadableStream::from_blob_copy_ref(global_this, &blob, blob_size)?;
+                        ReadableStream::text_decode_from(global_this, bytes)?
+                    } else {
+                        let string = blob.to_string(global_this, Lifetime::Transfer)?;
+                        ReadableStream::from_decoded_text(global_this, string)?
+                    }
+                };
+                *self = Value::Used;
+                Ok(stream)
+            }
+            Value::Locked(_) => self.locked_to_native_stream(global_this, true),
+            Value::Error(err) => {
+                let reason = err.to_js(global_this);
+                ReadableStream::errored(global_this, reason)
+            }
+        }
+    }
+
+    /// Materialize a `Value::Locked` body (no readable yet) as a
+    /// `NewSource<ByteStream>`-backed native `ReadableStream` and wire up the
+    /// HTTP-client callbacks. Shared tail of [`to_readable_stream`] and
+    /// [`to_text_readable_stream`].
+    fn locked_to_native_stream(
+        &mut self,
+        global_this: &JSGlobalObject,
+        text_mode: bool,
+    ) -> JsResult<JSValue> {
+        let Value::Locked(locked) = self else {
+            unreachable!("locked_to_native_stream on non-Locked Value");
+        };
+        if locked.promise.is_some() || !locked.action.is_none() {
+            return ReadableStream::used(global_this);
+        }
+        let mut drain_result = DrainResult::EstimatedSize(0);
+
+        if let Some(drain) = locked.on_start_streaming.take() {
+            drain_result = drain(locked.task.unwrap());
+        }
+
+        if matches!(drain_result, DrainResult::Empty | DrainResult::Aborted) {
+            *self = Value::Null;
+            return ReadableStream::empty(global_this);
+        }
+
+        // `new_mut` centralises the post-allocation deref; ownership of the
+        // heap `NewSource` transfers to the JS wrapper's `m_ctx` in
+        // `to_readable_stream()` below (freed by the GC finalizer).
+        let reader = webcore::readable_stream::NewSource::<ByteStream>::new_mut(
+            webcore::readable_stream::NewSource {
+                // `ByteStream::default()` is the post-setup state.
+                context: ByteStream::default(),
+                global_this: Some(bun_ptr::BackRef::new(global_this)),
+                ..Default::default()
+            },
+        );
+
+        if let Some(task) = locked.task {
+            if let Some(on_cancelled) = locked.on_stream_cancelled {
+                reader.cancel_handler.set(Some(on_cancelled));
+                reader.cancel_ctx.set(Some(task));
+            }
+            if let Some(on_drained) = locked.on_stream_drained {
+                reader.drain_handler.set(Some(on_drained));
+                reader.drain_ctx.set(Some(task));
+            }
+        }
+
+        reader.context.setup();
+
+        match drain_result {
+            DrainResult::EstimatedSize(estimated_size) => {
+                reader.context.high_water_mark = estimated_size as blob::SizeType;
+                reader
+                    .context
+                    .size_hint
+                    .set(estimated_size as blob::SizeType);
+            }
+            DrainResult::Owned { list, size_hint } => {
+                reader.context.buffer.set(list);
+                reader.context.size_hint.set(size_hint as blob::SizeType);
+            }
+            _ => {}
+        }
+
+        let context_ptr: *mut ByteStream = &raw mut reader.context;
+        let stream_value = if text_mode {
+            reader.to_text_readable_stream(global_this)?
+        } else {
+            reader.to_readable_stream(global_this)?
+        };
+        let readable = ReadableStream {
+            ptr: webcore::readable_stream::Source::Bytes(context_ptr),
+            value: stream_value,
+        };
+        locked.readable = webcore::readable_stream::Strong::init(readable, global_this);
+
+        if let Some(on_readable_stream_available) = locked.on_readable_stream_available {
+            on_readable_stream_available(locked.task.unwrap(), global_this, readable);
+        }
+
+        // In text mode the returned stream emits strings, so it must not be
+        // cached as the body's byte stream (consulted by `.body`, `bodyUsed`,
+        // and `throw_if_body_unusable`). Mark the body consumed instead.
+        if text_mode {
+            *self = Value::Used;
+        }
+
+        Ok(stream_value)
     }
 
     pub fn from_js(global_this: &JSGlobalObject, value: JSValue) -> JsResult<Value> {
@@ -1755,6 +1821,36 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
             }
         }
         self.get_body_value().to_readable_stream(global_this)
+    }
+
+    /// <https://fetch.spec.whatwg.org/#dom-body-textstream>
+    fn get_text_stream(
+        &self,
+        global_this: &JSGlobalObject,
+        _callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
+        // Step 1: If this is unusable, throw a TypeError.
+        self.throw_if_body_unusable(global_this)?;
+
+        // A `Locked` body whose stream is already materialized (user-provided
+        // ReadableStream, or `.body` was accessed first) is decoded via a reader
+        // on that existing stream.
+        if matches!(self.get_body_value(), Value::Locked(_)) {
+            if let Some(readable) = self.get_body_readable_stream(global_this) {
+                let text = ReadableStream::text_decode_from(global_this, readable.value)?;
+                self.detach_readable_stream(global_this);
+                *self.get_body_value() = Value::Used;
+                return Ok(text);
+            }
+        }
+
+        // Step 2: null body → a new empty closed ReadableStream.
+        // Steps 3-6: decode directly from the body's backing bytes.
+        let stream = self.get_body_value().to_text_readable_stream(global_this)?;
+        if stream.is_null() {
+            return ReadableStream::empty(global_this);
+        }
+        Ok(stream)
     }
 
     /// `Used` / in-flight-read bodies are unconditionally `true`; otherwise

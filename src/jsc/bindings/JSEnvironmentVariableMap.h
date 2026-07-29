@@ -7,11 +7,15 @@ class GlobalObject;
 
 namespace JSC {
 class JSValue;
+struct ClassInfo;
 }
 
 namespace Bun {
 
 JSC::JSValue createEnvironmentVariablesMap(Zig::GlobalObject* globalObject);
+
+// JSProcessEnv / JSSharedEnvMap; structured clone treats them as plain objects.
+bool isProcessEnvClassInfo(const JSC::ClassInfo* info);
 
 // worker_threads SHARE_ENV: a `process.env` whose reads/writes/enumeration go
 // through the SharedEnvStore of the tree its global belongs to.

@@ -2237,6 +2237,20 @@ pub mod environment_variables {
         bun_core::handle_oom(env_map.put(slot.key, &stored.bytes));
     }
 
+    /// `delete process.env.HTTP_PROXY` write-back; locking mirrors `Bun__setEnvValue`.
+    #[unsafe(no_mangle)]
+    pub(crate) extern "C" fn Bun__deleteEnvValue(global_object: &JSGlobalObject, name: &BunString) {
+        let vm = global_object.bun_vm().as_mut();
+        let name_slice = name.to_utf8();
+
+        let mut slots = vm.proxy_env_storage.lock();
+        let Some(slot) = slots.slot(name_slice.slice()) else {
+            return;
+        };
+        *slot.ptr = None;
+        vm.transpiler.env_mut().map.remove(slot.key);
+    }
+
     pub(crate) fn get_env_value(
         global_object: &JSGlobalObject,
         name: ZigString,

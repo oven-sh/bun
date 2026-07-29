@@ -1,7 +1,7 @@
 import { spawnSync, which } from "bun";
 import { describe, expect, it } from "bun:test";
 import { familySync } from "detect-libc";
-import { bunEnv, bunExe, isMacOS, isWindows, tempDir, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isMacOS, isWindows, tempDir, tls as tlsCert, tmpdirSync } from "harness";
 import { basename, join, resolve } from "path";
 
 const process_sleep = resolve(import.meta.dir, "process-sleep.js");
@@ -268,6 +268,177 @@ it("process.env.TZ", () => {
   expect(Intl.DateTimeFormat().resolvedOptions().timeZone).toBe(target);
   process.env[tzKey] = origTimezone;
   expect(Intl.DateTimeFormat().resolvedOptions().timeZone).toBe(realOrigTimezone);
+});
+
+// https://github.com/oven-sh/bun/issues/2786
+it("process.env.TZ reverts on delete / empty / invalid instead of staying stuck", async () => {
+  // Run in a child so TZ manipulation cannot leak into other tests. TZ is
+  // unset at startup so "initial" and every revert target the host zone.
+  const fixture = `
+    const d = new Date("2018-07-14T12:34:56Z");
+    const snap = () => ({ zone: new Intl.DateTimeFormat().resolvedOptions().timeZone, offset: d.getTimezoneOffset() });
+    const initial = snap();
+    const target = initial.zone === "Asia/Tokyo" ? "America/Los_Angeles" : "Asia/Tokyo";
+
+    process.env.TZ = target;
+    const afterSet = { ...snap(), enumerable: Object.keys(process.env).includes("TZ") };
+
+    delete process.env.TZ;
+    const afterDelete = { ...snap(), value: process.env.TZ };
+
+    process.env.TZ = target;
+    const afterReSet = { ...snap(), spread: { ...process.env }.TZ };
+
+    process.env.TZ = "Not/A/Real/Zone";
+    const afterInvalid = snap();
+
+    process.env.TZ = target;
+    process.env.TZ = "";
+    const afterEmpty = snap();
+
+    process.env.TZ = target;
+    process.env.TZ = undefined;
+    const afterUndefined = snap();
+
+    // Guard against the JSProcessEnv classInfo falling out of the
+    // structured-clone plain-object allow-list. Windows wraps process.env in
+    // a Proxy, which structured clone rejects independently of this change.
+    const cloneIsPlainObject = process.platform === "win32"
+      ? "skipped"
+      : Object.getPrototypeOf(structuredClone(process.env)) === Object.prototype;
+
+    process.stdout.write(JSON.stringify({ initial, target, afterSet, afterDelete, afterReSet, afterInvalid, afterEmpty, afterUndefined, cloneIsPlainObject }));
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", fixture],
+    env: { ...bunEnv, TZ: undefined },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const out = stdout ? JSON.parse(stdout) : { stderr };
+  expect({ ...out, exitCode }).toEqual({
+    initial: out.initial,
+    target: out.target,
+    afterSet: { zone: out.target, offset: expect.any(Number), enumerable: true },
+    // Previously stayed at `target`: the accessor was removed and the WTF
+    // override never cleared.
+    afterDelete: { ...out.initial, value: undefined },
+    // Previously a plain data write; the setter never fired again after delete.
+    // The var stays enumerable after re-set so {...process.env} carries it.
+    afterReSet: { zone: out.target, offset: out.afterSet?.offset, spread: out.target },
+    // Unresolvable and empty both drop the override rather than keeping the
+    // previous zone.
+    afterInvalid: out.initial,
+    afterEmpty: out.initial,
+    afterUndefined: out.initial,
+    cloneIsPlainObject: isWindows ? "skipped" : true,
+    exitCode: 0,
+  });
+  expect(out.afterSet.zone).not.toBe(out.initial.zone);
+});
+
+// https://github.com/oven-sh/bun/issues/7430
+// `delete process.env.NODE_TLS_REJECT_UNAUTHORIZED` used to remove the
+// CustomAccessor without resetting the native TLS flag, so verification stayed
+// disabled for the rest of the process and later assignments became plain data
+// properties that never reached the flag again.
+it("delete process.env.NODE_TLS_REJECT_UNAUTHORIZED re-enables verification and keeps later writes live", async () => {
+  using dir = tempDir("tls-reject-delete", {
+    "cert.pem": tlsCert.cert,
+    "key.pem": tlsCert.key,
+    "fixture.mjs": `
+      const tls = { cert: Bun.file("cert.pem"), key: Bun.file("key.pem") };
+      const probe = async () => {
+        await using server = Bun.serve({ port: 0, tls, fetch: () => new Response("ok") });
+        try {
+          const r = await fetch("https://localhost:" + server.port + "/", { headers: { connection: "close" } });
+          await r.text();
+          return "ACCEPTED";
+        } catch (e) {
+          return "REJECTED:" + (e.code ?? e.name);
+        }
+      };
+      const out = { baseline: await probe() };
+      process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0"; out.set0 = await probe();
+      delete process.env.NODE_TLS_REJECT_UNAUTHORIZED;
+      out.afterDelete = await probe();
+      out.readback = process.env.NODE_TLS_REJECT_UNAUTHORIZED ?? null;
+      process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0"; out.reSet0 = await probe();
+      process.env.NODE_TLS_REJECT_UNAUTHORIZED = "1"; out.reSet1 = await probe();
+      process.stdout.write(JSON.stringify(out));
+    `,
+  });
+  const env = { ...bunEnv };
+  delete env.NODE_TLS_REJECT_UNAUTHORIZED;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "fixture.mjs"],
+    env,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const out = stdout ? JSON.parse(stdout) : {};
+  expect({ ...out, stderr, exitCode }).toEqual({
+    baseline: expect.stringMatching(/^REJECTED:/),
+    set0: "ACCEPTED",
+    // Previously ACCEPTED: the accessor was gone and the native flag kept "0".
+    afterDelete: expect.stringMatching(/^REJECTED:/),
+    readback: null,
+    // Previously ACCEPTED regardless of value: writes landed as plain data.
+    reSet0: "ACCEPTED",
+    reSet1: expect.stringMatching(/^REJECTED:/),
+    stderr: expect.any(String),
+    exitCode: 0,
+  });
+});
+
+// https://github.com/oven-sh/bun/issues/735
+// Same delete-kills-the-accessor bug for the proxy env vars: after `delete`
+// fetch() kept proxying through the stale native env map entry, and later
+// writes never reached it.
+it("delete process.env.HTTP_PROXY stops proxying and keeps later writes live", async () => {
+  const fixture = `
+    await using target = Bun.serve({ port: 0, fetch: () => new Response("direct") });
+    let proxyHits = 0;
+    await using proxy = Bun.serve({ port: 0, fetch: () => { proxyHits++; return new Response("via-proxy"); } });
+    await using proxy2 = Bun.serve({ port: 0, fetch: () => new Response("via-proxy2") });
+    const go = async () => (await fetch("http://127.0.0.1:" + target.port + "/", { headers: { connection: "close" } })).text();
+
+    const out = { baseline: await go() };
+    process.env.HTTP_PROXY = "http://127.0.0.1:" + proxy.port;
+    out.set = await go();
+    delete process.env.HTTP_PROXY;
+    out.afterDelete = await go();
+    out.readback = process.env.HTTP_PROXY ?? null;
+    process.env.HTTP_PROXY = "http://127.0.0.1:" + proxy2.port;
+    out.reSet = await go();
+    out.spread = { ...process.env }.HTTP_PROXY;
+    out.proxyHits = proxyHits;
+    process.stdout.write(JSON.stringify(out));
+  `;
+  // Scrub every proxy var casing so the child starts in the not-in-OS-env path.
+  const env = { ...bunEnv };
+  for (const k of Object.keys(env)) {
+    if (/^(https?_proxy|no_proxy)$/i.test(k)) delete env[k];
+  }
+  await using proc = Bun.spawn({ cmd: [bunExe(), "-e", fixture], env, stdout: "pipe", stderr: "pipe" });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const out = stdout ? JSON.parse(stdout) : {};
+  expect({ ...out, stderr, exitCode }).toEqual({
+    baseline: "direct",
+    set: "via-proxy",
+    // Previously "via-proxy": env map still held the removed value.
+    afterDelete: "direct",
+    readback: null,
+    // Previously "via-proxy": the write landed as a plain data property.
+    reSet: "via-proxy2",
+    spread: expect.stringMatching(/^http:\/\/127\.0\.0\.1:\d+$/),
+    proxyHits: 1,
+    stderr: "",
+    exitCode: 0,
+  });
 });
 
 it("process.version starts with v", () => {

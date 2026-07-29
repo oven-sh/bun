@@ -1771,7 +1771,10 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             }
 
             // Only free the memory if the JS reference has been freed too.
-            if matches!(self.js_value, jsc::JsRef::Finalized) {
+            // Same `is_shutting_down` gate as the promise block above:
+            // `schedule_deinit` enqueues tasks no tick will ever drain once
+            // this is reached from `lastChanceToFinalize()`.
+            if matches!(self.js_value, jsc::JsRef::Finalized) && !self.vm().is_shutting_down() {
                 self.schedule_deinit();
             }
         }

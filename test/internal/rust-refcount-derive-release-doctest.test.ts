@@ -25,8 +25,7 @@ const codegenDir = join(repoRoot, "build", "debug", "codegen");
 // applying -p, and test-only CI lanes run a prebuilt binary without
 // vendor/lolhtml or the codegen tree on disk.
 const workspaceResolvable =
-  existsSync(join(repoRoot, "vendor", "lolhtml", "Cargo.toml")) &&
-  existsSync(join(codegenDir, "build_options.rs"));
+  existsSync(join(repoRoot, "vendor", "lolhtml", "Cargo.toml")) && existsSync(join(codegenDir, "build_options.rs"));
 
 test.skipIf(!cargo || !workspaceResolvable)(
   "cargo test --release --doc -p bun_http compiles the ref-count derives",

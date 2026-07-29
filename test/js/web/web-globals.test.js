@@ -373,10 +373,13 @@ test.each([
   await proc.stdin.flush();
   proc.stdin.end();
 
-  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  expect(stderr).toBe(JSON.stringify(expected) + "\n");
-  expect(exitCode).toBe(0);
+  expect({ stdout, stderr, exitCode }).toEqual({
+    stdout: "Q? ",
+    stderr: JSON.stringify(expected) + "\n",
+    exitCode: 0,
+  });
 });
 
 test("globalThis.self = 123 works", () => {

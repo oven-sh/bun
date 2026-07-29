@@ -1545,12 +1545,14 @@ BUN_DEFINE_HOST_FUNCTION(JSMock__jsSpyOn, (JSC::JSGlobalObject * lexicalGlobalOb
         if (!hasOwnValue) {
             mock->spyAttributes |= JSMockFunction::SpyAttributeNotOwn;
         }
-        unsigned attributes = 0;
+        unsigned attributes = hasValue ? slot.attributes() : 0;
+        if (!hasOwnValue) {
+            // The shadow we install is ours; keep it deletable so mockRestore() can
+            // remove it even when the inherited descriptor was non-configurable.
+            attributes &= ~PropertyAttribute::DontDelete;
+        }
 
         if (hasValue && ((slot.attributes() & PropertyAttribute::Function) != 0 || (value.isCell() && value.isCallable()))) {
-            if (hasValue)
-                attributes = slot.attributes();
-
             mock->copyNameAndLength(vm, globalObject, value);
 
             if (JSModuleNamespaceObject* moduleNamespaceObject = tryJSDynamicCast<JSModuleNamespaceObject*>(object)) {
@@ -1567,9 +1569,6 @@ BUN_DEFINE_HOST_FUNCTION(JSMock__jsSpyOn, (JSC::JSGlobalObject * lexicalGlobalOb
 
             pushImpl(mock, globalObject, JSMockImplementation::Kind::Call, value);
         } else {
-            if (hasValue)
-                attributes = slot.attributes();
-
             attributes |= PropertyAttribute::Accessor;
 
             if (JSModuleNamespaceObject* moduleNamespaceObject = tryJSDynamicCast<JSModuleNamespaceObject*>(object)) {

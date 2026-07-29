@@ -2085,8 +2085,7 @@ pub(crate) fn path_template_needs(data: &[u8], field: PlaceholderField) -> bool 
     strings::contains(data, needle)
 }
 
-/// `Some((byte_index_of_open_bracket, &template[byte_index..]))` when a `[`
-/// has no matching `]` (same depth-counting as [`path_template_print`]).
+/// `Some((index_of_open_bracket, &template[index..]))` when a `[` has no matching `]`.
 pub fn find_unterminated_placeholder(template: &[u8]) -> Option<(usize, &[u8])> {
     let mut remain = template;
     while let Some(j) = strings::index_of_char(remain, b'[') {

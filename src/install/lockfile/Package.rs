@@ -2610,7 +2610,19 @@ impl Package<u64> {
                     let gop = seen_workspace_names
                         .get_or_put(semver::string::Builder::string_hash(&entry.name)
                             as TruncatedPackageNameHash)?;
-                    if gop.found_existing {
+                    // The map key is a truncated hash, so a bucket hit may be a
+                    // collision between distinct names. Confirm with a real name
+                    // comparison before reporting a duplicate.
+                    let is_duplicate = gop.found_existing
+                        && workspace_names
+                            .values()
+                            .iter()
+                            .zip(workspace_names.keys().iter())
+                            .any(|(value, other_path)| {
+                                other_path.as_ptr() != path_.as_ptr()
+                                    && strings::eql_long(&value.name, &entry.name, true)
+                            });
+                    if is_duplicate {
                         // this path does alot of extra work to format the error message
                         // but this is ok because the install is going to fail anyways, so this
                         // has zero effect on the happy path.

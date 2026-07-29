@@ -58,6 +58,27 @@ test("non-string workspaces entry prints the error without literal markup", asyn
   expect(exitCode).toBe(1);
 });
 
+test("distinct workspace names with colliding truncated name hashes are not duplicates", async () => {
+  // Wyhash11("@demo/app-03511") and Wyhash11("@demo/app-13215") agree in their
+  // low 32 bits, so duplicate detection must compare names, not truncated hashes.
+  using dir = tempDir("workspace-name-hash-collision", {
+    "package.json": JSON.stringify({ name: "r", private: true, workspaces: ["a", "b"] }),
+    "a/package.json": JSON.stringify({ name: "@demo/app-03511", version: "0.0.0" }),
+    "b/package.json": JSON.stringify({ name: "@demo/app-13215", version: "0.0.0" }),
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "install"],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+
+  expect(stderr).not.toContain("already exists");
+  expect(exitCode).toBe(0);
+});
+
 test("workspace with ./ should not crash", () => {
   writeFileSync(
     `${cwd}/package.json`,

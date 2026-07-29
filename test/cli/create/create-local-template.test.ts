@@ -184,6 +184,30 @@ test.concurrent("bun create from local template does not run git in a pre-existi
   expect({ exitCode, stderr }).toEqual({ exitCode: 0, stderr: expect.not.stringContaining("error") });
 });
 
+test.concurrent("bun create from local template with --force replaces kind-mismatched entries", async () => {
+  using dir = tempDir("create-local-force-mismatch", {
+    "templates/mytpl/sub/nested.txt": "template nested",
+    "templates/mytpl/blocker": "template blocker file",
+    "proj/sub": "file named sub",
+    "proj/blocker/inner.txt": "user nested",
+    "proj/keep.txt": "keep me",
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "create", "mytpl", ".", "--force"],
+    env: createEnv(join(String(dir), "templates")),
+    cwd: join(String(dir), "proj"),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited, proc.stdout.text()]);
+
+  expect(await Bun.file(join(String(dir), "proj", "sub", "nested.txt")).text()).toBe("template nested");
+  expect(await Bun.file(join(String(dir), "proj", "blocker")).text()).toBe("template blocker file");
+  expect(await Bun.file(join(String(dir), "proj", "keep.txt")).text()).toBe("keep me");
+  expect({ exitCode, stderr }).toEqual({ exitCode: 0, stderr: expect.not.stringContaining("error") });
+});
+
 test.concurrent("bun create from local template refuses when a template directory collides with a file", async () => {
   using dir = tempDir("create-local-dir-conflict", {
     "templates/mytpl/sub/nested.txt": "template nested",

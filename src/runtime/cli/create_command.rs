@@ -608,23 +608,22 @@ impl CreateCommand {
                 template_has_npmignore =
                     bun_sys::exists_at(template_dir.fd, bun_core::zstr!(".npmignore"));
 
-                let existing_destination = if create_options.overwrite {
-                    None
-                } else {
-                    match bun_sys::Dir::open(destination) {
-                        Ok(d) => Some(d),
-                        Err(err) if err.get_errno() == bun_sys::E::ENOENT => None,
-                        Err(err) => {
-                            node.end();
-                            progress.refresh();
+                // With --force the scan still runs: it removes entries whose
+                // kind mismatches the template's, which O_TRUNC/mkdir cannot
+                // overwrite.
+                let existing_destination = match bun_sys::Dir::open(destination) {
+                    Ok(d) => Some(d),
+                    Err(err) if err.get_errno() == bun_sys::E::ENOENT => None,
+                    Err(err) => {
+                        node.end();
+                        progress.refresh();
 
-                            pretty_errorln!(
-                                "<r><red>{}<r>: opening dir {}",
-                                bstr::BStr::new(err.name()),
-                                bstr::BStr::new(destination),
-                            );
-                            Global::exit(1);
-                        }
+                        pretty_errorln!(
+                            "<r><red>{}<r>: opening dir {}",
+                            bstr::BStr::new(err.name()),
+                            bstr::BStr::new(destination),
+                        );
+                        Global::exit(1);
                     }
                 };
                 if let Some(existing_destination) = existing_destination {
@@ -684,6 +683,62 @@ impl CreateCommand {
                                 Global::exit(1);
                             }
                         };
+
+                        if create_options.overwrite {
+                            let mismatch = match entry.kind {
+                                bun_sys::FileKind::File => {
+                                    existing_kind == bun_sys::ExistsAtType::Directory
+                                }
+                                bun_sys::FileKind::Directory => {
+                                    existing_kind != bun_sys::ExistsAtType::Directory
+                                }
+                                _ => false,
+                            };
+                            if mismatch {
+                                #[cfg(not(windows))]
+                                let removed = if existing_kind == bun_sys::ExistsAtType::Directory
+                                {
+                                    existing_destination.delete_tree(entry.path.as_bytes())
+                                } else {
+                                    bun_sys::unlinkat(&existing_destination, entry.path)
+                                };
+                                #[cfg(windows)]
+                                let removed = {
+                                    let mut utf8 = bun_core::strings::convert_utf16_to_utf8(
+                                        Vec::new(),
+                                        entry.path.as_slice(),
+                                    );
+                                    if existing_kind == bun_sys::ExistsAtType::Directory {
+                                        existing_destination.delete_tree(&utf8)
+                                    } else {
+                                        utf8.push(0);
+                                        bun_sys::unlinkat(
+                                            &existing_destination,
+                                            bun_core::ZStr::from_slice_with_nul(&utf8),
+                                        )
+                                    }
+                                };
+                                if let Err(err) = removed {
+                                    node.end();
+                                    progress.refresh();
+
+                                    #[cfg(not(windows))]
+                                    let entry_path: &[u8] = entry.path.as_bytes();
+                                    #[cfg(windows)]
+                                    let entry_path: &[u16] = entry.path.as_slice();
+                                    pretty_errorln!(
+                                        "<r><red>{}<r>: removing {}",
+                                        bstr::BStr::new(err.name()),
+                                        bun_core::fmt::fmt_os_path(
+                                            entry_path,
+                                            Default::default()
+                                        ),
+                                    );
+                                    Global::exit(1);
+                                }
+                            }
+                            continue;
+                        }
 
                         let conflicting = match entry.kind {
                             bun_sys::FileKind::File => true,

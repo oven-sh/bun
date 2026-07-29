@@ -1517,7 +1517,7 @@ describe("response framing", () => {
   // Read the raw response so that `Content-Length: 0` and an absent
   // Content-Length are distinguishable (fetch normalizes the two cases away),
   // and so body bytes smuggled after a no-body status's header block show up.
-  async function rawRequest(port: number, method: string): Promise<RawResponse> {
+  async function rawRequest(port: number, method: string, version: "1.0" | "1.1" = "1.1"): Promise<RawResponse> {
     const received: Buffer[] = [];
     const { resolve, reject, promise } = Promise.withResolvers<void>();
     await using connection = await Bun.connect({
@@ -1538,7 +1538,9 @@ describe("response framing", () => {
         },
       },
     });
-    connection.write(`${method} / HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n`);
+    // HTTP/1.0 has no keep-alive by default, so the Connection header is redundant there.
+    const connectionHeader = version === "1.1" ? "Connection: close\r\n" : "";
+    connection.write(`${method} / HTTP/${version}\r\nHost: 127.0.0.1\r\n${connectionHeader}\r\n`);
     connection.flush();
     await promise;
     const raw = Buffer.concat(received).toString();
@@ -1695,6 +1697,53 @@ describe("response framing", () => {
       );
       expect(GET).toEqual({ status: 204, contentLength: null, transferEncoding: null, body: "" });
       expect(HEAD).toEqual({ status: 204, contentLength: null, transferEncoding: null, body: "" });
+    });
+
+    // RFC 9112 §6.1: a server MUST NOT send Transfer-Encoding unless the
+    // request indicates HTTP/1.1 or later. uWS's GET write path already skips
+    // chunked framing for HTTP/1.0 requests; HEAD was writing the header
+    // unconditionally on two arms (a streamed body, and a handler-supplied
+    // Transfer-Encoding on a bodiless Response), advertising a framing that
+    // the GET of the same resource would never use.
+    it.each([
+      [
+        "a streamed body",
+        () =>
+          new Response(
+            new ReadableStream({
+              pull(c) {
+                c.enqueue(new TextEncoder().encode("hi"));
+                c.close();
+              },
+            }),
+          ),
+      ],
+      [
+        "a handler-supplied Transfer-Encoding on a null body",
+        () => new Response(null, { headers: { "Transfer-Encoding": "chunked" } }),
+      ],
+    ])("%s on HEAD/1.0 carries no Transfer-Encoding, same as GET/1.0", async (_, makeResponse) => {
+      using server = Bun.serve({
+        port: 0,
+        hostname: "127.0.0.1",
+        fetch: makeResponse,
+      });
+
+      const head10 = await rawRequest(server.port, "HEAD", "1.0");
+      const get10 = await rawRequest(server.port, "GET", "1.0");
+      const head11 = await rawRequest(server.port, "HEAD", "1.1");
+
+      expect({
+        "HEAD/1.0 transfer-encoding": head10.headers["transfer-encoding"] ?? null,
+        "HEAD/1.0 body": head10.body,
+        "GET/1.0 transfer-encoding": get10.headers["transfer-encoding"] ?? null,
+        "HEAD/1.1 transfer-encoding": head11.headers["transfer-encoding"] ?? null,
+      }).toEqual({
+        "HEAD/1.0 transfer-encoding": null,
+        "HEAD/1.0 body": "",
+        "GET/1.0 transfer-encoding": null,
+        "HEAD/1.1 transfer-encoding": "chunked",
+      });
     });
   });
 

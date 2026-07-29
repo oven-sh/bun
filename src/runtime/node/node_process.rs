@@ -352,14 +352,12 @@ mod _impl {
         // argv also omits the script name
         // `deref` on every element on scope exit: a no-op for ZigString/Static
         // tags, and releases the +1 held by `clone_*` in the worker branch.
-        let mut args_list = scopeguard::guard(
-            Vec::<BunString>::with_capacity(args_count + 2),
-            |v| {
+        let mut args_list =
+            scopeguard::guard(Vec::<BunString>::with_capacity(args_count + 2), |v| {
                 for a in &v {
                     a.deref();
                 }
-            },
-        );
+            });
 
         if vm.standalone_module_graph.is_some() {
             // Don't break user's code because they did process.argv.slice(2)

@@ -28,6 +28,9 @@ bun_core::define_scoped_log!(log, watcher, visible);
 
 pub const MAX_COUNT: usize = 128;
 
+/// Prefer [`Watcher::requires_file_descriptors`] when a `Watcher` is in scope;
+/// this compile-time value is `true` on kqueue platforms even when the polling
+/// backend (which needs no fds) is active.
 #[cfg(any(target_os = "macos", target_os = "freebsd"))]
 pub const REQUIRES_FILE_DESCRIPTORS: bool = true;
 #[cfg(not(any(target_os = "macos", target_os = "freebsd")))]
@@ -345,6 +348,14 @@ impl Watcher {
 
     pub fn get_hash(filepath: &[u8]) -> HashType {
         bun_wyhash::hash(filepath) as HashType
+    }
+
+    /// Runtime check: the kqueue backend watches by fd, so callers must open
+    /// one per file; inotify/Windows/polling watch by path and pass
+    /// `Fd::INVALID`.
+    #[inline]
+    pub fn requires_file_descriptors(&self) -> bool {
+        REQUIRES_FILE_DESCRIPTORS && matches!(self.platform, Backend::Native(_))
     }
 
     /// # Safety
@@ -867,8 +878,7 @@ impl Watcher {
         }
 
         // Only open fd if we might need it
-        #[cfg(any(target_os = "macos", target_os = "freebsd"))]
-        let fd: Fd = {
+        let fd: Fd = if self.requires_file_descriptors() {
             let mut path_z = bun_paths::PathBuffer::uninit();
             if file_path.len() >= path_z.len() {
                 return false;
@@ -882,9 +892,9 @@ impl Watcher {
                 Ok(opened) => opened,
                 Err(_) => return false,
             }
+        } else {
+            Fd::INVALID
         };
-        #[cfg(not(any(target_os = "macos", target_os = "freebsd")))]
-        let fd: Fd = Fd::INVALID;
 
         let res = self.add_file::<true>(fd, file_path, hash, loader, Fd::INVALID, None);
         match res {

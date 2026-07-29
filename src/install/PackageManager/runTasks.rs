@@ -374,8 +374,10 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                     }
                 }
 
-                // Handle retry-able errors.
+                // Handle retry-able errors. `fail` set with metadata present
+                // means the transport failed mid-body (truncated download).
                 if task.response.metadata.is_none()
+                    || task.response.fail.is_some()
                     || task
                         .response
                         .metadata
@@ -412,7 +414,12 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                     }
                 }
 
-                let Some(metadata) = task.response.metadata.as_ref() else {
+                let Some(metadata) = task
+                    .response
+                    .metadata
+                    .as_ref()
+                    .filter(|_| task.response.fail.is_none())
+                else {
                     // Handle non-retry-able errors.
                     let err = task
                         .response
@@ -627,11 +634,11 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                 // touch `task.callback` (see `NetworkTask::reset_streaming_*`
                 // / `discard_unused_streaming_state`).
                 let extract = unsafe { &mut *extract_ptr };
-                // Streaming extraction never pushes its NetworkTask to
-                // `async_network_task_queue` once committed — the
-                // extract Task published by `TarballStream.finish()`
-                // owns its lifetime — so every `.extract` task that
-                // arrives here is taking the buffered path.
+                // Two ways to get here: streaming never committed (the
+                // extract Task published by `TarballStream.finish()` owns a
+                // committed task's lifetime), or `finish()` un-committed the
+                // task and pushed it back for a re-download after a
+                // mid-stream transport failure. Either way the flag is clear.
                 debug_assert!(!task.streaming_committed);
 
                 if !has_network_error && task.response.metadata.is_none() {
@@ -644,7 +651,11 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                     }
                 }
 
+                // `fail` set with metadata present means the transport failed
+                // mid-body (e.g. connection closed before `Content-Length`
+                // bytes); the truncated body must not reach the extractor.
                 if task.response.metadata.is_none()
+                    || task.response.fail.is_some()
                     || task
                         .response
                         .metadata
@@ -662,10 +673,30 @@ pub fn run_tasks<C: RunTasksCallbacks>(
 
                     if task.retried < manager.options.max_retry_count {
                         task.retried += 1;
-                        // Streaming never committed (asserted above), so
-                        // the pre-allocated stream is safe to reuse for
-                        // the retry attempt.
+                        // If streaming never committed, the pre-allocated
+                        // stream is still present and safe to reuse for the
+                        // retry attempt; no-op on the stream otherwise.
                         task.reset_streaming_for_retry();
+                        // A committed stream that hit a transport failure was
+                        // consumed and dropped by `TarballStream::finish()`
+                        // before it handed the task back here. Re-arm a fresh
+                        // stream: the response-body-streaming signal on the
+                        // HTTP client is still enabled, so the retry's chunk
+                        // callbacks need a consumer.
+                        if task.tarball_stream.is_none() && !task.streaming_extract_task.is_null() {
+                            let extract_task = task.streaming_extract_task;
+                            // SAFETY: `extract_task` is the live pre-allocated
+                            // Task owned by this NetworkTask (never published:
+                            // `finish()` returned the NetworkTask instead);
+                            // `task_ptr` is the live pool slot, disjoint from
+                            // the `manager` fields `TarballStream::init`
+                            // touches (see `generate_network_task_for_tarball`).
+                            unsafe {
+                                task.tarball_stream = Some(bun_core::heap::take(
+                                    TarballStream::init(extract_task, task_ptr, manager),
+                                ));
+                            }
+                        }
                         enqueue::enqueue_network_task(manager, task_ptr);
 
                         if manager.options.log_level.is_verbose() {
@@ -695,7 +726,12 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                 // path below allocates its own Task.
                 task.discard_unused_streaming_state(manager);
 
-                let Some(metadata) = task.response.metadata.as_ref() else {
+                let Some(metadata) = task
+                    .response
+                    .metadata
+                    .as_ref()
+                    .filter(|_| task.response.fail.is_none())
+                else {
                     let err = task
                         .response
                         .fail

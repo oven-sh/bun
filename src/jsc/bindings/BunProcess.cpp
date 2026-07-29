@@ -1253,9 +1253,16 @@ extern "C" int Bun__handleUncaughtException(JSC::JSGlobalObject* lexicalGlobalOb
         (void)call(lexicalGlobalObject, capture, args, "uncaughtExceptionCaptureCallback"_s);
         if (auto ex = scope.exception()) {
             (void)scope.tryClearException();
-            // if an exception is thrown in the uncaughtException handler, we abort
-            Bun__logUnhandledException(JSValue::encode(JSValue(ex)));
-            Bun__Process__exit(lexicalGlobalObject, 1);
+            // A termination (e.g. a `--watch` process.exit() in the callback)
+            // is not a throw: tryClearException left it pending, so just let
+            // it keep unwinding.
+            if (!vm.isTerminationException(ex)) {
+                // Capture callback threw: exit. Under `bun run --watch` / in a
+                // worker, Bun__Process__exit returns after requesting
+                // termination and we fall through to `return true`.
+                Bun__logUnhandledException(JSValue::encode(JSValue(ex)));
+                Bun__Process__exit(lexicalGlobalObject, 1);
+            }
         }
     } else if (wrapped.listenerCount(uncaughtExceptionIdent) > 0) {
         wrapped.emit(uncaughtExceptionIdent, args);
@@ -3374,9 +3381,9 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionReallyExit, (JSGlobalObject * globalObj
     // while native shutdown (profiles, cleanup hooks, SQLite close) still runs.
     zigGlobal->processObject()->m_isExiting = true;
     Bun__Process__exit(zigGlobal, exitCode);
-    // Main-thread Bun__Process__exit is noreturn. In a worker it returns; the
-    // WebWorker exit path it called requests JSC termination (guarded so it's a
-    // no-op when re-entered from a process.on('exit') handler).
+    // Main-thread Bun__Process__exit is noreturn, except under
+    // `bun run --watch` and in a worker, where it returns after requesting
+    // JSC termination (which then unwinds JS at the next safepoint).
     throwScope.release();
     return JSC::JSValue::encode(jsUndefined());
 }

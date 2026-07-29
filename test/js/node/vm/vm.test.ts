@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, normalizeBunSnapshot } from "harness";
+import { bunEnv, bunExe, normalizeBunSnapshot, tempDir } from "harness";
 import {
   compileFunction,
   constants,
@@ -1383,3 +1383,42 @@ describe("node:vm SourceTextModule cyclic graph linking", () => {
     expect(exitCode).toBe(0);
   });
 });
+
+// process.exit() in a Worker raises a JSC termination that is neither SIGINT
+// nor the watchdog firing; node:vm used to release-assert on that (or, with a
+// timeout option armed, misreport it as ERR_SCRIPT_EXECUTION_TIMEOUT) instead
+// of letting the worker exit.
+for (const [variant, options] of [
+  ["no options", ""],
+  ["armed timeout", ", { timeout: 60_000 }"],
+] as const) {
+  test(`process.exit() inside vm.runInThisContext in a Worker exits only the worker (${variant})`, async () => {
+    using dir = tempDir("vm-worker-exit", {
+      "main.js": `
+        const { Worker } = require("node:worker_threads");
+        const { join } = require("node:path");
+        const w = new Worker(join(__dirname, "w.js"));
+        w.on("exit", code => console.log("WORKER_EXIT " + code));
+      `,
+      "w.js": `
+        require("node:vm").runInThisContext("process.exit(7)"${options});
+        console.log("AFTER_EXIT_SHOULD_NOT_PRINT");
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "main.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stdout).toContain("WORKER_EXIT 7");
+    expect(stdout).not.toContain("AFTER_EXIT_SHOULD_NOT_PRINT");
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
+}

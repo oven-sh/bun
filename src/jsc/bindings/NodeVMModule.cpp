@@ -105,6 +105,14 @@ JSValue NodeVMModule::evaluate(JSGlobalObject* globalObject, uint32_t timeout, b
             // below, then convert it to ERR_SCRIPT_EXECUTION_*.
             std::ignore = scope.exception();
             if (vm.hasTerminationRequest() || vm.hasPendingTerminationException()) {
+                // See checkForTermination in NodeVMScript.cpp: a termination
+                // node:vm doesn't own propagates instead.
+                void* bunVM = Bun::vm(vm);
+                if (Bun__VM__isWatchExitRequested(bunVM) || Bun__VM__isWorkerTerminationRequested(bunVM)
+                    || (!getSigintReceived() && timeout == 0)) {
+                    scope.throwException(globalObject, vm.terminationException());
+                    return {};
+                }
                 vm.drainMicrotasksForGlobalObject(nodeVmGlobalObject);
                 DECLARE_TOP_EXCEPTION_SCOPE(vm).clearException();
                 vm.clearHasTerminationRequest();
@@ -245,16 +253,23 @@ JSValue NodeVMModule::evaluate(JSGlobalObject* globalObject, uint32_t timeout, b
     // so the exception-check validator is satisfied before the TOP scope.
     std::ignore = scope.exception();
     if (vm.hasTerminationRequest() || vm.hasPendingTerminationException()) {
+        // See checkForTermination in NodeVMScript.cpp: a termination node:vm
+        // doesn't own propagates instead.
+        void* bunVM = Bun::vm(vm);
+        if (Bun__VM__isWatchExitRequested(bunVM) || Bun__VM__isWorkerTerminationRequested(bunVM)
+            || (!getSigintReceived() && timeout == 0)) {
+            scope.throwException(globalObject, vm.terminationException());
+            return {};
+        }
         vm.drainMicrotasksForGlobalObject(nodeVmGlobalObject);
         DECLARE_TOP_EXCEPTION_SCOPE(vm).clearException();
         vm.clearHasTerminationRequest();
         if (getSigintReceived()) {
             setSigintReceived(false);
             throwError(globalObject, scope, ErrorCode::ERR_SCRIPT_EXECUTION_INTERRUPTED, "Script execution was interrupted by `SIGINT`"_s);
-        } else if (timeout != 0) {
-            throwError(globalObject, scope, ErrorCode::ERR_SCRIPT_EXECUTION_TIMEOUT, makeString("Script execution timed out after "_s, timeout, "ms"_s));
         } else {
-            RELEASE_ASSERT_NOT_REACHED_WITH_MESSAGE("vm.SourceTextModule evaluation terminated due neither to SIGINT nor to timeout");
+            // `timeout` is set: the neither-SIGINT-nor-timeout case returned above.
+            throwError(globalObject, scope, ErrorCode::ERR_SCRIPT_EXECUTION_TIMEOUT, makeString("Script execution timed out after "_s, timeout, "ms"_s));
         }
     } else {
         setSigintReceived(false);

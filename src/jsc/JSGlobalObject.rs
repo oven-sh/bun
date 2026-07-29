@@ -297,6 +297,11 @@ impl JSGlobalObject {
     }
 
     #[inline]
+    pub fn request_termination(&self) {
+        JSGlobalObject__requestTermination(self)
+    }
+
+    #[inline]
     pub fn clear_termination_exception(&self) {
         JSGlobalObject__clearTerminationException(self)
     }
@@ -1657,6 +1662,7 @@ unsafe extern "C" {
     safe fn JSGlobalObject__clearExceptionExceptTermination(this: &JSGlobalObject) -> bool;
     safe fn JSGlobalObject__clearTerminationException(this: &JSGlobalObject);
     safe fn JSGlobalObject__hasException(this: &JSGlobalObject) -> bool;
+    safe fn JSGlobalObject__requestTermination(this: &JSGlobalObject);
     safe fn JSGlobalObject__setTimeZone(this: &JSGlobalObject, time_zone: &ZigString) -> bool;
     safe fn JSGlobalObject__tryTakeException(this: &JSGlobalObject) -> JSValue;
 

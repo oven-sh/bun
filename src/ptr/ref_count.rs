@@ -656,11 +656,6 @@ impl DebugDataOps for NoopDebugData {
 
 #[doc(hidden)]
 pub fn noop_debug_data() -> *mut dyn DebugDataOps {
-    // Per-call leaked stub — `RefPtr` only calls `acquire`/`release` on it,
-    // both of which are no-ops, so a shared static would also be sound; but
-    // `*mut dyn` from a `static mut` is unergonomic. Debug-only.
-    // SAFETY: NonNull::dangling is fine here? No — `RefPtr` derefs it.
-    // Use a thread-local static to avoid per-ref allocation.
     thread_local! {
         static NOOP: core::cell::UnsafeCell<NoopDebugData> =
             const { core::cell::UnsafeCell::new(NoopDebugData) };

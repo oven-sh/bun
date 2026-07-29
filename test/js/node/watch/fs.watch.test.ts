@@ -673,6 +673,93 @@ describe("fs.watch", () => {
     },
     90_000,
   );
+
+  // When inotify_add_watch fails for a subdirectory during the recursive walk
+  // (ENOSPC at the watch limit, EACCES on an unreadable subdir), bun used to
+  // swallow the failure so the watcher looked healthy while whole subtrees
+  // were silently unwatched. Now the first such failure is delivered as an
+  // `'error'` event and the watcher keeps covering whatever did register,
+  // matching node's recursive watcher.
+  //
+  // ENOSPC (the motivating case) needs the per-user inotify limit lowered,
+  // which requires a private user namespace; CI containers disallow that via
+  // seccomp. The same `add_one` error branch is reachable with EACCES by
+  // watching a tree that contains one unreadable subdirectory as an
+  // unprivileged user, so this test drops privileges to trigger it.
+  test.skipIf(!isLinux || process.getuid?.() !== 0)(
+    "recursive watch surfaces inotify_add_watch failure on a subdirectory as an 'error' event",
+    async () => {
+      const NOBODY = 65534;
+      using dir = tempDir("fs-watch-subtree-error", {
+        "open/.keep": "",
+        "locked/.keep": "",
+      });
+      const root = fs.realpathSync(String(dir));
+      // The de-privileged child must be able to traverse into `root`, read it,
+      // and write inside `open/`, while `locked/` denies read so
+      // inotify_add_watch on it returns EACCES.
+      fs.chownSync(root, NOBODY, NOBODY);
+      fs.chownSync(path.join(root, "open"), NOBODY, NOBODY);
+      fs.chmodSync(root, 0o755);
+      fs.chmodSync(path.join(root, "open"), 0o755);
+      fs.chmodSync(path.join(root, "locked"), 0o000);
+
+      const fixture = `
+        const fs = require("fs"), path = require("path");
+        const root = process.env.WATCH_ROOT;
+        const seen = new Set();
+        let errorEvent = null, closed = false;
+        const w = fs.watch(root, { recursive: true }, (t, f) => seen.add(String(f)));
+        w.on("error", e => {
+          errorEvent = { code: e.code, syscall: e.syscall, path: e.path };
+          // Prove the watcher survives the error: a change under the readable
+          // subtree must still arrive.
+          fs.writeFileSync(path.join(root, "open", "p.txt"), "x");
+        });
+        w.on("close", () => { closed = true; });
+        const done = () => {
+          console.log(JSON.stringify({
+            errorEvent,
+            closed,
+            openDelivered: seen.has("open/p.txt") || seen.has(path.join("open", "p.txt")),
+          }));
+          try { w.close(); } catch {}
+          clearInterval(poll);
+          clearTimeout(deadline);
+        };
+        const poll = setInterval(() => {
+          if (errorEvent && (seen.has("open/p.txt") || seen.has(path.join("open", "p.txt")))) done();
+        }, 20);
+        const deadline = setTimeout(done, 4000);
+      `;
+      try {
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "-e", fixture],
+          env: { ...bunEnv, WATCH_ROOT: root },
+          cwd: "/",
+          uid: NOBODY,
+          gid: NOBODY,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([
+          proc.stdout.text(),
+          proc.stderr.text(),
+          proc.exited,
+        ]);
+        expect(stderr).toBe("");
+        const result = JSON.parse(stdout.trim());
+        expect(result.errorEvent).not.toBeNull();
+        expect(result.errorEvent.syscall).toBe("watch");
+        expect(result.errorEvent.path).toContain("locked");
+        expect(result.closed).toBe(false);
+        expect(result.openDelivered).toBe(true);
+        expect(exitCode).toBe(0);
+      } finally {
+        fs.chmodSync(path.join(root, "locked"), 0o755);
+      }
+    },
+  );
 });
 
 describe("fs.promises.watch", () => {

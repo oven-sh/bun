@@ -170,9 +170,8 @@ impl<'a> S3ListObjectsV2Result<'a> {
     }
 }
 
-// Infallible: the only fallible operations are allocations
-// (Vec::push / alloc), which abort on OOM.
-pub fn parse_s3_list_objects_result(xml: &[u8]) -> S3ListObjectsV2Result<'_> {
+/// Returns `None` when the body is not a complete `<ListBucketResult>` document.
+pub fn parse_s3_list_objects_result(xml: &[u8]) -> Option<S3ListObjectsV2Result<'_>> {
     let mut result = S3ListObjectsV2Result {
         contents: None,
         common_prefixes: None,
@@ -192,7 +191,9 @@ pub fn parse_s3_list_objects_result(xml: &[u8]) -> S3ListObjectsV2Result<'_> {
     let mut common_prefixes: Vec<&[u8]> = Vec::new();
 
     // we dont use trailing ">" as it may finish with xmlns=...
-    if let Some(delete_result_pos) = strings::index_of(xml, b"<ListBucketResult") {
+    let delete_result_pos = strings::index_of(xml, b"<ListBucketResult")?;
+    strings::index_of(&xml[delete_result_pos..], b"</ListBucketResult>")?;
+    {
         let mut i: usize = 0;
         while i < xml[delete_result_pos..].len() {
             if xml[i] != b'<' {
@@ -517,7 +518,7 @@ pub fn parse_s3_list_objects_result(xml: &[u8]) -> S3ListObjectsV2Result<'_> {
         // else branch: Vec drops itself
     }
 
-    result
+    Some(result)
 }
 
 pub fn get_list_objects_options_from_js(

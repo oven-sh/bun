@@ -372,24 +372,23 @@ impl S3HttpSimpleTask {
                 404 => this.error_with_body(ErrorType::NotFound)?,
                 _ => this.error_with_body(ErrorType::Failure)?,
             },
-            Callback::ListObjects(callback) => match response.status_code {
-                200 => {
-                    if let Some(body) = &this.result.body {
-                        // parse_s3_list_objects_result is infallible (alloc-only
-                        // failure modes abort).
-                        let success =
-                            list_objects::parse_s3_list_objects_result(body.list.as_slice());
-                        callback(
-                            S3ListObjectsResult::Success(Box::new(success)),
-                            this.callback_context,
-                        )?;
-                    } else {
-                        this.error_with_body(ErrorType::Failure)?;
+            Callback::ListObjects(callback) => {
+                match response.status_code {
+                    200 => {
+                        match this.result.body.as_ref().and_then(|b| {
+                            list_objects::parse_s3_list_objects_result(b.list.as_slice())
+                        }) {
+                            Some(success) => callback(
+                                S3ListObjectsResult::Success(Box::new(success)),
+                                this.callback_context,
+                            )?,
+                            None => this.error_with_body(ErrorType::Failure)?,
+                        }
                     }
+                    404 => this.error_with_body(ErrorType::NotFound)?,
+                    _ => this.error_with_body(ErrorType::Failure)?,
                 }
-                404 => this.error_with_body(ErrorType::NotFound)?,
-                _ => this.error_with_body(ErrorType::Failure)?,
-            },
+            }
             Callback::Upload(callback) => match response.status_code {
                 200 => callback(S3UploadResult::Success, this.callback_context)?,
                 _ => this.error_with_body(ErrorType::Failure)?,

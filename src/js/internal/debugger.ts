@@ -382,9 +382,10 @@ class Debugger {
       // Bun.serve walks every getaddrinfo result for `hostname`, so `localhost` may bind [::1] on
       // one system and 127.0.0.1 on another. Print the address that actually bound so the banner
       // URL is reachable regardless of how the client resolves the name.
-      const addr = (server as { address?: { address?: string; family?: string } }).address;
-      if (addr && typeof addr.address === "string" && addr.address) {
-        this.#url!.hostname = addr.family === "IPv6" ? `[${addr.address}]` : addr.address;
+      const { address: boundIp, family } =
+        (server as { address?: { address?: string; family?: string } }).address ?? {};
+      if (typeof boundIp === "string" && boundIp) {
+        this.#url!.hostname = family === "IPv6" ? `[${boundIp}]` : boundIp;
       } else {
         this.#url!.hostname = server.hostname;
       }

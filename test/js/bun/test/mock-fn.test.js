@@ -1076,5 +1076,92 @@ describe("spyOn", () => {
     });
   }
 
+  test("throws when the property does not exist", () => {
+    const obj = { a: 1 };
+    expect(() => spyOn(obj, "typo")).toThrow("Property `typo` does not exist in the provided object");
+    // No phantom own property is left behind.
+    expect(Object.hasOwn(obj, "typo")).toBe(false);
+    expect(Object.keys(obj)).toEqual(["a"]);
+
+    expect(() => spyOn(Object.create({ inherited: () => 1 }), "nope")).toThrow(
+      "Property `nope` does not exist in the provided object",
+    );
+  });
+
+  test("spies through a Proxy with default traps", () => {
+    const target = { m: () => "orig" };
+    const proxy = new Proxy(target, {});
+    const fn = spyOn(proxy, "m").mockReturnValue("MRV");
+
+    expect(proxy.m()).toBe("MRV");
+    expect(target.m()).toBe("MRV");
+    expect(fn).toHaveBeenCalledTimes(2);
+
+    fn.mockRestore();
+    expect(target.m()).toBe("orig");
+    expect(proxy.m()).toBe("orig");
+    expect(fn).not.toHaveBeenCalled();
+  });
+
+  test("spies through a Proxy with forwarding traps", () => {
+    const target = { m: () => "orig" };
+    const proxy = new Proxy(target, {
+      get: Reflect.get,
+      set: Reflect.set,
+      has: Reflect.has,
+      defineProperty: Reflect.defineProperty,
+    });
+    const fn = spyOn(proxy, "m");
+
+    expect(proxy.m()).toBe("orig");
+    expect(fn).toHaveBeenCalledTimes(1);
+    fn.mockReturnValue("MRV");
+    expect(target.m()).toBe("MRV");
+    expect(fn).toHaveBeenCalledTimes(2);
+
+    fn.mockRestore();
+    expect(target.m()).toBe("orig");
+  });
+
+  test("propagates exceptions from a Proxy get trap", () => {
+    const proxy = new Proxy(
+      {},
+      {
+        has: () => true,
+        get() {
+          throw new Error("boom-get");
+        },
+      },
+    );
+    expect(() => spyOn(proxy, "x")).toThrow("boom-get");
+  });
+
+  test("throws when a Proxy reports the property missing", () => {
+    // has trap absent, target empty => [[HasProperty]] is false
+    expect(() => spyOn(new Proxy({}, { get: () => 1 }), "x")).toThrow(
+      "Property `x` does not exist in the provided object",
+    );
+  });
+
+  if (isBun) {
+    test("spies on a non-function value through a Proxy", () => {
+      const target = { n: 42 };
+      const proxy = new Proxy(target, {});
+      const fn = spyOn(proxy, "n");
+
+      expect(proxy.n).toBe(42);
+      expect(fn).toHaveBeenCalledTimes(1);
+
+      fn.mockRestore();
+      expect(Object.getOwnPropertyDescriptor(target, "n")).toEqual({
+        value: 42,
+        writable: true,
+        enumerable: true,
+        configurable: true,
+      });
+      expect(fn).not.toHaveBeenCalled();
+    });
+  }
+
   // spyOn does not work with getters/setters yet.
 });

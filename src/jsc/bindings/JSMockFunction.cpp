@@ -25,6 +25,7 @@
 #include <JavaScriptCore/DateInstance.h>
 #include <JavaScriptCore/JSModuleEnvironment.h>
 #include <JavaScriptCore/JSModuleNamespaceObject.h>
+#include <JavaScriptCore/PropertyDescriptor.h>
 #include "BunPlugin.h"
 #include "AsyncContextFrame.h"
 #include "ErrorCode.h"
@@ -276,6 +277,8 @@ public:
     unsigned spyAttributes = 0;
 
     static constexpr unsigned SpyAttributeESModuleNamespace = 1 << 30;
+    static constexpr unsigned SpyAttributeProxy = 1 << 29;
+    static constexpr unsigned SpyAttributeMask = SpyAttributeESModuleNamespace | SpyAttributeProxy;
 
     JSString* jsName()
     {
@@ -380,11 +383,19 @@ public:
                 if (auto* moduleNamespaceObject = tryJSDynamicCast<JSModuleNamespaceObject*>(target)) {
                     moduleNamespaceObject->overrideExportValue(moduleNamespaceObject->globalObject(), this->spyIdentifier, implValue);
                 }
+            } else if (this->spyAttributes & SpyAttributeProxy) {
+                // Restore via [[DefineOwnProperty]] so the Proxy handler (or its target) sees the
+                // write, and so an accessor we installed is replaced rather than invoked.
+                auto catcher = DECLARE_TOP_EXCEPTION_SCOPE(this->vm());
+                JSC::PropertyDescriptor descriptor(implValue, static_cast<unsigned>(0));
+                target->methodTable()->defineOwnProperty(target, globalObject(), this->spyIdentifier, descriptor, false);
+                if (catcher.exception()) [[unlikely]]
+                    catcher.clearException();
             } else if (auto index = parseIndex(this->spyIdentifier)) {
                 // Use putDirectIndex for numeric property keys (e.g., spyOn(arr, 0))
-                target->putDirectIndex(globalObject(), *index, implValue, this->spyAttributes, PutDirectIndexLikePutDirect);
+                target->putDirectIndex(globalObject(), *index, implValue, this->spyAttributes & ~SpyAttributeMask, PutDirectIndexLikePutDirect);
             } else {
-                target->putDirect(this->vm(), this->spyIdentifier, implValue, this->spyAttributes);
+                target->putDirect(this->vm(), this->spyIdentifier, implValue, this->spyAttributes & ~SpyAttributeMask);
             }
         }
 
@@ -1509,41 +1520,51 @@ BUN_DEFINE_HOST_FUNCTION(JSMock__jsSpyOn, (JSC::JSGlobalObject * lexicalGlobalOb
     if (object->type() == JSC::JSType::GlobalProxyType)
         object = uncheckedDowncast<JSC::JSGlobalProxy>(object)->target();
 
+    bool isProxy = object->type() == JSC::ProxyObjectType;
+
     JSC::PropertySlot slot(object, JSC::PropertySlot::InternalMethodType::HasProperty);
     bool hasValue = object->getPropertySlot(globalObject, propertyKey, slot);
     RETURN_IF_EXCEPTION(scope, {});
 
-    // easymode: regular property or missing property
-    if (!hasValue || slot.isValue()) {
-        JSValue value = jsUndefined();
-        if (hasValue) {
-            if (slot.isTaintedByOpaqueObject()) [[unlikely]] {
-                // if it's a Proxy or JSModuleNamespaceObject
-                value = object->get(globalObject, propertyKey);
-            } else {
-                value = slot.getValue(globalObject, propertyKey);
-            }
+    if (!hasValue) {
+        WTF::StringImpl* keyString = propertyKey.uid();
+        throwVMError(globalObject, scope, makeString("Property `"_s, keyString ? StringView { *keyString } : StringView {}, "` does not exist in the provided object"_s));
+        return {};
+    }
 
-            if (dynamicDowncast<JSMockFunction>(value)) {
-                return JSValue::encode(value);
-            }
+    // easymode: regular property
+    if (slot.isValue()) {
+        JSValue value;
+        if (slot.isTaintedByOpaqueObject()) [[unlikely]] {
+            // if it's a Proxy or JSModuleNamespaceObject
+            value = object->get(globalObject, propertyKey);
+        } else {
+            value = slot.getValue(globalObject, propertyKey);
+        }
+        RETURN_IF_EXCEPTION(scope, {});
+
+        if (dynamicDowncast<JSMockFunction>(value)) {
+            return JSValue::encode(value);
         }
 
         auto* mock = JSMockFunction::create(vm, globalObject, globalObject->mockModule.mockFunctionStructure.getInitializedOnMainThread(globalObject), CallbackKind::GetterSetter);
         mock->spyTarget = JSC::Weak<JSObject>(object, &weakValueHandleOwner(), nullptr);
         mock->spyIdentifier = propertyKey.isSymbol() ? Identifier::fromUid(vm, propertyKey.uid()) : Identifier::fromString(vm, propertyKey.publicName());
-        mock->spyAttributes = hasValue ? slot.attributes() : 0;
-        unsigned attributes = 0;
+        mock->spyAttributes = slot.attributes();
+        unsigned attributes = slot.attributes();
 
-        if (hasValue && ((slot.attributes() & PropertyAttribute::Function) != 0 || (value.isCell() && value.isCallable()))) {
-            if (hasValue)
-                attributes = slot.attributes();
-
+        if ((slot.attributes() & PropertyAttribute::Function) != 0 || (value.isCell() && value.isCallable())) {
             mock->copyNameAndLength(vm, globalObject, value);
 
             if (JSModuleNamespaceObject* moduleNamespaceObject = tryJSDynamicCast<JSModuleNamespaceObject*>(object)) {
                 moduleNamespaceObject->overrideExportValue(globalObject, propertyKey, mock);
                 mock->spyAttributes |= JSMockFunction::SpyAttributeESModuleNamespace;
+            } else if (isProxy) {
+                // putDirect() on a ProxyObject writes to the proxy's own storage, which ProxyObject's
+                // [[Get]] never consults. Route through [[Set]] so the handler (or its target) sees it.
+                PutPropertySlot putSlot(object, true);
+                object->methodTable()->put(object, globalObject, propertyKey, mock, putSlot);
+                mock->spyAttributes |= JSMockFunction::SpyAttributeProxy;
             } else if (auto index = parseIndex(propertyKey)) {
                 // Use putDirectIndex for numeric property keys (e.g., spyOn(arr, 0))
                 object->putDirectIndex(globalObject, *index, mock, attributes, PutDirectIndexLikePutDirect);
@@ -1555,14 +1576,18 @@ BUN_DEFINE_HOST_FUNCTION(JSMock__jsSpyOn, (JSC::JSGlobalObject * lexicalGlobalOb
 
             pushImpl(mock, globalObject, JSMockImplementation::Kind::Call, value);
         } else {
-            if (hasValue)
-                attributes = slot.attributes();
-
             attributes |= PropertyAttribute::Accessor;
 
             if (JSModuleNamespaceObject* moduleNamespaceObject = tryJSDynamicCast<JSModuleNamespaceObject*>(object)) {
                 moduleNamespaceObject->overrideExportValue(globalObject, propertyKey, mock);
                 mock->spyAttributes |= JSMockFunction::SpyAttributeESModuleNamespace;
+            } else if (isProxy) {
+                JSC::PropertyDescriptor descriptor;
+                descriptor.setGetter(mock);
+                descriptor.setSetter(mock);
+                descriptor.setConfigurable(true);
+                object->methodTable()->defineOwnProperty(object, globalObject, propertyKey, descriptor, true);
+                mock->spyAttributes |= JSMockFunction::SpyAttributeProxy;
             } else if (auto index = parseIndex(propertyKey)) {
                 // For indexed properties, set the mock directly instead of wrapping in GetterSetter
                 object->putDirectIndex(globalObject, *index, mock, attributes, PutDirectIndexLikePutDirect);

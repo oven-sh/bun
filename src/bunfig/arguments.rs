@@ -214,8 +214,7 @@ pub fn load_config(
         }
 
         if auto_loaded {
-            // Walk up from cwd so commands run from a workspace subdirectory
-            // pick up the project-root bunfig.toml.
+            // Walk up from cwd so a workspace subdirectory finds the root bunfig.toml.
             let awd: Box<[u8]> = ctx
                 .args
                 .absolute_working_dir
@@ -231,8 +230,7 @@ pub fn load_config(
             {
                 dir = &dir[..dir.len() - 1];
             }
-            // `bun_paths::dirname` yields roots ("/", "C:\\", UNC share)
-            // with a trailing separator; that marks the last directory to check.
+            // Roots ("/", "C:\\", UNC) keep their trailing separator: the last to check.
             let mut is_root = matches!(dir.last(), Some(&c) if bun_paths::is_sep_native(c));
             let mut found_len: Option<usize> = None;
             loop {
@@ -288,8 +286,7 @@ pub fn load_config(
                 }
             }
         } else {
-            // Capture only the length so the `ctx.args` borrow ends
-            // before the `&mut ctx` call below.
+            // Capture the length only, ending the `ctx.args` borrow early for borrowck.
             config_path_len = {
                 let awd: &[u8] = ctx.args.absolute_working_dir.as_deref().unwrap();
                 let parts: [&[u8]; 2] = [awd, config_path_];

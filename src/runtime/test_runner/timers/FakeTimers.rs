@@ -228,8 +228,6 @@ impl FakeTimers {
 }
 
 /// Restore real timers and the real clock at a test-file boundary.
-/// `FakeTimers::active` and `CURRENT_TIME` are per-thread, so without this a
-/// file that leaks either state makes every later file's `setTimeout` fake.
 pub(crate) fn reset_between_files(global: &JSGlobalObject) {
     let all = timer_all();
     if all.is_null() {

@@ -19,8 +19,6 @@
 
 namespace Zig {
 
-using CachedBytecode = JSC::CachedBytecode;
-using SourceCode = JSC::SourceCode;
 using SourceOrigin = JSC::SourceOrigin;
 using String = WTF::String;
 using SourceProviderSourceType = JSC::SourceProviderSourceType;

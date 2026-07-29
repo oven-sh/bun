@@ -114,14 +114,6 @@ extern "C" JSC::EncodedJSValue AsyncContextFrame__withAsyncContextIfNeeded(JSGlo
     }                                                                               \
     return result;
 
-// JSValue AsyncContextFrame::call(JSGlobalObject* global, JSValue functionObject, const ArgList& args, ASCIILiteral errorMessage)
-// {
-//     ASYNCCONTEXTFRAME_CALL_IMPL(global, ProfilingReason::API, functionObject, args, errorMessage);
-// }
-// JSValue AsyncContextFrame::call(JSGlobalObject* global, JSValue functionObject, JSValue thisValue, const ArgList& args, ASCIILiteral errorMessage)
-// {
-//     ASYNCCONTEXTFRAME_CALL_IMPL(global, ProfilingReason::API, functionObject, thisValue, args, errorMessage);
-// }
 JSValue AsyncContextFrame::call(JSGlobalObject* global, JSValue functionObject, JSValue thisValue, const ArgList& args)
 {
 #if ASSERT_ENABLED

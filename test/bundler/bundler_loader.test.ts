@@ -65,8 +65,95 @@ describe("bundler", async () => {
         },
         run: { stdout: '{"hello":"world"}' },
       });
+      itBundled("bun/loader-base64-import-attribute", {
+        target,
+        files: {
+          "/entry.ts": /* js */ `
+        import hello from './hello.foo' with {type: "base64"};
+        console.write(hello);
+      `,
+          "/hello.foo": "ABC",
+        },
+        run: { stdout: "QUJD" },
+      });
+      itBundled("bun/loader-dataurl-import-attribute", {
+        target,
+        files: {
+          "/entry.ts": /* js */ `
+        import hello from './hello.foo' with {type: "dataurl"};
+        console.write(hello);
+      `,
+          "/hello.foo": "ABC",
+        },
+        run: { stdout: "data:text/plain;charset=utf-8,ABC" },
+      });
     });
   }
+
+  itBundled("bun/loader-base64", {
+    target: "bun",
+    files: {
+      "/entry.ts": /* js */ `
+    import txt from './x.txt';
+    import bin from './x.bin';
+    import empty from './empty.bin';
+    console.log(JSON.stringify([txt, bin, empty]));
+    console.log(Buffer.from(txt, "base64").toString("utf8"));
+    console.log(Buffer.from(bin, "base64").toString("hex"));
+  `,
+      "/x.txt": "Hello, world!",
+      "/x.bin": Buffer.from([0x00, 0xff, 0x80, 0x7f]),
+      "/empty.bin": "",
+    },
+    loader: {
+      ".txt": "base64",
+      ".bin": "base64",
+    },
+    run: {
+      stdout: `["SGVsbG8sIHdvcmxkIQ==","AP+Afw==",""]\nHello, world!\n00ff807f`,
+    },
+  });
+
+  itBundled("bun/loader-dataurl", {
+    target: "bun",
+    files: {
+      "/entry.ts": /* js */ `
+    import txt from './x.txt';
+    import svg from './x.svg';
+    import png from './x.png';
+    import unknown from './x.foo';
+    import binary from './binary.foo';
+    console.log(txt);
+    console.log(svg);
+    console.log(png);
+    console.log(unknown);
+    console.log(binary);
+    const [, mime, b64] = /^data:([^;,]+);base64,(.*)$/.exec(png);
+    console.log(mime, Buffer.from(b64, "base64").toString("hex"));
+  `,
+      "/x.txt": "hello world",
+      "/x.svg": `<svg xmlns="http://www.w3.org/2000/svg"/>`,
+      "/x.png": Buffer.from("89504e470d0a1a0a", "hex"),
+      "/x.foo": "just text",
+      "/binary.foo": Buffer.from([0x89, 0x50, 0x4e]),
+    },
+    loader: {
+      ".txt": "dataurl",
+      ".svg": "dataurl",
+      ".png": "dataurl",
+      ".foo": "dataurl",
+    },
+    run: {
+      stdout: [
+        "data:text/plain;charset=utf-8,hello world",
+        `data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg"/>`,
+        "data:image/png;base64,iVBORw0KGgo=",
+        "data:text/plain;charset=utf-8,just text",
+        "data:application/octet-stream;base64,iVBO",
+        "image/png 89504e470d0a1a0a",
+      ].join("\n"),
+    },
+  });
 
   itBundled("bun/loader-text-file", {
     target: "bun",

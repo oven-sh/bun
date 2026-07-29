@@ -2717,10 +2717,9 @@ describe("binaries", () => {
         stderr: "pipe",
         env: globalEnv,
       });
-      const err = await stderr.text();
+      const [out, err, exitCode] = await Promise.all([stdout.text(), stderr.text(), exited]);
       expect(err).not.toContain("error:");
-      const out = await stdout.text();
-      expect(await exited).toBe(0);
+      expect(exitCode).toBe(0);
       return out;
     }
 
@@ -2742,10 +2741,9 @@ describe("binaries", () => {
         stderr: "pipe",
         env,
       });
-      const err = await stderr.text();
+      const [out, err, exitCode] = await Promise.all([stdout.text(), stderr.text(), exited]);
       expect(err).not.toContain("error:");
-      const out = await stdout.text();
-      expect(await exited).toBe(0);
+      expect(exitCode).toBe(0);
       return out;
     }
 

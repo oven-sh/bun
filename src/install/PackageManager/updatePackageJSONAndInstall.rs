@@ -850,8 +850,18 @@ fn update_package_json_and_install_with_manager_with_updates(
                                     Ok(file) => {
                                         let _ = file.close();
                                     }
-                                    Err(_) => {
-                                        let _ = bun_sys::unlinkat(node_modules_bin, buf);
+                                    Err(err) => {
+                                        // Only unlink when the target can never resolve.
+                                        // Transient failures (EACCES, EMFILE, ...) must
+                                        // not delete a valid shim.
+                                        if matches!(
+                                            err.get_errno(),
+                                            bun_sys::E::ENOENT
+                                                | bun_sys::E::ENOTDIR
+                                                | bun_sys::E::ELOOP
+                                        ) {
+                                            let _ = bun_sys::unlinkat(node_modules_bin, buf);
+                                        }
                                         continue 'iterator;
                                     }
                                 }

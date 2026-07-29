@@ -707,4 +707,17 @@ describe("TextEncoder encodeInto detached destination", () => {
   it("returns { read: 0, written: 0 } for a non-detached zero-length destination", () => {
     expect(encoder.encodeInto("x", new Uint8Array(0))).toEqual({ read: 0, written: 0 });
   });
+
+  it("returns { read: 0, written: 0 } when source toString() detaches the destination", () => {
+    const ab = new ArrayBuffer(16);
+    const dest = new Uint8Array(ab);
+    const src = {
+      toString() {
+        structuredClone(ab, { transfer: [ab] });
+        return "hello";
+      },
+    };
+    expect(encoder.encodeInto(src, dest)).toEqual({ read: 0, written: 0 });
+    expect(dest.byteLength).toBe(0);
+  });
 });

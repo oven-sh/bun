@@ -14,8 +14,10 @@
 
 import { SQL } from "bun";
 import { expect, test } from "bun:test";
+import { generateKeyPairSync } from "node:crypto";
 import {
   listeningServer,
+  mysqlAuthMoreData,
   mysqlAuthSwitchRequest,
   mysqlHandshakeV10,
   mysqlOkPacket,
@@ -109,6 +111,74 @@ test("MySQL: at most two AuthSwitchRequests are honoured per handshake", async (
   expect({ err, responses }).toEqual({
     err: { code: "ERR_MYSQL_UNEXPECTED_PACKET" },
     responses: 2,
+  });
+});
+
+test("MySQL: caching_sha2 perform_full_authentication is honoured at most once", async () => {
+  // Over plain TCP with allowPublicKeyRetrieval, CONTINUE_AUTH (0x04) sends a
+  // PublicKeyRequest, the server's key reply elicits an encrypted-password
+  // write, and a second CONTINUE_AUTH used to restart that exchange
+  // indefinitely. Now the second CONTINUE_AUTH is rejected.
+  const { publicKey } = generateKeyPairSync("rsa", { modulusLength: 1024 });
+  const pem = Buffer.from(publicKey.export({ type: "spki", format: "pem" }) as string);
+
+  let passwords = 0;
+  const sockets = new Set<import("node:net").Socket>();
+  const { server, port } = await listeningServer(socket => {
+    sockets.add(socket);
+    let buffered = Buffer.alloc(0);
+    let phase = 0;
+    socket.write(mysqlHandshakeV10({ authPlugin: "caching_sha2_password" }));
+    socket.on("error", () => {});
+    socket.on("close", () => sockets.delete(socket));
+    socket.on("data", chunk => {
+      buffered = mysqlReadPackets(Buffer.concat([buffered, chunk]), (seq, payload) => {
+        if (phase === 0) {
+          // HandshakeResponse41 → ask for full auth.
+          phase = 1;
+          socket.write(mysqlAuthMoreData(seq + 1, Buffer.from([0x04])));
+        } else if (payload.length === 1 && payload[0] === 0x02) {
+          // PublicKeyRequest → send the RSA key.
+          socket.write(mysqlAuthMoreData(seq + 1, pem));
+        } else {
+          // Encrypted-password packet → ask for full auth again.
+          passwords++;
+          if (passwords >= 20) {
+            socket.destroy();
+            return;
+          }
+          socket.write(mysqlAuthMoreData(seq + 1, Buffer.from([0x04])));
+        }
+      });
+    });
+  });
+
+  const db = new SQL({
+    adapter: "mysql",
+    hostname: "127.0.0.1",
+    port,
+    username: "u",
+    password: "pw",
+    database: "d",
+    tls: false,
+    max: 1,
+    connectionTimeout: 30,
+    allowPublicKeyRetrieval: true,
+  });
+  let err: any;
+  try {
+    await db.unsafe("SELECT 1");
+    err = { code: "UNEXPECTED_SUCCESS" };
+  } catch (e: any) {
+    err = { code: e?.code ?? String(e) };
+  } finally {
+    await db.close({ timeout: 0 });
+    for (const s of sockets) s.destroy();
+    await new Promise<void>(r => server.close(() => r()));
+  }
+  expect({ err, passwords }).toEqual({
+    err: { code: "ERR_MYSQL_UNEXPECTED_PACKET" },
+    passwords: 1,
   });
 });
 

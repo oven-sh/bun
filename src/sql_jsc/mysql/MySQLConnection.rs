@@ -71,6 +71,7 @@ pub struct MySQLConnection {
     auth_plugin: Option<AuthMethod>,
     _auth_state: AuthState,
     auth_switch_count: u8,
+    full_auth_requested: bool,
 
     auth_data: Vec<u8>,
     // PERF: database/user/password/options could be sub-slices into options_buf
@@ -110,6 +111,7 @@ impl Default for MySQLConnection {
             auth_plugin: None,
             _auth_state: AuthState::Pending,
             auth_switch_count: 0,
+            full_auth_requested: false,
             auth_data: Vec::new(),
             database: Box::default(),
             user: Box::default(),
@@ -827,6 +829,11 @@ impl MySQLConnection {
                                 }
                                 Auth::caching_sha2_password::FastAuthStatus::CONTINUE_AUTH => {
                                     bun_core::scoped_log!(MySQLConnection, "continue auth");
+
+                                    if self.full_auth_requested {
+                                        return Err(AnyMySQLError::UnexpectedPacket);
+                                    }
+                                    self.full_auth_requested = true;
 
                                     if self.tls_status != TLSStatus::SslOk {
                                         // Over plain TCP, an on-path attacker can answer the

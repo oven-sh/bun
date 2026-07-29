@@ -129,7 +129,7 @@ describe.concurrent("node-module-module", () => {
     expect(m.exports).toEqual({});
   });
 
-  test("Module.prototype is not enumerable (#16933)", () => {
+  test("Module.prototype is not enumerable (#16933)", async () => {
     expect(Object.getOwnPropertyDescriptor(Module, "prototype")).toEqual({
       value: Module.prototype,
       writable: true,
@@ -141,13 +141,25 @@ describe.concurrent("node-module-module", () => {
     // jest-runtime copies every enumerable own property of Module onto a class
     // declaration, whose own .prototype is non-writable. If Module.prototype is
     // enumerable this throws "Attempted to assign to readonly property." in
-    // strict mode.
-    class Sub extends Module {}
-    expect(() => {
-      for (const [key, value] of Object.entries(Module)) {
-        Sub[key] = value;
-      }
-    }).not.toThrow();
+    // strict mode. Run in a subprocess because the loop also invokes the
+    // inherited Module.wrapper setter, which flips a process-global flag.
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `"use strict";
+         const Module = require("node:module");
+         class Sub extends Module {}
+         for (const [key, value] of Object.entries(Module)) Sub[key] = value;
+         console.log("ok");`,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("ok\n");
+    expect(exitCode).toBe(0);
   });
 
   test("_nodeModulePaths() works", () => {

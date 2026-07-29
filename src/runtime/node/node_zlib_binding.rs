@@ -481,7 +481,10 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
             NonNull::new(global_this.bun_vm_concurrently()).expect("bun_vm_concurrently"),
         );
 
-        this_ref.stream().with_mut(|s| s.do_work());
+        {
+            let _permit = WorkPool::cpu_permit();
+            this_ref.stream().with_mut(|s| s.do_work());
+        }
 
         // SAFETY: `event_loop()` is a self-pointer into a live VM; the
         // `enqueue_task_concurrent` body only touches the lock-free

@@ -16,6 +16,10 @@ pub trait ConcurrentPromiseTaskContext: Sized {
     /// JS event loop's concurrent queue (`task_tag::*`).
     const TASK_TAG: TaskTag;
 
+    /// Whether [`run`](Self::run) is CPU-bound and should hold a
+    /// [`WorkPool::cpu_permit`]. Override to `false` for I/O bodies.
+    const CPU_BOUND: bool = true;
+
     fn run(&mut self);
     fn then(&mut self, promise: &mut JSPromise) -> Result<(), JsTerminated>;
 }
@@ -83,9 +87,12 @@ impl<'a, Context: ConcurrentPromiseTaskContext> ConcurrentPromiseTask<'a, Contex
         // field, so `from_task_ptr` recovers the live heap `Self` parent,
         // exclusively owned by the work pool for this callback's duration.
         let this = unsafe { Self::from_task_ptr(task) };
-        // SAFETY: `this` is alive for the duration of the thread-pool callback;
-        // exclusively owned by the work pool at this point.
-        unsafe { (*this).ctx.run() };
+        {
+            let _permit = Context::CPU_BOUND.then(WorkPool::cpu_permit);
+            // SAFETY: `this` is alive for the duration of the thread-pool callback;
+            // exclusively owned by the work pool at this point.
+            unsafe { (*this).ctx.run() };
+        }
         Self::on_finish(this);
     }
 

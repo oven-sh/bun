@@ -25,6 +25,10 @@ use crate::{JSGlobalObject, JsResult, VirtualMachineRef as VirtualMachine};
 /// (from `run_from_js`'s `heap::take`) on every exit, including the
 /// `is_shutting_down` early-out and `init` failure.
 pub trait AnyTaskJobCtx: Sized {
+    /// Whether [`run`](Self::run) is CPU-bound and should hold a
+    /// [`WorkPool::cpu_permit`]. Override to `false` for IPC/I/O bodies.
+    const CPU_BOUND: bool = true;
+
     /// Optional fallible JS-thread setup, run after heap allocation but before
     /// `schedule`. On error the job is freed (running `Drop`). Default: no-op.
     #[inline]
@@ -140,7 +144,10 @@ impl<C: AnyTaskJobCtx> AnyTaskJob<C> {
         // `run_from_js` reclaims it.
         let job = unsafe { &mut *Self::from_task_ptr(task) };
         let vm = job.vm;
-        job.ctx.run(vm.global);
+        {
+            let _permit = C::CPU_BOUND.then(WorkPool::cpu_permit);
+            job.ctx.run(vm.global);
+        }
         // `ConcurrentTask::create` heap-allocates a fresh task; the queue takes
         // ownership of it.
         vm.event_loop_shared()

@@ -24,6 +24,9 @@ pub(crate) struct SecretsCtx {
 }
 
 impl AnyTaskJobCtx for SecretsCtx {
+    // Keychain / secret-service IPC, not compute.
+    const CPU_BOUND: bool = false;
+
     fn run(&mut self, global: *mut JSGlobalObject) {
         // `ctx` is a valid C++ SecretsJobOptions* held alive until Drop;
         // `global` is the creating VM's global pointer. Both are `opaque_ffi!`

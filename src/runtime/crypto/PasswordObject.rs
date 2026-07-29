@@ -572,7 +572,10 @@ impl<Op: PasswordOp> PasswordJob<Op> {
     // is a false positive on this macro contract.
     #[allow(clippy::boxed_local)]
     fn run_owned(mut self: Box<Self>) {
-        let value = self.op.compute(&self.password);
+        let value = {
+            let _permit = WorkPool::cpu_permit();
+            self.op.compute(&self.password)
+        };
         let result = bun_core::heap::into_raw(Box::new(PasswordResult::<Op> {
             value,
             task: AnyTask::default(), // overwritten below

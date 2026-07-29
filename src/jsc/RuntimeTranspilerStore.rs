@@ -568,6 +568,7 @@ impl TranspilerJob {
         // `transpile`; the WorkPool calls back with exactly that field, so
         // `from_field_ptr!` recovers the live heap `TranspilerJob` parent.
         let this = unsafe { &mut *bun_core::from_field_ptr!(TranspilerJob, work_task, work_task) };
+        let _permit = WorkPool::cpu_permit();
         this.run();
     }
 

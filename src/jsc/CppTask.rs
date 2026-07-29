@@ -75,9 +75,13 @@ impl ConcurrentCppTask {
         // is the centralised non-null deref proof. Valid until `run` consumes it.
         let maybe_vm = EventLoopTaskNoContext::opaque_ref(cpp_task).get_vm();
         drop(self);
-        // SAFETY: `cpp_task` is the valid C++ handle stored by `ConcurrentCppTask__createAndRun`;
-        // `opaque_ref` above proved it non-null and it has not yet been freed — `run` consumes it here.
-        unsafe { EventLoopTaskNoContext::run(cpp_task) };
+        {
+            // Only caller is WebCrypto's `PhonyWorkQueue`; those bodies are compute.
+            let _permit = WorkPool::cpu_permit();
+            // SAFETY: `cpp_task` is the valid C++ handle stored by `ConcurrentCppTask__createAndRun`;
+            // `opaque_ref` above proved it non-null and it has not yet been freed — `run` consumes it here.
+            unsafe { EventLoopTaskNoContext::run(cpp_task) };
+        }
         if let Some(vm) = maybe_vm {
             vm.event_loop_shared().unref_concurrently();
         }

@@ -1,6 +1,6 @@
 use std::sync::OnceLock;
 
-use crate::ThreadPool;
+use crate::{Semaphore, ThreadPool};
 
 pub use crate::thread_pool::Batch;
 pub use crate::thread_pool::Task;
@@ -140,10 +140,39 @@ fn create() -> ThreadPool {
     })
 }
 
+static CPU_SEM: OnceLock<Semaphore> = OnceLock::new();
+
+#[cold]
+fn create_cpu_sem() -> Semaphore {
+    // One fewer than the pool so a CPU flood leaves a core for the JS thread.
+    let n = usize::from(bun_core::get_thread_count().saturating_sub(1).max(1));
+    Semaphore::with_permits(n)
+}
+
+/// RAII guard for one CPU-bound concurrency slot; see [`WorkPool::cpu_permit`].
+#[must_use = "dropping the permit releases the slot"]
+pub struct CpuPermit(&'static Semaphore);
+
+impl Drop for CpuPermit {
+    #[inline]
+    fn drop(&mut self) {
+        self.0.post();
+    }
+}
+
 impl WorkPool {
     #[inline]
     pub fn get() -> &'static ThreadPool {
         POOL.get_or_init(create)
+    }
+
+    /// Acquire one CPU-bound concurrency slot (pool size minus one), blocking
+    /// the calling worker until free. Must only be called from a worker
+    /// thread; calling from the JS thread can deadlock.
+    pub fn cpu_permit() -> CpuPermit {
+        let sem = CPU_SEM.get_or_init(create_cpu_sem);
+        sem.wait();
+        CpuPermit(sem)
     }
 
     pub fn schedule(task: *mut Task) {

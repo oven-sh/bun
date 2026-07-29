@@ -845,7 +845,10 @@ describe("File prototype chain", () => {
     fd.append("a", new Blob(["x"]), "");
     fd.append("b", new File(["x"], ""));
     fd.append("c", new Blob(["x"]));
-    for (const k of ["a", "b", "c"]) {
+    fd.set("d", new Blob(["x"]), "");
+    fd.set("e", new File(["x"], ""));
+    fd.set("f", new Blob(["x"]));
+    for (const k of ["a", "b", "c", "d", "e", "f"]) {
       const v = fd.get(k);
       expect(v instanceof File).toBe(true);
       expect((v as File).constructor).toBe(File);

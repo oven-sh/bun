@@ -2,7 +2,6 @@
 #include "ZigGeneratedClasses.h"
 #include <JavaScriptCore/ObjectConstructor.h>
 #include <JavaScriptCore/InternalFunction.h>
-#include <JavaScriptCore/FunctionPrototype.h>
 #include "JSDOMFile.h"
 
 using namespace JSC;

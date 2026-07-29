@@ -3743,11 +3743,8 @@ impl BlobExt for Blob {
                     }
                 }
 
-                // Resolve relative paths against the current working directory
-                // now, at construction time. The BunFile is a long-lived handle
-                // whose reads happen later; keeping the raw relative string and
-                // resolving at read time means a `process.chdir()` in between
-                // silently retargets the handle to a different file.
+                // Resolve relative paths now so a later `process.chdir()`
+                // cannot retarget this handle's reads.
                 let slice = path_or_fd.path().slice();
                 let resolved = if !slice.is_empty() && !bun_paths::is_absolute(slice) {
                     let mut buf = bun_paths::path_buffer_pool::get();

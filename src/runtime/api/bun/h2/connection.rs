@@ -179,6 +179,17 @@ pub trait Sink {
     fn highest_started_stream_id(&self) -> u32 {
         0
     }
+    /// Highest locally-initiated stream id the embedder has allocated (own parity only: odd on a
+    /// client, even on a server). Powers the parity-aware §5.1 idle test.
+    fn highest_local_stream_id(&self) -> u32 {
+        0
+    }
+    /// Transition shim: outbound DATA bytes the legacy encoder has already written on `stream_id`
+    /// that the engine has not yet applied to its send window. Removed from the embedder's queue
+    /// and returned so the value is consumed exactly once when the engine first tracks the stream.
+    fn take_pending_stream_send_consumed(&self, _stream_id: u32) -> u64 {
+        0
+    }
     /// Whether the embedder's reader for `stream_id` is currently consuming data. While it is
     /// paused, the stream's receive window is not replenished (mirrors node, where
     /// nghttp2_session_consume_stream is only called while the JS readable is flowing) so the
@@ -275,6 +286,9 @@ pub struct Connection {
 
     preface_received: usize,
     pub last_stream_id: u32,
+    /// Highest peer-initiated stream id: odd on a server (inbound HEADERS), even on a client
+    /// (PUSH_PROMISE). The parity-aware half of the §5.1 idle test.
+    last_peer_stream_id: u32,
     pub going_away: bool,
 }
 
@@ -313,6 +327,7 @@ impl Connection {
             evict_buf: Vec::new(),
             preface_received: 0,
             last_stream_id: 0,
+            last_peer_stream_id: 0,
             going_away: false,
         }
     }
@@ -398,12 +413,34 @@ impl Connection {
     }
 
     /// §5.1 idle-stream test (nghttp2's session_detect_idle_stream): neither side has opened it
-    /// and it is above both high-water marks, so an evicted stream reads as closed, not idle.
+    /// and it is above the parity-matching high-water mark, so an evicted stream reads as closed.
     fn is_idle_stream_id(&self, sink: &impl Sink, stream_id: u32) -> bool {
-        !self.streams.contains_key(&stream_id)
-            && !sink.is_local_stream(stream_id)
-            && stream_id > self.last_stream_id
-            && stream_id > sink.highest_started_stream_id()
+        if self.streams.contains_key(&stream_id) || sink.is_local_stream(stream_id) {
+            return false;
+        }
+        let local_parity: u32 = if self.is_server { 0 } else { 1 };
+        if stream_id & 1 == local_parity {
+            stream_id > sink.highest_local_stream_id()
+        } else {
+            stream_id > self.last_peer_stream_id
+        }
+    }
+
+    /// Transition shim: insert an engine entry for a stream the embedder opened locally. The
+    /// send window is seeded with any outbound DATA the legacy encoder has already written
+    /// subtracted, so an overflow check run against it sees the same window the peer does.
+    fn track_local_stream(&mut self, sink: &impl Sink, stream_id: u32) {
+        if self.streams.contains_key(&stream_id) || !sink.is_local_stream(stream_id) {
+            return;
+        }
+        let mut s = Stream::new(
+            self.remote_settings.initial_window_size,
+            self.local_settings.initial_window_size,
+        );
+        s.state = State::Open;
+        s.send_window
+            .consume(sink.take_pending_stream_send_consumed(stream_id) as i64);
+        self.streams.insert(stream_id, s);
     }
 
     // ---- Inbound --------------------------------------------------------
@@ -870,22 +907,16 @@ impl Connection {
         if hdr.stream_id == 0 {
             // 6.9.1: the connection window must not exceed 2^31-1.
             if self.send_window.increase(increment).is_err() {
-                self.send_go_away(
+                self.local_connection_error(
                     sink,
                     ErrorCode::FlowControlError,
+                    wire::lib_error::FLOW_CONTROL,
                     b"connection flow-control window overflow",
                 );
                 return true;
             }
         } else {
-            // Transition shim: track a locally-opened stream so the overflow check covers it.
-            if !self.streams.contains_key(&hdr.stream_id) && sink.is_local_stream(hdr.stream_id) {
-                let send_init = self.remote_settings.initial_window_size;
-                let recv_init = self.local_settings.initial_window_size;
-                let mut s = Stream::new(send_init, recv_init);
-                s.state = State::Open;
-                self.streams.insert(hdr.stream_id, s);
-            }
+            self.track_local_stream(sink, hdr.stream_id);
             if let Some(s) = self.streams.get_mut(&hdr.stream_id) {
                 // §6.9.1: per-stream window > 2^31-1. nghttp2 surfaces NGHTTP2_ERR_FLOW_CONTROL and
                 // node tears the session down, so escalate to a connection error for parity.
@@ -967,6 +998,7 @@ impl Connection {
         let refused = is_new && self.is_server && !sink.can_open_stream();
         let mut stream_closed = false;
         if !refused {
+            self.track_local_stream(sink, hdr.stream_id);
             let cur_state = self
                 .streams
                 .entry(hdr.stream_id)
@@ -1019,6 +1051,9 @@ impl Connection {
             // refused HEADERS (RST_STREAM especially) are tolerated instead of GOAWAY'd.
             if hdr.stream_id > self.last_stream_id {
                 self.last_stream_id = hdr.stream_id;
+            }
+            if self.is_server && hdr.stream_id > self.last_peer_stream_id {
+                self.last_peer_stream_id = hdr.stream_id;
             }
             if !refused {
                 sink.on_stream_open(hdr.stream_id);
@@ -1383,13 +1418,7 @@ impl Connection {
             self.send_go_away(sink, ErrorCode::ProtocolError, b"DATA on idle stream");
             return StreamedDataStart::Fatal;
         }
-        if !self.streams.contains_key(&hdr.stream_id) && sink.is_local_stream(hdr.stream_id) {
-            let send_init = self.remote_settings.initial_window_size;
-            let recv_init = self.local_settings.initial_window_size;
-            let mut s = Stream::new(send_init, recv_init);
-            s.state = State::Open;
-            self.streams.insert(hdr.stream_id, s);
-        }
+        self.track_local_stream(sink, hdr.stream_id);
         let recv_limit = self
             .acked_local_initial_window
             .max(self.local_settings.initial_window_size) as i64;
@@ -1523,15 +1552,7 @@ impl Connection {
             self.send_go_away(sink, ErrorCode::ProtocolError, b"DATA on idle stream");
             return true;
         }
-        // Transition shim: DATA for a stream the embedder opened locally (legacy outbound) — open it
-        // here so it isn't mistaken for a closed/idle stream.
-        if !self.streams.contains_key(&hdr.stream_id) && sink.is_local_stream(hdr.stream_id) {
-            let send_init = self.remote_settings.initial_window_size;
-            let recv_init = self.local_settings.initial_window_size;
-            let mut s = Stream::new(send_init, recv_init);
-            s.state = State::Open;
-            self.streams.insert(hdr.stream_id, s);
-        }
+        self.track_local_stream(sink, hdr.stream_id);
         let recv_limit = self
             .acked_local_initial_window
             .max(self.local_settings.initial_window_size) as i64;
@@ -1750,6 +1771,9 @@ impl Connection {
         entry.state = State::ReservedRemote;
         if promised > self.last_stream_id {
             self.last_stream_id = promised;
+        }
+        if promised > self.last_peer_stream_id {
+            self.last_peer_stream_id = promised;
         }
 
         let end_headers = wire::flags::has(hdr.flags, wire::flags::END_HEADERS);

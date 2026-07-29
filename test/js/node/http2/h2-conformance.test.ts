@@ -370,13 +370,6 @@ describe("CONTINUATION (checklist §3,§7)", () => {
 });
 
 describe("SETTINGS value ranges (checklist §6.5.2)", () => {
-  function settingsPayload(id: number, value: number): Buffer {
-    const b = Buffer.alloc(6);
-    b.writeUInt16BE(id, 0);
-    b.writeUInt32BE(value >>> 0, 2);
-    return b;
-  }
-
   test("ENABLE_PUSH with a value other than 0/1 is a PROTOCOL_ERROR", async () => {
     const c = await RawH2.connect(port);
     c.sendPreface();
@@ -1046,7 +1039,7 @@ describe("request pseudo-header requirements (RFC 9113 §8.3.1)", () => {
 // clause independently (verified against node v26.3.0).
 async function hostileServerProbe(
   inject: (raw: RawH2Server) => void,
-  { openRequest = true }: { openRequest?: boolean } = {},
+  { requests = 1 }: { requests?: number } = {},
 ): Promise<{
   sessionError: NodeJS.ErrnoException | null;
   streamError: NodeJS.ErrnoException | null;
@@ -1063,15 +1056,17 @@ async function hostileServerProbe(
   client.on("error", (e: NodeJS.ErrnoException) => (sessionError ??= e));
   let req: http2.ClientHttp2Stream | undefined;
   const reqClosed = Promise.withResolvers<void>();
-  if (openRequest) {
+  for (let i = 0; i < requests; i++) {
     req = client.request({ ":path": "/" });
     req.on("response", h => (gotResponse = h as Record<string, string>));
     req.on("error", (e: NodeJS.ErrnoException) => (streamError ??= e));
+    req.end();
+  }
+  if (req) {
     req.on("close", () => {
       streamRstCode = req!.rstCode ?? null;
       reqClosed.resolve();
     });
-    req.end();
   } else {
     reqClosed.resolve();
   }
@@ -1080,7 +1075,7 @@ async function hostileServerProbe(
     await raw.waitFor(f => f.type === FrameType.SETTINGS && (f.flags & 0x1) === 0);
     raw.sendFrame(FrameType.SETTINGS, 0, 0);
     raw.sendFrame(FrameType.SETTINGS, 0x1, 0);
-    if (openRequest) await raw.waitFor(f => f.type === FrameType.HEADERS && f.streamId === 1);
+    if (requests > 0) await raw.waitFor(f => f.type === FrameType.HEADERS && f.streamId === 2 * requests - 1);
     raw.frames.length = 0;
     const rawSocketClosed = new Promise<null>(resolve => raw.socket!.on("close", () => resolve(null)));
     inject(raw);
@@ -1122,7 +1117,7 @@ describe("client rejects server-side protocol violations (RFC 9113)", () => {
   test.concurrent.each([
     [
       "SETTINGS_ENABLE_PUSH=1 from server (§8.4)",
-      { openRequest: false },
+      { requests: 0 },
       (raw: RawH2Server) => raw.sendFrame(FrameType.SETTINGS, 0, 0, settingsPayload(0x2, 1)),
       ErrorCode.PROTOCOL_ERROR,
     ],
@@ -1141,6 +1136,14 @@ describe("client rejects server-side protocol violations (RFC 9113)", () => {
     [
       "HEADERS on an idle even stream never promised (§5.1)",
       {},
+      (raw: RawH2Server) => raw.sendFrame(FrameType.HEADERS, 0x5, 2, Buffer.from([0x88])),
+      ErrorCode.PROTOCOL_ERROR,
+    ],
+    [
+      // Parity-aware idle: stream 2 is still idle even when it sits below the client's own
+      // highest odd id (nghttp2's session_detect_idle_stream compares per parity).
+      "HEADERS on idle even stream 2 with two open requests (§5.1)",
+      { requests: 2 },
       (raw: RawH2Server) => raw.sendFrame(FrameType.HEADERS, 0x5, 2, Buffer.from([0x88])),
       ErrorCode.PROTOCOL_ERROR,
     ],
@@ -1217,6 +1220,36 @@ describe("client rejects server-side protocol violations (RFC 9113)", () => {
       expect(headers[":status"]).toBe(200);
       expect(headers["x-a"]).toBe("b");
       expect(raw.frames.find(f => f.type === FrameType.RST_STREAM || f.type === FrameType.GOAWAY)).toBeUndefined();
+    } finally {
+      client.destroy();
+      raw.close();
+    }
+  });
+
+  // §6.9.1 positive control: a WINDOW_UPDATE that brings a stream's send window to exactly
+  // 2^31-1 after the client has already sent body bytes is legal. The overflow check must
+  // account for those already-sent bytes (they are what the peer is replenishing).
+  test.concurrent("a stream WINDOW_UPDATE replenishing already-sent bytes to the 2^31-1 cap is accepted", async () => {
+    const raw = await RawH2Server.listen();
+    const client = http2.connect(`http://127.0.0.1:${raw.port}`);
+    let sessionError: unknown = null;
+    client.on("error", e => (sessionError = e));
+    try {
+      await raw.waitFor(f => f.type === FrameType.SETTINGS && (f.flags & 0x1) === 0);
+      // Advertise the maximum initial window so the overflow boundary is exactly the bytes sent.
+      raw.sendFrame(FrameType.SETTINGS, 0, 0, settingsPayload(0x4, 0x7fffffff));
+      raw.sendFrame(FrameType.SETTINGS, 0x1, 0);
+      const req = client.request({ ":path": "/", ":method": "POST" });
+      req.on("error", () => {});
+      req.write(Buffer.alloc(8000, 0x61));
+      await raw.waitFor(f => f.type === FrameType.DATA && f.streamId === 1);
+      raw.frames.length = 0;
+      // Replenish the 8000 bytes the server has received: peer window 2^31-1 - 8000 + 8000 = 2^31-1.
+      raw.sendFrame(FrameType.WINDOW_UPDATE, 0, 1, u32be(8000));
+      raw.sendFrame(FrameType.PING, 0, 0, Buffer.alloc(8));
+      await raw.waitFor(f => f.type === FrameType.PING && (f.flags & 0x1) !== 0);
+      expect(sessionError).toBeNull();
+      expect(raw.frames.find(f => f.type === FrameType.GOAWAY || f.type === FrameType.RST_STREAM)).toBeUndefined();
     } finally {
       client.destroy();
       raw.close();

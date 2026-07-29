@@ -118,15 +118,10 @@ pub mod parent_death_watchdog {
 
     static JOB_ASSIGNED: AtomicBool = AtomicBool::new(false);
 
-    /// Self-assign to a kill-on-close Job Object with recursive membership
-    /// (no `SILENT_BREAKAWAY_OK`). Unlike libuv's global spawn Job, this one
-    /// propagates to every descendant regardless of how it was spawned, so a
-    /// `cmd.exe` / `.cmd` shim / node.exe link in the tree can't orphan what's
-    /// below it. Idempotent; the handle is leaked for the process lifetime so
-    /// `KILL_ON_JOB_CLOSE` only fires when this process actually exits.
-    ///
-    /// Called unconditionally from `bun --filter` (Windows) so Ctrl+C reaps the
-    /// whole tree, and from `enable()` for `--no-orphans`.
+    /// Self-assign to a kill-on-close Job Object without `SILENT_BREAKAWAY_OK`,
+    /// so membership is inherited by every descendant (unlike libuv's spawn
+    /// Job). Idempotent; handle leaked for process lifetime. Used by
+    /// `--no-orphans` and unconditionally by `bun --filter`/`--parallel`.
     #[cold]
     #[inline(never)]
     pub fn ensure_kill_on_close_job() {

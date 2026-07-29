@@ -287,9 +287,7 @@ pub fn enable() {
     }
 }
 
-/// Windows arm: self-assign to a recursive kill-on-close Job Object. POSIX
-/// has no equivalent primitive (descendants are handled by the exit-time
-/// tree walk and per-child PDEATHSIG), so this is a no-op here.
+/// Windows-only primitive; POSIX cleanup is the exit-time tree walk above.
 #[inline]
 pub fn ensure_kill_on_close_job() {}
 

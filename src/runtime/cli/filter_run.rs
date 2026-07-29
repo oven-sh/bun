@@ -665,10 +665,8 @@ impl AbortHandler {
         // only necessary on Windows, as on posix we pass the SA_RESETHAND flag
         #[cfg(windows)]
         {
-            // Remove the handler we installed. `SetConsoleCtrlHandler(None, FALSE)`
-            // only clears the "ignore Ctrl+C" attribute; it does NOT unregister a
-            // previously-added routine, so the second Ctrl+C would still land in
-            // `windows_ctrl_handler` instead of the default handler.
+            // (None, FALSE) clears the ignore attribute; it does NOT unregister
+            // a handler routine — pass the address.
             let _ = bun_sys::c::SetConsoleCtrlHandler(
                 Some(Self::windows_ctrl_handler),
                 bun_sys::windows::FALSE,
@@ -878,11 +876,8 @@ pub(crate) fn run_scripts_with_filter(
         Some(unsafe { &mut *env_ptr }),
         None,
     );
-    // Windows: self-assign to a recursive kill-on-close Job Object so every
-    // descendant (including ones spawned through cmd.exe / .cmd shims that
-    // escape libuv's SILENT_BREAKAWAY job) is reaped when this process exits.
-    // Each script runs under CREATE_NO_WINDOW and so never receives the user's
-    // Ctrl+C directly; cleanup is entirely on us. POSIX: no-op.
+    // Windows: recursive kill-on-close Job so cmd.exe/.cmd-shim grandchildren
+    // (which escape libuv's SILENT_BREAKAWAY job) die with us. POSIX: no-op.
     bun_io::ParentDeathWatchdog::ensure_kill_on_close_job();
     // --no-orphans: register the macOS kqueue parent watch on this MiniEventLoop
     // (the VirtualMachine.init path is never reached for --filter). Linux is

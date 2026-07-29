@@ -78,10 +78,6 @@ pub mod analyze_transpiled_module {
     #[repr(u8)]
     #[derive(Clone, Copy, PartialEq, Eq)]
     pub enum RecordKind {
-        /// var_name
-        DeclaredVariable,
-        /// let_name
-        LexicalVariable,
         /// module_name, import_name, local_name
         ImportInfoSingle,
         /// module_name, import_name, local_name
@@ -106,7 +102,6 @@ pub mod analyze_transpiled_module {
     impl RecordKind {
         pub fn len(self) -> usize {
             match self {
-                Self::DeclaredVariable | Self::LexicalVariable => 1,
                 Self::ImportInfoSingle => 3,
                 Self::ImportInfoSingleTypeScript => 3,
                 Self::ImportInfoNamespace => 3,
@@ -170,12 +165,6 @@ pub mod analyze_transpiled_module {
         pub fn host_defined(value: StringID) -> Self {
             Self(value.0)
         }
-    }
-
-    #[derive(Clone, Copy, PartialEq, Eq)]
-    pub enum VarKind {
-        Declared,
-        Lexical,
     }
 
     /// `AbstractModuleRecord::ModulePhase` — only `Evaluation` and `Defer`
@@ -351,24 +340,11 @@ pub mod analyze_transpiled_module {
             }
         }
 
-        pub fn add_var(&mut self, name: StringID, kind: VarKind) {
-            match kind {
-                VarKind::Declared => self.add_declared_variable(name),
-                VarKind::Lexical => self.add_lexical_variable(name),
-            }
-        }
-
         fn add_record(&mut self, kind: RecordKind, data: &[StringID]) {
             debug_assert!(!self.finalized);
             debug_assert_eq!(data.len(), kind.len());
             self.record_kinds.push(kind);
             self.buffer.extend_from_slice(data);
-        }
-        pub fn add_declared_variable(&mut self, id: StringID) {
-            self.add_record(RecordKind::DeclaredVariable, &[id]);
-        }
-        pub fn add_lexical_variable(&mut self, id: StringID) {
-            self.add_record(RecordKind::LexicalVariable, &[id]);
         }
         pub fn add_import_info_single(
             &mut self,
@@ -1140,6 +1116,13 @@ impl<'a> Default for Options<'a> {
 
 use bun_ast::{Indentation, IndentationCharacter};
 
+// `is_export` gates whether printing a binding also records an export entry
+// in ModuleInfo; dead-code elimination drops it when MAY_HAVE_MODULE_INFO is false.
+#[derive(Clone, Copy, Default)]
+pub struct TopLevelAndIsExport {
+    pub is_export: bool,
+}
+
 /// Downstream-compat: `print_json` callers pass this. Only the fields any caller actually sets are surfaced
 /// here and forwarded into `Options { .. }` inside `print_json`.
 #[derive(Clone, Copy, Default)]
@@ -1284,43 +1267,6 @@ enum ClauseItemAs {
     Var,
     Export,
     ExportFrom,
-}
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub enum IsTopLevel {
-    Yes,
-    VarOnly,
-    No,
-}
-
-// One shape; dead-code elimination removes the unused fields when
-// MAY_HAVE_MODULE_INFO is false.
-#[derive(Clone, Copy, Default)]
-pub struct TopLevelAndIsExport {
-    pub is_export: bool,
-    pub is_top_level: Option<analyze_transpiled_module::VarKind>,
-}
-
-#[derive(Clone, Copy)]
-pub struct TopLevel {
-    pub is_top_level: IsTopLevel,
-}
-
-impl TopLevel {
-    #[inline]
-    pub fn init(is_top_level: IsTopLevel) -> Self {
-        Self { is_top_level }
-    }
-    pub fn sub_var(self) -> Self {
-        if self.is_top_level == IsTopLevel::No {
-            return Self::init(IsTopLevel::No);
-        }
-        Self::init(IsTopLevel::VarOnly)
-    }
-    #[inline]
-    pub fn is_top_level(self) -> bool {
-        self.is_top_level != IsTopLevel::No
-    }
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -1822,30 +1768,6 @@ pub mod __gated_printer {
 
                 self.print_semicolon_after_statement();
             }
-
-            // Record var declarations for module_info. printGlobalBunImportStatement
-            // bypasses printDeclStmt/printBinding, so we must record vars explicitly.
-            // reshaped for borrowck — compute names before borrowing module_info.
-            if Self::MAY_HAVE_MODULE_INFO && self.module_info.is_some() {
-                if !import.star_name_loc.is_empty() {
-                    let name = self.name_for_symbol(import.namespace_ref);
-                    let mi = self.module_info().expect("infallible: module_info enabled");
-                    let id = mi.str(name);
-                    mi.add_var(id, analyze_transpiled_module::VarKind::Declared);
-                }
-                if let Some(default) = &import.default_name {
-                    let name = self.name_for_symbol(default.ref_);
-                    let mi = self.module_info().expect("infallible: module_info enabled");
-                    let id = mi.str(name);
-                    mi.add_var(id, analyze_transpiled_module::VarKind::Declared);
-                }
-                for item in slice_of(import.items).iter() {
-                    let name = self.name_for_symbol(item.name.ref_);
-                    let mi = self.module_info().expect("infallible: module_info enabled");
-                    let id = mi.str(name);
-                    mi.add_var(id, analyze_transpiled_module::VarKind::Declared);
-                }
-            }
         }
 
         #[inline]
@@ -1892,31 +1814,26 @@ pub mod __gated_printer {
             }
         }
 
-        pub fn print_body(&mut self, stmt: Stmt, tlmtlo: TopLevel) {
+        pub fn print_body(&mut self, stmt: Stmt) {
             match &stmt.data {
                 StmtData::SBlock(block) => {
                     self.print_space();
-                    self.print_block(
-                        stmt.loc,
-                        slice_of(block.stmts),
-                        Some(block.close_brace_loc),
-                        tlmtlo,
-                    );
+                    self.print_block(stmt.loc, slice_of(block.stmts), Some(block.close_brace_loc));
                     self.print_newline();
                 }
                 _ => {
                     self.print_newline();
                     self.indent();
-                    self.print_stmt(stmt, tlmtlo).expect("unreachable");
+                    self.print_stmt(stmt).expect("unreachable");
                     self.unindent();
                 }
             }
         }
 
-        pub fn print_block_body(&mut self, stmts: &[Stmt], tlmtlo: TopLevel) {
+        pub fn print_block_body(&mut self, stmts: &[Stmt]) {
             for stmt in stmts {
                 self.print_semicolon_if_needed();
-                self.print_stmt(*stmt, tlmtlo).expect("unreachable");
+                self.print_stmt(*stmt).expect("unreachable");
             }
         }
 
@@ -1925,14 +1842,13 @@ pub mod __gated_printer {
             loc: bun_ast::Loc,
             stmts: &[Stmt],
             close_brace_loc: Option<bun_ast::Loc>,
-            tlmtlo: TopLevel,
         ) {
             self.add_source_mapping(loc);
             self.print(b"{");
             if !stmts.is_empty() {
                 self.print_newline();
                 self.indent();
-                self.print_block_body(stmts, tlmtlo);
+                self.print_block_body(stmts);
                 self.unindent();
                 self.print_indent();
             }
@@ -2213,12 +2129,7 @@ pub mod __gated_printer {
                 false,
             );
             self.print_space();
-            self.print_block(
-                func.body.loc,
-                slice_of(func.body.stmts),
-                None,
-                TopLevel::init(IsTopLevel::No),
-            );
+            self.print_block(func.body.loc, slice_of(func.body.stmts), None);
         }
 
         pub fn print_class(&mut self, class: &G::Class) {
@@ -2243,12 +2154,7 @@ pub mod __gated_printer {
                     self.print(b"static");
                     self.print_space();
                     let csb = item.class_static_block_ref().unwrap();
-                    self.print_block(
-                        csb.loc,
-                        csb.stmts.slice(),
-                        None,
-                        TopLevel::init(IsTopLevel::No),
-                    );
+                    self.print_block(csb.loc, csb.stmts.slice(), None);
                     self.print_newline();
                     continue;
                 }
@@ -3499,12 +3405,7 @@ pub mod __gated_printer {
                     }
 
                     if !was_printed {
-                        self.print_block(
-                            e.body.loc,
-                            slice_of(e.body.stmts),
-                            None,
-                            TopLevel::init(IsTopLevel::No),
-                        );
+                        self.print_block(e.body.loc, slice_of(e.body.stmts), None);
                     }
 
                     if wrap {
@@ -4746,9 +4647,6 @@ pub mod __gated_printer {
                         let local_name = self.name_for_symbol(b.r#ref);
                         if let Some(mi) = self.module_info() {
                             let name_id = mi.str(local_name);
-                            if let Some(vk) = tlm.is_top_level {
-                                mi.add_var(name_id, vk);
-                            }
                             if tlm.is_export {
                                 mi.add_export_info_local(name_id, name_id);
                             }
@@ -4864,9 +4762,6 @@ pub mod __gated_printer {
                                                         if Self::MAY_HAVE_MODULE_INFO {
                                                             if let Some(mi) = self.module_info() {
                                                                 let name_id = mi.str(str.slice8());
-                                                                if let Some(vk) = tlm.is_top_level {
-                                                                    mi.add_var(name_id, vk);
-                                                                }
                                                                 if tlm.is_export {
                                                                     mi.add_export_info_local(
                                                                         name_id, name_id,
@@ -4902,9 +4797,6 @@ pub mod __gated_printer {
                                                         let str8 = str.slice(self.bump);
                                                         if let Some(mi) = self.module_info() {
                                                             let name_id = mi.str(str8);
-                                                            if let Some(vk) = tlm.is_top_level {
-                                                                mi.add_var(name_id, vk);
-                                                            }
                                                             if tlm.is_export {
                                                                 mi.add_export_info_local(
                                                                     name_id, name_id,
@@ -4965,7 +4857,7 @@ pub mod __gated_printer {
             }
         }
 
-        pub fn print_stmt(&mut self, stmt: Stmt, tlmtlo: TopLevel) -> crate::Result<()> {
+        pub fn print_stmt(&mut self, stmt: Stmt) -> crate::Result<()> {
             if !self.stack_check.is_safe_to_recurse() {
                 self.stack_overflowed = true;
                 return Ok(());
@@ -5016,11 +4908,6 @@ pub mod __gated_printer {
                     if Self::MAY_HAVE_MODULE_INFO {
                         if let Some(mi) = self.module_info() {
                             let name_id = mi.str(local_name);
-                            // function declarations are lexical (block-scoped in modules);
-                            // only record at true top-level, not inside blocks.
-                            if tlmtlo.is_top_level == IsTopLevel::Yes {
-                                mi.add_var(name_id, analyze_transpiled_module::VarKind::Lexical);
-                            }
                             if s.func.flags.contains(G::FnFlags::IsExport) {
                                 mi.add_export_info_local(name_id, name_id);
                             }
@@ -5052,9 +4939,6 @@ pub mod __gated_printer {
                     if Self::MAY_HAVE_MODULE_INFO {
                         if let Some(mi) = self.module_info() {
                             let name_id = mi.str(name_str);
-                            if tlmtlo.is_top_level == IsTopLevel::Yes {
-                                mi.add_var(name_id, analyze_transpiled_module::VarKind::Lexical);
-                            }
                             if s.is_export {
                                 mi.add_export_info_local(name_id, name_id);
                             }
@@ -5092,10 +4976,6 @@ pub mod __gated_printer {
                                     mi.add_export_info_local(
                                         default_id,
                                         analyze_transpiled_module::StringID::STAR_DEFAULT,
-                                    );
-                                    mi.add_var(
-                                        analyze_transpiled_module::StringID::STAR_DEFAULT,
-                                        analyze_transpiled_module::VarKind::Lexical,
                                     );
                                 }
                             }
@@ -5138,10 +5018,6 @@ pub mod __gated_printer {
                                         };
                                             let default_id = mi.str(b"default");
                                             mi.add_export_info_local(default_id, local_name);
-                                            mi.add_var(
-                                                local_name,
-                                                analyze_transpiled_module::VarKind::Lexical,
-                                            );
                                         }
                                     }
 
@@ -5173,10 +5049,6 @@ pub mod __gated_printer {
                                         };
                                             let default_id = mi.str(b"default");
                                             mi.add_export_info_local(default_id, local_name);
-                                            mi.add_var(
-                                                local_name,
-                                                analyze_transpiled_module::VarKind::Lexical,
-                                            );
                                         }
                                     }
 
@@ -5419,35 +5291,27 @@ pub mod __gated_printer {
                     self.add_source_mapping(stmt.loc);
                     match s.kind {
                         S::Kind::KConst => {
-                            self.print_decl_stmt(s.is_export, b"const", s.decls.slice(), tlmtlo)
+                            self.print_decl_stmt(s.is_export, b"const", s.decls.slice())
                         }
-                        S::Kind::KLet => {
-                            self.print_decl_stmt(s.is_export, b"let", s.decls.slice(), tlmtlo)
-                        }
-                        S::Kind::KVar => {
-                            self.print_decl_stmt(s.is_export, b"var", s.decls.slice(), tlmtlo)
-                        }
+                        S::Kind::KLet => self.print_decl_stmt(s.is_export, b"let", s.decls.slice()),
+                        S::Kind::KVar => self.print_decl_stmt(s.is_export, b"var", s.decls.slice()),
                         S::Kind::KUsing => {
-                            self.print_decl_stmt(s.is_export, b"using", s.decls.slice(), tlmtlo)
+                            self.print_decl_stmt(s.is_export, b"using", s.decls.slice())
                         }
-                        S::Kind::KAwaitUsing => self.print_decl_stmt(
-                            s.is_export,
-                            b"await using",
-                            s.decls.slice(),
-                            tlmtlo,
-                        ),
+                        S::Kind::KAwaitUsing => {
+                            self.print_decl_stmt(s.is_export, b"await using", s.decls.slice())
+                        }
                     }
                 }
                 StmtData::SIf(s) => {
                     self.print_indent();
-                    self.print_if(s, stmt.loc, tlmtlo.sub_var());
+                    self.print_if(s, stmt.loc);
                 }
                 StmtData::SDoWhile(s) => {
                     self.print_indent();
                     self.print_space_before_identifier();
                     self.add_source_mapping(stmt.loc);
                     self.print(b"do");
-                    let sub_var = tlmtlo.sub_var();
                     match s.body.data {
                         StmtData::SBlock(block) => {
                             self.print_space();
@@ -5455,14 +5319,13 @@ pub mod __gated_printer {
                                 s.body.loc,
                                 slice_of(block.stmts),
                                 Some(block.close_brace_loc),
-                                sub_var,
                             );
                             self.print_space();
                         }
                         _ => {
                             self.print_newline();
                             self.indent();
-                            self.print_stmt(s.body, sub_var).expect("unreachable");
+                            self.print_stmt(s.body).expect("unreachable");
                             self.print_semicolon_if_needed();
                             self.unindent();
                             self.print_indent();
@@ -5490,7 +5353,7 @@ pub mod __gated_printer {
                     self.print_space();
                     self.print_expr(s.value, Level::Lowest, ExprFlag::none());
                     self.print(b")");
-                    self.print_body(s.body, tlmtlo.sub_var());
+                    self.print_body(s.body);
                 }
                 StmtData::SForOf(s) => {
                     self.print_indent();
@@ -5510,7 +5373,7 @@ pub mod __gated_printer {
                     self.print_space();
                     self.print_expr(s.value, Level::Comma, ExprFlag::none());
                     self.print(b")");
-                    self.print_body(s.body, tlmtlo.sub_var());
+                    self.print_body(s.body);
                 }
                 StmtData::SWhile(s) => {
                     self.print_indent();
@@ -5521,7 +5384,7 @@ pub mod __gated_printer {
                     self.print(b"(");
                     self.print_expr(s.test, Level::Lowest, ExprFlag::none());
                     self.print(b")");
-                    self.print_body(s.body, tlmtlo.sub_var());
+                    self.print_body(s.body);
                 }
                 StmtData::SWith(s) => {
                     self.print_indent();
@@ -5532,7 +5395,7 @@ pub mod __gated_printer {
                     self.print(b"(");
                     self.print_expr(s.value, Level::Lowest, ExprFlag::none());
                     self.print(b")");
-                    self.print_body(s.body, tlmtlo.sub_var());
+                    self.print_body(s.body);
                 }
                 StmtData::SLabel(s) => {
                     if !self.options.minify_whitespace && self.options.indent.count > 0 {
@@ -5542,7 +5405,7 @@ pub mod __gated_printer {
                     self.add_source_mapping(stmt.loc);
                     self.print_symbol(s.name.ref_);
                     self.print(b":");
-                    self.print_body(s.stmt, tlmtlo.sub_var());
+                    self.print_body(s.stmt);
                 }
                 StmtData::STry(s) => {
                     self.print_indent();
@@ -5550,8 +5413,7 @@ pub mod __gated_printer {
                     self.add_source_mapping(stmt.loc);
                     self.print(b"try");
                     self.print_space();
-                    let sub_var_try = tlmtlo.sub_var();
-                    self.print_block(s.body_loc, slice_of(s.body), None, sub_var_try);
+                    self.print_block(s.body_loc, slice_of(s.body), None);
 
                     if let Some(catch) = &s.catch {
                         self.print_space();
@@ -5564,14 +5426,14 @@ pub mod __gated_printer {
                             self.print(b")");
                         }
                         self.print_space();
-                        self.print_block(catch.body_loc, slice_of(catch.body), None, sub_var_try);
+                        self.print_block(catch.body_loc, slice_of(catch.body), None);
                     }
 
                     if let Some(finally) = &s.finally {
                         self.print_space();
                         self.print(b"finally");
                         self.print_space();
-                        self.print_block(finally.loc, slice_of(finally.stmts), None, sub_var_try);
+                        self.print_block(finally.loc, slice_of(finally.stmts), None);
                     }
 
                     self.print_newline();
@@ -5602,7 +5464,7 @@ pub mod __gated_printer {
                     }
 
                     self.print(b")");
-                    self.print_body(s.body, tlmtlo.sub_var());
+                    self.print_body(s.body);
                 }
                 StmtData::SSwitch(s) => {
                     self.print_indent();
@@ -5631,8 +5493,6 @@ pub mod __gated_printer {
                         }
 
                         self.print(b":");
-
-                        let sub_var_case = tlmtlo.sub_var();
                         let c_body = slice_of(c.body);
                         if c_body.len() == 1 {
                             if let StmtData::SBlock(block) = &c_body[0].data {
@@ -5641,7 +5501,6 @@ pub mod __gated_printer {
                                     c_body[0].loc,
                                     slice_of(block.stmts),
                                     Some(block.close_brace_loc),
-                                    sub_var_case,
                                 );
                                 self.print_newline();
                                 continue;
@@ -5652,7 +5511,7 @@ pub mod __gated_printer {
                         self.indent();
                         for st in c_body.iter() {
                             self.print_semicolon_if_needed();
-                            self.print_stmt(*st, sub_var_case).expect("unreachable");
+                            self.print_stmt(*st).expect("unreachable");
                         }
                         self.unindent();
                     }
@@ -5969,7 +5828,6 @@ pub mod __gated_printer {
                             let local_name = self.name_for_symbol(name.ref_);
                             let mi = self.module_info().expect("infallible: module_info enabled");
                             let local_name_id = mi.str(local_name);
-                            mi.add_var(local_name_id, analyze_transpiled_module::VarKind::Lexical);
                             let default_id = mi.str(b"default");
                             mi.add_import_info_single(irp_id, default_id, local_name_id, false);
                         }
@@ -5978,7 +5836,6 @@ pub mod __gated_printer {
                             let local_name = self.name_for_symbol(item.name.ref_);
                             let mi = self.module_info().expect("infallible: module_info enabled");
                             let local_name_id = mi.str(local_name);
-                            mi.add_var(local_name_id, analyze_transpiled_module::VarKind::Lexical);
                             let alias_id = mi.str(item.alias.slice());
                             mi.add_import_info_single(irp_id, alias_id, local_name_id, false);
                         }
@@ -5990,7 +5847,6 @@ pub mod __gated_printer {
                             let local_name = self.name_for_symbol(s.namespace_ref);
                             let mi = self.module_info().expect("infallible: module_info enabled");
                             let local_name_id = mi.str(local_name);
-                            mi.add_var(local_name_id, analyze_transpiled_module::VarKind::Lexical);
                             if phase_defer {
                                 mi.add_import_info_namespace_defer(irp_id, local_name_id);
                             } else {
@@ -6001,12 +5857,7 @@ pub mod __gated_printer {
                 }
                 StmtData::SBlock(s) => {
                     self.print_indent();
-                    self.print_block(
-                        stmt.loc,
-                        slice_of(s.stmts),
-                        Some(s.close_brace_loc),
-                        tlmtlo.sub_var(),
-                    );
+                    self.print_block(stmt.loc, slice_of(s.stmts), Some(s.close_brace_loc));
                     self.print_newline();
                 }
                 StmtData::SDebugger(_) => {
@@ -6163,7 +6014,7 @@ pub mod __gated_printer {
             }
         }
 
-        pub fn print_if(&mut self, s: &S::If, loc: bun_ast::Loc, tlmtlo: TopLevel) {
+        pub fn print_if(&mut self, s: &S::If, loc: bun_ast::Loc) {
             // `else if` chains recurse here directly without passing through
             // `print_stmt`, so they need their own guard.
             if !self.stack_check.is_safe_to_recurse() {
@@ -6186,7 +6037,6 @@ pub mod __gated_printer {
                         s.yes.loc,
                         slice_of(block.stmts),
                         Some(block.close_brace_loc),
-                        tlmtlo,
                     );
                     if s.no.is_some() {
                         self.print_space();
@@ -6201,7 +6051,7 @@ pub mod __gated_printer {
                         self.print_newline();
 
                         self.indent();
-                        self.print_stmt(s.yes, tlmtlo).expect("unreachable");
+                        self.print_stmt(s.yes).expect("unreachable");
                         self.unindent();
                         self.needs_semicolon = false;
 
@@ -6216,7 +6066,7 @@ pub mod __gated_printer {
                     } else {
                         self.print_newline();
                         self.indent();
-                        self.print_stmt(s.yes, tlmtlo).expect("unreachable");
+                        self.print_stmt(s.yes).expect("unreachable");
                         self.unindent();
 
                         if s.no.is_some() {
@@ -6235,16 +6085,16 @@ pub mod __gated_printer {
                 match &no_block.data {
                     StmtData::SBlock(block) => {
                         self.print_space();
-                        self.print_block(no_block.loc, slice_of(block.stmts), None, tlmtlo);
+                        self.print_block(no_block.loc, slice_of(block.stmts), None);
                         self.print_newline();
                     }
                     StmtData::SIf(s_if) => {
-                        self.print_if(s_if, no_block.loc, tlmtlo);
+                        self.print_if(s_if, no_block.loc);
                     }
                     _ => {
                         self.print_newline();
                         self.indent();
-                        self.print_stmt(*no_block, tlmtlo).expect("unreachable");
+                        self.print_stmt(*no_block).expect("unreachable");
                         self.unindent();
                     }
                 }
@@ -6331,30 +6181,12 @@ pub mod __gated_printer {
             is_export: bool,
             keyword: &'static [u8],
             decls: &[G::Decl],
-            tlmtlo: TopLevel,
         ) {
             if is_export {
                 self.print(b"export ");
             }
             let tlm: TopLevelAndIsExport = if Self::MAY_HAVE_MODULE_INFO {
-                TopLevelAndIsExport {
-                    is_export,
-                    is_top_level: if keyword == b"var" {
-                        if tlmtlo.is_top_level() {
-                            Some(analyze_transpiled_module::VarKind::Declared)
-                        } else {
-                            None
-                        }
-                    } else {
-                        // let/const are block-scoped: only record at true top-level,
-                        // not inside blocks where subVar() downgrades to .var_only.
-                        if tlmtlo.is_top_level == IsTopLevel::Yes {
-                            Some(analyze_transpiled_module::VarKind::Lexical)
-                        } else {
-                            None
-                        }
-                    },
-                }
+                TopLevelAndIsExport { is_export }
             } else {
                 TopLevelAndIsExport::default()
             };
@@ -6732,7 +6564,7 @@ pub mod __gated_printer {
                 );
                 self.print(b" => {\n");
                 self.indent();
-                self.print_block_body(slice_of(func.body.stmts), TopLevel::init(IsTopLevel::No));
+                self.print_block_body(slice_of(func.body.stmts));
                 self.unindent();
                 self.print_indent();
                 self.print(b"}, ");
@@ -7519,15 +7351,13 @@ pub fn print_ast<'a, W: WriterTrait, const ASCII_ONLY: bool, const GENERATE_SOUR
         if PrinterType::<W, ASCII_ONLY, GENERATE_SOURCE_MAP>::MAY_HAVE_MODULE_INFO {
             if let Some(mi) = printer.module_info.as_deref_mut() {
                 mi.flags.contains_import_meta = true;
-                let s = mi.str(b"require");
-                mi.add_var(s, analyze_transpiled_module::VarKind::Declared);
             }
         }
     }
 
     for part in tree.parts.iter() {
         for stmt in slice_of(part.stmts).iter() {
-            printer.print_stmt(*stmt, TopLevel::init(IsTopLevel::Yes))?;
+            printer.print_stmt(*stmt)?;
             printer.writer.get_error()?;
             printer.print_semicolon_if_needed();
         }
@@ -7761,7 +7591,7 @@ pub fn print_with_writer_and_platform<
 
         for part in parts {
             for stmt in slice_of(part.stmts).iter() {
-                if let Err(err) = printer.print_stmt(*stmt, TopLevel::init(IsTopLevel::Yes)) {
+                if let Err(err) = printer.print_stmt(*stmt) {
                     return PrintResult::Err(err);
                 }
                 if let Err(err) = printer.writer.get_error() {

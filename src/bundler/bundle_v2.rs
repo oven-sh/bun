@@ -17,8 +17,8 @@ pub use bv2_impl::bake_types;
 pub use bv2_impl::dispatch;
 pub use bv2_impl::{
     CompileResult, CompileResultForSourceMap, CompileResultForSourceMapColumns, ContentHasher,
-    DeclInfo, DeclInfoKind, EventLoop, ImportTracker, PartRange, StableRef, WrapKind,
-    generic_path_with_pretty_initialized, target_from_hashbang,
+    EventLoop, ImportTracker, PartRange, StableRef, WrapKind, generic_path_with_pretty_initialized,
+    target_from_hashbang,
 };
 pub use bv2_impl::{DevServerInput, DevServerOutput, ImportTrackerIterator, ImportTrackerStatus};
 // Flatten the impl-body module into this file's namespace so external callers
@@ -7271,23 +7271,10 @@ pub mod bv2_impl {
         pub import_ref: bun_ast::Ref,
     }
 
-    #[repr(u8)]
-    #[derive(Clone, Copy, PartialEq, Eq)]
-    pub enum DeclInfoKind {
-        Declared,
-        Lexical,
-    }
-    #[derive(Clone)]
-    pub struct DeclInfo {
-        pub name: Box<[u8]>,
-        pub kind: DeclInfoKind,
-    }
-
     pub enum CompileResult {
         Javascript {
             source_index: IndexInt,
             result: bun_js_printer::PrintResult,
-            decls: Box<[DeclInfo]>,
         },
         Css {
             result: crate::Result<Box<[u8]>>,
@@ -7353,7 +7340,6 @@ pub mod bv2_impl {
                 CompileResult::Javascript {
                     source_index,
                     result,
-                    decls,
                 } => CompileResult::Javascript {
                     source_index: *source_index,
                     result: match result {
@@ -7367,7 +7353,6 @@ pub mod bv2_impl {
                         }
                         bun_js_printer::PrintResult::Err(e) => bun_js_printer::PrintResult::Err(*e),
                     },
-                    decls: decls.clone(),
                 },
                 CompileResult::Css {
                     result,
@@ -7399,7 +7384,6 @@ pub mod bv2_impl {
                     code: Box::new([]),
                     source_map: None,
                 }),
-                decls: Box::new([]),
             }
         }
     }

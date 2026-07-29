@@ -1,5 +1,5 @@
-import { expect, test } from "bun:test";
 import { heapStats } from "bun:jsc";
+import { expect, test } from "bun:test";
 import fs from "fs";
 import { isASAN, isDebug, tempDir } from "harness";
 import { join } from "path";

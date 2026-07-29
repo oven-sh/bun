@@ -73,7 +73,7 @@ test("distinct workspace names with colliding truncated name hashes are not dupl
     stdout: "pipe",
     stderr: "pipe",
   });
-  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+  const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect(stderr).not.toContain("already exists");
   expect(exitCode).toBe(0);

@@ -286,6 +286,9 @@ function unescapeUnixSocketUrl(href: string) {
 
 class Debugger {
   #url?: URL;
+  // Hostname as the user wrote it in --inspect; the Host-header allowlist must keep accepting it
+  // after #url.hostname is rewritten to the numeric bound address.
+  #requestedHostname?: string;
   #createBackend: (refEventLoop: boolean, receive: (...messages: string[]) => void) => Backend;
   // node:inspector mode: connections speak the V8 Chrome DevTools Protocol and
   // /json discovery endpoints are served.
@@ -364,6 +367,7 @@ class Debugger {
 
   #listen(): void {
     const { protocol, hostname, port, pathname } = this.#url!;
+    this.#requestedHostname = hostname;
 
     if (protocol === "ws:" || protocol === "wss:" || protocol === "ws+tcp:") {
       const server = Bun.serve({
@@ -375,7 +379,15 @@ class Debugger {
       });
 
       this.#server = server;
-      this.#url!.hostname = server.hostname;
+      // Bun.serve walks every getaddrinfo result for `hostname`, so `localhost` may bind [::1] on
+      // one system and 127.0.0.1 on another. Print the address that actually bound so the banner
+      // URL is reachable regardless of how the client resolves the name.
+      const addr = (server as { address?: { address?: string; family?: string } }).address;
+      if (addr && typeof addr.address === "string" && addr.address) {
+        this.#url!.hostname = addr.family === "IPv6" ? `[${addr.address}]` : addr.address;
+      } else {
+        this.#url!.hostname = server.hostname;
+      }
       this.#url!.port = `${server.port}`;
       return;
     }
@@ -495,7 +507,7 @@ class Debugger {
     }
 
     const isUnix = this.#url!.protocol.includes("unix");
-    if (!isUnix && !isHostAllowed(headers.get("Host"), this.#url!.hostname)) {
+    if (!isUnix && !isHostAllowed(headers.get("Host"), this.#requestedHostname ?? this.#url!.hostname)) {
       return new Response(null, {
         status: 400, // Bad Request
       });
@@ -774,7 +786,10 @@ function bufferedWriter(writer: Writer): Writer {
   };
 }
 
-const defaultHostname = "localhost";
+// Match Node's --inspect default: an IPv4 literal avoids the IPv4/IPv6 lottery that `localhost`
+// creates between Bun.serve (binds whichever family getaddrinfo returns first) and clients such
+// as browsers, IDEs, and WSL's localhost forwarding (which only relays 127.0.0.1).
+const defaultHostname = "127.0.0.1";
 const defaultPort = 6499;
 
 function parseUrl(input: string): URL {

@@ -101,12 +101,14 @@ describe("ClientHttp2Stream.close(code) event sequence after data", () => {
   });
 });
 
-// close(NGHTTP2_CANCEL) on a stream that has not received any response yet (the "pending" case):
-// node emits 'end' + 'close' with no 'error'. Uses a real http2 server that never responds.
+// close(code) on a stream that has not received any response yet: same contract (NO_ERROR/CANCEL
+// end cleanly, other codes emit 'error' only). Uses a real http2 server that never responds.
 describe("ClientHttp2Stream.close(code) before response", () => {
   test.each([
     [http2.constants.NGHTTP2_NO_ERROR, ["end", "close:0"]],
     [http2.constants.NGHTTP2_CANCEL, ["end", "close:8"]],
+    [http2.constants.NGHTTP2_INTERNAL_ERROR, ["error:ERR_HTTP2_STREAM_ERROR", "close:2"]],
+    [http2.constants.NGHTTP2_ENHANCE_YOUR_CALM, ["error:ERR_HTTP2_STREAM_ERROR", "close:11"]],
   ])("close(%p)", async (code, expected) => {
     const server = http2.createServer();
     server.on("stream", stream => {

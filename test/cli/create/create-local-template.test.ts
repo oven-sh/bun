@@ -207,6 +207,28 @@ test.concurrent("bun create from local template does not run git when .git is a 
   expect({ exitCode, stderr }).toEqual({ exitCode: 0, stderr: expect.not.stringContaining("error") });
 });
 
+test.concurrent("bun create from local template flags a directory named README.md as a conflict", async () => {
+  using dir = tempDir("create-local-readme-dir", {
+    "templates/mytpl/README.md": "template readme",
+    "proj/README.md/index.md": "user file inside dir",
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "create", "mytpl", "."],
+    env: createEnv(join(String(dir), "templates")),
+    cwd: join(String(dir), "proj"),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited, proc.stdout.text()]);
+
+  expect(await Bun.file(join(String(dir), "proj", "README.md", "index.md")).text()).toBe("user file inside dir");
+  expect({ exitCode, stderr }).toEqual({
+    exitCode: 1,
+    stderr: expect.stringContaining("contains files that could conflict"),
+  });
+});
+
 test.concurrent("bun create from local template with --force replaces kind-mismatched entries", async () => {
   using dir = tempDir("create-local-force-mismatch", {
     "templates/mytpl/sub/nested.txt": "template nested",

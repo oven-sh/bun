@@ -746,7 +746,11 @@ impl CreateCommand {
                             continue;
                         }
 
-                        if entry.kind == bun_sys::FileKind::File {
+                        // The bypass only applies when the copy can actually
+                        // overwrite: a directory in the way still conflicts.
+                        if entry.kind == bun_sys::FileKind::File
+                            && existing_kind != bun_sys::ExistsAtType::Directory
+                        {
                             #[cfg(not(windows))]
                             let never_conflict = NEVER_CONFLICT
                                 .iter()

@@ -456,19 +456,19 @@ pub mod dir_entry {
 /// Per-entry hook invoked by `add_entry`/`readdir`.
 pub trait DirEntryIterator {
     const IS_VOID: bool = false;
-    fn next(&self, entry: &mut Entry, fd: Fd);
+    fn next(&self, entry: &mut Entry);
 }
 
 impl DirEntryIterator for () {
     const IS_VOID: bool = true;
-    fn next(&self, _entry: &mut Entry, _fd: Fd) {}
+    fn next(&self, _entry: &mut Entry) {}
 }
 
 impl<T: DirEntryIterator + ?Sized> DirEntryIterator for &T {
     const IS_VOID: bool = T::IS_VOID;
     #[inline]
-    fn next(&self, entry: &mut Entry, fd: Fd) {
-        (**self).next(entry, fd)
+    fn next(&self, entry: &mut Entry) {
+        (**self).next(entry)
     }
 }
 
@@ -662,7 +662,7 @@ impl DirEntry {
         self.data.put_static_key_hashed(name_hash, key, stored)?;
 
         if !I::IS_VOID {
-            iterator.next(stored_ref, self.fd);
+            iterator.next(stored_ref);
         }
 
         if FeatureFlags::VERBOSE_FS {

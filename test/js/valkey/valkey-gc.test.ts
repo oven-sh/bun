@@ -181,13 +181,11 @@ test.concurrent("RedisClient survives subscribe() + close() against a server tha
   expect(exitCode).toBe(0);
 });
 
-// A malformed reply drives on_data -> parse fail -> fail_with_js_value ->
-// close(), which dispatches SocketHandler::on_close synchronously. Its
-// on_valkey_close() previously adopted the socket keep-alive ref
-// unconditionally; the enter_event_loop_scope drain inside on_valkey_close runs
-// the connect() promise rejection, so user code re-enters close() while the
-// socket handler frames are still on the stack. With take_socket_ref() the
-// second caller sees no outstanding ref and releases nothing.
+// Drives on_data -> parse fail -> fail_with_js_value -> close() -> synchronous
+// on_close -> on_valkey_close, with the connect() rejection drained while the
+// socket-handler frames are still on the stack. Path coverage for
+// take_socket_ref(); the fuzzer interleaving that over-releases here is not
+// reproduced deterministically.
 test.concurrent("RedisClient survives a malformed RESP reply that closes the socket from on_data", async () => {
   const src = `
     const CRLF = "\\r\\n";

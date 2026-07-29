@@ -481,6 +481,7 @@ impl Source {
     pub fn is_no_color() -> bool {
         // Parsed bool, default false. NO_COLOR=0 → false.
         env_var::NO_COLOR.get().unwrap_or(false)
+            || env_var::NODE_DISABLE_COLORS.get_not_empty().is_some()
     }
 
     pub fn get_force_color_depth() -> Option<ColorDepth> {
@@ -540,11 +541,13 @@ impl Source {
                 }
 
                 let mut enable_color: Option<bool> = None;
-                if Self::is_force_color() {
-                    enable_color = Some(true);
+                if let Some(depth) = Self::get_force_color_depth() {
+                    enable_color = Some(depth != ColorDepth::None);
                 } else if Self::is_no_color() {
                     enable_color = Some(false);
-                } else if Self::is_color_terminal() && (is_stdout_tty || is_stderr_tty) {
+                } else if (Self::is_color_terminal() && (is_stdout_tty || is_stderr_tty))
+                    || (env_var::TERM.get().unwrap_or(b"") != b"dumb" && is_ansi_capable_ci())
+                {
                     enable_color = Some(true);
                 }
 
@@ -892,6 +895,32 @@ fn compute_color_depth() -> ColorDepth {
     ColorDepth::None
 }
 
+/// CI log viewers that render ANSI; subset of `CI_ENVS` in `src/js/internal/tty.ts`.
+#[cfg(not(target_arch = "wasm32"))]
+fn is_ansi_capable_ci() -> bool {
+    macro_rules! set {
+        ($k:literal) => {
+            crate::getenv_z(crate::zstr!($k)).is_some()
+        };
+    }
+    // Azure DevOps does not set `CI`.
+    if set!("TF_BUILD") && set!("AGENT_NAME") {
+        return true;
+    }
+    if !set!("CI") {
+        return false;
+    }
+    set!("GITHUB_ACTIONS")
+        || set!("GITEA_ACTIONS")
+        || set!("GITLAB_CI")
+        || set!("CIRCLECI")
+        || set!("TRAVIS")
+        || set!("APPVEYOR")
+        || set!("BUILDKITE")
+        || set!("DRONE")
+        || crate::getenv_z(crate::zstr!("CI_NAME")) == Some(b"codeship")
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 // Module-level state
 // ──────────────────────────────────────────────────────────────────────────
@@ -1107,8 +1136,10 @@ pub fn writer_buffered() -> &'static mut io::Writer {
 }
 
 pub fn reset_terminal() {
-    let stderr = ENABLE_ANSI_COLORS_STDERR.load(Ordering::Relaxed);
-    let stdout = ENABLE_ANSI_COLORS_STDOUT.load(Ordering::Relaxed);
+    let stderr = ENABLE_ANSI_COLORS_STDERR.load(Ordering::Relaxed)
+        && stderr_descriptor_type() == OutputStreamDescriptor::Terminal;
+    let stdout = ENABLE_ANSI_COLORS_STDOUT.load(Ordering::Relaxed)
+        && stdout_descriptor_type() == OutputStreamDescriptor::Terminal;
     if !stderr && !stdout {
         return;
     }
@@ -1123,10 +1154,14 @@ pub fn reset_terminal() {
 
 pub fn reset_terminal_all() {
     SOURCE.with_borrow_mut(|s| {
-        if ENABLE_ANSI_COLORS_STDERR.load(Ordering::Relaxed) {
+        if ENABLE_ANSI_COLORS_STDERR.load(Ordering::Relaxed)
+            && stderr_descriptor_type() == OutputStreamDescriptor::Terminal
+        {
             let _ = s.error_stream().write_all(b"\x1B[2J\x1B[3J\x1B[H");
         }
-        if ENABLE_ANSI_COLORS_STDOUT.load(Ordering::Relaxed) {
+        if ENABLE_ANSI_COLORS_STDOUT.load(Ordering::Relaxed)
+            && stdout_descriptor_type() == OutputStreamDescriptor::Terminal
+        {
             let _ = s.stream().write_all(b"\x1B[2J\x1B[3J\x1B[H");
         }
     });

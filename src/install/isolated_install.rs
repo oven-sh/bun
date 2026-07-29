@@ -1928,7 +1928,6 @@ pub(crate) fn install_isolated_packages(
         let progress = unsafe { &mut *progress };
 
         if manager.options.log_level.show_progress() {
-            progress.supports_ansi_escape_codes = Output::enable_ansi_colors_stderr();
             // `Progress::start` returns `&mut Node` (points into `progress.root`);
             // keep it as a safe reborrow — it's only used to spawn the three
             // children below and is dead before the `manager.*` writes that

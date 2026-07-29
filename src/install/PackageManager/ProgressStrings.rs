@@ -138,7 +138,6 @@ impl PackageManager {
     }
 
     pub fn start_progress_bar(&mut self) {
-        self.progress.supports_ansi_escape_codes = Output::enable_ansi_colors_stderr();
         // `Progress::start` returns `&mut Node` borrowing `self.progress`;
         // decay to a raw ptr immediately so the exclusive borrow ends before we
         // re-borrow `&mut self` for `set_node_name` / `progress.refresh()`.

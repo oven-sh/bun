@@ -448,7 +448,6 @@ impl TrustCommand {
             // immediately consumed by `Node::start` (returns an owned `Node`
             // with raw backrefs into `pm.progress`).
             unsafe {
-                (*pm_raw).progress.supports_ansi_escape_codes = Output::enable_ansi_colors_stderr();
                 scripts_node = (*pm_raw)
                     .progress
                     .start(b"", 0)

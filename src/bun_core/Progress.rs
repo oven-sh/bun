@@ -353,6 +353,7 @@ impl Progress {
             self.terminal = Some(stderr);
             self.supports_ansi_escape_codes = true;
         } else {
+            self.supports_ansi_escape_codes = false;
             #[cfg(windows)]
             if stderr.is_tty() {
                 self.is_windows_terminal = true;

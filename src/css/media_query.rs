@@ -1258,12 +1258,6 @@ impl MediaList {
         Self { media_queries }
     }
 
-    /// Alias for `deep_clone`.
-    #[inline]
-    pub fn clone_in(&self, bump: &bun_alloc::Arena) -> Self {
-        self.deep_clone(bump)
-    }
-
     /// `MediaList` carries no
     /// `ImportRecord` indices so this is just `deep_clone`.
     #[inline]

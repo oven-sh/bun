@@ -49,7 +49,6 @@ pub struct ProgramContext {
     pub renames: Vec<crate::hir::environment::BindingRename>,
 
     // Internal state
-    already_compiled: IndexSet<u32>,
     known_referenced_names: IndexSet<String>,
     imports: IndexMap<&'static str, IndexMap<&'static str, NonLocalImportSpecifier>>,
 }
@@ -73,21 +72,9 @@ impl ProgramContext {
             instrument_gating_name: None,
             hook_guard_name: None,
             renames: Vec::new(),
-            already_compiled: IndexSet::new(),
             known_referenced_names: IndexSet::new(),
             imports: IndexMap::new(),
         }
-    }
-
-    /// Check if a function at the given start position has already been compiled.
-    /// This is a workaround for Babel not consistently respecting skip().
-    pub fn is_already_compiled(&self, start: u32) -> bool {
-        self.already_compiled.contains(&start)
-    }
-
-    /// Mark a function at the given start position as compiled.
-    pub fn mark_compiled(&mut self, start: u32) {
-        self.already_compiled.insert(start);
     }
 
     /// Initialize known referenced names from scope bindings.

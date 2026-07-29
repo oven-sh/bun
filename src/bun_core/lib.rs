@@ -1181,7 +1181,7 @@ pub use crate::fmt::{
     format_ip, format_latin1, format_utf16_type, hex_byte_lower, hex_byte_upper, hex_char_lower,
     hex_char_upper, hex_digit_value, hex_lower, hex_pair_value, hex_u16, hex_upper, hex2_lower,
     hex2_upper, hex4_upper, int_as_bytes, parse_ascii, parse_f32, parse_f64, parse_hex_prefix,
-    parse_hex_to_int, parse_hex4, parse_int as parse_int_radix, parse_num, print_int, quote, raw,
+    parse_hex_to_int, parse_hex4, parse_int as parse_int_radix, print_int, quote, raw,
     s, size, truncated_hash32, truncated_hash32_bytes, utf16,
 };
 

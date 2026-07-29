@@ -1045,12 +1045,6 @@ pub fn parse_ascii<T: core::str::FromStr>(s: &[u8]) -> Option<T> {
         .ok()
 }
 
-#[deprecated = "use parse_int / parse_f64 / parse_ascii (no from_utf8)"]
-#[inline]
-pub fn parse_num<T: core::str::FromStr>(s: &[u8]) -> Option<T> {
-    parse_ascii(s)
-}
-
 // ───────────────────────────────────────────────────────────────────────────
 // Latin-1 formatting
 // ───────────────────────────────────────────────────────────────────────────
@@ -2320,69 +2314,6 @@ pub fn format_ip<'a>(
 // count
 // ───────────────────────────────────────────────────────────────────────────
 
-// ───────────────────────── CountingWriter / Null ─────────────────────────
-// One type subsumes a pure discarding sink and a counting forwarding
-// wrapper. Implements
-// `core::fmt::Write` so it can replace the per-crate private `CountingWriter`
-// reinventions (clap). The byte-level `bun_io::Write` counting sink stays in
-// `bun_io::DiscardingWriter` (different trait, sits above bun_core).
-
-/// Zero-sized `fmt::Write` no-op — default type param for [`CountingWriter`].
-pub struct Null;
-impl fmt::Write for Null {
-    #[inline]
-    fn write_str(&mut self, _: &str) -> fmt::Result {
-        Ok(())
-    }
-}
-
-/// Counts every byte written; optionally forwards to a wrapped `fmt::Write`.
-/// `inner: None` ⇒ pure discarding sink.
-pub struct CountingWriter<'a, W: fmt::Write = Null> {
-    inner: Option<&'a mut W>,
-    /// Total bytes written so far (counted before forwarding).
-    pub count: usize,
-}
-
-impl<'a, W: fmt::Write> CountingWriter<'a, W> {
-    /// Wrap an existing `fmt::Write` sink, forwarding writes through it.
-    #[inline]
-    pub fn wrap(w: &'a mut W) -> Self {
-        Self {
-            inner: Some(w),
-            count: 0,
-        }
-    }
-    /// Direct access to the inner sink (bypasses counting). Panics on the
-    /// `null()` variant — callers know which mode they constructed.
-    #[inline]
-    pub fn inner(&mut self) -> &mut W {
-        self.inner.as_mut().unwrap()
-    }
-}
-
-impl CountingWriter<'static, Null> {
-    /// Pure discarding sink — `inner: None`, never forwarded.
-    #[inline]
-    pub fn null() -> Self {
-        Self {
-            inner: None,
-            count: 0,
-        }
-    }
-}
-
-impl<W: fmt::Write> fmt::Write for CountingWriter<'_, W> {
-    #[inline]
-    fn write_str(&mut self, s: &str) -> fmt::Result {
-        self.count += s.len();
-        if let Some(w) = self.inner.as_mut() {
-            w.write_str(s)?;
-        }
-        Ok(())
-    }
-}
-
 /// Number of bytes the formatted args would produce.
 ///
 /// `fmt::Arguments` drives a `fmt::Write` impl that only sums `s.len()`.
@@ -2885,10 +2816,6 @@ impl<const LOWER: bool, const NIBBLES: usize> Display for HexIntFormatter<LOWER,
 }
 
 pub fn hex_int_lower<const NIBBLES: usize>(value: u64) -> HexIntFormatter<true, NIBBLES> {
-    HexIntFormatter { value }
-}
-
-pub fn hex_int_upper<const NIBBLES: usize>(value: u64) -> HexIntFormatter<false, NIBBLES> {
     HexIntFormatter { value }
 }
 

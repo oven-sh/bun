@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
-import net from "node:net";
 import { once } from "node:events";
+import net from "node:net";
 import { join } from "node:path";
 
 // Aborting a fetch whose request body stream is still uploading must also

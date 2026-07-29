@@ -919,6 +919,25 @@ where
                         ctx.remove_at_index(bun_watcher::Kind::File, event.index, 0, &[]);
                     }
 
+                    // Rename-over of a held-open inode delivers only IN_ATTRIB; evict on st_nlink==0.
+                    #[cfg(any(target_os = "linux", target_os = "android"))]
+                    if !event.op.contains(WatchOp::DELETE)
+                        && event.op.intersects(WatchOp::METADATA | WatchOp::RENAME)
+                    {
+                        let fd = file_descriptors[event.index as usize];
+                        let orphaned = event.op.contains(WatchOp::RENAME)
+                            || (fd.is_valid()
+                                && bun_sys::fstat(fd)
+                                    .map(|st| st.st_nlink == 0)
+                                    .unwrap_or(false));
+                        if orphaned {
+                            ctx.remove_at_index(bun_watcher::Kind::File, event.index, 0, &[]);
+                            record_changed_path(file_path);
+                            current_task.append(current_hash);
+                            continue;
+                        }
+                    }
+
                     if self.verbose {
                         Self::debug(format_args!(
                             "File changed: {}",

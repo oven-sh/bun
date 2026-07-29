@@ -749,7 +749,14 @@ impl Watcher {
 
     #[inline]
     fn is_eligible_directory(&self, dir: &[u8]) -> bool {
-        strings::contains(dir, self.top_level_dir()) && !strings::contains(dir, b"node_modules")
+        if strings::contains(dir, b"node_modules") {
+            return false;
+        }
+        if cfg!(windows) {
+            // ReadDirectoryChangesW is cwd-rooted; POSIX has no such restriction.
+            return strings::contains(dir, self.top_level_dir());
+        }
+        true
     }
 
     #[inline]
@@ -935,12 +942,7 @@ impl Watcher {
     }
 
     pub fn on_maybe_watch_directory(watch: &mut Self, file_path: &[u8], dir_fd: Fd) {
-        // We don't want to watch:
-        // - Directories outside the root directory
-        // - Directories inside node_modules
-        if !strings::contains(file_path, b"node_modules")
-            && strings::contains(file_path, watch.top_level_dir())
-        {
+        if watch.is_eligible_directory(file_path) {
             let _ = watch.add_directory::<false>(dir_fd, file_path, Self::get_hash(file_path));
         }
     }

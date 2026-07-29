@@ -6072,9 +6072,27 @@ impl DevServer {
 
             match kind {
                 bun_watcher::Kind::File => {
-                    if event.op.contains(bun_watcher::Op::DELETE)
-                        || event.op.contains(bun_watcher::Op::RENAME)
-                    {
+                    #[allow(unused_mut)]
+                    let mut evict = event.op.contains(bun_watcher::Op::DELETE)
+                        || event.op.contains(bun_watcher::Op::RENAME);
+                    #[cfg(any(target_os = "linux", target_os = "android"))]
+                    if !evict && event.op.contains(bun_watcher::Op::METADATA) {
+                        let fd = slice.items_fd()[event.index as usize];
+                        if fd.is_valid()
+                            && bun_sys::fstat(fd)
+                                .map(|st| st.st_nlink == 0)
+                                .unwrap_or(false)
+                        {
+                            evict = true;
+                        } else if !event.op.intersects(
+                            bun_watcher::Op::WRITE
+                                | bun_watcher::Op::MOVE_TO
+                                | bun_watcher::Op::CREATE,
+                        ) {
+                            continue;
+                        }
+                    }
+                    if evict {
                         // TODO: audit this line heavily
                         self.bun_watcher.remove_at_index(
                             bun_watcher::Kind::File,

@@ -527,8 +527,7 @@ impl ShellMvBatchedTask {
                 Err(e) if e.get_errno() == bun_sys::E::EEXIST => {}
                 Err(e) => return Err(e),
             }
-            let src_fd =
-                shell_openat(src_dir, src, bun_sys::O::RDONLY | bun_sys::O::DIRECTORY, 0)?;
+            let src_fd = shell_openat(src_dir, src, bun_sys::O::RDONLY | bun_sys::O::DIRECTORY, 0)?;
             let dst_fd =
                 match shell_openat(dst_dir, dst, bun_sys::O::RDONLY | bun_sys::O::DIRECTORY, 0) {
                     Ok(fd) => fd,
@@ -552,9 +551,7 @@ impl ShellMvBatchedTask {
                         nbuf[..name.len()].copy_from_slice(name);
                         nbuf[name.len()] = 0;
                         let name_z = ZStr::from_buf(&nbuf[..], name.len());
-                        if let Err(e) =
-                            Self::move_across_devices(src_fd, name_z, dst_fd, name_z)
-                        {
+                        if let Err(e) = Self::move_across_devices(src_fd, name_z, dst_fd, name_z) {
                             break Err(e);
                         }
                     }

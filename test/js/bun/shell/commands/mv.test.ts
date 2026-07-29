@@ -1,9 +1,18 @@
 import { $ } from "bun";
 import { describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, readFileSync, readlinkSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { isPosix } from "harness";
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  readlinkSync,
+  rmSync,
+  statSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "path";
-import { isPosix } from "harness";
 import { createTestBuilder } from "../test_builder";
 import { sortedShellOutput } from "../util";
 const TestBuilder = createTestBuilder(import.meta.path);

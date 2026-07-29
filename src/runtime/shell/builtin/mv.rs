@@ -572,6 +572,8 @@ impl ShellMvBatchedTask {
                 }
             };
             if result.is_ok() {
+                #[cfg(unix)]
+                let _ = bun_sys::fchown(dst_fd, st.st_uid as _, st.st_gid as _);
                 let _ = bun_sys::fchmod(dst_fd, mode & 0o7777);
             }
             closefd(dst_fd);
@@ -607,8 +609,9 @@ impl ShellMvBatchedTask {
         let copied = bun_sys::copy_file(in_fd, out_fd);
         #[cfg(unix)]
         if copied.is_ok() {
-            let _ = bun_sys::fchmod(out_fd, mode & 0o7777);
+            // `fchown` first: Linux clears S_ISUID/S_ISGID on chown.
             let _ = bun_sys::fchown(out_fd, st.st_uid as _, st.st_gid as _);
+            let _ = bun_sys::fchmod(out_fd, mode & 0o7777);
         }
         closefd(out_fd);
         closefd(in_fd);

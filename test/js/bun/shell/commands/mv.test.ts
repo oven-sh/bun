@@ -199,6 +199,7 @@ describe("mv", async () => {
         expect(mk).toBe(0);
 
         const r = await $`mv ${fifo} ${dst}`.quiet();
+        expect(r.stderr.toString()).toContain("not supported");
         expect(r.exitCode).not.toBe(0);
         expect(lstatSync(fifo).isFIFO()).toBe(true);
         expect(lstatSync(join(dst, "pipe"), { throwIfNoEntry: false })).toBeUndefined();

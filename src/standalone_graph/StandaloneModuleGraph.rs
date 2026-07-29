@@ -1070,7 +1070,6 @@ pub(crate) fn inject(
     inject_options: &InjectOptions,
     target: &CompileTarget,
 ) -> Fd {
-    let _ = inject_options;
     let mut buf = PathBuffer::uninit();
     // Note: `tmpname` borrows `buf` mutably for the &ZStr it returns. The
     // tmpdir-fallback retry below may need to repoint `zname` at a heap-owned
@@ -1357,6 +1356,13 @@ pub(crate) fn inject(
                 bun_core::pretty_errorln!("Error adding Bun section to PE file: {}", e);
                 cleanup(zname, cloned_executable_fd);
                 return Fd::INVALID;
+            }
+            if inject_options.hide_console {
+                if let Err(e) = pe_file.set_subsystem(bun_pe::IMAGE_SUBSYSTEM_WINDOWS_GUI) {
+                    bun_core::pretty_errorln!("Error setting PE subsystem: {}", e);
+                    cleanup(zname, cloned_executable_fd);
+                    return Fd::INVALID;
+                }
             }
             drop(input_bytes);
 

@@ -95,10 +95,7 @@ impl SystemError {
         SystemError__toErrorInstance(&self, global)
     }
 
-    /// Like [`to_error_instance`](Self::to_error_instance), but the instance
-    /// is a JS `TypeError` with the same `code`/`path`/`errno`/... properties.
-    /// The fetch spec maps network errors to `TypeError`, which callers
-    /// feature-detect via `instanceof`. Consumes `self` for the same reason.
+    /// [`to_error_instance`](Self::to_error_instance) as a JS `TypeError` (same `code`/`path`/`errno` properties), for fetch-spec network errors.
     pub fn to_type_error_instance(self, global: &JSGlobalObject) -> JSValue {
         SystemError__toTypeErrorInstance(&self, global)
     }

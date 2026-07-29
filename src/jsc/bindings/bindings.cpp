@@ -2431,9 +2431,7 @@ JSC::EncodedJSValue SystemError__toErrorInstance(const SystemError* arg0, JSC::J
     return systemErrorToErrorInstance(arg0, globalObject, ErrorType::Error);
 }
 
-// Same property layout as `SystemError__toErrorInstance` (`code`, `path`,
-// `errno`, ...) but the instance is a `TypeError`. The fetch specification
-// requires network errors to reject with a `TypeError`.
+// `SystemError__toErrorInstance` as a `TypeError`, for fetch-spec network errors.
 JSC::EncodedJSValue SystemError__toTypeErrorInstance(const SystemError* arg0, JSC::JSGlobalObject* globalObject)
 {
     return systemErrorToErrorInstance(arg0, globalObject, ErrorType::TypeError);

@@ -238,13 +238,7 @@ pub static EXPERIMENTAL_HTTP3_CLIENT_FROM_CLI: AtomicBool = AtomicBool::new(fals
 
 const MAX_REDIRECT_URL_LENGTH: usize = 128 * 1024;
 
-/// Default budget for `HTTPClient::remaining_redirect_count`.
-///
-/// <https://fetch.spec.whatwg.org/#http-redirect-fetch> step 5: "If request's
-/// redirect count is 20, then return a network error." `do_redirect` decrements
-/// the budget and then fails on 0, so the stored value is one larger than the
-/// number of redirects actually followed: 20 are followed and the 21st redirect
-/// response rejects with `TooManyRedirects`.
+/// <https://fetch.spec.whatwg.org/#http-redirect-fetch> caps redirects at 20; `do_redirect` decrements then checks for 0, so the stored budget is `+1`.
 pub(crate) const DEFAULT_REDIRECT_COUNT: i8 = 20 + 1;
 
 /// The static is exported to
@@ -2643,9 +2637,7 @@ impl<'a> HTTPClient<'a> {
             self.hostname = None;
         }
 
-        // Decrement-then-check means a budget of N allows N-1 follows, so every
-        // initializer stores one more than the redirect limit it grants; see
-        // `DEFAULT_REDIRECT_COUNT`.
+        // Decrement-then-check: see `DEFAULT_REDIRECT_COUNT` for why every initializer stores `limit + 1`.
         if self.remaining_redirect_count == 0 {
             self.fail(crate::Error::TooManyRedirects);
             return;

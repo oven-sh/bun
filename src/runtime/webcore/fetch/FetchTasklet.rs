@@ -1291,10 +1291,7 @@ impl FetchTasklet {
 
         let fail = self.result.fail.unwrap();
 
-        // Fetch-spec "network error" cases that callers feature-detect via
-        // `instanceof TypeError`. Keep this list narrow (redirect failures are
-        // handled below so their `code` property survives); the catch-all
-        // SystemError below is still a plain Error for backwards compat.
+        // Fetch-spec "network error" `TypeError`s; redirect failures go through `SystemTypeError` below so their `code` survives.
         if fail == http::Error::RequestBodyNotReusable {
             return BodyValueError::TypeError(BunString::static_(
                 "Request body is a ReadableStream and cannot be replayed for this redirect",
@@ -1568,9 +1565,7 @@ impl FetchTasklet {
             ..Default::default()
         };
 
-        // HTTP-redirect fetch returns a network error for each of these
-        // (https://fetch.spec.whatwg.org/#http-redirect-fetch), and a network
-        // error rejects fetch() with a `TypeError`. Same `code`/`path`/message.
+        // <https://fetch.spec.whatwg.org/#http-redirect-fetch>: each of these is a network error, so a `TypeError`.
         if matches!(
             fail,
             http::Error::TooManyRedirects

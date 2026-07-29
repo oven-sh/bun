@@ -482,8 +482,7 @@ impl<'a> AsyncHTTP<'a> {
             this.client.flags.disable_decompression = val;
         }
         if let Some(val) = options.max_redirects {
-            // +1: the stored budget includes the terminal check; see
-            // `DEFAULT_REDIRECT_COUNT`. Clamped to 126 so the result fits `i8`.
+            // +1 for the terminal check (see `DEFAULT_REDIRECT_COUNT`); clamped to fit `i8`.
             this.client.remaining_redirect_count = (val.min(126) + 1) as i8;
         }
         if let Some(val) = options.disable_keepalive {

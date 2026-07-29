@@ -564,10 +564,7 @@ pub enum Tag {
 pub enum ValueError {
     AbortReason(CommonAbortReason),
     SystemError(SystemError),
-    /// Like `SystemError` (same `code`/`path`/`errno` properties) but the
-    /// instance is a JS `TypeError`. The fetch spec maps every "network
-    /// error" to TypeError; use this over `TypeError` when callers also
-    /// rely on the error's machine-readable `code`.
+    /// [`SystemError`](Self::SystemError) surfaced as a JS `TypeError`; use over [`TypeError`](Self::TypeError) when callers also rely on the error's `code`.
     SystemTypeError(SystemError),
     Message(BunString),
     /// Surfaces as a JS `TypeError`. The fetch spec maps every "network

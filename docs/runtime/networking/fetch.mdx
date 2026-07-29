@@ -288,7 +288,7 @@ Use the `maxRedirects` option to raise or lower the limit. It accepts any intege
 await fetch("http://example.com/", { maxRedirects: 5 });
 ```
 
-The standard `redirect` option works as the specification describes. `"manual"` returns the redirect response itself, and `"error"` rejects with a `TypeError` whose `code` is `"UnexpectedRedirect"`.
+The standard `redirect` option is also available. `"error"` rejects with a `TypeError` whose `code` is `"UnexpectedRedirect"`. `"manual"` resolves with the raw redirect response, so its status and `Location` header are readable; browsers instead return an opaque-redirect filtered response whose status is `0` and whose headers are hidden, and Bun (like Node.js) does not apply that filtering.
 
 ```ts
 const response = await fetch("http://example.com/", { redirect: "manual" });

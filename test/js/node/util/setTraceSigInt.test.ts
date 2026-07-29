@@ -16,6 +16,9 @@ async function readUntil(reader: ReadableStreamDefaultReader<Uint8Array>, needle
     if (done) break;
     buf += decoder.decode(value);
   }
+  // Surface a startup crash at the readiness wait instead of a confusing
+  // downstream exit-code assertion.
+  expect(buf).toContain(needle);
   return buf;
 }
 

@@ -1327,8 +1327,14 @@ pub(crate) fn collect_compile_assets(
             ));
         }
 
-        let n = asset_trimmed.len().min(zbuf.len() - 1);
-        zbuf[..n].copy_from_slice(&asset_trimmed[..n]);
+        if asset_trimmed.len() >= zbuf.len() || strings::index_of_char(asset_trimmed, 0).is_some() {
+            return fail(
+                bun_sys::Error::from_code(bun_sys::E::ENAMETOOLONG, bun_sys::Tag::open)
+                    .with_path(asset),
+            );
+        }
+        let n = asset_trimmed.len();
+        zbuf[..n].copy_from_slice(asset_trimmed);
         zbuf[n] = 0;
         let asset_z = bun_core::ZStr::from_buf(&zbuf[..], n);
 

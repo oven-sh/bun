@@ -278,7 +278,9 @@ describe.concurrent("compile --asset and /$bunfs/ directory semantics", () => {
         },
       });
       expect(result.success).toBe(false);
-      expect(result.logs.map(String).join("\n")).toContain("collides");
+      const logs = result.logs.map(String).join("\n");
+      expect(logs).toContain("collides");
+      expect(logs).toContain("data.json");
     },
     TIMEOUT,
   );

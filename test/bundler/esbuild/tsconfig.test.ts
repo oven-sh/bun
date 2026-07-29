@@ -7,8 +7,7 @@ import { itBundled } from "../expectBundled";
 // For debug, all files are written to $TEMP/bun-bundle-tests/tsconfig
 
 describe("bundler", () => {
-  itBundled("tsconfig/Paths", ({ root }) => ({
-    todo: true,
+  itBundled("tsconfig/Paths", {
     files: {
       "/entry.ts": /* ts */ `
         import baseurl_dot from './baseurl_dot'
@@ -52,8 +51,8 @@ describe("bundler", () => {
               "test5/*": ["./test5-first/*", "./test5-second/*"],
               "/virtual-in/test": ["./actual/test"],
               "/virtual-in-star/*": ["./actual/*"],
-              "/virtual-out/test": ["${root}/baseurl_dot/actual/test"],
-              "/virtual-out-star/*": ["${root}/baseurl_dot/actual/*"],
+              "/virtual-out/test": ["{{root}}/baseurl_dot/actual/test"],
+              "/virtual-out-star/*": ["{{root}}/baseurl_dot/actual/*"],
             }
           }
         }
@@ -106,8 +105,8 @@ describe("bundler", () => {
               "test5/*": ["./test5-first/*", "./test5-second/*"],
               "/virtual-in/test": ["./actual/test"],
               "/virtual-in-star/*": ["./actual/*"],
-              "/virtual-out/test": ["${root}/baseurl_nested/nested/actual/test"],
-              "/virtual-out-star/*": ["${root}/baseurl_nested/nested/actual/*"],
+              "/virtual-out/test": ["{{root}}/baseurl_nested/nested/actual/test"],
+              "/virtual-out-star/*": ["{{root}}/baseurl_nested/nested/actual/*"],
             }
           }
         }
@@ -128,9 +127,8 @@ describe("bundler", () => {
       stdout:
         '{"baseurl_dot":{"test0":"test0-success","test1":"test1-success","test2":"test2-success","test3":"test3-success","test4":"test4-success","test5":"test5-success","absoluteIn":"absolute-success","absoluteInStar":"absolute-success","absoluteOut":"absolute-success","absoluteOutStar":"absolute-success"},"baseurl_nested":{"test0":"test0-success","test1":"test1-success","test2":"test2-success","test3":"test3-success","test4":"test4-success","test5":"test5-success","absoluteIn":"absolute-success","absoluteInStar":"absolute-success","absoluteOut":"absolute-success","absoluteOutStar":"absolute-success"}}',
     },
-  }));
+  });
   itBundled("tsconfig/PathsNoBaseURL", {
-    todo: true,
     files: {
       "/entry.ts": /* ts */ `
         import simple from './simple'
@@ -228,6 +226,34 @@ describe("bundler", () => {
     run: {
       stdout:
         '{"simple":{"test0":"test0-success","test1":"test1-success","test2":"test2-success","test3":"test3-success","test4":"test4-success","test5":"test5-success","absolute":"absolute-success"},"extended":{"test0":"test0-success","test1":"test1-success","test2":"test2-success","test3":"test3-success","test4":"test4-success","test5":"test5-success","absolute":"absolute-success"}}',
+    },
+  });
+  itBundled("tsconfig/PathsWildcardKeySuffix", {
+    // https://github.com/oven-sh/bun/issues/26193
+    // The '*'-not-on-a-segment-boundary shape lives in tsconfig/Paths above;
+    // this covers the two key-suffix shapes that test lacks.
+    files: {
+      "/entry.ts": /* ts */ `
+        import a from '@src/lib.js'
+        import b from 'tie/xend'
+        console.log(JSON.stringify([a, b]))
+      `,
+      "/tsconfig.json": /* json */ `
+        {
+          "compilerOptions": {
+            "baseUrl": ".",
+            "paths": {
+              "@src/*.js": ["./src/*.ts"],
+              "tie/*end": ["./tie-long/*"]
+            }
+          }
+        }
+      `,
+      "/src/lib.ts": `export default 'src-lib'`,
+      "/tie-long/x.ts": `export default 'tie-long-x'`,
+    },
+    run: {
+      stdout: '["src-lib","tie-long-x"]',
     },
   });
   // TODO: warnings shouldnt stop build?

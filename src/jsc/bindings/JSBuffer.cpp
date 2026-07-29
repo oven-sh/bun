@@ -91,6 +91,7 @@ extern "C" size_t highway_memrmem(const uint8_t* haystack, size_t haystack_len, 
 extern "C" size_t highway_memmem16(const uint16_t* haystack, size_t haystack_len, const uint16_t* needle, size_t needle_len);
 extern "C" size_t highway_memrmem16(const uint16_t* haystack, size_t haystack_len, const uint16_t* needle, size_t needle_len);
 extern "C" size_t highway_index_of_char(const uint8_t* haystack, size_t haystack_len, uint8_t needle);
+static constexpr size_t kHighwayNotFound = ~static_cast<size_t>(0);
 
 // export fn Bun__inspect_singleline(globalThis: *JSGlobalObject, value: JSValue) bun.String
 extern "C" BunString Bun__inspect_singleline(JSC::JSGlobalObject* globalObject, JSC::JSValue value);
@@ -1581,7 +1582,7 @@ static int64_t indexOf16(const uint8_t* thisPtr, int64_t thisLength, const uint8
     const uint16_t* haystack = reinterpret_cast<const uint16_t*>(thisPtr);
     size_t result = highway_memmem16(haystack + byteOffset, static_cast<size_t>(thisLength - byteOffset),
         reinterpret_cast<const uint16_t*>(valuePtr), static_cast<size_t>(valueLength));
-    if (result == ~static_cast<size_t>(0)) return -1;
+    if (result == kHighwayNotFound) return -1;
     return (byteOffset + static_cast<int64_t>(result)) * 2;
 }
 
@@ -1596,7 +1597,7 @@ static int64_t lastIndexOf16(const uint8_t* thisPtr, int64_t thisLength, const u
     if (haystackLen < valueLength) return -1;
     size_t result = highway_memrmem16(reinterpret_cast<const uint16_t*>(thisPtr), static_cast<size_t>(haystackLen),
         reinterpret_cast<const uint16_t*>(valuePtr), static_cast<size_t>(valueLength));
-    if (result == ~static_cast<size_t>(0)) return -1;
+    if (result == kHighwayNotFound) return -1;
     return static_cast<int64_t>(result) * 2;
 }
 
@@ -1610,7 +1611,7 @@ static int64_t lastIndexOf(const uint8_t* thisPtr, int64_t thisLength, const uin
     }
     size_t result = highway_memrmem(thisPtr, static_cast<size_t>(haystackLen),
         valuePtr, static_cast<size_t>(valueLength));
-    if (result == ~static_cast<size_t>(0)) return -1;
+    if (result == kHighwayNotFound) return -1;
     return static_cast<int64_t>(result);
 }
 

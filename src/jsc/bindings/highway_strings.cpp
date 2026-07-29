@@ -157,11 +157,20 @@ size_t MemMemTwoWayFallback(const Char* haystack, size_t haystack_len,
     const Char* needle, size_t needle_len, size_t start_index, bool is_forward);
 
 // Two anchor offsets for the SIMD substring filter: the needle's two
-// least-frequent bytes (low byte for uint16_t), first tie earliest / second
-// tie latest, so any distinguishing byte anywhere in the needle is picked.
+// least-frequent bytes (ranked by low byte for uint16_t; the filter compares
+// full lanes), first tie earliest / second tie latest, so any distinguishing
+// byte anywhere in the needle is picked.
 template<typename Char>
 static inline void MemMemPickAnchors(const Char* needle, size_t needle_len, size_t* a, size_t* b)
 {
+    // Short needles: first/last is as selective and skips the 1 KiB zero-init;
+    // the false-positive budget still bounds total work.
+    if (needle_len <= 16) {
+        *a = 0;
+        *b = needle_len - 1;
+        return;
+    }
+
     auto bucket = [](Char c) -> uint8_t { return static_cast<uint8_t>(c); };
 
     uint32_t histogram[256] = {};

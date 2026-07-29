@@ -153,9 +153,6 @@ describe("Buffer#indexOf / lastIndexOf adversarial worst case", () => {
 });
 
 describe("Buffer#indexOf / lastIndexOf correctness", () => {
-  // Deterministic pseudo-random cross-check against a naive implementation,
-  // covering the SIMD anchor filter, the Boyer-Moore fallback, short needles
-  // (< kBMMinPatternLength), utf16le, and byteOffset handling.
   test("randomized cross-check vs naive", () => {
     let seed = 0x1234_5678;
     const rand = () => {
@@ -210,12 +207,19 @@ describe("Buffer#indexOf / lastIndexOf correctness", () => {
   });
 
   test("utf16le indexOf / lastIndexOf still correct", () => {
-    const hay = Buffer.from("a".repeat(1000) + "needle" + "a".repeat(1000), "utf16le");
+    const hay = Buffer.from(Buffer.alloc(1000, "a").toString() + "needle" + Buffer.alloc(1000, "a").toString(), "utf16le");
+    const miss = Buffer.alloc(20, "x").toString();
+    // indexOfBuffer → indexOf16 / lastIndexOf16
     const ndl = Buffer.from("needle", "utf16le");
     expect(hay.indexOf(ndl, 0, "utf16le")).toBe(1000 * 2);
     expect(hay.lastIndexOf(ndl, hay.length, "utf16le")).toBe(1000 * 2);
-    expect(hay.indexOf(Buffer.from("x".repeat(20), "utf16le"), 0, "utf16le")).toBe(-1);
-    expect(hay.lastIndexOf(Buffer.from("x".repeat(20), "utf16le"), hay.length, "utf16le")).toBe(-1);
+    expect(hay.indexOf(Buffer.from(miss, "utf16le"), 0, "utf16le")).toBe(-1);
+    expect(hay.lastIndexOf(Buffer.from(miss, "utf16le"), hay.length, "utf16le")).toBe(-1);
+    // indexOfString → indexOf16 / lastIndexOf16
+    expect(hay.indexOf("needle", 0, "utf16le")).toBe(1000 * 2);
+    expect(hay.lastIndexOf("needle", hay.length, "utf16le")).toBe(1000 * 2);
+    expect(hay.indexOf(miss, 0, "utf16le")).toBe(-1);
+    expect(hay.lastIndexOf(miss, hay.length, "utf16le")).toBe(-1);
   });
 
   test("adversarial needle that is present", () => {

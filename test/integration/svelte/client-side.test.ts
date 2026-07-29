@@ -20,26 +20,30 @@ beforeAll(async () => {
 });
 
 describe("generating client-side code", () => {
-  test("Bundling Svelte components", async () => {
-    const outdir = tmpdirSync("bun-svelte-client-side");
-    const { SveltePlugin } = await import("bun-plugin-svelte");
-    try {
-      const result = await Bun.build({
-        entrypoints: [fixturePath("app/index.ts")],
-        outdir,
-        sourcemap: "inline",
-        minify: true,
-        target: "browser",
-        plugins: [SveltePlugin({ development: true })],
-      });
-      expect(result.success).toBeTrue();
+  test(
+    "Bundling Svelte components",
+    async () => {
+      const outdir = tmpdirSync("bun-svelte-client-side");
+      const { SveltePlugin } = await import("bun-plugin-svelte");
+      try {
+        const result = await Bun.build({
+          entrypoints: [fixturePath("app/index.ts")],
+          outdir,
+          sourcemap: "inline",
+          minify: true,
+          target: "browser",
+          plugins: [SveltePlugin({ development: true })],
+        });
+        expect(result.success).toBeTrue();
 
-      const entrypoint = result.outputs.find(o => o.kind === "entry-point");
-      expect(entrypoint).toBeDefined();
-    } finally {
-      await fs.rm(outdir, { force: true, recursive: true });
-    }
-  }, svelteCompileTimeout);
+        const entrypoint = result.outputs.find(o => o.kind === "entry-point");
+        expect(entrypoint).toBeDefined();
+      } finally {
+        await fs.rm(outdir, { force: true, recursive: true });
+      }
+    },
+    svelteCompileTimeout,
+  );
 
   describe("Using Svelte components in Bun's dev server", () => {
     let server: Subprocess<"ignore", "pipe", "inherit">;
@@ -76,12 +80,16 @@ describe("generating client-side code", () => {
       server?.kill();
     });
 
-    it("serves the app", async () => {
-      const response = await fetch(baseUrl);
-      const body = await response.text();
-      expect(body).toContain("<title>Svelte App</title>");
-      expect(response.status).toBe(200);
-      expect(response.headers.get("content-type")).toMatch("text/html");
-    }, svelteCompileTimeout);
+    it(
+      "serves the app",
+      async () => {
+        const response = await fetch(baseUrl);
+        const body = await response.text();
+        expect(body).toContain("<title>Svelte App</title>");
+        expect(response.status).toBe(200);
+        expect(response.headers.get("content-type")).toMatch("text/html");
+      },
+      svelteCompileTimeout,
+    );
   });
 });

@@ -1257,15 +1257,19 @@ fn collect_compile_assets(
 
     let mut seen: StringArrayHashMap<()> = StringArrayHashMap::new();
     for f in out.iter() {
-        if f.output_kind.is_file_in_standalone_mode() {
-            let key = strings::remove_leading_dot_slash(&f.dest_path);
-            #[cfg(windows)]
-            let key: Vec<u8> = key
-                .iter()
-                .map(|&b| if b == b'\\' { b'/' } else { b })
-                .collect();
-            let _ = seen.put(&key[..], ());
+        if !f.output_kind.is_file_in_standalone_mode() {
+            continue;
         }
+        let key = strings::remove_leading_dot_slash(&f.dest_path);
+        #[cfg(windows)]
+        let _ = seen.put(
+            &key.iter()
+                .map(|&b| if b == b'\\' { b'/' } else { b })
+                .collect::<Vec<u8>>(),
+            (),
+        );
+        #[cfg(not(windows))]
+        let _ = seen.put(key, ());
     }
     let mut push =
         |out: &mut Vec<options::OutputFile>, asset: &[u8], dest: Vec<u8>, bytes: Vec<u8>| {

@@ -350,4 +350,57 @@ describe("BunFile exists()/size/lastModified reflect the current filesystem stat
       clone: "01234",
     });
   });
+
+  test("a file replaced by rename reads the new inode's full contents", async () => {
+    using dir = tempDir("bunfile-stat-rename", {});
+    const p = join(String(dir), "f");
+    const tmp = join(String(dir), "f.tmp");
+    fs.writeFileSync(p, "short");
+    const f = Bun.file(p);
+    void f.size;
+    fs.writeFileSync(tmp, "much longer replacement content");
+    fs.renameSync(tmp, p);
+    expect({ exists: await f.exists(), size: f.size, text: await f.text() }).toEqual({
+      exists: true,
+      size: 31,
+      text: "much longer replacement content",
+    });
+  });
+
+  // 2**52 - 1: the internal "not yet statted" sentinel that must never reach JS.
+  const LAST_MODIFIED_SENTINEL = 4503599627370495;
+
+  test("lastModified is 0 for a path that does not exist", async () => {
+    using dir = tempDir("lastmodified-missing", {});
+    const missing = Bun.file(join(String(dir), "does-not-exist.txt"));
+    expect({ exists: await missing.exists(), lastModified: missing.lastModified }).toEqual({
+      exists: false,
+      lastModified: 0,
+    });
+    expect(missing.lastModified).not.toBe(LAST_MODIFIED_SENTINEL);
+  });
+
+  test("lastModified: a missing file is not newer than a real one", async () => {
+    using dir = tempDir("lastmodified-compare", { "real.txt": "x" });
+    const real = Bun.file(join(String(dir), "real.txt"));
+    const missing = Bun.file(join(String(dir), "nope.txt"));
+    expect(real.lastModified).toBeGreaterThan(0);
+    expect(real.lastModified).toBeLessThan(LAST_MODIFIED_SENTINEL);
+    expect(missing.lastModified).toBe(0);
+    expect(missing.lastModified < real.lastModified).toBe(true);
+  });
+
+  test("lastModified is 0 after the file is deleted", async () => {
+    using dir = tempDir("lastmodified-deleted", { "gone.txt": "x" });
+    const path = join(String(dir), "gone.txt");
+    const f = Bun.file(path);
+    expect(f.lastModified).toBeGreaterThan(0);
+    fs.unlinkSync(path);
+    expect(f.lastModified).toBe(0);
+  });
+
+  test("in-memory Blob.lastModified is 0, not the internal sentinel", () => {
+    expect(new Blob(["x"]).lastModified).toBe(0);
+    expect(new Blob().lastModified).toBe(0);
+  });
 });

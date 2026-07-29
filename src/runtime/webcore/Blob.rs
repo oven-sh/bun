@@ -2155,9 +2155,12 @@ impl BlobExt for Blob {
         if let Some(store) = self.store.get() {
             if matches!(store.data, store::Data::File(_)) {
                 resolve_file_stat(store);
-                return JSValue::js_number(JSValue::purify_nan(
-                    store.data_mut().as_file().last_modified as f64,
-                ));
+                let last_modified = store.data_mut().as_file().last_modified;
+                // stat failed (missing file): expose 0, not the internal sentinel.
+                if last_modified == jsc::INIT_TIMESTAMP {
+                    return JSValue::js_number(0.0);
+                }
+                return JSValue::js_number(JSValue::purify_nan(last_modified as f64));
             }
         }
 
@@ -2165,7 +2168,7 @@ impl BlobExt for Blob {
             return JSValue::js_number(JSValue::purify_nan(self.last_modified.get()));
         }
 
-        JSValue::js_number(jsc::INIT_TIMESTAMP as f64)
+        JSValue::js_number(0.0)
     }
 
     fn get_size_for_bindings(&self) -> u64 {

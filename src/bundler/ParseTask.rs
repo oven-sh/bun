@@ -615,6 +615,13 @@ pub mod parse_worker {
 
     fn guess_mime_type_for_data_url(path: &[u8], contents: &[u8]) -> Vec<u8> {
         let ext = strings::trim_leading_char(bun_paths::extension(path), b'.');
+        let ext_lower;
+        let ext = if ext.iter().any(u8::is_ascii_uppercase) {
+            ext_lower = ext.to_ascii_lowercase();
+            ext_lower.as_slice()
+        } else {
+            ext
+        };
         if let Some(mime) = bun_http_types::MimeType::by_extension_no_default(ext) {
             let value = &*mime.value;
             if strings::has_prefix_comptime(value, b"text/")

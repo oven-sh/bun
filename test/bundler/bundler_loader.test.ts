@@ -87,6 +87,17 @@ describe("bundler", async () => {
         },
         run: { stdout: "data:text/plain;charset=utf-8,ABC" },
       });
+      itBundled("bun/loader-dataurl-uppercase-extension", {
+        target,
+        files: {
+          "/entry.ts": /* js */ `
+        import logo from './LOGO.PNG' with {type: "dataurl"};
+        console.write(logo);
+      `,
+          "/LOGO.PNG": Buffer.from("89504e470d0a1a0a", "hex"),
+        },
+        run: { stdout: "data:image/png;base64,iVBORw0KGgo=" },
+      });
     });
   }
 

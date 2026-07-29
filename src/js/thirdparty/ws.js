@@ -10,7 +10,6 @@ const ReadyState_CLOSED = 3;
 
 const EventEmitter = require("node:events");
 const http = require("node:http");
-const onceObject = { once: true };
 const kBunInternals = Symbol.for("::bunternal::");
 const readyStates = ["CONNECTING", "OPEN", "CLOSING", "CLOSED"];
 
@@ -281,95 +280,78 @@ class BunWebSocket extends EventEmitter {
     return ws;
   }
 
-  #onOrOnce(event, listener, once) {
+  #ensureForwarder(event) {
     if (event === "unexpected-response" || event === "upgrade" || event === "redirect") {
       emitWarning(event, "ws.WebSocket '" + event + "' event is not implemented in bun");
     }
     const mask = 1 << eventIds[event];
-    const hasPersistentListener = mask && (this.#eventId & mask) === mask;
-    // Add a native listener if:
-    // 1. For `on()`: no native listener exists yet (will be persistent)
-    // 2. For `once()`: no persistent `on()` listener exists (otherwise the persistent one forwards events)
-    //    If only `once()` listeners exist, each needs its own native listener since they auto-remove
-    if (mask && !hasPersistentListener) {
-      // Only set the eventId bit for persistent `on` listeners, not for `once`
-      if (!once) {
-        this.#eventId |= mask;
-      }
+    if (mask && (this.#eventId & mask) === 0) {
+      this.#eventId |= mask;
       if (event === "open") {
-        this.#ws.addEventListener(
-          "open",
-          () => {
-            this.emit("open");
-          },
-          once,
-        );
+        this.#ws.addEventListener("open", () => {
+          this.emit("open");
+        });
       } else if (event === "close") {
-        this.#ws.addEventListener(
-          "close",
-          ({ code, reason, wasClean }) => {
-            this.emit("close", code, reason, wasClean);
-          },
-          once,
-        );
+        this.#ws.addEventListener("close", ({ code, reason, wasClean }) => {
+          this.emit("close", code, reason, wasClean);
+        });
       } else if (event === "message") {
-        this.#ws.addEventListener(
-          "message",
-          ({ data }) => {
-            const isBinary = typeof data !== "string";
-            if (isBinary) {
-              this.emit("message", this.#fragments ? [data] : data, isBinary);
-            } else {
-              let encoded = encoder.encode(data);
-              if (this.#binaryType !== "arraybuffer") {
-                encoded = Buffer.from(encoded.buffer, encoded.byteOffset, encoded.byteLength);
-              }
-              this.emit("message", this.#fragments ? [encoded] : encoded, isBinary);
+        this.#ws.addEventListener("message", ({ data }) => {
+          const isBinary = typeof data !== "string";
+          if (isBinary) {
+            this.emit("message", this.#fragments ? [data] : data, isBinary);
+          } else {
+            let encoded = encoder.encode(data);
+            if (this.#binaryType !== "arraybuffer") {
+              encoded = Buffer.from(encoded.buffer, encoded.byteOffset, encoded.byteLength);
             }
-          },
-          once,
-        );
+            this.emit("message", this.#fragments ? [encoded] : encoded, isBinary);
+          }
+        });
       } else if (event === "error") {
-        this.#ws.addEventListener(
-          "error",
-          err => {
-            this.emit("error", err);
-          },
-          once,
-        );
+        this.#ws.addEventListener("error", err => {
+          this.emit("error", err);
+        });
       } else if (event === "ping") {
-        this.#ws.addEventListener(
-          "ping",
-          ({ data }) => {
-            this.emit("ping", data);
-          },
-          once,
-        );
+        this.#ws.addEventListener("ping", ({ data }) => {
+          this.emit("ping", data);
+        });
       } else if (event === "pong") {
-        this.#ws.addEventListener(
-          "pong",
-          ({ data }) => {
-            this.emit("pong", data);
-          },
-          once,
-        );
+        this.#ws.addEventListener("pong", ({ data }) => {
+          this.emit("pong", data);
+        });
       }
     }
-    return once ? super.once(event, listener) : super.on(event, listener);
   }
 
   on(event, listener) {
-    return this.#onOrOnce(event, listener, undefined);
+    this.#ensureForwarder(event);
+    return super.on(event, listener);
   }
 
-  once(event, listener) {
-    return this.#onOrOnce(event, listener, onceObject);
+  addListener(event, listener) {
+    this.#ensureForwarder(event);
+    return super.on(event, listener);
   }
+
+  prependListener(event, listener) {
+    this.#ensureForwarder(event);
+    return super.prependListener(event, listener);
+  }
+
+  // once() / prependOnceListener() are inherited: EventEmitter.prototype.once
+  // calls this.on() and prependOnceListener calls this.prependListener(), both
+  // of which reach #ensureForwarder above.
 
   send(data, opts, cb) {
     if ($isCallable(opts)) {
       cb = opts;
       opts = undefined;
+    }
+
+    const state = this.#ws.readyState;
+    if (state !== ReadyState_OPEN && state !== ReadyState_CONNECTING) {
+      return sendAfterClose(state, cb);
     }
 
     try {
@@ -882,6 +864,13 @@ class BunWebSocketMocked extends EventEmitter {
     this.#state = ReadyState_CLOSED;
     this.#ws = null;
 
+    const queued = this.#enquedMessages;
+    if (queued.length) {
+      this.#enquedMessages = [];
+      this.#bufferedAmount = 0;
+      for (const [, , cb] of queued) sendAfterClose(ReadyState_CLOSED, cb);
+    }
+
     this.emit("close", code, reason);
   }
 
@@ -977,6 +966,8 @@ class BunWebSocketMocked extends EventEmitter {
       // not connected yet
       this.#enquedMessages.push([data, opts?.compress, cb]);
       this.#bufferedAmount += data.length;
+    } else {
+      return sendAfterClose(this.#state, cb);
     }
   }
 
@@ -1566,9 +1557,122 @@ class Receiver {
   }
 }
 
-var createWebSocketStream = _ws => {
-  throw new Error("Not supported yet in Bun");
-};
+function emitClose(stream) {
+  stream.emit("close");
+}
+
+function duplexOnEnd() {
+  if (!this.destroyed && this._writableState.finished) {
+    this.destroy();
+  }
+}
+
+function duplexOnError(err) {
+  this.removeListener("error", duplexOnError);
+  this.destroy();
+  if (this.listenerCount("error") === 0) {
+    this.emit("error", err);
+  }
+}
+
+let Duplex;
+
+/**
+ * Wraps a `WebSocket` in a duplex stream.
+ *
+ * Ported from https://github.com/websockets/ws/blob/master/lib/stream.js with
+ * adaptations for Bun's `ws` shim: the shim has no `_socket` and `pause()` /
+ * `resume()` are no-ops, so backpressure from the readable side is absorbed by
+ * the Duplex internal buffer instead of pausing the underlying socket.
+ *
+ * @param {WebSocket} ws The `WebSocket` to wrap
+ * @param {Object} [options] The options for the `Duplex` constructor
+ * @return {Duplex} The duplex stream
+ * @public
+ */
+function createWebSocketStream(ws, options) {
+  Duplex ??= require("node:stream").Duplex;
+  let terminateOnDestroy = true;
+
+  const duplex = new Duplex({
+    ...options,
+    autoDestroy: false,
+    emitClose: false,
+    objectMode: false,
+    writableObjectMode: false,
+  });
+
+  ws.on("message", function message(msg, isBinary) {
+    const data = !isBinary && duplex._readableState.objectMode ? msg.toString() : msg;
+
+    duplex.push(data);
+  });
+
+  ws.once("error", function error(err) {
+    if (duplex.destroyed) return;
+
+    terminateOnDestroy = false;
+    duplex.destroy(err);
+  });
+
+  ws.once("close", function close() {
+    if (duplex.destroyed) return;
+
+    duplex.push(null);
+  });
+
+  duplex._destroy = function (err, callback) {
+    if (ws.readyState === ws.CLOSED) {
+      callback(err);
+      process.nextTick(emitClose, duplex);
+      return;
+    }
+
+    let called = false;
+
+    ws.once("error", function error(err) {
+      called = true;
+      callback(err);
+    });
+
+    ws.once("close", function close() {
+      if (!called) callback(err);
+      process.nextTick(emitClose, duplex);
+    });
+
+    if (terminateOnDestroy) ws.terminate();
+  };
+
+  duplex._final = function (callback) {
+    if (ws.readyState === ws.CONNECTING) {
+      ws.once("open", function open() {
+        duplex._final(callback);
+      });
+      return;
+    }
+
+    callback();
+    if (ws.readyState === ws.OPEN) ws.close();
+    if (duplex._readableState.endEmitted) duplex.destroy();
+  };
+
+  duplex._read = function () {};
+
+  duplex._write = function (chunk, encoding, callback) {
+    if (ws.readyState === ws.CONNECTING) {
+      ws.once("open", function open() {
+        duplex._write(chunk, encoding, callback);
+      });
+      return;
+    }
+
+    ws.send(chunk, callback);
+  };
+
+  duplex.on("end", duplexOnEnd);
+  duplex.on("error", duplexOnError);
+  return duplex;
+}
 
 export default Object.assign(BunWebSocket, {
   createWebSocketStream,

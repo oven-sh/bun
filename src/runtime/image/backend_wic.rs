@@ -92,7 +92,6 @@ pub fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, BackendE
     }
 
     let stream = f.create_stream().ok_or(BackendUnavailable)?;
-    scopeguard::defer! { release(stream.as_ptr()); }
     if stream.initialize_from_memory(
         bytes.as_ptr(),
         u32::try_from(bytes.len()).expect("int cast"),
@@ -103,12 +102,10 @@ pub fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, BackendE
 
     // WICDecodeMetadataCacheOnDemand = 0. vendor GUID null = let WIC pick.
     let dec = f
-        .create_decoder_from_stream(stream.cast::<IUnknown>().as_ptr(), 0)
+        .create_decoder_from_stream(stream.as_ptr().cast(), 0)
         .ok_or(DecodeFailed)?;
-    scopeguard::defer! { release(dec.as_ptr()); }
 
     let frame = dec.get_frame(0).ok_or(DecodeFailed)?;
-    scopeguard::defer! { release(frame.as_ptr()); }
 
     let mut w: u32 = 0;
     let mut h: u32 = 0;
@@ -131,7 +128,6 @@ pub fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, BackendE
         return Err(DecodeFailed);
     }
     let conv = ComPtr::new(conv).ok_or(DecodeFailed)?;
-    scopeguard::defer! { release(conv.as_ptr()); }
 
     // Compute stride/size in u64 first: with `maxPixels` raised past ~1.07B,
     // `w * 4` can wrap u32 (0x4000_0001×4 → 4); the checked cast below is a
@@ -190,23 +186,20 @@ pub(crate) fn encode(
     if unsafe { CreateStreamOnHGlobal(ptr::null_mut(), 1, &mut stream) } < 0 {
         return Err(BackendUnavailable);
     }
-    let stream = ComPtr::new(stream).ok_or(BackendUnavailable)?;
-    scopeguard::defer! { release(stream.as_ptr()); }
+    let stream = ComPtr::new(stream.cast::<IStream>()).ok_or(BackendUnavailable)?;
 
     // WINCODEC_ERR_COMPONENTNOTFOUND when the HEIF/AV1 store extension isn't
     // installed → BackendUnavailable so codecs.encode() falls through to
     // UnsupportedOnPlatform instead of a generic "encode failed".
     let guid = container_guid(opts.format).ok_or(BackendUnavailable)?;
     let enc = f.create_encoder(guid).ok_or(BackendUnavailable)?;
-    scopeguard::defer! { release(enc.as_ptr()); }
     // WICBitmapEncoderNoCache = 2.
-    if enc.initialize(stream.as_ptr(), 2) < 0 {
+    if enc.initialize(stream.as_ptr().cast(), 2) < 0 {
         return Err(EncodeFailed);
     }
 
     let (frame, props) = enc.create_new_frame().ok_or(EncodeFailed)?;
-    scopeguard::defer! { release(frame.as_ptr()); }
-    scopeguard::defer! { release(props); }
+    let props_ptr = props.as_ref().map_or(ptr::null_mut(), ComPtr::as_ptr);
 
     // Thread `quality` and the HEIF sub-codec through the IPropertyBag2 the
     // encoder hands back. Both go via the C++ shim so the SDK's own VARIANT/
@@ -219,7 +212,7 @@ pub(crate) fn encode(
     // SAFETY: props may be null (shim must tolerate); name is static NUL-terminated UTF-16.
     let _ = unsafe {
         bun_wic_propbag_write_f32(
-            props as *mut c_void,
+            props_ptr.cast(),
             bun_core::wstr!("ImageQuality").as_ptr(),
             (opts.quality as f32) / 100.0,
         )
@@ -232,7 +225,7 @@ pub(crate) fn encode(
     // SAFETY: same as above.
     if unsafe {
         bun_wic_propbag_write_u8(
-            props as *mut c_void,
+            props_ptr.cast(),
             bun_core::wstr!("HeifCompressionMethod").as_ptr(),
             method,
         )
@@ -240,7 +233,7 @@ pub(crate) fn encode(
     {
         return Err(BackendUnavailable);
     }
-    if frame.initialize(props) < 0 {
+    if frame.initialize(props_ptr) < 0 {
         return Err(EncodeFailed);
     }
     if frame.set_size(width, height) < 0 {
@@ -278,7 +271,6 @@ pub(crate) fn encode(
                 rgba.as_ptr(),
             )
             .ok_or(EncodeFailed)?;
-        scopeguard::defer! { release(src.as_ptr()); }
         let convert_fn = wicConvertBitmapSource
             .get()
             .copied()
@@ -289,8 +281,7 @@ pub(crate) fn encode(
             return Err(EncodeFailed);
         }
         let conv = ComPtr::new(conv).ok_or(EncodeFailed)?;
-        scopeguard::defer! { release(conv.as_ptr()); }
-        if frame.write_source(conv, ptr::null()) < 0 {
+        if frame.write_source(&conv, ptr::null()) < 0 {
             return Err(EncodeFailed);
         }
     }
@@ -308,13 +299,13 @@ pub(crate) fn encode(
     // position IS the byte count. (MSDN GetHGlobalFromStream: "use IStream::Stat
     // to obtain the actual size".)
     let mut pos: u64 = 0;
-    if stream.cast::<IStream>().seek(0, STREAM_SEEK_CUR, &mut pos) < 0 {
+    if stream.seek(0, STREAM_SEEK_CUR, &mut pos) < 0 {
         return Err(EncodeFailed);
     }
 
     let mut hg: *mut c_void = ptr::null_mut();
     // SAFETY: stream is non-null.
-    if unsafe { GetHGlobalFromStream(stream.as_ptr(), &mut hg) } < 0 || hg.is_null() {
+    if unsafe { GetHGlobalFromStream(stream.as_ptr().cast(), &mut hg) } < 0 || hg.is_null() {
         return Err(EncodeFailed);
     }
     // SAFETY: hg is non-null.
@@ -413,24 +404,14 @@ fn release<T>(p: *mut T) {
     }
 }
 
-/// Non-null COM interface pointer. Exists solely to move the per-call-site
-/// `unsafe { ((*(*p).vt).Method)(p, ..) }` vtable dance into one place per
-/// method, so `decode`/`encode` read as straight-line safe code.
-///
-/// Not an owning smart pointer — release is still explicit via
-/// `scopeguard::defer! { release(p.as_ptr()) }` at the call site. `Copy` so the defer-guard
-/// closure captures a copy and the handle stays usable afterwards.
+/// Owning non-null COM interface pointer; `Drop` calls `Release`.
 #[repr(transparent)]
 struct ComPtr<T>(ptr::NonNull<T>);
 
-// Hand-rolled instead of `#[derive]` because the derive adds an implicit
-// `T: Copy` bound, and the COM interface structs (`IWICStream`, …) are not
-// `Copy`. `NonNull<T>` is always `Copy` so the unconstrained impl is sound.
-impl<T> Copy for ComPtr<T> {}
-impl<T> Clone for ComPtr<T> {
+impl<T> Drop for ComPtr<T> {
     #[inline]
-    fn clone(&self) -> Self {
-        *self
+    fn drop(&mut self) {
+        release(self.0.as_ptr());
     }
 }
 
@@ -440,15 +421,8 @@ impl<T> ComPtr<T> {
         ptr::NonNull::new(p).map(Self)
     }
     #[inline]
-    fn as_ptr(self) -> *mut T {
+    fn as_ptr(&self) -> *mut T {
         self.0.as_ptr()
-    }
-    /// Reinterpret as a base/derived interface. Every COM interface is
-    /// vtable-prefix-compatible with its parents, so this is the moral
-    /// equivalent of a C++ `static_cast` along the inheritance chain.
-    #[inline]
-    fn cast<U>(self) -> ComPtr<U> {
-        ComPtr(self.0.cast())
     }
 }
 
@@ -462,14 +436,14 @@ impl<T> ComPtr<T> {
 
 impl ComPtr<IWICImagingFactory> {
     #[inline]
-    fn create_stream(self) -> Option<ComPtr<IWICStream>> {
+    fn create_stream(&self) -> Option<ComPtr<IWICStream>> {
         let mut out = ptr::null_mut();
         let hr = unsafe { ((*(*self.as_ptr()).vt).CreateStream)(self.as_ptr(), &mut out) };
         if hr < 0 { None } else { ComPtr::new(out) }
     }
     #[inline]
     fn create_decoder_from_stream(
-        self,
+        &self,
         stream: *mut IUnknown,
         opts: u32,
     ) -> Option<ComPtr<IWICBitmapDecoder>> {
@@ -486,7 +460,7 @@ impl ComPtr<IWICImagingFactory> {
         if hr < 0 { None } else { ComPtr::new(out) }
     }
     #[inline]
-    fn create_encoder(self, container: *const GUID) -> Option<ComPtr<IWICBitmapEncoder>> {
+    fn create_encoder(&self, container: *const GUID) -> Option<ComPtr<IWICBitmapEncoder>> {
         let mut out = ptr::null_mut();
         let hr = unsafe {
             ((*(*self.as_ptr()).vt).CreateEncoder)(self.as_ptr(), container, ptr::null(), &mut out)
@@ -495,7 +469,7 @@ impl ComPtr<IWICImagingFactory> {
     }
     #[inline]
     fn create_bitmap_from_memory(
-        self,
+        &self,
         width: u32,
         height: u32,
         fmt: *const GUID,
@@ -522,14 +496,14 @@ impl ComPtr<IWICImagingFactory> {
 
 impl ComPtr<IWICStream> {
     #[inline]
-    fn initialize_from_memory(self, buf: *const u8, len: u32) -> HRESULT {
+    fn initialize_from_memory(&self, buf: *const u8, len: u32) -> HRESULT {
         unsafe { ((*(*self.as_ptr()).vt).InitializeFromMemory)(self.as_ptr(), buf, len) }
     }
 }
 
 impl ComPtr<IWICBitmapDecoder> {
     #[inline]
-    fn get_frame(self, index: u32) -> Option<ComPtr<IWICBitmapSource>> {
+    fn get_frame(&self, index: u32) -> Option<ComPtr<IWICBitmapSource>> {
         let mut out = ptr::null_mut();
         let hr = unsafe { ((*(*self.as_ptr()).vt).GetFrame)(self.as_ptr(), index, &mut out) };
         if hr < 0 { None } else { ComPtr::new(out) }
@@ -538,22 +512,24 @@ impl ComPtr<IWICBitmapDecoder> {
 
 impl ComPtr<IWICBitmapSource> {
     #[inline]
-    fn get_size(self, w: &mut u32, h: &mut u32) -> HRESULT {
+    fn get_size(&self, w: &mut u32, h: &mut u32) -> HRESULT {
         unsafe { ((*(*self.as_ptr()).vt).GetSize)(self.as_ptr(), w, h) }
     }
     #[inline]
-    fn copy_pixels(self, rc: *const c_void, stride: u32, size: u32, out: *mut u8) -> HRESULT {
+    fn copy_pixels(&self, rc: *const c_void, stride: u32, size: u32, out: *mut u8) -> HRESULT {
         unsafe { ((*(*self.as_ptr()).vt).CopyPixels)(self.as_ptr(), rc, stride, size, out) }
     }
 }
 
 impl ComPtr<IWICBitmapEncoder> {
     #[inline]
-    fn initialize(self, stream: *mut IUnknown, cache: u32) -> HRESULT {
+    fn initialize(&self, stream: *mut IUnknown, cache: u32) -> HRESULT {
         unsafe { ((*(*self.as_ptr()).vt).Initialize)(self.as_ptr(), stream, cache) }
     }
     #[inline]
-    fn create_new_frame(self) -> Option<(ComPtr<IWICBitmapFrameEncode>, *mut IUnknown)> {
+    fn create_new_frame(
+        &self,
+    ) -> Option<(ComPtr<IWICBitmapFrameEncode>, Option<ComPtr<IUnknown>>)> {
         let mut frame = ptr::null_mut();
         let mut props = ptr::null_mut();
         let hr = unsafe {
@@ -562,44 +538,44 @@ impl ComPtr<IWICBitmapEncoder> {
         if hr < 0 {
             return None;
         }
-        ComPtr::new(frame).map(|f| (f, props))
+        ComPtr::new(frame).map(|f| (f, ComPtr::new(props)))
     }
     #[inline]
-    fn commit(self) -> HRESULT {
+    fn commit(&self) -> HRESULT {
         unsafe { ((*(*self.as_ptr()).vt).Commit)(self.as_ptr()) }
     }
 }
 
 impl ComPtr<IWICBitmapFrameEncode> {
     #[inline]
-    fn initialize(self, props: *mut IUnknown) -> HRESULT {
+    fn initialize(&self, props: *mut IUnknown) -> HRESULT {
         unsafe { ((*(*self.as_ptr()).vt).Initialize)(self.as_ptr(), props) }
     }
     #[inline]
-    fn set_size(self, w: u32, h: u32) -> HRESULT {
+    fn set_size(&self, w: u32, h: u32) -> HRESULT {
         unsafe { ((*(*self.as_ptr()).vt).SetSize)(self.as_ptr(), w, h) }
     }
     #[inline]
-    fn set_pixel_format(self, pf: &mut GUID) -> HRESULT {
+    fn set_pixel_format(&self, pf: &mut GUID) -> HRESULT {
         unsafe { ((*(*self.as_ptr()).vt).SetPixelFormat)(self.as_ptr(), pf) }
     }
     #[inline]
-    fn write_pixels(self, lines: u32, stride: u32, size: u32, buf: *const u8) -> HRESULT {
+    fn write_pixels(&self, lines: u32, stride: u32, size: u32, buf: *const u8) -> HRESULT {
         unsafe { ((*(*self.as_ptr()).vt).WritePixels)(self.as_ptr(), lines, stride, size, buf) }
     }
     #[inline]
-    fn write_source(self, src: ComPtr<IWICBitmapSource>, rc: *const c_void) -> HRESULT {
+    fn write_source(&self, src: &ComPtr<IWICBitmapSource>, rc: *const c_void) -> HRESULT {
         unsafe { ((*(*self.as_ptr()).vt).WriteSource)(self.as_ptr(), src.as_ptr(), rc) }
     }
     #[inline]
-    fn commit(self) -> HRESULT {
+    fn commit(&self) -> HRESULT {
         unsafe { ((*(*self.as_ptr()).vt).Commit)(self.as_ptr()) }
     }
 }
 
 impl ComPtr<IStream> {
     #[inline]
-    fn seek(self, dlib_move: i64, origin: u32, new_pos: &mut u64) -> HRESULT {
+    fn seek(&self, dlib_move: i64, origin: u32, new_pos: &mut u64) -> HRESULT {
         unsafe { ((*(*self.as_ptr()).vt).Seek)(self.as_ptr(), dlib_move, origin, new_pos) }
     }
 }
@@ -878,7 +854,8 @@ static FACTORY_PTR: core::sync::atomic::AtomicPtr<IWICImagingFactory> =
     core::sync::atomic::AtomicPtr::new(ptr::null_mut());
 static FACTORY_ONCE: Once = Once::new();
 
-fn factory() -> Result<ComPtr<IWICImagingFactory>, BackendError> {
+/// `ManuallyDrop`: the factory is a process-lifetime singleton and is never `Release`d.
+fn factory() -> Result<core::mem::ManuallyDrop<ComPtr<IWICImagingFactory>>, BackendError> {
     // COM apartment must be entered on the *calling* thread; the factory
     // itself is created once and shared (valid in the MTA).
     if !COM_INITIALISED.get() {
@@ -891,7 +868,9 @@ fn factory() -> Result<ComPtr<IWICImagingFactory>, BackendError> {
     }
     FACTORY_ONCE.call_once(load_factory);
     // FACTORY_PTR is only written inside FACTORY_ONCE; happens-before via call_once.
-    ComPtr::new(FACTORY_PTR.load(core::sync::atomic::Ordering::Relaxed)).ok_or(BackendUnavailable)
+    ComPtr::new(FACTORY_PTR.load(core::sync::atomic::Ordering::Relaxed))
+        .map(core::mem::ManuallyDrop::new)
+        .ok_or(BackendUnavailable)
 }
 
 fn load_factory() {

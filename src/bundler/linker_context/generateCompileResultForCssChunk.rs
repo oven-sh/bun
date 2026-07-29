@@ -54,7 +54,7 @@ pub unsafe fn generate_compile_result_for_css_chunk(task: *mut ThreadPoolLib::Ta
         // SAFETY: `chunk_ptr` is the live `Chunk` from the same prologue; this
         // `&` is scoped so it does not overlap the raw slot write below.
         let chunk_ref: &Chunk = unsafe { &*chunk_ptr };
-        generate_compile_result_for_css_chunk_impl(&mut **worker, c_ref, chunk_ref, part_range.i)
+        generate_compile_result_for_css_chunk_impl(&mut *worker, c_ref, chunk_ref, part_range.i)
     };
 
     // SAFETY: per-task unique `i`; see `Chunk::write_compile_result_slot`.

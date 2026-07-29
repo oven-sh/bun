@@ -28,21 +28,36 @@ pub fn convert_env_to_wtf8() -> Result<(), AllocError> {
         "convertEnvToWTF8 may only be called once"
     );
     ENV_CONVERTED.store(true, core::sync::atomic::Ordering::Relaxed);
-    let env_guard = scopeguard::guard((), |()| {
-        ENV_CONVERTED.store(false, core::sync::atomic::Ordering::Relaxed);
-    });
+    struct ResetConvertedOnDrop;
+    impl Drop for ResetConvertedOnDrop {
+        #[inline]
+        fn drop(&mut self) {
+            ENV_CONVERTED.store(false, core::sync::atomic::Ordering::Relaxed);
+        }
+    }
+    let env_guard = ResetConvertedOnDrop;
 
     let mut num_vars: usize = 0;
     let wtf8_buf: Vec<u8> = 'blk: {
-        let wtf16_buf: *mut u16 = crate::windows::GetEnvironmentStringsW()?;
-        let _free = scopeguard::guard(wtf16_buf, |p| {
-            crate::windows::FreeEnvironmentStringsW(p);
-        });
+        struct EnvStringsW(*mut u16);
+        impl EnvStringsW {
+            #[inline]
+            fn as_ptr(&self) -> *mut u16 {
+                self.0
+            }
+        }
+        impl Drop for EnvStringsW {
+            #[inline]
+            fn drop(&mut self) {
+                crate::windows::FreeEnvironmentStringsW(self.0);
+            }
+        }
+        let wtf16_buf = EnvStringsW(crate::windows::GetEnvironmentStringsW()?);
         let mut len: usize = 0;
         loop {
             // SAFETY: `wtf16_buf` is a contiguous double-NUL-terminated block returned by the OS;
             // every offset we read is inside that block until we observe the terminating empty string.
-            let str_len = unsafe { bun_core::ffi::wcslen(wtf16_buf.add(len)) };
+            let str_len = unsafe { bun_core::ffi::wcslen(wtf16_buf.as_ptr().add(len)) };
             len += str_len + 1; // each string is null-terminated
             if str_len == 0 {
                 break; // array ends with empty null-terminated string
@@ -50,7 +65,7 @@ pub fn convert_env_to_wtf8() -> Result<(), AllocError> {
             num_vars += 1;
         }
         // SAFETY: we just measured `len` u16 elements (including terminators) within the OS-owned block.
-        let wtf16_slice = unsafe { bun_core::ffi::slice(wtf16_buf, len) };
+        let wtf16_slice = unsafe { bun_core::ffi::slice(wtf16_buf.as_ptr(), len) };
         // `bun_core::strings::to_utf8_alloc` is infallible (panics on OOM)
         // and returns `Vec<u8>` directly — no `?` here.
         break 'blk bun_core::strings::to_utf8_alloc(wtf16_slice);
@@ -86,6 +101,6 @@ pub fn convert_env_to_wtf8() -> Result<(), AllocError> {
         bun_core::os::set_environ(envp_slice.as_mut_ptr(), envp_nonnull_len);
     }
 
-    let _ = scopeguard::ScopeGuard::into_inner(env_guard);
+    core::mem::forget(env_guard);
     Ok(())
 }

@@ -2,7 +2,7 @@ use std::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};
 
 use bun_core::{ZBox, ZStr};
 use bun_paths::resolve_path::{self, Platform, platform};
-use bun_sys::{E, FdExt, dir_iterator};
+use bun_sys::{E, dir_iterator};
 
 use crate::shell::ExitCode;
 use crate::shell::builtin::{Builtin, IoKind, Kind};
@@ -1048,11 +1048,7 @@ impl ShellRmTask {
 
         // On posix we can close the fd whenever, but on Windows we need to
         // close it BEFORE we delete.
-        let mut _close_fd = scopeguard::guard(Some(fd), |fd| {
-            if let Some(fd) = fd {
-                fd.close();
-            }
-        });
+        let mut _close_fd = Some(bun_sys::CloseOnDrop::new(fd));
 
         if self.error_signal().load(Ordering::SeqCst) {
             return Ok(());
@@ -1143,8 +1139,8 @@ impl ShellRmTask {
                 // take the counter to 0 and drive
                 // `delete_after_waiting_for_children`; nothing after this
                 // may dereference `dir_task`. The directory fd is closed by
-                // the `close_fd` scopeguard on return — that touches only a
-                // stack local, not `dir_task`.
+                // `_close_fd` on return — that touches only a stack local,
+                // not `dir_task`.
                 return Ok(());
             }
             // Every child already released its count (each saw the counter
@@ -1163,9 +1159,7 @@ impl ShellRmTask {
         #[cfg(windows)]
         {
             // Close BEFORE deleting on Windows.
-            if let Some(f) = _close_fd.take() {
-                f.close();
-            }
+            drop(_close_fd.take());
         }
 
         match bun_sys::unlinkat_with_flags(self.cwd, path, bun_sys::AT_REMOVEDIR) {

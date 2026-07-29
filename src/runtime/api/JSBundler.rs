@@ -26,8 +26,6 @@ pub mod js_bundler {
     use super::*;
     use bun_core::ZigStringSlice;
 
-    use bun_sys::FdExt;
-
     type OwnedString = MutableString;
 
     /// `options::JSX::Runtime` → `api::JsxRuntime` (only the reverse `From`
@@ -903,10 +901,10 @@ pub mod js_bundler {
                         )));
                     }
                 };
-                let _close = scopeguard::guard(dir, |d| d.close());
+                let dir = bun_sys::Dir::from_fd(dir);
 
                 let mut rootdir_buf = bun_paths::PathBuffer::uninit();
-                let rootdir = match bun_sys::get_fd_path(*_close, &mut rootdir_buf) {
+                let rootdir = match bun_sys::get_fd_path(dir.fd(), &mut rootdir_buf) {
                     Ok(p) => p,
                     Err(err) => {
                         return Err(global_this.throw(format_args!(

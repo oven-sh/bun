@@ -9,7 +9,7 @@ use bun_core::{ZStr, strings};
 use bun_paths::{self as path, PathBuffer};
 use bun_resolver::fs::FileSystem;
 use bun_semver::String as SemverString;
-use bun_sys::{self as sys, Fd, FdExt};
+use bun_sys::{self as sys, Fd};
 use bun_threading::IntrusiveWorkTask as _;
 use bun_threading::thread_pool::{Batch, Node as ThreadPoolNode, Task as ThreadPoolTask};
 use bun_wyhash::Wyhash11;
@@ -552,10 +552,10 @@ impl PatchTask {
                     return Ok(());
                 }
             };
-            let _close_guard = scopeguard::guard(patch_pkg_dir, |fd| fd.close());
+            let patch_pkg_dir = sys::Dir::from_fd(patch_pkg_dir);
 
             // 4. apply patch
-            if let Some(e) = patchfile.apply(patch_pkg_dir) {
+            if let Some(e) = patchfile.apply(patch_pkg_dir.fd) {
                 log.add_error_fmt_opts(
                     format_args!("failed applying patch file: {}", e),
                     Default::default(),
@@ -576,7 +576,7 @@ impl PatchTask {
             };
             buntagbuf[bun_tag_prefix.len() + hashlen] = 0;
             let buntag_zstr = ZStr::from_buf(&buntagbuf, bun_tag_prefix.len() + hashlen);
-            if let Err(e) = sys::File::write_file(patch_pkg_dir, buntag_zstr, b"") {
+            if let Err(e) = sys::File::write_file(patch_pkg_dir.fd, buntag_zstr, b"") {
                 log.add_error_fmt_opts(
                     format_args!(
                         "failed adding bun tag: {}",

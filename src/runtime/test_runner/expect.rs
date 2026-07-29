@@ -767,7 +767,7 @@ impl Expect {
     ) -> JsResult<JSValue> {
         // The guard owns the `&Self` and calls
         // post_match on drop so it runs on every exit path.
-        let this = scopeguard::guard(self, |t| t.post_match(global_this));
+        let this = self.post_match_guard(global_this);
 
         let arguments = call_frame.arguments();
 
@@ -813,7 +813,7 @@ impl Expect {
     ) -> JsResult<JSValue> {
         // The guard owns the `&Self` borrow
         // so `post_match` runs on every exit.
-        let this = scopeguard::guard(self, |t| t.post_match(global_this));
+        let this = self.post_match_guard(global_this);
 
         let arguments = call_frame.arguments();
 
@@ -1739,10 +1739,9 @@ impl Expect {
 
     /// Shared front-matter for `expect(received).toX(...)` matchers.
     ///
-    /// Composes the four lines every hand-ported matcher repeats — currently
-    /// stamped out in **four** different shapes (scopeguard-rebind,
-    /// scopeguard-side-binding, inner-closure-then-`post_match`, and *missing
-    /// entirely* in `toContainAllValues` / `toBeArrayOfSize`). Third member of
+    /// Composes the four lines every hand-ported matcher repeats — the
+    /// [`PostMatchGuard`] rebind, `get_value`, `increment_expect_call_counter`,
+    /// and the `not` snapshot. Third member of
     /// the matcher-scaffold family alongside [`Self::run_unary_predicate`] and
     /// [`Self::mock_prologue`], for matchers that need the received value but
     /// are NOT a pure unary predicate and NOT a mock-function matcher.

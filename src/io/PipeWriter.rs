@@ -1426,10 +1426,22 @@ impl<Parent: WindowsBufferedWriterParent> BaseWindowsPipeWriter for WindowsBuffe
 // SAFETY: libuv write-complete callbacks re-enter via `FileSink::on_write` →
 // JS → `writer.with_mut(|w| w.end())`; writer is intrusive in `Parent`, kept
 // alive across the callback by the parent ref taken in `write()` (derefed via
-// the callback-end scopeguards); single JS thread.
+// the callback-end deref guards); single JS thread.
 unsafe impl<Parent: WindowsBufferedWriterParent> bun_ptr::LaunderedSelf
     for WindowsBufferedWriter<Parent>
 {
+}
+
+#[cfg(windows)]
+struct BufferedWriterDerefGuard<Parent: WindowsBufferedWriterParent>(
+    *mut WindowsBufferedWriter<Parent>,
+);
+#[cfg(windows)]
+impl<Parent: WindowsBufferedWriterParent> Drop for BufferedWriterDerefGuard<Parent> {
+    #[inline]
+    fn drop(&mut self) {
+        WindowsBufferedWriter::<Parent>::r_deref(self.0);
+    }
 }
 
 #[cfg(windows)]
@@ -1498,10 +1510,10 @@ impl<Parent: WindowsBufferedWriterParent> WindowsBufferedWriter<Parent> {
         // them after the call. Launder so post-`on_write` reads see fresh
         // state.
         let this: *mut Self = core::hint::black_box(core::ptr::from_mut(self));
-        // Scopeguard deref to balance write()'s ref: `Parent::on_write` may
-        // drop the last external strong ref, and the trailing `is_done` /
-        // `close()` reads below need the parent (and `self`, inside it) alive.
-        let _g = scopeguard::guard(this, |s| Self::r_deref(s));
+        // Deref to balance write()'s ref: `Parent::on_write` may drop the last
+        // external strong ref, and the trailing `is_done` / `close()` reads
+        // below need the parent (and `self`, inside it) alive.
+        let _g = BufferedWriterDerefGuard(this);
         let written = Self::r(this).pending_payload_size;
         Self::r(this).pending_payload_size = 0;
         if let Some(err) = status.to_error(sys::Tag::write) {
@@ -1589,7 +1601,7 @@ impl<Parent: WindowsBufferedWriterParent> WindowsBufferedWriter<Parent> {
         if let Some(err) = result.to_error(sys::Tag::write) {
             // Balance write()'s ref — lazy `.parent` read at guard execution
             // in case close()/on_error re-enter and swap the parent pointer.
-            let _g = scopeguard::guard(this, |s| Self::r_deref(s));
+            let _g = BufferedWriterDerefGuard(this);
             // close() may re-enter JS.
             Self::r(this).close();
             core::hint::black_box(this);
@@ -1959,6 +1971,18 @@ unsafe impl<Parent: WindowsStreamingWriterParent> bun_ptr::LaunderedSelf
 }
 
 #[cfg(windows)]
+struct StreamingWriterDerefGuard<Parent: WindowsStreamingWriterParent>(
+    *mut WindowsStreamingWriter<Parent>,
+);
+#[cfg(windows)]
+impl<Parent: WindowsStreamingWriterParent> Drop for StreamingWriterDerefGuard<Parent> {
+    #[inline]
+    fn drop(&mut self) {
+        WindowsStreamingWriter::<Parent>::r_deref(self.0);
+    }
+}
+
+#[cfg(windows)]
 impl<Parent: WindowsStreamingWriterParent> WindowsStreamingWriter<Parent> {
     /// Raw backref to the owning `Parent`. Returned as `*mut` (never `&mut`)
     /// because this writer is an intrusive field of `Parent` and a `&mut Parent`
@@ -2004,7 +2028,7 @@ impl<Parent: WindowsStreamingWriterParent> WindowsStreamingWriter<Parent> {
     /// invariant and laundered-receiver rationale. Reads `self.parent`
     /// **before** dispatch so the (potentially freeing) `Parent::deref`
     /// runs with no borrow of `*this` live — matching the lazy read order
-    /// at each scopeguard site. Collapses the three
+    /// at each [`StreamingWriterDerefGuard`] site. Collapses the three
     /// `Parent::deref` blocks into one `unsafe`.
     #[inline(always)]
     fn r_deref(this: *mut Self) {
@@ -2047,7 +2071,7 @@ impl<Parent: WindowsStreamingWriterParent> WindowsStreamingWriter<Parent> {
         // Capture the laundered `*mut Self` and read `.parent` at guard
         // execution instead — the `black_box` above also ensures the guard's
         // read is not folded with any pre-call load.
-        let _g = scopeguard::guard(this, |s| Self::r_deref(s));
+        let _g = StreamingWriterDerefGuard(this);
 
         if let Some(err) = status.to_error(sys::Tag::write) {
             log!("onWrite() = {}", bstr::BStr::new(err.name()));
@@ -2164,7 +2188,7 @@ impl<Parent: WindowsStreamingWriterParent> WindowsStreamingWriter<Parent> {
             // deref to balance process_send ref — read `.parent` LAZILY at
             // guard execution, not eagerly, in case
             // close()/on_error re-enter and swap the parent pointer.
-            let _g = scopeguard::guard(this, |s| Self::r_deref(s));
+            let _g = StreamingWriterDerefGuard(this);
             // close() may re-enter JS — every post-call `r(this)` reborrow
             // reloads (laundered raw ptr, no noalias).
             Self::r(this).close();

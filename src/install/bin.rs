@@ -1765,13 +1765,11 @@ impl<'a> Linker<'a> {
                             return;
                         }
                     };
-                    let _close = scopeguard::guard(target_dir, |fd| {
-                        let _ = sys::close(fd);
-                    });
+                    let target_dir = sys::Dir::from_fd(target_dir);
 
                     let abs_dest_dir_end = dest_off;
 
-                    let mut iter = sys::iterate_dir(target_dir);
+                    let mut iter = sys::iterate_dir(target_dir.fd);
                     while let Some(entry) = iter.next().unwrap_or(None) {
                         match entry.kind {
                             sys::EntryKind::SymLink | sys::EntryKind::File => {
@@ -1922,13 +1920,11 @@ impl<'a> Linker<'a> {
                             return;
                         }
                     };
-                    let _close = scopeguard::guard(target_dir, |fd| {
-                        let _ = sys::close(fd);
-                    });
+                    let target_dir = sys::Dir::from_fd(target_dir);
 
                     let abs_dest_dir_end = dest_off;
 
-                    let mut iter = sys::iterate_dir(target_dir);
+                    let mut iter = sys::iterate_dir(target_dir.fd);
                     while let Some(entry) = iter.next().unwrap_or(None) {
                         match entry.kind {
                             sys::EntryKind::SymLink | sys::EntryKind::File => {

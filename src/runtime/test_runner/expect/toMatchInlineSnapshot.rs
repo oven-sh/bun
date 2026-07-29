@@ -9,10 +9,7 @@ pub(crate) fn to_match_inline_snapshot(
     global: &JSGlobalObject,
     frame: &CallFrame,
 ) -> JsResult<JSValue> {
-    // `defer this.postMatch(globalThis)` — wrap `this` in a scopeguard that owns the
-    // &mut Expect and runs post_match on drop, so the body can borrow through DerefMut without
-    // overlapping with the deferred call (matches toThrowErrorMatchingInlineSnapshot.rs).
-    let this = scopeguard::guard(this, |this| this.post_match(global));
+    let this = this.post_match_guard(global);
 
     let this_value = frame.this();
     let arguments: &[JSValue] = frame.arguments();
@@ -86,7 +83,7 @@ pub(crate) fn to_match_inline_snapshot(
         "<green>properties<r><d>, <r>hint",
     )?;
     Expect::inline_snapshot(
-        &**this,
+        &*this,
         global,
         frame,
         value,

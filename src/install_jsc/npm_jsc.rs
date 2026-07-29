@@ -82,7 +82,7 @@ impl ManifestBindings {
 #[bun_jsc::host_fn]
 pub(crate) fn js_parse_manifest(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     use bstr::BStr;
-    use bun_core::{String as BunString, strings};
+    use bun_core::{OwnedString, String as BunString, strings};
     use bun_install::npm;
     use bun_jsc::JsError;
     use std::io::Write as _;
@@ -94,13 +94,10 @@ pub(crate) fn js_parse_manifest(global: &JSGlobalObject, frame: &CallFrame) -> J
         )));
     }
 
-    // `defer manifest_filename_str.deref()` — release the +1 WTFStringImpl ref
-    // returned by `toBunString`; `bun_core::String` has no `Drop` impl.
-    let manifest_filename_str = scopeguard::guard(args[0].to_bun_string(global)?, |s| s.deref());
+    let manifest_filename_str = OwnedString::new(args[0].to_bun_string(global)?);
     let manifest_filename = manifest_filename_str.to_utf8();
 
-    // `defer registry_str.deref()` — see above.
-    let registry_str = scopeguard::guard(args[1].to_bun_string(global)?, |s| s.deref());
+    let registry_str = OwnedString::new(args[1].to_bun_string(global)?);
     let registry = registry_str.to_utf8();
 
     let manifest_file = match bun_sys::openat_a(

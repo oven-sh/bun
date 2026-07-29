@@ -474,8 +474,7 @@ impl Entry {
                     if bytes.is_empty() {
                         return Err(crate::CrateError::Alloc(bun_alloc::AllocError));
                     }
-                    // errdefer scratch.deref() — BunString is `Copy`, so guard explicitly.
-                    let errdefer = scopeguard::guard(scratch, |s| s.deref());
+                    let scratch = bun_core::OwnedString::new(scratch);
                     let read_bytes = file.pread_all(bytes, self.metadata.output_byte_offset)?;
                     if read_bytes as u64 != self.metadata.output_byte_length {
                         return Err(crate::CrateError::MissingData);
@@ -489,8 +488,7 @@ impl Entry {
                         // Fast path: ASCII ⊂ Latin-1, so `scratch` is already
                         // the correct `BunString` — hand it straight to the
                         // consumer as `OutputCode::String`.
-                        scopeguard::ScopeGuard::into_inner(errdefer);
-                        OutputCode::String(scratch)
+                        OutputCode::String(scratch.into_inner())
                     } else {
                         // Rare path: real multi-byte UTF-8. Transcode into a
                         // fresh WTF string and drop the Latin-1 scratch (the
@@ -507,8 +505,7 @@ impl Entry {
                     if bytes.is_empty() {
                         return Err(crate::CrateError::Alloc(bun_alloc::AllocError));
                     }
-                    // errdefer latin1.deref() — BunString is `Copy`, so guard explicitly.
-                    let errdefer = scopeguard::guard(latin1, |s| s.deref());
+                    let latin1 = bun_core::OwnedString::new(latin1);
                     let read_bytes = file.pread_all(bytes, self.metadata.output_byte_offset)?;
 
                     if self.metadata.output_hash != 0 {
@@ -521,8 +518,7 @@ impl Entry {
                         return Err(crate::CrateError::MissingData);
                     }
 
-                    scopeguard::ScopeGuard::into_inner(errdefer);
-                    OutputCode::String(latin1)
+                    OutputCode::String(latin1.into_inner())
                 }
                 Encoding::UTF16 => {
                     let char_len = (self.metadata.output_byte_length / 2) as usize;
@@ -532,7 +528,7 @@ impl Entry {
                     if chars.is_empty() {
                         return Err(crate::CrateError::Alloc(bun_alloc::AllocError));
                     }
-                    let errdefer = scopeguard::guard(string, |s| s.deref());
+                    let string = bun_core::OwnedString::new(string);
 
                     // `chars` is `&mut [u16; char_len]` backed by contiguous
                     // WTFString storage; reinterpret as bytes for pread via the
@@ -551,8 +547,7 @@ impl Entry {
                         }
                     }
 
-                    scopeguard::ScopeGuard::into_inner(errdefer);
-                    OutputCode::String(string)
+                    OutputCode::String(string.into_inner())
                 }
 
                 _ => unreachable!("Unexpected output encoding"),
@@ -896,14 +891,10 @@ impl RuntimeTranspilerCache {
 
             break 'brk Fd::cwd();
         };
-        let _dir_guard = scopeguard::guard(cache_dir_fd, |fd| {
-            if fd != Fd::cwd() {
-                fd.close();
-            }
-        });
+        let cache_dir = sys::Dir::from_fd(cache_dir_fd);
 
         Entry::save(
-            cache_dir_fd,
+            cache_dir.fd,
             cache_file_path,
             input_byte_length,
             input_hash,

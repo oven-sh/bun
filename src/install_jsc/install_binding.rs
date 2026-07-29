@@ -39,7 +39,6 @@ pub mod bun_install_js_bindings {
         };
         use bun_install::lockfile::{LoadResult, Lockfile};
         use bun_paths::resolve_path;
-        use bun_sys::FdExt as _;
 
         let mut log = bun_ast::Log::init();
 
@@ -57,7 +56,7 @@ pub mod bun_install_js_bindings {
             }
         };
         // `defer dir.close()` — closed at fn return.
-        let dir = scopeguard::guard(dir, |d| d.close());
+        let dir = bun_sys::Dir::from_fd(dir);
 
         let lockfile_path = resolve_path::join_abs_string_z::<resolve_path::platform::Auto>(
             cwd.slice(),
@@ -80,7 +79,7 @@ pub mod bun_install_js_bindings {
         let manager = vm.package_manager();
 
         let load_result: LoadResult<'_> =
-            lockfile_.load_from_dir::<true>(*dir, Some(manager), &mut log);
+            lockfile_.load_from_dir::<true>(dir.fd, Some(manager), &mut log);
 
         match load_result {
             LoadResult::Err(err) => {

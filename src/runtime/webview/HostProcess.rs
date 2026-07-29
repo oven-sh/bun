@@ -27,7 +27,7 @@ use {
     bun_spawn::{
         EventLoopHandle, ProcessExit, ProcessExitKind, SpawnOptions, SpawnResultExt as _, Stdio,
     },
-    bun_sys::{self, Fd, FdExt as _},
+    bun_sys::{self, Fd},
     core::ffi::c_char,
 };
 
@@ -146,7 +146,7 @@ fn spawn(vm: *mut VirtualMachine, stdout_inherit: bool, stderr_inherit: bool) ->
             true, // .nonblocking
         )?;
         // fd0_guard rolls back fds[0] on any error below.
-        let fd0_guard = scopeguard::guard(fds[0], |fd| fd.close());
+        let fd0_guard = bun_sys::CloseOnDrop::new(fds[0]);
         // fds[1] is closed by spawnProcess after dup2 into the child.
 
         let exe = bun_core::self_exe_path()?;
@@ -229,7 +229,7 @@ fn spawn(vm: *mut VirtualMachine, stdout_inherit: bool, stderr_inherit: bool) ->
         INSTANCE.store(self_ptr, core::sync::atomic::Ordering::Relaxed);
         // fd handed to C++ which adopts it into usockets. Not stored here —
         // usockets owns the socket; Rust only owns process lifetime.
-        let fd0 = scopeguard::ScopeGuard::into_inner(fd0_guard);
+        let fd0 = fd0_guard.into_raw();
         Ok(fd0)
     }
 }

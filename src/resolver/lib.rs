@@ -798,12 +798,12 @@ pub mod fs {
                 // Spec's `TmpfileWindows` has no `dir_fd` field — the handle is
                 // local. Close it once we've captured the absolute path so we
                 // don't leak a directory HANDLE per tmpfile.
-                scopeguard::defer! { let _ = bun_sys::close(tmp_dir); }
+                let tmp_dir = bun_sys::Dir::from_fd(tmp_dir);
                 let flags = bun_sys::O::CREAT
                     | bun_sys::O::WRONLY
                     | bun_sys::O::TRUNC
                     | bun_sys::O::CLOEXEC;
-                self.fd = bun_sys::openat(tmp_dir, name, flags, 0)?;
+                self.fd = bun_sys::openat(tmp_dir.fd, name, flags, 0)?;
                 let mut buf = bun_paths::PathBuffer::uninit();
                 let existing_path = bun_sys::get_fd_path(self.fd, &mut buf)?;
                 self.existing_path = Box::<[u8]>::from(&*existing_path);
@@ -1219,14 +1219,11 @@ pub mod fs {
                 },
             };
 
-            // Close the handle on every exit path. Use
-            // scopeguard so close happens even if `readdir`/`put` early-return with `?`.
+            // Close the handle on every exit path, including `readdir`/`put`
+            // early-return with `?`.
             let should_close_handle = !had_handle && (!store_fd || self.need_to_close_files());
-            let _close_guard = scopeguard::guard(handle, move |h| {
-                if should_close_handle {
-                    let _ = bun_sys::close(h);
-                }
-            });
+            let _handle_dir: Option<bun_sys::Dir> =
+                should_close_handle.then(|| bun_sys::Dir::from_fd(handle));
 
             // if we get this far, it's a real directory, so we can just store the dir name.
             // An in-place refresh always keeps the slot's existing interned name: callers
@@ -1585,12 +1582,10 @@ pub mod fs {
                             return self.read_directory_error(dir, err.into()).ok();
                         }
                     };
-                    let _close_guard = scopeguard::guard(handle, |h| {
-                        let _ = bun_sys::close(h);
-                    });
+                    let handle = bun_sys::Dir::from_fd(handle);
                     // SAFETY: see above — exclusive `&mut` on the prev map for the duration of `readdir`.
                     let prev = Some(unsafe { &mut (*e_ptr).data });
-                    match self.readdir(false, prev, dir, generation, handle, ()) {
+                    match self.readdir(false, prev, dir, generation, handle.fd, ()) {
                         Ok(new_entry) => {
                             // SAFETY: see above.
                             unsafe { (*e_ptr).data.clear() };

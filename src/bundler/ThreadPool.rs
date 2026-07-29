@@ -640,6 +640,12 @@ impl Worker {
         self.ast_memory_store.pop();
     }
 
+    /// [`Worker::get`] + [`Worker::unget`] on drop.
+    #[inline]
+    pub fn get_scoped(ctx: &BundleV2<'_>) -> WorkerGuard {
+        WorkerGuard(Self::get(ctx))
+    }
+
     pub fn init(&mut self, v2: &BundleV2<'_>) {
         // Lifetime-erase `'_` → `'static` via `NonNull::cast` (BACKREF: the
         // bundle outlives every worker).
@@ -741,5 +747,27 @@ impl Worker {
         if !self.has_created {
             self.create(ctx);
         }
+    }
+}
+
+/// Returned by [`Worker::get_scoped`]; calls [`Worker::unget`] on drop.
+pub struct WorkerGuard(&'static mut Worker);
+impl core::ops::Deref for WorkerGuard {
+    type Target = Worker;
+    #[inline]
+    fn deref(&self) -> &Worker {
+        self.0
+    }
+}
+impl core::ops::DerefMut for WorkerGuard {
+    #[inline]
+    fn deref_mut(&mut self) -> &mut Worker {
+        self.0
+    }
+}
+impl Drop for WorkerGuard {
+    #[inline]
+    fn drop(&mut self) {
+        self.0.unget();
     }
 }

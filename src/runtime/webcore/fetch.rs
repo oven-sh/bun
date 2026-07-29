@@ -54,7 +54,6 @@ use bun_http_jsc::method_jsc;
 use bun_http_types::Method::Method;
 use bun_jsc::{HTTPHeaderName, StringJsc as _, SysErrorJsc as _};
 use bun_paths::{self, PathBuffer};
-use bun_sys::FdExt as _;
 // `FromJsEnum for FetchRedirect` lives in bun_http_jsc; importing the impl crate
 // brings the trait impl into scope for `JSValue::get_optional_enum::<FetchRedirect>`.
 use crate::node;
@@ -1783,7 +1782,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             // is handed it as an `Fd` and never takes ownership. Wrap it in an
             // RAII guard so any future early return between here and the read
             // can't leak it.
-            let opened_fd = scopeguard::guard(opened_fd, |fd| fd.close());
+            let opened_fd = bun_sys::CloseOnDrop::new(opened_fd);
 
             // TODO: make this async + lazy
             let blob_offset = body.any_blob().blob().offset.get();

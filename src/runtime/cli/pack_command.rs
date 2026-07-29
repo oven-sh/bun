@@ -444,6 +444,39 @@ fn new_pack_queue() -> PackQueue {
 /// (dir, dir_subpath, dir_depth)
 struct DirInfo(Dir, Box<[u8]>, usize);
 
+/// `Dir` that only closes on drop when `owned` is set (the walk root is borrowed).
+struct MaybeOwnedDir {
+    dir: core::mem::ManuallyDrop<Dir>,
+    owned: bool,
+}
+
+impl MaybeOwnedDir {
+    #[inline]
+    fn new(dir: Dir, owned: bool) -> Self {
+        Self {
+            dir: core::mem::ManuallyDrop::new(dir),
+            owned,
+        }
+    }
+}
+
+impl core::ops::Deref for MaybeOwnedDir {
+    type Target = Dir;
+    #[inline]
+    fn deref(&self) -> &Dir {
+        &self.dir
+    }
+}
+
+impl Drop for MaybeOwnedDir {
+    fn drop(&mut self) {
+        if self.owned {
+            // SAFETY: `self.dir` is never taken elsewhere; this runs at most once.
+            unsafe { core::mem::ManuallyDrop::drop(&mut self.dir) };
+        }
+    }
+}
+
 // ───────────────────────────────────────────────────────────────────────────
 // tree iteration (includes / excludes)
 // ───────────────────────────────────────────────────────────────────────────
@@ -478,11 +511,7 @@ fn iterate_included_project_tree(
         let DirInfo(dir, dir_subpath, dir_depth) = dir_info;
         // Root (depth 1) is borrowed from the caller's `root_dir`; only close
         // subdirs we opened.
-        let dir = scopeguard::guard(dir, move |d| {
-            if dir_depth == 1 {
-                let _ = d.into_raw();
-            }
-        });
+        let dir = MaybeOwnedDir::new(dir, dir_depth != 1);
 
         let mut dir_iter = DirIterator::iterate(Fd::from_std_dir(&dir));
         'next_entry: while let Some(entry) = dir_iter.next().ok().flatten() {
@@ -1265,11 +1294,7 @@ fn iterate_project_tree(
     while let Some(dir_info) = dirs.pop() {
         let DirInfo(dir, dir_subpath, dir_depth) = dir_info;
         // Root (depth 1) is caller-owned; only close subdirs we opened.
-        let dir = scopeguard::guard(dir, move |d| {
-            if dir_depth == 1 {
-                let _ = d.into_raw();
-            }
-        });
+        let dir = MaybeOwnedDir::new(dir, dir_depth != 1);
 
         while let Some(last) = ignores.last() {
             if last.depth < dir_depth {

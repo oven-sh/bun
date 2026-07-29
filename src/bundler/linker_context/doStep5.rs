@@ -65,10 +65,7 @@ impl LinkerContext<'_> {
         // `Worker::get` only needs `&BundleV2`, so derive a shared ref — never
         // form `&mut BundleV2` here (concurrent tasks would alias it).
         let bundle_v2: &BundleV2<'_> = unsafe { &*LinkerContext::bundle_v2_ptr(this) };
-        let worker = ThreadPool::Worker::get(bundle_v2);
-        // `Worker::get` returns the thread-local worker
-        // (not RAII), so balance with `unget` explicitly via scopeguard.
-        let worker = scopeguard::guard(worker, |w| w.unget());
+        let worker = ThreadPool::Worker::get_scoped(bundle_v2);
 
         // we must use this arena here
         // SAFETY: `Worker::create` initializes `arena` to point at

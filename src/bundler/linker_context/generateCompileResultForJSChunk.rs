@@ -68,7 +68,7 @@ pub unsafe fn generate_compile_result_for_js_chunk(task: *mut ThreadPoolLib::Tas
         // SAFETY: same mutable-provenance / disjoint-write contract as `c_ptr` above.
         let chunk_mut: &mut Chunk = unsafe { &mut *chunk_ptr };
         generate_compile_result_for_js_chunk_impl(
-            &mut **worker,
+            &mut *worker,
             c_mut,
             chunk_mut,
             part_range.part_range,

@@ -767,7 +767,7 @@ impl BunTest {
         // so scope-exit drop is a silent no-op. Decrement the intrusive count explicitly so
         // (a) RefData::destructor frees the box + Weak<BunTest>, and (b) a paired done() callback
         // observes has_one_ref()==true on its turn instead of hanging.
-        let refdata = scopeguard::guard(refdata, |r: RefDataPtr| r.deref());
+        let refdata = RefDataGuard(refdata);
         let has_one_ref = refdata.has_one_ref();
         let Some(this_strong) = refdata.buntest_weak.upgrade() else {
             bun_core::scoped_log!(bun_test_group, "bunTestThenOrCatch -> the BunTest is no longer active");
@@ -843,7 +843,7 @@ impl BunTest {
         // RefPtr<T> currently has NO Drop impl, so decrement the
         // intrusive count explicitly at scope exit. Without this the
         // paired promise then/catch path never sees has_one_ref()==true and the RefData leaks.
-        let ref_in = scopeguard::guard(ref_in, |r: RefDataPtr| r.deref());
+        let ref_in = RefDataGuard(ref_in);
 
         // dupe the ref and enqueue a task to call the done callback.
         // this makes it so if you do something else after calling done(), the next test doesn't start running until the next tick.
@@ -1534,6 +1534,22 @@ impl RefData {
     }
     pub fn bun_test(&self) -> Option<BunTestPtr> {
         self.buntest_weak.upgrade()
+    }
+}
+
+/// Owns a [`RefDataPtr`] and `.deref()`s it on drop (`RefPtr<T>` itself has no `Drop`).
+struct RefDataGuard(RefDataPtr);
+impl core::ops::Deref for RefDataGuard {
+    type Target = RefData;
+    #[inline]
+    fn deref(&self) -> &RefData {
+        &self.0
+    }
+}
+impl Drop for RefDataGuard {
+    #[inline]
+    fn drop(&mut self) {
+        self.0.deref();
     }
 }
 

@@ -1259,9 +1259,7 @@ impl Archiver {
                 break 'brk d;
             }
         };
-        // Fd has no Drop impl; close explicitly on every return path to avoid leaking
-        // a directory HANDLE on Windows. Mirrors the guard pattern in extract_to_disk.
-        let _close_dir_guard = scopeguard::guard(dir, |d| d.close());
+        let dir = bun_sys::Dir::from_fd(dir);
 
         'loop_: loop {
             // SAFETY: archive valid for stream lifetime
@@ -1322,13 +1320,13 @@ impl Archiver {
                     let size: usize =
                         usize::try_from(lib::Entry::opaque_ref(entry).size().max(0)).unwrap();
                     if size > 0 {
-                        let Ok(opened) = bun_sys::openat_a(dir, pathname, bun_sys::O::WRONLY, 0)
+                        let Ok(opened) =
+                            bun_sys::openat_a(dir.fd(), pathname, bun_sys::O::WRONLY, 0)
                         else {
                             continue 'loop_;
                         };
-                        // defer opened.close()
-                        let _close_guard = scopeguard::guard(opened, |fd| fd.close());
-                        let stat_size = bun_sys::get_file_size(opened)?;
+                        let opened = bun_sys::File::from_fd(opened);
+                        let stat_size = bun_sys::get_file_size(opened.fd())?;
 
                         if stat_size > 0 {
                             let is_already_top_level = dirname.is_empty();
@@ -1764,11 +1762,9 @@ impl Archiver {
 
                             let file_handle: Fd = {
                                 // errdefer file_handle_native.close()
-                                let guard = scopeguard::guard(file_handle_native, |fd| {
-                                    fd.close();
-                                });
-                                let owned = (*guard).make_lib_uv_owned()?;
-                                scopeguard::ScopeGuard::into_inner(guard);
+                                let guard = bun_sys::CloseOnDrop::new(file_handle_native);
+                                let owned = guard.fd().make_lib_uv_owned()?;
+                                let _ = guard.into_raw();
                                 owned
                             };
 

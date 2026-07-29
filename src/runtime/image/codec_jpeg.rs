@@ -121,18 +121,12 @@ pub fn decode(
     max_pixels: u64,
     hint: codecs::DecodeHint,
 ) -> Result<codecs::Decoded, codecs::Error> {
-    // SAFETY: FFI — tj3Init has no preconditions; returns null on failure.
-    let h = unsafe { tj3Init(1) };
-    if h.is_null() {
-        return Err(codecs::Error::OutOfMemory);
-    }
-    // SAFETY: `h` is the non-null tjhandle returned above; tj3Destroy is the
-    // documented owner-release and is called exactly once via this guard.
-    let _h_guard = scopeguard::guard(h, |h| unsafe { tj3Destroy(h) });
+    let handle = Handle::init(1).ok_or(codecs::Error::OutOfMemory)?;
+    let h = handle.as_ptr();
     // Ask libjpeg-turbo to keep the APP2/ICC_PROFILE markers so we can pull
     // the profile out after header parse. Must be set PRE-header — the
     // marker buffer is discarded if we set this after.
-    // SAFETY: `h` is a live tjhandle for the duration of `_h_guard`.
+    // SAFETY: `h` is a live tjhandle for the duration of `handle`.
     unsafe { tj3Set(h, TJPARAM_SAVEMARKERS, 2) };
     // SAFETY: `h` is live; ptr/len come from a valid `&[u8]` borrowed for the call.
     if unsafe { tj3DecompressHeader(h, bytes.as_ptr(), bytes.len()) } != 0 {
@@ -299,15 +293,9 @@ pub(crate) fn encode(
     progressive: bool,
     icc_profile: Option<&[u8]>,
 ) -> Result<codecs::Encoded, codecs::Error> {
-    // SAFETY: FFI — tj3Init has no preconditions; returns null on failure.
-    let h = unsafe { tj3Init(0) };
-    if h.is_null() {
-        return Err(codecs::Error::OutOfMemory);
-    }
-    // SAFETY: `h` is the non-null tjhandle returned above; tj3Destroy is the
-    // documented owner-release and is called exactly once via this guard.
-    let _h_guard = scopeguard::guard(h, |h| unsafe { tj3Destroy(h) });
-    // SAFETY: `h` is a live tjhandle for the duration of `_h_guard`.
+    let handle = Handle::init(0).ok_or(codecs::Error::OutOfMemory)?;
+    let h = handle.as_ptr();
+    // SAFETY: `h` is a live tjhandle for the duration of `handle`.
     unsafe {
         tj3Set(h, TJPARAM_QUALITY, c_int::from(quality.clamp(1, 100)));
         tj3Set(h, TJPARAM_SUBSAMP, TJSAMP_420);

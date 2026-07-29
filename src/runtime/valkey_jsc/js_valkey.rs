@@ -58,6 +58,14 @@ fn vm_event_loop_ctx() -> bun_io::EventLoopCtx {
 
 bun_output::define_scoped_log!(debug, RedisJS, visible);
 
+struct UpdatePollOnDrop(BackRef<JSValkeyClient>);
+impl Drop for UpdatePollOnDrop {
+    #[inline]
+    fn drop(&mut self) {
+        self.0.update_poll_ref();
+    }
+}
+
 type Socket = uws::AnySocket;
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -283,10 +291,7 @@ impl SubscriptionCtx {
 
         // After we go through every single callback, we will have to update the poll ref.
         // The user may, for example, unsubscribe in the callbacks, or even stop the client.
-        // `BackRef` (Copy + Deref) detaches the borrow so the guard closure is
-        // safe even though intervening JS may re-enter `&self`.
-        let parent_br = BackRef::new(self.parent());
-        let _update = scopeguard::guard(parent_br, |p| p.update_poll_ref());
+        let _update = UpdatePollOnDrop(BackRef::new(self.parent()));
 
         // If callbacks is an array, iterate and call each one
         let mut iter = callbacks.array_iterator(global_object)?;
@@ -1045,8 +1050,7 @@ impl JSValkeyClient {
         // Without this, every subsequent command rejects with "Connection has
         // failed" forever — see https://github.com/oven-sh/bun/issues/29925.
         self.client_mut().flags.failed = false;
-        let self_br = BackRef::new(self);
-        let _update = scopeguard::guard(self_br, |p| p.update_poll_ref());
+        let _update = UpdatePollOnDrop(BackRef::new(self));
 
         if self.client.get().flags.needs_to_open_socket {
             self.poll_ref.with_mut(|r| r.ref_(vm_event_loop_ctx()));
@@ -1367,7 +1371,7 @@ impl JSValkeyClient {
         // SAFETY: adopts connect()'s socket keep-alive ref; the caller holds
         // its own scoped ref so count stays > 0 until this drops.
         let _socket_ref = unsafe { ScopedRef::adopt(self.as_ctx_ptr()) };
-        let _defer = scopeguard::guard(BackRef::new(self), |p| p.update_poll_ref());
+        let _defer = UpdatePollOnDrop(BackRef::new(self));
 
         let Some(this_jsvalue) = self.this_value.get().try_get() else {
             return Ok(());
@@ -1625,8 +1629,7 @@ impl JSValkeyClient {
             self.reset_connection_timeout();
         }
 
-        let self_br = BackRef::new(self);
-        let _update = scopeguard::guard(self_br, |p| p.update_poll_ref());
+        let _update = UpdatePollOnDrop(BackRef::new(self));
         self.client_mut().send(global_this, command)
     }
 
@@ -1815,7 +1818,7 @@ impl<const SSL: bool> SocketHandler<SSL> {
         );
         let handshake_success = success == 1;
         let _guard = this.ref_scope();
-        let _update = scopeguard::guard(BackRef::new(this), |p| p.update_poll_ref());
+        let _update = UpdatePollOnDrop(BackRef::new(this));
         let vm = this.client.get().vm;
         if handshake_success {
             if this.client.get().tls.reject_unauthorized(vm) {

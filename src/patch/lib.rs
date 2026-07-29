@@ -12,7 +12,7 @@ use bun_collections::bit_set::ArrayBitSet;
 use bun_core::strings;
 use bun_core::{ZBox, ZStr};
 use bun_paths::{self as paths, PathBuffer};
-use bun_sys::{self as sys, Fd, FdExt};
+use bun_sys::{self as sys, Fd};
 
 bun_core::declare_scope!(Patch, visible);
 
@@ -150,7 +150,7 @@ impl<'a> PatchFile<'a> {
                         sys::Result::Ok(fd) => fd,
                         sys::Result::Err(e) => return Some(e.without_path()),
                     };
-                    let _close_newfile = scopeguard::guard(newfile_fd, |fd| fd.close());
+                    let newfile = sys::File::from_fd(newfile_fd);
 
                     let Some(hunk) = &file_creation.hunk else {
                         continue;
@@ -192,7 +192,7 @@ impl<'a> PatchFile<'a> {
 
                     let mut written: usize = 0;
                     while written < file_contents.len() {
-                        match sys::write(newfile_fd, &file_contents[written..]) {
+                        match sys::write(newfile.fd(), &file_contents[written..]) {
                             sys::Result::Ok(bytes) => written += bytes,
                             sys::Result::Err(e) => return Some(e.without_path()),
                         }
@@ -238,8 +238,8 @@ impl<'a> PatchFile<'a> {
                             sys::Result::Err(e) => return Some(e.without_path()),
                             sys::Result::Ok(f) => f,
                         };
-                        let _close = scopeguard::guard(fd, |fd| fd.close());
-                        if let sys::Result::Err(e) = sys::fchmod(fd, newmode.to_bun_mode()) {
+                        let file = sys::File::from_fd(fd);
+                        if let sys::Result::Err(e) = sys::fchmod(file.fd(), newmode.to_bun_mode()) {
                             return Some(e.without_path());
                         }
                     }
@@ -412,13 +412,13 @@ fn apply_patch(patch: &FilePatch<'_>, patch_dir: Fd, state: &mut ApplyState) -> 
         sys::Result::Err(e) => return sys::Result::Err(e.with_path(file_path.as_bytes())),
         sys::Result::Ok(fd) => fd,
     };
-    let _close_file = scopeguard::guard(file_fd, |fd| fd.close());
+    let file = sys::File::from_fd(file_fd);
 
     let contents = join_bytes(b"\n", &lines);
 
     let mut written: usize = 0;
     while written < contents.len() {
-        match sys::write(file_fd, &contents[written..]) {
+        match sys::write(file.fd(), &contents[written..]) {
             sys::Result::Ok(w) => written += w,
             sys::Result::Err(e) => return sys::Result::Err(e.with_path(file_path.as_bytes())),
         }

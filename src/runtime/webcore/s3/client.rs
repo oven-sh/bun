@@ -558,6 +558,7 @@ pub(crate) fn writable_stream(
     Ok(sink.to_js(global_this))
 }
 
+#[derive(bun_ptr::CellRefCounted)]
 pub struct S3UploadStreamWrapper {
     // intrusive ref_count — bun.ptr.RefCount(@This(), "ref_count", deinit, .{}) → bun_ptr::IntrusiveRc<Self>
     pub ref_count: core::cell::Cell<u32>,
@@ -576,19 +577,6 @@ pub struct S3UploadStreamWrapper {
 pub(crate) type ResumableSink = ResumableS3UploadSink;
 
 impl S3UploadStreamWrapper {
-    /// Intrusive `deref()` — decrements ref_count; runs finalizer + frees on zero.
-    /// SAFETY: `this` must be a live Box-allocated `Self` (created via heap::alloc).
-    pub(crate) unsafe fn deref_(this: *mut Self) {
-        // SAFETY: caller contract above.
-        let rc = unsafe { (*this).ref_count.get() } - 1;
-        // SAFETY: caller contract above — `this` is still live (freed only after rc hits zero below).
-        unsafe { (*this).ref_count.set(rc) };
-        if rc == 0 {
-            // SAFETY: ref_count hit zero; reconstitute the Box to run Drop and free.
-            drop(unsafe { bun_core::heap::take(this) });
-        }
-    }
-
     fn detach_sink(&mut self) {
         bun_output::scoped_log!(S3UploadStream, "detachSink {}", self.sink.is_some());
         if let Some(sink) = self.sink.take() {
@@ -638,12 +626,8 @@ impl S3UploadStreamWrapper {
     pub(crate) fn write_end_request(&mut self, err: Option<JSValue>) {
         bun_output::scoped_log!(S3UploadStream, "writeEndRequest {}", err.is_some());
         self.detach_sink();
-        // scope-exit deref via guard (keeps borrowck happy)
-        let _deref_guard = scopeguard::guard(std::ptr::from_mut::<Self>(self), |s| {
-            // SAFETY: s points to self which is alive for the duration of the guard; deref_
-            // decrements ref_count and may free self only after all borrows above are released
-            unsafe { Self::deref_(s) }
-        });
+        // SAFETY: `self` is a live Box-allocated `Self` holding the ref this scope consumes.
+        let _deref_guard = unsafe { bun_ptr::ScopedRef::adopt(std::ptr::from_mut::<Self>(self)) };
         if let Some(js_err) = err {
             if self.end_promise.has_value() && !js_err.is_empty_or_undefined_or_null() {
                 // if we have a explicit error, reject the promise
@@ -666,12 +650,8 @@ impl S3UploadStreamWrapper {
 
     pub(crate) fn resolve(result: S3UploadResult, self_: &mut Self) -> JsTerminatedResult<()> {
         bun_output::scoped_log!(S3UploadStream, "resolve");
-        // scope-exit deref via guard (keeps borrowck happy)
-        let _deref_guard = scopeguard::guard(std::ptr::from_mut::<Self>(self_), |s| {
-            // SAFETY: s points to self_ which is alive for the duration of the guard; deref_
-            // decrements ref_count and may free self only after all borrows above are released
-            unsafe { Self::deref_(s) }
-        });
+        // SAFETY: `self_` is a live Box-allocated `Self` holding the ref this scope consumes.
+        let _deref_guard = unsafe { bun_ptr::ScopedRef::adopt(std::ptr::from_mut::<Self>(self_)) };
         match &result {
             S3UploadResult::Success => {
                 if self_.end_promise.has_value() {
@@ -1126,14 +1106,17 @@ pub fn readable_stream(
             request_err: Option<Error::S3Error>,
             self_: &mut Self,
         ) -> JsTerminatedResult<()> {
-            // scope-exit cleanup via guard (keeps borrowck happy)
-            let _guard = scopeguard::guard(std::ptr::from_mut::<Self>(self_), move |s| {
-                if !has_more {
-                    // SAFETY: s is a live Box-allocated pointer (heap::alloc in S3DownloadStreamWrapper::new);
-                    // reconstituting and dropping the Box runs Drop::drop and frees the allocation
-                    drop(unsafe { bun_core::heap::take(s) });
+            struct FreeOnLast(*mut S3DownloadStreamWrapper, bool);
+            impl Drop for FreeOnLast {
+                fn drop(&mut self) {
+                    if !self.1 {
+                        // SAFETY: self.0 is a live Box-allocated pointer (heap::alloc in S3DownloadStreamWrapper::new);
+                        // reconstituting and dropping the Box runs Drop::drop and frees the allocation
+                        drop(unsafe { bun_core::heap::take(self.0) });
+                    }
                 }
-            });
+            }
+            let _guard = FreeOnLast(std::ptr::from_mut::<Self>(self_), has_more);
 
             if let Some(readable) = self_.readable_stream_ref.get(&self_.global) {
                 // BACKREF: see `Source::bytes()` — payload live while the

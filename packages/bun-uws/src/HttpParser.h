@@ -1143,16 +1143,6 @@ struct HttpResponseData;
         data[length + 1] = 'a'; /* Anything that is not \n, to trigger "invalid request" */
         req->ancientHttp = false;
         for (;length;) {
-            /* RFC 9112 9.6: a prior request forbade keep-alive, so everything
-             * after it is never parsed. Bun.serve discards it so onData's tail
-             * closes after the final response; node:http raises
-             * HPE_CLOSED_CONNECTION ('clientError') like Node's own parser. */
-            if (sawConnectionClose) {
-                if constexpr (IsNodeHttp) {
-                    return HttpParserResult::error(HTTP_ERROR_400_BAD_REQUEST, HTTP_PARSER_ERROR_CLOSED_CONNECTION);
-                }
-                return HttpParserResult::success(consumedTotal + length, user);
-            }
             /* node:http server compat: an accepted Upgrade request whose body just
              * finished parsing switched this connection into tunnel mode (the data
              * handler set isConnectRequest when it saw the body fin). Everything
@@ -1172,6 +1162,19 @@ struct HttpResponseData;
                     consumedTotal += length;
                     return HttpParserResult::success(consumedTotal, user);
                 }
+            }
+            /* RFC 9112 9.6: a prior request forbade keep-alive, so everything
+             * after it is never parsed. Bun.serve discards it so onData's tail
+             * closes after the final response; node:http raises
+             * HPE_CLOSED_CONNECTION ('clientError') like Node's own parser.
+             * Runs after the tunnel check above: a switched-protocol connection
+             * is no longer HTTP, so 9.6 does not apply to it. Runs after the
+             * park above: parked bytes reach this gate when reads resume. */
+            if (sawConnectionClose) {
+                if constexpr (IsNodeHttp) {
+                    return HttpParserResult::error(HTTP_ERROR_400_BAD_REQUEST, HTTP_PARSER_ERROR_CLOSED_CONNECTION);
+                }
+                return HttpParserResult::success(consumedTotal + length, user);
             }
             /* RFC 9112 2.2: ignore empty lines (CRLF) received prior to the
              * request-line, like Node/llhttp - e.g. a stray "\r\n" sent on an

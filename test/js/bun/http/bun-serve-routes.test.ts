@@ -236,6 +236,71 @@ describe("implicit HEAD for per-method route objects", () => {
     expect(get.status).toBe(200);
   });
 
+  describe.each([
+    ["callable GET", () => () => new Response("get-body")],
+    ["static Response GET", () => new Response("get-body")],
+  ])("HEAD: false alongside a %s", (_, makeGet) => {
+    test("sends HEAD to fetch instead of deriving it from GET", async () => {
+      await using server = Bun.serve({
+        port: 0,
+        routes: {
+          // @ts-expect-error - false is the per-method disable
+          "/x": { GET: makeGet(), HEAD: false },
+        },
+        fetch: req => new Response(null, { status: 299, headers: { "x-from": "fetch", "x-method": req.method } }),
+      });
+
+      const head = await fetch(new URL("/x", server.url), { method: "HEAD" });
+      const g = await fetch(new URL("/x", server.url));
+      expect({
+        head: { status: head.status, from: head.headers.get("x-from"), method: head.headers.get("x-method") },
+        get: { status: g.status, body: await g.text() },
+      }).toEqual({
+        head: { status: 299, from: "fetch", method: "HEAD" },
+        get: { status: 200, body: "get-body" },
+      });
+    });
+
+    test("sends HEAD to 404 when there is no fetch handler", async () => {
+      await using server = Bun.serve({
+        port: 0,
+        // @ts-expect-error - false is the per-method disable
+        routes: { "/x": { GET: makeGet(), HEAD: false } },
+      });
+
+      const head = await fetch(new URL("/x", server.url), { method: "HEAD" });
+      const g = await fetch(new URL("/x", server.url));
+      expect({
+        head: { status: head.status },
+        get: { status: g.status, body: await g.text() },
+      }).toEqual({
+        head: { status: 404 },
+        get: { status: 200, body: "get-body" },
+      });
+    });
+  });
+
+  test("HEAD: false on one path does not affect the implicit HEAD on another", async () => {
+    await using server = Bun.serve({
+      port: 0,
+      routes: {
+        // @ts-expect-error - false is the per-method disable
+        "/a": { GET: new Response("a-body"), HEAD: false },
+        "/b": { GET: new Response("b-body") },
+      },
+      fetch: () => new Response(null, { status: 299 }),
+    });
+
+    const [ha, hb] = await Promise.all([
+      fetch(new URL("/a", server.url), { method: "HEAD" }),
+      fetch(new URL("/b", server.url), { method: "HEAD" }),
+    ]);
+    expect({ a: ha.status, b: { status: hb.status, len: hb.headers.get("content-length") } }).toEqual({
+      a: 299,
+      b: { status: 200, len: String("b-body".length) },
+    });
+  });
+
   test("a static Response for another method does not capture HEAD away from GET", async () => {
     await using server = Bun.serve({
       port: 0,

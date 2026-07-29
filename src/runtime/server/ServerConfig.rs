@@ -185,6 +185,11 @@ pub struct StaticRouteEntry {
     pub path: Box<[u8]>,
     pub route: AnyRoute,
     pub method: MethodOptional,
+    /// Set when the per-method route object this entry came from also declared
+    /// `HEAD` (as a handler, a static value, or `false`). `apply_static_route`
+    /// uses it to skip the implicit GET→HEAD registration so the sibling
+    /// declaration is not displaced.
+    pub skip_implicit_head: bool,
 }
 
 impl StaticRouteEntry {
@@ -299,6 +304,7 @@ impl ServerConfig {
             path: Box::<[u8]>::from(path),
             route,
             method,
+            skip_implicit_head: false,
         });
         Ok(())
     }
@@ -918,6 +924,7 @@ impl ServerConfig {
                     // so a route object with a GET handler and no HEAD entry also answers HEAD.
                     let mut derived_head_route: Option<UserRouteBuilder> = None;
                     let mut has_head_route = false;
+                    let static_routes_start = init_ctx.user_routes.len();
                     for method in METHODS {
                         let method_name = bun_core::String::static_(method.as_str());
                         if let Some(function) = value.get_own(global, &method_name)? {
@@ -925,6 +932,13 @@ impl ServerConfig {
                                 validate_route_name(global, &path)?;
                             }
                             found = true;
+
+                            if function == JSValue::FALSE {
+                                if method == Method::HEAD {
+                                    has_head_route = true;
+                                }
+                                continue;
+                            }
 
                             if function.is_callable() {
                                 let callback = function.with_async_context_if_needed(global);
@@ -958,6 +972,7 @@ impl ServerConfig {
                                     path: Box::<[u8]>::from(&*path),
                                     route: html_route,
                                     method: http_method::Optional::Method(method_set),
+                                    skip_implicit_head: false,
                                 });
                                 if method == Method::HEAD {
                                     has_head_route = true;
@@ -966,6 +981,13 @@ impl ServerConfig {
                         }
                     }
 
+                    if has_head_route {
+                        for entry in &mut init_ctx.user_routes[static_routes_start..] {
+                            if *entry.path == *path {
+                                entry.skip_implicit_head = true;
+                            }
+                        }
+                    }
                     if let Some(builder) = derived_head_route {
                         if !has_head_route {
                             args.user_routes_to_build.push(builder);
@@ -1014,6 +1036,7 @@ impl ServerConfig {
                     path,
                     route,
                     method: http_method::Optional::Any,
+                    skip_implicit_head: false,
                 });
             }
 

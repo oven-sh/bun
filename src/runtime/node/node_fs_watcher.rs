@@ -315,7 +315,10 @@ pub enum Event {
     /// subtree-registration failure during a recursive walk (ENOSPC, EACCES)
     /// keeps the watcher alive so the caller still owns the partial coverage,
     /// matching node's recursive watcher.
-    Error { err: bun_sys::Error, close: bool },
+    Error {
+        err: bun_sys::Error,
+        close: bool,
+    },
     /// An event with no filename, surfaced to JS with `null`, matching node:
     /// `Change` when the OS event queue overflowed and changes were lost,
     /// `Rename` when libuv could not convert a name to UTF-8 (Windows).

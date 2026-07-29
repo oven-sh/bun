@@ -2216,6 +2216,7 @@ export class WebSocketDebugAdapter extends BaseDebugAdapter<WebSocketInspector> 
       processArgs.unshift("test");
     }
 
+    const isWatching = !!watchMode || runtimeArgs.includes("--watch") || runtimeArgs.includes("--hot");
     if (watchMode && !runtimeArgs.includes("--watch") && !runtimeArgs.includes("--hot")) {
       processArgs.unshift(watchMode === "hot" ? "--hot" : "--watch");
     }
@@ -2262,7 +2263,13 @@ export class WebSocketDebugAdapter extends BaseDebugAdapter<WebSocketInspector> 
 
     let started: boolean;
     if (terminalKind && this.initializeRequest?.supportsRunInTerminalRequest) {
-      this.#terminalLaunch = { watchMode: !!watchMode };
+      if (strictEnv) {
+        this.emitAdapterEvent("output", {
+          category: "console",
+          output: `Warning: "strictEnv" is ignored when "console" is "${console_}"; the terminal's environment is inherited.\n`,
+        });
+      }
+      this.#terminalLaunch = { watchMode: isWatching };
       started = await this.#runInTerminal({
         kind: terminalKind,
         title: "Bun Debugger",

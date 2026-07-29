@@ -266,11 +266,13 @@ pub struct FsIoRing {
     api: &'static IoRingApi,
     ring: HIORING,
     inflight: u32,
+    pending: u32,
     sq_size: u32,
     write_supported: bool,
     event: HANDLE,
     wait_handle: HANDLE,
     async_: *mut uv::uv_async_t,
+    prepare: *mut uv::uv_prepare_t,
 }
 
 impl FsIoRing {
@@ -322,11 +324,13 @@ impl FsIoRing {
             api,
             ring,
             inflight: 0,
+            pending: 0,
             sq_size: sq,
             write_supported,
             event,
             wait_handle: ptr::null_mut(),
             async_: ptr::null_mut(),
+            prepare: ptr::null_mut(),
         });
 
         // uv_async_t must live at a stable heap address for libuv.
@@ -339,6 +343,21 @@ impl FsIoRing {
         // loop from staying alive solely because a ring exists.
         unsafe { uv::uv_unref((async_ as *mut uv::uv_async_t).cast()) };
         this.async_ = async_;
+
+        // uv_prepare_t fires on the JS thread immediately before the loop would
+        // block on IOCP; that is the latest point at which SQEs built during
+        // the preceding JS tick can be submitted in a single syscall.
+        let prepare = Box::leak(Box::new(unsafe {
+            core::mem::zeroed::<uv::uv_prepare_t>()
+        }));
+        // SAFETY: `prepare` is a stable heap allocation; `loop_` is live.
+        unsafe {
+            uv::uv_prepare_init(loop_, prepare);
+            (*prepare).data = (&mut *this as *mut Self).cast();
+            uv::uv_prepare_start(prepare, Some(Self::on_prepare));
+            uv::uv_unref((prepare as *mut uv::uv_prepare_t).cast());
+        }
+        this.prepare = prepare;
 
         // SAFETY: `event` is a valid waitable handle; `on_wait` has the
         // WAITORTIMERCALLBACK ABI; `Context` is the `uv_async_t*` (stable).
@@ -388,6 +407,7 @@ impl FsIoRing {
     ) -> bool {
         let user_data = req as usize;
         if self.inflight >= self.sq_size {
+            self.flush();
             return false;
         }
         let href = IORING_HANDLE_REF {
@@ -408,14 +428,7 @@ impl FsIoRing {
             bun_core::scoped_log!(ioring, "BuildIoRingReadFile failed: 0x{:08x}", hr);
             return false;
         }
-        let mut sub = 0u32;
-        // SAFETY: `ring` is live; `sub` is a valid out-param.
-        let hr = unsafe { (self.api.submit)(self.ring, 0, 0, &mut sub) };
-        if hr != S_OK {
-            bun_core::scoped_log!(ioring, "SubmitIoRing failed: 0x{:08x}", hr);
-            return false;
-        }
-        self.inflight += 1;
+        self.note_built();
         true
     }
 
@@ -432,7 +445,11 @@ impl FsIoRing {
         let Some(build_write) = self.api.build_write else {
             return false;
         };
-        if !self.write_supported || self.inflight >= self.sq_size {
+        if !self.write_supported {
+            return false;
+        }
+        if self.inflight >= self.sq_size {
+            self.flush();
             return false;
         }
         let href = IORING_HANDLE_REF {
@@ -460,13 +477,37 @@ impl FsIoRing {
         if hr != S_OK {
             return false;
         }
-        let mut sub = 0u32;
-        // SAFETY: `ring` is live.
-        if unsafe { (self.api.submit)(self.ring, 0, 0, &mut sub) } != S_OK {
-            return false;
-        }
-        self.inflight += 1;
+        self.note_built();
         true
+    }
+
+    #[inline]
+    fn note_built(&mut self) {
+        self.inflight += 1;
+        self.pending += 1;
+        if self.pending >= self.sq_size {
+            self.flush();
+        }
+    }
+
+    fn flush(&mut self) {
+        if self.pending == 0 {
+            return;
+        }
+        let mut sub = 0u32;
+        // SAFETY: `ring` is live; `sub` is a valid out-param.
+        let hr = unsafe { (self.api.submit)(self.ring, 0, 0, &mut sub) };
+        bun_core::scoped_log!(ioring, "SubmitIoRing({}) hr=0x{:08x}", self.pending, hr);
+        let _ = hr;
+        self.pending = 0;
+    }
+
+    /// Fires right before the uv loop blocks on IOCP. Submits any SQEs built
+    /// during the preceding JS tick in a single syscall.
+    unsafe extern "C" fn on_prepare(p: *mut uv::uv_prepare_t) {
+        // SAFETY: `data` was set to `*mut Self` in `new()`.
+        let this = unsafe { &mut *((*p).data as *mut Self) };
+        this.flush();
     }
 
     /// Windows thread-pool wait callback. Runs off the JS thread; touches only

@@ -1828,7 +1828,12 @@ describe("socket.destroy() is not a graceful EOF", () => {
   // Node only emits 'end' / sets readableEnded when EOF is read from the peer.
   // A locally destroy()ed socket emits 'close' alone; reporting it as cleanly
   // ended makes a torn connection look like a complete message.
-  it("destroying a client socket emits 'close' but never 'end'", async () => {
+  const teardowns = [
+    ["destroy", (s: Socket) => s.destroy()],
+    ["resetAndDestroy", (s: Socket) => s.resetAndDestroy()],
+  ] as const;
+
+  it.each(teardowns)("client %s() emits 'close' but never 'end'", async (_name, teardown) => {
     const { promise, resolve, reject } = Promise.withResolvers<void>();
     const server = createServer(c => {
       c.on("error", () => {});
@@ -1837,7 +1842,7 @@ describe("socket.destroy() is not a graceful EOF", () => {
       await new Promise<void>(r => server.listen(0, "127.0.0.1", r));
       const port = (server.address() as import("node:net").AddressInfo).port;
       const events: string[] = [];
-      const socket = connect(port, "127.0.0.1", () => socket.destroy());
+      const socket = connect(port, "127.0.0.1", () => teardown(socket));
       socket.on("end", () => events.push("end"));
       socket.on("error", reject);
       socket.on("close", () => {
@@ -1855,7 +1860,7 @@ describe("socket.destroy() is not a graceful EOF", () => {
     }
   });
 
-  it("destroying an accepted socket emits 'close' but never 'end'", async () => {
+  it.each(teardowns)("accepted-socket %s() emits 'close' but never 'end'", async (_name, teardown) => {
     const { promise, resolve, reject } = Promise.withResolvers<void>();
     const events: string[] = [];
     const server = createServer(c => {
@@ -1870,7 +1875,7 @@ describe("socket.destroy() is not a graceful EOF", () => {
           reject(e);
         }
       });
-      c.on("data", () => c.destroy());
+      c.on("data", () => teardown(c));
     });
     let client: Socket | undefined;
     try {

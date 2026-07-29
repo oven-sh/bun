@@ -8,6 +8,7 @@
 using namespace JSC;
 
 extern "C" SYSV_ABI void* JSDOMFile__construct(JSC::JSGlobalObject*, JSC::CallFrame* callframe);
+extern "C" SYSV_ABI size_t Blob__estimatedSize(void* ptr);
 
 namespace WebCore {
 JSC_DECLARE_CUSTOM_GETTER(BlobPrototype__nameGetterWrap);
@@ -126,8 +127,9 @@ public:
             return JSValue::encode(JSC::jsUndefined());
         }
 
-        return JSValue::encode(
-            WebCore::JSBlob::create(vm, globalObject, structure, ptr));
+        auto* instance = WebCore::JSBlob::create(vm, globalObject, structure, ptr);
+        vm.heap.reportExtraMemoryAllocated(instance, Blob__estimatedSize(ptr));
+        return JSValue::encode(instance);
     }
 
     static JSC_HOST_CALL_ATTRIBUTES EncodedJSValue call(JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame)
@@ -164,7 +166,9 @@ extern "C" SYSV_ABI EncodedJSValue BUN__createJSDOMFile(JSC::JSGlobalObject* lex
     auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
     auto& vm = JSC::getVM(globalObject);
     auto* structure = globalObject->JSDOMFileStructure();
-    return JSValue::encode(WebCore::JSBlob::create(vm, globalObject, structure, ptr));
+    auto* instance = WebCore::JSBlob::create(vm, globalObject, structure, ptr);
+    vm.heap.reportExtraMemoryAllocated(instance, Blob__estimatedSize(ptr));
+    return JSValue::encode(instance);
 }
 
 }

@@ -919,8 +919,10 @@ describe("File prototype chain", () => {
           const w = new Worker(URL.createObjectURL(new Blob([
             "self.onmessage = e => postMessage({ctor: e.data.constructor.name, isFile: e.data instanceof File});",
           ], { type: "text/javascript" })));
-          const { promise, resolve } = Promise.withResolvers();
+          const { promise, resolve, reject } = Promise.withResolvers();
           w.onmessage = e => resolve(e.data);
+          w.onerror = reject;
+          w.onmessageerror = reject;
           w.postMessage(new File(["hi"], "x.txt"));
           const r = await promise;
           console.log(JSON.stringify(r));

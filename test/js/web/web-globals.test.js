@@ -366,14 +366,19 @@ async function runWithPipedStdin(script, input) {
   return { stderr, exitCode };
 }
 
-test.concurrent("prompt() does not consume stdin past the newline (Bun.stdin)", async () => {
+test.concurrent.each([
+  ["LF", "hello\nrest-of-stdin\nmore\n", "hello"],
+  ["CRLF", "hello\r\nrest-of-stdin\nmore\n", "hello"],
+  ["empty LF", "\nrest-of-stdin\nmore\n", null],
+  ["empty CRLF", "\r\nrest-of-stdin\nmore\n", null],
+])("prompt() does not consume stdin past the newline (Bun.stdin, %s)", async (_, input, answer) => {
   const { stderr, exitCode } = await runWithPipedStdin(
     `const r = prompt("Q?");
      const rest = await Bun.stdin.text();
      console.error(JSON.stringify({ r, rest }));`,
-    "hello\nrest-of-stdin\nmore\n",
+    input,
   );
-  expect(JSON.parse(stderr)).toEqual({ r: "hello", rest: "rest-of-stdin\nmore\n" });
+  expect(JSON.parse(stderr)).toEqual({ r: answer, rest: "rest-of-stdin\nmore\n" });
   expect(exitCode).toBe(0);
 });
 

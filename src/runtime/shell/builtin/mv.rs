@@ -467,7 +467,7 @@ impl ShellMvBatchedTask {
             return;
         }
         // Rename single entry to a new path (target was not a directory).
-        if let Err(e) = bun_sys::renameat(this.cwd, &this.sources[0], this.cwd, &this.target) {
+        if let Err(e) = Self::do_rename(this.cwd, &this.sources[0], this.cwd, &this.target) {
             this.err = Some(if e.get_errno() == bun_sys::E::ENOTDIR {
                 e.with_path(this.target.as_bytes())
             } else {
@@ -475,6 +475,126 @@ impl ShellMvBatchedTask {
             });
         }
         // Bounce-back is posted by `shell_task_trampoline`.
+    }
+
+    /// `renameat()` with a POSIX `mv` cross-device fallback: on EXDEV the
+    /// source hierarchy is duplicated at the destination and then removed.
+    fn do_rename(
+        src_dir: bun_sys::Fd,
+        src: &ZStr,
+        dst_dir: bun_sys::Fd,
+        dst: &ZStr,
+    ) -> Result<(), bun_sys::Error> {
+        match bun_sys::renameat(src_dir, src, dst_dir, dst) {
+            Err(e) if e.get_errno() == bun_sys::E::EXDEV => {
+                Self::move_across_devices(src_dir, src, dst_dir, dst)
+                    .map_err(|e| e.with_path(src.as_bytes()))
+            }
+            r => r,
+        }
+    }
+
+    /// EXDEV fallback: copy the source to the destination, then remove the
+    /// source. The source is only removed once the copy has fully succeeded.
+    fn move_across_devices(
+        src_dir: bun_sys::Fd,
+        src: &ZStr,
+        dst_dir: bun_sys::Fd,
+        dst: &ZStr,
+    ) -> Result<(), bun_sys::Error> {
+        let st = bun_sys::lstatat(src_dir, src)?;
+        let mode = st.st_mode as bun_core::Mode;
+
+        if bun_sys::S::ISLNK(mode) {
+            let mut buf = bun_paths::path_buffer_pool::get();
+            let n = bun_sys::readlinkat(src_dir, src, &mut buf[..])?;
+            if n >= bun_paths::MAX_PATH_BYTES {
+                return Err(bun_sys::Error::from_code(
+                    bun_sys::E::ENAMETOOLONG,
+                    bun_sys::Tag::readlink,
+                ));
+            }
+            buf[n] = 0;
+            let target = ZStr::from_buf(&buf[..], n);
+            let _ = bun_sys::unlinkat(dst_dir, dst);
+            bun_sys::symlinkat(target, dst_dir, dst)?;
+            return bun_sys::unlinkat(src_dir, src);
+        }
+
+        if bun_sys::S::ISDIR(mode) {
+            match bun_sys::mkdirat(dst_dir, dst, mode & 0o7777) {
+                Ok(()) => {}
+                Err(e) if e.get_errno() == bun_sys::E::EEXIST => {}
+                Err(e) => return Err(e),
+            }
+            let src_fd =
+                shell_openat(src_dir, src, bun_sys::O::RDONLY | bun_sys::O::DIRECTORY, 0)?;
+            let dst_fd =
+                match shell_openat(dst_dir, dst, bun_sys::O::RDONLY | bun_sys::O::DIRECTORY, 0) {
+                    Ok(fd) => fd,
+                    Err(e) => {
+                        closefd(src_fd);
+                        return Err(e);
+                    }
+                };
+            let mut iter = bun_sys::dir_iterator::iterate(src_fd);
+            let result: Result<(), bun_sys::Error> = loop {
+                match iter.next() {
+                    Ok(Some(entry)) => {
+                        let name = entry.name.slice_u8();
+                        let mut nbuf = bun_paths::path_buffer_pool::get();
+                        if name.len() >= bun_paths::MAX_PATH_BYTES {
+                            break Err(bun_sys::Error::from_code(
+                                bun_sys::E::ENAMETOOLONG,
+                                bun_sys::Tag::rename,
+                            ));
+                        }
+                        nbuf[..name.len()].copy_from_slice(name);
+                        nbuf[name.len()] = 0;
+                        let name_z = ZStr::from_buf(&nbuf[..], name.len());
+                        if let Err(e) =
+                            Self::move_across_devices(src_fd, name_z, dst_fd, name_z)
+                        {
+                            break Err(e);
+                        }
+                    }
+                    Ok(None) => break Ok(()),
+                    Err(e) => break Err(e),
+                }
+            };
+            closefd(dst_fd);
+            closefd(src_fd);
+            result?;
+            return bun_sys::rmdirat(src_dir, src);
+        }
+
+        let in_fd = bun_sys::openat(src_dir, src, bun_sys::O::RDONLY | bun_sys::O::CLOEXEC, 0)?;
+        let out_fd = match bun_sys::openat(
+            dst_dir,
+            dst,
+            bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::TRUNC | bun_sys::O::CLOEXEC,
+            mode & 0o7777,
+        ) {
+            Ok(fd) => fd,
+            Err(e) => {
+                closefd(in_fd);
+                return Err(e);
+            }
+        };
+        let _ = bun_sys::preallocate_file(out_fd.native(), 0, st.st_size as _);
+        let copied = bun_sys::copy_file(in_fd, out_fd);
+        #[cfg(unix)]
+        if copied.is_ok() {
+            let _ = bun_sys::fchmod(out_fd, mode & 0o7777);
+            let _ = bun_sys::fchown(out_fd, st.st_uid as _, st.st_gid as _);
+        }
+        closefd(out_fd);
+        closefd(in_fd);
+        if let Err(e) = copied {
+            let _ = bun_sys::unlinkat(dst_dir, dst);
+            return Err(e);
+        }
+        bun_sys::unlinkat(src_dir, src)
     }
 
     /// `renameat(cwd, src, target_fd, basename(src))`. A free fn over the
@@ -498,7 +618,7 @@ impl ShellMvBatchedTask {
         }
         buf[len] = 0;
         let path_in_dir = ZStr::from_buf(buf.as_slice(), len);
-        bun_sys::renameat(cwd, src, target_fd, path_in_dir).map_err(|e| {
+        Self::do_rename(cwd, src, target_fd, path_in_dir).map_err(|e| {
             // Surface `target/basename(src)` as the failing path.
             let joined = resolve_path::join_z::<bun_paths::platform::Auto>(&[target, base]);
             e.with_path(joined.as_bytes())

@@ -2263,6 +2263,7 @@ fn path_template_print_tolerates_malformed_brackets() {
     assert_eq!(run(b"a[b"), b"a[b");
     assert_eq!(run(b"foo["), b"foo[");
     assert_eq!(run(b"["), b"[");
+    assert_eq!(run(b"]"), b"]");
     assert_eq!(run(b""), b"");
     // No change to well-formed templates.
     assert_eq!(run(b"[dir]/[name].[ext]"), b"D/N.E");
@@ -2285,6 +2286,7 @@ fn path_template_print_tolerates_malformed_brackets() {
         Some((1, b"[b.js".as_slice()))
     );
     assert_eq!(find_unterminated_placeholder(b""), None);
+    assert_eq!(find_unterminated_placeholder(b"]"), None);
     assert_eq!(find_unterminated_placeholder(b"[dir]/[name].[ext]"), None);
     assert_eq!(find_unterminated_placeholder(b"[foo]-[name].[ext]"), None);
 }

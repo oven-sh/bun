@@ -325,12 +325,7 @@ describe("bundler", () => {
     },
     run: { stdout: "1" },
   });
-  // https://github.com/oven-sh/bun/issues/7810
-  // An unterminated known placeholder ("[name" with no closing "]") used to
-  // panic the whole process with "range start index N out of range" because the
-  // known-placeholder branch in path_template_print advanced one byte past the
-  // end of the template. Run via the CLI backend so a regression crashes the
-  // spawned `bun build`, not the test runner.
+  // Unterminated `[` used to panic path_template_print; CLI backend isolates the crash.
   for (const unterminated of ["[name", "[dir", "[ext", "[hash", "[target", "a[b.js", "[name]-[hash.js"]) {
     itBundled(`naming/UnterminatedPlaceholder/${unterminated}`, {
       backend: "cli",
@@ -345,8 +340,24 @@ describe("bundler", () => {
       },
     });
   }
-  // An unknown `[placeholder]` with a matching `]` is kept as literal bytes in
-  // the output path rather than being silently dropped.
+  for (const [opt, flag] of [
+    ["chunkNaming", "--chunk-naming"],
+    ["assetNaming", "--asset-naming"],
+  ] as const) {
+    itBundled(`naming/UnterminatedPlaceholder/${flag}`, {
+      backend: "cli",
+      files: {
+        "/src/entry.js": `console.log(1);`,
+      },
+      root: "/src",
+      [opt]: "[name]-[hash",
+      entryPointsRaw: ["./src/entry.js"],
+      bundleErrors: {
+        "<bun>": [`${flag}: unterminated "[hash"`],
+      },
+    });
+  }
+  // An unknown `[placeholder]` is kept verbatim in the output path.
   itBundled("naming/UnknownPlaceholderIsLiteral", {
     backend: "cli",
     files: {
@@ -362,9 +373,7 @@ describe("bundler", () => {
   });
 });
 
-// Same repro via the JS API: Bun.build({ naming: "[name" }) used to SIGABRT
-// the process (see #7810), so run it in a subprocess. After the fix the config
-// parser rejects the template up front with a catchable error.
+// Bun.build({ naming: "[name" }) used to SIGABRT; validation now rejects it.
 describe("bundler", () => {
   for (const naming of [`"[name"`, `{ chunk: "[name]-[hash" }`, `{ asset: "pre[post" }`]) {
     test(`naming/UnterminatedPlaceholderAPI ${naming}`, async () => {

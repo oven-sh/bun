@@ -11,12 +11,18 @@ import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows } from "harness";
 
 /** Spawn a child attached to a fresh terminal, collect all PTY output until
- *  `done()` returns true or the child exits, then close the terminal. */
+ *  `done()` returns true or the child exits, then close the terminal.
+ *
+ *  On POSIX the child becomes the session leader with the PTY as its
+ *  controlling terminal (setsid + TIOCSCTTY) whether the terminal is created
+ *  inline by the spawn or passed as a pre-constructed `Bun.Terminal`; set
+ *  `existing: true` to exercise the latter (oven-sh/bun#33237). */
 async function runInTerminal(
   childScript: string,
   opts: {
     cols?: number;
     rows?: number;
+    existing?: boolean;
     done: (output: string) => boolean;
     afterReady?: (terminal: Bun.Terminal, output: () => string) => void | Promise<void>;
     readyMarker?: string;
@@ -29,23 +35,23 @@ async function runInTerminal(
   const readyMarker = opts.readyMarker ?? "READY";
   const decoder = new TextDecoder();
 
-  // Use an inline terminal so the child becomes the session leader on POSIX
-  // (setsid + TIOCSCTTY), which is required for SIGINT/SIGWINCH delivery.
+  const terminalOptions: Bun.TerminalOptions = {
+    cols: opts.cols ?? 80,
+    rows: opts.rows ?? 24,
+    data(_t, chunk: Uint8Array) {
+      output += decoder.decode(chunk, { stream: true });
+      if (output.includes(readyMarker)) ready.resolve();
+      if (opts.done(output)) finished.resolve();
+    },
+    exit() {
+      eof.resolve();
+    },
+  };
+
   const proc = Bun.spawn({
     cmd: [bunExe(), "-e", childScript],
     env: bunEnv,
-    terminal: {
-      cols: opts.cols ?? 80,
-      rows: opts.rows ?? 24,
-      data(_t, chunk: Uint8Array) {
-        output += decoder.decode(chunk, { stream: true });
-        if (output.includes(readyMarker)) ready.resolve();
-        if (opts.done(output)) finished.resolve();
-      },
-      exit() {
-        eof.resolve();
-      },
-    },
+    terminal: opts.existing ? new Bun.Terminal(terminalOptions) : terminalOptions,
   });
 
   if (opts.afterReady) {
@@ -143,6 +149,36 @@ describe("Bun.Terminal platform behaviour", () => {
     expect(output).toContain("rows=19");
   });
 
+  // POSIX only: /dev/tty (the controlling terminal) has no Windows equivalent,
+  // so these are skipped rather than todo'd there. The child opens /dev/tty
+  // and writes a marker; that marker only reaches the PTY's data callback if
+  // the PTY is the child's controlling terminal (setsid + TIOCSCTTY). Before
+  // https://github.com/oven-sh/bun/issues/33237 an existing-Terminal child
+  // kept the parent's controlling terminal (or none), so the open failed with
+  // ENXIO or the write went to the wrong tty.
+  const DEV_TTY_CHILD = `
+    const fs = require("fs");
+    process.stdout.write("READY");
+    let r;
+    try { fs.writeSync(fs.openSync("/dev/tty", "w"), "VIA_DEV_TTY"); r = "ok"; }
+    catch (e) { r = String(e.code || e); }
+    process.stdout.write(" DONE:" + r);`;
+
+  test.skipIf(isWindows)("POSIX: /dev/tty inside the child is the PTY (inline terminal)", async () => {
+    const { output } = await runInTerminal(DEV_TTY_CHILD, { done: o => o.includes("DONE:") });
+    expect(output).toContain("VIA_DEV_TTY");
+    expect(output).toContain("DONE:ok");
+  });
+
+  test.skipIf(isWindows)("POSIX: /dev/tty inside the child is the PTY (existing Terminal)", async () => {
+    const { output } = await runInTerminal(DEV_TTY_CHILD, {
+      existing: true,
+      done: o => o.includes("DONE:"),
+    });
+    expect(output).toContain("VIA_DEV_TTY");
+    expect(output).toContain("DONE:ok");
+  });
+
   // (Bun.Terminal stores `name` but does not inject TERM= into the child env
   // on either platform; that's inheritance from the caller's env, not a gap.)
 
@@ -188,6 +224,23 @@ describe("Bun.Terminal platform behaviour", () => {
        setInterval(() => {}, 1000);
        process.stdout.write('READY');`,
       {
+        done: o => o.includes("SIGINT"),
+        afterReady: t => void t.write("\x03"),
+      },
+    );
+    expect(output).toContain("SIGINT");
+  });
+
+  // https://github.com/oven-sh/bun/issues/33237: a pre-constructed Bun.Terminal
+  // must also become the child's controlling terminal, or the line discipline
+  // has no foreground process group to deliver SIGINT to and \x03 is only echoed.
+  test.todoIf(isWindows)("SAME: Ctrl+C input interrupts a child on an existing Terminal", async () => {
+    const { output } = await runInTerminal(
+      `process.on('SIGINT', () => { process.stdout.write('SIGINT'); process.exit(0); });
+       setInterval(() => {}, 1000);
+       process.stdout.write('READY');`,
+      {
+        existing: true,
         done: o => o.includes("SIGINT"),
         afterReady: t => void t.write("\x03"),
       },
@@ -335,6 +388,23 @@ describe("Bun.Terminal platform behaviour", () => {
     terminal.close();
   });
 
+  // Companion to the test above: the exit callback that a child's exit must NOT
+  // fire must still fire on close(). On macOS/BSD the session leader's exit
+  // revokes the pts and finishes the master reader early; the exit callback is
+  // deferred through that, not lost (https://github.com/oven-sh/bun/issues/33237).
+  test("SAME: exit callback fires on close() after an existing terminal's child exited", async () => {
+    const exitFired = Promise.withResolvers<void>();
+    const terminal = new Bun.Terminal({
+      exit() {
+        exitFired.resolve();
+      },
+    });
+    const proc = Bun.spawn({ cmd: [bunExe(), "-e", ""], env: bunEnv, terminal });
+    await proc.exited;
+    terminal.close();
+    await exitFired.promise;
+  });
+
   test("SAME: terminal can be reused across sequential spawns", async () => {
     let output = "";
     const first = Promise.withResolvers<void>();
@@ -358,6 +428,49 @@ describe("Bun.Terminal platform behaviour", () => {
     terminal.close();
     expect(output).toContain("FIRST");
     expect(output).toContain("SECOND");
+  });
+
+  // https://github.com/oven-sh/bun/issues/33237: sequential children on a
+  // reused Terminal must each get the PTY as their controlling terminal. On
+  // macOS/BSD the first session leader's exit revokes every fd on the pts, so
+  // the Terminal must transparently re-acquire a live slave (and re-arm its
+  // master reader) before the second spawn. POSIX only: /dev/tty has no
+  // Windows equivalent.
+  test.skipIf(isWindows)("POSIX: sequential children on a reused Terminal each get it as the ctty", async () => {
+    let output = "";
+    const first = Promise.withResolvers<void>();
+    const second = Promise.withResolvers<void>();
+    const terminal = new Bun.Terminal({
+      data(_t, chunk) {
+        output += Buffer.from(chunk).toString("latin1");
+        if (output.includes("DONE1:")) first.resolve();
+        if (output.includes("DONE2:")) second.resolve();
+      },
+    });
+    // Writes a marker to /dev/tty (only visible on the PTY when it is the
+    // child's ctty), then always reports DONE on stdout so the test never hangs.
+    const writeToDevTty = (n: number) =>
+      `const fs = require("fs");
+       let r;
+       try { fs.writeSync(fs.openSync("/dev/tty", "w"), "CTTY:${n} "); r = "ok"; }
+       catch (e) { r = String(e.code || e); }
+       process.stdout.write("DONE${n}:" + r + " ");`;
+
+    try {
+      const p1 = Bun.spawn({ cmd: [bunExe(), "-e", writeToDevTty(1)], env: bunEnv, terminal });
+      await first.promise;
+      await p1.exited;
+
+      const p2 = Bun.spawn({ cmd: [bunExe(), "-e", writeToDevTty(2)], env: bunEnv, terminal });
+      await second.promise;
+      await p2.exited;
+    } finally {
+      terminal.close();
+    }
+    expect(output).toContain("CTTY:1");
+    expect(output).toContain("CTTY:2");
+    expect(output).toContain("DONE1:ok");
+    expect(output).toContain("DONE2:ok");
   });
 
   // ClosePseudoConsole on Windows < 11 24H2 may not terminate a still-running

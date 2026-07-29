@@ -789,10 +789,8 @@ describe("SPILL.TERM - invalid chunk terminators", () => {
 
     // Attach the data/close/error listeners BEFORE any write so the response
     // can't arrive between the write and the listener attach (which would drop
-    // it). The writes below are issued without waiting for `connect`: net.Socket
-    // queues writes until connected, and a separate `await once('connect')`
-    // would hang with no error path if the connect fails under load. Any
-    // connect failure instead rejects `responseReady` below.
+    // it). `events.once` rejects if `error` fires before `connect`, so a
+    // connect failure under load surfaces instead of leaving the await pending.
     let data = "";
     const responseReady = new Promise<string>((resolve, reject) => {
       client.on("error", reject);
@@ -802,6 +800,7 @@ describe("SPILL.TERM - invalid chunk terminators", () => {
       client.on("close", () => resolve(data));
     });
 
+    await once(client, "connect");
     client.write(
       "POST / HTTP/1.1\r\n" + "Host: localhost\r\n" + "Transfer-Encoding: chunked\r\n" + "\r\n" + "0\r\n" + "\r", // first half of terminator
     );
@@ -836,8 +835,7 @@ describe("SPILL.TERM - invalid chunk terminators", () => {
     const client = net.connect(server.port, "127.0.0.1");
     client.setNoDelay(true);
 
-    // Listeners first, no separate `connect` await — see comment in the
-    // previous test.
+    // Listeners first — see comment in the previous test.
     let data = "";
     const bothResponses = Promise.withResolvers<string>();
     client.on("error", bothResponses.reject);
@@ -851,6 +849,7 @@ describe("SPILL.TERM - invalid chunk terminators", () => {
     });
     client.on("close", () => bothResponses.resolve(data));
 
+    await once(client, "connect");
     client.write(
       "POST / HTTP/1.1\r\n" + "Host: localhost\r\n" + "Transfer-Encoding: chunked\r\n" + "\r\n" + "0\r\n" + "\r", // first half of terminator
     );

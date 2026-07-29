@@ -1286,6 +1286,16 @@ pub mod js_bundler {
                         "Cannot use compile with target 'browser' and splitting for standalone HTML"
                     )));
                 }
+                if has_all_html
+                    && this
+                        .compile
+                        .as_ref()
+                        .is_some_and(|c| !c.assets.is_empty())
+                {
+                    return Err(global_this.throw_invalid_arguments(format_args!(
+                        "Cannot use compile.assets with target 'browser' for standalone HTML"
+                    )));
+                }
             }
 
             scopeguard::ScopeGuard::into_inner(plugins);

@@ -2102,13 +2102,13 @@ impl<'a> HTTPClient<'a> {
             return;
         }
         bun_core::scoped_log!(fetch, "Timeout  {}\n", BStr::new(self.url.href));
-        // Terminate (mark dead + close) BEFORE failing, matching
+        // Close (mark dead + close) BEFORE failing, matching
         // `close_and_fail`: `fail()` dispatches the final result, which frees
         // the HTTP-thread AsyncHTTP clone that embeds `self`, so nothing may
         // run after it, and the socket must already be de-tagged so the
         // synchronous close callbacks (TLS close fires on_handshake for a
         // mid-handshake socket) cannot re-enter this client.
-        GenHttpContext::<IS_SSL>::terminate_socket(socket);
+        GenHttpContext::<IS_SSL>::fail_socket(socket);
         self.fail(crate::Error::Timeout);
     }
 
@@ -3563,7 +3563,7 @@ impl<'a> HTTPClient<'a> {
         socket: HttpSocket<IS_SSL>,
     ) {
         bun_core::scoped_log!(fetch, "closeAndFail: {:?}", err);
-        GenHttpContext::<IS_SSL>::terminate_socket(socket);
+        GenHttpContext::<IS_SSL>::fail_socket(socket);
         self.fail(err);
     }
 

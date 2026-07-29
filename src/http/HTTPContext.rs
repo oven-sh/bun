@@ -301,6 +301,21 @@ impl<const SSL: bool> HTTPContext<SSL> {
         socket.close(uws::CloseKind::Failure);
     }
 
+    /// Close a socket whose request failed (client-detected error, abort,
+    /// timeout) without arming SO_LINGER{1,0}. A `Failure` close sends RST,
+    /// and with a request body still in the kernel send buffer XNU picks
+    /// `th_seq = snd_nxt` for that RST, which can sit past the peer's
+    /// `rcv_nxt + rcv_wnd` and be dropped as out-of-window (Linux clamps via
+    /// `tcp_acceptable_seq`). The peer's TCB stays ESTABLISHED and it never
+    /// observes the close. A normal FIN (what Node's `socket.destroy()` sends
+    /// on abort) is in-order and reaches a reading peer after the buffered
+    /// body drains. `FastShutdown` keeps the TLS fast path (no wait for the
+    /// peer's close_notify).
+    pub(crate) fn fail_socket(socket: HTTPSocket<SSL>) {
+        Self::mark_socket_as_dead(socket);
+        socket.close(uws::CloseKind::FastShutdown);
+    }
+
     pub(crate) fn close_socket(socket: HTTPSocket<SSL>) {
         Self::mark_socket_as_dead(socket);
         socket.close(uws::CloseKind::Normal);

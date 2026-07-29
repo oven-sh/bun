@@ -957,8 +957,7 @@ impl CreateCommand {
         {
             let parent_dir = bun_sys::Dir::open(destination)?;
             if template_has_gitignore {
-                // rename replaces an existing .gitignore; linkat would fail
-                // with EEXIST and silently drop the template's version.
+                // rename replaces an existing .gitignore; linkat fails EEXIST.
                 let _ = bun_sys::renameat(
                     parent_dir.fd(),
                     bun_core::zstr!("gitignore"),

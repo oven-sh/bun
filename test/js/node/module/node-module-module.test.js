@@ -129,6 +129,27 @@ describe.concurrent("node-module-module", () => {
     expect(m.exports).toEqual({});
   });
 
+  test("Module.prototype is not enumerable (#16933)", () => {
+    expect(Object.getOwnPropertyDescriptor(Module, "prototype")).toEqual({
+      value: Module.prototype,
+      writable: true,
+      enumerable: false,
+      configurable: false,
+    });
+    expect(Object.keys(Module)).not.toContain("prototype");
+
+    // jest-runtime copies every enumerable own property of Module onto a class
+    // declaration, whose own .prototype is non-writable. If Module.prototype is
+    // enumerable this throws "Attempted to assign to readonly property." in
+    // strict mode.
+    class Sub extends Module {}
+    expect(() => {
+      for (const [key, value] of Object.entries(Module)) {
+        Sub[key] = value;
+      }
+    }).not.toThrow();
+  });
+
   test("_nodeModulePaths() works", () => {
     const root = path.resolve("/");
     expect(() => {

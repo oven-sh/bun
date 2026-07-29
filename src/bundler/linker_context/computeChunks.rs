@@ -615,10 +615,18 @@ pub fn compute_chunks(this: &mut LinkerContext, unique_key: u64) -> crate::Resul
             }
         }
 
-        let pathname = bun_fs::PathName::init(
-            output_paths[chunk.entry_point.entry_point_id() as usize].slice(),
-        );
-        chunk.template.placeholder.name = pathname.base.to_vec().into_boxed_slice();
+        // `entry_point_id()` is only meaningful when `is_entry_point()` is true;
+        // shared split chunks carry a zeroed id. For those, `[name]` stays the
+        // literal "chunk" (already set by `PathTemplate::CHUNK.into()` above),
+        // matching esbuild.
+        let pathname: Option<bun_fs::PathName<'_>> = chunk.entry_point.is_entry_point().then(|| {
+            bun_fs::PathName::init(
+                output_paths[chunk.entry_point.entry_point_id() as usize].slice(),
+            )
+        });
+        if let Some(ref pathname) = pathname {
+            chunk.template.placeholder.name = pathname.base.to_vec().into_boxed_slice();
+        }
         chunk.template.placeholder.ext = chunk.content.ext().to_vec().into_boxed_slice();
 
         if chunk.template.needs(PlaceholderField::Target) {
@@ -633,7 +641,9 @@ pub fn compute_chunks(this: &mut LinkerContext, unique_key: u64) -> crate::Resul
             };
         }
 
-        if chunk.template.needs(PlaceholderField::Dir) {
+        if let Some(ref pathname) = pathname
+            && chunk.template.needs(PlaceholderField::Dir)
+        {
             // this if check is a specific fix for `bun build hi.ts --external '*'`, without leading `./`
             let dir_path: &[u8] = if !pathname.dir.is_empty() {
                 pathname.dir

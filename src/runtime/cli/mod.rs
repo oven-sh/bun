@@ -826,14 +826,13 @@ pub mod command {
     // stays silent on unknown flags.
     // ──────────────────
     pub(crate) fn is_bun_x(argv0: &[u8]) -> bool {
-        #[cfg(windows)]
-        {
-            return strings::ends_with(argv0, b"bunx.exe") || strings::ends_with(argv0, b"bunx");
+        // `.exe` is matched on posix too: the npm `bun` package ships `bin/bunx.exe` everywhere (#14596).
+        if strings::ends_with(argv0, b"bunx") || strings::ends_with(argv0, b"bunx.exe") {
+            return true;
         }
-        #[cfg(not(windows))]
-        {
-            strings::ends_with(argv0, b"bunx")
-        }
+        bun_core::Environment::IS_DEBUG
+            && (strings::ends_with(argv0, b"bunx-debug")
+                || strings::ends_with(argv0, b"bunx-debug.exe"))
     }
 
     pub(crate) fn is_node(argv0: &[u8]) -> bool {

@@ -1132,6 +1132,29 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                 manager.extracted_count += 1;
                 bun_core::analytics::Features::extracted_packages_inc();
 
+                // Back-fill a registry package whose manifest or lockfile entry
+                // carried no usable integrity: the extractor hashed the bytes
+                // as they were downloaded, so pin that value now and force a
+                // lockfile save so subsequent installs verify against it. Runs
+                // here (rather than in a single callback) so the resolve phase
+                // and both hoisted/isolated install phases share one write-back.
+                if resolution.tag == bun_install::ResolutionTag::Npm
+                    && package_id != INVALID_PACKAGE_ID
+                {
+                    let computed = task.data_extract().integrity;
+                    if computed.tag.is_supported() {
+                        let meta =
+                            &mut manager.lockfile.packages.items_meta_mut()[package_id as usize];
+                        if !meta.integrity.tag.is_supported() {
+                            meta.integrity = computed;
+                            manager
+                                .options
+                                .enable
+                                .set(Enable::FORCE_SAVE_LOCKFILE, true);
+                        }
+                    }
+                }
+
                 if C::HAS_ON_EXTRACT {
                     if C::IS_PACKAGE_INSTALLER {
                         C::as_package_installer(extract_ctx).fix_cached_lockfile_package_slices();

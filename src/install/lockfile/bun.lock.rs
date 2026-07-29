@@ -110,6 +110,9 @@ pub enum Version {
     /// lockfile keeps loading:
     /// - an npm package resolved to a tarball URL outside the configured
     ///   registry must carry a supported integrity hash
+    /// - an npm package's integrity string, when non-empty, must parse as a
+    ///   supported SRI hash (unparseable/unknown-algorithm entries are
+    ///   rejected rather than warned-and-ignored)
     /// - a git `.bun-tag` must be a safe path/checkout component (the same
     ///   check on a `github` tag is enforced at every version, since its
     ///   download path has no checkout-time re-validation)
@@ -2622,11 +2625,19 @@ pub fn parse_into_binary_lockfile(
 
                     pkg.meta.integrity = Integrity::parse(integrity_str);
                     if !integrity_str.is_empty() && !pkg.meta.integrity.tag.is_supported() {
-                        // Surface — don't fail — for npm parity (`npm install`
-                        // proceeds on a malformed lockfile integrity, treating
-                        // it as absent). The download path still applies any
-                        // registry-supplied integrity, so this only loses the
-                        // *lockfile* pin.
+                        // A non-empty value that doesn't parse as a supported
+                        // SRI hash is refused so a tampered or unknown-algorithm
+                        // entry cannot silently disable verification. Gated to
+                        // v2+ so lockfiles written before this check keep
+                        // loading with the prior warn-and-ignore behaviour.
+                        if lockfile_version.at_least(Version::V2) {
+                            log.add_error(
+                                Some(source),
+                                item_loc(source, key_loc, i),
+                                b"Unsupported or malformed integrity hash for npm package",
+                            );
+                            return Err(ParseError::InvalidPackageInfo);
+                        }
                         log.add_warning(
                             Some(source),
                             item_loc(source, key_loc, i),
@@ -2652,6 +2663,39 @@ pub fn parse_into_binary_lockfile(
                             b"Missing integrity hash for npm package resolved to a tarball URL outside the configured registry",
                         );
                         return Err(ParseError::InvalidPackageInfo);
+                    }
+
+                    // An empty integrity string means this entry vouches for
+                    // nothing. The download path computes and back-fills a
+                    // SHA-512 once the tarball is fetched, so a non-frozen
+                    // install self-heals; under --frozen-lockfile the lockfile
+                    // cannot be updated and the unverified entry is refused.
+                    // Gated to v2+ so lockfiles written before the back-fill
+                    // existed (which always persisted `""` for a registry with
+                    // no integrity) keep loading silently.
+                    if lockfile_version.at_least(Version::V2) && integrity_str.is_empty() {
+                        let frozen = manager
+                            .as_deref()
+                            .is_some_and(|m| m.options.enable.frozen_lockfile());
+                        if frozen {
+                            log.add_error_fmt(
+                                Some(source),
+                                item_loc(source, key_loc, i),
+                                format_args!(
+                                    "Package {} has no integrity pin in the frozen lockfile",
+                                    bstr::BStr::new(name_str),
+                                ),
+                            );
+                            return Err(ParseError::InvalidPackageInfo);
+                        }
+                        log.add_warning_fmt(
+                            Some(source),
+                            item_loc(source, key_loc, i),
+                            format_args!(
+                                "Package {} has no integrity pin in the lockfile; it will be computed after download",
+                                bstr::BStr::new(name_str),
+                            ),
+                        );
                     }
                 }
                 ResolutionTag::LocalTarball | ResolutionTag::RemoteTarball => {

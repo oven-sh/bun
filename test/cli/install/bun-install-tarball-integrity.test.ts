@@ -1,5 +1,6 @@
 import { file, spawn } from "bun";
 import { afterAll, beforeAll, describe, expect, it, setDefaultTimeout } from "bun:test";
+import { readFileSync, writeFileSync } from "fs";
 import { rm, writeFile } from "fs/promises";
 import { bunExe, bunEnv as env, readdirSorted, tempDir } from "harness";
 import { createHash } from "node:crypto";
@@ -748,6 +749,334 @@ describe.concurrent("tarball integrity metadata forms", () => {
     expect(stderr + stdout).toContain("Integrity check failed");
     expect(stdout).not.toContain("1 package installed");
     expect(exitCode).not.toBe(0);
+  });
+});
+
+describe.concurrent("npm registry without usable integrity metadata", () => {
+  function octal(n: number, width: number) {
+    return n.toString(8).padStart(width - 1, "0") + "\0";
+  }
+  function tarHeader(name: string, size: number) {
+    const buf = Buffer.alloc(512, 0);
+    buf.write(name, 0, 100, "utf8");
+    buf.write(octal(0o644, 8), 100);
+    buf.write(octal(0, 8), 108);
+    buf.write(octal(0, 8), 116);
+    buf.write(octal(size, 12), 124);
+    buf.write(octal(0, 12), 136);
+    buf.fill(" ", 148, 156);
+    buf.write("0", 156);
+    buf.write("ustar\0", 257);
+    buf.write("00", 263);
+    let sum = 0;
+    for (let i = 0; i < 512; i++) sum += buf[i];
+    buf.write(octal(sum, 8), 148);
+    return buf;
+  }
+  function pad512(len: number) {
+    return Buffer.alloc((512 - (len % 512)) % 512, 0);
+  }
+  function buildTarball(body: Buffer) {
+    const tar = Buffer.concat([
+      tarHeader("package/package.json", body.length),
+      body,
+      pad512(body.length),
+      Buffer.alloc(1024, 0),
+    ]);
+    return gzipSync(tar);
+  }
+  function sha512(bytes: Uint8Array) {
+    return "sha512-" + createHash("sha512").update(bytes).digest("base64");
+  }
+  function makeRegistry(state: { bytes: Buffer; dist: Record<string, string> }) {
+    const server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      async fetch(req) {
+        const url = new URL(req.url);
+        if (url.pathname.endsWith(".tgz")) {
+          return new Response(state.bytes, { headers: { "content-length": String(state.bytes.length) } });
+        }
+        return Response.json({
+          name: "pkg",
+          "dist-tags": { latest: "1.0.0" },
+          versions: {
+            "1.0.0": {
+              name: "pkg",
+              version: "1.0.0",
+              dist: { tarball: `http://127.0.0.1:${server.port}/pkg/-/pkg-1.0.0.tgz`, ...state.dist },
+            },
+          },
+        });
+      },
+    });
+    return server;
+  }
+  function projectDir(name: string, port: number) {
+    return tempDir(name, {
+      "package.json": JSON.stringify({ name: "app", version: "1.0.0", dependencies: { pkg: "1.0.0" } }),
+      "bunfig.toml": `[install]\nregistry = "http://127.0.0.1:${port}/"\nlinker = "hoisted"\n`,
+    });
+  }
+  async function runInstall(dir: string, extra: string[] = [], extraEnv: Record<string, string> = {}) {
+    await using proc = spawn({
+      cmd: [bunExe(), "install", "--no-progress", ...extra],
+      cwd: dir,
+      env: { ...env, ...extraEnv, BUN_INSTALL_CACHE_DIR: join(dir, ".cache"), NO_COLOR: "1" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stderr, stdout, exitCode] = await Promise.all([proc.stderr.text(), proc.stdout.text(), proc.exited]);
+    return { stderr, stdout, exitCode };
+  }
+  function lockfileIntegrity(dir: string) {
+    const text = readFileSync(join(dir, "bun.lock"), "utf8");
+    const m = text.match(/"pkg@1\.0\.0"[^\n]*?"((?:sha\d+-[A-Za-z0-9+/]+=*)?)"\]/);
+    return m ? m[1] : null;
+  }
+
+  // Face A: the registry advertises a non-empty integrity value that does not
+  // parse as a supported SRI hash. Installing that version must fail closed.
+  for (const [label, dist] of [
+    ["unsupported algorithm", { integrity: "md5-AAAAAAAAAAAAAAAAAAAAAA==" }],
+    ["malformed base64", { integrity: "sha512-!!!" }],
+    ["not an SRI string", { integrity: "not-an-sri-string!!!" }],
+    ["non-hex shasum", { shasum: "this-is-not-hex" }],
+  ] as const) {
+    it(`refuses an unparseable manifest integrity (${label})`, async () => {
+      const good = buildTarball(Buffer.from('{"name":"pkg","version":"1.0.0"}\n'));
+      const state = { bytes: good, dist };
+      await using server = makeRegistry(state);
+      using dir = projectDir("npm-integrity-manifest-invalid", server.port);
+
+      const r = await runInstall(String(dir));
+      expect(r.stderr).toContain("Registry provided an invalid integrity hash for pkg@1.0.0");
+      expect(r.exitCode).not.toBe(0);
+    });
+  }
+
+  it("uses the legacy shasum when the SRI integrity is unparseable", async () => {
+    const good = buildTarball(Buffer.from('{"name":"pkg","version":"1.0.0"}\n'));
+    const shasum = createHash("sha1").update(good).digest("hex");
+    const state = { bytes: good, dist: { integrity: "md5-AAAAAAAAAAAAAAAAAAAAAA==", shasum } };
+    await using server = makeRegistry(state);
+    using dir = projectDir("npm-integrity-shasum-fallback", server.port);
+
+    const r = await runInstall(String(dir));
+    expect(r.stderr).not.toContain("invalid integrity");
+    expect(lockfileIntegrity(String(dir))).toMatch(/^sha1-[A-Za-z0-9+/]+=*$/);
+    expect(r.exitCode).toBe(0);
+  });
+
+  // Face B: the registry omits both `dist.integrity` and `dist.shasum`. Bun must
+  // compute a SHA-512 of the downloaded bytes, pin it in the lockfile, and on a
+  // subsequent install reject a swapped tarball. Covers both extract paths.
+  for (const [label, extraEnv] of [
+    ["buffered", {}],
+    ["streaming", { BUN_INSTALL_STREAMING_MIN_SIZE: "1" }],
+  ] as const) {
+    it(`pins a computed sha512 when the manifest omits integrity (${label}) and rejects a swapped tarball on reinstall`, async () => {
+      const tarballA = buildTarball(Buffer.from('{"name":"pkg","version":"1.0.0"}\n'));
+      const tarballB = buildTarball(Buffer.from('{"name":"pkg","version":"1.0.0","swapped":true}\n'));
+
+      const state = { bytes: tarballA, dist: {} as Record<string, string> };
+      await using server = makeRegistry(state);
+      using dir = projectDir("npm-integrity-missing", server.port);
+
+      // First install: the absent manifest integrity must not leave the
+      // package permanently unverified; Bun computes a SHA-512 of the bytes
+      // it downloaded and records it in the lockfile.
+      {
+        const r = await runInstall(String(dir), ["--save-text-lockfile"], extraEnv);
+        expect(r.stderr).toContain("Saved lockfile");
+        expect(r.exitCode).toBe(0);
+      }
+
+      expect(lockfileIntegrity(String(dir))).toBe(sha512(tarballA));
+
+      // Second install from scratch: the server now serves different bytes.
+      // The pin recorded on the first install must reject the swap.
+      await rm(join(String(dir), "node_modules"), { recursive: true, force: true });
+      await rm(join(String(dir), ".cache"), { recursive: true, force: true });
+      state.bytes = tarballB;
+
+      {
+        const r = await runInstall(String(dir), [], extraEnv);
+        expect(r.stderr + r.stdout).toContain("Integrity check failed");
+        expect(r.stdout).not.toContain("1 package installed");
+        expect(r.exitCode).not.toBe(0);
+      }
+    });
+  }
+
+  // Face C: a lockfile that already has an empty integrity for an npm package
+  // is warned about and self-heals on the next download; under --frozen-lockfile
+  // the same entry is refused.
+  it("warns on an empty npm lockfile integrity and back-fills it", async () => {
+    const good = buildTarball(Buffer.from('{"name":"pkg","version":"1.0.0"}\n'));
+    const state = { bytes: good, dist: { integrity: sha512(good) } };
+    await using server = makeRegistry(state);
+    using dir = projectDir("npm-integrity-lockfile-empty", server.port);
+
+    {
+      const r = await runInstall(String(dir));
+      expect(r.exitCode).toBe(0);
+    }
+    const lockPath = join(String(dir), "bun.lock");
+    const lock = readFileSync(lockPath, "utf8");
+    writeFileSync(lockPath, lock.replace(/"sha\d+-[A-Za-z0-9+/]+=*"]/, '""]'));
+    await rm(join(String(dir), "node_modules"), { recursive: true, force: true });
+    await rm(join(String(dir), ".cache"), { recursive: true, force: true });
+
+    {
+      const r = await runInstall(String(dir), ["--frozen-lockfile"]);
+      expect(r.stderr).toContain("Package pkg has no integrity pin in the frozen lockfile");
+      expect(r.exitCode).not.toBe(0);
+    }
+
+    {
+      const r = await runInstall(String(dir));
+      expect(r.stderr).toContain("Package pkg has no integrity pin in the lockfile");
+      expect(r.stderr).toContain("Saved lockfile");
+      expect(lockfileIntegrity(String(dir))).toBe(sha512(good));
+      expect(r.exitCode).toBe(0);
+    }
+  });
+
+  // Face D: an unparseable / unsupported-algorithm integrity in the lockfile
+  // must be rejected, not warned-and-ignored, for a v2 lockfile.
+  it("rejects an unsupported-algorithm integrity in the lockfile", async () => {
+    const good = buildTarball(Buffer.from('{"name":"pkg","version":"1.0.0"}\n'));
+    const state = { bytes: good, dist: { integrity: sha512(good) } };
+    await using server = makeRegistry(state);
+    using dir = projectDir("npm-integrity-lockfile-md5", server.port);
+
+    {
+      const r = await runInstall(String(dir));
+      expect(r.exitCode).toBe(0);
+    }
+    const lockPath = join(String(dir), "bun.lock");
+    const lock = readFileSync(lockPath, "utf8");
+    const tampered = lock.replace(/"sha\d+-[A-Za-z0-9+/]+=*"]/, '"md5-AAAAAAAAAAAAAAAAAAAAAA=="]');
+    expect(tampered).not.toBe(lock);
+    writeFileSync(lockPath, tampered);
+    await rm(join(String(dir), "node_modules"), { recursive: true, force: true });
+    await rm(join(String(dir), ".cache"), { recursive: true, force: true });
+
+    {
+      const r = await runInstall(String(dir), ["--frozen-lockfile"]);
+      expect(r.stderr).toContain("Unsupported or malformed integrity hash for npm package");
+      expect(r.exitCode).not.toBe(0);
+    }
+
+    // Without --frozen-lockfile the error is reported and the lockfile is
+    // discarded; re-resolving writes a verified sha512 back.
+    {
+      const r = await runInstall(String(dir));
+      expect(r.stderr).toContain("Unsupported or malformed integrity hash for npm package");
+      expect(lockfileIntegrity(String(dir))).toBe(sha512(good));
+      expect(r.exitCode).toBe(0);
+    }
+  });
+
+  it("still warns and ignores an unsupported-algorithm integrity in a v1 lockfile", async () => {
+    const good = buildTarball(Buffer.from('{"name":"pkg","version":"1.0.0"}\n'));
+    const state = { bytes: good, dist: { integrity: sha512(good) } };
+    await using server = makeRegistry(state);
+    using dir = projectDir("npm-integrity-lockfile-md5-v1", server.port);
+
+    const lock = {
+      lockfileVersion: 1,
+      configVersion: 1,
+      workspaces: { "": { name: "app", dependencies: { pkg: "1.0.0" } } },
+      packages: {
+        pkg: ["pkg@1.0.0", "", {}, "md5-AAAAAAAAAAAAAAAAAAAAAA=="],
+      },
+    };
+    writeFileSync(join(String(dir), "bun.lock"), JSON.stringify(lock));
+
+    const r = await runInstall(String(dir));
+    expect(r.stderr).toContain("Unsupported or malformed integrity hash; ignoring");
+    expect(r.stderr).not.toContain("error:");
+    expect(r.exitCode).toBe(0);
+  });
+
+  it("does not re-save the lockfile on reinstall when the registry provides no integrity metadata", async () => {
+    const tarball = buildTarball(Buffer.from('{"name":"pkg","version":"1.0.0"}\n'));
+
+    await using server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      async fetch(req) {
+        const url = new URL(req.url);
+        if (url.pathname.endsWith("/pkg")) {
+          return Response.json({
+            name: "pkg",
+            "dist-tags": { latest: "1.0.0" },
+            versions: {
+              "1.0.0": {
+                name: "pkg",
+                version: "1.0.0",
+                // No dist.integrity and no dist.shasum.
+                dist: { tarball: `http://127.0.0.1:${server.port}/pkg/-/pkg-1.0.0.tgz` },
+              },
+            },
+          });
+        }
+        if (url.pathname.endsWith("/pkg-1.0.0.tgz")) {
+          return new Response(tarball, { headers: { "content-length": String(tarball.length) } });
+        }
+        return new Response("Not found", { status: 404 });
+      },
+    });
+
+    using dir = tempDir("npm-integrity-no-resave", {
+      "package.json": JSON.stringify({
+        name: "app",
+        version: "1.0.0",
+        dependencies: { pkg: "1.0.0" },
+      }),
+      "bunfig.toml": `[install]\nregistry = "http://127.0.0.1:${server.port}/"\nlinker = "hoisted"\n`,
+    });
+    const cacheDir = join(String(dir), ".cache");
+
+    // First install: pins the computed SHA-512 into the lockfile.
+    {
+      await using proc = spawn({
+        cmd: [bunExe(), "install", "--save-text-lockfile"],
+        cwd: String(dir),
+        env: { ...env, BUN_INSTALL_CACHE_DIR: cacheDir },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      expect(stderr).toContain("Saved lockfile");
+      expect(exitCode).toBe(0);
+    }
+
+    const lockContent = await file(join(String(dir), "bun.lock")).text();
+    expect(lockContent).toMatch(/"sha512-[A-Za-z0-9+/]+=*"/);
+
+    // Second install of the unchanged project, forcing a re-download and
+    // re-extract: the lockfile already contains the pin, so it must not be
+    // dirtied and re-saved again.
+    await rm(join(String(dir), "node_modules"), { recursive: true, force: true });
+    await rm(cacheDir, { recursive: true, force: true });
+
+    {
+      await using proc = spawn({
+        cmd: [bunExe(), "install"],
+        cwd: String(dir),
+        env: { ...env, BUN_INSTALL_CACHE_DIR: cacheDir },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stderr, stdout, exitCode] = await Promise.all([proc.stderr.text(), proc.stdout.text(), proc.exited]);
+      expect(stderr).not.toContain("Saved lockfile");
+      expect(stderr + stdout).not.toContain("Integrity check failed");
+      expect(stdout).toContain("1 package installed");
+      expect(exitCode).toBe(0);
+    }
   });
 });
 

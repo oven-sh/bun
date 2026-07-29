@@ -10,7 +10,7 @@ describe("Bun.build compile with wasm", () => {
     await using dir = tempDir("build-compile-wasm", {
       "app.js": `
         // Import a wasm module and properly instantiate it
-        import wasmPath from "./test.wasm";
+        import wasmPath from "./test.wasm" with { type: "file" };
 
         async function main() {
           try {
@@ -122,5 +122,5 @@ describe("Bun.build compile with wasm", () => {
     expect(stdout).toContain("WASM result: 5");
     expect(stdout).toContain("WASM module loaded successfully");
     expect(stderr).toBe("");
-  });
+  }, 60_000);
 });

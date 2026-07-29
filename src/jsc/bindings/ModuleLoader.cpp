@@ -68,6 +68,29 @@ public:
 
 extern "C" BunLoaderType Bun__getDefaultLoader(JSC::JSGlobalObject*, BunString* specifier);
 
+#if ENABLE(WEBASSEMBLY)
+// Rebuild the raw wasm bytes packed into source_code (Latin-1) into a WebAssemblySourceProvider.
+static JSC::SourceCode sourceCodeForWasm(ResolvedSource& resolved, BunString* specifier)
+{
+    WTF::String wasmSource = resolved.source_code.toWTFString(BunString::NonNull);
+    Vector<uint8_t> wasmBytes;
+    if (wasmSource.is8Bit()) {
+        wasmBytes.append(wasmSource.span8());
+    } else {
+        auto span = wasmSource.span16();
+        wasmBytes.reserveInitialCapacity(span.size());
+        for (auto ch : span)
+            wasmBytes.append(static_cast<uint8_t>(ch & 0xff));
+    }
+
+    auto moduleKey = specifier->toWTFString(BunString::ZeroCopy);
+    auto sourceUrlString = resolved.source_url.toWTFString(BunString::ZeroCopy);
+    auto sourceURL = !sourceUrlString.isEmpty() ? WTF::URL::fileURLWithFileSystemPath(sourceUrlString) : WTF::URL();
+    auto provider = JSC::WebAssemblySourceProvider::create(WTF::move(wasmBytes), JSC::SourceOrigin(sourceURL), WTF::move(moduleKey));
+    return JSC::SourceCode(WTF::move(provider));
+}
+#endif
+
 static JSC::JSPromise* rejectedInternalPromise(JSC::JSGlobalObject* globalObject, JSC::JSValue value)
 {
     auto& vm = JSC::getVM(globalObject);
@@ -391,6 +414,11 @@ static JSValue handleVirtualModuleResult(
         if (!res->success) {
             RELEASE_AND_RETURN(scope, reject(JSValue::decode(res->result.err.value)));
         }
+#if ENABLE(WEBASSEMBLY)
+        if (res->result.value.tag == SyntheticModuleType::Wasm) {
+            return resolve(JSC::JSSourceCode::create(vm, sourceCodeForWasm(res->result.value, specifier)));
+        }
+#endif
 
         auto provider = Zig::SourceProvider::create(globalObject, res->result.value);
         return resolve(JSC::JSSourceCode::create(vm, JSC::SourceCode(provider)));
@@ -1176,6 +1204,11 @@ static JSValue fetchESMSourceCode(
         JSC::ensureStillAliveHere(value);
         RELEASE_AND_RETURN(scope, rejectOrResolve(JSSourceCode::create(globalObject->vm(), WTF::move(source))));
     }
+#if ENABLE(WEBASSEMBLY)
+    else if (res->result.value.tag == SyntheticModuleType::Wasm) {
+        RELEASE_AND_RETURN(scope, rejectOrResolve(JSC::JSSourceCode::create(vm, sourceCodeForWasm(res->result.value, specifier))));
+    }
+#endif
 
     auto provider = Zig::SourceProvider::create(globalObject, res->result.value);
     if (useIsolationCache) {

@@ -111,6 +111,30 @@ pub mod parent_death_watchdog {
                 bun_core::w!("BUN_FEATURE_FLAG_NO_ORPHANS\0").as_ptr(),
                 bun_core::w!("1\0").as_ptr(),
             );
+            ensure_kill_on_close_job();
+            arm_parent_watch();
+        }
+    }
+
+    static JOB_ASSIGNED: AtomicBool = AtomicBool::new(false);
+
+    /// Self-assign to a kill-on-close Job Object with recursive membership
+    /// (no `SILENT_BREAKAWAY_OK`). Unlike libuv's global spawn Job, this one
+    /// propagates to every descendant regardless of how it was spawned, so a
+    /// `cmd.exe` / `.cmd` shim / node.exe link in the tree can't orphan what's
+    /// below it. Idempotent; the handle is leaked for the process lifetime so
+    /// `KILL_ON_JOB_CLOSE` only fires when this process actually exits.
+    ///
+    /// Called unconditionally from `bun --filter` (Windows) so Ctrl+C reaps the
+    /// whole tree, and from `enable()` for `--no-orphans`.
+    #[cold]
+    #[inline(never)]
+    pub fn ensure_kill_on_close_job() {
+        if JOB_ASSIGNED.swap(true, Ordering::Relaxed) {
+            return;
+        }
+        // SAFETY: Win32 FFI; null args are documented-valid (anonymous Job).
+        unsafe {
             let job = windows::CreateJobObjectA(core::ptr::null_mut(), core::ptr::null());
             if !job.is_null() {
                 let mut jeli: windows::JOBOBJECT_EXTENDED_LIMIT_INFORMATION =
@@ -127,8 +151,6 @@ pub mod parent_death_watchdog {
                     windows::CloseHandle(job);
                 }
             }
-
-            arm_parent_watch();
         }
     }
 

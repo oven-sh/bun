@@ -1,7 +1,8 @@
 import { spawnSync } from "bun";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir, tempDirWithFiles } from "harness";
 import { symlinkSync } from "node:fs";
+import { setTimeout as sleep } from "node:timers/promises";
 import { join } from "path";
 
 const cwd_root = tempDirWithFiles("testworkspace", {
@@ -662,3 +663,106 @@ describe("bun", () => {
     expect(exitCode).toBe(0);
   });
 });
+
+// #20319: on Windows, `bun --filter` spawns each script as `bun exec "<script>"`
+// with CREATE_NO_WINDOW, so the user's Ctrl+C never reaches the scripts and
+// cleanup is entirely on the filter parent. libuv's global spawn Job is
+// KILL_ON_CLOSE | SILENT_BREAKAWAY_OK, so membership only propagates one hop:
+// as soon as the tree contains a non-libuv spawner (cmd.exe, a `.cmd` bin shim,
+// node.exe), everything below it escapes and keeps its port bound after the
+// filter parent exits.
+//
+// Tree under test:
+//   test → `bun --filter` → `bun exec` → cmd.exe → leaf bun (long-running).
+// The leaf writes its pid to a file; the test kills the filter parent and polls
+// the leaf. Without a recursive kill-on-close Job on the filter parent, the
+// leaf survives.
+test.skipIf(!isWindows)(
+  "windows: --filter reaps the whole descendant tree when the parent exits (#20319)",
+  async () => {
+    function isAlive(pid: number): boolean {
+      try {
+        process.kill(pid, 0);
+        return true;
+      } catch {
+        return false;
+      }
+    }
+    async function waitUntilDead(pid: number, timeoutMs: number): Promise<boolean> {
+      const deadline = Date.now() + timeoutMs;
+      while (Date.now() < deadline) {
+        if (!isAlive(pid)) return true;
+        await sleep(25);
+      }
+      return !isAlive(pid);
+    }
+
+    using dir = tempDir("filter-win-cleanup", {
+      "package.json": JSON.stringify({ name: "ws", workspaces: ["packages/*"] }),
+      // .bat avoids cmd /c's quote-stripping around a quoted exe path + arg.
+      "packages/app/run.bat": `@"${bunExe()}" "%~dp0server.js"\r\n`,
+      "packages/app/server.js": `
+        require("fs").writeFileSync(process.env.PIDFILE, String(process.pid));
+        setInterval(() => {}, 1000);
+      `,
+      "packages/app/package.json": JSON.stringify({
+        name: "app",
+        scripts: { dev: "cmd /d /c run.bat" },
+      }),
+    });
+
+    const pidfile = join(String(dir), "leaf.pid");
+    // Unset NO_ORPHANS so the test exercises the --filter-specific Job rather
+    // than the opt-in env-var path CI may set globally.
+    const env: Record<string, string | undefined> = {
+      ...bunEnv,
+      PIDFILE: pidfile,
+      BUN_FEATURE_FLAG_NO_ORPHANS: undefined,
+      NO_COLOR: "1",
+    };
+
+    const filter = Bun.spawn({
+      cmd: [bunExe(), "--filter", "*", "dev"],
+      env,
+      cwd: String(dir),
+      stdout: "ignore",
+      stderr: "pipe",
+    });
+
+    let leafPid = 0;
+    try {
+      const deadline = Date.now() + 15000;
+      while (leafPid === 0 && Date.now() < deadline) {
+        try {
+          const t = await Bun.file(pidfile).text();
+          if (t.length > 0) leafPid = Number(t.trim());
+        } catch {}
+        if (leafPid === 0) await sleep(25);
+      }
+      if (leafPid === 0) {
+        const stderr = await filter.stderr.text();
+        throw new Error(`leaf never wrote pidfile; stderr:\n${stderr}`);
+      }
+      expect(isAlive(leafPid)).toBe(true);
+
+      // TerminateProcess on the filter parent — same effect as the second
+      // Ctrl+C (default handler) or the first Ctrl+C's abort() path once the
+      // direct children have exited and filter calls Global::exit().
+      filter.kill("SIGKILL");
+      await filter.exited;
+
+      const died = await waitUntilDead(leafPid, 10000);
+      expect(died).toBe(true);
+    } finally {
+      filter.kill("SIGKILL");
+      await filter.exited;
+      if (leafPid > 0 && isAlive(leafPid)) {
+        try {
+          process.kill(leafPid, "SIGKILL");
+        } catch {}
+        await waitUntilDead(leafPid, 2000);
+      }
+    }
+  },
+  30000,
+);

@@ -90,6 +90,9 @@ pub(crate) type Platform = platform::Platform;
 /// inotify/kqueue/ReadDirectoryChangesW implementation; `Polling` stat()s
 /// each watched file on an interval for mounts that can't deliver native
 /// change events.
+// `Watcher` is itself `Box`'d in `init()` and there is one per process, so
+// the size skew between variants costs one heap slot, not stack.
+#[allow(clippy::large_enum_variant)]
 pub enum Backend {
     Native(Platform),
     Polling(PollingWatcher),
@@ -100,27 +103,11 @@ impl Backend {
     /// `watch_loop_cycle` / kqueue registration, which `watch_loop()`
     /// dispatches to only when `self` is `Native`.
     #[inline]
-    #[cfg_attr(any(target_os = "linux", target_os = "android"), allow(dead_code))]
-    pub(crate) fn native(&self) -> &Platform {
-        match self {
-            Backend::Native(p) => p,
-            Backend::Polling(_) => unreachable!("native() on polling backend"),
-        }
-    }
-
-    #[inline]
-    #[cfg_attr(any(target_os = "macos", target_os = "freebsd"), allow(dead_code))]
     pub(crate) fn native_mut(&mut self) -> &mut Platform {
         match self {
             Backend::Native(p) => p,
             Backend::Polling(_) => unreachable!("native_mut() on polling backend"),
         }
-    }
-
-    #[inline]
-    #[cfg_attr(not(any(target_os = "macos", target_os = "freebsd")), allow(dead_code))]
-    pub(crate) fn is_polling(&self) -> bool {
-        matches!(self, Backend::Polling(_))
     }
 
     fn stop(&mut self) {
@@ -480,7 +467,7 @@ impl Watcher {
             // route to the right module; EV_ADD on an existing (ident, filter) replaces in
             // place. See #29524.
             #[cfg(any(target_os = "macos", target_os = "freebsd"))]
-            if !self.platform.is_polling() {
+            if matches!(self.platform, Backend::Native(_)) {
                 if (item as usize) < self.watchlist.len() {
                     let moved_fd = self.watchlist.items_fd()[item as usize];
                     if moved_fd.is_valid() {
@@ -542,7 +529,7 @@ impl Watcher {
         // Basically:
         // - We register the event here.
         // our while(true) loop above receives notification of changes to any of the events created here.
-        let _ = bun_sys::kevent(self.platform.native().fd, &[event], &mut [], None);
+        let _ = bun_sys::kevent(self.platform.native_mut().fd, &[event], &mut [], None);
     }
 
     fn append_file_assume_capacity<const CLONE_FILE_PATH: bool>(
@@ -586,7 +573,7 @@ impl Watcher {
             p.register(hash, file_path);
         }
         #[cfg(any(target_os = "macos", target_os = "freebsd"))]
-        if !self.platform.is_polling() {
+        if matches!(self.platform, Backend::Native(_)) {
             self.add_file_descriptor_to_kqueue_without_checks(fd, watchlist_id);
         }
         #[cfg(any(target_os = "linux", target_os = "android"))]
@@ -669,7 +656,7 @@ impl Watcher {
         let watchlist_id = self.watchlist.len();
 
         #[cfg(any(target_os = "macos", target_os = "freebsd"))]
-        if !self.platform.is_polling() {
+        if matches!(self.platform, Backend::Native(_)) {
             self.add_file_descriptor_to_kqueue_without_checks(fd, watchlist_id);
         }
         #[cfg(any(target_os = "linux", target_os = "android"))]

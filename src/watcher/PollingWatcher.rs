@@ -2,9 +2,9 @@
 //! don't fire (Docker/WSL bind mounts, NFS/SMB, virtiofs/9p). Enabled via
 //! `BUN_WATCHER_USE_POLLING=1`; interval via `BUN_WATCHER_POLL_INTERVAL` (ms).
 
-use std::collections::HashMap;
 use std::time::Duration;
 
+use bun_collections::{HashMap, IdentityContext};
 use bun_core::ZStr;
 use bun_sys::{self as sys, stat_mtime};
 
@@ -43,7 +43,7 @@ pub struct PollingWatcher {
     /// `flush_evictions`' `swap_remove` reordering doesn't invalidate state.
     /// Guarded by `Watcher.mutex` (written from `add_file` on the JS thread
     /// and from the watcher thread's diff step).
-    snapshots: HashMap<HashType, Snapshot>,
+    snapshots: HashMap<HashType, Snapshot, IdentityContext<HashType>>,
     /// Scratch reused across cycles; only touched by the watcher thread.
     scratch_idx: Vec<(WatchItemIndex, HashType)>,
     scratch_path: Vec<Vec<u8>>,
@@ -54,7 +54,7 @@ impl PollingWatcher {
     pub fn new(interval_ms: u64) -> Self {
         Self {
             interval: Duration::from_millis(interval_ms.max(1)),
-            snapshots: HashMap::new(),
+            snapshots: HashMap::default(),
             scratch_idx: Vec::new(),
             scratch_path: Vec::new(),
             scratch_stat: Vec::new(),

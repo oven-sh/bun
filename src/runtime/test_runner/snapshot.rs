@@ -358,6 +358,25 @@ impl<'a> Snapshots<'a> {
         Ok(())
     }
 
+    /// Returns the value already queued at `(line, col)` when it differs from
+    /// `value`, removing every entry queued for that call site so
+    /// `write_inline_snapshots` leaves the source file untouched.
+    pub fn take_conflicting_inline_snapshot(
+        &mut self,
+        file_id: FileId,
+        line: c_ulong,
+        col: c_ulong,
+        value: &[u8],
+    ) -> Option<Box<[u8]>> {
+        let list = self.inline_snapshots_to_write.get_mut(&file_id)?;
+        let index = list
+            .iter()
+            .position(|e| e.line == line && e.col == col && !strings::eql(&e.value, value))?;
+        let existing = list.swap_remove(index).value;
+        list.retain(|e| !(e.line == line && e.col == col));
+        Some(existing)
+    }
+
     pub fn write_inline_snapshots(&mut self) -> Result<bool, Error> {
         // `success` is a Cell so the per-iteration error-check guard
         // closure can flip it without holding a &mut across the loop body.

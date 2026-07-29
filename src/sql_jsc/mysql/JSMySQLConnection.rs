@@ -1049,8 +1049,6 @@ impl<const SSL: bool> SocketHandler<SSL> {
             // `_ref` has not yet dropped, so `*p` is still live; `ParentRef`
             // yields a fresh `&JSMySQLConnection` per access (R-2: every
             // callee is `&self`).
-            // Only the idle timer follows traffic; the connect deadline is not
-            // re-armed so a byte-trickling server still times out.
             if p.connection.get().status == my_sql_connection::Status::Connected {
                 p.reset_connection_timeout();
             }

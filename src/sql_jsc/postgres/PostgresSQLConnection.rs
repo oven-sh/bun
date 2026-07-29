@@ -971,8 +971,6 @@ impl PostgresSQLConnection {
         self.ref_();
         self.update_flags(|f| f.insert(ConnectionFlags::IS_PROCESSING_DATA));
 
-        // Only the idle timer follows traffic; the connect deadline is not
-        // re-armed so a byte-trickling server still times out.
         if self.status.get() == Status::Connected {
             self.disable_connection_timeout();
         }
@@ -1064,7 +1062,6 @@ impl PostgresSQLConnection {
         }
         self.update_flags(|f| f.remove(ConnectionFlags::IS_PROCESSING_DATA));
 
-        // reset the connection timeout after we're done processing the data
         if self.status.get() == Status::Connected {
             self.reset_connection_timeout();
         }

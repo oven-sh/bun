@@ -696,9 +696,7 @@ impl CreateCommand {
 
                         if create_options.overwrite {
                             let mismatch = match entry.kind {
-                                bun_sys::FileKind::File => {
-                                    existing_kind != bun_sys::FileKind::File
-                                }
+                                bun_sys::FileKind::File => existing_kind != bun_sys::FileKind::File,
                                 bun_sys::FileKind::Directory => {
                                     existing_kind != bun_sys::FileKind::Directory
                                 }

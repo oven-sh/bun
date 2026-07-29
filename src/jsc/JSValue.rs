@@ -2287,17 +2287,13 @@ impl JSValue {
     pub fn unwrap_boxed_primitive(self, global: &JSGlobalObject) -> JsResult<JSValue> {
         host_fn::from_js_host_call(global, || JSC__JSValue__unwrapBoxedPrimitive(global, self))
     }
-    /// Reads the internal `[[PrimitiveValue]]` slot of a `Number` / `String` /
-    /// `Boolean` / `Symbol` / `BigInt` wrapper object directly, bypassing
-    /// `ToPrimitive` (and thus any user-defined `toString` / `valueOf` /
-    /// `Symbol.toPrimitive`). Returns `self` unchanged for anything that is
-    /// not a `JSWrapperObject`. Never throws and never runs JS.
+    /// `JSWrapperObject::internalValue()`: the `[[PrimitiveValue]]` slot of a
+    /// boxed primitive, bypassing `ToPrimitive`. Never runs JS.
     pub fn wrapper_internal_value(self) -> JSValue {
         JSC__JSValue__getWrapperInternalValue(self)
     }
-    /// Formats a `RegExp` object as `/source/flags` from its internal record,
-    /// bypassing `RegExp.prototype.toString`. Returns an empty string for
-    /// anything that is not a `RegExpObject`. Never throws and never runs JS.
+    /// `RegExp::toSourceString()`: `/source/flags` from the internal record,
+    /// bypassing `RegExp.prototype.toString`. Never runs JS.
     pub fn regexp_display_string(self) -> bun_core::String {
         let mut out = bun_core::String::default();
         JSC__JSValue__getRegExpDisplayString(self, &mut out);

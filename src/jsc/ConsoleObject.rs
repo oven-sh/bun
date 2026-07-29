@@ -3648,9 +3648,7 @@ pub mod formatter {
         ) -> JsResult<()> {
             // This is called from the '%s' formatter, so it can actually be any value
             use crate::StringJsc as _;
-            // For boxed strings and RegExp objects read the internal slot directly;
-            // `BunString::from_js` on the wrapper would dispatch through ToPrimitive
-            // and run user-defined toString / valueOf / Symbol.toPrimitive.
+            // Wrapper objects: read the internal slot, not ToString (which runs user hooks).
             let (str, inner) = match js_type {
                 jsc::JSType::StringObject | jsc::JSType::DerivedStringObject => {
                     let inner = value.wrapper_internal_value();

@@ -213,19 +213,13 @@ describe.if(isWindows)("path length validation against UTF-16 conversion buffers
   });
 });
 
-// https://github.com/oven-sh/bun/issues/7760
-//
-// A path over PATH_MAX is an OS-level error, not a programmer error: Node.js
-// performs no length pre-check and lets the kernel return ENAMETOOLONG, so the
-// error reaches the callback (never throws synchronously) and carries the
-// per-operation `syscall` plus the full `path`. Bun pre-checked the length
-// during argument parsing, threw synchronously from every callback/promise
-// form, and built the error with no `syscall`, no `path`, and a message that
-// hard-coded `open` regardless of which operation was called. The check now
-// happens at dispatch (where the syscall name is known) and returns a
-// `bun_sys::Error`, so it flows through the same async path as every other
-// kernel error.
-describe("over-PATH_MAX path goes to the callback with full error identity (#7760)", () => {
+// https://github.com/oven-sh/bun/issues/25659
+// A path over PATH_MAX is an OS-level error, not a programmer error: in Node
+// it reaches the callback (never a synchronous throw) and the error carries
+// the per-operation `syscall` plus the full `path`. Bun pre-checked the
+// length during argument parsing and threw synchronously with no `syscall`,
+// no `path`, and a message that hard-coded `open`.
+describe("over-PATH_MAX path goes to the callback with full error identity (#25659)", () => {
   // Longer than PATH_MAX on every platform (Windows MAX_PATH_BYTES ≈ 98302).
   const BIG = Buffer.alloc(100_000, "a").toString();
 

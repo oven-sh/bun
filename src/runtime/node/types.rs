@@ -856,12 +856,8 @@ pub trait PathLikeExt {
     fn slice_z<'a>(&'a self, buf: &'a mut PathBuffer) -> &'a ZStr
     where
         Self: Sized;
-    /// [`Self::slice_z`] for `node:fs` syscall dispatch: when the path would
-    /// not fit `PathBuffer` (which is `PATH_MAX` bytes on POSIX), return the
-    /// `ENAMETOOLONG` the kernel would have returned, tagged with the caller's
-    /// syscall and carrying the full path. This is what lets `fs.stat(big, cb)`
-    /// deliver the error via `cb` (the check happens in dispatch, not in
-    /// argument parsing) and with `err.syscall`/`err.path` populated.
+    /// Fallible [`Self::slice_z`]: returns `ENAMETOOLONG` tagged with
+    /// `syscall` and the full path when the path would not fit `PathBuffer`.
     fn slice_z_sys<'a>(
         &'a self,
         buf: &'a mut PathBuffer,

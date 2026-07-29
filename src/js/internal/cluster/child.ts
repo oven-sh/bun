@@ -57,6 +57,36 @@ cluster._setupWorker = function () {
   }
 };
 
+cluster._bunServeUnix = function (unixPath) {
+  return new Promise(resolve => {
+    if (!process.connected) return resolve(-1);
+    // Resolve against the worker's cwd; the bind happens in the primary, whose cwd may differ.
+    if (unixPath.charCodeAt(0) !== 0 && process.platform !== "win32") unixPath = path.resolve(unixPath);
+    let settled = false;
+    const settle = v => {
+      if (settled) {
+        // A reply that lost the race against the deadline carries a dup'd fd; close it.
+        if (typeof v === "number" && v >= 0) require("node:fs").closeSync(v);
+        return;
+      }
+      settled = true;
+      clearTimeout(timer);
+      process.removeListener("disconnect", onDisconnect);
+      resolve(v);
+    };
+    const onDisconnect = () => settle(-1);
+    process.once("disconnect", onDisconnect);
+    // A primary that does not know this act silently drops it; bound the wait so Bun.serve falls back to a direct bind.
+    const timer = setTimeout(() => settle(-1), 5000);
+    const sent = send({ act: "bunServeUnix", path: unixPath }, (reply, handle) => {
+      const fd = handle?.fd;
+      if (typeof fd === "number" && fd >= 0) settle(fd);
+      else settle(typeof reply?.errno === "number" && reply.errno < 0 ? reply.errno : -1);
+    });
+    if (sent === false) settle(-1);
+  });
+};
+
 // `obj` is a net#Server or a dgram#Socket object.
 cluster._getServer = function (obj, options, cb) {
   let address = options.address;

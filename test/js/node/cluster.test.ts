@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, bunRun, joinP, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, bunRun, isWindows, joinP, tempDir, tempDirWithFiles } from "harness";
 
 test("cloneable and transferable equals", () => {
   const dir = tempDirWithFiles("bun-test", {
@@ -160,6 +160,105 @@ process.send("regular message");
   const { stdout } = bunRun(joinP(dir, "parent.ts"), bunEnv);
   expect(stdout).toContain("P received regular message");
 });
+
+// https://github.com/oven-sh/bun/issues/13611
+// SO_REUSEPORT does not apply to AF_UNIX; every worker must adopt the same
+// listen descriptor from the primary instead of binding independently.
+test.skipIf(isWindows)(
+  "Bun.serve({ unix }) shares one listen socket across cluster workers",
+  async () => {
+    using dir = tempDir("bun-serve-cluster-unix", {
+      "index.ts": `
+      import cluster from "node:cluster";
+      import net from "node:net";
+      import path from "node:path";
+      const SOCK = path.join(process.cwd(), "serve.sock");
+      const WORKERS = 3;
+      async function request(): Promise<string> {
+        return new Promise(r => {
+          const c = net.connect(SOCK);
+          let b = "";
+          c.on("data", d => b += d);
+          c.on("close", () => r(b.split("\\r\\n\\r\\n")[1] ?? ""));
+          c.on("error", () => r(""));
+          c.write("GET / HTTP/1.0\\r\\nHost: x\\r\\n\\r\\n");
+        });
+      }
+      if (cluster.isPrimary) {
+        let ready = 0;
+        const workers: any[] = [];
+        for (let i = 0; i < WORKERS; i++) {
+          const w = cluster.fork({ WORKER_NUM: String(i) });
+          workers.push(w);
+          w.on("message", m => { if (m === "ready" && ++ready === WORKERS) go(); });
+          w.on("exit", (code, sig) => {
+            if (code !== 0 && sig !== "SIGTERM") {
+              console.error("worker " + i + " exited " + code + " signal " + sig);
+              process.exit(1);
+            }
+          });
+        }
+        async function go() {
+          // Every worker returned from Bun.serve without throwing: on an
+          // unpatched build 2 of 3 workers EADDRINUSE and exit before this
+          // prints.
+          console.log("listening=" + WORKERS);
+          // accept() on a shared fd is kernel-scheduled across the epoll set,
+          // not round-robin; keep going until at least two workers have
+          // answered. Without the fix this never passes because only one
+          // worker ever bound.
+          const seen = new Set<string>();
+          for (let i = 0; i < 100 && seen.size < 2; i++) {
+            const body = await request();
+            if (body) seen.add(body);
+          }
+          console.log("distinct=" + seen.size);
+          // One worker stopping must not unlink the primary-owned socket file
+          // or break the remaining workers' accepts.
+          const stopped = await new Promise<string>(r => {
+            workers[0].once("message", r);
+            workers[0].send("stop");
+          });
+          console.log("sock-after-stop=" + require("fs").existsSync(SOCK));
+          let responder = "";
+          for (let i = 0; i < 100 && (!responder || responder === stopped); i++)
+            responder = await request();
+          console.log("after-stop-responder=" + (responder && responder !== stopped));
+          for (const w of workers) w.kill();
+          process.exit(seen.size >= 2 ? 0 : 1);
+        }
+      } else {
+        const id = process.env.WORKER_NUM;
+        const server = Bun.serve({
+          unix: SOCK,
+          reusePort: true,
+          fetch() { return new Response("worker-" + id); },
+        });
+        process.on("message", m => {
+          if (m !== "stop") return;
+          server.stop(true);
+          process.send!("worker-" + id);
+        });
+        process.send!("ready");
+      }
+    `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "index.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).not.toContain("EADDRINUSE");
+    expect(stdout).toContain("listening=3");
+    expect(stdout).toContain("distinct=2");
+    expect(stdout).toContain("sock-after-stop=true");
+    expect(stdout).toContain("after-stop-responder=true");
+    expect(exitCode).toBe(0);
+  },
+  20_000,
+);
 
 test("disconnect() on a cluster.Worker built around a plain object does not abort", async () => {
   // `kHandle` is a private symbol that only `cluster.fork()` sets, so a

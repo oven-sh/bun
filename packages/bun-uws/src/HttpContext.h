@@ -1027,6 +1027,15 @@ public:
 
         return socket;
     }
+
+    us_listen_socket_t *listen_fd(struct ssl_ctx_st *sslCtx, LIBUS_SOCKET_DESCRIPTOR fd, int options) {
+        int error = 0;
+        auto* socket = us_socket_group_listen_fd(&group, socketKind(), sslCtx, fd, 512, options, socketExtSize(), &error);
+        if (socket) {
+            us_socket_unref(&socket->s);
+        }
+        return socket;
+    }
 };
 
 }

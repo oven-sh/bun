@@ -7,6 +7,7 @@ const { throwNotImplemented, kHandle } = require("internal/shared");
 
 const sendHelper = $newRustFunction("node_cluster_binding.rs", "sendHelperPrimary", 4);
 const onInternalMessage = $newRustFunction("node_cluster_binding.rs", "onInternalMessagePrimary", 3);
+const bindUnixListenFd = $newRustFunction("node_cluster_binding.rs", "bindUnixListenFd", 1);
 
 let child_process;
 
@@ -207,6 +208,7 @@ const methodMessageMapping = {
   listening,
   online,
   queryServer,
+  bunServeUnix,
 };
 
 function onmessage(message, _handle) {
@@ -290,6 +292,54 @@ function queryServer(worker, message) {
       handle,
     );
   });
+}
+
+const bunServeUnixHandles = new Map(); // path -> { fd, workers: Set<id> }
+
+// Shared AF_UNIX listen fds for Bun.serve({ unix }) in workers (SO_REUSEPORT is TCP-only).
+function bunServeUnix(worker, message) {
+  // Stop processing if worker already disconnecting
+  if (worker.exitedAfterDisconnect) return;
+  const sockPath = message.path;
+  const key = `bunServeUnix:${sockPath}`;
+  if (typeof sockPath !== "string" || process.platform === "win32") {
+    send(worker, { errno: -22 /* EINVAL */, key, ack: message.seq });
+    return;
+  }
+  let entry = bunServeUnixHandles.get(sockPath);
+  if (entry === undefined) {
+    const result = bindUnixListenFd(sockPath);
+    if (result < 0) {
+      send(worker, { errno: result, key, ack: message.seq });
+      return;
+    }
+    entry = { fd: result, workers: new Set() };
+    bunServeUnixHandles.set(sockPath, entry);
+    handles.set(key, {
+      remove(w) {
+        if (!entry!.workers.delete(w.id)) return false;
+        if (entry!.workers.size !== 0) return false;
+        bunServeUnixHandles.delete(sockPath);
+        require("node:fs").closeSync(entry!.fd);
+        try {
+          if (sockPath.charCodeAt(0) !== 0) require("node:fs").unlinkSync(sockPath);
+        } catch {}
+        return true;
+      },
+    });
+  }
+  entry.workers.add(worker.id);
+  const reply = {
+    cmd: "NODE_HANDLE",
+    type: "bun.ServeUnixFd",
+    message: { errno: 0, key, ack: message.seq, cmd: "NODE_CLUSTER" },
+  };
+  const sent = sendHelper(worker.process[kHandle], reply, { fd: entry.fd }, null);
+  if (sent === false) {
+    // Transfer failed: drop this worker's claim so a sole worker can fall back to a direct bind.
+    const handle = handles.get(key);
+    if (handle && handle.remove(worker)) handles.delete(key);
+  }
 }
 
 function listening(worker, message) {

@@ -55,6 +55,10 @@ pub struct ServerConfig {
     pub websocket: Option<WebSocketServerContext>,
 
     pub reuse_port: bool,
+    /// Shared AF_UNIX listen fd from the cluster primary; adopted instead of binding `address`.
+    pub cluster_unix_fd: Option<bun_sys::File>,
+    /// The cluster primary owns the socket file at `address`; never unlink it here.
+    pub cluster_owns_unix_path: bool,
     pub id: Box<[u8]>,
     pub allow_hot: bool,
     pub ipv6_only: bool,
@@ -88,6 +92,8 @@ impl Default for ServerConfig {
             on_node_http_request: JSValue::ZERO,
             websocket: None,
             reuse_port: false,
+            cluster_unix_fd: None,
+            cluster_owns_unix_path: false,
             id: Box::default(),
             allow_hot: true,
             ipv6_only: false,
@@ -272,6 +278,8 @@ impl ServerConfig {
             on_node_http_request: self.on_node_http_request,
             websocket: self.websocket.take(),
             reuse_port: self.reuse_port,
+            cluster_unix_fd: self.cluster_unix_fd.take(),
+            cluster_owns_unix_path: self.cluster_owns_unix_path,
             id: core::mem::take(&mut self.id),
             allow_hot: self.allow_hot,
             ipv6_only: self.ipv6_only,

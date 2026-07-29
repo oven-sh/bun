@@ -1625,7 +1625,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
 
         if let server_config::Address::Unix(path) = &self.config.address {
             let bytes = path.as_bytes();
-            if !bytes.is_empty() && bytes[0] != 0 {
+            if !bytes.is_empty() && bytes[0] != 0 && !self.config.cluster_owns_unix_path {
                 let _ = bun_sys::unlink(path.as_zstr());
             }
         }
@@ -2876,6 +2876,10 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             };
             (addr, cfg.http1, cfg.get_usockets_options())
         };
+        // Take the adopted cluster fd out of config: `listen_fd` consumes it,
+        // and it must not reach `config`'s eventual drop once handed over.
+        // SAFETY: `this` is the live boxed server; the borrow ends at the `;`.
+        let cluster_unix_fd = unsafe { &mut *this }.config.cluster_unix_fd.take();
 
         match addr {
             Addr::Tcp { port, host } => {
@@ -2979,18 +2983,37 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                         unsafe { uws_sys::h3::App::destroy(h3a) };
                     }
                 }
-                // SAFETY: ptr/len reference `config.address`'s ZBox; NUL
-                // sentinel at `ptr[len]` holds for ZStr::from_raw.
-                let z = unsafe { bun_core::ZStr::from_raw(ptr, len) };
-                // SAFETY: app is a live uws handle owned by this server. No
-                // `&*this` is live across this call.
-                unsafe {
-                    (*app).listen_on_unix_socket(
-                        trampoline::on_listen_unix::<SSL, DEBUG>,
-                        this.cast::<c_void>(),
-                        z,
-                        options,
-                    );
+                match cluster_unix_fd {
+                    #[cfg(not(windows))]
+                    Some(fd) => {
+                        // SAFETY: app is a live uws handle owned by this server.
+                        // No `&*this` is live across this call. `into_raw`
+                        // disarms the close-on-drop guard; `listen_fd` consumes
+                        // the descriptor (closes it on failure).
+                        unsafe {
+                            (*app).listen_fd(
+                                trampoline::on_listen::<SSL, DEBUG>,
+                                this.cast::<c_void>(),
+                                fd.into_raw().native(),
+                                options,
+                            );
+                        }
+                    }
+                    _ => {
+                        // SAFETY: ptr/len reference `config.address`'s ZBox; NUL
+                        // sentinel at `ptr[len]` holds for ZStr::from_raw.
+                        let z = unsafe { bun_core::ZStr::from_raw(ptr, len) };
+                        // SAFETY: app is a live uws handle owned by this server. No
+                        // `&*this` is live across this call.
+                        unsafe {
+                            (*app).listen_on_unix_socket(
+                                trampoline::on_listen_unix::<SSL, DEBUG>,
+                                this.cast::<c_void>(),
+                                z,
+                                options,
+                            );
+                        }
+                    }
                 }
             }
         }

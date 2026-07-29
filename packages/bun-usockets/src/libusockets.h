@@ -395,6 +395,10 @@ struct us_listen_socket_t *us_socket_group_listen_unix(us_socket_group_r group,
     unsigned char kind, struct ssl_ctx_st *ssl_ctx,
     const char *path, size_t pathlen, int options, int socket_ext_size, int *error)
     __attribute__((nonnull(1, 4, 8)));  /* ssl_ctx nullable */
+struct us_listen_socket_t *us_socket_group_listen_fd(us_socket_group_r group,
+    unsigned char kind, struct ssl_ctx_st *ssl_ctx,
+    LIBUS_SOCKET_DESCRIPTOR fd, int backlog, int options, int socket_ext_size, int *error)
+    __attribute__((nonnull(1, 8)));  /* ssl_ctx nullable */
 void us_listen_socket_close(struct us_listen_socket_t *ls) nonnull_fn_decl;
 
 /* SNI: tree hangs off the listen socket. ssl_ctx is up_ref'd; user is opaque

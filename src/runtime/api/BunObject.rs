@@ -1579,6 +1579,43 @@ pub(crate) fn serve(global_object: &JSGlobalObject, callframe: &CallFrame) -> Js
         }
     }
 
+    // Cluster workers adopt one shared AF_UNIX listen fd from the primary (SO_REUSEPORT is TCP-only).
+    #[cfg(not(windows))]
+    if config.reuse_port && global_object.bun_vm().ipc.is_some() {
+        if let crate::server::server_config::Address::Unix(path) = &config.address {
+            let bytes = path.as_bytes();
+            if !bytes.is_empty() {
+                unsafe extern "C" {
+                    fn Bun__requestClusterUnixServeFd(
+                        global: &JSGlobalObject,
+                        path: JSValue,
+                    ) -> JSValue;
+                }
+                let path_js = bun_jsc::bun_string_jsc::create_utf8_for_js(global_object, bytes)?;
+                let promise = bun_jsc::from_js_host_call(global_object, || {
+                    // SAFETY: FFI to C++ shim in BunObject.cpp; both args valid.
+                    unsafe { Bun__requestClusterUnixServeFd(global_object, path_js) }
+                })?;
+                if let Some(any) = promise.as_any_promise() {
+                    global_object.bun_vm().as_mut().wait_for_promise(any);
+                    if global_object.has_exception() {
+                        return Err(bun_jsc::JsError::Thrown);
+                    }
+                    let result = any.result(global_object.vm());
+                    if result.is_number() {
+                        let fd = result.to_int32();
+                        if fd >= 0 {
+                            // `File` closes the fd on drop if `Bun.serve` fails before adopting it.
+                            config.cluster_unix_fd =
+                                Some(bun_sys::File::from_fd(bun_sys::Fd::from_native(fd)));
+                            config.cluster_owns_unix_path = true;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     macro_rules! serve_with {
         ($ServerType:ty, $tag:expr) => {{
             let server = <$ServerType>::init(&mut config, global_object)?;

@@ -4104,10 +4104,7 @@ impl<'a> HTTPClient<'a> {
             // A leftover that decoded to 0 bytes (stream terminator only) can
             // flip has_more to false with nothing to deliver; that terminal
             // callback still has to fire or the reader never completes.
-            if !(decoded_pending
-                && self.state.is_done()
-                && !self.state.has_pending_compressed())
-            {
+            if !(decoded_pending && self.state.is_done() && !self.state.has_pending_compressed()) {
                 return;
             }
         }

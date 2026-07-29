@@ -303,6 +303,13 @@ pub struct Interpreter {
     pub global_this: Cell<*mut crate::jsc::JSGlobalObject>,
 
     pub flags: Cell<InterpreterFlags>,
+    /// `Some("FORCE_COLOR=N\0")` when the JS-captured root stdout is a color
+    /// terminal. `Cmd` appends it to a child's env only when that child's
+    /// resolved stdout is still the relayed `Stdio::Capture` pipe.
+    pub force_color_env: Cell<Option<&'static [u8]>>,
+    /// Whether root stderr is itself a tty; gates the `1>&2` arm of the
+    /// `force_color_env` check, since that reroutes output onto root stderr.
+    pub stderr_is_tty: Cell<bool>,
     pub exit_code: Cell<Option<ExitCode>>,
     pub this_jsvalue: Cell<crate::jsc::JSValue>,
     pub cleanup_state: Cell<CleanupState>,
@@ -576,6 +583,8 @@ impl Interpreter {
             async_commands_executing: Cell::new(0),
             global_this: Cell::new(core::ptr::null_mut()),
             flags: Cell::new(InterpreterFlags::default()),
+            force_color_env: Cell::new(None),
+            stderr_is_tty: Cell::new(false),
             // Starts at `None` so `async_cmd_done` only finishes once
             // `on_root_child_done` has recorded the real exit code.
             exit_code: Cell::new(None),
@@ -1150,6 +1159,29 @@ impl Interpreter {
                 captured: cap_err,
             });
         });
+
+        self.stderr_is_tty.set(bun_sys::isatty(stderr_fd));
+
+        // JS path: children get a `Stdio::Capture` pipe, so isatty() is false.
+        // When the relayed output is a color terminal, record a FORCE_COLOR
+        // hint; `Cmd` only applies it when appropriate. See `force_color_env`.
+        if cap_out.is_some()
+            && bun_sys::isatty(stdout_fd)
+            && bun_core::output::enable_ansi_colors_stdout()
+            && bun_core::output::Source::is_color_terminal()
+        {
+            use bun_core::output::ColorDepth;
+            self.force_color_env
+                .set(Some(match bun_core::output::Source::color_depth() {
+                    ColorDepth::C16m => b"FORCE_COLOR=3\0",
+                    ColorDepth::C256 => b"FORCE_COLOR=2\0",
+                    ColorDepth::C16 => b"FORCE_COLOR=1\0",
+                    // Only reachable on Windows, where `is_color_terminal()` is
+                    // unconditional and `color_depth()` reads env vars stock
+                    // consoles do not set; Win10+ consoles are truecolor.
+                    ColorDepth::None => b"FORCE_COLOR=3\0",
+                }));
+        }
 
         Ok(())
     }

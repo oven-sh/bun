@@ -520,6 +520,16 @@ impl Cmd {
         interp.as_cmd_mut(this).args[0] = resolved;
 
         // Fill env from export_env + cmd_local_env.
+        let force_color_env = interp.force_color_env.get().filter(|_| {
+            use crate::shell::env_str::EnvStr;
+            let env = interp.as_cmd(this).base.shell();
+            let fc = EnvStr::init_slice(b"FORCE_COLOR");
+            let nc = EnvStr::init_slice(b"NO_COLOR");
+            !(env.export_env.contains(fc)
+                || env.export_env.contains(nc)
+                || env.cmd_local_env.contains(fc)
+                || env.cmd_local_env.contains(nc))
+        });
         {
             let env = interp.as_cmd_mut(this).base.shell_mut();
             let mut iter = env.export_env.iterator();
@@ -548,6 +558,26 @@ impl Cmd {
                 drop(spawn_args);
                 drop(arena);
                 return Yield::failed();
+            }
+        }
+
+        // When this command's stdout is the capture pipe that relays to the
+        // script's color terminal, hint FORCE_COLOR so color-aware programs
+        // do not suppress ANSI just because `isatty()` is false.
+        if let Some(line) = force_color_env {
+            let stdout_is_relay = match &spawn_args.stdio[1] {
+                // Plain capture; also `2>&1`, whose combined output still
+                // relays through root stdout (slot 2 carries the dup there).
+                Stdio::Capture(_) => true,
+                // `1>&2`: output is rerouted onto root stderr, which only
+                // reaches the terminal when stderr is itself a tty.
+                Stdio::Dup2(d) if matches!(d.to, StdioKind::Stderr) => {
+                    interp.stderr_is_tty.get() && matches!(spawn_args.stdio[2], Stdio::Capture(_))
+                }
+                _ => false,
+            };
+            if stdout_is_relay {
+                spawn_args.env_array.push(line.as_ptr().cast());
             }
         }
 

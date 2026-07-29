@@ -3172,3 +3172,220 @@ test("cd treats interpolated arguments starting with tilde or dash as literal di
     expect(exitCode).toBe(1);
   }
 });
+
+// https://github.com/oven-sh/bun/issues/11046
+describe("FORCE_COLOR", () => {
+  // Bun shell relays subprocess stdout/stderr through a pipe so it can
+  // capture the output; the child therefore sees `isatty() === false` and
+  // suppresses ANSI colors. When the relayed output is going to a color
+  // terminal the shell now sets FORCE_COLOR so color-aware programs still
+  // emit escapes.
+  const colorEnv = {
+    ...bunEnv,
+    NO_COLOR: undefined,
+    FORCE_COLOR: undefined,
+    CI: undefined,
+    TERM: "xterm-256color",
+  };
+
+  async function runInTerminal(fixture: string, env: Record<string, string | undefined> = colorEnv) {
+    let output = "";
+    const { promise, resolve, reject } = Promise.withResolvers<void>();
+    await using terminal = new Bun.Terminal({
+      cols: 200,
+      rows: 24,
+      data(_term, chunk: Uint8Array) {
+        output += new TextDecoder().decode(chunk);
+        if (output.includes("DONE")) resolve();
+      },
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env,
+      terminal,
+    });
+    // Exit and PTY data delivery are independent; only the data callback
+    // resolves. A non-zero exit still rejects so failures surface promptly.
+    proc.exited.then(code => {
+      if (code !== 0) reject(new Error(`exit ${code}: ${output}`));
+    });
+    await promise;
+    await proc.exited;
+    // ConPTY wraps output in screen-control and window-title sequences; strip
+    // them so the line-anchored assertions see the visible text.
+    return output.replace(/\x1b\[[0-9;?]*[A-Za-z]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g, "");
+  }
+
+  function fixture(body: string) {
+    // The probe spawns a real external subprocess that prints its own
+    // FORCE_COLOR/NO_COLOR environ as `fc=<val> nc=<val>`. On POSIX `sh -c`
+    // keeps this fast; on Windows there is no stock equivalent so the child
+    // bun under test spawns another copy of itself.
+    const probe = isWindows
+      ? `\${process.argv[0]} -e \${'process.stdout.write("fc="+(process.env.FORCE_COLOR||"")+" nc="+(process.env.NO_COLOR||"")+"\\\\n")'}`
+      : `sh -c 'printf "fc=%s nc=%s\\n" "$FORCE_COLOR" "$NO_COLOR"'`;
+    return `import { $ } from "bun";\n${body.replaceAll("PROBE", probe)}\nprocess.stdout.write("DONE\\n");`;
+  }
+
+  function probeResult(output: string) {
+    const m = output.match(/fc=([0-9]*) nc=([0-9]*)/);
+    if (!m) throw new Error(`no probe output in: ${JSON.stringify(output)}`);
+    return { fc: m[1], nc: m[2] };
+  }
+
+  test("is set for a subprocess whose output goes to a color terminal", async () => {
+    const output = await runInTerminal(fixture(`await $\`PROBE\`;`));
+    expect(probeResult(output).fc).toMatch(/^[123]$/);
+  });
+
+  test("is set for `cmd 2>&1` when stderr is the relayed terminal", async () => {
+    const output = await runInTerminal(fixture(`await $\`PROBE 2>&1\`;`));
+    expect(probeResult(output).fc).toMatch(/^[123]$/);
+  });
+
+  test("is not set for a subprocess whose stdout is redirected to a file", async () => {
+    const output = await runInTerminal(
+      fixture(
+        `const f = require("path").join(require("os").tmpdir(), "fc-" + process.pid);
+         try {
+           await $\`PROBE > \${f}\`;
+           process.stdout.write(require("fs").readFileSync(f, "utf8"));
+         } finally { require("fs").rmSync(f, { force: true }); }`,
+      ),
+    );
+    expect(probeResult(output)).toEqual({ fc: "", nc: "" });
+  });
+
+  test("is not set for a non-final pipeline stage", async () => {
+    const output = await runInTerminal(fixture(`await $\`PROBE | cat\`;`));
+    expect(probeResult(output)).toEqual({ fc: "", nc: "" });
+  });
+
+  test("is not set inside a command substitution", async () => {
+    const output = await runInTerminal(fixture(`await $\`echo result=$(PROBE)\`;`));
+    expect(output).toContain("result=fc= nc=");
+  });
+
+  test("is not set when the caller's env specifies NO_COLOR", async () => {
+    const output = await runInTerminal(fixture(`await $\`PROBE\`.env({ ...process.env, NO_COLOR: "1" });`));
+    expect(probeResult(output)).toEqual({ fc: "", nc: "1" });
+  });
+
+  test("is not set when an inline NO_COLOR=1 assignment is present", async () => {
+    const output = await runInTerminal(fixture(`await $\`NO_COLOR=1 PROBE\`;`));
+    expect(probeResult(output)).toEqual({ fc: "", nc: "1" });
+  });
+
+  test("is not set after an in-script export NO_COLOR", async () => {
+    const output = await runInTerminal(fixture(`await $\`export NO_COLOR=1 && PROBE\`;`));
+    expect(probeResult(output)).toEqual({ fc: "", nc: "1" });
+  });
+
+  test("does not override a FORCE_COLOR already in the caller's env", async () => {
+    const output = await runInTerminal(fixture(`await $\`PROBE\`.env({ ...process.env, FORCE_COLOR: "0" });`));
+    expect(probeResult(output).fc).toBe("0");
+  });
+
+  test("is not set for .quiet() / .text()", async () => {
+    const output = await runInTerminal(fixture(`const out = await $\`PROBE\`.text(); process.stdout.write(out);`));
+    expect(probeResult(output)).toEqual({ fc: "", nc: "" });
+  });
+
+  test("is not visible to shell expansion", async () => {
+    // The hint is appended to the child's spawn env only; it is not an
+    // exported shell variable.
+    const output = await runInTerminal(fixture(`await $\`echo fc=[$FORCE_COLOR]\`;`));
+    expect(output).toContain("fc=[]");
+  });
+
+  test.skipIf(isWindows)("is not set when TERM=dumb", async () => {
+    const output = await runInTerminal(fixture(`await $\`PROBE\`;`), { ...colorEnv, TERM: "dumb" });
+    expect(probeResult(output)).toEqual({ fc: "", nc: "" });
+  });
+
+  test.skipIf(!isWindows)("defaults to truecolor when TERM is unset on Windows", async () => {
+    // Stock Windows consoles set none of the color env vars; supports-color
+    // treats a numeric FORCE_COLOR as an override, so 1 would downgrade them.
+    const output = await runInTerminal(fixture(`await $\`PROBE\`;`), { ...colorEnv, TERM: undefined });
+    expect(probeResult(output).fc).toBe("3");
+  });
+
+  test("is not set when the script's own stdout is not a terminal", async () => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture(`await $\`PROBE\`;`)],
+      env: colorEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "fc= nc=\nDONE\n", stderr: "", exitCode: 0 });
+  });
+
+  test.skipIf(isWindows)("is not set when stdout is redirected but stderr is a terminal", async () => {
+    // The script's stderr is the PTY (so bun's own color policy is "on"), but
+    // stdout (where the shell relays command output) is a file.
+    let output = "";
+    const { promise, resolve, reject } = Promise.withResolvers<void>();
+    await using terminal = new Bun.Terminal({
+      cols: 200,
+      rows: 24,
+      data(_t, chunk: Uint8Array) {
+        output += new TextDecoder().decode(chunk);
+        if (output.includes("DONE")) resolve();
+      },
+    });
+    using dir = tempDir("shell-fc-stderr", {});
+    const out = join(String(dir), "out.txt");
+    await using proc = Bun.spawn({
+      cmd: [
+        "sh",
+        "-c",
+        `exec "$0" -e "$1" > "$2"`,
+        bunExe(),
+        fixture(`await $\`PROBE\`; process.stderr.write("DONE\\n");`),
+        out,
+      ],
+      env: colorEnv,
+      terminal,
+    });
+    proc.exited.then(code => {
+      if (code !== 0) reject(new Error(`exit ${code}: ${output}`));
+    });
+    await promise;
+    await proc.exited;
+    expect(await Bun.file(out).text()).toBe("fc= nc=\nDONE\n");
+  });
+
+  test("is set for `cmd 1>&2` when stderr is the relayed terminal", async () => {
+    const output = await runInTerminal(fixture(`await $\`PROBE 1>&2\`;`));
+    expect(probeResult(output).fc).toMatch(/^[123]$/);
+  });
+
+  test.skipIf(isWindows)("is not set for `cmd 1>&2` when the script's stderr is redirected", async () => {
+    // `1>&2` reroutes stdout onto stderr's destination; here root stderr is a
+    // file, so the output must stay plain even though stdout is the PTY.
+    let output = "";
+    const { promise, resolve, reject } = Promise.withResolvers<void>();
+    await using terminal = new Bun.Terminal({
+      cols: 200,
+      rows: 24,
+      data(_t, chunk: Uint8Array) {
+        output += new TextDecoder().decode(chunk);
+        if (output.includes("DONE")) resolve();
+      },
+    });
+    using dir = tempDir("shell-fc-dup2", {});
+    const err = join(String(dir), "err.txt");
+    await using proc = Bun.spawn({
+      cmd: ["sh", "-c", `exec "$0" -e "$1" 2> "$2"`, bunExe(), fixture(`await $\`PROBE 1>&2\`;`), err],
+      env: colorEnv,
+      terminal,
+    });
+    proc.exited.then(code => {
+      if (code !== 0) reject(new Error(`exit ${code}: ${output}`));
+    });
+    await promise;
+    await proc.exited;
+    expect(await Bun.file(err).text()).toBe("fc= nc=\n");
+  });
+});

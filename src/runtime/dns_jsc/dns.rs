@@ -2621,11 +2621,9 @@ pub mod internal {
         pub addr: SockaddrStorage,
     }
 
-    // Pack getaddrinfo results into a single allocation, interleaving address
-    // families (RFC 8305 §4): alternate between the resolver's first family
-    // and the other, preserving resolver order within each family, so a run of
-    // unroutable same-family addresses cannot occupy every concurrent connect
-    // attempt in usockets (CONCURRENT_CONNECTIONS = 4). See #4938 / #33278.
+    // Pack getaddrinfo results into one allocation with address families
+    // interleaved (RFC 8305 §4) so an unroutable family can never fill all
+    // CONCURRENT_CONNECTIONS parallel connect attempts. See #4938 / #33278.
     fn process_results(info: *mut AddrInfo) -> Box<[ResultEntry]> {
         let mut count: usize = 0;
         let mut n_first: usize = 0;
@@ -2650,18 +2648,13 @@ pub mod internal {
 
         let mut results: Box<[MaybeUninit<ResultEntry>]> = Box::new_uninit_slice(count);
 
-        // Copy results. The slot for the i-th entry of the first family is 2*i
-        // while the other family can still pair with it, then n_other+i for the
-        // surplus tail (and symmetrically 2*j+1 / n_first+j for the other
-        // family). This is a bijection over 0..count, so every MaybeUninit slot
-        // is written exactly once.
         let mut i_first: usize = 0;
         let mut i_other: usize = 0;
         info_ = info;
         while !info_.is_null() {
             // SAFETY: info_ is a valid addrinfo node (counted above); the slot
-            // mapping is a bijection over 0..count, so every results[i] is a
-            // MaybeUninit slot fully initialized exactly once.
+            // mapping is a bijection over 0..count so every MaybeUninit slot
+            // is fully initialized exactly once.
             unsafe {
                 let i = if (*info_).ai_family == first_family {
                     let i = i_first;
@@ -3019,44 +3012,61 @@ pub mod internal {
         Ok(object)
     }
 
-    /// `bun:internal-for-testing` probe for [`process_results`]: feeds a
-    /// synthetic getaddrinfo list with the given address families (4 or 6)
-    /// through the real packing path and returns `family * 1000 + originalIndex`
-    /// in connect-attempt order so tests can assert interleaving and stability.
-    pub(crate) fn getaddrinfo_interleave_for_testing(
+    /// `bun:internal-for-testing`: seed the connect-path DNS cache for `hostname`
+    /// by running `addresses` through the real [`process_results`] interleave and
+    /// storing the result, so a real `fetch()` / `Bun.connect()` consumes it.
+    pub(crate) fn seed_cache_for_testing(
         global: &JSGlobalObject,
         frame: &CallFrame,
     ) -> JsResult<JSValue> {
-        let families = frame.argument(0);
-        let len = families.get_length(global)? as usize;
+        let args = frame.arguments();
+        if args.len() < 2 || !args[0].is_string() || !args[1].is_array() {
+            return Err(global.throw_invalid_arguments(format_args!(
+                "expected (hostname: string, addresses: string[])"
+            )));
+        }
+        let hostname_slice = args[0].to_slice(global)?;
+        let hostname_z = bun::ZBox::from_bytes(hostname_slice.slice());
+        let len = args[1].get_length(global)? as usize;
+        if len == 0 || len > 64 {
+            return Err(global.throw_invalid_arguments(format_args!(
+                "addresses must have 1..=64 entries"
+            )));
+        }
 
         let mut addrs: Vec<SockaddrStorage> = (0..len).map(|_| bun_core::ffi::zeroed()).collect();
         let mut nodes: Vec<AddrInfo> = (0..len).map(|_| bun_core::ffi::zeroed()).collect();
         for i in 0..len {
-            let family = families.get_index(global, i as u32)?.to_int32();
+            let addr_slice = args[1].get_index(global, i as u32)?.to_slice(global)?;
+            let addr_z = bun::ZBox::from_bytes(addr_slice.slice());
             let node = &mut nodes[i];
-            // Stash the original index in the port so the test can verify
-            // resolver order is preserved within each family.
-            match family {
-                4 => {
-                    // SAFETY: sockaddr_in fits in the zeroed sockaddr_storage.
-                    let sa = unsafe { &mut *(&raw mut addrs[i]).cast::<netc::sockaddr_in>() };
-                    sa.sin_family = netc::AF_INET as _;
-                    sa.sin_port = i as u16;
+            node.ai_socktype = netc::SOCK_STREAM;
+            // SAFETY: sockaddr_in/in6 fit in the zeroed sockaddr_storage and
+            // ares_inet_pton writes at most sizeof(in_addr)/sizeof(in6_addr).
+            unsafe {
+                let v4 = (&raw mut addrs[i]).cast::<netc::sockaddr_in>();
+                let v6 = (&raw mut addrs[i]).cast::<netc::sockaddr_in6>();
+                if c_ares::ares_inet_pton(
+                    netc::AF_INET,
+                    addr_z.as_ptr().cast::<c_char>(),
+                    (&raw mut (*v4).sin_addr).cast::<c_void>(),
+                ) > 0
+                {
+                    (*v4).sin_family = netc::AF_INET as _;
                     node.ai_family = netc::AF_INET;
                     node.ai_addrlen = size_of::<netc::sockaddr_in>() as _;
-                }
-                6 => {
-                    // SAFETY: sockaddr_in6 fits in the zeroed sockaddr_storage.
-                    let sa = unsafe { &mut *(&raw mut addrs[i]).cast::<netc::sockaddr_in6>() };
-                    sa.sin6_family = netc::AF_INET6 as _;
-                    sa.sin6_port = i as u16;
+                } else if c_ares::ares_inet_pton(
+                    netc::AF_INET6,
+                    addr_z.as_ptr().cast::<c_char>(),
+                    (&raw mut (*v6).sin6_addr).cast::<c_void>(),
+                ) > 0
+                {
+                    (*v6).sin6_family = netc::AF_INET6 as _;
                     node.ai_family = netc::AF_INET6;
                     node.ai_addrlen = size_of::<netc::sockaddr_in6>() as _;
-                }
-                other => {
+                } else {
                     return Err(global.throw_invalid_arguments(format_args!(
-                        "family must be 4 or 6, got {other}"
+                        "addresses[{i}] is not an IPv4 or IPv6 literal"
                     )));
                 }
             }
@@ -3068,35 +3078,38 @@ pub mod internal {
             unsafe { (*base.add(i)).ai_next = base.add(i + 1) };
         }
 
-        let results = process_results(if len == 0 {
-            ptr::null_mut()
-        } else {
-            nodes.as_mut_ptr()
-        });
+        let results = process_results(nodes.as_mut_ptr());
 
-        // Walk the rebuilt ai_next chain (not the slice) so the pointer fixup
-        // at the end of process_results is exercised too.
         let out = JSValue::create_empty_array(global, results.len())?;
-        let mut p: *const AddrInfo = if results.is_empty() {
-            ptr::null()
-        } else {
-            &raw const results[0].info
-        };
-        let mut idx: u32 = 0;
-        while !p.is_null() {
-            // SAFETY: p walks the ai_next chain inside the live `results` allocation.
-            let encoded = unsafe {
-                if (*p).ai_family == netc::AF_INET {
-                    4000 + i32::from((*(*p).ai_addr.cast::<netc::sockaddr_in>()).sin_port)
-                } else {
-                    6000 + i32::from((*(*p).ai_addr.cast::<netc::sockaddr_in6>()).sin6_port)
-                }
+        for (i, entry) in (0u32..).zip(results.iter()) {
+            let fam: i32 = if entry.info.ai_family == netc::AF_INET6 {
+                6
+            } else {
+                4
             };
-            out.put_index(global, idx, JSValue::js_number_from_int32(encoded))?;
-            idx += 1;
-            // SAFETY: as above.
-            p = unsafe { (*p).ai_next };
+            out.put_index(global, i, JSValue::js_number_from_int32(fam))?;
         }
+
+        let key = RequestKey::init(Some(hostname_z.as_zstr()), 0);
+        let req = Request::new(key.to_owned(), 0, GlobalCache::get_cache_timestamp());
+        // SAFETY: `req` is freshly heap-allocated and exclusively owned until
+        // `try_push` transfers it to the lock-guarded cache.
+        unsafe {
+            (*req).result_buf = Some(results);
+            let info = (*req)
+                .result_buf
+                .as_mut()
+                .and_then(|b| NonNull::new(b.as_mut_ptr()));
+            (*req).result = Some(RequestResult { info, err: 0 });
+        }
+        let mut guard = global_cache().lock();
+        if !guard.try_push(req) {
+            drop(guard);
+            Request::deinit(req);
+            return Err(global.throw_invalid_arguments(format_args!("DNS cache is full")));
+        }
+        DNS_CACHE_SIZE.store(guard.len, Ordering::Relaxed);
+        drop(guard);
         Ok(out)
     }
 
@@ -6214,6 +6227,6 @@ export_host_fn!(
     "JS2Rust___src_runtime_dns_jsc_dns_rs__Resolver_getRuntimeDefaultResultOrderOption"
 );
 export_host_fn!(
-    internal::getaddrinfo_interleave_for_testing,
-    "JS2Rust___src_runtime_dns_jsc_dns_rs__internal_getaddrinfoInterleaveForTesting"
+    internal::seed_cache_for_testing,
+    "JS2Rust___src_runtime_dns_jsc_dns_rs__internal_seedCacheForTesting"
 );

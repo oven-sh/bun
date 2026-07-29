@@ -23,9 +23,7 @@ const script = `
   "use strict";
   const net = require("node:net");
 
-  let connId = 0;
   const server = net.createServer(sock => {
-    const id = connId++;
     sock.on("error", () => {});
     sock.write(
       "HTTP/1.1 200 OK\\r\\n" +
@@ -59,7 +57,7 @@ const script = `
     );
   }
 
-  async function once(i) {
+  async function once() {
     let resp;
     try {
       resp = await fetch(url);
@@ -75,7 +73,7 @@ const script = `
 
   for (let iter = 0; iter < 8; iter++) {
     const batch = [];
-    for (let i = 0; i < 40; i++) batch.push(once(i));
+    for (let i = 0; i < 40; i++) batch.push(once());
     await Promise.all(batch);
     for (let k = 0; k < 6; k++) {
       Bun.gc(true);

@@ -2936,12 +2936,47 @@ static SOURCE_CODE_PRINTER_FROM_MACRO: Cell<bool> = Cell::new(false);
 fn normalize_specifier_for_resolution<'a>(
     specifier_: &'a [u8],
     query_string: &mut &'a [u8],
+    is_esm: bool,
 ) -> &'a [u8] {
-    if let Some(i) = bun_core::strings::index_of_char_usize(specifier_, b'?') {
+    if let Some(i) = index_of_query_or_fragment(specifier_, is_esm) {
         *query_string = &specifier_[i..];
         &specifier_[..i]
     } else {
         specifier_
+    }
+}
+
+/// Index of the first `?` (or `#`, for a relative ESM specifier) in a module
+/// specifier. `#` is a URL fragment only for `./` / `../` ESM specifiers;
+/// everywhere else (CJS, bare, absolute, leading-`#` imports subpath) it is a
+/// literal filename byte.
+#[inline]
+pub fn index_of_query_or_fragment(specifier: &[u8], is_esm: bool) -> Option<usize> {
+    let q = bun_core::strings::index_of_char_usize(specifier, b'?');
+    if !is_esm || !(specifier.starts_with(b"./") || specifier.starts_with(b"../")) {
+        return q;
+    }
+    let h = bun_core::strings::index_of_char_usize(specifier, b'#');
+    match (q, h) {
+        (Some(q), Some(h)) => Some(q.min(h)),
+        (a, b) => a.or(b),
+    }
+}
+
+/// Clone a specifier suffix into the `queryString` out-param. The module key's
+/// only delimiter is `?` (the loader never scans for `#`, a legal filename
+/// byte), so a bare `#frag` is carried as `?#frag`.
+#[inline]
+pub fn clone_specifier_suffix(suffix: &[u8]) -> bun_core::String {
+    if suffix.is_empty() {
+        bun_core::String::empty()
+    } else if suffix[0] == b'#' {
+        let mut buf = Vec::with_capacity(suffix.len() + 1);
+        buf.push(b'?');
+        buf.extend_from_slice(suffix);
+        bun_core::String::clone_utf8(&buf)
+    } else {
+        bun_core::String::clone_utf8(suffix)
     }
 }
 
@@ -3041,10 +3076,13 @@ pub fn collect_macro_vm_garbage() {
 }
 
 fn normalize_source(source: &[u8]) -> &[u8] {
-    if let Some(rest) = source.strip_prefix(b"file://") {
-        return rest;
+    let source = source.strip_prefix(b"file://".as_slice()).unwrap_or(source);
+    // A referring module's key may carry a `?query#frag` suffix; strip it so
+    // `dir_with_trailing_slash` doesn't latch onto a `/` inside the suffix.
+    match bun_core::strings::index_of_char_usize(source, b'?') {
+        Some(i) => &source[..i],
+        None => source,
     }
-    source
 }
 
 /// `bun.String.createIfDifferent` — `clone_utf8(other)` unless `other` is
@@ -4056,7 +4094,8 @@ impl VirtualMachine {
 
         let is_special_source = source == MAIN_FILE_NAME || Macro::is_macro_path(source);
         let mut query_string: &[u8] = b"";
-        let normalized_specifier = normalize_specifier_for_resolution(specifier, &mut query_string);
+        let normalized_specifier =
+            normalize_specifier_for_resolution(specifier, &mut query_string, is_esm);
         let top_level_dir = self.top_level_dir();
         let source_to_use: &[u8] = if !is_special_source {
             if is_a_file_path {
@@ -4384,11 +4423,7 @@ impl VirtualMachine {
         }
 
         if let Some(query) = query_string {
-            *query = if !result.query_string.is_empty() {
-                bun_core::String::clone_utf8(result.query_string)
-            } else {
-                bun_core::String::empty()
-            };
+            *query = clone_specifier_suffix(result.query_string);
         }
 
         *res = ErrorableString::ok(bun_core::String::clone_utf8(result.path));

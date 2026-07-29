@@ -386,8 +386,10 @@ public:
                     moduleNamespaceObject->overrideExportValue(moduleNamespaceObject->globalObject(), this->spyIdentifier, implValue);
                 }
             } else if (this->spyAttributes & SpyAttributeProxy) {
+                auto scope = DECLARE_THROW_SCOPE(this->vm());
                 JSC::PropertyDescriptor descriptor(implValue, this->spyAttributes & ~SpyAttributeMask);
-                target->methodTable()->defineOwnProperty(target, globalObject(), this->spyIdentifier, descriptor, false);
+                target->methodTable()->defineOwnProperty(target, globalObject(), this->spyIdentifier, descriptor, true);
+                RETURN_IF_EXCEPTION(scope, );
             } else if (auto index = parseIndex(this->spyIdentifier)) {
                 // Use putDirectIndex for numeric property keys (e.g., spyOn(arr, 0))
                 target->putDirectIndex(globalObject(), *index, implValue, this->spyAttributes & ~SpyAttributeMask, PutDirectIndexLikePutDirect);
@@ -657,7 +659,8 @@ extern "C" void JSMock__resetSpies(Zig::GlobalObject* globalObject)
             return;
         spy->clearSpy();
     });
-    globalObject->mockModule.activeSpies.clear();
+    if (!scope.exception()) [[likely]]
+        globalObject->mockModule.activeSpies.clear();
     scope.release();
 }
 

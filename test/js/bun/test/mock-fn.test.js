@@ -1161,20 +1161,34 @@ describe("spyOn", () => {
       );
     });
 
-    test("mockRestore propagates a Proxy defineProperty trap exception", () => {
-      let armed = false;
-      const proxy = new Proxy(
-        { m: () => "orig" },
-        {
-          defineProperty(t, k, d) {
-            if (armed) throw new Error("boom-define");
-            return Reflect.defineProperty(t, k, d);
-          },
-        },
-      );
+    test("mockRestore propagates a Proxy defineProperty trap failure and can retry", () => {
+      let allow = true;
+      const target = { m: () => "orig" };
+      const proxy = new Proxy(target, {
+        defineProperty: (t, k, d) => (allow ? Reflect.defineProperty(t, k, d) : false),
+      });
       const fn = spyOn(proxy, "m");
+      allow = false;
+      expect(() => fn.mockRestore()).toThrow();
+      expect(target.m).toBe(fn);
+      allow = true;
+      fn.mockRestore();
+      expect(target.m()).toBe("orig");
+
+      let armed = false;
+      const target2 = { m: () => "orig" };
+      const proxy2 = new Proxy(target2, {
+        defineProperty(t, k, d) {
+          if (armed) throw new Error("boom-define");
+          return Reflect.defineProperty(t, k, d);
+        },
+      });
+      const fn2 = spyOn(proxy2, "m");
       armed = true;
-      expect(() => fn.mockRestore()).toThrow("boom-define");
+      expect(() => fn2.mockRestore()).toThrow("boom-define");
+      armed = false;
+      fn2.mockRestore();
+      expect(target2.m()).toBe("orig");
     });
 
     test("spies on a non-function value through a Proxy", () => {

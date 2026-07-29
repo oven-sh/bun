@@ -93,7 +93,6 @@ void MessagePortPipe::drainAndDispatch(uint8_t side, ScriptExecutionContextIdent
     // Messages are popped one at a time under the lock, so if the handler
     // transfers this port (pipe->detach clears `s.port`/`Attached`) the
     // remaining inbox stays buffered for the new owner.
-    static constexpr size_t kMessageDrainPerTurnCap = 1024;
     auto& s = m_sides[side];
 
     RefPtr<MessagePort> port;
@@ -113,7 +112,7 @@ void MessagePortPipe::drainAndDispatch(uint8_t side, ScriptExecutionContextIdent
             s.state.store(st & ~DrainScheduled, std::memory_order_release);
             return;
         }
-        limit = std::min<size_t>(s.inbox.size(), kMessageDrainPerTurnCap);
+        limit = std::min<size_t>(s.inbox.size(), kDrainPerTurnCap);
     }
 
     // All 'message' listeners removed: the port is paused. Leave the inbox buffered

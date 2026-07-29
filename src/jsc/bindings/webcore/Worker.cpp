@@ -268,18 +268,16 @@ void Worker::enqueueToParent(MessageWithMessagePorts&& message)
 }
 
 // Shared drain loop for the two inboxes. Mirrors MessagePortPipe's
-// drainAndDispatch: one task drains up to kMessageDrainPerTurnCap messages,
-// running microtasks between each so queueMicrotask/Promise callbacks observe
-// messages one at a time, then yields to the next loop iteration if more
-// remain so a sustained sender can't starve timers/poll.
+// drainAndDispatch: one task drains up to MessagePortPipe::kDrainPerTurnCap
+// messages, running microtasks between each so queueMicrotask/Promise
+// callbacks observe messages one at a time, then yields to the next loop
+// iteration if more remain so a sustained sender can't starve timers/poll.
 //
 // Unlike MessagePortPipe, Worker sides never transfer, so we don't need to
 // re-check port identity each iteration — which lets us swap the whole inbox
 // into a local deque under the lock and dispatch without contending with the
 // sender. A sustained producer (e.g. a tight postMessage loop) would otherwise
 // make every per-message pop a contended acquire.
-static constexpr size_t kMessageDrainPerTurnCap = 1024;
-
 template<typename Dispatch>
 static inline bool drainInbox(Worker::MessageInbox& inbox, Zig::GlobalObject* globalObject, ScriptExecutionContext& context, Dispatch&& dispatch)
 {
@@ -291,7 +289,7 @@ static inline bool drainInbox(Worker::MessageInbox& inbox, Zig::GlobalObject* gl
             inbox.drainScheduled.store(false, std::memory_order_relaxed);
             return false;
         }
-        limit = std::min<size_t>(inbox.queue.size(), kMessageDrainPerTurnCap);
+        limit = std::min<size_t>(inbox.queue.size(), MessagePortPipe::kDrainPerTurnCap);
         batch = std::exchange(inbox.queue, {});
     }
 

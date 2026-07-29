@@ -35,6 +35,9 @@ using ScriptExecutionContextIdentifier = uint32_t;
 
 class MessagePortPipe final : public ThreadSafeRefCounted<MessagePortPipe> {
 public:
+    // Shared per-turn message drain cap for drainAndDispatch and Worker::drainInbox.
+    static constexpr size_t kDrainPerTurnCap = 1024;
+
     static Ref<MessagePortPipe> create() { return adoptRef(*new MessagePortPipe); }
     ~MessagePortPipe();
 

@@ -39,67 +39,69 @@ async function expectBuildOk(proc: Bun.Subprocess<"ignore", "pipe", "pipe">) {
   return { stdout, stderr, exitCode };
 }
 
-describe.skipIf(!isWindows).concurrent("Windows compile metadata", () => {
-  // https://github.com/oven-sh/bun/issues/19916
-  describe("--windows-hide-console", () => {
-    test("default build is a console subsystem", async () => {
-      using dir = tempDir("windows-subsystem-default", {
-        "app.js": `console.log("cui");`,
-      });
-      const outfile = join(String(dir), "cui.exe");
-      await using _cleanup = cleanup(outfile);
-
-      await using proc = Bun.spawn({
-        cmd: [bunExe(), "build", "--compile", join(String(dir), "app.js"), "--outfile", outfile],
-        env: bunEnv,
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-      await expectBuildOk(proc);
-
-      expect(readPESubsystem(outfile)).toBe(IMAGE_SUBSYSTEM_WINDOWS_CUI);
+// https://github.com/oven-sh/bun/issues/19916
+// Kept outside the big .concurrent block below so these three compiles don't
+// pile onto the existing ~25 parallel --compile spawns and trip the 5s timeout.
+describe.skipIf(!isWindows)("--windows-hide-console", () => {
+  test.concurrent("default build is a console subsystem", async () => {
+    using dir = tempDir("windows-subsystem-default", {
+      "app.js": `console.log("cui");`,
     });
+    const outfile = join(String(dir), "cui.exe");
+    await using _cleanup = cleanup(outfile);
 
-    test("CLI flag sets GUI subsystem", async () => {
-      using dir = tempDir("windows-subsystem-gui-cli", {
-        "app.js": `console.log("gui");`,
-      });
-      const outfile = join(String(dir), "gui.exe");
-      await using _cleanup = cleanup(outfile);
-
-      await using proc = Bun.spawn({
-        cmd: [bunExe(), "build", "--compile", "--windows-hide-console", join(String(dir), "app.js"), "--outfile", outfile],
-        env: bunEnv,
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-      await expectBuildOk(proc);
-
-      expect(readPESubsystem(outfile)).toBe(IMAGE_SUBSYSTEM_WINDOWS_GUI);
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "--compile", join(String(dir), "app.js"), "--outfile", outfile],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
     });
+    await expectBuildOk(proc);
 
-    test("Bun.build() hideConsole sets GUI subsystem", async () => {
-      using dir = tempDir("windows-subsystem-gui-api", {
-        "app.js": `console.log("gui");`,
-      });
-
-      const result = await Bun.build({
-        entrypoints: [join(String(dir), "app.js")],
-        outdir: String(dir),
-        compile: {
-          target: process.arch === "arm64" ? "bun-windows-aarch64" : "bun-windows-x64",
-          outfile: "gui-api.exe",
-          windows: { hideConsole: true },
-        },
-      });
-      expect(result.success).toBe(true);
-
-      const outfile = result.outputs[0].path;
-      await using _cleanup = cleanup(outfile);
-      expect(readPESubsystem(outfile)).toBe(IMAGE_SUBSYSTEM_WINDOWS_GUI);
-    });
+    expect(readPESubsystem(outfile)).toBe(IMAGE_SUBSYSTEM_WINDOWS_CUI);
   });
 
+  test.concurrent("CLI flag sets GUI subsystem", async () => {
+    using dir = tempDir("windows-subsystem-gui-cli", {
+      "app.js": `console.log("gui");`,
+    });
+    const outfile = join(String(dir), "gui.exe");
+    await using _cleanup = cleanup(outfile);
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "--compile", "--windows-hide-console", join(String(dir), "app.js"), "--outfile", outfile],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    await expectBuildOk(proc);
+
+    expect(readPESubsystem(outfile)).toBe(IMAGE_SUBSYSTEM_WINDOWS_GUI);
+  });
+
+  test.concurrent("Bun.build() hideConsole sets GUI subsystem", async () => {
+    using dir = tempDir("windows-subsystem-gui-api", {
+      "app.js": `console.log("gui");`,
+    });
+
+    const result = await Bun.build({
+      entrypoints: [join(String(dir), "app.js")],
+      outdir: String(dir),
+      compile: {
+        target: process.arch === "arm64" ? "bun-windows-aarch64" : "bun-windows-x64",
+        outfile: "gui-api.exe",
+        windows: { hideConsole: true },
+      },
+    });
+    expect(result.success).toBe(true);
+
+    const outfile = result.outputs[0].path;
+    await using _cleanup = cleanup(outfile);
+    expect(readPESubsystem(outfile)).toBe(IMAGE_SUBSYSTEM_WINDOWS_GUI);
+  });
+});
+
+describe.skipIf(!isWindows).concurrent("Windows compile metadata", () => {
   describe("CLI flags", () => {
     test("all metadata flags via CLI", async () => {
       using dir = tempDir("windows-metadata-cli", {

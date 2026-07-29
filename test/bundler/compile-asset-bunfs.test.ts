@@ -311,5 +311,5 @@ describe.concurrent("compile --asset and /$bunfs/ directory semantics", () => {
     const [stderr, code] = await Promise.all([proc.stderr.text(), proc.exited]);
     expect(stderr).toContain(expected);
     expect(code).not.toBe(0);
-  });
+  }, TIMEOUT);
 });

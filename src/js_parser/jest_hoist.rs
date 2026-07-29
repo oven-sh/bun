@@ -138,10 +138,6 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
             return;
         }
 
-        if let Some(cache) = self.options.features.runtime_transpiler_cache_mut() {
-            cache.input_hash = None;
-        }
-
         let mut hoisted = BumpVec::<Stmt>::new_in(bump);
         let mut lowered_any_import = false;
 

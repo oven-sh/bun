@@ -2073,16 +2073,19 @@ pub(crate) fn install_isolated_packages(
 
         // `append_store_path` runs on worker threads via `&Installer` and
         // can't take `&mut PackageManager` there, so ensure the
-        // global link dir once on the main thread before any `.symlink`
-        // resolution can be reached by a task. Guarded so installs without
-        // `link:` deps don't touch the global dir.
-        if pkg_resolutions
-            .iter()
-            .any(|r| r.tag == ResolutionTag::Symlink)
+        // global link dir once on the main thread before any name-form
+        // `link:<name>` resolution can be reached by a task. Path-form
+        // `link:./path` resolves from cwd and never reads the global dir.
         {
-            let _ = crate::package_manager_real::directories::global_link_dir_path(
-                installer.manager_mut(),
-            );
+            let string_buf = installer.lockfile().buffers.string_bytes.as_slice();
+            if pkg_resolutions.iter().any(|r| {
+                r.tag == ResolutionTag::Symlink
+                    && !crate::dependency::is_link_path(r.symlink().slice(string_buf))
+            }) {
+                let _ = crate::package_manager_real::directories::global_link_dir_path(
+                    installer.manager_mut(),
+                );
+            }
         }
 
         // add the pending task count upfront

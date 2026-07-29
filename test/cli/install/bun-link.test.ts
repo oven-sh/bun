@@ -1,6 +1,6 @@
 import { file, spawn } from "bun";
-import { afterAll, afterEach, beforeAll, beforeEach, expect, it } from "bun:test";
-import { access, mkdir, writeFile } from "fs/promises";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "bun:test";
+import { access, mkdir, readlink, writeFile } from "fs/promises";
 import {
   bunExe,
   bunEnv as env,
@@ -13,7 +13,7 @@ import {
   toHaveBins,
 } from "harness";
 import { basename, join } from "path";
-import { dummyAfterAll, dummyAfterEach, dummyBeforeAll, dummyBeforeEach, package_dir } from "./dummy.registry";
+import { dummyAfterAll, dummyAfterEach, dummyBeforeAll, dummyBeforeEach, getPort, package_dir } from "./dummy.registry";
 
 beforeAll(dummyBeforeAll);
 afterAll(dummyAfterAll);
@@ -471,4 +471,138 @@ it("should link dependency without crashing", async () => {
 
   // This should fail with a non-zero exit code.
   expect(await exited4).toBe(1);
+});
+
+// https://github.com/oven-sh/bun/issues/4719
+describe.each(["hoisted", "isolated"])("link: with a filesystem path (%s)", linker => {
+  async function setLinker() {
+    await writeFile(
+      join(package_dir, "bunfig.toml"),
+      `[install]\ncache = false\nregistry = "http://localhost:${getPort()}/"\nsaveTextLockfile = true\nlinker = "${linker}"\n`,
+    );
+  }
+
+  async function checkLink(dep: string, expected: { name: string; version: string }) {
+    await setLinker();
+    const { out, err } = await runBunInstall(env, package_dir);
+    expect(err).not.toContain("not linked");
+    if (linker === "hoisted") expect(out).toContain(`+ ${expected.name}@link:`);
+
+    const target = await readlink(join(package_dir, "node_modules", ...expected.name.split("/")));
+    expect(target.replaceAll("\\", "/")).toContain(basename(dep));
+    expect(await file(join(package_dir, "node_modules", expected.name, "package.json")).json()).toEqual(expected);
+
+    const second = await runBunInstall(env, package_dir, { frozenLockfile: true });
+    expect(second.err).not.toContain("Saved lockfile");
+  }
+
+  it("resolves a ./relative path", async () => {
+    await mkdir(join(package_dir, "lib", "mypkg"), { recursive: true });
+    await writeFile(
+      join(package_dir, "lib", "mypkg", "package.json"),
+      JSON.stringify({ name: "mypkg", version: "1.0.0" }),
+    );
+    await writeFile(
+      join(package_dir, "package.json"),
+      JSON.stringify({
+        name: "root",
+        dependencies: { mypkg: "link:./lib/mypkg" },
+      }),
+    );
+    await checkLink("./lib/mypkg", { name: "mypkg", version: "1.0.0" });
+  });
+
+  it("resolves a ../relative path", async () => {
+    await mkdir(join(link_dir, "sibling"), { recursive: true });
+    await writeFile(
+      join(link_dir, "sibling", "package.json"),
+      JSON.stringify({ name: "sibling-pkg", version: "2.0.0" }),
+    );
+    await writeFile(
+      join(package_dir, "package.json"),
+      JSON.stringify({
+        name: "root",
+        dependencies: { "sibling-pkg": `link:${join("..", basename(link_dir), "sibling").replaceAll("\\", "/")}` },
+      }),
+    );
+    await checkLink("sibling", { name: "sibling-pkg", version: "2.0.0" });
+  });
+
+  it("resolves a scoped package path", async () => {
+    await mkdir(join(package_dir, "packages", "scoped"), { recursive: true });
+    await writeFile(
+      join(package_dir, "packages", "scoped", "package.json"),
+      JSON.stringify({ name: "@scope/pkg", version: "3.0.0" }),
+    );
+    await writeFile(
+      join(package_dir, "package.json"),
+      JSON.stringify({
+        name: "root",
+        dependencies: { "@scope/pkg": "link:./packages/scoped" },
+      }),
+    );
+    await checkLink("./packages/scoped", { name: "@scope/pkg", version: "3.0.0" });
+  });
+
+  it("resolves an absolute path", async () => {
+    await mkdir(join(link_dir, "abspkg"), { recursive: true });
+    await writeFile(join(link_dir, "abspkg", "package.json"), JSON.stringify({ name: "abspkg", version: "4.0.0" }));
+    await writeFile(
+      join(package_dir, "package.json"),
+      JSON.stringify({
+        name: "root",
+        dependencies: { abspkg: `link:${join(link_dir, "abspkg").replaceAll("\\", "/")}` },
+      }),
+    );
+    await checkLink("abspkg", { name: "abspkg", version: "4.0.0" });
+  });
+
+  it("resolves relative to a workspace member", async () => {
+    await mkdir(join(package_dir, "packages", "foo", "local"), { recursive: true });
+    await writeFile(
+      join(package_dir, "packages", "foo", "local", "package.json"),
+      JSON.stringify({ name: "localpkg", version: "5.0.0" }),
+    );
+    await writeFile(
+      join(package_dir, "packages", "foo", "package.json"),
+      JSON.stringify({ name: "foo", dependencies: { localpkg: "link:./local" } }),
+    );
+    await writeFile(join(package_dir, "package.json"), JSON.stringify({ name: "root", workspaces: ["packages/*"] }));
+    await setLinker();
+    await runBunInstall(env, package_dir);
+
+    const linked =
+      linker === "hoisted"
+        ? join(package_dir, "node_modules", "localpkg")
+        : join(package_dir, "packages", "foo", "node_modules", "localpkg");
+    expect(await file(join(linked, "package.json")).json()).toEqual({ name: "localpkg", version: "5.0.0" });
+    expect((await readlink(linked)).replaceAll("\\", "/")).toContain("local");
+
+    const second = await runBunInstall(env, package_dir, { frozenLockfile: true });
+    expect(second.err).not.toContain("Saved lockfile");
+  });
+
+  it("errors with the path when package.json is missing", async () => {
+    await writeFile(
+      join(package_dir, "package.json"),
+      JSON.stringify({
+        name: "root",
+        dependencies: { missing: "link:./does-not-exist" },
+      }),
+    );
+    await setLinker();
+    await using proc = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: package_dir,
+      stdout: "pipe",
+      stderr: "pipe",
+      env,
+    });
+    const [, stderr, exited] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const errText = stderrForInstall(stderr);
+    expect(errText).toContain('Could not find package.json at "./does-not-exist"');
+    expect(errText).not.toContain("is not linked");
+    expect(errText).not.toContain("bun link my-pkg-name-from-package-json");
+    expect(exited).toBe(1);
+  });
 });

@@ -740,11 +740,12 @@ impl VersionExt for Version {
                     true,
                 ) || self.npm().eql(rhs.npm(), lhs_buf, rhs_buf)
             }
-            Tag::Folder | Tag::DistTag => self.literal.eql(rhs.literal, lhs_buf, rhs_buf),
+            Tag::Folder | Tag::DistTag | Tag::Symlink => {
+                self.literal.eql(rhs.literal, lhs_buf, rhs_buf)
+            }
             Tag::Git => Repository::eql(self.git(), rhs.git(), lhs_buf, rhs_buf),
             Tag::Github => Repository::eql(self.github(), rhs.github(), lhs_buf, rhs_buf),
             Tag::Tarball => self.tarball().eql(rhs.tarball(), lhs_buf, rhs_buf),
-            Tag::Symlink => self.symlink().eql(*rhs.symlink(), lhs_buf, rhs_buf),
             Tag::Workspace => self.workspace().eql(*rhs.workspace(), lhs_buf, rhs_buf),
             _ => true,
         }
@@ -1155,6 +1156,32 @@ impl ValueExt for Value {
 // ──────────────────────────────────────────────────────────────────────────
 // Free functions: parse
 // ──────────────────────────────────────────────────────────────────────────
+
+/// True when a `link:` dependency value is a filesystem path rather than a
+/// globally-registered package name. Matches the same shapes `Tag::infer`
+/// treats as a folder: `.`/`..`-relative, absolute (`/` or Windows drive
+/// letter), or `~/` (classified as a path for parity with `file:`; tilde
+/// expansion is not performed for either protocol). Used by the resolver and
+/// installers to decide whether to look in the global link directory or next
+/// to the project root.
+pub fn is_link_path(value: &[u8]) -> bool {
+    if value.is_empty() {
+        return false;
+    }
+    match value[0] {
+        b'.' | b'/' => true,
+        b'~' => value.len() > 1 && value[1] == b'/',
+        #[cfg(windows)]
+        b'\\' => true,
+        _ => {
+            #[cfg(windows)]
+            if strings::starts_with_windows_drive_letter_t(value) {
+                return true;
+            }
+            false
+        }
+    }
+}
 
 pub fn is_windows_abs_path_with_leading_slashes(dep: &[u8]) -> Option<&[u8]> {
     let mut i: usize = 0;

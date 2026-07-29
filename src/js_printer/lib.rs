@@ -3951,7 +3951,8 @@ pub mod __gated_printer {
 
                                 if let Some(target) = &self.call_target {
                                     wrap = e.was_originally_identifier()
-                                        && matches!(target, ExprData::EIdentifier(id) if id.ref_.eql(e.ref_));
+                                        && (matches!(target, ExprData::EIdentifier(id) if id.ref_.eql(e.ref_))
+                                            || matches!(target, ExprData::EImportIdentifier(id) if id.ref_.eql(e.ref_)));
                                 }
 
                                 if wrap {
@@ -3988,7 +3989,8 @@ pub mod __gated_printer {
 
                             let wrap = if let Some(target) = &self.call_target {
                                 e.was_originally_identifier()
-                                    && matches!(target, ExprData::EIdentifier(id) if id.ref_.eql(e.ref_))
+                                    && (matches!(target, ExprData::EIdentifier(id) if id.ref_.eql(e.ref_))
+                                        || matches!(target, ExprData::EImportIdentifier(id) if id.ref_.eql(e.ref_)))
                             } else {
                                 false
                             };

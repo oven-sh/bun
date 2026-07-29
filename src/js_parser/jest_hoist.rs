@@ -251,6 +251,20 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
         }
 
         let ns_ref = st.namespace_ref;
+        // For non-star imports the parser synthesised `namespace_ref` with a
+        // non-unique `import_<basename>` name that was never meant to be
+        // printed; two paths sharing a basename would collide at runtime.
+        if !has_star {
+            let unique: &'a [u8] = bun_alloc::arena_format!(
+                in self.arena,
+                "__bun_import_{:x}$",
+                st.import_record_index
+            )
+            .into_bump_str()
+            .as_bytes();
+            self.symbols[ns_ref.inner_index() as usize].original_name =
+                js_ast::StoreStr::new(unique);
+        }
         let mut decls = G::DeclList::init_capacity(1);
         decls.append_assume_capacity(G::Decl {
             binding: Binding::alloc(bump, B::Identifier { r#ref: ns_ref }, loc),

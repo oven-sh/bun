@@ -415,6 +415,40 @@ describe("top-level jest.mock/mock.module is hoisted above static imports", () =
     expect(exitCode).toBe(0);
   });
 
+  test.concurrent("two imports whose paths share a basename do not collide", async () => {
+    const { stderr, exitCode } = await runFixture({
+      "services/user.ts": `export const svc = "service";`,
+      "models/user.ts": `export const model = "model";`,
+      "fixture.test.ts": `
+        import { expect, test, jest } from "bun:test";
+        import { svc } from "./services/user";
+        import { model } from "./models/user";
+        jest.mock("./lib", () => ({}));
+        test("t", () => {
+          expect({ svc, model }).toEqual({ svc: "service", model: "model" });
+        });
+      `,
+    });
+    expect(stderr).toContain("1 pass");
+    expect(stderr).not.toContain("fail)");
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("bare-calling an imported function keeps `this` undefined", async () => {
+    const { stderr, exitCode } = await runFixture({
+      "this-mod.ts": `export function getThis(this: unknown) { return this; }`,
+      "fixture.test.ts": `
+        import { expect, test, jest } from "bun:test";
+        import { getThis } from "./this-mod";
+        jest.mock("./lib", () => ({}));
+        test("t", () => { expect(getThis()).toBeUndefined(); });
+      `,
+    });
+    expect(stderr).toContain("1 pass");
+    expect(stderr).not.toContain("fail)");
+    expect(exitCode).toBe(0);
+  });
+
   test.concurrent("named/default imports stay live for re-mocks inside tests", async () => {
     const { stderr, exitCode } = await runFixture({
       "fixture.test.ts": `

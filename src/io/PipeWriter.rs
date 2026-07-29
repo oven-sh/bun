@@ -136,6 +136,15 @@ pub trait PosixPipeWriter {
                     self_addr,
                     poll.is_registered()
                 );
+                // Empty-buffer wake with nothing to write: drop the watch
+                // explicitly instead of relying on the kernel's EPOLLONESHOT
+                // auto-disarm. Kernels that lack it (HongMeng: a ONESHOT
+                // registration fires EPOLLOUT forever on a writable pipe)
+                // would otherwise wake the loop continuously at 100% CPU.
+                // `force` because on such a kernel the fd is still armed —
+                // the needs_rearm fast path skips the syscall entirely.
+                // The next buffered write re-registers via register_poll().
+                _ = poll.unregister(crate::Loop::get(), true);
             }
             return;
         }

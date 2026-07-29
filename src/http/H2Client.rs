@@ -22,6 +22,12 @@ pub(crate) const LOCAL_INITIAL_WINDOW_SIZE: u32 = 1 << 24;
 /// cap is checked locally regardless of what the server honors.
 pub(crate) const LOCAL_MAX_HEADER_LIST_SIZE: u32 = 256 * 1024;
 
+/// Hard cap on CONTINUATION frames per header block. The byte-size cap above
+/// is defeated by zero-length CONTINUATION frames (CVE-2024-28182), so bound
+/// the frame count independently. Matches nghttp2's
+/// `NGHTTP2_DEFAULT_MAX_CONTINUATIONS`.
+pub(crate) const LOCAL_MAX_CONTINUATIONS: u32 = 8;
+
 /// `write_buffer` high-water mark. `writeDataWindowed` stops queueing once the
 /// userland send buffer crosses this even if flow-control window remains, so a
 /// large grant doesn't duplicate the whole body in memory before the first

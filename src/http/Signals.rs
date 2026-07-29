@@ -79,6 +79,20 @@ impl Signals {
             .map(bun_ptr::BackRef::from)
             .is_some_and(|a| a.load(Ordering::Acquire) == BodyReceiveMode::Paused as u8)
     }
+
+    /// Streaming consumer is pulling chunk-by-chunk (`AutoPause`/`Paused`),
+    /// as opposed to `BufferAll` / `Ignore` / unwired.
+    #[inline]
+    pub fn is_auto_pause(self) -> bool {
+        self.body_receive_mode
+            .map(bun_ptr::BackRef::from)
+            .is_some_and(|a| {
+                matches!(
+                    BodyReceiveMode::from_u8(a.load(Ordering::Acquire)),
+                    BodyReceiveMode::AutoPause | BodyReceiveMode::Paused
+                )
+            })
+    }
 }
 
 pub struct Store {

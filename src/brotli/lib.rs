@@ -143,17 +143,22 @@ impl StreamingDecoder {
         unsafe { self.brotli.as_mut() }
     }
 
-    /// Consume all of `input`, appending decompressed bytes to `out`
-    /// (growing in 4096-byte steps). Returns `ShortRead` when more input is
+    /// Consume `input`, appending decompressed bytes to `out` (growing in
+    /// 4096-byte steps). Stops early once `out.len()` reaches `max_output`
+    /// and returns the number of input bytes consumed so the caller can
+    /// retain the remainder for the next call. The separate
+    /// [`max_output_size`](Self::max_output_size) field is the hard bomb
+    /// guard. Returns `ShortRead` when all input was consumed but more is
     /// required and `is_done` is false.
     pub fn decompress(
         &mut self,
         input: &[u8],
         out: &mut Vec<u8>,
+        max_output: usize,
         is_done: bool,
-    ) -> crate::Result<()> {
+    ) -> crate::Result<usize> {
         if matches!(self.state, ReaderState::End | ReaderState::Error) {
-            return Ok(());
+            return Ok(input.len());
         }
         debug_assert!(out.as_ptr() != input.as_ptr());
 
@@ -162,6 +167,9 @@ impl StreamingDecoder {
             self.state,
             ReaderState::Uninitialized | ReaderState::Inflating
         ) {
+            if out.len() >= max_output {
+                return Ok(total_in);
+            }
             out.reserve(4096);
             let spare = out.spare_capacity_mut();
             let out_len = spare.len();
@@ -198,7 +206,7 @@ impl StreamingDecoder {
             match result {
                 c::BrotliDecoderResult::success => {
                     self.state = ReaderState::End;
-                    return Ok(());
+                    return Ok(total_in);
                 }
                 c::BrotliDecoderResult::err => {
                     self.state = ReaderState::Error;
@@ -221,7 +229,7 @@ impl StreamingDecoder {
                 }
             }
         }
-        Ok(())
+        Ok(total_in)
     }
 }
 

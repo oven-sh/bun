@@ -382,8 +382,7 @@ public:
                     moduleNamespaceObject->overrideExportValue(moduleNamespaceObject->globalObject(), this->spyIdentifier, implValue);
                 }
             } else if (this->spyAttributes & SpyAttributeNotOwn) {
-                // The spied property was inherited from the prototype chain (or absent) before spying.
-                // Jest deletes the own shadow so the target re-inherits from its prototype.
+                // There was no own property before spying; drop the shadow so the target re-inherits.
                 DeletePropertySlot deleteSlot;
                 JSObject::deleteProperty(target, globalObject(), this->spyIdentifier, deleteSlot);
             } else if (auto index = parseIndex(this->spyIdentifier)) {
@@ -1547,8 +1546,7 @@ BUN_DEFINE_HOST_FUNCTION(JSMock__jsSpyOn, (JSC::JSGlobalObject * lexicalGlobalOb
         }
         unsigned attributes = hasValue ? slot.attributes() : 0;
         if (!hasOwnValue) {
-            // The shadow we install is ours; keep it deletable so mockRestore() can
-            // remove it even when the inherited descriptor was non-configurable.
+            // Keep our own shadow configurable so clearSpy()'s deleteProperty always succeeds.
             attributes &= ~PropertyAttribute::DontDelete;
         }
 

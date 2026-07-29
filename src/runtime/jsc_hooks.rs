@@ -5032,6 +5032,17 @@ unsafe fn resolve<'a>(
         }
     };
 
+    // Node rejects `pkg?v=1`; letting it through here would evaluate a
+    // fresh package instance per distinct query. `?raw` and tsconfig
+    // `paths` aliases are Bun extensions and keep their query semantics.
+    if query_string != b"?raw"
+        && !query_string.is_empty()
+        && bun_paths::is_package_path(specifier)
+        && result.is_node_module()
+    {
+        return Err(crate::Error::ModuleNotFound);
+    }
+
     // SAFETY: plain bool/usize fields.
     unsafe {
         if !(*vm).macro_mode {
@@ -5040,21 +5051,10 @@ unsafe fn resolve<'a>(
         }
     }
 
+    *ret_query = query_string;
     let Some(result_path) = result.path_const() else {
         return Err(crate::Error::ModuleNotFound);
     };
-
-    // Node rejects `pkg?v=1`; letting it through here would evaluate a
-    // fresh package instance per distinct query. The `is_node_module`
-    // gate keeps tsconfig `paths` aliases (e.g. `@/util?raw`) working.
-    if !query_string.is_empty()
-        && bun_paths::is_package_path(specifier)
-        && result_path.is_node_module()
-    {
-        return Err(crate::Error::ModuleNotFound);
-    }
-
-    *ret_query = query_string;
     // Note: `result_path.text` is a `&'_ [u8]` borrowed from the
     // resolver's interned `'static` BSSStringList stores (see resolver/lib.rs
     // §allocators) — the same store `load_preloads` reads from. Transmute the

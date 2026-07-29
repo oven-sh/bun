@@ -1,5 +1,7 @@
 import { beforeEach, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, normalizeBunSnapshot, tempDir } from "harness";
+import { symlinkSync } from "node:fs";
+import { join } from "node:path";
 globalThis.importQueryFixtureOrder = [];
 const resolvedPath = require.resolve("./import-query-fixture.ts");
 const resolvedURL = Bun.pathToFileURL(resolvedPath).href;
@@ -356,6 +358,72 @@ describe("?query on a bare package specifier does not resolve", () => {
       imr: "ERR:ERR_MODULE_NOT_FOUND",
       resolveSync: "ERR:ERR_MODULE_NOT_FOUND",
     });
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("import('pkg?v=N') on a symlinked (workspace/link) package", async () => {
+    // Bun realpaths symlinks by default, so the resolved `text` has no
+    // `/node_modules/` component; the rejection must cover this layout too.
+    using dir = tempDir("import-query-bare-symlink", {
+      "packages/sk/package.json": JSON.stringify({ name: "sk", main: "./i.js", exports: { ".": "./i.js" } }),
+      "packages/sk/i.js": "globalThis.__sk = (globalThis.__sk || 0) + 1; module.exports = { inst: globalThis.__sk };",
+      "packages/sn/package.json": JSON.stringify({ name: "sn", main: "./i.js" }),
+      "packages/sn/i.js": "globalThis.__sn = (globalThis.__sn || 0) + 1; module.exports = { inst: globalThis.__sn };",
+      "app/node_modules/.keep": "",
+      "app/entry.mjs": `
+        const out = { insts: [], errors: [] };
+        for (const name of ["sk", "sn"]) {
+          out.insts.push((await import(name)).default.inst);
+          for (const spec of [name + "?v=1", name + "?v=2"]) {
+            try {
+              out.insts.push((await import(spec)).default.inst);
+            } catch (e) {
+              out.errors.push(e.code || e.name);
+            }
+          }
+          out.insts.push((await import(name)).default.inst);
+        }
+        console.log(JSON.stringify(out));
+      `,
+    });
+    symlinkSync(join(String(dir), "packages/sk"), join(String(dir), "app/node_modules/sk"), "junction");
+    symlinkSync(join(String(dir), "packages/sn"), join(String(dir), "app/node_modules/sn"), "junction");
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "entry.mjs"],
+      env: bunEnv,
+      cwd: join(String(dir), "app"),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout.trim())).toEqual({
+      insts: [1, 1, 1, 1],
+      errors: ["ERR_MODULE_NOT_FOUND", "ERR_MODULE_NOT_FOUND", "ERR_MODULE_NOT_FOUND", "ERR_MODULE_NOT_FOUND"],
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("?raw on a bare package subpath still loads as text (control)", async () => {
+    using dir = tempDir("import-query-bare-raw", {
+      "node_modules/tp/package.json": JSON.stringify({ name: "tp", main: "./i.js" }),
+      "node_modules/tp/i.js": "module.exports = 0;",
+      "node_modules/tp/data.txt": "RAW TEXT CONTENT",
+      "entry.mjs": `
+        const a = await import("tp/data.txt?raw");
+        console.log(JSON.stringify(a.default));
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "entry.mjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout.trim())).toBe("RAW TEXT CONTENT");
     expect(exitCode).toBe(0);
   });
 

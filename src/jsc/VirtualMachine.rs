@@ -4153,27 +4153,27 @@ impl VirtualMachine {
             }
         };
 
-        if !self.macro_mode {
-            self.has_any_macro_remappings =
-                self.has_any_macro_remappings || self.transpiler.options.macro_remap.count() > 0;
-        }
-        let result_path = result
-            .path_const()
-            .ok_or(crate::CrateError::ModuleNotFound)?;
-
         // Node rejects `pkg?v=1`; letting it through here would evaluate a
-        // fresh package instance per distinct query. The `is_node_module`
-        // gate keeps tsconfig `paths` aliases (e.g. `@/util?raw`) working.
-        if !query_string.is_empty()
+        // fresh package instance per distinct query. `?raw` and tsconfig
+        // `paths` aliases are Bun extensions and keep their query semantics.
+        if query_string != b"?raw"
+            && !query_string.is_empty()
             && bun_paths::is_package_path(specifier)
-            && result_path.is_node_module()
+            && result.is_node_module()
         {
             return Err(crate::CrateError::ModuleNotFound);
         }
 
+        if !self.macro_mode {
+            self.has_any_macro_remappings =
+                self.has_any_macro_remappings || self.transpiler.options.macro_remap.count() > 0;
+        }
         // SAFETY: PORT — `query_string` re-slices `specifier` (caller-owned;
         // see lifetime erasure note above).
         ret.query_string = unsafe { bun_ptr::detach_lifetime(query_string) };
+        let result_path = result
+            .path_const()
+            .ok_or(crate::CrateError::ModuleNotFound)?;
         // SAFETY: `result_path.text` borrows the resolver's arena, which
         // outlives `ResolveFunctionResult` (see the struct's lifetime-erasure
         // note).

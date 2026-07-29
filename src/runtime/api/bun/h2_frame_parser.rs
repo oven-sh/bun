@@ -8575,6 +8575,42 @@ impl H2FrameParser {
             return Ok(JSValue::js_number(-1.0));
         }
 
+        // Reject on the session memory budget before any header touches the connection-scoped
+        // HPACK encoder, so the encoder's dynamic table is never advanced for a request that is
+        // refused here and the session survives intact. max_rejected_streams is the session-level
+        // escape hatch for a sustained flood.
+        if this.is_over_session_memory_limit() {
+            this.rejected_streams.set(this.rejected_streams.get() + 1);
+            let Some(stream_ptr) = this.handle_received_stream_id(stream_id) else {
+                return Ok(JSValue::js_number(-1.0));
+            };
+            let mut stream = this.enter_stream_dispatch(stream_ptr);
+            if !stream_ctx_arg.is_empty_or_undefined_or_null() && stream_ctx_arg.is_object() {
+                stream.set_context(stream_ctx_arg, global_object);
+            }
+            this.reject_unencodable_header_block(
+                &mut stream,
+                ErrorCode::ENHANCE_YOUR_CALM,
+                None,
+                false,
+            );
+            if this.rejected_streams.get() >= this.max_rejected_streams.get() {
+                let global = this.handlers.get().global();
+                let chunk = this
+                    .handlers
+                    .get()
+                    .binary_type
+                    .to_js(b"ENHANCE_YOUR_CALM", &global)?;
+                this.dispatch_with_2_extra(
+                    JSH2FrameParser::Gc::onError,
+                    JSValue::js_number(ErrorCode::ENHANCE_YOUR_CALM.0 as f64),
+                    JSValue::js_number(this.last_stream_id.get() as f64),
+                    chunk,
+                );
+            }
+            return Ok(JSValue::js_number(stream_id as f64));
+        }
+
         // we iterate twice, because pseudo headers must be sent first, but can appear anywhere in the headers object
         let mut single_value_headers = [false; SINGLE_VALUE_HEADERS_LEN];
 
@@ -9086,35 +9122,6 @@ impl H2FrameParser {
             }
         }
 
-        // too much memory being use
-        if this.is_over_session_memory_limit() {
-            this.rejected_streams.set(this.rejected_streams.get() + 1);
-            // encoder_touched is intentionally false: the memory budget is a transient condition
-            // (a large upload still draining) and tearing the session down here breaks clients
-            // that retry the refused request (grpc-js). max_rejected_streams below is the
-            // session-level escape hatch.
-            this.reject_unencodable_header_block(
-                &mut stream,
-                ErrorCode::ENHANCE_YOUR_CALM,
-                None,
-                false,
-            );
-            if this.rejected_streams.get() >= this.max_rejected_streams.get() {
-                let global = this.handlers.get().global();
-                let chunk = this
-                    .handlers
-                    .get()
-                    .binary_type
-                    .to_js(b"ENHANCE_YOUR_CALM", &global)?;
-                this.dispatch_with_2_extra(
-                    JSH2FrameParser::Gc::onError,
-                    JSValue::js_number(ErrorCode::ENHANCE_YOUR_CALM.0 as f64),
-                    JSValue::js_number(this.last_stream_id.get() as f64),
-                    chunk,
-                );
-            }
-            return Ok(JSValue::js_number(stream_id as f64));
-        }
         let mut length: usize = encoded_size;
         if has_priority {
             length += 5;

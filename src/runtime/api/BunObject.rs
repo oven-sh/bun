@@ -2366,6 +2366,15 @@ pub mod JSZlib {
         global_this: &JSGlobalObject,
         mut list: Vec<u8>,
     ) -> JsResult<JSValue> {
+        let max_output = ArrayBuffer::MAX_SIZE as usize;
+        if list.len() > max_output {
+            return Err(global_this
+                .err(
+                    jsc::ErrCode::BUFFER_TOO_LARGE,
+                    format_args!("Cannot create a Buffer larger than {max_output} bytes"),
+                )
+                .throw());
+        }
         list.shrink_to_fit();
         let is_empty = list.is_empty();
         let leaked: &'static mut [u8] = list.leak();
@@ -2721,21 +2730,7 @@ pub mod JSZlib {
                     )));
                 }
 
-                // Ownership of the allocation transfers to JSC; freed via
-                // `global_deallocator` once the ArrayBuffer is finalized.
-                let leaked: &'static mut [u8] = list.leak();
-                let ptr = leaked.as_mut_ptr();
-                let array_buffer = ArrayBuffer::from_bytes(leaked, jsc::JSType::Uint8Array);
-                // SAFETY: `ptr` is the just-leaked `Vec` allocation, live until
-                // `global_deallocator` (`mi_free_ctx`) frees it exactly once at
-                // GC via the ctx pointer (the data pointer itself).
-                unsafe {
-                    array_buffer.to_js_with_context(
-                        global_this,
-                        ptr.cast::<c_void>(),
-                        Some(global_deallocator),
-                    )
-                }
+                leak_list_into_uint8array(global_this, list)
             }
         }
     }
@@ -2792,6 +2787,19 @@ pub mod JSZstd {
             .throw_invalid_arguments(format_args!("Expected buffer to be a string or buffer")))
     }
 
+    fn leak_vec_into_buffer(global_this: &JSGlobalObject, output: Vec<u8>) -> JsResult<JSValue> {
+        let max_output = ArrayBuffer::MAX_SIZE as usize;
+        if output.len() > max_output {
+            return Err(global_this
+                .err(
+                    jsc::ErrCode::BUFFER_TOO_LARGE,
+                    format_args!("Cannot create a Buffer larger than {max_output} bytes"),
+                )
+                .throw());
+        }
+        Ok(JSValue::create_buffer(global_this, output.leak()))
+    }
+
     #[bun_jsc::host_fn]
     pub(crate) fn compress_sync(
         global_this: &JSGlobalObject,
@@ -2828,7 +2836,7 @@ pub mod JSZstd {
             output.shrink_to_fit();
         }
 
-        Ok(JSValue::create_buffer(global_this, output.leak()))
+        leak_vec_into_buffer(global_this, output)
     }
 
     #[bun_jsc::host_fn]
@@ -2852,7 +2860,7 @@ pub mod JSZstd {
             }
         };
 
-        Ok(JSValue::create_buffer(global_this, output.leak()))
+        leak_vec_into_buffer(global_this, output)
     }
 
     // --- Async versions ---
@@ -2934,6 +2942,19 @@ pub mod JSZstd {
             }
 
             let output_slice = core::mem::take(&mut self.output);
+            let max_output = ArrayBuffer::MAX_SIZE as usize;
+            if output_slice.len() > max_output {
+                promise.reject_with_async_stack(
+                    global_this,
+                    Ok(global_this
+                        .err(
+                            jsc::ErrCode::BUFFER_TOO_LARGE,
+                            format_args!("Cannot create a Buffer larger than {max_output} bytes"),
+                        )
+                        .to_js()),
+                )?;
+                return Ok(());
+            }
             let buffer_value = JSValue::create_buffer(global_this, output_slice.leak());
             promise.resolve(global_this, buffer_value)?;
             Ok(())

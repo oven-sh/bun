@@ -905,11 +905,8 @@ EncodedJSValue BunPlugin::OnResolve::run(JSC::JSGlobalObject* globalObject, BunS
         }
     }
 
-    // A specifier like "virt:x" is split by the caller into namespace="virt"
-    // and path="x". If no callback registered under that namespace matched,
-    // also consult the default (file) namespace group with the full "virt:x"
-    // specifier so that onResolve({ filter: /^virt:/ }) — the form the
-    // bundler and esbuild use — fires at runtime too.
+    // Fall back to the default-namespace group with the full "ns:path" so
+    // onResolve({ filter: /^ns:/ }) matches like it does in Bun.build.
     if (!nsString.isEmpty() && !this->fileNamespace.filters.isEmpty()) {
         WTF::String fullSpecifier = makeString(nsString, ":"_s, pathString);
         RELEASE_AND_RETURN(scope, runOnResolveGroup(globalObject, this->fileNamespace, fullSpecifier, importer));

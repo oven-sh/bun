@@ -487,9 +487,7 @@ export function runOnResolvePlugins(this: BundlerPlugin, specifier, inputNamespa
       return null;
     }
 
-    // An import like "virt:x" from a file-namespace module is also offered to
-    // onResolve({ namespace: "virt" }) with the stripped path, so a plugin
-    // written for the runtime's dispatch works here too.
+    // Also offer "ns:rest" to onResolve({ namespace: "ns" }) with the stripped path.
     if (inputNamespace === "file") {
       var colon = inputPath.indexOf(":");
       if (

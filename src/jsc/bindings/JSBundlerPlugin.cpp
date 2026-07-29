@@ -107,9 +107,7 @@ bool BundlerPlugin::anyMatchesCrossThread(JSC::VM& vm, BunString* namespaceStr, 
     if (anyMatchesForNamespace(vm, list, namespaceString, pathString))
         return true;
 
-    // For onResolve, an import like "virt:x" from a file-namespace source
-    // should also be offered to onResolve({ namespace: "virt" }) with the
-    // stripped path, matching the runtime's dispatch.
+    // onResolve: also offer "ns:rest" to the "ns" group with the stripped path.
     if (!isOnLoad && (namespaceString.isEmpty() || namespaceString == "file"_s) && !list.namespaces.isEmpty()) {
         if (auto colon = pathString.find(':'); colon != WTF::notFound && colon != 0 && !(colon == 1 && isASCIIAlpha(pathString[0]))) {
             auto prefixNamespace = pathString.left(colon);

@@ -6366,20 +6366,14 @@ impl<'a> Resolver<'a> {
                     );
                     while !current.extends.is_empty() {
                         let ts_dir_name = Dirname::dirname(&current.abs_path);
-                        // `Platform::Loose` so the joined path uses the same
-                        // separator normalization as `abs_buf` (which built
-                        // `parent_configs[0].abs_path`); the cycle check below
-                        // compares the two byte-for-byte.
+                        // Loose: same normalization as `abs_buf` so the cycle check can byte-compare.
                         let abs_path = ResolvePath::join_abs_string_buf(
                             ts_dir_name,
                             bufs!(tsconfig_path_abs),
                             &[ts_dir_name, &current.extends],
                             bun_paths::Platform::Loose,
                         );
-                        // An `extends` that resolves back into the chain would
-                        // otherwise re-parse forever until `parent_configs`
-                        // overflows, surfacing `error.Overflow` to the user.
-                        // Match esbuild: warn and stop following.
+                        // Match esbuild: stop following a cyclic `extends` with a warning.
                         if parent_configs.iter().any(|&visited| {
                             // SAFETY: see loop-wide note above; every pointer in
                             // `parent_configs` stays live until the merge loop below.
@@ -6395,9 +6389,7 @@ impl<'a> Resolver<'a> {
                             );
                             break;
                         }
-                        // Reserve the slot before parsing so a chain deeper than
-                        // the array's capacity stops cleanly instead of leaking the
-                        // freshly parsed config and propagating `error.Overflow`.
+                        // Reserve before parsing: a full array would leak the fresh alloc.
                         if parent_configs.ensure_unused_capacity(1).is_err() {
                             let _ = self.log_mut().add_warning_fmt(
                                 None,

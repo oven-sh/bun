@@ -121,9 +121,7 @@ pub fn load_config_path(
     load_bunfig(cmd, auto_loaded, config_path, ctx)
 }
 
-/// Print the accumulated parse log (the concrete TOML error and its location)
-/// followed by the "failed to load bunfig" error, then exit 1. The shared
-/// user-facing presentation of a malformed `bunfig.toml`.
+/// Print the parse log and the `failed to load bunfig` error, then exit 1.
 #[cold]
 pub fn report_bunfig_load_failure(ctx: Context<'_>, err: crate::Error) -> ! {
     debug_assert!(!ctx.log.is_null());

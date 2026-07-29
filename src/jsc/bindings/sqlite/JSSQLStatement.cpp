@@ -2067,8 +2067,6 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementFcntlFunction, (JSC::JSGlobalObject * lex
         return JSValue::encode(jsNumber(rc));
     }
 
-    // Every remaining opcode either exchanges a raw pointer with the VFS or is
-    // documented as internal/app-should-not-call.
     default:
         throwException(lexicalGlobalObject, scope, createTypeError(lexicalGlobalObject, makeString("fileControl: opcode "_s, op, " has no safe JavaScript mapping"_s)));
         return {};

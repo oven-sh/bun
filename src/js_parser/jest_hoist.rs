@@ -1,13 +1,7 @@
-//! Hoist `jest.mock()` / `vi.mock()` / `mock.module()` above imports in test
-//! files, matching babel-plugin-jest-hoist and Vitest's transform.
-//!
-//! Static ESM imports are evaluated before any module body code, so a bare
-//! reorder is not enough: when a hoistable call is present we also rewrite the
-//! test file's remaining static imports to `var {...} = await import("...")`
-//! so they evaluate in statement order after the mocks are installed.
-//!
-//! Only applied when `inject_jest_globals` is on (bun test) and only to files
-//! that actually contain a hoistable call, so the common case is untouched.
+//! Hoist top-level `jest.mock()` / `vi.mock()` / `mock.module()` above a test
+//! file's imports (babel-plugin-jest-hoist / Vitest semantics). Static ESM
+//! imports evaluate before any body code, so the remaining imports are also
+//! lowered to `await import(...)` so they run after the hoisted mocks.
 
 use bun_alloc::Arena as Bump;
 use bun_alloc::ArenaVec as BumpVec;
@@ -40,8 +34,7 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
             return false;
         }
         let symbol = &self.symbols.as_slice()[ref_.inner_index() as usize];
-        // Only hoist when `jest`/`vi`/`mock` refers to the bun:test binding:
-        // either the auto-injected Unbound symbol or a user `import {...}` item.
+        // `jest`/`vi`/`mock` must be the bun:test binding, not a user `const jest = ...`.
         if !matches!(
             symbol.kind,
             js_ast::symbol::Kind::Unbound | js_ast::symbol::Kind::Import
@@ -95,9 +88,7 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
                         [import_data.import_record_index as usize]
                         .path
                         .text;
-                    // Keep bun:test / @jest/globals / vitest as static imports so
-                    // `jest` / `vi` / `mock` are bound (engine-hoisted) before the
-                    // hoisted mock calls run.
+                    // Keep bun:test static so `jest`/`vi`/`mock` bind before the hoisted calls.
                     if matches!(path, b"bun:test" | b"@jest/globals" | b"vitest") {
                         kept.push(*stmt);
                         continue;
@@ -148,8 +139,6 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
         );
         let await_expr = self.new_expr(E::Await { value: import_expr }, loc);
 
-        // The original S::Import record is now dead; mark it so later passes
-        // don't resolve it as a static dependency.
         self.import_records.items_mut()[st.import_record_index as usize]
             .flags
             .insert(bun_ast::ImportRecordFlags::IS_UNUSED);
@@ -160,8 +149,7 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
         let has_named = !items.is_empty();
 
         if has_star {
-            // import * as ns from "m"            -> var ns = await import("m")
-            // import d, * as ns from "m"         -> var ns = await import("m"); var d = ns.default;
+            // import [d,] * as ns from "m" -> var ns = await import("m")[; var d = ns.default]
             let ns_ref = st.namespace_ref;
             let mut decls = G::DeclList::init_capacity(1);
             decls.append_assume_capacity(G::Decl {

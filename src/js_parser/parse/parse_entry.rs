@@ -1897,10 +1897,8 @@ impl<'a> Parser<'a> {
             }
         }
 
-        // Hoist jest.mock()/vi.mock()/mock.module() above imports. This has to
-        // run after visiting (so identifier refs are resolved) and after the
-        // bun:test injection above (so the hoisted part lands after it in
-        // `before`), but before ImportScanner sees the rewritten statements.
+        // Runs after the bun:test injection so the hoisted part lands after it
+        // in `before`, and before ImportScanner sees the lowered imports.
         if p.options.features.inject_jest_globals && exports_kind != js_ast::ExportsKind::Cjs {
             p.hoist_jest_module_mocks(&mut parts, &mut before, p.arena);
         }

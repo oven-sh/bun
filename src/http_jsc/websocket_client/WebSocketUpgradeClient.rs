@@ -120,33 +120,6 @@ impl Drop for SslCtxOwned {
     }
 }
 
-/// Non-`None` while buffering the body of a non-101 response that spans
-/// multiple TCP reads, so the `'unexpected-response'` listener sees the
-/// complete payload rather than a truncated prefix.
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum DeferredHandshake {
-    None,
-    /// Total expected buffer length (`head_len + Content-Length`).
-    WaitingForLength(usize),
-    /// No `Content-Length`; accumulate until the peer closes the connection.
-    WaitingForEof,
-}
-
-/// Routing decision for a parsed handshake response body.
-enum HandshakeBody {
-    /// Dispatch now; `end` is the exclusive upper bound of the body in `full`.
-    Ready { end: usize },
-    /// Buffer `full` and wait for more data before dispatching.
-    Defer(DeferredHandshake),
-    /// Declared body exceeds [`MAX_NON_101_BODY`]; fail without buffering.
-    TooLarge,
-}
-
-/// Cap on bytes buffered for a non-101 response body. Real error pages fit
-/// well under this; the cap stops a misbehaving server from growing `self.body`
-/// without bound.
-const MAX_NON_101_BODY: usize = 64 * 1024 * 1024;
-
 /// WebSocket HTTP upgrade client, generic over `SSL`.
 ///
 /// Intrusive single-thread
@@ -192,11 +165,6 @@ pub struct HTTPClient<const SSL: bool> {
     /// with a `Sec-WebSocket-Extensions` header anyway, `processResponse`
     /// fails the handshake per RFC 6455 §9.1 — matching upstream `ws`.
     offered_permessage_deflate: bool,
-
-    /// Tracks deferred dispatch of the `'handshake'` event for non-101
-    /// responses whose body straddles multiple TCP reads. See
-    /// [`DeferredHandshake`].
-    deferred_handshake: DeferredHandshake,
 }
 
 // Handler set referenced by the dispatch table (kind = `.ws_client_upgrade[_tls]`).
@@ -398,7 +366,6 @@ impl<const SSL: bool> HTTPClient<SSL> {
             expected_accept: request_result.expected_accept,
             offered_permessage_deflate: offer_permessage_deflate,
             subprotocols,
-            deferred_handshake: DeferredHandshake::None,
         }));
         bun_core::scoped_log!(alloc, "new({}) = {:p}", Self::TYPE_NAME, client);
         // SAFETY: just allocated above; we hold the only ref. This `&mut` is
@@ -742,47 +709,20 @@ impl<const SSL: bool> HTTPClient<SSL> {
     pub fn handle_close(this: ThisPtr<Self>, _: Socket<SSL>, _: c_int, _: *mut c_void) {
         log!("onClose");
         bun_jsc::mark_binding!();
-        let _guard = this.ref_guard();
-
-        // Detach the socket and clear its ext slot before any JS dispatch so a
-        // reentrant `cancel()` from a listener finds nothing to release.
-        if let Some(ext) = this.tcp.ext::<Option<core::ptr::NonNull<Self>>>() {
-            // SAFETY: ext slot is the `Option<NonNull<Self>>` set in `connect_group`.
-            unsafe { (*ext).take() };
-        }
-        // SAFETY: short-lived `&mut` for the field detach.
-        unsafe { (*this.as_ptr()).tcp.detach() };
-
-        // Flush any buffered non-101 body as `'unexpected-response'`; on the
-        // normal path this is a no-op. `process_response` → `terminate`
-        // consumes `outgoing_websocket`, so `dispatch_abrupt_close` below then
-        // no-ops.
-        if let Some(full) = Self::take_deferred_body(this) {
-            Self::process_websocket_upgrade_response(this, full, true);
-        }
-
-        // SAFETY: short-lived `&mut` for clear_data; no reentrant call.
+        // SAFETY: short-lived `&mut` borrows; each ends before the next call.
         unsafe { (*this.as_ptr()).clear_data() };
+        // SAFETY: short-lived `&mut` for the field detach; `this` is live.
+        unsafe { (*this.as_ptr()).tcp.detach() };
         // SAFETY: forwards `this` with root provenance; no `&mut Self` is live.
         unsafe { Self::dispatch_abrupt_close(this.as_ptr(), ErrorCode::Ended) };
-        // SAFETY: balances the socket-userdata ref; `_guard` still holds one.
+
+        // SAFETY: may free `this`; no `&mut Self` is live.
         unsafe { Self::deref(this.as_ptr()) };
     }
 
     /// # Safety
     /// `this` must point to a live `Self`. See `fail`.
     pub unsafe fn terminate(this: *mut Self, code: ErrorCode) {
-        // The proxy-tunnel path reaches `terminate(Ended)` without going
-        // through `handle_end`/`handle_close`; flush any deferred body here too.
-        if code == ErrorCode::Ended {
-            // SAFETY: caller contract — `this` is a live `heap::alloc` pointer.
-            let this = unsafe { ThisPtr::new(this) };
-            if let Some(full) = Self::take_deferred_body(this) {
-                let _guard = this.ref_guard();
-                Self::process_websocket_upgrade_response(this, full, true);
-                return;
-            }
-        }
         // SAFETY: forwards `this` with root provenance.
         unsafe { Self::fail(this, code) };
         // We cannot access the pointer after fail is called.
@@ -980,12 +920,8 @@ impl<const SSL: bool> HTTPClient<SSL> {
             }
         }
 
-        if Self::append_deferred_handshake_body(this, data) {
-            return;
-        }
-
         // SAFETY: short-lived `&mut` for body buffering; no reentrant calls in
-        // this region until `terminate`/`process_websocket_upgrade_response` below.
+        // this region until `terminate`/`process_response` below.
         let me = unsafe { &mut *this.as_ptr() };
         let mut body = data;
         if !me.body.is_empty() {
@@ -993,8 +929,8 @@ impl<const SSL: bool> HTTPClient<SSL> {
             body = &me.body;
         }
 
-        let response = match picohttp::Response::parse(body, &mut me.headers_buf) {
-            Ok(r) => r,
+        match picohttp::Response::parse(body, &mut me.headers_buf) {
+            Ok(_) => {}
             Err(picohttp::ParseResponseError::MalformedHttpResponse) => {
                 // SAFETY: `me`'s last use is above; no `&mut Self` spans this call.
                 unsafe { Self::terminate(this.as_ptr(), ErrorCode::InvalidResponse) };
@@ -1016,67 +952,12 @@ impl<const SSL: bool> HTTPClient<SSL> {
             }
         };
 
-        let _ = response;
-        Self::process_websocket_upgrade_response(this, body.to_vec(), false);
+        let full = body.to_vec();
+        Self::process_websocket_upgrade_response(this, &full);
         // `_guard` drops here, balancing the ref above. May free `this`.
     }
 
-    fn find_header<'a>(response: &picohttp::Response<'a>, name: &[u8]) -> Option<&'a [u8]> {
-        response
-            .headers
-            .list
-            .iter()
-            .find(|h| {
-                h.name().len() == name.len()
-                    && strings::eql_case_insensitive_ascii_ignore_length(h.name(), name)
-            })
-            .map(|h| h.value())
-    }
-
-    /// Decide whether a handshake response's body is ready to surface to JS
-    /// (and how much of `full` it spans), or whether more bytes are needed.
-    /// Pure: encodes RFC 7230 §3.3.3 body-length rules for the response side.
-    fn route_handshake_body(
-        response: &picohttp::Response,
-        head_len: usize,
-        available: usize,
-    ) -> HandshakeBody {
-        let status = response.status_code;
-        // 101: post-header bytes are the first WebSocket frame, not HTTP body.
-        if status == 101 {
-            return HandshakeBody::Ready { end: head_len };
-        }
-        // Bodiless statuses (rule 1) and Transfer-Encoding (rule 3; we don't
-        // decode chunked here) dispatch immediately with whatever is on hand.
-        let bodiless = status == 204 || status == 304 || (100..200).contains(&status);
-        if bodiless || Self::find_header(response, b"Transfer-Encoding").is_some() {
-            return HandshakeBody::Ready { end: available };
-        }
-        match Self::find_header(response, b"Content-Length").and_then(|v| {
-            core::str::from_utf8(v)
-                .ok()?
-                .trim_matches(|c: char| c == ' ' || c == '\t')
-                .parse::<usize>()
-                .ok()
-        }) {
-            Some(cl) if cl > MAX_NON_101_BODY => HandshakeBody::TooLarge,
-            Some(cl) => {
-                let target = head_len + cl;
-                if available >= target {
-                    HandshakeBody::Ready { end: target }
-                } else {
-                    HandshakeBody::Defer(DeferredHandshake::WaitingForLength(target))
-                }
-            }
-            // Rule 7: read until the peer closes.
-            None => HandshakeBody::Defer(DeferredHandshake::WaitingForEof),
-        }
-    }
-
-    /// Forward the parsed handshake response to the C++ `WebSocket` as a
-    /// `'handshake'` event. Everything borrows `response`'s parse buffer, which
-    /// the caller keeps alive for the call; C++ copies into JS strings before
-    /// any user JS runs.
+    /// Forward the handshake response to C++ as a `'handshake'` event.
     fn dispatch_handshake(ws: *mut CppWebSocket, response: &picohttp::Response, body: &[u8]) {
         let raw_headers: Vec<super::cpp_websocket::RawHeader> = response
             .headers
@@ -1097,107 +978,29 @@ impl<const SSL: bool> HTTPClient<SSL> {
         );
     }
 
-    /// Take the buffered deferred-handshake body out of `self`, clearing the
-    /// deferred state. `None` when nothing was deferred.
-    fn take_deferred_body(this: ThisPtr<Self>) -> Option<Vec<u8>> {
-        // SAFETY: short-lived `&mut` for field reads/writes; no reentrant call.
-        let me = unsafe { &mut *this.as_ptr() };
-        if matches!(me.deferred_handshake, DeferredHandshake::None) {
-            return None;
-        }
-        me.deferred_handshake = DeferredHandshake::None;
-        let full = core::mem::take(&mut me.body);
-        (!full.is_empty()).then_some(full)
-    }
-
-    /// Append a TCP read to the deferred non-101 body buffer. Returns `true`
-    /// when the read was consumed (caller should stop). Caller must hold a
-    /// `ref_guard` across this call.
-    fn append_deferred_handshake_body(this: ThisPtr<Self>, data: &[u8]) -> bool {
-        // SAFETY: short-lived `&mut` for buffer append; ends before any dispatch.
-        let me = unsafe { &mut *this.as_ptr() };
-        match me.deferred_handshake {
-            DeferredHandshake::None => false,
-            DeferredHandshake::WaitingForLength(target) => {
-                let take = (target - me.body.len()).min(data.len());
-                me.body.extend_from_slice(&data[..take]);
-                if me.body.len() >= target {
-                    me.body.truncate(target);
-                    me.deferred_handshake = DeferredHandshake::None;
-                    let full = core::mem::take(&mut me.body);
-                    Self::process_websocket_upgrade_response(this, full, true);
-                }
-                true
-            }
-            DeferredHandshake::WaitingForEof => {
-                if me.body.len().saturating_add(data.len()) > MAX_NON_101_BODY {
-                    me.deferred_handshake = DeferredHandshake::None;
-                    // SAFETY: `me`'s last use is above; no `&mut Self` spans this call.
-                    unsafe { Self::terminate(this.as_ptr(), ErrorCode::Expected101StatusCode) };
-                    return true;
-                }
-                me.body.extend_from_slice(data);
-                true
-            }
-        }
-    }
-
-    /// Parse `full` as the handshake response, surface the `'handshake'` event
-    /// to the `ws` shim, then hand off to [`Self::process_response`].
-    ///
-    /// Parses into a local scratch buffer so nothing borrows `self` across the
-    /// JS dispatch. The dispatch can re-enter (`ws.close()`/`terminate()` →
-    /// `cancel()`), so the caller must hold a `ref_guard`. `is_final` is set
-    /// on EOF/close flushes: no more bytes are coming, so `Defer` is treated as
-    /// `Ready` with whatever body arrived.
-    fn process_websocket_upgrade_response(this: ThisPtr<Self>, full: Vec<u8>, is_final: bool) {
+    /// Surface `'handshake'` to the `ws` shim, then [`Self::process_response`].
+    /// Caller holds a `ref_guard` and owns `full` (it must not borrow `self`).
+    fn process_websocket_upgrade_response(this: ThisPtr<Self>, full: &[u8]) {
         let mut scratch = [picohttp::Header::ZERO; 128];
-        let response = match picohttp::Response::parse(&full, &mut scratch) {
-            Ok(r) => r,
-            Err(_) => {
-                // SAFETY: no `&mut Self` is live across this call.
-                return unsafe { Self::terminate(this.as_ptr(), ErrorCode::InvalidResponse) };
-            }
+        let Ok(response) = picohttp::Response::parse(full, &mut scratch) else {
+            // SAFETY: forwards to the existing teardown path.
+            return unsafe { Self::terminate(this.as_ptr(), ErrorCode::InvalidResponse) };
         };
         let head_len = usize::try_from(response.bytes_read).expect("int cast");
+        let is_101 = response.status_code == 101;
 
-        let Some(ws) = this.outgoing_websocket else {
-            // SAFETY: no `&mut Self` is live across this call.
-            return unsafe { Self::process_response(this.as_ptr(), response, &full[head_len..]) };
-        };
+        // 101: one scope across 'upgrade'+'open' so microtasks drain after open.
+        let _scope = is_101
+            .then(|| bun_jsc::virtual_machine::VirtualMachine::get().enter_event_loop_scope());
 
-        let route = match Self::route_handshake_body(&response, head_len, full.len()) {
-            HandshakeBody::Defer(_) if is_final => HandshakeBody::Ready { end: full.len() },
-            r => r,
-        };
-        match route {
-            HandshakeBody::Defer(state) => {
-                // SAFETY: short-lived `&mut` for two field writes; no reentrant call.
-                let me = unsafe { &mut *this.as_ptr() };
-                me.body = full;
-                me.deferred_handshake = state;
-            }
-            HandshakeBody::TooLarge => {
-                // SAFETY: no `&mut Self` is live across this call.
-                unsafe { Self::terminate(this.as_ptr(), ErrorCode::Expected101StatusCode) };
-            }
-            HandshakeBody::Ready { end } => {
-                // On 101, hold one event-loop scope across `'upgrade'` and
-                // `'open'` so microtasks drain after `open` (matches npm `ws`).
-                // On non-101, the `'unexpected-response'` body stream needs the
-                // microtask checkpoint between dispatch and teardown, so skip.
-                let _loop_scope = (response.status_code == 101).then(|| {
-                    bun_jsc::virtual_machine::VirtualMachine::get().enter_event_loop_scope()
-                });
-                Self::dispatch_handshake(ws, &response, &full[head_len..end]);
-                if this.outgoing_websocket.is_some() {
-                    // SAFETY: no `&mut Self` is live across this call.
-                    unsafe {
-                        Self::process_response(this.as_ptr(), response, &full[head_len..]);
-                    }
-                }
+        if let Some(ws) = this.outgoing_websocket {
+            Self::dispatch_handshake(ws, &response, if is_101 { &[] } else { &full[head_len..] });
+            if this.outgoing_websocket.is_none() {
+                return;
             }
         }
+        // SAFETY: forwards to the existing handoff path.
+        unsafe { Self::process_response(this.as_ptr(), response, &full[head_len..]) };
     }
 
     /// Takes `ThisPtr<Self>` because `terminate`/`handle_data` may free `this`.
@@ -1449,20 +1252,19 @@ impl<const SSL: bool> HTTPClient<SSL> {
         let this = unsafe { ThisPtr::new(this) };
         let _guard = this.ref_guard();
 
-        if Self::append_deferred_handshake_body(this, data) {
-            return;
-        }
-
-        // SAFETY: short-lived `&mut` for body buffering; ends before dispatch below.
+        // SAFETY: short-lived `&mut` for body buffering; no reentrant calls in
+        // this region until `terminate`/`process_response` below.
         let me = unsafe { &mut *this.as_ptr() };
+
+        // Process as if it came directly from the socket
         let mut body = data;
         if !me.body.is_empty() {
             me.body.extend_from_slice(data);
             body = &me.body;
         }
 
-        let response = match picohttp::Response::parse(body, &mut me.headers_buf) {
-            Ok(r) => r,
+        match picohttp::Response::parse(body, &mut me.headers_buf) {
+            Ok(_) => {}
             Err(picohttp::ParseResponseError::MalformedHttpResponse) => {
                 // SAFETY: `me`'s last use is above; no `&mut Self` spans this call.
                 unsafe { Self::terminate(this.as_ptr(), ErrorCode::InvalidResponse) };
@@ -1480,18 +1282,13 @@ impl<const SSL: bool> HTTPClient<SSL> {
             }
         };
 
-        let _ = response;
-        Self::process_websocket_upgrade_response(this, body.to_vec(), false);
+        let full = body.to_vec();
+        Self::process_websocket_upgrade_response(this, &full);
     }
 
     /// Takes `ThisPtr<Self>` because `terminate` may free `this`; see `fail`.
     pub fn handle_end(this: ThisPtr<Self>, _: Socket<SSL>) {
         log!("onEnd");
-        if let Some(full) = Self::take_deferred_body(this) {
-            let _guard = this.ref_guard();
-            Self::process_websocket_upgrade_response(this, full, true);
-            return;
-        }
         // SAFETY: forwards `this` with root provenance; no `&mut Self` is live.
         unsafe { Self::terminate(this.as_ptr(), ErrorCode::Ended) };
     }

@@ -22,11 +22,7 @@ bun_opaque::opaque_ffi! {
     pub struct CppWebSocket;
 }
 
-/// A single HTTP response header passed across the FFI to
-/// `WebSocket__didReceiveHandshakeResponse`. Name/value point into the
-/// PicoHTTP-parsed response head, which the caller keeps alive for the
-/// duration of the synchronous dispatch. Matches `WebCore::WebSocket::
-/// HandshakeRawHeader` (src/jsc/bindings/webcore/WebSocket.h).
+/// Matches `WebCore::WebSocket::HandshakeRawHeader` (WebSocket.h).
 #[repr(C)]
 pub struct RawHeader {
     pub name_ptr: *const u8,
@@ -101,11 +97,7 @@ impl CppWebSocket {
         event_loop.exit();
     }
 
-    /// Dispatch the native `'handshake'` event to the `ws` shim.
-    ///
-    /// `status_message`, `headers`, and `body` are borrowed for the call only
-    /// — the C++ side copies whatever it needs into JS values synchronously.
-    // Forwards raw pointers to C++ without dereferencing on the Rust side.
+    /// Dispatch the native `'handshake'` event; C++ copies all slices synchronously.
     #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub(crate) fn did_receive_handshake_response(
         &self,

@@ -333,7 +333,6 @@ describe("websocket", () => {
     socket.addEventListener("close", cause => reject(new Error("WebSocket closed", { cause })));
     await promise;
     socket.close();
-    proc.kill();
   });
 
   afterEach(() => {

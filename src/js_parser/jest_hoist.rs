@@ -10,12 +10,50 @@ use bun_collections::VecExt;
 use bun_ast as js_ast;
 use bun_ast::expr::Data as ExprData;
 use bun_ast::stmt::Data as StmtData;
-use bun_ast::{B, Binding, E, Expr, G, S, Stmt};
+use bun_ast::{B, Binding, E, Expr, G, Ref, S, Stmt};
 
 use crate::p::P;
 
+fn is_bun_test_path(path: &[u8]) -> bool {
+    matches!(path, b"bun:test" | b"@jest/globals" | b"vitest")
+}
+
 impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
-    fn is_hoistable_mock_stmt(&self, stmt: &Stmt) -> bool {
+    /// Refs that are valid `jest`/`vi`/`mock` callees: the auto-injected
+    /// Unbound symbols plus any `import { jest | vi | mock }` item that
+    /// actually came from bun:test / @jest/globals / vitest.
+    fn collect_bun_test_mock_refs<'bump>(
+        &self,
+        parts: &BumpVec<'bump, js_ast::Part>,
+        bump: &'bump Bump,
+    ) -> BumpVec<'bump, Ref> {
+        let mut refs = BumpVec::<Ref>::with_capacity_in(6, bump);
+        for r in [self.jest.jest, self.jest.vi, self.jest.mock] {
+            if !r.is_null() {
+                refs.push(r);
+            }
+        }
+        for part in parts.iter() {
+            for stmt in part.stmts.iter() {
+                let StmtData::SImport(st) = stmt.data else {
+                    continue;
+                };
+                let path =
+                    self.import_records.items()[st.import_record_index as usize].path.text;
+                if !is_bun_test_path(path) {
+                    continue;
+                }
+                for item in st.items.iter() {
+                    if matches!(item.alias.slice(), b"jest" | b"vi" | b"mock") {
+                        refs.push(item.name.ref_);
+                    }
+                }
+            }
+        }
+        refs
+    }
+
+    fn is_hoistable_mock_stmt(&self, stmt: &Stmt, allowed: &[Ref]) -> bool {
         let StmtData::SExpr(sexpr) = stmt.data else {
             return false;
         };
@@ -30,18 +68,12 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
             ExprData::EImportIdentifier(id) => id.ref_,
             _ => return false,
         };
-        if ref_.is_source_contents_slice() {
+        if ref_.is_source_contents_slice() || !allowed.iter().any(|r| r.eql(ref_)) {
             return false;
         }
-        let symbol = &self.symbols.as_slice()[ref_.inner_index() as usize];
-        // `jest`/`vi`/`mock` must be the bun:test binding, not a user `const jest = ...`.
-        if !matches!(
-            symbol.kind,
-            js_ast::symbol::Kind::Unbound | js_ast::symbol::Kind::Import
-        ) {
-            return false;
-        }
-        let obj = symbol.original_name.slice();
+        let obj = self.symbols.as_slice()[ref_.inner_index() as usize]
+            .original_name
+            .slice();
         let method = dot.name.slice();
         match obj {
             b"jest" | b"vi" => matches!(method, b"mock" | b"unmock"),
@@ -56,10 +88,12 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
         before: &mut BumpVec<'bump, js_ast::Part>,
         bump: &'bump Bump,
     ) {
+        let allowed = self.collect_bun_test_mock_refs(parts, bump);
+
         let mut has_hoistable = false;
         'scan: for part in parts.iter() {
             for stmt in part.stmts.iter() {
-                if self.is_hoistable_mock_stmt(stmt) {
+                if self.is_hoistable_mock_stmt(stmt, &allowed) {
                     has_hoistable = true;
                     break 'scan;
                 }
@@ -74,22 +108,28 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
         }
 
         let mut hoisted = BumpVec::<Stmt>::new_in(bump);
+        let mut lowered_any_import = false;
 
         for part in parts.iter_mut() {
             let old_len = part.stmts.len();
             let mut kept = BumpVec::<Stmt>::with_capacity_in(old_len, bump);
             for stmt in part.stmts.iter() {
-                if self.is_hoistable_mock_stmt(stmt) {
+                if self.is_hoistable_mock_stmt(stmt, &allowed) {
                     hoisted.push(*stmt);
                     continue;
                 }
                 if let StmtData::SImport(import_data) = stmt.data {
-                    let path: &'static [u8] = self.import_records.items()
-                        [import_data.import_record_index as usize]
-                        .path
-                        .text;
-                    // Keep bun:test static so `jest`/`vi`/`mock` bind before the hoisted calls.
-                    if matches!(path, b"bun:test" | b"@jest/globals" | b"vitest") {
+                    let record =
+                        &self.import_records.items()[import_data.import_record_index as usize];
+                    let path: &'static [u8] = record.path.text;
+                    // Keep bun:test static so `jest`/`vi`/`mock` bind before the
+                    // hoisted calls, and keep `with { type: ... }` / `import defer`
+                    // since `await import()` drops those and mock.module() cannot
+                    // affect asset or deferred modules anyway.
+                    if is_bun_test_path(path)
+                        || record.loader.is_some()
+                        || import_data.phase_defer
+                    {
                         kept.push(*stmt);
                         continue;
                     }
@@ -100,11 +140,21 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
                         &mut kept,
                         bump,
                     );
+                    lowered_any_import = true;
                     continue;
                 }
                 kept.push(*stmt);
             }
             part.stmts = bun_ast::StoreSlice::from_bump(kept);
+        }
+
+        // The isolation ModuleInfo path reads `top_level_await_keyword` to set
+        // `has_tla`; we just emitted top-level `await import()`.
+        if lowered_any_import && self.top_level_await_keyword.is_empty() {
+            self.top_level_await_keyword = bun_ast::Range {
+                loc: bun_ast::Loc::EMPTY,
+                len: 1,
+            };
         }
 
         before.push(js_ast::Part {

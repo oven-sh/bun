@@ -17,6 +17,7 @@ declare var afterEach: typeof import("bun:test").afterEach;
 declare var afterAll: typeof import("bun:test").afterAll;
 declare var jest: typeof import("bun:test").jest;
 declare var vi: typeof import("bun:test").vi;
+declare var mock: typeof import("bun:test").mock;
 declare var xit: typeof import("bun:test").xit;
 declare var xtest: typeof import("bun:test").xtest;
 declare var xdescribe: typeof import("bun:test").xdescribe;

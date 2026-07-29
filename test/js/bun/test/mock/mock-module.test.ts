@@ -181,10 +181,10 @@ describe("top-level jest.mock/mock.module is hoisted above static imports", () =
     export const callSend = () => client.send();
   `;
 
-  async function runFixture(files: Record<string, string>) {
+  async function runFixture(files: Record<string, string>, extraArgs: string[] = []) {
     using dir = tempDir("mock-hoist", { "lib.ts": lib, "consumer.ts": consumer, ...files });
     await using proc = Bun.spawn({
-      cmd: [bunExe(), "test", "fixture.test.ts"],
+      cmd: [bunExe(), "test", ...extraArgs, "fixture.test.ts"],
       env: bunEnv,
       cwd: String(dir),
       stdout: "pipe",
@@ -333,6 +333,65 @@ describe("top-level jest.mock/mock.module is hoisted above static imports", () =
       `,
     });
     expect(stderr).toContain("1 pass");
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("mock imported from a module other than bun:test does not trigger the rewrite", async () => {
+    const { stdout, stderr, exitCode } = await runFixture({
+      "order-a.ts": `console.log("a");`,
+      "wrapper.ts": `export const mock = { module: (_s: string, _f: () => unknown) => {} };`,
+      "fixture.test.ts": `
+        import { test } from "bun:test";
+        import { mock } from "./wrapper";
+        console.log("body");
+        import "./order-a";
+        mock.module("./lib", () => ({}));
+        test("t", () => {});
+      `,
+    });
+    expect(stderr).toContain("1 pass");
+    // "./order-a" must stay engine-hoisted because this `mock` is not bun:test's.
+    expect(stdout).toContain("a\nbody\n");
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("import attributes are preserved when a mock is hoisted", async () => {
+    const { stderr, exitCode } = await runFixture({
+      "data.txt": "file-contents",
+      "fixture.test.ts": `
+        import { expect, test, jest } from "bun:test";
+        import data from "./data.txt" with { type: "text" };
+        import { callSend } from "./consumer";
+        jest.mock("./lib", () => ({
+          Client: class { send() { return "mocked"; } },
+        }));
+        test("t", () => {
+          expect(callSend()).toBe("mocked");
+          expect(data).toBe("file-contents");
+        });
+      `,
+    });
+    expect(stderr).toContain("1 pass");
+    expect(stderr).not.toContain("fail)");
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("works under --isolate", async () => {
+    const { stderr, exitCode } = await runFixture(
+      {
+        "fixture.test.ts": `
+          import { expect, test, mock } from "bun:test";
+          import { callSend } from "./consumer";
+          mock.module("./lib", () => ({
+            Client: class { send() { return "mocked"; } },
+          }));
+          test("t", () => { expect(callSend()).toBe("mocked"); });
+        `,
+      },
+      ["--isolate"],
+    );
+    expect(stderr).toContain("1 pass");
+    expect(stderr).not.toContain("fail)");
     expect(exitCode).toBe(0);
   });
 });

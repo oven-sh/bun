@@ -1427,11 +1427,16 @@ impl<'a> Transpiler<'a> {
             if matches!(loader, options::Loader::Base64 | options::Loader::Dataurl) {
                 let read = match file_descriptor {
                     Some(fd) => bun_sys::lseek(fd, 0, libc::SEEK_SET)
-                        .and_then(|_| bun_sys::File::borrow(&fd).read_to_end()),
-                    None => bun_sys::File::read_from(FD::cwd(), path.text),
+                        .and_then(|_| bun_sys::File::borrow(&fd).read_to_end())
+                        .map(|b| (fd, b)),
+                    None => bun_sys::File::openat(FD::cwd(), path.text, bun_sys::O::RDONLY, 0)
+                        .and_then(|f| {
+                            let body = f.read_to_end()?;
+                            Ok((f.into_raw(), body))
+                        }),
                 };
-                let body = match read {
-                    Ok(b) => b,
+                let (fd, body) = match read {
+                    Ok(v) => v,
                     Err(err) => {
                         let _ = log.add_error_fmt(
                             None,
@@ -1445,6 +1450,10 @@ impl<'a> Transpiler<'a> {
                         return None;
                     }
                 };
+                input_fd = Some(fd);
+                if let Some(file_fd_ptr) = this_parse.file_fd_ptr.take() {
+                    *file_fd_ptr = fd;
+                }
                 source_backing = resolver::cache::Contents::from(body);
                 // SAFETY: `source_backing` outlives every read through
                 // `source.contents` (moved into the returned `ParseResult`).

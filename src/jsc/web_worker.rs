@@ -127,6 +127,14 @@ pub struct WebWorker {
     /// (`exit`). The worker loop polls this between ticks.
     requested_terminate: AtomicBool,
 
+    /// Set by `self.close()` on the worker thread. The event loop polls this
+    /// alongside `requested_terminate` so it exits after the current task.
+    /// Separate from `requested_terminate` so that `notify_need_termination`
+    /// and `terminate_all_and_wait` (which skip arming the TerminationException
+    /// when `requested_terminate` is already set) still interrupt a worker that
+    /// has called `close()` and then entered a long synchronous section.
+    close_requested: AtomicBool,
+
     /// The worker's `jsc.VirtualMachine`, or null before `startVM()` / after
     /// `shutdown()` nulls it. Lives inside `arena`. `vm_lock` must be held for
     /// any cross-thread read (see header comment).
@@ -407,18 +415,25 @@ pub(crate) extern "C" fn WebWorker__getParentWorker(vm: &VirtualMachine) -> *mut
 /// Worker-thread only. Sets the closing flag so the event loop exits after the
 /// current task completes. Unlike `exit()`, this does not arm the
 /// TerminationException, so the script that called `close()` runs to its
-/// synchronous completion.
+/// synchronous completion. Uses a separate flag from `requested_terminate` so a
+/// later `terminate()` still arms the trap.
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn WebWorker__requestClose(vm: &VirtualMachine) {
     if let Some(worker) = vm.worker_ref() {
-        worker.exit_called.store(true, Ordering::Relaxed);
-        let _ = worker.set_requested_terminate();
+        worker.close_requested.store(true, Ordering::Relaxed);
     }
 }
 
 impl WebWorker {
     pub fn has_requested_terminate(&self) -> bool {
         self.requested_terminate.load(Ordering::Acquire)
+    }
+
+    /// `terminate()` / `process.exit()` / `self.close()`: any of the ways the
+    /// event loop has been asked to stop after the current task.
+    pub fn should_exit_loop(&self) -> bool {
+        self.requested_terminate.load(Ordering::Acquire)
+            || self.close_requested.load(Ordering::Relaxed)
     }
 
     /// Raw read of the `vm` cell. Worker-thread-only callers (which are also
@@ -577,6 +592,7 @@ impl WebWorker {
             live_next: Cell::new(core::ptr::null_mut()),
             live_prev: Cell::new(core::ptr::null_mut()),
             requested_terminate: AtomicBool::new(false),
+            close_requested: AtomicBool::new(false),
             vm: Cell::new(core::ptr::null_mut()),
             vm_lock: Mutex::new(),
             parent_poll_ref: JsCell::new(KeepAlive::init()),
@@ -1171,31 +1187,33 @@ impl WebWorker {
 
         // Always do a first tick so we call CppTask without delay after
         // dispatchOnline.
-        vm.as_mut().tick();
-
-        while vm.is_event_loop_alive() {
+        if !self.should_exit_loop() {
             vm.as_mut().tick();
-            if self.has_requested_terminate() {
-                break;
-            }
-            vm.as_mut().auto_tick_active();
-            if self.has_requested_terminate() {
-                break;
+
+            while vm.is_event_loop_alive() {
+                vm.as_mut().tick();
+                if self.should_exit_loop() {
+                    break;
+                }
+                vm.as_mut().auto_tick_active();
+                if self.should_exit_loop() {
+                    break;
+                }
             }
         }
 
         log!(
             "[{}] before exit {}",
             self.execution_context_id,
-            if self.has_requested_terminate() {
+            if self.should_exit_loop() {
                 "(terminated)"
             } else {
                 "(event loop dead)"
             }
         );
 
-        // Only emit 'beforeExit' on a natural drain, not on terminate().
-        if !self.has_requested_terminate() {
+        // Only emit 'beforeExit' on a natural drain, not on terminate() / close().
+        if !self.should_exit_loop() {
             // TODO: is this able to allow the event loop to continue?
             vm.as_mut().on_before_exit();
         }

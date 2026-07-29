@@ -336,22 +336,29 @@ describe("web worker", () => {
     });
   });
 
+  async function messageOrError(worker: Worker) {
+    const { promise, resolve, reject } = Promise.withResolvers<any>();
+    worker.onmessage = e => resolve(e.data);
+    worker.onerror = e => reject(e.message ?? e);
+    try {
+      return await promise;
+    } finally {
+      worker.terminate();
+    }
+  }
+
   test("self.name reflects the name option", async () => {
     const worker = new Worker(
       "data:text/javascript," +
         encodeURIComponent(`postMessage({ name: self.name, global: globalThis.name, type: typeof self.name });`),
       { name: "wanted-name" },
     );
-    const [e] = await once(worker, "message");
-    worker.terminate();
-    expect(e.data).toEqual({ name: "wanted-name", global: "wanted-name", type: "string" });
+    expect(await messageOrError(worker)).toEqual({ name: "wanted-name", global: "wanted-name", type: "string" });
   });
 
   test("self.name defaults to the empty string", async () => {
     const worker = new Worker("data:text/javascript," + encodeURIComponent(`postMessage(self.name);`));
-    const [e] = await once(worker, "message");
-    worker.terminate();
-    expect(e.data).toBe("");
+    expect(await messageOrError(worker)).toBe("");
   });
 
   test("self.close() ends the worker after the current task", async () => {
@@ -369,6 +376,26 @@ describe("web worker", () => {
 
     expect(messages).toEqual([{ closeType: "function", name: "closer", afterClose: "reached" }]);
     expect(close.code).toBe(0);
+  });
+
+  test("terminate() still interrupts after self.close()", async () => {
+    const src = `self.close(); postMessage("closing"); while (true) {}`;
+    const worker = new Worker("data:text/javascript," + encodeURIComponent(src));
+    // messageOrError resolves on "closing" and then calls worker.terminate();
+    // the worker is in the infinite loop by then, so terminate() must arm the
+    // TerminationException for the close event to ever fire.
+    expect(await messageOrError(worker)).toBe("closing");
+    const [close] = await once(worker, "close");
+    expect(typeof close.code).toBe("number");
+  });
+
+  test("self.close() followed by a top-level throw still reports the error", async () => {
+    const src = `self.close(); throw new Error("boom");`;
+    const worker = new Worker("data:text/javascript," + encodeURIComponent(src));
+    const { promise, resolve, reject } = Promise.withResolvers<any>();
+    worker.onerror = e => resolve(e.message);
+    worker.addEventListener("close", e => reject(new Error(`closed (${e.code}) without error event`)));
+    expect(await promise).toContain("boom");
   });
 
   test("close and name are not defined on the main-thread global", () => {

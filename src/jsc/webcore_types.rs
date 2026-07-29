@@ -373,8 +373,6 @@ impl Blob {
             content_type: JsCell::new(self.content_type.get().clone()),
             content_type_was_set: Cell::new(self.content_type_was_set.get()),
             charset: Cell::new(self.charset.get()),
-            // A dupe is a fresh Blob view over the same bytes; File identity
-            // belongs to the original wrapper, not to copies.
             is_jsdom_file: Cell::new(false),
             ref_count: bun_ptr::RawRefCount::init(0), // setNotHeapAllocated
             global_this: Cell::new(self.global_this.get()),

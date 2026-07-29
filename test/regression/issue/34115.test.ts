@@ -123,8 +123,8 @@ test.concurrent("Writable.toWeb() close rejects with ABORT_ERR when preload requ
 });
 
 // A nextTick callback that spins wait_for_promise re-enters GlobalObject::drainMicrotasks
-// while the hook's re-entrancy guard is held; gating that call on !isEmpty() keeps the
-// nested drain from clearing asyncContextData[0] via the mustResetContext branch.
+// under the hook's m_isDrainingNextTickQueue guard; JSNextTickQueue::drain must not clear
+// asyncContextData[0] on that nested path.
 test.concurrent("AsyncLocalStorage frame survives a nextTick callback that spins wait_for_promise", async () => {
   await using proc = Bun.spawn({
     cmd: [

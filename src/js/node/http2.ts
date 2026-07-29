@@ -2200,8 +2200,6 @@ function validateWindowSize(windowSize) {
 hideFromStack(validateWindowSize);
 
 function pushToStream(stream, data) {
-  // Data arriving after close(): drop it. _destroy ends the readable with the correct event
-  // ('end' for NO_ERROR/CANCEL, 'error' otherwise) once the rstCode is known.
   if (data && stream[bunHTTP2StreamStatus] & StreamState.Closed) return;
 
   // Node's onStreamRead (lib/internal/stream_base_commons.js): push() returning false
@@ -2603,10 +2601,9 @@ class Http2Stream extends Duplex {
         validateFunction(callback, "callback");
         this.once("close", callback);
       }
-      // Node only push(null)s here for a pending stream; ids are assigned eagerly so "no response
-      // yet" is the closest equivalent. Once a body has started _destroy ends the readable so 'end'
-      // is suppressed for rstCodes that synthesize an error.
       if ((this[bunHTTP2StreamStatus] & StreamState.StreamResponded) === 0) {
+        // Once a body has started _destroy ends the readable instead (so 'end' is
+        // suppressed for rstCodes that synthesize an error).
         this.push(null);
       }
       const { ending } = this._writableState;
@@ -3729,8 +3726,6 @@ function emitStreamErrorNT(self, stream, error, destroy, destroy_self) {
     if (stream.listenerCount("error") > 0) {
       if (typeof error === "number") {
         stream.rstCode = error;
-        // NO_ERROR and CANCEL are documented as not raising a stream error; _destroy applies the
-        // same exemption when synthesizing from rstCode.
         if (error !== NGHTTP2_NO_ERROR && error !== NGHTTP2_CANCEL) {
           error_instance = streamErrorFromCode(error);
         }

@@ -1897,6 +1897,14 @@ impl<'a> Parser<'a> {
             }
         }
 
+        // Hoist jest.mock()/vi.mock()/mock.module() above imports. This has to
+        // run after visiting (so identifier refs are resolved) and after the
+        // bun:test injection above (so the hoisted part lands after it in
+        // `before`), but before ImportScanner sees the rewritten statements.
+        if p.options.features.inject_jest_globals && exports_kind != js_ast::ExportsKind::Cjs {
+            p.hoist_jest_module_mocks(&mut parts, &mut before, p.arena);
+        }
+
         if p.has_called_runtime {
             let mut runtime_imports: [u8; RuntimeImports::ALL.len()] =
                 [0; RuntimeImports::ALL.len()];

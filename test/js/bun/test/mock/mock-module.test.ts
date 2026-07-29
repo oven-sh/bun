@@ -7,7 +7,8 @@
 // - Write test for export {foo} from "./foo"
 // - Write test for import {foo} from "./foo"; export {foo}
 
-import { expect, mock, spyOn, test } from "bun:test";
+import { describe, expect, mock, spyOn, test } from "bun:test";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { default as defaultValue, fn, iCallFn, rexported, rexportedAs, variable } from "./mock-module-fixture";
 import * as spyFixture from "./spymodule-fixture";
 
@@ -165,4 +166,177 @@ test("mocking a builtin", async () => {
 
   const { readFile } = await import("node:fs/promises");
   expect(await readFile("hello.txt", "utf8")).toBe("hello world");
+});
+
+// https://github.com/oven-sh/bun/issues/10428
+describe("top-level jest.mock/mock.module is hoisted above static imports", () => {
+  const lib = `
+    export class Client { send() { return "real"; } }
+    export const value = "real-value";
+    export default "real-default";
+  `;
+  const consumer = `
+    import { Client } from "./lib";
+    const client = new Client();
+    export const callSend = () => client.send();
+  `;
+
+  async function runFixture(files: Record<string, string>) {
+    using dir = tempDir("mock-hoist", { "lib.ts": lib, "consumer.ts": consumer, ...files });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "fixture.test.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([
+      proc.stdout.text(),
+      proc.stderr.text(),
+      proc.exited,
+    ]);
+    return { stdout, stderr, exitCode };
+  }
+
+  test.concurrent("mock.module() installs before a transitively-imported module evaluates", async () => {
+    const { stderr, exitCode } = await runFixture({
+      "fixture.test.ts": `
+        import { expect, test, mock, jest } from "bun:test";
+        import { callSend } from "./consumer";
+        mock.module("./lib", () => ({
+          Client: jest.fn().mockImplementation(() => ({ send: () => "mocked" })),
+        }));
+        test("t", () => {
+          expect(callSend()).toBe("mocked");
+        });
+      `,
+    });
+    expect(stderr).toContain("1 pass");
+    expect(stderr).not.toContain("fail)");
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("jest.mock() hoists", async () => {
+    const { stderr, exitCode } = await runFixture({
+      "fixture.test.ts": `
+        import { expect, test, jest } from "bun:test";
+        import { callSend } from "./consumer";
+        jest.mock("./lib", () => ({
+          Client: class { send() { return "mocked"; } },
+        }));
+        test("t", () => { expect(callSend()).toBe("mocked"); });
+      `,
+    });
+    expect(stderr).toContain("1 pass");
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("vi.mock() hoists", async () => {
+    const { stderr, exitCode } = await runFixture({
+      "fixture.test.ts": `
+        import { expect, test, vi } from "bun:test";
+        import { callSend } from "./consumer";
+        vi.mock("./lib", () => ({
+          Client: class { send() { return "mocked"; } },
+        }));
+        test("t", () => { expect(callSend()).toBe("mocked"); });
+      `,
+    });
+    expect(stderr).toContain("1 pass");
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("rewrites default, named, aliased, namespace and side-effect imports", async () => {
+    // The consumer captures values at module-evaluation time so we can tell
+    // whether the mock was installed before the import graph ran.
+    const { stderr, exitCode } = await runFixture({
+      "side.ts": `(globalThis as any).__side_ran = true;`,
+      "capture.ts": `
+        import d from "./lib";
+        import { value, Client as C } from "./lib";
+        export const captured = { d, value, send: new C().send() };
+        export default captured;
+      `,
+      "fixture.test.ts": `
+        import { expect, test, jest } from "bun:test";
+        import cap from "./capture";
+        import * as capNs from "./capture";
+        import { captured as aliased } from "./capture";
+        import "./side";
+        jest.mock("./lib", () => ({
+          default: "mocked-default",
+          value: "mocked-value",
+          Client: class { send() { return "mocked"; } },
+        }));
+        test("t", () => {
+          expect({
+            cap,
+            capNs: capNs.captured,
+            aliased,
+            side: (globalThis as any).__side_ran,
+          }).toEqual({
+            cap: { d: "mocked-default", value: "mocked-value", send: "mocked" },
+            capNs: { d: "mocked-default", value: "mocked-value", send: "mocked" },
+            aliased: { d: "mocked-default", value: "mocked-value", send: "mocked" },
+            side: true,
+          });
+        });
+      `,
+    });
+    expect(stderr).toContain("1 pass");
+    expect(stderr).not.toContain("fail)");
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("only jest.mock/vi.mock/mock.module on the bun:test binding trigger the rewrite", async () => {
+    // If a non-hoisted member like jest.fn() or a user-declared `mock`
+    // triggered the rewrite, "./order-a" would be deferred and "body" would
+    // print first.
+    const { stdout, stderr, exitCode } = await runFixture({
+      "order-a.ts": `console.log("a");`,
+      "fixture.test.ts": `
+        import { test, jest } from "bun:test";
+        console.log("body");
+        import "./order-a";
+        jest.fn();
+        const mock = { module: () => {} };
+        mock.module();
+        test("t", () => {});
+      `,
+    });
+    expect(stderr).toContain("1 pass");
+    // Static ESM: "./order-a" evaluates before module body code.
+    expect(stdout).toContain("a\nbody\n");
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("files without a top-level mock call keep native ESM import ordering", async () => {
+    const { stdout, stderr, exitCode } = await runFixture({
+      "order-a.ts": `console.log("a");`,
+      "fixture.test.ts": `
+        import { test } from "bun:test";
+        console.log("body");
+        import "./order-a";
+        test("t", () => {});
+      `,
+    });
+    expect(stderr).toContain("1 pass");
+    // Static ESM: "./order-a" evaluates before module body code.
+    expect(stdout).toContain("a\nbody\n");
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("hoists with injected jest global (no bun:test import)", async () => {
+    const { stderr, exitCode } = await runFixture({
+      "fixture.test.ts": `
+        jest.mock("./lib", () => ({
+          Client: class { send() { return "mocked"; } },
+        }));
+        import { callSend } from "./consumer";
+        test("t", () => { expect(callSend()).toBe("mocked"); });
+      `,
+    });
+    expect(stderr).toContain("1 pass");
+    expect(exitCode).toBe(0);
+  });
 });

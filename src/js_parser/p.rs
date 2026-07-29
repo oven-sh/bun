@@ -2857,6 +2857,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             self.jest.jest =
                 self.declare_common_js_symbol(js_ast::symbol::Kind::Unbound, b"jest")?;
             self.jest.vi = self.declare_common_js_symbol(js_ast::symbol::Kind::Unbound, b"vi")?;
+            self.jest.mock =
+                self.declare_common_js_symbol(js_ast::symbol::Kind::Unbound, b"mock")?;
             self.jest.xit = self.declare_common_js_symbol(js_ast::symbol::Kind::Unbound, b"xit")?;
             self.jest.xtest =
                 self.declare_common_js_symbol(js_ast::symbol::Kind::Unbound, b"xtest")?;

@@ -11,7 +11,7 @@
  * two apart.
  */
 import { describe, expect, test } from "bun:test";
-import { isWindows, tempDir } from "harness";
+import { bunExe, isWindows, tempDir } from "harness";
 import { chmodSync } from "node:fs";
 import { join } from "node:path";
 import { waitForStepOutcome } from "../../scripts/build/ci.ts";
@@ -37,7 +37,7 @@ n=0
 if [ "$attr" = "state" ]; then
   echo $((n+1)) > "$AGENT_DIR/calls"
 fi
-node -e '
+exec "$BUN_EXE" -e '
   const s = require(process.env.AGENT_DIR + "/script.json");
   const i = Math.min(+process.argv[1], s.length - 1);
   process.stdout.write(s[i][process.argv[2]] ?? "");
@@ -45,16 +45,17 @@ node -e '
 `,
   });
   chmodSync(join(String(dir), "buildkite-agent"), 0o755);
-  const prevPath = process.env.PATH;
-  const prevDir = process.env.AGENT_DIR;
-  process.env.PATH = `${dir}:${prevPath}`;
+  const prev = { PATH: process.env.PATH, AGENT_DIR: process.env.AGENT_DIR, BUN_EXE: process.env.BUN_EXE };
+  process.env.PATH = `${dir}:${prev.PATH}`;
   process.env.AGENT_DIR = String(dir);
+  process.env.BUN_EXE = bunExe();
   try {
     return await fn();
   } finally {
-    process.env.PATH = prevPath;
-    if (prevDir === undefined) delete process.env.AGENT_DIR;
-    else process.env.AGENT_DIR = prevDir;
+    for (const [k, v] of Object.entries(prev)) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
   }
 }
 

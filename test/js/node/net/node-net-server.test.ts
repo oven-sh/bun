@@ -731,15 +731,17 @@ describe("net.createServer options.highWaterMark", () => {
     }
   });
 
-  it.concurrent("surfaces an accept-time Socket ctor throw as uncaughtException without corrupting the server", async () => {
-    // NaN passes validateNumber so it reaches the accepted Socket's Duplex
-    // ctor, which throws ERR_INVALID_ARG_VALUE before kAttach reassigns
-    // socket.data. The accept-error path used to assume socket.data was a
-    // Socket and called Server.destroy (undefined), then the follow-on close
-    // nulled server._handle. The original error must reach uncaughtException
-    // and the server must remain listening.
-    expect(
-      await run(`
+  it.concurrent(
+    "surfaces an accept-time Socket ctor throw as uncaughtException without corrupting the server",
+    async () => {
+      // NaN passes validateNumber so it reaches the accepted Socket's Duplex
+      // ctor, which throws ERR_INVALID_ARG_VALUE before kAttach reassigns
+      // socket.data. The accept-error path used to assume socket.data was a
+      // Socket and called Server.destroy (undefined), then the follow-on close
+      // nulled server._handle. The original error must reach uncaughtException
+      // and the server must remain listening.
+      expect(
+        await run(`
         const net = require("node:net");
         const seen = [];
         process.on("uncaughtException", e => seen.push(e.code || e.constructor.name));
@@ -757,15 +759,16 @@ describe("net.createServer options.highWaterMark", () => {
           }));
         });
       `),
-    ).toEqual({
-      stdout: JSON.stringify({
-        uncaught: ["ERR_INVALID_ARG_VALUE"],
-        handle: "present",
-        hadError: false,
-        listening: true,
-      }),
-      exitCode: 0,
-      failureDetail: "",
-    });
-  });
+      ).toEqual({
+        stdout: JSON.stringify({
+          uncaught: ["ERR_INVALID_ARG_VALUE"],
+          handle: "present",
+          hadError: false,
+          listening: true,
+        }),
+        exitCode: 0,
+        failureDetail: "",
+      });
+    },
+  );
 });

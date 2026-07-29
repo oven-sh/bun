@@ -1433,9 +1433,6 @@ impl<'a> Transpiler<'a> {
                     None => bun_sys::File::openat(FD::cwd(), path.text, bun_sys::O::RDONLY, 0)
                         .and_then(|f| {
                             let body = f.read_to_end()?;
-                            // Only disarm Drop when the caller owns the fd
-                            // (runtime watcher via `file_fd_ptr`); otherwise
-                            // let `f` close itself here.
                             let fd = publish_fd.then(|| f.into_raw());
                             Ok((fd, body))
                         }),

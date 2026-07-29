@@ -1,8 +1,21 @@
-import { expect, test } from "bun:test";
+import { afterAll, expect, test } from "bun:test";
 import { tls as tlsCerts } from "harness";
 import { once } from "node:events";
 import http from "node:http";
 import net from "node:net";
+
+// NO_PROXY applies to explicit proxies too; an ambient
+// NO_PROXY=localhost,127.0.0.1,... would silently bypass the proxy below.
+const prevNoProxy = process.env.NO_PROXY;
+const prevNoProxyLower = process.env.no_proxy;
+process.env.NO_PROXY = "";
+process.env.no_proxy = "";
+afterAll(() => {
+  if (prevNoProxy === undefined) delete process.env.NO_PROXY;
+  else process.env.NO_PROXY = prevNoProxy;
+  if (prevNoProxyLower === undefined) delete process.env.no_proxy;
+  else process.env.no_proxy = prevNoProxyLower;
+});
 
 // Regression test for #27433: send_buffer_out() was writing directly to
 // this.tcp (detached in proxy tunnel mode) instead of routing through the
@@ -11,13 +24,6 @@ import net from "node:net";
 // takes that path when its encoded size >= STACK_FRAME_SIZE (1024 B); the 2 KB
 // payloads below guarantee it on every client send.
 test("bidirectional traffic through TLS proxy routes large frames via the tunnel", async () => {
-  // NO_PROXY applies to explicit proxies too; an ambient
-  // NO_PROXY=localhost,127.0.0.1,... would silently bypass the proxy here.
-  const prevNoProxy = process.env.NO_PROXY;
-  const prevNoProxyLower = process.env.no_proxy;
-  process.env.NO_PROXY = "";
-  process.env.no_proxy = "";
-
   const intervals: ReturnType<typeof setInterval>[] = [];
   const clearIntervals = () => {
     for (const i of intervals) clearInterval(i);
@@ -146,9 +152,5 @@ test("bidirectional traffic through TLS proxy routes large frames via the tunnel
     clearIntervals();
     ws.close();
     proxy.close();
-    if (prevNoProxy === undefined) delete process.env.NO_PROXY;
-    else process.env.NO_PROXY = prevNoProxy;
-    if (prevNoProxyLower === undefined) delete process.env.no_proxy;
-    else process.env.no_proxy = prevNoProxyLower;
   }
 });

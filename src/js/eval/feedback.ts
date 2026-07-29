@@ -560,15 +560,19 @@ function getOldestGitSha(): string | undefined {
 async function main() {
   const rawArgv = process.argv.slice(1);
 
-  let terminal: TerminalIO | null = null;
+  let terminal: TerminalIO | null | undefined = undefined;
+  const getTerminal = (): TerminalIO | null => {
+    if (terminal === undefined) {
+      terminal = openTerminal();
+    }
+    return terminal;
+  };
   try {
     const { email: emailFlag, help, positionals } = parseCliArgs(rawArgv);
     if (help) {
       printHelp();
       return;
     }
-
-    terminal = openTerminal();
 
     const exit = (code: number): never => {
       terminal?.cleanup();
@@ -586,16 +590,17 @@ async function main() {
     const gitEmailRaw = readEmailFromGitConfig();
     const gitEmail = isValidEmail(gitEmailRaw) ? gitEmailRaw.trim() : undefined;
 
-    const canPrompt = terminal !== null;
-
     let email = emailFlag?.trim() ?? storedEmail ?? gitEmail;
 
-    if (canPrompt && !emailFlag && !storedEmail) {
-      email = await promptForEmail(terminal, email ?? gitEmail ?? undefined);
+    if (!emailFlag && !storedEmail) {
+      const promptTerminal = getTerminal();
+      if (promptTerminal !== null) {
+        email = await promptForEmail(promptTerminal, email ?? gitEmail ?? undefined);
+      }
     }
 
     if (!isValidEmail(email)) {
-      if (!canPrompt) {
+      if (getTerminal() === null) {
         logError("Unable to determine email automatically. Pass --email <address>.");
       } else {
         logError("An email address is required. Pass --email or configure git user.email.");
@@ -623,8 +628,9 @@ async function main() {
 
     let message = pieces.length > 0 ? pieces.join(pieces.length > 1 ? "\n\n" : "") : "";
 
-    if (message.trim().length === 0 && terminal) {
-      const interactiveBody = await promptForBody(terminal, positionalContent.files);
+    const bodyTerminal = message.trim().length === 0 ? getTerminal() : null;
+    if (bodyTerminal) {
+      const interactiveBody = await promptForBody(bodyTerminal, positionalContent.files);
       if (interactiveBody && interactiveBody.trim().length > 0) {
         message = interactiveBody;
       }

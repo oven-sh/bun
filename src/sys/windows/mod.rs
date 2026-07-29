@@ -1324,6 +1324,19 @@ pub const JOB_OBJECT_LIMIT_DIE_ON_UNHANDLED_EXCEPTION: DWORD = 0x400;
 pub const JOB_OBJECT_LIMIT_BREAKAWAY_OK: DWORD = 0x800;
 pub const JOB_OBJECT_LIMIT_SILENT_BREAKAWAY_OK: DWORD = 0x00001000;
 
+/// `LimitFlags` for a kill-on-close Job that reaps an entire **inherited**
+/// descendant tree (`--no-orphans`, the parallel-test coordinator).
+/// `DIE_ON_UNHANDLED_EXCEPTION` keeps a crashed descendant from parking on
+/// WER; `BREAKAWAY_OK` keeps a descendant's
+/// `CreateProcess(CREATE_BREAKAWAY_FROM_JOB)` from failing `ERROR_ACCESS_DENIED`.
+/// Deliberately omits `SILENT_BREAKAWAY_OK`: inheritance is the membership
+/// mechanism, and that flag would make every child escape the Job. (libuv's
+/// global job includes it because libuv assigns each child explicitly; see
+/// `uv__init_global_job_handle`.)
+pub const JOB_LIMIT_FLAGS_KILL_TREE_ON_CLOSE: DWORD = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
+    | JOB_OBJECT_LIMIT_DIE_ON_UNHANDLED_EXCEPTION
+    | JOB_OBJECT_LIMIT_BREAKAWAY_OK;
+
 pub mod rescle {
     use super::*;
 

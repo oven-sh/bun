@@ -1121,8 +1121,8 @@ test.concurrent.skipIf(!isWindows)(
             ],
             returns: FFIType.i32,
           },
-          WaitForSingleObject: { args: [FFIType.ptr, FFIType.u32], returns: FFIType.u32 },
-          CloseHandle: { args: [FFIType.ptr], returns: FFIType.i32 },
+          WaitForSingleObject: { args: [FFIType.u64, FFIType.u32], returns: FFIType.u32 },
+          CloseHandle: { args: [FFIType.u64], returns: FFIType.i32 },
         }).symbols;
 
         // sizeof(JOBOBJECT_EXTENDED_LIMIT_INFORMATION) == 144 on x64/arm64;

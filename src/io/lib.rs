@@ -115,22 +115,10 @@ pub mod parent_death_watchdog {
             if !job.is_null() {
                 let mut jeli: windows::JOBOBJECT_EXTENDED_LIMIT_INFORMATION =
                     bun_core::ffi::zeroed();
-                // KILL_ON_JOB_CLOSE is the mechanism; the other two keep us
-                // from breaking descendants:
-                //   DIE_ON_UNHANDLED_EXCEPTION — a crashing descendant exits
-                //     with its NTSTATUS instead of parking on the WER dialog.
-                //     Bun's own `SetUnhandledExceptionFilter` callback still
-                //     runs first, so the crash reporter is unaffected.
-                //   BREAKAWAY_OK — without it, a descendant's
-                //     `CreateProcess(CREATE_BREAKAWAY_FROM_JOB)` fails with
-                //     ERROR_ACCESS_DENIED because this is its immediate job.
-                // SILENT_BREAKAWAY_OK is deliberately NOT set: we rely on
-                // inheritance to put the whole tree in the Job, and that flag
-                // would make every child escape it (libuv's global job sets it
-                // because libuv assigns each child explicitly).
-                jeli.BasicLimitInformation.LimitFlags = windows::JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
-                    | windows::JOB_OBJECT_LIMIT_DIE_ON_UNHANDLED_EXCEPTION
-                    | windows::JOB_OBJECT_LIMIT_BREAKAWAY_OK;
+                // See the constant's doc — Bun's own crash reporter (installed
+                // via `SetUnhandledExceptionFilter`) still runs before
+                // `DIE_ON_UNHANDLED_EXCEPTION` applies.
+                jeli.BasicLimitInformation.LimitFlags = windows::JOB_LIMIT_FLAGS_KILL_TREE_ON_CLOSE;
                 if windows::SetInformationJobObject(
                     job,
                     windows::JobObjectExtendedLimitInformation,

@@ -973,17 +973,22 @@ impl CreateCommand {
                         Global::exit(1);
                     }
                 }
-                if let Err(err) = bun_sys::renameat(
+                match bun_sys::renameat(
                     parent_dir.fd(),
                     bun_core::zstr!("gitignore"),
                     parent_dir.fd(),
                     bun_core::zstr!(".gitignore"),
                 ) {
-                    pretty_errorln!(
-                        "<r><red>{}<r>: renaming gitignore to .gitignore",
-                        bstr::BStr::new(err.name()),
-                    );
-                    Global::exit(1);
+                    Ok(()) => {}
+                    // Tarballs default the flag on; nothing to rename is fine.
+                    Err(ref err) if err.get_errno() == bun_sys::E::ENOENT => {}
+                    Err(err) => {
+                        pretty_errorln!(
+                            "<r><red>{}<r>: renaming gitignore to .gitignore",
+                            bstr::BStr::new(err.name()),
+                        );
+                        Global::exit(1);
+                    }
                 }
             }
             if template_has_npmignore {

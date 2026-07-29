@@ -1194,13 +1194,9 @@ describe("response header block encode failures (RFC 9113 section 8.1)", () => {
       expect(rst1?.payload.readUInt32BE(0)).toBe(ErrorCode.FRAME_SIZE_ERROR);
       const goaway = c.frames.find(f => f.type === FrameType.GOAWAY);
       expect(goaway && goawayErrorCode(goaway)).toBe(ErrorCode.NO_ERROR);
-      // Stream 3 must not have received a HEADERS frame whose payload indexes into the dynamic
-      // table (any byte with the high bit set and value >= 0xBE references index >= 62).
-      const hdr3 = c.frames.find(f => f.streamId === 3 && f.type === FrameType.HEADERS);
-      if (hdr3) {
-        const dynRef = [...hdr3.payload].find(b => b >= 0xbe);
-        expect(dynRef).toBeUndefined();
-      }
+      // The session was torn down before stream 3 could be answered, so it receives no HEADERS
+      // at all (and therefore certainly none indexing into the desynced dynamic table).
+      expect(c.frames.find(f => f.streamId === 3 && f.type === FrameType.HEADERS)).toBeUndefined();
     } finally {
       c.destroy();
       srv.close();

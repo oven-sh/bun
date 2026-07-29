@@ -2530,15 +2530,12 @@ impl H2FrameParser {
             );
         }
         if encoder_touched {
-            // On the server the onEnd teardown stops later responds from reusing the desynced
-            // encoder; on the client the stream error above must reach the user first, so only
-            // the wire-level GOAWAY is sent and the local session drains when the peer closes.
             self.send_go_away(
                 triggering_id,
                 ErrorCode::NO_ERROR,
                 b"",
                 self.last_stream_id.get(),
-                self.is_server.get(),
+                true,
             );
         }
     }
@@ -2555,13 +2552,11 @@ impl H2FrameParser {
         let Some(stream_ptr) = self.handle_received_stream_id(stream_id) else {
             return JSValue::js_number(-1.0);
         };
-        // SAFETY: stream_ptr is the heap::alloc'd *mut Stream stored in self.streams; valid while
-        // the map entry exists.
-        let stream = unsafe { &mut *stream_ptr };
+        let mut stream = self.enter_stream_dispatch(stream_ptr);
         if !stream_ctx_arg.is_empty_or_undefined_or_null() && stream_ctx_arg.is_object() {
             stream.set_context(stream_ctx_arg, global_object);
         }
-        self.reject_unencodable_header_block(stream, ErrorCode::FRAME_SIZE_ERROR, encoder_touched);
+        self.reject_unencodable_header_block(&mut stream, ErrorCode::FRAME_SIZE_ERROR, encoder_touched);
         JSValue::js_number(stream_id as f64)
     }
 
@@ -8258,6 +8253,15 @@ impl H2FrameParser {
                     )
                     .is_err()
                 {
+                    if !encoded_headers.is_empty() {
+                        this.send_go_away(
+                            parent_id,
+                            ErrorCode::NO_ERROR,
+                            b"",
+                            this.last_stream_id.get(),
+                            true,
+                        );
+                    }
                     return Err(
                         global_object.throw(format_args!("Failed to encode push promise headers"))
                     );
@@ -8935,12 +8939,10 @@ impl H2FrameParser {
         if callframe.arguments_count() > 4 && !options_arg.is_empty_or_undefined_or_null() {
             let options = options_arg;
             if !options.is_object() {
-                stream.state = StreamState::CLOSED;
-                stream.rst_code = ErrorCode::INTERNAL_ERROR.0;
-                this.dispatch_with_extra(
-                    JSH2FrameParser::Gc::onStreamError,
-                    stream.get_identifier(),
-                    JSValue::js_number(stream.rst_code as f64),
+                this.reject_unencodable_header_block(
+                    &mut stream,
+                    ErrorCode::INTERNAL_ERROR,
+                    encoded_size > 0,
                 );
                 return Ok(JSValue::js_number(stream_id as f64));
             }
@@ -9013,14 +9015,12 @@ impl H2FrameParser {
                     has_priority = true;
                     parent = parent_js.to_int32();
                     if parent <= 0 || parent as u32 > MAX_STREAM_ID {
-                        stream.state = StreamState::CLOSED;
-                        stream.rst_code = ErrorCode::INTERNAL_ERROR.0;
-                        this.dispatch_with_extra(
-                            JSH2FrameParser::Gc::onStreamError,
-                            stream.get_identifier(),
-                            JSValue::js_number(stream.rst_code as f64),
+                        this.reject_unencodable_header_block(
+                            &mut stream,
+                            ErrorCode::INTERNAL_ERROR,
+                            encoded_size > 0,
                         );
-                        return Ok(JSValue::js_number(stream.id as f64));
+                        return Ok(JSValue::js_number(stream_id as f64));
                     }
                     stream.stream_dependency = u32::try_from(parent).expect("int cast");
                 } else {
@@ -9037,12 +9037,10 @@ impl H2FrameParser {
                     has_priority = true;
                     weight = weight_js.to_int32();
                     if weight < 1 || weight > u8::MAX as i32 {
-                        stream.state = StreamState::CLOSED;
-                        stream.rst_code = ErrorCode::INTERNAL_ERROR.0;
-                        this.dispatch_with_extra(
-                            JSH2FrameParser::Gc::onStreamError,
-                            stream.get_identifier(),
-                            JSValue::js_number(stream.rst_code as f64),
+                        this.reject_unencodable_header_block(
+                            &mut stream,
+                            ErrorCode::INTERNAL_ERROR,
+                            encoded_size > 0,
                         );
                         return Ok(JSValue::js_number(stream_id as f64));
                     }
@@ -9054,19 +9052,6 @@ impl H2FrameParser {
                         weight_js,
                     ));
                 }
-
-                if weight < 1 || weight > u8::MAX as i32 {
-                    stream.state = StreamState::CLOSED;
-                    stream.rst_code = ErrorCode::INTERNAL_ERROR.0;
-                    this.dispatch_with_extra(
-                        JSH2FrameParser::Gc::onStreamError,
-                        stream.get_identifier(),
-                        JSValue::js_number(stream.rst_code as f64),
-                    );
-                    return Ok(JSValue::js_number(stream_id as f64));
-                }
-
-                stream.weight = u16::try_from(weight).expect("int cast");
             }
 
             if let Some(signal_arg) = options.get(global_object, "signal")? {

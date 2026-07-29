@@ -6624,7 +6624,7 @@ describe.concurrent("bun-install", () => {
           }),
         );
 
-          let { stderr, exited } = spawn({
+        let { stderr, exited } = spawn({
           cmd: [bunExe(), "install"],
           cwd: ctx.package_dir,
           stdout: "ignore",

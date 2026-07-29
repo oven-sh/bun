@@ -60,9 +60,9 @@ void JSStreamsRuntime::initialize(Zig::GlobalObject* globalObject)
             jsWebStreamsCountQueuingStrategySize, ImplementationVisibility::Public));
     });
 
-#define WEB_STREAMS_INIT_STRUCTURE(memberName, ClassName)                                                 \
-    m_##memberName.initLater([](const JSC::LazyProperty<JSGlobalObject, Structure>::Initializer& init) {  \
-        init.set(ClassName::createStructure(init.vm, init.owner, jsNull()));                              \
+#define WEB_STREAMS_INIT_STRUCTURE(memberName, ClassName)                                                \
+    m_##memberName.initLater([](const JSC::LazyProperty<JSGlobalObject, Structure>::Initializer& init) { \
+        init.set(ClassName::createStructure(init.vm, init.owner, jsNull()));                             \
     });
     FOR_EACH_WEB_STREAMS_INTERNAL_STRUCTURE(WEB_STREAMS_INIT_STRUCTURE)
 #undef WEB_STREAMS_INIT_STRUCTURE
@@ -112,10 +112,10 @@ JSFunction* JSStreamsRuntime::countQueuingStrategySizeFunction(const Zig::Global
     return m_countQueuingStrategySizeFunction.getInitializedOnMainThread(m_globalObject);
 }
 
-#define WEB_STREAMS_DEFINE_STRUCTURE_ACCESSOR(memberName, ClassName)          \
-    Structure* JSStreamsRuntime::memberName(const Zig::GlobalObject*)         \
-    {                                                                         \
-        return m_##memberName.getInitializedOnMainThread(m_globalObject);     \
+#define WEB_STREAMS_DEFINE_STRUCTURE_ACCESSOR(memberName, ClassName)      \
+    Structure* JSStreamsRuntime::memberName(const Zig::GlobalObject*)     \
+    {                                                                     \
+        return m_##memberName.getInitializedOnMainThread(m_globalObject); \
     }
 FOR_EACH_WEB_STREAMS_INTERNAL_STRUCTURE(WEB_STREAMS_DEFINE_STRUCTURE_ACCESSOR)
 #undef WEB_STREAMS_DEFINE_STRUCTURE_ACCESSOR

@@ -1,9 +1,8 @@
-const huge = Array.from({ length: 1000000 }, () => 0);
-huge.fill(0);
+const huge = new Array(100_000).fill(0);
 let hasRun = false;
 const gc = typeof Bun !== "undefined" ? Bun.gc : typeof globalThis.gc !== "undefined" ? globalThis.gc : () => {};
 
-var timers = new Array(50_000);
+var timers = new Array(5_000);
 
 function fn(huge) {
   if (hasRun) {

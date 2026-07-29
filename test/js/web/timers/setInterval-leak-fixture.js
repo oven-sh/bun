@@ -1,22 +1,10 @@
 const delta = 1;
-const initialRuns = 10_000;
+const initialRuns = 1_000;
 let runs = initialRuns;
-// ASAN's quarantine retains freed allocations (default 256 MB) so RSS deltas
-// run far higher under bun-asan; widen the threshold to avoid false positives.
-const isASAN = process.execPath.includes("bun-asan");
 
 function usage() {
   return process.memoryUsage.rss();
 }
-
-Promise.withResolvers ??= () => {
-  let promise, resolve, reject;
-  promise = new Promise((res, rej) => {
-    resolve = res;
-    reject = rej;
-  });
-  return { promise, resolve, reject };
-};
 
 function gc() {
   if (typeof Bun !== "undefined") {
@@ -35,7 +23,7 @@ function iterate() {
     huge: {
       wow: {
         big: {
-          data: runs.toString().repeat(50),
+          data: Buffer.alloc(32 * 1024, runs & 0xff),
         },
       },
     },
@@ -66,15 +54,15 @@ async function batch(iterations) {
 
 {
   // Warmup
-  for (let i = 0; i < 50; i++) {
-    await batch(1_000);
+  for (let i = 0; i < 3; i++) {
+    await batch(200);
   }
   // Measure memory usage after the warmup
   const initial = usage();
-  // Run batch 300 more times, each time creating 1,000 timers, waiting for them to finish, and
+  // Run batch 20 more times, each time creating 200 timers, waiting for them to finish, and
   // clearing them.
-  for (let i = 0; i < 300; i++) {
-    await batch(1_000);
+  for (let i = 0; i < 20; i++) {
+    await batch(200);
   }
   // Measure memory usage again, to check that cleared timers and the objects allocated inside each
   // callback have not bloated it
@@ -86,13 +74,21 @@ async function batch(iterations) {
 
     if (globalThis.Bun) {
       const heapStats = require("bun:jsc").heapStats();
-      console.log("Timeout object count:", heapStats.objectTypeCounts.Timeout || 0);
+      const timeoutCount = heapStats.objectTypeCounts.Timeout || 0;
+      console.log("Timeout object count:", timeoutCount);
       if (heapStats.protectedObjectTypeCounts.Timeout) {
         throw new Error("Expected 0 protected Timeout but received " + heapStats.protectedObjectTypeCounts.Timeout);
       }
+      // One batch (200 timers) is live until the next GC; anything much larger means cleared
+      // timers from earlier batches are being retained.
+      if (timeoutCount > 500) {
+        throw new Error("Expected <= 500 live Timeout objects but received " + timeoutCount);
+      }
     }
 
-    if (delta > (isASAN ? 256 : 20)) {
+    // With a 32 KiB payload pinned on each timer, 20 leaked batches would add well over 100 MB,
+    // so this backstop is well below the leak signal and well above allocator/heap growth noise.
+    if (delta > 50) {
       throw new Error("Memory leak detected");
     }
   }

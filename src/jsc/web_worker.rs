@@ -1637,7 +1637,14 @@ unsafe fn resolve_entry_point_specifier<'s>(
         //   new Worker("./foo.cts") -> new Worker("./foo.js")
         //   new Worker("./foo.tsx") -> new Worker("./foo.js")
         //
-        if str.starts_with(b"./") || str.starts_with(b"../") {
+        // `new Worker(new URL("./foo.ts", import.meta.url))` reaches here as
+        // an absolute `/$bunfs/root/...` path (Worker.cpp strips `file://`),
+        // so accept standalone-prefixed absolutes too; `join_abs_string_buf`
+        // treats an absolute part as replacing the base.
+        if str.starts_with(b"./")
+            || str.starts_with(b"../")
+            || bun_options_types::standalone_path::is_bun_standalone_file_path(str)
+        {
             'try_from_extension: {
                 let mut pathbuf = bun_paths::path_buffer_pool::get();
                 let base_path = graph.base_public_path_with_default_suffix();

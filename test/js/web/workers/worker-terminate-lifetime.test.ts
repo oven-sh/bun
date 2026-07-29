@@ -200,7 +200,7 @@ test.skipIf(!isDebug)(
           '    await Bun.sleep(0);' +
           '  } })); } });' +
           'require("node:worker_threads").parentPort.postMessage(server.port);';
-        for (let i = 0; i < 8; i++) {
+        for (let i = 0; i < ${rounds}; i++) {
           const w = new Worker(src, { eval: true });
           const port = await new Promise(r => w.once("message", r));
           const res = await fetch("http://127.0.0.1:" + port + "/");
@@ -220,7 +220,7 @@ test.skipIf(!isDebug)(
     });
 
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).not.toContain("ASSERTION FAILED");
+    expect(stderr).toBe("");
     expect(stdout).toBe("survived\n");
     expect(exitCode).toBe(0);
   },

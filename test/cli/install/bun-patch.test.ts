@@ -1,7 +1,8 @@
 import { $, ShellOutput } from "bun";
 import { describe, expect, setDefaultTimeout, test } from "bun:test";
+import { lstatSync } from "fs";
 import { bunEnv, bunExe, isASAN, tempDir } from "harness";
-import { join } from "path";
+import { isAbsolute, join, sep } from "path";
 
 const expectNoError = (o: ShellOutput) => expect(o.stderr.toString()).not.toContain("error");
 // const platformPath = (path: string) => (process.platform === "win32" ? path.replaceAll("/", sep) : path);
@@ -328,6 +329,7 @@ describe("bun patch <pkg>", async () => {
         const suggested = prep.stdout.toString().match(/bun patch --commit '([^']+)'/);
         expect(suggested).not.toBeNull();
         const absPath = suggested![1];
+        expect(isAbsolute(absPath.replaceAll("/", sep))).toBe(true);
         expect(absPath).toContain("node_modules");
 
         await Bun.write(join(tempdir, "node_modules", "is-odd", "index.js"), "module.exports = () => 'patched';\n");
@@ -339,7 +341,7 @@ describe("bun patch <pkg>", async () => {
         expect(commit.stderr.toString()).not.toContain("error");
         expect(commit.exitCode).toBe(0);
 
-        expect((await $`cat package.json`.cwd(tempdir).env(bunEnv).json()).patchedDependencies).toEqual({
+        expect((await Bun.file(join(tempdir, "package.json")).json()).patchedDependencies).toEqual({
           "is-odd@3.0.1": "patches/is-odd@3.0.1.patch",
         });
         const patch = await Bun.file(join(tempdir, "patches", "is-odd@3.0.1.patch")).text();
@@ -366,6 +368,7 @@ describe("bun patch <pkg>", async () => {
       test("relative node_modules/<pkg>", async () => {
         await using tempdir = tempDir("patch-ws-rel", files);
         const { subdir } = await prepare(String(tempdir));
+        expect(lstatSync(join(subdir, "node_modules", "is-odd")).isSymbolicLink()).toBe(true);
         const commit = await $`${bunExe()} patch --commit node_modules/is-odd`.env(bunEnv).cwd(subdir).throws(false);
         await check(String(tempdir), commit);
       });

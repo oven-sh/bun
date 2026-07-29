@@ -1082,7 +1082,9 @@ describe("net.Server accepted-socket buffering", () => {
       await listening.promise;
       client = createConnection({ port: (server.address() as import("node:net").AddressInfo).port, host: "127.0.0.1" });
       client.on("error", received.reject);
-      await new Promise<void>(resolve => setTimeout(resolve, 50));
+      while (!client._readableState?.ended) await new Promise<void>(r => setImmediate(r));
+      await new Promise<void>(r => setImmediate(r));
+      await new Promise<void>(r => setImmediate(r));
       expect(client.destroyed).toBe(false);
       let got = "";
       client.on("data", chunk => (got += chunk));

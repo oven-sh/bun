@@ -46,7 +46,11 @@ fn print_package_json_into_cache_entry(entry: &mut MapEntry, root: bun_ast::Expr
         bun_core::pretty_errorln!("package.json failed to write due to error {}", e.name(),);
         Global::crash();
     }
-    entry.source.contents = Cow::Owned(writer.ctx.written_without_trailing_zero().to_vec());
+    let old = core::mem::replace(
+        &mut entry.source.contents,
+        Cow::Owned(writer.ctx.written_without_trailing_zero().to_vec()),
+    );
+    entry.stale_contents.push(old);
 }
 
 pub fn update_package_json_and_install_with_manager(

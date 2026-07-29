@@ -356,21 +356,24 @@ describe("update", () => {
     expect(exitCode).toBe(0);
   });
 
-  test("--latest --dry-run does not modify any package.json", async () => {
-    const { packageDir } = await registry.createTestDir();
-    await createUpdateMonorepo(packageDir, "catalog-update-dry-run");
-    await runBunInstall(bunEnv, packageDir);
+  for (const fromWorkspace of [false, true]) {
+    test(`--latest --dry-run does not modify any package.json (from ${fromWorkspace ? "workspace" : "root"})`, async () => {
+      const { packageDir } = await registry.createTestDir();
+      await createUpdateMonorepo(packageDir, `catalog-update-dry-run-${fromWorkspace ? "ws" : "root"}`);
+      await runBunInstall(bunEnv, packageDir);
 
-    const rootBefore = await file(join(packageDir, "package.json")).text();
-    const pkg1Before = await file(join(packageDir, "packages", "pkg1", "package.json")).text();
+      const rootBefore = await file(join(packageDir, "package.json")).text();
+      const pkg1Before = await file(join(packageDir, "packages", "pkg1", "package.json")).text();
 
-    const { err, exitCode } = await runUpdate(packageDir, "--latest", "--dry-run");
-    expect(err).not.toContain("error:");
+      const cwd = fromWorkspace ? join(packageDir, "packages", "pkg1") : packageDir;
+      const { err, exitCode } = await runUpdate(cwd, "--latest", "--dry-run");
+      expect(err).not.toContain("error:");
 
-    expect(await file(join(packageDir, "package.json")).text()).toBe(rootBefore);
-    expect(await file(join(packageDir, "packages", "pkg1", "package.json")).text()).toBe(pkg1Before);
-    expect(exitCode).toBe(0);
-  });
+      expect(await file(join(packageDir, "package.json")).text()).toBe(rootBefore);
+      expect(await file(join(packageDir, "packages", "pkg1", "package.json")).text()).toBe(pkg1Before);
+      expect(exitCode).toBe(0);
+    });
+  }
 
   test("update without --latest stays in range and keeps catalog references", async () => {
     const { packageDir } = await registry.createTestDir();

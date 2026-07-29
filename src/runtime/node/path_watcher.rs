@@ -770,8 +770,7 @@ impl Linux {
         let rc = unsafe { sys::linux::inotify_add_watch(fd.native(), abs_path.as_ptr(), mask) };
         if rc < 0 {
             let err = sys::Error::from_code_int(sys::last_errno(), Tag::watch);
-            // ENOENT/ENOTDIR during the walk just means we raced; anything else
-            // (ENOSPC, EACCES, ENOMEM) propagates so it reaches the error event.
+            // ENOENT/ENOTDIR during a recursive walk just means we raced; skip.
             if !subpath.is_empty() && matches!(err.get_errno(), E::ENOENT | E::ENOTDIR) {
                 return Ok(());
             }

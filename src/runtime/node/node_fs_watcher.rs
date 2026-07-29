@@ -312,8 +312,6 @@ pub enum Event {
     Change(EventPathString),
     Error {
         err: bun_sys::Error,
-        /// Fatal backend errors close; partial-coverage errors (recursive
-        /// subtree registration failed) emit and keep the watcher alive.
         close: bool,
     },
     /// An event with no filename, surfaced to JS with `null`, matching node:

@@ -532,4 +532,28 @@ describe.concurrent("fake timers / setSystemTime do not leak across test files",
     expect(norm).toContain("0 fail");
     expect(exitCode).toBe(0);
   });
+
+  test("plain: file that calls useFakeTimers() at module scope and throws does not leak into next file", async () => {
+    using dir = tempDir("fake-timers-module-throw", {
+      "a_throws.test.ts": `
+        import { jest, setSystemTime } from "bun:test";
+        jest.useFakeTimers();
+        setSystemTime(new Date("1999-12-31T23:59:59Z"));
+        throw new Error("module-scope boom");
+      `,
+      "b_real.test.ts": leakFixtures["b_real.test.ts"],
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "./a_throws.test.ts", "./b_real.test.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const norm = normalizeBunSnapshot(stderr, dir);
+    expect(norm).toContain("(pass) B expects real timers and real clock");
+    expect(norm).toContain("module-scope boom");
+    expect(exitCode).not.toBe(0);
+  });
 });

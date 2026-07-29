@@ -492,19 +492,17 @@ describe.concurrent("fake timers / setSystemTime do not leak across test files",
     return { stdout, stderr, exitCode };
   }
 
-  for (const [label, extra] of [
+  test.each([
     ["plain", []],
     ["--isolate", ["--isolate"]],
-  ] as const) {
-    test(`${label}: useFakeTimers() + setSystemTime() are reset before next file`, async () => {
-      using dir = tempDir("fake-timers-cross-file", leakFixtures);
-      const { stderr, exitCode } = await run(String(dir), [...extra]);
-      const norm = normalizeBunSnapshot(stderr, dir);
-      expect(norm).toContain("2 pass");
-      expect(norm).toContain("0 fail");
-      expect(exitCode).toBe(0);
-    });
-  }
+  ] as const)("%s: useFakeTimers() + setSystemTime() are reset before next file", async (_label, extra) => {
+    using dir = tempDir("fake-timers-cross-file", leakFixtures);
+    const { stderr, exitCode } = await run(String(dir), [...extra]);
+    const norm = normalizeBunSnapshot(stderr, dir);
+    expect(norm).toContain("2 pass");
+    expect(norm).toContain("0 fail");
+    expect(exitCode).toBe(0);
+  });
 
   test("plain: setSystemTime() without useFakeTimers() is reset before next file", async () => {
     using dir = tempDir("setsystemtime-cross-file", {

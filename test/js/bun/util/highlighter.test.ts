@@ -69,7 +69,10 @@ test("bunfig error on a line ending in `${}` does not crash", async () => {
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  // The highlighter printed the source line without panicking. A malformed
+  // bunfig is a hard startup error for `bun run`, so the script never runs.
   expect(stderr).toContain("expected string");
-  expect(stdout).toContain("hi");
-  expect(exitCode).toBe(0);
+  expect(stderr).toContain("failed to load bunfig");
+  expect(stdout).toBe("");
+  expect(exitCode).toBe(1);
 });

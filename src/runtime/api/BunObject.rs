@@ -2510,6 +2510,7 @@ pub mod JSZlib {
 
         match library {
             Library::Zlib => {
+                let max_output = ArrayBuffer::MAX_SIZE as usize;
                 let mut reader = match zlib::ZlibReaderArrayList::init_with_options(
                     compressed,
                     &mut list,
@@ -2531,8 +2532,20 @@ pub mod JSZlib {
                         return Err(global_this.throw_error(crate::Error::from(err), "Zlib error"));
                     }
                 };
+                reader.max_output_size = max_output;
 
-                if reader.read_all(true).is_err() {
+                if let Err(err) = reader.read_all(true) {
+                    if err == zlib::ZlibError::OutputTooLarge {
+                        drop(reader);
+                        return Err(global_this
+                            .err(
+                                jsc::ErrCode::BUFFER_TOO_LARGE,
+                                format_args!(
+                                    "Cannot create a Buffer larger than {max_output} bytes",
+                                ),
+                            )
+                            .throw());
+                    }
                     let msg = reader.error_message().unwrap_or(b"Zlib returned an error");
                     return Err(global_this
                         .throw_value(ZigString::init(msg).to_error_instance(global_this)));
@@ -2840,8 +2853,17 @@ pub mod JSZstd {
 
         let input = buffer.slice();
 
-        let output = match bun_zstd::decompress_alloc(input) {
+        let max_output = ArrayBuffer::MAX_SIZE as usize;
+        let output = match bun_zstd::decompress_alloc_with_limit(input, max_output) {
             Ok(v) => v,
+            Err(bun_zstd::ZstdError::OutputTooLarge) => {
+                return Err(global_this
+                    .err(
+                        jsc::ErrCode::BUFFER_TOO_LARGE,
+                        format_args!("Cannot create a Buffer larger than {max_output} bytes"),
+                    )
+                    .throw());
+            }
             Err(err) => {
                 return Err(global_this
                     .err(
@@ -2865,6 +2887,7 @@ pub mod JSZstd {
         pub level: i32,
         pub output: Vec<u8>,
         pub error_message: Option<&'static [u8]>,
+        pub output_too_large: bool,
         pub promise: jsc::JSPromiseStrong,
     }
 
@@ -2907,8 +2930,13 @@ pub mod JSZstd {
                 };
             } else {
                 // Decompression path
-                self.output = match bun_zstd::decompress_alloc(input) {
+                let max_output = ArrayBuffer::MAX_SIZE as usize;
+                self.output = match bun_zstd::decompress_alloc_with_limit(input, max_output) {
                     Ok(v) => v,
+                    Err(bun_zstd::ZstdError::OutputTooLarge) => {
+                        self.output_too_large = true;
+                        return;
+                    }
                     Err(_) => {
                         self.error_message = Some(b"Decompression failed");
                         return;
@@ -2919,6 +2947,20 @@ pub mod JSZstd {
 
         fn then(&mut self, global_this: &JSGlobalObject) -> JsResult<()> {
             let promise = self.promise.swap();
+
+            if self.output_too_large {
+                let max_output = ArrayBuffer::MAX_SIZE as usize;
+                promise.reject_with_async_stack(
+                    global_this,
+                    Ok(global_this
+                        .err(
+                            jsc::ErrCode::BUFFER_TOO_LARGE,
+                            format_args!("Cannot create a Buffer larger than {max_output} bytes"),
+                        )
+                        .to_js()),
+                )?;
+                return Ok(());
+            }
 
             if let Some(err_msg) = self.error_message {
                 promise.reject_with_async_stack(
@@ -2963,6 +3005,7 @@ pub mod JSZstd {
                 level,
                 output: Vec::new(),
                 error_message: None,
+                output_too_large: false,
                 promise,
             },
         )

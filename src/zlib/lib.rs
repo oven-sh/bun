@@ -190,8 +190,8 @@ impl<'a, W, const BUFFER_SIZE: usize> ZlibReader<'a, W, BUFFER_SIZE> {
 
         zlib_reader.zlib = zStream_struct {
             next_in: input.as_ptr(),
-            avail_in: u32::try_from(input.len()).expect("int cast"),
-            total_in: u32::try_from(input.len()).expect("int cast") as _,
+            avail_in: input.len().min(uInt::MAX as usize) as uInt,
+            total_in: input.len().min(uInt::MAX as usize) as _,
 
             next_out: zlib_reader.buf.as_mut_ptr(),
             avail_out: BUFFER_SIZE as uInt,
@@ -248,6 +248,8 @@ pub enum ZlibError {
     InvalidArgument,
     ZlibError,
     ShortRead,
+    /// Decompressed output would exceed `max_output_size`.
+    OutputTooLarge,
 }
 
 bun_core::impl_tag_error!(ZlibError);
@@ -422,7 +424,7 @@ impl<'a> ZlibReaderArrayList<'a> {
                     let remaining_budget = self.max_output_size.saturating_sub(produced);
                     if remaining_budget == 0 {
                         self.state = ZlibReaderArrayListState::Error;
-                        return Err(ZlibError::ZlibError);
+                        return Err(ZlibError::OutputTooLarge);
                     }
                     // SAFETY: zlib writes the tail; len is truncated to `total_out` before any read.
                     let (next_out, avail_out) = unsafe {
@@ -1185,7 +1187,7 @@ impl InflateDecoder {
             let remaining = self.max_output_size.saturating_sub(out.len());
             if remaining == 0 {
                 self.state = State::Error;
-                return Err(ZlibError::ZlibError);
+                return Err(ZlibError::OutputTooLarge);
             }
             let reserve = remaining.min(4096);
             let (consumed, rc) = self.step(input, out, reserve, FlushValue::NoFlush);
@@ -1193,7 +1195,7 @@ impl InflateDecoder {
             self.state = State::Inflating;
             if out.len() > self.max_output_size {
                 self.state = State::Error;
-                return Err(ZlibError::ZlibError);
+                return Err(ZlibError::OutputTooLarge);
             }
             match rc {
                 ReturnCode::StreamEnd => {

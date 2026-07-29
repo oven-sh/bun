@@ -1232,9 +1232,7 @@ impl CreateCommand {
 
         // git add/commit on a pre-existing repo would sweep the user's files in.
         let has_existing_git_repo = bun_sys::Dir::open(destination)
-            .map(|d| {
-                bun_sys::directory_exists_at(d.fd, bun_core::zstr!(".git")).unwrap_or(false)
-            })
+            .map(|d| bun_sys::directory_exists_at(d.fd, bun_core::zstr!(".git")).unwrap_or(false))
             .unwrap_or(false);
 
         if !create_options.skip_git && !has_existing_git_repo {

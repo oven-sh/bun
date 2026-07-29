@@ -653,19 +653,16 @@ impl CreateCommand {
                             continue;
                         };
 
-                        match entry.kind {
-                            // Any existing entry at a template file path would
-                            // be overwritten.
-                            bun_sys::FileKind::File => {}
-                            // A directory only conflicts when the destination
-                            // has a non-directory in its place; merging into an
-                            // existing directory is fine.
+                        let conflicting = match entry.kind {
+                            bun_sys::FileKind::File => true,
+                            // Merging into an existing directory is fine.
                             bun_sys::FileKind::Directory => {
-                                if existing_kind == bun_sys::ExistsAtType::Directory {
-                                    continue;
-                                }
+                                existing_kind != bun_sys::ExistsAtType::Directory
                             }
-                            _ => continue,
+                            _ => false,
+                        };
+                        if !conflicting {
+                            continue;
                         }
 
                         if entry.kind == bun_sys::FileKind::File {

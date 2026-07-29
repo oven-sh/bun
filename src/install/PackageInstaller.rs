@@ -814,9 +814,7 @@ impl<'a> PackageInstaller<'a> {
                     self.node_modules.path = context.path;
                     self.current_tree_id = context.tree_id;
 
-                    // Re-verify: the skip branch defers packages whose parents
-                    // were still installing, and a parent reinstall may have
-                    // deleted them since.
+                    // Re-verify: a parent reinstall may have deleted a deferred entry.
                     const NEEDS_VERIFY: bool = true;
                     const IS_PENDING_PACKAGE_INSTALL: bool = true;
                     self.install_package_with_name_and_resolution::<NEEDS_VERIFY, IS_PENDING_PACKAGE_INSTALL>(
@@ -2111,10 +2109,8 @@ impl<'a> PackageInstaller<'a> {
                 }
             }
         } else {
-            // The package on disk matches the lockfile, but if a parent tree has
-            // not yet finished installing it may still wipe this package via
-            // `uninstall_before_install`. Defer the skip decision until every
-            // parent is done so we re-verify against the final disk state.
+            // Same gate as the `needs_install` branch: a pending parent's
+            // `uninstall_before_install` would delete this verified package.
             if !IS_PENDING_PACKAGE_INSTALL
                 && !Self::can_install_package_for_tree(
                     &self.completed_trees,

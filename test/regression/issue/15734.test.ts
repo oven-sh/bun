@@ -5,7 +5,7 @@
 // enumerates `${import.meta.dir}/client` at startup, so every static asset 404'd.
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDirWithFiles } from "harness";
-import { join } from "path";
+import { join, sep } from "path";
 
 // `bun build --compile` copies + rewrites the whole bun binary (~1GB under
 // debug+ASAN), which blows the 5s default.
@@ -147,15 +147,17 @@ describe("compiled executable: /$bunfs/ directory semantics", () => {
       expect(r.nestedCssViaReadFile).toBe("body{margin:0}");
       expect(r.nestedDirIsDir).toBe(true);
 
-      // recursive must include both files and intermediate directories.
-      const rec = r.recursive.map((p: string) => p.replace(/\\/g, "/"));
+      // recursive must include both files and intermediate directories, with
+      // the platform path separator (same as Node's real-fs recursive readdir).
+      const rec: string[] = r.recursive;
       expect(rec).toContain("_app");
-      expect(rec).toContain("_app/immutable");
-      expect(rec).toContain("_app/immutable/app.css");
-      expect(rec).toContain("_app/immutable/chunks");
-      expect(rec).toContain("_app/immutable/chunks/entry.js");
+      expect(rec).toContain(join("_app", "immutable"));
+      expect(rec).toContain(join("_app", "immutable", "app.css"));
+      expect(rec).toContain(join("_app", "immutable", "chunks"));
+      expect(rec).toContain(join("_app", "immutable", "chunks", "entry.js"));
       expect(rec).toContain("favicon.svg");
       expect(rec).toContain("index.html");
+      expect(r.recursive.join("\n")).not.toContain(sep === "/" ? "\\" : "/");
 
       expect(r.embeddedFileCount).toBeGreaterThanOrEqual(4);
       expect(code).toBe(0);
@@ -197,9 +199,12 @@ describe("compiled executable: /$bunfs/ directory semantics", () => {
         import fs from "node:fs";
         import path from "node:path";
         const p = path.join(import.meta.dir, "config.json");
+        let readdirCode = "";
+        try { fs.readdirSync(p); } catch (e: any) { readdirCode = e.code; }
         console.log(JSON.stringify({
           exists: fs.existsSync(p),
           content: fs.readFileSync(p, "utf8"),
+          readdirCode,
         }));
       `,
         "config.json": `{"ok":true}`,
@@ -210,6 +215,7 @@ describe("compiled executable: /$bunfs/ directory semantics", () => {
       const r = JSON.parse(stdout.trim());
       expect(r.exists).toBe(true);
       expect(r.content).toBe(`{"ok":true}`);
+      expect(r.readdirCode).toBe("ENOTDIR");
       expect(code).toBe(0);
     },
     TIMEOUT,

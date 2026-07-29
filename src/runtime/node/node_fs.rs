@@ -6947,65 +6947,69 @@ impl NodeFS {
         if let Some(graph) = standalone_module_graph_get() {
             if bun_standalone_graph::is_bun_standalone_file_path(path.as_bytes()) {
                 // SAFETY: see `standalone_module_graph_get`.
-                let graph = unsafe { &*graph };
-                return match graph.readdir(path.as_bytes(), recursive) {
-                    None => Err(sys::Error::from_code(E::ENOENT, sys::Tag::scandir)
-                        .with_path(args.path.slice())),
-                    Some(list) => {
-                        let mut entries: Vec<T> = Vec::with_capacity(list.len());
-                        let root_path = if T::IS_DIRENT {
-                            BunString::clone_utf8(args.path.slice())
-                        } else {
-                            BunString::empty()
-                        };
-                        let mut joined: Vec<u8> = Vec::new();
-                        for (name, is_dir) in list {
-                            let kind = if is_dir {
-                                sys::FileKind::Directory
-                            } else {
-                                sys::FileKind::File
-                            };
-                            if recursive {
-                                let (base, parent) = match strings::last_index_of_char(&name, b'/')
-                                {
-                                    Some(i) => (&name[i + 1..], &name[..i]),
-                                    None => (&name[..], b"".as_slice()),
-                                };
-                                let dirent_path = if T::IS_DIRENT && !parent.is_empty() {
-                                    joined.clear();
-                                    joined.extend_from_slice(args.path.slice());
-                                    if joined.last() != Some(&b'/') {
-                                        joined.push(b'/');
-                                    }
-                                    joined.extend_from_slice(parent);
-                                    BunString::clone_utf8(&joined)
-                                } else {
-                                    root_path.dupe_ref()
-                                };
-                                T::append_entry_recursive(
-                                    &mut entries,
-                                    base,
-                                    &name,
-                                    &dirent_path,
-                                    kind,
-                                    args.encoding,
-                                    flavor == Flavor::Sync,
-                                );
-                                dirent_path.deref();
-                            } else {
-                                T::append_entry(
-                                    &mut entries,
-                                    &name,
-                                    &root_path,
-                                    kind,
-                                    args.encoding,
-                                );
+                let graph = unsafe { &mut *graph };
+                let Some(list) = graph.readdir(path.as_bytes(), recursive) else {
+                    let code = if graph.find_assume_standalone_path(path.as_bytes()).is_some() {
+                        E::ENOTDIR
+                    } else {
+                        E::ENOENT
+                    };
+                    return Err(
+                        sys::Error::from_code(code, sys::Tag::scandir).with_path(args.path.slice())
+                    );
+                };
+                let mut entries: Vec<T> = Vec::with_capacity(list.len());
+                let root_path = if T::IS_DIRENT {
+                    BunString::clone_utf8(args.path.slice())
+                } else {
+                    BunString::empty()
+                };
+                let mut joined: Vec<u8> = Vec::new();
+                #[allow(unused_mut)]
+                for (mut name, is_dir) in list {
+                    let kind = if is_dir {
+                        sys::FileKind::Directory
+                    } else {
+                        sys::FileKind::File
+                    };
+                    if recursive {
+                        #[cfg(windows)]
+                        for b in name.iter_mut() {
+                            if *b == b'/' {
+                                *b = paths::SEP;
                             }
                         }
-                        root_path.deref();
-                        Ok(T::into_readdir(entries))
+                        let (base, parent) = match strings::last_index_of_char(&name, paths::SEP) {
+                            Some(i) => (&name[i + 1..], &name[..i]),
+                            None => (&name[..], b"".as_slice()),
+                        };
+                        let dirent_path = if T::IS_DIRENT && !parent.is_empty() {
+                            joined.clear();
+                            joined.extend_from_slice(args.path.slice());
+                            if !matches!(joined.last(), Some(&b'/') | Some(&b'\\')) {
+                                joined.push(paths::SEP);
+                            }
+                            joined.extend_from_slice(parent);
+                            BunString::clone_utf8(&joined)
+                        } else {
+                            root_path.dupe_ref()
+                        };
+                        T::append_entry_recursive(
+                            &mut entries,
+                            base,
+                            &name,
+                            &dirent_path,
+                            kind,
+                            args.encoding,
+                            flavor == Flavor::Sync,
+                        );
+                        dirent_path.deref();
+                    } else {
+                        T::append_entry(&mut entries, &name, &root_path, kind, args.encoding);
                     }
-                };
+                }
+                root_path.deref();
+                return Ok(T::into_readdir(entries));
             }
         }
 

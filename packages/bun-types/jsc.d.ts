@@ -196,11 +196,11 @@ declare module "bun:jsc" {
    * Calling this function creates another reference to each object, which
    * further prevents it from being garbage collected.
    *
-   * This is mostly a debugging tool for Bun itself.
-   *
-   * Warning: not all of the returned objects are supposed to be observable from JavaScript.
+   * This is mostly a debugging tool for Bun itself. The list may include
+   * engine-internal objects (such as module records and the global object)
+   * that user code would not otherwise be able to reach.
    */
-  function getProtectedObjects(): any[];
+  function getProtectedObjects(): object[];
 
   /**
    * Starts a remote debugging socket server on the given port.

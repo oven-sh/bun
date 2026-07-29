@@ -590,8 +590,14 @@ JSC_DEFINE_HOST_FUNCTION(functionGetProtectedObjects,
     (JSGlobalObject * globalObject, CallFrame*))
 {
     MarkedArgumentBuffer list;
+    // The protected cell set also contains internal cells (unlinked code blocks,
+    // private symbols, structures). Those are not valid JavaScript values, so
+    // handing them to JS as-is causes type confusion the first time one is touched.
     globalObject->vm().heap.forEachProtectedCell(
-        [&](JSCell* cell) { list.append(cell); });
+        [&](JSCell* cell) {
+            if (cell->isObject())
+                list.append(cell);
+        });
     RELEASE_ASSERT(!list.hasOverflowed());
     return JSC::JSValue::encode(constructArray(
         globalObject, static_cast<JSC::ArrayAllocationProfile*>(nullptr), list));

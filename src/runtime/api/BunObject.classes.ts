@@ -100,6 +100,10 @@ export default [
         fn: "disconnect",
         length: 0,
       },
+      setChannelRef: {
+        fn: "setChannelRef",
+        length: 1,
+      },
       connected: {
         getter: "getConnected",
       },

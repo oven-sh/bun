@@ -1,7 +1,18 @@
 import { semver, write } from "bun";
 import { afterAll, beforeEach, describe, expect, it } from "bun:test";
 import fs from "fs";
-import { bunEnv, bunExe, isLinux, isPosix, isWindows, nodeExe, runBunInstall, shellExe, tmpdirSync } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  isLinux,
+  isPosix,
+  isWindows,
+  nodeExe,
+  runBunInstall,
+  shellExe,
+  tempDir,
+  tmpdirSync,
+} from "harness";
 import { ChildProcess, exec, execFile, execFileSync, execSync, fork, spawn, spawnSync } from "node:child_process";
 import { getEventListeners, once, setMaxListeners } from "node:events";
 import { promisify } from "node:util";
@@ -1112,5 +1123,148 @@ describe("spawn/execFile({signal}) does not leak abort listeners on spawn failur
     expect(getEventListeners(ac.signal, "abort").length).toBe(0);
     ac.abort();
     expect(errors.map(e => e.code)).toEqual(["ENOENT"]);
+  });
+});
+
+describe.concurrent("fork IPC channel ref/unref", () => {
+  const parentScript = `
+    const { fork } = require("node:child_process");
+    const c = fork(__filename, ["kid"]);
+    console.log(JSON.stringify({ ref: typeof c.channel?.ref, unref: typeof c.channel?.unref }));
+    let got = null;
+    c.on("message", m => { got = m; });
+    c.send("ping");
+    c.unref();
+    if (process.env.UNREF_CHANNEL === "1") c.channel.unref();
+    process.on("exit", () => console.log(JSON.stringify({ gotReply: !!got })));
+  `;
+  const kidScript = `
+    process.on("message", m => {
+      setTimeout(() => {
+        try { process.send({ pong: m }); } catch {}
+        process.exit(0);
+      }, 100);
+    });
+  `;
+  const fixture = `if (process.argv[2] === "kid") { ${kidScript} } else { ${parentScript} }`;
+
+  it("subprocess.unref() keeps the event loop alive while the IPC channel is established", async () => {
+    using dir = tempDir("cp-ipc-ref", { "index.js": fixture });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "index.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    const lines = stdout.trim().split("\n");
+    expect(lines.map(l => JSON.parse(l))).toEqual([{ ref: "function", unref: "function" }, { gotReply: true }]);
+    expect(exitCode).toBe(0);
+  });
+
+  it("channel.unref() releases the IPC keepalive so the parent can exit early", async () => {
+    using dir = tempDir("cp-ipc-unref", { "index.js": fixture });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "index.js"],
+      env: { ...bunEnv, UNREF_CHANNEL: "1" },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    const lines = stdout.trim().split("\n");
+    expect(lines.map(l => JSON.parse(l))).toEqual([{ ref: "function", unref: "function" }, { gotReply: false }]);
+    expect(exitCode).toBe(0);
+  });
+
+  it("disconnect() releases the IPC keepalive", async () => {
+    using dir = tempDir("cp-ipc-disconnect", {
+      "index.js": `
+        if (process.argv[2] === "kid") {
+          process.channel?.unref();
+          setTimeout(() => process.exit(0), 200);
+        } else {
+          const { fork } = require("node:child_process");
+          const c = fork(__filename, ["kid"]);
+          c.unref();
+          c.disconnect();
+          process.on("exit", () => console.log("exited"));
+        }
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "index.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout.trim()).toBe("exited");
+    expect(exitCode).toBe(0);
+  });
+
+  it("child exit without reply releases the IPC keepalive", async () => {
+    using dir = tempDir("cp-ipc-child-exit", {
+      "index.js": `
+        if (process.argv[2] === "kid") {
+          setTimeout(() => process.exit(0), 50);
+        } else {
+          const { fork } = require("node:child_process");
+          const c = fork(__filename, ["kid"]);
+          c.on("message", () => {});
+          c.unref();
+          process.on("exit", () => console.log("exited"));
+        }
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "index.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout.trim()).toBe("exited");
+    expect(exitCode).toBe(0);
+  });
+
+  it("channel.ref() after channel.unref() restores the keepalive", async () => {
+    using dir = tempDir("cp-ipc-reref", {
+      "index.js": `
+        if (process.argv[2] === "kid") {
+          process.on("message", m => {
+            setTimeout(() => { try { process.send({ pong: m }); } catch {} process.exit(0); }, 100);
+          });
+        } else {
+          const { fork } = require("node:child_process");
+          const c = fork(__filename, ["kid"]);
+          let got = null;
+          c.on("message", m => { got = m; });
+          c.send("ping");
+          c.unref();
+          c.channel.unref();
+          c.channel.ref();
+          process.on("exit", () => console.log(JSON.stringify({ gotReply: !!got })));
+        }
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "index.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout.trim())).toEqual({ gotReply: true });
+    expect(exitCode).toBe(0);
   });
 });

@@ -16,7 +16,7 @@ Promise.resolve().then(() => console.log("promise"));
 `;
 
 describe("process.nextTick ordering is preserved with --preload", () => {
-  test.each([
+  test.concurrent.each([
     ["that reads process.nextTick", `process.nextTick;`],
     ["that calls process.nextTick", `process.nextTick(() => console.log("preload-tick"));`, "preload-tick\n"],
     ["that requires node:stream", `require("node:stream");`],
@@ -39,7 +39,7 @@ describe("process.nextTick ordering is preserved with --preload", () => {
     expect(exitCode).toBe(0);
   });
 
-  test("preserved with two preload scripts", async () => {
+  test.concurrent("preserved with two preload scripts", async () => {
     using dir = tempDir("issue-34115-two-preloads", {
       "preload-a.js": `process.nextTick(() => console.log("a"));`,
       "preload-b.js": `process.nextTick(() => console.log("b"));`,
@@ -95,7 +95,7 @@ w.on("error", e => { console.error(String(e)); process.exitCode = 1; });
   });
 });
 
-test("Writable.toWeb() close rejects with ABORT_ERR when preload requires node:stream", async () => {
+test.concurrent("Writable.toWeb() close rejects with ABORT_ERR when preload requires node:stream", async () => {
   using dir = tempDir("issue-34115-writable", {
     "preload.js": `require("node:stream");`,
     "repro.js": `

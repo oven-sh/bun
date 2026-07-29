@@ -1077,6 +1077,9 @@ impl PathLikeExt for PathLike {
         #[cfg(windows)]
         {
             let s = self.slice();
+            if s.len() >= MAX_PATH_BYTES {
+                return Err(NameTooLong);
+            }
             let mut b = bun_paths::path_buffer_pool::get();
             // RAII guard puts back on Drop.
 
@@ -1843,6 +1846,21 @@ impl PathOrBlob {
         args: &mut ArgumentsSlice,
     ) -> JsResult<PathOrBlob> {
         if let Some(path) = PathOrFileDescriptor::from_js(ctx, args)? {
+            if let PathOrFileDescriptor::Path(ref p) = path {
+                let s = p.slice();
+                if s.len() >= MAX_PATH_BYTES && !s.starts_with(b"s3://") {
+                    return Err(ctx.throw_value(
+                        bun_sys::Error {
+                            errno: bun_sys::E::ENAMETOOLONG as _,
+                            syscall: bun_sys::Tag::open,
+                            path: s.into(),
+                            ..Default::default()
+                        }
+                        .to_system_error()
+                        .to_error_instance(ctx),
+                    ));
+                }
+            }
             return Ok(PathOrBlob::Path(path));
         }
 

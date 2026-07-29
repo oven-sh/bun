@@ -356,20 +356,25 @@ describe("over-PATH_MAX path goes to the callback with full error identity (#256
     });
   });
 
-  it("Bun.file() throws ENAMETOOLONG with syscall/path for an over-PATH_MAX path", () => {
-    let err!: NodeJS.ErrnoException;
-    try {
-      Bun.file(BIG);
-      expect.unreachable();
-    } catch (e) {
-      err = e as NodeJS.ErrnoException;
-    }
-    expect({ code: err.code, syscall: err.syscall, hasPath: "path" in err }).toEqual({
-      code: "ENAMETOOLONG",
-      syscall: "open",
-      hasPath: true,
+  for (const [name, fn] of [
+    ["Bun.file()", () => Bun.file(BIG)],
+    ["Bun.write() destination", () => Bun.write(BIG, "x")],
+  ] as const) {
+    it(`${name} throws ENAMETOOLONG with syscall/path for an over-PATH_MAX path`, () => {
+      let err!: NodeJS.ErrnoException;
+      try {
+        fn();
+        expect.unreachable();
+      } catch (e) {
+        err = e as NodeJS.ErrnoException;
+      }
+      expect({ code: err.code, syscall: err.syscall, hasPath: "path" in err }).toEqual({
+        code: "ENAMETOOLONG",
+        syscall: "open",
+        hasPath: true,
+      });
     });
-  });
+  }
 
   it("type errors and null-byte paths still throw synchronously (matches node)", async () => {
     // ERR_INVALID_ARG_TYPE: wrong path type

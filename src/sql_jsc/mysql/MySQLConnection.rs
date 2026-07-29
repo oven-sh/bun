@@ -55,6 +55,7 @@ pub struct MySQLConnection {
     write_buffer: OffsetByteList,
     read_buffer: OffsetByteList,
     last_message_start: u32,
+    packet_end: u32,
     sequence_id: u8,
 
     // TODO: move it to JSMySQLConnection
@@ -100,6 +101,7 @@ impl Default for MySQLConnection {
             write_buffer: OffsetByteList::default(),
             read_buffer: OffsetByteList::default(),
             last_message_start: 0,
+            packet_end: u32::MAX,
             sequence_id: 0,
             queue: MySQLRequestQueue::init(),
             statements: PreparedStatementsMap::default(),
@@ -492,7 +494,8 @@ impl MySQLConnection {
             // so the post-error read of `offset`/`consumed` doesn't conflict.
             let consumed = core::cell::Cell::new(0usize);
             let offset = core::cell::Cell::new(0usize);
-            let reader = StackReader::init(data, &consumed, &offset);
+            let packet_end = core::cell::Cell::new(usize::MAX);
+            let reader = StackReader::init(data, &consumed, &offset, &packet_end);
             match self.process_packets(reader) {
                 Ok(()) => {}
                 Err(err) => {
@@ -587,6 +590,8 @@ impl MySQLConnection {
             reader
                 .ensure_capacity(packet_length)
                 .map_err(|_| AnyMySQLError::ShortRead)?;
+            // Bound every body read to the now-fully-buffered packet.
+            reader.set_packet_limit_from_start(packet_length);
             // `NewReader<C>: Copy` so the scopeguard captures by copy; the inner
             // `C` writes through a raw pointer so the offset update still lands.
             // Always skip the full packet, we dont care about padding or unread bytes.
@@ -609,6 +614,8 @@ impl MySQLConnection {
                     // reject them instead of feeding them to the auth/command handlers.
                     if self.tls_status == TLSStatus::MessageSent {
                         reader.set_offset_from_start(packet_length);
+                        // Peeking past this packet, so drop its window.
+                        reader.clear_packet_limit();
                         if !reader.peek().is_empty() {
                             return Err(AnyMySQLError::UnexpectedPacket);
                         }
@@ -1678,15 +1685,39 @@ impl Reader {
         // through `&mut self` while the reader is live.
         unsafe { &mut *core::ptr::addr_of_mut!((*self.connection).last_message_start) }
     }
+
+    #[inline]
+    #[allow(clippy::mut_from_ref)]
+    fn packet_end(&self) -> &mut u32 {
+        // SAFETY: same justification as `read_buffer()` / `last_message_start()`.
+        unsafe { &mut *core::ptr::addr_of_mut!((*self.connection).packet_end) }
+    }
 }
 
 impl ReaderContext for Reader {
     fn mark_message_start(self) {
         *self.last_message_start() = self.read_buffer().head;
+        *self.packet_end() = u32::MAX;
     }
 
     fn set_offset_from_start(self, offset: usize) {
         self.read_buffer().head = *self.last_message_start() + (offset as u32);
+    }
+
+    fn packet_remaining(&self) -> usize {
+        let end = *self.packet_end();
+        if end == u32::MAX {
+            return usize::MAX;
+        }
+        end.saturating_sub(self.read_buffer().head) as usize
+    }
+
+    fn set_packet_limit_from_start(self, packet_length: usize) {
+        *self.packet_end() = *self.last_message_start() + packet_length as u32;
+    }
+
+    fn clear_packet_limit(self) {
+        *self.packet_end() = u32::MAX;
     }
 
     fn peek(&self) -> &[u8] {
@@ -1728,17 +1759,6 @@ impl ReaderContext for Reader {
         let slice = bun_ptr::RawSlice::new(&remaining[0..count]);
         self.skip(isize::try_from(count).expect("int cast"));
         Ok(Data::Temporary(slice))
-    }
-
-    fn read_z(self) -> Result<Data, AnyMySQLError> {
-        let remaining = self.read_buffer().remaining();
-        if let Some(zero) = bun_core::strings::index_of_char(remaining, 0) {
-            let slice = bun_ptr::RawSlice::new(&remaining[0..zero as usize]);
-            self.skip(isize::try_from(zero + 1).expect("int cast"));
-            return Ok(Data::Temporary(slice));
-        }
-
-        Err(AnyMySQLError::ShortRead)
     }
 }
 

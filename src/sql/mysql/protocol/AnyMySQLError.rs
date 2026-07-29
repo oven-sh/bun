@@ -42,6 +42,7 @@ pub enum Error {
     InvalidEOFPacket,
     InvalidErrorPacket,
     UnexpectedPacket,
+    MalformedPacket,
     ShortRead,
     UnknownError,
     InvalidState,

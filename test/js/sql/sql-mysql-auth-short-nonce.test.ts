@@ -99,7 +99,10 @@ test("MySQL: an AuthSwitchRequest frame declaring a zero-length payload is rejec
       e => ({ code: e?.code ?? String(e) }),
     );
 
-    expect(err).toEqual({ code: "ERR_MYSQL_INVALID_AUTH_SWITCH_REQUEST" });
+    // A zero-length body leaves no byte for handle_auth's first-byte dispatch
+    // read, so the per-packet bound rejects it before the AuthSwitch-specific
+    // packet_size check is reached.
+    expect(err).toEqual({ code: "ERR_MYSQL_MALFORMED_PACKET" });
   } finally {
     await new Promise<void>(r => server.close(() => r()));
   }

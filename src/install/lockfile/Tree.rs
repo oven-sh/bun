@@ -988,11 +988,8 @@ impl Tree {
             (s.as_ptr(), s.len())
         };
 
-        // When walking ancestors, stop hoisting if this tree already holds a
-        // different version of one of `package_id`'s peer dependencies. Placing
-        // the package here (or deduplicating it to a copy here) would make
-        // `require(peer)` resolve to that conflicting version instead of the
-        // one the package was resolved against.
+        // Stop hoisting at an ancestor that holds a different version of one
+        // of `package_id`'s peer dependencies.
         if !AS_DEFINED && package_id != invalid_package_id {
             let pkg_deps = builder.resolution_lists[package_id as usize];
             'peers: for peer_dep_id in pkg_deps.begin()..pkg_deps.end() {

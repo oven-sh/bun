@@ -840,6 +840,18 @@ describe("File prototype chain", () => {
     expect((got as File).name).toBe("x.txt");
   });
 
+  test("FormData.get returns a File for empty or omitted filename", () => {
+    const fd = new FormData();
+    fd.append("a", new Blob(["x"]), "");
+    fd.append("b", new File(["x"], ""));
+    fd.append("c", new Blob(["x"]));
+    for (const k of ["a", "b", "c"]) {
+      const v = fd.get(k);
+      expect(v instanceof File).toBe(true);
+      expect((v as File).constructor).toBe(File);
+    }
+  });
+
   test("Object.getPrototypeOf(File) is Blob", () => {
     expect(Object.getPrototypeOf(File)).toBe(Blob);
   });
@@ -893,13 +905,17 @@ describe("File prototype chain", () => {
     const { promise, resolve, reject } = Promise.withResolvers<Blob>();
     ws.onmessage = e => resolve(e.data);
     ws.onerror = reject;
-    const data = await promise;
-    ws.close();
-    expect(data instanceof Blob).toBe(true);
-    expect(data instanceof File).toBe(false);
-    expect(data.constructor).toBe(Blob);
-    expect(Object.prototype.toString.call(data)).toBe("[object Blob]");
-    expect(new Uint8Array(await data.arrayBuffer())).toEqual(new Uint8Array([1, 2, 3]));
+    ws.onclose = () => reject(new Error("closed before message"));
+    try {
+      const data = await promise;
+      expect(data instanceof Blob).toBe(true);
+      expect(data instanceof File).toBe(false);
+      expect(data.constructor).toBe(Blob);
+      expect(Object.prototype.toString.call(data)).toBe("[object Blob]");
+      expect(new Uint8Array(await data.arrayBuffer())).toEqual(new Uint8Array([1, 2, 3]));
+    } finally {
+      ws.close();
+    }
   });
 
   test("name and lastModified are own accessors on File.prototype", () => {

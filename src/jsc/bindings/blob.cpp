@@ -10,7 +10,7 @@ namespace WebCore {
 JSC::JSValue toJS(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* globalObject, WebCore::Blob& impl)
 {
     void* duped = Blob__dupe(impl.impl());
-    if (impl.fileName().isEmpty())
+    if (impl.fileName().isNull())
         return JSC::JSValue::decode(Blob__create(lexicalGlobalObject, duped));
 
     BunString filename = Bun::toString(impl.fileName());
@@ -21,7 +21,7 @@ JSC::JSValue toJS(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* g
 JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* globalObject, Ref<WebCore::Blob>&& impl)
 {
     auto fileNameStr = impl->fileName();
-    if (fileNameStr.isEmpty())
+    if (fileNameStr.isNull())
         return JSC::JSValue::decode(Blob__create(lexicalGlobalObject, impl->impl()));
 
     BunString filename = Bun::toString(fileNameStr);

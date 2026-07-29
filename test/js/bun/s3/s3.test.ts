@@ -1022,7 +1022,7 @@ for (let credentials of allCredentials) {
             expect.unreachable();
           } catch (e: any) {
             expect(e?.code).toBe("ENOENT");
-            expect(e?.path).toBe("./do-not-exist.txt");
+            expect(e?.path).toBe(path.resolve("./do-not-exist.txt"));
             expect(e?.syscall).toBe("open");
           }
         });
@@ -1786,7 +1786,7 @@ describe("s3 multipart upload id validation", () => {
 
     await using proc = Bun.spawn({
       cmd: [bunExe(), "-e", fixture],
-      env: bunEnv,
+      env: { ...bunEnv, http_proxy: undefined, HTTP_PROXY: undefined, https_proxy: undefined, HTTPS_PROXY: undefined },
       stdout: "pipe",
       stderr: "pipe",
     });

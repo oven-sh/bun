@@ -3743,7 +3743,29 @@ impl BlobExt for Blob {
                     }
                 }
 
-                path_or_fd.to_thread_safe();
+                // Resolve relative paths now so a later `process.chdir()`
+                // cannot retarget this handle's reads.
+                let slice = path_or_fd.path().slice();
+                let resolved = if !slice.is_empty() && !bun_paths::is_absolute(slice) {
+                    let mut buf = bun_paths::path_buffer_pool::get();
+                    let cwd = global_this.bun_vm().top_level_dir();
+                    bun_paths::resolve_path::join_abs_string_buf_checked::<
+                        bun_paths::platform::Auto,
+                    >(cwd, &mut buf[..], &[slice])
+                    .map(|abs| {
+                        bun_core::handle_oom(bun_ptr::cow_slice::CowSlice::init_dupe(abs))
+                    })
+                } else {
+                    None
+                };
+                match resolved {
+                    Some(abs) => {
+                        *path_or_fd = PathOrFileDescriptor::Path(
+                            crate::webcore::node_types::PathLike::String(abs),
+                        );
+                    }
+                    None => path_or_fd.to_thread_safe(),
+                }
                 core::mem::replace(
                     path_or_fd,
                     PathOrFileDescriptor::Path(crate::webcore::node_types::PathLike::String(
@@ -4347,6 +4369,15 @@ pub extern "C" fn Blob__dupe(this: &Blob) -> *mut Blob {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn Blob__getFileNameString(this: &Blob) -> BunString {
+    if let Some(store) = this.store.get().as_deref() {
+        if let store::Data::File(file) = &store.data {
+            if let PathOrFileDescriptor::Path(path) = &file.pathlike {
+                // FormData default filename: basename only (RFC 7578 4.2).
+                return BunString::from_bytes(bun_paths::basename(path.slice()));
+            }
+            return BunString::empty();
+        }
+    }
     if let Some(filename) = this.get_file_name() {
         return BunString::from_bytes(filename);
     }

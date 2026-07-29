@@ -2178,7 +2178,8 @@ declare module "bun" {
      */
     lastModified: number;
     /**
-     * The name or path of the file, as specified in the constructor.
+     * The name or path of the file. Relative paths are resolved against
+     * `process.cwd()` at the time `Bun.file()` is called.
      */
     readonly name?: string;
 

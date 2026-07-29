@@ -939,11 +939,13 @@ test("aborting in-flight streaming fetch() responses does not retain the buffere
     cmd: [bunExe(), join(import.meta.dir, "fetch-abort-stream-leak-fixture.ts")],
     env: {
       ...bunEnv,
-      ITERATIONS: "60",
-      // Unfixed, every held iteration retains its multi-MB buffered body
-      // (>100MB total); 55 absorbs allocator noise (Windows release measured
-      // 32.8MB of it) while staying far below the leak.
-      MAX_GROWTH_MB: "55",
+      ITERATIONS: "120",
+      // The retained ByteStream buffer is off the JS heap, so the fixture
+      // gates on RSS growth minus JS-heap growth. Fixed builds measure
+      // 25-41 MB of that across linux/darwin x64+aarch64 (flat in ITER);
+      // unfixed measures 103-107 MB on darwin aarch64 at 120 iterations
+      // and climbs linearly from there.
+      MAX_OFFHEAP_MB: "64",
       ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "quarantine_size_mb=0", "thread_local_quarantine_size_kb=0"]
         .filter(Boolean)
         .join(":"),
@@ -952,7 +954,7 @@ test("aborting in-flight streaming fetch() responses does not retain the buffere
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stdout).toContain("held=60");
+  expect(stdout).toContain("held=120");
   expect(stderr).not.toContain("LEAK");
   expect(exitCode).toBe(0);
 });

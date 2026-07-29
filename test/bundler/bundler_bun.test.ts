@@ -3,6 +3,46 @@ import { describe, expect } from "bun:test";
 import { itBundled } from "./expectBundled";
 
 describe("bundler", () => {
+  // https://github.com/oven-sh/bun/issues/8058
+  itBundled("bun/require-bun-shadowed-globalThis", {
+    target: "bun",
+    files: {
+      "/entry.ts": /* js */ `
+        import * as B from "bun";
+        var globalThis = { Bun: "intercepted" };
+        if (typeof B.serve !== "function") throw new Error("import * from 'bun' was shadowed: " + B);
+        {
+          let globalThis = { Bun: "intercepted" };
+          const b = require("bun");
+          if (typeof b.serve !== "function") throw new Error("require('bun') was shadowed: " + b);
+          const d = await import("bun");
+          if (typeof d.serve !== "function") throw new Error("import('bun') was shadowed: " + d);
+          console.log("pass");
+        }
+      `,
+    },
+    run: { stdout: "pass" },
+    onAfterBundle(api) {
+      expect(api.readFile("out.js")).not.toContain(`globalThis = { Bun`);
+    },
+  });
+  itBundled("bun/require-bun-shadowed-globalThis-cjs", {
+    target: "bun",
+    format: "cjs",
+    files: {
+      "/entry.ts": /* js */ `
+        import * as B from "bun";
+        {
+          let globalThis = { Bun: "intercepted" };
+          const b = require("bun");
+          if (typeof b.serve !== "function") throw new Error("require('bun') was shadowed: " + b);
+          if (typeof B.serve !== "function") throw new Error("import * from 'bun' was shadowed: " + B);
+          console.log("pass");
+        }
+      `,
+    },
+    run: { stdout: "pass" },
+  });
   // https://github.com/oven-sh/bun/issues/18899
   itBundled("bun/import-bun-format-cjs", {
     target: "bun",

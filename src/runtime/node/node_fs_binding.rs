@@ -256,8 +256,7 @@ impl Binding {
 
         // SAFETY: re-borrow `vm` mutably; the `slice` borrow is no longer used.
         let vm: &mut VirtualMachine = global.bun_vm().as_mut();
-        // Embedded /$bunfs/ paths are served from an in-memory graph, so there is
-        // no I/O to offload; readdir_inner handles them (including recursive).
+        // /$bunfs/ is in-memory; readdir_inner handles it (recursive included).
         let is_bunfs = bun_standalone_graph::Graph::get().is_some()
             && bun_standalone_graph::is_bun_standalone_file_path(rd_args.path.slice());
         if rd_args.recursive && !is_bunfs {

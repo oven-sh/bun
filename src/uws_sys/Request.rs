@@ -82,6 +82,12 @@ impl Request {
         // ffi::slice tolerates the (null, 0) shape uWS returns when no parameter is present.
         unsafe { bun_core::ffi::slice(ptr, len) }
     }
+    /// Returns `(sec_websocket_key_count, connection_has_upgrade_token)`.
+    pub fn ws_handshake_scan(&self) -> (u32, bool) {
+        let mut conn_has_upgrade = false;
+        let key_count = c::uws_req_ws_handshake_scan(self, &mut conn_has_upgrade);
+        (key_count, conn_has_upgrade)
+    }
 }
 
 mod c {
@@ -106,5 +112,9 @@ mod c {
             index: c_ushort,
             dest: &mut *const u8,
         ) -> usize;
+        pub(super) safe fn uws_req_ws_handshake_scan(
+            res: &Request,
+            conn_has_upgrade: &mut bool,
+        ) -> u32;
     }
 }

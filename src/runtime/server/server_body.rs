@@ -432,6 +432,13 @@ fn is_valid_sec_websocket_key(key: &[u8]) -> bool {
             .all(|&c| c.is_ascii_alphanumeric() || c == b'+' || c == b'/')
 }
 
+#[inline]
+fn header_value_has_token(value: &[u8], lower_token: &[u8]) -> bool {
+    value
+        .split(|&c| c == b',')
+        .any(|t| strings::eql_case_insensitive_ascii(t.trim_ascii(), lower_token, true))
+}
+
 pub(super) type ServerRequestContext<const SSL: bool, const DEBUG: bool> =
     NewRequestContext<NewServer<SSL, DEBUG>, SSL, DEBUG, false>;
 pub(super) type ServerH3RequestContext<const SSL: bool, const DEBUG: bool> =
@@ -1964,6 +1971,7 @@ where
         let mut sec_websocket_extensions = ZigString::EMPTY;
         let mut sec_websocket_version = ZigString::EMPTY;
         let mut upgrade_header = ZigString::EMPTY;
+        let mut connection_header = ZigString::EMPTY;
 
         // Owned backing storage for sec_websocket_*.
         // `ZigStringSlice` impls `Drop`; reassignment drops the previous value.
@@ -1972,6 +1980,7 @@ where
         let mut _sec_websocket_extensions_owned = bun_core::ZigStringSlice::empty();
         let mut _sec_websocket_version_owned = bun_core::ZigStringSlice::empty();
         let mut _upgrade_header_owned = bun_core::ZigStringSlice::empty();
+        let mut _connection_header_owned = bun_core::ZigStringSlice::empty();
 
         // NOTE: `FetchHeaders::fast_get` takes `&mut self` (FFI signature
         // is `*mut`), so go through the `BodyMixin` accessor which yields a
@@ -2002,10 +2011,15 @@ where
                 _upgrade_header_owned = up.to_slice_clone();
                 upgrade_header = ZigString::init(_upgrade_header_owned.slice());
             }
+            if let Some(conn) = head.fast_get(HTTPHeaderName::Connection) {
+                _connection_header_owned = conn.to_slice_clone();
+                connection_header = ZigString::init(_connection_header_owned.slice());
+            }
         }
 
         // SAFETY: upgrader_ptr is live (ref_() above)
         let upgrader = unsafe { &mut *upgrader_ptr };
+        let mut connection_has_upgrade: Option<bool> = None;
         if let Some(req_ptr) = upgrader.req {
             // NOTE: `RequestContext.req` is type-erased to `*mut c_void`
             // (RequestContext.rs:82). `server.upgrade()` is HTTP/1-only — H3
@@ -2034,16 +2048,21 @@ where
             if upgrade_header.len == 0 {
                 upgrade_header = ZigString::init(r.header(b"upgrade").unwrap_or(b""));
             }
+            // `r.header()` returns only the first field line; scan all of them.
+            let (key_count, conn_upgrade) = r.ws_handshake_scan();
+            connection_has_upgrade = Some(conn_upgrade);
+            if key_count > 1 {
+                return Ok(JSValue::FALSE);
+            }
         }
 
-        // RFC 6455 §4.2.1: validate the client's opening handshake.
-        // A request that does not name "websocket" in its |Upgrade| token list,
-        // or whose |Sec-WebSocket-Key| is not base64 of 16 bytes, is not a
-        // WebSocket handshake; fall through so the caller's fetch() can respond.
-        if !upgrade_header
-            .slice()
-            .split(|&c| c == b',')
-            .any(|t| strings::eql_case_insensitive_ascii(t.trim_ascii(), b"websocket", true))
+        // RFC 6455 §4.2.1: not a WebSocket handshake; fall through so the
+        // caller's fetch() can respond.
+        if !header_value_has_token(upgrade_header.slice(), b"websocket") {
+            return Ok(JSValue::FALSE);
+        }
+        if !connection_has_upgrade
+            .unwrap_or_else(|| header_value_has_token(connection_header.slice(), b"upgrade"))
         {
             return Ok(JSValue::FALSE);
         }

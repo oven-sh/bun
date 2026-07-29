@@ -111,6 +111,8 @@ pub mod lib_error {
     pub const PROTO: i32 = -505;
     /// NGHTTP2_ERR_STREAM_CLOSED — "Stream was already closed or invalid"
     pub const STREAM_CLOSED: i32 = -510;
+    /// NGHTTP2_ERR_FLOW_CONTROL — "Flow control error"
+    pub const FLOW_CONTROL: i32 = -524;
     /// NGHTTP2_ERR_BAD_CLIENT_MAGIC — "Received bad client magic byte string"
     pub const BAD_CLIENT_MAGIC: i32 = -903;
     /// NGHTTP2_ERR_FLOODED — "Flooding was detected in this HTTP/2 session, and it must be closed"

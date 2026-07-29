@@ -35,7 +35,6 @@
 
 namespace WebCore {
 
-class ScriptExecutionContext;
 class URLSearchParams;
 
 class DOMURL final : public RefCounted<DOMURL>, public CanMakeWeakPtr<DOMURL>, public URLDecomposition {

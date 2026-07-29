@@ -34,10 +34,8 @@ pub use self::js_valkey as js_valkey_body;
 pub use js_valkey::JSValkeyClient;
 pub use valkey::{Options, Protocol, Status, ValkeyClient};
 
-// ── ValkeyCommand ────────────────────────────────────────────────────────────
-// `ValkeyCommand` is both a namespace
-// *and* the `Command` type. Expose a `valkey_command` module that re-exports
-// the body's items so `command::PromisePair` / `command::Entry` resolve.
+// Re-export `ValkeyCommand.rs` items under `valkey_command` so
+// `command::PromisePair` / `command::Entry` resolve from sibling files.
 pub mod valkey_command {
     pub use super::valkey_command_body::{Entry, Meta, Promise, PromisePair, entry, promise_pair};
 }

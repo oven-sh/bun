@@ -3423,6 +3423,54 @@ test("it should install with missing bun.lockb, node_modules, and/or cache", asy
 });
 
 describe("hoisting", async () => {
+  // https://github.com/oven-sh/bun/issues/7241
+  test("nested dependency is preserved when its parent is reinstalled from an empty cache", async () => {
+    // `one-fixed-dep@1.0.0` depends on `no-deps@1.0.0`. With `no-deps@2.0.0`
+    // at the root, `no-deps@1.0.0` is forced to nest under
+    // `node_modules/one-fixed-dep/node_modules/no-deps`.
+    await writeFile(
+      packageJson,
+      JSON.stringify({
+        name: "foo",
+        dependencies: {
+          "one-fixed-dep": "1.0.0",
+          "no-deps": "2.0.0",
+        },
+      }),
+    );
+
+    await runBunInstall(env, packageDir);
+
+    const nestedPkg = join(packageDir, "node_modules", "one-fixed-dep", "node_modules", "no-deps", "package.json");
+    expect(await file(nestedPkg).json()).toMatchObject({ name: "no-deps", version: "1.0.0" });
+
+    // Simulate a CI build cache restore: node_modules survives, the install
+    // cache does not, and the parent package needs a reinstall.
+    await rm(join(packageDir, ".bun-cache"), { recursive: true, force: true });
+    await rm(join(packageDir, "node_modules", "one-fixed-dep", "package.json"));
+
+    // The nested child is still correct on disk. The bug was that the installer
+    // verified it before `one-fixed-dep` had finished re-downloading, marked it
+    // as done, and then the parent reinstall deleted `one-fixed-dep/` wholesale.
+    await runBunInstall(env, packageDir, { savesLockfile: false });
+
+    expect(await file(join(packageDir, "node_modules", "no-deps", "package.json")).json()).toMatchObject({
+      name: "no-deps",
+      version: "2.0.0",
+    });
+    expect(await file(join(packageDir, "node_modules", "one-fixed-dep", "package.json")).json()).toMatchObject({
+      name: "one-fixed-dep",
+      version: "1.0.0",
+    });
+    expect(await file(nestedPkg).json()).toMatchObject({
+      name: "no-deps",
+      version: "1.0.0",
+    });
+
+    const lockfile = parseLockfile(packageDir);
+    expect(lockfile).toMatchNodeModulesAt(packageDir);
+  });
+
   var tests: any = [
     {
       situation: "1.0.0 - 1.0.10 is in order",

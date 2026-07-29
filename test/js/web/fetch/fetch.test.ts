@@ -3068,3 +3068,53 @@ it("an explicit numeric `timeout` extends the socket idle deadline past the defa
   expect(out.withDefault).toStartWith("ERR:");
   expect(exitCode).toBe(0);
 }, 60_000);
+
+// https://github.com/oven-sh/bun/issues/29195 (init is a Web IDL dictionary)
+describe("init argument validation (#29195)", () => {
+  // data: URL keeps good_init cases hermetic, no network I/O.
+  const url = "data:text/plain,ok";
+  const bad_init: [string, unknown][] = [
+    ["number 0", 0],
+    ["non-zero number", 42],
+    ["bigint", 0n],
+    ["empty string", ""],
+    ["non-empty string", "hello"],
+    ["boolean false", false],
+    ["boolean true", true],
+    ["symbol", Symbol("test")],
+  ];
+  const good_init: [string, unknown][] = [
+    ["undefined", undefined],
+    ["null", null],
+    ["a plain object", { method: "GET" }],
+  ];
+
+  it.each(bad_init)("fetch() rejects TypeError when init is %s", async (_l, value) => {
+    await expect(fetch(url, value as any)).rejects.toBeInstanceOf(TypeError);
+  });
+  it.each(good_init)("fetch() resolves when init is %s", async (_l, value) => {
+    const res = await fetch(url, value as any);
+    expect(res.status).toBe(200);
+    expect(await res.text()).toBe("ok");
+  });
+  it.each(bad_init)("new Request() throws TypeError when init is %s", (_l, value) => {
+    expect(() => new Request(url, value as any)).toThrow(TypeError);
+  });
+  it.each(good_init)("new Request() does not throw when init is %s", (_l, value) => {
+    expect(() => new Request(url, value as any)).not.toThrow();
+  });
+
+  // WebIDL converts arguments left-to-right: a throwing toString on `input`
+  // surfaces before the init TypeError. (Bun currently throws this one
+  // synchronously during URL conversion rather than rejecting, a pre-existing
+  // divergence from WebIDL §3.7.10 independent of this change. The assertion is
+  // written to accept either delivery mode so it survives an eventual fix.)
+  it("surfaces first-argument conversion errors before the init TypeError", () => {
+    const first_arg = {
+      toString() {
+        throw new Error("boom from toString");
+      },
+    };
+    expect(async () => await fetch(first_arg as any, 0 as any)).toThrow("boom from toString");
+  });
+});

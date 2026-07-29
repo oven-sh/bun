@@ -390,6 +390,20 @@ impl Process {
         }
     }
 
+    /// True when this process has no pidfd to poll: global opt-out, or Linux
+    /// `pidfd_open` failed (EMFILE etc.) after `posix_spawn` already succeeded.
+    #[cfg(unix)]
+    fn needs_waiter_thread(&self) -> bool {
+        if WaiterThread::should_use_waiter_thread() {
+            return true;
+        }
+        #[cfg(any(target_os = "linux", target_os = "android"))]
+        if self.pidfd <= 0 {
+            return true;
+        }
+        false
+    }
+
     pub fn watch(&mut self) -> bun_sys::Result<()> {
         #[cfg(windows)]
         {
@@ -402,13 +416,17 @@ impl Process {
         #[cfg(unix)]
         {
             let ctx = self.event_loop_ctx();
-            if WaiterThread::should_use_waiter_thread() {
+            if self.needs_waiter_thread() {
+                if waiter_thread_posix::init().is_err() {
+                    self.wait_posix(true);
+                    return Ok(());
+                }
                 self.poller = Poller::WaiterThread(KeepAlive::default());
                 if let Poller::WaiterThread(w) = &mut self.poller {
                     w.ref_(ctx);
                 }
                 self.ref_();
-                WaiterThread::append(self);
+                let _ = WaiterThread::append(self);
                 return Ok(());
             }
 
@@ -460,7 +478,11 @@ impl Process {
     #[cfg(unix)]
     pub fn rewatch_posix(&mut self) -> bun_sys::Result<()> {
         let ctx = self.event_loop_ctx();
-        if WaiterThread::should_use_waiter_thread() {
+        if self.needs_waiter_thread() {
+            if waiter_thread_posix::init().is_err() {
+                self.wait_posix(true);
+                return Ok(());
+            }
             if !matches!(self.poller, Poller::WaiterThread(_)) {
                 self.poller = Poller::WaiterThread(KeepAlive::default());
             }
@@ -468,7 +490,7 @@ impl Process {
                 w.ref_(ctx);
             }
             self.ref_();
-            WaiterThread::append(self);
+            let _ = WaiterThread::append(self);
             return Ok(());
         }
 
@@ -1292,27 +1314,25 @@ pub mod waiter_thread_posix {
             bun_spawn_sys::waiter_thread_flag::get()
         }
 
-        pub fn append(process: *mut Process) {
+        pub fn append(process: *mut Process) -> bun_sys::Result<()> {
+            init()?;
+
             // `js_process.queue` is an MPSC lock-free queue; `append` is the
             // producer half and only touches `queue`, never `active`.
             instance_ref().js_process.append(process);
 
-            init().unwrap_or_else(|_| panic!("Failed to start WaiterThread"));
-
             #[cfg(any(target_os = "linux", target_os = "android"))]
             {
                 let one: [u8; 8] = (1usize).to_ne_bytes();
-                // SAFETY: write(2) is async-signal-safe; eventfd valid after init().
-                let n =
-                    unsafe { libc::write(instance_ref().eventfd.native(), one.as_ptr().cast(), 8) };
-                if n < 0 {
-                    panic!("Failed to write to eventfd");
-                }
+                let _ = bun_sys::write(instance_ref().eventfd, &one);
             }
+            Ok(())
         }
 
         pub fn reload_handlers() {
-            if !bun_spawn_sys::waiter_thread_flag::get() {
+            // Keys off thread existence, not the global flag: the thread may
+            // have been started for a single pidfd-less process.
+            if instance_ref().started.load(Ordering::Relaxed) == 0 {
                 return;
             }
 
@@ -1335,36 +1355,30 @@ pub mod waiter_thread_posix {
         }
     }
 
-    pub fn init() -> Result<(), std::io::Error> {
-        debug_assert!(bun_spawn_sys::waiter_thread_flag::get());
-
-        if instance_ref().started.fetch_max(1, Ordering::Relaxed) > 0 {
+    pub fn init() -> bun_sys::Result<()> {
+        if instance_ref().started.load(Ordering::Acquire) > 0 {
             return Ok(());
         }
 
         #[cfg(any(target_os = "linux", target_os = "android"))]
-        {
-            // All by-value `c_uint`/`c_int` args; the kernel validates flags
-            // and returns -1/errno on failure — no memory-safety preconditions,
-            // so `safe fn` (Rust 2024) discharges the link-time proof.
-            unsafe extern "C" {
-                safe fn eventfd(
-                    initval: core::ffi::c_uint,
-                    flags: core::ffi::c_int,
-                ) -> core::ffi::c_int;
-            }
-            let fd = eventfd(0, libc::EFD_NONBLOCK | libc::EFD_CLOEXEC);
-            if fd < 0 {
-                return Err(std::io::Error::last_os_error());
-            }
-            // SAFETY: single-writer init path (guarded by fetch_max above).
-            unsafe { (*instance()).eventfd = Fd::from_native(fd) };
+        let fd = bun_sys::eventfd(0, libc::EFD_NONBLOCK | libc::EFD_CLOEXEC)?;
+
+        if instance_ref().started.fetch_max(1, Ordering::AcqRel) > 0 {
+            #[cfg(any(target_os = "linux", target_os = "android"))]
+            let _ = bun_sys::close(fd);
+            return Ok(());
         }
 
-        let thread = std::thread::Builder::new()
+        #[cfg(any(target_os = "linux", target_os = "android"))]
+        // SAFETY: single-writer init path (guarded by fetch_max above).
+        unsafe {
+            (*instance()).eventfd = fd
+        };
+
+        std::thread::Builder::new()
             .stack_size(STACK_SIZE)
-            .spawn(loop_)?;
-        drop(thread); // detach
+            .spawn(loop_)
+            .expect("Failed to start WaiterThread");
         Ok(())
     }
 

@@ -529,42 +529,23 @@ impl PosixSpawnResult {
         };
         match attempt {
             Err(err) => {
-                match err.get_errno() {
-                    // seccomp filters can be used to block this system call or pidfd's altogether
-                    // https://github.com/moby/moby/issues/42680
-                    // so let's treat a bunch of these as actually meaning we should use the waiter thread fallback instead.
+                // seccomp filters can be used to block this system call or pidfd's altogether
+                // https://github.com/moby/moby/issues/42680
+                // so let's treat a bunch of these as actually meaning we should use the waiter thread fallback instead.
+                if matches!(
+                    err.get_errno(),
                     bun_sys::E::ENOSYS
-                    // EOPNOTSUPP == ENOTSUP on Linux (both 95).
-                    | bun_sys::E::ENOTSUP
-                    | bun_sys::E::EPERM
-                    | bun_sys::E::EACCES
-                    | bun_sys::E::EINVAL => {
-                        crate::waiter_thread_flag::set();
-                        return Err(err);
-                    }
-
-                    // No such process can happen if it exited between the time we got the pid and called pidfd_open
-                    // Until we switch to CLONE_PIDFD, this needs to be handled separately.
-                    bun_sys::E::ESRCH => {}
-
-                    // For all other cases, ensure we don't leak the child process on error
-                    // That would cause Zombie processes to accumulate.
-                    _ => {
-                        loop {
-                            let mut status: i32 = 0;
-                            // SAFETY: libc wait4
-                            let rc = unsafe {
-                                libc::wait4(self.pid, &raw mut status, 0, core::ptr::null_mut())
-                            };
-                            match bun_sys::get_errno(rc as isize) {
-                                bun_sys::E::SUCCESS => {}
-                                bun_sys::E::EINTR => continue,
-                                _ => {}
-                            }
-                            break;
-                        }
-                    }
+                        // EOPNOTSUPP == ENOTSUP on Linux (both 95).
+                        | bun_sys::E::ENOTSUP
+                        | bun_sys::E::EPERM
+                        | bun_sys::E::EACCES
+                        | bun_sys::E::EINVAL
+                ) {
+                    crate::waiter_thread_flag::set();
                 }
+                // The child is already running; never block on it here. The
+                // caller maps ESRCH to fast-exit and everything else to a
+                // per-process waiter-thread fallback.
                 Err(err)
             }
             Ok(fd) => Ok(fd.native()),
@@ -995,13 +976,11 @@ pub unsafe fn spawn_process_posix(
                             spawned.pidfd = Some(pidfd);
                         }
                         Err(err) => {
-                            // we intentionally do not clean up any of the file descriptors in this case
-                            // you could have data sitting in stdout, just waiting.
+                            // `posix_spawn` already succeeded; never surface
+                            // this as a spawn failure. `pidfd = None` makes
+                            // `Process::watch` fall back to the waiter thread.
                             if err.get_errno() == bun_sys::E::ESRCH {
                                 spawned.has_exited = true;
-                                // a real error occurred. one we should not assume means pidfd_open is blocked.
-                            } else if !crate::waiter_thread_flag::get() {
-                                return Ok(Err(err));
                             }
                         }
                     }

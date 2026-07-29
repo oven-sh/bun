@@ -386,7 +386,7 @@ describe("web worker", () => {
     // TerminationException for the close event to ever fire.
     expect(await messageOrError(worker)).toBe("closing");
     const [close] = await once(worker, "close");
-    expect(typeof close.code).toBe("number");
+    expect([0, 1]).toContain(close.code);
   });
 
   test("self.close() followed by a top-level throw still reports the error", async () => {

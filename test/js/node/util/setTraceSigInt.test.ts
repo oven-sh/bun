@@ -78,6 +78,27 @@ test.concurrent.skipIf(isWindows)("disabling restores the default silent SIGINT 
   expect(proc.signalCode).toBe("SIGINT");
 });
 
+// Guards the double-enable case: a redundant enable must not capture the
+// trace handler itself as the saved disposition, or disabling would leave
+// the trace installed.
+test.concurrent.skipIf(isWindows)("double enable then disable restores the silent SIGINT exit", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      "const util = require('node:util'); util.setTraceSigInt(true); util.setTraceSigInt(true); util.setTraceSigInt(false); setInterval(() => {}, 1000); console.log('ready');",
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  await readUntil(proc.stdout.getReader(), "ready");
+  proc.kill("SIGINT");
+  await proc.exited;
+  expect(await proc.stderr.text()).not.toContain(KEYBOARD_INTERRUPT);
+  expect(proc.signalCode).toBe("SIGINT");
+});
+
 test.concurrent.skipIf(isWindows)("a JS SIGINT listener takes priority over the trace", async () => {
   await using proc = Bun.spawn({
     cmd: [

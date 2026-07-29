@@ -1235,7 +1235,11 @@ fn collect_compile_assets(
     use bun_sys::EntryKind;
 
     let fail = |err: bun_sys::Error| -> Result<(), ()> {
-        Output::err(&err, "failed to read --asset {}", (bun_fmt::quote(&err.path),));
+        Output::err(
+            &err,
+            "failed to read --asset {}",
+            (bun_fmt::quote(&err.path),),
+        );
         Err(())
     };
 

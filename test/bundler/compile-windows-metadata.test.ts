@@ -67,7 +67,15 @@ describe.skipIf(!isWindows)("--windows-hide-console", () => {
     await using _cleanup = cleanup(outfile);
 
     await using proc = Bun.spawn({
-      cmd: [bunExe(), "build", "--compile", "--windows-hide-console", join(String(dir), "app.js"), "--outfile", outfile],
+      cmd: [
+        bunExe(),
+        "build",
+        "--compile",
+        "--windows-hide-console",
+        join(String(dir), "app.js"),
+        "--outfile",
+        outfile,
+      ],
       env: bunEnv,
       stdout: "pipe",
       stderr: "pipe",

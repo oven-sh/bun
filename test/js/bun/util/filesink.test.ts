@@ -622,3 +622,96 @@ it("fs.promises.writeFile with iterables under GC pressure does not crash", asyn
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({ stdout: "ok", stderr: "", exitCode: 0 });
 });
+
+// Accessing process.stdout creates a FileSink on a dup of fd 1. openForWriting
+// sets O_NONBLOCK on that dup, which also flips fd 1 itself (shared open file
+// description). The sink is then forced into synchronous mode, which is meant
+// to clear O_NONBLOCK again, but FileSink.setup() never recorded the fd so the
+// undo was a no-op. With fd 1 left non-blocking, console.log silently dropped
+// bytes on EAGAIN and Bun.write(Bun.stdout, ...) spun forever in WriteFile.
+describe.concurrent("process.stdout leaves fd 1 blocking on a pipe", () => {
+  it.skipIf(!isLinux)("O_NONBLOCK is cleared after process.stdout is materialized", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          process.stdout.write("x");
+          const fs = require("fs");
+          const fdinfo = fs.readFileSync("/proc/self/fdinfo/1", "utf8");
+          const flags = parseInt(fdinfo.match(/flags:\\s*(\\d+)/)[1], 8);
+          process.stderr.write((flags & 0o4000) ? "nonblock" : "blocking");
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toBe("x");
+    expect(stderr).toBe("blocking");
+    expect(exitCode).toBe(0);
+  });
+
+  it.skipIf(isWindows)("Bun.write(Bun.stdout, ...) completes after process.stdout is materialized", async () => {
+    const SIZE = 1024 * 1024;
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const _ = process.stdout;
+          await Bun.write(Bun.stdout, Buffer.alloc(${SIZE}, "A").toString());
+          process.stderr.write("done");
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("done");
+    expect(stdout.length).toBe(SIZE);
+    expect(exitCode).toBe(0);
+  });
+
+  it.skipIf(isWindows)(
+    "console.log / process.stdout.write / Bun.write(Bun.stdout) interleaved deliver every line",
+    async () => {
+      const N = 200;
+      // Longest line "C199 " + PAD + "\n" stays within macOS PIPE_BUF (512) so
+      // the un-awaited Bun.write running on a work-pool thread cannot interleave
+      // mid-line with the main thread's writes.
+      const PAD = 500;
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
+            const pad = Buffer.alloc(${PAD}, "x").toString();
+            for (let i = 0; i < ${N}; i++) {
+              console.log("A" + i + " " + pad);
+              process.stdout.write("B" + i + " " + pad + "\\n");
+              Bun.write(Bun.stdout, "C" + i + " " + pad + "\\n");
+            }
+            await Bun.write(Bun.stdout, "");
+            process.stderr.write("done");
+          `,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("done");
+      const lines = stdout.split("\n").filter(Boolean);
+      expect({
+        A: lines.filter(l => l.startsWith("A")).length,
+        B: lines.filter(l => l.startsWith("B")).length,
+        C: lines.filter(l => l.startsWith("C")).length,
+        total: lines.length,
+      }).toEqual({ A: N, B: N, C: N, total: 3 * N });
+      expect(exitCode).toBe(0);
+    },
+  );
+});

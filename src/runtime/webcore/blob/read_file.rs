@@ -508,54 +508,39 @@ impl ReadFile {
 
     /// Never touches `self.buffer`; the caller moves it out for the duration.
     pub fn do_read(&mut self, buf: &mut [u8], read_len: &mut usize, retry: &mut bool) -> bool {
-        let result: bun_sys::Result<usize> = 'brk: {
-            if bun_sys::S::ISSOCK(self.file_store.mode) {
-                break 'brk bun_sys::recv_non_block(self.opened_fd, buf);
-            }
-            break 'brk bun_sys::read(self.opened_fd, buf);
+        let result: bun_sys::Result<usize> = if bun_sys::S::ISSOCK(self.file_store.mode) {
+            bun_sys::recv_non_block(self.opened_fd, buf)
+        } else {
+            bun_sys::read(self.opened_fd, buf)
         };
 
-        loop {
-            match &result {
-                Ok(res) => {
-                    *read_len = *res as usize; // @truncate — usize→usize is identity here
-                    self.read_eof = *res == 0;
-                }
-                Err(err) => {
-                    match err.get_errno() {
-                        e if e == io::RETRY => {
-                            if !self.could_block {
-                                // regular files cannot use epoll.
-                                // this is fine on kqueue, but not on epoll.
-                                continue;
-                            }
-                            *retry = true;
-                            self.read_eof = false;
-                            return true;
-                        }
-                        _ => {
-                            self.errno = Some(bun_errno::from_errno(err.errno as i32).into());
-                            self.system_error = Some(err.to_system_error().into());
-                            if self.system_error.as_ref().unwrap().path.is_empty() {
-                                self.system_error.as_mut().unwrap().path =
-                                    if self.file_store.pathlike.is_path() {
-                                        BunString::clone_utf8(
-                                            self.file_store.pathlike.path().slice(),
-                                        )
-                                        .into()
-                                    } else {
-                                        BunString::EMPTY.into()
-                                    };
-                            }
-                            return false;
-                        }
-                    }
-                }
+        match result {
+            Ok(res) => {
+                *read_len = res;
+                self.read_eof = res == 0;
+                true
             }
-            break;
+            Err(err) => {
+                if err.get_errno() == io::RETRY {
+                    // EAGAIN is impossible on a regular file, so the fd is pollable.
+                    self.could_block = true;
+                    *retry = true;
+                    self.read_eof = false;
+                    return true;
+                }
+                self.errno = Some(bun_errno::from_errno(err.errno as i32).into());
+                self.system_error = Some(err.to_system_error().into());
+                if self.system_error.as_ref().unwrap().path.is_empty() {
+                    self.system_error.as_mut().unwrap().path = if self.file_store.pathlike.is_path()
+                    {
+                        BunString::clone_utf8(self.file_store.pathlike.path().slice()).into()
+                    } else {
+                        BunString::EMPTY.into()
+                    };
+                }
+                false
+            }
         }
-
-        true
     }
 
     pub fn then(this: Box<Self>, _: &JSGlobalObject) -> jsc::JsTerminatedResult<()> {

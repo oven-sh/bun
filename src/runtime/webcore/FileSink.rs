@@ -657,6 +657,7 @@ impl FileSink {
                         return sys::Result::Err(err);
                     }
                     sys::Result::Ok(()) => {
+                        self.fd.set(fd);
                         self.writer
                             .with_mut(|w| w.update_ref(self.io_evtloop(), false));
                     }
@@ -672,6 +673,7 @@ impl FileSink {
                 return sys::Result::Err(err);
             }
             sys::Result::Ok(()) => {
+                self.fd.set(fd);
                 // Only keep the event loop ref'd while there's a pending write in progress.
                 // If there's no pending write, no need to keep the event loop ref'd.
                 self.writer

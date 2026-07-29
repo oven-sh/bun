@@ -338,32 +338,22 @@ impl WriteFile {
         //
         // On macOS, it is an error to use pwrite() on a
         // non-seekable file.
-        let result: bun_sys::Result<usize> =
-            sys::write(fd, &self.bytes_blob.shared_view()[off..off + len]);
-
-        loop {
-            match &result {
-                bun_sys::Result::Ok(res) => {
-                    *wrote = *res;
-                    self.total_written += *res;
-                }
-                bun_sys::Result::Err(err) => {
-                    if err.get_errno() == io::RETRY {
-                        if !self.could_block {
-                            // regular files cannot use epoll.
-                            // this is fine on kqueue, but not on epoll.
-                            continue;
-                        }
-                        self.wait_for_writable();
-                        return false;
-                    } else {
-                        self.errno = Some(bun_errno::from_errno(err.errno as i32).into());
-                        self.system_error = Some(err.to_system_error().into());
-                        return false;
-                    }
-                }
+        match sys::write(fd, &self.bytes_blob.shared_view()[off..off + len]) {
+            bun_sys::Result::Ok(res) => {
+                *wrote = res;
+                self.total_written += res;
             }
-            break;
+            bun_sys::Result::Err(err) => {
+                if err.get_errno() == io::RETRY {
+                    // EAGAIN is impossible on a regular file, so the fd is pollable.
+                    self.could_block = true;
+                    self.wait_for_writable();
+                    return false;
+                }
+                self.errno = Some(bun_errno::from_errno(err.errno as i32).into());
+                self.system_error = Some(err.to_system_error().into());
+                return false;
+            }
         }
 
         true

@@ -67,7 +67,7 @@
 #include "JSDOMURL.h"
 #include "headers.h"
 #include "ObjectBindings.h"
-#include "../ErrorCode.h"
+#include "ErrorCode.h"
 
 namespace WebCore {
 using namespace JSC;

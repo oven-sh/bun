@@ -451,7 +451,11 @@ describe("proxy option validation", () => {
     expect(hits).toEqual(["/null", "/empty", "/undef"]);
   });
 
-  test("valid string / URL / {url} shapes still route through the proxy", async () => {
+  test("valid string / URL / {url} shapes are accepted (not rejected by validation)", async () => {
+    // Proxy routing for each shape is covered by the matrix tests and the
+    // "proxy as URL instance ..." / "proxy object with url string ..." tests
+    // elsewhere in this file; this check only guards against the new
+    // ERR_INVALID_ARG_TYPE validation over-rejecting valid shapes.
     for (const value of [httpProxyServer.url, new URL(httpProxyServer.url), { url: httpProxyServer.url }]) {
       const response = await fetch(httpServer.url, {
         method: "POST",

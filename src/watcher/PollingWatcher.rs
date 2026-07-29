@@ -39,12 +39,9 @@ impl Snapshot {
 
 pub struct PollingWatcher {
     pub interval: Duration,
-    /// Baseline stat per watched file, keyed by `WatchItem.hash` so
-    /// `flush_evictions`' `swap_remove` reordering doesn't invalidate state.
-    /// Guarded by `Watcher.mutex` (written from `add_file` on the JS thread
-    /// and from the watcher thread's diff step).
+    /// Keyed by `WatchItem.hash`; guarded by `Watcher.mutex`.
     snapshots: HashMap<HashType, Snapshot, IdentityContext<HashType>>,
-    /// Scratch reused across cycles; only touched by the watcher thread.
+    /// Watcher-thread-only scratch, reused across cycles.
     scratch_idx: Vec<(WatchItemIndex, HashType)>,
     scratch_path: Vec<Vec<u8>>,
     scratch_stat: Vec<Snapshot>,
@@ -61,10 +58,8 @@ impl PollingWatcher {
         }
     }
 
-    /// Capture the baseline stat for `path` at the moment it's registered
-    /// (same point where inotify/kqueue would start listening), so a write
-    /// that lands between registration and the first poll cycle is detected.
-    /// Caller must hold `Watcher.mutex`.
+    /// Baseline stat at registration time so a write between `add_file` and
+    /// the first poll cycle is detected. Caller holds `Watcher.mutex`.
     pub(crate) fn register(&mut self, hash: HashType, path: &[u8]) {
         self.snapshots.insert(hash, stat_path(path));
     }
@@ -125,9 +120,6 @@ pub(crate) fn watch_loop_cycle(this: &mut Watcher) -> sys::Result<()> {
         return Ok(());
     }
 
-    // Move the watcher-thread-only scratch buffers out so `&mut this` stays
-    // free for `dispatch_file_updates`; `snapshots` stays in place because the
-    // JS thread's `register()` may write it concurrently under `this.mutex`.
     let Backend::Polling(poll) = &mut this.platform else {
         unreachable!()
     };

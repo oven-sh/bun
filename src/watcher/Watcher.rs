@@ -86,12 +86,9 @@ impl AnyResolveWatcher {
 // ideally, the constants above can be inlined
 pub(crate) type Platform = platform::Platform;
 
-/// Runtime-selected watch backend. `Native` is the compile-time
-/// inotify/kqueue/ReadDirectoryChangesW implementation; `Polling` stat()s
-/// each watched file on an interval for mounts that can't deliver native
-/// change events.
-// `Watcher` is itself `Box`'d in `init()` and there is one per process, so
-// the size skew between variants costs one heap slot, not stack.
+/// Runtime-selected watch backend: the compile-time native impl or the
+/// stat-polling fallback for mounts without native change events.
+// `Watcher` is `Box`'d and per-process; the variant size skew is one heap slot.
 #[allow(clippy::large_enum_variant)]
 pub enum Backend {
     Native(Platform),
@@ -99,9 +96,7 @@ pub enum Backend {
 }
 
 impl Backend {
-    /// Unwrap the native platform. Only called from native
-    /// `watch_loop_cycle` / kqueue registration, which `watch_loop()`
-    /// dispatches to only when `self` is `Native`.
+    /// Only reached from paths `watch_loop()` dispatches when `self` is Native.
     #[inline]
     pub(crate) fn native_mut(&mut self) -> &mut Platform {
         match self {

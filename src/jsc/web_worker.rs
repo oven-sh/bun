@@ -1325,9 +1325,10 @@ impl WebWorker {
         }
 
         // The finalizers JSC just ran close the sockets that `close_all_socket_groups` leaves
-        // alone (a Listener owns its listen socket and closes it in `finalize`). `us_socket_close`
-        // only queues onto `loop->data.closed_head`; step 5's `on_thread_exit()` frees the loop
-        // out from under whatever is still queued, so drain it now, while the loop is alive.
+        // alone (a `Listener` / `NewServer` owns its listen socket and closes it in `finalize`).
+        // `us_socket_close` only queues onto `loop->data.closed_head`; step 5's `on_thread_exit()`
+        // frees the loop out from under whatever is still queued, so drain it now, while the loop
+        // is alive.
         if !vm_ptr.is_null() {
             // SAFETY: `vm_ptr` was unpublished under `vm_lock`; sole owner, `destroy()` is below.
             unsafe { (*vm_ptr).uws_loop_mut().drain_closed_sockets() };

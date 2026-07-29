@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isLinux } from "harness";
 import { join } from "path";
 
 // Worker VM startup/teardown is much slower under debug and/or ASAN; these
@@ -173,6 +173,85 @@ test.skipIf(!isASAN)(
 
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect({ stdout, stderr, exitCode }).toEqual({ stdout: "ok\n", stderr: "", exitCode: 0 });
+  },
+  timeout,
+);
+
+// Regression: NewServer::finalize() never closed its listen socket. Worker
+// shutdown's close_all_socket_groups() deliberately skips listen sockets on
+// the assumption the owner closes them in finalize (Bun.listen's Listener
+// does), so a Bun.serve() server in a terminated worker leaked its listen fd
+// and the port stayed bound for the life of the process. All three exit modes
+// below converge on WebWorker::shutdown() -> lastChanceToFinalize().
+test.each([
+  ["parent terminate()", "", true],
+  ["worker process.exit()", " setImmediate(() => process.exit(0));", false],
+  ["worker unref() + drain", " s.unref();", false],
+])(
+  "Bun.serve() in a worker releases the listening port on %s",
+  async (_name, tail, parentTerminates) => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const serveWorker =
+          "const s = Bun.serve({ port: 0, fetch: () => new Response('ok') });" +
+          "postMessage(s.port);" + ${JSON.stringify(tail)};
+
+        async function cycle() {
+          const w = new Worker("data:text/javascript," + encodeURIComponent(serveWorker));
+          const port = await new Promise(r => w.addEventListener("message", e => r(e.data), { once: true }));
+          const closed = new Promise(r => w.addEventListener("close", r, { once: true }));
+          ${parentTerminates ? "w.terminate();" : ""}
+          await closed;
+          // Worker has fully exited; its listen socket must be gone. Rebind
+          // fails with EADDRINUSE if the old listener is still alive.
+          const s = Bun.serve({ port, reusePort: false, fetch: () => new Response("x") });
+          s.stop(true);
+          return port;
+        }
+
+        // One warm-up cycle so lazily-created per-process fds (DNS, event loop
+        // timers, module cache) do not count against the leak delta below.
+        await cycle();
+
+        const fdCount = ${isLinux}
+          ? () => require("fs").readdirSync("/proc/self/fd").length
+          : () => 0;
+        const before = fdCount();
+
+        const ports = [];
+        for (let i = 0; i < 5; i++) ports.push(await cycle());
+
+        // The 'close' event fires from WebWorker__dispatchExit (shutdown step
+        // 4); the detached worker thread then still runs step 5 (vm.destroy +
+        // on_thread_exit) which closes the per-worker epoll/eventfd. Poll the
+        // fd count with a bounded deadline so the last cycle's worker has
+        // reached that point instead of relying on gc() as an implicit sleep.
+        let fdDelta = fdCount() - before;
+        for (let i = 0; fdDelta > 1 && i < ${slow ? 500 : 100}; i++) {
+          await Bun.sleep(10);
+          fdDelta = fdCount() - before;
+        }
+        console.log(JSON.stringify({ ports: ports.length, fdDelta }));
+      `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    const { ports, fdDelta } = JSON.parse(stdout.trim());
+    // Every cycle rebound its port: EADDRINUSE would have thrown before here.
+    expect(ports).toBe(5);
+    if (isLinux) {
+      // Unfixed: one listen fd per cycle (>= 5).
+      expect(fdDelta).toBeLessThanOrEqual(1);
+    }
+    expect(exitCode).toBe(0);
   },
   timeout,
 );

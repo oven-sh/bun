@@ -2751,6 +2751,27 @@ where
         // hold a ref), so hand ownership back to the raw teardown path.
         let this = bun_core::heap::release(self);
         this.js_value.finalize();
+        // `listener` set here ⇒ VM teardown (`lastChanceToFinalize`): the
+        // Strong `js_value` root kept the wrapper alive through every ordinary
+        // GC. `close_all_socket_groups` skipped listen sockets for us to close
+        // (matching `Listener::finalize`); not doing so leaks the fd/port past
+        // worker exit.
+        if let Some(listener) = this.listener.take() {
+            if let server_config::Address::Unix(path) = &this.config.address {
+                let bytes = path.as_bytes();
+                if !bytes.is_empty() && bytes[0] != 0 {
+                    let _ = bun_sys::unlink(path.as_zstr());
+                }
+            }
+            bun_opaque::opaque_deref_mut(listener).close();
+        }
+        // Not `h3_listener.close()`: `us_quic_listen_socket_close` runs
+        // `lsquic_conn_abort` + `us_quic_process` → JS `on_abort` for any live
+        // QUIC conn (which `close_all_socket_groups` never drained), and JS is
+        // unsound inside `lastChanceToFinalize`.
+        if Self::HAS_H3 {
+            this.h3_listener = None;
+        }
         this.deinit_if_we_can();
     }
 

@@ -1611,6 +1611,99 @@ pub mod bv2_impl {
             self.client_transpiler = Some(NonNull::from(&mut *ct).into());
             Ok(ct)
         }
+    }
+
+    /// Applies the target 'bun' builtin externalization to an `ImportRecord` whose
+    /// specifier names a hardcoded alias or `bun:` module: rewrites the path and
+    /// sets `IS_EXTERNAL_WITHOUT_SIDE_EFFECTS`. Returns whether the record matched.
+    fn mark_bun_builtin_external(
+        import_record: &mut ImportRecord,
+        rewrite_jest_for_tests: bool,
+    ) -> bool {
+        if let Some(replacement) = bun_resolve_builtins::HardcodedModule::Alias::get(
+            import_record.path.text,
+            Target::Bun,
+            bun_resolve_builtins::HardcodedModule::Cfg {
+                rewrite_jest_for_tests,
+            },
+        ) {
+            // When bundling node builtins, remove the "node:" prefix.
+            // This supports special use cases where the bundle is put
+            // into a non-node module resolver that doesn't support
+            // node's prefix. https://github.com/oven-sh/bun/issues/18545
+            import_record.path.text = if replacement.node_builtin && !replacement.node_only_prefix {
+                &replacement.path.as_bytes()[5..]
+            } else {
+                replacement.path.as_bytes()
+            };
+            import_record.tag = replacement.tag;
+            import_record.source_index = Index::INVALID;
+            import_record
+                .flags
+                .insert(bun_ast::ImportRecordFlags::IS_EXTERNAL_WITHOUT_SIDE_EFFECTS);
+            return true;
+        }
+
+        if import_record.path.text.starts_with(b"bun:") {
+            let new_text: &'static [u8] = &import_record.path.text[b"bun:".len()..];
+            import_record.path = bun_paths::fs::Path::init(new_text);
+            import_record.path.namespace = b"bun";
+            import_record.source_index = Index::INVALID;
+            import_record
+                .flags
+                .insert(bun_ast::ImportRecordFlags::IS_EXTERNAL_WITHOUT_SIDE_EFFECTS);
+            return true;
+        }
+
+        false
+    }
+
+    impl<'a> BundleV2<'a> {
+        fn fail_disallowed_external(
+            &mut self,
+            source: &bun_ast::Source,
+            bake_graph: bake::Graph,
+            range: bun_ast::Range,
+            kind: ImportKind,
+            specifier: &[u8],
+        ) {
+            // SAFETY: log lives in DevServer/transpiler, disjoint from the caller-owned `source`.
+            let log: &mut bun_ast::Log = unsafe {
+                bun_ptr::detach_lifetime_mut(
+                    self.log_for_resolution_failures(source.path.text, bake_graph),
+                )
+            };
+            bun_ast::Log::add_resolve_error_with_text_dupe(
+                log,
+                Some(source),
+                range,
+                format_args!(
+                    "Cannot {} \"{}\" because 'external' is set to false",
+                    bstr::BStr::new(kind.error_label()),
+                    bstr::BStr::new(specifier),
+                ),
+                specifier,
+                kind,
+            );
+        }
+
+        fn fail_disallowed_external_from_graph(
+            &mut self,
+            importer_source_index: u32,
+            bake_graph: bake::Graph,
+            range: bun_ast::Range,
+            kind: ImportKind,
+            specifier: &[u8],
+        ) {
+            // SAFETY: `input_files` is not mutated across the `fail_disallowed_external`
+            // call; detach so `&mut self` reborrow below type-checks.
+            let source: &bun_ast::Source = unsafe {
+                &*std::ptr::from_ref(
+                    &self.graph.input_files.items_source()[importer_source_index as usize],
+                )
+            };
+            self.fail_disallowed_external(source, bake_graph, range, kind, specifier);
+        }
 
         /// By calling this function, it implies that the returned log *will* be
         /// written to. For DevServer, this allocates a per-file log for the sources
@@ -2197,6 +2290,28 @@ pub mod bv2_impl {
                 }
             }
 
+            let disallow_external = self.transpiler.options.disallow_external
+                && import_record.importer_source_index != Index::RUNTIME.get();
+            if target.is_bun() && !import_record.kind.is_from_css() {
+                let rewrite_jest_for_tests = self.transpiler.options.rewrite_jest_for_tests;
+                let record: &mut ImportRecord = &mut self.graph.ast.items_import_records_mut()
+                    [import_record.importer_source_index as usize]
+                    .as_mut_slice()[import_record.import_record_index as usize];
+                if mark_bun_builtin_external(record, rewrite_jest_for_tests) {
+                    if disallow_external {
+                        record.path.is_disabled = true;
+                        self.fail_disallowed_external_from_graph(
+                            import_record.importer_source_index,
+                            target.bake_graph(),
+                            import_record.range,
+                            import_record.kind,
+                            &import_record.specifier,
+                        );
+                    }
+                    return;
+                }
+            }
+
             let mut had_busted_dir_cache = false;
             let resolve_result: _resolver::Result = loop {
                 // SAFETY: see `transpiler` note above.
@@ -2358,6 +2473,19 @@ pub mod bv2_impl {
             };
 
             if resolve_result.flags.is_external() {
+                if disallow_external && !import_record.kind.is_from_css() {
+                    let record: &mut ImportRecord = &mut self.graph.ast.items_import_records_mut()
+                        [import_record.importer_source_index as usize]
+                        .as_mut_slice()[import_record.import_record_index as usize];
+                    record.path.is_disabled = true;
+                    self.fail_disallowed_external_from_graph(
+                        import_record.importer_source_index,
+                        target.bake_graph(),
+                        import_record.range,
+                        import_record.kind,
+                        &import_record.specifier,
+                    );
+                }
                 return;
             }
 
@@ -4554,6 +4682,27 @@ pub mod bv2_impl {
                 }
                 jsc_api::JSBundler::ResolveValue::Success(result) => {
                     let mut out_source_index: Option<Index> = None;
+                    if result.external
+                        && this.transpiler.options.disallow_external
+                        && resolve.import_record.kind != ImportKind::EntryPointBuild
+                        && resolve.import_record.importer_source_index != Index::RUNTIME.get()
+                        && !resolve.import_record.kind.is_from_css()
+                    {
+                        let record: &mut ImportRecord =
+                            &mut this.graph.ast.items_import_records_mut()
+                                [resolve.import_record.importer_source_index as usize]
+                                .as_mut_slice()
+                                [resolve.import_record.import_record_index as usize];
+                        record.path.is_disabled = true;
+                        this.fail_disallowed_external_from_graph(
+                            resolve.import_record.importer_source_index,
+                            resolve.import_record.original_target.bake_graph(),
+                            resolve.import_record.range,
+                            resolve.import_record.kind,
+                            &resolve.import_record.specifier,
+                        );
+                        return;
+                    }
                     if !result.external {
                         // SAFETY: `result.{path,namespace}` are `Box<[u8]>` whose heap
                         // allocations are moved into `this.free_list` below (in the
@@ -5780,6 +5929,8 @@ pub mod bv2_impl {
             let source = ctx.source;
             let loader = ctx.loader;
             let source_dir = source.path.source_dir();
+            let disallow_external =
+                self.transpiler.options.disallow_external && !source.index.is_runtime();
             let mut estimated_resolve_queue_count: usize = 0;
             for import_record in ctx.import_records.iter_mut() {
                 if import_record
@@ -5870,48 +6021,20 @@ pub mod bv2_impl {
                     continue;
                 }
 
-                if ctx.target.is_bun() {
-                    if let Some(replacement) = bun_resolve_builtins::HardcodedModule::Alias::get(
-                        import_record.path.text,
-                        Target::Bun,
-                        bun_resolve_builtins::HardcodedModule::Cfg {
-                            rewrite_jest_for_tests: self.transpiler.options.rewrite_jest_for_tests,
-                        },
-                    ) {
-                        // When bundling node builtins, remove the "node:" prefix.
-                        // This supports special use cases where the bundle is put
-                        // into a non-node module resolver that doesn't support
-                        // node's prefix. https://github.com/oven-sh/bun/issues/18545
-                        import_record.path.text =
-                            if replacement.node_builtin && !replacement.node_only_prefix {
-                                &replacement.path.as_bytes()[5..]
-                            } else {
-                                replacement.path.as_bytes()
-                            };
-                        import_record.tag = replacement.tag;
-                        import_record.source_index = Index::INVALID;
-                        import_record
-                            .flags
-                            .insert(bun_ast::ImportRecordFlags::IS_EXTERNAL_WITHOUT_SIDE_EFFECTS);
-                        continue;
-                    }
-
-                    if import_record.path.text.starts_with(b"bun:") {
-                        let new_text: &'static [u8] = &import_record.path.text[b"bun:".len()..];
-                        import_record.path = bun_paths::fs::Path::init(new_text);
-                        import_record.path.namespace = b"bun";
-                        import_record.source_index = Index::INVALID;
-                        import_record
-                            .flags
-                            .insert(bun_ast::ImportRecordFlags::IS_EXTERNAL_WITHOUT_SIDE_EFFECTS);
-
-                        // don't link bun
-                        continue;
-                    }
-                }
-
                 // By default, we treat .sqlite files as external.
                 if import_record.loader == Some(Loader::Sqlite) {
+                    if disallow_external {
+                        self.fail_disallowed_external(
+                            source,
+                            ctx.target.bake_graph(),
+                            import_record.range,
+                            import_record.kind,
+                            import_record.original_path,
+                        );
+                        last_error = Some(Error::ModuleNotFound);
+                        import_record.path.is_disabled = true;
+                        continue;
+                    }
                     import_record
                         .flags
                         .insert(bun_ast::ImportRecordFlags::IS_EXTERNAL_WITHOUT_SIDE_EFFECTS);
@@ -5931,6 +6054,27 @@ pub mod bv2_impl {
                     i as u32,
                     ctx.target,
                 ) {
+                    continue;
+                }
+
+                if ctx.target.is_bun()
+                    && !import_record.kind.is_from_css()
+                    && mark_bun_builtin_external(
+                        import_record,
+                        self.transpiler.options.rewrite_jest_for_tests,
+                    )
+                {
+                    if disallow_external {
+                        self.fail_disallowed_external(
+                            source,
+                            ctx.target.bake_graph(),
+                            import_record.range,
+                            import_record.kind,
+                            import_record.original_path,
+                        );
+                        last_error = Some(Error::ModuleNotFound);
+                        import_record.path.is_disabled = true;
+                    }
                     continue;
                 }
 
@@ -6250,6 +6394,18 @@ pub mod bv2_impl {
                 };
 
                 if resolve_result.flags.is_external() {
+                    if disallow_external && !import_record.kind.is_from_css() {
+                        self.fail_disallowed_external(
+                            source,
+                            ctx.target.bake_graph(),
+                            import_record.range,
+                            import_record.kind,
+                            import_record.original_path,
+                        );
+                        last_error = Some(Error::ModuleNotFound);
+                        import_record.path.is_disabled = true;
+                        continue;
+                    }
                     if resolve_result.flags.is_external_and_rewrite_import_path()
                         && !strings::eql_long(
                             resolve_result.path_pair.primary.text,

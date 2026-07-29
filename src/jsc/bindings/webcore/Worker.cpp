@@ -603,17 +603,11 @@ bool Worker::dispatchExit(int32_t exitCode)
         m_parentContextId,
         [this] { this->deref(); },
         [exitCode, protectedThis = Ref { *this }](ScriptExecutionContext& context) {
-            // Flush the worker→parent inbox before 'close'. Node delivers every
-            // parentPort.postMessage() that ran before the worker exited, then
-            // fires 'exit'; without this, a drainToParent that hit its yield
-            // budget while the worker was still posting has re-posted itself
-            // BEHIND this close task, and once m_state == Closed dispatchEvent()
-            // drops the rest on the floor. The worker thread has already torn
-            // down its VM (this task is posted from shutdown() step 4), so
-            // m_toParent cannot grow and one drainToParent pass empties it
-            // (limit = max(queue.size(), 1000) ≥ queue.size()). terminate()
-            // still drops pending messages: dispatchEvent() is gated on
-            // m_terminateRequested, so the dispatches below are no-ops.
+            // Node delivers every parentPort message before 'exit'. The worker VM
+            // is already torn down (this task is shutdown() step 4), so m_toParent
+            // can't grow and one drain pass empties it; a drain that rescheduled
+            // behind this task would otherwise dispatch into Closed and drop.
+            // terminate() still discards: dispatchEvent gates on m_terminateRequested.
             protectedThis->drainToParent(context);
 
             // Closing → dispatch 'close' → Closed. The split lets 'close'/'exit'

@@ -405,6 +405,12 @@ impl FsIoRing {
         offset: i64,
         req: *mut uv::fs_t,
     ) -> bool {
+        // `BuildIoRingReadFile` takes an absolute `UINT64` offset with no
+        // current-position sentinel; position < 0 (node's `null`) must fall
+        // back to the uv threadpool which honours the handle's file pointer.
+        if offset < 0 {
+            return false;
+        }
         let user_data = req as usize;
         if self.inflight >= self.sq_size {
             self.flush();
@@ -418,7 +424,7 @@ impl FsIoRing {
             Kind: IORING_REF_RAW,
             Buffer: buf.cast(),
         };
-        let off = if offset < 0 { u64::MAX } else { offset as u64 };
+        let off = offset as u64;
         // SAFETY: `ring` is live; handle/buffer are caller-provided and remain
         // valid until completion (guaranteed by the JS-side buffer protection).
         let hr = unsafe {
@@ -445,7 +451,7 @@ impl FsIoRing {
         let Some(build_write) = self.api.build_write else {
             return false;
         };
-        if !self.write_supported {
+        if !self.write_supported || offset < 0 {
             return false;
         }
         if self.inflight >= self.sq_size {
@@ -460,7 +466,7 @@ impl FsIoRing {
             Kind: IORING_REF_RAW,
             Buffer: buf as *mut c_void,
         };
-        let off = if offset < 0 { u64::MAX } else { offset as u64 };
+        let off = offset as u64;
         // SAFETY: see `submit_read`.
         let hr = unsafe {
             build_write(

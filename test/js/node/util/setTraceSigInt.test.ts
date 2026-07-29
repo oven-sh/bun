@@ -5,9 +5,7 @@ import util from "node:util";
 const KEYBOARD_INTERRUPT = "KEYBOARD_INTERRUPT: Script execution was interrupted by `SIGINT`";
 
 test("setTraceSigInt validates its argument", () => {
-  expect(() => util.setTraceSigInt("yes" as any)).toThrow(
-    expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }),
-  );
+  expect(() => util.setTraceSigInt("yes" as any)).toThrow(expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }));
 });
 
 async function readUntil(reader: ReadableStreamDefaultReader<Uint8Array>, needle: string, previous = "") {

@@ -3396,7 +3396,7 @@ fn edit_root_package_json(
                                         b'*' => b"",
                                         _ => unreachable!(),
                                     };
-                                    // on-disk package.json wins; bun.lock's cached version may be stale (#20477)
+                                    // on-disk version is authoritative; the lockfile's cached version may be stale
                                     let tmp = if let Some(version) =
                                         read_workspace_version_from_package_json(
                                             lockfile,

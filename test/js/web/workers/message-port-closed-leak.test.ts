@@ -68,7 +68,7 @@ describe("MessagePortChannel closed port", () => {
             const ITERATIONS = 1000;
             const PAYLOAD_SIZE = 128 * 1024;
 
-            function round() {
+            async function round() {
               for (let i = 0; i < ITERATIONS; i++) {
                 const carrier = new MessageChannel();
                 const inner = new MessageChannel();
@@ -84,7 +84,7 @@ describe("MessagePortChannel closed port", () => {
                   carrier.port2.close();
                   carrier.port1.postMessage(null, [inner.port1]);
                 } else {
-                  // Drop path: MessagePortPipe::close() swaps out the inbox; the dropped
+                  // Drop path: the deferred close task swaps out the inbox; the dropped
                   // message's TransferredMessagePort is harvested into the close worklist.
                   carrier.port1.postMessage(null, [inner.port1]);
                   carrier.port2.close();
@@ -93,15 +93,18 @@ describe("MessagePortChannel closed port", () => {
                 inner.port2.close();
                 carrier.port1.close();
               }
+              // close() defers the inbox drop to a task (node compat); let those
+              // run so the freed memory is reusable before RSS is measured.
+              await Bun.sleep(0);
               Bun.gc(true);
               Bun.gc(true);
             }
 
             // Warm up to establish allocator high-water mark.
-            round();
+            await round();
 
             const rssBefore = process.memoryUsage().rss;
-            round();
+            await round();
             const rssAfter = process.memoryUsage().rss;
             const deltaMB = (rssAfter - rssBefore) / 1024 / 1024;
 

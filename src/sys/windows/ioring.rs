@@ -171,7 +171,7 @@ fn detect() -> Option<IoRingApi> {
     }
 
     // SAFETY: KernelBase is always loaded in every Windows process.
-    let kb = unsafe { kernel32::GetModuleHandleW(wchz(b"KernelBase.dll").as_ptr()) };
+    let kb = unsafe { kernel32::GetModuleHandleW(WCH_KERNELBASE.as_ptr()) };
     if kb.is_null() {
         return None;
     }
@@ -241,16 +241,10 @@ fn detect() -> Option<IoRingApi> {
     }
 }
 
-/// Static ASCII→UTF-16 with trailing NUL for `GetModuleHandleW`.
-const fn wchz<const N: usize>(s: &[u8; N]) -> [u16; N] {
-    let mut out = [0u16; N];
-    let mut i = 0;
-    while i + 1 < N {
-        out[i] = s[i] as u16;
-        i += 1;
-    }
-    out
-}
+static WCH_KERNELBASE: &[u16] = &[
+    b'K' as u16, b'e' as u16, b'r' as u16, b'n' as u16, b'e' as u16, b'l' as u16, b'B' as u16,
+    b'a' as u16, b's' as u16, b'e' as u16, b'.' as u16, b'd' as u16, b'l' as u16, b'l' as u16, 0,
+];
 
 // ──────────────────────────── per-thread ring ────────────────────────────
 
@@ -371,6 +365,12 @@ impl FsIoRing {
             cq,
             write_supported
         );
+        if std::env::var_os("BUN_DEBUG_IORING_TRACE").is_some() {
+            eprintln!(
+                "[ioring] ring created: v{} sq={} cq={} write={}",
+                version, sq, cq, write_supported
+            );
+        }
         Some(this)
     }
 

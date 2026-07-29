@@ -1000,11 +1000,8 @@ const ServerHandlers: SocketHandler<NetSocket> = {
     const data = this.data;
     if (!data) return;
 
-    // `data` is still the listening Server when onconnection threw before
-    // kAttach reassigned it to a JS Socket. Calling .destroy below would
-    // throw and the follow-on close would null the Server's _handle. Detach
-    // so close is a no-op and surface the original exception the way Node's
-    // accept callback does (uncaughtException).
+    // `data` is the listening Server (no .destroy) when onconnection threw
+    // before kAttach attached a JS Socket; detach and surface the real error.
     if (typeof data.destroy !== "function") {
       this.data = null;
       reportError(error);

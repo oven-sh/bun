@@ -1,7 +1,9 @@
-import { beforeAll, describe, expect, it, setDefaultTimeout, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, it, setDefaultTimeout, test } from "bun:test";
 import { isWindows } from "harness";
+import * as dgram from "node:dgram";
 import * as dns from "node:dns";
 import * as dns_promises from "node:dns/promises";
+import { once } from "node:events";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as util from "node:util";
@@ -425,8 +427,7 @@ describe("test invalid arguments", () => {
       try {
         expect(err).not.toBeNull();
         expect(results).toBeUndefined();
-        // Assert we convert our error codes to Node.js error codes
-        expect(err.code).not.toStartWith("DNS_");
+        expect(err.code).toBe("EBADNAME");
         done();
       } catch (e) {
         done(e);
@@ -659,5 +660,89 @@ describe("dns.lookupService with a numeric-string port", () => {
     expect(() => dns_promises.lookupService("127.0.0.1", "nope")).toThrow(
       expect.objectContaining({ code: "ERR_SOCKET_BAD_PORT" }),
     );
+  });
+});
+
+describe("resolve4 against a loopback responder", () => {
+  // A DNS response whose answer RR owner name exceeds 255 octets is a malformed
+  // reply from the resolver. Node.js reports EFORMERR; Bun previously reported
+  // ENOTFOUND, which is indistinguishable from "domain does not exist" for
+  // callers that branch on err.code.
+  //
+  // Node.js calls ares_query_dnsrec() and re-serializes the parsed record for
+  // ares_parse_a_reply(). The re-serialize fails for an over-length name and
+  // ares_parse_a_reply then sees an empty buffer, which it reports as EFORMERR.
+  // The legacy ares_query() path differs: its internal converter overwrites the
+  // post-response status with the re-serialize failure (ARES_EBADNAME), which
+  // Bun then relabeled to ENOTFOUND.
+  const u16 = n => {
+    const b = Buffer.alloc(2);
+    b.writeUInt16BE(n & 0xffff);
+    return b;
+  };
+  const u32 = n => {
+    const b = Buffer.alloc(4);
+    b.writeUInt32BE(n >>> 0);
+    return b;
+  };
+
+  let udp;
+  let resolver;
+  let build;
+
+  beforeAll(async () => {
+    udp = dgram.createSocket("udp4");
+    udp.on("message", (msg, rinfo) => {
+      let off = 12;
+      while (off < msg.length && msg[off] !== 0) off += msg[off] + 1;
+      const question = msg.slice(12, off + 5);
+      udp.send(build(msg, question), rinfo.port, rinfo.address);
+    });
+    udp.bind(0, "127.0.0.1");
+    await once(udp, "listening");
+    resolver = new dns_promises.Resolver({ timeout: 3000, tries: 1 });
+    resolver.setServers([`127.0.0.1:${udp.address().port}`]);
+  });
+
+  afterAll(() => {
+    udp?.close();
+    // Drop the describe-scope reference so the native Resolver channel can be
+    // finalized before LeakSanitizer runs its end-of-process check.
+    resolver = undefined;
+    Bun.gc(true);
+  });
+
+  it("reports EFORMERR for an answer RR owner name over 255 octets", async () => {
+    // 6 x 63-byte labels + terminator = 385 wire octets, above the RFC 1035 255-octet limit.
+    const label = Buffer.concat([Buffer.from([63]), Buffer.alloc(63, 0x61)]);
+    const owner = Buffer.concat([label, label, label, label, label, label, Buffer.from([0])]);
+    build = (msg, question) => {
+      const rr = Buffer.concat([owner, u16(1), u16(1), u32(60), u16(4), Buffer.from([127, 0, 0, 7])]);
+      const hdr = Buffer.concat([msg.slice(0, 2), u16(0x8180), u16(1), u16(1), u16(0), u16(0)]);
+      return Buffer.concat([hdr, question, rr]);
+    };
+    const err = await resolver.resolve4("longname.test").then(
+      ok => ({ ok }),
+      e => e,
+    );
+    expect(err.code).toBe("EFORMERR");
+    expect(err.syscall).toBe("queryA");
+    expect(err.hostname).toBe("longname.test");
+  });
+
+  it("still resolves a well-formed A record from the same path", async () => {
+    build = (msg, question) => {
+      const rr = Buffer.concat([
+        Buffer.from([0xc0, 0x0c]),
+        u16(1),
+        u16(1),
+        u32(60),
+        u16(4),
+        Buffer.from([127, 0, 0, 7]),
+      ]);
+      const hdr = Buffer.concat([msg.slice(0, 2), u16(0x8180), u16(1), u16(1), u16(0), u16(0)]);
+      return Buffer.concat([hdr, question, rr]);
+    };
+    expect(await resolver.resolve4("good.test")).toEqual(["127.0.0.7"]);
   });
 });

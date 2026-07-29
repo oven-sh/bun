@@ -473,9 +473,13 @@ impl hostent_with_ttls {
             this.on_hostent_with_ttls(Error::get(status), timeouts, None);
             return;
         }
-        // SAFETY: c-ares passes the reply buffer it owns; valid for `buffer_length` bytes.
-        let buffer = unsafe {
-            core::slice::from_raw_parts(buffer, usize::try_from(buffer_length).unwrap_or(0))
+        let buffer = if buffer.is_null() {
+            &[][..]
+        } else {
+            // SAFETY: c-ares passes the reply buffer it owns; valid for `buffer_length` bytes.
+            unsafe {
+                core::slice::from_raw_parts(buffer, usize::try_from(buffer_length).unwrap_or(0))
+            }
         };
         match (T::PARSE)(buffer) {
             Ok(result) => this.on_hostent_with_ttls(None, timeouts, Some(result)),
@@ -688,6 +692,11 @@ bun_opaque::opaque_ffi! {
     /// mutates the channel on every dispatch/process call).
     pub struct Channel;
 }
+
+bun_opaque::opaque_ffi! {
+    /// Opaque parsed DNS record handed to `ares_callback_dnsrec`.
+    pub struct ares_dns_record_t;
+}
 // Load-bearing: `ares_cancel`/`ares_process_fd` are declared `safe fn(&mut Channel)`
 // on the basis that re-entrant callbacks re-deriving `&mut Channel` from a raw
 // pointer cannot conflict because `Channel` claims zero bytes. If this type ever
@@ -856,13 +865,14 @@ impl Channel {
 
         // SAFETY: c-ares FFI; name_ptr is a NUL-terminated stack buffer; ctx outlives the channel.
         unsafe {
-            ares_query(
+            ares_query_dnsrec(
                 self,
                 name_ptr,
                 NSClass::ns_c_in,
                 T::NS_TYPE,
-                Some(T::raw_callback),
+                Some(dnsrec_to_buf_callback::<T>),
                 std::ptr::from_mut::<T>(ctx).cast::<c_void>(),
+                ptr::null_mut(),
             );
         }
     }
@@ -979,6 +989,8 @@ fn library_init() {
 }
 
 pub type ares_callback = Option<unsafe extern "C" fn(*mut c_void, c_int, c_int, *mut u8, c_int)>;
+pub type ares_callback_dnsrec =
+    Option<unsafe extern "C" fn(*mut c_void, c_int, usize, *const ares_dns_record_t)>;
 pub type ares_host_callback =
     Option<unsafe extern "C" fn(*mut c_void, c_int, c_int, *mut struct_hostent)>;
 pub type ares_nameinfo_callback =
@@ -1094,6 +1106,20 @@ unsafe extern "C" {
         callback: ares_callback,
         arg: *mut c_void,
     );
+    pub fn ares_query_dnsrec(
+        channel: *mut Channel,
+        name: *const c_char,
+        dnsclass: NSClass,
+        type_: NSType,
+        callback: ares_callback_dnsrec,
+        arg: *mut c_void,
+        qid: *mut c_ushort,
+    ) -> c_int;
+    pub fn ares_dns_write(
+        dnsrec: *const ares_dns_record_t,
+        buf: *mut *mut u8,
+        buf_len: *mut usize,
+    ) -> c_int;
     pub fn ares_search(
         channel: *mut Channel,
         name: *const c_char,
@@ -1236,6 +1262,40 @@ pub trait AresReply: Sized {
 /// Receiver for a parsed `R` reply (replaces the per-type `*Handler` traits).
 pub trait ReplyHandler<R: AresReply>: Sized {
     fn on_reply(&mut self, status: Option<Error>, timeouts: i32, results: *mut R);
+}
+
+/// `ares_callback_dnsrec` thunk for [`Channel::resolve`] that re-serializes
+/// the reply and forwards to `T::raw_callback`.
+unsafe extern "C" fn dnsrec_to_buf_callback<T: ResolveHandler>(
+    ctx: *mut c_void,
+    status: c_int,
+    timeouts: usize,
+    dnsrec: *const ares_dns_record_t,
+) {
+    let mut abuf: *mut u8 = ptr::null_mut();
+    let mut alen: usize = 0;
+    if !dnsrec.is_null() {
+        // Matches Node's QueryWrap::Callback: a write failure is left to the
+        // parse thunk to classify instead of overriding `status`.
+        // SAFETY: c-ares FFI; `dnsrec` is the live record owned by the caller for
+        // the duration of this callback; out-params are valid stack pointers.
+        let _ = unsafe { ares_dns_write(dnsrec, &raw mut abuf, &raw mut alen) };
+    }
+    // SAFETY: `ctx` is the `*mut T` registered with `ares_query_dnsrec`;
+    // `abuf` is null or a c-ares-allocated buffer of `alen` bytes.
+    unsafe {
+        T::raw_callback(
+            ctx,
+            status,
+            c_int::try_from(timeouts).unwrap_or(c_int::MAX),
+            abuf,
+            c_int::try_from(alen).unwrap_or(c_int::MAX),
+        );
+    }
+    if !abuf.is_null() {
+        // SAFETY: `abuf` was allocated by `ares_dns_write`.
+        unsafe { ares_free_string(abuf.cast::<c_void>()) };
+    }
 }
 
 /// Generic `ares_callback` thunk. Monomorphized per `(R, T)` to a concrete
@@ -1474,10 +1534,14 @@ impl struct_any_reply {
             this.on_any(Error::get(status), timeouts, None);
             return;
         }
-        // SAFETY: c-ares guarantees `buffer` is non-null and readable for
-        // `buffer_length` bytes on a successful callback.
-        let buffer = unsafe {
-            core::slice::from_raw_parts(buffer, usize::try_from(buffer_length).unwrap_or(0))
+        let buffer = if buffer.is_null() {
+            &[][..]
+        } else {
+            // SAFETY: c-ares guarantees `buffer` is readable for `buffer_length`
+            // bytes on a successful callback.
+            unsafe {
+                core::slice::from_raw_parts(buffer, usize::try_from(buffer_length).unwrap_or(0))
+            }
         };
         match Self::parse(buffer) {
             Ok(reply) => this.on_any(None, timeouts, Some(reply)),
@@ -1924,7 +1988,7 @@ impl Error {
             Error::ENOTIMP => "DNS_ENOTIMP",
             Error::EREFUSED => "DNS_EREFUSED",
             Error::EBADQUERY => "DNS_EBADQUERY",
-            Error::EBADNAME => "DNS_ENOTFOUND",
+            Error::EBADNAME => "DNS_EBADNAME",
             Error::EBADFAMILY => "DNS_EBADFAMILY",
             Error::EBADRESP => "DNS_EBADRESP",
             Error::ECONNREFUSED => "DNS_ECONNREFUSED",

@@ -16,11 +16,8 @@ thread_local! {
     static PARSER_BUFFER: UnsafeCell<[u8; 1024]> = const { UnsafeCell::new([0u8; 1024]) };
 }
 
-/// Output capacity of [`join_abs_string`] / [`join`]. Must hold any valid host
-/// path: on Windows `MAX_PATH_BYTES` is 98 302, so a hard-coded 4096 rejects
-/// paths in `[4096, MAX_PATH_BYTES)` with a slice-index panic. On POSIX
-/// `MAX_PATH_BYTES <= 4096`; keep 4096 there so callers that pre-date per-part
-/// length validation see no behaviour change.
+/// Output capacity of [`join_abs_string`] / [`join`]: at least `MAX_PATH_BYTES`
+/// (98 302 on Windows) so any valid host path fits; floored at 4096 on POSIX.
 pub(crate) const TL_JOIN_BUF_LEN: usize = if MAX_PATH_BYTES > 4096 {
     MAX_PATH_BYTES
 } else {
@@ -2490,9 +2487,7 @@ mod tests {
 
     #[test]
     fn join_abs_string_accepts_path_buffer_length() {
-        // A part just under MAX_PATH_BYTES must round-trip through the
-        // thread-local output buffer without panicking. This is the Windows
-        // `[4096, MAX_PATH_BYTES)` window: valid host path, previously aborted.
+        // A valid host path just under MAX_PATH_BYTES round-trips through the TL buffer.
         let long = vec![b'a'; MAX_PATH_BYTES - 8];
         let cwd: &[u8] = if cfg!(windows) { b"C:\\d" } else { b"/d" };
         let abs: &[u8] = if cfg!(windows) { b"C:\\" } else { b"/" };

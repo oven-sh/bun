@@ -644,6 +644,12 @@ impl From<JsError> for bun_event_loop::ErasedJsError {
     }
 }
 
+/// Bare `Error` that snapshots the current JS stack for later transplant.
+#[inline]
+pub fn capture_caller_stack_error(global: &JSGlobalObject) -> JSValue {
+    Bun__captureCallerStackError(global)
+}
+
 /// Converts `bun.JSError` → `std.Io.Writer.Error` for Console formatting paths.
 /// `Display` impls return `fmt::Error`; the JS exception, if any, remains on the VM.
 #[inline]
@@ -1170,6 +1176,7 @@ unsafe extern "C" {
         global: &JSGlobalObject,
         code: u8,
     ) -> JSValue;
+    safe fn Bun__captureCallerStackError(global: &JSGlobalObject) -> JSValue;
     safe fn ZigString__toValueGC(this: &bun_core::ZigString, global: &JSGlobalObject) -> JSValue;
     // ZigString__toExternalValue: use the generated `cpp::` re-export (canonical signature).
     safe fn ZigString__toJSONObject(this: &bun_core::ZigString, global: &JSGlobalObject)

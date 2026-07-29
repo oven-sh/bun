@@ -440,8 +440,8 @@ describe("corrupt compressed responses", () => {
     return payload;
   };
   const bodies: Record<string, [Buffer, string]> = {
-    gzip: [corrupt(gzipSync), "ZlibError"],
-    deflate: [corrupt(deflateSync), "ZlibError"],
+    gzip: [corrupt(gzipSync), "Z_DATA_ERROR"],
+    deflate: [corrupt(deflateSync), "Z_DATA_ERROR"],
     br: [corrupt(brotliCompressSync), "BrotliDecompressionError"],
     zstd: [corrupt(zstdCompressSync), "ZstdDecompressionError"],
   };
@@ -532,7 +532,7 @@ describe("corrupt compressed responses", () => {
         e => e,
       );
       expect(bodyErr).toBeInstanceOf(Error);
-      expect((bodyErr as { code?: string }).code).toBe("InvalidHTTPResponse");
+      expect((bodyErr as { code?: string }).code).toBe("HPE_INVALID_CHUNK_SIZE");
     } finally {
       srv.close();
     }
@@ -543,8 +543,8 @@ describe("corrupt compressed responses", () => {
     const plain = Buffer.alloc(FULL, "A");
     const truncate = (b: Buffer) => b.subarray(0, b.length >> 1);
     const codecs: Record<string, [Buffer, string]> = {
-      gzip: [truncate(gzipSync(plain)), "ZlibError"],
-      deflate: [truncate(deflateSync(plain)), "ZlibError"],
+      gzip: [truncate(gzipSync(plain)), "Z_DATA_ERROR"],
+      deflate: [truncate(deflateSync(plain)), "Z_DATA_ERROR"],
       br: [truncate(brotliCompressSync(plain)), "BrotliDecompressionError"],
       zstd: [truncate(zstdCompressSync(plain)), "ZstdDecompressionError"],
     };

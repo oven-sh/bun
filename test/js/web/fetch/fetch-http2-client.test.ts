@@ -852,10 +852,10 @@ describe.concurrent("fetch() over HTTP/2 (BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CL
         async url => {
           await using proc = await spawnFetch(`
             try { await fetch("${url}", { tls: { rejectUnauthorized: false } }); console.log("ok"); }
-            catch (e) { console.log("rejected", String(e).includes("Refused")); }
+            catch (e) { console.log("rejected", e?.code); }
           `);
           const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-          expect(stdout.trim()).toBe("rejected true");
+          expect(stdout.trim()).toBe("rejected HTTP2RefusedStream");
           expect(exitCode).toBe(0);
           // initial + 5 retries
           expect(attempts).toBe(6);
@@ -1154,10 +1154,10 @@ describe.concurrent("fetch() over HTTP/2 (BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CL
               const r = await fetch("${url}", { tls: { rejectUnauthorized: false } });
               await r.text();
               console.log("ok");
-            } catch (e) { console.log("rejected", String(e).includes("ContentLength")); }
+            } catch (e) { console.log("rejected", e?.code); }
           `);
           const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-          expect(stdout.trim()).toBe("rejected true");
+          expect(stdout.trim()).toBe("rejected UND_ERR_RES_CONTENT_LENGTH_MISMATCH");
           expect(exitCode).toBe(0);
         },
       );
@@ -1176,10 +1176,10 @@ describe.concurrent("fetch() over HTTP/2 (BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CL
             try {
               const r = await fetch("${url}", { tls: { rejectUnauthorized: false } });
               console.log("ok", r.status, (await r.text()).length);
-            } catch (e) { console.log("rejected", String(e).includes("ContentLength")); }
+            } catch (e) { console.log("rejected", e?.code); }
           `);
           const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-          expect(stdout.trim()).toBe("rejected true");
+          expect(stdout.trim()).toBe("rejected UND_ERR_RES_CONTENT_LENGTH_MISMATCH");
           expect(exitCode).toBe(0);
         },
       );
@@ -1945,7 +1945,7 @@ describe.concurrent("fetch() over HTTP/2 (BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CL
   // client's first SSL_read that returns app data is also the call that
   // completes the handshake. ssl_on_data must fire on_handshake there or the
   // socket never gets re-tagged for h2 and the frame bytes hit the HTTP/1.1
-  // parser as Malformed_HTTP_Response. Neither node:tls nor Bun.listen exposes
+  // parser as HPE_INVALID_CONSTANT. Neither node:tls nor Bun.listen exposes
   // the 0.5-RTT write window, so this hits a real Cloudflare-fronted origin —
   // tolerate network blips by only failing on the specific regression code.
   test("GET https://registry.npmjs.org over protocol: http2", async () => {
@@ -1959,9 +1959,9 @@ describe.concurrent("fetch() over HTTP/2 (BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CL
     expect(stderr).toBe("");
     expect(exitCode).toBe(0);
     const out = stdout.trim();
-    // The bug under test surfaces as Malformed_HTTP_Response — DNS/connect
+    // The bug under test surfaces as HPE_INVALID_CONSTANT — DNS/connect
     // failures or 5xx are environmental, not regressions.
-    expect(out).not.toContain("Malformed_HTTP_Response");
+    expect(out).not.toContain("HPE_INVALID_CONSTANT");
     if (!out.startsWith("status")) {
       console.warn(`skipping live h2 assertion: ${out}`);
       return;

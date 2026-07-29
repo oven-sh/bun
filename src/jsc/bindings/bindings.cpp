@@ -2353,6 +2353,81 @@ JSC::EncodedJSValue JSGlobalObject__createOutOfMemoryError(JSC::JSGlobalObject* 
     return JSValue::encode(exception);
 }
 
+// Bare Error that snapshots the caller's stack for later transplant.
+extern "C" JSC::EncodedJSValue Bun__captureCallerStackError(JSC::JSGlobalObject* globalObject)
+{
+    return JSC::JSValue::encode(JSC::createError(globalObject, "fetch"_s));
+}
+
+// TypeError('fetch failed'|'terminated') with `.cause`, `.code` mirrored from
+// the cause, and `.stack` transplanted from `stackSourceValue` (the call-site
+// Error captured when fetch() was invoked).
+extern "C" JSC::EncodedJSValue Bun__createFetchFailedTypeError(
+    JSC::JSGlobalObject* globalObject,
+    JSC::EncodedJSValue causeValue,
+    JSC::EncodedJSValue stackSourceValue,
+    bool terminated)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    auto clientData = WebCore::clientData(vm);
+
+    JSC::JSObject* result = JSC::createTypeError(globalObject,
+        terminated ? "terminated"_s : "fetch failed"_s);
+
+    JSC::JSValue cause = JSC::JSValue::decode(causeValue);
+    if (cause && !cause.isEmpty() && !cause.isUndefined()) {
+        result->putDirect(vm, vm.propertyNames->cause, cause, JSC::PropertyAttribute::DontEnum | 0);
+
+        if (auto* causeObj = cause.getObject()) {
+            JSC::JSValue code = causeObj->getDirect(vm, clientData->builtinNames().codePublicName());
+            if (code && !code.isUndefined())
+                result->putDirect(vm, clientData->builtinNames().codePublicName(), code, 0);
+        }
+    }
+
+    // Transplant only for the pre-response rejection; body-stage errors get
+    // their stack from the body promise's async-attach path.
+    auto* destInstance = dynamicDowncast<JSC::ErrorInstance>(result);
+    JSC::JSValue stackSrc = JSC::JSValue::decode(stackSourceValue);
+    if (auto* srcInstance = dynamicDowncast<JSC::ErrorInstance>(stackSrc); srcInstance && destInstance && !terminated) {
+        if (auto* srcTrace = srcInstance->stackTrace(); srcTrace && !srcTrace->isEmpty()) {
+            // Copy: source may be shared across a cloned Response body.
+            WTF::Vector<JSC::StackFrame> frames;
+            frames.appendVector(*srcTrace);
+            destInstance->setStackFrames(vm, WTF::move(frames));
+        } else {
+            // GC may have materialized the source (finalizeUnconditionally
+            // clears the frame vector when a captured callee is collected):
+            // fall back to its `.stack` string with the header rewritten.
+            // Swallow a throwing prepareStackTrace; the header-only fallback
+            // below still runs.
+            srcInstance->materializeErrorInfoIfNeeded(vm);
+            if (scope.exception()) [[unlikely]] {
+                scope.clearExceptionExceptTermination();
+            } else if (JSC::JSValue srcStack = srcInstance->getDirect(vm, vm.propertyNames->stack); srcStack && srcStack.isString()) {
+                auto str = asString(srcStack)->value(globalObject);
+                if (scope.exception()) [[unlikely]] {
+                    scope.clearExceptionExceptTermination();
+                } else {
+                    size_t nl = str->find('\n');
+                    auto frames = nl == WTF::notFound ? WTF::emptyString() : str->substring(nl);
+                    result->putDirect(vm, vm.propertyNames->stack, JSC::jsString(vm, makeString("TypeError: fetch failed"_s, frames)), JSC::PropertyAttribute::DontEnum | 0);
+                }
+            }
+        }
+    }
+
+    if (destInstance && !terminated) {
+        auto* destTrace = destInstance->stackTrace();
+        if ((!destTrace || destTrace->isEmpty()) && !result->getDirect(vm, vm.propertyNames->stack)) {
+            result->putDirect(vm, vm.propertyNames->stack, JSC::jsString(vm, String("TypeError: fetch failed"_s)), JSC::PropertyAttribute::DontEnum | 0);
+        }
+    }
+
+    return JSC::JSValue::encode(result);
+}
+
 JSC::EncodedJSValue SystemError__toErrorInstance(const SystemError* arg0, JSC::JSGlobalObject* globalObject)
 {
     SystemError err = *arg0;

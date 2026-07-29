@@ -91,7 +91,7 @@ it("should be able to abruptly stop the server many times", async () => {
         await fetch(url, { keepalive: true }).then(res => res.text());
         expect.unreachable();
       } catch (e) {
-        expect(["ECONNRESET", "ConnectionRefused"]).toContain(e.code);
+        expect(["ECONNRESET", "ECONNREFUSED"]).toContain(e.code);
       }
     }
 
@@ -2481,7 +2481,12 @@ it.concurrent("should not instanciate error instances in each request", async ()
       await Promise.all(batch);
     }
   }
-  expect(heapStats().objectTypeCounts.Error || 0).toBeLessThanOrEqual(startErrorCount);
+  // fetch() allocates one Error per call for the rejection stack. GC reclaims
+  // most; conservative stack scanning and the last batch's live Responses can
+  // pin a handful, so allow one batch of headroom (well below the 1000 a
+  // per-request server-side leak would produce, which is what this guards).
+  Bun.gc(true);
+  expect(heapStats().objectTypeCounts.Error || 0).toBeLessThanOrEqual(startErrorCount + batchSize);
 });
 
 it("should be able to abort a sendfile response and streams", async () => {
@@ -2676,7 +2681,7 @@ it.concurrent(
       if (success) {
         expect(res.text()).resolves.toBe("Hello, World!");
       } else {
-        expect(res.text()).rejects.toThrow(/The socket connection was closed unexpectedly./);
+        expect(res.text()).rejects.toMatchObject({ name: "TypeError", code: "ECONNRESET" });
       }
     }
     await Promise.all([testTimeout("/ok", true), testTimeout("/timeout", false)]);

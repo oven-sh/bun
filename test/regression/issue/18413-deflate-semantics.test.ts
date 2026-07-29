@@ -196,7 +196,7 @@ test("truncated zlib-wrapped deflate should fail", async () => {
     await response.text();
     expect.unreachable("Should have thrown decompression error");
   } catch (err: any) {
-    expect(err.code).toMatch(/ZlibError|ShortRead/);
+    expect(err.code).toMatch(/Z_DATA_ERROR|ShortRead/);
   }
 });
 
@@ -222,7 +222,7 @@ test("invalid deflate data should fail", async () => {
     await response.text();
     expect.unreachable("Should have thrown decompression error");
   } catch (err: any) {
-    expect(err.code).toMatch(/ZlibError/);
+    expect(err.code).toMatch(/Z_DATA_ERROR/);
   }
 });
 

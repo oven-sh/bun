@@ -2097,6 +2097,10 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         } else {
             jsc::strong::Optional::create(check_server_identity, global_this)
         },
+        caller_stack_source: jsc::strong::Optional::create(
+            jsc::capture_caller_stack_error(global_this),
+            global_this,
+        ),
         unix_socket_path: core::mem::replace(&mut unix_socket_path, ZigStringSlice::empty()),
     };
 

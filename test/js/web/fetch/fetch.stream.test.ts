@@ -1264,17 +1264,17 @@ describe.concurrent("fetch() with streaming", () => {
             expect(buffer.toString("utf8")).toBe("unreachable");
           } catch (err) {
             if (compression === "br") {
-              expect((err as Error).name).toBe("Error");
+              expect((err as Error).name).toBe("TypeError");
               expect((err as Error).code).toBe("BrotliDecompressionError");
             } else if (compression === "deflate-libdeflate") {
-              expect((err as Error).name).toBe("Error");
-              expect((err as Error).code).toBe("ZlibError");
+              expect((err as Error).name).toBe("TypeError");
+              expect((err as Error).code).toBe("Z_DATA_ERROR");
             } else if (compression === "zstd") {
-              expect((err as Error).name).toBe("Error");
+              expect((err as Error).name).toBe("TypeError");
               expect((err as Error).code).toBe("ZstdDecompressionError");
             } else {
-              expect((err as Error).name).toBe("Error");
-              expect((err as Error).code).toBe("ZlibError");
+              expect((err as Error).name).toBe("TypeError");
+              expect((err as Error).code).toBe("Z_DATA_ERROR");
             }
           }
         }
@@ -1365,7 +1365,7 @@ describe.concurrent("fetch() with streaming", () => {
         gcTick(false);
         expect(buffer.toString("utf8")).toBe("unreachable");
       } catch (err) {
-        expect((err as Error).name).toBe("Error");
+        expect((err as Error).name).toBe("TypeError");
         expect((err as Error).code).toBe("ECONNRESET");
       }
     });

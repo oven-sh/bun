@@ -105,7 +105,7 @@ test("truncated gzip stream should throw error", async () => {
     await response.text();
     expect.unreachable("Should have thrown decompression error");
   } catch (err: any) {
-    expect(err.code || err.name || err.message).toMatch(/ZlibError|ShortRead/);
+    expect(err.code || err.name || err.message).toMatch(/Z_DATA_ERROR|ShortRead/);
   }
 });
 
@@ -144,7 +144,7 @@ test("truncated deflate stream should throw error", async () => {
     await response.text();
     expect.unreachable("Should have thrown decompression error");
   } catch (err: any) {
-    expect(err.code || err.name || err.message).toMatch(/ZlibError|ShortRead/);
+    expect(err.code || err.name || err.message).toMatch(/Z_DATA_ERROR|ShortRead/);
   }
 });
 
@@ -253,7 +253,7 @@ test("invalid gzip data should fail", async () => {
     await response.text();
     expect.unreachable("Should have thrown decompression error");
   } catch (err: any) {
-    expect(err.code || err.name || err.message).toMatch(/ZlibError/);
+    expect(err.code || err.name || err.message).toMatch(/Z_DATA_ERROR/);
   }
 });
 

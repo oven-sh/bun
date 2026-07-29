@@ -569,7 +569,25 @@ pub enum ValueError {
     /// error" to TypeError, so use this for fetch-layer rejections that
     /// callers feature-detect via `err instanceof TypeError`.
     TypeError(BunString),
+    /// `TypeError('fetch failed'|'terminated')` with `.cause`. `stack_source`
+    /// holds the `fetch()` call-site frames for transplant onto the TypeError.
+    FetchFailed {
+        cause: SystemError,
+        terminated: bool,
+        stack_source: jsc::strong::Optional,
+    },
     JSValue(jsc::strong::Optional),
+}
+
+// SAFETY: `JSGlobalObject` is opaque `UnsafeCell`, so `&JSGlobalObject` is
+// ABI-identical to a non-null `JSGlobalObject*`; `JSValue` is `#[repr(C)]`.
+unsafe extern "C" {
+    safe fn Bun__createFetchFailedTypeError(
+        global: &JSGlobalObject,
+        cause: JSValue,
+        stack_source: JSValue,
+        terminated: bool,
+    ) -> JSValue;
 }
 
 impl ValueError {
@@ -581,6 +599,7 @@ impl ValueError {
             ValueError::SystemError(_system_error) => {}
             ValueError::Message(message) => message.deref(),
             ValueError::TypeError(message) => message.deref(),
+            ValueError::FetchFailed { stack_source, .. } => stack_source.deinit(),
             ValueError::JSValue(v) => v.deinit(),
             ValueError::AbortReason(_) => {}
         }
@@ -614,6 +633,16 @@ impl ValueError {
             }
             ValueError::Message(message) => message.to_error_instance(global_object),
             ValueError::TypeError(message) => message.to_type_error_instance(global_object),
+            ValueError::FetchFailed {
+                cause,
+                terminated,
+                stack_source,
+            } => {
+                let cause_js = core::mem::take(cause).to_error_instance(global_object);
+                cause_js.ensure_still_alive();
+                let stack_src = stack_source.swap();
+                Bun__createFetchFailedTypeError(global_object, cause_js, stack_src, *terminated)
+            }
             // do an early return in this case we don't need to create a new Strong
             ValueError::JSValue(js_value) => {
                 return js_value.get().unwrap_or(JSValue::UNDEFINED);
@@ -630,6 +659,18 @@ impl ValueError {
             ValueError::SystemError(e) => ValueError::SystemError(e.clone()),
             ValueError::Message(m) => ValueError::Message(m.clone()),
             ValueError::TypeError(m) => ValueError::TypeError(m.clone()),
+            ValueError::FetchFailed {
+                cause,
+                terminated,
+                stack_source,
+            } => ValueError::FetchFailed {
+                cause: cause.clone(),
+                terminated: *terminated,
+                stack_source: match stack_source.get() {
+                    Some(v) => jsc::strong::Optional::create(v, global_object),
+                    None => jsc::strong::Optional::empty(),
+                },
+            },
             ValueError::JSValue(js_ref) => {
                 if let Some(js_value) = js_ref.get() {
                     return ValueError::JSValue(jsc::strong::Optional::create(

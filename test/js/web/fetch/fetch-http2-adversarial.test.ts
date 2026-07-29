@@ -320,7 +320,7 @@ describe.concurrent("fetch() HTTP/2 adversarial", () => {
         const result = await fetch(url, h2)
           .then(r => r.text(), errcode)
           .catch(errcode);
-        expect(String(result)).toMatch(/HTTP2|ProtocolError|ConnectionClosed/);
+        expect(String(result)).toMatch(/HTTP2|ProtocolError|ECONNRESET/);
       },
     );
   });

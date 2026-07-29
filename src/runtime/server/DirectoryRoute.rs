@@ -159,7 +159,6 @@ impl DirectoryRoute {
                 write_any_status(resp, 301);
                 resp.write_mark();
                 resp.write_header(b"location", &loc.0[..n]);
-                resp.write_header_int(b"content-length", 0);
                 resp.end(b"", resp.should_close_connection());
                 return;
             }

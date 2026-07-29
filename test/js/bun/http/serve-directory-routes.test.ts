@@ -14,7 +14,9 @@ describe("Bun.serve() directory routes", () => {
 
   // fetch() normalizes `..` client-side, so the traversal/adversarial tests
   // send raw request bytes over a socket.
-  async function raw(path: string): Promise<{ status: number; headers: Record<string, string>; body: string }> {
+  async function raw(
+    path: string,
+  ): Promise<{ status: number; headers: Record<string, string>; head: string; body: string }> {
     const { promise, resolve } = Promise.withResolvers<string>();
     let buf = "";
     const sock = await Bun.connect({
@@ -36,13 +38,14 @@ describe("Bun.serve() directory routes", () => {
     const full = await promise;
     const status = parseInt(full.slice(9, 12), 10);
     const headEnd = full.indexOf("\r\n\r\n");
+    const head = full.slice(0, headEnd);
     const headers: Record<string, string> = {};
-    for (const line of full.slice(full.indexOf("\r\n") + 2, headEnd).split("\r\n")) {
+    for (const line of head.slice(head.indexOf("\r\n") + 2).split("\r\n")) {
       const i = line.indexOf(":");
       if (i > 0) headers[line.slice(0, i).toLowerCase()] = line.slice(i + 1).trim();
     }
     const body = full.slice(headEnd + 4);
-    return { status, headers, body };
+    return { status, headers, head, body };
   }
 
   it("serves files from a directory at /*", async () => {
@@ -582,6 +585,8 @@ describe("Bun.serve() directory routes", () => {
     expect(noSlash.body).not.toContain("SECRET");
     expect(noSlash.status).toBe(301);
     expect(noSlash.headers.location).toBe("/static/admin/");
+    // Exactly one Content-Length header (strict intermediaries reject duplicates).
+    expect(noSlash.head.toLowerCase().match(/^content-length:/gm)?.length).toBe(1);
     expect((await fetch(`${server.url}static/admin`)).status).toBe(401);
 
     // A trailing slash on a regular file routes past the exact `/static/secret.pdf`

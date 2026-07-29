@@ -227,6 +227,17 @@ impl FakeTimers {
     }
 }
 
+fn drain_to_real_timers(global: &JSGlobalObject) {
+    // SAFETY: per-thread `timer::All`; the borrow ends before `release_heap_pin`,
+    // which reaches `All::remove` and forms its own `&mut All`.
+    let pinned = unsafe { (*timer_all()).fake_timers.deactivate(global) };
+    let vm = global.bun_vm_ptr();
+    for p in pinned {
+        TimerObjectInternals::release_heap_pin(p, vm);
+    }
+    set_fake_timer_marker(global, false);
+}
+
 /// Restore real timers and the real clock at a test-file boundary.
 pub(crate) fn reset_between_files(global: &JSGlobalObject) {
     let all = timer_all();
@@ -235,14 +246,7 @@ pub(crate) fn reset_between_files(global: &JSGlobalObject) {
     }
     // SAFETY: `timer_all()` is the live per-thread `All`; single JS thread.
     if unsafe { (*all).fake_timers.is_active() } {
-        // SAFETY: as above; the borrow ends before `release_heap_pin`, which
-        // reaches `All::remove` and forms its own `&mut All`.
-        let pinned = unsafe { (*all).fake_timers.deactivate(global) };
-        let vm = global.bun_vm_ptr();
-        for p in pinned {
-            TimerObjectInternals::release_heap_pin(p, vm);
-        }
-        set_fake_timer_marker(global, false);
+        drain_to_real_timers(global);
     } else {
         // `setSystemTime()` writes `overridenDateNow` without activating fake timers.
         CURRENT_TIME.clear(global);
@@ -325,16 +329,7 @@ fn use_fake_timers(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVal
 
 #[bun_jsc::host_fn]
 fn use_real_timers(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    // SAFETY: per-thread `timer::All`; the borrow ends before `release_heap_pin`.
-    let pinned = unsafe { (*timer_all()).fake_timers.deactivate(global) };
-    let vm = global.bun_vm_ptr();
-    for p in pinned {
-        TimerObjectInternals::release_heap_pin(p, vm);
-    }
-
-    // Remove the setTimeout.clock marker when switching back to real timers.
-    set_fake_timer_marker(global, false);
-
+    drain_to_real_timers(global);
     Ok(frame.this())
 }
 

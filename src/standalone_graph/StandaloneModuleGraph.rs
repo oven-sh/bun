@@ -731,7 +731,7 @@ impl StandaloneModuleGraph {
             let mut rest: &[u8] = key;
             while let Some(sep) = strings::last_index_of_char(rest, b'/') {
                 rest = &rest[..sep as usize];
-                if rest.is_empty() || dirs.contains_key(rest) {
+                if rest.len() < BASE_PUBLIC_PATH.len() || dirs.contains_key(rest) {
                     break;
                 }
                 let _ = dirs.put(rest, ());

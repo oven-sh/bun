@@ -742,13 +742,13 @@ it("throws a validation error when passing invalid routes", () => {
 
 describe("per-method route value validation", () => {
   it.each([
-    ["null", null],
-    ["number", 42],
-    ["string", "str"],
-    ["plain object", {}],
-    ["array", [1, 2]],
-    ["true", true],
-  ])("throws when a method value is %s", (_, value) => {
+    ["null", null, "null"],
+    ["number", 42, "number"],
+    ["string", "str", "string"],
+    ["plain object", {}, "object"],
+    ["array", [1, 2], "object"],
+    ["true", true, "boolean"],
+  ])("throws when a method value is %s", (_, value, received) => {
     expect(() => {
       Bun.serve({
         port: 0,
@@ -756,7 +756,9 @@ describe("per-method route value validation", () => {
         routes: { "/x": { GET: value, POST: () => new Response("ok") } },
         fetch: () => new Response("fallback"),
       });
-    }).toThrow('Invalid value for route "/x" method GET');
+    }).toThrow(
+      `Invalid value for route "/x" method GET: received ${received}. Expected a function, Response, HTMLBundle, BunFile, or false.`,
+    );
   });
 
   it.each([
@@ -780,6 +782,20 @@ describe("per-method route value validation", () => {
       get: { status: 299, body: "fallback" },
       post: { status: 200, body: "post-ok" },
     });
+  });
+
+  it.each([
+    ["undefined", undefined],
+    ["false", false],
+  ])("accepts a lone { GET: %s } without falling through to the top-level validator", async (_, value) => {
+    await using server = Bun.serve({
+      port: 0,
+      // @ts-expect-error - testing runtime acceptance
+      routes: { "/x": { GET: value } },
+      fetch: () => new Response("fallback", { status: 299 }),
+    });
+    const res = await fetch(new URL("/x", server.url));
+    expect({ status: res.status, body: await res.text() }).toEqual({ status: 299, body: "fallback" });
   });
 
   it("still accepts a Response as a method value", async () => {

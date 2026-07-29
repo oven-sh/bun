@@ -4153,16 +4153,7 @@ impl VirtualMachine {
             }
         };
 
-        // Node rejects `pkg?v=1`; letting it through here would evaluate a
-        // fresh package instance per distinct query. tsconfig `paths` aliases
-        // resolve with the flag unset; subpaths (`pkg/sub?q`) are left to the
-        // exports/imports map, where Node's answer depends on wildcard shape.
-        if !query_string.is_empty()
-            && bun_paths::is_package_path(normalized_specifier)
-            && bun_resolver::package_json::Package::parse_name(normalized_specifier)
-                .is_some_and(|n| n.len() == normalized_specifier.len())
-            && result.flags.is_from_node_modules()
-        {
+        if result.rejects_bare_root_query(normalized_specifier, query_string) {
             return Err(crate::CrateError::ModuleNotFound);
         }
 

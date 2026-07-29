@@ -186,6 +186,10 @@ fn make_client<'a>(
         proxy_settings: None,
         proxy_headers,
         proxy_authorization: None,
+        proxy_sspi: None,
+        proxy_sspi_header: None,
+        proxy_sspi_legs: 0,
+        proxy_sspi_drain_remaining: 0,
         proxy_tunnel: None,
         h2: None,
         h3: None,
@@ -751,6 +755,8 @@ impl<'a> AsyncHTTP<'a> {
                     drop(core::mem::take(&mut client.prev_redirect));
                     drop(core::mem::take(&mut client.compressed_request_body));
                     drop(core::mem::take(&mut client.proxy_authorization));
+                    drop(core::mem::take(&mut client.proxy_sspi));
+                    drop(core::mem::take(&mut client.proxy_sspi_header));
                     if let Some(tunnel) = client.proxy_tunnel.take() {
                         // SAFETY: tunnel was created by ProxyTunnel::start
                         // (heap::alloc) and is refcounted; detach the socket

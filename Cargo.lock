@@ -822,6 +822,7 @@ dependencies = [
  "bun_threading",
  "bun_url",
  "bun_uws",
+ "bun_windows_sys",
  "bun_wyhash",
  "bun_zlib",
  "bun_zstd",

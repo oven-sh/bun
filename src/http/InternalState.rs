@@ -476,6 +476,8 @@ pub enum HTTPStage {
     ProxyHandshake,
     ProxyHeaders,
     ProxyBody,
+    /// Discarding a 407 body before the same-socket SSPI retry is written.
+    ProxyAuthDrain,
 }
 
 #[repr(u8)]

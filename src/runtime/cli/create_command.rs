@@ -44,8 +44,14 @@ static BUN_PATH_BUF: bun_core::RacyCell<PathBuffer> = bun_core::RacyCell::new(Pa
 // Elements must be `&OSPathSlice` because `OSPathSlice` itself is unsized.
 #[cfg(not(windows))]
 const SKIP_DIRS: &[&OSPathSlice] = &[b"node_modules", b".git"];
+// `.git` as a file is a worktree/submodule pointer; never scan or copy it.
 #[cfg(not(windows))]
-const SKIP_FILES: &[&OSPathSlice] = &[b"package-lock.json", b"yarn.lock", b"pnpm-lock.yaml"];
+const SKIP_FILES: &[&OSPathSlice] = &[
+    b"package-lock.json",
+    b"yarn.lock",
+    b"pnpm-lock.yaml",
+    b".git",
+];
 #[cfg(windows)]
 const SKIP_DIRS: &[&OSPathSlice] = &[bun_core::w!("node_modules"), bun_core::w!(".git")];
 #[cfg(windows)]
@@ -53,6 +59,7 @@ const SKIP_FILES: &[&OSPathSlice] = &[
     bun_core::w!("package-lock.json"),
     bun_core::w!("yarn.lock"),
     bun_core::w!("pnpm-lock.yaml"),
+    bun_core::w!(".git"),
 ];
 
 const NEVER_CONFLICT: &[&[u8]] = &[b"README.md", b"gitignore", b".gitignore", b".git/"];
@@ -950,26 +957,14 @@ impl CreateCommand {
         {
             let parent_dir = bun_sys::Dir::open(destination)?;
             if template_has_gitignore {
-                #[cfg(windows)]
-                {
-                    let _ = parent_dir.copy_file(
-                        b"gitignore",
-                        &parent_dir,
-                        b".gitignore",
-                        Default::default(),
-                    );
-                }
-                #[cfg(not(windows))]
-                {
-                    let _ = bun_sys::linkat(
-                        parent_dir.fd(),
-                        bun_core::zstr!("gitignore"),
-                        parent_dir.fd(),
-                        bun_core::zstr!(".gitignore"),
-                    );
-                }
-
-                let _ = bun_sys::unlinkat(&parent_dir, bun_core::zstr!("gitignore"));
+                // rename replaces an existing .gitignore; linkat would fail
+                // with EEXIST and silently drop the template's version.
+                let _ = bun_sys::renameat(
+                    parent_dir.fd(),
+                    bun_core::zstr!("gitignore"),
+                    parent_dir.fd(),
+                    bun_core::zstr!(".gitignore"),
+                );
             }
             if template_has_npmignore {
                 let _ = bun_sys::unlinkat(&parent_dir, bun_core::zstr!(".npmignore"));

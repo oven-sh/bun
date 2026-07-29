@@ -208,6 +208,50 @@ test.concurrent("bun create from local template does not run git when .git is a 
   expect({ exitCode, stderr }).toEqual({ exitCode: 0, stderr: expect.not.stringContaining("error") });
 });
 
+test.concurrent("bun create skips a template's .git worktree pointer file even with --force", async () => {
+  using dir = tempDir("create-local-tpl-git-file", {
+    "templates/mytpl/.git": "gitdir: /somewhere/else/.git/worktrees/mytpl",
+    "templates/mytpl/tpl.txt": "template file",
+    "proj/.git/KEEP.txt": "keep",
+    "proj/keep.txt": "keep me",
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "create", "mytpl", ".", "--force"],
+    env: createEnv(join(String(dir), "templates")),
+    cwd: join(String(dir), "proj"),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited, proc.stdout.text()]);
+
+  // the destination repo must not be replaced by the template's pointer file
+  expect(await Bun.file(join(String(dir), "proj", ".git", "KEEP.txt")).text()).toBe("keep");
+  expect(await Bun.file(join(String(dir), "proj", "keep.txt")).text()).toBe("keep me");
+  expect(await Bun.file(join(String(dir), "proj", "tpl.txt")).text()).toBe("template file");
+  expect({ exitCode, stderr }).toEqual({ exitCode: 0, stderr: expect.not.stringContaining("error") });
+});
+
+test.concurrent("bun create from local template replaces an existing .gitignore via the gitignore convention", async () => {
+  using dir = tempDir("create-local-gitignore-rename", {
+    "templates/mytpl/gitignore": "node_modules",
+    "proj/.gitignore": "dist",
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "create", "mytpl", "."],
+    env: createEnv(join(String(dir), "templates")),
+    cwd: join(String(dir), "proj"),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited, proc.stdout.text()]);
+
+  expect(await Bun.file(join(String(dir), "proj", ".gitignore")).text()).toBe("node_modules");
+  expect(await Bun.file(join(String(dir), "proj", "gitignore")).exists()).toBe(false);
+  expect({ exitCode, stderr }).toEqual({ exitCode: 0, stderr: expect.not.stringContaining("error") });
+});
+
 test.concurrent("bun create from local template flags a directory named README.md as a conflict", async () => {
   using dir = tempDir("create-local-readme-dir", {
     "templates/mytpl/README.md": "template readme",

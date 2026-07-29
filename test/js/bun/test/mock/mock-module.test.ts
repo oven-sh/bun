@@ -394,4 +394,47 @@ describe("top-level jest.mock/mock.module is hoisted above static imports", () =
     expect(stderr).not.toContain("fail)");
     expect(exitCode).toBe(0);
   });
+
+  test.concurrent("imports used only in type position are still elided", async () => {
+    const { stderr, exitCode } = await runFixture({
+      "fixture.test.ts": `
+        import { expect, test, jest } from "bun:test";
+        import { OnlyAType } from "this-package-does-not-exist";
+        import { callSend } from "./consumer";
+        jest.mock("./lib", () => ({
+          Client: class { send() { return "mocked"; } },
+        }));
+        test("t", () => {
+          const x: OnlyAType = 1 as any;
+          expect(callSend()).toBe("mocked");
+        });
+      `,
+    });
+    expect(stderr).toContain("1 pass");
+    expect(stderr).not.toContain("Cannot find");
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("named/default imports stay live for re-mocks inside tests", async () => {
+    const { stderr, exitCode } = await runFixture({
+      "fixture.test.ts": `
+        import { expect, test, mock } from "bun:test";
+        import { value } from "./lib";
+        import libDefault from "./lib";
+        mock.module("./lib", () => ({ value: "v1", default: "d1" }));
+        test("a", () => {
+          expect(value).toBe("v1");
+          expect(libDefault).toBe("d1");
+        });
+        test("b", () => {
+          mock.module("./lib", () => ({ value: "v2", default: "d2" }));
+          expect(value).toBe("v2");
+          expect(libDefault).toBe("d2");
+        });
+      `,
+    });
+    expect(stderr).toContain("2 pass");
+    expect(stderr).not.toContain("fail)");
+    expect(exitCode).toBe(0);
+  });
 });

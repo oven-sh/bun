@@ -83,6 +83,40 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
         }
     }
 
+    /// Mirrors the TypeScript cull in ImportScanner: every binding is used only
+    /// in type position, so leave the `S::Import` in place for ImportScanner to
+    /// elide instead of forcing a runtime `await import()` on a module that may
+    /// only exist in the type system.
+    fn import_is_ts_type_only(&self, st: &S::Import) -> bool {
+        if !TS
+            || !self.options.features.trim_unused_imports
+            || self.options.preserve_unused_imports_ts
+        {
+            return false;
+        }
+        let mut found = false;
+        let used = |r: Ref| self.ts_use_counts[r.inner_index() as usize] != 0;
+        if let Some(d) = st.default_name {
+            found = true;
+            if used(d.ref_) {
+                return false;
+            }
+        }
+        if !st.star_name_loc.is_empty() {
+            found = true;
+            if used(st.namespace_ref) {
+                return false;
+            }
+        }
+        for item in st.items.iter() {
+            found = true;
+            if used(item.name.ref_) {
+                return false;
+            }
+        }
+        found
+    }
+
     pub fn hoist_jest_module_mocks<'bump>(
         &mut self,
         parts: &mut BumpVec<'bump, js_ast::Part>,
@@ -124,10 +158,13 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
                         &self.import_records.items()[import_data.import_record_index as usize];
                     let path: &'static [u8] = record.path.text;
                     // Keep bun:test static so `jest`/`vi`/`mock` bind before the
-                    // hoisted calls, and keep `with { type: ... }` / `import defer`
-                    // since `await import()` drops those and mock.module() cannot
-                    // affect asset or deferred modules anyway.
-                    if is_bun_test_path(path) || record.loader.is_some() || import_data.phase_defer
+                    // hoisted calls; keep `with { type: ... }` / `import defer`
+                    // since lowering would drop the attribute/phase; keep
+                    // TS-type-only imports so ImportScanner can elide them.
+                    if is_bun_test_path(path)
+                        || record.loader.is_some()
+                        || import_data.phase_defer
+                        || self.import_is_ts_type_only(&import_data)
                     {
                         kept.push(*stmt);
                         continue;
@@ -163,6 +200,10 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
         });
     }
 
+    /// Emit `var ns = await import("m")` and point every named/default binding
+    /// at `ns.<alias>` via `namespace_alias` so existing `E::ImportIdentifier`
+    /// uses print as property reads on the (mutable) namespace object. This
+    /// keeps `mock.module()` re-mocks live for the test file's own imports.
     fn lower_import_to_await_import<'bump>(
         &mut self,
         st: &S::Import,
@@ -197,63 +238,7 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
         let has_default = st.default_name.is_some();
         let has_named = !items.is_empty();
 
-        if has_star {
-            // import [d,] * as ns from "m" -> var ns = await import("m")[; var d = ns.default]
-            let ns_ref = st.namespace_ref;
-            let mut decls = G::DeclList::init_capacity(1);
-            decls.append_assume_capacity(G::Decl {
-                binding: Binding::alloc(bump, B::Identifier { r#ref: ns_ref }, loc),
-                value: Some(await_expr),
-            });
-            out.push(self.s(
-                S::Local {
-                    kind: js_ast::LocalKind::KVar,
-                    decls,
-                    ..Default::default()
-                },
-                loc,
-            ));
-            if let Some(default) = st.default_name {
-                let ns_id = self.new_expr(
-                    E::Identifier {
-                        ref_: ns_ref,
-                        ..Default::default()
-                    },
-                    loc,
-                );
-                let dot = self.new_expr(
-                    E::Dot {
-                        target: ns_id,
-                        name: b"default".into(),
-                        name_loc: loc,
-                        ..Default::default()
-                    },
-                    loc,
-                );
-                let mut decls = G::DeclList::init_capacity(1);
-                decls.append_assume_capacity(G::Decl {
-                    binding: Binding::alloc(
-                        bump,
-                        B::Identifier {
-                            r#ref: default.ref_,
-                        },
-                        default.loc,
-                    ),
-                    value: Some(dot),
-                });
-                out.push(self.s(
-                    S::Local {
-                        kind: js_ast::LocalKind::KVar,
-                        decls,
-                        ..Default::default()
-                    },
-                    loc,
-                ));
-            }
-            return;
-        }
-
-        if !has_default && !has_named {
+        if !has_star && !has_default && !has_named {
             // import "m" -> await import("m")
             out.push(self.s(
                 S::SExpr {
@@ -265,63 +250,10 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
             return;
         }
 
-        // import d, { a, b as c } from "m" -> var { default: d, a, b: c } = await import("m")
-        let mut props =
-            BumpVec::<B::Property>::with_capacity_in(items.len() + usize::from(has_default), bump);
-        if let Some(default) = st.default_name {
-            let key = self.new_expr(
-                E::String {
-                    data: b"default".into(),
-                    ..Default::default()
-                },
-                loc,
-            );
-            let value = self.b(
-                B::Identifier {
-                    r#ref: default.ref_,
-                },
-                default.loc,
-            );
-            props.push(B::Property {
-                flags: bun_ast::flags::PROPERTY_NONE,
-                key,
-                value,
-                default_value: None,
-            });
-        }
-        for item in items.iter() {
-            let alias: &'static [u8] = item.alias.slice();
-            let key = self.new_expr(
-                E::String {
-                    data: alias.into(),
-                    ..Default::default()
-                },
-                loc,
-            );
-            let value = self.b(
-                B::Identifier {
-                    r#ref: item.name.ref_,
-                },
-                item.name.loc,
-            );
-            props.push(B::Property {
-                flags: bun_ast::flags::PROPERTY_NONE,
-                key,
-                value,
-                default_value: None,
-            });
-        }
-        let props = bun_ast::StoreSlice::from_bump(props);
-        let binding = self.b(
-            B::Object {
-                properties: props,
-                is_single_line: true,
-            },
-            loc,
-        );
+        let ns_ref = st.namespace_ref;
         let mut decls = G::DeclList::init_capacity(1);
         decls.append_assume_capacity(G::Decl {
-            binding,
+            binding: Binding::alloc(bump, B::Identifier { r#ref: ns_ref }, loc),
             value: Some(await_expr),
         });
         out.push(self.s(
@@ -332,5 +264,25 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
             },
             loc,
         ));
+
+        let record_index = st.import_record_index;
+        if let Some(default) = st.default_name {
+            self.symbols[default.ref_.inner_index() as usize].namespace_alias =
+                Some(bun_alloc::ast_box(G::NamespaceAlias {
+                    namespace_ref: ns_ref,
+                    alias: js_ast::StoreStr::new(b"default"),
+                    import_record_index: record_index,
+                    was_originally_property_access: true,
+                }));
+        }
+        for item in items.iter() {
+            self.symbols[item.name.ref_.inner_index() as usize].namespace_alias =
+                Some(bun_alloc::ast_box(G::NamespaceAlias {
+                    namespace_ref: ns_ref,
+                    alias: item.alias,
+                    import_record_index: record_index,
+                    was_originally_property_access: true,
+                }));
+        }
     }
 }

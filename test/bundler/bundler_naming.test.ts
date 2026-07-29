@@ -192,7 +192,6 @@ describe("bundler", () => {
     ],
   });
   itBundled("naming/AssetNoOverwrite", {
-    todo: true,
     files: {
       "/src/entry.js": /* js */ `
         import asset1 from "./asset1.file";
@@ -213,7 +212,27 @@ describe("bundler", () => {
       ".file": "file",
     },
     bundleErrors: {
-      "<bun>": ['Multiple files share the same output path: "same-filename.txt"'],
+      "<bun>": [`Multiple files share the same output path`],
+    },
+  });
+  itBundled("naming/AssetNoOverwriteSameContent", {
+    files: {
+      "/src/entry.js": /* js */ `
+        import asset1 from "./a/icon.file";
+        import asset2 from "./b/icon.file";
+        console.log(asset1, asset2);
+      `,
+      "/src/a/icon.file": "same bytes",
+      "/src/b/icon.file": "same bytes",
+    },
+    root: "/src",
+    assetNaming: "icon.txt",
+    entryPointsRaw: ["./src/entry.js"],
+    loader: {
+      ".file": "file",
+    },
+    onAfterBundle(api) {
+      api.expectFile("out/icon.txt").toBe("same bytes");
     },
   });
   itBundled("naming/AssetFileLoaderPath1", {

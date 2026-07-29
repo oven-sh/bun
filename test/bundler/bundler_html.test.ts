@@ -1011,4 +1011,130 @@ body {
       expect(htmlContent).toMatch(/href=".*\.webmanifest"/);
     },
   });
+
+  // Protocol-relative URLs (`//host/...`) must be treated as external, not
+  // rewritten as a rooted project path.
+  itBundled("html/protocol-relative-url-is-external", {
+    outdir: "out/",
+    files: {
+      "/index.html": `
+<!DOCTYPE html>
+<html>
+  <head>
+    <link rel="stylesheet" href="//cdn.example.com/style.css">
+    <script src="//cdn.example.com/script.js"></script>
+  </head>
+  <body>
+    <img src="//cdn.example.com/logo.png">
+  </body>
+</html>`,
+    },
+    entryPoints: ["/index.html"],
+    onAfterBundle(api) {
+      const html = api.readFile("out/index.html");
+      expect(html).toContain('href="//cdn.example.com/style.css"');
+      expect(html).toContain('src="//cdn.example.com/script.js"');
+      expect(html).toContain('src="//cdn.example.com/logo.png"');
+    },
+  });
+
+  // `srcset` is a comma-separated list of `url [descriptor]` candidates; each
+  // local URL should be emitted as an asset and the descriptors preserved.
+  itBundled("html/srcset-candidates", {
+    outdir: "out/",
+    files: {
+      "/index.html": `
+<!DOCTYPE html>
+<html>
+  <body>
+    <img srcset="./a.png 1x, ./b.png 2x">
+    <img id="bare" srcset="./a.png,
+      ./b.png  ,">
+    <picture>
+      <source srcset="./a.png 300w, https://cdn.example.com/big.png 600w">
+    </picture>
+  </body>
+</html>`,
+      "/a.png": "A",
+      "/b.png": "B",
+    },
+    entryPoints: ["/index.html"],
+    onAfterBundle(api) {
+      const html = api.readFile("out/index.html");
+      const img = html.match(/<img srcset="([^"]+)">/)![1];
+      const [c1, c2] = img.split(/,\s*/);
+      expect(c1).toMatch(/^\.\/a-[a-z0-9]+\.png 1x$/);
+      expect(c2).toMatch(/^\.\/b-[a-z0-9]+\.png 2x$/);
+
+      // Descriptor-less, newline-separated, multi-space, trailing comma.
+      const bare = html
+        .match(/<img id="bare" srcset="([^"]+)">/)![1]
+        .split(/,\s*/)
+        .filter(Boolean);
+      expect(bare).toHaveLength(2);
+      expect(bare[0]).toMatch(/^\.\/a-[a-z0-9]+\.png$/);
+      expect(bare[1]).toMatch(/^\.\/b-[a-z0-9]+\.png$/);
+
+      const source = html.match(/<source srcset="([^"]+)">/)![1];
+      const [s1, s2] = source.split(/,\s*/);
+      expect(s1).toMatch(/^\.\/a-[a-z0-9]+\.png 300w$/);
+      // External candidate stays untouched
+      expect(s2).toBe("https://cdn.example.com/big.png 600w");
+
+      // The asset files themselves were emitted
+      const aName = c1.split(" ")[0].replace(/^\.\//, "");
+      expect(api.readFile("out/" + aName)).toBe("A");
+    },
+  });
+
+  // The `?query`/`#fragment` on an asset reference must survive the rewrite to
+  // the hashed output filename (SVG fragment addressing, cache-busting).
+  itBundled("html/asset-url-preserves-query-and-fragment", {
+    outdir: "out/",
+    files: {
+      "/index.html": `
+<!DOCTYPE html>
+<html>
+  <body>
+    <img src="./sprites.svg#icon">
+    <img src="./logo.png?v=1">
+  </body>
+</html>`,
+      "/sprites.svg": "<svg><symbol id='icon'/></svg>",
+      "/logo.png": "fake png",
+    },
+    entryPoints: ["/index.html"],
+    onAfterBundle(api) {
+      const html = api.readFile("out/index.html");
+      expect(html).toMatch(/src="\.\/sprites-[a-z0-9]+\.svg#icon"/);
+      expect(html).toMatch(/src="\.\/logo-[a-z0-9]+\.png\?v=1"/);
+    },
+  });
+
+  // An asset small enough to be inlined in CSS but also referenced from HTML
+  // must still be emitted on disk so the HTML reference resolves.
+  itBundled("html/asset-shared-css-and-html-emitted", {
+    outdir: "out/",
+    files: {
+      "/index.html": `
+<!DOCTYPE html>
+<html>
+  <head><link rel="stylesheet" href="./style.css"></head>
+  <body><img src="./tiny.png"></body>
+</html>`,
+      "/style.css": `body { background: url(./tiny.png); }`,
+      "/tiny.png": "x",
+    },
+    entryPoints: ["/index.html"],
+    onAfterBundle(api) {
+      const html = api.readFile("out/index.html");
+      // HTML got the emitted asset path, not the raw "./tiny.png"
+      const img = html.match(/<img src="([^"]+)">/)![1];
+      expect(img).toMatch(/^\.\/tiny-[a-z0-9]+\.png$/);
+      expect(api.readFile("out/" + img.replace(/^\.\//, ""))).toBe("x");
+      // CSS kept its data: URL inlining
+      const cssHref = html.match(/href="([^"]+\.css)"/)![1];
+      expect(api.readFile("out/" + cssHref.replace(/^\.\//, ""))).toContain("data:");
+    },
+  });
 });

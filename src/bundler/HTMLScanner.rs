@@ -32,40 +32,40 @@ impl<'a> HTMLScanner<'a> {
 
 impl<'a> HTMLScanner<'a> {
     fn create_import_record(&mut self, input_path: &[u8], kind: ImportKind) -> Result<(), Error> {
-        // In HTML, sometimes people do /src/index.js
-        // In that case, we don't want to use the absolute filesystem path, we want to use the path relative to the project root
-        let path_to_use: &[u8] = if input_path.len() > 1 && input_path[0] == b'/' {
-            resolve_path::join_abs_string::<platform::Auto>(
-                fs::FileSystem::instance().top_level_dir,
-                &[&input_path[1..]],
-            )
-        }
-        // Check if imports to (e.g) "App.tsx" are actually relative imoprts w/o the "./"
-        else if input_path.len() > 2 && input_path[0] != b'.' && input_path[1] != b'/' {
-            'blk: {
-                let Some(index_of_dot) = input_path.iter().rposition(|&b| b == b'.') else {
-                    break 'blk input_path;
-                };
-                let ext = &input_path[index_of_dot..];
-                if ext.len() > 4 {
-                    break 'blk input_path;
-                }
-                // /foo/bar/index.html -> /foo/bar
-                let dirname = resolve_path::dirname::<platform::Auto>(self.source.path.text());
-                if dirname.is_empty() {
-                    break 'blk input_path;
-                }
-                let resolved =
-                    resolve_path::join_abs_string_z::<platform::Auto>(dirname, &[input_path]);
-                if sys::exists_z(resolved) {
-                    resolved.as_bytes()
-                } else {
-                    input_path
-                }
+        // `/src/x.js` is project-root-relative; `//host/x.js` is protocol-relative (external).
+        let path_to_use: &[u8] =
+            if input_path.len() > 1 && input_path[0] == b'/' && input_path[1] != b'/' {
+                resolve_path::join_abs_string::<platform::Auto>(
+                    fs::FileSystem::instance().top_level_dir,
+                    &[&input_path[1..]],
+                )
             }
-        } else {
-            input_path
-        };
+            // Check if imports to (e.g) "App.tsx" are actually relative imoprts w/o the "./"
+            else if input_path.len() > 2 && input_path[0] != b'.' && input_path[1] != b'/' {
+                'blk: {
+                    let Some(index_of_dot) = input_path.iter().rposition(|&b| b == b'.') else {
+                        break 'blk input_path;
+                    };
+                    let ext = &input_path[index_of_dot..];
+                    if ext.len() > 4 {
+                        break 'blk input_path;
+                    }
+                    // /foo/bar/index.html -> /foo/bar
+                    let dirname = resolve_path::dirname::<platform::Auto>(self.source.path.text());
+                    if dirname.is_empty() {
+                        break 'blk input_path;
+                    }
+                    let resolved =
+                        resolve_path::join_abs_string_z::<platform::Auto>(dirname, &[input_path]);
+                    if sys::exists_z(resolved) {
+                        resolved.as_bytes()
+                    } else {
+                        input_path
+                    }
+                }
+            } else {
+                input_path
+            };
 
         let owned: &'static [u8] =
             Box::leak(AstAlloc::vec_from_slice(path_to_use).into_boxed_slice());
@@ -103,7 +103,12 @@ impl<'a> HTMLScanner<'a> {
         url_attribute: &[u8],
         kind: ImportKind,
     ) {
-        let _ = url_attribute;
+        if url_attribute == b"srcset" {
+            for (url, _) in SrcSetIter::new(path) {
+                let _ = self.create_import_record(url, kind);
+            }
+            return;
+        }
         let _ = self.create_import_record(path, kind);
     }
 
@@ -163,6 +168,61 @@ impl<'a> HTMLProcessorHandler for HTMLScanner<'a> {
 }
 
 pub(crate) struct HTMLProcessor<T, const VISIT_DOCUMENT_TAGS: bool>(PhantomData<T>);
+
+/// `(url, descriptor)` per `srcset` candidate; scan and rewrite both use this so their record counts stay 1:1.
+pub(crate) struct SrcSetIter<'a>(&'a [u8]);
+
+impl<'a> SrcSetIter<'a> {
+    pub(crate) fn new(value: &'a [u8]) -> Self {
+        Self(value)
+    }
+}
+
+impl<'a> Iterator for SrcSetIter<'a> {
+    type Item = (&'a [u8], &'a [u8]);
+    fn next(&mut self) -> Option<Self::Item> {
+        let ws = u8::is_ascii_whitespace;
+        let s = &mut self.0;
+        while s.first().is_some_and(|b| ws(b) || *b == b',') {
+            *s = &s[1..];
+        }
+        if s.is_empty() {
+            return None;
+        }
+        let url_end = s.iter().position(ws).unwrap_or(s.len());
+        let url_trim = s[..url_end]
+            .iter()
+            .rposition(|&b| b != b',')
+            .map_or(0, |i| i + 1);
+        let url = &s[..url_trim];
+        if url_trim < url_end {
+            *s = &s[url_end..];
+            return Some((url, b""));
+        }
+        let mut i = url_end;
+        while s.get(i).is_some_and(ws) {
+            i += 1;
+        }
+        let desc_start = i;
+        let mut depth: u32 = 0;
+        while let Some(&b) = s.get(i) {
+            match b {
+                b',' if depth == 0 => break,
+                b'(' => depth += 1,
+                b')' => depth = depth.saturating_sub(1),
+                _ => {}
+            }
+            i += 1;
+        }
+        let desc = &s[desc_start
+            ..s[desc_start..i]
+                .iter()
+                .rposition(|b| !ws(b))
+                .map_or(desc_start, |j| desc_start + j + 1)];
+        *s = s.get(i + 1..).unwrap_or(b"");
+        Some((url, desc))
+    }
+}
 
 #[derive(Clone, Copy)]
 pub struct TagHandler {

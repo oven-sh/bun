@@ -1643,7 +1643,7 @@ pub mod bv2_impl {
         pub scb_bitset: Option<DynamicBitSetUnmanaged>,
         pub scb_list: server_component_boundary::Slice<'a>,
 
-        /// Files which are imported by JS and inlined in CSS
+        /// Files inlined in CSS and also imported by a non-CSS source (JS, HTML)
         pub additional_files_imported_by_js_and_inlined_in_css: &'a mut DynamicBitSetUnmanaged,
         /// Files which are imported by CSS and inlined in CSS
         pub additional_files_imported_by_css_and_inlined: &'a mut DynamicBitSetUnmanaged,
@@ -1744,7 +1744,6 @@ pub mod bv2_impl {
                     }
                 }
 
-                let is_js = self.all_loaders[source_index.get() as usize].is_javascript_like();
                 let is_css = self.all_loaders[source_index.get() as usize].is_css();
 
                 let import_record_list_id = source_index;
@@ -1795,17 +1794,19 @@ pub mod bv2_impl {
                             let import_record = &self.all_import_records
                                 [import_record_list_id.get() as usize]
                                 .as_slice()[ir_idx];
-                            // Mark if the file is imported by JS and its URL is inlined for CSS
+                            // CSS inlines as data:; any non-CSS importer (JS, HTML) forces on-disk emission.
                             let is_inlined = import_record.source_index.is_valid()
                                 && !self.all_urls_for_css
                                     [import_record.source_index.get() as usize]
                                     .is_empty();
-                            if is_js && is_inlined {
-                                self.additional_files_imported_by_js_and_inlined_in_css
-                                    .set(import_record.source_index.get() as usize);
-                            } else if is_css && is_inlined {
-                                self.additional_files_imported_by_css_and_inlined
-                                    .set(import_record.source_index.get() as usize);
+                            if is_inlined {
+                                if is_css {
+                                    self.additional_files_imported_by_css_and_inlined
+                                        .set(import_record.source_index.get() as usize);
+                                } else {
+                                    self.additional_files_imported_by_js_and_inlined_in_css
+                                        .set(import_record.source_index.get() as usize);
+                                }
                             }
 
                             let next_source = import_record.source_index;
@@ -1976,8 +1977,7 @@ pub mod bv2_impl {
             let content_hashes: &mut [u64] = input_files_cols.content_hash_for_additional_file;
             for (index, url_for_css) in all_urls_for_css.iter().enumerate() {
                 if !url_for_css.is_empty() {
-                    // We like to inline additional files in CSS if they fit a size threshold
-                    // If we do inline a file in CSS, and it is not imported by JS, then we don't need to copy the additional file into the output directory
+                    // A file inlined in CSS and not imported by any non-CSS source needn't be copied to the output directory.
                     if additional_files_imported_by_css_and_inlined.is_set(index)
                         && !additional_files_imported_by_js_and_inlined_in_css.is_set(index)
                     {
@@ -4167,6 +4167,24 @@ pub mod bv2_impl {
                             (additional_output_files.len() - 1) as u32,
                         ));
                     }
+                }
+
+                // Distinct-content asset collisions on one output path are a hard error; identical content is benign.
+                let mut seen: bun_collections::StringHashMap<u64> = Default::default();
+                for out in &additional_output_files {
+                    let gop = seen.get_or_put(&out.dest_path)?;
+                    if gop.found_existing && *gop.value_ptr != out.hash {
+                        self.transpiler.log_mut().add_error_fmt(
+                            None,
+                            bun_ast::Loc::EMPTY,
+                            format_args!(
+                                "Multiple files share the same output path: {}\nConsider adding \"[hash]\" to --asset-naming",
+                                bstr::BStr::new(&out.dest_path),
+                            ),
+                        );
+                        return Err(Error::DuplicateOutputPath);
+                    }
+                    *gop.value_ptr = out.hash;
                 }
 
                 self.graph.additional_output_files = additional_output_files;

@@ -9,8 +9,8 @@ use bun_threading::thread_pool::Task as ThreadPoolLibTask;
 use lol_html::HandlerResult;
 use lol_html::html_content::{ContentType, Element, EndTag};
 
-use crate::HTMLScanner::{HTMLProcessor, HTMLProcessorHandler};
-use crate::linker_context_mod::{GenerateChunkCtx, LinkerContext, debug};
+use crate::HTMLScanner::{HTMLProcessor, HTMLProcessorHandler, SrcSetIter};
+use crate::linker_context_mod::{GenerateChunkCtx, LinkerContext};
 use crate::options::Loader;
 use crate::{Chunk, CompileResult};
 
@@ -121,89 +121,35 @@ impl<'a> HTMLProcessorHandler for HTMLLoader<'a> {
     fn on_tag(
         &mut self,
         element: &mut Element<'_, '_>,
-        _path: &[u8],
+        path: &[u8],
         url_attribute: &[u8],
         _kind: ImportKind,
     ) {
-        if self.current_import_record_index as usize >= self.import_records.len() {
-            bun_core::Output::panic(format_args!(
-                "Assertion failure in HTMLLoader.onTag: current_import_record_index ({}) >= import_records.len ({})",
-                self.current_import_record_index,
-                self.import_records.len()
-            ));
-        }
-
-        let import_record: &ImportRecord =
-            &self.import_records[self.current_import_record_index as usize];
-        self.current_import_record_index += 1;
-
-        let parse_graph = self.linker.parse_graph();
-        let unique_key_for_additional_files: &[u8] = if import_record.source_index.is_valid() {
-            &parse_graph
-                .input_files
-                .items_unique_key_for_additional_file()[import_record.source_index.get() as usize]
-        } else {
-            b""
-        };
-        let loader: Loader = if import_record.source_index.is_valid() {
-            parse_graph.input_files.items_loader()[import_record.source_index.get() as usize]
-        } else {
-            Loader::File
-        };
-
-        if import_record
-            .flags
-            .contains(ImportRecordFlags::IS_EXTERNAL_WITHOUT_SIDE_EFFECTS)
-        {
-            debug!(
-                "Leaving external import: {}",
-                BStr::new(import_record.path.text)
-            );
-            return;
-        }
-
-        if self.linker.dev_server.is_some() {
-            if !unique_key_for_additional_files.is_empty() {
-                set_attribute(element, url_attribute, unique_key_for_additional_files);
-            } else if import_record.path.is_disabled
-                || loader.is_javascript_like()
-                || loader.is_css()
-            {
-                element.remove();
-            } else {
-                set_attribute(element, url_attribute, import_record.path.pretty);
+        if url_attribute == b"srcset" {
+            let mut out: Vec<u8> = Vec::with_capacity(path.len());
+            for (url, desc) in SrcSetIter::new(path) {
+                let v = self.next_record_url(url);
+                if matches!(v, Rewrite::Remove) {
+                    continue;
+                }
+                if !out.is_empty() {
+                    out.extend_from_slice(b", ");
+                }
+                out.extend_from_slice(if let Rewrite::Set(ref s) = v { s } else { url });
+                if !desc.is_empty() {
+                    out.push(b' ');
+                    out.extend_from_slice(desc);
+                }
+            }
+            if out != path {
+                set_attribute(element, url_attribute, &out);
             }
             return;
         }
-
-        if import_record.source_index.is_invalid() {
-            debug!(
-                "Leaving import with invalid source index: {}",
-                BStr::new(import_record.path.text)
-            );
-            return;
-        }
-
-        if loader.is_javascript_like() || loader.is_css() {
-            // Remove the original non-external tags
-            element.remove();
-            return;
-        }
-
-        if self.compile_to_standalone_html && import_record.source_index.is_valid() {
-            // In standalone HTML mode, inline assets as data: URIs
-            let url_for_css =
-                parse_graph.ast.items_url_for_css()[import_record.source_index.get() as usize];
-            if !url_for_css.is_empty() {
-                set_attribute(element, url_attribute, url_for_css);
-                return;
-            }
-        }
-
-        if !unique_key_for_additional_files.is_empty() {
-            // Replace the external href/src with the unique key so that we later will rewrite it to the final URL or pathname
-            set_attribute(element, url_attribute, unique_key_for_additional_files);
-            return;
+        match self.next_record_url(path) {
+            Rewrite::Keep => {}
+            Rewrite::Remove => element.remove(),
+            Rewrite::Set(v) => set_attribute(element, url_attribute, &v),
         }
     }
 
@@ -217,6 +163,68 @@ impl<'a> HTMLProcessorHandler for HTMLLoader<'a> {
 
     fn on_body_tag(&mut self, element: &mut Element<'_, '_>) -> bool {
         self.register_end_tag_handler(element, Self::end_body_tag_handler)
+    }
+}
+
+enum Rewrite {
+    Keep,
+    Remove,
+    Set(Vec<u8>),
+}
+
+impl<'a> HTMLLoader<'a> {
+    /// Advances one import record; returns the rewritten value with `original`'s `?#` suffix re-appended.
+    fn next_record_url(&mut self, original: &[u8]) -> Rewrite {
+        let record: &ImportRecord = &self.import_records[self.current_import_record_index as usize];
+        self.current_import_record_index += 1;
+
+        if record
+            .flags
+            .contains(ImportRecordFlags::IS_EXTERNAL_WITHOUT_SIDE_EFFECTS)
+        {
+            return Rewrite::Keep;
+        }
+
+        let graph = self.linker.parse_graph();
+        let src = record.source_index;
+        let (unique_key, loader, url_for_css): (&[u8], Loader, &[u8]) = if src.is_valid() {
+            let i = src.get() as usize;
+            (
+                &graph.input_files.items_unique_key_for_additional_file()[i],
+                graph.input_files.items_loader()[i],
+                graph.ast.items_url_for_css()[i],
+            )
+        } else {
+            (b"", Loader::File, b"")
+        };
+
+        let suffix: &[u8] = strings::index_of_any(original, b"?#").map_or(b"", |i| &original[i..]);
+        let set = |url: &[u8], suffix: &[u8]| Rewrite::Set([url, suffix].concat());
+
+        if self.linker.dev_server.is_some() {
+            return if !unique_key.is_empty() {
+                set(unique_key, suffix)
+            } else if record.path.is_disabled || loader.is_javascript_like() || loader.is_css() {
+                Rewrite::Remove
+            } else {
+                set(record.path.pretty, suffix)
+            };
+        }
+        if src.is_invalid() {
+            return Rewrite::Keep;
+        }
+        if loader.is_javascript_like() || loader.is_css() {
+            return Rewrite::Remove;
+        }
+        if !url_for_css.is_empty() && (self.compile_to_standalone_html || unique_key.is_empty()) {
+            let fragment: &[u8] =
+                strings::index_of_char(suffix, b'#').map_or(b"", |i| &suffix[i as usize..]);
+            return set(url_for_css, fragment);
+        }
+        if !unique_key.is_empty() {
+            return set(unique_key, suffix);
+        }
+        Rewrite::Keep
     }
 }
 

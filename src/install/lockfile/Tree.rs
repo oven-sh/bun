@@ -1034,15 +1034,9 @@ impl Tree {
             }
 
             if dep.behavior.is_dev() != dependency.behavior.is_dev() {
-                // A package listed the same name in both `dependencies` and
-                // `devDependencies`. Only one folder can exist at
-                // `node_modules/<name>`, so merge the second onto the first.
-                //
-                // `AS_DEFINED` covers the root package (its own deps are the
-                // only ones ever placed in the root tree at this point). For a
-                // workspace package the first sibling may already have been
-                // hoisted into a parent tree, so also merge when the found
-                // entry came from the same source package's dependency range.
+                // Same name in `dependencies` and `devDependencies`: merge.
+                // `input_dep_range` catches a workspace sibling that was already
+                // hoisted into a parent tree (where AS_DEFINED is false).
                 if AS_DEFINED || input_dep_range.contains(dep_id) {
                     return Ok(HoistDependencyResult::Hoisted); // 1
                 }

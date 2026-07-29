@@ -298,12 +298,8 @@ pub mod registry {
     // `unreachable!()`.
     bun_collections::object_pool!(pub BodyPool: MutableString, threadsafe, 8);
 
-    /// npm treats the registry URL as a directory and appends the package
-    /// name as a new path segment. The manifest URL is built via WHATWG URL
-    /// resolution (`bun_url::join`), which discards the final segment of a
-    /// base without a trailing slash, so normalize one on configured http(s)
-    /// registry URLs. Other inputs are left untouched so invalid-URL errors
-    /// still report what the user wrote.
+    /// `bun_url::join` drops the last path segment of a base without a
+    /// trailing `/`; npm does not. Normalize http(s) registry URLs only.
     pub(crate) fn ensure_trailing_slash(href: Box<[u8]>) -> Box<[u8]> {
         if href.last() == Some(&b'/')
             || !(strings::has_prefix_comptime(&href, b"https://")
@@ -527,8 +523,6 @@ pub mod registry {
                 registry_url
             };
 
-            // The hash below and every display path use
-            // `without_trailing_slash`, so this does not affect cache keys.
             let final_href = ensure_trailing_slash(final_href);
 
             let url_hash = Self::hash(strings::without_trailing_slash(&final_href));

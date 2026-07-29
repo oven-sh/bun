@@ -1223,11 +1223,8 @@ mod draft {
     // loadNpmrcConfig / loadNpmrc
     // ──────────────────────────────────────────────────────────────────────────
 
-    /// Fields on `BunInstall` that were set by a higher-precedence source
-    /// (bunfig.toml) before `.npmrc` files are read. `load_npmrc` skips the
-    /// corresponding `.npmrc` keys so bunfig.toml wins, while later `.npmrc`
-    /// files still override earlier ones (this is captured once before the
-    /// file loop).
+    /// Snapshot of which `BunInstall` fields bunfig.toml already set;
+    /// `load_npmrc` skips those keys so bunfig wins over `.npmrc`.
     #[derive(Default)]
     pub struct NpmrcPreset {
         pub default_registry: bool,
@@ -1471,11 +1468,9 @@ mod draft {
                         install.node_linker = Some(NodeLinker::Hoisted);
                     } else if install_strategy_str == b"linked" {
                         install.node_linker = Some(NodeLinker::Isolated);
-                    } else if install_strategy_str == b"nested"
-                        || install_strategy_str == b"shallow"
-                    {
-                        // TODO
                     }
+                    // "nested" / "shallow" are recognized npm values but bun
+                    // has no equivalent linker mode; leave node_linker unset.
                 }
             }
 

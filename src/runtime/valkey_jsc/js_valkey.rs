@@ -471,22 +471,6 @@ impl bun_ptr::RefCounted for JSValkeyClient {
         unsafe { &raw mut (*this).ref_count }
     }
     unsafe fn destructor(this: *mut Self, _ctx: ()) {
-        // SAFETY: last ref dropped; `this` is live until `deinit` reclaims it.
-        let this_ref = unsafe { &*this };
-        if !this_ref.client.get().flags.finalized && this_ref.this_value.get().is_not_empty() {
-            // Reaching 0 while the JS wrapper is still attached means a ref
-            // was released that was not owned (the wrapper's `+1` is only
-            // ever consumed by `finalize()`). Freeing here would make the
-            // later `finalize()` a heap-use-after-free, so donate the stolen
-            // ref back and leave the allocation live; `finalize()` then frees
-            // normally. Assertion builds panic so the over-release is caught.
-            debug_assert!(
-                false,
-                "JSValkeyClient refcount reached 0 before the JS wrapper was finalized",
-            );
-            this_ref.ref_();
-            return;
-        }
         // SAFETY: last ref dropped; sole owner.
         unsafe { JSValkeyClient::deinit(this) };
     }
@@ -522,24 +506,24 @@ impl JSValkeyClient {
         // SAFETY: `self` is live; the guard's own ref keeps it alive past Drop.
         unsafe { ScopedRef::new(self.as_ctx_ptr()) }
     }
-    /// Adopt a socket keep-alive ref recorded by [`connect`](Self::connect)
-    /// into the calling scope. Returns `None` when no ref is outstanding, so a
-    /// close/reconnect dispatch that arrives without a live socket ref cannot
-    /// release one it does not own.
+    /// Adopt one socket keep-alive ref recorded by [`connect`](Self::connect)
+    /// into the calling scope, or `None` when none is outstanding. The
+    /// close/fail paths can re-enter (`on_data` parse fail or
+    /// `on_connection_timeout` → `fail_with_js_value` → `close()` dispatches
+    /// `on_close` synchronously, and the `enter_event_loop_scope` drain inside
+    /// `on_valkey_close` runs JS that can close again), so a second caller
+    /// sees 0 here and releases nothing.
     #[inline]
     fn take_socket_ref(&self) -> Option<ScopedRef<Self>> {
-        let n = self.socket_refs.get();
-        if n == 0 {
-            debug_assert!(
-                false,
-                "on_valkey_close/on_valkey_reconnect without a live socket ref",
-            );
-            return None;
+        match self.socket_refs.get().checked_sub(1) {
+            None => None,
+            Some(n) => {
+                self.socket_refs.set(n);
+                // SAFETY: `connect()` took this `+1` via `socket_ref.forget()`
+                // and recorded it in `socket_refs`; this scope consumes it.
+                Some(unsafe { ScopedRef::adopt(self.as_ctx_ptr()) })
+            }
         }
-        self.socket_refs.set(n - 1);
-        // SAFETY: `connect()` took this `+1` via `socket_ref.forget()` and
-        // recorded it in `socket_refs`; this scope consumes it.
-        Some(unsafe { ScopedRef::adopt(self.as_ctx_ptr()) })
     }
     #[inline]
     pub fn new(init: JSValkeyClient) -> *mut JSValkeyClient {

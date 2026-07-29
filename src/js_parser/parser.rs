@@ -380,7 +380,8 @@ pub mod Runtime {
                 self.standard_decorators,
                 self.lower_using,
                 self.repl_mode,
-                // note that we do not include .inject_jest_globals, as we bail out of the cache entirely if this is true
+                // .inject_jest_globals and .is_macro_runtime are excluded: both
+                // bail out of the cache entirely (input_hash is cleared).
             ];
 
             // `[bool; N]` is N bytes of 0x00/0x01.

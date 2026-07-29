@@ -489,7 +489,7 @@ static void applyTZFromString(JSGlobalObject* globalObject, const String& value)
 {
     if (value.length() < 32 && WTF::setTimeZoneOverride(value)) {
         WTF::timeZoneDidChange();
-        JSC::getVM(globalObject).dateCache.clearForTimeZoneChange();
+        JSC::getVM(globalObject).clearForTimeZoneChange();
     }
 }
 static void applyTLSRejectFromString(JSGlobalObject*, const String& value)

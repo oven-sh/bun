@@ -32,10 +32,6 @@
 #define PAL_EXPORT
 #endif
 
-#if PLATFORM(COCOA)
-#include <CoreFoundation/CoreFoundation.h>
-#endif
-
 namespace PAL {
 
 class TextCodec;
@@ -48,14 +44,6 @@ PAL_EXPORT std::unique_ptr<TextCodec> newTextCodec(const TextEncoding&);
 // Only TextEncoding should use the following functions directly.
 ASCIILiteral atomCanonicalTextEncodingName(ASCIILiteral alias);
 ASCIILiteral atomCanonicalTextEncodingName(StringView);
-bool noExtendedTextEncodingNameUsed();
-bool isJapaneseEncoding(ASCIILiteral canonicalEncodingName);
 bool shouldShowBackslashAsCurrencySymbolIn(ASCIILiteral canonicalEncodingName);
-
-PAL_EXPORT String defaultTextEncodingNameForSystemLanguage();
-
-#if PLATFORM(COCOA)
-PAL_EXPORT CFStringEncoding webDefaultCFStringEncoding();
-#endif
 
 } // namespace PAL

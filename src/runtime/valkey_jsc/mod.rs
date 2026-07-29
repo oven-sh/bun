@@ -25,9 +25,6 @@ pub mod valkey_command_body; // Command::serialize, Promise::resolve/reject
 #[path = "protocol_jsc.rs"]
 pub mod protocol_jsc; // RESPValue → JSValue, RedisError → JS Error
 
-#[path = "index.rs"]
-pub mod index;
-
 // ─── back-compat aliases ─────────────────────────────────────────────────────
 // Sibling files were written against `*_body` module names (`valkey.rs`
 // imports `super::js_valkey_body`); keep the alias so it doesn't need to churn.
@@ -40,14 +37,10 @@ pub use valkey::{Options, Protocol, Status, ValkeyClient};
 // ── ValkeyCommand ────────────────────────────────────────────────────────────
 // `ValkeyCommand` is both a namespace
 // *and* the `Command` type. Expose a `valkey_command` module that re-exports
-// the body's items so `command::PromisePair` / `command::Entry` resolve, and
-// alias it as `ValkeyCommand` for callers that use that spelling.
+// the body's items so `command::PromisePair` / `command::Entry` resolve.
 pub mod valkey_command {
     pub use super::valkey_command_body::{Entry, Meta, Promise, PromisePair, entry, promise_pair};
-    // `index.rs` re-exports `super::valkey_command::ValkeyCommand`.
-    pub use super::ValkeyCommand;
 }
-pub use valkey_command as ValkeyCommand;
 
 // ── JsClass wiring (codegen name = "RedisClient", see valkey.classes.ts) ────
 // `generate-classes.ts` emits the `RedisClient__{fromJS,fromJSDirect,create,

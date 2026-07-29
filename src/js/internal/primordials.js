@@ -84,20 +84,8 @@ const ArrayPrototypeSymbolIterator = uncurryThis(Array.prototype[Symbol.iterator
 const ArrayIteratorPrototypeNext = uncurryThis(Array.prototype[Symbol.iterator]().next);
 const SafeArrayIterator = createSafeIterator(ArrayPrototypeSymbolIterator, ArrayIteratorPrototypeNext);
 
-const ArrayPrototypeMap = Array.prototype.map;
 const PromisePrototypeThen = $Promise.prototype.$then;
-
-const arrayToSafePromiseIterable = (promises, mapFn) =>
-  new SafeArrayIterator(
-    ArrayPrototypeMap.$call(
-      promises,
-      (promise, i) =>
-        new Promise((a, b) => PromisePrototypeThen.$call(mapFn == null ? promise : mapFn(promise, i), a, b)),
-    ),
-  );
-const PromiseAll = Promise.all;
 const PromiseResolve = Promise.$resolve.bind(Promise);
-const SafePromiseAll = (promises, mapFn) => PromiseAll(arrayToSafePromiseIterable(promises, mapFn));
 // Shared scheduler for SafePromiseAllReturnVoid/ReturnArrayLike: `returnVal`
 // is null for the void variant (no result bookkeeping, resolves with nothing).
 const safePromiseAllCollect = (promises, mapFn, returnVal) =>
@@ -142,7 +130,6 @@ export default {
       }
     },
   ),
-  SafePromiseAll,
   SafePromiseAllReturnArrayLike,
   SafePromiseAllReturnVoid,
   SafeSet: makeSafe(

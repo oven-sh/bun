@@ -81,13 +81,6 @@ function createWorkerProcess(id, env) {
   const workerEnv = { ...process.env, ...env, NODE_UNIQUE_ID: `${id}` };
   const execArgv = [...cluster.settings.execArgv];
 
-  // if (cluster.settings.inspectPort === null) {
-  //   throw new ERR_SOCKET_BAD_PORT("Port", null, true);
-  // }
-  // if (isUsingInspector(cluster.settings.execArgv)) {
-  //   ArrayPrototypePush(execArgv, `--inspect-port=${getInspectPort(cluster.settings.inspectPort)}`);
-  // }
-
   child_process ??= require("node:child_process");
   return child_process.fork(cluster.settings.exec, cluster.settings.args, {
     cwd: cluster.settings.cwd,

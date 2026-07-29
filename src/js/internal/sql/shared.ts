@@ -1503,22 +1503,6 @@ function parseSQLiteOptions(
   return sqliteOptions;
 }
 
-function isOptionsOfAdapter<A extends Bun.SQL.__internal.Adapter>(
-  options: Bun.SQL.Options,
-  adapter: A,
-): options is Extract<Bun.SQL.Options, { adapter?: A }> {
-  return options.adapter === adapter;
-}
-
-function assertIsOptionsOfAdapter<A extends Bun.SQL.__internal.Adapter>(
-  options: Bun.SQL.Options,
-  adapter: A,
-): asserts options is Extract<Bun.SQL.Options, { adapter?: A }> {
-  if (!isOptionsOfAdapter(options, adapter)) {
-    throw new Error(`Expected adapter to be ${adapter}, but got '${options.adapter}'`);
-  }
-}
-
 const DEFAULT_PROTOCOL: Bun.SQL.__internal.Adapter = "postgres";
 
 const env = Bun.env;
@@ -2147,8 +2131,6 @@ export interface DatabaseAdapter<Connection, ConnectionHandle, QueryHandle> {
 
 export default {
   parseDefinitelySqliteUrl,
-  isOptionsOfAdapter,
-  assertIsOptionsOfAdapter,
   parseOptions,
   SQLHelper,
   buildDefinedColumnsAndQuery,

@@ -47,12 +47,6 @@ public:
 
     bool isValid() const { return !m_name.isNull(); }
     ASCIILiteral name() const { return m_name; }
-    PAL_EXPORT ASCIILiteral domName() const; // name exposed via DOM
-    bool usesVisualOrdering() const;
-    bool isJapanese() const;
-
-    const TextEncoding& closestByteBasedEquivalent() const;
-    const TextEncoding& encodingForFormSubmissionOrURLParsing() const;
 
     PAL_EXPORT String decode(std::span<const uint8_t>, bool stopOnError, bool& sawError) const;
     String decode(std::span<const uint8_t>) const;
@@ -60,29 +54,15 @@ public:
     Vector<uint8_t> encodeForURLParsing(StringView string) const final { return encode(string, PAL::UnencodableHandling::URLEncodedEntities, NFCNormalize::No); }
 
     char16_t backslashAsCurrencySymbol() const;
-    bool isByteBasedEncoding() const { return !isNonByteBasedEncoding(); }
 
 private:
-    bool isNonByteBasedEncoding() const;
-    bool isUTF7Encoding() const;
-
     ASCIILiteral m_name;
     char16_t m_backslashAsCurrencySymbol;
 };
 
 inline bool operator==(const TextEncoding& a, const TextEncoding& b) { return a.name() == b.name(); }
 
-const TextEncoding& ASCIIEncoding();
-const TextEncoding& Latin1Encoding();
-const TextEncoding& UTF16BigEndianEncoding();
-const TextEncoding& UTF16LittleEndianEncoding();
 PAL_EXPORT const TextEncoding& UTF8Encoding();
-PAL_EXPORT const TextEncoding& WindowsLatin1Encoding();
-
-// Unescapes the given string using URL escaping rules.
-// DANGER: If the URL has "%00" in it,
-// the resulting string will have embedded null characters!
-PAL_EXPORT String decodeURLEscapeSequences(StringView, const TextEncoding& = UTF8Encoding());
 
 inline String TextEncoding::decode(std::span<const uint8_t> characters) const
 {

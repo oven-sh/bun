@@ -127,12 +127,9 @@ pub struct WebWorker {
     /// (`exit`). The worker loop polls this between ticks.
     requested_terminate: AtomicBool,
 
-    /// Set by `self.close()` on the worker thread. The event loop polls this
-    /// alongside `requested_terminate` so it exits after the current task.
-    /// Separate from `requested_terminate` so that `notify_need_termination`
-    /// and `terminate_all_and_wait` (which skip arming the TerminationException
-    /// when `requested_terminate` is already set) still interrupt a worker that
-    /// has called `close()` and then entered a long synchronous section.
+    /// Set by `self.close()` on the worker thread. Kept separate from
+    /// `requested_terminate` so a later `terminate()` still arms the
+    /// TerminationException (its setter early-returns when that flag is set).
     close_requested: AtomicBool,
 
     /// The worker's `jsc.VirtualMachine`, or null before `startVM()` / after
@@ -411,12 +408,9 @@ pub(crate) extern "C" fn WebWorker__getParentWorker(vm: &VirtualMachine) -> *mut
         .unwrap_or(core::ptr::null_mut())
 }
 
-/// `self.close()` inside the worker (DedicatedWorkerGlobalScope.close()).
-/// Worker-thread only. Sets the closing flag so the event loop exits after the
-/// current task completes. Unlike `exit()`, this does not arm the
-/// TerminationException, so the script that called `close()` runs to its
-/// synchronous completion. Uses a separate flag from `requested_terminate` so a
-/// later `terminate()` still arms the trap.
+/// `self.close()` inside the worker. Worker-thread only. Sets `close_requested`
+/// so the event loop exits after the current task; does not arm the
+/// TerminationException, so the calling script runs to completion.
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn WebWorker__requestClose(vm: &VirtualMachine) {
     if let Some(worker) = vm.worker_ref() {

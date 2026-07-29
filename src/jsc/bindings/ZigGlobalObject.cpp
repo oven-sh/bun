@@ -598,8 +598,7 @@ extern "C" JSC::JSGlobalObject* Zig__GlobalObject__create(void* console_client, 
             }
 
             if (options.kind == WebCore::WorkerOptions::Kind::Web) {
-                // DedicatedWorkerGlobalScope members. Not installed for node:worker_threads
-                // workers, whose globalThis matches the main thread.
+                // DedicatedWorkerGlobalScope members (node:worker_threads keeps the main-thread global shape).
                 globalObject->putDirect(vm, vm.propertyNames->name, jsString(vm, options.name.isolatedCopy()), PropertyAttribute::ReadOnly | 0);
                 globalObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "close"_s), 0, WebCore::jsFunctionWorkerGlobalScopeClose, ImplementationVisibility::Public, NoIntrinsic, 0);
             }

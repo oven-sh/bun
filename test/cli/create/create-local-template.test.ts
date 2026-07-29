@@ -201,9 +201,7 @@ test.concurrent("bun create from local template does not run git when .git is a 
   const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited, proc.stdout.text()]);
 
   // the worktree pointer file must survive untouched
-  expect(await Bun.file(join(String(dir), "proj", ".git")).text()).toBe(
-    "gitdir: /somewhere/else/.git/worktrees/proj",
-  );
+  expect(await Bun.file(join(String(dir), "proj", ".git")).text()).toBe("gitdir: /somewhere/else/.git/worktrees/proj");
   expect(await Bun.file(join(String(dir), "proj", "tpl.txt")).text()).toBe("template file");
   expect({ exitCode, stderr }).toEqual({ exitCode: 0, stderr: expect.not.stringContaining("error") });
 });

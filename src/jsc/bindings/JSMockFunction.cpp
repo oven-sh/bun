@@ -273,8 +273,7 @@ public:
     mutable JSC::WriteBarrier<JSC::JSArray> returnValues;
 
     JSC::Weak<JSObject> spyTarget;
-    // For Proxy spies the write lands on the proxy's underlying target, so the proxy must
-    // outlive the spy for restore to route back through it.
+    // Proxy spies write through to the proxy's target; keep the proxy reachable for restore.
     mutable JSC::WriteBarrier<JSObject> spyStrongTarget;
     JSC::Identifier spyIdentifier;
     unsigned spyAttributes = 0;

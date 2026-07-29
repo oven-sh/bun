@@ -80,7 +80,7 @@ test("fetch does not reuse a pooled TLS connection for a request with a differen
 // so the pool can't leak into other tests. The server here keeps the socket
 // open and answers every request on it, so the connection count is exactly
 // how many times bun dialed (pooled reuse => 1, correct => 4).
-test.each([200, 400, 413, 500])("a %d response with Connection: close is not pooled", async status => {
+test.concurrent.each([200, 400, 413, 500])("a %d response with Connection: close is not pooled", async status => {
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),

@@ -4898,12 +4898,8 @@ impl<'a> HTTPClient<'a> {
                     location = header.value();
                 }
                 h if h == hash_header_const(b"Connection") => {
-                    // RFC 9112 §9.6: `Connection: close` means the sender will
-                    // close after this response; status code is irrelevant. The
-                    // old 2xx-only guard dates from when keep-alive defaulted
-                    // off and the block only handled `keep-alive`; with the
-                    // default now on, gating `close` on 2xx pools a socket the
-                    // server (or relaying proxy) is closing after a 4xx/5xx.
+                    // `close` applies on any status (RFC 9112 §9.6); only an
+                    // explicit `keep-alive` is gated on a 2xx success.
                     if bun_core::strings::eql_case_insensitive_ascii_check_length(
                         header.value(),
                         b"close",

@@ -664,13 +664,16 @@ describe("multi-chunk consumers produce exactly the concatenated bytes", () => {
     const reader = rs.getReader();
     await reader.read();
     const snap = Bun.generateHeapSnapshot();
+    expect(snap.nodeClassNames).toBeArray();
+    expect(snap.nodeClassNames).toContain("DirectStreamController");
     expect(snap.nodeClassNames).not.toContain("StreamsRuntime");
     reader.cancel();
   });
 
-  it("many direct controllers armed in one tick all deliver under GC pressure", async () => {
-    // Every controller's auto-flush job roots its controller through the nextTick queue,
-    // so a full GC between arming and delivery cannot collect any of them.
+  it("many direct controllers armed in one tick each deliver their own byte", async () => {
+    // Functional coverage of the nextTick-scheduled auto-flush: 64 controllers armed in the
+    // same tick, a full GC, and every read must still resolve with the byte its own pull
+    // wrote (not a sibling's).
     const N = 64;
     const readers = [];
     const reads = [];
@@ -688,7 +691,6 @@ describe("multi-chunk consumers produce exactly the concatenated bytes", () => {
     }
     Bun.gc(true);
     const results = await Promise.all(reads);
-    Bun.gc(true);
     expect(results.map(r => r.value[0])).toEqual([...Array(N).keys()]);
     for (const r of readers) r.cancel();
   });

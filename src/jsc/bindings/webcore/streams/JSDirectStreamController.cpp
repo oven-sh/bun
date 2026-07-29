@@ -75,10 +75,14 @@ void JSDirectStreamController::armEndOfTickFlush(JSGlobalObject* globalObject)
 {
     if (m_endOfTickFlushArmed || m_closed || !m_stream)
         return;
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     m_endOfTickFlushArmed = true;
     auto* zigGlobal = defaultGlobalObject(globalObject);
     auto* handler = JSStreamsRuntime::from(globalObject)->onDirectEndOfTickFlush();
     Bun__Process__queueNextTick2(zigGlobal, JSValue::encode(handler), JSValue::encode(jsUndefined()), JSValue::encode(this));
+    if (scope.exception()) [[unlikely]]
+        m_endOfTickFlushArmed = false;
 }
 
 Structure* JSDirectStreamController::createStructure(VM& vm, JSGlobalObject* globalObject, JSValue prototype)

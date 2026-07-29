@@ -791,7 +791,9 @@ function unwrapJSTransferableEnvelope(value: unknown): unknown {
     (value as Record<string, unknown>)[kJSTransferableMarker] === kJSTransferableEnvelope &&
     Object.prototype.hasOwnProperty.$call(value, kJSTransferableMarker)
   ) {
-    return unpackJSTransferables((value as Record<string, unknown>).m);
+    // Write back so every on('message') listener (each has its own wrapper) sees one instance.
+    const env = value as Record<string, unknown>;
+    return (env.m = unpackJSTransferables(env.m));
   }
   return value;
 }

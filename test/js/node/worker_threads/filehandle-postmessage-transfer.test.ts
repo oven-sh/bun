@@ -151,6 +151,28 @@ test("MessagePort.postMessage rejects a FileHandle marked untransferable", async
   }
 });
 
+test("multiple on('message') listeners receive the same FileHandle instance", async () => {
+  using dir = tempDir("port-fh-transfer", { "x.txt": "hello" });
+  const fh = await fs.promises.open(join(String(dir), "x.txt"), "r");
+  const { port1, port2 } = new MessageChannel();
+  let a: any, b: any;
+  try {
+    const pa = new Promise<any>(resolve => port1.on("message", resolve));
+    const pb = new Promise<any>(resolve => port1.on("message", resolve));
+    port2.postMessage(fh, [fh as any]);
+    [a, b] = await Promise.all([pa, pb]);
+    expect(a).toBe(b);
+    await a.close();
+    expect(b.fd).toBe(-1);
+  } finally {
+    if (a?.fd >= 0) await a.close();
+    if (b && b !== a && b.fd >= 0) await b.close();
+    if (fh.fd !== -1) await fh.close();
+    port1.close();
+    port2.close();
+  }
+});
+
 test("a FileHandle referenced twice in a posted message deserializes to one instance", async () => {
   using dir = tempDir("port-fh-transfer", { "x.txt": "hello" });
   const fh = await fs.promises.open(join(String(dir), "x.txt"), "r");

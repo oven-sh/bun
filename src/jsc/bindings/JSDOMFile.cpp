@@ -93,7 +93,7 @@ public:
     static JSDOMFileConstructor* create(JSC::VM& vm, JSGlobalObject* globalObject, JSC::JSObject* filePrototype)
     {
         auto* zigGlobal = defaultGlobalObject(globalObject);
-        auto structure = createStructure(vm, globalObject, zigGlobal->functionPrototype());
+        auto structure = createStructure(vm, globalObject, zigGlobal->JSBlobConstructor());
         auto* object = new (NotNull, JSC::allocateCell<JSDOMFileConstructor>(vm)) JSDOMFileConstructor(vm, structure);
         object->finishCreation(vm);
 

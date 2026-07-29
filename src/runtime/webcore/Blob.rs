@@ -1970,8 +1970,6 @@ impl BlobExt for Blob {
         let blob = self.dupe();
         blob.offset.set(offset);
         blob.size.set(len);
-        // Per File API spec, slice() returns a Blob regardless of the receiver.
-        blob.is_jsdom_file.set(false);
 
         let content_type_was_allocated = content_type.is_owned() && !content_type.is_empty();
         // infer the content type if it was not specified
@@ -3340,7 +3338,7 @@ impl BlobExt for Blob {
                                         blob.content_type_was_set.get(),
                                     ),
                                     charset: Cell::new(blob.charset.get()),
-                                    is_jsdom_file: Cell::new(blob.is_jsdom_file.get()),
+                                    is_jsdom_file: Cell::new(false),
                                     ref_count: bun_ptr::RawRefCount::init(0), // setNotHeapAllocated
                                     global_this: Cell::new(blob.global_this.get()),
                                     last_modified: Cell::new(blob.last_modified.get()),

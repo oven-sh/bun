@@ -840,6 +840,10 @@ describe("File prototype chain", () => {
     expect((got as File).name).toBe("x.txt");
   });
 
+  test("Object.getPrototypeOf(File) is Blob", () => {
+    expect(Object.getPrototypeOf(File)).toBe(Blob);
+  });
+
   test("file.slice() returns a plain Blob", async () => {
     const f = new File(["hello"], "x.txt", { lastModified: 123 });
     const s = f.slice(1, 3);
@@ -849,6 +853,53 @@ describe("File prototype chain", () => {
     expect(Object.prototype.toString.call(s)).toBe("[object Blob]");
     expect(Object.getPrototypeOf(s)).toBe(Blob.prototype);
     expect(await s.text()).toBe("el");
+  });
+
+  test("new Response(file).blob() returns a plain Blob", async () => {
+    const f = new File(["hi"], "x.txt", { type: "text/plain" });
+    const b = await new Response(f).blob();
+    expect(b instanceof File).toBe(false);
+    expect(b.constructor).toBe(Blob);
+    expect(Object.prototype.toString.call(b)).toBe("[object Blob]");
+    expect(await b.text()).toBe("hi");
+  });
+
+  test("new Blob([file]) is a plain Blob and stays one through structuredClone", () => {
+    const b = new Blob([new File(["hi"], "x.txt")]);
+    expect(Object.getPrototypeOf(b)).toBe(Blob.prototype);
+    expect(b instanceof File).toBe(false);
+    const c = structuredClone(b);
+    expect(c instanceof File).toBe(false);
+    expect(c.constructor).toBe(Blob);
+    expect(Object.prototype.toString.call(c)).toBe("[object Blob]");
+  });
+
+  test("WebSocket binaryType 'blob' delivers a plain Blob", async () => {
+    using server = Bun.serve({
+      port: 0,
+      websocket: {
+        open(ws) {
+          ws.sendBinary(new Uint8Array([1, 2, 3]));
+        },
+        message() {},
+      },
+      fetch(req, server) {
+        if (server.upgrade(req)) return;
+        return new Response();
+      },
+    });
+    const ws = new WebSocket(`ws://localhost:${server.port}`);
+    ws.binaryType = "blob";
+    const { promise, resolve, reject } = Promise.withResolvers<Blob>();
+    ws.onmessage = e => resolve(e.data);
+    ws.onerror = reject;
+    const data = await promise;
+    ws.close();
+    expect(data instanceof Blob).toBe(true);
+    expect(data instanceof File).toBe(false);
+    expect(data.constructor).toBe(Blob);
+    expect(Object.prototype.toString.call(data)).toBe("[object Blob]");
+    expect(new Uint8Array(await data.arrayBuffer())).toEqual(new Uint8Array([1, 2, 3]));
   });
 
   test("name and lastModified are own accessors on File.prototype", () => {

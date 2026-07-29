@@ -37,8 +37,8 @@ test("server version", async () => {
       },
     });
 
-  // will start the server on default port 3000
-  const server = Bun.serve({
+  await using server = Bun.serve({
+    port: 0,
     fetch(req) {
       return new Response(stream());
     },

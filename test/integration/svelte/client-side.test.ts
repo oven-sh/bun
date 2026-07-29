@@ -38,18 +38,42 @@ describe("generating client-side code", () => {
   });
 
   describe("Using Svelte components in Bun's dev server", () => {
-    let server: Subprocess;
+    let server: Subprocess<"ignore", "pipe", "pipe">;
+    let baseUrl: string;
 
     beforeAll(async () => {
-      server = Bun.spawn([bunExe(), "./index.html"], {
+      server = Bun.spawn({
+        cmd: [bunExe(), "./index.html", "--port=0", "--hostname=127.0.0.1"],
         env: {
           ...bunEnv,
           NODE_ENV: "development",
         },
         cwd: fixturePath("app"),
-        stdio: ["ignore", "inherit", "inherit"],
+        stdio: ["ignore", "pipe", "pipe"],
       });
-      await Bun.sleep(500);
+
+      const decoder = new TextDecoder();
+      let text = "";
+      const reader = server.stdout.getReader();
+      try {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (value) text += decoder.decode(value, { stream: true });
+          const match = text.match(/http:\/\/127\.0\.0\.1:\d+\//);
+          if (match) {
+            baseUrl = match[0];
+            break;
+          }
+          if (done) break;
+        }
+      } finally {
+        reader.releaseLock();
+      }
+
+      if (!baseUrl) {
+        const stderr = await server.stderr.text();
+        throw new Error("dev server did not print a URL.\nstdout: " + text + "\nstderr: " + stderr);
+      }
     });
 
     afterAll(() => {
@@ -57,8 +81,9 @@ describe("generating client-side code", () => {
     });
 
     it("serves the app", async () => {
-      const response = await fetch("http://localhost:3000");
-      await console.log(await response.text());
+      const response = await fetch(baseUrl);
+      const body = await response.text();
+      expect(body).toContain("<title>Svelte App</title>");
       expect(response.status).toBe(200);
       expect(response.headers.get("content-type")).toMatch("text/html");
     });

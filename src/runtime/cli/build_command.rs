@@ -1261,8 +1261,7 @@ fn collect_compile_assets(
         if !f.output_kind.is_file_in_standalone_mode() {
             continue;
         }
-        // The first server-side entry point is renamed to `basename(outfile)`
-        // after this function returns; that slot is covered by `entry_name`.
+        // First server EntryPoint is later renamed to basename(outfile); covered by `entry_name`.
         if !skipped_main_entry
             && f.output_kind == options::OutputKind::EntryPoint
             && f.side.unwrap_or(options::Side::Server) == options::Side::Server

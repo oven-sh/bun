@@ -987,6 +987,41 @@ impl Tree {
                 .get(builder.list.items_dependencies()[self_id as usize].as_slice());
             (s.as_ptr(), s.len())
         };
+
+        // When walking ancestors, stop hoisting if this tree already holds a
+        // different version of one of `package_id`'s peer dependencies. Placing
+        // the package here (or deduplicating it to a copy here) would make
+        // `require(peer)` resolve to that conflicting version instead of the
+        // one the package was resolved against.
+        if !AS_DEFINED && package_id != invalid_package_id {
+            let pkg_deps = builder.resolution_lists[package_id as usize];
+            'peers: for peer_dep_id in pkg_deps.begin()..pkg_deps.end() {
+                // SAFETY: `pkg_deps` is a slice into `deps` produced by the
+                // same lockfile, so `peer_dep_id` is in bounds.
+                let peer_dep = unsafe { deps.get_unchecked(peer_dep_id as usize) };
+                if !peer_dep.behavior.is_peer() {
+                    continue;
+                }
+                let peer_pkg_id = builder.resolutions[peer_dep_id as usize];
+                if peer_pkg_id == invalid_package_id {
+                    continue;
+                }
+                for i in 0..this_deps_len {
+                    // SAFETY: same invariant as the name-match loop below.
+                    let dep_id: DependencyID = unsafe { *this_deps_ptr.add(i) };
+                    let dep = unsafe { deps.get_unchecked(dep_id as usize) };
+                    if dep.name_hash != peer_dep.name_hash {
+                        continue;
+                    }
+                    let res_id = builder.resolutions[dep_id as usize];
+                    if res_id == invalid_package_id || res_id == peer_pkg_id {
+                        continue 'peers;
+                    }
+                    return Ok(HoistDependencyResult::DependencyLoop);
+                }
+            }
+        }
+
         // Keep the comparand in a register; `deps.get_unchecked` may alias `dependency`.
         let target_name_hash = dependency.name_hash;
         for i in 0..this_deps_len {

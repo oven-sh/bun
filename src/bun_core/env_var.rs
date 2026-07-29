@@ -118,6 +118,12 @@ platform_specific_new!(pub LIBRARY_PATH: string, posix = "LIBRARY_PATH", windows
 new!(pub BUN_TEST_DRAIN_EVENT_LOOP: boolean, "BUN_TEST_DRAIN_EVENT_LOOP", { default: false });
 new!(pub BUN_TMPDIR: string, "BUN_TMPDIR", {});
 new!(pub BUN_WATCHER_TRACE: string, "BUN_WATCHER_TRACE", {});
+// Poll the filesystem instead of using inotify/kqueue/ReadDirectoryChangesW
+// for `--watch` / `--hot`. Needed on mounts that can't deliver native change
+// events (Docker bind mounts from a Windows/macOS host, WSL `/mnt/...`,
+// NFS/SMB). See src/watcher/PollingWatcher.rs.
+new!(pub BUN_WATCHER_USE_POLLING: boolean, "BUN_WATCHER_USE_POLLING", { default: false });
+new!(pub BUN_WATCHER_POLL_INTERVAL: unsigned, "BUN_WATCHER_POLL_INTERVAL", {});
 new!(pub CI: boolean, "CI", {});
 new!(pub CI_COMMIT_SHA: string, "CI_COMMIT_SHA", {});
 new!(pub CI_JOB_URL: string, "CI_JOB_URL", {});

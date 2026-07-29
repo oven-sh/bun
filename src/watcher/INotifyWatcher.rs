@@ -372,7 +372,7 @@ pub(crate) fn watch_loop_cycle(this: &mut Watcher) -> bun_sys::Result<()> {
     use crate::watcher_impl::WatchItemColumns;
     let _flush = Output::flush_guard();
 
-    let events = this.platform.read()?;
+    let events = this.platform.native_mut().read()?;
     if events.is_empty() {
         return Ok(());
     }

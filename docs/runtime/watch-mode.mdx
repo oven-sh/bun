@@ -76,6 +76,22 @@ bun --watch test
   --no-clear-screen`.
 </Note>
 
+### Docker, WSL, and network filesystems
+
+Bun's watcher relies on the operating system's native file-change APIs (inotify on Linux, kqueue on macOS, `ReadDirectoryChangesW` on Windows). These do not fire for files that live on certain mounted filesystems, including:
+
+- Docker bind mounts where the host is Windows or macOS
+- WSL paths under `/mnt/c/...`
+- NFS, SMB, and other network shares
+
+If edits on the host are not picked up inside the container, set `BUN_WATCHER_USE_POLLING=1` to switch `--watch` and `--hot` to a polling backend that periodically `stat()`s each watched file:
+
+```bash terminal icon="terminal"
+BUN_WATCHER_USE_POLLING=1 bun --watch index.ts
+```
+
+The poll interval defaults to 100 ms and can be changed with `BUN_WATCHER_POLL_INTERVAL` (in milliseconds). Polling uses more CPU than native watching, so only enable it when native events are unavailable.
+
 ---
 
 ## `--hot` mode

@@ -21,6 +21,9 @@ pub mod kevent_watcher;
 #[path = "WindowsWatcher.rs"]
 pub mod windows_watcher;
 
+#[path = "PollingWatcher.rs"]
+pub mod polling_watcher;
+
 #[path = "WatcherTrace.rs"]
 pub mod watcher_trace;
 

@@ -1051,9 +1051,16 @@ impl ServerConfig {
                     // `UserOptions` (lives until `args.bake` is dropped).
                     let arena = bun_alloc::Arena::new();
 
+                    // `top_level_dir()` gains a trailing separator after a
+                    // runtime `process.chdir()` (set_process_cwd appends one),
+                    // but the boot-time value has none. DevServer::relative_path
+                    // asserts no trailing '/', so strip it here to match the
+                    // getcwd path in bake_body.rs.
                     let root = bb::arena_dupe_z(
                         &arena,
-                        bun_paths::fs::FileSystem::instance().top_level_dir(),
+                        strings::without_trailing_slash(
+                            bun_paths::fs::FileSystem::instance().top_level_dir(),
+                        ),
                     );
 
                     // Convert `crate::bake::FileSystemRouterType` (Cow-backed)

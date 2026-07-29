@@ -839,4 +839,49 @@ describe("File prototype chain", () => {
     expect(got instanceof File).toBe(true);
     expect((got as File).name).toBe("x.txt");
   });
+
+  test("file.slice() returns a plain Blob", async () => {
+    const f = new File(["hello"], "x.txt", { lastModified: 123 });
+    const s = f.slice(1, 3);
+    expect(s instanceof File).toBe(false);
+    expect(s instanceof Blob).toBe(true);
+    expect(s.constructor).toBe(Blob);
+    expect(Object.prototype.toString.call(s)).toBe("[object Blob]");
+    expect(Object.getPrototypeOf(s)).toBe(Blob.prototype);
+    expect(await s.text()).toBe("el");
+  });
+
+  test("name and lastModified are own accessors on File.prototype", () => {
+    expect(Object.getOwnPropertyNames(File.prototype).sort()).toEqual(["constructor", "lastModified", "name"]);
+    const name = Object.getOwnPropertyDescriptor(File.prototype, "name");
+    const lastModified = Object.getOwnPropertyDescriptor(File.prototype, "lastModified");
+    expect(typeof name!.get).toBe("function");
+    expect(typeof lastModified!.get).toBe("function");
+  });
+
+  test("File posted to a Worker has the File prototype before globalThis.File is touched", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const w = new Worker(URL.createObjectURL(new Blob([
+            "self.onmessage = e => postMessage({ctor: e.data.constructor.name, isFile: e.data instanceof File});",
+          ], { type: "text/javascript" })));
+          const { promise, resolve } = Promise.withResolvers();
+          w.onmessage = e => resolve(e.data);
+          w.postMessage(new File(["hi"], "x.txt"));
+          const r = await promise;
+          console.log(JSON.stringify(r));
+          w.terminate();
+        `,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout.trim())).toEqual({ ctor: "File", isFile: true });
+    expect(exitCode).toBe(0);
+  });
 });

@@ -1,8 +1,8 @@
 #pragma once
 
 #include "root.h"
+#include <JavaScriptCore/LazyClassStructure.h>
 
 namespace Bun {
-JSC::JSObject* createJSDOMFileConstructor(JSC::VM&, JSC::JSGlobalObject*);
-JSC::Structure* createJSDOMFileStructure(JSC::VM&, JSC::JSGlobalObject*);
+void setupJSDOMFileClassStructure(JSC::LazyClassStructure::Initializer&);
 }

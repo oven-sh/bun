@@ -9,9 +9,17 @@ using namespace JSC;
 
 extern "C" SYSV_ABI void* JSDOMFile__construct(JSC::JSGlobalObject*, JSC::CallFrame* callframe);
 
+namespace WebCore {
+JSC_DECLARE_CUSTOM_GETTER(BlobPrototype__nameGetterWrap);
+JSC_DECLARE_CUSTOM_GETTER(BlobPrototype__lastModifiedGetterWrap);
+}
+
 namespace Bun {
 
-class JSDOMFileConstructor;
+static const HashTableValue JSDOMFilePrototypeTableValues[] = {
+    { "name"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, WebCore::BlobPrototype__nameGetterWrap, 0 } },
+    { "lastModified"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, WebCore::BlobPrototype__lastModifiedGetterWrap, 0 } },
+};
 
 class JSDOMFilePrototype final : public JSC::JSNonFinalObject {
 public:
@@ -51,6 +59,7 @@ private:
     {
         Base::finishCreation(vm);
         ASSERT(inherits(info()));
+        reifyStaticProperties(vm, WebCore::JSBlob::info(), JSDOMFilePrototypeTableValues, *this);
         JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
     }
 };
@@ -88,8 +97,7 @@ public:
         auto* object = new (NotNull, JSC::allocateCell<JSDOMFileConstructor>(vm)) JSDOMFileConstructor(vm, structure);
         object->finishCreation(vm);
 
-        object->putDirect(vm, vm.propertyNames->prototype, filePrototype, JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly);
-        filePrototype->putDirect(vm, vm.propertyNames->constructor, object, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum));
+        object->putDirectWithoutTransition(vm, vm.propertyNames->prototype, filePrototype, JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly);
 
         return object;
     }
@@ -138,21 +146,17 @@ private:
 
 const JSC::ClassInfo JSDOMFileConstructor::s_info = { "File"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSDOMFileConstructor) };
 
-JSC::Structure* createJSDOMFileStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
+void setupJSDOMFileClassStructure(JSC::LazyClassStructure::Initializer& init)
 {
-    auto* zigGlobal = defaultGlobalObject(globalObject);
+    auto* zigGlobal = defaultGlobalObject(init.global);
     JSC::JSObject* blobPrototype = zigGlobal->JSBlobPrototype();
-    auto* protoStructure = JSDOMFilePrototype::createStructure(vm, globalObject, blobPrototype);
-    auto* prototype = JSDOMFilePrototype::create(vm, globalObject, protoStructure);
-    return WebCore::JSBlob::createStructure(vm, globalObject, prototype);
-}
-
-JSC::JSObject* createJSDOMFileConstructor(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
-{
-    auto* zigGlobal = defaultGlobalObject(globalObject);
-    auto* structure = zigGlobal->JSDOMFileStructure();
-    auto* filePrototype = structure->storedPrototypeObject();
-    return JSDOMFileConstructor::create(vm, globalObject, filePrototype);
+    auto* protoStructure = JSDOMFilePrototype::createStructure(init.vm, init.global, blobPrototype);
+    auto* prototype = JSDOMFilePrototype::create(init.vm, init.global, protoStructure);
+    auto* structure = WebCore::JSBlob::createStructure(init.vm, init.global, prototype);
+    auto* constructor = JSDOMFileConstructor::create(init.vm, init.global, prototype);
+    init.setPrototype(prototype);
+    init.setStructure(structure);
+    init.setConstructor(constructor);
 }
 
 extern "C" SYSV_ABI EncodedJSValue BUN__createJSDOMFile(JSC::JSGlobalObject* lexicalGlobalObject, void* ptr)

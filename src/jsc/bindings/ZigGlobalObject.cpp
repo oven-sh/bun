@@ -3374,6 +3374,9 @@ extern "C" void JSGlobalObject__requestTermination(JSC::JSGlobalObject* globalOb
 extern "C" void JSGlobalObject__clearTerminationException(JSC::JSGlobalObject* globalObject)
 {
     auto& vm = JSC::getVM(globalObject);
+    // The trap bit is set cross-thread and may not have reached a safepoint
+    // yet; without this it would re-fire inside the next allocation.
+    vm.traps().clearTrap(JSC::VMTraps::NeedTermination);
     // Clear the request for the termination exception to be thrown
     vm.clearHasTerminationRequest();
     // In case it actually has been thrown, clear the exception itself as well.

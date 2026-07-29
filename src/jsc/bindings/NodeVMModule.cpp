@@ -107,6 +107,7 @@ JSValue NodeVMModule::evaluate(JSGlobalObject* globalObject, uint32_t timeout, b
             if (vm.hasTerminationRequest() || vm.hasPendingTerminationException()) {
                 vm.drainMicrotasksForGlobalObject(nodeVmGlobalObject);
                 DECLARE_TOP_EXCEPTION_SCOPE(vm).clearException();
+                vm.traps().clearTrap(JSC::VMTraps::NeedTermination);
                 vm.clearHasTerminationRequest();
                 if (getSigintReceived()) {
                     setSigintReceived(false);
@@ -247,6 +248,7 @@ JSValue NodeVMModule::evaluate(JSGlobalObject* globalObject, uint32_t timeout, b
     if (vm.hasTerminationRequest() || vm.hasPendingTerminationException()) {
         vm.drainMicrotasksForGlobalObject(nodeVmGlobalObject);
         DECLARE_TOP_EXCEPTION_SCOPE(vm).clearException();
+        vm.traps().clearTrap(JSC::VMTraps::NeedTermination);
         vm.clearHasTerminationRequest();
         if (getSigintReceived()) {
             setSigintReceived(false);

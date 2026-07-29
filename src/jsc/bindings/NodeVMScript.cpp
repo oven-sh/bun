@@ -315,6 +315,7 @@ static bool checkForTermination(JSC::VM& vm, JSC::JSGlobalObject* globalObject, 
         // the ERR_SCRIPT_EXECUTION_* error below replaces it.
         if (vm.hasPendingTerminationException())
             DECLARE_TOP_EXCEPTION_SCOPE(vm).clearException();
+        vm.traps().clearTrap(JSC::VMTraps::NeedTermination);
         vm.clearHasTerminationRequest();
         if (script->getSigintReceived()) {
             script->setSigintReceived(false);

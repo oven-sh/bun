@@ -208,11 +208,12 @@ JSObject* ErrorCodeCache::createError(VM& vm, Zig::GlobalObject* globalObject, E
     auto* structure = uncheckedDowncast<Structure>(cache->internalField(static_cast<unsigned>(code)).get());
     auto* created_error = JSC::ErrorInstance::create(globalObject, structure, message, options, nullptr, JSC::RuntimeType::TypeNothing, data.type, true);
     if (auto* thrown_exception = scope.exception()) [[unlikely]] {
+        // TerminationException's value is a JSString; leave it pending.
+        if (vm.isTerminationException(thrown_exception))
+            return created_error;
         (void)scope.tryClearException();
-        // TODO investigate what can throw here and whether it will throw non-objects
-        // (this is better than before where we would have returned nullptr from createError if any
-        // exception were thrown by ErrorInstance::create)
-        return uncheckedDowncast<JSObject>(thrown_exception->value());
+        auto value = thrown_exception->value();
+        return value.isObject() ? asObject(value) : created_error;
     }
     return created_error;
 }

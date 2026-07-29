@@ -4668,6 +4668,17 @@ pub mod bv2_impl {
                                         resolve.import_record.original_target,
                                     );
                                     let mut jsx = t.options.jsx.clone();
+                                    if path.namespace == b"file" {
+                                        let dir =
+                                            Fs::PathName::init(path.text).dir_with_trailing_slash();
+                                        if let Some(tsconfig) = t
+                                            .resolver
+                                            .read_dir_info_ignore_error(dir)
+                                            .and_then(|d| d.enclosing_tsconfig_json)
+                                        {
+                                            jsx = tsconfig.merge_jsx(jsx);
+                                        }
+                                    }
                                     if let Some(dev) =
                                         t.options.force_node_env.jsx_development_override()
                                     {

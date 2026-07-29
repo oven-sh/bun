@@ -2833,11 +2833,9 @@ void JSC__VM__collectAsync(JSC::VM* vm)
 extern "C" bool JSC__VM__hasExecutionTimeLimit(JSC::VM* vm)
 {
     JSC::JSLockHolder locker(vm);
-    if (vm->watchdog()) {
-        return vm->watchdog()->hasTimeLimit();
-    }
-
-    return false;
+    // NodeVMTimeoutScope leaves hasTimeLimit() true until its veto callback
+    // runs; the active-scope slot is the accurate "a node:vm timeout is live".
+    return WebCore::clientData(*vm)->nodeVMTimeoutScope != nullptr;
 }
 
 size_t JSC__VM__heapSize(JSC::VM* arg0)

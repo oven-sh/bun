@@ -30,6 +30,10 @@ namespace Zig {
 class GlobalObject;
 }
 
+namespace Bun {
+class NodeVMTimeoutScope;
+}
+
 namespace WebCore {
 using namespace JSC;
 using namespace Zig;
@@ -126,6 +130,9 @@ public:
 
     void* bunVM;
     Bun::JSCTaskScheduler deferredWorkTimer;
+
+    // Innermost active node:vm `timeout` scope; see NodeVMTimeoutScope.
+    Bun::NodeVMTimeoutScope* nodeVMTimeoutScope { nullptr };
 
     // Backing storage for Bun::IsolatedModuleCache (see IsolatedModuleCache.h).
     // All access should go through that class. Stored as the JSC base type to

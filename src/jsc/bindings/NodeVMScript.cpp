@@ -13,6 +13,8 @@
 #include "NodeVMScriptFetcher.h"
 #include "../vm/SigintWatcher.h"
 
+#include "JavaScriptCore/Watchdog.h"
+
 #include <bit>
 
 namespace Bun {
@@ -306,51 +308,83 @@ void NodeVMScript::destroy(JSCell* cell)
     static_cast<NodeVMScript*>(cell)->NodeVMScript::~NodeVMScript();
 }
 
-static bool checkForTermination(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, NodeVMScript* script, std::optional<double> timeout)
+NodeVMTimeoutScope::NodeVMTimeoutScope(JSC::VM& vm, std::optional<int64_t> timeoutMs)
 {
-    if (vm.hasTerminationRequest()) {
-        vm.drainMicrotasksForGlobalObject(globalObject);
-        // The termination may have fired inside an afterEvaluate microtask
-        // checkpoint, leaving the termination exception pending; clear it so
-        // the ERR_SCRIPT_EXECUTION_* error below replaces it.
-        if (vm.hasPendingTerminationException())
-            DECLARE_TOP_EXCEPTION_SCOPE(vm).clearException();
-        vm.clearHasTerminationRequest();
-        if (script->getSigintReceived()) {
-            script->setSigintReceived(false);
-            throwError(globalObject, scope, ErrorCode::ERR_SCRIPT_EXECUTION_INTERRUPTED, "Script execution was interrupted by `SIGINT`"_s);
-        } else if (timeout) {
-            throwError(globalObject, scope, ErrorCode::ERR_SCRIPT_EXECUTION_TIMEOUT, makeString("Script execution timed out after "_s, *timeout, "ms"_s));
-        } else {
-            RELEASE_ASSERT_NOT_REACHED_WITH_MESSAGE("vm.Script terminated due neither to SIGINT nor to timeout");
-        }
+    if (!timeoutMs)
+        return;
+
+    m_vm = &vm;
+    auto*& active = WebCore::clientData(vm)->nodeVMTimeoutScope;
+    m_prev = active;
+    active = this;
+
+    JSC::JSLockHolder locker(vm);
+    JSC::Watchdog& dog = vm.ensureWatchdog();
+    // ensureWatchdog may have just created it, past VMEntryScope's on-entry.
+    dog.enteredVM();
+
+    double effective = static_cast<double>(*timeoutMs);
+    if (m_prev && m_prev->m_effectiveTimeoutMs < effective)
+        effective = m_prev->m_effectiveTimeoutMs;
+    m_effectiveTimeoutMs = effective;
+
+    dog.setTimeLimit(WTF::Seconds::fromMilliseconds(effective), shouldTerminateCallback, &active, nullptr);
+}
+
+NodeVMTimeoutScope::~NodeVMTimeoutScope()
+{
+    if (!m_vm)
+        return;
+    auto*& active = WebCore::clientData(*m_vm)->nodeVMTimeoutScope;
+    active = m_prev;
+    // No enclosing scope: leave the Watchdog armed so the already-dispatched
+    // timer's trap service keeps hasTimeLimit() true (startTimer asserts it);
+    // the callback observes active==nullptr and vetoes.
+    if (!m_prev)
+        return;
+    JSC::JSLockHolder locker(*m_vm);
+    m_vm->watchdog()->setTimeLimit(WTF::Seconds::fromMilliseconds(m_prev->m_effectiveTimeoutMs), shouldTerminateCallback, &active, nullptr);
+}
+
+bool NodeVMTimeoutScope::shouldTerminateCallback(JSC::JSGlobalObject* globalObject, void* data1, void*)
+{
+    auto** activeSlot = static_cast<NodeVMTimeoutScope**>(data1);
+    if (auto* active = *activeSlot) {
+        active->m_fired = true;
         return true;
     }
-
+    // Stale fire (the armer has returned): clear the limit and veto.
+    globalObject->vm().watchdog()->setTimeLimit(JSC::Watchdog::noTimeLimit);
     return false;
 }
 
-void setupWatchdog(VM& vm, double timeout, double* oldTimeout, double* newTimeout)
+bool checkForTermination(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, SigintReceiver* receiver, NodeVMTimeoutScope& timeoutScope)
 {
-    JSC::JSLockHolder locker(vm);
-    JSC::Watchdog& dog = vm.ensureWatchdog();
-    dog.enteredVM();
+    if (!vm.hasTerminationRequest() && !vm.hasPendingTerminationException())
+        return false;
 
-    Seconds oldLimit = dog.getTimeLimit();
-
-    if (oldTimeout) {
-        *oldTimeout = oldLimit.milliseconds();
+    bool sigint = receiver && receiver->getSigintReceived();
+    if (!sigint && !timeoutScope.didFire()) {
+        // Foreign termination (enclosing eval / worker.terminate()): propagate.
+        scope.throwException(globalObject, vm.ensureTerminationException());
+        return true;
     }
 
-    if (oldLimit.isInfinity() || timeout < oldLimit.milliseconds()) {
-        dog.setTimeLimit(WTF::Seconds::fromMilliseconds(timeout));
+    // Drop microtasks the aborted evaluation queued on its own context; for
+    // runInThisContext / context-less modules they share the caller's queue.
+    if (auto* vmGlobal = dynamicDowncast<NodeVMGlobalObject>(globalObject))
+        vm.drainMicrotasksForGlobalObject(vmGlobal);
+    if (vm.hasPendingTerminationException())
+        DECLARE_TOP_EXCEPTION_SCOPE(vm).clearException();
+    vm.clearHasTerminationRequest();
+
+    if (sigint) {
+        receiver->setSigintReceived(false);
+        throwError(globalObject, scope, ErrorCode::ERR_SCRIPT_EXECUTION_INTERRUPTED, "Script execution was interrupted by `SIGINT`"_s);
     } else {
-        timeout = oldLimit.milliseconds();
+        throwError(globalObject, scope, ErrorCode::ERR_SCRIPT_EXECUTION_TIMEOUT, makeString("Script execution timed out after "_s, timeoutScope.effectiveTimeoutMs(), "ms"_s));
     }
-
-    if (newTimeout) {
-        *newTimeout = timeout;
-    }
+    return true;
 }
 
 static JSC::EncodedJSValue runInContext(NodeVMGlobalObject* globalObject, NodeVMScript* script, JSObject* contextifiedObject, JSValue optionsArg, bool allowStringInPlaceOfOptions = false)
@@ -379,11 +413,7 @@ static JSC::EncodedJSValue runInContext(NodeVMGlobalObject* globalObject, NodeVM
         result = JSC::evaluate(globalObject, script->source(), globalObject, exception);
     };
 
-    std::optional<double> oldLimit, newLimit;
-
-    if (options.timeout) {
-        setupWatchdog(vm, *options.timeout, &oldLimit.emplace(), &newLimit.emplace());
-    }
+    NodeVMTimeoutScope timeoutScope(vm, options.timeout);
 
     script->setSigintReceived(false);
 
@@ -404,11 +434,7 @@ static JSC::EncodedJSValue runInContext(NodeVMGlobalObject* globalObject, NodeVM
         drainAfterEvaluate();
     }
 
-    if (options.timeout) {
-        vm.watchdog()->setTimeLimit(WTF::Seconds::fromMilliseconds(*oldLimit));
-    }
-
-    if (checkForTermination(vm, globalObject, scope, script, newLimit)) {
+    if (checkForTermination(vm, globalObject, scope, script, timeoutScope)) {
         return {};
     }
 
@@ -455,11 +481,7 @@ JSC_DEFINE_HOST_FUNCTION(scriptRunInThisContext, (JSGlobalObject * globalObject,
         result = JSC::evaluate(globalObject, script->source(), globalObject, exception);
     };
 
-    std::optional<double> oldLimit, newLimit;
-
-    if (options.timeout) {
-        setupWatchdog(vm, *options.timeout, &oldLimit.emplace(), &newLimit.emplace());
-    }
+    NodeVMTimeoutScope timeoutScope(vm, options.timeout);
 
     script->setSigintReceived(false);
 
@@ -471,11 +493,7 @@ JSC_DEFINE_HOST_FUNCTION(scriptRunInThisContext, (JSGlobalObject * globalObject,
         run();
     }
 
-    if (options.timeout) {
-        vm.watchdog()->setTimeLimit(WTF::Seconds::fromMilliseconds(*oldLimit));
-    }
-
-    if (checkForTermination(vm, globalObject, scope, script, newLimit)) {
+    if (checkForTermination(vm, globalObject, scope, script, timeoutScope)) {
         return {};
     }
 

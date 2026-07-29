@@ -45,6 +45,34 @@ bool isUseMainContextDefaultLoaderConstant(JSC::JSGlobalObject* globalObject, JS
 
 } // namespace NodeVM
 
+class SigintReceiver;
+
+// RAII guard for one node:vm evaluation's `timeout`. Installs a Watchdog
+// ShouldTerminateCallback that attributes a fire to the active scope and
+// vetoes a stale one (the per-VM Watchdog has no cancel API).
+class NodeVMTimeoutScope {
+    WTF_MAKE_NONCOPYABLE(NodeVMTimeoutScope);
+
+public:
+    NodeVMTimeoutScope(JSC::VM&, std::optional<int64_t> timeoutMs);
+    ~NodeVMTimeoutScope();
+
+    bool didFire() const { return m_fired; }
+    double effectiveTimeoutMs() const { return m_effectiveTimeoutMs; }
+
+private:
+    static bool shouldTerminateCallback(JSC::JSGlobalObject*, void* data1, void* data2);
+
+    JSC::VM* m_vm { nullptr };
+    NodeVMTimeoutScope* m_prev { nullptr };
+    double m_effectiveTimeoutMs { 0 };
+    bool m_fired { false };
+};
+
+// Convert a termination this evaluation raised to ERR_SCRIPT_EXECUTION_*;
+// propagate a foreign one (enclosing evaluation or worker.terminate()).
+bool checkForTermination(JSC::VM&, JSC::JSGlobalObject*, JSC::ThrowScope&, SigintReceiver*, NodeVMTimeoutScope&);
+
 class BaseVMOptions {
 public:
     String filename;

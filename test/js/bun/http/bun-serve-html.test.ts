@@ -1132,4 +1132,4 @@ test("dev server HTML route works after process.chdir() before Bun.serve", async
   expect(json).toBe(JSON.stringify({ status: 200, hasScript: true }));
   expect(stdout).toContain("DONE");
   expect(exitCode).toBe(0);
-}, 30_000);
+});

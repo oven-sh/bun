@@ -253,11 +253,11 @@ fn blob_scheme_fetch(
         ));
     };
 
-    if blob.size.get() == blob::MAX_SIZE && !blob.is_s3() {
+    if blob.needs_to_read_file() {
         blob.resolve_size();
     }
     let full_length = blob.size.get();
-    let size_known = full_length != blob::MAX_SIZE;
+    let size_known = full_length != blob::MAX_SIZE && !blob.is_s3();
     let mut status_code: u16 = 200;
     let mut status_text: &[u8] = b"OK";
     let mut content_range_buf = [0u8; crate::server::range_request::CONTENT_RANGE_BUF];

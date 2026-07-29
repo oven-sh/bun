@@ -247,21 +247,33 @@ describe("blob: scheme fetch", () => {
 
   test("resolves a file-backed blob's size before Content-Length/Range", async () => {
     using dir = tempDir("blob-scheme-file", { "x.bin": "hello" });
-    const fileUrl = URL.createObjectURL(Bun.file(path.join(String(dir), "x.bin")));
-    try {
-      const full = await fetch(fileUrl);
-      expect(full.headers.get("Content-Length")).toBe("5");
-      expect(await full.text()).toBe("hello");
+    const file = Bun.file(path.join(String(dir), "x.bin"));
 
-      const part = await fetch(fileUrl, { headers: { Range: "bytes=-3" } });
-      expect({
-        status: part.status,
-        contentLength: part.headers.get("Content-Length"),
-        contentRange: part.headers.get("Content-Range"),
-      }).toEqual({ status: 206, contentLength: "3", contentRange: "bytes 2-4/5" });
-      expect(await part.text()).toBe("llo");
-    } finally {
-      URL.revokeObjectURL(fileUrl);
+    for (const [blob, body] of [
+      [file, "hello"],
+      [file.slice(3), "lo"],
+      [file.slice(1, 4), "ell"],
+    ] as const) {
+      const url = URL.createObjectURL(blob);
+      try {
+        const full = await fetch(url);
+        expect(full.headers.get("Content-Length")).toBe(String(body.length));
+        expect(await full.text()).toBe(body);
+
+        const part = await fetch(url, { headers: { Range: "bytes=-1" } });
+        expect({
+          status: part.status,
+          contentLength: part.headers.get("Content-Length"),
+          contentRange: part.headers.get("Content-Range"),
+        }).toEqual({
+          status: 206,
+          contentLength: "1",
+          contentRange: `bytes ${body.length - 1}-${body.length - 1}/${body.length}`,
+        });
+        expect(await part.text()).toBe(body.at(-1));
+      } finally {
+        URL.revokeObjectURL(url);
+      }
     }
   });
 });

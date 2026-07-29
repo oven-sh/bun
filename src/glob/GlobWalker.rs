@@ -260,6 +260,8 @@ pub struct GlobWalker<A: Accessor, const SENTINEL: bool> {
     pub follow_symlinks: bool,
     pub error_on_broken_symlinks: bool,
     pub only_files: bool,
+    /// Skip directories whose open/read fails instead of aborting the walk.
+    pub suppress_errors: bool,
 
     pub path_buf: Box<PathBuffer>,
     // iteration state
@@ -439,7 +441,7 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
                                 return Ok(Ok(()));
                             }
                             // Doesn't exist
-                            if e.get_errno() == E::ENOENT {
+                            if e.get_errno() == E::ENOENT || self.walker.suppress_errors {
                                 self.iter_state = IterState::GetNext;
                                 return Ok(Ok(()));
                             }
@@ -487,6 +489,10 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
         let root_path_z = ZStr::from_buf(&self.walker.path_buf[..], root_path_len);
         let cwd_fd = match A::open(root_path_z)? {
             Err(err) => {
+                if self.walker.suppress_errors {
+                    self.iter_state = IterState::GetNext;
+                    return Ok(Ok(()));
+                }
                 return Ok(Err(err.with_path(&self.walker.path_buf[..root_path_len])));
             }
             Ok(fd) => fd,
@@ -573,6 +579,10 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
                 if let Some(fd) = work_item.fd {
                     self.close_disallowing_cwd(fd);
                 }
+                if self.walker.suppress_errors {
+                    self.iter_state = IterState::GetNext;
+                    return Ok(Ok(()));
+                }
                 return Ok(Err(SysError::from_code(
                     E::ENAMETOOLONG,
                     Syscall::Tag::open,
@@ -601,6 +611,10 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
                     Err(e) => {
                         if let Some(fd) = work_item.fd {
                             self.close_disallowing_cwd(fd);
+                        }
+                        if self.walker.suppress_errors {
+                            self.iter_state = IterState::GetNext;
+                            return Ok(Ok(()));
                         }
                         return Ok(Err(e));
                     }
@@ -631,6 +645,10 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
                 if had_dot_dot {
                     break 'fd match A::openat(self.cwd_fd, dir_path)? {
                         Err(err) => {
+                            if self.walker.suppress_errors {
+                                self.iter_state = IterState::GetNext;
+                                return Ok(Ok(()));
+                            }
                             return Ok(Err(self.walker.handle_sys_err_with_path(&err, dir_path)));
                         }
                         Ok(fd_) => {
@@ -646,6 +664,10 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
 
             match A::openat(self.cwd_fd, dir_path)? {
                 Err(err) => {
+                    if self.walker.suppress_errors {
+                        self.iter_state = IterState::GetNext;
+                        return Ok(Ok(()));
+                    }
                     return Ok(Err(self.walker.handle_sys_err_with_path(&err, dir_path)));
                 }
                 Ok(fd_) => {
@@ -676,7 +698,7 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
                     Err(e_) => {
                         let e: SysError = e_;
                         self.close_disallowing_cwd(fd);
-                        if e.get_errno() == E::ENOENT {
+                        if e.get_errno() == E::ENOENT || self.walker.suppress_errors {
                             self.iter_state = IterState::GetNext;
                             return Ok(Ok(()));
                         }
@@ -824,6 +846,10 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
                             // NUL re-written at `[len]` below isn't left embedded in the path.
                             let work_item_path: &[u8] = work_item_logical_path(&work_item.path);
                             if work_item_path.len() >= MAX_PATH_BYTES {
+                                if self.walker.suppress_errors {
+                                    self.iter_state = IterState::GetNext;
+                                    continue;
+                                }
                                 return Ok(Err(SysError::from_code(
                                     E::ENAMETOOLONG,
                                     Syscall::Tag::open,
@@ -857,7 +883,13 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
                                         scratch_path_buf,
                                         &mut has_dot_dot,
                                     ) {
-                                        Err(e) => return Ok(Err(e)),
+                                        Err(e) => {
+                                            if walker.suppress_errors {
+                                                self.iter_state = IterState::GetNext;
+                                                continue 'outer;
+                                            }
+                                            return Ok(Err(e));
+                                        }
                                         Ok(i) => i,
                                     };
                                     if norm as usize >= walker.pattern_components.len() {
@@ -894,7 +926,9 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
                                         if err.get_errno() == E::ENOTDIR {
                                             break 'brk None;
                                         }
-                                        if self.walker.error_on_broken_symlinks {
+                                        if self.walker.error_on_broken_symlinks
+                                            && !self.walker.suppress_errors
+                                        {
                                             return Ok(Err(self.walker.handle_sys_err_with_path(
                                                 &err,
                                                 symlink_full_path_z,
@@ -995,6 +1029,7 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
                         Err(err) => {
                             let dir_fd = dir.fd;
                             let at_cwd = dir.at_cwd;
+                            let suppress = self.walker.suppress_errors;
                             let dir_path = dir.dir_path();
                             // Note: reshaped for borrowck
                             let err = self.walker.handle_sys_err_with_path(&err, dir_path);
@@ -1003,6 +1038,10 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
                             }
                             if let IterState::Directory(d) = &mut self.iter_state {
                                 d.iter_closed = true;
+                            }
+                            if suppress {
+                                self.iter_state = IterState::GetNext;
+                                continue;
                             }
                             return Ok(Err(err));
                         }
@@ -1393,6 +1432,7 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
         follow_symlinks: bool,
         error_on_broken_symlinks: bool,
         only_files: bool,
+        suppress_errors: bool,
         ignore_filter_fn: Option<IgnoreFilterFn>,
     ) -> Result<Maybe<Self>, Error> {
         // `bun_paths::fs::FileSystem` (singleton holds only the cwd string; the
@@ -1405,6 +1445,7 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
             follow_symlinks,
             error_on_broken_symlinks,
             only_files,
+            suppress_errors,
             ignore_filter_fn,
         )
     }
@@ -1440,6 +1481,7 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
         follow_symlinks: bool,
         error_on_broken_symlinks: bool,
         only_files: bool,
+        suppress_errors: bool,
         ignore_filter_fn: Option<IgnoreFilterFn>,
     ) -> Result<Maybe<Self>, Error> {
         log!("initWithCwd(cwd={})", bstr::BStr::new(cwd));
@@ -1451,6 +1493,7 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
             follow_symlinks,
             error_on_broken_symlinks,
             only_files,
+            suppress_errors,
             basename_excluding_special_syntax_component_idx: 0,
             end_byte_of_basename_excluding_special_syntax: 0,
             pattern_components: Vec::new(),

@@ -28,6 +28,7 @@ struct ScanOpts {
     only_files: bool,
     follow_symlinks: bool,
     error_on_broken_symlinks: bool,
+    suppress_errors: bool,
 }
 
 impl ScanOpts {
@@ -110,6 +111,7 @@ impl ScanOpts {
             follow_symlinks: false,
             error_on_broken_symlinks: false,
             only_files: true,
+            suppress_errors: false,
         };
         if opts_obj.is_undefined_or_null() {
             return Ok(Some(out));
@@ -152,6 +154,14 @@ impl ScanOpts {
         if let Some(follow_symlinks_val) = opts_obj.get_truthy(global_this, "followSymlinks")? {
             out.follow_symlinks = if follow_symlinks_val.is_boolean() {
                 follow_symlinks_val.as_boolean()
+            } else {
+                false
+            };
+        }
+
+        if let Some(suppress_errors_val) = opts_obj.get_truthy(global_this, "suppressErrors")? {
+            out.suppress_errors = if suppress_errors_val.is_boolean() {
+                suppress_errors_val.as_boolean()
             } else {
                 false
             };
@@ -310,6 +320,7 @@ impl Glob {
         let follow_symlinks = match_opts.follow_symlinks;
         let error_on_broken_symlinks = match_opts.error_on_broken_symlinks;
         let only_files = match_opts.only_files;
+        let suppress_errors = match_opts.suppress_errors;
 
         let _ = arena; // arena ownership is no longer threaded through GlobWalker init.
 
@@ -322,6 +333,7 @@ impl Glob {
                 follow_symlinks,
                 error_on_broken_symlinks,
                 only_files,
+                suppress_errors,
                 None,
             )
             .map_err(crate::Error::from)?
@@ -341,6 +353,7 @@ impl Glob {
             follow_symlinks,
             error_on_broken_symlinks,
             only_files,
+            suppress_errors,
             None,
         )
         .map_err(crate::Error::from)?

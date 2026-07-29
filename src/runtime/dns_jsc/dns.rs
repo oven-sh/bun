@@ -3029,9 +3029,9 @@ pub mod internal {
         let hostname_z = bun::ZBox::from_bytes(hostname_slice.slice());
         let len = args[1].get_length(global)? as usize;
         if len == 0 || len > 64 {
-            return Err(global.throw_invalid_arguments(format_args!(
-                "addresses must have 1..=64 entries"
-            )));
+            return Err(
+                global.throw_invalid_arguments(format_args!("addresses must have 1..=64 entries"))
+            );
         }
 
         let mut addrs: Vec<SockaddrStorage> = (0..len).map(|_| bun_core::ffi::zeroed()).collect();

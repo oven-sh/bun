@@ -359,10 +359,8 @@ pub struct JSValkeyClient {
 
     pub timer: RefCountedTimer,
     pub reconnect_timer: RefCountedTimer,
-    /// Keep-alive refs handed to open sockets by [`connect`](Self::connect).
-    /// Released by [`take_socket_ref`](Self::take_socket_ref). A counter (not
-    /// a bool) because the reconnect path can have more than one in-flight
-    /// `us_socket_t` with this client in its ext slot.
+    /// Socket keep-alive refs outstanding from [`connect`](Self::connect);
+    /// consumed by [`take_socket_ref`](Self::take_socket_ref).
     socket_refs: Cell<u32>,
     pub ref_count: bun_ptr::RefCount<JSValkeyClient>,
 }
@@ -506,13 +504,8 @@ impl JSValkeyClient {
         // SAFETY: `self` is live; the guard's own ref keeps it alive past Drop.
         unsafe { ScopedRef::new(self.as_ctx_ptr()) }
     }
-    /// Adopt one socket keep-alive ref recorded by [`connect`](Self::connect)
-    /// into the calling scope, or `None` when none is outstanding. The
-    /// close/fail paths can re-enter (`on_data` parse fail or
-    /// `on_connection_timeout` → `fail_with_js_value` → `close()` dispatches
-    /// `on_close` synchronously, and the `enter_event_loop_scope` drain inside
-    /// `on_valkey_close` runs JS that can close again), so a second caller
-    /// sees 0 here and releases nothing.
+    /// Adopt one socket keep-alive ref from [`connect`](Self::connect), or
+    /// `None` when the re-entrant close/fail path has already taken it.
     #[inline]
     fn take_socket_ref(&self) -> Option<ScopedRef<Self>> {
         match self.socket_refs.get().checked_sub(1) {

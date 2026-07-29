@@ -491,6 +491,7 @@ export function runOnResolvePlugins(this: BundlerPlugin, specifier, inputNamespa
     if (inputNamespace === "file") {
       var colon = inputPath.indexOf(":");
       if (colon > 0) {
+        var prefix = inputPath.slice(0, colon);
         var isDriveLetter =
           process.platform === "win32" &&
           colon === 1 &&
@@ -498,7 +499,7 @@ export function runOnResolvePlugins(this: BundlerPlugin, specifier, inputNamespa
           (inputPath.charCodeAt(0) | 0x20) >= 97 &&
           (inputPath.charCodeAt(0) | 0x20) <= 122 &&
           (inputPath.charCodeAt(2) === 47 || inputPath.charCodeAt(2) === 92);
-        if (!isDriveLetter && (await tryNamespace(inputPath.slice(0, colon), inputPath.slice(colon + 1)))) {
+        if (!isDriveLetter && prefix !== "file" && (await tryNamespace(prefix, inputPath.slice(colon + 1)))) {
           return null;
         }
       }

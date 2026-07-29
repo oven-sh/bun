@@ -30,11 +30,8 @@ impl StmtPrepareOKPacket {
         }
         self.num_columns = reader.int::<u16>()?;
         self.num_params = reader.int::<u16>()?;
-        // Both counts drive allocation of a Vec<ColumnDefinition41>
-        // (~256 bytes each) and how many follow-up packets the client will
-        // wait for. MySQL hard-caps a result set at 4096 columns (MAX_FIELDS),
-        // so a larger count is a hostile 12-byte packet trying to make us
-        // commit megabytes and then wedge waiting for packets that never come.
+        // Both counts size a Vec<ColumnDefinition41> and how many follow-up
+        // packets the client waits for; MySQL's MAX_FIELDS is 4096.
         if self.num_columns > 4096 || self.num_params > 4096 {
             return Err(AnyMySQLError::InvalidPrepareOKPacket);
         }

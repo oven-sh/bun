@@ -586,9 +586,7 @@ impl MySQLConnection {
             reader
                 .ensure_capacity(packet_length)
                 .map_err(|_| AnyMySQLError::ShortRead)?;
-            // The full packet is now buffered; bound every body read to it so a
-            // server-controlled lenenc length can't pull bytes from the next
-            // packet (silent corruption) or return ShortRead (permanent wedge).
+            // Bound every body read to the now-fully-buffered packet.
             reader.set_packet_limit_from_start(packet_length);
             // `NewReader<C>: Copy` so the scopeguard captures by copy; the inner
             // `C` writes through a raw pointer so the offset update still lands.
@@ -612,9 +610,7 @@ impl MySQLConnection {
                     // reject them instead of feeding them to the auth/command handlers.
                     if self.tls_status == TLSStatus::MessageSent {
                         reader.set_offset_from_start(packet_length);
-                        // This check is explicitly looking for bytes buffered
-                        // AFTER the handshake packet, so drop the per-packet
-                        // window before peeking.
+                        // Peeking past this packet, so drop its window.
                         reader.clear_packet_limit();
                         if !reader.peek().is_empty() {
                             return Err(AnyMySQLError::UnexpectedPacket);
@@ -1695,8 +1691,6 @@ impl ReaderContext for Reader {
     }
 
     fn set_packet_limit_from_start(self, packet_length: usize) {
-        // packet_length = PacketHeader::SIZE + a 24-bit body length, so the sum
-        // always fits in u32.
         *self.packet_end() = *self.last_message_start() + packet_length as u32;
     }
 

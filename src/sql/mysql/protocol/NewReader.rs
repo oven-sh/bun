@@ -41,11 +41,8 @@ impl<C: ReaderContext> NewReader<C> {
         self.wrapped.clear_packet_limit();
     }
 
-    /// Every MySQL packet's body is bounded by the Int<3> payload_length in its
-    /// header. The dispatch loop buffers the whole packet before decoding it,
-    /// so a body read that still comes up short has overrun the packet, and the
-    /// bytes it would return belong to the next packet's framing: that is a
-    /// malformed packet, never "wait for more socket data".
+    /// The dispatch loop buffers the whole packet before decoding, so a body
+    /// read past `packet_remaining` is a malformed packet, never `ShortRead`.
     pub fn read(self, count: usize) -> Result<Data, AnyMySQLError> {
         if count > self.wrapped.packet_remaining() {
             return Err(AnyMySQLError::MalformedPacket);

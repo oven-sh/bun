@@ -18,6 +18,9 @@ pub mod cares_jsc; // c-ares reply struct → JSValue bridges
 #[path = "options_jsc.rs"]
 pub mod options_jsc; // GetAddrInfo.Options ↔ JSValue
 
+#[path = "config_watcher.rs"]
+pub mod config_watcher; // OS DNS-config-change → channel reinit
+
 // ─── public surface ──────────────────────────────────────────────────────────
 // `dns_body` is the real implementation (c-ares channel, request types,
 // Resolver method bodies, `internal` cache). The earlier erased "type-surface"

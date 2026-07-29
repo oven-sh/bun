@@ -103,6 +103,8 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_BunString_toThreadSafeRefCountDelta, (JSC::J
 
 extern "C" void Bun__MemoryPressure__emit(JSC::JSGlobalObject* global, int level);
 extern "C" bool Bun__MemoryPressure__isInstalled(JSC::JSGlobalObject* global);
+extern "C" uint64_t Bun__DNSConfig__generation();
+extern "C" void Bun__DNSConfig__bump();
 
 // Synthetically fire process.on("memoryPressure") so tests can exercise the
 // emit path without depending on real OS memory pressure.
@@ -122,6 +124,17 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_emitMemoryPressure, (JSC::JSGlobalObject * g
 JSC_DEFINE_HOST_FUNCTION(jsFunction_isMemoryPressureWatcherInstalled, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     return JSValue::encode(jsBoolean(Bun__MemoryPressure__isInstalled(defaultGlobalObject(globalObject))));
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsFunction_dnsConfigGeneration, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    return JSValue::encode(jsNumber(static_cast<double>(Bun__DNSConfig__generation())));
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsFunction_dnsConfigChanged, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    Bun__DNSConfig__bump();
+    return encodedJSUndefined();
 }
 
 }

@@ -130,12 +130,31 @@ export const platforms: Platform[] = [
   },
 ];
 
-export const supportedPlatforms: Platform[] = platforms.filter(
-  platform =>
-    platform.os === os && platform.arch === arch && !platform.alias && (!platform.abi || abi === platform.abi),
-);
+export function getSupportedPlatforms(os: string, arch: string, abi: string | undefined): Platform[] {
+  return platforms
+    .filter(
+      platform =>
+        platform.os === os && platform.arch === arch && !platform.alias && (!platform.abi || abi === platform.abi),
+    )
+    .sort((a, b) => Number(a.abi !== abi) - Number(b.abi !== abi));
+}
+
+export const supportedPlatforms: Platform[] = getSupportedPlatforms(os, arch, abi);
 
 function isLinuxMusl(): boolean {
+  try {
+    if (process.report) {
+      const excludeNetwork = process.report.excludeNetwork;
+      process.report.excludeNetwork = true;
+      const report = process.report.getReport() as { header?: { glibcVersionRuntime?: string } };
+      process.report.excludeNetwork = excludeNetwork;
+      if (report && report.header) {
+        return !report.header.glibcVersionRuntime;
+      }
+    }
+  } catch (error) {
+    debug("process.report.getReport failed", error);
+  }
   try {
     return exists("/etc/alpine-release");
   } catch (error) {

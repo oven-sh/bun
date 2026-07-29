@@ -332,9 +332,14 @@ impl<T: HTMLProcessorHandler, const VISIT_DOCUMENT_TAGS: bool>
         let settings = lol_html::Settings {
             element_content_handlers,
             encoding: lol_html::AsciiCompatibleEncoding::utf_8(),
-            memory_settings: lol_html::MemorySettings {
-                preallocated_parsing_buffer_size: (input.len() / 4).max(1024),
-                max_allowed_memory_usage: 1024 * 1024 * 10,
+            memory_settings: {
+                let max_allowed_memory_usage = 1024 * 1024 * 10;
+                lol_html::MemorySettings {
+                    // lol_html debug-asserts preallocated < max_allowed.
+                    preallocated_parsing_buffer_size: (input.len() / 4)
+                        .clamp(1024, max_allowed_memory_usage - 1),
+                    max_allowed_memory_usage,
+                }
             },
             strict: false,
             ..lol_html::Settings::new()

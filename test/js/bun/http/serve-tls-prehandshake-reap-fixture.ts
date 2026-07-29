@@ -20,17 +20,20 @@ const server = Bun.serve({
 });
 
 let opened = 0;
-let closed = 0;
-const allClosed = Promise.withResolvers<void>();
+let settled = 0;
+const held = new Set<net.Socket>();
+const allSettled = Promise.withResolvers<void>();
 const socks: net.Socket[] = [];
 for (let i = 0; i < N; i++) {
   const s = net.connect(server.port as number, "127.0.0.1", () => {
     opened++;
+    held.add(s);
   });
   s.on("error", () => {});
   s.on("close", () => {
-    closed++;
-    if (closed === N) allClosed.resolve();
+    held.delete(s);
+    settled++;
+    if (settled === N) allSettled.resolve();
   });
   socks.push(s);
 }
@@ -39,9 +42,9 @@ for (let i = 0; i < N; i++) {
 // behaving server closes every connection by ~16s; the deadline leaves margin
 // for debug builds. The race here is won or lost at a single sweep tick, so a
 // server that has not reaped them all by the deadline never will.
-await Promise.race([allClosed.promise, Bun.sleep(DEADLINE_MS)]);
+await Promise.race([allSettled.promise, Bun.sleep(DEADLINE_MS)]);
 
-console.log(JSON.stringify({ opened, held: opened - closed }));
+console.log(JSON.stringify({ opened, held: held.size }));
 
 for (const s of socks) s.destroy();
 server.stop(true);

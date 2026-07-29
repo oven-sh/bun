@@ -3297,10 +3297,8 @@ fn add_archive_entry(
     Ok(entry.clear())
 }
 
-/// Read the `"version"` field from a workspace dependency's `package.json` on
-/// disk. The lockfile is only used to map `dependency_name` to its relative
-/// workspace path. Returns `None` on any I/O or parse failure so callers can
-/// fall back to `lockfile.workspace_versions`.
+/// Read `"version"` from a workspace dependency's on-disk `package.json`.
+/// `None` on I/O/parse failure.
 fn read_workspace_version_from_package_json(
     lockfile: &Lockfile,
     dependency_name: &[u8],
@@ -3398,10 +3396,7 @@ fn edit_root_package_json(
                                         b'*' => b"",
                                         _ => unreachable!(),
                                     };
-                                    // Prefer the dependency's on-disk `package.json` version so
-                                    // a version bump that has not yet been written back to
-                                    // `bun.lock` is still picked up (issue #20477). Fall back to
-                                    // `lockfile.workspace_versions` if the file cannot be read.
+                                    // on-disk package.json wins; bun.lock's cached version may be stale (#20477)
                                     let tmp = if let Some(version) =
                                         read_workspace_version_from_package_json(
                                             lockfile,

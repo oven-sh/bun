@@ -36,9 +36,15 @@ parallelism and is ~5× faster than a 4-thread pool on uncached reads.
 
 ### End-to-end Bun `fs.read`/`fs.write` (this benchmark)
 
-Filled in at runtime; see the script output. Given the sync-handle constraint,
-expect the ring to be slower on the read scenarios and modestly faster on the
-write scenario.
+Release build, batched `SubmitIoRing` via `uv_prepare_t`, 3 runs averaged:
+
+| scenario                      | uv threadpool | ioring    | delta       |
+| ----------------------------- | ------------- | --------- | ----------- |
+| 512 × 2 KB reads (cached)     | 0.88 ms       | 2.21 ms   | 2.5× slower |
+| 64 MB seq read, 64 KB chunks  | 58.5 ms       | 59.1 ms   | ~same       |
+| 512 × 2 KB writes             | 0.77 ms       | 2.28 ms   | 3.0× slower |
+
+All 426 tests in `test/js/node/fs/fs.test.ts` pass with the flag enabled.
 
 ## Conclusion
 

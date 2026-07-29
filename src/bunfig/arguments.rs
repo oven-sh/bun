@@ -288,11 +288,8 @@ pub fn load_config(
                 }
             }
         } else {
-            // Reshaped for borrowck: `join_abs_string_buf` ties the
-            // returned slice's lifetime to both `cwd` (borrowed from `ctx.args`)
-            // and `config_buf`. We only need the length to NUL-terminate and
-            // re-wrap, so capture `joined.len()` and drop the `ctx` borrow before
-            // the `&mut ctx` call below.
+            // Capture only the length so the `ctx.args` borrow ends
+            // before the `&mut ctx` call below.
             config_path_len = {
                 let awd: &[u8] = ctx.args.absolute_working_dir.as_deref().unwrap();
                 let parts: [&[u8]; 2] = [awd, config_path_];
@@ -311,8 +308,7 @@ pub fn load_config(
     let config_path = ZStr::from_buf(&config_buf[..], config_path_len);
 
     if let Err(err) = load_config_path(cmd, auto_loaded, config_path, ctx) {
-        // Auto-discovered bunfig errors are non-fatal for run-like commands
-        // (the log still reaches stderr); explicit --config stays fatal.
+        // Non-fatal for run-like commands; explicit --config stays fatal.
         let run_like = cmd == CommandTag::RunCommand || cmd == CommandTag::AutoCommand;
         if !(auto_loaded && run_like) {
             report_bunfig_load_failure(ctx.log, err);

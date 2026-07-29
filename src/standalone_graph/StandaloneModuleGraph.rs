@@ -99,6 +99,16 @@ impl StandaloneModuleGraph {
         INSTANCE.get().map(|cell| cell.0.get())
     }
 
+    /// Shared-borrow accessor for read-only lookups (`contains_file`,
+    /// `find_dir`, `readdir`, `stat`). Callers that need to touch the lazy
+    /// per-`File` caches (`wtf_string`, `cached_blob`, sourcemap) must go
+    /// through `get()` and re-borrow `*mut` themselves.
+    pub fn get_ref() -> Option<&'static StandaloneModuleGraph> {
+        // SAFETY: `Instance` is `Sync` (see the `unsafe impl` above); the
+        // `&self` surface below touches only the immutable key/value tables.
+        INSTANCE.get().map(|cell| unsafe { &*cell.0.get() })
+    }
+
     pub fn set(instance: StandaloneModuleGraph) -> *mut StandaloneModuleGraph {
         let _ = INSTANCE.set(Instance(core::cell::UnsafeCell::new(instance)));
         INSTANCE.get().unwrap().0.get()
@@ -160,11 +170,31 @@ impl StandaloneModuleGraph {
         self.find_assume_standalone_path(name)
     }
 
-    pub fn stat(&mut self, name: &[u8]) -> Option<Stat> {
+    pub fn find_ref(&self, name: &[u8]) -> Option<&File> {
         if !is_bun_standalone_file_path(name) {
             return None;
         }
-        if let Some(file) = self.find_assume_standalone_path(name) {
+        #[cfg(windows)]
+        {
+            let mut normalized_buf = PathBuffer::uninit();
+            let input = strings::paths::without_nt_prefix::<u8>(name);
+            let normalized =
+                path::resolve_path::platform_to_posix_buf::<u8>(input, &mut normalized_buf);
+            return self.files.get(normalized);
+        }
+        #[cfg(not(windows))]
+        self.files.get(name)
+    }
+
+    pub fn contains_file(&self, name: &[u8]) -> bool {
+        self.find_ref(name).is_some()
+    }
+
+    pub fn stat(&self, name: &[u8]) -> Option<Stat> {
+        if !is_bun_standalone_file_path(name) {
+            return None;
+        }
+        if let Some(file) = self.find_ref(name) {
             return Some(file.stat());
         }
         if self.find_dir(name) {
@@ -471,8 +501,7 @@ impl File {
     }
 
     pub fn stat(&self) -> Stat {
-        // SAFETY: all-zero is a valid `libc::stat` (POD `#[repr(C)]`).
-        let mut result: Stat = unsafe { bun_core::ffi::zeroed_unchecked() };
+        let mut result: Stat = bun_core::ffi::zeroed();
         result.st_size = self.contents.len() as _;
         // `Stat` is `libc::stat` (POSIX) / `uv_stat_t` (Windows, `st_mode: u64`).
         result.st_mode = (libc::S_IFREG | 0o644) as _;
@@ -503,8 +532,7 @@ impl File {
 }
 
 fn dir_stat() -> Stat {
-    // SAFETY: all-zero is a valid `libc::stat` (POD `#[repr(C)]`).
-    let mut result: Stat = unsafe { bun_core::ffi::zeroed_unchecked() };
+    let mut result: Stat = bun_core::ffi::zeroed();
     result.st_mode = (libc::S_IFDIR | 0o755) as _;
     result
 }

@@ -82,8 +82,13 @@ public:
     // Create a new handle scope in the given environment
     static NapiHandleScopeImpl* open(Zig::GlobalObject* globalObject, bool escapable);
 
-    // Closes the most recently created handle scope in the given environment and restores the old one.
-    // Asserts that `current` is the active handle scope.
+    // If `current` is on the chain of open handle scopes, closes it -- along with any scopes
+    // opened after it that were not closed, matching V8's handle scope destructor -- and returns
+    // true. Otherwise returns false without changing anything.
+    static bool closeIfOpen(Zig::GlobalObject* globalObject, NapiHandleScopeImpl* current);
+
+    // Closes the most recently created handle scope in the given environment and restores the old
+    // one. Asserts that `current` is the active handle scope.
     static void close(Zig::GlobalObject* globalObject, NapiHandleScopeImpl* current);
 
 private:
@@ -94,9 +99,19 @@ private:
 // Create a new handle scope in the given environment
 extern "C" NapiHandleScopeImpl* NapiHandleScope__open(napi_env env, bool escapable);
 
-// Pop the most recently created handle scope in the given environment and restore the old one.
-// Asserts that `current` is the active handle scope.
+// Pop the handle scope `current`, which must still be open. Used for Bun's own handle scopes.
 extern "C" void NapiHandleScope__close(napi_env env, NapiHandleScopeImpl* current);
+
+// napi_open_handle_scope / napi_open_escapable_handle_scope: like NapiHandleScope__open, but
+// counts the scope against `env` so that NapiHandleScope__closeAddonScope can detect unbalanced
+// closes the way Node does.
+extern "C" NapiHandleScopeImpl* NapiHandleScope__openAddonScope(napi_env env, bool escapable);
+
+// napi_close_handle_scope / napi_close_escapable_handle_scope. Addons close handle scopes in
+// surprising orders, and Node returns a status instead of aborting, so unlike
+// NapiHandleScope__close this never asserts. Returns false if `env` has no addon-opened handle
+// scope left to close (napi_handle_scope_mismatch in Node) and true otherwise (napi_ok).
+extern "C" bool NapiHandleScope__closeAddonScope(napi_env env, NapiHandleScopeImpl* current);
 
 // Store a value in the active handle scope in the given environment
 extern "C" void NapiHandleScope__append(napi_env env, JSC::EncodedJSValue value);

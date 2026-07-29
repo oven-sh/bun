@@ -190,6 +190,8 @@ unsafe extern "C" {
     pub(super) fn NapiHandleScope__open(env: *mut NapiEnv, escapable: bool)
     -> *mut NapiHandleScope;
     pub(super) fn NapiHandleScope__close(env: *mut NapiEnv, current: *mut NapiHandleScope);
+    fn NapiHandleScope__openAddonScope(env: *mut NapiEnv, escapable: bool) -> *mut NapiHandleScope;
+    fn NapiHandleScope__closeAddonScope(env: *mut NapiEnv, current: *mut NapiHandleScope) -> bool;
     fn NapiHandleScope__append(env: *mut NapiEnv, value: usize);
     fn NapiHandleScope__escape(handle_scope: *mut NapiHandleScope, value: usize) -> bool;
 }
@@ -209,10 +211,29 @@ impl NapiHandleScope {
     }
 
     /// Closes the given handle scope, releasing all values inside it, if it is safe to do so.
-    /// Asserts that self is the current handle scope in env.
+    /// Asserts that self is still an open handle scope in env. Only for Bun's own handle scopes,
+    /// which are strictly LIFO; addon scopes go through [`Self::close_addon`].
     pub(super) fn close(self_: *mut NapiHandleScope, env: &NapiEnv) {
         // SAFETY: NapiHandleScope__close handles null `current`.
         unsafe { NapiHandleScope__close(env.as_mut_ptr(), self_) }
+    }
+
+    /// [`napi_open_handle_scope`] / [`napi_open_escapable_handle_scope`]: like [`Self::open`],
+    /// but counted against `env` so that [`Self::close_addon`] can detect unbalanced closes.
+    pub(super) fn open_addon(env: &NapiEnv, escapable: bool) -> *mut NapiHandleScope {
+        // SAFETY: env is valid; C++ mutates env's scope stack (interior mutability).
+        unsafe { NapiHandleScope__openAddonScope(env.as_mut_ptr(), escapable) }
+    }
+
+    /// [`napi_close_handle_scope`] / [`napi_close_escapable_handle_scope`]. Node lets addons
+    /// close handle scopes out of order (which also discards any scopes opened after `self_`)
+    /// without aborting, so this never asserts. Returns `false` if the addon has already closed
+    /// every scope it opened, which Node reports as `napi_handle_scope_mismatch`.
+    #[must_use]
+    pub(super) fn close_addon(self_: *mut NapiHandleScope, env: &NapiEnv) -> bool {
+        // SAFETY: env is valid; `self_` is only compared against the scopes that are still open,
+        // never dereferenced, so a stale or already-closed pointer is harmless.
+        unsafe { NapiHandleScope__closeAddonScope(env.as_mut_ptr(), self_) }
     }
 
     /// Place a value in the handle scope. Must be done while returning any JS value into NAPI
@@ -1115,7 +1136,7 @@ pub(super) extern "C" fn napi_open_handle_scope(
     let env = get_env!(env_);
     env.check_gc();
     let result = get_out!(env, result_);
-    *result = NapiHandleScope::open(env, false);
+    *result = NapiHandleScope::open_addon(env, false);
     env.ok()
 }
 
@@ -1127,8 +1148,12 @@ pub(super) extern "C" fn napi_close_handle_scope(
     bun_output::scoped_log!(napi, "napi_close_handle_scope");
     let env = get_env!(env_);
     env.check_gc();
-    if !handle_scope.is_null() {
-        NapiHandleScope::close(handle_scope, env);
+    // napi_open_handle_scope returns a null (uncounted) scope during a GC sweep.
+    if handle_scope.is_null() {
+        return env.ok();
+    }
+    if !NapiHandleScope::close_addon(handle_scope, env) {
+        return NapiEnv::set_last_error(Some(env), NapiStatus::handle_scope_mismatch);
     }
     env.ok()
 }
@@ -1220,7 +1245,7 @@ pub(super) extern "C" fn napi_open_escapable_handle_scope(
     let env = get_env!(env_);
     env.check_gc();
     let result = get_out!(env, result_);
-    *result = NapiHandleScope::open(env, true);
+    *result = NapiHandleScope::open_addon(env, true);
     env.ok()
 }
 
@@ -1232,8 +1257,12 @@ pub(super) extern "C" fn napi_close_escapable_handle_scope(
     bun_output::scoped_log!(napi, "napi_close_escapable_handle_scope");
     let env = get_env!(env_);
     env.check_gc();
-    if !scope.is_null() {
-        NapiHandleScope::close(scope, env);
+    // napi_open_escapable_handle_scope returns a null (uncounted) scope during a GC sweep.
+    if scope.is_null() {
+        return env.ok();
+    }
+    if !NapiHandleScope::close_addon(scope, env) {
+        return NapiEnv::set_last_error(Some(env), NapiStatus::handle_scope_mismatch);
     }
     env.ok()
 }

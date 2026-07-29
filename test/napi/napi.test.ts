@@ -263,6 +263,12 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
     it("keeps the parent handle scope alive", async () => {
       await checkSameOutput("test_napi_handle_scope_nesting", []);
     });
+    it("returns a status for unbalanced closes instead of aborting", async () => {
+      const result = await checkSameOutput("test_napi_handle_scope_unbalanced_close", []);
+      // napi_ok == 0, napi_handle_scope_mismatch == 13
+      expect(result).toContain("out of order: close a -> 0");
+      expect(result).toContain("double close: close a again -> 13");
+    });
     it("exists when calling a napi constructor", async () => {
       await checkSameOutput("test_napi_class_constructor_handle_scope", []);
     });
@@ -746,6 +752,13 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
 
     it("does not throw with nullptr", async () => {
       await checkSameOutput("test_napi_throw_with_nullptr", []);
+    });
+
+    it("does not replace an already-pending exception", async () => {
+      const result = await checkSameOutput("test_napi_throw_with_pending_exception", []);
+      // napi_pending_exception == 10; the first exception must survive
+      expect(result).toContain("napi_throw_error #2 -> 10");
+      expect(result).toContain("pending exception -> ERR_FIRST: first");
     });
   });
   describe("napi_create_error functions", () => {

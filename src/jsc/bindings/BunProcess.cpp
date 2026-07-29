@@ -1426,14 +1426,18 @@ static void traceSigintHandler(int)
     raise(SIGINT);
 }
 
-static void installTraceSigintHandler()
+// s_previousSigintAction is written only when the caller passes it as
+// oldAction: on the first transition from "trace not installed" to
+// "trace installed". Re-arming after listener churn passes nullptr so the
+// saved disposition survives.
+static void installTraceSigintHandler(struct sigaction* oldAction)
 {
     struct sigaction action;
     memset(&action, 0, sizeof(action));
     action.sa_handler = traceSigintHandler;
     sigemptyset(&action.sa_mask);
     action.sa_flags = SA_RESTART;
-    sigaction(SIGINT, &action, &s_previousSigintAction);
+    sigaction(SIGINT, &action, oldAction);
 }
 #endif
 
@@ -1451,7 +1455,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionSetTraceSigInt, (JSC::JSGlobalObject * global
         // Skipping a redundant enable keeps s_previousSigintAction pointing at
         // the real previous disposition instead of the trace handler itself.
         if (current.sa_handler != forwardSignal && current.sa_handler != traceSigintHandler)
-            installTraceSigintHandler();
+            installTraceSigintHandler(&s_previousSigintAction);
     } else if (current.sa_handler == traceSigintHandler) {
         sigaction(SIGINT, &s_previousSigintAction, nullptr);
     }
@@ -1651,7 +1655,7 @@ static void onDidChangeListeners(EventEmitter& eventEmitter, const Identifier& e
                             signal(signalNumber, oldHandler);
                         } else if (signalNumber == SIGINT && s_traceSigintEnabled.load(std::memory_order_relaxed)) {
                             // Removing the last JS 'SIGINT' listener re-arms util.setTraceSigInt.
-                            installTraceSigintHandler();
+                            installTraceSigintHandler(nullptr);
                         }
 #else
                         SignalHandleValue signal_handle = signalToContextIdsMap->get(signalNumber);

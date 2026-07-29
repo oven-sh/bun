@@ -303,10 +303,10 @@ describe("bundler", () => {
       },
     ],
   });
-  // Shared (non-entry-point) split chunks have no owning entry point, so
-  // `[name]` must resolve to the literal "chunk" (matching esbuild) rather
-  // than whichever entry point happens to be listed first. Dynamic-import
-  // chunks are entry points and keep their own source basename.
+  // A non-entry split chunk's `[name]` is the owning entry point's basename
+  // plus `-chunk` when exactly one entry reaches it, or `shared` otherwise,
+  // never the first-listed entrypoint. Dynamic-import chunks are entry points
+  // and keep their own source basename.
   for (const order of ["MainFirst", "ModnameFirst"] as const) {
     itBundled(`naming/ChunkNamePlaceholderSharedChunk${order}`, {
       files: {
@@ -328,14 +328,12 @@ describe("bundler", () => {
       chunkNaming: "chunks/[name]-[hash].[ext]",
       onAfterBundle(api) {
         const chunks = readdirSync(api.outdir + "/chunks").sort();
-        // One dynamic-import chunk named after its source, and every other
-        // chunk (shared code + runtime helper) named "chunk-<hash>.js".
         const lazy = chunks.filter(f => f.startsWith("lazy-"));
         const shared = chunks.filter(f => !f.startsWith("lazy-"));
         expect(lazy.length).toBe(1);
         expect(shared.length).toBeGreaterThan(0);
         for (const f of shared) {
-          expect(f).toMatch(/^chunk-[a-z0-9]+\.js$/);
+          expect(f).toMatch(/^shared-[a-z0-9]+\.js$/);
         }
       },
       run: {

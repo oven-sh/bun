@@ -3048,6 +3048,30 @@ mod posix_impl {
         let rc = check!(safe_libc::lseek(fd.native(), offset, whence), Tag::lseek);
         Ok(rc)
     }
+    /// Version of `lseek` that treats `ESPIPE` (illegal seek on pipes/sockets)
+    /// as a successful no-op, returning `Ok(0)`. On OHOS the kernel returns
+    /// ESPIPE whenever `lseek` is called on a non-seekable fd such as a pipe;
+    /// this veneer lets callers that only need best-effort seeking (e.g. the
+    /// shell's output reporting) avoid crashing with "Illegal seek".
+    pub fn lseek_allow_espipe(fd: Fd, offset: i64, whence: i32) -> Maybe<i64> {
+        #[cfg(target_env = "ohos")]
+        {
+            // SAFETY: fd is a live descriptor.
+            let rc = unsafe { safe_libc::lseek(fd.native(), offset, whence) };
+            if rc < 0 {
+                let raw_errno = crate::last_errno();
+                if raw_errno == libc::ESPIPE as u16 {
+                    return Ok(0);
+                }
+                return Err(Error::from_code(raw_errno, Tag::lseek));
+            }
+            Ok(rc)
+        }
+        #[cfg(not(target_env = "ohos"))]
+        {
+            lseek(fd, offset, whence)
+        }
+    }
     pub fn chdir(path: &ZStr) -> Maybe<()> {
         // SAFETY: `ZStr::as_ptr()` yields a valid NUL-terminated C string.
         check_p!(unsafe { libc::chdir(path.as_ptr()) }, Tag::chdir, path);

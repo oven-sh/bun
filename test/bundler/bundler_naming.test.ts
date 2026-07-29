@@ -396,7 +396,7 @@ describe("bundler", () => {
         stderr: "pipe",
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      expect(stderr).not.toContain("panic:");
+      expect(stderr).toBe("");
       expect(stdout).toContain("SURVIVED");
       expect(stdout).toContain(`unterminated "[`);
       expect(stdout).toContain(`(missing "]")`);

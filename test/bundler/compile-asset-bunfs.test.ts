@@ -245,7 +245,7 @@ describe.concurrent("compile --asset and /$bunfs/ directory semantics", () => {
         ],
         cwd: dir,
         env: bunEnv,
-        stdout: "pipe",
+        stdout: "ignore",
         stderr: "pipe",
       });
       const [stderr, code] = await Promise.all([proc.stderr.text(), proc.exited]);
@@ -267,7 +267,7 @@ describe.concurrent("compile --asset and /$bunfs/ directory semantics", () => {
         cmd: [bunExe(), "build", "--compile", "./index.ts", "--outfile", "./dist/client", "--asset", "./client"],
         cwd: dir,
         env: bunEnv,
-        stdout: "pipe",
+        stdout: "ignore",
         stderr: "pipe",
       });
       const [stderr, code] = await Promise.all([proc.stderr.text(), proc.exited]);

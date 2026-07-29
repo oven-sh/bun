@@ -277,6 +277,12 @@ impl BuildCommand {
                     );
                     Global::exit(1);
                 }
+                if !ctx.bundler_options.compile_assets.is_empty() {
+                    bun_core::pretty_errorln!(
+                        "<r><red>error<r><d>:<r> cannot use --compile --target browser with --asset"
+                    );
+                    Global::exit(1);
+                }
 
                 this_transpiler.options.compile_to_standalone_html = true;
                 // This is not a bun executable compile - clear compile flags
@@ -1250,11 +1256,16 @@ fn collect_compile_assets(
     let entry_name = bun_paths::basename(outfile);
 
     let mut seen: StringArrayHashMap<()> = StringArrayHashMap::new();
+    for f in out.iter() {
+        if f.output_kind.is_file_in_standalone_mode() {
+            let _ = seen.put(strings::remove_leading_dot_slash(&f.dest_path), ());
+        }
+    }
     let mut push =
         |out: &mut Vec<options::OutputFile>, asset: &[u8], dest: Vec<u8>, bytes: Vec<u8>| {
             if seen.contains_key(&dest) {
                 Output::err_generic(
-                    "--asset {} collides with an earlier --asset at embedded path {}",
+                    "--asset {} collides with another embedded file at {}",
                     (bun_fmt::quote(asset), bun_fmt::quote(&dest)),
                 );
                 return Err(());

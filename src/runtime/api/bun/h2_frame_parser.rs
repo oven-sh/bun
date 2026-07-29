@@ -2494,14 +2494,15 @@ impl H2FrameParser {
         let _ = self.write(&buffer);
     }
 
-    /// A header block could not be sent (a single field over the encoder's per-entry limit, or the
-    /// encoded block over `maxSendHeaderBlockLength`). Surface `frameError(FRAME_SIZE_ERROR)` and
-    /// fail the stream with `rst_code`. On the server the stream exists on the wire so RST_STREAM
-    /// is written; on the client the HEADERS never went out so the stream is failed locally only.
-    /// When `encoder_touched` is set, earlier entries in the block were already committed to the
-    /// connection-scoped HPACK encoder's dynamic table and the peer will never see them, so the
-    /// encoder is no longer in step with the peer's decoder: gracefully GOAWAY(NO_ERROR) like the
-    /// trailers encode-failure path so no later response emits a dynamic index the peer lacks.
+    /// A header block could not be sent (a single field over the encoder's per-entry limit, the
+    /// encoded block over `maxSendHeaderBlockLength`, or the session over its memory budget).
+    /// Surface `frameError(FRAME_SIZE_ERROR)` and fail the stream with `rst_code`. On the server
+    /// the stream exists on the wire so RST_STREAM is written; on the client the HEADERS never
+    /// went out so the stream is failed locally only. When `encoder_touched` is set, earlier
+    /// entries in the block were already committed to the connection-scoped HPACK encoder's
+    /// dynamic table and the peer will never see them, so the encoder is no longer in step with
+    /// the peer's decoder: gracefully GOAWAY(NO_ERROR) like the trailers encode-failure path so no
+    /// later HEADERS emits a dynamic index the peer lacks.
     fn reject_unencodable_header_block(
         &self,
         stream: &mut Stream,
@@ -2510,6 +2511,7 @@ impl H2FrameParser {
     ) {
         let identifier = stream.get_identifier();
         identifier.ensure_still_alive();
+        let triggering_id = stream.id;
         self.dispatch_with_2_extra(
             JSH2FrameParser::Gc::onFrameError,
             identifier,
@@ -2518,15 +2520,6 @@ impl H2FrameParser {
         );
         if self.is_server.get() {
             self.end_stream(stream, rst_code);
-            if encoder_touched {
-                self.send_go_away(
-                    stream.id,
-                    ErrorCode::NO_ERROR,
-                    b"",
-                    self.last_stream_id.get(),
-                    true,
-                );
-            }
         } else {
             stream.state = StreamState::CLOSED;
             stream.rst_code = rst_code.0;
@@ -2534,6 +2527,18 @@ impl H2FrameParser {
                 JSH2FrameParser::Gc::onStreamError,
                 identifier,
                 JSValue::js_number(rst_code.0 as f64),
+            );
+        }
+        if encoder_touched {
+            // On the server the onEnd teardown stops later responds from reusing the desynced
+            // encoder; on the client the stream error above must reach the user first, so only
+            // the wire-level GOAWAY is sent and the local session drains when the peer closes.
+            self.send_go_away(
+                triggering_id,
+                ErrorCode::NO_ERROR,
+                b"",
+                self.last_stream_id.get(),
+                self.is_server.get(),
             );
         }
     }
@@ -9087,13 +9092,11 @@ impl H2FrameParser {
 
         // too much memory being use
         if this.is_over_session_memory_limit() {
-            stream.state = StreamState::CLOSED;
-            stream.rst_code = ErrorCode::ENHANCE_YOUR_CALM.0;
             this.rejected_streams.set(this.rejected_streams.get() + 1);
-            this.dispatch_with_extra(
-                JSH2FrameParser::Gc::onStreamError,
-                stream.get_identifier(),
-                JSValue::js_number(stream.rst_code as f64),
+            this.reject_unencodable_header_block(
+                &mut stream,
+                ErrorCode::ENHANCE_YOUR_CALM,
+                encoded_size > 0,
             );
             if this.rejected_streams.get() >= this.max_rejected_streams.get() {
                 let global = this.handlers.get().global();

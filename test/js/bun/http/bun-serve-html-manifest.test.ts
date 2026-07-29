@@ -291,7 +291,9 @@ describe("Bun.serve HTML manifest", () => {
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
-    expect(stdout.trim()).toMatch(/^CAUGHT (ENOENT|ENAMETOOLONG|ERR_FILE_NOT_FOUND|no-throw)$/);
+    // ENAMETOOLONG on POSIX (the per-part guard fires); ERR_INVALID_ARG_TYPE
+    // on Windows (abs() succeeds; route setup then rejects the missing file).
+    expect(stdout.trim()).toMatch(/^CAUGHT (ENAMETOOLONG|ERR_INVALID_ARG_TYPE)$/);
     expect(exitCode).toBe(0);
   });
 

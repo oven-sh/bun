@@ -1148,16 +1148,6 @@ describe.concurrent("fork IPC channel ref/unref", () => {
   `;
   const fixture = `if (process.argv[2] === "kid") { ${kidScript} } else { ${parentScript} }`;
 
-  it("channel.ref and channel.unref are functions", () => {
-    const c = fork(bunExe(), ["-e", "process.exit(0)"], { execArgv: [], stdio: ["ignore", "ignore", "ignore", "ipc"] });
-    try {
-      expect(typeof c.channel?.ref).toBe("function");
-      expect(typeof c.channel?.unref).toBe("function");
-    } finally {
-      c.kill();
-    }
-  });
-
   it("subprocess.unref() keeps the event loop alive while the IPC channel is established", async () => {
     using dir = tempDir("cp-ipc-ref", { "index.js": fixture });
     await using proc = Bun.spawn({

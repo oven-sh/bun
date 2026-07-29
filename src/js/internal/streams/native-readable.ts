@@ -245,18 +245,18 @@ function destroy(this: NativeReadable, error: any, cb: () => void) {
 
 function ref(this: NativeReadable) {
   const ptr = this.$bunNativePtr;
-  if (ptr === undefined) return;
-  if (this[kRefCount]++ === 0) {
+  if (ptr !== undefined && this[kRefCount]++ === 0) {
     ptr.updateRef(true);
   }
+  return this;
 }
 
 function unref(this: NativeReadable) {
   const ptr = this.$bunNativePtr;
-  if (ptr === undefined) return;
-  if (this[kRefCount]-- === 1) {
+  if (ptr !== undefined && this[kRefCount]-- === 1) {
     ptr.updateRef(false);
   }
+  return this;
 }
 
 export default { constructNativeReadable };

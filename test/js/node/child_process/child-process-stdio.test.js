@@ -187,6 +187,8 @@ describe("ChildProcess stdio pipe streams are net.Socket", () => {
         "typeof ref": typeof child[name].ref,
         "typeof unref": typeof child[name].unref,
         "typeof setEncoding": typeof child[name].setEncoding,
+        "unref() === this": child[name].unref() === child[name],
+        "ref() === this": child[name].ref() === child[name],
       });
       expect({
         stdin: shape("stdin"),
@@ -204,6 +206,8 @@ describe("ChildProcess stdio pipe streams are net.Socket", () => {
           "typeof ref": "function",
           "typeof unref": "function",
           "typeof setEncoding": "function",
+          "unref() === this": true,
+          "ref() === this": true,
         },
         stdout: {
           "constructor.name": "Socket",
@@ -214,6 +218,8 @@ describe("ChildProcess stdio pipe streams are net.Socket", () => {
           "typeof ref": "function",
           "typeof unref": "function",
           "typeof setEncoding": "function",
+          "unref() === this": true,
+          "ref() === this": true,
         },
         stderr: {
           "constructor.name": "Socket",
@@ -224,6 +230,8 @@ describe("ChildProcess stdio pipe streams are net.Socket", () => {
           "typeof ref": "function",
           "typeof unref": "function",
           "typeof setEncoding": "function",
+          "unref() === this": true,
+          "ref() === this": true,
         },
         "stdin.readable": false,
         "stdin.writable": true,

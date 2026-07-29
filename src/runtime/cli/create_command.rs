@@ -800,8 +800,7 @@ impl CreateCommand {
                     &mut template_path_buf,
                 )?;
 
-                // Only a template-derived package.json may be rewritten below;
-                // a template without one must leave the user's file untouched.
+                // A template without package.json must leave the user's file untouched.
                 package_json_file =
                     if bun_sys::exists_at(template_dir.fd, bun_core::zstr!("package.json")) {
                         destination_dir
@@ -1231,8 +1230,7 @@ impl CreateCommand {
         let user_skipped_install = create_options.skip_install;
         create_options.skip_install = create_options.skip_install || !has_dependencies;
 
-        // `git add`/`git commit` on a pre-existing repository would sweep the
-        // user's files into a new commit.
+        // git add/commit on a pre-existing repo would sweep the user's files in.
         let has_existing_git_repo = bun_sys::Dir::open(destination)
             .map(|d| {
                 bun_sys::directory_exists_at(d.fd, bun_core::zstr!(".git")).unwrap_or(false)

@@ -609,6 +609,7 @@ class BunWebSocket extends EventEmitter {
       return;
     }
     if (type === "error" && typeof listener === "function") {
+      if (options?.signal?.aborted) return;
       if (this.#errorListenerWrappers?.has(listener)) return;
       const self = this;
       const once = !!(options && options.once);

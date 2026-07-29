@@ -2129,16 +2129,9 @@ where
                 stream_log!("returned a promise");
                 this.drain_microtasks();
 
-                // A worker terminate() arriving while drain_microtasks() was
-                // driving the stream's async pull leaves the
-                // TerminationException pending here. Every branch below would
-                // then re-enter JS (NativePromiseContext lazy-init /
-                // then_with_value / handle_resolve_stream /
-                // handle_reject_stream), tripping JSC's DeferTermination or
-                // executeCallImpl assertNoException under debug/ASAN. The
-                // worker is shutting down, so the sink already in `this.sink`
-                // is torn down by the server abort path during
-                // close_all_socket_groups; nothing to wire up.
+                // worker.terminate() landing inside drain_microtasks leaves the
+                // TerminationException pending; every branch below re-enters
+                // JS. Leave the sink on `this` for the server abort path.
                 if global_this.has_exception() {
                     response_stream.sink.on_first_write = None;
                     response_stream.sink.ctx = None;
@@ -2695,6 +2688,13 @@ where
         request_value.ensure_still_alive();
         response_value.ensure_still_alive();
         ctx.drain_microtasks();
+
+        // Same guard as do_render_stream: worker.terminate() landing inside the
+        // drain leaves the TerminationException pending, and the paths below
+        // re-enter JS.
+        if this.global_this().has_exception() {
+            return;
+        }
 
         if ctx.is_aborted_or_ended() {
             return;

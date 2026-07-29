@@ -3230,24 +3230,9 @@ uint8_t GlobalObject::drainMicrotasks()
     auto& vm = this->vm();
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
 
-    // Each `return 1` below observes the TerminationException still pending.
-    // The outermost VMEntryScope that raised it has already run
-    // executeEntryScopeServicesOnExit(), which clears hasTerminationRequest()
-    // while leaving the exception in place. Re-set the flag so JSC's
-    // DeferTermination invariant (hasPendingTerminationException() implies
-    // hasTerminationRequest(); see VMTraps::deferTerminationSlow) holds for a
-    // caller that does not consult the return value and proceeds to touch a
-    // LazyProperty (LazyPropertyInlines.h callFunc opens
-    // DeferTerminationForAWhile unconditionally). setHasTerminationRequest()
-    // is idempotent.
-    auto returnTerminated = [&]() -> uint8_t {
-        vm.setHasTerminationRequest();
-        return 1;
-    };
-
     if (auto* exception = scope.exception()) [[unlikely]] {
         if (vm.isTerminationException(exception)) [[unlikely]] {
-            return returnTerminated();
+            return 1;
         }
 
 #if ASSERT_ENABLED
@@ -3269,7 +3254,7 @@ uint8_t GlobalObject::drainMicrotasks()
         nextTickQueue->drain(vm, this);
         if (auto* exception = scope.exception()) {
             if (vm.isTerminationException(exception)) {
-                return returnTerminated();
+                return 1;
             }
             (void)scope.tryClearException();
             this->reportUncaughtExceptionAtEventLoop(this, exception);
@@ -3279,7 +3264,7 @@ uint8_t GlobalObject::drainMicrotasks()
     vm.drainMicrotasks();
     if (auto* exception = scope.exception()) {
         if (vm.isTerminationException(exception)) {
-            return returnTerminated();
+            return 1;
         }
         (void)scope.tryClearException();
         this->reportUncaughtExceptionAtEventLoop(this, exception);

@@ -20,10 +20,10 @@ const timeout = slow ? 60_000 : 20_000;
 // DeferTerminationForAWhile scope, asserting hasTerminationRequest() in
 // VMTraps::deferTerminationSlow, and (b) re-entered JS via then_with_value,
 // asserting !exception() in executeCallImpl. Separately, WebWorker::shutdown
-// cleared only the request flag before on_exit / close_all_socket_groups,
-// leaving the sticky exception in place for the same class of assert. Both
-// asserts are debug/ASAN-only; release builds compile them out.
-test.skipIf(!isDebug)(
+// cleared only the request flag before close_all_socket_groups, leaving the
+// sticky exception in place for the same class of assert. Both asserts are
+// compiled out outside debug/ASAN builds.
+test.skipIf(!(isDebug || isASAN))(
   'terminate() while Bun.serve is streaming a type:"direct" body does not trip DeferTermination / assertNoException',
   async () => {
     await using proc = Bun.spawn({

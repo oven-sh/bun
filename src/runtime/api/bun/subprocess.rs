@@ -145,8 +145,7 @@ pub struct Subprocess<'a> {
 
     /// `None` indicates all of the IPC data is uninitialized.
     pub ipc_data: JsCell<Option<IPC::SendQueue>>,
-    /// Node `channel.ref()`/`unref()` keepalive. Independent of the process
-    /// poller; engaged by `node:child_process`, disabled in `handle_ipc_close`.
+    /// Node `subprocess.channel.ref()`/`.unref()` keepalive; see `set_channel_ref`.
     pub ipc_channel_ref: JsCell<bun_io::KeepAlive>,
     pub flags: Cell<Flags>,
 

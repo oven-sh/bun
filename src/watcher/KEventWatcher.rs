@@ -26,7 +26,27 @@ impl KEventWatcher {
             self.fd = Fd::INVALID;
         }
     }
+
+    /// Interrupt a watcher thread blocked in `kevent`.
+    ///
+    /// EVFILT_USER is kqueue's self-pipe: registering and triggering the same
+    /// `ident` in one call makes the pending `kevent` wait return immediately.
+    pub(crate) fn wake(&self) {
+        if !self.fd.is_valid() {
+            return;
+        }
+        let mut event: libc::kevent = bun_core::ffi::zeroed();
+        event.ident = WAKE_IDENT;
+        event.filter = libc::EVFILT_USER as _;
+        event.flags = (libc::EV_ADD | libc::EV_ONESHOT) as _;
+        event.fflags = libc::NOTE_TRIGGER as _;
+        let _ = bun_sys::kevent(self.fd, &[event], &mut [], None);
+    }
 }
+
+/// `ident` for the EVFILT_USER wakeup. Cannot collide with a real registration:
+/// those use EVFILT_VNODE and key on file descriptors.
+const WAKE_IDENT: usize = usize::MAX;
 
 pub(crate) fn watch_event_from_kevent(kevent: &libc::kevent) -> WatchEvent {
     let mut op = Op::empty();

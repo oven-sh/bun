@@ -40,6 +40,12 @@ pub(crate) type Platform = INotifyWatcher;
 
 pub struct INotifyWatcher {
     pub fd: Fd,
+    /// Signalled by [`INotifyWatcher::wake`]; `read` waits on it alongside `fd`
+    /// so the wait can be ended without a filesystem event.
+    ///
+    /// `Fd::INVALID` when `eventfd(2)` failed. `read` then waits on `fd` alone
+    /// and is uninterruptible, which is degraded but still correct.
+    pub wake_fd: Fd,
     pub loaded: bool,
 
     // Avoid statically allocating because it increases the binary size.
@@ -61,6 +67,7 @@ impl Default for INotifyWatcher {
     fn default() -> Self {
         Self {
             fd: Fd::INVALID,
+            wake_fd: Fd::INVALID,
             loaded: false,
             eventlist_bytes: bun_core::boxed_zeroed(),
             eventlist_ptrs: [core::ptr::null(); max_count],
@@ -193,8 +200,11 @@ impl INotifyWatcher {
         }
         let fd = Fd::from_native(raw);
         bun_core::scoped_log!(watcher, "{} init", fd);
+        let wake_fd =
+            bun_sys::eventfd(0, libc::EFD_CLOEXEC | libc::EFD_NONBLOCK).unwrap_or(Fd::INVALID);
         Ok(Self {
             fd,
+            wake_fd,
             loaded: true,
             coalesce_interval: env_var::BUN_INOTIFY_COALESCE_INTERVAL
                 .get()
@@ -202,6 +212,81 @@ impl INotifyWatcher {
                 .unwrap_or(100_000),
             ..Self::default()
         })
+    }
+
+    /// Interrupt a watcher thread blocked in [`INotifyWatcher::read`].
+    ///
+    /// Safe to call from any thread and more than once; the eventfd counter
+    /// stays signalled until `read` observes it, and `read` never drains it, so
+    /// there is no lost-wakeup window.
+    pub(crate) fn wake(&self) {
+        // Also releases a thread parked in the `watch_count` futex below, which
+        // is where it waits when nothing is being watched yet.
+        Futex::wake(&self.watch_count, 10);
+        if self.wake_fd == Fd::INVALID {
+            return;
+        }
+        let one: u64 = 1;
+        // SAFETY: `wake_fd` is a live eventfd; eventfd writes take exactly 8 bytes.
+        unsafe {
+            libc::write(
+                self.wake_fd.native(),
+                core::ptr::from_ref(&one).cast(),
+                size_of::<u64>(),
+            );
+        }
+    }
+
+    /// Block until the inotify fd has events or [`wake`](Self::wake) fires.
+    /// Returns `false` when woken, meaning the caller should stop reading.
+    fn wait_for_events(&self) -> bun_sys::Result<bool> {
+        use bun_sys::linux as system;
+        if self.wake_fd == Fd::INVALID {
+            return Ok(true);
+        }
+        loop {
+            let mut fds = [
+                system::pollfd {
+                    fd: self.fd.native(),
+                    events: (libc::POLLIN | libc::POLLERR) as _,
+                    revents: 0,
+                },
+                system::pollfd {
+                    fd: self.wake_fd.native(),
+                    events: libc::POLLIN as _,
+                    revents: 0,
+                },
+            ];
+            // SAFETY: both fds are live; null timeout blocks indefinitely, null sigmask.
+            let rc = unsafe {
+                system::ppoll(
+                    fds.as_mut_ptr(),
+                    fds.len(),
+                    core::ptr::null(),
+                    core::ptr::null(),
+                )
+            };
+            if rc < 0 {
+                let errno = bun_sys::E::init(bun_sys::last_errno() as _);
+                if matches!(errno, Some(bun_sys::E::EINTR) | Some(bun_sys::E::EAGAIN)) {
+                    continue;
+                }
+                return Err(bun_sys::Error {
+                    errno: bun_sys::last_errno() as _,
+                    syscall: bun_sys::Tag::watch,
+                    ..Default::default()
+                });
+            }
+            // Check the wake fd first: on a simultaneous wake + event, shutting
+            // down takes priority over draining one more batch.
+            if fds[1].revents != 0 {
+                bun_core::scoped_log!(watcher, "{} woken", self.fd);
+                return Ok(false);
+            }
+            if fds[0].revents != 0 {
+                return Ok(true);
+            }
+        }
     }
 
     pub(crate) fn read(&mut self) -> bun_sys::Result<&[*const Event]> {
@@ -227,6 +312,12 @@ impl INotifyWatcher {
         } else {
             'outer: loop {
                 Futex::wait_forever(&self.watch_count, 0);
+
+                // An empty result is the shutdown signal: `watch_loop` re-checks
+                // `running` and exits.
+                if !self.wait_for_events()? {
+                    return Ok(&[]);
+                }
 
                 // SAFETY: fd is a valid inotify fd; buffer is valid for eventlist_bytes.len() bytes.
                 let rc = unsafe {
@@ -363,6 +454,10 @@ impl INotifyWatcher {
         if self.fd != Fd::INVALID {
             let _ = bun_sys::close(self.fd);
             self.fd = Fd::INVALID;
+        }
+        if self.wake_fd != Fd::INVALID {
+            let _ = bun_sys::close(self.wake_fd);
+            self.wake_fd = Fd::INVALID;
         }
     }
 }

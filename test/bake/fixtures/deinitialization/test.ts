@@ -2,6 +2,29 @@ import { getDevServerDeinitCount } from "bun:internal-for-testing";
 import html from "./index.html";
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import { fullGC, heapStats } from "bun:jsc";
+import { readdirSync, readFileSync } from "node:fs";
+
+/**
+ * Count live watcher threads by name. Each DevServer starts one; `Drop` calls
+ * `Watcher::shutdown`, which must be able to wake the thread out of its
+ * blocking wait for filesystem events. When it can't, the thread — and the
+ * `Box<Watcher>` it owns — survives until an unrelated change happens to
+ * arrive, which for a stopped server is never.
+ *
+ * Linux-only: reads `/proc/self/task`. Returns -1 elsewhere.
+ */
+function watcherThreadCount(): number {
+  if (process.platform !== "linux") return -1;
+  let count = 0;
+  for (const tid of readdirSync("/proc/self/task")) {
+    try {
+      if (readFileSync(`/proc/self/task/${tid}/comm`, "utf8").trim() === "File Watcher") count++;
+    } catch {
+      // the thread exited between readdir and read
+    }
+  }
+  return count;
+}
 
 expect(process.cwd()).toBe(import.meta.dir);
 
@@ -158,6 +181,17 @@ afterAll(async () => {
   // native NewServer boxes are freed, not just the embedded dev servers.
   await drainServerWrappers(serverWrapperBaseline);
   expect(liveServerWrappers()).toBe(serverWrapperBaseline);
+
+  // Every case above started a dev server and stopped it, so no watcher thread
+  // should still be alive. Poll rather than assert once: the threads wake and
+  // unwind asynchronously.
+  if (process.platform === "linux") {
+    const deadline = Date.now() + 5000;
+    while (watcherThreadCount() > 0 && Date.now() < deadline) {
+      await new Promise(resolve => setTimeout(resolve, 25));
+    }
+    expect(watcherThreadCount()).toBe(0);
+  }
 });
 
 for (const { closeActiveConnections, sendAnyRequests, websocket } of cases) {

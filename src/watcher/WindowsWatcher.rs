@@ -379,6 +379,20 @@ impl WindowsWatcher {
         }
     }
 
+    /// Interrupt a watcher thread blocked in `GetQueuedCompletionStatus` by
+    /// posting a completion packet with a null OVERLAPPED, which the wait loop
+    /// already treats as "stop".
+    pub(crate) fn wake(&self) {
+        if self.iocp == w::INVALID_HANDLE_VALUE {
+            return;
+        }
+        // SAFETY: `iocp` is a live completion port; a null OVERLAPPED is a
+        // documented wakeup packet.
+        unsafe {
+            let _ = w::kernel32::PostQueuedCompletionStatus(self.iocp, 0, 0, ptr::null_mut());
+        }
+    }
+
     pub(crate) fn stop(&mut self) {
         // SAFETY: handles were opened in init() and are valid until stop() is called once.
         unsafe {

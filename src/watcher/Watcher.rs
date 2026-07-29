@@ -280,11 +280,16 @@ impl Watcher {
             me.mutex.lock();
             me.close_descriptors.store(close_descriptors);
             me.running.store(false);
+            // Must be inside the lock. `running = false` is published above, so
+            // the watcher thread may now exit and free the `Box<Watcher>`;
+            // `thread_main` takes this same lock before freeing, so holding it
+            // here is what keeps `me` alive across the wake.
+            me.platform.wake();
             me.mutex.unlock();
         } else {
             if close_descriptors && me.running.load() {
                 let fds = me.watchlist.items_fd();
-                for &fd in fds {
+                for &fd in fds.iter().filter(|fd| fd.is_valid()) {
                     let _ = bun_sys::close(fd);
                 }
             }
@@ -335,11 +340,20 @@ impl Watcher {
             // deinit and close descriptors if needed
             if me.close_descriptors.load() {
                 let fds = me.watchlist.items_fd();
-                for &fd in fds {
+                // Platforms that don't need a descriptor per watch (inotify,
+                // ReadDirectoryChangesW) store `Fd::INVALID`, which `close`
+                // asserts against. `flush_evictions` guards the same way.
+                for &fd in fds.iter().filter(|fd| fd.is_valid()) {
                     let _ = bun_sys::close(fd);
                 }
             }
             // watchlist freed by Drop below
+
+            // Rendezvous with `shutdown`, which calls `platform.wake()` under
+            // this lock. Acquiring it here orders that wake before the
+            // deallocation below.
+            me.mutex.lock();
+            me.mutex.unlock();
         }
 
         // Close trace file if open

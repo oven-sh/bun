@@ -322,9 +322,7 @@ describe("bundler", () => {
         `,
       },
       entryPointsRaw:
-        order === "MainFirst"
-          ? ["./src/main.js", "./src/sub/modname.js"]
-          : ["./src/sub/modname.js", "./src/main.js"],
+        order === "MainFirst" ? ["./src/main.js", "./src/sub/modname.js"] : ["./src/sub/modname.js", "./src/main.js"],
       outdir: "/out",
       splitting: true,
       chunkNaming: "chunks/[name]-[hash].[ext]",

@@ -619,11 +619,12 @@ pub fn compute_chunks(this: &mut LinkerContext, unique_key: u64) -> crate::Resul
         // shared split chunks carry a zeroed id. For those, `[name]` stays the
         // literal "chunk" (already set by `PathTemplate::CHUNK.into()` above),
         // matching esbuild.
-        let pathname: Option<bun_fs::PathName<'_>> = chunk.entry_point.is_entry_point().then(|| {
-            bun_fs::PathName::init(
-                output_paths[chunk.entry_point.entry_point_id() as usize].slice(),
-            )
-        });
+        let pathname: Option<bun_fs::PathName<'_>> =
+            chunk.entry_point.is_entry_point().then(|| {
+                bun_fs::PathName::init(
+                    output_paths[chunk.entry_point.entry_point_id() as usize].slice(),
+                )
+            });
         if let Some(ref pathname) = pathname {
             chunk.template.placeholder.name = pathname.base.to_vec().into_boxed_slice();
         }

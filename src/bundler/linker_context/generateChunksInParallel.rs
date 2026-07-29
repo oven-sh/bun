@@ -436,10 +436,7 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
 
             c.log_mut().add_error(None, bun_ast::Loc::EMPTY, msg);
 
-            for (name, template) in [
-                ("entry", entry_naming),
-                ("chunk", chunk_naming),
-            ] {
+            for (name, template) in [("entry", entry_naming), ("chunk", chunk_naming)] {
                 let Some(template) = template else { continue };
 
                 let mut text: Vec<u8> = Vec::new();

@@ -638,7 +638,8 @@ export async function waitForStepOutcome(stepKey: string, pollMs = 3000): Promis
   const sleep = (ms: number) => new Promise<void>(r => setTimeout(r, ms));
   const get = (attr: string) => {
     const r = spawnSync("buildkite-agent", ["step", "get", attr, "--step", stepKey], { encoding: "utf8" });
-    return { ok: !r.error && r.status === 0, out: (r.stdout ?? "").trim(), err: (r.stderr ?? "").trim() };
+    if (r.error) throw new BuildError(`Failed to spawn buildkite-agent`, { cause: r.error });
+    return { ok: r.status === 0, out: (r.stdout ?? "").trim(), err: (r.stderr ?? "").trim() };
   };
   const start = Date.now();
   const deadlineMs = 60 * 60 * 1000;

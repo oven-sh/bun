@@ -1,6 +1,6 @@
 import { dlopen, linkSymbols } from "bun:ffi";
 import { describe, expect, test } from "bun:test";
-import { isMusl } from "harness";
+import { bunEnv, bunExe, isMusl } from "harness";
 
 describe("FFI error messages", () => {
   test("dlopen shows library name when library cannot be opened", () => {
@@ -19,6 +19,36 @@ describe("FFI error messages", () => {
       expect(err.message).toMatch(/Failed to open library/i);
     }
   });
+
+  // dlopen falls back to FileSystem::abs() when the direct open fails; abs()
+  // writes into a thread-local buffer that was 4096 bytes on every platform.
+  // A library path longer than that used to abort with
+  //   panic: range end index 5003 out of range for slice of length 4095
+  // instead of reporting the ordinary dlopen error.
+  test.concurrent.each([5000, 100_000])(
+    "dlopen with a %d-byte library path reports an error instead of aborting",
+    async len => {
+      const prefix = process.platform === "win32" ? "C:\\" : "/";
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `const { dlopen } = require("bun:ffi");` +
+            `const name = ${JSON.stringify(prefix)} + Buffer.alloc(${len}, "a").toString() + ".so";` +
+            `try { dlopen(name, { f: { args: [], returns: "void" } }); }` +
+            `catch (e) { console.log("CAUGHT", e.code || e.name, String(e.message).slice(0, 30)); }`,
+        ],
+        env: bunEnv,
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout: stdout.trim(), stderr }).toEqual({
+        stdout: expect.stringMatching(/^CAUGHT ERR_DLOPEN_FAILED Failed to open library/),
+        stderr: "",
+      });
+      expect(exitCode).toBe(0);
+    },
+  );
 
   test("dlopen shows which symbol is missing when symbol not found", () => {
     // Use appropriate system library for the platform

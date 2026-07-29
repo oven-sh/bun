@@ -195,3 +195,15 @@ test("Bun.file(relativePath) resolves against cwd at construction, not at read t
   });
   expect(exitCode).toBe(0);
 });
+
+test("FormData.append(name, Bun.file(path)) sends only the basename as filename", async () => {
+  using dir = tempDir("bun-file-formdata", {
+    "upload.csv": "a,b,c\n",
+  });
+
+  const fd = new FormData();
+  fd.append("f", Bun.file(join(String(dir), "upload.csv")));
+  const body = await new Request("http://x", { method: "POST", body: fd }).text();
+  const m = body.match(/filename="([^"]*)"/);
+  expect(m?.[1]).toBe("upload.csv");
+});

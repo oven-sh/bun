@@ -236,6 +236,74 @@ test("bunfig.toml scoped registry takes precedence over .npmrc @scope:registry",
   expect(exitCode).toBe(1);
 });
 
+test("bunfig.toml registry token takes precedence over .npmrc //host/:_authToken", async () => {
+  let auth: string | null = "unset";
+  using server = Bun.serve({
+    port: 0,
+    fetch(req) {
+      auth = req.headers.get("authorization");
+      return new Response("not found", { status: 404 });
+    },
+  });
+
+  await Bun.write(
+    join(package_dir, "bunfig.toml"),
+    `[install]\nregistry = { url = "http://${server.hostname}:${server.port}/", token = "bunfig-token" }\n`,
+  );
+  await Bun.write(join(package_dir, ".npmrc"), `//${server.hostname}:${server.port}/:_authToken=npmrc-token\n`);
+  await Bun.write(
+    join(package_dir, "package.json"),
+    JSON.stringify({ name: "test", version: "0.0.0", dependencies: { react: "1.0.0" } }),
+  );
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "install", "--no-cache"],
+    env,
+    cwd: package_dir,
+    stdout: "ignore",
+    stderr: "pipe",
+    stdin: "ignore",
+  });
+  const [, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+
+  expect(auth).toBe("Bearer bunfig-token");
+  expect(exitCode).toBe(1);
+});
+
+test(".npmrc //host/:_authToken still fills in when bunfig.toml sets only the registry url", async () => {
+  let auth: string | null = "unset";
+  using server = Bun.serve({
+    port: 0,
+    fetch(req) {
+      auth = req.headers.get("authorization");
+      return new Response("not found", { status: 404 });
+    },
+  });
+
+  await Bun.write(
+    join(package_dir, "bunfig.toml"),
+    `[install]\nregistry = "http://${server.hostname}:${server.port}/"\n`,
+  );
+  await Bun.write(join(package_dir, ".npmrc"), `//${server.hostname}:${server.port}/:_authToken=npmrc-token\n`);
+  await Bun.write(
+    join(package_dir, "package.json"),
+    JSON.stringify({ name: "test", version: "0.0.0", dependencies: { react: "1.0.0" } }),
+  );
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "install", "--no-cache"],
+    env,
+    cwd: package_dir,
+    stdout: "ignore",
+    stderr: "pipe",
+    stdin: "ignore",
+  });
+  const [, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+
+  expect(auth).toBe("Bearer npmrc-token");
+  expect(exitCode).toBe(1);
+});
+
 // A `registry=` line in the project .npmrc should still take precedence over
 // the user ~/.npmrc when bunfig.toml does not configure a registry.
 test("project .npmrc registry takes precedence over user .npmrc", async () => {

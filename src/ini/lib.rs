@@ -1223,11 +1223,39 @@ mod draft {
     // loadNpmrcConfig / loadNpmrc
     // ──────────────────────────────────────────────────────────────────────────
 
+    #[derive(Default, Clone, Copy)]
+    pub struct RegistryCredPreset {
+        pub token: bool,
+        pub username: bool,
+        pub password: bool,
+    }
+
+    impl RegistryCredPreset {
+        fn from(r: &NpmRegistry) -> Self {
+            Self {
+                token: !r.token.is_empty(),
+                username: !r.username.is_empty(),
+                password: !r.password.is_empty(),
+            }
+        }
+
+        fn blocks(self, opt: ConfigOpt) -> bool {
+            match opt {
+                ConfigOpt::_AuthToken => self.token,
+                ConfigOpt::Username => self.username,
+                ConfigOpt::_Password => self.password,
+                ConfigOpt::_Auth => self.username || self.password,
+                ConfigOpt::Email | ConfigOpt::Certfile | ConfigOpt::Keyfile => false,
+            }
+        }
+    }
+
     /// Snapshot of which `BunInstall` fields bunfig.toml already set;
     /// `load_npmrc` skips those keys so bunfig wins over `.npmrc`.
     #[derive(Default)]
     pub struct NpmrcPreset {
         pub default_registry: bool,
+        pub default_registry_creds: RegistryCredPreset,
         pub cache_directory: bool,
         pub disable_cache: bool,
         pub dry_run: bool,
@@ -1242,7 +1270,7 @@ mod draft {
         pub node_linker: bool,
         pub public_hoist_pattern: bool,
         pub hoist_pattern: bool,
-        pub scoped_names: Vec<Box<[u8]>>,
+        pub scoped: Vec<(Box<[u8]>, RegistryCredPreset)>,
     }
 
     impl NpmrcPreset {
@@ -1252,6 +1280,11 @@ mod draft {
                     .default_registry
                     .as_ref()
                     .is_some_and(|r| !r.url.is_empty()),
+                default_registry_creds: install
+                    .default_registry
+                    .as_ref()
+                    .map(RegistryCredPreset::from)
+                    .unwrap_or_default(),
                 cache_directory: install.cache_directory.is_some(),
                 disable_cache: install.disable_cache.is_some(),
                 dry_run: install.dry_run.is_some(),
@@ -1266,16 +1299,31 @@ mod draft {
                 node_linker: install.node_linker.is_some(),
                 public_hoist_pattern: install.public_hoist_pattern.is_some(),
                 hoist_pattern: install.hoist_pattern.is_some(),
-                scoped_names: install
+                scoped: install
                     .scoped
                     .as_ref()
-                    .map(|m| m.scopes.keys().to_vec())
+                    .map(|m| {
+                        m.scopes
+                            .keys()
+                            .iter()
+                            .zip(m.scopes.values())
+                            .map(|(k, v)| (k.clone(), RegistryCredPreset::from(v)))
+                            .collect()
+                    })
                     .unwrap_or_default(),
             }
         }
 
         fn has_scope(&self, name: &[u8]) -> bool {
-            self.scoped_names.iter().any(|n| &**n == name)
+            self.scoped.iter().any(|(n, _)| &**n == name)
+        }
+
+        fn scope_creds(&self, name: &[u8]) -> RegistryCredPreset {
+            self.scoped
+                .iter()
+                .find(|(n, _)| &**n == name)
+                .map(|(_, c)| *c)
+                .unwrap_or_default()
         }
     }
 
@@ -1685,8 +1733,9 @@ mod draft {
             for conf_item in configs.iter() {
                 let conf_item_url = URL::parse(&conf_item.registry_url);
 
-                if bun_core::without_trailing_slash(&default_registry_host)
-                    == bun_core::without_trailing_slash(conf_item_url.host)
+                if !preset.default_registry_creds.blocks(conf_item.optname)
+                    && bun_core::without_trailing_slash(&default_registry_host)
+                        == bun_core::without_trailing_slash(conf_item_url.host)
                     && bun_core::without_trailing_slash(&default_registry_pathname)
                         == bun_core::without_trailing_slash(conf_item_url.pathname)
                 {
@@ -1740,9 +1789,10 @@ mod draft {
                 // `url_map` was filled in lockstep with `registry_map.scopes` (same
                 // ArrayHashMap insertion order), zip its values directly instead
                 // of looking each one up by key.
-                for (url_bytes, v) in url_map
-                    .values()
+                for ((scope_name, url_bytes), v) in url_map
+                    .keys()
                     .iter()
+                    .zip(url_map.values().iter())
                     .zip(registry_map.scopes.values_mut())
                 {
                     let url = URL::parse(url_bytes);
@@ -1758,6 +1808,9 @@ mod draft {
                             {
                                 continue;
                             }
+                        }
+                        if preset.scope_creds(scope_name).blocks(conf_item.optname) {
+                            continue;
                         }
                         // Apply config to scoped registry
                         match conf_item.optname {

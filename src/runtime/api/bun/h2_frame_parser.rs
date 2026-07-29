@@ -660,9 +660,7 @@ bun_core::comptime_string_set! {
     };
 }
 
-/// Every pseudo-header the spec defines (node's `kValidPseudoHeaders`). Outbound request and
-/// PUSH_PROMISE blocks validate against this, not the request-only set: a `:status` sent in a
-/// request is a protocol error the *peer* reports, so it reaches the wire instead of throwing.
+/// Node's `kValidPseudoHeaders`: outbound requests accept every defined pseudo-header.
 #[inline]
 fn is_valid_pseudo_header(name: &[u8]) -> bool {
     PSEUDO_HEADERS.contains(name)

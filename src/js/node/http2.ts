@@ -2991,8 +2991,6 @@ function doSendFileFD(options, fd, headers, err, stat) {
 
     if (onError) onError(err);
     else {
-      // respond() validates headers and can throw (e.g. a connection-specific header); the
-      // stream must still be torn down, so never let that throw skip the destroy below.
       try {
         this.respond(headers, options);
       } catch {}
@@ -3014,8 +3012,6 @@ function doSendFileFD(options, fd, headers, err, stat) {
       if (ownsFd) tryClose(fd);
       if (onError) onError(err);
       else {
-        // respond() validates headers and can throw (e.g. a connection-specific header); the
-        // stream must still be torn down, so never let that throw skip the destroy below.
         try {
           this.respond(headers, options);
         } catch {}
@@ -3765,9 +3761,7 @@ function emitStreamErrorNT(self, stream, error, destroy, destroy_self) {
     if (destroy_self) self.destroy();
   }
 }
-// RFC 9113 §8.2.2: connection-specific fields must never appear in an HTTP/2 message. node
-// rejects them from every outbound header block (buildNgHeaderString), so each site that encodes
-// one calls this first; `te` survives, but only with the exact value "trailers".
+// RFC 9113 §8.2.2: connection-specific fields are forbidden on every HTTP/2 header block.
 const kForbiddenConnectionHeaders = new SafeSet([
   "connection",
   "upgrade",
@@ -3793,9 +3787,7 @@ function assertNoConnectionHeaders(headers): void {
   }
 }
 
-// Outbound guard: header values carrying code points above 0xFF (or raw CR/LF/NUL) cannot be
-// legally serialized as an HTTP field value; node's stack drops such headers at submit time
-// (response-splitting probes rely on them). Returns true when the value must be dropped.
+// Header values with code points above 0xFF or CR/LF/NUL cannot be serialized; drop them.
 function headerValueIsUnsendable(value): boolean {
   if ($isArray(value)) {
     // Array-valued headers (e.g. set-cookie): unsendable if any element is.

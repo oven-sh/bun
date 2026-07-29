@@ -1835,6 +1835,7 @@ export class VerdaccioRegistry {
   }
 
   async start(silent: boolean = true) {
+    this.#stopped = false;
     await rm(join(dirname(this.configPath), "htpasswd"), { force: true });
     this.process = fork(require.resolve("verdaccio/bin/verdaccio"), ["-c", this.configPath, "-l", `${this.port}`], {
       silent,

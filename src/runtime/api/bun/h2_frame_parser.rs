@@ -2494,14 +2494,10 @@ impl H2FrameParser {
         let _ = self.write(&buffer);
     }
 
-    /// A request/response header block hit an entry the HPACK encoder cannot emit (a single field
-    /// exceeding the encoder's per-entry limit). On the server the peer has already opened this
-    /// stream, so silently swallowing the failure leaves it waiting on a HEADERS frame that never
-    /// comes (RFC 9113 section 8.1) while a later end() flushes a stray DATA+END_STREAM with no
-    /// HEADERS in front of it, which a conforming client answers with a connection-level GOAWAY.
-    /// Reset the one stream with RST_STREAM(FRAME_SIZE_ERROR) so the failure stays scoped to it
-    /// (node/nghttp2 behavior). On the client the HEADERS never reached the wire, so RST_STREAM
-    /// would name a stream the peer still considers idle; fail it locally without a wire write.
+    /// A header block hit an entry the HPACK encoder cannot emit (single field over its per-entry
+    /// limit). Surface `frameError` and fail the stream with FRAME_SIZE_ERROR (node/nghttp2
+    /// parity). On the server the stream exists on the wire so RST_STREAM is written; on the
+    /// client the HEADERS never went out so the stream is failed locally only.
     fn reject_unencodable_header_block(
         &self,
         stream_id: u32,
@@ -7488,11 +7484,9 @@ impl H2FrameParser {
         let stream = unsafe { &mut *stream };
 
         stream.wait_for_trailers = false;
-        // The compat response always routes _final through here (kBeginSend sets
-        // waitForTrailers: true); when the response headers could not be encoded the stream has
-        // already been reset to CLOSED, and emitting the empty END_STREAM DATA here would put a
-        // frame on the wire after RST_STREAM (or, before the encode-failure fix, with no HEADERS
-        // in front of it). Same guard write_stream() applies.
+        // Same guard as write_stream(): the compat _final reaches here on every response (kBeginSend
+        // sets waitForTrailers), so a stream already reset by a header-encode failure must not emit
+        // a stray DATA frame.
         if stream.can_send_data() {
             let _ = this.send_data(stream, b"", true, JSValue::UNDEFINED, false, false);
         }

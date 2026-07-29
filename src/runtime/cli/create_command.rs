@@ -608,9 +608,7 @@ impl CreateCommand {
                 template_has_npmignore =
                     bun_sys::exists_at(template_dir.fd, bun_core::zstr!(".npmignore"));
 
-                // With --force the scan still runs: it removes entries whose
-                // kind mismatches the template's, which O_TRUNC/mkdir cannot
-                // overwrite.
+                // Under --force the scan removes kind-mismatched entries instead.
                 let existing_destination = match bun_sys::Dir::open(destination) {
                     Ok(d) => Some(d),
                     Err(err) if err.get_errno() == bun_sys::E::ENOENT => None,

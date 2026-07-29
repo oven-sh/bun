@@ -27,6 +27,7 @@ unsafe extern "C" {
     safe fn URL__getFileURLString(input: &mut String) -> String;
     safe fn URL__getHrefJoin(base: &mut String, relative: &mut String) -> String;
     safe fn URL__pathFromFileURL(input: &mut String) -> String;
+    safe fn URL__pathAndQueryFromFileURL(input: &mut String) -> String;
     safe fn URL__hash(url: &URL) -> String;
 }
 
@@ -50,6 +51,11 @@ impl URL {
     pub fn path_from_file_url(str: String) -> String {
         let mut input = str;
         URL__pathFromFileURL(&mut input)
+    }
+
+    pub fn path_and_query_from_file_url(str: String) -> String {
+        let mut input = str;
+        URL__pathAndQueryFromFileURL(&mut input)
     }
 
     /// This percent-encodes the URL, punycode-encodes the hostname, and returns the result

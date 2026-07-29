@@ -740,6 +740,57 @@ it("throws a validation error when passing invalid routes", () => {
   `);
 });
 
+describe("per-method route value validation", () => {
+  it.each([
+    ["null", null],
+    ["number", 42],
+    ["string", "str"],
+    ["plain object", {}],
+    ["array", [1, 2]],
+    ["true", true],
+  ])("throws when a method value is %s", (_, value) => {
+    expect(() => {
+      Bun.serve({
+        port: 0,
+        // @ts-expect-error - testing invalid input
+        routes: { "/x": { GET: value, POST: () => new Response("ok") } },
+        fetch: () => new Response("fallback"),
+      });
+    }).toThrow('Invalid value for route "/x" method GET');
+  });
+
+  it.each([
+    ["undefined", undefined],
+    ["false", false],
+  ])("accepts %s as a method value (skips that method)", async (_, value) => {
+    await using server = Bun.serve({
+      port: 0,
+      // @ts-expect-error - testing runtime acceptance
+      routes: { "/x": { GET: value, POST: () => new Response("post-ok") } },
+      fetch: () => new Response("fallback", { status: 299 }),
+    });
+    const [g, p] = await Promise.all([
+      fetch(new URL("/x", server.url)),
+      fetch(new URL("/x", server.url), { method: "POST" }),
+    ]);
+    expect({ get: { status: g.status, body: await g.text() }, post: { status: p.status, body: await p.text() } }).toEqual({
+      get: { status: 299, body: "fallback" },
+      post: { status: 200, body: "post-ok" },
+    });
+  });
+
+  it("still accepts a Response as a method value", async () => {
+    await using server = Bun.serve({
+      port: 0,
+      routes: { "/x": { GET: new Response("static-get") } },
+      fetch: () => new Response("fallback"),
+    });
+    const res = await fetch(new URL("/x", server.url));
+    expect(await res.text()).toBe("static-get");
+    expect(res.status).toBe(200);
+  });
+});
+
 it("throws a validation error when routes object is empty and fetch is not specified", async () => {
   expect(() =>
     Bun.serve({

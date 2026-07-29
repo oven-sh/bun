@@ -921,10 +921,17 @@ impl ServerConfig {
                     for method in METHODS {
                         let method_name = bun_core::String::static_(method.as_str());
                         if let Some(function) = value.get_own(global, &method_name)? {
+                            if function.is_undefined() {
+                                continue;
+                            }
                             if !found {
                                 validate_route_name(global, &path)?;
                             }
                             found = true;
+
+                            if function == JSValue::FALSE {
+                                continue;
+                            }
 
                             if function.is_callable() {
                                 let callback = function.with_async_context_if_needed(global);
@@ -962,6 +969,12 @@ impl ServerConfig {
                                 if method == Method::HEAD {
                                     has_head_route = true;
                                 }
+                            } else {
+                                return Err(global.throw_invalid_arguments(format_args!(
+                                    "Invalid value for route {} method {}. Expected a function, Response, HTMLBundle, BunFile, or false.",
+                                    bun_fmt::quote(&path),
+                                    method.as_str(),
+                                )));
                             }
                         }
                     }

@@ -325,10 +325,6 @@ function getTypes(fast) {
       returns: "ptr",
       args: [],
     },
-    getNoopDeallocatorCallback: {
-      returns: "ptr",
-      args: [],
-    },
     getDeallocatorBuffer: {
       returns: "ptr",
       args: [],
@@ -382,7 +378,6 @@ function ffiRunner(fast) {
         is_null,
         does_pointer_equal_42_as_int32_t,
         ptr_should_point_to_42_as_int32_t,
-        getNoopDeallocatorCallback,
         cb_identity_true,
         cb_identity_false,
         cb_identity_42_char,
@@ -493,11 +488,12 @@ function ffiRunner(fast) {
       expect(cptr != 0).toBe(true);
       expect(typeof cptr === "number").toBe(true);
       expect(does_pointer_equal_42_as_int32_t(cptr)).toBe(true);
-      const noopDeallocator = getNoopDeallocatorCallback();
       {
-        const buffer = toBuffer(cptr, 0, 4, noopDeallocator);
+        // No finalizer: both views borrow `cptr` (static storage in the fixture),
+        // so the GC below must not free it. See oven-sh/bun#35405.
+        const buffer = toBuffer(cptr, 0, 4);
         expect(buffer.readInt32(0)).toBe(42);
-        expect(new DataView(toArrayBuffer(cptr, 0, 4, noopDeallocator), 0, 4).getInt32(0, true)).toBe(42);
+        expect(new DataView(toArrayBuffer(cptr, 0, 4), 0, 4).getInt32(0, true)).toBe(42);
         expect(ptr(buffer)).toBe(cptr);
       }
       Bun.gc(true);

@@ -879,6 +879,25 @@ impl Lockfile {
         self.packages.items_dependencies()[root_id as usize].contains(id)
     }
 
+    /// Whether `id` is a dependency of a workspace targeted by the current
+    /// `bun update` (cwd by default; the `--recursive`/`--filter` set via
+    /// `update_workspace_name_hashes`). Keyed on name hashes (stable across clean).
+    pub fn is_update_target_dependency(
+        &self,
+        manager: &mut PackageManager,
+        id: DependencyID,
+    ) -> bool {
+        let Some(name_hashes) = manager.update_workspace_name_hashes.as_deref() else {
+            return self.is_root_dependency(manager, id);
+        };
+        let pkg_id = self.get_workspace_pkg_if_workspace_dep(id);
+        if pkg_id == invalid_package_id {
+            return false;
+        }
+        let name_hash = self.packages.items_name_hash()[pkg_id as usize];
+        name_hashes.contains(&name_hash)
+    }
+
     /// Is this a direct dependency of any workspace (including workspace root)?
     /// TODO make this faster by caching the workspace package ids
     pub fn is_workspace_dependency(&self, id: DependencyID) -> bool {

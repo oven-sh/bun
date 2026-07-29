@@ -1,5 +1,5 @@
 use crate::lockfile::package::PackageColumns as _;
-use bun_collections::VecExt;
+use bun_collections::{StringArrayHashMap, VecExt};
 use core::fmt;
 use std::borrow::Cow;
 
@@ -9,8 +9,12 @@ use crate::Error;
 use crate::ShellCompletions;
 use crate::bun_fs::FileSystem;
 use crate::bun_json as json;
+use crate::package_manager::WorkspaceFilter;
+use crate::{PackageID, PackageNameHash, lockfile, resolution};
+use bun_ast::Indentation;
 use bun_core::{Global, Output};
 use bun_core::{ZStr, strings};
+use bun_glob as glob;
 use bun_js_printer as js_printer;
 use bun_paths::{self, PathBuffer};
 use bun_sys::{self, Fd, File};
@@ -19,7 +23,7 @@ use super::command_line_arguments::CommandLineArguments;
 use super::package_json_editor as PackageJSONEditor;
 use super::update_request::Array as UpdateRequestArray;
 use super::{
-    Command, PackageManager, PatchCommitResult, Subcommand, UpdateRequest,
+    Command, PackageManager, PackageUpdateInfo, PatchCommitResult, Subcommand, UpdateRequest,
     attempt_to_create_package_json, install_with_manager, patch_package,
 };
 
@@ -121,6 +125,15 @@ fn update_package_json_and_install_with_manager_with_updates(
         }
         Global::crash();
     }
+
+    // For `bun update --recursive`/`--filter` with no named packages, fan the
+    // update out to workspace members: set the install-time gate and edit each
+    // member before install (the cwd is still handled below via `cwd_in_target`).
+    let mut plan = if subcommand == Subcommand::Update && updates.is_empty() {
+        prepare_workspace_update_plan(manager, original_cwd)?
+    } else {
+        WorkspaceUpdatePlan::cwd_only()
+    };
 
     // reshaped for borrowck — `get_with_path` returns `&mut MapEntry`
     // borrowed from `manager.workspace_package_json_cache`, but we then need
@@ -322,16 +335,22 @@ fn update_package_json_and_install_with_manager_with_updates(
                 // `edit` may shrink the slice.
                 let new_len = updates_slice.len();
                 updates.truncate(new_len);
-            } else if subcommand == Subcommand::Update {
-                PackageJSONEditor::edit_update_no_args(
+            } else if subcommand == Subcommand::Update && plan.cwd_in_target {
+                let mut updating = core::mem::take(&mut manager.updating_packages);
+                let ws_hash = manager.workspace_name_hash;
+                let res = PackageJSONEditor::edit_update_no_args(
                     manager,
+                    &mut updating,
+                    ws_hash,
                     &mut current_package_json_root,
                     EditOptions {
                         exact_versions: true,
                         before_install: true,
                         ..Default::default()
                     },
-                )?;
+                );
+                manager.updating_packages = updating;
+                res?;
             }
         }
         _ => {
@@ -557,14 +576,22 @@ fn update_package_json_and_install_with_manager_with_updates(
             };
 
         if updates.is_empty() {
-            PackageJSONEditor::edit_update_no_args(
-                manager,
-                &mut new_package_json,
-                EditOptions {
-                    exact_versions: manager.options.enable.exact_versions(),
-                    ..Default::default()
-                },
-            )?;
+            if plan.cwd_in_target {
+                let mut updating = core::mem::take(&mut manager.updating_packages);
+                let ws_hash = manager.workspace_name_hash;
+                let res = PackageJSONEditor::edit_update_no_args(
+                    manager,
+                    &mut updating,
+                    ws_hash,
+                    &mut new_package_json,
+                    EditOptions {
+                        exact_versions: manager.options.enable.exact_versions(),
+                        ..Default::default()
+                    },
+                );
+                manager.updating_packages = updating;
+                res?;
+            }
         } else {
             let mut updates_slice: &mut [UpdateRequest] = &mut updates[..];
             PackageJSONEditor::edit(
@@ -614,7 +641,12 @@ fn update_package_json_and_install_with_manager_with_updates(
 
     let _ = written;
 
-    if manager.options.do_.contains(Do::WRITE_PACKAGE_JSON) {
+    // When `--filter` selects workspaces that don't include the cwd/root, the
+    // cwd package.json is not a target and must not be rewritten here. For the
+    // default and `--recursive` cases `cwd_in_target` is always true.
+    if manager.options.do_.contains(Do::WRITE_PACKAGE_JSON)
+        && (plan.cwd_in_target || subcommand != Subcommand::Update)
+    {
         let (source, path): (&[u8], &ZStr) =
             if matches!(manager.options.patch_features, PatchFeatures::Commit { .. }) {
                 'source_and_path: {
@@ -740,7 +772,395 @@ fn update_package_json_and_install_with_manager_with_updates(
         }
     }
 
+    // Commit the fanned-out workspace members: read back the versions the
+    // install step resolved and write each member's package.json to disk.
+    if subcommand == Subcommand::Update && manager.options.do_.contains(Do::WRITE_PACKAGE_JSON) {
+        for member in plan.members.iter_mut() {
+            commit_workspace_member_update(manager, member)?;
+        }
+    }
+
     Ok(())
+}
+
+/// Plan for fanning `bun update` out to workspace members under
+/// `--recursive`/`--filter`.
+struct WorkspaceUpdatePlan {
+    /// Members other than the cwd/root workspace (which the main flow edits).
+    members: Vec<MemberUpdate>,
+    /// Whether the cwd/root workspace is itself a target of this update.
+    cwd_in_target: bool,
+}
+
+impl WorkspaceUpdatePlan {
+    fn cwd_only() -> Self {
+        Self {
+            members: Vec::new(),
+            cwd_in_target: true,
+        }
+    }
+}
+
+/// A workspace member to update, captured before install so its resolved
+/// versions can be written back afterwards.
+struct MemberUpdate {
+    /// Absolute path to the member's package.json.
+    package_json_path: Box<[u8]>,
+    /// Stable across `clean_with_logger`; selects the member post-install.
+    name_hash: Option<PackageNameHash>,
+    /// The member package.json printed after the pre-install pass.
+    source_before_install: Vec<u8>,
+    /// The member package.json exactly as it was on disk, so an unchanged
+    /// member is not rewritten.
+    original_contents: Vec<u8>,
+    /// Per-member original version literals captured in the pre-install pass.
+    updating_packages: StringArrayHashMap<PackageUpdateInfo>,
+    indentation: Indentation,
+    preserve_trailing_newline: bool,
+}
+
+fn prepare_workspace_update_plan(
+    manager: &mut PackageManager,
+    original_cwd: &[u8],
+) -> Result<WorkspaceUpdatePlan, Error> {
+    let recursive = manager.options.do_.recursive();
+    let has_filter = !manager.options.filter_patterns.is_empty();
+    if !recursive && !has_filter {
+        return Ok(WorkspaceUpdatePlan::cwd_only());
+    }
+
+    // Probe the lockfile without migration (planning only needs the workspace
+    // list). `install_with_manager` does the real migrating load and owns the
+    // error policy, so a missing/foreign/corrupt lockfile just falls back here.
+    if !manager.options.do_.load_lockfile()
+        || !matches!(
+            manager.load_lockfile_from_cwd::<false>(),
+            lockfile::LoadResult::Ok(_)
+        )
+    {
+        return Ok(WorkspaceUpdatePlan::cwd_only());
+    }
+
+    let selected: Vec<PackageID> = if has_filter {
+        select_filtered_workspaces(manager, original_cwd)
+    } else {
+        select_all_workspaces(manager)
+    };
+
+    let cwd_pkg_id = manager
+        .lockfile
+        .get_workspace_package_id(manager.workspace_name_hash);
+
+    // The install-time update gate: a dependency updates iff it belongs to one
+    // of these workspaces. Name hashes are stable across `clean_with_logger`.
+    {
+        let col = manager.lockfile.packages.items_name_hash();
+        let name_hashes: Box<[PackageNameHash]> =
+            selected.iter().map(|&id| col[id as usize]).collect();
+        manager.update_workspace_name_hashes = Some(name_hashes);
+    }
+
+    let top_level_dir: Box<[u8]> = Box::from(strings::without_trailing_slash(
+        FileSystem::instance().top_level_dir(),
+    ));
+
+    let mut cwd_in_target = false;
+    let mut members: Vec<MemberUpdate> = Vec::new();
+    for &pkg_id in &selected {
+        if pkg_id == cwd_pkg_id {
+            // The cwd/root package.json is edited by the main flow.
+            cwd_in_target = true;
+            continue;
+        }
+
+        let res_tag = manager.lockfile.packages.items_resolution()[pkg_id as usize].tag;
+        // `None` means the root workspace (the codebase convention
+        // `get_workspace_package_id` honors); only real workspaces carry a hash.
+        let name_hash: Option<PackageNameHash> = if res_tag == resolution::Tag::Workspace {
+            Some(manager.lockfile.packages.items_name_hash()[pkg_id as usize])
+        } else {
+            None
+        };
+        let rel: Box<[u8]> = if res_tag == resolution::Tag::Workspace {
+            let res = manager.lockfile.packages.items_resolution()[pkg_id as usize];
+            Box::from(
+                res.workspace()
+                    .slice(manager.lockfile.buffers.string_bytes.as_slice()),
+            )
+        } else {
+            Box::default()
+        };
+
+        let mut path_buf = PathBuffer::uninit();
+        let abs_path: &[u8] =
+            if rel.is_empty() {
+                bun_paths::resolve_path::join_abs_string_buf::<
+                    bun_paths::resolve_path::platform::Auto,
+                >(&top_level_dir, &mut path_buf.0, &[b"package.json"])
+            } else {
+                bun_paths::resolve_path::join_abs_string_buf::<
+                    bun_paths::resolve_path::platform::Auto,
+                >(&top_level_dir, &mut path_buf.0, &[&rel, b"package.json"])
+            };
+
+        members.push(prepare_member_before_install(manager, abs_path, name_hash)?);
+    }
+
+    Ok(WorkspaceUpdatePlan {
+        members,
+        cwd_in_target,
+    })
+}
+
+fn select_all_workspaces(manager: &PackageManager) -> Vec<PackageID> {
+    let resolutions = manager.lockfile.packages.items_resolution();
+    let mut ids = Vec::new();
+    for (pkg_id, res) in resolutions.iter().enumerate() {
+        if res.tag == resolution::Tag::Workspace || res.tag == resolution::Tag::Root {
+            ids.push(pkg_id as PackageID);
+        }
+    }
+    ids
+}
+
+fn select_filtered_workspaces(manager: &PackageManager, original_cwd: &[u8]) -> Vec<PackageID> {
+    let lockfile = &manager.lockfile;
+    let packages = lockfile.packages.slice();
+    let pkg_names = packages.items_name();
+    let pkg_resolutions = packages.items_resolution();
+    let string_buf = lockfile.buffers.string_bytes.as_slice();
+
+    let mut ids: Vec<PackageID> = Vec::new();
+    for (pkg_id, res) in pkg_resolutions.iter().enumerate() {
+        if res.tag == resolution::Tag::Workspace || res.tag == resolution::Tag::Root {
+            ids.push(pkg_id as PackageID);
+        }
+    }
+
+    let mut path_buf = PathBuffer::uninit();
+    let converted_filters: Vec<WorkspaceFilter> = manager
+        .options
+        .filter_patterns
+        .iter()
+        .map(|filter| {
+            bun_core::handle_oom(WorkspaceFilter::init(filter, original_cwd, &mut path_buf.0))
+        })
+        .collect();
+
+    let top_level_dir = FileSystem::instance().top_level_dir();
+
+    // Keep only workspaces matching every filter (mirrors `outdated`/`update
+    // --interactive`).
+    let mut i = 0;
+    while i < ids.len() {
+        let pkg_id = ids[i];
+        let matched = 'matched: {
+            for filter in &converted_filters {
+                match filter {
+                    WorkspaceFilter::Path(pattern) => {
+                        if pattern.is_empty() {
+                            continue;
+                        }
+                        let res = &pkg_resolutions[pkg_id as usize];
+                        let res_path: &[u8] = match res.tag {
+                            resolution::Tag::Workspace => res.workspace().slice(string_buf),
+                            resolution::Tag::Root => top_level_dir,
+                            _ => continue,
+                        };
+                        let abs = bun_paths::resolve_path::join_abs_string_buf::<
+                            bun_paths::resolve_path::platform::Posix,
+                        >(
+                            top_level_dir, &mut path_buf.0, &[res_path]
+                        );
+                        if !glob::r#match(pattern, strings::without_trailing_slash(abs)).matches() {
+                            break 'matched false;
+                        }
+                    }
+                    WorkspaceFilter::Name(pattern) => {
+                        let name = pkg_names[pkg_id as usize].slice(string_buf);
+                        if !glob::r#match(pattern, name).matches() {
+                            break 'matched false;
+                        }
+                    }
+                    WorkspaceFilter::All => {}
+                }
+            }
+            true
+        };
+        if matched {
+            i += 1;
+        } else {
+            ids.swap_remove(i);
+        }
+    }
+
+    ids
+}
+
+fn prepare_member_before_install(
+    manager: &mut PackageManager,
+    abs_path: &[u8],
+    name_hash: Option<PackageNameHash>,
+) -> Result<MemberUpdate, Error> {
+    // Demote to a raw pointer so the edit pass can take `&mut manager`. A
+    // selected workspace that can't be read/parsed is a hard failure (its
+    // dependencies are already in the update gate), matching the cwd path above.
+    let entry_ptr: *mut MapEntry = match manager.workspace_package_json_cache.get_with_path(
+        manager.log_mut(),
+        abs_path,
+        GetJSONOptions {
+            guess_indentation: true,
+            ..Default::default()
+        },
+    ) {
+        GetResult::Entry(entry) => core::ptr::from_mut(entry),
+        GetResult::ParseErr(err) => {
+            let _ = manager
+                .log_mut()
+                .print(std::ptr::from_mut(Output::error_writer()));
+            Output::err_generic(
+                "failed to parse package.json \"{s}\": {s}",
+                (BStr::new(abs_path), err.name()),
+            );
+            Global::crash();
+        }
+        GetResult::ReadErr(err) => {
+            Output::err_generic(
+                "failed to read package.json \"{s}\": {s}",
+                (BStr::new(abs_path), err.name()),
+            );
+            Global::crash();
+        }
+    };
+
+    // SAFETY: pointer into `manager.workspace_package_json_cache`, valid until the
+    // next `get_with_path`. The edit pass touches only disjoint manager fields.
+    let (mut member_root, indentation, preserve_trailing_newline, original_contents) = {
+        let entry = unsafe { &*entry_ptr };
+        (
+            entry.root,
+            entry.indentation,
+            entry.source.contents.last() == Some(&b'\n'),
+            entry.source.contents.to_vec(),
+        )
+    };
+
+    let mut updating_packages: StringArrayHashMap<PackageUpdateInfo> =
+        StringArrayHashMap::default();
+    PackageJSONEditor::edit_update_no_args(
+        manager,
+        &mut updating_packages,
+        name_hash,
+        &mut member_root,
+        EditOptions {
+            exact_versions: true,
+            before_install: true,
+            ..Default::default()
+        },
+    )?;
+
+    // SAFETY: see above.
+    let entry: &mut MapEntry = unsafe { &mut *entry_ptr };
+    let source_before_install = print_package_json(
+        &entry.source,
+        member_root,
+        indentation,
+        preserve_trailing_newline,
+    );
+    // Push the pre-install edit into the cache so install resolves the updated
+    // (possibly `latest`) versions for this member.
+    entry.source.contents = Cow::Owned(source_before_install.clone());
+    if let Err(err) = entry.reparse_root(manager.log_mut()) {
+        bun_core::pretty_errorln!("package.json failed to parse due to error {}", err.name());
+        Global::crash();
+    }
+
+    Ok(MemberUpdate {
+        package_json_path: Box::from(abs_path),
+        name_hash,
+        source_before_install,
+        original_contents,
+        updating_packages,
+        indentation,
+        preserve_trailing_newline,
+    })
+}
+
+fn commit_workspace_member_update(
+    manager: &mut PackageManager,
+    member: &mut MemberUpdate,
+) -> Result<(), Error> {
+    let source =
+        bun_ast::Source::init_path_string(&b"package.json"[..], &member.source_before_install[..]);
+    let json_arena = bun_alloc::Arena::new();
+    let mut ast: bun_ast::Expr =
+        match json::parse_package_json_utf8(&source, manager.log_mut(), &json_arena) {
+            Ok(v) => v,
+            Err(err) => {
+                bun_core::pretty_errorln!(
+                    "package.json failed to parse due to error {}",
+                    err.name()
+                );
+                Global::crash();
+            }
+        };
+
+    PackageJSONEditor::edit_update_no_args(
+        manager,
+        &mut member.updating_packages,
+        member.name_hash,
+        &mut ast,
+        EditOptions {
+            exact_versions: manager.options.enable.exact_versions(),
+            ..Default::default()
+        },
+    )?;
+
+    let new_source = print_package_json(
+        &source,
+        ast,
+        member.indentation,
+        member.preserve_trailing_newline,
+    );
+
+    // Don't rewrite a member the update left unchanged.
+    if new_source == member.original_contents {
+        return Ok(());
+    }
+
+    let mut path_zbuf = PathBuffer::uninit();
+    let path_z = bun_paths::resolve_path::z(&member.package_json_path, &mut path_zbuf);
+    File::write_file(Fd::cwd(), path_z, &new_source).map_err(Error::from)?;
+    Ok(())
+}
+
+fn print_package_json(
+    source: &bun_ast::Source,
+    root: bun_ast::Expr,
+    indent: Indentation,
+    preserve_newline: bool,
+) -> Vec<u8> {
+    let mut buffer_writer = js_printer::BufferWriter::init();
+    buffer_writer
+        .buffer
+        .list
+        .reserve((source.contents.len() + 1).saturating_sub(buffer_writer.buffer.list.len()));
+    buffer_writer.append_newline = preserve_newline;
+    let mut writer = js_printer::BufferPrinter::init(buffer_writer);
+    if let Err(e) = js_printer::print_json(
+        &mut writer,
+        root,
+        source,
+        js_printer::PrintJsonOptions {
+            indent,
+            mangled_props: None,
+            ..Default::default()
+        },
+    ) {
+        bun_core::pretty_errorln!("package.json failed to write due to error {}", e.name());
+        Global::crash();
+    }
+    writer.ctx.written_without_trailing_zero().to_vec()
 }
 
 pub fn update_package_json_and_install_and_cli(

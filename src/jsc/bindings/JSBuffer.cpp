@@ -1689,14 +1689,24 @@ static int64_t indexOfString(JSC::JSGlobalObject* lexicalGlobalObject, bool last
     auto* arrayValue = uncheckedDowncast<JSC::JSUint8Array>(JSC::JSValue::decode(encodedBuffer));
     size_t needleLength = arrayValue->byteLength();
 
-    size_t haystackLength = isUTF16Encoding(encoding) ? byteLength & ~static_cast<size_t>(1) : byteLength;
+    // For ucs2/utf16le the *search range* is clamped to an even boundary
+    // (odd trailing bytes are invisible).  But the *offset* must still be
+    // computed against the raw byteLength so that negative offsets wrap
+    // correctly (Node wraps against the raw length, then clamps to the
+    // nearest valid character boundary).
+    size_t effectiveLength = isUTF16Encoding(encoding) ? byteLength & ~static_cast<size_t>(1) : byteLength;
 
     size_t byteOffset = 0;
     size_t searchEnd = 0;
     int64_t immediateResult = -1;
-    if (!computeIndexOfRange(haystackLength, byteOffsetD, endD, needleLength, !last, &byteOffset, &searchEnd, &immediateResult))
+    if (!computeIndexOfRange(byteLength, byteOffsetD, endD, needleLength, !last, &byteOffset, &searchEnd, &immediateResult))
         return immediateResult;
-    if (isUTF16Encoding(encoding)) searchEnd &= ~static_cast<size_t>(1);
+    // Clamp the computed range to the encoding-aligned length.
+    if (isUTF16Encoding(encoding)) {
+        searchEnd = std::min(searchEnd, effectiveLength);
+        byteOffset = std::min(byteOffset, effectiveLength);
+        searchEnd &= ~static_cast<size_t>(1);
+    }
 
     const uint8_t* typedVectorValue = arrayValue->typedVector();
     if (isUTF16Encoding(encoding)) {
@@ -1710,14 +1720,18 @@ static int64_t indexOfString(JSC::JSGlobalObject* lexicalGlobalObject, bool last
 static int64_t indexOfBuffer(JSC::JSGlobalObject* lexicalGlobalObject, bool last, const uint8_t* typedVector, size_t byteLength, double byteOffsetD, double endD, JSC::JSGenericTypedArrayView<JSC::Uint8Adaptor>* array, BufferEncodingType encoding)
 {
     size_t needleLength = array->byteLength();
-    size_t haystackLength = isUTF16Encoding(encoding) ? byteLength & ~static_cast<size_t>(1) : byteLength;
+    size_t effectiveLength = isUTF16Encoding(encoding) ? byteLength & ~static_cast<size_t>(1) : byteLength;
 
     size_t byteOffset = 0;
     size_t searchEnd = 0;
     int64_t immediateResult = -1;
-    if (!computeIndexOfRange(haystackLength, byteOffsetD, endD, needleLength, !last, &byteOffset, &searchEnd, &immediateResult))
+    if (!computeIndexOfRange(byteLength, byteOffsetD, endD, needleLength, !last, &byteOffset, &searchEnd, &immediateResult))
         return immediateResult;
-    if (isUTF16Encoding(encoding)) searchEnd &= ~static_cast<size_t>(1);
+    if (isUTF16Encoding(encoding)) {
+        searchEnd = std::min(searchEnd, effectiveLength);
+        byteOffset = std::min(byteOffset, effectiveLength);
+        searchEnd &= ~static_cast<size_t>(1);
+    }
 
     const uint8_t* typedVectorValue = array->typedVector();
     if (isUTF16Encoding(encoding)) {

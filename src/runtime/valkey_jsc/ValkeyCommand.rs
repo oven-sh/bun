@@ -102,12 +102,27 @@ impl<'a> Command<'a> {
         self.write(&mut buf)?;
         Ok(buf.into_boxed_slice())
     }
+
+    /// Number of top-level replies this command produces.
+    ///
+    /// Almost every Redis command produces exactly one reply. The exception
+    /// is `(P)SUBSCRIBE` / `(P)UNSUBSCRIBE`, which emit one confirmation push
+    /// per channel argument (RESP spec and `redis/src/pubsub.c`).
+    pub fn expected_reply_count(&self) -> u32 {
+        if self.meta.intersects(Meta::SUBSCRIPTION_REQUEST) {
+            u32::try_from(self.args.len()).unwrap_or(u32::MAX).max(1)
+        } else {
+            1
+        }
+    }
 }
 
 /// Command stored in offline queue when disconnected
 pub struct Entry {
     pub serialized_data: Box<[u8]>, // Pre-serialized RESP protocol bytes
     pub meta: Meta,
+    /// See [`PromisePair::remaining_replies`].
+    pub remaining_replies: u32,
     pub promise: Promise,
 }
 
@@ -125,6 +140,7 @@ impl Entry {
             // We should be calling .check against command here but due
             // to a hack introduced to let SUBSCRIBE work, we are not doing that for now.
             meta: command.meta,
+            remaining_replies: command.expected_reply_count(),
             promise,
         })
     }
@@ -134,11 +150,17 @@ bitflags::bitflags! {
     #[repr(transparent)]
     #[derive(Clone, Copy, PartialEq, Eq)]
     pub struct Meta: u8 {
-        const RETURN_AS_BOOL          = 1 << 0;
+        const RETURN_AS_BOOL           = 1 << 0;
         const SUPPORTS_AUTO_PIPELINING = 1 << 1;
-        const RETURN_AS_BUFFER        = 1 << 2;
-        const SUBSCRIPTION_REQUEST    = 1 << 3;
-        // bits 4..8 are padding
+        const RETURN_AS_BUFFER         = 1 << 2;
+        /// Set on `(P)SUBSCRIBE`: reply is one `(p)subscribe` push per arg.
+        const SUBSCRIBE_REQUEST        = 1 << 3;
+        /// Set on `(P)UNSUBSCRIBE`: reply is one `(p)unsubscribe` push per arg.
+        const UNSUBSCRIBE_REQUEST      = 1 << 4;
+        /// Either direction of a subscription-state command.
+        const SUBSCRIPTION_REQUEST = Self::SUBSCRIBE_REQUEST.bits()
+                                   | Self::UNSUBSCRIBE_REQUEST.bits();
+        // bits 5..8 are padding
     }
 }
 
@@ -166,8 +188,10 @@ bun_core::comptime_string_set! {
         b"PIPELINE",
         b"SUBSCRIBE",
         b"PSUBSCRIBE",
+        b"SSUBSCRIBE",
         b"UNSUBSCRIBE",
-        b"UNPSUBSCRIBE",
+        b"PUNSUBSCRIBE",
+        b"SUNSUBSCRIBE",
     };
 }
 
@@ -178,6 +202,27 @@ impl Meta {
             Meta::SUPPORTS_AUTO_PIPELINING,
             !AUTO_PIPELINE_DISALLOWED_COMMANDS.contains(command.command),
         );
+        // Derive subscription flags from the command name so the raw
+        // `client.send("SUBSCRIBE", [...])` escape hatch still pairs its
+        // confirmation pushes correctly.
+        let name = command.command;
+        if name.eq_ignore_ascii_case(b"SUBSCRIBE")
+            || name.eq_ignore_ascii_case(b"PSUBSCRIBE")
+            || name.eq_ignore_ascii_case(b"SSUBSCRIBE")
+        {
+            new |= Meta::SUBSCRIBE_REQUEST;
+        } else if name.eq_ignore_ascii_case(b"UNSUBSCRIBE")
+            || name.eq_ignore_ascii_case(b"PUNSUBSCRIBE")
+            || name.eq_ignore_ascii_case(b"SUNSUBSCRIBE")
+        {
+            new |= Meta::UNSUBSCRIBE_REQUEST;
+        }
+        // Subscription commands are in `AUTO_PIPELINE_DISALLOWED_COMMANDS`,
+        // but that lookup is case-sensitive; enforce the same for any
+        // casing that matched above.
+        if new.intersects(Meta::SUBSCRIPTION_REQUEST) {
+            new.remove(Meta::SUPPORTS_AUTO_PIPELINING);
+        }
         new
     }
 }
@@ -227,6 +272,10 @@ impl Promise {
 // Command+Promise pair for tracking which command corresponds to which promise
 pub struct PromisePair {
     pub meta: Meta,
+    /// Number of further top-level replies the server will produce for
+    /// this command before its promise may be settled. Always 1 except for
+    /// `(P)SUBSCRIBE` / `(P)UNSUBSCRIBE`, which emit one push per channel.
+    pub remaining_replies: u32,
     pub promise: Promise,
 }
 

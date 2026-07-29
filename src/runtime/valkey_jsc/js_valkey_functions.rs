@@ -357,6 +357,9 @@ macro_rules! cmd_key_value_value2 {
 
 macro_rules! cmd_strings_varargs {
     ($fn_name:ident, $name:literal, $command:literal, $state:ident) => {
+        cmd_strings_varargs!($fn_name, $name, $command, $state, CommandMeta::default());
+    };
+    ($fn_name:ident, $name:literal, $command:literal, $state:ident, $meta:expr) => {
         #[bun_jsc::host_fn(method)]
         pub fn $fn_name(
             this: &Self,
@@ -385,7 +388,7 @@ macro_rules! cmd_strings_varargs {
                 frame.this(),
                 $command.as_bytes(),
                 CommandArgs::Args(&args),
-                CommandMeta::default(),
+                $meta,
                 concat!("Failed to send ", $command),
             )
         }
@@ -1594,8 +1597,20 @@ impl JSValkeyClient {
         NotSubscriber
     );
     cmd_key_varargs!(zrevrank, b"zrevrank", "ZREVRANK", "key", NotSubscriber);
-    cmd_strings_varargs!(psubscribe, b"psubscribe", "PSUBSCRIBE", DontCare);
-    cmd_strings_varargs!(punsubscribe, b"punsubscribe", "PUNSUBSCRIBE", DontCare);
+    cmd_strings_varargs!(
+        psubscribe,
+        b"psubscribe",
+        "PSUBSCRIBE",
+        DontCare,
+        CommandMeta::default() | CommandMeta::SUBSCRIBE_REQUEST
+    );
+    cmd_strings_varargs!(
+        punsubscribe,
+        b"punsubscribe",
+        "PUNSUBSCRIBE",
+        DontCare,
+        CommandMeta::default() | CommandMeta::UNSUBSCRIBE_REQUEST
+    );
     cmd_strings_varargs!(pubsub, b"pubsub", "PUBSUB", DontCare);
     cmd_strings_varargs!(copy, b"copy", "COPY", NotSubscriber);
     cmd_key_varargs!(unlink, b"unlink", "UNLINK", "key", NotSubscriber);
@@ -1711,7 +1726,7 @@ impl JSValkeyClient {
         let command = Command {
             command: b"SUBSCRIBE",
             args: CommandArgs::Args(&redis_channels),
-            meta: CommandMeta::default() | CommandMeta::SUBSCRIPTION_REQUEST,
+            meta: CommandMeta::default() | CommandMeta::SUBSCRIBE_REQUEST,
         };
         let promise = match this.send(global, frame.this(), &command) {
             Ok(p) => p,
@@ -1742,7 +1757,7 @@ impl JSValkeyClient {
             this_js,
             b"UNSUBSCRIBE",
             CommandArgs::Args(redis_channels),
-            CommandMeta::default(),
+            CommandMeta::default() | CommandMeta::UNSUBSCRIBE_REQUEST,
             "Failed to send UNSUBSCRIBE command",
         )
     }

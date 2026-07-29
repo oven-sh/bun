@@ -790,10 +790,18 @@ pub enum SubscriptionPushMessage {
 }
 
 bun_core::comptime_string_map! {
+    /// Every push kind a subscription command can produce: the plain, pattern
+    /// (`p`-prefixed) and sharded (`s`-prefixed) variants.
     static SUBSCRIPTION_PUSH_MESSAGES: SubscriptionPushMessage = {
         b"message" => SubscriptionPushMessage::Message,
+        b"pmessage" => SubscriptionPushMessage::Message,
+        b"smessage" => SubscriptionPushMessage::Message,
         b"subscribe" => SubscriptionPushMessage::Subscribe,
+        b"psubscribe" => SubscriptionPushMessage::Subscribe,
+        b"ssubscribe" => SubscriptionPushMessage::Subscribe,
         b"unsubscribe" => SubscriptionPushMessage::Unsubscribe,
+        b"punsubscribe" => SubscriptionPushMessage::Unsubscribe,
+        b"sunsubscribe" => SubscriptionPushMessage::Unsubscribe,
     };
 }
 
@@ -801,19 +809,5 @@ impl SubscriptionPushMessage {
     #[inline]
     pub fn from_bytes(bytes: &[u8]) -> Option<Self> {
         SUBSCRIPTION_PUSH_MESSAGES.get(bytes).copied()
-    }
-
-    /// Pattern (`p`-prefixed) and sharded (`s`-prefixed) variants of the
-    /// `Subscribe`/`Unsubscribe` push kinds; the unprefixed kinds are matched by
-    /// `from_bytes` before this is consulted.
-    #[inline]
-    pub fn is_reply_kind(kind: &[u8]) -> bool {
-        match kind.split_first() {
-            Some((b'p' | b's', base)) => matches!(
-                Self::from_bytes(base),
-                Some(Self::Subscribe | Self::Unsubscribe)
-            ),
-            _ => false,
-        }
     }
 }

@@ -2203,8 +2203,34 @@ where
     /// valid-but-emptied state and its `Drop` frees whatever was *not* taken.
     /// Any `Some(ws)` is adopted unconditionally — `Handler::from_js` already
     /// rejected configs with no non-error callback.
-    pub fn on_reload_from_zig(&mut self, new_config: &mut ServerConfig, global: &JSGlobalObject) {
+    pub fn on_reload_from_zig(
+        &mut self,
+        new_config: &mut ServerConfig,
+        global: &JSGlobalObject,
+    ) -> JsResult<()> {
         httplog!("onReload");
+
+        // A `tls` on `reload()` rotates the default certificate, matching
+        // `Bun.serve()`'s startup validation: build the context first so a bad
+        // PEM or key/cert mismatch throws before any handler or route is
+        // swapped, and the server keeps serving its previous certificate.
+        let new_ssl_ctx: Option<*mut uws_sys::SslCtx> = if SSL {
+            if let Some(ssl_config) = new_config.ssl_config.as_ref() {
+                let mut err = uws_sys::create_bun_socket_error_t::none;
+                match ssl_config.as_usockets().create_ssl_context(&mut err) {
+                    Some(ctx) => Some(ctx.cast()),
+                    None => {
+                        return Err(global.throw_value(
+                            crate::socket::uws_jsc::create_bun_socket_error_to_js(err, global),
+                        ));
+                    }
+                }
+            } else {
+                None
+            }
+        } else {
+            None
+        };
 
         // SAFETY: `on_reload` is only reachable while the server is running
         // (`self.app` set in `listen()`).
@@ -2308,6 +2334,31 @@ where
                 ));
             }
         }
+
+        if let Some(ctx) = new_ssl_ctx {
+            // The listen socket up_refs the new context and releases the
+            // retiring one; connections already accepted keep the certificate
+            // they handshook with via their own `SSL_new` ref.
+            let server_name = self
+                .config
+                .ssl_config
+                .as_ref()
+                .and_then(|c| c.server_name_cstr())
+                .filter(|n| !n.to_bytes().is_empty());
+            let swapped = self
+                .listener
+                .map(|ls| bun_opaque::opaque_deref_mut(ls).set_ssl_ctx(ctx, server_name))
+                .unwrap_or(false);
+            // `create_ssl_context` handed one owned ref; the listen socket took
+            // its own via `SSL_CTX_up_ref`, so release ours regardless.
+            // SAFETY: FFI; `ctx` is non-null from `create_ssl_context`.
+            unsafe { bun_boringssl_sys::SSL_CTX_free(ctx.cast()) };
+            if swapped {
+                self.config.ssl_config = new_config.ssl_config.take();
+            }
+        }
+
+        Ok(())
     }
 
     pub fn reload_static_routes(&mut self) -> Result<bool, crate::Error> {
@@ -2364,7 +2415,7 @@ where
         // ws shadows, and each `wrap_handler_slot` call allocates via
         // `with_async_context_if_needed`. Same window as `serve()`; same fix.
         let _handler_pins = super::protect_handler_shadows(&new_config);
-        self.on_reload_from_zig(&mut new_config, global);
+        self.on_reload_from_zig(&mut new_config, global)?;
 
         Ok(self.js_value.try_get().unwrap_or(JSValue::UNDEFINED))
     }

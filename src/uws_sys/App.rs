@@ -440,6 +440,19 @@ impl<const SSL: bool> ListenSocket<SSL> {
         // (a listen socket IS a us_socket_t).
         crate::socket::NewSocketHandler::<SSL>::from(std::ptr::from_mut::<Self>(self).cast())
     }
+
+    /// Swap the default `SSL_CTX` subsequent accepts build their `SSL` from.
+    /// See `crate::ListenSocket::set_ssl_ctx`.
+    #[inline]
+    pub fn set_ssl_ctx(
+        &mut self,
+        ssl_ctx: *mut crate::SslCtx,
+        hostname: Option<&core::ffi::CStr>,
+    ) -> bool {
+        // S008: opaque ZST cast as above.
+        bun_opaque::opaque_deref_mut(std::ptr::from_mut::<Self>(self).cast::<UwsListenSocket>())
+            .set_ssl_ctx(ssl_ctx, hostname)
+    }
 }
 
 #[derive(strum::IntoStaticStr, Debug)]

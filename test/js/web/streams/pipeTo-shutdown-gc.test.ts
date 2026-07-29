@@ -1,23 +1,11 @@
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN } from "harness";
 
-// Regression guard for a use-after-GC in pipeTo's native shutdown path.
-// JSNativeStreamSourceAdapter::m_controller was a JSC::Weak<>, so an adapter
-// queued as a microtask reaction context did not root the controller. When a
-// socket error rejected the native pull promise and FetchTasklet released its
-// Strong<>s before the microtask drain, a GC in between could leave the whole
-// consumer graph (controller -> stream -> reader -> pipe op -> destination ->
-// writer -> readyPromise) white. The subsequent onNativePullRejected errored
-// the stream through a stale Weak read, cascading into a deferred pipe
-// shutdown that called writableStreamAbort on a corpse destination and
-// dereferenced a swept readyPromise (RELEASE_ASSERT in JSObject::realm();
-// silent heap write on builds without the assert).
-//
-// The crash is timing-dependent (observed ~1/3 under a fault-injected tracer
-// replay; 0/1800 under best-effort in-memory GC storms). This test exercises
-// the shape (native body source, socket fault mid-stream, fire-and-forget
-// pipeTo under collectContinuously, AbortDestination shutdown arm) as a
-// regression surface, not a deterministic reproducer.
+// Regression surface for a use-after-GC observed in pipeTo's native shutdown
+// path (RELEASE_ASSERT in JSObject::realm() from a swept readyPromise). The
+// crash only reproduced under a fault-injected tracer replay; this exercises
+// the same shape (native body source, socket fault mid-stream, fire-and-forget
+// pipeTo, AbortDestination shutdown arm) under collectContinuously.
 
 const script = `
   "use strict";

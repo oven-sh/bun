@@ -481,7 +481,7 @@ describe("Bun.serve() directory routes", () => {
     // Walk the full set twice so every slot is guaranteed to have been
     // evicted and reused between the two visits to any given path.
     for (let pass = 0; pass < 2; pass++) {
-      const batch = 128;
+      const batch = 32;
       for (let base = 0; base < N; base += batch) {
         const chunk = Array.from({ length: Math.min(batch, N - base) }, (_, j) => base + j);
         const bodies = await Promise.all(chunk.map(i => fetch(`${server!.url}f${i}.txt`).then(r => r.text())));

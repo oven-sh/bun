@@ -1337,7 +1337,6 @@ pub mod parse_worker {
                 ast.url_for_css = encoded;
                 return Ok(ast);
             }
-            // TODO:
             Loader::Bunsh => {
                 return get_empty_ast::<E::String>(log, transpiler, opts, bump, source);
             }

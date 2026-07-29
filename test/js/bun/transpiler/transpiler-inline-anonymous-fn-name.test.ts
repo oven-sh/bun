@@ -6,6 +6,8 @@ import { bunEnv, bunExe, tempDir } from "harness";
 // single-use-let inlining previously substituted an anonymous
 // function/arrow/class initializer into the use site, dropping the ".name" it
 // would have received via NamedEvaluation at the declaration.
+// https://github.com/oven-sh/bun/issues/20398
+// https://github.com/oven-sh/bun/issues/22770
 //
 // Block-level function declarations are lowered to exactly that shape
 // ("let f = function() {}"), so "{ function f() {} ... }" lost its name at
@@ -39,7 +41,13 @@ test("single-use let of an anonymous function keeps its .name at runtime", async
       let n = 42;
       return n + 1;
     }
-    console.log(JSON.stringify([t1(), t2(), t3(), t4(), t5()]));
+    function t6() {
+      // issue #20398: substituted into an array literal
+      const f = () => 0;
+      const a = [f];
+      return a[0].name;
+    }
+    console.log(JSON.stringify([t1(), t2(), t3(), t4(), t5(), t6()]));
   `;
   await using proc = Bun.spawn({
     cmd: [bunExe(), "-e", src],
@@ -50,7 +58,7 @@ test("single-use let of an anonymous function keeps its .name at runtime", async
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect({ out: JSON.parse(stdout.trim()), stderr, exitCode }).toEqual({
-    out: ["fn", "arrow", "Cls", "named", 43],
+    out: ["fn", "arrow", "Cls", "named", 43, "f"],
     stderr: "",
     exitCode: 0,
   });

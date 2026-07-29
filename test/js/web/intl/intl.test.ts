@@ -96,10 +96,9 @@ describe("Intl.NumberFormat", () => {
         [0.145, 0.145],
       ] as const) {
         const single = nf.format(a);
-        const range = nf.formatRange(a, b);
         // The collapsed range is format(a) with a locale-specific "approximately" affix.
-        expect({ a, b, range }.range).toContain(single);
-        expect({ a, b, parts: numeric(nf.formatRangeToParts(a, b)) }.parts).toEqual(numeric(nf.formatToParts(a)));
+        expect({ a, b, range: nf.formatRange(a, b) }).toEqual({ a, b, range: expect.stringContaining(single) });
+        expect({ a, b, parts: numeric(nf.formatRangeToParts(a, b)) }).toEqual({ a, b, parts: numeric(nf.formatToParts(a)) });
       }
       // Distinct endpoints must still render as a range.
       expect(nf.formatRange(0.5, 0.6)).toContain(nf.format(0.6));

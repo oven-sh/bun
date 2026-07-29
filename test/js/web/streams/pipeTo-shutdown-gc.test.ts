@@ -56,7 +56,7 @@ const script = `
     setTimeout(() => ac.abort(new Error("iter-abort")), 3);
     // preventAbort=false: source error -> AbortDestination shutdown arm
     resp.body.pipeTo(makeSink(), { signal: ac.signal }).catch(() => {});
-    // No await: drop resp / ws so only the internal pipe graph roots them.
+    // No await: drop resp so only the internal pipe graph roots the body stream.
   }
 
   for (let iter = 0; iter < 8; iter++) {

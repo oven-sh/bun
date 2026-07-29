@@ -851,11 +851,7 @@ describe.skipIf(!isWindows).concurrent("Windows compile metadata", () => {
 });
 
 // The PE OptionalHeader.CheckSum field is defined as `fold16(word_sum) + file_length`
-// (the same algorithm Windows' MapFileAndCheckSum uses). An earlier implementation
-// folded again after adding the file length, truncating the 32-bit result to ~17 bits,
-// so every `bun build --compile --target=bun-windows-*` output carried a checksum that
-// tools like MapFileAndCheckSum / dumpbin reported as invalid. Windows only enforces
-// this field for drivers, so the executables still ran, but PE validators flagged them.
+// (the same algorithm Windows' MapFileAndCheckSum uses).
 //
 // This test crafts a minimal PE64 template (large enough that the correct checksum
 // exceeds 0xffff) and cross-compiles via `--compile-executable-path`, so it runs on
@@ -868,8 +864,7 @@ test("bun build --compile writes a valid PE OptionalHeader.CheckSum", async () =
   const optSize = 240;
   const shOff = optOff + optSize;
   const textRaw = 512;
-  // Big enough that fold16(word_sum) + file_length > 0xffff; with a tiny template
-  // the correct checksum happens to fit in 16 bits and the bug is invisible.
+  // Big enough that the correct checksum exceeds 0xffff (asserted below).
   const textRawSize = 128 * 1024;
   const textVA = sectAlign;
 
@@ -930,9 +925,7 @@ test("bun build --compile writes a valid PE OptionalHeader.CheckSum", async () =
     stdout: "pipe",
     stderr: "pipe",
   });
-  const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stderr).not.toContain("error:");
-  expect(exitCode).toBe(0);
+  await expectBuildOk(proc);
 
   const out = Buffer.from(await Bun.file(outPath).arrayBuffer());
   const outPeOff = out.readUInt32LE(0x3c);
@@ -952,9 +945,8 @@ test("bun build --compile writes a valid PE OptionalHeader.CheckSum", async () =
   sum = (sum & 0xffff) + (sum >>> 16);
   const expected = (sum + copy.length) >>> 0;
 
-  // The correct checksum for a >64KB image cannot fit in 16 bits; the broken
-  // implementation always produced a value <= 0x1fffe. Assert both the exact
-  // match and that the test template is large enough to distinguish the two.
+  // Guard against the template shrinking to where the checksum fits in 16 bits
+  // and the assertion below becomes vacuous.
   expect(expected).toBeGreaterThan(0xffff);
   expect(stored).toBe(expected);
 });

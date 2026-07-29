@@ -90,6 +90,28 @@ describe("bundler", async () => {
     });
   }
 
+  itBundled("bun/loader-base64-dataurl-unused-import-dce", {
+    target: "bun",
+    files: {
+      "/entry.ts": /* js */ `
+    import unusedA from './a.bin';
+    import unusedB from './b.bin' with {type: "dataurl"};
+    console.log("ok");
+  `,
+      "/a.bin": "payload-a",
+      "/b.bin": "payload-b",
+    },
+    loader: { ".bin": "base64" },
+    dce: true,
+    run: { stdout: "ok" },
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      expect(out).not.toContain("cGF5bG9hZC1h");
+      expect(out).not.toContain("payload-b");
+      expect(out).not.toContain("data:");
+    },
+  });
+
   itBundled("bun/loader-base64", {
     target: "bun",
     files: {

@@ -424,8 +424,10 @@ export function packageAndUpload(cfg: Config, output: BunOutput): void {
   const bunPath = exeName.replace(/^bun/, bunTriplet);
   const files: string[] = [basename(exe), "features.json"];
   const testFFI = webkitTestFFIPath(cfg);
-  if (existsSync(testFFI)) chmodSync(testFFI, 0o755);
-  files.push(testFFI);
+  if (existsSync(testFFI)) {
+    chmodSync(testFFI, 0o755);
+    files.push(testFFI);
+  }
   // Debug symbols / linker map — platform-specific extras.
   if (cfg.windows) {
     files.push(`${exeName}.pdb`);

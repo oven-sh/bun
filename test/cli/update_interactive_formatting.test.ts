@@ -73,9 +73,10 @@ describe.concurrent("bun update --interactive", () => {
     await install(dir);
     const { stdout, exitCode } = await updateInteractive(dir, { args: ["--latest", "--dry-run"], input: "\n" });
 
-    // Header prefix is the same for every row; once the widest name fits, the
-    // narrower rows pad to it.
+    // Widest name is 22 chars; every row pads to the same Current column.
     expect(stdout).toContain("Current  Target  Latest");
+    expect(stdout).toContain("a-dep                   1.0.1");
+    expect(stdout).toContain("no-deps                 1.0.0");
     expect(stdout).toContain("normal-dep-and-dev-dep  1.0.0");
     expect(stdout).toContain("No packages selected");
     expect(exitCode).toBe(0);
@@ -98,9 +99,12 @@ describe.concurrent("bun update --interactive", () => {
     await install(dir);
     const { stdout, exitCode } = await updateInteractive(dir, { args: ["--latest", "--dry-run"], input: "\n" });
 
+    // Exact spacing so a regression in name_padding / current_padding /
+    // target_padding fails here instead of slipping through a \s+ regex.
     expect(stdout).toContain("Current  Target  Latest");
-    expect(stdout).toMatch(/a-dep\s+1\.0\.1\s+1\.0\.1\s+1\.0\.10/);
-    expect(stdout).toMatch(/no-deps\s+1\.0\.0\s+1\.0\.0\s+2\.0\.0/);
+    expect(stdout).toContain("a-dep          1.0.1    1.0.1   1.0.10");
+    expect(stdout).toContain("dep-with-tags  1.0.0    1.0.0   3.0.0");
+    expect(stdout).toContain("no-deps        1.0.0    1.0.0   2.0.0");
     expect(exitCode).toBe(0);
   });
 
@@ -120,7 +124,7 @@ describe.concurrent("bun update --interactive", () => {
     const { stdout, exitCode } = await updateInteractive(dir, { args: ["--latest", "--dry-run"], input: "\n" });
 
     // The name column grows to fit; Current/Target/Latest stay on the same line.
-    expect(stdout).toMatch(/normal-dep-and-dev-dep\s+1\.0\.0\s+1\.0\.0\s+1\.0\.2/);
+    expect(stdout).toContain("normal-dep-and-dev-dep  1.0.0    1.0.0   1.0.2");
     expect(exitCode).toBe(0);
   });
 
@@ -201,10 +205,13 @@ describe.concurrent("bun update --interactive", () => {
     await install(dir);
     const { stdout, exitCode } = await updateInteractive(dir, { args: ["--latest", "--dry-run"], input: "\n" });
 
-    expect(stdout).toContain("dependencies");
     expect(stdout).toContain("devDependencies");
+    expect(stdout).toContain("peerDependencies");
+    expect(stdout).toContain("optionalDependencies");
     expect(stdout).toContain("no-deps");
-    expect(stdout).toContain("a-dep");
+    expect(stdout).toContain("a-dep dev");
+    expect(stdout).toContain("dep-with-tags peer");
+    expect(stdout).toContain("normal-dep-and-dev-dep optional");
     expect(exitCode).toBe(0);
   });
 

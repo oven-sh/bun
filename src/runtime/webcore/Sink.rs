@@ -333,6 +333,11 @@ pub trait JsSinkType: Sized {
 
     fn memory_cost(&self) -> usize;
     fn finalize(&mut self);
+    /// `.close()` nulled `m_sinkPtr`; release the wrapper's ref. Runs outside
+    /// GC sweep, so overrides may differ from `finalize`. Default: `finalize`.
+    fn wrapper_detached(&mut self) {
+        self.finalize();
+    }
     fn write_bytes(&mut self, data: &streams::Result) -> streams::result::Writable;
     fn write_utf16(&mut self, data: &streams::Result) -> streams::result::Writable;
     fn write_latin1(&mut self, data: &streams::Result) -> streams::result::Writable;
@@ -614,6 +619,12 @@ impl<T: JsSinkType + JsSinkAbi> JSSink<T> {
     #[inline]
     pub fn js_finalize(this: &mut T) {
         this.finalize();
+    }
+
+    /// `${abi_name}__wrapperDetached` body.
+    #[inline]
+    pub fn js_wrapper_detached(this: &mut T) {
+        this.wrapper_detached();
     }
 
     /// `${abi_name}__controllerDetached` body — called from

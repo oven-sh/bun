@@ -207,6 +207,34 @@ it("write result is not cumulative", async () => {
   await util.promisify(fs.close)(fd);
 });
 
+it.skipIf(!isPosix)("a backpressured write() promise settles after .close()", async () => {
+  const [readFd, writeFd] = createSocketPair();
+  const sink = Bun.file(writeFd).writer();
+  const size = 4 * 1024 * 1024;
+
+  const pending = sink.write(Buffer.alloc(size, 0x61));
+  expect(pending).toBeInstanceOf(Promise);
+
+  // .close() detaches m_sinkPtr and releases the wrapper's ref via
+  // wrapper_detached, which must leave `pending` alone so run_pending can
+  // still settle the promise once the writer drains.
+  sink.close();
+
+  let received = 0;
+  const reader = (async () => {
+    for await (const part of Bun.file(readFd).stream()) received += part.byteLength;
+  })();
+
+  try {
+    expect(await pending).toBe(size);
+  } finally {
+    fs.closeSync(writeFd);
+    await reader;
+    fs.closeSync(readFd);
+  }
+  expect(received).toBe(size);
+});
+
 // A backpressured write buffers everything `write(2)` would not take, so the
 // Promise it returns has to resolve with the chunk's own byte count. It used to
 // resolve with the partial `write(2)` return instead.

@@ -544,7 +544,8 @@ pub fn init(options: Options) -> JsResult<Box<DevServer>> {
         w!(magic, Magic::Valid);
         w!(
             root,
-            paths::string_paths::without_trailing_slash_windows_path(options.root.as_bytes()).into()
+            paths::string_paths::without_trailing_slash_windows_path(options.root.as_bytes())
+                .into()
         );
         w!(vm, bun_ptr::BackRef::new(options.vm));
         w!(server, None);

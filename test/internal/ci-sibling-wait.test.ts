@@ -104,7 +104,11 @@ describe.skipIf(isWindows)("waitForStepOutcome", () => {
         { outcome: "hard_failed", state: "failed" },
         { outcome: "hard_failed", state: "failed" },
       ],
-      () => waitForStepOutcome("linux-x64-build-cpp", 5).then(() => null, e => e as Error),
+      () =>
+        waitForStepOutcome("linux-x64-build-cpp", 5).then(
+          () => null,
+          e => e as Error,
+        ),
     );
     expect(err).not.toBeNull();
     expect(String(err)).toContain("linux-x64-build-cpp hard_failed");
@@ -118,7 +122,11 @@ describe.skipIf(isWindows)("waitForStepOutcome", () => {
         { outcome: "errored", state: "" },
         { outcome: "errored", state: "" },
       ],
-      () => waitForStepOutcome("linux-x64-build-cpp", 5).then(() => null, e => e as Error),
+      () =>
+        waitForStepOutcome("linux-x64-build-cpp", 5).then(
+          () => null,
+          e => e as Error,
+        ),
     );
     expect(err).not.toBeNull();
     expect(String(err)).toContain("errored");

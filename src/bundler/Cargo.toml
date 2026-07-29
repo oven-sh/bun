@@ -59,6 +59,7 @@ bun_sourcemap.workspace = true
 bun_sys.workspace = true
 bun_threading.workspace = true
 bun_url.workspace = true
+bun_uws.workspace = true
 bun_watcher.workspace = true
 bun_wyhash.workspace = true
 # `bundle_v2.rs:ContentHasher` uses xxh64. Streaming xxh64 comes

@@ -5033,11 +5033,13 @@ unsafe fn resolve<'a>(
     };
 
     // Node rejects `pkg?v=1`; letting it through here would evaluate a
-    // fresh package instance per distinct query. `?raw` and tsconfig
-    // `paths` aliases are Bun extensions and keep their query semantics.
-    if query_string != b"?raw"
-        && !query_string.is_empty()
+    // fresh package instance per distinct query. tsconfig `paths` aliases
+    // resolve with the flag unset; subpaths (`pkg/sub?q`) are left to the
+    // exports/imports map, where Node's answer depends on wildcard shape.
+    if !query_string.is_empty()
         && bun_paths::is_package_path(normalized_specifier)
+        && bun_resolver::package_json::Package::parse_name(normalized_specifier)
+            .is_some_and(|n| n.len() == normalized_specifier.len())
         && result.flags.is_from_node_modules()
     {
         return Err(crate::Error::ModuleNotFound);

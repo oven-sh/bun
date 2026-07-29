@@ -237,12 +237,13 @@ test("Bun.resolveSync with non-ASCII specifier and query string", async () => {
   expect(exitCode).toBe(0);
 });
 
-// Node gives `?` URL-separator meaning only for relative/absolute ESM specifiers.
-// A bare package specifier (`pkg`, `@scope/pkg/sub`) is not a URL: `?` is part of
-// the package name / subpath and must reach the resolver verbatim. Stripping it
-// made `import("pkg?v=1")` evaluate a second instance of the whole package,
-// splitting singleton state.
-describe("?query on a bare package specifier does not resolve", () => {
+// Node rejects a `?query` on a bare package *root* (`pkg?v=1`, `@scope/pkg?v=1`,
+// `#name?v=1`, self-reference by name). Stripping it made `import("pkg?v=1")`
+// evaluate a second instance of the whole package, splitting singleton state.
+// Subpaths (`pkg/sub?q`) are left to the exports/imports map, since Node's
+// answer there depends on whether the subpath matched an exact key or a
+// suffix-less wildcard.
+describe("?query on a bare package root does not resolve", () => {
   const pkgFiles = {
     "node_modules/qk/package.json": JSON.stringify({
       name: "qk",
@@ -325,18 +326,24 @@ describe("?query on a bare package specifier does not resolve", () => {
     expect(exitCode).toBe(0);
   });
 
-  test.concurrent("pkg/subpath?query is not matched against the exports map", async () => {
-    using dir = tempDir("import-query-bare-subpath", {
-      ...pkgFiles,
+  test.concurrent("?query on a wildcard exports/imports subpath still resolves (control)", async () => {
+    // Node ESM accepts a ?query on a suffix-less wildcard key: the `*` captures
+    // the `?` into patternMatch, the href-replace substitution lands it in the
+    // URL `.search`, and the pathname stats. The rejection is limited to the
+    // package root so this Node behaviour stays intact.
+    using dir = tempDir("import-query-bare-wildcard", {
+      "package.json": JSON.stringify({ name: "app", type: "module", imports: { "#hot/*": "./src/*" } }),
+      "src/config.js": "globalThis.__wc = (globalThis.__wc || 0) + 1; export const inst = globalThis.__wc;",
+      "node_modules/wp/package.json": JSON.stringify({ name: "wp", type: "module", exports: { "./*": "./dist/*" } }),
+      "node_modules/wp/dist/foo.js": "globalThis.__wp = (globalThis.__wp || 0) + 1; export const inst = globalThis.__wp;",
       "entry.mjs": `
-        import { createRequire } from "node:module";
-        const require = createRequire(import.meta.url);
-        const out = {};
-        const go = (k, f) => { try { out[k] = f() } catch (e) { out[k] = "ERR:" + (e.code || e.name) } };
-        go("plain", () => require("qk/s"));
-        go("require", () => require("qk/s?x=1"));
-        go("imr", () => import.meta.resolve("qk/s?x=1"));
-        go("resolveSync", () => Bun.resolveSync("qk/s?x=1", import.meta.dir));
+        const out = [];
+        for (const spec of ["#hot/config.js", "#hot/config.js?v=1", "#hot/config.js?v=2"]) {
+          out.push((await import(spec)).inst);
+        }
+        for (const spec of ["wp/foo.js", "wp/foo.js?v=1", "wp/foo.js?v=2"]) {
+          out.push((await import(spec)).inst);
+        }
         console.log(JSON.stringify(out));
       `,
     });
@@ -349,15 +356,7 @@ describe("?query on a bare package specifier does not resolve", () => {
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
-    const out = JSON.parse(stdout.trim());
-    // `./s` is exported; `./s?x=1` is not. Previously `imr` returned a file URL
-    // whose path ended in `/s.js%3Fx=1` (the query percent-encoded into the path).
-    expect(out).toEqual({
-      plain: "SUB",
-      require: "ERR:MODULE_NOT_FOUND",
-      imr: "ERR:ERR_MODULE_NOT_FOUND",
-      resolveSync: "ERR:ERR_MODULE_NOT_FOUND",
-    });
+    expect(JSON.parse(stdout.trim())).toEqual([1, 2, 3, 1, 2, 3]);
     expect(exitCode).toBe(0);
   });
 
@@ -406,8 +405,8 @@ describe("?query on a bare package specifier does not resolve", () => {
 
   test.concurrent("import('#name?v=N') via package.json imports / self-reference by name", async () => {
     // Both routes go through handle_esm_resolution which sets
-    // IS_FROM_NODE_MODULES, so Result::is_node_module() catches them via the
-    // flag even though the resolved file lives outside any node_modules dir.
+    // IS_FROM_NODE_MODULES, so the flag check catches them even though the
+    // resolved file lives outside any node_modules dir.
     using dir = tempDir("import-query-bare-hash-self", {
       "package.json": JSON.stringify({
         name: "myapp",

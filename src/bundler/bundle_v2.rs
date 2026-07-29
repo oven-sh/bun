@@ -1564,7 +1564,7 @@ pub mod bv2_impl {
                 .map(|s| s.as_bytes().to_vec().into_boxed_slice())
                 .collect();
             ct.options.conditions =
-                options::ESMConditions::init(Target::Browser.default_conditions(), false, &[])?;
+                options::ESMConditions::init(Target::Browser.default_conditions(), false, &[], false)?;
 
             // We need to make sure it has [hash] in the names so we don't get conflicts.
             if this_compile {

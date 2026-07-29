@@ -720,6 +720,7 @@ impl ESMConditions {
         defaults: &[&[u8]],
         allow_addons: bool,
         conditions: &[&[u8]],
+        skip_defaults: bool,
     ) -> Result<ESMConditions, bun_alloc::AllocError> {
         let mut default_condition_amp = ConditionsMap::default();
 
@@ -728,10 +729,11 @@ impl ESMConditions {
         let mut style_condition_map = ConditionsMap::default();
 
         let addon_extra = if allow_addons { 1 } else { 0 };
-        default_condition_amp.reserve(defaults.len() + 2 + addon_extra + conditions.len());
-        import_condition_map.reserve(defaults.len() + 2 + addon_extra + conditions.len());
-        require_condition_map.reserve(defaults.len() + 2 + addon_extra + conditions.len());
-        style_condition_map.reserve(defaults.len() + 2 + conditions.len());
+        let defaults_len = if skip_defaults { 0 } else { defaults.len() };
+        default_condition_amp.reserve(defaults_len + 2 + addon_extra + conditions.len());
+        import_condition_map.reserve(defaults_len + 2 + addon_extra + conditions.len());
+        require_condition_map.reserve(defaults_len + 2 + addon_extra + conditions.len());
+        style_condition_map.reserve(defaults_len + 2 + conditions.len());
 
         import_condition_map.insert(b"import".as_slice(), ());
         require_condition_map.insert(b"require".as_slice(), ());
@@ -743,11 +745,13 @@ impl ESMConditions {
             default_condition_amp.insert(*condition, ());
         }
 
-        for default in defaults {
-            default_condition_amp.insert(*default, ());
-            import_condition_map.insert(*default, ());
-            require_condition_map.insert(*default, ());
-            style_condition_map.insert(*default, ());
+        if !skip_defaults {
+            for default in defaults {
+                default_condition_amp.insert(*default, ());
+                import_condition_map.insert(*default, ());
+                require_condition_map.insert(*default, ());
+                style_condition_map.insert(*default, ());
+            }
         }
 
         if allow_addons {
@@ -1776,7 +1780,7 @@ impl<'a> BundleOptions<'a> {
 
         {
             // conditions:
-            // 1. defaults
+            // 1. defaults (unless no_default_conditions is set)
             // 2. node-addons
             // 3. user conditions
             opts.conditions = ESMConditions::init(
@@ -1787,6 +1791,7 @@ impl<'a> BundleOptions<'a> {
                     .iter()
                     .map(|s| &**s)
                     .collect::<Vec<&[u8]>>(),
+                transform.no_default_conditions,
             )?;
         }
 

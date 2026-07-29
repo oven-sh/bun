@@ -1277,17 +1277,24 @@ pub mod parse_worker {
             }
             Loader::Base64 => {
                 let contents = source.contents();
+                let mime = guess_mime_type_for_data_url(source.path.text, contents);
                 let encode_len = bun_base64::encode_len(contents);
-                let encoded = bump.alloc_slice_fill_copy(encode_len, 0u8);
-                let len = bun_base64::encode(encoded, contents);
+                let prefix_len = b"data:".len() + mime.len() + b";base64,".len();
+                let buf = bump.alloc_slice_fill_copy(prefix_len + encode_len, 0u8);
+                buf[..5].copy_from_slice(b"data:");
+                buf[5..5 + mime.len()].copy_from_slice(&mime);
+                buf[5 + mime.len()..prefix_len].copy_from_slice(b";base64,");
+                let len = bun_base64::encode(&mut buf[prefix_len..], contents);
+                let url: &[u8] = &buf[..prefix_len + len];
+                let encoded: &[u8] = &url[prefix_len..];
                 let root = Expr::init(
                     E::String {
-                        data: (&encoded[..len]).into(),
+                        data: encoded.into(),
                         ..Default::default()
                     },
                     Loc { start: 0 },
                 );
-                return Ok(JSAst::init(
+                let mut ast = JSAst::init(
                     js_parser::new_lazy_export_ast(
                         bump,
                         &mut topts.define,
@@ -1298,7 +1305,9 @@ pub mod parse_worker {
                         b"",
                     )?
                     .unwrap(),
-                ));
+                );
+                ast.url_for_css = url;
+                return Ok(ast);
             }
             Loader::Dataurl => {
                 let contents = source.contents();

@@ -90,6 +90,25 @@ describe("bundler", async () => {
     });
   }
 
+  itBundled("bun/loader-base64-dataurl-css-url", {
+    target: "browser",
+    files: {
+      "/entry.css": /* css */ `
+    .a { background: url(./a.bin); }
+    .b { background: url(./b.png); }
+  `,
+      "/a.bin": "ABC",
+      "/b.png": Buffer.from("89504e470d0a1a0a", "hex"),
+    },
+    loader: { ".bin": "base64", ".png": "dataurl" },
+    outfile: "/out.css",
+    onAfterBundle(api) {
+      const out = api.readFile("/out.css");
+      expect(out).toContain(`url("data:application/octet-stream;base64,QUJD")`);
+      expect(out).toContain(`url("data:image/png;base64,iVBORw0KGgo=")`);
+    },
+  });
+
   itBundled("bun/loader-base64-dataurl-unused-import-dce", {
     target: "bun",
     files: {

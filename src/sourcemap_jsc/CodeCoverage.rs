@@ -946,3 +946,136 @@ pub struct Block {
     pub start_line: u32,
     pub end_line: u32,
 }
+
+/// Remap ControlFlowProfiler byte offsets (which index the runtime-transpiled
+/// source JSC compiled) to byte offsets into the original file on disk, so
+/// `Profiler.takePreciseCoverage` matches Node/V8 for the same file. Returns
+/// false (offsets unchanged) for scripts with no saved sourcemap.
+///
+/// SAFETY: `offsets` points to `count` writable `i32`s and `out_original_len`
+/// to a writable `u32`; JS-thread-only (touches the per-VM `SavedSourceMap`).
+#[unsafe(no_mangle)]
+pub(crate) unsafe extern "C" fn InspectorCoverage__remapOffsets(
+    source_url: bun_core::String,
+    transpiled: bun_core::String,
+    offsets: *mut i32,
+    count: usize,
+    out_original_len: *mut u32,
+) -> bool {
+    let path = source_url.to_utf8();
+    // vm.Script / eval / builtins: no file on disk, no saved sourcemap.
+    if !bun_paths::is_absolute(path.slice()) {
+        return false;
+    }
+
+    // SAFETY: JS-thread-only; `VirtualMachine::get()` returns the live singleton.
+    let Some(parsed) = bun_jsc::VirtualMachine::VirtualMachine::get()
+        .as_mut()
+        .source_mappings()
+        .get(path.slice())
+    else {
+        return false;
+    };
+
+    // `OwnedLineOffsetTables` runs `drop_elements` so each non-ASCII line's
+    // `columns_for_non_ascii` box is freed (`MultiArrayList::Drop` is slab-only).
+    let original = match bun_sys::File::read_from(bun_core::Fd::cwd(), path.slice()) {
+        Ok(bytes) => bytes,
+        Err(_) => return false,
+    };
+    let Ok(table) = LineOffsetTable::generate(&original, 0) else {
+        return false;
+    };
+    let original_table = bun_sourcemap::chunk::OwnedLineOffsetTables(table);
+    let original_starts = original_table.0.items_byte_offset_to_start_of_line();
+    let original_first_na = original_table.0.items_byte_offset_to_first_non_ascii();
+
+    let transpiled = transpiled.to_utf8();
+    let Ok(table) = LineOffsetTable::generate(transpiled.slice(), 0) else {
+        return false;
+    };
+    let transpiled_table = bun_sourcemap::chunk::OwnedLineOffsetTables(table);
+    let transpiled_starts = transpiled_table.0.items_byte_offset_to_start_of_line();
+
+    // SAFETY: caller contract.
+    let offsets = unsafe { core::slice::from_raw_parts_mut(offsets, count) };
+    let original_len = i32::try_from(original.len()).unwrap_or(i32::MAX);
+    let mut cursor = parsed.internal_cursor();
+
+    let remap_one =
+        |off: i32, is_end: bool, cursor: &mut Option<internal_source_map::Cursor>| -> i32 {
+            if off < 0 {
+                return off;
+            }
+            let line = LineOffsetTable::find_line(transpiled_starts, Loc { start: off });
+            if line < 0 {
+                return if is_end { original_len } else { 0 };
+            }
+            let line_start = transpiled_starts[line as usize] as i32;
+            let col = off - line_start;
+            let found = if let Some(c) = cursor.as_mut() {
+                c.move_to(
+                    Ordinal::from_zero_based(line),
+                    Ordinal::from_zero_based(col),
+                )
+            } else {
+                parsed.find_mapping(
+                    Ordinal::from_zero_based(line),
+                    Ordinal::from_zero_based(col),
+                )
+            };
+            let Some(m) = found else {
+                return if is_end { original_len } else { 0 };
+            };
+            let orig_line = m.original.lines.zero_based();
+            if orig_line < 0 || (orig_line as usize) >= original_starts.len() {
+                return if is_end { original_len } else { 0 };
+            }
+            // Use the nearest mapping's original position as-is (no byte-delta
+            // carry: `cover_lines_without_mappings` inserts synthetic column-0
+            // mappings, so bytes between a mapping and the target do not line
+            // up 1:1). Sourcemap columns are UTF-16 code units, so invert the
+            // line's `columns_for_non_ascii` table back to a byte column.
+            let orig_col_units = m.original.columns.zero_based();
+            let first_na = original_first_na[orig_line as usize];
+            let orig_col_bytes = if orig_col_units >= 0 && (orig_col_units as u32) >= first_na {
+                let cols: &[i32] = &original_table
+                    .0
+                    .items::<"columns_for_non_ascii", Box<[i32]>>()[orig_line as usize];
+                // A codepoint's continuation bytes carry the NEXT column (the
+                // extend in `generate` runs before `column +=`), so pick the
+                // last index in the equal-value run, not the first.
+                first_na as i32
+                    + cols
+                        .partition_point(|&c| c <= orig_col_units)
+                        .saturating_sub(1) as i32
+            } else {
+                orig_col_units
+            };
+            let mut remapped = original_starts[orig_line as usize] as i32 + orig_col_bytes;
+            // A closing `}` has no mapping of its own (FnBody has no
+            // close_brace_loc), so extend end offsets to the end of the mapped
+            // original line so the range still encloses the function body.
+            if is_end {
+                let next_line = orig_line as usize + 1;
+                let line_end = if next_line < original_starts.len() {
+                    original_starts[next_line] as i32
+                } else {
+                    original_len
+                };
+                remapped = remapped.max(line_end);
+            }
+            remapped.clamp(0, original_len)
+        };
+
+    for pair in offsets.as_chunks_mut::<2>().0 {
+        let start = remap_one(pair[0], false, &mut cursor);
+        let end = remap_one(pair[1], true, &mut cursor);
+        pair[0] = start;
+        pair[1] = start.max(end);
+    }
+
+    // SAFETY: caller contract.
+    unsafe { *out_original_len = original_len as u32 };
+    true
+}

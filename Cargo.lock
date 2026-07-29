@@ -1866,6 +1866,7 @@ dependencies = [
  "bun_options_types",
  "bun_paths",
  "bun_sourcemap",
+ "bun_sys",
  "bun_wyhash",
  "const_format",
  "enum-map",

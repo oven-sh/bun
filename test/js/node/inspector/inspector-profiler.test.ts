@@ -549,10 +549,12 @@ console.log(JSON.stringify({ first: countFor(first), second: countFor(second) })
       // neverCalled() reports a single function-granularity range with count 0.
       const neverCalledEntry = entryCoveringOffset(entry.functions, offsets.neverCalledBody);
       expect(neverCalledEntry).toEqual({
-        functionName: "",
+        functionName: "neverCalled",
         isBlockCoverage: false,
         ranges: [{ startOffset: expect.any(Number), endOffset: expect.any(Number), count: 0 }],
       });
+      expect(addEntry.functionName).toBe("add");
+      expect(classifyEntry.functionName).toBe("classify");
     });
 
     test.concurrent("respects callCount: false and detailed: false", async () => {
@@ -605,6 +607,82 @@ console.log(JSON.stringify({ first: countFor(first), second: countFor(second) })
       // double() ran twice, neverCalled() never ran.
       expect(functionCounts).toContain(2);
       expect(functionCounts).toContain(0);
+    });
+
+    // The runtime transpiler strips comments and hoists class declarations, so
+    // JSC's coverage offsets index a text that differs from the file on disk.
+    // V8-coverage consumers (c8, v8-to-istanbul) slice the on-disk file by
+    // offset, so the reported ranges must be remapped to original-file bytes.
+    test.concurrent("offsets and functionName address the original file for Bun-transpiled modules", async () => {
+      const moduleSource = [
+        "// header comment that the runtime transpiler strips",
+        "export function alpha() { return 'A'; }   // called 3x",
+        "export function beta() { return 'B'; }    // called 1x",
+        "const tag='\u00e9\u{1f389}'; export function caf\u00e9() { return tag; }   // non-ASCII before the function",
+        "export class Zed { m() { return 'Z'; } \u8a9e() { return '\u8a9e'; } }   // hoisted in the transpiled text",
+        "",
+      ].join("\n");
+      using dir = tempDir("inspector-coverage-original", {
+        "m.mjs": moduleSource,
+        "fixture.mjs": `
+import { Session } from "node:inspector/promises";
+const session = new Session();
+session.connect();
+await session.post("Profiler.enable");
+await session.post("Profiler.startPreciseCoverage", { callCount: true, detailed: true });
+const M = await import("./m.mjs");
+M.alpha(); M.alpha(); M.alpha(); M.beta(); const z = new M.Zed(); z.m(); z.\u8a9e(); M.caf\u00e9();
+const coverage = await session.post("Profiler.takePreciseCoverage");
+await session.post("Profiler.stopPreciseCoverage");
+session.disconnect();
+const entry = coverage.result.find(s => s.url.endsWith("m.mjs"));
+console.log(JSON.stringify(entry));
+`,
+      });
+      await using proc = Bun.spawn({ cmd: [bunExe(), "fixture.mjs"], env: bunEnv, cwd: String(dir), stderr: "pipe" });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stderrIfFailed: exitCode === 0 ? "" : stderr, exitCode }).toEqual({ stderrIfFailed: "", exitCode: 0 });
+      const entry = JSON.parse(stdout.trim());
+
+      const byName = (name: string) => entry.functions.find((f: any) => f.functionName === name);
+      expect({
+        alpha: byName("alpha")?.ranges[0].count,
+        beta: byName("beta")?.ranges[0].count,
+        m: byName("m")?.ranges[0].count,
+      }).toEqual({ alpha: 3, beta: 1, m: 1 });
+
+      // The whole-script range must cover the on-disk file length, not the
+      // transpiled text's length (which is shorter: no comments). Byte length,
+      // not JS string length: the source contains multi-byte characters.
+      expect(entry.functions[0].ranges[0]).toEqual({
+        startOffset: 0,
+        endOffset: Buffer.byteLength(moduleSource),
+        count: 1,
+      });
+
+      // Each function's primary range, sliced out of the on-disk file, must
+      // start at the function's own text and contain its full body. End offsets
+      // are line-granular (the closing brace has no sourcemap entry of its own),
+      // so the slice may extend to the end of the line like Node's ranges do
+      // for wrapped CJS modules.
+      const bytes = Buffer.from(moduleSource);
+      const slice = (fn: any) => bytes.toString("utf8", fn.ranges[0].startOffset, fn.ranges[0].endOffset);
+      expect(slice(byName("alpha"))).toStartWith("function alpha() { return 'A'; }");
+      expect(slice(byName("beta"))).toStartWith("function beta() { return 'B'; }");
+      expect(slice(byName("m"))).toStartWith("m() { return 'Z'; }");
+      // The line before café() has non-ASCII bytes (é is 2 UTF-8 bytes, 🎉 is 4)
+      // before the function; the remap must convert the sourcemap's UTF-16
+      // column back to a byte column so startOffset lands on the function.
+      expect(slice(byName("caf\u00e9"))).toStartWith("function caf\u00e9() { return tag; }");
+      // Before the offset remap, the class-hoisted transpiled offsets for m()
+      // landed inside the header comment when sliced out of the on-disk file.
+      expect(byName("alpha").ranges[0].startOffset).toBe(bytes.indexOf("function alpha"));
+      expect(byName("m").ranges[0].startOffset).toBe(bytes.indexOf("m() {"));
+      expect(byName("caf\u00e9").ranges[0].startOffset).toBe(bytes.indexOf("function caf\u00e9"));
+      // 語 is a 3-byte BMP codepoint (é is 2, 🎉 is astral), exercising the
+      // columns_for_non_ascii inversion at first_na exactly.
+      expect(slice(byName("\u8a9e"))).toStartWith("\u8a9e() { return '\u8a9e'; }");
+      expect(byName("\u8a9e").ranges[0].startOffset).toBe(bytes.indexOf("\u8a9e() {"));
     });
   });
 

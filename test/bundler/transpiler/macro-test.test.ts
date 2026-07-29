@@ -243,3 +243,30 @@ describe("--no-macros", () => {
     expect(existsSync(path.join(String(dir), "MACRO_RAN"))).toBe(true);
   });
 });
+
+// A callable has no AST representation, so a macro that returns a function,
+// arrow, or class must fail the build with "cannot coerce" rather than
+// silently producing an empty object.
+test.each([
+  ["function", `function foo() {}`],
+  ["arrow", `() => {}`],
+  ["class", `class Bar {}`],
+])("macro returning a %s is a build error", async (_label, expr) => {
+  using dir = tempDir("macro-returns-callable", {
+    "macro.ts": `export function returnsCallable() {\n  return ${expr};\n}\n`,
+    "index.ts": `import { returnsCallable } from "./macro.ts" with { type: "macro" };\nconsole.log(returnsCallable());\n`,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "run", "index.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toMatchObject({
+    stderr: expect.stringContaining("cannot coerce"),
+    exitCode: 1,
+  });
+  expect(stderr).toContain("to Bun's AST. Please return a simpler type");
+});

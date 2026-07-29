@@ -25,6 +25,9 @@ const streamWebClasses = [
 ];
 
 test.concurrent("node:stream/web classes inspect as [class X], not [class Function]", async () => {
+  // This issue is about the class *name*. Classes with enumerable statics
+  // (ReadableStream.from) also print a trailing { ... } block, matching
+  // Node; strip it so this stays a header-only name check.
   const source = `
     const sw = require("node:stream/web");
     const names = ${JSON.stringify(streamWebClasses)};
@@ -35,7 +38,8 @@ test.concurrent("node:stream/web classes inspect as [class X], not [class Functi
         continue;
       }
       // Bun.inspect() uses the same formatter as console.log.
-      console.log(name + ": " + Bun.inspect(klass));
+      const header = Bun.inspect(klass).split("\\n")[0].replace(/ \\{$/, "");
+      console.log(name + ": " + header);
     }
   `;
 
@@ -65,12 +69,18 @@ test.concurrent("other DOM / WebCore constructors inspect as [class X]", async (
   // Sanity: the inspect formatter should work for any `isConstructor`
   // InternalFunction exposed as a global. Keep this list small — it's
   // a regression guard, not an audit.
+  //
+  // This issue is about the class *name* (must be "[class URL]", never
+  // "[class Function]"). Constructors with enumerable statics (URL,
+  // Response, Event) also print a trailing `{ ... }` block now; strip it
+  // so this stays a header-only name check and does not couple to each
+  // constructor's static member list.
   const code = `
-    console.log("URL: " + Bun.inspect(URL));
-    console.log("Request: " + Bun.inspect(Request));
-    console.log("Response: " + Bun.inspect(Response));
-    console.log("Blob: " + Bun.inspect(Blob));
-    console.log("Event: " + Bun.inspect(Event));
+    const names = ["URL", "Request", "Response", "Blob", "Event"];
+    for (const name of names) {
+      const header = Bun.inspect(globalThis[name]).split("\\n")[0].replace(/ \\{$/, "");
+      console.log(name + ": " + header);
+    }
   `;
 
   await using proc = Bun.spawn({

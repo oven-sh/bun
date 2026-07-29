@@ -2269,25 +2269,14 @@ pub mod formatter {
                 && js_type != jsc::JSType::ProxyObject
                 && value.is_callable()
             {
-                if value.is_class(global_this) {
-                    return Ok(TagResult {
-                        tag: TagPayload::Class,
-                        cell: js_type,
-                    });
-                }
-
-                // TODO: we print InternalFunction as Object because we have a lot
-                // of callable namespaces and printing the contents of it is better
-                // than [Function: namespace]. Ideally, we would print
-                // `[Function: namespace] { ... }` on all functions, internal and
-                // js. What we'll do later is rid of .Function and .Class and
-                // handle the prefix in the .Object formatter.
+                // Route every callable through the object formatter so its own
+                // enumerable properties print as `[Function: x] { ... }` /
+                // `[class X] { ... }`, matching Node's util.inspect. The object
+                // formatter emits the bare `[Function: x]` / `[class X]` header
+                // (via `print_function` / `print_class`) when there are no such
+                // properties, so property-less callables are unchanged.
                 return Ok(TagResult {
-                    tag: if js_type == jsc::JSType::InternalFunction {
-                        TagPayload::Object
-                    } else {
-                        TagPayload::Function
-                    },
+                    tag: TagPayload::Object,
                     cell: js_type,
                 });
             }
@@ -3044,6 +3033,10 @@ pub mod formatter {
         pub single_line: bool,
         pub always_newline: bool,
         pub parent: JSValue,
+        /// Whether `parent` is callable, computed once by the caller so
+        /// `handle_first_property` does not re-run the FFI `is_callable` /
+        /// `is_class` checks on the common non-callable path.
+        pub is_callable: bool,
     }
 
     impl<'a, 'b, const C: bool> PropertyIteratorCtx<'a, 'b, C> {
@@ -3052,7 +3045,22 @@ pub mod formatter {
             global_this: &JSGlobalObject,
             value: JSValue,
         ) -> JsResult<()> {
-            if value.is_cell() && !value.js_type().is_function() {
+            // Write the header that precedes `{`. Callables get their
+            // `[Function: x]` / `[class X]` label (so their properties render as
+            // `[Function: x] { ... }`); other objects get their constructor
+            // name. Kept in sync with the no-property header in
+            // `print_object_tail`. `is_callable` is precomputed by the caller;
+            // `is_class` implies callable, so the non-callable path pays no FFI
+            // here.
+            if self.is_callable {
+                if value.is_class(global_this) {
+                    self.formatter.print_class::<C>(&mut *self.writer, value)?;
+                } else {
+                    self.formatter
+                        .print_function::<C>(&mut *self.writer, value)?;
+                }
+                let _ = self.writer.write_all(b" ");
+            } else if value.is_cell() {
                 let mut writer = WrappedWriter {
                     ctx: self.writer,
                     failed: false,
@@ -3470,7 +3478,7 @@ pub mod formatter {
                     &mut remove_before_recurse,
                 ),
                 Tag::JSX => self.print_jsx::<ENABLE_ANSI_COLORS>(writer_, value),
-                Tag::Object => self.print_object::<ENABLE_ANSI_COLORS>(writer_, value, js_type),
+                Tag::Object => self.print_object::<ENABLE_ANSI_COLORS>(writer_, value),
                 Tag::TypedArray => {
                     self.print_typed_array::<ENABLE_ANSI_COLORS>(writer_, value, js_type)
                 }
@@ -4595,6 +4603,8 @@ pub mod formatter {
                         single_line,
                         parent: value,
                         i: i as usize,
+                        // `value` is an array here, never callable.
+                        is_callable: false,
                     };
                     value.for_each_property_non_indexed(
                         global_this,
@@ -5454,7 +5464,6 @@ pub mod formatter {
             &mut self,
             writer_: &mut dyn bun_io::Write,
             value: JSValue,
-            js_type: jsc::JSType,
         ) -> JsResult<()> {
             debug_assert!(value.is_cell());
             let prev_quote_strings = self.quote_strings;
@@ -5495,6 +5504,12 @@ pub mod formatter {
             }
             let ordered_properties = self.ordered_properties;
             let global_this = self.global_this;
+            // Functions/classes reach here too (see `Tag::get`). Enumerate only
+            // their own enumerable properties so intrinsic `name`/`length`/
+            // `prototype` stay hidden; the header is written by
+            // `handle_first_property` (with properties) or `print_object_tail`
+            // (without).
+            let is_callable = value.is_callable();
             let mut iter = PropertyIteratorCtx::<C> {
                 formatter: self,
                 writer: writer_,
@@ -5502,9 +5517,17 @@ pub mod formatter {
                 single_line,
                 parent: value,
                 i: 0,
+                is_callable,
             };
 
-            if ordered_properties {
+            if is_callable {
+                value.for_each_property_enumerable_own(
+                    global_this,
+                    ordered_properties,
+                    (&raw mut iter).cast::<c_void>(),
+                    PropertyIteratorCtx::<C>::for_each,
+                )?;
+            } else if ordered_properties {
                 value.for_each_property_ordered(
                     global_this,
                     (&raw mut iter).cast::<c_void>(),
@@ -5527,7 +5550,7 @@ pub mod formatter {
                 return Ok(());
             }
 
-            self.print_object_tail::<C>(writer_, value, js_type, iter_i, iter_always_newline)
+            self.print_object_tail::<C>(writer_, value, iter_i, iter_always_newline)
         }
 
         #[inline(never)]
@@ -5540,6 +5563,15 @@ pub mod formatter {
                 ($s:literal) => {
                     pfmt!($s, C)
                 };
+            }
+            // Callables keep their `[Function: x]` / `[class X]` header past the
+            // depth limit (they never expanded their own properties), so emit it
+            // inline rather than the object `[Name ...]` placeholder. Direct
+            // calls avoid re-adding `value` to the visited map.
+            if value.is_class(self.global_this) {
+                return self.print_class::<C>(writer_, value);
+            } else if value.is_callable() {
+                return self.print_function::<C>(writer_, value);
             }
             if self.single_line {
                 let _ = writer_.write_all(b" ");
@@ -5568,15 +5600,19 @@ pub mod formatter {
             &mut self,
             writer_: &mut dyn bun_io::Write,
             value: JSValue,
-            js_type: jsc::JSType,
             iter_i: usize,
             iter_always_newline: bool,
         ) -> JsResult<()> {
             if iter_i == 0 {
+                // No enumerable own properties: emit the bare header. Call
+                // `print_class`/`print_function` directly rather than through
+                // `print_as`, which would re-add `value` to the visited map (it
+                // is already present for the object being printed) and render a
+                // spurious `[Circular]`.
                 if value.is_class(self.global_this) {
-                    self.print_as::<C>(Tag::Class, writer_, value, js_type)?;
+                    self.print_class::<C>(writer_, value)?;
                 } else if value.is_callable() {
-                    self.print_as::<C>(Tag::Function, writer_, value, js_type)?;
+                    self.print_function::<C>(writer_, value)?;
                 } else {
                     if let Some(name_str) = get_object_name(self.global_this, value)? {
                         let _ = write!(writer_, "{name_str} ");

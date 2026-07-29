@@ -615,7 +615,10 @@ impl<'a> Run<'a> {
             T::Private => self.coerce(T::Private, value),
             T::Boolean => self.coerce(T::Boolean, value),
             T::Array => self.coerce(T::Array, value),
-            T::Object => self.coerce(T::Object, value),
+            // `Tag::get` folds callables into `Object` for the console
+            // formatter; they have no AST form, so let them fall through to the
+            // catch-all and report "cannot coerce".
+            T::Object if !value.is_callable() => self.coerce(T::Object, value),
             T::ToJSON | T::JSON => self.coerce(T::JSON, value),
             T::Integer => self.coerce(T::Integer, value),
             T::Double => self.coerce(T::Double, value),

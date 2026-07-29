@@ -280,6 +280,11 @@ export const fsStreamInternals = {
   },
 };
 
+export const nodeHttpInternals = {
+  kHandle: require("internal/http").kHandle,
+  getRequestTimeout: $newCppFunction("NodeHTTP.cpp", "jsHTTPGetTimeout", 1) as (handle: unknown) => number,
+};
+
 export const arrayBufferViewHasBuffer = $newCppFunction(
   "InternalForTesting.cpp",
   "jsFunction_arrayBufferViewHasBuffer",

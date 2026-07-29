@@ -23,9 +23,6 @@ use super::{
     attempt_to_create_package_json, install_with_manager, patch_package,
 };
 
-/// Prints `root` and stores the result as the cache entry's source contents,
-/// preserving the entry's indentation and trailing-newline style. Crashes the
-/// process on a print failure (mirrors the other package.json print sites).
 fn print_package_json_into_cache_entry(entry: &mut MapEntry, root: bun_ast::Expr) {
     let preserve_trailing_newline = entry.source.contents.last() == Some(&b'\n');
     let mut buffer_writer = js_printer::BufferWriter::init();
@@ -445,8 +442,6 @@ fn update_package_json_and_install_with_manager_with_updates(
         Global::crash();
     }
 
-    // `bun update --latest` with no package names also updates the versions
-    // declared in the root package.json `catalog`/`catalogs`.
     let mut editing_catalogs = false;
 
     // may or may not be the package json we are editing
@@ -552,14 +547,10 @@ fn update_package_json_and_install_with_manager_with_updates(
             if PackageJSONEditor::edit_catalogs_before_update(manager, &root_package_json_root)? {
                 editing_catalogs = true;
 
-                // with `--latest`, the catalog entries were set to a temporary
-                // `latest` — re-print the root package.json into the cache
-                // entry so the install below resolves those instead of the
-                // on-disk versions. (Without `--latest` nothing was modified.)
                 if manager.options.do_.contains(Do::UPDATE_TO_LATEST) {
+                    // catalog entries now hold a temporary `latest`; re-print into the
+                    // cache entry so install resolves those, then re-parse to keep the AST in sync.
                     print_package_json_into_cache_entry(root_package_json, root_package_json_root);
-                    // keep the cached AST in sync with the printed source — it
-                    // is consumed by workspace resolution during install.
                     if let Err(err) = root_package_json.reparse_root(manager.log_mut()) {
                         bun_core::pretty_errorln!(
                             "package.json failed to parse due to error {}",
@@ -624,9 +615,7 @@ fn update_package_json_and_install_with_manager_with_updates(
             )?;
 
             if editing_catalogs && manager.workspace_name_hash.is_none() {
-                // the current package.json IS the workspace root: commit the
-                // resolved catalog versions into the same AST before it is
-                // printed and written below.
+                // running from root: catalogs live in this file.
                 let _ = PackageJSONEditor::edit_catalogs_after_update(
                     manager,
                     &new_package_json,
@@ -687,9 +676,7 @@ fn update_package_json_and_install_with_manager_with_updates(
         && manager.workspace_name_hash.is_some()
         && manager.options.do_.contains(Do::WRITE_PACKAGE_JSON)
     {
-        // the command ran from a workspace package: the catalogs live in the
-        // root package.json, a different file from the one written below.
-        // reshaped for borrowck — see `current_package_json_ptr` above.
+        // running from a workspace: catalogs live in the root package.json (a separate file).
         let root_package_json_ptr: *mut MapEntry =
             match manager.workspace_package_json_cache.get_with_path(
                 manager.log_mut(),

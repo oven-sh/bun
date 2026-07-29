@@ -424,9 +424,7 @@ pub struct PackageManager {
     // dependency name -> original version information
     pub updating_packages: StringArrayHashMap<PackageUpdateInfo>,
 
-    // `bun update --latest` (no package names) also updates versions declared
-    // in the root package.json `catalog`/`catalogs`. Keyed by catalog name +
-    // dependency name because the same package may appear in multiple catalogs.
+    // (catalog name, dependency name) -> original version literal
     pub updating_catalogs: Vec<CatalogUpdateInfo>,
 
     pub patched_dependencies_to_remove:

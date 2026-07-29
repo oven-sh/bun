@@ -285,10 +285,7 @@ pub(crate) fn edit_update_no_args(
                             .unwrap_or_else(|| bun_core::out_of_memory());
                         let mut tag = dependency::Tag::infer(version_literal);
 
-                        // only updating dependencies with npm versions, and dist-tags if `--latest`.
-                        // `catalog:` references are left untouched: the version lives in the
-                        // root package.json catalog entry, which is updated by
-                        // `edit_catalogs_before_update`/`edit_catalogs_after_update`.
+                        // npm versions only (and dist-tags with --latest); `catalog:` is handled by edit_catalogs_*.
                         if tag != dependency::Tag::Npm
                             && (tag != dependency::Tag::DistTag
                                 || !manager.options.do_.contains(Do::UPDATE_TO_LATEST))
@@ -390,10 +387,7 @@ pub(crate) fn edit_update_no_args(
                             continue;
                         }
 
-                        // never rewrite a `catalog:` reference; the resolved version is
-                        // written to the root catalog entry instead. This also prevents a
-                        // catalog reference from consuming an `updating_packages` entry
-                        // registered by a same-named dependency in a later group.
+                        // `catalog:` references are never rewritten; the root catalog entry is updated instead.
                         let value_literal = value
                             .as_utf8_string_literal()
                             .unwrap_or_else(|| bun_core::out_of_memory());
@@ -541,13 +535,8 @@ pub(crate) fn edit_update_no_args(
     Ok(())
 }
 
-/// Visits every catalog object in the root package.json, calling `f` with the
-/// catalog group name (empty for the default catalog) and the object holding
-/// its `"name": "version"` entries.
-///
-/// Mirrors the locations `CatalogMap::parse_append` reads: catalogs under
-/// `"workspaces"` win; top-level `"catalog"`/`"catalogs"` are only read when
-/// `"workspaces"` exists but declares none.
+/// Calls `f(catalog_name, entries_object)` for each catalog in the root
+/// package.json, matching the precedence `CatalogMap::parse_append` uses.
 fn for_each_catalog_object(
     root_package_json: &Expr,
     mut f: impl FnMut(&[u8], Expr) -> Result<(), bun_alloc::AllocError>,
@@ -585,15 +574,8 @@ fn for_each_catalog_object(
     Ok(())
 }
 
-/// `bun update` without package names: record the original version of every
-/// catalog entry in the root package.json so `edit_catalogs_after_update` can
-/// write the resolved versions back once the install finishes. With
-/// `--latest`, the entry is additionally set to `latest` in memory so the
-/// resolver fetches the latest version through the existing `catalog:`
-/// resolution path.
-///
-/// Workspace dependencies keep their `catalog:` references; only the root
-/// catalog entries change.
+/// Records the original version of every catalog entry and, with `--latest`,
+/// rewrites each to `latest` in memory so the resolver fetches it.
 pub(crate) fn edit_catalogs_before_update(
     manager: &mut PackageManager,
     root_package_json: &Expr,
@@ -605,7 +587,6 @@ pub(crate) fn edit_catalogs_before_update(
 
     let update_to_latest = manager.options.do_.contains(Do::UPDATE_TO_LATEST);
 
-    // disjoint-field borrows held across the closure
     let arena = &manager.ast_arena;
     let updating_catalogs = &mut manager.updating_catalogs;
 
@@ -636,17 +617,14 @@ pub(crate) fn edit_catalogs_before_update(
 
             let mut alias_at_index: Option<usize> = None;
             if strings::trim(version_literal, &strings::WHITESPACE_CHARS).starts_with(b"npm:") {
-                // negative because the real package might have a scope
-                // e.g. "dep": "npm:@foo/bar@1.2.3"
+                // last '@' handles scoped aliases like "npm:@foo/bar@1.2.3"
                 if let Some(at_index) = strings::last_index_of_char(version_literal, b'@') {
                     tag = dependency::Tag::infer(&version_literal[at_index + 1..]);
                     alias_at_index = Some(at_index);
                 }
             }
 
-            // only updating catalog entries with npm versions, and dist-tags if
-            // `--latest` — same rule as direct dependencies. Anything else
-            // (workspace:, file:, git…) is left alone.
+            // same tag rule as direct dependencies
             if tag != dependency::Tag::Npm && (tag != dependency::Tag::DistTag || !update_to_latest)
             {
                 continue;
@@ -690,13 +668,8 @@ pub(crate) fn edit_catalogs_before_update(
     Ok(!manager.updating_catalogs.is_empty())
 }
 
-/// Writes the resolved versions back into the root package.json catalog
-/// entries recorded by `edit_catalogs_before_update`, preserving the pinning
-/// style (`^`/`~`/exact) of the original catalog version. Entries that did not
-/// resolve (e.g. not referenced by any workspace dependency) are restored to
-/// their original literal.
-///
-/// Returns whether any entry now differs from its original version.
+/// Writes resolved versions back into the recorded catalog entries, preserving
+/// the original pin style. Unresolved entries are restored. Returns `changed`.
 pub(crate) fn edit_catalogs_after_update(
     manager: &mut PackageManager,
     root_package_json: &Expr,
@@ -715,9 +688,6 @@ pub(crate) fn edit_catalogs_after_update(
     let string_buf = lockfile.buffers.string_bytes.as_slice();
     let package_resolutions = lockfile.packages.items_resolution();
 
-    // Resolve each recorded catalog entry through the first `catalog:`
-    // dependency in the lockfile that references it (all references to the
-    // same entry resolve identically). Single pass over the dependency buffer.
     let mut new_literals: Vec<Option<Vec<u8>>> = vec![None; infos.len()];
     debug_assert_eq!(
         lockfile.buffers.dependencies.len(),
@@ -754,8 +724,7 @@ pub(crate) fn edit_catalogs_after_update(
         }
 
         if !manager.options.do_.contains(Do::UPDATE_TO_LATEST) {
-            // same rule as direct dependencies: a plain `bun update` does not
-            // move an exact catalog version.
+            // plain `bun update` does not move an exact pin (matches direct-dep behavior)
             let resolved_version = lockfile
                 .resolve_catalog_dependency(dep)
                 .unwrap_or_else(|| dep.version.clone());
@@ -853,8 +822,7 @@ pub(crate) fn edit_catalogs_after_update(
             let info = &infos[index];
             let new_literal: &[u8] = match &new_literals[index] {
                 Some(v) => arena_str(arena, v),
-                // unresolved: restore the original literal (the in-memory AST
-                // may still hold the temporary `latest`)
+                // unresolved: restore the original (may still be the temporary `latest`)
                 None => arena_dup(arena, &info.original_version_literal),
             };
 
@@ -936,11 +904,7 @@ pub(crate) fn edit(
 
                             if let Some(value) = query.expr.as_property(name) {
                                 if matches!(value.expr.data, bun_ast::ExprData::EString(_)) {
-                                    // `bun update <pkg>` on a dependency using the `catalog:`
-                                    // protocol keeps the catalog reference instead of replacing
-                                    // it with a resolved range — route it to the "use the
-                                    // existing spot" branch so the final loop (which skips
-                                    // catalog literals) sees the original value.
+                                    // `bun update <pkg>` keeps a `catalog:` reference intact.
                                     let keep_catalog_reference = manager.subcommand
                                         == Subcommand::Update
                                         && value.expr.as_utf8_string_literal().is_some_and(
@@ -1449,10 +1413,7 @@ pub(crate) fn edit(
             // derived from a `StoreRef` to the same `E::EString` is live inside this loop body,
             // so this is the sole mutable borrow.
             let e_string = unsafe { &mut *e_string };
-            // `bun update <pkg>` on a dependency using the `catalog:` protocol keeps
-            // the catalog reference; the version is managed by the root catalog entry.
-            // (`bun add <pkg>` still replaces it — adding is an explicit request to
-            // pin a version in this package.)
+            // `bun update <pkg>` keeps a `catalog:` reference; `bun add` still replaces it.
             if manager.subcommand == Subcommand::Update
                 && dependency::Tag::infer(e_string.data.slice()) == dependency::Tag::Catalog
             {

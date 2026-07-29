@@ -1012,7 +1012,12 @@ extern "C" void Bun__unregisterSignalsForForwarding()
 #if OS(LINUX) || OS(DARWIN) || OS(FREEBSD)
 #include <paths.h>
 
+#if defined(__OHOS__)
+// OHOS has system binaries in /system/bin (echo, sh, mkdir, etc.).
+extern "C" const char* BUN_DEFAULT_PATH_FOR_SPAWN = "/system/bin:/usr/bin:/bin";
+#else
 extern "C" const char* BUN_DEFAULT_PATH_FOR_SPAWN = _PATH_DEFPATH;
+#endif
 #elif OS(WINDOWS)
 extern "C" const char* BUN_DEFAULT_PATH_FOR_SPAWN = "C:\\Windows\\System32;C:\\Windows;";
 #else

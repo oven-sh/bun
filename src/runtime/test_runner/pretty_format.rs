@@ -1458,7 +1458,8 @@ impl<'a> Formatter<'a> {
                     let name_bytes = name_slice.slice();
                     let show_name = !name_bytes.is_empty()
                         && name_bytes != b"jest.fn()"
-                        && name_bytes != b"mockConstructor";
+                        && name_bytes != b"mockConstructor"
+                        && name_bytes != b"mockedFunction";
 
                     let calls = expect::mock::JSMockFunction__getCalls(self.global_this, value)?;
                     let has_calls =

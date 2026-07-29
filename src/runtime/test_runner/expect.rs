@@ -3011,9 +3011,7 @@ pub mod mock {
         })
     }
 
-    /// `bun.cpp.JSMockFunction__getName` — returns the mock's name (the value
-    /// `getMockName()` reports) for a JSMockFunction, or `undefined` if `value`
-    /// is not a mock. `[[ZIG_EXPORT(nothrow)]]`.
+    /// Mock's `getMockName()` string, or `undefined` when `value` is not a `JSMockFunction`.
     #[allow(non_snake_case)]
     #[inline]
     pub(crate) fn JSMockFunction__getName(value: JSValue) -> JSValue {

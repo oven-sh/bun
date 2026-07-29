@@ -13,6 +13,10 @@ test.concurrent("bun create from local template preserves unrelated files in des
     "templates/mytpl/tpl.txt": "template file",
     "proj/important.txt": "IMPORTANT DATA",
     "proj/subdir/data.txt": "more data",
+    // post-copy cleanup must not remove these when the template has no
+    // gitignore/.npmignore of its own
+    "proj/.npmignore": "my npmignore",
+    "proj/gitignore": "file literally named gitignore",
   });
 
   await using proc = Bun.spawn({
@@ -27,6 +31,8 @@ test.concurrent("bun create from local template preserves unrelated files in des
   expect(await Bun.file(join(String(dir), "proj", "important.txt")).text()).toBe("IMPORTANT DATA");
   expect(await Bun.file(join(String(dir), "proj", "subdir", "data.txt")).text()).toBe("more data");
   expect(await Bun.file(join(String(dir), "proj", "tpl.txt")).text()).toBe("template file");
+  expect(await Bun.file(join(String(dir), "proj", ".npmignore")).text()).toBe("my npmignore");
+  expect(await Bun.file(join(String(dir), "proj", "gitignore")).text()).toBe("file literally named gitignore");
   expect({ exitCode, stderr }).toEqual({ exitCode: 0, stderr: expect.not.stringContaining("error") });
 });
 

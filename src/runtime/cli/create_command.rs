@@ -338,6 +338,11 @@ impl CreateCommand {
 
         let mut package_json_contents: MutableString = MutableString::default();
         let mut package_json_file: Option<bun_sys::File> = None;
+        // The post-copy cleanup renames `gitignore` and removes `.npmignore`.
+        // Local templates set these from the template's contents so files the
+        // user already had are left alone; tarballs keep the old behavior.
+        let mut template_has_gitignore = true;
+        let mut template_has_npmignore = true;
 
         if example_tag != ExampleTag::LocalFolder {
             if create_options.verbose {
@@ -600,6 +605,11 @@ impl CreateCommand {
                     }
                 };
 
+                template_has_gitignore =
+                    bun_sys::exists_at(template_dir.fd, bun_core::zstr!("gitignore"));
+                template_has_npmignore =
+                    bun_sys::exists_at(template_dir.fd, bun_core::zstr!(".npmignore"));
+
                 let existing_destination = if create_options.overwrite {
                     None
                 } else {
@@ -649,8 +659,34 @@ impl CreateCommand {
                             existing_destination.fd,
                             entry.path.as_slice(),
                         );
-                        let Ok(existing_kind) = existing_kind else {
-                            continue;
+                        let existing_kind = match existing_kind {
+                            Ok(k) => k,
+                            // ENOTDIR: a parent component is a file, which the
+                            // scan already records as a conflict for that
+                            // component.
+                            Err(err)
+                                if matches!(
+                                    err.get_errno(),
+                                    bun_sys::E::ENOENT | bun_sys::E::ENOTDIR
+                                ) =>
+                            {
+                                continue;
+                            }
+                            Err(err) => {
+                                node.end();
+                                progress.refresh();
+
+                                #[cfg(not(windows))]
+                                let entry_path: &[u8] = entry.path.as_bytes();
+                                #[cfg(windows)]
+                                let entry_path: &[u16] = entry.path.as_slice();
+                                pretty_errorln!(
+                                    "<r><red>{}<r>: checking {}",
+                                    bstr::BStr::new(err.name()),
+                                    bun_core::fmt::fmt_os_path(entry_path, Default::default()),
+                                );
+                                Global::exit(1);
+                            }
                         };
 
                         let conflicting = match entry.kind {
@@ -859,27 +895,31 @@ impl CreateCommand {
 
         {
             let parent_dir = bun_sys::Dir::open(destination)?;
-            #[cfg(windows)]
-            {
-                let _ = parent_dir.copy_file(
-                    b"gitignore",
-                    &parent_dir,
-                    b".gitignore",
-                    Default::default(),
-                );
-            }
-            #[cfg(not(windows))]
-            {
-                let _ = bun_sys::linkat(
-                    parent_dir.fd(),
-                    bun_core::zstr!("gitignore"),
-                    parent_dir.fd(),
-                    bun_core::zstr!(".gitignore"),
-                );
-            }
+            if template_has_gitignore {
+                #[cfg(windows)]
+                {
+                    let _ = parent_dir.copy_file(
+                        b"gitignore",
+                        &parent_dir,
+                        b".gitignore",
+                        Default::default(),
+                    );
+                }
+                #[cfg(not(windows))]
+                {
+                    let _ = bun_sys::linkat(
+                        parent_dir.fd(),
+                        bun_core::zstr!("gitignore"),
+                        parent_dir.fd(),
+                        bun_core::zstr!(".gitignore"),
+                    );
+                }
 
-            let _ = bun_sys::unlinkat(&parent_dir, bun_core::zstr!("gitignore"));
-            let _ = bun_sys::unlinkat(&parent_dir, bun_core::zstr!(".npmignore"));
+                let _ = bun_sys::unlinkat(&parent_dir, bun_core::zstr!("gitignore"));
+            }
+            if template_has_npmignore {
+                let _ = bun_sys::unlinkat(&parent_dir, bun_core::zstr!(".npmignore"));
+            }
         }
 
         let mut start_command: &[u8] = b"bun dev";

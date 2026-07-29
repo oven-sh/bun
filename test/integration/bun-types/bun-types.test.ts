@@ -391,6 +391,44 @@ describe("@types/bun integration test", () => {
     });
   });
 
+  // Runs on debug builds too, like the Bun.mmap test above.
+  describe("WebSocket", () => {
+    test("error event listeners receive ErrorEvent", async () => {
+      const checkDir = join(TEMP_DIR, "websocket-error-event-check");
+      const tsconfig = structuredClone(sourceTsconfig);
+      tsconfig.include = ["websocket-error-event.ts"];
+      tsconfig.compilerOptions.typeRoots = [join(BASE_FIXTURE_DIR, "node_modules", "@types")];
+      await mkdir(checkDir, { recursive: true });
+      await makeTree(checkDir, {
+        "tsconfig.json": JSON.stringify(tsconfig, null, 2),
+        "websocket-error-event.ts": `const ws = new WebSocket("wss://dev.local");
+           ws.addEventListener("error", event => {
+             event satisfies ErrorEvent;
+             event.message satisfies string;
+             console.log(event.error);
+           });
+           ws.addEventListener("error", (event: ErrorEvent) => console.log(event.error));
+           ws.onerror = event => {
+             event satisfies ErrorEvent;
+           };`,
+      });
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), join(BASE_FIXTURE_DIR, "node_modules", "typescript", "bin", "tsc"), "-p", "."],
+        env: bunEnv,
+        cwd: checkDir,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect(stderr.trim()).toBe("");
+      expect(stdout.trim()).toBe("");
+      expect(exitCode).toBe(0);
+    });
+  });
+
   describe("Test Globals", () => {
     const code = `
       const test_shouldBeAFunction: Function = test;
@@ -791,6 +829,29 @@ describe("@types/bun integration test", () => {
             "Object literal may only specify known properties, and 'protocols' does not exist in type 'string[]'.",
         },
         {
+          code: 2322,
+          line: "websocket.ts:105:3",
+          message:
+            "Type '(event: ErrorEvent) => void' is not assignable to type '(this: WebSocket, ev: Event) => any'.\nTypes of parameters 'event' and 'ev' are incompatible.\nType 'Event' is missing the following properties from type 'ErrorEvent': colno, error, filename, lineno, message",
+        },
+        {
+          code: 2554,
+          line: "websocket.ts:132:23",
+          message: "Expected 2 arguments, but got 0.",
+        },
+        {
+          code: 2769,
+          line: "websocket.ts:170:32",
+          message:
+            "No overload matches this call.\nOverload 1 of 2, '(type: \"error\", listener: (this: WebSocket, ev: Event) => any, options?: boolean | AddEventListenerOptions | undefined): void', gave the following error.\nArgument of type '(event: ErrorEvent) => void' is not assignable to parameter of type '(this: WebSocket, ev: Event) => any'.\nTypes of parameters 'event' and 'ev' are incompatible.\nType 'Event' is missing the following properties from type 'ErrorEvent': colno, error, filename, lineno, message\nOverload 2 of 2, '(type: string, listener: EventListenerOrEventListenerObject, options?: boolean | AddEventListenerOptions | undefined): void', gave the following error.\nArgument of type '(event: ErrorEvent) => void' is not assignable to parameter of type 'EventListenerOrEventListenerObject'.\nType '(event: ErrorEvent) => void' is not assignable to type 'EventListener'.\nTypes of parameters 'event' and 'evt' are incompatible.\nType 'Event' is missing the following properties from type 'ErrorEvent': colno, error, filename, lineno, message",
+        },
+        {
+          code: 2769,
+          line: "websocket.ts:176:35",
+          message:
+            "No overload matches this call.\nOverload 1 of 2, '(type: \"error\", listener: (this: WebSocket, ev: Event) => any, options?: boolean | EventListenerOptions | undefined): void', gave the following error.\nArgument of type '(event: ErrorEvent) => void' is not assignable to parameter of type '(this: WebSocket, ev: Event) => any'.\nTypes of parameters 'event' and 'ev' are incompatible.\nType 'Event' is missing the following properties from type 'ErrorEvent': colno, error, filename, lineno, message\nOverload 2 of 2, '(type: string, listener: EventListenerOrEventListenerObject, options?: boolean | EventListenerOptions | undefined): void', gave the following error.\nArgument of type '(event: ErrorEvent) => void' is not assignable to parameter of type 'EventListenerOrEventListenerObject'.\nType '(event: ErrorEvent) => void' is not assignable to type 'EventListener'.\nTypes of parameters 'event' and 'evt' are incompatible.\nType 'Event' is missing the following properties from type 'ErrorEvent': colno, error, filename, lineno, message",
+        },
+        {
           code: 2551,
           line: "websocket.ts:192:17",
           message: "Property 'URL' does not exist on type 'WebSocket'. Did you mean 'url'?",
@@ -844,6 +905,27 @@ describe("@types/bun integration test", () => {
           code: 2339,
           line: "websocket.ts:270:6",
           message: "Property 'terminate' does not exist on type 'WebSocket'.",
+        },
+        {
+          code: 2554,
+          line: "websocket.ts:279:23",
+          message: "Expected 2 arguments, but got 0.",
+        },
+        {
+          code: 2339,
+          line: "websocket.ts:280:22",
+          message: "Property 'message' does not exist on type 'Event'.",
+        },
+        {
+          code: 2339,
+          line: "websocket.ts:281:22",
+          message: "Property 'error' does not exist on type 'Event'.",
+        },
+        {
+          code: 2769,
+          line: "websocket.ts:285:32",
+          message:
+            "No overload matches this call.\nOverload 1 of 2, '(type: \"error\", listener: (this: WebSocket, ev: Event) => any, options?: boolean | AddEventListenerOptions | undefined): void', gave the following error.\nArgument of type '(event: ErrorEvent) => void' is not assignable to parameter of type '(this: WebSocket, ev: Event) => any'.\nTypes of parameters 'event' and 'ev' are incompatible.\nType 'Event' is missing the following properties from type 'ErrorEvent': colno, error, filename, lineno, message\nOverload 2 of 2, '(type: string, listener: EventListenerOrEventListenerObject, options?: boolean | AddEventListenerOptions | undefined): void', gave the following error.\nArgument of type '(event: ErrorEvent) => void' is not assignable to parameter of type 'EventListenerOrEventListenerObject'.\nType '(event: ErrorEvent) => void' is not assignable to type 'EventListener'.\nTypes of parameters 'event' and 'evt' are incompatible.\nType 'Event' is missing the following properties from type 'ErrorEvent': colno, error, filename, lineno, message",
         },
         {
           code: 2339,

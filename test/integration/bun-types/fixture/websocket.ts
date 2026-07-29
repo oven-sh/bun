@@ -102,8 +102,8 @@ import { expectType } from "./utilities";
     expectType(event.data).is<string>();
   };
 
-  ws.onerror = (event: Event) => {
-    expectType(event).is<Event>();
+  ws.onerror = (event: ErrorEvent) => {
+    expectType(event).is<ErrorEvent>();
   };
 
   ws.onclose = (event: CloseEvent) => {
@@ -129,7 +129,7 @@ import { expectType } from "./utilities";
   };
 
   ws.onerror = event => {
-    expectType(event).is<Event>();
+    expectType(event).is<ErrorEvent>();
   };
 
   ws.onclose = event => {
@@ -153,8 +153,8 @@ import { expectType } from "./utilities";
     expectType(event.data).is<string>();
   };
 
-  const handleError = (event: Event) => {
-    expectType(event).is<Event>();
+  const handleError = (event: ErrorEvent) => {
+    expectType(event).is<ErrorEvent>();
   };
 
   const handleClose = (event: CloseEvent) => {
@@ -268,4 +268,21 @@ import { expectType } from "./utilities";
 
   // Terminate the connection immediately
   ws.terminate();
+}
+
+// WebSocket "error" event is an ErrorEvent (issue #36329)
+{
+  const ws = new WebSocket("wss://dev.local");
+
+  // Inferred listener parameter is ErrorEvent with its properties accessible
+  ws.addEventListener("error", event => {
+    expectType(event).is<ErrorEvent>();
+    expectType(event.message).is<string>();
+    expectType(event.error).is<any>();
+  });
+
+  // Explicitly typed ErrorEvent listener matches the overload
+  ws.addEventListener("error", (event: ErrorEvent) => {
+    expectType(event.message).is<string>();
+  });
 }

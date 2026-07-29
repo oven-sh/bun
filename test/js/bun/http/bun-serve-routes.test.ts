@@ -1044,3 +1044,158 @@ describe.concurrent("false route with no fetch handler", () => {
     await proc.exited;
   });
 });
+
+// https://github.com/oven-sh/bun/issues/17363
+describe("ignoreTrailingSlash", () => {
+  let server: Server;
+
+  beforeAll(() => {
+    server = Bun.serve({
+      port: 0,
+      ignoreTrailingSlash: true,
+      fetch: () => new Response("fallback"),
+      routes: {
+        "/": () => new Response("root"),
+        "/api/users": req => new Response(new URL(req.url).pathname),
+        "/api/static": new Response("static"),
+        "/posts/:id": req => new Response(req.params.id),
+      },
+    });
+    server.unref();
+  });
+
+  afterAll(() => {
+    server.stop(true);
+  });
+
+  it("matches the exact path", async () => {
+    const res = await fetch(new URL("/api/users", server.url).href);
+    expect(await res.text()).toBe("/api/users");
+  });
+
+  it("matches a trailing slash and keeps the raw request.url", async () => {
+    const res = await fetch(new URL("/api/users/", server.url).href);
+    expect(await res.text()).toBe("/api/users/");
+  });
+
+  it("matches a static Response route with a trailing slash", async () => {
+    const res = await fetch(new URL("/api/static/", server.url).href);
+    expect(await res.text()).toBe("static");
+  });
+
+  it("matches a param route with a trailing slash", async () => {
+    const res = await fetch(new URL("/posts/123/", server.url).href);
+    expect(await res.text()).toBe("123");
+  });
+
+  it("keeps the root route working", async () => {
+    const res = await fetch(new URL("/", server.url).href);
+    expect(await res.text()).toBe("root");
+  });
+
+  it("does not collapse duplicate slashes (that flag is off)", async () => {
+    const res = await fetch(`${server.url.origin}//api//users`);
+    expect(await res.text()).toBe("fallback");
+  });
+});
+
+describe("ignoreDuplicateSlashes", () => {
+  let server: Server;
+
+  beforeAll(() => {
+    server = Bun.serve({
+      port: 0,
+      ignoreDuplicateSlashes: true,
+      fetch: () => new Response("fallback"),
+      routes: {
+        "/api/users": req => new Response(new URL(req.url).pathname),
+      },
+    });
+    server.unref();
+  });
+
+  afterAll(() => {
+    server.stop(true);
+  });
+
+  it("collapses duplicate slashes and keeps the raw request.url", async () => {
+    const res = await fetch(`${server.url.origin}//api//users`);
+    expect(await res.text()).toBe("/api//users");
+  });
+
+  it("does not trim a trailing slash (that flag is off)", async () => {
+    const res = await fetch(new URL("/api/users/", server.url).href);
+    expect(await res.text()).toBe("fallback");
+  });
+});
+
+describe("lenient slash matching is off by default", () => {
+  let server: Server;
+
+  beforeAll(() => {
+    server = Bun.serve({
+      port: 0,
+      fetch: () => new Response("fallback"),
+      routes: {
+        "/api/users": () => new Response("matched"),
+      },
+    });
+    server.unref();
+  });
+
+  afterAll(() => {
+    server.stop(true);
+  });
+
+  it("still matches the exact path", async () => {
+    const res = await fetch(new URL("/api/users", server.url).href);
+    expect(await res.text()).toBe("matched");
+  });
+
+  it("falls through to fetch on a trailing slash", async () => {
+    const res = await fetch(new URL("/api/users/", server.url).href);
+    expect(await res.text()).toBe("fallback");
+  });
+
+  it("falls through to fetch on duplicate slashes", async () => {
+    const res = await fetch(`${server.url.origin}//api//users`);
+    expect(await res.text()).toBe("fallback");
+  });
+});
+
+describe("ignoreTrailingSlash + ignoreDuplicateSlashes", () => {
+  let server: Server;
+
+  beforeAll(() => {
+    server = Bun.serve({
+      port: 0,
+      ignoreTrailingSlash: true,
+      ignoreDuplicateSlashes: true,
+      fetch: () => new Response("fallback"),
+      routes: {
+        "/api/users": req => new Response(new URL(req.url).pathname),
+      },
+    });
+    server.unref();
+  });
+
+  afterAll(() => {
+    server.stop(true);
+  });
+
+  it("matches messy duplicate and trailing slashes together and keeps the raw request.url", async () => {
+    const res = await fetch(`${server.url.origin}//api//users//`);
+    expect(await res.text()).toBe("/api//users//");
+  });
+
+  it("persists across server.reload()", async () => {
+    server.reload({
+      fetch: () => new Response("fallback"),
+      routes: {
+        "/api/users": () => new Response("reloaded"),
+      },
+    });
+    const res = await fetch(`${server.url.origin}//api//users//`);
+    expect(await res.text()).toBe("reloaded");
+  });
+});

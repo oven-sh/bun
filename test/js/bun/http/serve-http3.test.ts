@@ -410,6 +410,27 @@ describe("Bun.serve HTTP/3", () => {
     });
   });
 
+  test("routes: ignoreTrailingSlash and ignoreDuplicateSlashes apply to the H3 router", async () => {
+    const script = `
+      const tls = ${JSON.stringify(tls)};
+      const server = Bun.serve({
+        port: 0, tls, http3: true,
+        ignoreTrailingSlash: true,
+        ignoreDuplicateSlashes: true,
+        routes: { "/api/users": () => new Response("matched") },
+        fetch: () => new Response("fallback"),
+      });
+      console.error("PORT=" + server.port);
+      process.stdin.on("data", () => {});
+      ${STOP_ON_STDIN_END}
+    `;
+    await withCustomServer(script, async port => {
+      expect(await fetchH3(port, "/api/users").then(r => r.text())).toBe("matched");
+      expect(await fetchH3(port, "/api/users/").then(r => r.text())).toBe("matched");
+      expect(await fetchH3(port, "/api//users//").then(r => r.text())).toBe("matched");
+    });
+  });
+
   test("ReadableStream response body", async () => {
     await withServer(async port => {
       expect(await fetchH3(port, "/stream").then(r => r.text())).toBe("one two three");

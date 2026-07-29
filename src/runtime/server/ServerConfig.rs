@@ -60,6 +60,8 @@ pub struct ServerConfig {
     pub ipv6_only: bool,
     pub http3: bool,
     pub http1: bool,
+    pub ignore_trailing_slash: bool,
+    pub ignore_duplicate_slashes: bool,
 
     pub had_routes_object: bool,
 
@@ -93,6 +95,8 @@ impl Default for ServerConfig {
             ipv6_only: false,
             http3: false,
             http1: true,
+            ignore_trailing_slash: false,
+            ignore_duplicate_slashes: false,
             had_routes_object: false,
             static_routes: Vec::new(),
             negative_routes: Vec::new(),
@@ -277,6 +281,8 @@ impl ServerConfig {
             ipv6_only: self.ipv6_only,
             http3: self.http3,
             http1: self.http1,
+            ignore_trailing_slash: self.ignore_trailing_slash,
+            ignore_duplicate_slashes: self.ignore_duplicate_slashes,
             had_routes_object: self.had_routes_object,
             static_routes: core::mem::take(&mut self.static_routes),
             negative_routes: core::mem::take(&mut self.negative_routes),
@@ -1302,6 +1308,20 @@ impl ServerConfig {
 
         if let Some(dev) = arg.get(global, "ipv6Only")? {
             args.ipv6_only = dev.to_boolean();
+        }
+        if global.has_exception() {
+            return Err(JsError::Thrown);
+        }
+
+        if let Some(v) = arg.get(global, "ignoreTrailingSlash")? {
+            args.ignore_trailing_slash = v.to_boolean();
+        }
+        if global.has_exception() {
+            return Err(JsError::Thrown);
+        }
+
+        if let Some(v) = arg.get(global, "ignoreDuplicateSlashes")? {
+            args.ignore_duplicate_slashes = v.to_boolean();
         }
         if global.has_exception() {
             return Err(JsError::Thrown);

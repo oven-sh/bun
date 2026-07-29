@@ -2116,6 +2116,8 @@ export class NodeSocketDebugAdapter extends BaseDebugAdapter<NodeSocketInspector
  */
 export class WebSocketDebugAdapter extends BaseDebugAdapter<WebSocketInspector> {
   #process?: ChildProcess;
+  #signal?: UnixSignal | TCPSocketSignal;
+  #terminalLaunch?: { watchMode: boolean };
 
   public constructor(url?: string | URL, untitledDocPath?: string, bunEvalPath?: string) {
     super(new WebSocketInspector(url), untitledDocPath, bunEvalPath);
@@ -2124,7 +2126,14 @@ export class WebSocketDebugAdapter extends BaseDebugAdapter<WebSocketInspector> 
   async ["Inspector.disconnected"](error?: Error): Promise<void> {
     await super["Inspector.disconnected"](error);
 
-    if (this.#process?.exitCode !== null) {
+    if (this.#terminalLaunch) {
+      // The terminal owns the debuggee; we can't observe its exit directly. In watch
+      // mode the inspector disconnects on every restart, so only treat a disconnect
+      // as session termination when not watching.
+      if (!this.#terminalLaunch.watchMode) {
+        this.emitAdapterEvent("terminated");
+      }
+    } else if (this.#process?.exitCode !== null) {
       this.emitAdapterEvent("terminated");
     }
   }
@@ -2148,6 +2157,9 @@ export class WebSocketDebugAdapter extends BaseDebugAdapter<WebSocketInspector> 
 
   close() {
     this.#process?.kill();
+    this.#signal?.close();
+    this.#signal = undefined;
+    this.#terminalLaunch = undefined;
     super.close();
   }
 
@@ -2227,6 +2239,7 @@ export class WebSocketDebugAdapter extends BaseDebugAdapter<WebSocketInspector> 
       url = `ws://127.0.0.1:${await getAvailablePort()}/${getRandomId()}`;
       signal = new TCPSocketSignal(await getAvailablePort());
     }
+    this.#signal = signal;
 
     signal.on("Signal.received", () => {
       this.#attach({ url });
@@ -2249,6 +2262,7 @@ export class WebSocketDebugAdapter extends BaseDebugAdapter<WebSocketInspector> 
 
     let started: boolean;
     if (terminalKind && this.initializeRequest?.supportsRunInTerminalRequest) {
+      this.#terminalLaunch = { watchMode: !!watchMode };
       started = await this.#runInTerminal({
         kind: terminalKind,
         title: "Bun Debugger",

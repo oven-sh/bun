@@ -159,4 +159,42 @@ describe("launch console", () => {
       adapter.close();
     }
   });
+
+  test.each([
+    [false, 1],
+    [true, 0],
+  ])(
+    "terminal launch with watchMode=%p emits terminated on inspector disconnect %p time(s)",
+    async (watchMode, expectedTerminated) => {
+      const adapter = new WebSocketDebugAdapter();
+
+      adapter.on("Adapter.reverseRequest", (request, reply) => {
+        reply({ type: "response", seq: 0, request_seq: 0, command: request.command, success: true });
+      });
+
+      adapter.initialize({ adapterID: "bun", supportsRunInTerminalRequest: true });
+
+      try {
+        await adapter.launch({
+          runtime: bunExe(),
+          program: "script.ts",
+          cwd: process.cwd(),
+          console: "integratedTerminal",
+          watchMode,
+        } as DAP.LaunchRequest);
+
+        let terminated = 0;
+        adapter.on("Adapter.terminated", () => void terminated++);
+        // Simulate a watch-mode restart: the inspector socket drops while the
+        // terminal process stays alive. resetInternal() clears `options`, so a
+        // second disconnect must still be suppressed in watch mode.
+        await adapter["Inspector.disconnected"]();
+        if (watchMode) await adapter["Inspector.disconnected"]();
+
+        expect(terminated).toBe(expectedTerminated);
+      } finally {
+        adapter.close();
+      }
+    },
+  );
 });

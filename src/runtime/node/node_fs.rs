@@ -7271,9 +7271,11 @@ impl NodeFS {
         // to the kernel which only stores into it.
         unsafe { buf.expand_to_capacity() };
 
-        // Node's kReadFileBufferLength: caps each read() so aborted() runs between chunks.
-        const READ_FILE_CHUNK_SIZE: usize = 512 * 1024;
+        // With a signal, bound each read() so the aborted() check above runs between
+        // chunks. The bound doubles each iteration so an unaborted read pays O(log n)
+        // syscalls instead of O(n) at Node's fixed kReadFileBufferLength.
         let has_signal = args.signal.is_some();
+        let mut signal_chunk: usize = 512 * 1024;
 
         // Two-phase read: first up to `size`, then keep going until EOF.
         // `phase == 0` is the size-bounded loop, `phase == 1` is the unbounded tail.
@@ -7288,7 +7290,8 @@ impl NodeFS {
             // !has_max_size` arm below.
             let mut upper = (buf.capacity() as u64).min(max_size) as usize;
             if has_signal {
-                upper = upper.min(total.saturating_add(READ_FILE_CHUNK_SIZE));
+                upper = upper.min(total.saturating_add(signal_chunk));
+                signal_chunk = signal_chunk.saturating_mul(2);
             }
             let amt = Syscall::read(fd, &mut buf[total..upper])?;
             total += amt;

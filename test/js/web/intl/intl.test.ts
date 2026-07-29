@@ -185,6 +185,65 @@ describe("Intl.ListFormat", () => {
   });
 });
 
+describe("Intl.DurationFormat", () => {
+  // https://tc39.es/ecma402/#sec-getdurationunitoptions step 3.b.i: when a
+  // unit's style is left undefined and the previous unit resolved to
+  // "numeric"/"2-digit", minutes and seconds must default their *display* to
+  // "always" (only other units default to "auto"). Without this, {hours:"numeric"}
+  // formatted {hours:1} as "1" instead of "1:00:00".
+  describe("per-unit numeric style forces minutes/seconds display", () => {
+    test("resolvedOptions()", () => {
+      const pick = (o: Intl.ResolvedDurationFormatOptions) => ({
+        minutes: o.minutes,
+        minutesDisplay: o.minutesDisplay,
+        seconds: o.seconds,
+        secondsDisplay: o.secondsDisplay,
+        milliseconds: o.milliseconds,
+        millisecondsDisplay: o.millisecondsDisplay,
+      });
+      // hours:"numeric" -> minutes/seconds inherit 2-digit + display:"always";
+      // milliseconds inherits numeric but keeps display:"auto" (not minute/second).
+      expect(pick(new Intl.DurationFormat("en", { hours: "numeric" }).resolvedOptions())).toEqual({
+        minutes: "2-digit",
+        minutesDisplay: "always",
+        seconds: "2-digit",
+        secondsDisplay: "always",
+        milliseconds: "numeric",
+        millisecondsDisplay: "auto",
+      });
+      expect(pick(new Intl.DurationFormat("en", { hours: "2-digit" }).resolvedOptions())).toEqual({
+        minutes: "2-digit",
+        minutesDisplay: "always",
+        seconds: "2-digit",
+        secondsDisplay: "always",
+        milliseconds: "numeric",
+        millisecondsDisplay: "auto",
+      });
+      // minutes:"numeric" -> only seconds is forced.
+      const ro = new Intl.DurationFormat("en", { minutes: "numeric" }).resolvedOptions();
+      expect({ seconds: ro.seconds, secondsDisplay: ro.secondsDisplay }).toEqual({
+        seconds: "2-digit",
+        secondsDisplay: "always",
+      });
+    });
+
+    test("format()", () => {
+      const fmt = (opts: Intl.DurationFormatOptions, d: Intl.DurationInput) =>
+        new Intl.DurationFormat("en", opts).format(d);
+      expect(fmt({ hours: "numeric" }, { hours: 1 })).toBe("1:00:00");
+      expect(fmt({ hours: "numeric" }, { hours: 0 })).toBe("0:00:00");
+      expect(fmt({ hours: "2-digit" }, { hours: 1 })).toBe("01:00:00");
+      expect(fmt({ hours: "numeric", minutes: "numeric" }, { minutes: 5 })).toBe("0:05:00");
+      expect(fmt({ minutes: "numeric" }, { minutes: 5 })).toBe("5:00");
+      expect(fmt({ minutes: "2-digit" }, { minutes: 5 })).toBe("05:00");
+      // style:"digital" already behaved this way; the two spellings must agree.
+      expect(fmt({ style: "digital" }, { minutes: 5 })).toBe("0:05:00");
+      // An explicit {minutesDisplay:"auto"} still suppresses zero units.
+      expect(fmt({ hours: "numeric", minutesDisplay: "auto", secondsDisplay: "auto" }, { hours: 1 })).toBe("1");
+    });
+  });
+});
+
 describe("Intl.RelativeTimeFormat", () => {
   snapshotIf("format across locales", () => {
     const out: Record<string, string[]> = {};

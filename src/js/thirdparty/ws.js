@@ -195,8 +195,7 @@ class BunWebSocket extends EventEmitter {
   #binaryType = "nodebuffer";
   // Gates the EventEmitter bridge so the native non-101 error isn't re-emitted.
   #unexpectedResponseEmitted = false;
-  // Gates addEventListener('error')/onerror wrappers; set only when
-  // 'unexpected-response' actually fired (real ws emits no error then).
+  // Gates addEventListener('error')/onerror wrappers; set only when 'unexpected-response' fired.
   #unexpectedResponseHandled = false;
   // listener -> suppression wrapper, for removeEventListener('error', ...).
   #errorListenerWrappers;
@@ -356,8 +355,7 @@ class BunWebSocket extends EventEmitter {
     this.#ws.addEventListener("handshake", event => this.#onHandshake(event.data), onceObject);
   }
 
-  // Minimal ClientRequest stub for the first 'unexpected-response' argument
-  // (we bypass node:http, so there is no real one to expose).
+  // Minimal ClientRequest stub for the first 'unexpected-response' argument.
   #syntheticRequest;
   #getSyntheticRequest() {
     let req = this.#syntheticRequest;

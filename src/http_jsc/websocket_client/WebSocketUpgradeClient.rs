@@ -978,8 +978,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
         );
     }
 
-    /// Surface `'handshake'` to the `ws` shim, then [`Self::process_response`].
-    /// Caller holds a `ref_guard` and owns `full` (it must not borrow `self`).
+    /// Caller holds a `ref_guard` and owns `full` (must not borrow `self`).
     fn process_websocket_upgrade_response(this: ThisPtr<Self>, full: &[u8]) {
         let mut scratch = [picohttp::Header::ZERO; 128];
         let Ok(response) = picohttp::Response::parse(full, &mut scratch) else {

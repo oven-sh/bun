@@ -1559,8 +1559,7 @@ void WebSocket::didReceiveBinaryData(const AtomString& eventName, const std::spa
 
 void WebSocket::didReceiveHandshakeResponse(uint16_t statusCode, std::span<const uint8_t> statusMessage, std::span<const HandshakeRawHeader> headers, std::span<const uint8_t> body)
 {
-    // The only consumer is the `ws` package shim, which always registers a listener
-    // before connecting. The browser-style `new WebSocket()` path skips this entirely.
+    // Only the `ws` shim listens; the browser-style path pays nothing.
     if (!this->hasEventListeners(eventNames().handshakeEvent))
         return;
 
@@ -1577,8 +1576,6 @@ void WebSocket::didReceiveHandshakeResponse(uint16_t statusCode, std::span<const
     obj->putDirect(vm, builtinNames.statusMessagePublicName(),
         JSC::jsString(vm, WTF::String({ statusMessage.data(), statusMessage.size() })));
 
-    // PicoHTTP already parsed the response head, so surface its header list as
-    // a flat [name, value, name, value, ...] rawHeaders array.
     auto* rawHeaders = JSC::constructEmptyArray(globalObject, nullptr, headers.size() * 2);
     if (!rawHeaders || scope.exception()) [[unlikely]] {
         scope.clearExceptionExceptTermination();

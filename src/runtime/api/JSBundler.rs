@@ -243,6 +243,7 @@ pub mod js_bundler {
         pub autoload_bunfig: bool,
         pub autoload_tsconfig: bool,
         pub autoload_package_json: bool,
+        pub sourcemap_sidecar: bool,
     }
 
     impl Default for CompileOptions {
@@ -264,6 +265,7 @@ pub mod js_bundler {
                 autoload_bunfig: true,
                 autoload_tsconfig: false,
                 autoload_package_json: false,
+                sourcemap_sidecar: false,
             }
         }
     }
@@ -1202,6 +1204,9 @@ pub mod js_bundler {
                     // When using --compile, only `external` sourcemaps work, as we do not
                     // look at the source map comment. Override any other sourcemap type.
                     if this.source_map != options::SourceMapOption::None {
+                        // Only write a .map sidecar when the user asked for it.
+                        compile.sourcemap_sidecar =
+                            this.source_map == options::SourceMapOption::External;
                         this.source_map = options::SourceMapOption::External;
                     }
 

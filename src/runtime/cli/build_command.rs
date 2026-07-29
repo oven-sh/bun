@@ -246,6 +246,7 @@ impl BuildCommand {
 
         this_transpiler.options.bytecode = ctx.bundler_options.bytecode;
         let mut was_renamed_from_index = false;
+        let mut compile_sourcemap_sidecar = false;
 
         if ctx.bundler_options.compile {
             if ctx.bundler_options.transform_only {
@@ -310,6 +311,9 @@ impl BuildCommand {
                 // override it. (Standalone HTML builds keep the user's choice
                 // because browsers do read the comment.)
                 if this_transpiler.options.source_map != options::SourceMapOption::None {
+                    // Only write a .map sidecar when the user asked for it.
+                    compile_sourcemap_sidecar =
+                        this_transpiler.options.source_map == options::SourceMapOption::External;
                     this_transpiler.options.source_map = options::SourceMapOption::External;
                 }
 
@@ -580,7 +584,6 @@ impl BuildCommand {
         let opt_minify_syntax = this_transpiler.options.minify_syntax;
         let opt_public_path: Box<[u8]> = this_transpiler.options.public_path.clone();
         let opt_output_format = this_transpiler.options.output_format;
-        let opt_source_map = this_transpiler.options.source_map;
         let opt_transform_only = this_transpiler.options.transform_only;
         let env_ptr = this_transpiler.env;
 
@@ -931,7 +934,7 @@ impl BuildCommand {
 
                 // Write external sourcemap files next to the compiled executable.
                 // With --splitting, there can be multiple .map files (one per chunk).
-                if opt_source_map == options::SourceMapOption::External {
+                if compile_sourcemap_sidecar {
                     for f in output_files.iter() {
                         if f.output_kind == options::OutputKind::Sourcemap
                             && matches!(f.value, options::OutputFileValue::Buffer { .. })

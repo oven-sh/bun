@@ -58,6 +58,7 @@ const rustIdentifierPaths: Record<string, string> = {
   "dependency.rs": "install/dependency.rs",
   "escapeRegExp.rs": "string/escapeRegExp.rs",
   "event_loop.rs": "jsc/event_loop.rs",
+  "exe_format/pe.rs": "exe_format/pe.rs",
   "ffi.rs": "runtime/ffi/ffi.rs",
   "h2_frame_parser.rs": "runtime/api/bun/h2_frame_parser.rs",
   "hosted_git_info.rs": "install/hosted_git_info.rs",

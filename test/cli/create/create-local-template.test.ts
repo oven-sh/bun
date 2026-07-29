@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
-import { join } from "path";
 import { bunEnv, bunExe, tempDir } from "harness";
+import { join } from "path";
 
 // https://github.com/oven-sh/bun/issues/36341
 // `bun create <local-template> <dest>` used to `rm -rf` the destination

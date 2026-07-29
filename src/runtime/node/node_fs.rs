@@ -7322,18 +7322,41 @@ impl NodeFS {
             return Err(abort_err());
         }
 
-        let stat_ = Syscall::fstat(fd)?;
+        // A descriptor that reads fine but refuses to describe itself is not a
+        // fatal case. The HarmonyOS sandbox denies fstat/statx (and
+        // stat("/proc/self/fd/N")) on memfd descriptors whose read() returns
+        // the full contents — verified with a standalone C probe, which
+        // passes unchanged inside the OpenHarmony container. Failing here
+        // turned a readable fd into `EACCES: permission denied, fstat`.
+        //
+        // The size is only ever a hint: the loop below already has an
+        // unbounded tail phase for files whose stat size is wrong or stale
+        // (issue #1220), so an unknown size degrades to exactly that path.
+        // Only metadata-permission errors fall back; EBADF and friends still
+        // propagate, since a read would not be meaningful either.
+        let stat_ = match Syscall::fstat(fd) {
+            Ok(stat_) => Some(stat_),
+            Err(err) if err.errno == E::EACCES as _ || err.errno == E::EPERM as _ => None,
+            Err(err) => return Err(err),
+        };
 
         // For certain files, the size might be 0 but the file might still have contents.
         // https://github.com/oven-sh/bun/issues/1220
         let max_size: u64 = args.max_size.map(|v| v as u64).unwrap_or(BLOB_SIZE_MAX);
         let has_max_size = args.max_size.is_some();
 
-        let size: u64 = (stat_.st_size as i64)
-            .min(max_size as i64) // Only used in DOMFormData
-            .max(total as i64)
-            .max(0) as u64
-            + (string_type == ReadFileStringType::NullTerminated) as u64;
+        let size: u64 = match stat_ {
+            Some(stat_) => {
+                (stat_.st_size as i64)
+                    .min(max_size as i64) // Only used in DOMFormData
+                    .max(total as i64)
+                    .max(0) as u64
+                    + (string_type == ReadFileStringType::NullTerminated) as u64
+            }
+            // Unknown: claim only what has already been read, so the loop
+            // starts in its unbounded phase and grows as the reads land.
+            None => total as u64,
+        };
 
         if args.limit_size_for_javascript &&
             // assume that anything more than 40 bits is not trustworthy.

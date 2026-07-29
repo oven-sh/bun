@@ -696,3 +696,87 @@ describe("accepted socket event-loop hold matches Node (per-connection KeepAlive
     ).toEqual({ stdout: "fast", exitCode: 0, failureDetail: "" });
   });
 });
+
+describe("net.createServer options.highWaterMark", () => {
+  async function run(body: string) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", body],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, exitCode, failureDetail: exitCode === 0 ? "" : stderr };
+  }
+
+  it("normalizes a negative value to the default so accepted connections work", async () => {
+    // Node's Server ctor validates highWaterMark with validateNumber and maps
+    // negative values to the default. Without that, the accepted Socket's
+    // Duplex ctor throws before kAttach, the 'connection' listener never runs,
+    // and the client receives a bare FIN.
+    expect(
+      await run(`
+        const net = require("node:net");
+        const { getDefaultHighWaterMark } = require("node:stream");
+        process.on("uncaughtException", e => { process.stdout.write("UNCAUGHT:" + e.message); process.exit(1); });
+        const srv = net.createServer({ highWaterMark: -1 }, s => s.end("hello"));
+        if (srv.highWaterMark !== getDefaultHighWaterMark()) {
+          process.stdout.write("hwm=" + srv.highWaterMark); process.exit(1);
+        }
+        srv.listen(0, "127.0.0.1", () => {
+          const c = net.connect(srv.address().port, "127.0.0.1");
+          let got = "";
+          c.on("data", d => { got += d; });
+          c.on("close", () => { process.stdout.write("data=" + got); process.exit(0); });
+        });
+      `),
+    ).toEqual({ stdout: "data=hello", exitCode: 0, failureDetail: "" });
+  });
+
+  it("rejects a non-number value synchronously", () => {
+    // https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L1859
+    for (const value of ["4096", {}, true, () => {}]) {
+      expect(() => createServer({ highWaterMark: value as any })).toThrow(
+        expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }),
+      );
+    }
+  });
+
+  it("surfaces an accept-time Socket ctor throw as uncaughtException without corrupting the server", async () => {
+    // NaN passes validateNumber so it reaches the accepted Socket's Duplex
+    // ctor, which throws ERR_INVALID_ARG_VALUE before kAttach reassigns
+    // socket.data. The accept-error path used to assume socket.data was a
+    // Socket and called Server.destroy (undefined), then the follow-on close
+    // nulled server._handle. The original error must reach uncaughtException
+    // and the server must remain listening.
+    expect(
+      await run(`
+        const net = require("node:net");
+        const seen = [];
+        process.on("uncaughtException", e => seen.push(e.code || e.constructor.name));
+        const srv = net.createServer({ highWaterMark: NaN }, s => s.end("x"));
+        srv.listen(0, "127.0.0.1", () => {
+          const c = net.connect(srv.address().port, "127.0.0.1");
+          c.on("close", () => setImmediate(() => {
+            process.stdout.write(JSON.stringify({
+              uncaught: seen,
+              handle: srv._handle === null ? "null" : "present",
+              hadError: srv._hadError === true,
+              listening: srv.listening,
+            }));
+            process.exit(0);
+          }));
+        });
+      `),
+    ).toEqual({
+      stdout: JSON.stringify({
+        uncaught: ["ERR_INVALID_ARG_VALUE"],
+        handle: "present",
+        hadError: false,
+        listening: true,
+      }),
+      exitCode: 0,
+      failureDetail: "",
+    });
+  });
+});

@@ -1000,6 +1000,17 @@ const ServerHandlers: SocketHandler<NetSocket> = {
     const data = this.data;
     if (!data) return;
 
+    // `data` is still the listening Server when onconnection threw before
+    // kAttach reassigned it to a JS Socket. Calling .destroy below would
+    // throw and the follow-on close would null the Server's _handle. Detach
+    // so close is a no-op and surface the original exception the way Node's
+    // accept callback does (uncaughtException).
+    if (typeof data.destroy !== "function") {
+      this.data = null;
+      reportError(error);
+      return;
+    }
+
     if (data._hadError) return;
     data._hadError = true;
     const bunTLS = data[bunTlsSymbol];
@@ -3513,7 +3524,7 @@ function Server(options?, connectionListener?) {
     allowHalfOpen = false,
     keepAlive = false,
     keepAliveInitialDelay,
-    highWaterMark = getDefaultHighWaterMark(),
+    highWaterMark,
     pauseOnConnect = false,
     noDelay = false,
   } = options;
@@ -3523,6 +3534,14 @@ function Server(options?, connectionListener?) {
     if (keepAliveInitialDelay < 0) keepAliveInitialDelay = 0;
   } else {
     keepAliveInitialDelay = 0;
+  }
+
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L1859
+  if (highWaterMark !== undefined) {
+    validateNumber(highWaterMark, "options.highWaterMark");
+    if (highWaterMark < 0) highWaterMark = getDefaultHighWaterMark();
+  } else {
+    highWaterMark = getDefaultHighWaterMark();
   }
 
   this._connections = 0;

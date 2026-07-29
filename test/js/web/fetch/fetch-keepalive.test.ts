@@ -1,6 +1,79 @@
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, tls } from "harness";
 
+// The server's `Keep-Alive: timeout=N` hint advertises when it will close an
+// idle connection. The pool must stop reusing the socket before that window
+// (undici subtracts a 2 s safety margin, `keepAliveTimeoutThreshold`),
+// otherwise a request dispatched at the server's expiry lands on a socket the
+// server is closing and the caller sees a spurious ECONNRESET. Subprocess so
+// the pool state is isolated from the rest of the suite.
+test("fetch honours the server's Keep-Alive: timeout= hint", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+      import net from "node:net";
+      const mkServer = hint => {
+        let conns = 0;
+        const server = net.createServer(sock => {
+          conns++;
+          sock.on("error", () => {});
+          let buf = "";
+          sock.on("data", d => {
+            buf += d.toString("latin1");
+            let i;
+            while ((i = buf.indexOf("\\r\\n\\r\\n")) !== -1) {
+              buf = buf.slice(i + 4);
+              sock.write(
+                "HTTP/1.1 200 OK\\r\\nConnection: keep-alive\\r\\nKeep-Alive: " + hint +
+                "\\r\\nContent-Length: 2\\r\\n\\r\\nok",
+              );
+            }
+          });
+        });
+        return { server, conns: () => conns };
+      };
+
+      const run = async hint => {
+        const { server, conns } = mkServer(hint);
+        await new Promise(r => server.listen(0, "127.0.0.1", r));
+        const url = "http://127.0.0.1:" + server.address().port + "/";
+        for (let i = 0; i < 2; i++) await (await fetch(url)).text();
+        server.close();
+        return conns();
+      };
+
+      // timeout<=2: after the 2 s safety margin is subtracted there is no
+      // safe idle window, so each request must open a fresh connection
+      // (matches undici: don't pool when hint - threshold <= 0).
+      const short = await run("timeout=1");
+      const atMargin = await run("timeout=2");
+      // Apache's "max=100, timeout=1" ordering must parse the same.
+      const reordered = await run("max=100, timeout=1");
+      // timeout=60 → well above the margin; sequential requests reuse one
+      // connection (regression guard: the hint must not disable keep-alive).
+      const long = await run("timeout=60");
+
+      console.log(JSON.stringify({ short, atMargin, reordered, long }));
+      process.exit(0);
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const result = stdout.startsWith("{") ? JSON.parse(stdout.trim()) : { stdout, stderr };
+  expect({ result, exitCode }).toEqual({
+    // Without the fix the hint is ignored and every case reuses one connection
+    // (short/atMargin/reordered would be 1).
+    result: { short: 2, atMargin: 2, reordered: 2, long: 1 },
+    exitCode: 0,
+  });
+});
+
 test("keepalive", async () => {
   using server = Bun.serve({
     port: 0,

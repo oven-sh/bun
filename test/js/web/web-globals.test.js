@@ -410,10 +410,7 @@ describe.concurrent("prompt()/confirm() with unterminated stdin (EOF before newl
     ["", "No"],
     ["yes", "No"],
   ])("confirm() with stdin %j returns %s", async (stdin, expected) => {
-    const { stderr, exitCode } = await runPrompt(
-      stdin,
-      'console.error(confirm("Q?") ? "Yes" : "No")',
-    );
+    const { stderr, exitCode } = await runPrompt(stdin, 'console.error(confirm("Q?") ? "Yes" : "No")');
     expect(stderr).toBe(expected + "\n");
     expect(exitCode).toBe(0);
   });

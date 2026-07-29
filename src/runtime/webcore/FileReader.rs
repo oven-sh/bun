@@ -778,8 +778,15 @@ impl FileReader {
             unsafe { (*parent).increment_count() };
             self.pending.with_mut(|p| p.run());
             close_if_needed!();
-            // Re-entrant cancel closed the reader; tell the io caller to stop.
-            let ret = if self.done.get() { false } else { ret };
+            // Re-entrant cancel (sets `done`) or a nested on_pull that read to
+            // EOF (sets IS_DONE via on_reader_done but not `self.done`) closed
+            // the reader; tell the io caller to stop so it does not re-read the
+            // captured fd.
+            let ret = if self.done.get() || self.reader().is_done() {
+                false
+            } else {
+                ret
+            };
             // SAFETY: see `parent()`; the pin keeps the count >= 1, so this
             // never frees. `self` is not accessed after.
             let _ = unsafe { Source::decrement_count(parent) };
@@ -794,14 +801,19 @@ impl FileReader {
         }
 
         // No JS read is waiting; stop at the highwater mark. onPull restarts.
+        //
+        // `started` gates the backstop: a `from_pipe()` reader for non-lazy
+        // `Bun.spawn` is already reading when it arrives here, and throttling
+        // before any consumer has attached deadlocks a child that alternates
+        // stdout/stderr writes while the caller only awaits one of them.
         // SAFETY: see `reader_buffer` decl.
         let reader_buffer_len = unsafe { (*reader_buffer).len() };
-        let ret = self.flowing.get()
-            && !matches!(
-                self.read_inside_on_pull.get(),
-                ReadDuringJSOnPullResult::Temporary(_)
-            )
-            && self.buffered.get().len() + reader_buffer_len < self.highwater_mark;
+        let ret = !matches!(
+            self.read_inside_on_pull.get(),
+            ReadDuringJSOnPullResult::Temporary(_)
+        ) && (!self.started.get()
+            || (self.flowing.get()
+                && self.buffered.get().len() + reader_buffer_len < self.highwater_mark));
         close_if_needed!();
         ret
     }
@@ -949,12 +961,6 @@ impl FileReader {
         let global = self.parent_global();
         self.pending_value.with_mut(|p| p.set(&global, array));
         self.pending_view.set(buffer);
-
-        // `has_pending_read()` tracks the registration flag, not the kernel
-        // arm state: the highwater backstop leaves the one-shot poll disarmed.
-        if self.flowing.get() {
-            self.reader().watch();
-        }
 
         bun_core::scoped_log!(FileReader, "onPull({}) = pending", buffer_len);
 

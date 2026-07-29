@@ -458,7 +458,11 @@ impl PosixBufferedReader {
 
     // Exists for consistently with Windows.
     pub fn has_pending_read(&self) -> bool {
-        matches!(&self.handle, PollOrFd::Poll(poll) if poll.is_registered())
+        // `is_watching()` (registered && !needs-rearm) rather than
+        // `is_registered()`: a one-shot poll that has fired but not been
+        // re-armed will not deliver another callback, so callers that skip
+        // `read()` on "pending" must not be told one is in flight.
+        matches!(&self.handle, PollOrFd::Poll(poll) if poll.is_watching())
     }
 
     pub fn watch(&mut self) {
@@ -672,16 +676,21 @@ impl PosixBufferedReader {
 
                         if streaming {
                             // Stream this chunk and register for next cycle
-                            if !parent.vtable.on_read_chunk(
+                            let keep_going = parent.vtable.on_read_chunk(
                                 &stack_buffer[..bytes_read],
                                 if received_hup && bytes_read < stack_buffer.len() {
                                     ReadState::Eof
                                 } else {
                                     ReadState::Progress
                                 },
-                            ) && !received_hup
-                                && !over_budget
-                            {
+                            );
+                            // Re-entrant JS inside on_read_chunk can close the
+                            // reader (nested on_pull -> read -> EOF); the
+                            // captured `fd` is then stale regardless of HUP.
+                            if parent.is_done() {
+                                return;
+                            }
+                            if !keep_going && !received_hup && !over_budget {
                                 return;
                             }
                         } else {
@@ -739,6 +748,9 @@ impl PosixBufferedReader {
                                         ReadState::Progress
                                     },
                                 );
+                                if parent.is_done() {
+                                    return;
+                                }
                                 // Closing for `over_budget` outranks the
                                 // consumer asking us to stop: it must still
                                 // happen, or nothing ever caps the pipe.
@@ -900,15 +912,21 @@ impl PosixBufferedReader {
                                 // Once HUP is set the kernel
                                 // returns the remaining bytes then 0, so
                                 // draining to `bytes_read == 0` is bounded.
-                                if !parent.vtable.on_read_chunk(
+                                let keep_going = parent.vtable.on_read_chunk(
                                     &event_loop.pipe_read_buffer_mut()[..head_start],
                                     if received_hup {
                                         ReadState::Eof
                                     } else {
                                         ReadState::Progress
                                     },
-                                ) && !received_hup
-                                {
+                                );
+                                // Re-entrant close (nested on_pull -> read ->
+                                // EOF) invalidates the captured `fd`; stop
+                                // before the next recv regardless of HUP.
+                                if parent.is_done() {
+                                    return;
+                                }
+                                if !keep_going && !received_hup {
                                     return;
                                 }
                                 head_start = 0;
@@ -949,15 +967,18 @@ impl PosixBufferedReader {
                 }
 
                 if head_start > 0 {
-                    if !parent.vtable.on_read_chunk(
+                    let keep_going = parent.vtable.on_read_chunk(
                         &event_loop.pipe_read_buffer_mut()[..head_start],
                         if received_hup {
                             ReadState::Eof
                         } else {
                             ReadState::Progress
                         },
-                    ) && !received_hup
-                    {
+                    );
+                    if parent.is_done() {
+                        return;
+                    }
+                    if !keep_going && !received_hup {
                         return;
                     }
                 }
@@ -1048,7 +1069,7 @@ impl PosixBufferedReader {
                                 .vtable
                                 .on_read_chunk(&parent._buffer, ReadState::Progress);
                             parent._buffer.clear();
-                            if !keep_going {
+                            if parent.is_done() || !keep_going {
                                 return;
                             }
                             continue;
@@ -1912,7 +1933,14 @@ impl WindowsBufferedReader {
         // grows by `amount_result` every chunk and never resets, so a 1 GB
         // `cat` holds 1 GB resident instead of ~64 KB. Clear it here, after
         // the streaming consumer has finished with `slice`.
-        if should_continue && has_more != ReadState::Eof && self.vtable.is_streaming_enabled() {
+        // `should_continue` no longer gates the clear: FileReader may say
+        // stop at its highwater mark while uv keeps delivering, and leaving
+        // `_buffer` uncleared would double-buffer (here + FileReader.buffered).
+        // Parents that want the reader paused call `reader().pause()`
+        // themselves; stopping here could free a parent whose caller still
+        // holds `this` (FileResponseStream on abort).
+        let _ = should_continue;
+        if has_more != ReadState::Eof && self.vtable.is_streaming_enabled() {
             self._buffer.clear();
         }
 

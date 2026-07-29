@@ -1636,11 +1636,8 @@ unsafe fn resolve_entry_point_specifier<'s>(
         //   new Worker("./foo.cjs") -> new Worker("./foo.js")
         //   new Worker("./foo.cts") -> new Worker("./foo.js")
         //   new Worker("./foo.tsx") -> new Worker("./foo.js")
+        //   new Worker(new URL("./foo.ts", import.meta.url)) -> "/$bunfs/root/foo.ts"
         //
-        // `new Worker(new URL("./foo.ts", import.meta.url))` reaches here as
-        // an absolute `/$bunfs/root/...` path (Worker.cpp strips `file://`),
-        // so accept standalone-prefixed absolutes too; `join_abs_string_buf`
-        // treats an absolute part as replacing the base.
         if str.starts_with(b"./")
             || str.starts_with(b"../")
             || bun_options_types::standalone_path::is_bun_standalone_file_path(str)

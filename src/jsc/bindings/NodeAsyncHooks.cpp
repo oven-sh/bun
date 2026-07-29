@@ -17,9 +17,7 @@ using namespace JSC;
 JSC_DEFINE_HOST_FUNCTION(jsCleanupLater, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     ASSERT(callFrame->argumentCount() == 0);
-    auto* global = uncheckedDowncast<Zig::GlobalObject>(globalObject);
-    global->asyncHooksNeedsCleanup = true;
-    global->resetOnEachMicrotaskTick();
+    uncheckedDowncast<Zig::GlobalObject>(globalObject)->resetOnEachMicrotaskTick();
     return JSC::JSValue::encode(JSC::jsUndefined());
 }
 

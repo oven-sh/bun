@@ -404,7 +404,6 @@ static void cleanupAsyncHooksData(JSC::VM& vm)
 {
     auto* globalObject = defaultGlobalObject();
     globalObject->m_asyncContextData.get()->putInternalField(vm, 0, jsUndefined());
-    globalObject->asyncHooksNeedsCleanup = false;
     vm.setOnEachMicrotaskTick(&checkIfNextTickWasCalledDuringMicrotask);
     checkIfNextTickWasCalledDuringMicrotask(vm);
 }
@@ -446,8 +445,6 @@ JSC::Structure* GlobalObject::createStructure(JSC::VM& vm)
 
 void Zig::GlobalObject::resetOnEachMicrotaskTick()
 {
-    // Sole caller (jsCleanupLater) sets asyncHooksNeedsCleanup = true immediately before.
-    ASSERT(this->asyncHooksNeedsCleanup);
     this->vm().setOnEachMicrotaskTick(&cleanupAsyncHooksData);
 }
 

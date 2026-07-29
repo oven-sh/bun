@@ -193,7 +193,12 @@ impl<'a> PatchFile<'a> {
                     let mut written: usize = 0;
                     while written < file_contents.len() {
                         match sys::write(newfile_fd, &file_contents[written..]) {
-                            sys::Result::Ok(bytes) => written += bytes,
+                            sys::Result::Ok(bytes) => {
+                                if bytes == 0 {
+                                    break;
+                                }
+                                written += bytes;
+                            }
                             sys::Result::Err(e) => return Some(e.without_path()),
                         }
                     }

@@ -1034,8 +1034,10 @@ impl Tree {
             }
 
             let from_same_source_package = AS_DEFINED || input_dep_range.contains(dep_id);
-            if from_same_source_package && dep.behavior.is_dev() != dependency.behavior.is_dev() {
-                // same name in `dependencies` and `devDependencies`: merge
+            let different_group = dep.behavior.is_dev() != dependency.behavior.is_dev()
+                || dep.behavior.is_optional() != dependency.behavior.is_optional();
+            if from_same_source_package && different_group {
+                // same name listed in two dependency groups: merge
                 return Ok(HoistDependencyResult::Hoisted); // 1
             }
 

@@ -115,6 +115,14 @@ export const upgrade_test_helpers = $rust("upgrade_command.rs", "upgrade_js_bind
 };
 
 export const install_test_helpers = $rust("install_binding.rs", "bun_install_js_bindings.generate") as {
+  simulateHardlinkFallback: (
+    cacheVolume: number,
+    destinationVolume: number,
+  ) => {
+    copyfileDecisionCount: number;
+    cacheProbeCount: number;
+    destinationProbeCount: number;
+  };
   /**
    * Returns the lockfile at the given path as an object.
    */

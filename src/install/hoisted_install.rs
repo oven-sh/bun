@@ -407,6 +407,8 @@ pub(crate) fn install_hoisted_packages(
                             }),
                             pending_installs: Vec::new(),
                             install_count: 0,
+                            #[cfg(windows)]
+                            destination_volume: Default::default(),
                         });
                     }
                     break 'trees trees.into_boxed_slice();
@@ -417,6 +419,10 @@ pub(crate) fn install_hoisted_packages(
                 folder_path_buf: bun_paths::PathBuffer::uninit(),
                 current_tree_id: tree::INVALID_ID,
                 pending_lifecycle_scripts: Vec::new(),
+                #[cfg(windows)]
+                package_cache_volume: Default::default(),
+                #[cfg(windows)]
+                cross_volume_fallback_logged: Default::default(),
             };
         };
 

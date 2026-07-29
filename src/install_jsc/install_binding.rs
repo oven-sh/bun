@@ -5,7 +5,7 @@ pub mod bun_install_js_bindings {
 
     pub fn generate(global: &JSGlobalObject) -> JSValue {
         use bun_jsc::JSFunction;
-        let obj = JSValue::create_empty_object(global, 1);
+        let obj = JSValue::create_empty_object(global, 2);
         obj.put(
             global,
             b"parseLockfile",
@@ -19,7 +19,78 @@ pub mod bun_install_js_bindings {
                 Default::default(),
             ),
         );
+        obj.put(
+            global,
+            b"simulateHardlinkFallback",
+            JSFunction::create(
+                global,
+                bun_core::String::static_(b"simulateHardlinkFallback"),
+                __jsc_host_js_simulate_hardlink_fallback,
+                2,
+                Default::default(),
+            ),
+        );
         obj
+    }
+
+    #[bun_jsc::host_fn]
+    pub(crate) fn js_simulate_hardlink_fallback(
+        global: &JSGlobalObject,
+        frame: &bun_jsc::CallFrame,
+    ) -> bun_jsc::JsResult<JSValue> {
+        let args = frame.arguments();
+        if args.len() < 2 {
+            return Err(global.throw(format_args!(
+                "Expected two volume arguments; pass 0 for an unavailable volume",
+            )));
+        }
+        let volume = |value: JSValue| match value.to_u32() {
+            0 => None,
+            id => Some(u64::from(id)),
+        };
+        let cache_volume = volume(args[0]);
+        let destination_volume = volume(args[1]);
+        let cache = bun_install::package_installer::CachedVolumeId::default();
+        let destination = bun_install::package_installer::CachedVolumeId::default();
+        let cache_probe_count = core::cell::Cell::new(0u32);
+        let destination_probe_count = core::cell::Cell::new(0u32);
+        let decide = || {
+            let cache_volume = cache.get_or_init(|| {
+                cache_probe_count.set(cache_probe_count.get() + 1);
+                cache_volume
+            });
+            let destination_volume = destination.get_or_init(|| {
+                destination_probe_count.set(destination_probe_count.get() + 1);
+                destination_volume
+            });
+            bun_install::package_installer::hardlink_fallback_decision(
+                cache_volume,
+                destination_volume,
+            )
+        };
+        let decisions = [decide(), decide()];
+        let copyfile_decision_count = decisions
+            .iter()
+            .filter(|use_copyfile| **use_copyfile)
+            .count();
+
+        let result = JSValue::create_empty_object(global, 3);
+        result.put(
+            global,
+            b"copyfileDecisionCount",
+            JSValue::js_number(copyfile_decision_count as f64),
+        );
+        result.put(
+            global,
+            b"cacheProbeCount",
+            JSValue::js_number(cache_probe_count.get() as f64),
+        );
+        result.put(
+            global,
+            b"destinationProbeCount",
+            JSValue::js_number(destination_probe_count.get() as f64),
+        );
+        Ok(result)
     }
 
     // Lives at module scope (not in an `impl`) because the

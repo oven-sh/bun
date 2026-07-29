@@ -42,6 +42,41 @@ bun_output::declare_scope!(PackageInstaller, hidden);
 
 type Bitset = DynamicBitSet;
 
+/// Returns whether hardlink installation should fall back to copying because
+/// the cache and destination are on different volumes.
+#[doc(hidden)]
+#[inline]
+pub fn hardlink_fallback_decision(
+    cache_volume: Option<u64>,
+    destination_volume: Option<u64>,
+) -> bool {
+    matches!(
+        (cache_volume, destination_volume),
+        (Some(cache), Some(destination)) if cache != destination
+    )
+}
+
+#[doc(hidden)]
+#[derive(Default)]
+pub struct CachedVolumeId {
+    state: core::cell::OnceCell<Option<u64>>,
+}
+
+impl CachedVolumeId {
+    #[doc(hidden)]
+    pub fn get_or_init(&self, probe: impl FnOnce() -> Option<u64>) -> Option<u64> {
+        *self.state.get_or_init(probe)
+    }
+
+    #[cfg(windows)]
+    fn get(&self, fd: Fd) -> Option<u64> {
+        self.get_or_init(|| match Syscall::fstat(fd) {
+            Ok(stat) if stat.st_dev != 0 => Some(stat.st_dev),
+            _ => None,
+        })
+    }
+}
+
 pub struct PendingLifecycleScript {
     pub list: lockfile::package::scripts::List,
     pub tree_id: lockfile::tree::Id,
@@ -94,6 +129,11 @@ pub struct PackageInstaller<'a> {
     pub successfully_installed: Bitset,
     pub command_ctx: Command::Context<'a>,
     pub current_tree_id: lockfile::tree::Id,
+
+    #[cfg(windows)]
+    pub(crate) package_cache_volume: CachedVolumeId,
+    #[cfg(windows)]
+    pub(crate) cross_volume_fallback_logged: core::cell::Cell<bool>,
 
     // fields used for running lifecycle scripts when it's safe
     //
@@ -291,6 +331,9 @@ pub struct TreeContext {
 
     /// Number of installed dependencies. Could be successful or failure.
     pub install_count: usize,
+
+    #[cfg(windows)]
+    pub(crate) destination_volume: CachedVolumeId,
 }
 
 pub(crate) type TreeContextId = lockfile::tree::Id;
@@ -1146,6 +1189,53 @@ impl<'a> PackageInstaller<'a> {
         count
     }
 
+    fn get_install_method(
+        &self,
+        installer: &PackageInstall,
+        destination_dir: &Dir,
+        resolution_tag: resolution::Tag,
+    ) -> package_install::Method {
+        let method = installer.get_install_method();
+
+        #[cfg(not(windows))]
+        {
+            let _ = (destination_dir, resolution_tag);
+            return method;
+        }
+
+        #[cfg(windows)]
+        {
+            // Windows hardlink failures fall back per file, unlike Unix where the first
+            // EXDEV switches the process-wide backend. Cache the shared package-cache
+            // volume and each destination tree's volume to avoid that repeated failure.
+            let resolution_uses_package_cache = resolution_tag.can_enqueue_install_task();
+            if method != package_install::Method::Hardlink || !resolution_uses_package_cache {
+                return method;
+            }
+
+            let cache_volume = self.package_cache_volume.get(installer.cache_dir);
+            let destination_volume_cache =
+                &self.trees[self.current_tree_id as usize].destination_volume;
+            let destination_volume = destination_volume_cache.get(destination_dir.fd());
+
+            let use_copyfile = hardlink_fallback_decision(cache_volume, destination_volume);
+            if use_copyfile
+                && self.manager().options.log_level.is_verbose()
+                && !self.cross_volume_fallback_logged.replace(true)
+            {
+                bun_core::pretty_errorln!(
+                    "Package cache and destination are on different volumes; using copyfile instead of hardlink"
+                );
+            }
+
+            if use_copyfile {
+                package_install::Method::Copyfile
+            } else {
+                method
+            }
+        }
+    }
+
     pub(crate) fn install_package_with_name_and_resolution<
         // false when coming from download. if the package was downloaded
         // it was already determined to need an install
@@ -1732,10 +1822,15 @@ impl<'a> PackageInstaller<'a> {
                         if resolution.tag == resolution::Tag::Folder
                             && self.lockfile().is_folder_tree_id(self.current_tree_id)
                         {
+                            let method = self.get_install_method(
+                                &installer,
+                                &destination_dir,
+                                resolution.tag,
+                            );
                             break 'result installer.install(
                                 self.skip_delete,
                                 &destination_dir,
-                                installer.get_install_method(),
+                                method,
                                 resolution.tag,
                             );
                         }
@@ -1773,10 +1868,15 @@ impl<'a> PackageInstaller<'a> {
                         let result = if resolution.tag == resolution::Tag::Root {
                             installer.install_from_link(self.skip_delete, &destination_dir)
                         } else {
+                            let method = self.get_install_method(
+                                &installer,
+                                &destination_dir,
+                                resolution.tag,
+                            );
                             installer.install(
                                 self.skip_delete,
                                 &destination_dir,
-                                installer.get_install_method(),
+                                method,
                                 resolution.tag,
                             )
                         };
@@ -1796,10 +1896,12 @@ impl<'a> PackageInstaller<'a> {
                         break 'result result;
                     }
 
+                    let method =
+                        self.get_install_method(&installer, &destination_dir, resolution.tag);
                     break 'result installer.install(
                         self.skip_delete,
                         &destination_dir,
-                        installer.get_install_method(),
+                        method,
                         resolution.tag,
                     );
                 }

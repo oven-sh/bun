@@ -1,4 +1,5 @@
 import { file, listen, Socket, spawn, write } from "bun";
+import { install_test_helpers } from "bun:internal-for-testing";
 import { afterAll, beforeAll, describe, expect, it, jest, setDefaultTimeout, test } from "bun:test";
 import { readlinkSync, realpathSync } from "fs";
 import { access, cp, exists, mkdir, readlink, rm, stat, writeFile } from "fs/promises";
@@ -9169,6 +9170,29 @@ describe.concurrent("bun-install", () => {
       expect(out).not.toContain("1 package installed");
 
       expect(await exited).toBe(1);
+    });
+  });
+
+  test.each([
+    ["zero", []],
+    ["one", [1]],
+  ] as const)("hardlink fallback decision rejects %s-argument calls", (_, args) => {
+    expect(() => Reflect.apply(install_test_helpers.simulateHardlinkFallback, undefined, args)).toThrow(
+      "Expected two volume arguments; pass 0 for an unavailable volume",
+    );
+  });
+
+  test.each([
+    ["different volumes", [1, 2], true],
+    ["same volume", [1, 1], false],
+    ["unavailable cache volume", [0, 2], false],
+    ["unavailable destination volume", [1, 0], false],
+    ["both volumes unavailable", [0, 0], false],
+  ] as const)("hardlink fallback decision caches synthetic volumes: %s", (_, args, useCopyfile) => {
+    expect(install_test_helpers.simulateHardlinkFallback(...args)).toEqual({
+      copyfileDecisionCount: useCopyfile ? 2 : 0,
+      cacheProbeCount: 1,
+      destinationProbeCount: 1,
     });
   });
 });

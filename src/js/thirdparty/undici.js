@@ -262,7 +262,38 @@ class MockAgent {
 
 function mockErrors() {}
 
-class Dispatcher extends EventEmitter {}
+class Dispatcher extends EventEmitter {
+  /**
+   * Close the dispatcher and all its connections.
+   * @param {Function} [callback] Optional callback
+   * @returns {Promise|undefined} Promise if no callback, undefined otherwise
+   */
+  close(callback) {
+    if (typeof callback === 'function') {
+      queueMicrotask(() => callback(null, null));
+      return;
+    }
+    return Promise.resolve(null);
+  }
+
+  /**
+   * Destroy the dispatcher and all its connections.
+   * @param {Error} [err] Optional error
+   * @param {Function} [callback] Optional callback
+   * @returns {Promise|undefined} Promise if no callback, undefined otherwise
+   */
+  destroy(err, callback) {
+    if (typeof err === 'function') {
+      callback = err;
+      err = undefined;
+    }
+    if (typeof callback === 'function') {
+      queueMicrotask(() => callback(err, null));
+      return;
+    }
+    return Promise.resolve(null);
+  }
+}
 class Agent extends Dispatcher {}
 class Pool extends Dispatcher {
   request() {}

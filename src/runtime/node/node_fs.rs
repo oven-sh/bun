@@ -4755,7 +4755,11 @@ impl NodeFS {
         }
     }
 
-    pub fn append_file(&mut self, args: &args::AppendFile, flavor: Flavor) -> Maybe<ret::AppendFile> {
+    pub fn append_file(
+        &mut self,
+        args: &args::AppendFile,
+        flavor: Flavor,
+    ) -> Maybe<ret::AppendFile> {
         let mut data = args.data.slice();
         let has_signal = flavor == Flavor::Async && args.signal.is_some();
         let fd = match &args.file {

@@ -1469,8 +1469,6 @@ mod draft {
                     } else if install_strategy_str == b"linked" {
                         install.node_linker = Some(NodeLinker::Isolated);
                     }
-                    // "nested" / "shallow" are recognized npm values but bun
-                    // has no equivalent linker mode; leave node_linker unset.
                 }
             }
 

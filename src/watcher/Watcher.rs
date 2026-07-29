@@ -156,20 +156,24 @@ impl Watcher {
     /// receives watch callbacks on the watcher thread. This function does not
     /// actually start the watcher thread.
     ///
+    /// `subscription` is the set of [`Op`]s the context consumes. Ops outside it
+    /// are never requested from the OS, so they cost nothing to deliver, decode
+    /// or dispatch — and are never delivered, so a context must not rely on an
+    /// op it did not subscribe to. Pass [`Op::all`] to receive everything.
+    ///
     /// ```ignore
-    /// let watcher = Watcher::init(instance_of_t, fs)?;
+    /// let watcher = Watcher::init(instance_of_t, top_level_dir, Op::all())?;
     /// // on error: watcher.shutdown(false);
     /// watcher.start()?;
-    ///
     /// // To integrate a started watcher into module resolution:
     /// transpiler.resolver.watcher = watcher.get_resolve_watcher();
-    ///
     /// // To integrate a started watcher into bundle_v2:
     /// bundle_v2.bun_watcher = watcher;
     /// ```
     pub fn init<T: WatcherContext>(
         ctx: *mut T,
         top_level_dir: &'static [u8],
+        subscription: Op,
     ) -> Result<Box<Watcher>, crate::Error> {
         fn on_file_update_wrapped<T: WatcherContext>(
             ctx_opaque: *mut (),
@@ -194,7 +198,7 @@ impl Watcher {
             ctx: ctx.cast::<()>(),
             on_file_update: on_file_update_wrapped::<T>,
             on_error: on_error_wrapped::<T>,
-            platform: Platform::new(top_level_dir)?,
+            platform: Platform::new(top_level_dir, subscription)?,
             watch_events: vec![WatchEvent::default(); MAX_COUNT].into_boxed_slice(),
             changed_filepaths: [const { None }; MAX_COUNT],
             watchloop_handle: bun_core::AtomicCell::new(false),
@@ -471,7 +475,6 @@ impl Watcher {
         kind: WatchItemKind,
     ) {
         use libc::{EV_ADD, EV_CLEAR, EV_ENABLE, EVFILT_VNODE, kevent as KEvent};
-        use libc::{NOTE_ATTRIB, NOTE_DELETE, NOTE_RENAME, NOTE_WRITE};
 
         // https://developer.apple.com/library/archive/documentation/System/Conceptual/ManPages_iPhoneOS/man2/kqueue.2.html
         let mut event: KEvent = bun_core::ffi::zeroed();
@@ -480,15 +483,7 @@ impl Watcher {
         // we want to know about the vnode
         event.filter = EVFILT_VNODE as _;
 
-        // NOTE_ATTRIB is requested for files only. A directory vnode reports it
-        // solely for changes to the directory's own metadata — entry-level
-        // `chmod`/`touch` raise nothing on the parent — and no consumer acts on
-        // that, so requesting it there only adds wakeups.
-        let mut fflags = NOTE_WRITE | NOTE_RENAME | NOTE_DELETE;
-        if kind == WatchItemKind::File {
-            fflags |= NOTE_ATTRIB;
-        }
-        event.fflags = fflags as _;
+        event.fflags = crate::kevent_watcher::vnode_fflags(self.platform.subscription, kind) as _;
 
         // id
         event.ident = usize::try_from(fd.native()).expect("int cast");

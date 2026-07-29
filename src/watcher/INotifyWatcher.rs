@@ -55,6 +55,66 @@ pub struct INotifyWatcher {
     pub(crate) watch_count: AtomicU32,
     /// nanoseconds
     pub(crate) coalesce_interval: isize,
+    /// See [`Watcher::init`].
+    subscription: Op,
+}
+
+/// Translate a subscription into the inotify mask for a **file** watch.
+///
+/// `IN_EXCL_UNLINK` is unconditional: it is a modifier, not an event.
+fn file_mask(subscription: Op) -> u32 {
+    use bun_sys::linux::IN;
+    let mut mask = IN::EXCL_UNLINK;
+    if subscription.contains(Op::DELETE) {
+        mask |= IN::DELETE_SELF;
+    }
+    if subscription.contains(Op::RENAME) {
+        mask |= IN::MOVE_SELF;
+    }
+    if subscription.contains(Op::MOVE_TO) {
+        mask |= IN::MOVED_TO;
+    }
+    if subscription.contains(Op::WRITE) {
+        mask |= IN::MODIFY;
+    }
+    if subscription.contains(Op::METADATA) {
+        mask |= IN::ATTRIB;
+    }
+    mask
+}
+
+/// Translate a subscription into the inotify mask for a **directory** watch.
+///
+/// `IN_ONLYDIR` guards against the path being swapped for a file between
+/// resolution and registration.
+///
+/// `Op::METADATA` is deliberately not honoured here. IN_ATTRIB on a directory
+/// reports metadata changes of every entry inside it, named, and consumers treat
+/// a named directory event as "re-resolve this entry" — so a bare `touch` would
+/// reload the module. Metadata reaches consumers through the per-file watch
+/// instead.
+fn dir_mask(subscription: Op) -> u32 {
+    use bun_sys::linux::IN;
+    let mut mask = IN::EXCL_UNLINK | IN::ONLYDIR;
+    if subscription.contains(Op::DELETE) {
+        mask |= IN::DELETE | IN::DELETE_SELF;
+    }
+    if subscription.contains(Op::CREATE) {
+        mask |= IN::CREATE;
+    }
+    if subscription.contains(Op::RENAME) {
+        mask |= IN::MOVE_SELF;
+    }
+    if subscription.contains(Op::MOVE_TO) {
+        mask |= IN::MOVED_TO;
+    }
+    if subscription.contains(Op::MOVE_FROM) {
+        mask |= IN::MOVED_FROM;
+    }
+    if subscription.contains(Op::WRITE) {
+        mask |= IN::MODIFY;
+    }
+    mask
 }
 
 impl Default for INotifyWatcher {
@@ -67,6 +127,7 @@ impl Default for INotifyWatcher {
             read_ptr: None,
             watch_count: AtomicU32::new(0),
             coalesce_interval: 100_000,
+            subscription: Op::all(),
         }
     }
 }
@@ -132,19 +193,9 @@ impl Event {
 
 impl INotifyWatcher {
     pub(crate) fn watch_path(&mut self, pathname: &ZStr) -> bun_sys::Result<EventListIndex> {
-        use bun_sys::linux::IN;
         debug_assert!(self.loaded);
         let old_count = self.watch_count.fetch_add(1, Ordering::Release);
-        // IN_ATTRIB is a file-watch flag only. On a directory it reports metadata
-        // changes of every entry inside it, named, and consumers treat a named
-        // directory event as "re-resolve this entry" — so a bare `touch` would
-        // reload the module.
-        let watch_file_mask = IN::EXCL_UNLINK
-            | IN::MOVE_SELF
-            | IN::DELETE_SELF
-            | IN::MOVED_TO
-            | IN::MODIFY
-            | IN::ATTRIB;
+        let watch_file_mask = file_mask(self.subscription);
         // SAFETY: fd is a valid inotify fd (loaded == true), pathname is NUL-terminated.
         let rc = unsafe {
             bun_sys::linux::inotify_add_watch(self.fd.native(), pathname.as_ptr(), watch_file_mask)
@@ -165,18 +216,9 @@ impl INotifyWatcher {
     }
 
     pub(crate) fn watch_dir(&mut self, pathname: &ZStr) -> bun_sys::Result<EventListIndex> {
-        use bun_sys::linux::IN;
         debug_assert!(self.loaded);
         let old_count = self.watch_count.fetch_add(1, Ordering::Release);
-        let watch_dir_mask = IN::EXCL_UNLINK
-            | IN::DELETE
-            | IN::DELETE_SELF
-            | IN::CREATE
-            | IN::MOVE_SELF
-            | IN::ONLYDIR
-            | IN::MOVED_FROM
-            | IN::MOVED_TO
-            | IN::MODIFY;
+        let watch_dir_mask = dir_mask(self.subscription);
         // SAFETY: fd is a valid inotify fd (loaded == true), pathname is NUL-terminated.
         let rc = unsafe {
             bun_sys::linux::inotify_add_watch(self.fd.native(), pathname.as_ptr(), watch_dir_mask)
@@ -196,7 +238,7 @@ impl INotifyWatcher {
         result
     }
 
-    pub(crate) fn new(_root: &[u8]) -> crate::Result<Self> {
+    pub(crate) fn new(_root: &[u8], subscription: Op) -> crate::Result<Self> {
         use bun_sys::linux::IN;
 
         let raw = bun_sys::linux::inotify_init1(IN::CLOEXEC);
@@ -211,6 +253,7 @@ impl INotifyWatcher {
         Ok(Self {
             fd,
             loaded: true,
+            subscription,
             coalesce_interval: env_var::BUN_INOTIFY_COALESCE_INTERVAL
                 .get()
                 .and_then(|v| isize::try_from(v).ok())

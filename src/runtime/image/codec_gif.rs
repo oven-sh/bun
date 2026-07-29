@@ -370,6 +370,7 @@ fn decode_frame(
         rgba: out.into_vec(),
         width: w,
         height: h,
+        bit_depth: 8,
         icc_profile: None,
     })
 }

@@ -674,7 +674,6 @@ pub(crate) fn edit_catalogs_before_update(
 pub(crate) fn edit_catalogs_after_update(
     manager: &mut PackageManager,
     root_package_json: &Expr,
-    _options: EditOptions,
 ) -> Result<bool, bun_alloc::AllocError> {
     // see note in `edit_update_no_args` — always avoid the store
     let _guard = ExprDisabler::scope();

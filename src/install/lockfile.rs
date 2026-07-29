@@ -966,17 +966,20 @@ impl Lockfile {
             ) else {
                 continue;
             };
-            let group = old
-                .catalogs
-                .get_or_put_group(string_builder.string_bytes.as_slice(), catalog_name)?;
             let buf = string_builder.string_bytes.as_slice();
             let ctx = bun_semver::string::ArrayHashContext {
                 arg_buf: buf,
                 existing_buf: buf,
             };
-            let entry = group.get_or_put_adapted(&dep_name, &ctx)?;
-            if entry.found_existing {
-                entry.value_ptr.version = version;
+            let group = if info.catalog_name.is_empty() {
+                &mut old.catalogs.default
+            } else if let Some(i) = old.catalogs.groups.get_index_adapted(&catalog_name, &ctx) {
+                &mut old.catalogs.groups.values_mut()[i]
+            } else {
+                continue;
+            };
+            if let Some(i) = group.get_index_adapted(&dep_name, &ctx) {
+                group.values_mut()[i].version = version;
             }
         }
         string_builder.clamp();

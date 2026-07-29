@@ -924,7 +924,13 @@ impl ServerConfig {
                         if let Some(function) = value.get_own(global, &method_name)? {
                             found = true;
 
-                            if function.is_undefined() || function == JSValue::FALSE {
+                            if function.is_undefined() {
+                                continue;
+                            }
+                            if function == JSValue::FALSE {
+                                if method == Method::HEAD {
+                                    has_head_route = true;
+                                }
                                 continue;
                             }
                             if !route_name_validated {

@@ -236,6 +236,31 @@ describe("implicit HEAD for per-method route objects", () => {
     expect(get.status).toBe(200);
   });
 
+  test("HEAD: false suppresses the GET-derived HEAD route", async () => {
+    await using server = Bun.serve({
+      port: 0,
+      routes: {
+        "/x": {
+          GET: () => new Response("get-body"),
+          // @ts-expect-error - false is an explicit per-method disable
+          HEAD: false,
+        },
+      },
+      fetch: req => new Response(null, { status: 299, headers: { "x-from": "fetch", "x-method": req.method } }),
+    });
+
+    const head = await fetch(new URL("/x", server.url), { method: "HEAD" });
+    expect({ status: head.status, from: head.headers.get("x-from"), method: head.headers.get("x-method") }).toEqual({
+      status: 299,
+      from: "fetch",
+      method: "HEAD",
+    });
+
+    const get = await fetch(new URL("/x", server.url));
+    expect(await get.text()).toBe("get-body");
+    expect(get.status).toBe(200);
+  });
+
   test("a static Response for another method does not capture HEAD away from GET", async () => {
     await using server = Bun.serve({
       port: 0,

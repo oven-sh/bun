@@ -856,10 +856,6 @@ impl<'a> Parser<'a> {
 
         parse_tracer.end();
 
-        // Top-level await parses under the Module goal regardless of output
-        // format. Reject it here for formats that cannot represent it so the
-        // diagnostic points at the format mismatch instead of the generic
-        // `"await" can only be used inside an "async" function` lexer error.
         if p.top_level_await_keyword.len > 0 && p.options.bundle {
             let format_name: Option<&'static str> = match p.options.output_format {
                 options::Format::Cjs => Some("cjs"),

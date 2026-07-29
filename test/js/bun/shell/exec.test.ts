@@ -48,7 +48,7 @@ describe("bun exec", () => {
       // ["cat",    1, "", ""],
       ["touch",  1, "touch: illegal option -- help\n", ""],
       ["mkdir",  1, "mkdir: illegal option -- help\n", ""],
-      // ["cd",     1, "cd: no such file or directory: --help\n", ""],
+      ["cd",     1, "cd: no such file or directory: --help\n", ""],
       ["echo",   0, "", "--help\n"],
       ["pwd",    1, "pwd: too many arguments\n", ""],
       // ["which",  1, "--help not found\n", ""],

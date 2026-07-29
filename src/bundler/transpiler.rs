@@ -1425,14 +1425,19 @@ impl<'a> Transpiler<'a> {
             // `read_file_with_allocator` strips/transcodes BOMs; the raw-binary
             // loaders need the file bytes verbatim.
             if matches!(loader, options::Loader::Base64 | options::Loader::Dataurl) {
+                let publish_fd = this_parse.file_fd_ptr.is_some();
                 let read = match file_descriptor {
                     Some(fd) => bun_sys::lseek(fd, 0, libc::SEEK_SET)
                         .and_then(|_| bun_sys::File::borrow(&fd).read_to_end())
-                        .map(|b| (fd, b)),
+                        .map(|b| (Some(fd), b)),
                     None => bun_sys::File::openat(FD::cwd(), path.text, bun_sys::O::RDONLY, 0)
                         .and_then(|f| {
                             let body = f.read_to_end()?;
-                            Ok((f.into_raw(), body))
+                            // Only disarm Drop when the caller owns the fd
+                            // (runtime watcher via `file_fd_ptr`); otherwise
+                            // let `f` close itself here.
+                            let fd = publish_fd.then(|| f.into_raw());
+                            Ok((fd, body))
                         }),
                 };
                 let (fd, body) = match read {
@@ -1450,8 +1455,8 @@ impl<'a> Transpiler<'a> {
                         return None;
                     }
                 };
-                input_fd = Some(fd);
-                if let Some(file_fd_ptr) = this_parse.file_fd_ptr.take() {
+                input_fd = fd;
+                if let (Some(fd), Some(file_fd_ptr)) = (fd, this_parse.file_fd_ptr.take()) {
                     *file_fd_ptr = fd;
                 }
                 source_backing = resolver::cache::Contents::from(body);

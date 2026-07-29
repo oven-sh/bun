@@ -172,7 +172,8 @@ static inline void MemMemPickAnchors(const Char* needle, size_t needle_len, size
     auto bucket = [](Char c) -> uint8_t { return static_cast<uint8_t>(c); };
 
     uint32_t histogram[256] = {};
-    for (size_t i = 0; i < needle_len; i++) histogram[bucket(needle[i])]++;
+    for (size_t i = 0; i < needle_len; i++)
+        histogram[bucket(needle[i])]++;
 
     // First anchor: rarest byte, ties to the earliest offset.
     size_t p0 = 0;

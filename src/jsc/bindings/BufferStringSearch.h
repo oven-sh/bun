@@ -115,7 +115,8 @@ static size_t TwoWay(Vector<Char> haystack, Vector<Char> needle, size_t start_in
     while (pos + m <= n) {
         // Right half: [max(ms+1, mem), m).
         size_t k = std::max(ms + 1, mem);
-        while (k < m && needle[k] == haystack[pos + k]) k++;
+        while (k < m && needle[k] == haystack[pos + k])
+            k++;
         if (k < m) {
             pos += k - ms;
             mem = 0;
@@ -123,7 +124,8 @@ static size_t TwoWay(Vector<Char> haystack, Vector<Char> needle, size_t start_in
         }
         // Left half: (mem, ms].
         k = ms + 1;
-        while (k > mem && needle[k - 1] == haystack[pos + k - 1]) k--;
+        while (k > mem && needle[k - 1] == haystack[pos + k - 1])
+            k--;
         if (k <= mem) return pos;
         pos += p;
         mem = mem0;

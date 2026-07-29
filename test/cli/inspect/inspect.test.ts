@@ -329,7 +329,8 @@ describe("websocket", () => {
     const { promise, resolve, reject } = Promise.withResolvers<void>();
     const socket = new WebSocket(url);
     socket.addEventListener("open", () => resolve());
-    socket.addEventListener("error", ev => reject(new Error("WebSocket error", { cause: ev })));
+    socket.addEventListener("error", cause => reject(new Error("WebSocket error", { cause })));
+    socket.addEventListener("close", cause => reject(new Error("WebSocket closed", { cause })));
     await promise;
     socket.close();
     proc.kill();

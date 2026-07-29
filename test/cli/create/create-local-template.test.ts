@@ -27,8 +27,7 @@ test.concurrent("bun create from local template preserves unrelated files in des
   expect(await Bun.file(join(String(dir), "proj", "important.txt")).text()).toBe("IMPORTANT DATA");
   expect(await Bun.file(join(String(dir), "proj", "subdir", "data.txt")).text()).toBe("more data");
   expect(await Bun.file(join(String(dir), "proj", "tpl.txt")).text()).toBe("template file");
-  expect(stderr).not.toContain("error");
-  expect(exitCode).toBe(0);
+  expect({ exitCode, stderr }).toEqual({ exitCode: 0, stderr: expect.not.stringContaining("error") });
 });
 
 test.concurrent("bun create from local template refuses to overwrite conflicting files without --force", async () => {
@@ -46,10 +45,12 @@ test.concurrent("bun create from local template refuses to overwrite conflicting
   });
   const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited, proc.stdout.text()]);
 
-  expect(stderr).toContain("contains files that could conflict");
   expect(stderr).toContain("index.ts");
   expect(await Bun.file(join(String(dir), "proj", "index.ts")).text()).toBe("my version");
-  expect(exitCode).toBe(1);
+  expect({ exitCode, stderr }).toEqual({
+    exitCode: 1,
+    stderr: expect.stringContaining("contains files that could conflict"),
+  });
 });
 
 test.concurrent("bun create from local template overwrites conflicting files with --force", async () => {
@@ -71,8 +72,7 @@ test.concurrent("bun create from local template overwrites conflicting files wit
   expect(await Bun.file(join(String(dir), "proj", "index.ts")).text()).toBe("template version");
   // --force overwrites conflicts but must not delete unrelated files
   expect(await Bun.file(join(String(dir), "proj", "keep.txt")).text()).toBe("keep me");
-  expect(stderr).not.toContain("error");
-  expect(exitCode).toBe(0);
+  expect({ exitCode, stderr }).toEqual({ exitCode: 0, stderr: expect.not.stringContaining("error") });
 });
 
 test.concurrent("bun create from local template into existing named directory preserves its files", async () => {
@@ -92,8 +92,7 @@ test.concurrent("bun create from local template into existing named directory pr
 
   expect(await Bun.file(join(String(dir), "dest", "keep.txt")).text()).toBe("keep me");
   expect(await Bun.file(join(String(dir), "dest", "tpl.txt")).text()).toBe("template file");
-  expect(stderr).not.toContain("error");
-  expect(exitCode).toBe(0);
+  expect({ exitCode, stderr }).toEqual({ exitCode: 0, stderr: expect.not.stringContaining("error") });
 });
 
 test.concurrent("bun create from local template ignores README.md and .gitignore conflicts", async () => {
@@ -114,7 +113,9 @@ test.concurrent("bun create from local template ignores README.md and .gitignore
   });
   const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited, proc.stdout.text()]);
 
-  expect(stderr).not.toContain("contains files that could conflict");
   expect(await Bun.file(join(String(dir), "proj", "tpl.txt")).text()).toBe("template file");
-  expect(exitCode).toBe(0);
+  expect({ exitCode, stderr }).toEqual({
+    exitCode: 0,
+    stderr: expect.not.stringContaining("contains files that could conflict"),
+  });
 });

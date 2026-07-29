@@ -627,10 +627,11 @@ impl ProxyTunnel {
                 if e == InitError::OutOfMemory {
                     bun_core::out_of_memory();
                 }
-
-                // invalid TLS Options
+                let fail = crate::error::take_boringssl_error()
+                    .map(|p| crate::Error::ClientTLSSetup(p.get()))
+                    .unwrap_or(crate::Error::ConnectionRefused);
                 proxy_tunnel_ref.detach_and_deref();
-                this.close_and_fail::<IS_SSL>(crate::Error::ConnectionRefused, socket);
+                this.close_and_fail::<IS_SSL>(fail, socket);
                 return;
             }
         }

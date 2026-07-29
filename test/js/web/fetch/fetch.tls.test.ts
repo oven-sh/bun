@@ -1,5 +1,8 @@
 import { describe, expect, it } from "bun:test";
 import { bunEnv, bunExe, isASAN, tmpdirSync } from "harness";
+import { once } from "node:events";
+import { readFileSync } from "node:fs";
+import net from "node:net";
 import { join } from "node:path";
 import tls from "node:tls";
 
@@ -202,23 +205,29 @@ describe.concurrent("fetch-tls", () => {
   // read the freed AsyncHTTP clone and called through a null callback pointer.
   // The fixture drives that exact traffic shape and exits non-zero on any
   // unexpected outcome; every failure must surface as a catchable error.
-  it("rejects a trusted cert with a mismatched hostname cleanly under abort/timeout/keepalive churn", async () => {
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), join(import.meta.dir, "fetch.tls.cert-mismatch-churn.fixture.ts")],
-      env: { ...bunEnv, BUN_CONFIG_HTTP_IDLE_TIMEOUT: "1" },
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    // Check stderr for sanitizer reports first (and unconditionally): a
-    // recovered ASAN report can leave exit code 0, and on an abort this
-    // surfaces the actual report instead of a bare exit-code mismatch.
-    // Don't assert emptiness: debug builds emit benign startup noise.
-    expect(stderr).not.toMatch(/AddressSanitizer|ERROR: (Leak|Thread)Sanitizer/);
-    // Fixture reports unexpected outcomes on stdout.
-    expect(stdout).toStartWith("OK ");
-    expect(exitCode).toBe(0);
-  });
+  it(
+    "rejects a trusted cert with a mismatched hostname cleanly under abort/timeout/keepalive churn",
+    async () => {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), join(import.meta.dir, "fetch.tls.cert-mismatch-churn.fixture.ts")],
+        env: { ...bunEnv, BUN_CONFIG_HTTP_IDLE_TIMEOUT: "1" },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      // Check stderr for sanitizer reports first (and unconditionally): a
+      // recovered ASAN report can leave exit code 0, and on an abort this
+      // surfaces the actual report instead of a bare exit-code mismatch.
+      // Don't assert emptiness: debug builds emit benign startup noise.
+      expect(stderr).not.toMatch(/AddressSanitizer|ERROR: (Leak|Thread)Sanitizer/);
+      // Fixture reports unexpected outcomes on stdout.
+      expect(stdout).toStartWith("OK ");
+      expect(exitCode).toBe(0);
+    },
+    // The fixture is a debug+ASAN subprocess driving hundreds of TLS
+    // handshakes; on main it already ran at ~4.2-5.0s against the 5s default.
+    isASAN ? 20000 : 10000,
+  );
 
   // When checkServerIdentity is provided, the HTTP thread sends an intermediate
   // progress update carrying the server certificate before response headers
@@ -696,6 +705,79 @@ describe.concurrent("fetch-tls", () => {
       const stderr = await proc.stderr.text();
       expect(stderr).toContain("DEPTH_ZERO_SELF_SIGNED_CERT");
       expect(stderr).toContain("ignoring extra certs");
+    }
+  });
+});
+
+// When client cert/key material fails to load into the SSL_CTX, fetch used to
+// surface a generic FailedToOpenSocket "Was there a typo in the url or port?"
+// even though the same misconfiguration via node:https reports the real
+// BoringSSL error (ERR_OSSL_X509_KEY_VALUES_MISMATCH, ERR_OSSL_BAD_DECRYPT,
+// ERR_OSSL_PEM_NO_START_LINE).
+describe.concurrent("fetch tls: client cert/key load errors surface the OpenSSL code", () => {
+  const nodeTlsFixture = (f: string) =>
+    readFileSync(join(import.meta.dir, "..", "..", "node", "tls", "fixtures", f), "utf8");
+  const rsaCert = nodeTlsFixture("rsa_cert.crt");
+  const rsaEncryptedKey = nodeTlsFixture("rsa_private_encrypted.pem");
+
+  const cases: [string, { cert: string; key: string; passphrase?: string }, RegExp][] = [
+    ["cert/key mismatch", { cert: validTls.cert, key: expiredTls.key }, /^ERR_OSSL_X509_KEY_VALUES_MISMATCH$/],
+    ["encrypted key, wrong passphrase", { cert: rsaCert, key: rsaEncryptedKey, passphrase: "wrong" }, /^ERR_OSSL_/],
+    ["encrypted key, no passphrase", { cert: rsaCert, key: rsaEncryptedKey }, /^ERR_OSSL_/],
+    ["non-PEM cert string", { cert: "not a pem", key: validTls.key }, /^ERR_OSSL_PEM_NO_START_LINE$/],
+    ["non-PEM key string", { cert: validTls.cert, key: "not a pem" }, /^ERR_OSSL_PEM_NO_START_LINE$/],
+  ];
+
+  it.each(cases)("%s", async (_name, clientTls, codePattern) => {
+    using server = Bun.serve({
+      port: 0,
+      tls: validTls,
+      fetch: () => new Response("ok"),
+    });
+
+    let err: any;
+    try {
+      await fetch(server.url, { tls: { ca: validTls.cert, ...clientTls } });
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeDefined();
+    expect(err.code).toMatch(codePattern);
+    expect(err.code).not.toBe("FailedToOpenSocket");
+    expect(err.message).not.toContain("typo in the url");
+    // The failing URL is attached like every other fetch rejection.
+    expect(err.path).toBe(server.url.href);
+  });
+
+  // The http-proxy -> https-target CONNECT-tunnel path builds the client
+  // SSL_CTX at ProxyTunnel::start, after the proxy replies 200; that site must
+  // surface the same ERR_OSSL_* code instead of a generic ConnectionRefused.
+  it.each(cases)("via http CONNECT proxy: %s", async (_name, clientTls, codePattern) => {
+    const proxy = net.createServer(client => {
+      client.on("error", () => {});
+      client.once("data", () => {
+        client.write("HTTP/1.1 200 Connection established\r\n\r\n");
+      });
+    });
+    proxy.listen(0, "127.0.0.1");
+    await once(proxy, "listening");
+    const proxyPort = (proxy.address() as net.AddressInfo).port;
+    try {
+      let err: any;
+      try {
+        await fetch(`https://127.0.0.1:1/`, {
+          proxy: `http://127.0.0.1:${proxyPort}`,
+          tls: { rejectUnauthorized: false, ...clientTls },
+        });
+      } catch (e) {
+        err = e;
+      }
+      expect(err).toBeDefined();
+      expect(err.code).toMatch(codePattern);
+      expect(err.code).not.toBe("ConnectionRefused");
+      expect(err.code).not.toBe("FailedToOpenSocket");
+    } finally {
+      proxy.close();
     }
   });
 });

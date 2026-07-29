@@ -494,7 +494,9 @@ impl<const SSL: bool> HTTPContext<SSL> {
                     uws::create_bun_socket_error_t::none
                     | uws::create_bun_socket_error_t::invalid_ciphers
                     | uws::create_bun_socket_error_t::invalid_ecdh_curve => {
-                        InitError::FailedToOpenSocket
+                        crate::error::take_boringssl_error()
+                            .map(|p| InitError::ClientTLSSetup(p.get()))
+                            .unwrap_or(InitError::FailedToOpenSocket)
                     }
                 });
             }

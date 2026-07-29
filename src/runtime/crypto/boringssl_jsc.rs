@@ -52,23 +52,39 @@ fn static_cstr<'a>(ptr: *const core::ffi::c_char) -> Option<&'a [u8]> {
     if bytes.is_empty() { None } else { Some(bytes) }
 }
 
-pub fn err_to_js(global: &JSGlobalObject, err_code: u32) -> JSValue {
-    // The message is the raw ERR_error_string output
-    // ("error:0b000074:X.509 certificate routines:OPENSSL_internal:..."),
-    // exactly what Node built against BoringSSL produces - no prefix.
-    let mut outbuf = [0u8; 128 + 1];
-    let message_buf = &mut outbuf[..];
+fn build_err_ossl_code(err_code: u32, reason: &[u8]) -> Vec<u8> {
+    let lib = lib_short_name((err_code >> 24) & 0xff);
+    let prefix = if lib == "SSL_" { "" } else { "OSSL_" };
+    let mut code = Vec::with_capacity(4 + prefix.len() + lib.len() + reason.len());
+    code.extend_from_slice(b"ERR_");
+    code.extend_from_slice(prefix.as_bytes());
+    code.extend_from_slice(lib.as_bytes());
+    code.extend_from_slice(reason);
+    code
+}
 
-    // SAFETY: message_buf is a valid writable buffer of message_buf.len() bytes.
+/// JSC-free `(ERR_OSSL_* code, message)` for a packed BoringSSL error; thread-agnostic lookup.
+pub fn err_code_and_message(err_code: u32) -> (Vec<u8>, Vec<u8>) {
+    let mut outbuf = [0u8; 128 + 1];
+    // SAFETY: outbuf is a valid writable buffer of outbuf.len() bytes.
     unsafe {
         boring::ERR_error_string_n(
             err_code,
-            message_buf.as_mut_ptr().cast::<core::ffi::c_char>(),
-            message_buf.len(),
+            outbuf.as_mut_ptr().cast::<core::ffi::c_char>(),
+            outbuf.len(),
         );
     }
+    let message = bun_core::slice_to_nul(&outbuf[..]).to_vec();
 
-    let error_message: &[u8] = bun_core::slice_to_nul(&outbuf[..]);
+    let code = static_cstr(boring::ERR_reason_error_string(err_code))
+        .map(|reason| build_err_ossl_code(err_code, reason))
+        .unwrap_or_default();
+
+    (code, message)
+}
+
+pub fn err_to_js(global: &JSGlobalObject, err_code: u32) -> JSValue {
+    let (code, error_message) = err_code_and_message(err_code);
     if error_message.is_empty() {
         return global
             .err(
@@ -78,12 +94,8 @@ pub fn err_to_js(global: &JSGlobalObject, err_code: u32) -> JSValue {
             .to_js();
     }
 
-    // A plain Error carrying Node's library/function/reason/code decomposition
-    // of the OpenSSL error, the way ThrowCryptoError builds it: the code is
-    // ERR_OSSL_<LIB>_<REASON> (or ERR_SSL_<REASON> for the SSL library).
-    // The message must own its bytes - `outbuf` is a stack buffer and the
-    // error instance outlives this frame.
-    let err = BunString::clone_utf8(error_message).to_error_instance(global);
+    // Node's ThrowCryptoError shape: .message/.library/.function/.reason/.code.
+    let err = BunString::clone_utf8(&error_message).to_error_instance(global);
 
     if let Some(library) = static_cstr(boring::ERR_lib_error_string(err_code)) {
         err.put(global, b"library", ZigString::init(library).to_js(global));
@@ -93,15 +105,8 @@ pub fn err_to_js(global: &JSGlobalObject, err_code: u32) -> JSValue {
     }
     if let Some(reason) = static_cstr(boring::ERR_reason_error_string(err_code)) {
         err.put(global, b"reason", ZigString::init(reason).to_js(global));
-
-        let lib = lib_short_name((err_code >> 24) & 0xff);
-        // Don't generate codes like "ERR_OSSL_SSL_".
-        let prefix = if lib == "SSL_" { "" } else { "OSSL_" };
-        let mut code = Vec::with_capacity(4 + prefix.len() + lib.len() + reason.len());
-        code.extend_from_slice(b"ERR_");
-        code.extend_from_slice(prefix.as_bytes());
-        code.extend_from_slice(lib.as_bytes());
-        code.extend_from_slice(reason);
+    }
+    if !code.is_empty() {
         err.put(global, b"code", ZigString::init(&code).to_js(global));
     }
 

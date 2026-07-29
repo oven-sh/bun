@@ -93,6 +93,9 @@ pub enum Error {
     HTTP3ContentLengthMismatch,
     #[error("FailedToOpenSocket")]
     FailedToOpenSocket,
+    /// Packed BoringSSL error from [`take_boringssl_error`]; surfaces as `ERR_OSSL_*`.
+    #[error("ClientTLSSetup")]
+    ClientTLSSetup(u32),
     #[error("InvalidCRL")]
     InvalidCRL,
     #[error("UnsupportedProxyProtocol")]
@@ -256,6 +259,14 @@ pub enum CertError {
     UNKNOWN_CERTIFICATE_VERIFICATION_ERROR,
 }
 
+/// Pop+drain the thread-local BoringSSL error queue right after a failed `create_ssl_context`.
+pub fn take_boringssl_error() -> Option<core::num::NonZeroU32> {
+    let packed = bun_boringssl_sys::ERR_get_error();
+    let packed = core::num::NonZeroU32::new(packed)?;
+    bun_boringssl_sys::ERR_clear_error();
+    Some(packed)
+}
+
 impl Error {
     #[allow(clippy::trivially_copy_pass_by_ref)]
     pub fn name(&self) -> &'static str {
@@ -306,6 +317,7 @@ impl Error {
             Self::HTTP3StreamReset => "HTTP3StreamReset",
             Self::HTTP3ContentLengthMismatch => "HTTP3ContentLengthMismatch",
             Self::FailedToOpenSocket => "FailedToOpenSocket",
+            Self::ClientTLSSetup(_) => "ClientTLSSetup",
             Self::InvalidCRL => "InvalidCRL",
             Self::UnsupportedProxyProtocol => "UnsupportedProxyProtocol",
             Self::Cert(e) => <&'static str>::from(e),

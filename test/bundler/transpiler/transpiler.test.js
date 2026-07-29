@@ -1927,6 +1927,188 @@ export default class {
     });
   });
 
+  describe("exports.eliminate/replace do not depend on deadCodeElimination", () => {
+    // Every source starts with these two statements. An eliminated export used to steal
+    // an unrelated part while hoisting, so asserting the full output also pins the order.
+    const lead = 'console.log("a");\nconsole.log("b");\n';
+
+    // [label, source after `lead`, eliminate: ["f"], replace: { f: 42 }, replace: { f: ["__N_SSG", true] }]
+    const forms = [
+      [
+        "function declaration",
+        "export function f() {}\nexport const keep = 1;",
+        lead + "export const keep = 1;\n",
+        lead + "export var f = 42;\nexport const keep = 1;\n",
+        lead + "export var __N_SSG = true;\nexport const keep = 1;\n",
+      ],
+      [
+        // A class is hoistable, so its replacement lands above `lead`.
+        "class declaration",
+        "export class f {}\nexport const keep = 1;",
+        lead + "export const keep = 1;\n",
+        "export var f = 42;\n" + lead + "export const keep = 1;\n",
+        "export var __N_SSG = true;\n" + lead + "export const keep = 1;\n",
+      ],
+      [
+        "const declaration",
+        "export const f = () => {};\nexport const keep = 1;",
+        lead + "export const keep = 1;\n",
+        lead + "export const f = 42;\nexport const keep = 1;\n",
+        lead + "export const __N_SSG = true;\nexport const keep = 1;\n",
+      ],
+      [
+        "export clause",
+        "function f() {}\nexport { f };\nexport const keep = 1;",
+        lead + "function f() {}\nexport const keep = 1;\n",
+        lead + "function f() {}\nexport var f = 42;\nexport const keep = 1;\n",
+        lead + "function f() {}\nexport var __N_SSG = true;\nexport const keep = 1;\n",
+      ],
+    ];
+
+    // `export default <value>` — each value form takes a different branch of s_export_default.
+    const defaultValues = [["class X {}"], ["function X() {}"], ["123"]];
+
+    // A declaration with no initializer is a separate branch of visit_decls.
+    // [kind, replace: { f: 42 }, replace: { f: ["__N_SSG", true] }]
+    const uninitialized = [
+      ["let", "export let f = 42;\n", "export let __N_SSG = true;\n"],
+      ["var", "export var f = 42;\n", "export var __N_SSG = true;\n"],
+    ];
+
+    // Eliminating any of these aborted the process: the hoistable two popped an empty parts
+    // list, the uninitialized one unwrapped a missing value. Spawn so an abort is reported
+    // as a failed child rather than taking the test runner down with it.
+    const aborting = [
+      ["export class f {}", { eliminate: ["f"] }],
+      ["export default class X {}", { eliminate: ["default"] }],
+      ["export let f;", { eliminate: ["f"] }],
+    ];
+
+    for (const deadCodeElimination of [true, false]) {
+      describe(`deadCodeElimination: ${deadCodeElimination}`, () => {
+        it.each(forms)("eliminates an exported %s", (_label, source, eliminated) => {
+          const transpiler = new Bun.Transpiler({ loader: "ts", deadCodeElimination, exports: { eliminate: ["f"] } });
+          expect(transpiler.transformSync(lead + source)).toBe(eliminated);
+          expect(transpiler.scan(lead + source).exports).toEqual(["keep"]);
+        });
+
+        it.each(forms)("replaces an exported %s", (_label, source, _elim, replaced) => {
+          const transpiler = new Bun.Transpiler({ loader: "ts", deadCodeElimination, exports: { replace: { f: 42 } } });
+          expect(transpiler.transformSync(lead + source)).toBe(replaced);
+          expect(transpiler.scan(lead + source).exports).toEqual(["f", "keep"]);
+        });
+
+        it.each(forms)("injects a renamed export for an exported %s", (_label, source, _elim, _repl, injected) => {
+          const transpiler = new Bun.Transpiler({
+            loader: "ts",
+            deadCodeElimination,
+            exports: { replace: { f: ["__N_SSG", true] } },
+          });
+          expect(transpiler.transformSync(lead + source)).toBe(injected);
+          expect(transpiler.scan(lead + source).exports).toEqual(["__N_SSG", "keep"]);
+        });
+
+        it.each(defaultValues)("eliminates `export default %s`", value => {
+          const transpiler = new Bun.Transpiler({
+            loader: "ts",
+            deadCodeElimination,
+            exports: { eliminate: ["default"] },
+          });
+          const source = `${lead}export default ${value};\nexport const keep = 1;`;
+          expect(transpiler.transformSync(source)).toBe(lead + "export const keep = 1;\n");
+          expect(transpiler.scan(source).exports).toEqual(["keep"]);
+        });
+
+        it.each(defaultValues)("replaces `export default %s`", value => {
+          const transpiler = new Bun.Transpiler({
+            loader: "ts",
+            deadCodeElimination,
+            exports: { replace: { default: 42 } },
+          });
+          const source = `${lead}export default ${value};\nexport const keep = 1;`;
+          expect(transpiler.transformSync(source)).toBe("export default 42;\n" + lead + "export const keep = 1;\n");
+          expect(transpiler.scan(source).exports).toEqual(["default", "keep"]);
+        });
+
+        it.each(defaultValues)("injects a renamed export for `export default %s`", value => {
+          const transpiler = new Bun.Transpiler({
+            loader: "ts",
+            deadCodeElimination,
+            exports: { replace: { default: ["__N_SSG", true] } },
+          });
+          const source = `${lead}export default ${value};\nexport const keep = 1;`;
+          expect(transpiler.transformSync(source)).toBe(
+            "export var __N_SSG = true;\n" + lead + "export const keep = 1;\n",
+          );
+          expect(transpiler.scan(source).exports).toEqual(["__N_SSG", "keep"]);
+        });
+
+        it.each(uninitialized)("replaces an uninitialized exported %s declaration", (kind, replaced) => {
+          const transpiler = new Bun.Transpiler({ loader: "ts", deadCodeElimination, exports: { replace: { f: 42 } } });
+          const source = `${lead}export ${kind} f;\nexport const keep = 1;`;
+          expect(transpiler.transformSync(source)).toBe(lead + replaced + "export const keep = 1;\n");
+          expect(transpiler.scan(source).exports).toEqual(["f", "keep"]);
+        });
+
+        it.each(uninitialized)(
+          "injects a renamed export for an uninitialized exported %s declaration",
+          (kind, _repl, injected) => {
+            const transpiler = new Bun.Transpiler({
+              loader: "ts",
+              deadCodeElimination,
+              exports: { replace: { f: ["__N_SSG", true] } },
+            });
+            const source = `${lead}export ${kind} f;\nexport const keep = 1;`;
+            expect(transpiler.transformSync(source)).toBe(lead + injected + "export const keep = 1;\n");
+            expect(transpiler.scan(source).exports).toEqual(["__N_SSG", "keep"]);
+          },
+        );
+
+        it.concurrent.each(aborting)("eliminates a lone `%s`", async (source, exports) => {
+          await using proc = Bun.spawn({
+            cmd: [
+              bunExe(),
+              "-e",
+              `const t = new Bun.Transpiler(${JSON.stringify({ loader: "ts", deadCodeElimination, exports })});
+               process.stdout.write(JSON.stringify(t.transformSync(${JSON.stringify(source)})));`,
+            ],
+            env: bunEnv,
+            stdout: "pipe",
+            stderr: "pipe",
+          });
+          const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+          // stderr is asserted so that an abort surfaces its panic trace on failure.
+          expect({ stdout, stderr, exitCode }).toEqual({ stdout: '""', stderr: "", exitCode: 0 });
+        });
+
+        it("does not touch a namespace member that happens to share the name", () => {
+          const transpiler = new Bun.Transpiler({ loader: "ts", deadCodeElimination, exports: { eliminate: ["f"] } });
+
+          expect(
+            transpiler.transformSync(
+              'import g from "g";\nexport namespace N {\n  export function f() {\n    g();\n  }\n}',
+            ),
+          ).toBe(
+            'import g from "g";\nexport var N;\n((N) => {\n  function f() {\n    g();\n  }\n  N.f = f;\n})(N ||= {});\n',
+          );
+
+          expect(
+            transpiler.transformSync(
+              'import g from "g";\nexport namespace N {\n  export class f {\n    m() {\n      g();\n    }\n  }\n}',
+            ),
+          ).toBe(
+            'import g from "g";\nexport var N;\n((N) => {\n\n  class f {\n    m() {\n      g();\n    }\n  }\n  N.f = f;\n})(N ||= {});\n',
+          );
+
+          // s_local took the same shortcut: the member and its initializer both vanished.
+          expect(transpiler.transformSync('import g from "g";\nexport namespace N {\n  export const f = g();\n}')).toBe(
+            'import g from "g";\nexport var N;\n((N) => {\n  N.f = g();\n})(N ||= {});\n',
+          );
+        });
+      });
+    }
+  });
+
   const bunTranspiler = new Bun.Transpiler({
     loader: "tsx",
     define: {

@@ -126,6 +126,10 @@ pub struct WebWorker {
     /// Set by the parent (`notifyNeedTermination`) or by the worker itself
     /// (`exit`). The worker loop polls this between ticks.
     requested_terminate: AtomicBool,
+    /// `requested_terminate` is also set by worker-side paths (uncaught
+    /// exception, process.exit). `shutdown()` uses this to know the request
+    /// came from the parent's `terminate()` so it can report exit code 1.
+    terminate_from_parent: AtomicBool,
 
     /// The worker's `jsc.VirtualMachine`, or null before `startVM()` / after
     /// `shutdown()` nulls it. Lives inside `arena`. `vm_lock` must be held for
@@ -179,10 +183,6 @@ pub struct WebWorker {
     /// observed concurrently by `terminate_all_and_wait` / parent-thread FFI;
     /// producing `&mut WebWorker` while another thread holds `&WebWorker` is UB).
     exit_called: AtomicBool,
-    /// `requested_terminate` is also set by worker-side paths (uncaught
-    /// exception, process.exit). `shutdown()` uses this to know the request
-    /// came from the parent's `terminate()` so it can report exit code 1.
-    terminate_from_parent: AtomicBool,
 }
 
 #[repr(u8)]
@@ -569,6 +569,7 @@ impl WebWorker {
             live_next: Cell::new(core::ptr::null_mut()),
             live_prev: Cell::new(core::ptr::null_mut()),
             requested_terminate: AtomicBool::new(false),
+            terminate_from_parent: AtomicBool::new(false),
             vm: Cell::new(core::ptr::null_mut()),
             vm_lock: Mutex::new(),
             parent_poll_ref: JsCell::new(KeepAlive::init()),
@@ -576,7 +577,6 @@ impl WebWorker {
             arena: JsCell::new(None),
             worker_env_loader: Cell::new(core::ptr::null_mut()),
             exit_called: AtomicBool::new(false),
-            terminate_from_parent: AtomicBool::new(false),
         }));
         // `worker` is non-null (just heap-allocated). Wrap once for the safe
         // shared reborrows below; the raw `worker` is still used for

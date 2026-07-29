@@ -14,8 +14,10 @@ async function run(script: string) {
   return { stdout: normalizeBunSnapshot(stdout), stderr: normalizeBunSnapshot(stderr), exitCode };
 }
 
-test.concurrent("ws on/addListener/prepend*/addEventListener for upgrade/unexpected-response emit no warning", async () => {
-  const { stdout, stderr, exitCode } = await run(/* js */ `
+test.concurrent(
+  "ws on/addListener/prepend*/addEventListener for upgrade/unexpected-response emit no warning",
+  async () => {
+    const { stdout, stderr, exitCode } = await run(/* js */ `
     const { WebSocket } = require("ws");
     const ws = new WebSocket("ws://127.0.0.1:1");
     const h = () => {};
@@ -31,10 +33,11 @@ test.concurrent("ws on/addListener/prepend*/addEventListener for upgrade/unexpec
     ws.terminate();
     console.log("ok");
   `);
-  expect(stderr).toBe("");
-  expect(stdout).toBe("ok");
-  expect(exitCode).toBe(0);
-});
+    expect(stderr).toBe("");
+    expect(stdout).toBe("ok");
+    expect(exitCode).toBe(0);
+  },
+);
 
 test.concurrent("ws emits 'unexpected-response' with status, headers and body on non-101", async () => {
   const { stdout, exitCode } = await run(/* js */ `

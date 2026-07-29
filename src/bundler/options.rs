@@ -2102,11 +2102,6 @@ pub(crate) fn path_template_print<W: bun_io::Write>(
         let j = j as usize;
         PathTemplate::write_replacing_slashes_on_windows(writer, &remain[0..j])?;
         remain = &remain[j + 1..];
-        if remain.is_empty() {
-            // TODO: throw error
-            writer.write_all(b"[")?;
-            break;
-        }
 
         let mut count: isize = 1;
         let mut end_len: usize = remain.len();
@@ -2119,16 +2114,26 @@ pub(crate) fn path_template_print<W: bun_io::Write>(
 
             if count == 0 {
                 end_len = idx;
-                debug_assert!(end_len <= remain.len());
+                debug_assert!(end_len < remain.len());
                 break;
             }
+        }
+
+        if count != 0 {
+            // No matching `]` exists: the `[` and everything after it is literal.
+            // `remain` is written after the loop.
+            writer.write_all(b"[")?;
+            break;
         }
 
         let placeholder = &remain[0..end_len];
 
         let Some(field) = PLACEHOLDER_MAP.get(placeholder).copied() else {
+            // Unknown placeholder: keep `[placeholder]` verbatim in the output.
+            writer.write_all(b"[")?;
             PathTemplate::write_replacing_slashes_on_windows(writer, placeholder)?;
-            remain = &remain[end_len..];
+            writer.write_all(b"]")?;
+            remain = &remain[end_len + 1..];
             continue;
         };
 
@@ -2208,6 +2213,33 @@ fn write_sanitized_parent_dirs_rewrites_every_dotdot_segment() {
     // POSIX: `\` is an ordinary filename byte, not a separator.
     #[cfg(not(windows))]
     assert_eq!(run(br"weird\dir/x.js"), br"weird\dir/x.js");
+}
+
+#[cfg(test)]
+#[test]
+fn path_template_print_tolerates_malformed_brackets() {
+    fn run(template: &[u8]) -> Vec<u8> {
+        let mut out = Vec::new();
+        path_template_print(&mut out, template, b"D", b"N", b"E", Some(0), b"T", false).unwrap();
+        out
+    }
+    // A known placeholder name with no closing `]` must not slice past the end
+    // (used to panic with "range start index 5 out of range for slice of length 4").
+    assert_eq!(run(b"[name"), b"[name");
+    assert_eq!(run(b"[dir"), b"[dir");
+    assert_eq!(run(b"[hash"), b"[hash");
+    assert_eq!(run(b"[ext"), b"[ext");
+    assert_eq!(run(b"[target"), b"[target");
+    // A closed placeholder before the unterminated one is still substituted.
+    assert_eq!(run(b"[name]-[ext"), b"N-[ext");
+    // Unknown placeholders and stray brackets pass through untouched.
+    assert_eq!(run(b"[foo]-[name].[ext]"), b"[foo]-N.E");
+    assert_eq!(run(b"a[b"), b"a[b");
+    assert_eq!(run(b"foo["), b"foo[");
+    assert_eq!(run(b"["), b"[");
+    assert_eq!(run(b""), b"");
+    // No change to well-formed templates.
+    assert_eq!(run(b"[dir]/[name].[ext]"), b"D/N.E");
 }
 
 impl PathTemplate {

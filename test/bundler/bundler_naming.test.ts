@@ -324,4 +324,65 @@ describe("bundler", () => {
     },
     run: { stdout: "1" },
   });
+  // https://github.com/oven-sh/bun/issues/7810
+  // An unterminated known placeholder ("[name" with no closing "]") used to
+  // panic the whole process with "range start index N out of range" because the
+  // known-placeholder branch advanced one byte past the end of the template.
+  // Run via the CLI backend so a regression crashes the spawned `bun build`,
+  // not the test runner.
+  for (const unterminated of ["[name", "[dir", "[ext", "[hash", "[target"]) {
+    itBundled(`naming/UnterminatedPlaceholderPanic/${unterminated.slice(1)}`, {
+      backend: "cli",
+      files: {
+        "/src/entry.js": `console.log(1);`,
+      },
+      root: "/src",
+      entryNaming: unterminated,
+      entryPointsRaw: ["./src/entry.js"],
+      onAfterBundle(api) {
+        api.assertFileExists(`/out/${unterminated}`);
+      },
+    });
+  }
+  itBundled("naming/UnterminatedAfterValidPlaceholder", {
+    backend: "cli",
+    files: {
+      "/src/entry.js": `console.log(1);`,
+    },
+    root: "/src",
+    entryNaming: "[name]-[hash.js",
+    entryPointsRaw: ["./src/entry.js"],
+    onAfterBundle(api) {
+      api.assertFileExists("/out/entry-[hash.js");
+    },
+    run: { file: "/out/entry-[hash.js", stdout: "1" },
+  });
+  // A `[` with no matching `]`, and an unknown `[placeholder]`, are kept as
+  // literal bytes in the output path rather than being silently dropped.
+  itBundled("naming/UnknownPlaceholderIsLiteral", {
+    backend: "cli",
+    files: {
+      "/src/entry.js": `console.log(1);`,
+    },
+    root: "/src",
+    entryNaming: "[nonexistent]-[name].[ext]",
+    entryPointsRaw: ["./src/entry.js"],
+    onAfterBundle(api) {
+      api.assertFileExists("/out/[nonexistent]-entry.js");
+    },
+    run: { file: "/out/[nonexistent]-entry.js", stdout: "1" },
+  });
+  itBundled("naming/StrayOpenBracketIsLiteral", {
+    backend: "cli",
+    files: {
+      "/src/entry.js": `console.log(1);`,
+    },
+    root: "/src",
+    entryNaming: "a[b.js",
+    entryPointsRaw: ["./src/entry.js"],
+    onAfterBundle(api) {
+      api.assertFileExists("/out/a[b.js");
+    },
+    run: { file: "/out/a[b.js", stdout: "1" },
+  });
 });

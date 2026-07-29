@@ -172,4 +172,44 @@ describe("tsconfig compilerOptions.jsx", () => {
       });
     }
   });
+
+  // A plugin onResolve that returns a disk path bypasses the resolver, so the
+  // bundler has to look up the enclosing tsconfig itself. Both the disk-resolved
+  // entry and the plugin-resolved file should land on the same runtime.
+  test.each([
+    ["react-jsx", "shim/jsx-runtime"],
+    ["react-jsxdev", "shim/jsx-dev-runtime"],
+  ] as const)("Bun.build onResolve -> disk path honors tsconfig %s", async (tsjsx, want) => {
+    using dir = tempDir("jsx-onresolve", {
+      ...shimFiles,
+      "v.jsx": `export const v = <span />;\n`,
+      "m.jsx": `import "virt"; export const a = <div />;\n`,
+      "tsconfig.json": JSON.stringify({ compilerOptions: { jsx: tsjsx, jsxImportSource: "shim" } }),
+    });
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const r = await Bun.build({
+           entrypoints: ["m.jsx"],
+           external: ["shim*"],
+           plugins: [{ name: "p", setup(b) {
+             b.onResolve({ filter: /^virt$/ }, () => ({ path: process.cwd() + "/v.jsx", namespace: "file" }));
+           }}],
+         });
+         if (!r.success) { console.error(r.logs.join("\\n")); process.exit(1); }
+         process.stdout.write(await r.outputs[0].text());`,
+      ],
+      env: { ...bunEnv, NODE_ENV: undefined, BUN_ENV: undefined },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    const unwanted = want === "shim/jsx-runtime" ? "shim/jsx-dev-runtime" : "shim/jsx-runtime";
+    expect(stdout).toContain(`"${want}"`);
+    expect(stdout).not.toContain(`"${unwanted}"`);
+    expect(exitCode).toBe(0);
+  });
 });

@@ -110,24 +110,22 @@ describe("$.braces", () => {
   });
 });
 
-// A shell word combining brace + glob (`src/*.{ts,tsx}`, `{src,lib}/*.ts`) was
-// brace-expanded but the resulting `*` patterns were never globbed (the
-// brace-expand state always transitioned to Done instead of re-entering glob).
-describe("brace + glob composition", () => {
-  test("src/*.{ts,tsx} globs after brace expansion", async () => {
+// Brace expansion precedes pathname expansion, and each resulting word is
+// globbed on its own. `{d1,d2}/*` used to emit the literal `d1/*` and `d2/*`
+// words *in addition to* their matches, because the brace-expand state pushed
+// every variant to argv and then globbed the un-expanded pattern.
+describe.concurrent("brace + glob composition", () => {
+  // The glob walker joins matched paths with the native separator on Windows,
+  // and readdir order is not sorted, so normalize before asserting.
+  const words = (out: string) => out.trim().replaceAll("\\", "/").split(" ").sort();
+
+  test("src/*.{ts,tsx} globs each variant and drops the patterns", async () => {
     using dir = tempDir("shell-brace-glob", {
       "src/app.ts": "",
       "src/util.tsx": "",
     });
-    // The glob walker joins matched paths with the native separator on
-    // Windows, so normalize before asserting.
-    const out = (await $`echo src/*.{ts,tsx}`.cwd(String(dir)).text()).trim().replaceAll("\\", "/");
-    const words = out.split(" ");
-    // Zig composes both the literal brace variants and the glob matches.
-    expect(words).toContain("src/app.ts");
-    expect(words).toContain("src/util.tsx");
-    expect(words).toContain("src/*.ts");
-    expect(words).toContain("src/*.tsx");
+    const out = await $`echo src/*.{ts,tsx}`.cwd(String(dir)).text();
+    expect(words(out)).toEqual(["src/app.ts", "src/util.tsx"]);
   });
 
   test("{src,lib}/*.ts composes a brace prefix with a glob", async () => {
@@ -135,10 +133,30 @@ describe("brace + glob composition", () => {
       "src/a.ts": "",
       "lib/b.ts": "",
     });
-    const out = (await $`echo {src,lib}/*.ts`.cwd(String(dir)).text()).trim().replaceAll("\\", "/");
-    const words = out.split(" ");
-    expect(words).toContain("src/a.ts");
-    expect(words).toContain("lib/b.ts");
+    const out = await $`echo {src,lib}/*.ts`.cwd(String(dir)).text();
+    expect(words(out)).toEqual(["lib/b.ts", "src/a.ts"]);
+  });
+
+  test("a variant without a glob metacharacter stays literal", async () => {
+    using dir = tempDir("shell-brace-glob4", {
+      "aa": "",
+      "ab": "",
+    });
+    // `nope` carries no `*`, so it is a plain word and never reaches the glob
+    // walker (which would fail it as a no-match).
+    const out = await $`echo {a*,nope}`.cwd(String(dir)).text();
+    expect(words(out)).toEqual(["aa", "ab", "nope"]);
+  });
+
+  test("a variant with no matches reports the expanded word", async () => {
+    using dir = tempDir("shell-brace-glob5", {
+      "d1/f1": "",
+    });
+    const { stdout, stderr, exitCode } = await $`echo {d1,nope}/*`.cwd(String(dir)).quiet().nothrow();
+    // The matches `d1/*` already produced never reach argv: the word fails.
+    expect(stdout.toString()).toBe("");
+    expect(stderr.toString()).toBe("bun: no matches found: nope/*\n");
+    expect(exitCode).toBe(1);
   });
 
   test("an interpolated comma inside a brace group is one literal branch", async () => {
@@ -147,15 +165,33 @@ describe("brace + glob composition", () => {
       "x.,foo": "",
       "x.]foo": "",
     });
-    // `echo` rather than `ls`: the literal brace variants (`*.ts`, `*.,foo`)
-    // are also emitted as argv words and do not exist as files.
-    const out = (await $`echo *.{ts,${",foo"}}`.cwd(String(dir)).text()).trim();
-    const words = out.split(" ");
-    expect(words).toContain("x.ts");
-    // The interpolated `,foo` is matched as a single literal branch...
-    expect(words).toContain("x.,foo");
-    // ...and does not split into a spurious `]foo` branch.
-    expect(words).not.toContain("x.]foo");
+    const out = await $`echo *.{ts,${",foo"}}`.cwd(String(dir)).text();
+    // The interpolated `,foo` is matched as a single literal branch, and does
+    // not split into a spurious `]foo` branch.
+    expect(words(out)).toEqual(["x.,foo", "x.ts"]);
+  });
+
+  test("an interpolated * inside a brace variant is data, not a pattern", async () => {
+    using dir = tempDir("shell-brace-glob6", {
+      "a1.txt": "",
+      "b1.txt": "",
+    });
+    // The template holds no `*`, so no variant is a glob: both stay literal
+    // even though `a1.txt`/`b1.txt` would match.
+    const out = await $`echo {a,b}${"*"}.txt`.cwd(String(dir)).text();
+    expect(words(out)).toEqual(["a*.txt", "b*.txt"]);
+  });
+
+  test("a literal * globs a variant while an interpolated metacharacter stays data", async () => {
+    using dir = tempDir("shell-brace-glob7", {
+      "a[c]1.txt": "",
+      "ac1.txt": "",
+      "b[c]2.txt": "",
+    });
+    // Each variant is neutralized on its own, so the recovered metacharacter
+    // offsets must still point at the template `*` and not at the `[c]`.
+    const out = await $`echo {a,b}${"[c]"}*`.cwd(String(dir)).text();
+    expect(words(out)).toEqual(["a[c]1.txt", "b[c]2.txt"]);
   });
 });
 

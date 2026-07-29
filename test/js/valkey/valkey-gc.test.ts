@@ -181,6 +181,54 @@ test.concurrent("RedisClient survives subscribe() + close() against a server tha
   expect(exitCode).toBe(0);
 });
 
+// Drives on_data -> parse fail -> fail_with_js_value -> close() -> synchronous
+// on_close -> on_valkey_close, with the connect() rejection drained while the
+// socket-handler frames are still on the stack. Path coverage for
+// take_socket_ref(); the fuzzer interleaving that over-releases here is not
+// reproduced deterministically.
+test.concurrent("RedisClient survives a malformed RESP reply that closes the socket from on_data", async () => {
+  const src = `
+    const CRLF = "\\r\\n";
+    const server = Bun.listen({
+      hostname: "127.0.0.1",
+      port: 0,
+      socket: {
+        open() {},
+        data(s) { s.write("!garbage" + CRLF); },
+        close() {},
+      },
+    });
+    for (let i = 0; i < 50; i++) {
+      const c = new Bun.RedisClient("redis://127.0.0.1:" + server.port, {
+        autoReconnect: false,
+        connectionTimeout: 5000,
+      });
+      c.onclose = () => {};
+      try { await c.connect(); } catch {}
+      if (typeof c.connected !== "boolean") throw new Error("connected getter broken");
+      try { c.close(); } catch {}
+      Bun.gc(true);
+      await new Promise(r => setImmediate(r));
+    }
+    server.stop(true);
+    console.log("OK");
+    process.exit(0);
+  `;
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", src],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "inherit",
+  });
+
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+
+  expect(stdout.trim()).toBe("OK");
+  expect(proc.signalCode).toBeNull();
+  expect(exitCode).toBe(0);
+});
+
 // Fuzzer found a flaky SIGILL when a RedisClient is constructed, a command
 // throws during argument validation (before any connection attempt), and the
 // client is then garbage collected. `updatePollRef` could be reached after

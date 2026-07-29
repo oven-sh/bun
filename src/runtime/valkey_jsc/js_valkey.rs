@@ -358,6 +358,9 @@ pub struct JSValkeyClient {
 
     pub timer: RefCountedTimer,
     pub reconnect_timer: RefCountedTimer,
+    /// Socket keep-alive refs outstanding from [`connect`](Self::connect);
+    /// consumed by [`take_socket_ref`](Self::take_socket_ref).
+    socket_refs: Cell<u32>,
     pub ref_count: bun_ptr::RefCount<JSValkeyClient>,
 }
 
@@ -499,6 +502,20 @@ impl JSValkeyClient {
     pub fn ref_scope(&self) -> ScopedRef<Self> {
         // SAFETY: `self` is live; the guard's own ref keeps it alive past Drop.
         unsafe { ScopedRef::new(self.as_ctx_ptr()) }
+    }
+    /// Adopt one socket keep-alive ref from [`connect`](Self::connect), or
+    /// `None` when the re-entrant close/fail path has already taken it.
+    #[inline]
+    fn take_socket_ref(&self) -> Option<ScopedRef<Self>> {
+        match self.socket_refs.get().checked_sub(1) {
+            None => None,
+            Some(n) => {
+                self.socket_refs.set(n);
+                // SAFETY: `connect()` took this `+1` via `socket_ref.forget()`
+                // and recorded it in `socket_refs`; this scope consumes it.
+                Some(unsafe { ScopedRef::adopt(self.as_ctx_ptr()) })
+            }
+        }
     }
     #[inline]
     pub fn new(init: JSValkeyClient) -> *mut JSValkeyClient {
@@ -817,6 +834,7 @@ impl JSValkeyClient {
             _secure: Cell::new(None),
             timer: RefCountedTimer::new(Timer::Tag::ValkeyConnectionTimeout),
             reconnect_timer: RefCountedTimer::new(Timer::Tag::ValkeyConnectionReconnect),
+            socket_refs: Cell::new(0),
         }))
     }
 
@@ -937,6 +955,7 @@ impl JSValkeyClient {
             _secure: Cell::new(None),
             timer: RefCountedTimer::new(Timer::Tag::ValkeyConnectionTimeout),
             reconnect_timer: RefCountedTimer::new(Timer::Tag::ValkeyConnectionReconnect),
+            socket_refs: Cell::new(0),
         }))
     }
 
@@ -1350,11 +1369,7 @@ impl JSValkeyClient {
 
     // Callback for when Valkey client needs to reconnect
     pub fn on_valkey_reconnect(&self) {
-        // SAFETY: adopts connect()'s socket keep-alive ref for the just-closed
-        // socket. Reached only from `ValkeyClient::on_close()`'s reconnect
-        // branch, which never calls `on_valkey_close()`, so this scope is the
-        // sole releaser. The caller holds its own scoped ref, so count > 0.
-        let _socket_ref = unsafe { ScopedRef::adopt(self.as_ctx_ptr()) };
+        let _socket_ref = self.take_socket_ref();
 
         self.reconnect_timer
             .arm(self, self.client.get().get_reconnect_delay());
@@ -1364,9 +1379,7 @@ impl JSValkeyClient {
     pub fn on_valkey_close(&self) -> JsTerminatedResult<()> {
         let global_object = self.global_object;
 
-        // SAFETY: adopts connect()'s socket keep-alive ref; the caller holds
-        // its own scoped ref so count stays > 0 until this drops.
-        let _socket_ref = unsafe { ScopedRef::adopt(self.as_ctx_ptr()) };
+        let _socket_ref = self.take_socket_ref();
         let _defer = scopeguard::guard(BackRef::new(self), |p| p.update_poll_ref());
 
         let Some(this_jsvalue) = self.this_value.get().try_get() else {
@@ -1552,6 +1565,7 @@ impl JSValkeyClient {
             // `on_valkey_close()` consumes the socket ref; hand it over so it
             // isn't released twice.
             socket_ref.forget();
+            self.socket_refs.set(self.socket_refs.get() + 1);
             self.client_mut().on_valkey_close()?;
             self.client_mut().status = valkey::Status::Disconnected;
             return Ok(());
@@ -1593,6 +1607,7 @@ impl JSValkeyClient {
         // Disarm on success: the socket now owns the keep-alive ref.
         scopeguard::ScopeGuard::into_inner(errdefer_status);
         socket_ref.forget();
+        self.socket_refs.set(self.socket_refs.get() + 1);
         Ok(())
     }
 
@@ -1665,6 +1680,7 @@ impl JSValkeyClient {
             debug_assert!(this_ref.client.get().socket.is_closed());
             debug_assert!(!this_ref.timer.ref_held.get());
             debug_assert!(!this_ref.reconnect_timer.ref_held.get());
+            debug_assert_eq!(this_ref.socket_refs.get(), 0);
             if let Some(s) = this_ref._secure.get() {
                 // SAFETY: SSL_CTX is C-refcounted; this releases our ref.
                 unsafe { boringssl::c::SSL_CTX_free(s) };

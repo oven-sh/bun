@@ -107,22 +107,22 @@ pub struct S3Credentials {
 pub struct Loader {
     pub map: Map,
     // allocator dropped — global mimalloc (see PORTING.md §Allocators)
-    pub env_local: Option<bun_ast::Source>,
-    pub env_development: Option<bun_ast::Source>,
-    pub env_production: Option<bun_ast::Source>,
-    pub env_test: Option<bun_ast::Source>,
-    pub env_development_local: Option<bun_ast::Source>,
-    pub env_production_local: Option<bun_ast::Source>,
-    pub env_test_local: Option<bun_ast::Source>,
-    pub env: Option<bun_ast::Source>,
+    pub(crate) env_local: Option<bun_ast::Source>,
+    pub(crate) env_development: Option<bun_ast::Source>,
+    pub(crate) env_production: Option<bun_ast::Source>,
+    pub(crate) env_test: Option<bun_ast::Source>,
+    pub(crate) env_development_local: Option<bun_ast::Source>,
+    pub(crate) env_production_local: Option<bun_ast::Source>,
+    pub(crate) env_test_local: Option<bun_ast::Source>,
+    pub(crate) env: Option<bun_ast::Source>,
 
     /// only populated with files specified explicitly (e.g. --env-file arg)
-    pub custom_files_loaded: StringArrayHashMap<bun_ast::Source>,
+    pub(crate) custom_files_loaded: StringArrayHashMap<bun_ast::Source>,
 
     pub quiet: bool,
 
-    pub did_load_process: bool,
-    pub reject_unauthorized: Cell<Option<bool>>,
+    pub(crate) did_load_process: bool,
+    pub(crate) reject_unauthorized: Cell<Option<bool>>,
 
     // Local POD mirror of `bun_s3_signing::S3Credentials` — see type doc above.
     aws_credentials: Option<S3Credentials>,
@@ -497,7 +497,7 @@ impl Loader {
         Ok(true)
     }
 
-    pub fn get_as_bool(&self, key: &[u8]) -> Option<bool> {
+    pub(crate) fn get_as_bool(&self, key: &[u8]) -> Option<bool> {
         let value = self.get(key)?;
         if value == b"" {
             return Some(false);
@@ -735,7 +735,7 @@ impl Loader {
         Ok(())
     }
 
-    pub fn print_loaded(&self, start: i128) {
+    pub(crate) fn print_loaded(&self, start: i128) {
         let count: usize = (self.env_development_local.is_some() as usize)
             + (self.env_production_local.is_some() as usize)
             + (self.env_test_local.is_some() as usize)
@@ -816,7 +816,7 @@ impl Loader {
         }
     }
 
-    pub fn load_env_file<const OVERRIDE: bool>(
+    pub(crate) fn load_env_file<const OVERRIDE: bool>(
         &mut self,
         dir: bun_sys::Fd,
         base: &'static [u8],
@@ -882,7 +882,7 @@ impl Loader {
         Ok(())
     }
 
-    pub fn load_env_file_dynamic<const OVERRIDE: bool>(
+    pub(crate) fn load_env_file_dynamic<const OVERRIDE: bool>(
         &mut self,
         file_path: &[u8],
         value_buffer: &mut Vec<u8>,
@@ -1258,7 +1258,7 @@ impl<'a> Parser<'a> {
     /// Same as [`parse`] but takes the source bytes directly. Exists so
     /// `load_env_file*` can parse a transient `Vec<u8>` without constructing a
     /// `bun_ast::Source` (whose `contents` field is currently `&'static [u8]`).
-    pub(crate) fn parse_bytes<const OVERRIDE: bool, const IS_PROCESS: bool, const EXPAND: bool>(
+    fn parse_bytes<const OVERRIDE: bool, const IS_PROCESS: bool, const EXPAND: bool>(
         src: &[u8],
         map: &mut Map,
         value_buffer: &mut Vec<u8>,
@@ -1395,7 +1395,7 @@ impl Map {
     }
 
     #[inline]
-    pub fn init() -> Map {
+    pub(crate) fn init() -> Map {
         Map {
             map: HashTable::default(),
         }
@@ -1518,7 +1518,7 @@ impl NullDelimitedEnvMap {
 }
 
 pub struct StdEnvMapWrapper {
-    pub unsafe_map: bun_sys::EnvMap,
+    pub(crate) unsafe_map: bun_sys::EnvMap,
 }
 
 impl StdEnvMapWrapper {

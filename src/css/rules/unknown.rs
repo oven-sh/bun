@@ -8,11 +8,11 @@ pub struct UnknownAtRule {
     // TODO: arena lifetime — slice backed by parser arena.
     pub name: &'static [u8],
     /// The prelude of the rule.
-    pub prelude: TokenList,
+    pub(crate) prelude: TokenList,
     /// The contents of the block, if any.
-    pub block: Option<TokenList>,
+    pub(crate) block: Option<TokenList>,
     /// The location of the rule in the source file.
-    pub loc: Location,
+    pub(crate) loc: Location,
 }
 
 impl UnknownAtRule {
@@ -38,7 +38,7 @@ impl UnknownAtRule {
         }
     }
 
-    pub fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
+    pub(crate) fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
         use crate::generics::DeepClone as _;
         // `name` is an arena-owned slice → identity copy; `TokenList`
         // carries `#[derive(DeepClone)]`.

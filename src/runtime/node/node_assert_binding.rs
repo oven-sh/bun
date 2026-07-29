@@ -13,7 +13,7 @@ use super::node_assert;
 /// declare function myersDiff(actual: string, expected: string): Diff[];
 /// ```
 #[bun_jsc::host_fn]
-pub(crate) fn myers_diff(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+fn myers_diff(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     let nargs = frame.arguments_count();
     if nargs < 2 {
         return Err(global.throw_not_enough_arguments("printMyersDiff", 2, nargs as usize));
@@ -55,7 +55,7 @@ pub(crate) fn myers_diff(global: &JSGlobalObject, frame: &CallFrame) -> JsResult
 
 // =============================================================================
 
-pub fn generate(global: &JSGlobalObject) -> JSValue {
+pub(crate) fn generate(global: &JSGlobalObject) -> JSValue {
     let exports = JSValue::create_empty_object(global, 1);
 
     exports.put(

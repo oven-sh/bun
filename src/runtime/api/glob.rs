@@ -206,7 +206,7 @@ pub(crate) enum WalkTaskErr {
 }
 
 impl WalkTaskErr {
-    pub(crate) fn to_js(&self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
+    fn to_js(&self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
         match self {
             WalkTaskErr::Syscall(err) => Ok(err.to_js(global_this)),
             WalkTaskErr::Unknown(err) => {
@@ -219,7 +219,7 @@ impl WalkTaskErr {
 pub(crate) type AsyncGlobWalkTask<'a> = ConcurrentPromiseTask<'a, WalkTask<'a>>;
 
 impl<'a> WalkTask<'a> {
-    pub(crate) fn create(
+    fn create(
         global_this: &'a JSGlobalObject,
         glob_walker: Box<GlobWalker>,
         has_pending_activity: &'a AtomicUsize,
@@ -357,7 +357,10 @@ impl Glob {
     // the struct already emits the `GlobClass__construct` shim that calls
     // `<Glob>::constructor(..)`. The free-fn `host_fn` expansion can't name an
     // associated fn without a receiver.
-    pub fn constructor(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<Box<Glob>> {
+    pub(crate) fn constructor(
+        global_this: &JSGlobalObject,
+        callframe: &CallFrame,
+    ) -> JsResult<Box<Glob>> {
         // SAFETY: bun_vm() returns a non-null *mut to the live VirtualMachine for this global.
         let mut arguments = ArgumentsSlice::init(global_this.bun_vm(), callframe.arguments());
         // `arguments` drops at scope exit.
@@ -388,7 +391,7 @@ impl Glob {
     /// atomic counter; never allocates, locks, or touches JS. The codegen shim
     /// (`Glob__hasPendingActivity`) handles the `callconv(.c)` ABI and passes
     /// `&*this`.
-    pub fn has_pending_activity(&self) -> bool {
+    pub(crate) fn has_pending_activity(&self) -> bool {
         self.has_pending_activity.load(Ordering::SeqCst) > 0
     }
 }
@@ -408,7 +411,11 @@ impl Glob {
     // `&mut self` receivers were vestigial. The codegen shim still emits
     // `this: &mut Glob`; `&mut T` auto-derefs to `&T`.
     #[bun_jsc::host_fn(method)]
-    pub fn __scan(&self, global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn __scan(
+        &self,
+        global_this: &JSGlobalObject,
+        callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
         // SAFETY: bun_vm() returns a non-null *mut to the live VirtualMachine for this global.
         let mut arguments = ArgumentsSlice::init(global_this.bun_vm(), callframe.arguments());
         // `arguments` drops at scope exit.
@@ -444,7 +451,7 @@ impl Glob {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn __scan_sync(
+    pub(crate) fn __scan_sync(
         &self,
         global_this: &JSGlobalObject,
         callframe: &CallFrame,

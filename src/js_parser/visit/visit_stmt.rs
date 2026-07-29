@@ -44,7 +44,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.current_scope_mut()
     }
 
-    pub fn visit_and_append_stmt(
+    pub(crate) fn visit_and_append_stmt(
         &mut self,
         stmts: &mut StmtList<'a>,
         stmt: &mut Stmt,

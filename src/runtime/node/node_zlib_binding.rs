@@ -31,8 +31,8 @@ pub(crate) struct CompressionStream<T>(PhantomData<T>);
 
 #[derive(Default)]
 pub struct CountedKeepAlive {
-    pub keep_alive: KeepAlive,
-    pub ref_count: u32,
+    pub(crate) keep_alive: KeepAlive,
+    pub(crate) ref_count: u32,
 }
 
 impl Drop for CountedKeepAlive {
@@ -46,28 +46,28 @@ impl Drop for CountedKeepAlive {
 /// and zstd (`ZSTD_getErrorString`) hand back runtime C pointers.
 #[derive(Clone, Copy)]
 pub struct Error {
-    pub msg: *const c_char,
-    pub err: c_int,
-    pub code: *const c_char,
+    pub(crate) msg: *const c_char,
+    pub(crate) err: c_int,
+    pub(crate) code: *const c_char,
 }
 
 impl Error {
-    pub const OK: Error = Error {
+    pub(crate) const OK: Error = Error {
         msg: core::ptr::null(),
         err: 0,
         code: core::ptr::null(),
     };
 
     #[inline]
-    pub const fn ok() -> Error {
+    pub(crate) const fn ok() -> Error {
         Self::OK
     }
 
-    pub const fn init(msg: *const c_char, err: c_int, code: *const c_char) -> Error {
+    pub(crate) const fn init(msg: *const c_char, err: c_int, code: *const c_char) -> Error {
         Error { msg, err, code }
     }
 
-    pub fn is_error(&self) -> bool {
+    pub(crate) fn is_error(&self) -> bool {
         !self.msg.is_null()
     }
 }
@@ -90,14 +90,14 @@ fn flush_value_is_valid(n: u32) -> bool {
 }
 
 impl CountedKeepAlive {
-    pub(crate) fn ref_(&mut self, _vm: &VirtualMachine) {
+    fn ref_(&mut self, _vm: &VirtualMachine) {
         if self.ref_count == 0 {
             self.keep_alive.ref_(bun_io::js_vm_ctx());
         }
         self.ref_count += 1;
     }
 
-    pub(crate) fn unref(&mut self, _vm: &VirtualMachine) {
+    fn unref(&mut self, _vm: &VirtualMachine) {
         self.ref_count -= 1;
         if self.ref_count == 0 {
             self.keep_alive.unref(bun_io::js_vm_ctx());

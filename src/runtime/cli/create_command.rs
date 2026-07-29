@@ -131,7 +131,7 @@ fn exec_task(task_: &[u8], cwd: &[u8], _path: &[u8], npm_client: Option<NPMClien
 // We don't want to allocate memory each time
 // But we cannot print over an existing buffer or weird stuff will happen
 // so we keep two and switch between them
-pub(crate) struct ProgressBuf;
+struct ProgressBuf;
 
 impl ProgressBuf {
     thread_local! {
@@ -139,7 +139,7 @@ impl ProgressBuf {
         static BUF_INDEX: Cell<usize> = const { Cell::new(0) };
     }
 
-    pub(crate) fn print(args: core::fmt::Arguments<'_>) -> crate::Result<&'static [u8]> {
+    fn print(args: core::fmt::Arguments<'_>) -> crate::Result<&'static [u8]> {
         Self::BUF_INDEX.with(|i| i.set(i.get() + 1));
         let idx = Self::BUF_INDEX.with(|i| i.get()) % 2;
         Self::BUFS.with_borrow_mut(|bufs| {
@@ -161,7 +161,7 @@ impl ProgressBuf {
     /// color template into `args` directly. Note: `<tag>` sequences inside
     /// interpolated arguments (e.g. a user-supplied template name) are also
     /// rewritten here. Cosmetic-only on adversarial input.
-    pub(crate) fn pretty(args: core::fmt::Arguments<'_>) -> crate::Result<&'static [u8]> {
+    fn pretty(args: core::fmt::Arguments<'_>) -> crate::Result<&'static [u8]> {
         if Output::enable_ansi_colors_stdout() {
             ProgressBuf::print(format_args!("{}", Output::pretty_fmt::<true>(args)))
         } else {
@@ -198,7 +198,7 @@ impl CreateOptions {
         PARAMS
     }
 
-    pub(crate) fn parse(_ctx: &Command::Context<'_>) -> crate::Result<CreateOptions> {
+    fn parse(_ctx: &Command::Context<'_>) -> crate::Result<CreateOptions> {
         // The `is_verbose()` accessor reads the env directly each call, so this is a no-op.
         let _ = Output::is_verbose();
 
@@ -1693,18 +1693,14 @@ pub struct Example {
     // literals, the process-lifetime CLI arena (`cli_arena()` — remote
     // examples JSON), or `filesystem.filename_store` (local examples).
     pub name: &'static [u8],
-    pub version: &'static [u8],
-    pub description: &'static [u8],
-    pub local: bool,
+    pub(crate) description: &'static [u8],
 }
 
 impl Default for Example {
     fn default() -> Self {
         Self {
             name: b"",
-            version: b"",
             description: b"",
-            local: false,
         }
     }
 }
@@ -1727,7 +1723,7 @@ bun_core::comptime_string_map! {
 }
 
 impl ExampleTag {
-    pub fn from_file_extension(extension: &[u8]) -> Option<ExampleTag> {
+    pub(crate) fn from_file_extension(extension: &[u8]) -> Option<ExampleTag> {
         EXTENSION_TAG_MAP.get(extension).copied()
     }
 }
@@ -1747,7 +1743,7 @@ static NPM_REGISTRY_URL_BUF: bun_core::RacyCell<[u8; 1024]> = bun_core::RacyCell
 impl Example {
     const EXAMPLES_URL: &'static [u8] = b"https://registry.npmjs.org/bun-examples-all/latest";
 
-    pub fn print(examples: &[Example], default_app_name: Option<&[u8]>) {
+    pub(crate) fn print(examples: &[Example], default_app_name: Option<&[u8]>) {
         for example in examples {
             // SAFETY: single-threaded CLI access to static buffer
             let app_name_buf = unsafe { &mut *APP_NAME_BUF.get() };
@@ -1781,7 +1777,7 @@ impl Example {
         }
     }
 
-    pub fn fetch_all_local_and_remote(
+    pub(crate) fn fetch_all_local_and_remote(
         ctx: &Command::Context,
         mut node: Option<&mut ProgressNode>,
         env_loader: &mut DotEnv::Loader,
@@ -1858,8 +1854,6 @@ impl Example {
 
                                 examples.push(Example {
                                     name: filesystem.filename_store.append_slice(entry_name)?,
-                                    version: b"",
-                                    local: true,
                                     description: b"",
                                 });
                                 continue 'loop_;
@@ -1874,7 +1868,7 @@ impl Example {
         Ok(examples)
     }
 
-    pub fn fetch_from_github(
+    pub(crate) fn fetch_from_github(
         _ctx: &Command::Context,
         env_loader: &mut DotEnv::Loader,
         name: &[u8],
@@ -2013,7 +2007,7 @@ impl Example {
         Ok(mutable.clone()?)
     }
 
-    pub fn fetch(
+    pub(crate) fn fetch(
         ctx: &Command::Context,
         env_loader: &mut DotEnv::Loader,
         name: &[u8],
@@ -2187,7 +2181,7 @@ impl Example {
         Ok(mutable.clone()?)
     }
 
-    pub fn fetch_all(
+    pub(crate) fn fetch_all(
         ctx: &Command::Context,
         env_loader: &mut DotEnv::Loader,
         progress_node: Option<&mut ProgressNode>,
@@ -2313,9 +2307,7 @@ impl Example {
                         } else {
                             name
                         },
-                        version: string_prop(b"version"),
                         description: string_prop(b"description"),
-                        local: false,
                     };
                 }
                 return Ok(list);
@@ -2330,10 +2322,10 @@ impl Example {
     }
 }
 
-pub(crate) struct CreateListExamplesCommand;
+struct CreateListExamplesCommand;
 
 impl CreateListExamplesCommand {
-    pub(crate) fn exec(ctx: &Command::Context) -> crate::Result<()> {
+    fn exec(ctx: &Command::Context) -> crate::Result<()> {
         let filesystem = fs::FileSystem::init(None)?;
         let mut env_loader = DotEnv::Loader::init();
 
@@ -2395,7 +2387,7 @@ static THREAD: bun_core::RacyCell<Option<std::thread::JoinHandle<()>>> =
     bun_core::RacyCell::new(None);
 
 impl GitHandler {
-    pub(crate) fn spawn(destination: &[u8], path: &[u8], verbose: bool) {
+    fn spawn(destination: &[u8], path: &[u8], verbose: bool) {
         SUCCESS.store(0, Ordering::Relaxed);
 
         // Own copies so the spawned closure is `'static` without any lifetime
@@ -2428,7 +2420,7 @@ impl GitHandler {
         Output::flush();
     }
 
-    pub(crate) fn wait() -> bool {
+    fn wait() -> bool {
         while SUCCESS.load(Ordering::Acquire) == 0 {
             Futex::wait_forever(&SUCCESS, 0);
         }
@@ -2439,7 +2431,7 @@ impl GitHandler {
         outcome
     }
 
-    pub(crate) fn run<const VERBOSE: bool>(destination: &[u8], path: &[u8]) -> crate::Result<bool> {
+    fn run<const VERBOSE: bool>(destination: &[u8], path: &[u8]) -> crate::Result<bool> {
         let git_start = bun_core::time::nano_timestamp();
 
         // Not sure why...

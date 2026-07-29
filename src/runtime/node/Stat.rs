@@ -231,7 +231,7 @@ pub enum Stats {
 
 impl Stats {
     #[inline]
-    pub fn init(stat_: &PosixStat, big: bool) -> Stats {
+    pub(crate) fn init(stat_: &PosixStat, big: bool) -> Stats {
         if big {
             Stats::Big(StatsBig::init(stat_))
         } else {
@@ -239,7 +239,7 @@ impl Stats {
         }
     }
 
-    pub fn to_js_newly_created(&self, global: &JSGlobalObject) -> JsResult<JSValue> {
+    pub(crate) fn to_js_newly_created(&self, global: &JSGlobalObject) -> JsResult<JSValue> {
         match self {
             Stats::Big(v) => v.to_js(global),
             Stats::Small(v) => v.to_js(global),

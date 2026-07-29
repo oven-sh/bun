@@ -28,7 +28,7 @@ use bun_sys::{
 /// Bytecode output file extension (also defined in `generateChunksInParallel.rs`).
 const BYTECODE_EXTENSION: &str = ".jsc";
 
-pub fn write_output_files_to_disk(
+pub(crate) fn write_output_files_to_disk(
     c: &mut LinkerContext,
     root_path: &[u8],
     chunks: &mut [Chunk],

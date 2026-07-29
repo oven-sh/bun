@@ -526,6 +526,7 @@ writeIfNotChanged(
 // Canonical builtin-module specifier -> InternalModuleRegistry tag (\`(1 << 9) | id\`),
 // kept in lock-step with SyntheticModuleType.h.
 bun_core::comptime_string_map! {
+#[allow(dead_code, unreachable_pub, unused)]
 static INTERNAL_MODULE_TAG: ResolvedSourceTag = {
 ${moduleList
   .slice(0, nativeStartIndex)

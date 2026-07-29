@@ -255,7 +255,7 @@ fn fail_with_build_error(vm: &mut VirtualMachine) -> ! {
     Global::exit(1);
 }
 
-pub(super) fn write_sourcemap_to_disk(
+fn write_sourcemap_to_disk(
     file: &OutputFile,
     bundled_outputs: &[OutputFile],
     source_maps: &mut StringArrayHashMap<OutputFileIndex>,
@@ -281,7 +281,7 @@ pub(super) fn write_sourcemap_to_disk(
     Ok(())
 }
 
-pub(super) fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<()> {
+fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<()> {
     // `pt.vm` is the live per-thread VM's BackRef set in `build_command`;
     // `as_ptr()` is `Copy` and does not borrow `pt`.
     let vm_ptr: *mut VirtualMachine = pt.vm.as_ptr();
@@ -568,7 +568,6 @@ pub(super) fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> cra
             abs_root: Box::from(strings::paths::without_trailing_slash_windows_path(
                 entry.abs_path,
             )),
-            prefix: Box::from(fsr.prefix),
             ignore_underscores: fsr.ignore_underscores,
             ignore_dirs: fsr
                 .ignore_dirs
@@ -1322,7 +1321,7 @@ unsafe extern "C" {
 }
 
 #[unsafe(no_mangle)]
-pub(super) extern "C" fn BakeToWindowsPath(input: BunString) -> BunString {
+extern "C" fn BakeToWindowsPath(input: BunString) -> BunString {
     #[cfg(unix)]
     {
         let _ = input;
@@ -1339,7 +1338,7 @@ pub(super) extern "C" fn BakeToWindowsPath(input: BunString) -> BunString {
 }
 
 #[unsafe(no_mangle)]
-pub(super) extern "C" fn BakeProdResolve(
+extern "C" fn BakeProdResolve(
     global: &JSGlobalObject,
     a_str: BunString,
     specifier_str: BunString,
@@ -1448,26 +1447,26 @@ impl framework_router::InsertionHandler for EntryPointMap {
 pub struct PerThread {
     // Shared Data (owned)
     /// Owns `input_files` (keys) and `output_indexes` (values).
-    pub entry_points: EntryPointMap,
-    pub bundled_outputs: Vec<OutputFile>,
+    pub(crate) entry_points: EntryPointMap,
+    pub(crate) bundled_outputs: Vec<OutputFile>,
     /// Indexed by entry point index (OpaqueFileId)
-    pub module_keys: Vec<BunString>,
+    pub(crate) module_keys: Vec<BunString>,
     /// Unordered
-    pub module_map: StringArrayHashMap<OutputFileIndex>,
-    pub source_maps: StringArrayHashMap<OutputFileIndex>,
+    pub(crate) module_map: StringArrayHashMap<OutputFileIndex>,
+    pub(crate) source_maps: StringArrayHashMap<OutputFileIndex>,
 
     // Thread-local
     // Note: stored as `BackRef` (the VM
     // is process-lifetime and outlives every `PerThread`); `load_module`
     // re-derives a mutable VM via the per-thread singleton, so no write
     // provenance is needed here.
-    pub vm: bun_ptr::BackRef<VirtualMachine>,
+    pub(crate) vm: bun_ptr::BackRef<VirtualMachine>,
     /// Indexed by entry point index (OpaqueFileId)
-    pub loaded_files: AutoBitSet,
+    pub(crate) loaded_files: AutoBitSet,
     /// JSArray of JSString, indexed by entry point index (OpaqueFileId)
     // Strong is required for JSValue struct fields. `None` is the pre-init
     // state; `PerThread::init` fills it. Strong's Drop releases the GC root.
-    pub all_server_files: Option<bun_jsc::Strong>,
+    pub(crate) all_server_files: Option<bun_jsc::Strong>,
     /// `attach()` was called and Drop should detach. The placeholder created in
     /// `build_command` before `init` must not call into C++ on drop.
     attached: bool,
@@ -1486,7 +1485,7 @@ unsafe extern "C" {
 impl PerThread {
     /// Safe `&VirtualMachine` accessor for the JSC_BORROW `vm` back-pointer.
     #[inline]
-    pub fn vm(&self) -> &VirtualMachine {
+    pub(crate) fn vm(&self) -> &VirtualMachine {
         // BackRef invariant: VM outlives `PerThread` (set in `init`/`placeholder`
         // from `init_bake`).
         self.vm.get()
@@ -1514,7 +1513,7 @@ impl PerThread {
     }
 
     /// After initializing, call `attach`
-    pub fn init(
+    pub(crate) fn init(
         vm: *mut VirtualMachine,
         entry_points: EntryPointMap,
         bundled_outputs: Vec<OutputFile>,
@@ -1547,7 +1546,7 @@ impl PerThread {
         })
     }
 
-    pub fn attach(&mut self) {
+    pub(crate) fn attach(&mut self) {
         // `self.global()` derefs the JSC_BORROW `vm` back-pointer (live for the
         // VM lifetime); C++ stores `pt` opaquely and hands it back via
         // `BakeProdResolve`, so passing `from_mut(self)` is just identity —
@@ -1557,20 +1556,20 @@ impl PerThread {
         self.attached = true;
     }
 
-    pub fn output_index(&self, id: OpaqueFileId) -> OutputFileIndex {
+    pub(crate) fn output_index(&self, id: OpaqueFileId) -> OutputFileIndex {
         self.entry_points.files.values()[id.get() as usize]
     }
 
-    pub fn input_file(&self, id: OpaqueFileId) -> InputFile {
+    pub(crate) fn input_file(&self, id: OpaqueFileId) -> InputFile {
         self.entry_points.files.keys()[id.get() as usize]
     }
 
-    pub fn output_file(&self, id: OpaqueFileId) -> &OutputFile {
+    pub(crate) fn output_file(&self, id: OpaqueFileId) -> &OutputFile {
         &self.bundled_outputs[self.output_index(id).get() as usize]
     }
 
     // Must be run at the top of the event loop
-    pub fn load_bundled_module(&self, id: OpaqueFileId) -> crate::Result<JSValue> {
+    pub(crate) fn load_bundled_module(&self, id: OpaqueFileId) -> crate::Result<JSValue> {
         let global = self.global();
         load_module(
             self.vm.as_ptr(),
@@ -1588,7 +1587,7 @@ impl PerThread {
     // What could be done here is generating a new index type, which is
     // specifically for referenced files. This would remove the holes, but make
     // it harder to pre-allocate. It's probably worth it.
-    pub fn preload_bundled_module(&mut self, id: OpaqueFileId) -> JsResult<JSValue> {
+    pub(crate) fn preload_bundled_module(&mut self, id: OpaqueFileId) -> JsResult<JSValue> {
         let global = self.global();
         if !self.loaded_files.is_set(id.get() as usize) {
             self.loaded_files.set(id.get() as usize);
@@ -1618,7 +1617,7 @@ impl Drop for PerThread {
 
 /// Given a key, returns the source code to load.
 #[unsafe(no_mangle)]
-pub(super) extern "C" fn BakeProdLoad(pt: *mut PerThread, key: BunString) -> BunString {
+extern "C" fn BakeProdLoad(pt: *mut PerThread, key: BunString) -> BunString {
     // SAFETY: `pt` is the non-null pointer previously attached via
     // BakeGlobalObject__attachPerThreadData; C++ only calls this while attached.
     let pt = unsafe { &*pt };
@@ -1636,7 +1635,7 @@ pub(super) extern "C" fn BakeProdLoad(pt: *mut PerThread, key: BunString) -> Bun
 }
 
 #[unsafe(no_mangle)]
-pub(super) extern "C" fn BakeProdSourceMap(pt: *mut PerThread, key: BunString) -> BunString {
+extern "C" fn BakeProdSourceMap(pt: *mut PerThread, key: BunString) -> BunString {
     // SAFETY: `pt` is the non-null pointer previously attached via
     // BakeGlobalObject__attachPerThreadData; C++ only calls this while attached.
     let pt = unsafe { &*pt };
@@ -1655,12 +1654,12 @@ pub(super) extern "C" fn BakeProdSourceMap(pt: *mut PerThread, key: BunString) -
 pub struct TypeAndFlags(i32);
 
 impl TypeAndFlags {
-    pub const fn new(ty: u8, no_client: bool) -> Self {
+    pub(crate) const fn new(ty: u8, no_client: bool) -> Self {
         // type: bits 0..8, no_client: bit 8, unused: bits 9..32
         TypeAndFlags((ty as i32) | ((no_client as i32) << 8))
     }
 
-    pub const fn bits(self) -> i32 {
+    pub(crate) const fn bits(self) -> i32 {
         self.0
     }
 }

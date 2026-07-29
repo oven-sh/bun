@@ -32,7 +32,7 @@ use crate::hir::{
 
 /// Main entry point: propagate scope dependencies through the HIR.
 /// Corresponds to TS `propagateScopeDependenciesHIR(fn)`.
-pub fn propagate_scope_dependencies_hir(func: &mut HirFunction, env: &mut Environment) {
+pub(crate) fn propagate_scope_dependencies_hir(func: &mut HirFunction, env: &mut Environment) {
     let used_outside_declaring_scope = find_temporaries_used_outside_declaring_scope(func, env);
     let temporaries = collect_temporaries_sidemap(func, env, &used_outside_declaring_scope);
 

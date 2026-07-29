@@ -61,7 +61,7 @@ describe.skipIf(!isWindows)("--windows-hide-console", () => {
 
   test("CLI flag sets GUI subsystem", async () => {
     using dir = tempDir("windows-subsystem-gui-cli", {
-      "app.js": `console.log("gui");`,
+      "app.js": `require("fs").writeFileSync(process.argv[2], "ran");`,
     });
     const outfile = join(String(dir), "gui.exe");
     await using _cleanup = cleanup(outfile);
@@ -83,6 +83,14 @@ describe.skipIf(!isWindows)("--windows-hide-console", () => {
     await expectBuildOk(proc);
 
     expect(readPESubsystem(outfile)).toBe(IMAGE_SUBSYSTEM_WINDOWS_GUI);
+
+    // The resulting GUI-subsystem exe still has to be a valid, runnable PE.
+    // A GUI process has no console, so assert via a file side effect + exit code.
+    const marker = join(String(dir), "marker.txt");
+    await using run = Bun.spawn({ cmd: [outfile, marker], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    const [, , runExit] = await Promise.all([run.stdout.text(), run.stderr.text(), run.exited]);
+    expect(await Bun.file(marker).text()).toBe("ran");
+    expect(runExit).toBe(0);
   }, 30_000);
 
   test("Bun.build() hideConsole sets GUI subsystem", async () => {

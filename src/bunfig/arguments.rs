@@ -311,7 +311,13 @@ pub fn load_config(
     let config_path = ZStr::from_buf(&config_buf[..], config_path_len);
 
     if let Err(err) = load_config_path(cmd, auto_loaded, config_path, ctx) {
-        report_bunfig_load_failure(ctx.log, err);
+        // A broken auto-discovered bunfig must not abort running a script;
+        // the accumulated log still reaches stderr on the normal path.
+        // Explicit --config and config-required commands remain fatal.
+        let run_like = cmd == CommandTag::RunCommand || cmd == CommandTag::AutoCommand;
+        if !(auto_loaded && run_like) {
+            report_bunfig_load_failure(ctx.log, err);
+        }
     }
     Ok(())
 }

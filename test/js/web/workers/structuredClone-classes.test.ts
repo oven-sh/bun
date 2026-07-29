@@ -65,6 +65,24 @@ const testTypes = [
       }
     },
   },
+  {
+    name: "net.SocketAddress (cloneable, non-transferable)",
+    createValue: () => {
+      const { SocketAddress } = require("net");
+      return new SocketAddress({ family: "ipv6", address: "abcd::1", port: 5, flowlabel: 3 });
+    },
+    isTransferable: false,
+    expectedAfterClone: (original: any, cloned: any, isTransfer: TransferMode, isStorage: boolean) => {
+      if (isStorage || isTransfer !== TransferMode.no) {
+        // Like Node, SocketAddress is not storable/transferable
+        expect(cloned).toBeEmptyObject();
+      } else {
+        const { SocketAddress } = require("net");
+        expect(SocketAddress.isSocketAddress(cloned)).toBe(true);
+        expect(cloned.toJSON()).toEqual(original.toJSON());
+      }
+    },
+  },
 ];
 
 describe("serialize & deserialize", () => {

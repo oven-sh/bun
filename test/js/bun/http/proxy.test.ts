@@ -463,7 +463,7 @@ describe("proxy option validation", () => {
   });
 
   test("WebSocket: rejects wrong-typed values instead of silently going direct", async () => {
-    let directHit = false;
+    let directHits = 0;
     await using origin = Bun.serve({
       port: 0,
       hostname: "127.0.0.1",
@@ -473,7 +473,7 @@ describe("proxy option validation", () => {
       },
       websocket: {
         open(ws) {
-          directHit = true;
+          directHits++;
           ws.close();
         },
         message() {},
@@ -496,19 +496,19 @@ describe("proxy option validation", () => {
         }),
       );
     }
-    expect(directHit).toBe(false);
+    expect(directHits).toBe(0);
 
     // null / empty string / undefined remain the "no proxy" sentinels: the
     // constructor must not throw and the socket must reach the origin directly.
     for (const value of [null, "", undefined]) {
-      const { promise, resolve } = Promise.withResolvers<void>();
+      const { promise, resolve, reject } = Promise.withResolvers<void>();
       const ws = new WebSocket(`ws://127.0.0.1:${origin.port}/`, { proxy: value } as any);
       ws.onopen = () => ws.close();
       ws.onclose = () => resolve();
-      ws.onerror = () => resolve();
+      ws.onerror = ev => reject(new Error(`proxy: ${JSON.stringify(value)} errored: ${(ev as ErrorEvent).message}`));
       await promise;
     }
-    expect(directHit).toBe(true);
+    expect(directHits).toBe(3);
   });
 });
 

@@ -245,13 +245,11 @@ test("Bun.resolveSync with non-ASCII specifier and query string", async () => {
 // suffix-less wildcard.
 describe("?query on a bare package root does not resolve", () => {
   const pkgFiles = {
-    "node_modules/qk/package.json": JSON.stringify({
-      name: "qk",
-      main: "./i.js",
-      exports: { ".": "./i.js", "./s": "./s.js" },
-    }),
+    "node_modules/qk/package.json": JSON.stringify({ name: "qk", main: "./i.js", exports: { ".": "./i.js" } }),
     "node_modules/qk/i.js": "globalThis.__qk = (globalThis.__qk || 0) + 1; module.exports = { inst: globalThis.__qk };",
-    "node_modules/qk/s.js": 'module.exports = "SUB";',
+    "node_modules/@sc/pk/package.json": JSON.stringify({ name: "@sc/pk", main: "./i.js", exports: { ".": "./i.js" } }),
+    "node_modules/@sc/pk/i.js":
+      "globalThis.__scpk = (globalThis.__scpk || 0) + 1; module.exports = { inst: globalThis.__scpk };",
   };
 
   const noExportsPkgFiles = {
@@ -264,16 +262,18 @@ describe("?query on a bare package root does not resolve", () => {
       ...pkgFiles,
       "entry.cjs": `
         const out = { insts: [], errors: [] };
-        out.insts.push(require("qk").inst);
-        for (const spec of ["qk?v=1", "qk?v=2"]) {
-          try {
-            out.insts.push(require(spec).inst);
-          } catch (e) {
-            out.errors.push(e.code || e.name);
+        for (const name of ["qk", "@sc/pk"]) {
+          out.insts.push(require(name).inst);
+          for (const spec of [name + "?v=1", name + "?v=2"]) {
+            try {
+              out.insts.push(require(spec).inst);
+            } catch (e) {
+              out.errors.push(e.code || e.name);
+            }
           }
+          // The un-suffixed specifier must still be the one-and-only instance.
+          out.insts.push(require(name).inst);
         }
-        // The un-suffixed specifier must still be the one-and-only instance.
-        out.insts.push(require("qk").inst);
         console.log(JSON.stringify(out));
       `,
     });
@@ -287,8 +287,8 @@ describe("?query on a bare package root does not resolve", () => {
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
     expect(JSON.parse(stdout.trim())).toEqual({
-      insts: [1, 1],
-      errors: ["MODULE_NOT_FOUND", "MODULE_NOT_FOUND"],
+      insts: [1, 1, 1, 1],
+      errors: ["MODULE_NOT_FOUND", "MODULE_NOT_FOUND", "MODULE_NOT_FOUND", "MODULE_NOT_FOUND"],
     });
     expect(exitCode).toBe(0);
   });
@@ -298,15 +298,17 @@ describe("?query on a bare package root does not resolve", () => {
       ...pkgFiles,
       "entry.mjs": `
         const out = { insts: [], errors: [] };
-        out.insts.push((await import("qk")).default.inst);
-        for (const spec of ["qk?v=1", "qk?v=2"]) {
-          try {
-            out.insts.push((await import(spec)).default.inst);
-          } catch (e) {
-            out.errors.push(e.code || e.name);
+        for (const name of ["qk", "@sc/pk"]) {
+          out.insts.push((await import(name)).default.inst);
+          for (const spec of [name + "?v=1", name + "?v=2"]) {
+            try {
+              out.insts.push((await import(spec)).default.inst);
+            } catch (e) {
+              out.errors.push(e.code || e.name);
+            }
           }
+          out.insts.push((await import(name)).default.inst);
         }
-        out.insts.push((await import("qk")).default.inst);
         console.log(JSON.stringify(out));
       `,
     });
@@ -320,8 +322,8 @@ describe("?query on a bare package root does not resolve", () => {
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
     expect(JSON.parse(stdout.trim())).toEqual({
-      insts: [1, 1],
-      errors: ["ERR_MODULE_NOT_FOUND", "ERR_MODULE_NOT_FOUND"],
+      insts: [1, 1, 1, 1],
+      errors: ["ERR_MODULE_NOT_FOUND", "ERR_MODULE_NOT_FOUND", "ERR_MODULE_NOT_FOUND", "ERR_MODULE_NOT_FOUND"],
     });
     expect(exitCode).toBe(0);
   });

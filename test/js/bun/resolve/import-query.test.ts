@@ -251,6 +251,11 @@ describe("?query on a bare package specifier does not resolve", () => {
     "node_modules/qk/s.js": 'module.exports = "SUB";',
   };
 
+  const noExportsPkgFiles = {
+    "node_modules/nx/package.json": JSON.stringify({ name: "nx", main: "./i.js" }),
+    "node_modules/nx/i.js": "globalThis.__nx = (globalThis.__nx || 0) + 1; module.exports = { inst: globalThis.__nx };",
+  };
+
   test.concurrent("require('pkg?v=N') does not evaluate a new instance of the package", async () => {
     using dir = tempDir("import-query-bare-require", {
       ...pkgFiles,
@@ -351,6 +356,68 @@ describe("?query on a bare package specifier does not resolve", () => {
       imr: "ERR:ERR_MODULE_NOT_FOUND",
       resolveSync: "ERR:ERR_MODULE_NOT_FOUND",
     });
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("import('pkg?v=N') on a package without an exports field", async () => {
+    using dir = tempDir("import-query-bare-noexports", {
+      ...noExportsPkgFiles,
+      "entry.mjs": `
+        const out = { insts: [], errors: [] };
+        out.insts.push((await import("nx")).default.inst);
+        for (const spec of ["nx?v=1", "nx?v=2"]) {
+          try {
+            out.insts.push((await import(spec)).default.inst);
+          } catch (e) {
+            out.errors.push(e.code || e.name);
+          }
+        }
+        out.insts.push((await import("nx")).default.inst);
+        console.log(JSON.stringify(out));
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "entry.mjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout.trim())).toEqual({
+      insts: [1, 1],
+      errors: ["ERR_MODULE_NOT_FOUND", "ERR_MODULE_NOT_FOUND"],
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("?query on a tsconfig paths alias still resolves (control)", async () => {
+    // A tsconfig `paths` alias is Bun-specific runtime resolution and resolves
+    // outside node_modules, so the split-off query is kept and `?raw` works.
+    using dir = tempDir("import-query-bare-tspaths", {
+      "tsconfig.json": JSON.stringify({ compilerOptions: { baseUrl: ".", paths: { "@/*": ["./src/*"] } } }),
+      "src/util.ts": "globalThis.__u = (globalThis.__u || 0) + 1; export const inst = globalThis.__u;",
+      "src/shader.glsl": "VERTEX SHADER CODE",
+      "entry.ts": `
+        const out = {};
+        out.a = (await import("@/util")).inst;
+        out.b = (await import("@/util?v=1")).inst;
+        out.c = (await import("@/util?v=2")).inst;
+        out.raw = (await import("@/shader.glsl?raw")).default;
+        console.log(JSON.stringify(out));
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "entry.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout.trim())).toEqual({ a: 1, b: 2, c: 3, raw: "VERTEX SHADER CODE" });
     expect(exitCode).toBe(0);
   });
 

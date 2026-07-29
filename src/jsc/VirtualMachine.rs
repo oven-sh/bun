@@ -2937,14 +2937,6 @@ fn normalize_specifier_for_resolution<'a>(
     specifier_: &'a [u8],
     query_string: &mut &'a [u8],
 ) -> &'a [u8] {
-    // Node only gives `?` URL-separator meaning for relative/absolute ESM
-    // specifiers. For a bare package specifier (`pkg`, `@scope/pkg/sub`) the
-    // `?` is part of the name/subpath and must reach the resolver verbatim so
-    // `import("pkg?v=1")` fails instead of evaluating a second instance of the
-    // package.
-    if bun_paths::is_package_path(specifier_) {
-        return specifier_;
-    }
     if let Some(i) = bun_core::strings::index_of_char_usize(specifier_, b'?') {
         *query_string = &specifier_[i..];
         &specifier_[..i]
@@ -4165,12 +4157,26 @@ impl VirtualMachine {
             self.has_any_macro_remappings =
                 self.has_any_macro_remappings || self.transpiler.options.macro_remap.count() > 0;
         }
-        // SAFETY: PORT — `query_string` re-slices `specifier` (caller-owned;
-        // see lifetime erasure note above).
-        ret.query_string = unsafe { bun_ptr::detach_lifetime(query_string) };
         let result_path = result
             .path_const()
             .ok_or(crate::CrateError::ModuleNotFound)?;
+
+        // Node gives `?` URL-separator meaning only for relative/absolute ESM
+        // specifiers; a bare specifier that resolves into node_modules is not a
+        // URL and Node rejects `pkg?v=1`. Re-appending the split-off query here
+        // would evaluate a fresh instance of the whole package for each
+        // distinct query. A tsconfig `paths` alias resolves outside
+        // node_modules, so `@/util?raw` keeps working.
+        if !query_string.is_empty()
+            && bun_paths::is_package_path(specifier)
+            && result_path.is_node_module()
+        {
+            return Err(crate::CrateError::ModuleNotFound);
+        }
+
+        // SAFETY: PORT — `query_string` re-slices `specifier` (caller-owned;
+        // see lifetime erasure note above).
+        ret.query_string = unsafe { bun_ptr::detach_lifetime(query_string) };
         // SAFETY: `result_path.text` borrows the resolver's arena, which
         // outlives `ResolveFunctionResult` (see the struct's lifetime-erasure
         // note).

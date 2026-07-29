@@ -88,9 +88,7 @@ void JSNextTickQueue::drain(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
 
     if (!isEmpty()) {
         RETURN_IF_EXCEPTION(throwScope, );
-        // An outer processTicksAndRejections frame owns the async-context save/restore
-        // while m_isDrainingNextTickQueue is set; clearing it here would drop that
-        // frame's AsyncLocalStorage store mid-callback.
+        // m_isDrainingNextTickQueue set => an outer processTicksAndRejections owns the async-context restore.
         if (mustResetContext && !defaultGlobalObject(globalObject)->m_isDrainingNextTickQueue) {
             globalObject->m_asyncContextData.get()->putInternalField(vm, 0, jsUndefined());
             RETURN_IF_EXCEPTION(throwScope, );

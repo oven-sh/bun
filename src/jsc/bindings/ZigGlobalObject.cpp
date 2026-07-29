@@ -446,12 +446,9 @@ JSC::Structure* GlobalObject::createStructure(JSC::VM& vm)
 
 void Zig::GlobalObject::resetOnEachMicrotaskTick()
 {
-    auto& vm = this->vm();
-    if (this->asyncHooksNeedsCleanup) {
-        vm.setOnEachMicrotaskTick(&cleanupAsyncHooksData);
-    } else {
-        vm.setOnEachMicrotaskTick(&checkIfNextTickWasCalledDuringMicrotask);
-    }
+    // Sole caller (jsCleanupLater) sets asyncHooksNeedsCleanup = true immediately before.
+    ASSERT(this->asyncHooksNeedsCleanup);
+    this->vm().setOnEachMicrotaskTick(&cleanupAsyncHooksData);
 }
 
 extern "C" size_t Bun__reported_memory_size;

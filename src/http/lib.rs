@@ -2421,10 +2421,14 @@ impl<'a> HTTPClient<'a> {
                     }
                 }
                 h if h == hash_header_const(CHUNKED_ENCODED_HEADER.name()) => {
-                    if !self.flags.is_streaming_request_body {
+                    // Transfer-Encoding is a forbidden request-header name
+                    // (Fetch spec); only node:http's raw ClientRequest API
+                    // lets the caller own framing. For fetch() the engine
+                    // always writes the framing header itself, so drop the
+                    // caller's value regardless of body shape.
+                    if !self.flags.is_streaming_request_body || !self.flags.is_node_http_client {
                         continue;
                     }
-                    // We don't want to override chunked encoding header if it was set by the user
                     if will_append {
                         add_transfer_encoding = false;
                     }
@@ -2471,11 +2475,18 @@ impl<'a> HTTPClient<'a> {
 
         if body_len > 0 || self.method.has_request_body() {
             if self.flags.is_streaming_request_body {
-                if let Some(content_length) = original_content_length {
+                // Content-Length is a forbidden request-header name (Fetch
+                // spec). For WebIDL fetch() the engine computes framing, so a
+                // caller-supplied Content-Length on a ReadableStream body is
+                // dropped and the body is always chunked. Honoring it would
+                // let the stream emit more bytes than the declared length,
+                // which is the CL-desync request-smuggling primitive. Only
+                // node:http's ClientRequest (which owns framing by contract)
+                // keeps the caller's value.
+                if let Some(content_length) = original_content_length
+                    && self.flags.is_node_http_client
+                {
                     if add_transfer_encoding {
-                        // User explicitly set Content-Length and did not set Transfer-Encoding;
-                        // preserve Content-Length instead of using chunked encoding.
-                        // This matches Node.js behavior where an explicit Content-Length is always honored.
                         request_headers_buf[header_count] =
                             picohttp::Header::new(CONTENT_LENGTH_HEADER_NAME, content_length);
                         header_count += 1;
@@ -4876,19 +4887,20 @@ impl<'a> HTTPClient<'a> {
                     location = header.value();
                 }
                 h if h == hash_header_const(b"Connection") => {
-                    if response.status_code >= 200 && response.status_code <= 299 {
-                        // HTTP headers are case-insensitive (RFC 7230)
-                        if bun_core::strings::eql_case_insensitive_ascii_check_length(
-                            header.value(),
-                            b"close",
-                        ) {
-                            self.state.flags.allow_keepalive = false;
-                        } else if bun_core::strings::eql_case_insensitive_ascii_check_length(
-                            header.value(),
-                            b"keep-alive",
-                        ) {
-                            self.state.flags.allow_keepalive = true;
-                        }
+                    // RFC 9112 §9.6: the `close` connection option is
+                    // connection-scoped, not tied to any status class. A 3xx
+                    // redirect that sends `Connection: close` must not have
+                    // its socket pooled for the follow-up request.
+                    if bun_core::strings::eql_case_insensitive_ascii_check_length(
+                        header.value(),
+                        b"close",
+                    ) {
+                        self.state.flags.allow_keepalive = false;
+                    } else if bun_core::strings::eql_case_insensitive_ascii_check_length(
+                        header.value(),
+                        b"keep-alive",
+                    ) {
+                        self.state.flags.allow_keepalive = true;
                     }
                 }
                 h if h == hash_header_const(b"Last-Modified") => {

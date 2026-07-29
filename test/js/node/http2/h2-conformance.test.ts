@@ -1046,13 +1046,17 @@ describe("response header block encode failures (RFC 9113 section 8.1)", () => {
   // (name + value > LSHPACK_MAX_HEADER_SIZE) cannot be emitted at all. Before the fix the native
   // layer marked the stream CLOSED locally and let the JS end path flush a stray DATA+END_STREAM
   // with no HEADERS in front of it, which a conforming client treats as a connection
-  // PROTOCOL_ERROR and tears down every multiplexed stream. node 26 / nghttp2 instead reset just
-  // that stream with RST_STREAM(FRAME_SIZE_ERROR); the connection stays up.
+  // PROTOCOL_ERROR and tears down every multiplexed stream. The stream is now reset with
+  // RST_STREAM(FRAME_SIZE_ERROR); because earlier entries in the failed block may already have
+  // been pushed into the connection-scoped HPACK encoder table (which the peer will never see),
+  // the session also winds down with a graceful GOAWAY(NO_ERROR) when any header was encoded
+  // before the failure.
   async function serveOversized(
     handler: (stream: http2.ServerHttp2Stream) => void,
+    serverOptions?: http2.ServerOptions,
   ): Promise<{ frames: Frame[]; frameError: [number, number] | null }> {
     let frameError: [number, number] | null = null;
-    const srv = http2.createServer();
+    const srv = http2.createServer(serverOptions ?? {});
     srv.on("session", s => s.on("error", () => {}));
     srv.on("stream", stream => {
       stream.on("error", () => {});
@@ -1070,9 +1074,9 @@ describe("response header block encode failures (RFC 9113 section 8.1)", () => {
       c.sendSettingsAck();
       c.sendFrame(FrameType.HEADERS, 0x5 /* END_HEADERS|END_STREAM */, 1, requestHeaderBlock("GET"));
       await c.waitFor(f => f.streamId === 1 && (f.type === FrameType.RST_STREAM || f.type === FrameType.DATA));
-      // PING barrier: once the ACK arrives the server has flushed everything queued for stream 1.
-      c.sendFrame(FrameType.PING, 0, 0, Buffer.alloc(8));
-      await c.waitFor(f => f.type === FrameType.PING && (f.flags & 0x1) !== 0);
+      // The encoder was touched (:status was encoded before the oversized entry failed), so the
+      // server also sends a graceful GOAWAY and closes: wait for either to snapshot the frames.
+      await Promise.race([c.waitForGoaway(2000), c.waitClosed(2000)]).catch(() => {});
       return { frames: c.frames.slice(), frameError };
     } finally {
       c.destroy();
@@ -1091,8 +1095,10 @@ describe("response header block encode failures (RFC 9113 section 8.1)", () => {
     expect(rst?.payload.readUInt32BE(0)).toBe(ErrorCode.FRAME_SIZE_ERROR);
     // The handler was told via 'frameError' that the HEADERS frame could not be sent.
     expect(frameError).toEqual([FrameType.HEADERS, ErrorCode.FRAME_SIZE_ERROR]);
-    // The connection survived: PING was answered and no GOAWAY went out.
-    expect(frames.find(f => f.type === FrameType.GOAWAY)).toBeUndefined();
+    // The session winds down gracefully: earlier encoded entries may have pushed into the HPACK
+    // encoder's dynamic table and the peer never saw them, so the encoder is no longer in step.
+    const goaway = frames.find(f => f.type === FrameType.GOAWAY);
+    expect(goaway && goawayErrorCode(goaway)).toBe(ErrorCode.NO_ERROR);
   }
 
   const BIG = Buffer.alloc(200000, 0x42).toString("latin1");
@@ -1149,12 +1155,104 @@ describe("response header block encode failures (RFC 9113 section 8.1)", () => {
       );
       // The first stream-1 frame must be the reset, not a stray DATA with no HEADERS.
       expect(first.type).toBe(FrameType.RST_STREAM);
-      c.sendFrame(FrameType.PING, 0, 0, Buffer.alloc(8));
-      await c.waitFor(f => f.type === FrameType.PING && (f.flags & 0x1) !== 0);
+      await Promise.race([c.waitForGoaway(2000), c.waitClosed(2000)]).catch(() => {});
       expectStreamReset({ frames: c.frames.slice(), frameError });
     } finally {
       c.destroy();
       srv.close();
+    }
+  });
+
+  test("a later stream on the same session is not sent a HEADERS referencing the desynced encoder", async () => {
+    // Stream 1's content-type is pushed into the encoder's dynamic table before x-big fails;
+    // without the GOAWAY the server would answer stream 3's content-type with an indexed
+    // reference (>= 62) the peer's decoder never saw, and the peer would GOAWAY(COMPRESSION_ERROR).
+    const srv = http2.createServer();
+    srv.on("session", s => s.on("error", () => {}));
+    let hit = 0;
+    srv.on("stream", stream => {
+      stream.on("error", () => {});
+      hit++;
+      if (hit === 1) {
+        stream.respond({ ":status": 200, "content-type": "text/plain", "x-big": BIG });
+      } else {
+        stream.respond({ ":status": 200, "content-type": "text/plain" });
+      }
+      stream.end();
+    });
+    srv.listen(0, "127.0.0.1");
+    await once(srv, "listening");
+    const c = await RawH2.connect((srv.address() as net.AddressInfo).port);
+    try {
+      c.sendPreface();
+      c.sendEmptySettings();
+      c.sendSettingsAck();
+      c.sendFrame(FrameType.HEADERS, 0x5, 1, requestHeaderBlock("GET"));
+      c.sendFrame(FrameType.HEADERS, 0x5, 3, requestHeaderBlock("GET"));
+      await Promise.race([c.waitForGoaway(2000), c.waitClosed(2000)]);
+      const rst1 = c.frames.find(f => f.streamId === 1 && f.type === FrameType.RST_STREAM);
+      expect(rst1?.payload.readUInt32BE(0)).toBe(ErrorCode.FRAME_SIZE_ERROR);
+      const goaway = c.frames.find(f => f.type === FrameType.GOAWAY);
+      expect(goaway && goawayErrorCode(goaway)).toBe(ErrorCode.NO_ERROR);
+      // Stream 3 must not have received a HEADERS frame whose payload indexes into the dynamic
+      // table (any byte with the high bit set and value >= 0xBE references index >= 62).
+      const hdr3 = c.frames.find(f => f.streamId === 3 && f.type === FrameType.HEADERS);
+      if (hdr3) {
+        const dynRef = [...hdr3.payload].find(b => b >= 0xbe);
+        expect(dynRef).toBeUndefined();
+      }
+    } finally {
+      c.destroy();
+      srv.close();
+    }
+  });
+
+  test("a response block exceeding maxSendHeaderBlockLength is reset on the wire", async () => {
+    // The whole block exceeds the limit after every field encoded fine; node/nghttp2 close the
+    // stream with REFUSED_STREAM (test-http2-options-max-headers-block-length.js) and emit
+    // frameError(FRAME_SIZE_ERROR).
+    const { frames, frameError } = await serveOversized(
+      stream => {
+        stream.respond({ ":status": 200, "x-a": "aaaa", "x-b": "bbbb", "x-c": "cccc", "x-d": "dddd" });
+        stream.end("x");
+      },
+      { maxSendHeaderBlockLength: 32 },
+    );
+    const onStream1 = frames.filter(f => f.streamId === 1);
+    const types = onStream1.map(f => f.type);
+    expect(types).not.toContain(FrameType.HEADERS);
+    expect(types).not.toContain(FrameType.DATA);
+    const rst = onStream1.find(f => f.type === FrameType.RST_STREAM);
+    expect(rst?.payload.readUInt32BE(0)).toBe(ErrorCode.REFUSED_STREAM);
+    expect(frameError).toEqual([FrameType.HEADERS, ErrorCode.FRAME_SIZE_ERROR]);
+    const goaway = frames.find(f => f.type === FrameType.GOAWAY);
+    expect(goaway && goawayErrorCode(goaway)).toBe(ErrorCode.NO_ERROR);
+  });
+});
+
+describe("client request terminator with waitForTrailers", () => {
+  test("a GET with { waitForTrailers: true } still half-closes its side on the wire", async () => {
+    // Native request() writes HEADERS without END_STREAM here and defers the terminator to
+    // noTrailers(); the state is HALF_CLOSED_LOCAL at that point so a can_send_data()-style
+    // guard would skip the terminating DATA and leave the peer's stream open.
+    const raw = await RawH2Server.listen();
+    try {
+      const client = http2.connect(`http://127.0.0.1:${raw.port}`);
+      client.on("error", () => {});
+      const req = client.request({ ":path": "/" }, { waitForTrailers: true });
+      req.on("error", () => {});
+      req.end();
+      await raw.waitFor(f => f.streamId === 1 && (f.type === FrameType.HEADERS || f.type === FrameType.DATA));
+      raw.sendFrame(FrameType.SETTINGS, 0, 0);
+      raw.sendFrame(FrameType.SETTINGS, 0x1, 0);
+      // Wait for the client to half-close stream 1 (END_STREAM on HEADERS or DATA).
+      const closer = await raw.waitFor(
+        f => f.streamId === 1 && (f.type === FrameType.HEADERS || f.type === FrameType.DATA) && (f.flags & 0x1) !== 0,
+      );
+      expect(closer.flags & 0x1).toBe(0x1);
+      client.destroy();
+    } finally {
+      raw.close();
     }
   });
 });

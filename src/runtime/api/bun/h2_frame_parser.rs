@@ -2494,15 +2494,58 @@ impl H2FrameParser {
         let _ = self.write(&buffer);
     }
 
-    /// A header block hit an entry the HPACK encoder cannot emit (single field over its per-entry
-    /// limit). Surface `frameError` and fail the stream with FRAME_SIZE_ERROR (node/nghttp2
-    /// parity). On the server the stream exists on the wire so RST_STREAM is written; on the
-    /// client the HEADERS never went out so the stream is failed locally only.
+    /// A header block could not be sent (a single field over the encoder's per-entry limit, or the
+    /// encoded block over `maxSendHeaderBlockLength`). Surface `frameError(FRAME_SIZE_ERROR)` and
+    /// fail the stream with `rst_code`. On the server the stream exists on the wire so RST_STREAM
+    /// is written; on the client the HEADERS never went out so the stream is failed locally only.
+    /// When `encoder_touched` is set, earlier entries in the block were already committed to the
+    /// connection-scoped HPACK encoder's dynamic table and the peer will never see them, so the
+    /// encoder is no longer in step with the peer's decoder: gracefully GOAWAY(NO_ERROR) like the
+    /// trailers encode-failure path so no later response emits a dynamic index the peer lacks.
     fn reject_unencodable_header_block(
+        &self,
+        stream: &mut Stream,
+        rst_code: ErrorCode,
+        encoder_touched: bool,
+    ) {
+        let identifier = stream.get_identifier();
+        identifier.ensure_still_alive();
+        self.dispatch_with_2_extra(
+            JSH2FrameParser::Gc::onFrameError,
+            identifier,
+            JSValue::js_number(FrameType::HTTP_FRAME_HEADERS as u8 as f64),
+            JSValue::js_number(ErrorCode::FRAME_SIZE_ERROR.0 as f64),
+        );
+        if self.is_server.get() {
+            self.end_stream(stream, rst_code);
+            if encoder_touched {
+                self.send_go_away(
+                    stream.id,
+                    ErrorCode::NO_ERROR,
+                    b"",
+                    self.last_stream_id.get(),
+                    true,
+                );
+            }
+        } else {
+            stream.state = StreamState::CLOSED;
+            stream.rst_code = rst_code.0;
+            self.dispatch_with_extra(
+                JSH2FrameParser::Gc::onStreamError,
+                identifier,
+                JSValue::js_number(rst_code.0 as f64),
+            );
+        }
+    }
+
+    /// Lookup-then-reject wrapper for the per-entry encode failure sites in `request()`, where the
+    /// stream may not have been materialized yet.
+    fn reject_unencodable_header_block_for(
         &self,
         stream_id: u32,
         stream_ctx_arg: JSValue,
         global_object: &JSGlobalObject,
+        encoder_touched: bool,
     ) -> JSValue {
         let Some(stream_ptr) = self.handle_received_stream_id(stream_id) else {
             return JSValue::js_number(-1.0);
@@ -2513,25 +2556,7 @@ impl H2FrameParser {
         if !stream_ctx_arg.is_empty_or_undefined_or_null() && stream_ctx_arg.is_object() {
             stream.set_context(stream_ctx_arg, global_object);
         }
-        let identifier = stream.get_identifier();
-        identifier.ensure_still_alive();
-        self.dispatch_with_2_extra(
-            JSH2FrameParser::Gc::onFrameError,
-            identifier,
-            JSValue::js_number(FrameType::HTTP_FRAME_HEADERS as u8 as f64),
-            JSValue::js_number(ErrorCode::FRAME_SIZE_ERROR.0 as f64),
-        );
-        if self.is_server.get() {
-            self.end_stream(stream, ErrorCode::FRAME_SIZE_ERROR);
-        } else {
-            stream.state = StreamState::CLOSED;
-            stream.rst_code = ErrorCode::FRAME_SIZE_ERROR.0;
-            self.dispatch_with_extra(
-                JSH2FrameParser::Gc::onStreamError,
-                identifier,
-                JSValue::js_number(ErrorCode::FRAME_SIZE_ERROR.0 as f64),
-            );
-        }
+        self.reject_unencodable_header_block(stream, ErrorCode::FRAME_SIZE_ERROR, encoder_touched);
         JSValue::js_number(stream_id as f64)
     }
 
@@ -7484,10 +7509,10 @@ impl H2FrameParser {
         let stream = unsafe { &mut *stream };
 
         stream.wait_for_trailers = false;
-        // Same guard as write_stream(): the compat _final reaches here on every response (kBeginSend
-        // sets waitForTrailers), so a stream already reset by a header-encode failure must not emit
-        // a stray DATA frame.
-        if stream.can_send_data() {
+        // A stream already reset (header-encode failure, peer RST) must not emit a stray DATA
+        // frame; HALF_CLOSED_LOCAL still needs the terminating END_STREAM here (client
+        // endStream + waitForTrailers reaches this with no END_STREAM on the wire yet).
+        if stream.state != StreamState::CLOSED {
             let _ = this.send_data(stream, b"", true, JSValue::UNDEFINED, false, false);
         }
         Ok(JSValue::UNDEFINED)
@@ -8649,10 +8674,11 @@ impl H2FrameParser {
                             return Err(global_object
                                 .throw(format_args!("Failed to allocate header buffer")));
                         }
-                        return Ok(this.reject_unencodable_header_block(
+                        return Ok(this.reject_unencodable_header_block_for(
                             stream_id,
                             stream_ctx_arg,
                             global_object,
+                            !encoded_headers.is_empty(),
                         ));
                     }
                 }
@@ -8809,10 +8835,11 @@ impl H2FrameParser {
                                 return Err(global_object
                                     .throw(format_args!("Failed to allocate header buffer")));
                             }
-                            return Ok(this.reject_unencodable_header_block(
+                            return Ok(this.reject_unencodable_header_block_for(
                                 stream_id,
                                 stream_ctx_arg,
                                 global_object,
+                                !encoded_headers.is_empty(),
                             ));
                         }
                     }
@@ -8872,10 +8899,11 @@ impl H2FrameParser {
                             return Err(global_object
                                 .throw(format_args!("Failed to allocate header buffer")));
                         }
-                        return Ok(this.reject_unencodable_header_block(
+                        return Ok(this.reject_unencodable_header_block_for(
                             stream_id,
                             stream_ctx_arg,
                             global_object,
+                            !encoded_headers.is_empty(),
                         ));
                     }
                 }
@@ -9095,20 +9123,10 @@ impl H2FrameParser {
         if this.max_send_header_block_length.get() != 0
             && encoded_size > this.max_send_header_block_length.get() as usize
         {
-            stream.state = StreamState::CLOSED;
-            stream.rst_code = ErrorCode::REFUSED_STREAM.0;
-
-            this.dispatch_with_2_extra(
-                JSH2FrameParser::Gc::onFrameError,
-                stream.get_identifier(),
-                JSValue::js_number(FrameType::HTTP_FRAME_HEADERS as u8 as f64),
-                JSValue::js_number(ErrorCode::FRAME_SIZE_ERROR.0 as f64),
-            );
-
-            this.dispatch_with_extra(
-                JSH2FrameParser::Gc::onStreamError,
-                stream.get_identifier(),
-                JSValue::js_number(stream.rst_code as f64),
+            this.reject_unencodable_header_block(
+                &mut stream,
+                ErrorCode::REFUSED_STREAM,
+                encoded_size > 0,
             );
             return Ok(JSValue::js_number(stream_id as f64));
         }

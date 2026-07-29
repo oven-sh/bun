@@ -601,11 +601,8 @@ fn send_sync_callback(
     if let Some(mut real) = async_http.real {
         // SAFETY: `real` outlives the HTTP-thread copy by construction.
         let real = unsafe { real.as_mut() };
-        // Do not copy `response` back: it is a bitwise alias of
-        // `metadata.response`, whose buffers are freed when the caller drops
-        // the `HTTPResponseMetadata` returned by `send_sync`, so a stored copy
-        // would dangle. No sync caller reads `real.response`; they use the
-        // returned value.
+        // `response` aliases the metadata `send_sync` hands to the caller; a
+        // stored copy would dangle once that metadata is dropped.
         real.response = None;
         real.err = async_http.err;
         real.elapsed = async_http.elapsed;
@@ -651,10 +648,6 @@ impl<'a> AsyncHTTP<'a> {
             // a network error rather than panicking on network-driven state.
             return Err(crate::Error::ConnectionClosed);
         };
-        // `metadata.response` borrows `metadata.owned_buf` (status text +
-        // header slices), so hand the whole metadata to the caller. Its
-        // `Deref` exposes the inner `Response`, and `Drop` reclaims the
-        // buffers when the caller is done.
         Ok(metadata)
     }
 

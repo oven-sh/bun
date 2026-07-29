@@ -130,15 +130,9 @@ impl Default for HTTPResponseMetadata {
     }
 }
 
-// `send_sync` returns the whole metadata so the borrowed `Response` cannot
-// outlive its backing buffers; callers that only read `Response` fields go
-// through this `Deref` and stay unchanged.
-//
-// CAUTION: the `Response` is typed `'static` but its status text and header
-// slices actually borrow the sibling `owned_buf` (and the leaked headers
-// slice) that `Drop` frees. The borrow checker cannot stop a slice obtained
-// via `res.headers.get(..)` from escaping the metadata's scope, so keep all
-// such borrows strictly inside it.
+// Lets `send_sync` callers keep reading `Response` fields. CAUTION: the target
+// is typed `'static` but its slices borrow the sibling `owned_buf` / header
+// slice that `Drop` frees; do not let a slice escape the metadata's scope.
 impl core::ops::Deref for HTTPResponseMetadata {
     type Target = bun_picohttp::Response<'static>;
 

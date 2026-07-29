@@ -295,12 +295,14 @@ static inline bool drainInbox(Worker::MessageInbox& inbox, Zig::GlobalObject* gl
 
     while (!batch.isEmpty()) {
         if (limit-- == 0) {
-            // Yield to the rest of the event loop. Return the undrained
-            // tail to the front of the inbox so it stays ahead of
-            // anything enqueued concurrently; caller reschedules.
+            // Yield to the rest of the event loop. Put the undrained tail
+            // back ahead of anything the sender enqueued during dispatch:
+            // swap so inbox.queue holds the large old tail, then append the
+            // few arrivals — O(arrivals), not O(backlog), under the lock.
             Locker locker { inbox.lock };
+            std::swap(inbox.queue, batch);
             while (!batch.isEmpty())
-                inbox.queue.prepend(batch.takeLast());
+                inbox.queue.append(batch.takeFirst());
             return true;
         }
         auto message = batch.takeFirst();

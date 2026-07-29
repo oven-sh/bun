@@ -174,9 +174,11 @@ void MessagePort::flushQueuedMessagesBeforeClose()
     if (Zig::GlobalObject::scriptExecutionStatus(globalObject, globalObject) != ScriptExecutionStatus::Running)
         return;
 
-    // Cap iterations like drainAndDispatch() so a 'message' handler re-injecting
-    // into this closing port (via its entangled peer) can't starve the loop.
-    size_t limit = std::max<size_t>(MessagePortPipe::queuedCount(m_pipe->state(m_side)), 1000);
+    // One-shot terminal flush before close(): anything left after `limit` is
+    // dropped by m_pipe->close(), so unlike drainAndDispatch() this doesn't
+    // cap at kDrainPerTurnCap. The floor bounds a handler re-injecting into
+    // this closing port via its entangled peer.
+    size_t limit = std::max<size_t>(MessagePortPipe::queuedCount(m_pipe->state(m_side)), MessagePortPipe::kDrainPerTurnCap);
     for (size_t i = 0; i < limit; ++i) {
         // A handler (or a microtask it queued) may have transferred this port; the
         // remaining inbox now belongs to the new owner. drainAndDispatch()'s

@@ -116,13 +116,9 @@ impl Capabilities {
             CLIENT_CONNECT_WITH_DB: has_db_name,
             CLIENT_DEPRECATE_EOF: true,
             CLIENT_SSL: ssl,
-            // Defence in depth: off by default so a string injection that
-            // reaches COM_QUERY cannot escalate to stacked queries. Opted in
-            // via the `multipleStatements` connection option (mirrors mysql2,
-            // go-sql-driver/mysql, mysqlclient). CLIENT_MULTI_RESULTS stays
-            // on unconditionally so stored procedures that return multiple
-            // result sets keep working.
+            // Opt-in (`multipleStatements`): off by default so COM_QUERY injection can't stack queries.
             CLIENT_MULTI_STATEMENTS: multiple_statements,
+            // Always on so stored procedures can return multiple result sets.
             CLIENT_MULTI_RESULTS: true,
             ..Default::default()
         }

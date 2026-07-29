@@ -1710,12 +1710,16 @@ pub(crate) fn js_set_secure_context(
 ) -> JsResult<JSValue> {
     jsc::mark_binding!();
 
-    let arguments = frame.arguments_old::<2>();
-    if arguments.len < 2 {
-        return Err(global.throw_not_enough_arguments("setSecureContext", 2, arguments.len));
+    let [listener, tls] = frame.arguments_as_array::<2>();
+    if frame.arguments_count() < 2 {
+        return Err(global.throw_not_enough_arguments(
+            "setSecureContext",
+            2,
+            frame.arguments_count() as usize,
+        ));
     }
-    if let Some(this) = arguments.ptr[0].as_class_ref::<Listener>() {
-        return Listener::set_secure_context(this, global, arguments.ptr[1]);
+    if let Some(this) = listener.as_class_ref::<Listener>() {
+        return Listener::set_secure_context(this, global, tls);
     }
     Err(global.throw(format_args!("Expected a Listener instance")))
 }

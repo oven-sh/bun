@@ -1256,8 +1256,18 @@ fn collect_compile_assets(
     let entry_name = bun_paths::basename(outfile);
 
     let mut seen: StringArrayHashMap<()> = StringArrayHashMap::new();
+    let mut skipped_main_entry = false;
     for f in out.iter() {
         if !f.output_kind.is_file_in_standalone_mode() {
+            continue;
+        }
+        // The first server-side entry point is renamed to `basename(outfile)`
+        // after this function returns; that slot is covered by `entry_name`.
+        if !skipped_main_entry
+            && f.output_kind == options::OutputKind::EntryPoint
+            && f.side.unwrap_or(options::Side::Server) == options::Side::Server
+        {
+            skipped_main_entry = true;
             continue;
         }
         let key = strings::remove_leading_dot_slash(&f.dest_path);

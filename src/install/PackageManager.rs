@@ -1768,11 +1768,8 @@ pub fn init(
         let mut buf = PathBuffer::uninit();
         let parts = [b"./.npmrc" as &[u8]];
 
-        // User-level .npmrc: `$XDG_CONFIG_HOME/.npmrc` when that file exists
-        // (bun's historical location), otherwise `$HOME/.npmrc` (where `npm
-        // login` writes it; npm itself ignores XDG_CONFIG_HOME). Without the
-        // fallback, `bun publish` on GitHub Actions never sees `~/.npmrc`
-        // because the runner exports `XDG_CONFIG_HOME=~/.config`.
+        // npm reads `$HOME/.npmrc` and ignores XDG_CONFIG_HOME; keep
+        // `$XDG_CONFIG_HOME/.npmrc` only when that file actually exists.
         let mut global_len: usize = 0;
         if let Some(xdg_dir) = bun_core::env_var::XDG_CONFIG_HOME.get_not_empty() {
             let p =

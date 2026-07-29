@@ -510,6 +510,36 @@ describe("web worker", () => {
       expect(stdout).toContain("EXITCODE:42");
       expect(exitCode).toBe(0);
     });
+
+    test("preventDefault() keeps a process.exitCode set inside the error handler", async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
+          const script = [
+            "self.addEventListener('error', e => {",
+            "  process.exitCode = 1;",
+            "  e.preventDefault();",
+            "  queueMicrotask(() => postMessage(process.exitCode));",
+            "});",
+            "throw new Error('handled-but-failed');",
+          ].join("\\n");
+          const w = new Worker(URL.createObjectURL(new Blob([script], { type: "text/javascript" })));
+          w.onmessage = e => { console.log("EXITCODE:" + e.data); w.terminate(); process.exit(e.data === 1 ? 0 : 1); };
+          w.onerror = e => { console.log("PARENT-ERROR:" + e.message); process.exit(1); };
+          w.addEventListener("close", e => { console.log("CLOSE:" + e.code); process.exit(1); });
+          `,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(stdout).toContain("EXITCODE:1");
+      expect(exitCode).toBe(0);
+    });
   });
 });
 

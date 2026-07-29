@@ -488,6 +488,9 @@ pub fn is_smol_mode() -> bool {
 #[derive(Default)]
 pub struct ExitHandler {
     pub exit_code: u8,
+    /// Bumped on every JS `process.exitCode` write; lets `uncaught_exception`
+    /// tell its own `exit_code = 1` apart from one the error handler set.
+    pub writes: u32,
 }
 
 impl ExitHandler {
@@ -499,6 +502,7 @@ impl ExitHandler {
     #[unsafe(no_mangle)]
     pub extern "C" fn Bun__setExitCode(vm: &mut VirtualMachine, code: u8) {
         vm.exit_handler.exit_code = code;
+        vm.exit_handler.writes = vm.exit_handler.writes.wrapping_add(1);
     }
 
     /// Note: spec calls `this.exit_handler.dispatchOnExit()` from a
@@ -1414,11 +1418,12 @@ impl VirtualMachine {
             // exit_code is set to 1 BEFORE the hook so 'exit' listeners run by a
             // terminating worker observe it (node parity).
             let prior_exit_code = self.exit_handler.exit_code;
+            let prior_writes = self.exit_handler.writes;
             self.exit_handler.exit_code = 1;
             handled = (self.on_unhandled_rejection)(self, global_object, err);
             if handled {
-                // Restore the exit code unless the error handler changed it.
-                if self.exit_handler.exit_code == 1 {
+                // Restore the exit code unless the error handler set process.exitCode.
+                if self.exit_handler.writes == prior_writes {
                     self.exit_handler.exit_code = prior_exit_code;
                 }
             } else {

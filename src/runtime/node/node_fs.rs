@@ -7161,8 +7161,9 @@ impl NodeFS {
                         };
                     }
                     if graph.find_dir(path.as_bytes()) {
-                        return Err(sys::Error::from_code(E::EISDIR, sys::Tag::read)
-                            .with_path(p.slice()));
+                        return Err(
+                            sys::Error::from_code(E::EISDIR, sys::Tag::read).with_path(p.slice())
+                        );
                     }
                 }
 

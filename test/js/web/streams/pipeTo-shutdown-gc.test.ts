@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN } from "harness";
+import { bunEnv, bunExe, isASAN, isWindows } from "harness";
 
 // Regression surface for a use-after-GC observed in pipeTo's native shutdown
 // path (RELEASE_ASSERT in JSObject::realm() from a swept readyPromise). The
@@ -81,7 +81,9 @@ test(
   async () => {
     await using proc = Bun.spawn({
       cmd: [bunExe(), "-e", script],
-      env: { ...bunEnv, BUN_JSC_collectContinuously: "1" },
+      // collectContinuously is prohibitively slow on Windows CI; the script's
+      // explicit Bun.gc(true) storms retain coverage there.
+      env: { ...bunEnv, ...(isWindows ? {} : { BUN_JSC_collectContinuously: "1" }) },
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);

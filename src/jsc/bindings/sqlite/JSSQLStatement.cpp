@@ -2023,7 +2023,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementFcntlFunction, (JSC::JSGlobalObject * lex
             return {};
         }
         double raw = resultValue.asNumber();
-        sqlite3_int64 scratch = raw >= 0 && raw <= static_cast<double>(std::numeric_limits<sqlite3_int64>::max())
+        sqlite3_int64 scratch = raw >= 0 && raw < static_cast<double>(std::numeric_limits<sqlite3_int64>::max())
             ? static_cast<sqlite3_int64>(raw)
             : 0;
         int rc = issue(&scratch);
@@ -2037,7 +2037,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementFcntlFunction, (JSC::JSGlobalObject * lex
         sqlite3_int64 scratch = -1;
         if (resultValue.isNumber()) {
             double raw = resultValue.asNumber();
-            if (raw >= 0 && raw <= static_cast<double>(std::numeric_limits<sqlite3_int64>::max()))
+            if (raw >= 0 && raw < static_cast<double>(std::numeric_limits<sqlite3_int64>::max()))
                 scratch = static_cast<sqlite3_int64>(raw);
             else if (raw < 0)
                 scratch = -1;
@@ -2057,7 +2057,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementFcntlFunction, (JSC::JSGlobalObject * lex
             if (out) sqlite3_free(out);
             return JSValue::encode(jsUndefined());
         }
-        JSString* str = JSC::jsString(vm, WTF::String::fromUTF8(out));
+        JSString* str = JSC::jsString(vm, WTF::String::fromUTF8ReplacingInvalidSequences({ reinterpret_cast<const unsigned char*>(out), strlen(out) }));
         sqlite3_free(out);
         return JSValue::encode(str);
     }

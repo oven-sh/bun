@@ -2409,13 +2409,16 @@ describe("fileControl", () => {
     // SQLITE_LOCK_NONE..SQLITE_LOCK_EXCLUSIVE == 0..4
     expect(db.fileControl(constants.SQLITE_FCNTL_LOCKSTATE)).toBeWithin(0, 5);
     expect(db.fileControl(constants.SQLITE_FCNTL_LAST_ERRNO)).toBeNumber();
-    expect(db.fileControl(constants.SQLITE_FCNTL_HAS_MOVED)).toBeOneOf([0, 1]);
+    // winFileControl does not implement HAS_MOVED (unix-only).
+    expect(db.fileControl(constants.SQLITE_FCNTL_HAS_MOVED)).toBeOneOf(isWindows ? [undefined] : [0, 1]);
     expect(db.fileControl(constants.SQLITE_FCNTL_DATA_VERSION)).toBeNumber();
     expect(db.fileControl(constants.SQLITE_FCNTL_RESERVE_BYTES)).toBeNumber();
     expect(db.fileControl(constants.SQLITE_FCNTL_MMAP_SIZE)).toBeNumber();
     expect(db.fileControl(constants.SQLITE_FCNTL_CHUNK_SIZE, 4096)).toBe(0);
     expect(db.fileControl(constants.SQLITE_FCNTL_SIZE_HINT, 65536)).toBe(0);
-    expect(db.fileControl(constants.SQLITE_FCNTL_RESET_CACHE)).toBe(0);
+    // RESET_CACHE is handled inside sqlite3_file_control (not the VFS) and only
+    // in SQLite >= 3.41.0; macOS dlopen()s Apple's libsqlite3, which may be older.
+    expect(db.fileControl(constants.SQLITE_FCNTL_RESET_CACHE)).toBeOneOf(isMacOS ? [0, 12] : [0]);
 
     expect(() => db.fileControl(constants.SQLITE_FCNTL_CHUNK_SIZE)).toThrow(TypeError);
     expect(() => db.fileControl(constants.SQLITE_FCNTL_SIZE_HINT)).toThrow(TypeError);

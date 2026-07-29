@@ -307,6 +307,14 @@ impl BundleOptions {
 // false, silently disabling the module-vs-main dual-resolution path.
 pub(crate) struct TargetMainFields;
 
+pub const ALL_DEFAULT_MAIN_FIELD_NAMES: [&[u8]; 4] = [
+    b"browser",
+    b"module",
+    b"main",
+    // Older packages use this in place of module: https://github.com/jsforum/jsforum/issues/5
+    b"jsnext:main",
+];
+
 // Note that this means if a package specifies "module" and "main", the ES6
 // module will not be selected. This means tree shaking will not work when
 // targeting node environments.
@@ -320,7 +328,10 @@ pub(crate) struct TargetMainFields;
 //
 // This is unfortunate but it's a problem on the side of those packages.
 // They won't work correctly with other popular bundlers (with node as a target) anyway.
-static DEFAULT_MAIN_FIELDS_NODE: &[&[u8]] = &[b"main", b"module"];
+static DEFAULT_MAIN_FIELDS_NODE: &[&[u8]] = &[
+    ALL_DEFAULT_MAIN_FIELD_NAMES[2],
+    ALL_DEFAULT_MAIN_FIELD_NAMES[1],
+];
 
 // Note that this means if a package specifies "main", "module", and
 // "browser" then "browser" will win out over "module". This is the
@@ -329,8 +340,17 @@ static DEFAULT_MAIN_FIELDS_NODE: &[&[u8]] = &[b"main", b"module"];
 // This is deliberate because the presence of the "browser" field is a
 // good signal that this should be preferred. Some older packages might only use CJS in their "browser"
 // but in such a case they probably don't have any ESM files anyway.
-static DEFAULT_MAIN_FIELDS_BROWSER: &[&[u8]] = &[b"browser", b"module", b"jsnext:main", b"main"];
-static DEFAULT_MAIN_FIELDS_BUN: &[&[u8]] = &[b"module", b"main", b"jsnext:main"];
+static DEFAULT_MAIN_FIELDS_BROWSER: &[&[u8]] = &[
+    ALL_DEFAULT_MAIN_FIELD_NAMES[0],
+    ALL_DEFAULT_MAIN_FIELD_NAMES[1],
+    ALL_DEFAULT_MAIN_FIELD_NAMES[3],
+    ALL_DEFAULT_MAIN_FIELD_NAMES[2],
+];
+static DEFAULT_MAIN_FIELDS_BUN: &[&[u8]] = &[
+    ALL_DEFAULT_MAIN_FIELD_NAMES[1],
+    ALL_DEFAULT_MAIN_FIELD_NAMES[2],
+    ALL_DEFAULT_MAIN_FIELD_NAMES[3],
+];
 
 impl TargetMainFields {
     pub(crate) fn get(&self, t: Target) -> &'static [&'static [u8]] {

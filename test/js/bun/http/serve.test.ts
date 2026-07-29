@@ -626,7 +626,12 @@ describe("does not dispatch a pipelined request after Connection: close", () => 
     // expected number of responses; an unfixed server writes one response too
     // many and never closes, so the second condition keeps the failure fast.
     const { promise: done, resolve } = Promise.withResolvers<void>();
-    const count = () => (Buffer.concat(chunks).toString("latin1").match(/HTTP\/1\.[01] \d{3} /g) ?? []).length;
+    const count = () =>
+      (
+        Buffer.concat(chunks)
+          .toString("latin1")
+          .match(/HTTP\/1\.[01] \d{3} /g) ?? []
+      ).length;
     const socket = net.connect(port, "127.0.0.1");
     socket.on("data", c => {
       chunks.push(c);

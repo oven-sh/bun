@@ -1254,7 +1254,7 @@ describe("bundler", () => {
     snapshotSourceMap: {
       "entry.js.map": {
         files: ["../node_modules/react/index.js", "../entry.js"],
-        mappingsExactMatch: "2lBACA,WAAW,IAAQ,EAAE,ICDrB,eACA,QAAQ,IAAI,CAAK",
+        mappingsExactMatch: "8nBACA,WAAW,IAAQ,EAAE,ICDrB,eACA,QAAQ,IAAI,CAAK",
       },
     },
   });
@@ -2301,6 +2301,56 @@ describe("bundler", () => {
     },
     run: {
       stdout: "Disposing\nCaught error: This function throws",
+    },
+  });
+
+  // ECMA-262 memoizes a module evaluation that threw: every later import of it
+  // must reject with the same error, never succeed with a partial namespace.
+  itBundled("edgecase/ESMEvaluationThrowIsMemoized", {
+    files: {
+      "/entry.js": /* js */ `
+        const errors = [];
+        for (let i = 1; i <= 2; i++)
+          await import("./thrower.js").then(
+            ns => console.log(i, "fulfilled", JSON.stringify(ns)),
+            e => (errors.push(e), console.log(i, "rejected", e.message)),
+          );
+        console.log("same error:", errors.length === 2 && errors[0] === errors[1]);
+        console.log("evaluations:", globalThis.evaluations);
+      `,
+      "/thrower.js": /* js */ `
+        export let v = 1;
+        globalThis.evaluations = (globalThis.evaluations ?? 0) + 1;
+        throw new Error("boom");
+      `,
+    },
+    run: {
+      stdout: "1 rejected boom\n2 rejected boom\nsame error: true\nevaluations: 1",
+    },
+  });
+
+  // Node removes a CJS module from require.cache when its evaluation throws, so
+  // a later require() re-evaluates it instead of seeing the partial exports.
+  itBundled("edgecase/CommonJSEvaluationThrowIsNotCached", {
+    files: {
+      "/entry.cjs": /* js */ `
+        for (let i = 1; i <= 2; i++) {
+          try {
+            console.log(i, "loaded", JSON.stringify(require("./thrower.cjs")));
+          } catch (e) {
+            console.log(i, "threw", e.message);
+          }
+        }
+        console.log("evaluations:", globalThis.evaluations);
+      `,
+      "/thrower.cjs": /* js */ `
+        exports.v = 1;
+        globalThis.evaluations = (globalThis.evaluations ?? 0) + 1;
+        throw new Error("boom");
+      `,
+    },
+    run: {
+      stdout: "1 threw boom\n2 threw boom\nevaluations: 2",
     },
   });
 

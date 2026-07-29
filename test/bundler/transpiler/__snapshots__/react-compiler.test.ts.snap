@@ -122,7 +122,15 @@ var __toESM = (mod, isNodeMode, target) => {
     cache.set(mod, to);
   return to;
 };
-var __commonJS = (cb, mod) => () => (mod || cb((mod = { exports: {} }).exports, mod), mod.exports);
+var __commonJS = (cb, mod) => () => {
+  if (!mod)
+    try {
+      cb((mod = { exports: {} }).exports, mod);
+    } catch (e) {
+      throw mod = 0, e;
+    }
+  return mod.exports;
+};
 
 // node_modules/react/index.js
 var require_react = __commonJS(function(exports) {

@@ -105,7 +105,17 @@ test("cyclic imports with async dependencies should generate async wrappers", as
           set: __exportSetter.bind(all, name)
         });
     };
-    var __esm = (fn, res) => () => (fn && (res = fn(fn = 0)), res);
+    var __esm = (fn, res, err) => () => {
+      if (err)
+        throw err[0];
+      if (fn)
+        try {
+          res = fn(fn = 0);
+        } catch (e) {
+          throw err = [e], e;
+        }
+      return res;
+    };
     var __promiseAll = (args) => Promise.all(args);
 
     // src/RecursiveDependencies/StoreDependencyAsync.ts
@@ -180,7 +190,7 @@ test("cyclic imports with async dependencies should generate async wrappers", as
     var { AsyncEntryPoint: AsyncEntryPoint2 } = await Promise.resolve().then(() => exports_AsyncEntryPoint);
     AsyncEntryPoint2();
 
-    //# debugId=2020261114B67BB564756E2164756E21
+    //# debugId=D5F43ED7FE060A5564756E2164756E21
     //# sourceMappingURL=entryBuild.js.map
     "
   `);

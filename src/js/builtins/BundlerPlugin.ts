@@ -546,8 +546,45 @@ export function runOnLoadPlugins(
             throw new TypeError('onLoad plugin returning loader: "object" must have "exports" property');
           }
           try {
-            contents = JSON.stringify(result.exports);
-            loader = "json";
+            const exportsObj = result.exports;
+            let keys: string[] | undefined;
+            let hasDefault = false;
+            if (exportsObj !== null && typeof exportsObj === "object" && !$isJSArray(exportsObj)) {
+              keys = Object.keys(exportsObj);
+              for (let i = 0; i < keys.length; i++) {
+                if (keys[i] === "default") {
+                  hasDefault = true;
+                  break;
+                }
+              }
+            }
+            if (hasDefault && keys) {
+              // Match runtime loader: "object" semantics (see ObjectModule.cpp
+              // generateObjectModuleSourceCode): each own enumerable key of
+              // `exports` is a binding of the module namespace, so an explicit
+              // `default` key must become the default import. Falling through to
+              // the JSON loader would bind the whole object as the default.
+              let source = "";
+              let clause = "";
+              let n = 0;
+              for (let i = 0; i < keys.length; i++) {
+                const key = keys[i];
+                const serialized = JSON.stringify(exportsObj[key]);
+                if (key === "default") {
+                  source += "export default " + serialized + ";\n";
+                } else if (key !== "__esModule") {
+                  const local = "__bun_object_loader_" + n++;
+                  source += "var " + local + " = " + serialized + ";\n";
+                  clause += (clause ? ", " : "") + local + " as " + JSON.stringify(key);
+                }
+              }
+              if (clause) source += "export { " + clause + " };\n";
+              contents = source;
+              loader = "js";
+            } else {
+              contents = JSON.stringify(exportsObj);
+              loader = "json";
+            }
           } catch (e) {
             throw new TypeError("When using Bun.build, onLoad plugin must return a JSON-serializable object: " + e);
           }

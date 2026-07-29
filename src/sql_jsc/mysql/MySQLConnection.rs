@@ -905,11 +905,8 @@ impl MySQLConnection {
                 let auth_method = AuthMethod::from_string(auth_switch.plugin_name.slice())
                     .ok_or(AnyMySQLError::UnsupportedAuthPlugin)?;
 
-                // Answering every AuthSwitchRequest lets a malicious/MITM
-                // server drive an unbounded auth ping-pong. Cap the number of
-                // switches honoured per handshake and refuse a switch back to
-                // the plugin already in use (mysql2 errors on a repeated
-                // switch; libmysqlclient honours at most one).
+                // Bound a hostile server's auth ping-pong: at most two
+                // switches, never back to the plugin already in use.
                 if self.auth_switch_count >= 2 || self.auth_plugin == Some(auth_method) {
                     bun_core::scoped_log!(
                         MySQLConnection,

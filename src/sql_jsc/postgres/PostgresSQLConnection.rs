@@ -971,10 +971,8 @@ impl PostgresSQLConnection {
         self.ref_();
         self.update_flags(|f| f.insert(ConnectionFlags::IS_PROCESSING_DATA));
 
-        // connectionTimeout bounds the whole handshake (connect → ReadyForQuery),
-        // so it keeps running across packets until `set_status(Connected)`
-        // switches the timer to the idle interval. Resetting it per packet
-        // would let a server that trickles bytes defeat the bound.
+        // Only the idle timer follows traffic; the connect deadline is not
+        // re-armed so a byte-trickling server still times out.
         if self.status.get() == Status::Connected {
             self.disable_connection_timeout();
         }
@@ -2655,11 +2653,7 @@ impl PostgresSQLConnection {
 
                 match &auth {
                     protocol::Authentication::SASL => {
-                        // AuthenticationSASL starts a new exchange and is only
-                        // valid before any authentication exchange has begun.
-                        // libpq rejects this as "duplicate SASL authentication
-                        // request"; answering it again loops unboundedly
-                        // against a malicious/MITM server.
+                        // libpq: "duplicate SASL authentication request".
                         if !matches!(
                             self.authentication_state.get(),
                             AuthenticationState::Pending

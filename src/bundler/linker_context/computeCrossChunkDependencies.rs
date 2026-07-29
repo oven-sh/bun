@@ -166,7 +166,7 @@ impl<'a, 'bump> CrossChunkDependencies<'a, 'bump> {
                 for &import_record_id in part.import_record_indices.slice() {
                     let import_record = &mut import_records[import_record_id as usize];
                     if import_record.source_index.is_valid()
-                        && ctx.is_external_dynamic_import(import_record, source_index)
+                        && ctx.is_external_dynamic_import(import_record)
                     {
                         let other_chunk_index =
                             entry_point_chunk_indices[import_record.source_index.get() as usize];

@@ -392,13 +392,12 @@ impl<'a> LinkerContext<'a> {
         self.pending_task_count.fetch_sub(1, Ordering::Relaxed);
     }
 
-    pub fn is_external_dynamic_import(&self, record: &ImportRecord, source_index: u32) -> bool {
+    pub fn is_external_dynamic_import(&self, record: &ImportRecord) -> bool {
         use crate::linker_graph::FileColumns as _;
         self.graph.code_splitting
             && record.kind == ImportKind::Dynamic
             && self.graph.files.items_entry_point_kind()[record.source_index.get() as usize]
                 .is_entry_point()
-            && record.source_index.get() != source_index
     }
 
     /// Note: this should call a `MimallocArena` debug hook
@@ -2722,7 +2721,7 @@ impl<'a> LinkerContext<'a> {
 
             for record in ctx.import_records[source_index as usize].iter() {
                 if record.source_index.is_valid()
-                    && !self.is_external_dynamic_import(record, source_index)
+                    && !self.is_external_dynamic_import(record)
                     && !ctx.file_entry_bits[record.source_index.get() as usize]
                         .is_set(entry_points_count)
                 {

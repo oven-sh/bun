@@ -1,7 +1,7 @@
 import { file, spawn } from "bun";
 import { afterAll, beforeAll, describe, expect, it, setDefaultTimeout } from "bun:test";
-import { rm, writeFile } from "fs/promises";
 import { readFileSync, writeFileSync } from "fs";
+import { rm, writeFile } from "fs/promises";
 import { bunExe, bunEnv as env, readdirSorted, tempDir } from "harness";
 import { createHash } from "node:crypto";
 import { gzipSync } from "node:zlib";

@@ -1143,8 +1143,8 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                 {
                     let computed = task.data_extract().integrity;
                     if computed.tag.is_supported() {
-                        let meta = &mut manager.lockfile.packages.items_meta_mut()
-                            [package_id as usize];
+                        let meta =
+                            &mut manager.lockfile.packages.items_meta_mut()[package_id as usize];
                         if !meta.integrity.tag.is_supported() {
                             meta.integrity = computed;
                             manager

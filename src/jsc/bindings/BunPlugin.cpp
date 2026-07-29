@@ -906,8 +906,7 @@ EncodedJSValue BunPlugin::OnResolve::run(JSC::JSGlobalObject* globalObject, cons
         }
     }
 
-    // Fall back to the default-namespace group with the full "ns:path" so
-    // onResolve({ filter: /^ns:/ }) matches like it does in Bun.build.
+    // Also offer the full "ns:path" to onResolve({ filter: /^ns:/ }) like Bun.build does.
     if (!nsString.isEmpty() && !this->fileNamespace.filters.isEmpty()) {
         WTF::String fullSpecifier = makeString(nsString, ":"_s, pathString);
         RELEASE_AND_RETURN(scope, runOnResolveGroup(globalObject, this->fileNamespace, fullSpecifier, importer));

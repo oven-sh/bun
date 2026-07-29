@@ -198,8 +198,26 @@ mod _impl {
         if let Some(worker) = vm.worker_ref() {
             // was explicitly overridden for the worker?
             if let Some(exec_argv) = worker.exec_argv() {
+                // The exec_argv slice borrows `StringImpl*` owned by the
+                // parent-thread `WorkerOptions::execArgv` vector. Handing one to
+                // `BunString::init` and then `to_js` would `String(impl)`-ref it
+                // from this worker thread and let JSC take further refs on it
+                // (atomization, rope resolution), which is a cross-thread hazard
+                // on a StringImpl that is not thread-safe. Copy the bytes into a
+                // worker-local impl instead, same as the C++ side does for
+                // `options.name.isolatedCopy()` in createNodeWorkerThreadsBinding.
                 return JSValue::create_array_from_iter(global_object, exec_argv.iter(), |&wtf| {
-                    BunString::init(wtf).to_js(global_object)
+                    // SAFETY: non-null entries borrow live storage in the
+                    // parent `WorkerOptions` (see `WebWorker::exec_argv`).
+                    let impl_ = unsafe { &*wtf };
+                    let s = if impl_.is_8bit() {
+                        BunString::clone_latin1(impl_.latin1_slice())
+                    } else {
+                        BunString::clone_utf16(impl_.utf16_slice())
+                    };
+                    let r = s.to_js(global_object);
+                    s.deref();
+                    r
                 });
             }
         }
@@ -332,7 +350,16 @@ mod _impl {
 
         // argv omits "bun" because it could be "bun run" or "bun" and it's kind of ambiguous
         // argv also omits the script name
-        let mut args_list: Vec<BunString> = Vec::with_capacity(args_count + 2);
+        // `deref` on every element on scope exit: a no-op for ZigString/Static
+        // tags, and releases the +1 held by `clone_*` in the worker branch.
+        let mut args_list = scopeguard::guard(
+            Vec::<BunString>::with_capacity(args_count + 2),
+            |v| {
+                for a in &v {
+                    a.deref();
+                }
+            },
+        );
 
         if vm.standalone_module_graph.is_some() {
             // Don't break user's code because they did process.argv.slice(2)
@@ -369,8 +396,22 @@ mod _impl {
         }
 
         if let Some(worker) = worker {
+            // The argv slice borrows `StringImpl*` owned by the parent-thread
+            // `WorkerOptions::argv` vector. Wrapping one in `BunString::init`
+            // lets `to_js_array` `String(impl)`-ref it from this worker thread
+            // and hand JSC a shared impl it may further ref (atomize, resolve a
+            // rope into), which is a cross-thread hazard on a StringImpl that is
+            // not thread-safe. Copy the bytes into a worker-local impl instead,
+            // same as the C++ side does for `options.name.isolatedCopy()`.
             for &arg in worker.argv() {
-                args_list.push(BunString::init(arg));
+                // SAFETY: non-null entries borrow live storage in the parent
+                // `WorkerOptions` (see `WebWorker::argv`).
+                let impl_ = unsafe { &*arg };
+                args_list.push(if impl_.is_8bit() {
+                    BunString::clone_latin1(impl_.latin1_slice())
+                } else {
+                    BunString::clone_utf16(impl_.utf16_slice())
+                });
             }
         } else {
             for arg in &vm.argv {

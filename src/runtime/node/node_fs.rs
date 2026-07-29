@@ -7014,9 +7014,7 @@ impl NodeFS {
             } else {
                 E::ENOENT
             };
-            return Err(
-                sys::Error::from_code(code, sys::Tag::scandir).with_path(args.path.slice())
-            );
+            return Err(sys::Error::from_code(code, sys::Tag::scandir).with_path(args.path.slice()));
         };
 
         let mut entries: Vec<T> = Vec::with_capacity(list.len());

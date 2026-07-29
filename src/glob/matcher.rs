@@ -369,14 +369,7 @@ fn glob_match_impl(
                             }
                             return match_brace(state, glob, path, brace_stack, brace_budget);
                         }
-                        b',' => {
-                            if state.brace_depth > 0 && skip_branch(state, glob, brace_stack) {
-                                continue 'main_loop;
-                            } else {
-                                break 'to_else;
-                            }
-                        }
-                        b'}' => {
+                        b',' | b'}' => {
                             if state.brace_depth > 0 && skip_branch(state, glob, brace_stack) {
                                 continue 'main_loop;
                             } else {

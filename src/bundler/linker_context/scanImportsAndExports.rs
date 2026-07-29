@@ -866,10 +866,14 @@ pub fn scan_imports_and_exports(
             );
 
             let parts_len = col_ref!(parts_list)[id].len() as usize;
+            // Counted across every part of this file, since `InsideWrapperPrefix`
+            // batches the whole file's dependency calls into one statement list.
+            let mut async_dependency_count: u32 = 0;
             for part_index in 0..parts_len {
                 let mut to_esm_uses: u32 = 0;
                 let mut to_common_js_uses: u32 = 0;
                 let mut runtime_require_uses: u32 = 0;
+                let mut promise_all_uses: u32 = 0;
 
                 // Imports of wrapped files must depend on the wrapper
                 // Iterate by index so each iteration re-borrows
@@ -984,6 +988,19 @@ pub fn scan_imports_and_exports(
                     let other_flags = col_ref!(flags)[other_id];
                     let other_export_kind = col_ref!(exports_kind)[other_id];
                     let other_source_index = other_id as u32;
+
+                    // `InsideWrapperPrefix` merges consecutive `await init_…()` calls into
+                    // one `await __promiseAll([…])`, so the runtime symbol becomes reachable
+                    // from the second async dependency onwards.
+                    if other_flags.wrap == WrapKind::Esm
+                        && kind == ImportKind::Stmt
+                        && other_flags.is_async_or_has_async_dependency
+                    {
+                        async_dependency_count += 1;
+                        if async_dependency_count >= 2 {
+                            promise_all_uses += 1;
+                        }
+                    }
 
                     if other_flags.wrap != WrapKind::None {
                         // Depend on the automatically-generated require wrapper symbol
@@ -1115,6 +1132,15 @@ pub fn scan_imports_and_exports(
                 }
 
                 if output_format != Format::InternalBakeDev {
+                    // If two async dependencies end up adjacent, they are awaited together
+                    // through the "__promiseAll" symbol from the runtime
+                    this.graph.generate_runtime_symbol_import_and_use(
+                        source_index,
+                        Index::part(part_index as u32),
+                        b"__promiseAll",
+                        promise_all_uses,
+                    )?;
+
                     // If there's an ES6 import of a CommonJS module, then we're going to need the
                     // "__toESM" symbol from the runtime to wrap the result of "require()"
                     this.graph.generate_runtime_symbol_import_and_use(

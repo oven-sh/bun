@@ -3236,29 +3236,6 @@ impl<'a> LinkerContext<'a> {
                 // This depends on the "__esm" symbol and declares the "init_foo" symbol
                 // for similar reasons to the CommonJS closure above.
 
-                // Count async dependencies to determine if we need __promiseAll
-                let mut async_import_count: usize = 0;
-                {
-                    let import_records =
-                        self.graph.ast.items_import_records()[source_index as usize].as_slice();
-                    let meta_flags = self.graph.meta.items_flags();
-
-                    for record in import_records {
-                        if !record.source_index.is_valid() {
-                            continue;
-                        }
-                        let other_flags = meta_flags[record.source_index.get() as usize];
-                        if other_flags.is_async_or_has_async_dependency {
-                            async_import_count += 1;
-                            if async_import_count >= 2 {
-                                break;
-                            }
-                        }
-                    }
-                }
-
-                let needs_promise_all = async_import_count >= 2;
-
                 let esm_parts: &[u32] = if wrapper_ref.is_valid()
                     && self.options.output_format != Format::InternalBakeDev
                 {
@@ -3267,25 +3244,9 @@ impl<'a> LinkerContext<'a> {
                     &[]
                 };
 
-                let promise_all_parts: &[u32] = if needs_promise_all
-                    && wrapper_ref.is_valid()
-                    && self.options.output_format != Format::InternalBakeDev
-                {
-                    self.top_level_symbols_to_parts_for_runtime(self.promise_all_runtime_ref)
-                } else {
-                    &[]
-                };
-
-                // generate a dummy part that depends on the "__esm" and optionally "__promiseAll" symbols
-                let mut dependencies =
-                    DependencyList::init_capacity(esm_parts.len() + promise_all_parts.len());
+                // generate a dummy part that depends on the "__esm" symbol
+                let mut dependencies = DependencyList::init_capacity(esm_parts.len());
                 for &part in esm_parts {
-                    dependencies.append_assume_capacity(Dependency {
-                        part_index: part,
-                        source_index: bun_ast::Index::RUNTIME,
-                    });
-                }
-                for &part in promise_all_parts {
                     dependencies.append_assume_capacity(Dependency {
                         part_index: part,
                         source_index: bun_ast::Index::RUNTIME,
@@ -3324,19 +3285,6 @@ impl<'a> LinkerContext<'a> {
                             crate::Index::RUNTIME,
                         )
                         .expect("OOM");
-
-                    // Only mark __promiseAll as used if we have multiple async dependencies
-                    if needs_promise_all {
-                        self.graph
-                            .generate_symbol_import_and_use(
-                                source_index,
-                                part_index,
-                                self.promise_all_runtime_ref,
-                                1,
-                                crate::Index::RUNTIME,
-                            )
-                            .expect("OOM");
-                    }
                 }
             }
             WrapKind::None => {}
@@ -4248,17 +4196,17 @@ pub struct StmtList {
 
 pub struct InsideWrapperPrefix {
     pub stmts: Vec<Stmt>,
-    pub sync_dependencies_end: usize,
-    // if true it will exist at `sync_dependencies_end`
-    pub has_async_dependency: bool,
+    /// Index of the trailing `await init_…()` statement, if any. Consecutive
+    /// async dependencies merge into it as `await __promiseAll([…])`; appending
+    /// anything else clears it so evaluation order is preserved.
+    async_dependency_index: Option<usize>,
 }
 
 impl InsideWrapperPrefix {
     pub(crate) fn init() -> Self {
         Self {
             stmts: Vec::new(),
-            sync_dependencies_end: 0,
-            has_async_dependency: false,
+            async_dependency_index: None,
         }
     }
 
@@ -4266,34 +4214,35 @@ impl InsideWrapperPrefix {
 
     pub(crate) fn reset(&mut self) {
         self.stmts.clear();
-        self.sync_dependencies_end = 0;
-        self.has_async_dependency = false;
+        self.async_dependency_index = None;
     }
 }
 
 impl InsideWrapperPrefix {
     pub(crate) fn append_non_dependency(&mut self, stmt: Stmt) -> Result<(), AllocError> {
         self.stmts.push(stmt);
+        self.async_dependency_index = None;
         Ok(())
     }
 
     pub(crate) fn append_non_dependency_slice(&mut self, stmts: &[Stmt]) -> Result<(), AllocError> {
+        if stmts.is_empty() {
+            return Ok(());
+        }
         self.stmts.extend_from_slice(stmts);
+        self.async_dependency_index = None;
         Ok(())
     }
 
     pub(crate) fn append_sync_dependency(&mut self, call_expr: Expr) -> Result<(), AllocError> {
-        self.stmts.insert(
-            self.sync_dependencies_end,
-            Stmt::alloc(
-                S::SExpr {
-                    value: call_expr,
-                    ..Default::default()
-                },
-                call_expr.loc,
-            ),
-        );
-        self.sync_dependencies_end += 1;
+        self.stmts.push(Stmt::alloc(
+            S::SExpr {
+                value: call_expr,
+                ..Default::default()
+            },
+            call_expr.loc,
+        ));
+        self.async_dependency_index = None;
         Ok(())
     }
 
@@ -4302,25 +4251,23 @@ impl InsideWrapperPrefix {
         call_expr: Expr,
         promise_all_ref: Ref,
     ) -> Result<(), AllocError> {
-        if !self.has_async_dependency {
-            self.has_async_dependency = true;
-            self.stmts.insert(
-                self.sync_dependencies_end,
-                Stmt::alloc(
-                    S::SExpr {
-                        value: Expr::init(E::Await { value: call_expr }, Loc::EMPTY),
-                        ..Default::default()
-                    },
-                    Loc::EMPTY,
-                ),
-            );
+        let Some(async_dependency_index) = self.async_dependency_index else {
+            self.async_dependency_index = Some(self.stmts.len());
+            self.stmts.push(Stmt::alloc(
+                S::SExpr {
+                    value: Expr::init(E::Await { value: call_expr }, Loc::EMPTY),
+                    ..Default::default()
+                },
+                Loc::EMPTY,
+            ));
             return Ok(());
-        }
+        };
+        debug_assert_eq!(async_dependency_index + 1, self.stmts.len());
 
         // Note: deep AST mutation chain — `s_expr_mut`/`e_await_mut`/
         // `e_call_mut`/`e_array_mut` return `Option`; `.unwrap()` panics on
         // shape mismatch.
-        let mut first_dep_call_expr = self.stmts[self.sync_dependencies_end]
+        let mut first_dep_call_expr = self.stmts[async_dependency_index]
             .data
             .s_expr_mut()
             .unwrap()
@@ -4383,7 +4330,7 @@ impl InsideWrapperPrefix {
             );
 
             // replace the `await init_` expr with `await __promiseAll`
-            self.stmts[self.sync_dependencies_end] = Stmt::alloc(
+            self.stmts[async_dependency_index] = Stmt::alloc(
                 S::SExpr {
                     value: Expr::init(
                         E::Await {

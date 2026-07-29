@@ -428,4 +428,82 @@ describe("bundler", () => {
       expect(bundled).not.toMatch(/await\s+__promiseAll\s*\(/);
     },
   });
+
+  // The entry point is never wrapped, so nothing used to mark __promiseAll as
+  // live even though its two adjacent async imports batch into a call to it.
+  itBundled("bundler/__promiseAll is included when an unwrapped entry batches async imports", {
+    files: {
+      "/entry.mjs": /* js */ `
+        import "./x.mjs";
+        import "./y.mjs";
+        await import("./dx.mjs");
+        await import("./dy.mjs");
+      `,
+      "/x.mjs": /* js */ `
+        await 0;
+        console.log("x");
+      `,
+      "/y.mjs": /* js */ `
+        await 0;
+        console.log("y");
+      `,
+      "/dx.mjs": /* js */ `
+        import "./x.mjs";
+        console.log("dx");
+      `,
+      "/dy.mjs": /* js */ `
+        import "./y.mjs";
+        console.log("dy");
+      `,
+    },
+    format: "esm",
+    target: "bun",
+    run: {
+      stdout: `
+        x
+        y
+        dx
+        dy
+      `,
+    },
+    onAfterBundle(api) {
+      const bundled = api.readFile("out.js");
+      expect(bundled).toMatch(/await\s+__promiseAll\s*\(\s*\[/);
+      expect(bundled).toContain("var __promiseAll = ");
+    },
+  });
+
+  itBundled("bundler/__promiseAll is tree-shaken when async deps are only reached by import()", {
+    files: {
+      "/entry.mjs": /* js */ `
+        await import("./w.mjs");
+      `,
+      "/w.mjs": /* js */ `
+        await import("./x.mjs");
+        await import("./y.mjs");
+        console.log("w");
+      `,
+      "/x.mjs": /* js */ `
+        await 0;
+        console.log("x");
+      `,
+      "/y.mjs": /* js */ `
+        await 0;
+        console.log("y");
+      `,
+    },
+    format: "esm",
+    target: "bun",
+    run: {
+      stdout: `
+        x
+        y
+        w
+      `,
+    },
+    onAfterBundle(api) {
+      // Dynamic imports never batch, so the helper can never be referenced.
+      expect(api.readFile("out.js")).not.toContain("__promiseAll");
+    },
+  });
 });

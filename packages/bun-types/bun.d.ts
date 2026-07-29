@@ -5406,7 +5406,9 @@ declare module "bun" {
     | "wasm"
     | "text"
     | "css"
-    | "html";
+    | "html"
+    | "base64"
+    | "dataurl";
 
   interface PluginConstraints {
     /**

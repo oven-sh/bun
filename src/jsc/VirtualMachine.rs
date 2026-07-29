@@ -4341,6 +4341,25 @@ impl VirtualMachine {
         );
         if let Err(err_) = resolve_result {
             let err = err_;
+            let sys_errno = match &err {
+                crate::CrateError::Resolver(bun_resolver::Error::Sys(e))
+                | crate::CrateError::Sys(e)
+                    if e.is_fd_or_memory_exhaustion() =>
+                {
+                    Some(*e)
+                }
+                _ => None,
+            };
+            if let Some(errno) = sys_errno {
+                let js_err = crate::SystemError::from(
+                    bun_sys::Error::new(errno, bun_sys::Tag::open)
+                        .with_path(specifier_utf8.slice())
+                        .to_system_error(),
+                )
+                .to_error_instance(global);
+                *res = ErrorableString::err(ErrorCode(ErrorCode::JS_ERROR_OBJECT), js_err);
+                return Ok(());
+            }
             let import_kind = if is_esm {
                 bun_ast::ImportKind::Stmt
             } else if is_user_require_resolve {

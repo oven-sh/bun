@@ -5225,6 +5225,25 @@ unsafe fn resolve_hook(
             &mut result_query,
         )
     } {
+        let sys_errno = match &err {
+            crate::Error::Resolver(bun_resolver::Error::Sys(e)) | crate::Error::Sys(e)
+                if e.is_fd_or_memory_exhaustion() =>
+            {
+                Some(*e)
+            }
+            _ => None,
+        };
+        if let Some(errno) = sys_errno {
+            let js_err = bun_jsc::SystemError::from(
+                bun_sys::Error::new(errno, bun_sys::Tag::open)
+                    .with_path(specifier_utf8.slice())
+                    .to_system_error(),
+            )
+            .to_error_instance(global_ref);
+            // SAFETY: per fn contract.
+            unsafe { *res = ErrorableString::err(ErrorCode(ErrorCode::JS_ERROR_OBJECT), js_err) };
+            return true;
+        }
         // Synthesise a `ResolveMessage` from the first
         // `.resolve`-tagged log msg, or fall back to `ResolveMessage::fmt`.
         let msg: bun_ast::Msg = 'brk: {

@@ -664,6 +664,14 @@ struct us_socket_t *us_socket_group_connect_unix(struct us_socket_group_t *group
     return connect_socket;
 }
 
+static int is_fd_or_memory_exhaustion(int err) {
+#ifdef _WIN32
+    return err == WSAEMFILE || err == WSAENOBUFS;
+#else
+    return err == EMFILE || err == ENFILE || err == ENOBUFS || err == ENOMEM;
+#endif
+}
+
 int start_connections(struct us_connecting_socket_t *c, int count) {
     int opened = 0;
     struct us_socket_group_t *group = c->group;
@@ -674,6 +682,10 @@ int start_connections(struct us_connecting_socket_t *c, int count) {
         /* The deferred-DNS path does not carry a local binding. */
         LIBUS_SOCKET_DESCRIPTOR connect_socket_fd = bsd_create_connect_socket(&addr, NULL, c->options);
         if (connect_socket_fd == LIBUS_SOCKET_ERROR) {
+            int err = LIBUS_ERR;
+            if (c->error == 0 && is_fd_or_memory_exhaustion(err)) {
+                c->error = err;
+            }
             continue;
         }
         bsd_socket_nodelay(connect_socket_fd, 1);
@@ -681,8 +693,12 @@ int start_connections(struct us_connecting_socket_t *c, int count) {
         struct us_poll_t *poll = &s->p;
         us_poll_init(poll, connect_socket_fd, POLL_TYPE_SEMI_SOCKET);
         if (us_poll_start_rc(poll, loop, LIBUS_SOCKET_WRITABLE) != 0) {
+            int saved_errno = LIBUS_ERR;
             bsd_close_socket(connect_socket_fd);
             us_poll_free(poll, loop);
+            if (c->error == 0 && is_fd_or_memory_exhaustion(saved_errno)) {
+                c->error = saved_errno;
+            }
             continue;
         }
         ++opened;
@@ -697,6 +713,11 @@ int start_connections(struct us_connecting_socket_t *c, int count) {
         s->connect_next = c->connecting_head;
         c->connecting_head = s;
         s->connect_state = c;
+    }
+    if (opened > 0 || c->connecting_head != NULL) {
+        /* A sibling's socket() failure is no longer the outcome once any
+         * address has a connect in flight; the async result decides. */
+        c->error = 0;
     }
     return opened;
 }
@@ -741,7 +762,9 @@ void us_internal_socket_after_resolve(struct us_connecting_socket_t *c) {
     if (opened == 0) {
         /* Same as the exhausted path in us_internal_socket_after_open: a
          * real connect failure must not be reported as a caller abort. */
-        c->error = ECONNREFUSED;
+        if (c->error == 0) {
+            c->error = ECONNREFUSED;
+        }
         us_connecting_socket_close(c);
     }
 }
@@ -782,7 +805,9 @@ void us_internal_socket_after_open(struct us_socket_t *s, int error) {
                      * us_connecting_socket_close defaults c->error to
                      * ECONNABORTED (caller abort) and never invalidates the
                      * DNS cache entry for the dead host. */
-                    c->error = ECONNREFUSED;
+                    if (c->error == 0) {
+                        c->error = ECONNREFUSED;
+                    }
                     us_connecting_socket_close(c);
                 }
             }

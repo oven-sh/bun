@@ -1117,10 +1117,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             )
         } else {
             debug_assert!(errno >= 0);
-            // Unix-path connect errors keep their real code (a non-socket file
-            // is ENOTSOCK, a permission-denied path is EACCES, a missing one is
-            // ENOENT, an inexpressible path is EINVAL); everything else stays
-            // ECONNREFUSED.
+            // Unix-path and resource-exhaustion errnos keep their identity; anything else becomes ECONNREFUSED.
             let errno_: c_int = if errno == sys::SystemErrno::ENOENT as c_int
                 || errno == sys::SystemErrno::ENOTSOCK as c_int
                 || errno == sys::SystemErrno::EACCES as c_int
@@ -1128,6 +1125,10 @@ impl<const SSL: bool> NewSocket<SSL> {
                 || errno == sys::SystemErrno::ECONNRESET as c_int
                 || errno == sys::SystemErrno::EADDRINUSE as c_int
                 || errno == sys::SystemErrno::EADDRNOTAVAIL as c_int
+                || errno == sys::SystemErrno::EMFILE as c_int
+                || errno == sys::SystemErrno::ENFILE as c_int
+                || errno == sys::SystemErrno::ENOBUFS as c_int
+                || errno == sys::SystemErrno::ENOMEM as c_int
             {
                 errno
             } else {
@@ -1147,6 +1148,14 @@ impl<const SSL: bool> NewSocket<SSL> {
                 BunString::static_("EADDRINUSE")
             } else if errno == sys::SystemErrno::EADDRNOTAVAIL as c_int {
                 BunString::static_("EADDRNOTAVAIL")
+            } else if errno == sys::SystemErrno::EMFILE as c_int {
+                BunString::static_("EMFILE")
+            } else if errno == sys::SystemErrno::ENFILE as c_int {
+                BunString::static_("ENFILE")
+            } else if errno == sys::SystemErrno::ENOBUFS as c_int {
+                BunString::static_("ENOBUFS")
+            } else if errno == sys::SystemErrno::ENOMEM as c_int {
+                BunString::static_("ENOMEM")
             } else {
                 BunString::static_("ECONNREFUSED")
             };

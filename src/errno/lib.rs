@@ -276,6 +276,15 @@ pub fn e_from_negated(errno: core::ffi::c_int) -> E {
 }
 
 impl SystemErrno {
+    /// Process-wide fd/memory exhaustion; propagate instead of caching as not-found or reporting as refused.
+    #[inline]
+    pub fn is_fd_or_memory_exhaustion(self) -> bool {
+        matches!(
+            self,
+            Self::EMFILE | Self::ENFILE | Self::ENOBUFS | Self::ENOMEM
+        )
+    }
+
     /// Unchecked discriminant cast.
     ///
     /// On POSIX the enum is dense `0..MAX`, so we debug-assert `n < MAX`.

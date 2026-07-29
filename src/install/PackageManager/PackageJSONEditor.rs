@@ -713,10 +713,7 @@ pub(crate) fn edit_catalogs_after_update(
             };
 
             let info = &infos[index];
-            // `Lockfile::preprocess_updating_catalogs` resolved this literal
-            // together with the lockfile's catalog map, so package.json and
-            // bun.lock always agree. `None` restores the original (may still
-            // be the temporary `latest`).
+            // `Lockfile::preprocess_updating_catalogs` wrote the same literal into bun.lock.
             let new_literal: &[u8] = match &info.resolved_version_literal {
                 Some(v) => arena_str(arena, v),
                 None => arena_dup(arena, &info.original_version_literal),

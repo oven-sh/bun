@@ -855,11 +855,8 @@ impl Lockfile {
         Ok(())
     }
 
-    /// `bun update` with catalogs records each catalog entry it edits in
-    /// `manager.updating_catalogs`; with `--latest` the entry is rewritten to
-    /// `latest` before resolution. Compute the resolved literal for each entry
-    /// and write it into `old.catalogs` so the saved lockfile matches the
-    /// package.json `edit_catalogs_after_update` will write.
+    /// Rewrite `old.catalogs` with the resolved literal for each catalog entry
+    /// `bun update` touched, so the saved lockfile matches package.json.
     fn preprocess_updating_catalogs(
         old: &mut Lockfile,
         manager: &mut PackageManager,
@@ -923,12 +920,9 @@ impl Lockfile {
             }
         }
 
-        // Split-borrow: `string_builder!` only takes `old.buffers.string_bytes`
-        // + `old.string_pool`, leaving `old.catalogs` free.
         let mut string_builder = string_builder!(old);
         for info in infos.iter() {
-            // Unresolved entries are left as-is; with `--latest` they still hold
-            // the temporary `latest`, so restore the original literal.
+            // Unresolved: restore the original (`--latest` left `latest`).
             let new_literal = info
                 .resolved_version_literal
                 .as_deref()
@@ -1373,10 +1367,8 @@ fn clean_preprocess_updating_catalogs_cold(
     Lockfile::preprocess_updating_catalogs(old, manager, exact_versions)
 }
 
-/// Version literal a catalog entry is rewritten to after `bun update`:
-/// the resolved npm version with the entry's original `^`/`~`/exact pin
-/// preserved (or exact under `--save-exact`), and the `npm:<name>@` prefix
-/// kept for alias entries.
+/// Resolved npm version with the entry's original `^`/`~`/exact pin and
+/// `npm:<name>@` alias prefix preserved (exact under `--save-exact`).
 pub fn format_catalog_update_literal(
     resolution: &Resolution,
     string_buf: &[u8],

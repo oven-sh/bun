@@ -584,9 +584,7 @@ pub struct CatalogUpdateInfo {
     pub dep_name: Box<[u8]>,
     pub original_version_literal: Box<[u8]>,
     pub is_alias: bool,
-    /// The literal `bun update` resolved, computed once in
-    /// `Lockfile::preprocess_updating_catalogs` and applied to both
-    /// `lockfile.catalogs` and package.json. `None` keeps the original.
+    /// Set by `Lockfile::preprocess_updating_catalogs`; `None` keeps the original.
     pub resolved_version_literal: Option<Box<[u8]>>,
 }
 

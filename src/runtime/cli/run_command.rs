@@ -1798,23 +1798,28 @@ impl RunCommand {
         Global::exit(1);
     }
 
-    // This path is almost always a path to a user directory. So it cannot be
-    // inlined like our uses of /tmp. On Windows use `GetTempPathW` /
-    // `RealFS.platformTempDir` instead — this const is POSIX-only and
-    // referencing it on Windows is a compile error.
-    //
     // Canonical definition lives in `bun_install::RunCommand` (lower tier so
     // the package manager can use it without depending on `bun_runtime`).
     #[cfg(not(windows))]
-    pub const BUN_NODE_DIR: &'static str = bun_install::RunCommand::BUN_NODE_DIR;
+    #[inline]
+    pub fn bun_node_dir() -> &'static str {
+        bun_install::RunCommand::bun_node_dir()
+    }
 
     /// Returns the path to the
     /// fake `node` shim that points back at the running `bun` binary.
     pub fn bun_node_file_utf8() -> crate::Result<&'static ZStr> {
         #[cfg(not(windows))]
         {
-            const BUN_NODE_DIR_Z: &str = const_format::concatcp!(RunCommand::BUN_NODE_DIR, "\0");
-            Ok(ZStr::from_static(BUN_NODE_DIR_Z.as_bytes()))
+            static ONCE: std::sync::OnceLock<Vec<u8>> = std::sync::OnceLock::new();
+            let bytes = ONCE.get_or_init(|| {
+                let dir = Self::bun_node_dir().as_bytes();
+                let mut v = Vec::with_capacity(dir.len() + 1);
+                v.extend_from_slice(dir);
+                v.push(0);
+                v
+            });
+            Ok(ZStr::from_slice_with_nul(bytes))
         }
         #[cfg(windows)]
         {
@@ -1838,18 +1843,11 @@ impl RunCommand {
                 &temp_path_buffer[..len as usize],
             );
 
-            const FILE_NAME: &str = const_format::concatcp!(
-                "bun-node",
-                if Environment::GIT_SHA_SHORT.len() > 0 {
-                    const_format::concatcp!("-", Environment::GIT_SHA_SHORT)
-                } else {
-                    ""
-                },
-                "\\node.exe"
-            );
+            let dir_name = bun_install::bun_node_dir_name(sys::windows::user_unique_id());
             let conv_len = converted.len();
-            let total = conv_len + FILE_NAME.len();
-            target_path_buffer[conv_len..total].copy_from_slice(FILE_NAME.as_bytes());
+            let total = conv_len + dir_name.len() + b"\\node.exe".len();
+            target_path_buffer[conv_len..][..dir_name.len()].copy_from_slice(dir_name.as_bytes());
+            target_path_buffer[conv_len + dir_name.len()..total].copy_from_slice(b"\\node.exe");
             target_path_buffer[total] = 0;
 
             // Park the

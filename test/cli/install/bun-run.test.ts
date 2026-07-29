@@ -1119,4 +1119,41 @@ describe.concurrent("bun run", () => {
       exitCode: 0,
     });
   });
+
+  // https://github.com/oven-sh/bun/issues/7504 — the `bun-node` shim dir used to
+  // be a fixed `/tmp/bun-node-<sha>`, shared across all users. The first user to
+  // run `--bun` owned it (mode 0700), and every other user's `--bun` silently
+  // fell through to the real `node`. The dir name must carry the uid so each
+  // user gets their own, same as the `bunx-<uid>-*` cache.
+  it.skipIf(isWindows)("--bun creates a per-user node shim directory (#7504)", async () => {
+    using dir = tempDir("bun-run-node-shim-uid", {
+      "package.json": JSON.stringify({
+        name: "shim-uid",
+        scripts: {
+          // Print the PATH entry that holds the node shim, and confirm `node`
+          // resolved through it is actually bun.
+          go: `node -e 'const p = process.env.PATH.split(":").find(e => /bun-node/.test(e)); console.log(p); console.log(typeof Bun);'`,
+        },
+      }),
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--bun", "run", "go"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const [shimDir, bunType] = stdout.trim().split("\n");
+    const uid = process.getuid!();
+
+    expect(stderr).not.toContain("error");
+    expect({ shimDir, bunType, exitCode }).toEqual({
+      shimDir: expect.stringMatching(new RegExp(`/bun-node-${uid}(-|$)`)),
+      bunType: "object",
+      exitCode: 0,
+    });
+  });
 });

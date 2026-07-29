@@ -70,7 +70,7 @@ pub struct MySQLConnection {
 
     auth_plugin: Option<AuthMethod>,
     _auth_state: AuthState,
-    auth_switched: bool,
+    auth_switch_count: u8,
 
     auth_data: Vec<u8>,
     // PERF: database/user/password/options could be sub-slices into options_buf
@@ -109,7 +109,7 @@ impl Default for MySQLConnection {
             status_flags: StatusFlags::default(),
             auth_plugin: None,
             _auth_state: AuthState::Pending,
-            auth_switched: false,
+            auth_switch_count: 0,
             auth_data: Vec::new(),
             database: Box::default(),
             user: Box::default(),
@@ -896,32 +896,36 @@ impl MySQLConnection {
             }
 
             PacketType::AUTH_SWITCH => {
-                // The server may switch the auth plugin once after the
-                // HandshakeResponse. A second AuthSwitchRequest is a protocol
-                // violation; answering it would let a malicious/MITM server
-                // drive an unbounded auth ping-pong. mysql2 and libmysqlclient
-                // refuse a second switch.
-                if self.auth_switched {
-                    bun_core::scoped_log!(MySQLConnection, "duplicate AuthSwitchRequest");
-                    return Err(AnyMySQLError::UnexpectedPacket);
-                }
-                self.auth_switched = true;
-
                 let mut auth_switch = AuthSwitchRequest {
                     packet_size: header_length,
                     ..Default::default()
                 };
                 auth_switch.decode_internal(reader)?;
 
-                // Update auth plugin and data
                 let auth_method = AuthMethod::from_string(auth_switch.plugin_name.slice())
                     .ok_or(AnyMySQLError::UnsupportedAuthPlugin)?;
+
+                // Answering every AuthSwitchRequest lets a malicious/MITM
+                // server drive an unbounded auth ping-pong. Cap the number of
+                // switches honoured per handshake and refuse a switch back to
+                // the plugin already in use (mysql2 errors on a repeated
+                // switch; libmysqlclient honours at most one).
+                if self.auth_switch_count >= 2 || self.auth_plugin == Some(auth_method) {
+                    bun_core::scoped_log!(
+                        MySQLConnection,
+                        "rejecting AuthSwitchRequest (count={}, plugin={:?})",
+                        self.auth_switch_count,
+                        auth_method
+                    );
+                    return Err(AnyMySQLError::UnexpectedPacket);
+                }
+                self.auth_switch_count += 1;
+
                 let auth_data = auth_switch.plugin_data.slice();
                 self.auth_plugin = Some(auth_method);
                 self.auth_data.clear();
                 self.auth_data.extend_from_slice(auth_data);
 
-                // Send new auth response
                 self.send_auth_switch_response(auth_method, auth_data)?;
             }
 

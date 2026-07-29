@@ -8,8 +8,9 @@
 // auth packet with another AuthSwitchRequest (0xFE) drove the client into an
 // unbounded auth ping-pong at 100% CPU, and connectionTimeout never fired
 // because every arriving handshake packet re-armed the connect-phase timer.
-// mysql2 and libmysqlclient refuse a second AuthSwitchRequest; Bun now does
-// the same, and connectionTimeout is an absolute connect→ready deadline.
+// Bun now caps the number of AuthSwitchRequests honoured per handshake, refuses
+// a switch back to the plugin already in use (mysql2 errors on a repeated auth
+// switch), and treats connectionTimeout as an absolute connect→ready deadline.
 
 import { SQL } from "bun";
 import { expect, test } from "bun:test";
@@ -21,29 +22,37 @@ import {
   mysqlReadPackets,
 } from "./wire-frames";
 
-test("MySQL: a second AuthSwitchRequest is rejected, not answered again", async () => {
+/**
+ * Scripted server: send `greeting`, answer the HandshakeResponse41 with
+ * `switches[0]`, then answer each subsequent client packet with the next entry
+ * in `switches` (cycling the last one). Destroys the socket once `limit`
+ * AuthSwitchResponses have been observed. Resolves to the client's error and
+ * the number of AuthSwitchResponses it sent.
+ */
+async function switchLoop(opts: { handshakePlugin: string; switches: string[]; limit: number }) {
   let responses = 0;
   const sockets = new Set<import("node:net").Socket>();
   const { server, port } = await listeningServer(socket => {
     sockets.add(socket);
     let buffered = Buffer.alloc(0);
     let sawHandshakeResponse = false;
-    socket.write(mysqlHandshakeV10());
+    socket.write(mysqlHandshakeV10({ authPlugin: opts.handshakePlugin }));
     socket.on("error", () => {});
     socket.on("close", () => sockets.delete(socket));
     socket.on("data", chunk => {
       buffered = mysqlReadPackets(Buffer.concat([buffered, chunk]), seq => {
         if (!sawHandshakeResponse) {
           sawHandshakeResponse = true;
-          socket.write(mysqlAuthSwitchRequest(seq + 1, "mysql_native_password", Buffer.alloc(20, 0x61)));
+          socket.write(mysqlAuthSwitchRequest(seq + 1, opts.switches[0], Buffer.alloc(20, 0x61)));
           return;
         }
         responses++;
-        if (responses >= 50) {
+        if (responses >= opts.limit) {
           socket.destroy();
           return;
         }
-        socket.write(mysqlAuthSwitchRequest(seq + 1, "mysql_native_password", Buffer.alloc(20, 0x62)));
+        const plugin = opts.switches[Math.min(responses, opts.switches.length - 1)];
+        socket.write(mysqlAuthSwitchRequest(seq + 1, plugin, Buffer.alloc(20, 0x62)));
       });
     });
   });
@@ -70,12 +79,36 @@ test("MySQL: a second AuthSwitchRequest is rejected, not answered again", async 
     for (const s of sockets) s.destroy();
     await new Promise<void>(r => server.close(() => r()));
   }
-  // The client must answer the first AuthSwitchRequest (responses == 1) and
-  // then error on the duplicate without answering it. Before the fix
-  // `responses` hit the limit.
+  return { err, responses };
+}
+
+test("MySQL: AuthSwitchRequest to the plugin already in use is rejected", async () => {
+  // Handshake advertises mysql_native_password; a switch to that same plugin
+  // is a no-op the server has no legitimate reason to request and is the
+  // signature of the ping-pong attack.
+  const { err, responses } = await switchLoop({
+    handshakePlugin: "mysql_native_password",
+    switches: ["mysql_native_password"],
+    limit: 50,
+  });
   expect({ err, responses }).toEqual({
     err: { code: "ERR_MYSQL_UNEXPECTED_PACKET" },
-    responses: 1,
+    responses: 0,
+  });
+});
+
+test("MySQL: at most two AuthSwitchRequests are honoured per handshake", async () => {
+  // Alternate between two different plugins so the same-plugin check never
+  // trips; the count cap must still cut the loop off after the second answer.
+  // Before the fix `responses` hit the limit.
+  const { err, responses } = await switchLoop({
+    handshakePlugin: "caching_sha2_password",
+    switches: ["mysql_native_password", "caching_sha2_password", "mysql_native_password"],
+    limit: 50,
+  });
+  expect({ err, responses }).toEqual({
+    err: { code: "ERR_MYSQL_UNEXPECTED_PACKET" },
+    responses: 2,
   });
 });
 

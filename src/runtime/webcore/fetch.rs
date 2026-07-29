@@ -1408,14 +1408,8 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         return Ok(JSValue::ZERO);
     }
 
-    // referrer: string | undefined;
-    //
-    // `fetch(input, init)` constructs a `Request` from its arguments, so the
-    // `referrer` init member resolves exactly as in the `Request` constructor
-    // (https://fetch.spec.whatwg.org/#dom-request, step 14). Stored in the
-    // serialized form described in `crate::webcore::referrer`; the init
-    // object overrides a `Request` first argument, which overrides the
-    // default ("about:client").
+    // referrer: string | undefined; resolved as in the `Request` constructor
+    // and stored as described in `crate::webcore::referrer`.
     let request_referrer: bun_core::OwnedString = bun_core::OwnedString::new('extract_referrer: {
         let objects_to_try = [
             options_object.unwrap_or(JSValue::ZERO),
@@ -1733,13 +1727,9 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         ));
     }
 
-    // `build_request` computes the `Referer` header from `referrer` /
-    // `referrer_policy` on each hop, so it's not appended to the header list
-    // here. An explicit user-set `Referer` header wins: the spec appends
-    // unconditionally, but only because in browsers `Referer` is a forbidden
-    // header name that can never already be present, and RFC 9110 makes
-    // `Referer` a singleton field. An empty `referrer` tells `build_request`
-    // to leave the `Referer` header entirely to the user's header list.
+    // `build_request` computes `Referer` on each hop, so it's not appended
+    // here. An explicit user-set `Referer` header wins: an empty `referrer`
+    // tells `build_request` to leave the user's header alone.
     let referrer: Box<[u8]> = match headers.as_ref().and_then(|h| h.get(b"referer")) {
         Some(_) => Box::default(),
         None => {

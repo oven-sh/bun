@@ -741,16 +741,12 @@ pub struct HTTPClient<'a> {
     /// `MAX_H2_RETRIES`.
     pub h2_retries: u8,
     pub redirect_type: FetchRedirect,
-    /// The request's referrer in its stored serialized form (see the
-    /// `bun_http_types::ReferrerPolicy::determine_referer_header` docs) and the
-    /// request's referrer policy. Empty when the caller set an explicit
-    /// `Referer` header, so `build_request` leaves that header untouched
-    /// across redirects. `referrer_policy` may be updated by a
-    /// `Referrer-Policy` response header on a redirect hop.
+    /// Stored referrer (see `determine_referer_header`) and policy; empty when
+    /// the caller set an explicit `Referer` header so `build_request` leaves
+    /// that header alone. A `Referrer-Policy` response header updates `policy`.
     pub referrer: Box<[u8]>,
     pub referrer_policy: ReferrerPolicy,
-    /// Backing storage for the `Referer` header value `build_request` emits
-    /// each hop. Lives on `self` so the `picohttp::Request` can borrow it.
+    /// Backs the `Referer` value `build_request` emits each hop.
     pub computed_referer: Vec<u8>,
     pub redirect: Vec<u8>,
     /// The previous hop's `redirect` buffer, parked by `handle_response_metadata`
@@ -2489,11 +2485,9 @@ impl<'a> HTTPClient<'a> {
             header_count += 1;
         }
 
-        // Compute the `Referer` header for this hop. `self.referrer` is empty
-        // when the caller set an explicit `Referer` (already in the loop
-        // above, which sets `override_referer`), so this recomputes only when
-        // the header came from the `referrer` / `referrerPolicy` options. It
-        // runs per `build_request`, i.e. freshly on every redirect hop.
+        // Compute `Referer` for this hop. `self.referrer` is empty when the
+        // caller set an explicit `Referer` header (handled above), so this only
+        // applies to the `referrer`/`referrerPolicy` options.
         if !override_referer && !self.referrer.is_empty() {
             self.computed_referer.clear();
             if let Some(value) =
@@ -4917,10 +4911,7 @@ impl<'a> HTTPClient<'a> {
                     location = header.value();
                 }
                 h if h == hash_header_const(b"Referrer-Policy") => {
-                    // "Set request's referrer policy on redirect"
-                    // (https://fetch.spec.whatwg.org/#http-redirect-fetch,
-                    // step 19). Applied unconditionally: when no redirect is
-                    // followed, `referrer_policy` is never read again.
+                    // https://fetch.spec.whatwg.org/#http-redirect-fetch step 19
                     if let Some(policy) = ReferrerPolicy::from_response_header(header.value()) {
                         self.referrer_policy = policy;
                     }

@@ -1,16 +1,10 @@
-//! The `Request`/`fetch()` construction-time referrer parsing.
-//!
 //! A request's referrer is stored in its serialized form, which is exactly
-//! what the `Request.referrer` getter returns:
-//!   - `""`             == the spec's "no-referrer"
-//!   - `"about:client"` == the spec's "client" (the default)
-//!   - anything else    == a WHATWG-normalized referrer URL
-//!
-//! The header-computation algorithm lives in
-//! `bun_http_types::ReferrerPolicy::determine_referer_header` so the HTTP
-//! client can reach it to recompute `Referer` on each redirect hop.
-//!
+//! what the `Request.referrer` getter returns: `""` for "no-referrer",
+//! `"about:client"` for "client" (the default), otherwise a normalized URL.
 //! https://fetch.spec.whatwg.org/#dom-request-referrer
+//!
+//! The header algorithm (`determine_referer_header`) lives in `bun_http_types`
+//! so the HTTP client can recompute `Referer` on each redirect hop.
 
 use bun_core::String as BunString;
 
@@ -25,15 +19,9 @@ pub fn client() -> BunString {
     BunString::static_(CLIENT_SERIALIZED)
 }
 
-/// Fetch spec `new Request(input, init)` step 14 ("If `init["referrer"]`
-/// exists"): turn `init.referrer` into the request's stored referrer.
-///
-/// `None` means `referrer` is not a parsable absolute URL; the caller throws
-/// a `TypeError`. (Bun has no base URL, so relative referrers fail here.)
-///
-/// Bun has no environment settings object, so step 14.3.3's "parsedReferrer's
-/// origin is not same origin with [the environment's] origin" branch never
-/// applies; undici skips it the same way when no global origin is configured.
+/// Request ctor step 14: turn `init.referrer` into the stored referrer.
+/// `None` means the value is not a parsable absolute URL; the caller throws.
+/// Bun has no environment origin, so step 14.3.3 never applies.
 pub fn parse_init_referrer(referrer: &BunString) -> Option<BunString> {
     // Step 14.2: the empty string means "no-referrer".
     if referrer.is_empty() {

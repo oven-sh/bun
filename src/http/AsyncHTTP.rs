@@ -262,9 +262,8 @@ pub struct Options<'a> {
     pub reject_unauthorized: Option<bool>,
     pub tls_props: Option<SSLConfigSharedPtr>,
     pub compress: Option<crate::compress_body::CompressOption>,
-    /// The request's referrer (stored serialized form) and referrer policy,
-    /// used by `build_request` to compute the `Referer` header on each hop.
-    /// Leave `referrer` empty when the caller set an explicit `Referer` header.
+    /// See `HTTPClient.referrer`. Leave empty when the caller set an explicit
+    /// `Referer` header.
     pub referrer: Box<[u8]>,
     pub referrer_policy: crate::ReferrerPolicy,
 }

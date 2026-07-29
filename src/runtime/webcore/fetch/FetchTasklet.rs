@@ -2568,9 +2568,8 @@ pub struct FetchOptions {
     pub url: ZigURL<'static>,
     pub verbose: http::HTTPVerboseLevel,
     pub redirect_type: FetchRedirect,
-    /// The request's referrer (stored serialized form) and referrer policy,
-    /// from which the HTTP client computes the `Referer` header on each hop.
-    /// Empty when the caller set an explicit `Referer` header.
+    /// See `HTTPClient.referrer`. Empty when the caller set an explicit
+    /// `Referer` header.
     pub referrer: Box<[u8]>,
     pub referrer_policy: http::ReferrerPolicy,
     pub proxy: Option<ZigURL<'static>>,

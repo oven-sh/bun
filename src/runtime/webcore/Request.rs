@@ -86,9 +86,8 @@ const _: () = {
 #[repr(C)]
 pub struct Request {
     pub url: bun_core::OwnedStringCell,
-    /// The request's referrer, stored serialized: `""` == "no-referrer",
-    /// `"about:client"` == "client" (the default), anything else is a
-    /// WHATWG-normalized referrer URL. See `crate::webcore::referrer`.
+    /// The request's referrer in its stored serialized form; see
+    /// `crate::webcore::referrer`.
     pub referrer: bun_core::OwnedStringCell,
 
     headers: JsCell<Option<HeadersRef>>,
@@ -775,8 +774,8 @@ impl Request {
         if this.weak_ptr_data.on_finalize() {
             // Hot path: no outstanding weak refs. Reclaim and drop the whole
             // allocation in one shot — `Box::from_raw`'s drop runs
-            // `drop_in_place` over every field (headers / url / referrer /
-            // signal / js_ref / internal_event_callback) once, without the 4× `Cell::set`
+            // `drop_in_place` over every field (headers / url / signal /
+            // js_ref / internal_event_callback) once, without the 4× `Cell::set`
             // read-write-drop round-trips the old `finalize_without_deinit()`
             // call performed here before re-dropping the (now-empty) fields.
             // SAFETY: `this` is the live Box-allocated payload.
@@ -795,8 +794,7 @@ impl Request {
     }
 
     /// https://fetch.spec.whatwg.org/#dom-request-referrer
-    /// The stored referrer is already the getter's serialization: `""` for
-    /// "no-referrer", `"about:client"` for "client", the URL otherwise.
+    /// The stored referrer is already the getter's serialization.
     pub fn get_referrer(&self, global_object: &JSGlobalObject) -> JsResult<JSValue> {
         self.referrer.get().to_js(global_object)
     }
@@ -810,8 +808,6 @@ impl Request {
         self.url.get().to_js(global_object)
     }
 
-    /// The referrer is always set (to the `"about:client"` static by default),
-    /// so unlike the url there is nothing to lazily compute here.
     pub fn size_of_referrer(&self) -> usize {
         self.referrer.get().byte_slice().len()
     }
@@ -1472,14 +1468,12 @@ impl Request {
                 }
             }
 
-            // Extract referrer option
-            // https://fetch.spec.whatwg.org/#dom-request (constructor step 14)
+            // Extract referrer option (Request ctor step 14)
             if !fields.contains(Fields::Referrer) {
                 match value.get(global_this, "referrer") {
                     Ok(Some(referrer_value)) if !referrer_value.is_undefined() => {
                         fields.insert(Fields::Referrer);
-                        // USVString conversion; `OwnedString` releases the +1
-                        // on every exit path.
+                        // `OwnedString` releases the +1 on every exit path.
                         let raw = OwnedString::new(
                             match BunString::from_js(referrer_value, global_this) {
                                 Ok(s) => s,
@@ -1639,9 +1633,8 @@ impl Request {
         // `clone()` seeds it with a dangling sentinel, and `construct_into`
         // releases its seed via the ptr-equality arm of its `cleanup`.
         // `url` was bitwise-copied above (preserve_url) or is the empty
-        // sentinel; `referrer` is an empty or static (non-owning) sentinel in
-        // both callers; remaining incoming fields are None/weak/Copy by
-        // contract.
+        // sentinel; `referrer` is a non-owning sentinel in both callers;
+        // remaining incoming fields are None/weak/Copy by contract.
         // SAFETY: `req` is a valid &mut, fully initialized by the caller;
         // nothing between here and the write can panic.
         unsafe {

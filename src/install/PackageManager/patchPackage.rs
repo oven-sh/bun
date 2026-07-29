@@ -111,13 +111,9 @@ pub fn do_patch_commit(
             workspace_package_id,
             argument,
         ) {
-            // `bun patch` always leaves the editable copy as a real directory
-            // (any symlink is detached first). If the workspace-prefixed path
-            // is a symlink or missing but the argument taken relative to the
-            // workspace root is a real directory, that is where `bun patch`
-            // actually prepared the package, so diff that instead of the
-            // symlink (which `git diff --no-index` would record as a single
-            // mode-120000 file and then fail to apply).
+            // `prepare_patch` detaches symlinks, so a symlink at `rel_path` is
+            // not the prepared copy; fall back to the root-relative argument
+            // when that one is a real directory.
             if !is_real_dir_not_symlink(&rel_path) && is_real_dir_not_symlink(argument) {
                 argument
             } else {

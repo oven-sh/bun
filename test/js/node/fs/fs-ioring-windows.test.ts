@@ -2,8 +2,8 @@
 // the Windows I/O Ring backend (BUN_FEATURE_FLAG_WINDOWS_IORING=1). On other
 // platforms and older Windows the flag is a no-op, so these assertions also
 // serve as a regression check that enabling the flag never changes results.
-import { describe, test, expect } from "bun:test";
-import { bunEnv, bunExe, tempDir, isWindows } from "harness";
+import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 
 const script = /* js */ `
 const fs = require("fs");
@@ -84,11 +84,7 @@ async function run(withFlag: boolean) {
     stdout: "pipe",
     stderr: "pipe",
   });
-  const [stdout, stderr, exitCode] = await Promise.all([
-    proc.stdout.text(),
-    proc.stderr.text(),
-    proc.exited,
-  ]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   return { stdout: stdout.trim(), stderr, exitCode };
 }
 
@@ -107,12 +103,9 @@ describe("fs async read/write with BUN_FEATURE_FLAG_WINDOWS_IORING", () => {
     expect(exitCode).toBe(0);
   });
 
-  test.skipIf(!isWindows)(
-    "flag on and off produce identical output on Windows",
-    async () => {
-      const [a, b] = await Promise.all([run(false), run(true)]);
-      expect(b.stdout).toBe(a.stdout);
-      expect(b.exitCode).toBe(a.exitCode);
-    },
-  );
+  test.skipIf(!isWindows)("flag on and off produce identical output on Windows", async () => {
+    const [a, b] = await Promise.all([run(false), run(true)]);
+    expect(b.stdout).toBe(a.stdout);
+    expect(b.exitCode).toBe(a.exitCode);
+  });
 });

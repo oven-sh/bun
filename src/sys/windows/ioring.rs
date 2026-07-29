@@ -242,8 +242,21 @@ fn detect() -> Option<IoRingApi> {
 }
 
 static WCH_KERNELBASE: &[u16] = &[
-    b'K' as u16, b'e' as u16, b'r' as u16, b'n' as u16, b'e' as u16, b'l' as u16, b'B' as u16,
-    b'a' as u16, b's' as u16, b'e' as u16, b'.' as u16, b'd' as u16, b'l' as u16, b'l' as u16, 0,
+    b'K' as u16,
+    b'e' as u16,
+    b'r' as u16,
+    b'n' as u16,
+    b'e' as u16,
+    b'l' as u16,
+    b'B' as u16,
+    b'a' as u16,
+    b's' as u16,
+    b'e' as u16,
+    b'.' as u16,
+    b'd' as u16,
+    b'l' as u16,
+    b'l' as u16,
+    0,
 ];
 
 // ──────────────────────────── per-thread ring ────────────────────────────
@@ -334,9 +347,7 @@ impl FsIoRing {
         });
 
         // uv_async_t must live at a stable heap address for libuv.
-        let async_ = Box::leak(Box::new(unsafe {
-            core::mem::zeroed::<uv::uv_async_t>()
-        }));
+        let async_ = Box::leak(Box::new(unsafe { core::mem::zeroed::<uv::uv_async_t>() }));
         async_.init(loop_, Some(Self::on_async));
         async_.data = (&mut *this as *mut Self).cast();
         // SAFETY: `async_` was just initialised on `loop_`; unreffing keeps the
@@ -347,9 +358,7 @@ impl FsIoRing {
         // uv_prepare_t fires on the JS thread immediately before the loop would
         // block on IOCP; that is the latest point at which SQEs built during
         // the preceding JS tick can be submitted in a single syscall.
-        let prepare = Box::leak(Box::new(unsafe {
-            core::mem::zeroed::<uv::uv_prepare_t>()
-        }));
+        let prepare = Box::leak(Box::new(unsafe { core::mem::zeroed::<uv::uv_prepare_t>() }));
         // SAFETY: `prepare` is a stable heap allocation; `loop_` is live.
         unsafe {
             uv::uv_prepare_init(loop_, prepare);

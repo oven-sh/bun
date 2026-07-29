@@ -850,4 +850,111 @@ describe.skipIf(!isWindows).concurrent("Windows compile metadata", () => {
   });
 });
 
-// Test for non-Windows platforms
+// The PE OptionalHeader.CheckSum field is defined as `fold16(word_sum) + file_length`
+// (the same algorithm Windows' MapFileAndCheckSum uses). An earlier implementation
+// folded again after adding the file length, truncating the 32-bit result to ~17 bits,
+// so every `bun build --compile --target=bun-windows-*` output carried a checksum that
+// tools like MapFileAndCheckSum / dumpbin reported as invalid. Windows only enforces
+// this field for drivers, so the executables still ran, but PE validators flagged them.
+//
+// This test crafts a minimal PE64 template (large enough that the correct checksum
+// exceeds 0xffff) and cross-compiles via `--compile-executable-path`, so it runs on
+// every platform without downloading a real bun.exe.
+test("bun build --compile writes a valid PE OptionalHeader.CheckSum", async () => {
+  const fileAlign = 512;
+  const sectAlign = 4096;
+  const peOff = 64;
+  const optOff = peOff + 24;
+  const optSize = 240;
+  const shOff = optOff + optSize;
+  const textRaw = 512;
+  // Big enough that fold16(word_sum) + file_length > 0xffff; with a tiny template
+  // the correct checksum happens to fit in 16 bits and the bug is invisible.
+  const textRawSize = 128 * 1024;
+  const textVA = sectAlign;
+
+  const tmpl = Buffer.alloc(textRaw + textRawSize);
+  // DOS header
+  tmpl.writeUInt16LE(0x5a4d, 0); // "MZ"
+  tmpl.writeUInt32LE(peOff, 0x3c); // e_lfanew
+  // COFF header
+  tmpl.writeUInt32LE(0x00004550, peOff); // "PE\0\0"
+  tmpl.writeUInt16LE(0x8664, peOff + 4); // machine = AMD64
+  tmpl.writeUInt16LE(1, peOff + 6); // NumberOfSections
+  tmpl.writeUInt16LE(optSize, peOff + 20); // SizeOfOptionalHeader
+  tmpl.writeUInt16LE(0x0022, peOff + 22); // Characteristics
+  // Optional header (PE32+)
+  tmpl.writeUInt16LE(0x020b, optOff); // Magic
+  tmpl.writeUInt32LE(textVA, optOff + 16); // AddressOfEntryPoint
+  tmpl.writeUInt32LE(textVA, optOff + 20); // BaseOfCode
+  tmpl.writeBigUInt64LE(0x140000000n, optOff + 24); // ImageBase
+  tmpl.writeUInt32LE(sectAlign, optOff + 32); // SectionAlignment
+  tmpl.writeUInt32LE(fileAlign, optOff + 36); // FileAlignment
+  tmpl.writeUInt16LE(6, optOff + 40); // MajorOSVersion
+  tmpl.writeUInt16LE(6, optOff + 48); // MajorSubsystemVersion
+  tmpl.writeUInt32LE(textVA + sectAlign, optOff + 56); // SizeOfImage
+  tmpl.writeUInt32LE(512, optOff + 60); // SizeOfHeaders
+  tmpl.writeUInt16LE(3, optOff + 68); // Subsystem = CUI
+  tmpl.writeUInt32LE(16, optOff + 108); // NumberOfRvaAndSizes
+  // Section header: .text
+  tmpl.write(".text\0\0\0", shOff, 8, "latin1");
+  tmpl.writeUInt32LE(textRawSize, shOff + 8); // VirtualSize
+  tmpl.writeUInt32LE(textVA, shOff + 12); // VirtualAddress
+  tmpl.writeUInt32LE(textRawSize, shOff + 16); // SizeOfRawData
+  tmpl.writeUInt32LE(textRaw, shOff + 20); // PointerToRawData
+  tmpl.writeUInt32LE(0x60000020, shOff + 36); // Characteristics
+  tmpl.fill(0xcc, textRaw); // .text body
+
+  using dir = tempDir("pe-checksum", {
+    "entry.js": `console.log("hi");`,
+  });
+  const cwd = String(dir);
+  const tmplPath = join(cwd, "template.exe");
+  const outPath = join(cwd, "out.exe");
+  await Bun.write(tmplPath, tmpl);
+
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "build",
+      "--compile",
+      "--target=bun-windows-x64",
+      "--compile-executable-path",
+      tmplPath,
+      join(cwd, "entry.js"),
+      "--outfile",
+      outPath,
+    ],
+    env: bunEnv,
+    cwd,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).not.toContain("error:");
+  expect(exitCode).toBe(0);
+
+  const out = Buffer.from(await Bun.file(outPath).arrayBuffer());
+  const outPeOff = out.readUInt32LE(0x3c);
+  const ckOff = outPeOff + 24 + 64;
+  const stored = out.readUInt32LE(ckOff);
+
+  // Recompute the reference checksum over the output with the CheckSum field zeroed.
+  const copy = Buffer.from(out);
+  copy.writeUInt32LE(0, ckOff);
+  let sum = 0;
+  for (let i = 0; i + 1 < copy.length; i += 2) {
+    sum += copy[i] | (copy[i + 1] << 8);
+    sum = (sum & 0xffff) + (sum >>> 16);
+  }
+  if (copy.length & 1) sum += copy[copy.length - 1];
+  sum = (sum & 0xffff) + (sum >>> 16);
+  sum = (sum & 0xffff) + (sum >>> 16);
+  const expected = (sum + copy.length) >>> 0;
+
+  // The correct checksum for a >64KB image cannot fit in 16 bits; the broken
+  // implementation always produced a value <= 0x1fffe. Assert both the exact
+  // match and that the test template is large enough to distinguish the two.
+  expect(expected).toBeGreaterThan(0xffff);
+  expect(stored).toBe(expected);
+});

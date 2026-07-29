@@ -505,12 +505,12 @@ impl PEFile {
             sum += data[data.len() - 1] as u64;
         }
 
-        // Final folds + add length
+        // Final folds, then add file length. The PE checksum is defined as
+        // `fold16(word_sum) + file_length` with no further folding after the
+        // length is added; folding again would truncate the 32-bit result.
         sum = (sum & 0xffff) + (sum >> 16);
         sum = (sum & 0xffff) + (sum >> 16);
-        sum += u64::try_from(data.len()).expect("int cast");
-        sum = (sum & 0xffff) + (sum >> 16);
-        let final_sum: u32 = u32::try_from((sum & 0xffff) + (sum >> 16)).expect("int cast");
+        let final_sum: u32 = (sum as u32).wrapping_add(data.len() as u32);
 
         let opt = self.get_optional_header_mut()?;
         // SAFETY: opt points into self.data at validated offset

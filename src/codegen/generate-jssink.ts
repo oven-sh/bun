@@ -662,11 +662,7 @@ void JS${controllerName}::detach() {
     if (readableStream.value() && onClose.value()) {
         JSC::JSGlobalObject *globalObject = this->globalObject();
         auto& vm = globalObject->vm();
-        // Worker shutdown stops every Bun.serve() and tears down in-flight response
-        // sinks while the sticky TerminationException is already set on the VM;
-        // re-entering JS here trips executeCallImpl's assertNoException(). The
-        // onClose hook only exists to transition the direct ReadableStream's
-        // state, which is moot once the VM is going away.
+        // Re-entering JS on a terminated worker trips executeCallImpl's assertNoException().
         if (vm.hasPendingTerminationException()) [[unlikely]]
             return;
         auto scope = DECLARE_THROW_SCOPE(vm);
@@ -980,9 +976,7 @@ extern "C" void ${name}__onReady(JSC::EncodedJSValue controllerValue, JSC::Encod
         return;
     JSC::JSGlobalObject *globalObject = controller->globalObject();
     auto& vm = globalObject->vm();
-    // See detach(): worker.terminate() mid-stream leaves the sticky
-    // TerminationException pending, so re-entering JS here aborts on
-    // executeCallImpl's assertNoException().
+    // Re-entering JS on a terminated worker trips executeCallImpl's assertNoException().
     if (vm.hasPendingTerminationException()) [[unlikely]]
         return;
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -1011,9 +1005,7 @@ extern "C" void ${name}__onClose(JSC::EncodedJSValue controllerValue, JSC::Encod
     controller->m_onClose.clear();
     JSC::JSGlobalObject* globalObject = controller->globalObject();
     auto& vm = globalObject->vm();
-    // See detach(): worker.terminate() mid-stream leaves the sticky
-    // TerminationException pending, so re-entering JS here aborts on
-    // executeCallImpl's assertNoException().
+    // Re-entering JS on a terminated worker trips executeCallImpl's assertNoException().
     if (vm.hasPendingTerminationException()) [[unlikely]]
         return;
     auto scope = DECLARE_THROW_SCOPE(vm);

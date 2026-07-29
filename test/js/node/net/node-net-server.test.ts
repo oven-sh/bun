@@ -723,6 +723,13 @@ describe("net.Server getConnections", () => {
       }
       while (accepted.length < 3) await once(server, "connection");
 
+      // Node defers the callback via process.nextTick; it must not fire
+      // before getConnections() returns.
+      let before: number | "unset" = "unset";
+      const ret = server.getConnections((_err, n) => (before = n));
+      expect(before).toBe("unset");
+      expect(ret).toBe(server);
+
       expect(await getConnections(server)).toBe(3);
 
       let serverClosed = false;

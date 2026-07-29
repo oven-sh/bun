@@ -3635,7 +3635,7 @@ Server.prototype.address = function address() {
 
 Server.prototype.getConnections = function getConnections(callback) {
   if (typeof callback === "function") {
-    callback(null, this._connections);
+    process.nextTick(callback, null, this._connections);
   }
   return this;
 };

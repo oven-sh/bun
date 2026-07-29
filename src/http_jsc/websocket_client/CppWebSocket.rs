@@ -98,7 +98,6 @@ impl CppWebSocket {
     }
 
     /// Dispatch the native `'handshake'` event; C++ copies all slices synchronously.
-    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub(crate) fn did_receive_handshake_response(
         &self,
         status_code: u16,

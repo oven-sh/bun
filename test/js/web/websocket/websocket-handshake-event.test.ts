@@ -28,7 +28,7 @@ test("WebSocket 'handshake' event surfaces status/head/body on non-101", async (
   try {
     const ws = new WebSocket("ws://127.0.0.1:" + (server.address() as AddressInfo).port);
     ws.addEventListener("error", () => {}); // swallow the expected-101 error
-    const { promise, resolve } = Promise.withResolvers<{
+    const { promise, resolve, reject } = Promise.withResolvers<{
       statusCode: number;
       statusMessage: string;
       rawHeaders: string[];
@@ -36,6 +36,7 @@ test("WebSocket 'handshake' event surfaces status/head/body on non-101", async (
     }>();
     // 'handshake' is a Bun extension consumed by the ws package shim.
     ws.addEventListener("handshake" as any, ((e: MessageEvent) => resolve(e.data as any)) as any);
+    ws.addEventListener("close", () => reject(new Error("'handshake' never fired")), { once: true });
     const { statusCode, statusMessage, rawHeaders, body } = await promise;
 
     expect(statusCode).toBe(503);

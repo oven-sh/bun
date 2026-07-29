@@ -1273,6 +1273,10 @@ impl<const SSL: bool> HTTPClient<SSL> {
                 if me.body.is_empty() {
                     me.body.extend_from_slice(data);
                 }
+                // ShortRead means no \r\n\r\n was found, so every byte in
+                // `body` is part of an incomplete header — cap that, not
+                // total bytes received (which may include pipelined
+                // WebSocket frames once the header does complete).
                 if me.body.len() > bun_http::max_http_header_size() {
                     // SAFETY: `me`'s last use is above; no `&mut Self` spans this call.
                     unsafe { Self::terminate(this.as_ptr(), ErrorCode::InvalidResponse) };

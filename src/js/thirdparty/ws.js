@@ -618,6 +618,7 @@ class BunWebSocket extends EventEmitter {
         return listener.$call(this, event);
       };
       (this.#errorListenerWrappers ??= new WeakMap()).set(listener, wrapper);
+      options?.signal?.addEventListener("abort", () => self.#errorListenerWrappers?.delete(listener), onceObject);
       this.#ws.addEventListener(type, wrapper, options);
       return;
     }

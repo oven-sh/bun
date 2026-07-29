@@ -346,13 +346,13 @@ describe("TracingChannel", () => {
 
   test("hasSubscribers reflects a subscriber on any sub-channel", () => {
     const tc = tracingChannel("tc-hasSubscribers");
-    expect(tc.hasSubscribers).toBeFalsy();
+    expect(tc.hasSubscribers).toBeFalse();
     for (const name of ["start", "end", "asyncStart", "asyncEnd", "error"] as const) {
       const handler = () => {};
       tc[name].subscribe(handler);
-      expect(tc.hasSubscribers).toBeTruthy();
+      expect(tc.hasSubscribers).toBeTrue();
       tc[name].unsubscribe(handler);
-      expect(tc.hasSubscribers).toBeFalsy();
+      expect(tc.hasSubscribers).toBeFalse();
     }
   });
 
@@ -385,7 +385,7 @@ describe("TracingChannel", () => {
 
   test("traceSync/tracePromise/traceCallback are pure passthrough with no subscribers", async () => {
     const tc = tracingChannel("tc-nosub-passthrough");
-    expect(tc.hasSubscribers).toBeFalsy();
+    expect(tc.hasSubscribers).toBeFalse();
 
     const calls: unknown[][] = [];
     const fn = function (this: unknown, ...args: unknown[]) {

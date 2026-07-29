@@ -123,7 +123,7 @@ impl<'a> HTMLProcessorHandler for HTMLLoader<'a> {
         element: &mut Element<'_, '_>,
         _path: &[u8],
         url_attribute: &[u8],
-        _kind: ImportKind,
+        kind: ImportKind,
     ) {
         if self.current_import_record_index as usize >= self.import_records.len() {
             bun_core::Output::panic(format_args!(
@@ -181,6 +181,36 @@ impl<'a> HTMLProcessorHandler for HTMLLoader<'a> {
                 "Leaving import with invalid source index: {}",
                 BStr::new(import_record.path.text)
             );
+            return;
+        }
+
+        if loader.is_css() && kind == ImportKind::Url {
+            if self.compile_to_standalone_html {
+                // A single-file bundle has no separate file to preload.
+                element.remove();
+                return;
+            }
+            // `<link rel="preload" as="style">`: rewrite href to the file's own CSS chunk.
+            let chunk_index = self.linker.graph.files.items_entry_point_chunk_index()
+                [import_record.source_index.get() as usize];
+            // SAFETY: `self.chunks` raw `*mut [Chunk]` valid for the link step.
+            let chunks = unsafe { &*self.chunks };
+            debug_assert!(
+                (chunk_index as usize) < chunks.len()
+                    && chunks[chunk_index as usize].content.is_css(),
+                "html_preload_css_chunk_indices did not assign a CSS chunk",
+            );
+            if (chunk_index as usize) < chunks.len()
+                && chunks[chunk_index as usize].content.is_css()
+            {
+                set_attribute(
+                    element,
+                    url_attribute,
+                    chunks[chunk_index as usize].unique_key,
+                );
+            } else {
+                element.remove();
+            }
             return;
         }
 

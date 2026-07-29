@@ -360,6 +360,91 @@ console.log("About manifest:", aboutHtml);
     },
   });
 
+  // <link rel="preload" as="style"> gets its own CSS chunk; that chunk must be
+  // listed in the owning page's manifest (and not in an unrelated page's).
+  itBundled("html-import/preload-as-style-in-manifest", {
+    outdir: "out/",
+    backend: "cli",
+    files: {
+      "/server.js": `
+import a from "./a.html";
+import b from "./b.html";
+console.log(a, b);
+`,
+      "/a.html": `<!doctype html>
+<link rel="preload" as="style" href="./later.css">
+<script src="./a.js"></script>`,
+      "/b.html": `<!doctype html>
+<script src="./b.js"></script>`,
+      "/later.css": "body { color: red; }",
+      "/a.js": "console.log('a');",
+      "/b.js": "console.log('b');",
+    },
+    entryPoints: ["/server.js"],
+    target: "bun",
+    onAfterBundle(api) {
+      const serverCode = api.readFile("out/server.js");
+      const manifestMatches = [...serverCode.matchAll(/__jsonParse\("(.+?)"\)/gs)];
+      expect(manifestMatches.length).toBe(2);
+      const manifests = manifestMatches.map(m => JSON.parse(JSON.parse('"' + m[1] + '"')));
+
+      const [aManifest, bManifest] = manifests[0].index.includes("a.html") ? manifests : [manifests[1], manifests[0]];
+
+      const aFiles = aManifest.files.map((f: any) => ({ loader: f.loader, path: f.path }));
+      const aCss = aFiles.find((f: any) => f.loader === "css");
+      expect(aCss).toBeDefined();
+      expect(aCss.path).toMatch(/later-[a-zA-Z0-9]+\.css$/);
+
+      const aHtml = api.readFile("out/a.html");
+      expect(aHtml).toContain(aCss.path);
+
+      const bCss = bManifest.files.find((f: any) => f.loader === "css");
+      expect(bCss).toBeUndefined();
+    },
+  });
+
+  // When one page applies a stylesheet and another page only preloads the same
+  // file, the preloading page's manifest must still list the (deduped) chunk.
+  itBundled("html-import/preload-as-style-in-manifest-deduped", {
+    outdir: "out/",
+    backend: "cli",
+    files: {
+      "/server.js": `
+import a from "./a.html";
+import b from "./b.html";
+console.log(a, b);
+`,
+      "/a.html": `<!doctype html>
+<link rel="stylesheet" href="./x.css">
+<script src="./a.js"></script>`,
+      "/b.html": `<!doctype html>
+<link rel="preload" as="style" href="./x.css">
+<script src="./b.js"></script>`,
+      "/x.css": "body { color: red; }",
+      "/a.js": "console.log('a');",
+      "/b.js": "console.log('b');",
+    },
+    entryPoints: ["/server.js"],
+    target: "bun",
+    onAfterBundle(api) {
+      const serverCode = api.readFile("out/server.js");
+      const manifestMatches = [...serverCode.matchAll(/__jsonParse\("(.+?)"\)/gs)];
+      expect(manifestMatches.length).toBe(2);
+      const manifests = manifestMatches.map(m => JSON.parse(JSON.parse('"' + m[1] + '"')));
+
+      const [aManifest, bManifest] = manifests[0].index.includes("a.html") ? manifests : [manifests[1], manifests[0]];
+
+      const aCss = aManifest.files.find((f: any) => f.loader === "css");
+      expect(aCss).toBeDefined();
+      const bCss = bManifest.files.find((f: any) => f.loader === "css");
+      expect(bCss).toBeDefined();
+      expect(bCss.path).toBe(aCss.path);
+
+      const bHtml = api.readFile("out/b.html");
+      expect(bHtml).toContain(bCss.path);
+    },
+  });
+
   // The HTML chunk's etag must change when only a referenced JS/CSS chunk
   // changes; otherwise the browser 304s to a body that points at chunks the
   // server no longer has.

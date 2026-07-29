@@ -1011,4 +1011,209 @@ body {
       expect(htmlContent).toMatch(/href=".*\.webmanifest"/);
     },
   });
+
+  // <link rel="preload" as="style"> is a fetch-only hint; it must NOT be merged
+  // into the page's applied stylesheet. It should be emitted as a standalone
+  // asset with its href rewritten, like as="font"/as="image" preloads.
+  itBundled("html/preload-as-style", {
+    outdir: "out/",
+    files: {
+      "/index.html": `
+<!DOCTYPE html>
+<html>
+  <head>
+    <link rel="stylesheet" href="./applied.css">
+    <link rel="preload" as="style" href="./later.css">
+  </head>
+  <body>
+    <script src="./a.js"></script>
+  </body>
+</html>`,
+      "/applied.css": "h1 { font-weight: bold; }",
+      "/later.css": "body { color: red; }",
+      "/a.js": "console.log(1)",
+    },
+    entryPoints: ["/index.html"],
+    onAfterBundle(api) {
+      const html = api.readFile("out/index.html");
+
+      // The preload tag must survive with its href rewritten to a hashed filename.
+      const preload = html.match(/<link rel="preload" as="style" href="(?:\.\/|\/)?(later-[a-zA-Z0-9]+\.css)">/);
+      expect(preload).not.toBeNull();
+
+      // The preloaded CSS must be emitted as its own file, not folded into the
+      // page bundle.
+      const laterContent = api.readFile("out/" + preload![1]);
+      expect(laterContent).toContain("color");
+      expect(laterContent).toContain("red");
+
+      // The applied stylesheet bundle must NOT contain the preloaded rules.
+      const stylesheet = html.match(/<link rel="stylesheet"[^>]* href="(?:\.\/|\/)?([^"]+\.css)"/);
+      expect(stylesheet).not.toBeNull();
+      expect(stylesheet![1]).not.toBe(preload![1]);
+      const bundleContent = api.readFile("out/" + stylesheet![1]);
+      expect(bundleContent).toContain("font-weight");
+      expect(bundleContent).not.toContain("color");
+      expect(bundleContent).not.toContain("red");
+    },
+  });
+
+  // When there is no rel="stylesheet" on the page at all, a preload-as-style
+  // reference must not cause a rel="stylesheet" link to be injected.
+  itBundled("html/preload-as-style-only", {
+    outdir: "out/",
+    files: {
+      "/index.html": `
+<!DOCTYPE html>
+<html>
+  <head>
+    <link rel="preload" as="style" href="./later.css">
+  </head>
+  <body>
+    <script src="./a.js"></script>
+  </body>
+</html>`,
+      "/later.css": "body { color: red; }",
+      "/a.js": "console.log(1)",
+    },
+    entryPoints: ["/index.html"],
+    onAfterBundle(api) {
+      const html = api.readFile("out/index.html");
+
+      expect(html).toMatch(/<link rel="preload" as="style" href="(?:\.\/|\/)?later-[a-zA-Z0-9]+\.css">/);
+      expect(html).not.toMatch(/rel="stylesheet"/);
+    },
+  });
+
+  // The preloaded stylesheet must be bundled through the CSS loader so its own
+  // `@import` and `url()` dependencies are resolved into the standalone output.
+  itBundled("html/preload-as-style-css-deps", {
+    outdir: "out/",
+    files: {
+      "/index.html": `
+<!DOCTYPE html>
+<html>
+  <head>
+    <link rel="preload" as="style" href="./fonts.css">
+  </head>
+  <body>
+    <script src="./a.js"></script>
+  </body>
+</html>`,
+      "/fonts.css": `
+@import './reset.css';
+@font-face { font-family: X; src: url('./x.woff2'); }
+`,
+      "/reset.css": "html { margin: 0; }",
+      "/x.woff2": "FAKE_FONT",
+      "/a.js": "console.log(1)",
+    },
+    entryPoints: ["/index.html"],
+    onAfterBundle(api) {
+      const html = api.readFile("out/index.html");
+
+      const preload = html.match(/<link rel="preload" as="style" href="(?:\.\/|\/)?(fonts-[a-zA-Z0-9]+\.css)">/);
+      expect(preload).not.toBeNull();
+      expect(html).not.toMatch(/rel="stylesheet"/);
+
+      const css = api.readFile("out/" + preload![1]);
+      // @import was inlined
+      expect(css).toContain("margin");
+      expect(css).not.toContain("@import");
+      // url() was resolved: the asset is small enough to inline as a data URI,
+      // so assert the encoded bytes are present (not just that the source path
+      // is absent).
+      expect(css).not.toContain("x.woff2");
+      expect(css).toMatch(/src:\s*url\("data:font\/woff2;base64,RkFLRV9GT05U"\)/);
+    },
+  });
+
+  // A file referenced by both rel="preload" as="style" and rel="stylesheet"
+  // must go through the CSS loader regardless of which tag appears first, and
+  // both hrefs must resolve to the same output file so the preload is useful.
+  for (const [order, production] of [
+    ["preload-first", false],
+    ["stylesheet-first", false],
+    ["preload-first", true],
+    ["stylesheet-first", true],
+  ] as const) {
+    itBundled(`html/preload-as-style-shared-${order}${production ? "-production" : ""}`, {
+      outdir: "out/",
+      production,
+      files: {
+        "/index.html":
+          order === "preload-first"
+            ? `
+<!DOCTYPE html>
+<link rel="preload" as="style" href="./app.css">
+<link rel="stylesheet" href="./app.css">
+<script src="./a.js"></script>`
+            : `
+<!DOCTYPE html>
+<link rel="stylesheet" href="./app.css">
+<link rel="preload" as="style" href="./app.css">
+<script src="./a.js"></script>`,
+        "/app.css": "@import './base.css'; body { color: red; }",
+        "/base.css": "html { padding: 0; }",
+        "/a.js": "console.log(1)",
+      },
+      entryPoints: ["/index.html"],
+      onAfterBundle(api) {
+        const html = api.readFile("out/index.html");
+
+        const preload = html.match(/<link rel="preload" as="style" href="(?:\.\/|\/)?([^"]+\.css)">/);
+        expect(preload).not.toBeNull();
+        const stylesheet = html.match(/<link rel="stylesheet"[^>]* href="(?:\.\/|\/)?([^"]+\.css)"/);
+        expect(stylesheet).not.toBeNull();
+
+        // The preload and the applied stylesheet must be the same file.
+        expect(preload![1]).toBe(stylesheet![1]);
+
+        const css = api.readFile("out/" + stylesheet![1]);
+        expect(css).toContain("padding");
+        expect(css).toContain("red");
+        expect(css).not.toContain("@import");
+      },
+    });
+  }
+
+  // When the page applies other stylesheets besides the preloaded one, the
+  // preload gets its own output containing only what the source preload
+  // declared (so `onload="this.rel='stylesheet'"` swaps to the source file,
+  // not the whole page bundle). The page bundle separately contains every
+  // applied stylesheet.
+  itBundled("html/preload-as-style-shared-with-extra-stylesheet", {
+    outdir: "out/",
+    files: {
+      "/index.html": `
+<!DOCTYPE html>
+<link rel="preload" as="style" href="./app.css">
+<link rel="stylesheet" href="./app.css">
+<link rel="stylesheet" href="./other.css">
+<script src="./a.js"></script>`,
+      "/app.css": "body { color: red; }",
+      "/other.css": "h1 { font-weight: bold; }",
+      "/a.js": "console.log(1)",
+    },
+    entryPoints: ["/index.html"],
+    onAfterBundle(api) {
+      const html = api.readFile("out/index.html");
+
+      const preload = html.match(/<link rel="preload" as="style" href="(?:\.\/|\/)?([^"]+\.css)">/);
+      expect(preload).not.toBeNull();
+      const stylesheet = html.match(/<link rel="stylesheet"[^>]* href="(?:\.\/|\/)?([^"]+\.css)"/);
+      expect(stylesheet).not.toBeNull();
+
+      // The preload output is just app.css; the page bundle is app.css + other.css.
+      expect(preload![1]).not.toBe(stylesheet![1]);
+
+      const preloaded = api.readFile("out/" + preload![1]);
+      expect(preloaded).toContain("red");
+      expect(preloaded).not.toContain("font-weight");
+
+      const applied = api.readFile("out/" + stylesheet![1]);
+      expect(applied).toContain("red");
+      expect(applied).toContain("font-weight");
+    },
+  });
 });

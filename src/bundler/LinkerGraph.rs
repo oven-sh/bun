@@ -48,6 +48,8 @@ pub mod entry_point {
         UserSpecified,
         DynamicImport,
         Html,
+        /// A CSS file referenced from HTML via `<link rel="preload" as="style">`.
+        HtmlPreload,
     }
     impl Kind {
         #[inline]
@@ -634,6 +636,7 @@ impl<'a> LinkerGraph<'a> {
         sources: &[bun_ast::Source],
         server_component_boundaries: &server_component_boundary::List,
         dynamic_import_entry_points: &[index::Int],
+        html_preload_css_entry_points: &[index::Int],
         entry_point_original_names: &IndexStringMap,
     ) -> Result<(), crate::Error> {
         let scb = server_component_boundaries.slice();
@@ -657,7 +660,8 @@ impl<'a> LinkerGraph<'a> {
             self.entry_points.set_capacity(
                 entry_points.len()
                     + server_component_boundaries.list.len()
-                    + dynamic_import_entry_points.len(),
+                    + dynamic_import_entry_points.len()
+                    + html_preload_css_entry_points.len(),
             )?;
             // SAFETY: capacity reserved; columns initialized below.
             unsafe { self.entry_points.set_len(entry_points.len()) };
@@ -704,6 +708,20 @@ impl<'a> LinkerGraph<'a> {
 
                 let source = &sources[id as usize];
                 entry_point_kinds[id as usize] = entry_point::Kind::DynamicImport;
+
+                self.entry_points.append_assume_capacity(EntryPoint {
+                    source_index: id,
+                    output_path: RawSlice::new(source.path.text),
+                });
+            }
+
+            for &id in html_preload_css_entry_points {
+                if entry_point_kinds[id as usize] != entry_point::Kind::None {
+                    continue;
+                }
+
+                let source = &sources[id as usize];
+                entry_point_kinds[id as usize] = entry_point::Kind::HtmlPreload;
 
                 self.entry_points.append_assume_capacity(EntryPoint {
                     source_index: id,

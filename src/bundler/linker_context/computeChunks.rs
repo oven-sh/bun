@@ -75,6 +75,8 @@ pub fn compute_chunks(this: &mut LinkerContext, unique_key: u64) -> crate::Resul
     let mut html_chunks: ArrayHashMap<&[u8], Chunk> = ArrayHashMap::new();
     let loaders = parse_graph.input_files.items_loader();
     let ast_targets = this.graph.ast.items_target();
+    // (source_index, pre-sort css_chunks index) per HtmlPreload entry; remapped below.
+    let mut html_preload_css_chunk_indices: Vec<(IndexInt, u32)> = Vec::new();
 
     let code_splitting = this.graph.code_splitting;
     let could_be_browser_target_from_server_build = this.options.target.is_server_side()
@@ -146,9 +148,11 @@ pub fn compute_chunks(this: &mut LinkerContext, unique_key: u64) -> crate::Resul
                 temp,
                 &[Index::init(source_index)],
             );
+            let is_html_preload = this.graph.files.items_entry_point_kind()[source_index as usize]
+                == crate::EntryPoint::Kind::HtmlPreload;
             // Create a chunk for the entry point here to ensure that the chunk is
             // always generated even if the resulting file is empty
-            let hash_to_use = if !this.options.css_chunking {
+            let hash_to_use = if !this.options.css_chunking && !is_html_preload {
                 bun_wyhash::hash(
                     temp.alloc_slice_copy(entry_bits.bytes(this.graph.entry_points.len())),
                 )
@@ -161,12 +165,28 @@ pub fn compute_chunks(this: &mut LinkerContext, unique_key: u64) -> crate::Resul
                 hasher.final_()
             };
             let css_chunk_entry = css_chunks.get_or_put(hash_to_use)?;
+            if is_html_preload {
+                html_preload_css_chunk_indices.push((
+                    source_index,
+                    u32::try_from(css_chunk_entry.index).expect("int cast"),
+                ));
+                if css_chunk_entry.found_existing {
+                    entry_bits.for_each(&mut css_chunk_entry.value_ptr.entry_bits, |dst, i| {
+                        dst.set(i)
+                    });
+                }
+            }
             if !css_chunk_entry.found_existing {
                 // const css_chunk_entry = try js_chunks.getOrPut();
                 let order_len = order.len() as usize;
                 *css_chunk_entry.value_ptr = Chunk {
                     entry_point: chunk::EntryPoint::new(source_index, entry_bit, true, false),
-                    entry_bits: entry_point_chunk_bits,
+                    // Full file bits so HTMLImportManifest picks the owning page.
+                    entry_bits: if is_html_preload {
+                        entry_bits.clone()?
+                    } else {
+                        entry_point_chunk_bits
+                    },
                     content: chunk::Content::Css(chunk::CssChunk {
                         imports_in_chunk_in_order: order,
                         asts: (0..order_len)
@@ -483,6 +503,9 @@ pub fn compute_chunks(this: &mut LinkerContext, unique_key: u64) -> crate::Resul
                     }
                 }
             }
+            for (_, idx) in html_preload_css_chunk_indices.iter_mut() {
+                *idx = remapped_css_indexes[*idx as usize];
+            }
         }
 
         // We don't care about the order of the HTML chunks that have no JS chunks.
@@ -512,6 +535,9 @@ pub fn compute_chunks(this: &mut LinkerContext, unique_key: u64) -> crate::Resul
             entry_point_chunk_indices[chunk.entry_point.source_index() as usize] =
                 u32::try_from(chunk_id).expect("int cast");
         }
+    }
+    for &(source, chunk_id) in html_preload_css_chunk_indices.iter() {
+        entry_point_chunk_indices[source as usize] = chunk_id;
     }
 
     // Determine the order of JS files (and parts) within the chunk ahead of time

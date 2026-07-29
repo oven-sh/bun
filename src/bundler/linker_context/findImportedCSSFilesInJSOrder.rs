@@ -1,6 +1,6 @@
 use crate::mal_prelude::*;
 use bun_alloc::Arena;
-use bun_ast::ImportRecord;
+use bun_ast::{ImportKind, ImportRecord};
 use bun_collections::VecExt;
 
 use crate::{Index, LinkerContext};
@@ -76,6 +76,12 @@ pub fn find_imported_css_files_in_js_order(
                 if record.source_index.is_valid()
                     && !visited.is_set(record.source_index.get() as usize)
                 {
+                    // Preloaded CSS is chunked via `html_preload_css_entry_points`.
+                    if record.kind == ImportKind::Url
+                        && all_loaders[record.source_index.get() as usize].is_css()
+                    {
+                        continue;
+                    }
                     stack.push(Frame::Enter(record.source_index));
                 }
             }

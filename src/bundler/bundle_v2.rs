@@ -114,6 +114,8 @@ pub struct BundleV2<'a> {
     /// See the comment in `Chunk.OutputPiece`.
     pub unique_key: u64,
     pub dynamic_import_entry_points: ArrayHashMap<IndexInt, ()>,
+    /// `<link rel="preload" as="style">` targets; each gets its own CSS chunk.
+    pub html_preload_css_entry_points: ArrayHashMap<IndexInt, ()>,
 
     pub finalizers: Vec<ExternalFreeFunction>,
 
@@ -1639,6 +1641,7 @@ pub mod bv2_impl {
         pub all_urls_for_css: &'a [&'a [u8]],
         pub redirects: &'a [u32],
         pub dynamic_import_entry_points: &'a mut ArrayHashMap<IndexInt, ()>,
+        pub html_preload_css_entry_points: &'a mut ArrayHashMap<IndexInt, ()>,
         /// Files which are Server Component Boundaries
         pub scb_bitset: Option<DynamicBitSetUnmanaged>,
         pub scb_list: server_component_boundary::Slice<'a>,
@@ -1746,6 +1749,7 @@ pub mod bv2_impl {
 
                 let is_js = self.all_loaders[source_index.get() as usize].is_javascript_like();
                 let is_css = self.all_loaders[source_index.get() as usize].is_css();
+                let is_html = self.all_loaders[source_index.get() as usize] == Loader::Html;
 
                 let import_record_list_id = source_index;
                 let mut has_redirect = false;
@@ -1810,6 +1814,15 @@ pub mod bv2_impl {
 
                             let next_source = import_record.source_index;
                             let kind_is_dynamic = import_record.kind == ImportKind::Dynamic;
+                            if is_html
+                                && import_record.kind == ImportKind::Url
+                                && next_source.is_valid()
+                                && self.all_loaders[next_source.get() as usize].is_css()
+                            {
+                                self.html_preload_css_entry_points
+                                    .put(next_source.get(), ())
+                                    .expect("unreachable");
+                            }
                             self.stack.push(ReachFrame::Enter {
                                 source_index: next_source,
                                 was_dynamic_import: CHECK_DYNAMIC_IMPORTS && kind_is_dynamic,
@@ -1888,6 +1901,7 @@ pub mod bv2_impl {
                 DynamicBitSetUnmanaged::init_empty(self.graph.input_files.len())?;
 
             self.dynamic_import_entry_points = ArrayHashMap::new();
+            self.html_preload_css_entry_points = ArrayHashMap::new();
 
             // reshaped for borrowck — hoist the values that would
             // otherwise re-borrow `self`/`self.graph` while the visitor holds
@@ -1915,6 +1929,7 @@ pub mod bv2_impl {
                 all_loaders: self.graph.input_files.items_loader(),
                 all_urls_for_css,
                 dynamic_import_entry_points: &mut self.dynamic_import_entry_points,
+                html_preload_css_entry_points: &mut self.html_preload_css_entry_points,
                 scb_bitset,
                 scb_list,
                 additional_files_imported_by_js_and_inlined_in_css:
@@ -2727,6 +2742,7 @@ pub mod bv2_impl {
                 free_list: Vec::new(),
                 unique_key: 0,
                 dynamic_import_entry_points: ArrayHashMap::new(),
+                html_preload_css_entry_points: ArrayHashMap::new(),
                 finalizers: Vec::new(),
                 drain_defer_task: DeferredBatchTask::default(),
                 asynchronous: false,
@@ -5109,6 +5125,7 @@ pub mod bv2_impl {
             /* arena: help_catch_memory_issues — no-op (mimalloc TLH check) */
 
             self.dynamic_import_entry_points = ArrayHashMap::new();
+            self.html_preload_css_entry_points = ArrayHashMap::new();
             let mut html_files: ArrayHashMap<Index, ()> = ArrayHashMap::new();
 
             // Separate non-failing files into two lists: JS and CSS

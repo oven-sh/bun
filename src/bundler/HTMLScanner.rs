@@ -189,8 +189,8 @@ pub(crate) const TAG_HANDLERS: [TagHandler; 16] = [
     TagHandler::new("script[src]", "src", ImportKind::Stmt),
     // CSS Stylesheets
     TagHandler::new("link[rel='stylesheet'][href]", "href", ImportKind::At),
-    // CSS Assets
-    TagHandler::new("link[as='style'][href]", "href", ImportKind::At),
+    // CSS preloads (fetch hint only; not merged into the page stylesheet)
+    TagHandler::new("link[as='style'][href]", "href", ImportKind::Url),
     // Font files
     TagHandler::new(
         "link[as='font'][href], link[type^='font/'][href]",

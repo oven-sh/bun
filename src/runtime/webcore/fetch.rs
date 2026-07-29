@@ -1115,9 +1115,6 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                             }
                         }
                     }
-                    // Fall through: a value that is neither a URL string, a `URL`
-                    // instance, nor a `{url}` object. Fail closed rather than
-                    // silently connecting directly to the origin.
                     let err = ctx.to_type_error(
                         jsc::ErrorCode::INVALID_ARG_TYPE,
                         format_args!(

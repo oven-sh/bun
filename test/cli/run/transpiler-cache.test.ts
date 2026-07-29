@@ -261,6 +261,41 @@ describe("transpiler cache", () => {
     expect(run(["--feature=OTHER", "--feature=SUPER_SECRET"])).toBe("enabled");
     expect(newCacheCount()).toBe(0); // cache hit, order doesn't matter
   });
+  test("--jsx-side-effects invalidates cache", () => {
+    // jsx.side_effects controls whether bare JSX expression statements survive
+    // DCE (via can_be_unwrapped_if_unused on the lowered call). It must be part
+    // of the features hash or toggling the flag serves a stale entry.
+    mkdirSync(join(temp_dir, "node_modules", "react"), { recursive: true });
+    writeFileSync(
+      join(temp_dir, "node_modules", "react", "package.json"),
+      JSON.stringify({ name: "react", exports: { "./jsx-dev-runtime": "./r.js", "./jsx-runtime": "./r.js" } }),
+    );
+    writeFileSync(
+      join(temp_dir, "node_modules", "react", "r.js"),
+      'let n=0;exports.jsxDEV=exports.jsx=exports.jsxs=()=>{n++};exports.Fragment={};process.on("exit",()=>console.log("calls="+n));',
+    );
+    writeFileSync(join(temp_dir, "tsconfig.json"), "{}");
+    // >= MINIMUM_CACHE_SIZE so the entry is written.
+    const pad = "// " + Buffer.alloc(50 * 1024, "x").toString() + "\n";
+    writeFileSync(join(temp_dir, "a.jsx"), pad + "<div />;\n<div />;\n<div />;\n");
+
+    const run = (extra: string[]) => {
+      const result = Bun.spawnSync({ cmd: [bunExe(), ...extra, "a.jsx"], cwd: temp_dir, env });
+      if (!result.success) throw new Error(result.stderr.toString());
+      return result.stdout.toString().trim();
+    };
+
+    // No flag: JSX calls are pure, the three bare statements are DCE'd.
+    expect(run([])).toBe("calls=0");
+    expect(newCacheCount()).toBe(1);
+    expect(run([])).toBe("calls=0");
+    expect(newCacheCount()).toBe(0); // cache hit
+
+    // With the flag: features hash differs, entry is re-transpiled with
+    // side_effects=true so all three calls execute.
+    expect(run(["--jsx-side-effects"])).toBe("calls=3");
+    expect(run(["--jsx-side-effects"])).toBe("calls=3");
+  });
 });
 
 test("rejects cached module records containing out-of-range string indices", () => {

@@ -220,8 +220,14 @@ impl Pragma {
         hasher.update(&self.classic_import_source);
         hasher.update(&self.package_name);
         // `runtime` selects classic vs automatic emission; `development`
-        // selects `jsx` vs `jsxDEV`. Both shape transpiled output.
-        hasher.update(&[self.runtime as u8, self.development as u8]);
+        // selects `jsx` vs `jsxDEV`; `side_effects` controls whether JSX
+        // calls are marked pure (and so whether bare JSX statements survive
+        // DCE). All three shape transpiled output.
+        hasher.update(&[
+            self.runtime as u8,
+            self.development as u8,
+            self.side_effects as u8,
+        ]);
     }
 
     pub fn import_source(&self) -> &[u8] {

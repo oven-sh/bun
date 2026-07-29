@@ -184,6 +184,58 @@ test("bunfig.toml registry takes precedence over .npmrc registry", async () => {
   expect(exitCode).toBe(1);
 });
 
+test("bunfig.toml scoped registry takes precedence over .npmrc @scope:registry", async () => {
+  const bunfigPaths: string[] = [];
+  using bunfigServer = Bun.serve({
+    port: 0,
+    fetch(req) {
+      bunfigPaths.push(new URL(req.url).pathname);
+      return new Response("not found", { status: 404 });
+    },
+  });
+  const npmrcPaths: string[] = [];
+  using npmrcServer = Bun.serve({
+    port: 0,
+    fetch(req) {
+      npmrcPaths.push(new URL(req.url).pathname);
+      return new Response("not found", { status: 404 });
+    },
+  });
+
+  await Bun.write(
+    join(package_dir, "bunfig.toml"),
+    `[install.scopes]\nmyorg = "http://${bunfigServer.hostname}:${bunfigServer.port}/from-bunfig/"\n`,
+  );
+  await Bun.write(
+    join(package_dir, ".npmrc"),
+    `@myorg:registry=http://${npmrcServer.hostname}:${npmrcServer.port}/from-npmrc/\n` +
+      `@other:registry=http://${npmrcServer.hostname}:${npmrcServer.port}/other-from-npmrc/\n`,
+  );
+  await Bun.write(
+    join(package_dir, "package.json"),
+    JSON.stringify({
+      name: "test",
+      version: "0.0.0",
+      dependencies: { "@myorg/pkg": "1.0.0", "@other/pkg": "1.0.0" },
+    }),
+  );
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "install", "--no-cache"],
+    env,
+    cwd: package_dir,
+    stdout: "ignore",
+    stderr: "pipe",
+    stdin: "ignore",
+  });
+  const [, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+
+  // @myorg configured in bunfig.toml wins; @other only in .npmrc still applies.
+  expect(bunfigPaths).toEqual(["/from-bunfig/@myorg%2fpkg"]);
+  expect(npmrcPaths).toEqual(["/other-from-npmrc/@other%2fpkg"]);
+  expect(exitCode).toBe(1);
+});
+
 // A `registry=` line in the project .npmrc should still take precedence over
 // the user ~/.npmrc when bunfig.toml does not configure a registry.
 test("project .npmrc registry takes precedence over user .npmrc", async () => {

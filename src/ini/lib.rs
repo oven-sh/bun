@@ -1242,6 +1242,7 @@ mod draft {
         pub node_linker: bool,
         pub public_hoist_pattern: bool,
         pub hoist_pattern: bool,
+        pub scoped_names: Vec<Box<[u8]>>,
     }
 
     impl NpmrcPreset {
@@ -1265,7 +1266,16 @@ mod draft {
                 node_linker: install.node_linker.is_some(),
                 public_hoist_pattern: install.public_hoist_pattern.is_some(),
                 hoist_pattern: install.hoist_pattern.is_some(),
+                scoped_names: install
+                    .scoped
+                    .as_ref()
+                    .map(|m| m.scopes.keys().to_vec())
+                    .unwrap_or_default(),
             }
+        }
+
+        fn has_scope(&self, name: &[u8]) -> bool {
+            self.scoped_names.iter().any(|n| &**n == name)
         }
     }
 
@@ -1551,6 +1561,9 @@ mod draft {
 
             while let Some(val) = iter.next()? {
                 if let Some(result) = val.get() {
+                    if preset.has_scope(&result.scope) {
+                        continue;
+                    }
                     let registry = result.registry.dupe();
                     registry_map.scopes.put(&*result.scope, registry)?;
                 }

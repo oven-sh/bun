@@ -70,9 +70,6 @@ describe("tsconfig compilerOptions.jsx", () => {
   });
 
   // Passing any --jsx-* CLI flag must not override tsconfig's dev/prod selection.
-  // Previously bundle_v2 overwrote the per-file resolver-merged `jsx.development`
-  // with the global CLI default whenever force_node_env was Unspecified, so
-  // adding e.g. --jsx-import-source=shim would discard the tsconfig "jsx" value.
   describe.concurrent("bun build: --jsx-* flags preserve tsconfig dev/prod", () => {
     const flags = [
       ["--jsx-runtime=automatic"],

@@ -227,6 +227,33 @@ impl FakeTimers {
     }
 }
 
+/// Restore real timers and the real clock at a test-file boundary. Jest gives
+/// each file its own fake-timer environment; Bun's `FakeTimers::active` flag
+/// and `CURRENT_TIME` live in per-thread state, so a file that never calls
+/// `useRealTimers()`/`setSystemTime()` would otherwise route every later
+/// file's `setTimeout` into the never-driven fake heap and pin `Date.now()`.
+pub(crate) fn reset_between_files(global: &JSGlobalObject) {
+    let all = timer_all();
+    if all.is_null() {
+        return;
+    }
+    // SAFETY: `timer_all()` is the live per-thread `All`; single JS thread.
+    if unsafe { (*all).fake_timers.is_active() } {
+        // SAFETY: as above; the borrow ends before `release_heap_pin`, which
+        // reaches `All::remove` and forms its own `&mut All`.
+        let pinned = unsafe { (*all).fake_timers.deactivate(global) };
+        let vm = global.bun_vm_ptr();
+        for p in pinned {
+            TimerObjectInternals::release_heap_pin(p, vm);
+        }
+        set_fake_timer_marker(global, false);
+    } else {
+        // `setSystemTime()` sets `globalObject->overridenDateNow` without
+        // activating fake timers; `CURRENT_TIME.clear` resets it to NaN.
+        CURRENT_TIME.clear(global);
+    }
+}
+
 // ===
 // JS Functions
 // ===

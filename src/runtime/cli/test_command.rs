@@ -3385,6 +3385,11 @@ impl TestCommand {
                 Output::flush();
             }
 
+            // Fake-timer / setSystemTime state is per-thread, not per-global,
+            // so a file that leaves either active would leak into every later
+            // file in both plain and --isolate runs.
+            crate::test_runner::timers::fake_timers::reset_between_files(vm.global());
+
             if !vm.test_isolation_enabled {
                 // Ensure these never linger across files. Under --isolate this
                 // is done by swapGlobalForTestIsolation() (kill+clear) and we

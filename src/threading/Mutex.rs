@@ -219,6 +219,7 @@ unsafe impl Send for WindowsImpl {}
 unsafe extern "system" {
     safe fn AcquireSRWLockExclusive(lock: &core::cell::UnsafeCell<bun_sys::windows::SRWLOCK>);
     // Returns BOOLEAN (u8), not BOOL — compare against 0, not the i32 `FALSE`.
+    #[cfg(debug_assertions)]
     safe fn TryAcquireSRWLockExclusive(
         lock: &core::cell::UnsafeCell<bun_sys::windows::SRWLOCK>,
     ) -> u8;
@@ -278,6 +279,7 @@ pub(crate) struct OsUnfairLock {
 // — so `safe fn` discharges the link-time proof and callers need no `unsafe`.
 #[cfg(target_vendor = "apple")]
 unsafe extern "C" {
+    #[cfg(debug_assertions)]
     safe fn os_unfair_lock_trylock(lock: &core::cell::UnsafeCell<OsUnfairLock>) -> bool;
     safe fn os_unfair_lock_lock(lock: &core::cell::UnsafeCell<OsUnfairLock>);
     safe fn os_unfair_lock_unlock(lock: &core::cell::UnsafeCell<OsUnfairLock>);

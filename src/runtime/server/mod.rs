@@ -234,6 +234,11 @@ pub struct NewServer<const SSL: bool, const DEBUG: bool> {
     // Never set when !SSL.
     pub h3_app: Option<*mut uws_sys::h3::App>,
     pub h3_listener: Option<*mut uws_sys::h3::ListenSocket>,
+    /// NUL-terminated `serverName` the default context was registered under in
+    /// the listen socket's SNI tree. Written once in `listen()`; the tree key
+    /// never changes across reloads, so `on_reload_from_zig` reads this rather
+    /// than the per-reload config.
+    pub sni_server_name: Option<Box<[u8]>>,
     /// Cached `h3=":<port>"; ma=86400` for Alt-Svc on H1 responses; formatted
     /// once in onH3Listen so renderMetadata doesn't reformat per-request.
     pub h3_alt_svc: Box<[u8]>,
@@ -2023,6 +2028,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             h3_app: None,
             h3_listener: None,
             h3_alt_svc: Box::<[u8]>::default(),
+            sni_server_name: None,
             js_value: jsc::JsRef::empty(),
             pending_requests: 0,
             active_websocket_count: core::cell::Cell::new(0),
@@ -2737,6 +2743,10 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 // Ensure routes are set for that domain name.
                 // SAFETY: `this` is the live boxed server from `init()`; no other borrow is live.
                 let _ = unsafe { &mut *this }.set_routes();
+
+                // SAFETY: `this` is the live boxed server; no other borrow is live.
+                unsafe { &mut *this }.sni_server_name =
+                    Some(server_name.to_bytes_with_nul().into());
             }
 
             // SNI: per-hostname contexts

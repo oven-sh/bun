@@ -86,6 +86,31 @@ impl ListenSocket {
         unsafe { us_listen_socket_remove_server_name(self, hostname.as_ptr()) }
     }
 
+    /// Swap the default `SSL_CTX` subsequent accepts build their `SSL` from. C
+    /// `SSL_CTX_up_ref`s `ssl_ctx` and releases the retiring reference, so the
+    /// caller keeps the one `create_ssl_context` handed it. `hostname` is the
+    /// name the retiring context was registered under in the SNI tree, if any.
+    /// With `force_sni` the entry moves unconditionally; otherwise only when it
+    /// pointed at the retiring default. Returns false for a non-TLS listener.
+    pub fn set_ssl_ctx(
+        &mut self,
+        ssl_ctx: *mut SslCtx,
+        hostname: Option<&core::ffi::CStr>,
+        force_sni: bool,
+    ) -> bool {
+        // SAFETY: `self` is a valid listen socket; caller guarantees `ssl_ctx`
+        // is non-null and points at a live SSL_CTX (C up-refs and stores it);
+        // `hostname` is NUL-terminated and valid for the duration of the call.
+        unsafe {
+            us_listen_socket_set_ssl_ctx(
+                self,
+                ssl_ctx,
+                hostname.map_or(core::ptr::null(), |h| h.as_ptr()),
+                c_int::from(force_sni),
+            ) != 0
+        }
+    }
+
     pub fn on_server_name(
         &mut self,
         cb: extern "C" fn(*mut ListenSocket, *const c_char, *mut c_int, *mut c_void) -> *mut c_void,
@@ -109,6 +134,12 @@ unsafe extern "C" {
         user: *mut c_void,
     ) -> c_int;
     fn us_listen_socket_remove_server_name(ls: *mut ListenSocket, hostname: *const c_char);
+    fn us_listen_socket_set_ssl_ctx(
+        ls: *mut ListenSocket,
+        ssl_ctx: *mut SslCtx,
+        hostname: *const c_char,
+        force_sni: c_int,
+    ) -> c_int;
     safe fn us_listen_socket_on_server_name(
         ls: &mut ListenSocket,
         cb: extern "C" fn(*mut ListenSocket, *const c_char, *mut c_int, *mut c_void) -> *mut c_void,

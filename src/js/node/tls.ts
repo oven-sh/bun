@@ -4,6 +4,7 @@ const net = require("node:net");
 const Duplex = require("internal/streams/duplex");
 const EventEmitter = require("node:events");
 const addServerName = $newRustFunction("Listener.rs", "jsAddServerName", 3);
+const setListenerSecureContext = $newRustFunction("Listener.rs", "jsSetSecureContext", 2);
 const { throwNotImplemented } = require("internal/shared");
 const {
   throwOnInvalidTLSArray,
@@ -1244,11 +1245,12 @@ function Server(options, secureConnectionListener): void {
       options = processPfxOptions(options);
       const { ALPNProtocols } = options;
 
+      // Unlike every other field below, an omitted ALPNProtocols keeps the
+      // previous value: Node's setSecureContext() never touches it.
       if (ALPNProtocols) {
         convertALPNProtocols(ALPNProtocols, next);
       } else {
-        // An omitted ALPNProtocols clears the previous call's protocols.
-        next.ALPNProtocols = undefined;
+        next.ALPNProtocols = this.ALPNProtocols;
       }
 
       let cert = options.cert;
@@ -1385,22 +1387,70 @@ function Server(options, secureConnectionListener): void {
       next.maxVersion = options.maxVersion;
     }
     if (options) {
-      this.ALPNProtocols = next.ALPNProtocols;
-      this.cert = next.cert;
-      this.key = next.key;
-      this.ca = next.ca;
-      this.crl = next.crl;
-      this.allowPartialTrustChain = next.allowPartialTrustChain;
-      this.sessionTimeout = next.sessionTimeout;
-      this.sigalgs = next.sigalgs;
-      this.ecdhCurve = next.ecdhCurve;
-      this.passphrase = next.passphrase;
-      this.servername = next.servername;
-      this.secureOptions = next.secureOptions;
-      this.ciphers = next.ciphers;
-      this.secureProtocol = next.secureProtocol;
-      this.minVersion = next.minVersion;
-      this.maxVersion = next.maxVersion;
+      const commit = (src: typeof next) => {
+        this.ALPNProtocols = src.ALPNProtocols;
+        this.cert = src.cert;
+        this.key = src.key;
+        this.ca = src.ca;
+        this.crl = src.crl;
+        this.allowPartialTrustChain = src.allowPartialTrustChain;
+        this.sessionTimeout = src.sessionTimeout;
+        this.sigalgs = src.sigalgs;
+        this.ecdhCurve = src.ecdhCurve;
+        this.passphrase = src.passphrase;
+        this.servername = src.servername;
+        this.secureOptions = src.secureOptions;
+        this.ciphers = src.ciphers;
+        this.secureProtocol = src.secureProtocol;
+        this.minVersion = src.minVersion;
+        this.maxVersion = src.maxVersion;
+      };
+
+      // The native context is built from these fields at listen() time, so an
+      // already-listening server needs it rebuilt now - that is the whole point
+      // of setSecureContext (live certificate rotation). Connections already
+      // accepted keep the certificate they handshook with, matching Node.
+      //
+      // buildSharedCreds() and a later listen() both read `this.cert` etc.
+      // directly, so keep the commit behind the one remaining throw so a bad
+      // PEM does not leave those reading rejected key material while the
+      // native listener is still serving the previous certificate.
+      const handle = this._handle;
+      if (handle) {
+        const prev = {
+          ALPNProtocols: this.ALPNProtocols,
+          cert: this.cert,
+          key: this.key,
+          ca: this.ca,
+          crl: this.crl,
+          allowPartialTrustChain: this.allowPartialTrustChain,
+          sessionTimeout: this.sessionTimeout,
+          sigalgs: this.sigalgs,
+          ecdhCurve: this.ecdhCurve,
+          passphrase: this.passphrase,
+          servername: this.servername,
+          secureOptions: this.secureOptions,
+          ciphers: this.ciphers,
+          secureProtocol: this.secureProtocol,
+          minVersion: this.minVersion,
+          maxVersion: this.maxVersion,
+        };
+        commit(next);
+        const tls = this[buntls](0, undefined, false)[0];
+        // Same transformation net.ts's listen path applies before Bun.listen:
+        // without it the verify mode on the rebuilt context ends up at
+        // SSL_VERIFY_FAIL_IF_NO_PEER_CERT for any server that has `ca` but did
+        // not set `requestCert`.
+        if (!tls.requestCert) tls.rejectUnauthorized = false;
+        try {
+          setListenerSecureContext(handle, tls);
+        } catch (e) {
+          commit(prev);
+          throw e;
+        }
+      } else {
+        commit(next);
+      }
     }
     this._sharedCreds = serverTLSOptions instanceof InternalSecureContext ? serverTLSOptions : null;
     this[ksharedCredsOptions] =

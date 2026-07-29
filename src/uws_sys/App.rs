@@ -440,6 +440,21 @@ impl<const SSL: bool> ListenSocket<SSL> {
         // (a listen socket IS a us_socket_t).
         crate::socket::NewSocketHandler::<SSL>::from(std::ptr::from_mut::<Self>(self).cast())
     }
+
+    /// Swap the default `SSL_CTX` subsequent accepts build their `SSL` from.
+    /// uWS's `addServerName` registers a separate per-domain context in the SNI
+    /// tree (not the app's default), so `force_sni` — see
+    /// `crate::ListenSocket::set_ssl_ctx`.
+    #[inline]
+    pub fn set_ssl_ctx(
+        &mut self,
+        ssl_ctx: *mut crate::SslCtx,
+        hostname: Option<&core::ffi::CStr>,
+    ) -> bool {
+        // S008: opaque ZST cast as above.
+        bun_opaque::opaque_deref_mut(std::ptr::from_mut::<Self>(self).cast::<UwsListenSocket>())
+            .set_ssl_ctx(ssl_ctx, hostname, true)
+    }
 }
 
 #[derive(strum::IntoStaticStr, Debug)]

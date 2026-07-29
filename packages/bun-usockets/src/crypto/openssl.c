@@ -2834,6 +2834,39 @@ void us_listen_socket_remove_server_name(struct us_listen_socket_t *ls,
   sni_node_destructor(node);
 }
 
+int us_listen_socket_set_ssl_ctx(struct us_listen_socket_t *ls, SSL_CTX *ctx,
+                                 const char *hostname_pattern, int force_sni) {
+  if (!ls->ssl_ctx) return 0;
+  SSL_CTX *old = ls->ssl_ctx;
+
+  /* Every reference is taken before the matching one is dropped, so `ctx ==
+   * old` would be a no-op rather than a use-after-free. */
+  SSL_CTX_up_ref(ctx);
+  ls->ssl_ctx = ctx;
+  /* Both SNI callbacks were installed on the retiring context; a freshly built
+   * one carries neither. */
+  if (ls->sni) SSL_CTX_set_tlsext_servername_callback(ctx, sni_cb);
+  if (ls->on_server_name) SSL_CTX_set_select_certificate_cb(ctx, us_select_cert_cb);
+
+  if (hostname_pattern && ls->sni) {
+    struct sni_node_t *node = (struct sni_node_t *)sni_find(ls->sni, hostname_pattern);
+    /* Bun.listen() registers `old` itself in the tree, so the entry belongs to
+     * us iff `node->ctx == old` (a node:tls addContext() on the same name is
+     * the caller's and stays). uWS/Bun.serve registers a separate domainCtx,
+     * so `force_sni` moves the entry unconditionally. node->user stays on the
+     * node; do not stamp it onto ctx via ex_data (ctx is now also ls->ssl_ctx,
+     * so that would route no-SNI clients via that per-domain router). */
+    if (node && (force_sni || node->ctx == old)) {
+      SSL_CTX_up_ref(ctx);
+      SSL_CTX_free(node->ctx);
+      node->ctx = ctx;
+    }
+  }
+
+  us_internal_ssl_ctx_unref(old);
+  return 1;
+}
+
 void *us_listen_socket_find_server_name_userdata(struct us_listen_socket_t *ls,
                                                  const char *hostname_pattern) {
   if (!ls->sni) return NULL;

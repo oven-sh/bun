@@ -84,3 +84,18 @@ const s4 = Bun.serve({
     },
   },
 });
+
+Bun.serve({
+  routes: {
+    "/static-per-method": {
+      GET: new Response("static"),
+      HEAD: false,
+      POST: req => {
+        expectType(req.params).is<{}>();
+        return new Response("ok");
+      },
+    },
+    "/top-level-false": false,
+  },
+  fetch: () => new Response("fallback"),
+});

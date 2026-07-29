@@ -626,7 +626,7 @@ declare module "bun" {
       [Path in R]:
         | BaseRouteValue
         | Handler<BunRequest<Path>, Server<WebSocketData>, Response>
-        | Partial<Record<HTTPMethod, Handler<BunRequest<Path>, Server<WebSocketData>, Response> | Response>>;
+        | Partial<Record<HTTPMethod, Handler<BunRequest<Path>, Server<WebSocketData>, Response> | BaseRouteValue>>;
     };
 
     type RoutesWithUpgrade<WebSocketData, R extends string> = {
@@ -634,7 +634,10 @@ declare module "bun" {
         | BaseRouteValue
         | Handler<BunRequest<Path>, Server<WebSocketData>, Response | undefined | void>
         | Partial<
-            Record<HTTPMethod, Handler<BunRequest<Path>, Server<WebSocketData>, Response | undefined | void> | Response>
+            Record<
+              HTTPMethod,
+              Handler<BunRequest<Path>, Server<WebSocketData>, Response | undefined | void> | BaseRouteValue
+            >
           >;
     };
 

@@ -64,7 +64,7 @@ pub struct ServerConfig {
     pub had_routes_object: bool,
 
     pub static_routes: Vec<StaticRouteEntry>,
-    pub negative_routes: Vec<ZBox>,
+    pub negative_routes: Vec<NegativeRoute>,
     pub user_routes_to_build: Vec<UserRouteBuilder>,
 
     pub bake: Option<crate::bake::UserOptions>,
@@ -153,7 +153,7 @@ impl ServerConfig {
         cost += self.id.len();
         cost += self.base_uri.len();
         for route in self.negative_routes.iter() {
-            cost += route.as_bytes().len();
+            cost += route.path.as_bytes().len();
         }
 
         cost
@@ -171,6 +171,12 @@ pub enum RouteMethod {
     Specific(Method),
 }
 
+/// A `false` route value: claim the path (or one method) for the default handler.
+pub struct NegativeRoute {
+    pub path: ZBox,
+    pub method: RouteMethod,
+}
+
 impl Default for RouteDeclaration {
     fn default() -> Self {
         Self {
@@ -185,6 +191,8 @@ pub struct StaticRouteEntry {
     pub path: Box<[u8]>,
     pub route: AnyRoute,
     pub method: MethodOptional,
+    /// The path's per-method route object declared `HEAD`, so don't derive one.
+    pub skip_implicit_head: bool,
 }
 
 impl StaticRouteEntry {
@@ -299,6 +307,7 @@ impl ServerConfig {
             path: Box::<[u8]>::from(path),
             route,
             method,
+            skip_implicit_head: false,
         });
         Ok(())
     }
@@ -904,8 +913,10 @@ impl ServerConfig {
                 if value == JSValue::FALSE {
                     // Appends a sentinel NUL without rejecting interior NULs
                     // (which already passed `is_all_ascii`).
-                    let duped = ZBox::from_bytes(&*path);
-                    args.negative_routes.push(duped);
+                    args.negative_routes.push(NegativeRoute {
+                        path: ZBox::from_bytes(&*path),
+                        method: RouteMethod::Any,
+                    });
                     continue;
                 }
 
@@ -938,7 +949,9 @@ impl ServerConfig {
                     // HEAD must behave like GET without a body (RFC 9110 section 9.3.2),
                     // so a route object with a GET handler and no HEAD entry also answers HEAD.
                     let mut derived_head_route: Option<UserRouteBuilder> = None;
+                    let mut derived_head_negative = false;
                     let mut has_head_route = false;
+                    let static_routes_start = init_ctx.user_routes.len();
                     for method in METHODS {
                         let method_name = bun_core::String::static_(method.as_str());
                         if let Some(function) = value.get_own(global, &method_name)? {
@@ -946,6 +959,19 @@ impl ServerConfig {
                                 validate_route_name(global, &path)?;
                             }
                             found = true;
+
+                            if function == JSValue::FALSE {
+                                match method {
+                                    Method::HEAD => has_head_route = true,
+                                    Method::GET => derived_head_negative = true,
+                                    _ => {}
+                                }
+                                args.negative_routes.push(NegativeRoute {
+                                    path: ZBox::from_bytes(&*path),
+                                    method: RouteMethod::Specific(method),
+                                });
+                                continue;
+                            }
 
                             if function.is_callable() {
                                 let callback = function.with_async_context_if_needed(global);
@@ -979,6 +1005,7 @@ impl ServerConfig {
                                     path: Box::<[u8]>::from(&*path),
                                     route: html_route,
                                     method: http_method::Optional::Method(method_set),
+                                    skip_implicit_head: false,
                                 });
                                 if method == Method::HEAD {
                                     has_head_route = true;
@@ -987,9 +1014,21 @@ impl ServerConfig {
                         }
                     }
 
-                    if let Some(builder) = derived_head_route {
-                        if !has_head_route {
+                    if has_head_route {
+                        for entry in &mut init_ctx.user_routes[static_routes_start..] {
+                            if *entry.path == *path {
+                                entry.skip_implicit_head = true;
+                            }
+                        }
+                    } else {
+                        if let Some(builder) = derived_head_route {
                             args.user_routes_to_build.push(builder);
+                        }
+                        if derived_head_negative {
+                            args.negative_routes.push(NegativeRoute {
+                                path: ZBox::from_bytes(&*path),
+                                method: RouteMethod::Specific(Method::HEAD),
+                            });
                         }
                     }
 
@@ -1035,6 +1074,7 @@ impl ServerConfig {
                     path,
                     route,
                     method: http_method::Optional::Any,
+                    skip_implicit_head: false,
                 });
             }
 

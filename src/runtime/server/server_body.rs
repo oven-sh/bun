@@ -619,6 +619,7 @@ impl AnyRoute {
             path: builder.into_boxed_slice(),
             route,
             method: methods,
+            skip_implicit_head: false,
         });
         Ok(None)
     }

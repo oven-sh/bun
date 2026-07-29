@@ -615,8 +615,6 @@ pub fn compute_chunks(this: &mut LinkerContext, unique_key: u64) -> crate::Resul
             }
         }
 
-        // Shared split chunks have no entry point; `[name]`/`[dir]` stay at the
-        // `PathTemplate::CHUNK` defaults ("chunk" / ".") like esbuild.
         let pathname: Option<bun_fs::PathName<'_>> =
             chunk.entry_point.is_entry_point().then(|| {
                 bun_fs::PathName::init(

@@ -1029,6 +1029,13 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/pm#scan<r>.
             Global::exit(0);
         }
 
+        if diag.reject_unknown(params) {
+            let name: &'static str = subcommand.into();
+            bun_core::pretty_errorln!("\nFor a list of options, run <b>bun {} --help<r>", name);
+            Output::flush();
+            Global::exit(1);
+        }
+
         let mut cli = CommandLineArguments::default();
         cli.positionals = args.positionals();
         cli.yarn = args.flag(b"--yarn");

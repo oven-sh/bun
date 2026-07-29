@@ -314,6 +314,11 @@ pub struct Diagnostic {
     pub arg: Vec<u8>,
     pub short: Option<u8>,
     pub long: Option<Vec<u8>>,
+    /// `--long` flags the parser did not recognise. The parser still skips
+    /// them (so `parse` returns `Ok`), but callers can inspect this after a
+    /// successful parse to warn or hard-fail. Each entry is the flag name
+    /// without the leading `--` and without any `=value` suffix.
+    pub unknown_long: Vec<Vec<u8>>,
 }
 
 impl Diagnostic {
@@ -364,6 +369,119 @@ impl Diagnostic {
         bun_core::Output::flush();
         Ok(())
     }
+
+    /// Print an `error:` line (with a did-you-mean suggestion when one of
+    /// `params` is within a small edit distance) for every unrecognised
+    /// `--long` flag collected during parsing. Returns `true` when at least
+    /// one unknown flag was seen. Callers that must refuse typo'd flags
+    /// (`bun install --frozen-lockfil`, `bun upgrade --dry-run`, …) call this
+    /// after a successful `parse` and exit non-zero when it returns `true`.
+    ///
+    /// The empty check is inlined so the `bun <file>` hot path never jumps
+    /// into the `#[cold]` body when there is nothing to report.
+    #[inline]
+    pub fn reject_unknown<Id>(&self, params: &[Param<Id>]) -> bool {
+        if self.unknown_long.is_empty() {
+            return false;
+        }
+        self.print_unknown(params, true)
+    }
+
+    /// Like [`reject_unknown`] but emits `warn:` instead of `error:`. Used by
+    /// `bun run` / bare `bun <file>` where an unknown flag might be a Node/V8
+    /// option Bun has not declared yet and hard-failing would be a regression.
+    #[inline]
+    pub fn warn_unknown<Id>(&self, params: &[Param<Id>]) -> bool {
+        if self.unknown_long.is_empty() {
+            return false;
+        }
+        self.print_unknown(params, false)
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn print_unknown<Id>(&self, params: &[Param<Id>], as_error: bool) -> bool {
+        for name in &self.unknown_long {
+            let suggestion = closest_long_name(params, name);
+            if as_error {
+                bun_core::pretty_error!(
+                    "<r><red>error<r><d>:<r> unknown option <b>'--{}'<r>",
+                    bstr::BStr::new(name),
+                );
+            } else {
+                bun_core::pretty_error!(
+                    "<r><yellow>warn<r><d>:<r> unknown option <b>'--{}'<r>",
+                    bstr::BStr::new(name),
+                );
+            }
+            if let Some(s) = suggestion {
+                bun_core::pretty_error!(". Did you mean <cyan>'--{}'<r>?", bstr::BStr::new(s));
+            }
+            bun_core::pretty_errorln!("");
+        }
+        Output::flush();
+        true
+    }
+}
+
+/// Bounded Levenshtein distance over ASCII byte slices. Returns `limit + 1`
+/// once the distance is known to exceed `limit`. Two-row DP, `O(|a|·|b|)` time,
+/// `O(min(|a|,|b|))` space; only ever called on the unknown-flag error path.
+#[cold]
+fn edit_distance(a: &[u8], b: &[u8], limit: usize) -> usize {
+    let (a, b) = if a.len() <= b.len() { (a, b) } else { (b, a) };
+    if b.len() - a.len() > limit {
+        return limit + 1;
+    }
+    let mut prev: Vec<usize> = (0..=a.len()).collect();
+    let mut curr: Vec<usize> = vec![0; a.len() + 1];
+    for (j, &bj) in b.iter().enumerate() {
+        curr[0] = j + 1;
+        let mut row_min = curr[0];
+        for (i, &ai) in a.iter().enumerate() {
+            let cost = if ai == bj { 0 } else { 1 };
+            curr[i + 1] = (prev[i] + cost).min(prev[i + 1] + 1).min(curr[i] + 1);
+            row_min = row_min.min(curr[i + 1]);
+        }
+        if row_min > limit {
+            return limit + 1;
+        }
+        core::mem::swap(&mut prev, &mut curr);
+    }
+    prev[a.len()]
+}
+
+/// Pick the candidate closest to `name` by edit distance. Only returns a
+/// suggestion when the distance is at most `max(1, name.len() / 3)` so wildly
+/// unrelated flags aren't offered.
+#[cold]
+pub fn closest_name<'a>(
+    name: &[u8],
+    candidates: impl IntoIterator<Item = &'a [u8]>,
+) -> Option<&'a [u8]> {
+    let limit = core::cmp::max(1, name.len() / 3);
+    let mut best: Option<(&'a [u8], usize)> = None;
+    for cand in candidates {
+        let d = edit_distance(name, cand, limit);
+        if d <= limit && best.is_none_or(|(_, bd)| d < bd) {
+            best = Some((cand, d));
+        }
+    }
+    best.map(|(s, _)| s)
+}
+
+/// [`closest_name`] over a param table's long names and aliases.
+#[cold]
+pub fn closest_long_name<Id>(params: &[Param<Id>], name: &[u8]) -> Option<&'static [u8]> {
+    closest_name(
+        name,
+        params.iter().flat_map(|p| {
+            p.names
+                .long
+                .into_iter()
+                .chain(p.names.long_aliases.iter().copied())
+        }),
+    )
 }
 
 #[derive(Clone, Copy)]

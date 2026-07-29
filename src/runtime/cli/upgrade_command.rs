@@ -508,12 +508,17 @@ impl UpgradeCommand {
         }
     };
 
+    const KNOWN_FLAGS: &'static [&'static [u8]] =
+        &[b"--canary", b"--stable", b"--profile", b"--help", b"-h"];
+
     #[cold]
     pub fn exec(ctx: Command::Context) -> crate::Result<()> {
         let args = bun_core::argv();
         if args.len() > 2 {
+            // A positional means the user confused `upgrade` with
+            // `add`/`update`; point them there regardless of any other flags.
             for arg in args.iter().skip(2) {
-                if !strings::contains(arg, b"--") {
+                if !arg.starts_with(b"-") {
                     bun_core::pretty_error!(
                         "<r><red>error<r><d>:<r> This command updates Bun itself, and does not take package names.\n<blue>note<r><d>:<r> Use `bun update"
                     );
@@ -521,6 +526,25 @@ impl UpgradeCommand {
                         bun_core::pretty_error!(" {}", bstr::BStr::new(arg_err));
                     }
                     bun_core::pretty_errorln!("` instead.");
+                    Global::exit(1);
+                }
+            }
+            for arg in args.iter().skip(2) {
+                if !Self::KNOWN_FLAGS.contains(&arg) {
+                    bun_core::pretty_error!(
+                        "<r><red>error<r><d>:<r> unknown option <b>'{}'<r>",
+                        bstr::BStr::new(arg),
+                    );
+                    if let Some(s) = bun_clap::closest_name(arg, Self::KNOWN_FLAGS.iter().copied())
+                    {
+                        bun_core::pretty_error!(
+                            ". Did you mean <cyan>'{}'<r>?",
+                            bstr::BStr::new(s)
+                        );
+                    }
+                    bun_core::pretty_errorln!(
+                        "\n\nFor a list of options, run <b>bun upgrade --help<r>"
+                    );
                     Global::exit(1);
                 }
             }

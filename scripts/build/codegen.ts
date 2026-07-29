@@ -528,7 +528,8 @@ function emitNodeFallbacks({ n, cfg, sources, o, dirStamp }: Ctx): void {
         "--target=browser",
         "--format=cjs",
         "--minify",
-        `--define:process.env.NODE_ENV="development"`,
+        "--define",
+        `process.env.NODE_ENV="development"`,
       ]),
     },
   });

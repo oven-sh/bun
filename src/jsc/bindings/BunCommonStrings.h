@@ -64,6 +64,7 @@
     macro(buffer, "buffer") \
     macro(ec, "ec") \
     macro(ed25519, "ed25519") \
+    macro(fetchBasic, "basic") \
     macro(fetchCors, "cors") \
     macro(fetchError, "error") \
     macro(fetchFollow, "follow") \

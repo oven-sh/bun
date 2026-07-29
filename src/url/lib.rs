@@ -341,8 +341,18 @@ impl<'a> URL<'a> {
     /// `"blob:".len + UUID.stringLength` — see `runtime/webcore/ObjectURLRegistry.specifier_len`.
     const BLOB_SPECIFIER_LEN: usize = b"blob:".len() + 36;
 
+    /// `href` up to the fragment. `#` only ever appears in a serialized URL as
+    /// the fragment delimiter, so cut at the first one.
+    pub fn href_without_fragment(&self) -> &'a [u8] {
+        match strings::index_of_char(self.href, b'#') {
+            Some(fragment_start) => &self.href[..fragment_start as usize],
+            None => self.href,
+        }
+    }
+
     pub fn is_blob(&self) -> bool {
-        self.href.len() == Self::BLOB_SPECIFIER_LEN && self.href.starts_with(b"blob:")
+        let href = self.href_without_fragment();
+        href.len() == Self::BLOB_SPECIFIER_LEN && href.starts_with(b"blob:")
     }
 
     // Ownership: returns an `OwnedURL` that owns the buffer; callers borrow

@@ -100,6 +100,12 @@ impl ObjectURLRegistry {
 }
 
 fn uuid_from_pathname(pathname: &[u8]) -> Option<UUID> {
+    // https://w3c.github.io/FileAPI/#blob-url-resolve — the blob URL store is keyed
+    // by the URL serialized with exclude fragment set to true.
+    let pathname = match strings::index_of_char(pathname, b'#') {
+        Some(fragment_start) => &pathname[..fragment_start as usize],
+        None => pathname,
+    };
     UUID::parse(pathname).ok()
 }
 

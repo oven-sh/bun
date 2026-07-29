@@ -1276,10 +1276,7 @@ mod draft {
     impl NpmrcPreset {
         pub fn from(install: &BunInstall) -> Self {
             Self {
-                default_registry: install
-                    .default_registry
-                    .as_ref()
-                    .is_some_and(|r| !r.url.is_empty()),
+                default_registry: install.default_registry.is_some(),
                 default_registry_creds: install
                     .default_registry
                     .as_ref()

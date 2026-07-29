@@ -1,6 +1,6 @@
 import { spawn } from "bun";
-import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, tempDirWithFiles } from "harness";
+import { describe, expect, it, test } from "bun:test";
+import { bunEnv, bunExe, isASAN, tempDirWithFiles } from "harness";
 
 describe.concurrent("bun info", () => {
   let i = 0;
@@ -370,3 +370,56 @@ describe.concurrent("bun info", () => {
     });
   });
 });
+
+// `send_sync` used to wrap the returned HTTPResponseMetadata in ManuallyDrop,
+// leaking the cloned response-header buffer and its backing string storage on
+// every sync CLI request. LSan's default conservative scan only catches it when
+// no idle thread happens to park with a stale pointer in a callee-saved
+// register, so exclude registers as roots to make the check deterministic and
+// look for the clone_metadata allocation site. A local registry keeps this
+// hermetic.
+test.skipIf(!isASAN)("bun info does not leak the sync response metadata", async () => {
+  const manifest = JSON.stringify({
+    name: "leakpkg",
+    "dist-tags": { latest: "0.0.1" },
+    versions: {
+      "0.0.1": {
+        name: "leakpkg",
+        version: "0.0.1",
+        dist: { tarball: "http://localhost/leakpkg-0.0.1.tgz", shasum: "0".repeat(40) },
+      },
+    },
+    time: { "0.0.1": "2020-01-01T00:00:00.000Z" },
+  });
+  await using server = Bun.serve({
+    port: 0,
+    fetch() {
+      return new Response(manifest, { headers: { "content-type": "application/json" } });
+    },
+  });
+  const dir = tempDirWithFiles("bun-info-lsan", {
+    "package.json": JSON.stringify({ name: "test", version: "1.0.0" }),
+    "bunfig.toml": `[install]\nregistry = "http://localhost:${server.port}/"\n`,
+  });
+  await using proc = spawn({
+    cmd: [bunExe(), "info", "leakpkg", "name"],
+    cwd: dir,
+    env: {
+      ...bunEnv,
+      http_proxy: "",
+      https_proxy: "",
+      HTTP_PROXY: "",
+      HTTPS_PROXY: "",
+      ASAN_OPTIONS: "allow_user_segv_handler=1:disable_coredump=0:detect_leaks=1",
+      LSAN_OPTIONS: "use_registers=0:exitcode=0:print_suppressions=0",
+    },
+    stdout: "pipe",
+    stderr: "pipe",
+    stdin: "ignore",
+  });
+  const [stdout, stderr] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout.trim()).toBe("leakpkg");
+  expect(stderr).not.toContain("clone_metadata");
+  // Timeout: a detected leak makes llvm-symbolizer load the full DWARF of the
+  // test binary before the assertion above can run; the no-leak path is < 1s.
+}, 30_000);

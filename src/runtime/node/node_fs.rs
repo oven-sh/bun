@@ -7960,8 +7960,7 @@ impl NodeFS {
             let target_path = args.target_path.slice();
             let new_path = args.new_path.slice();
             // Bound both paths before the fixed-size buffer copies below.
-            if target_path.len() >= paths::MAX_PATH_BYTES
-                || new_path.len() >= paths::MAX_PATH_BYTES
+            if target_path.len() >= paths::MAX_PATH_BYTES || new_path.len() >= paths::MAX_PATH_BYTES
             {
                 return Err(sys::Error {
                     errno: E::ENAMETOOLONG as _,

@@ -46,11 +46,8 @@ public:
     // the drain value returned by handle.start()/drain(), enqueued by the Native
     // startAlgorithm and then cleared.
     JSC::WriteBarrier<JSC::Unknown> m_drainValue;
-    // Visited: with the adapter queued as a reaction context (onNativePull*), this edge
-    // keeps the controller (and the whole downstream consumer graph) rooted across
-    // FetchTasklet's Strong release. Cleared by nativeSourceSever on every terminal path;
-    // controller->algorithmContext is cleared by readableStreamDefaultControllerClearAlgorithms,
-    // so the abandoned case is an ordinary intra-heap cycle.
+    // Visited (roots the consumer graph while the adapter is a queued reaction
+    // context); cleared on every terminal path.
     JSC::WriteBarrier<JSReadableStreamDefaultController> m_controller;
     // adaptive chunk size (256 KiB default, doubled once up to 2 MiB).
     size_t m_chunkSize { 0 };

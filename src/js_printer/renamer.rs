@@ -105,6 +105,10 @@ pub struct NoOpRenamer<'a> {
     // every transpile (require-cache.test.ts "files transpiled and loaded don't
     // leak the output source code" — `await import()` re-transpiles each
     // iteration, so the leak compounds to OOM).
+    //
+    // One deliberate exception: `print_repl_functions_source` parks a
+    // `NoOpRenamer` over a never-dropped (`ManuallyDrop`) bitwise alias of the
+    // Map; the owned Map still reaches the main pass and is freed exactly once.
     pub symbols: symbol::Map,
     pub source: &'a bun_ast::Source,
 }

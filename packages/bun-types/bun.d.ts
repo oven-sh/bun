@@ -2510,8 +2510,26 @@ declare module "bun" {
      * Enable REPL mode transforms:
      * - Wraps top-level inputs that appear to be object literals (inputs starting with '{' without trailing ';') in parentheses
      * - Hoists all declarations as var for REPL persistence across vm.runInContext calls
-     * - Wraps last expression in { __proto__: null, value: expr } for result capture
      * - Wraps code in sync/async IIFE to avoid parentheses around object literals
+     * - The IIFE returns a `{ __proto__: null, value, variables, functions }` result object:
+     *   - `value`: the completion value of the snippet (always an own property, even when undefined)
+     *   - `variables`: names declared by the snippet (`var`/`let`/`const`/`function`/`class`/import bindings), as an array of strings
+     *   - `functions`: printed source of the snippet's replayable declarations: function
+     *     declarations, plus only those classes and `var`/`let`/`const` declarations that have no
+     *     side effects when evaluated and only read bindings the string itself declares.
+     *     Function declarations are printed as-is; classes and `let`/`const` are re-declared as
+     *     `var`, so evaluating the string in a fresh `node:vm` context re-creates all of them
+     *     (for resuming a session on a new VM). Function bodies are not analyzed: a replayed
+     *     function that closed over non-replayable state throws when called, not when defined.
+     *
+     * @example
+     * ```js
+     * const transpiler = new Bun.Transpiler({ loader: "tsx", replMode: true });
+     * const ctx = vm.createContext({});
+     * const out = vm.runInContext(transpiler.transformSync("function inc(n) { return n + 1 }"), ctx);
+     * out.variables; // ["inc"]
+     * out.functions; // "function inc(n) {\n  return n + 1;\n}\n"
+     * ```
      *
      * @default false
      */

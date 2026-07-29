@@ -24,6 +24,16 @@ pub struct Stream {
 }
 
 impl Stream {
+    /// True when `gen_` predates a restart of this stream body (307/308
+    /// redirect replay). The write message was scheduled by a superseded
+    /// sink and must not touch the current request's state.
+    #[inline]
+    pub fn is_stale_generation(&mut self, gen_: u32) -> bool {
+        self.buffer_mut()
+            .map(|b| b.generation.load(core::sync::atomic::Ordering::Acquire) != gen_)
+            .unwrap_or(false)
+    }
+
     /// Mutable access to the JS-side `ThreadSafeStreamBuffer` while attached.
     ///
     /// INVARIANT: while `buffer` is `Some`, this `Stream` holds an intrusive

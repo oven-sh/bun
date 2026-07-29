@@ -4,7 +4,11 @@ const rustPaths = {
   Blob: "crate::webcore::byte_blob_loader::Source",
   File: "crate::webcore::file_reader::Source",
   Bytes: "crate::webcore::byte_stream::Source",
+  MultipartForm: "crate::webcore::multipart_form_loader::Source",
 };
+
+// Sources whose prototypes omit the buffered .text()/.json()/etc. shortcuts.
+const noBufferedShortcut = new Set(["File", "MultipartForm"]);
 
 function source(name) {
   return define({
@@ -52,7 +56,7 @@ function source(name) {
       isClosed: {
         getter: "getIsClosedFromJS",
       },
-      ...(name !== "File"
+      ...(!noBufferedShortcut.has(name)
         ? // Buffered versions
           // not implemented in File, yet.
           {
@@ -96,6 +100,6 @@ function source(name) {
   });
 }
 
-const sources = ["Blob", "File", "Bytes"];
+const sources = ["Blob", "File", "Bytes", "MultipartForm"];
 
 export default sources.map(source);

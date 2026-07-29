@@ -17,6 +17,8 @@ pub mod byte_stream;
 pub mod cookie_map;
 #[path = "webcore/Crypto.rs"]
 pub mod crypto;
+#[path = "webcore/MultipartFormLoader.rs"]
+pub mod multipart_form_loader;
 #[path = "webcore/ResumableSink.rs"]
 pub mod resumable_sink;
 #[path = "webcore/S3Client.rs"]

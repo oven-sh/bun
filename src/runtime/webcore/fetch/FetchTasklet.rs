@@ -120,6 +120,14 @@ pub struct FetchTasklet {
     pub is_waiting_body: bool,
     pub is_waiting_abort: bool,
     pub is_waiting_request_stream_start: bool,
+    /// Set by the HTTP-thread `callback` when a 307/308 redirect asks for the
+    /// streaming body to be replayed. While set, writes from the previous
+    /// sink are discarded so its end-of-stream cannot reach the new request.
+    pub request_stream_restart_pending: core::sync::atomic::AtomicBool,
+    /// Stream-buffer generation the current sink writes for. Captured at sink
+    /// creation; stale Data/End messages stamped with an earlier generation
+    /// are discarded on the HTTP thread.
+    pub request_stream_generation: u32,
     pub mutex: Mutex,
 
     pub tracker: AsyncTaskTracker,
@@ -135,6 +143,38 @@ pub enum HTTPRequestBody {
     AnyBlob(AnyBlob),
     Sendfile(http::SendFile),
     ReadableStream(ReadableStreamStrong),
+    /// `FormData` with file-backed parts streamed from disk. Carries the
+    /// precomputed length so the request uses `Content-Length`, not chunked.
+    MultipartFormStream {
+        /// Template: cloned into a fresh loader on each (re)start so 307/308
+        /// redirects can replay the body from the beginning.
+        segments: Vec<crate::webcore::multipart_form_loader::Segment>,
+        stream: ReadableStreamStrong,
+        content_type: Box<[u8]>,
+        content_length: u64,
+    },
+}
+
+fn multipart_form_stream(
+    global_this: &JSGlobalObject,
+    segments: &[crate::webcore::multipart_form_loader::Segment],
+) -> JsResult<Option<ReadableStreamStrong>> {
+    let reader = crate::webcore::readable_stream::NewSource::<
+        crate::webcore::multipart_form_loader::MultipartFormLoader,
+    >::new_mut(crate::webcore::readable_stream::NewSource {
+        global_this: Some(bun_ptr::BackRef::new(global_this)),
+        context: crate::webcore::multipart_form_loader::MultipartFormLoader {
+            segments: segments.to_vec(),
+            idx: 0,
+            done: false,
+        },
+        ..Default::default()
+    });
+    let stream_value = reader.to_readable_stream(global_this)?;
+    Ok(
+        crate::webcore::ReadableStream::from_js(stream_value, global_this)?
+            .map(|s| ReadableStreamStrong::init(s, global_this)),
+    )
 }
 
 impl Default for HTTPRequestBody {
@@ -163,7 +203,8 @@ impl HTTPRequestBody {
     pub fn detach(&mut self) {
         match self {
             HTTPRequestBody::AnyBlob(blob) => blob.detach(),
-            HTTPRequestBody::ReadableStream(stream) => {
+            HTTPRequestBody::ReadableStream(stream)
+            | HTTPRequestBody::MultipartFormStream { stream, .. } => {
                 stream.deinit();
             }
             HTTPRequestBody::Sendfile(sendfile) => {
@@ -176,7 +217,37 @@ impl HTTPRequestBody {
         }
     }
 
-    pub fn from_js(global_this: &JSGlobalObject, value: JSValue) -> JsResult<HTTPRequestBody> {
+    pub fn readable_stream(&self) -> Option<&ReadableStreamStrong> {
+        match self {
+            HTTPRequestBody::ReadableStream(s)
+            | HTTPRequestBody::MultipartFormStream { stream: s, .. } => Some(s),
+            _ => None,
+        }
+    }
+
+    /// `prefer_buffered`: skip the streaming FormData path because the caller
+    /// needs a buffered body (S3 destination, explicit `compress`).
+    pub fn from_js(
+        global_this: &JSGlobalObject,
+        value: JSValue,
+        prefer_buffered: bool,
+    ) -> JsResult<HTTPRequestBody> {
+        if !prefer_buffered
+            && let Some(form_data) = bun_jsc::DOMFormData::from_js(value)
+            && crate::webcore::blob::MultipartSegments::needs_streaming_multipart(form_data)
+            && let Some(segs) =
+                crate::webcore::blob::MultipartSegments::from_dom_form_data(global_this, form_data)
+        {
+            if let Some(stream) = multipart_form_stream(global_this, &segs.segments)? {
+                return Ok(HTTPRequestBody::MultipartFormStream {
+                    segments: segs.segments,
+                    stream,
+                    content_type: segs.content_type,
+                    content_length: segs.total_size,
+                });
+            }
+        }
+
         let mut body_value = BodyValue::from_js(global_this, value)?;
         if matches!(body_value, BodyValue::Used)
             || (matches!(&body_value, BodyValue::Locked(l) if !l.action.is_none() || l.is_disturbed2(global_this)))
@@ -229,25 +300,23 @@ impl HTTPRequestBody {
         }
     }
 
-    pub fn has_content_type_from_user(&self) -> bool {
-        match self {
-            HTTPRequestBody::AnyBlob(blob) => blob.has_content_type_from_user(),
-            _ => false,
-        }
-    }
-
-    pub fn get_any_blob(&mut self) -> Option<&mut AnyBlob> {
-        match self {
-            HTTPRequestBody::AnyBlob(blob) => Some(blob),
-            _ => None,
-        }
-    }
-
     pub fn has_body(&mut self) -> bool {
         match self {
             HTTPRequestBody::AnyBlob(blob) => blob.size() > 0,
-            HTTPRequestBody::ReadableStream(stream) => stream.has(),
+            HTTPRequestBody::ReadableStream(stream)
+            | HTTPRequestBody::MultipartFormStream { stream, .. } => stream.has(),
             HTTPRequestBody::Sendfile(_) => true,
+        }
+    }
+
+    /// Content-Type to use when the user did not set one.
+    pub fn implied_content_type(&self) -> Option<&[u8]> {
+        match self {
+            HTTPRequestBody::AnyBlob(blob) if blob.has_content_type_from_user() => {
+                Some(blob.content_type())
+            }
+            HTTPRequestBody::MultipartFormStream { content_type, .. } => Some(content_type),
+            _ => None,
         }
     }
 }
@@ -418,6 +487,28 @@ impl FetchTasklet {
         // SAFETY: enqueued with last ref; exclusive access on main thread
         unsafe { FetchTasklet::deinit(this) };
         Ok(())
+    }
+
+    /// Release the tasklet-held sink ref without touching the stream buffer
+    /// (which is reused across redirect-replay generations). If the sink had
+    /// not yet reached `write_end_request`, also release the tasklet ref that
+    /// `start_request_stream` took for it, since after `detach_js` the pump's
+    /// `js_end` will no-op and never balance it.
+    fn take_and_detach_sink(&mut self) {
+        if let Some(sink) = self.sink.take() {
+            // SAFETY: sink came from init_exact_refs; FetchTasklet holds one
+            // ref. `detach_js` runs no JS callbacks. JS-thread-only.
+            let was_done = unsafe { (*sink).is_detached() };
+            unsafe {
+                (*sink).detach_js();
+                ResumableFetchSink::deref_(sink);
+            }
+            if !was_done {
+                // SAFETY: the tasklet has additional refs while the fetch is
+                // active; this balances the one `start_request_stream` took.
+                FetchTasklet::deref(std::ptr::from_mut(self));
+            }
+        }
     }
 
     fn clear_sink(&mut self) {
@@ -610,11 +701,8 @@ impl FetchTasklet {
 
     pub(crate) fn start_request_stream(&mut self) {
         self.is_waiting_request_stream_start = false;
-        debug_assert!(matches!(
-            self.request_body,
-            HTTPRequestBody::ReadableStream(_)
-        ));
-        let HTTPRequestBody::ReadableStream(ref stream_ref) = self.request_body else {
+        let Some(stream_ref) = self.request_body.readable_stream() else {
+            debug_assert!(false, "start_request_stream without a streaming body");
             return;
         };
         if let Some(stream) = stream_ref.get(&self.global_this) {
@@ -862,6 +950,79 @@ impl FetchTasklet {
                 FetchTasklet::deref(std::ptr::from_mut(this));
             }
         };
+
+        if self.result.restart_request_stream
+            && matches!(
+                self.request_body,
+                HTTPRequestBody::MultipartFormStream { .. }
+            )
+        {
+            let global_this = self.global_this;
+            self.take_and_detach_sink();
+            let fresh = {
+                let HTTPRequestBody::MultipartFormStream {
+                    segments, stream, ..
+                } = &mut self.request_body
+                else {
+                    unreachable!()
+                };
+                if let Some(s) = stream.get(&global_this) {
+                    // Cancel so the old loader's `on_cancel` → `clear_data()`
+                    // closes its fd now instead of waiting for GC.
+                    s.cancel(&global_this);
+                }
+                stream.deinit();
+                multipart_form_stream(&global_this, segments)
+            };
+            match fresh {
+                Ok(Some(fresh)) => {
+                    let HTTPRequestBody::MultipartFormStream { stream, .. } =
+                        &mut self.request_body
+                    else {
+                        unreachable!()
+                    };
+                    *stream = fresh;
+                    self.is_waiting_request_stream_start = true;
+                }
+                err => {
+                    // `to_readable_stream` failing here means OOM or a tampered
+                    // global; abort so the fetch promise rejects instead of
+                    // stalling at the body stage with no sink.
+                    let reason = match err {
+                        Err(_) => global_this.try_take_exception(),
+                        _ => None,
+                    }
+                    .unwrap_or_else(|| {
+                        global_this.create_error_instance(format_args!(
+                            "Failed to restart request body stream"
+                        ))
+                    });
+                    self.abort_reason.set(&global_this, reason);
+                    self.result.restart_request_stream = false;
+                    self.request_stream_restart_pending
+                        .store(false, Ordering::Release);
+                    self.abort_task();
+                    self.mutex.unlock();
+                    if is_done {
+                        // SAFETY: `self` is the live heap tasklet; we hold a ref.
+                        FetchTasklet::deref(std::ptr::from_mut(self));
+                    }
+                    return Ok(());
+                }
+            }
+            self.result.restart_request_stream = false;
+            if let Some(buf) = self.stream_buffer_mut() {
+                self.request_stream_generation = buf.generation.load(Ordering::Acquire);
+                // A `write_request_data` that passed its `restart_pending`
+                // check before the HTTP thread reset the buffer can still
+                // deposit a stale chunk afterwards; reset again here (JS
+                // thread, after any such write has returned) so the new sink
+                // starts from an empty buffer.
+                buf.lock().reset();
+            }
+            self.request_stream_restart_pending
+                .store(false, Ordering::Release);
+        }
 
         if self.is_waiting_request_stream_start && self.result.can_stream {
             // start streaming
@@ -1911,6 +2072,8 @@ impl FetchTasklet {
             is_waiting_body: false,
             is_waiting_abort: false,
             is_waiting_request_stream_start: false,
+            request_stream_restart_pending: core::sync::atomic::AtomicBool::new(false),
+            request_stream_generation: 0,
             mutex: Mutex::new(),
             // SAFETY: jsc_vm derived from FFI ptr above; AsyncTaskTracker::init only
             // bumps a counter on the VM.
@@ -2043,12 +2206,13 @@ impl FetchTasklet {
             },
         )));
         // enable streaming the write side
-        let is_stream = matches!(
-            fetch_tasklet.request_body,
-            HTTPRequestBody::ReadableStream(_)
-        );
+        let is_stream = fetch_tasklet.request_body.readable_stream().is_some();
         let http_client = fetch_tasklet.http.as_mut().unwrap();
         http_client.client.flags.is_streaming_request_body = is_stream;
+        http_client.client.flags.streaming_body_can_restart = matches!(
+            fetch_tasklet.request_body,
+            HTTPRequestBody::MultipartFormStream { .. }
+        );
         http_client.client.flags.force_http2 = fetch_options.force_http2;
         http_client.client.flags.force_http3 = fetch_options.force_http3;
         http_client.client.flags.force_http1 = fetch_options.force_http1;
@@ -2065,6 +2229,12 @@ impl FetchTasklet {
                     FetchTasklet::on_write_request_data_drain,
                     fetch_tasklet_ptr,
                 );
+                if http_client.client.flags.streaming_body_can_restart {
+                    (*buffer).set_restart_callback::<FetchTasklet>(
+                        FetchTasklet::on_request_stream_restart,
+                        fetch_tasklet_ptr,
+                    );
+                }
             }
             let buffer_nn = core::ptr::NonNull::new(buffer);
             fetch_tasklet.request_body_streaming_buffer = buffer_nn;
@@ -2126,13 +2296,50 @@ impl FetchTasklet {
         // the underlying source's cancel(reason) callback still observes the
         // signal's reason (https://fetch.spec.whatwg.org/#abort-fetch step 5).
         if this.is_waiting_request_stream_start {
-            if let HTTPRequestBody::ReadableStream(stream_ref) = &this.request_body {
+            if let Some(stream_ref) = this.request_body.readable_stream() {
                 this.is_waiting_request_stream_start = false;
                 if let Some(stream) = stream_ref.get(&this.global_this) {
                     stream.cancel_with_reason(&this.global_this, reason);
                 }
             }
         }
+    }
+
+    /// Called from the HTTP thread when a 307/308 redirect will replay a
+    /// restartable streaming body. Sets the atomic immediately so any stale
+    /// sink write arriving first is discarded, then enqueues the JS-thread
+    /// detach so later stale writes hit a detached sink.
+    pub(crate) fn on_request_stream_restart(this: *mut FetchTasklet) {
+        let this_ref = Self::from_raw_ref(this);
+        this_ref
+            .request_stream_restart_pending
+            .store(true, Ordering::Release);
+        if this_ref.javascript_vm.is_shutting_down() {
+            return;
+        }
+        this_ref.ref_();
+        Self::enqueue_concurrent(
+            this_ref.javascript_vm,
+            ConcurrentTask::from_callback(this, FetchTasklet::detach_stale_request_sink),
+        );
+    }
+
+    /// JS-thread half of `on_request_stream_restart`: detach the current sink
+    /// so any in-flight pump read that resolves later no-ops at `js_write` /
+    /// `js_end` instead of reaching `write_end_request`.
+    pub(crate) fn detach_stale_request_sink(this: *mut FetchTasklet) -> ElJsResult<()> {
+        let this_ref = Self::from_raw_mut(this);
+        // If the restart block in `on_progress_update` already ran (callbacks
+        // coalesced), `self.sink` is the fresh sink and must not be detached.
+        if this_ref
+            .request_stream_restart_pending
+            .load(Ordering::Acquire)
+        {
+            this_ref.take_and_detach_sink();
+        }
+        // SAFETY: `this` is the live heap tasklet; we hold the ref taken above.
+        FetchTasklet::deref(this);
+        Ok(())
     }
 
     /// This is ALWAYS called from the http thread and we cannot touch the buffer here because is locked
@@ -2161,6 +2368,12 @@ impl FetchTasklet {
                 // already aborted; nothing to drain
                 return;
             }
+            if this_ref
+                .request_stream_restart_pending
+                .load(Ordering::Acquire)
+            {
+                return;
+            }
             if let Some(sink) = this_ref.sink_mut() {
                 sink.drain();
             }
@@ -2185,6 +2398,9 @@ impl FetchTasklet {
     pub(crate) fn write_request_data(&mut self, data: &[u8]) -> ResumableSinkBackpressure {
         bun_output::scoped_log!(FetchTasklet, "writeRequestData {}", data.len());
         if self.signal_aborted() {
+            return ResumableSinkBackpressure::Done;
+        }
+        if self.request_stream_restart_pending.load(Ordering::Acquire) {
             return ResumableSinkBackpressure::Done;
         }
         // An empty chunk is a no-op on every framing path. It must not reach
@@ -2242,6 +2458,7 @@ impl FetchTasklet {
             http::http_thread().schedule_request_write(
                 self.http.as_mut().unwrap(),
                 http::http_thread::WriteMessageType::Data,
+                self.request_stream_generation,
             );
         }
 
@@ -2252,6 +2469,13 @@ impl FetchTasklet {
     pub(crate) fn write_end_request(&mut self, err: Option<JSValue>) {
         bun_output::scoped_log!(FetchTasklet, "writeEndRequest hasError? {}", err.is_some());
         let this_ptr = std::ptr::from_mut(self);
+        if err.is_none() && self.request_stream_restart_pending.load(Ordering::Acquire) {
+            // A 307/308 redirect is replaying this body; discard the previous
+            // sink's end-of-stream so it cannot mark the new request done.
+            // SAFETY: `this_ptr` derived from live `&mut self`; we hold a ref.
+            FetchTasklet::deref(this_ptr);
+            return;
+        }
         if let Some(js_error) = err {
             if self.signal_store.aborted.load(Ordering::Relaxed) || self.abort_reason.has() {
                 // SAFETY: `this_ptr` derived from live `&mut self`; we hold a ref.
@@ -2277,8 +2501,11 @@ impl FetchTasklet {
                     .write(http::END_OF_CHUNKED_HTTP1_1_ENCODING_RESPONSE_BODY); // OOM/capacity: fire-and-forget
             }
             if let Some(http_) = self.http.as_mut() {
-                http::http_thread()
-                    .schedule_request_write(http_, http::http_thread::WriteMessageType::End);
+                http::http_thread().schedule_request_write(
+                    http_,
+                    http::http_thread::WriteMessageType::End,
+                    self.request_stream_generation,
+                );
             }
         }
         // SAFETY: `this_ptr` derived from live `&mut self`; we hold a ref.
@@ -2374,6 +2601,7 @@ impl FetchTasklet {
         let prev_metadata = task_ref.result.metadata.take();
         let prev_cert_info = task_ref.result.certificate_info.take();
         let prev_can_stream = task_ref.result.can_stream;
+        let prev_restart = task_ref.result.restart_request_stream;
         // SAFETY: lifetime erasure — `HTTPClientResult<'a>` borrows the
         // `*mut MutableString` we passed into `AsyncHTTP::init` (which lives
         // in `self.response_buffer` for the FetchTasklet's lifetime); widen
@@ -2382,6 +2610,13 @@ impl FetchTasklet {
         // can_stream is a one-shot signal to start the request body stream; don't let a
         // later coalesced result clobber it before the JS thread sees it.
         task_ref.result.can_stream = task_ref.result.can_stream || prev_can_stream;
+        task_ref.result.restart_request_stream =
+            task_ref.result.restart_request_stream || prev_restart;
+        if task_ref.result.restart_request_stream {
+            task_ref
+                .request_stream_restart_pending
+                .store(true, Ordering::Release);
+        }
 
         // Preserve pending certificate info if it was preovided in the previous update.
         if task_ref.result.certificate_info.is_none() {

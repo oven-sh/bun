@@ -213,7 +213,7 @@ impl ClientContext {
         false
     }
 
-    pub fn stream_body_by_http_id(async_http_id: u32, ended: bool) {
+    pub fn stream_body_by_http_id(async_http_id: u32, ended: bool, generation: u32) {
         let Some(this) = Self::get() else {
             return;
         };
@@ -221,7 +221,7 @@ impl ClientContext {
         let ctx = bun_ptr::BackRef::from(this);
         for &s in ctx.sessions.iter() {
             // Registry only holds live sessions — `session_mut` upgrade.
-            if session_mut(s).stream_body_by_http_id(async_http_id, ended) {
+            if session_mut(s).stream_body_by_http_id(async_http_id, ended, generation) {
                 return;
             }
         }

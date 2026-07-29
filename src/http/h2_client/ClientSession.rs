@@ -605,7 +605,7 @@ impl ClientSession {
 
     /// HTTP-thread wake-up from `scheduleRequestWrite`: new body bytes (or
     /// end-of-body) are available in the ThreadSafeStreamBuffer.
-    pub fn stream_body_by_http_id(&mut self, async_http_id: u32, ended: bool) {
+    pub fn stream_body_by_http_id(&mut self, async_http_id: u32, ended: bool, generation: u32) {
         let _guard = self.ref_scope();
         let Some(stream) = self.stream_for_http_id(async_http_id) else {
             return;
@@ -617,6 +617,9 @@ impl ClientSession {
             let HTTPRequestBody::Stream(ref mut st) = client.state.original_request_body else {
                 return;
             };
+            if st.is_stale_generation(generation) {
+                return;
+            }
             st.ended = ended;
         }
         self.rearm_timeout();

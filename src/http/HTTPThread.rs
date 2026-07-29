@@ -256,6 +256,10 @@ impl RequestBodyBuffer {
 pub struct WriteMessage {
     pub async_http_id: u32,
     pub kind: WriteMessageType,
+    /// Stream buffer generation this message was scheduled for. Discarded if
+    /// the buffer's current generation is newer (a restartable body was
+    /// replayed on redirect).
+    pub generation: u32,
 }
 
 #[repr(u8)]
@@ -722,12 +726,19 @@ impl HttpThread {
                                 if let crate::HTTPRequestBody::Stream(stream) =
                                     &mut client.state.original_request_body
                                 {
+                                    if stream.is_stale_generation(write.generation) {
+                                        continue;
+                                    }
                                     stream.ended = ended;
                                     client.flush_stream::<true>(socket);
                                 }
                             }
                             if let Some(session) = tagged.session_mut() {
-                                session.stream_body_by_http_id(write.async_http_id, ended);
+                                session.stream_body_by_http_id(
+                                    write.async_http_id,
+                                    ended,
+                                    write.generation,
+                                );
                             }
                         }
                         uws::AnySocket::SocketTcp(socket) => {
@@ -739,17 +750,28 @@ impl HttpThread {
                                 if let crate::HTTPRequestBody::Stream(stream) =
                                     &mut client.state.original_request_body
                                 {
+                                    if stream.is_stale_generation(write.generation) {
+                                        continue;
+                                    }
                                     stream.ended = ended;
                                     client.flush_stream::<false>(socket);
                                 }
                             }
                             if let Some(session) = tagged.session_mut() {
-                                session.stream_body_by_http_id(write.async_http_id, ended);
+                                session.stream_body_by_http_id(
+                                    write.async_http_id,
+                                    ended,
+                                    write.generation,
+                                );
                             }
                         }
                     }
                 } else {
-                    h3::ClientContext::stream_body_by_http_id(write.async_http_id, ended);
+                    h3::ClientContext::stream_body_by_http_id(
+                        write.async_http_id,
+                        ended,
+                        write.generation,
+                    );
                 }
             }
             let len = queued_writes.len();
@@ -990,12 +1012,18 @@ impl HttpThread {
         self.wakeup();
     }
 
-    pub fn schedule_request_write(&mut self, http: &AsyncHttp, kind: WriteMessageType) {
+    pub fn schedule_request_write(
+        &mut self,
+        http: &AsyncHttp,
+        kind: WriteMessageType,
+        generation: u32,
+    ) {
         {
             let _guard = self.queued_writes_lock.lock_guard();
             self.queued_writes.push(WriteMessage {
                 async_http_id: http.async_http_id,
                 kind,
+                generation,
             });
         }
         self.wakeup();

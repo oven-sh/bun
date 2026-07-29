@@ -25,9 +25,3 @@ pub(crate) fn blob_content_type(b: &Blob) -> Option<&[u8]> {
         None
     }
 }
-
-/// `Some(ct)` only when the body has a *user-set* content-type.
-#[inline]
-pub(crate) fn any_blob_content_type_opt(b: Option<&AnyBlob>) -> Option<&[u8]> {
-    b.and_then(any_blob_content_type)
-}

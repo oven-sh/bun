@@ -1826,6 +1826,7 @@ export class VerdaccioRegistry {
   configPath: string;
   packagesPath: string;
   users: Record<string, string> = {};
+  #stopped = false;
 
   constructor(opts?: { configPath?: string; packagesPath?: string; verbose?: boolean }) {
     this.port = randomPort();
@@ -1857,6 +1858,7 @@ export class VerdaccioRegistry {
     });
 
     this.process.on("exit", (code, signal) => {
+      if (this.#stopped) return;
       if (code !== 0) {
         console.error(`Verdaccio exited with code ${code} and signal ${signal}`);
       } else {
@@ -1878,8 +1880,9 @@ export class VerdaccioRegistry {
   }
 
   stop() {
+    this.#stopped = true;
     rmSync(join(dirname(this.configPath), "htpasswd"), { force: true });
-    this.process?.kill(0);
+    this.process?.kill();
   }
 
   /**

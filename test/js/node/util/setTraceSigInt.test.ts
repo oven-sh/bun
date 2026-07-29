@@ -147,12 +147,13 @@ test.concurrent.skipIf(isWindows)("trace fires when stdio is a TTY", async () =>
   expect(proc.signalCode).toBe("SIGINT");
 });
 
-// The trace handler must chain to the previous SIGINT disposition instead of
-// re-raising through SIG_DFL: with stdin on a PTY, bun's onExitSignal restores
-// the startup termios before dying, and that restore must still happen with
-// the trace enabled. FFI/termios plumbing mirrors
+// Spawns `script` with stdin on a fresh PTY slave, waits for it to flip the
+// device raw via setRawMode, SIGINTs it, and asserts the trace printed, the
+// process died from SIGINT, and the cooked termios came back (which only
+// happens when the trace handler re-raises through bun's termios-restoring
+// onExitSignal rather than SIG_DFL). FFI/termios plumbing mirrors
 // test/js/bun/terminal/terminal-spawn.test.ts.
-test.concurrent.skipIf(isWindows)("trace chains to the termios-restoring SIGINT handler", async () => {
+async function expectTracedSigintRestoresTermios(script: string) {
   const ICANON = process.platform === "darwin" ? 0x100 : 0x2;
   const ECHO = 0x8;
   const LFLAG_OFFSET = process.platform === "darwin" ? 24 : 12;
@@ -194,11 +195,7 @@ test.concurrent.skipIf(isWindows)("trace chains to the termios-restoring SIGINT 
     expect(getLflag() & ECHO).not.toBe(0);
 
     await using proc = Bun.spawn({
-      cmd: [
-        bunExe(),
-        "-e",
-        "process.stdin.setRawMode(true); require('node:util').setTraceSigInt(true); setInterval(() => {}, 1000); console.log('ready');",
-      ],
+      cmd: [bunExe(), "-e", script],
       env: bunEnv,
       stdin: slave,
       stdout: "pipe",
@@ -219,6 +216,20 @@ test.concurrent.skipIf(isWindows)("trace chains to the termios-restoring SIGINT 
     libc.symbols.close(master);
     libc.symbols.close(slave);
   }
+}
+
+test.concurrent.skipIf(isWindows)("trace chains to the termios-restoring SIGINT handler", async () => {
+  await expectTracedSigintRestoresTermios(
+    "process.stdin.setRawMode(true); require('node:util').setTraceSigInt(true); setInterval(() => {}, 1000); console.log('ready');",
+  );
+});
+
+// Re-arming after listener churn must not overwrite the disposition saved at
+// enable time: the chain target has to survive on('SIGINT') + removeListener.
+test.concurrent.skipIf(isWindows)("re-arm after listener churn keeps the termios-restoring chain", async () => {
+  await expectTracedSigintRestoresTermios(
+    "process.stdin.setRawMode(true); const util = require('node:util'); util.setTraceSigInt(true); const h = () => {}; process.on('SIGINT', h); process.removeListener('SIGINT', h); setInterval(() => {}, 1000); console.log('ready');",
+  );
 });
 
 test.concurrent.skipIf(isWindows)("removing the last SIGINT listener re-arms the trace", async () => {

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { execSync } from "child_process";
-import { promises as fs, readFileSync } from "fs";
+import { promises as fs } from "fs";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "path";
 
@@ -11,8 +11,9 @@ const IMAGE_SUBSYSTEM_WINDOWS_CUI = 3;
 // Read the Subsystem field from a PE32+ optional header.
 // Layout: e_lfanew at DOS+0x3C points to "PE\0\0" (4 bytes), followed by the
 // 20-byte COFF header, then the optional header whose Subsystem is at +68.
-function readPESubsystem(path: string): number {
-  const data = readFileSync(path);
+// The whole header fits in the first page, so read 4 KiB instead of the full exe.
+async function readPESubsystem(path: string): Promise<number> {
+  const data = await Bun.file(path).slice(0, 4096).bytes();
   const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
   const peOffset = view.getUint32(0x3c, true);
   return view.getUint16(peOffset + 24 + 68, true);
@@ -56,7 +57,7 @@ describe.skipIf(!isWindows).concurrent("--windows-hide-console", () => {
     });
     await expectBuildOk(proc);
 
-    expect(readPESubsystem(outfile)).toBe(IMAGE_SUBSYSTEM_WINDOWS_CUI);
+    expect(await readPESubsystem(outfile)).toBe(IMAGE_SUBSYSTEM_WINDOWS_CUI);
   });
 
   test("CLI flag sets GUI subsystem", async () => {
@@ -82,7 +83,7 @@ describe.skipIf(!isWindows).concurrent("--windows-hide-console", () => {
     });
     await expectBuildOk(proc);
 
-    expect(readPESubsystem(outfile)).toBe(IMAGE_SUBSYSTEM_WINDOWS_GUI);
+    expect(await readPESubsystem(outfile)).toBe(IMAGE_SUBSYSTEM_WINDOWS_GUI);
 
     // The resulting GUI-subsystem exe still has to be a valid, runnable PE.
     // A GUI process has no console, so assert via a file side effect + exit code.
@@ -111,7 +112,7 @@ describe.skipIf(!isWindows).concurrent("--windows-hide-console", () => {
 
     const outfile = result.outputs[0].path;
     await using _cleanup = cleanup(outfile);
-    expect(readPESubsystem(outfile)).toBe(IMAGE_SUBSYSTEM_WINDOWS_GUI);
+    expect(await readPESubsystem(outfile)).toBe(IMAGE_SUBSYSTEM_WINDOWS_GUI);
   });
 
   test("GUI subsystem survives the rescle metadata pass", async () => {
@@ -139,7 +140,7 @@ describe.skipIf(!isWindows).concurrent("--windows-hide-console", () => {
     });
     await expectBuildOk(proc);
 
-    expect(readPESubsystem(outfile)).toBe(IMAGE_SUBSYSTEM_WINDOWS_GUI);
+    expect(await readPESubsystem(outfile)).toBe(IMAGE_SUBSYSTEM_WINDOWS_GUI);
   });
 });
 

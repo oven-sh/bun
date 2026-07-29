@@ -285,8 +285,10 @@ env = "BUN_PUBLIC_*"
       const js = await jsResponse.text();
       expect(js).not.toContain("process.env.BUN_PUBLIC_FOO");
       expect(js).toContain('console.log("bar")');
-      expect(js).toContain("process.env.BUN_PRIVATE_FOO");
-      expect(js).not.toContain('console.log("baz")');
+      // `process` now resolves to the browser polyfill namespace in the output;
+      // the point of this check is that the private value is not inlined.
+      expect(js).toContain(".env.BUN_PRIVATE_FOO");
+      expect(js).not.toContain("baz");
       expect(js).toContain('document.getElementById("message")');
     }
   } finally {

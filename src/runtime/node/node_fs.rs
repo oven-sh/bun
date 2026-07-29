@@ -7665,9 +7665,8 @@ impl NodeFS {
                 .path
                 .slice_z_sys(&mut self.sync_error_buf, sys::Tag::realpath)?;
             let mut req = UvFsReq::new();
-            let rc = unsafe {
-                uv::uv_fs_realpath(bun_io::Loop::get(), &mut *req, path.as_ptr(), None)
-            };
+            let rc =
+                unsafe { uv::uv_fs_realpath(bun_io::Loop::get(), &mut *req, path.as_ptr(), None) };
             if let Some(errno) = rc.errno() {
                 return Err(sys::Error {
                     errno,

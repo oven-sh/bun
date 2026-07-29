@@ -19,6 +19,7 @@
 
 #include <JavaScriptCore/InternalFieldTuple.h>
 #include <JavaScriptCore/JSBoundFunction.h>
+#include <JavaScriptCore/JSBoundFunctionInlines.h>
 #include <JavaScriptCore/JSCInlines.h>
 #include <JavaScriptCore/JSFunction.h>
 #include <JavaScriptCore/JSPromise.h>
@@ -101,20 +102,6 @@ static JSPromise* asPromise(JSValue value)
     return dynamicDowncast<JSPromise>(value);
 }
 
-static void settlePullPromiseResolved(JSGlobalObject* globalObject, JSAsyncIteratorSourceOperation* op)
-{
-    auto& vm = getVM(globalObject);
-    op->m_done = true;
-    op->m_running = false;
-    op->m_nativeSinkCtx = nullptr;
-    op->m_nativeSinkWrite = nullptr;
-    op->m_nativeSinkEnd = nullptr;
-    if (auto* pullPromise = op->m_pullPromise.get()) {
-        op->m_pullPromise.clear();
-        pullPromise->fulfill(vm, jsUndefined());
-    }
-}
-
 static void asyncIterNativeSinkEnd(JSAsyncIteratorSourceOperation* op, JSValue err)
 {
     auto end = std::exchange(op->m_nativeSinkEnd, nullptr);
@@ -122,6 +109,18 @@ static void asyncIterNativeSinkEnd(JSAsyncIteratorSourceOperation* op, JSValue e
     op->m_nativeSinkWrite = nullptr;
     if (end && ctx)
         end(ctx, err.isEmpty() ? JSValue::encode(JSValue()) : JSValue::encode(err));
+}
+
+static void settlePullPromiseResolved(JSGlobalObject* globalObject, JSAsyncIteratorSourceOperation* op)
+{
+    auto& vm = getVM(globalObject);
+    asyncIterNativeSinkEnd(op, JSValue());
+    op->m_done = true;
+    op->m_running = false;
+    if (auto* pullPromise = op->m_pullPromise.get()) {
+        op->m_pullPromise.clear();
+        pullPromise->fulfill(vm, jsUndefined());
+    }
 }
 
 static void settlePullPromiseRejected(JSGlobalObject* globalObject, JSAsyncIteratorSourceOperation* op, JSValue error)
@@ -202,12 +201,14 @@ static void asyncIterFinishWithError(JSGlobalObject* globalObject, JSAsyncIterat
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     auto* runtime = JSStreamsRuntime::from(globalObject);
 
-    if (errorCodeIs(globalObject, error, "ERR_INVALID_THIS"_s)) {
+    // The native sink never throws these codes: an error carrying them came from the
+    // iterator, so on that path it reaches the sink as an abort like any other error.
+    if (!op->m_nativeSinkCtx && errorCodeIs(globalObject, error, "ERR_INVALID_THIS"_s)) {
         asyncIterReturnIteratorAndSettle(globalObject, op);
         return;
     }
 
-    bool swallowByCode = errorCodeIs(globalObject, error, "ERR_INVALID_STATE"_s);
+    bool swallowByCode = !op->m_nativeSinkCtx && errorCodeIs(globalObject, error, "ERR_INVALID_STATE"_s);
 
     JSObject* iterator = op->m_iterator.get();
     op->m_iterator.clear();
@@ -662,8 +663,27 @@ JSReadableStream* readableStreamFromAsyncIterator(JSGlobalObject* globalObject, 
     initializeReadableStream(stream);
     stream->m_bunMode = WebCore::BunStreamMode::DirectPending;
     stream->m_directUnderlyingSource.set(vm, stream, source);
-    stream->m_nativePtr.set(vm, stream, op);
     return stream;
+}
+
+// Recover the op from a DirectPending stream created above: source.pull is a JSBoundFunction
+// over boundAsyncIterableSourcePull with the op bound at argument 0.
+JSAsyncIteratorSourceOperation* asyncIteratorSourceOperationOf(JSGlobalObject* globalObject, JSReadableStream* stream)
+{
+    JSObject* source = stream->m_directUnderlyingSource.get();
+    if (!source)
+        return nullptr;
+    auto& vm = getVM(globalObject);
+    JSValue pull = source->getDirect(vm, WebCore::builtinNames(vm).pullPublicName());
+    auto* bound = pull.isCell() ? dynamicDowncast<JSBoundFunction>(pull.asCell()) : nullptr;
+    if (!bound || bound->boundArgsLength() < 1)
+        return nullptr;
+    JSAsyncIteratorSourceOperation* op = nullptr;
+    bound->forEachBoundArg([&](JSValue arg) {
+        op = dynamicDowncast<JSAsyncIteratorSourceOperation>(arg);
+        return IterationStatus::Done;
+    });
+    return op;
 }
 
 // assignStreamIntoResumableSink's fast path for async-iterable bodies: the pump writes each

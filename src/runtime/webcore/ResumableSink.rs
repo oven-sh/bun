@@ -358,10 +358,7 @@ impl<Js: ResumableSinkJs, Context: ResumableSinkContext> ResumableSink<Js, Conte
                 this.status = Status::Paused;
                 1
             }
-            ResumableSinkBackpressure::Done => {
-                this.status = Status::Done;
-                2
-            }
+            ResumableSinkBackpressure::Done => 2,
             ResumableSinkBackpressure::WantMore => {
                 this.status = Status::Started;
                 0

@@ -591,6 +591,8 @@ JSC::JSValue consumeDirectStreamToArrayBuffer(JSC::JSGlobalObject*, JSReadableSt
 // An async-generator-function value is accepted directly (started eagerly). BunAsyncIterableSource.cpp
 bool isNonHostAsyncGeneratorFunction(JSC::JSObject*);
 JSReadableStream* readableStreamFromAsyncIterator(JSC::JSGlobalObject*, JSC::JSValue asyncIterableOrGeneratorFn); // userJS: yes — WebStreamsExports.cpp
+// Recovers the op cell from a DirectPending stream's underlying source's bound `pull`.
+WebCore::JSAsyncIteratorSourceOperation* asyncIteratorSourceOperationOf(JSC::JSGlobalObject*, JSReadableStream*); // userJS: no — BunAsyncIterableSource.cpp
 // Wires the pump's native-sink fast path (per-chunk write/end are C calls, not JS dispatch)
 // and starts driveAsyncIterator. BunAsyncIterableSource.cpp
 void driveAsyncIterableSourceIntoResumableSink(JSC::JSGlobalObject*, WebCore::JSAsyncIteratorSourceOperation*, JSC::JSObject* sinkCell, void* sinkCtx, int32_t (*write)(void*, const uint8_t*, size_t), void (*end)(void*, JSC::EncodedJSValue)); // userJS: yes — BunStreamSource.cpp

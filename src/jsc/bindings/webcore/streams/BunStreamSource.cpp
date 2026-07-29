@@ -1596,10 +1596,7 @@ void Bun__ResumableS3UploadSink__nativeEnd(void*, JSC::EncodedJSValue);
 // sink's native drain() resumes it via Bun__AsyncIterableSource__resumeFromDrain.
 static bool tryResumableSetupAsyncIterable(JSC::VM& vm, JSGlobalObject* globalObject, JSReadableStream* stream, JSObject* sink)
 {
-    JSValue nativePtr = stream->m_nativePtr.get();
-    if (!nativePtr.isCell())
-        return false;
-    auto* op = dynamicDowncast<WebCore::JSAsyncIteratorSourceOperation>(nativePtr.asCell());
+    auto* op = asyncIteratorSourceOperationOf(globalObject, stream);
     if (!op)
         return false;
 
@@ -1622,7 +1619,6 @@ static bool tryResumableSetupAsyncIterable(JSC::VM& vm, JSGlobalObject* globalOb
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSObject* underlyingSource = stream->m_directUnderlyingSource.get();
     stream->m_directUnderlyingSource.clear();
-    stream->m_nativePtr.clear();
     stream->m_bunMode = BunStreamMode::Default;
     stream->m_lockedWithoutReader = true;
 

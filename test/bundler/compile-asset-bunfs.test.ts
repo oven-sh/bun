@@ -255,4 +255,25 @@ describe.concurrent("compile --asset and /$bunfs/ directory semantics", () => {
     },
     TIMEOUT,
   );
+
+  test(
+    "--asset errors when its basename matches --outfile",
+    async () => {
+      const dir = tempDirWithFiles("bunfs-asset-entry", {
+        "index.ts": `console.log("unreachable");`,
+        "client/index.html": `x`,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "build", "--compile", "./index.ts", "--outfile", "./dist/client", "--asset", "./client"],
+        cwd: dir,
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stderr, code] = await Promise.all([proc.stderr.text(), proc.exited]);
+      expect(stderr).toContain("same path as the entry point");
+      expect(code).not.toBe(0);
+    },
+    TIMEOUT,
+  );
 });

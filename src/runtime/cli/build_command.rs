@@ -731,8 +731,12 @@ impl BuildCommand {
         };
 
         if ctx.bundler_options.compile && !ctx.bundler_options.compile_assets.is_empty() {
-            if collect_compile_assets(&ctx.bundler_options.compile_assets, &mut output_files)
-                .is_err()
+            if collect_compile_assets(
+                &ctx.bundler_options.compile_assets,
+                outfile,
+                &mut output_files,
+            )
+            .is_err()
             {
                 exit_or_watch(1, ctx.debug.hot_reload == HotReload::Watch);
             }
@@ -1228,6 +1232,7 @@ fn print_summary(
 
 fn collect_compile_assets(
     assets: &[Box<[u8]>],
+    outfile: &[u8],
     out: &mut Vec<options::OutputFile>,
 ) -> Result<(), ()> {
     use bun_ast::Loader;
@@ -1242,6 +1247,7 @@ fn collect_compile_assets(
         );
         Err(())
     };
+    let entry_name = bun_paths::basename(outfile);
 
     let mut seen: StringArrayHashMap<()> = StringArrayHashMap::new();
     let mut push =
@@ -1285,6 +1291,13 @@ fn collect_compile_assets(
             return fail(
                 bun_sys::Error::from_code(bun_sys::E::EINVAL, bun_sys::Tag::open).with_path(asset),
             );
+        }
+        if base == entry_name {
+            Output::err_generic(
+                "--asset {} would embed at the same path as the entry point; pass a different --outfile",
+                (bun_fmt::quote(asset),),
+            );
+            return Err(());
         }
 
         let n = asset_trimmed.len().min(zbuf.len() - 1);

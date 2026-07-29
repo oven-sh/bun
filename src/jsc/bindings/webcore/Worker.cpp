@@ -268,12 +268,10 @@ void Worker::enqueueToParent(MessageWithMessagePorts&& message)
 }
 
 // Shared drain loop for the two inboxes. Mirrors MessagePortPipe's
-// drainAndDispatch: one task drains a bounded batch, running microtasks
-// between each message so queueMicrotask/Promise callbacks observe messages
-// one at a time, then yields and reschedules on the NEXT event-loop iteration
-// if more remain. The per-turn cap is fixed: when the sender outruns the
-// receiver the inbox is the backpressure buffer, and a cap that grows with it
-// (max(size, 1000)) never yields to timers/poll.
+// drainAndDispatch: one task drains up to kMessageDrainPerTurnCap messages,
+// running microtasks between each so queueMicrotask/Promise callbacks observe
+// messages one at a time, then yields to the next loop iteration if more
+// remain so a sustained sender can't starve timers/poll.
 //
 // Unlike MessagePortPipe, Worker sides never transfer, so we don't need to
 // re-check port identity each iteration — which lets us swap the whole inbox
@@ -346,11 +344,7 @@ void Worker::drainToWorker(ScriptExecutionContext& context)
         globalObject->globalEventScope->dispatchEvent(event);
     });
     if (reschedule) {
-        // Budget spent with messages left. Resume on the next loop iteration
-        // so this thread's timers, immediates and I/O get a turn; an ordinary
-        // post would re-run inside the same tick's drain-until-empty task
-        // loop and a sustained sender would starve them forever. `context` is
-        // the worker thread's own context (we are running on it).
+        // Next-iteration so this thread's timers/poll get a turn; postTaskTo would re-run in the same tick.
         context.postTaskNextIteration([protectedThis = Ref { *this }](ScriptExecutionContext& ctx) {
             protectedThis->drainToWorker(ctx);
         });
@@ -369,8 +363,6 @@ void Worker::drainToParent(ScriptExecutionContext& context)
         dispatchEvent(event);
     });
     if (reschedule) {
-        // Same yield as drainToWorker: this runs on the parent thread, so
-        // `context` is the parent context this drain task was dispatched on.
         context.postTaskNextIteration([protectedThis = Ref { *this }](ScriptExecutionContext& c) {
             protectedThis->drainToParent(c);
         });

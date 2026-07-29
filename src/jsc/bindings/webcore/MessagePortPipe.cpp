@@ -87,9 +87,8 @@ void MessagePortPipe::drainAndDispatch(uint8_t side, ScriptExecutionContextIdent
     // Mirrors Node's MessagePort::OnMessage (src/node_messaging.cc): one
     // drain task processes a bounded batch, draining microtasks between each
     // delivery so queueMicrotask/Promise callbacks observe messages one at a
-    // time, but without a separate posted task per message. The per-turn
-    // limit is a fixed cap so a fast sender can't starve the event loop;
-    // anything beyond it waits for the next loop iteration.
+    // time, but without a separate posted task per message. Anything beyond
+    // the fixed per-turn cap waits for the next loop iteration.
     //
     // Messages are popped one at a time under the lock, so if the handler
     // transfers this port (pipe->detach clears `s.port`/`Attached`) the
@@ -180,13 +179,7 @@ void MessagePortPipe::drainAndDispatch(uint8_t side, ScriptExecutionContextIdent
     }
 
     if (rescheduleCtx) {
-        // Limit exhausted with messages still queued. Resume on the NEXT
-        // event-loop iteration: `tick()` drains tasks queued by tasks, so an
-        // ordinary post (scheduleDrain -> postTaskTo -> concurrent queue)
-        // would re-run this drain inside the same tick and starve timers,
-        // immediates and I/O forever under a same-thread ping-pong. Node
-        // yields the same way here (TriggerAsync in MessagePort::OnMessage).
-        // We are on `rescheduleCtx`'s thread (== expectedCtx, checked above).
+        // Next-iteration so timers/poll get a turn; scheduleDrain would re-run inside the same tick.
         context->postTaskNextIteration([pipe = Ref { *this }, side, ctxId = rescheduleCtx](ScriptExecutionContext&) {
             pipe->drainAndDispatch(side, ctxId);
         });

@@ -2601,8 +2601,8 @@ class Http2Stream extends Duplex {
         validateFunction(callback, "callback");
         this.once("close", callback);
       }
-      if ((this[bunHTTP2StreamStatus] & StreamState.StreamResponded) === 0) {
-        // Once a body has started _destroy ends the readable instead.
+      if (code === NGHTTP2_NO_ERROR || code === NGHTTP2_CANCEL) {
+        // For error rstCodes _destroy ends the readable so 'end' is suppressed.
         this.push(null);
       }
       const { ending } = this._writableState;

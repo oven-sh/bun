@@ -38,8 +38,9 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
                 let StmtData::SImport(st) = stmt.data else {
                     continue;
                 };
-                let path =
-                    self.import_records.items()[st.import_record_index as usize].path.text;
+                let path = self.import_records.items()[st.import_record_index as usize]
+                    .path
+                    .text;
                 if !is_bun_test_path(path) {
                     continue;
                 }
@@ -126,9 +127,7 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
                     // hoisted calls, and keep `with { type: ... }` / `import defer`
                     // since `await import()` drops those and mock.module() cannot
                     // affect asset or deferred modules anyway.
-                    if is_bun_test_path(path)
-                        || record.loader.is_some()
-                        || import_data.phase_defer
+                    if is_bun_test_path(path) || record.loader.is_some() || import_data.phase_defer
                     {
                         kept.push(*stmt);
                         continue;

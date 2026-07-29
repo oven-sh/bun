@@ -1080,7 +1080,7 @@ impl VirtualMachine {
     }
 
     pub fn handled_promise(&self, global_object: &JSGlobalObject, promise: JSValue) -> bool {
-        if self.is_shutting_down() {
+        if self.script_execution_status() != crate::ScriptExecutionStatus::Running {
             return true;
         }
         Bun__emitHandledPromiseEvent(global_object, promise)
@@ -1354,7 +1354,7 @@ impl VirtualMachine {
         err: JSValue,
         is_rejection: bool,
     ) -> bool {
-        if self.is_shutting_down() {
+        if self.script_execution_status() != crate::ScriptExecutionStatus::Running {
             return true;
         }
 
@@ -3293,7 +3293,7 @@ impl VirtualMachine {
     ) {
         use bun_options_types::schema::api::UnhandledRejections as Mode;
 
-        if self.is_shutting_down() {
+        if self.script_execution_status() != crate::ScriptExecutionStatus::Running {
             bun_core::debug_warn!("unhandledRejection during shutdown.");
             return;
         }

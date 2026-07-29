@@ -121,6 +121,55 @@ test(
   timeout,
 );
 
+// Regression: a worker whose module fails to load reports its uncaught
+// MODULE_NOT_FOUND via flush_logs → report_uncaught_exception →
+// Bun__handleUncaughtException. When worker.terminate() + process.exit() land
+// mid-dispatch, flush_logs panicked on JsError::Terminated, and the handler
+// would still lazily create `process` and do `process->get("_fatalException")`
+// on a VM already asked to terminate, which tripped
+// ASSERT(object->structure() == this) in Structure::storedPrototype. The race
+// is non-deterministic (~2/14 on release-asan-cov), so loop it.
+test.skipIf(!isASAN)(
+  "terminate() + process.exit() while workers are reporting load errors does not crash",
+  async () => {
+    // Each subprocess run spawns workers whose module load fails, then main
+    // terminates them and exits. The race window is between a worker's error
+    // dispatch and terminate_all_and_wait arming TerminationException. Two
+    // levels only (no middle worker) to avoid also tripping the unrelated
+    // nested-worker parent-VM UAF that #31951 addresses.
+    const code = `
+      const { Worker } = require("node:worker_threads");
+      const bad = require("node:path").join(process.cwd(), "does-not-exist-xyzzy.mjs");
+      const workers = [];
+      for (let j = 0; j < 4; j++) {
+        const w = new Worker(bad);
+        w.on("error", () => {});
+        workers.push(w);
+      }
+      for (const w of workers) w.terminate();
+      console.log("ok");
+      process.exit(0);
+    `;
+
+    for (let i = 0; i < 20; i++) {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", code],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stderr, stdout, exitCode, signalCode: proc.signalCode }).toEqual({
+        stderr: "",
+        stdout: "ok\n",
+        exitCode: 0,
+        signalCode: null,
+      });
+    }
+  },
+  timeout * 2,
+);
+
 // Regression: the per-VM c-ares channel was destroyed in deinit_runtime_state
 // (RuntimeState drop) AFTER JSC teardown and RareData.file_polls drop.
 // ares_destroy() synchronously fires EDESTRUCTION query callbacks and socket-

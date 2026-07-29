@@ -1212,9 +1212,14 @@ extern "C" int Bun__handleUncaughtException(JSC::JSGlobalObject* lexicalGlobalOb
     if (!lexicalGlobalObject->inherits(Zig::GlobalObject::info()))
         return false;
     auto* globalObject = uncheckedDowncast<Zig::GlobalObject>(lexicalGlobalObject);
+    auto& vm = JSC::getVM(globalObject);
+
+    // Stopped == a worker with has_requested_terminate(); the process->get / emit / call walk below asserts under a terminate() race.
+    if (Zig::GlobalObject::scriptExecutionStatus(globalObject, globalObject) != JSC::ScriptExecutionStatus::Running) [[unlikely]]
+        return true;
+
     auto* process = globalObject->processObject();
     auto& wrapped = process->wrapped();
-    auto& vm = JSC::getVM(globalObject);
 
     // node parity (exitWithUndefinedFatalException): the internal fatal-exception
     // handler is monkey-patchable as process._fatalException. If user code
@@ -1346,6 +1351,8 @@ extern "C" int Bun__handleUnhandledRejection(JSC::JSGlobalObject* lexicalGlobalO
     if (!lexicalGlobalObject->inherits(Zig::GlobalObject::info()))
         return false;
     auto* globalObject = uncheckedDowncast<Zig::GlobalObject>(lexicalGlobalObject);
+    if (Zig::GlobalObject::scriptExecutionStatus(globalObject, globalObject) != JSC::ScriptExecutionStatus::Running) [[unlikely]]
+        return false;
     auto* process = globalObject->processObject();
 
     auto eventType = Identifier::fromString(JSC::getVM(globalObject), "unhandledRejection"_s);
@@ -1369,6 +1376,8 @@ extern "C" bool Bun__emitHandledPromiseEvent(JSC::JSGlobalObject* lexicalGlobalO
     if (!lexicalGlobalObject->inherits(Zig::GlobalObject::info()))
         return false;
     auto* globalObject = uncheckedDowncast<Zig::GlobalObject>(lexicalGlobalObject);
+    if (Zig::GlobalObject::scriptExecutionStatus(globalObject, globalObject) != JSC::ScriptExecutionStatus::Running) [[unlikely]]
+        return false;
     auto* process = globalObject->processObject();
 
     auto eventType = Identifier::fromString(JSC::getVM(globalObject), "rejectionHandled"_s);

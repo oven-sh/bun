@@ -1135,6 +1135,11 @@ impl WebWorker {
             }
         }
 
+        // terminate() may have landed during entrySettled / the status block above; skip dispatchOnline/tick().
+        if self.has_requested_terminate() && !self.exit_called.load(Ordering::Relaxed) {
+            return self.shutdown();
+        }
+
         self.flush_logs(vm);
         log!("[{}] event loop start", self.execution_context_id);
         // dispatchOnline fires the parent-side 'open' event and flips the C++
@@ -1459,7 +1464,25 @@ impl WebWorker {
         if vm_log.msgs.is_empty() {
             return;
         }
+        // Keyed on the JSC request so same-thread self-signals that only set the atomic (configure_defines) still dispatch.
+        if self.has_requested_terminate() && vm.jsc_vm().has_termination_request() {
+            return;
+        }
         let global = vm.global();
+        let report_thrown = |e: JsError| {
+            if self.has_requested_terminate() && global.vm().has_termination_request() {
+                return;
+            }
+            // take_exception on a JsError always yields an Exception cell; None is unreachable.
+            let exc = global
+                .take_exception(e)
+                .as_exception(global.vm().as_mut_ptr())
+                .expect("takeException returned non-Exception");
+            let _ = jsc::js_global_object::report_uncaught_exception(
+                global,
+                jsc::Exception::opaque_ref(exc),
+            );
+        };
         let result: jsc::JsResult<(JSValue, BunString)> = (|| {
             let err = vm_log.to_js(global, "Error in worker")?;
             let str = err.to_bun_string(global)?;
@@ -1468,7 +1491,8 @@ impl WebWorker {
         let (err, str) = match result {
             Ok(pair) => pair,
             Err(JsError::OutOfMemory) => bun_core::out_of_memory(),
-            Err(JsError::Thrown | JsError::Terminated) => panic!("unhandled exception"),
+            Err(JsError::Terminated) => return,
+            Err(e @ JsError::Thrown) => return report_thrown(e),
         };
         let mut str = bun_core::OwnedString::new(str);
         let dispatch = jsc::host_fn::from_js_host_call_generic(global, || {
@@ -1476,19 +1500,7 @@ impl WebWorker {
             WebWorker__dispatchError(global, self.cpp_worker, &mut str, err)
         });
         if let Err(e) = dispatch {
-            // `take_exception` on a `JsError` always returns an Exception
-            // cell; None is unreachable. Do not silently drop the error.
-            let exc = global
-                .take_exception(e)
-                .as_exception(global.vm().as_mut_ptr())
-                .expect("takeException returned non-Exception");
-            // `Exception` is an `opaque_ffi!` ZST handle; `opaque_ref` is the
-            // centralised non-null-ZST deref proof (`exc` is non-null per the
-            // `expect` above).
-            let _ = jsc::js_global_object::report_uncaught_exception(
-                global,
-                jsc::Exception::opaque_ref(exc),
-            );
+            report_thrown(e);
         }
     }
 }

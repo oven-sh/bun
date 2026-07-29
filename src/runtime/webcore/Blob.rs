@@ -5712,6 +5712,22 @@ pub fn construct_bun_file(
             // clone the path (`path` drops at scope exit).
             return S3File::construct_internal_js(global_object, p.clone(), options);
         }
+        // Filesystem blobs copy the path into a fixed-size PathBuffer at every
+        // syscall boundary (`slice_z`); reject here so an over-long path fails
+        // with ENAMETOOLONG instead of later truncating to "" and yielding
+        // ENOENT. S3 paths above are keys, not filesystem paths, so they skip
+        // this.
+        if p.slice().len() >= bun_paths::MAX_PATH_BYTES {
+            return Err(global_object.throw_value(
+                bun_sys::Error {
+                    errno: bun_sys::E::ENAMETOOLONG as _,
+                    syscall: bun_sys::Tag::open,
+                    path: p.slice().into(),
+                    ..Default::default()
+                }
+                .to_js(global_object),
+            ));
+        }
     }
     // The sync path took no `protect()`, so `Drop for PathOrFileDescriptor`
     // suffices to release `path`.

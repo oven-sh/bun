@@ -273,6 +273,7 @@ describe("over-PATH_MAX path goes to the callback with full error identity (#256
     ["statfs", fs.statfs, [BIG], "statfs"],
     ["truncate", fs.truncate, [BIG], "open"],
     ["mkdtemp", fs.mkdtemp, [BIG], "mkdtemp"],
+    ["rm (recursive)", fs.rm, [BIG, { recursive: true }], "lstat"],
   ] as const;
 
   describe.each(ops)("fs.%s", (_name, fn, args, syscall) => {
@@ -351,6 +352,21 @@ describe("over-PATH_MAX path goes to the callback with full error identity (#256
     expect({ code: err.code, syscall: err.syscall, hasPath: "path" in err }).toEqual({
       code: "ENAMETOOLONG",
       syscall: "stat",
+      hasPath: true,
+    });
+  });
+
+  it("Bun.file() throws ENAMETOOLONG with syscall/path for an over-PATH_MAX path", () => {
+    let err!: NodeJS.ErrnoException;
+    try {
+      Bun.file(BIG);
+      expect.unreachable();
+    } catch (e) {
+      err = e as NodeJS.ErrnoException;
+    }
+    expect({ code: err.code, syscall: err.syscall, hasPath: "path" in err }).toEqual({
+      code: "ENAMETOOLONG",
+      syscall: "open",
       hasPath: true,
     });
   });

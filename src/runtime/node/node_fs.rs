@@ -682,6 +682,19 @@ mod _async_tasks {
             self.global_object.get()
         }
 
+        /// Skip the libuv round-trip: store `err` and enqueue `run_from_js_thread`
+        /// directly so the promise rejects on the next tick (same path the
+        /// Writev empty-bufs arm uses for its early `Ok`).
+        fn complete_early_err(task: &mut Self, err: sys::Error) -> JSValue {
+            task.result = Err(err);
+            let task_ptr: *mut Self = task;
+            task.global_object()
+                .bun_vm()
+                .event_loop_mut()
+                .enqueue_task(Task::init(task_ptr));
+            task.promise.value()
+        }
+
         pub fn create(
             global_object: &JSGlobalObject,
             binding: &Binding,
@@ -737,8 +750,13 @@ mod _async_tasks {
                         // scratch path buffer; the borrow is held only across the
                         // libuv enqueue below (which copies `path` internally) and
                         // never across a JS re-entry point.
-                        args.path
-                            .slice_z(unsafe { &mut binding.node_fs.get_mut().sync_error_buf })
+                        match args.path.slice_z_sys(
+                            unsafe { &mut binding.node_fs.get_mut().sync_error_buf },
+                            sys::Tag::open,
+                        ) {
+                            Ok(p) => p,
+                            Err(err) => return Self::complete_early_err(task, err),
+                        }
                     };
                     let mut flags: c_int = args.flags.as_int();
                     flags = uv::O::from_bun_o(flags);
@@ -899,9 +917,13 @@ mod _async_tasks {
                     let args: &args::StatFS = args_as!(args::StatFS);
                     // SAFETY (R-2): single-JS-thread `JsCell` projection; held only
                     // across the libuv enqueue (copies `path` internally).
-                    let path = args
-                        .path
-                        .slice_z(unsafe { &mut binding.node_fs.get_mut().sync_error_buf });
+                    let path = match args.path.slice_z_sys(
+                        unsafe { &mut binding.node_fs.get_mut().sync_error_buf },
+                        sys::Tag::statfs,
+                    ) {
+                        Ok(p) => p,
+                        Err(err) => return Self::complete_early_err(task, err),
+                    };
                     // SAFETY: libuv copies `path` internally before return.
                     let rc = unsafe {
                         uv::uv_fs_statfs(
@@ -7774,13 +7796,10 @@ impl NodeFS {
             // "/tmp/foo" into a nonexistent NT name (ENOENT). Pre-resolve with
             // slice_z so the path already carries a drive letter, the same way
             // existsSync/statSync/unlinkSync see it.
-            #[cfg(windows)]
             let resolved = args
                 .path
                 .slice_z_sys(&mut self.sync_error_buf, sys::Tag::rmdir)?
                 .as_bytes();
-            #[cfg(not(windows))]
-            let resolved = args.path.slice();
             if let Err(err) = zig_delete_tree(&sys::Dir::cwd(), resolved, sys::FileKind::Directory)
             {
                 let mut errno: E = map_anyerror_to_errno(&err);
@@ -7818,13 +7837,10 @@ impl NodeFS {
             // Windows so rooted-but-driveless paths ("/tmp/foo") get the cwd
             // drive prepended before reaching the dt_* / Syscall::*at helpers,
             // which do not do that themselves.
-            #[cfg(windows)]
             let resolved = args
                 .path
                 .slice_z_sys(&mut self.sync_error_buf, sys::Tag::lstat)?
                 .as_bytes();
-            #[cfg(not(windows))]
-            let resolved = args.path.slice();
             if let Err(err) = zig_delete_tree(&sys::Dir::cwd(), resolved, sys::FileKind::File) {
                 if matches!(err, crate::Error::FileNotFound) {
                     if args.force {

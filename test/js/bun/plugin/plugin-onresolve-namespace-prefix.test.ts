@@ -86,13 +86,15 @@ describe.concurrent("onResolve namespace-prefix dispatch is consistent between r
     expect(exitCode).toBe(0);
   });
 
-  test('registering both forms resolves `import "virt:x"` at runtime and in Bun.build', async () => {
+  test("registering both forms keeps each context's existing primary lookup", async () => {
     const { stdout, stderr, exitCode } = await run("AB");
     expect(stderr).toBe("");
     const out = JSON.parse(stdout);
     expect(out.ok).toBe(true);
-    expect(["VIA-A", "VIA-B"]).toContain(out.runtime);
-    expect(["VIA-A", "VIA-B"]).toContain(out.bundled);
+    expect(out.runtime).toBe("VIA-B");
+    expect(out.bundled).toBe("VIA-A");
+    expect(out.calls).toContain("B:thing");
+    expect(out.calls).toContain("A:virt:thing");
     expect(exitCode).toBe(0);
   });
 

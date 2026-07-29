@@ -126,9 +126,9 @@ fn confirm(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         }
         b'y' | b'Y' => {
             let Ok(next_byte) = reader.take_byte() else {
-                // They may have said yes, but the stdin is invalid.
-
-                return Ok(JSValue::FALSE);
+                // EOF after 'y' with no newline (e.g. `printf y | bun ...`) is a
+                // completed positive response, not an abort.
+                return Ok(JSValue::TRUE);
             };
 
             if next_byte == b'\n' {
@@ -138,7 +138,7 @@ fn confirm(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
             } else if next_byte == b'\r' {
                 // Check Windows style
                 let Ok(second_byte) = reader.take_byte() else {
-                    return Ok(JSValue::FALSE);
+                    return Ok(JSValue::TRUE);
                 };
                 if second_byte == b'\n' {
                     return Ok(JSValue::TRUE);
@@ -320,12 +320,15 @@ pub mod prompt {
             //    that the user responded with.
             return Ok(default);
         } else if first_byte == b'\r' {
-            let Ok(second) = reader.read_byte() else {
-                return Ok(JSValue::NULL);
-            };
-            second_byte = Some(second);
-            if second == b'\n' {
-                return Ok(default);
+            match reader.read_byte() {
+                Ok(second) => {
+                    if second == b'\n' {
+                        return Ok(default);
+                    }
+                    second_byte = Some(second);
+                }
+                // Bare CR followed by EOF: treat as an empty response, same as CRLF.
+                Err(_) => return Ok(default),
             }
         }
 
@@ -340,40 +343,35 @@ pub mod prompt {
         // buffer of size 2048. If that is too small, then increase the buffer
         // size to 4096. If that is too small, then just dynamically allocate
         // the rest.
-        if let Err(e) = read_until_delimiter_array_list_append_assume_capacity(
-            &mut *reader,
-            &mut input,
-            b'\n',
-            2048,
-        ) {
-            if !matches!(e, ReadError::StreamTooLong) {
-                // 8. Let result be null if the user aborts, or otherwise the string
-                //    that the user responded with.
-                return Ok(JSValue::NULL);
+        //
+        // Reaching EOF before a newline is a completed response (the bytes read
+        // so far), not an abort: `printf answer | bun` and a TTY user typing
+        // text then Ctrl-D both produce this shape. Only EOF before the first
+        // byte (handled above) returns null.
+        'read: {
+            match read_until_delimiter_array_list_append_assume_capacity(
+                &mut *reader,
+                &mut input,
+                b'\n',
+                2048,
+            ) {
+                Ok(()) | Err(ReadError::Io) => break 'read,
+                Err(ReadError::StreamTooLong) => {}
             }
 
             input.ensure_total_capacity(4096);
 
-            if let Err(e2) = read_until_delimiter_array_list_append_assume_capacity(
+            match read_until_delimiter_array_list_append_assume_capacity(
                 &mut *reader,
                 &mut input,
                 b'\n',
                 4096,
             ) {
-                if !matches!(e2, ReadError::StreamTooLong) {
-                    // 8. Let result be null if the user aborts, or otherwise the string
-                    //    that the user responded with.
-                    return Ok(JSValue::NULL);
-                }
-
-                if read_until_delimiter_array_list_infinity(&mut *reader, &mut input, b'\n')
-                    .is_err()
-                {
-                    // 8. Let result be null if the user aborts, or otherwise the string
-                    //    that the user responded with.
-                    return Ok(JSValue::NULL);
-                }
+                Ok(()) | Err(ReadError::Io) => break 'read,
+                Err(ReadError::StreamTooLong) => {}
             }
+
+            let _ = read_until_delimiter_array_list_infinity(&mut *reader, &mut input, b'\n');
         }
 
         if !input.is_empty() && input[input.len() - 1] == b'\r' {
@@ -381,7 +379,6 @@ pub mod prompt {
         }
 
         debug_assert!(!input.is_empty());
-        debug_assert!(input[input.len() - 1] != b'\r');
 
         // 8. Let result be null if the user aborts, or otherwise the string
         //    that the user responded with.

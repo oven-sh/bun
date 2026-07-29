@@ -52,12 +52,12 @@ interface NativePtr {
 
 let debugId = 0;
 
-function constructNativeReadable(readableStream: ReadableStream, options): NativeReadable {
+function constructNativeReadable(readableStream: ReadableStream, options, Base?): NativeReadable {
   $assert(typeof readableStream === "object" && readableStream instanceof ReadableStream, "Invalid readable stream");
   const bunNativePtr = (readableStream as any).$bunNativePtr;
   $assert(typeof bunNativePtr === "object", "Invalid native ptr");
 
-  const stream = new Readable(options);
+  const stream = Base !== undefined ? new Base(options) : new Readable(options);
   stream._read = read;
   stream._destroy = destroy;
 

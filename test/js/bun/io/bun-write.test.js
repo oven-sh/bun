@@ -1,6 +1,7 @@
 import { describe, expect, it, test } from "bun:test";
 import fs, { mkdirSync } from "fs";
 import { bunEnv, bunExe, exampleHtml, exampleSite, gcTick, isWindows, tempDir, withoutAggressiveGC } from "harness";
+import { mkfifo } from "mkfifo";
 import path, { join } from "path";
 
 let i = 0;
@@ -726,5 +727,69 @@ int posix_fadvise(int fd, off_t offset, off_t len, int advice) {
     Bun.gc(true);
 
     expect(f.name).toBe(filePath);
+  });
+
+  // Writing more than the kernel pipe buffer to a FIFO used to deliver only the
+  // first partial write to the reader and then either reject ENXIO (fast path
+  // closed and reopened the fifo) or never settle (async path spun on EAGAIN
+  // with could_block=false). Both must now deliver the full payload.
+  describe.skipIf(isWindows).each([
+    ["string", payload => payload],
+    ["Uint8Array", payload => new TextEncoder().encode(payload)],
+    ["Blob", payload => new Blob([payload])],
+    ["Response", payload => new Response(payload)],
+  ])("Bun.write(fifo, %s) larger than the pipe buffer", (label, toSource) => {
+    // 200003 bytes: well over the 64 KiB Linux pipe buffer (and the 8 KiB
+    // minimum some CI kernels use), with a distinct tail so a torn prefix
+    // is visible.
+    const N = 200003;
+    const payload = Buffer.alloc(N - 3, "x").toString() + "END";
+
+    async function exercise(suffix, writeTo) {
+      using dir = tempDir(`bun-write-fifo-${label}-${suffix}`, {});
+      const fifo = join(String(dir), "f.fifo");
+      mkfifo(fifo);
+
+      // Open the read side synchronously with O_NONBLOCK so it returns
+      // immediately (no writer required) and the writer's O_WRONLY|O_NONBLOCK
+      // open cannot observe ENXIO. Reading through Bun.file(fd).stream() polls
+      // on EAGAIN instead of parking a thread-pool worker, which matters under
+      // describe.concurrent.
+      const readFd = fs.openSync(fifo, fs.constants.O_RDONLY | fs.constants.O_NONBLOCK);
+      const drained = (async () => {
+        const chunks = [];
+        for await (const chunk of Bun.file(readFd).stream()) chunks.push(chunk);
+        return Buffer.concat(chunks);
+      })();
+      drained.catch(() => {});
+
+      let got;
+      let written;
+      try {
+        written = await writeTo(fifo, toSource(payload));
+        got = await drained;
+      } finally {
+        fs.closeSync(readFd);
+        await drained.catch(() => {});
+      }
+
+      expect({ bytes: got.length, tail: got.subarray(-3).toString(), written }).toEqual({
+        bytes: N,
+        tail: "END",
+        written: N,
+      });
+    }
+
+    it("delivers every byte to the reader (path dest)", () => exercise("path", (fifo, src) => Bun.write(fifo, src)));
+
+    it("delivers every byte to the reader (O_NONBLOCK fd dest)", () =>
+      exercise("fd", async (fifo, src) => {
+        const wfd = fs.openSync(fifo, fs.constants.O_WRONLY | fs.constants.O_NONBLOCK);
+        try {
+          return await Bun.write(Bun.file(wfd), src);
+        } finally {
+          fs.closeSync(wfd);
+        }
+      }));
   });
 });

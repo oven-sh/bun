@@ -333,15 +333,15 @@ impl WriteFile {
         let fd = self.opened_fd;
         debug_assert!(fd != Fd::INVALID);
 
-        // We do not use pwrite() because the file may not be
-        // seekable (such as stdout)
-        //
-        // On macOS, it is an error to use pwrite() on a
-        // non-seekable file.
-        let result: bun_sys::Result<usize> =
-            sys::write(fd, &self.bytes_blob.shared_view()[off..off + len]);
-
         loop {
+            // We do not use pwrite() because the file may not be
+            // seekable (such as stdout)
+            //
+            // On macOS, it is an error to use pwrite() on a
+            // non-seekable file.
+            let result: bun_sys::Result<usize> =
+                sys::write(fd, &self.bytes_blob.shared_view()[off..off + len]);
+
             match &result {
                 bun_sys::Result::Ok(res) => {
                     *wrote = *res;
@@ -464,10 +464,11 @@ impl WriteFile {
                 }
             }
 
-            // We opened the file descriptor with O_NONBLOCK, so we
-            // shouldn't have to worry about blocking reads/writes
-            //
-            // We do not call fstat() because that is very expensive.
+            // Path-opened fds have no cached mode; fstat so a FIFO/socket
+            // reaches wait_for_writable() on EAGAIN.
+            if let bun_sys::Result::Ok(st) = sys::fstat(fd) {
+                break 'brk !bun_sys::is_regular_file(st.st_mode as bun_sys::Mode);
+            }
             false
         };
 

@@ -111,9 +111,7 @@ pub fn do_patch_commit(
             workspace_package_id,
             argument,
         ) {
-            // `prepare_patch` detaches symlinks, so a symlink at `rel_path` is
-            // not the prepared copy; fall back to the root-relative argument
-            // when that one is a real directory.
+            // prepare_patch detaches symlinks; a symlink here means the prepared copy is at the root
             if !is_real_dir_not_symlink(&rel_path) && is_real_dir_not_symlink(argument) {
                 argument
             } else {

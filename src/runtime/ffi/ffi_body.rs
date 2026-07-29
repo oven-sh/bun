@@ -211,21 +211,18 @@ impl Default for FFI {
 
 impl FFI {
     pub fn finalize(self: Box<Self>) {
-        // INTENTIONAL no-op when not closed. Compiled trampolines / dlopen'd
-        // symbols may still be reachable from JS after the wrapper is GC'd
-        // (e.g. `const { fn } = dlopen(...).symbols`); teardown is owned by
-        // `close()`. Dropping the Box would run `Function::drop` →
-        // `tcc_delete()`, freeing the executable pages those JSFunctions still
-        // jump into.
-        //
-        // When `close()` HAS run, the functions map is empty and the dylib /
-        // shared TCC state are already gone, so the Box only owns the (empty)
-        // hashmap's retained-capacity buffer. Drop it instead of leaking.
-        if self.closed.get() {
-            drop(self);
-        } else {
-            let _ = bun_core::heap::release(self);
+        if !self.closed.get() {
+            const _: () = assert!(
+                !core::mem::needs_drop::<bun_sys::DynLib>(),
+                "FFI::finalize leaks dylib on purpose; a DynLib Drop would dlclose() under live JSFunctions"
+            );
+            self.functions.with_mut(|f| {
+                for function in f.values_mut() {
+                    function.leak_compiled_pages_past_drop();
+                }
+            });
         }
+        drop(self);
     }
 }
 
@@ -1929,6 +1926,14 @@ impl Drop for Function {
 }
 
 impl Function {
+    /// Detach the TCC state and callback wrapper so [`Drop`] skips `tcc_delete()`; JS may still hold trampolines that jump into these pages after the FFI wrapper is GC'd without `close()`.
+    fn leak_compiled_pages_past_drop(&mut self) {
+        self.state = None;
+        if let Step::Compiled(compiled) = &mut self.step {
+            compiled.ffi_callback_function_wrapper = None;
+        }
+    }
+
     pub(crate) fn needs_handle_scope(&self) -> bool {
         for arg in self.arg_types.iter() {
             if *arg == ABIType::NapiEnv || *arg == ABIType::NapiValue {

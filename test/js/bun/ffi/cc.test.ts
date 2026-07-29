@@ -4,6 +4,84 @@ import { promises as fs } from "fs";
 import { bunEnv, bunExe, isASAN, isWindows, normalizeBunSnapshot, tempDir, tempDirWithFiles } from "harness";
 import path from "path";
 
+// LeakSanitizer only reports in ASAN builds, and Windows has no LSAN runtime.
+it.skipIf(!isASAN || isWindows)(
+  "GC of a cc() library without close() does not leak the FFI object under LSAN",
+  async () => {
+    using dir = tempDir("cc-leak", {
+      "x.c": "int noop(void* p) { return 0; }\n",
+      "fixture.js": `
+        const { cc } = require("bun:ffi");
+        const { heapStats } = require("bun:jsc");
+        const path = require("node:path");
+        const src = path.join(__dirname, "x.c");
+
+        const ffiCount = () => heapStats().objectTypeCounts.FFI ?? 0;
+        const baseline = ffiCount();
+
+        // Call cc() from a deep stack frame so the library wrapper becomes
+        // unreachable once the frame is overwritten; only the symbol function
+        // escapes (rooted via globalThis so it is off the stack entirely).
+        function use(n) {
+          if (n > 0) return use(n - 1);
+          const lib = cc({ source: src, symbols: { noop: { args: ["ptr"], returns: "int" } } });
+          if (lib.symbols.noop(0n) !== 0) throw new Error("bad result");
+          return lib.symbols.noop;
+        }
+        globalThis.noop = use(50);
+
+        // Overwrite the stack region that held the library reference so JSC's
+        // conservative scan does not keep it alive, then force collection.
+        function clobber(n) {
+          const a = [n, n + 1, n + 2, n + 3, n + 4, n + 5, n + 6, n + 7];
+          if (n > 0) return clobber(n - 1) + a[0];
+          return a[0];
+        }
+        clobber(60);
+        Bun.gc(true);
+        clobber(60);
+        Bun.gc(true);
+
+        // Precondition: the wrapper must have been collected or the LSAN
+        // assertion below cannot fail. One FFI cell above baseline is the
+        // lazily-created class prototype, not the cc() instance.
+        const after = ffiCount();
+        if (after > baseline + 1)
+          throw new Error("FFI wrapper not collected (before=" + baseline + " after=" + after + "); test would be vacuous");
+
+        // The wrapper has been finalized; the detached trampoline must still work.
+        if (globalThis.noop(0n) !== 0) throw new Error("symbol broken after GC");
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "fixture.js"],
+      env: {
+        ...bunEnv,
+        ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=1"].filter(Boolean).join(":"),
+        LSAN_OPTIONS: `print_suppressions=0:suppressions=${path.join(import.meta.dirname, "../../../leaksan.supp")}`,
+      },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    // Keep only the FFI leak frames so an unrelated LSAN finding shows up as such
+    // rather than burying the FFI signature in a wall of text.
+    const ffiLeakLines = stderr
+      .split("\n")
+      .filter(line => line.includes("bun_runtime::ffi") || line.includes("generate_symbols"));
+    expect({ stdout, stderr, ffiLeakLines, exitCode }).toEqual({
+      stdout: "",
+      stderr: "",
+      ffiLeakLines: [],
+      exitCode: 0,
+    });
+  },
+  30_000,
+);
+
 // TODO: we need to install build-essential and Apple SDK in CI.
 // It can't find includes. It can on machines with that enabled.
 // TinyCC's setjmp/longjmp error handling conflicts with ASan.

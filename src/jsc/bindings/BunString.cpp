@@ -994,3 +994,12 @@ bool BunString::isEmpty() const
         return true;
     }
 }
+
+BUN_DEFINE_HOST_FUNCTION(Bun__stringImplHashForTesting, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    WTF::String str = callFrame->argument(0).toWTFString(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    return JSC::JSValue::encode(JSC::jsNumber(str.impl() ? str.impl()->hash() : 0));
+}

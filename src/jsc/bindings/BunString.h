@@ -61,3 +61,5 @@ WTF::String toCrossThreadShareable(const WTF::String& string);
 Ref<WTF::StringImpl> toCrossThreadShareable(Ref<WTF::StringImpl> impl);
 
 }
+
+BUN_DECLARE_HOST_FUNCTION(Bun__stringImplHashForTesting);

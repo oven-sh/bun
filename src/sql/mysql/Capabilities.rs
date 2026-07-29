@@ -104,7 +104,11 @@ impl Capabilities {
         Self::from_int(self.to_int() & other.to_int())
     }
 
-    pub fn get_default_capabilities(ssl: bool, has_db_name: bool) -> Capabilities {
+    pub fn get_default_capabilities(
+        ssl: bool,
+        has_db_name: bool,
+        multiple_statements: bool,
+    ) -> Capabilities {
         Capabilities {
             CLIENT_PROTOCOL_41: true,
             CLIENT_PLUGIN_AUTH: true,
@@ -112,7 +116,13 @@ impl Capabilities {
             CLIENT_CONNECT_WITH_DB: has_db_name,
             CLIENT_DEPRECATE_EOF: true,
             CLIENT_SSL: ssl,
-            CLIENT_MULTI_STATEMENTS: true,
+            // Defence in depth: off by default so a string injection that
+            // reaches COM_QUERY cannot escalate to stacked queries. Opted in
+            // via the `multipleStatements` connection option (mirrors mysql2,
+            // go-sql-driver/mysql, mysqlclient). CLIENT_MULTI_RESULTS stays
+            // on unconditionally so stored procedures that return multiple
+            // result sets keep working.
+            CLIENT_MULTI_STATEMENTS: multiple_statements,
             CLIENT_MULTI_RESULTS: true,
             ..Default::default()
         }

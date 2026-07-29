@@ -419,9 +419,9 @@ test.skipIf(!isASAN)(
       stderr: "pipe",
       stdin: "ignore",
     });
-    const [stdout, stderr] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stdout.trim()).toBe("leakpkg");
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).not.toContain("clone_metadata");
+    expect({ stdout: stdout.trim(), exitCode }).toEqual({ stdout: "leakpkg", exitCode: 0 });
     // Timeout: a detected leak makes llvm-symbolizer load the full DWARF of the
     // test binary before the assertion above can run; the no-leak path is < 1s.
   },

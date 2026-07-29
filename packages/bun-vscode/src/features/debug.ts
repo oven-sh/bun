@@ -40,7 +40,7 @@ const ATTACH_CONFIGURATION: vscode.DebugConfiguration = {
   internalConsoleOptions: "neverOpen",
   request: "attach",
   name: "Attach Bun",
-  url: "ws://localhost:6499/",
+  url: "ws://127.0.0.1:6499/",
   stopOnEntry: false,
 };
 

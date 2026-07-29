@@ -775,7 +775,9 @@ describe.concurrent("bun update --interactive", () => {
     expect(exitCode).toBe(0);
 
     const packageJson = await Bun.file(join(dir, "package.json")).json();
-    expect(packageJson.catalog["dep-with-tags"]).toMatch(/^~/);
+    expect(packageJson.catalog["dep-with-tags"]).toBe("~3.0.0");
+    // app1 was filtered out, so its catalog entry is untouched.
+    expect(packageJson.catalog["no-deps"]).toBe("^1.0.0");
   });
 
   it("should handle multiple catalog definitions with same package", async () => {

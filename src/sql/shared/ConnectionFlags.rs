@@ -8,6 +8,7 @@ bitflags! {
         const USE_UNNAMED_PREPARED_STATEMENTS = 1 << 2;
         const WAITING_TO_PREPARE              = 1 << 3;
         const HAS_BACKPRESSURE                = 1 << 4;
+        const AWAITING_LOCAL_INFILE_RESULT    = 1 << 5;
     }
 }
 

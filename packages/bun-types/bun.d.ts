@@ -774,6 +774,114 @@ declare module "bun" {
   ): string;
 
   /**
+   * QR code generation and decoding.
+   *
+   * @category Utilities
+   */
+  namespace QR {
+    /** Error-correction level. Higher levels tolerate more damage but reduce capacity. */
+    export type ErrorCorrection = "L" | "M" | "Q" | "H";
+
+    export interface GenerateOptions {
+      /**
+       * Minimum error-correction level. Defaults to `"M"`. When
+       * {@link boostErrorCorrection} is true (the default), the actual level may
+       * be raised if the data still fits at the chosen version.
+       */
+      errorCorrection?: ErrorCorrection;
+      /** Minimum symbol version (1–40). Defaults to 1. */
+      minVersion?: number;
+      /** Maximum symbol version (1–40). Defaults to 40. */
+      maxVersion?: number;
+      /** Mask pattern (0–7). Chosen automatically by default. */
+      mask?: number;
+      /** Raise {@link errorCorrection} if it costs no extra version. Defaults to true. */
+      boostErrorCorrection?: boolean;
+      /** Quiet-zone border in modules, used by `svg`/`text`/`image`/`data-url`. Defaults to 2. */
+      border?: number;
+      /** Output format. Defaults to `"object"`. */
+      format?: "object" | "svg" | "text" | "data-url" | "image";
+      /** Pixel scale (px per module) for `format: "image"`. Defaults to 8. */
+      scale?: number;
+      /** Light (background) color. CSS color for SVG, `#rrggbb[aa]` for image. */
+      light?: string;
+      /** Dark (foreground) color. CSS color for SVG, `#rrggbb[aa]` for image. */
+      dark?: string;
+      /** Swap light/dark for `format: "text"`. */
+      invert?: boolean;
+    }
+
+    /** The raw encoded QR symbol returned by `generate()` when `format` is `"object"`. */
+    export interface QRCode {
+      /** Symbol version (1–40). */
+      version: number;
+      /** Modules per side (21–177). */
+      size: number;
+      /** Effective error-correction level after boosting. */
+      errorCorrection: ErrorCorrection;
+      /** Applied mask pattern (0–7). */
+      mask: number;
+      /** Row-major `size*size` module bitmap; `1` = dark, `0` = light. */
+      matrix: Uint8Array;
+    }
+
+    export interface ParseResult {
+      /** Decoded payload as UTF-8 text. */
+      text: string;
+      /** Decoded payload as raw bytes. */
+      bytes: Uint8Array;
+      version: number;
+      errorCorrection: ErrorCorrection;
+      mask: number;
+    }
+
+    /**
+     * Encode `data` as a QR code.
+     *
+     * String input picks the most compact encoding mode (numeric, alphanumeric,
+     * or byte) automatically; `BufferSource` input is always encoded in byte mode.
+     *
+     * @example
+     * ```ts
+     * const { matrix, size } = Bun.QR.generate("https://bun.com");
+     * console.log(Bun.QR.generate("https://bun.com", { format: "text" }));
+     * await Bun.QR.generate("https://bun.com", { format: "image" }).write("qr.png");
+     * ```
+     */
+    export function generate(data: string | NodeJS.TypedArray | ArrayBuffer | DataView): QRCode;
+    export function generate(
+      data: string | NodeJS.TypedArray | ArrayBuffer | DataView,
+      options: GenerateOptions & { format: "svg" | "text" | "data-url" },
+    ): string;
+    export function generate(
+      data: string | NodeJS.TypedArray | ArrayBuffer | DataView,
+      options: GenerateOptions & { format: "image" },
+    ): Bun.Image;
+    export function generate(
+      data: string | NodeJS.TypedArray | ArrayBuffer | DataView,
+      options: GenerateOptions & { format?: "object" },
+    ): QRCode;
+    export function generate(
+      data: string | NodeJS.TypedArray | ArrayBuffer | DataView,
+      options?: GenerateOptions,
+    ): QRCode | string | Bun.Image;
+
+    /**
+     * Decode a QR module matrix (as returned by {@link generate}) back to its payload.
+     *
+     * Applies Reed–Solomon error correction, so a matrix with a limited number
+     * of flipped modules still decodes.
+     *
+     * @example
+     * ```ts
+     * const qr = Bun.QR.generate("hello");
+     * Bun.QR.parse(qr).text; // "hello"
+     * ```
+     */
+    export function parse(input: QRCode | { matrix: ArrayBufferView; size?: number } | ArrayBufferView): ParseResult;
+  }
+
+  /**
    * TOML related APIs
    */
   namespace TOML {

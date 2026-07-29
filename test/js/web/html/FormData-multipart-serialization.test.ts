@@ -110,6 +110,22 @@ describe("multipart serialization (new Response(formData))", () => {
     );
   });
 
+  // The parser must undo the `"`/CR/LF percent-escaping shown above, or Bun
+  // cannot read back the names it wrote into its own multipart output.
+  test("round-trips escaped names and filenames through Response.formData()", async () => {
+    const formData = new FormData();
+    formData.append('quote"name', "v1");
+    formData.append("crlf\r\nname", "v2");
+    formData.append("file", new File(["<p>hi</p>"], 'weird"file\r\nname.html', { type: "text/html" }));
+
+    const parsed = await new Response(formData).formData();
+
+    expect([...parsed.keys()]).toEqual(['quote"name', "crlf\r\nname", "file"]);
+    expect(parsed.get('quote"name')).toBe("v1");
+    expect(parsed.get("crlf\r\nname")).toBe("v2");
+    expect((parsed.get("file") as File).name).toBe('weird"file\r\nname.html');
+  });
+
   test("round-trips every entry kind through Response.formData()", async () => {
     const formData = new FormData();
     formData.append("simple", "value");

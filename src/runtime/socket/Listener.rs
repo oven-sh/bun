@@ -829,7 +829,8 @@ impl Listener {
                     unsafe { core::ffi::CStr::from_ptr(bytes.as_ptr().cast()) }
                 });
                 // S008: `ListenSocket` is an `opaque_ffi!` ZST — safe deref.
-                let swapped = bun_opaque::opaque_deref_mut(ls).set_ssl_ctx(ctx.cast(), server_name);
+                let swapped =
+                    bun_opaque::opaque_deref_mut(ls).set_ssl_ctx(ctx.cast(), server_name, false);
                 // `this.ssl` ⇒ `listen()` stored a non-null `ls->ssl_ctx`; the
                 // only path that clears it is `us_listen_socket_close`, after
                 // which `this.listener` is `None` and we returned above.

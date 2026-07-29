@@ -406,10 +406,13 @@ void us_listen_socket_remove_server_name(struct us_listen_socket_t *ls,
     const char *hostname_pattern) nonnull_fn_decl;
 /* Swap the default context subsequent accepts build their SSL from; already
  * accepted sockets keep the one they handshook with. `hostname_pattern` is the
- * name the retiring context was registered under in the SNI tree (nullable);
- * its entry follows the swap. Returns 0 for a non-TLS listener. */
+ * name the retiring context was registered under in the SNI tree (nullable).
+ * With `force_sni`=0 the entry follows the swap only when it pointed at the
+ * retiring default (node:tls's listen-time hint); with `force_sni`!=0 it moves
+ * unconditionally (uWS registers a separate per-domain context). Returns 0 for
+ * a non-TLS listener. */
 int us_listen_socket_set_ssl_ctx(struct us_listen_socket_t *ls,
-    struct ssl_ctx_st *ssl_ctx, const char *hostname_pattern)
+    struct ssl_ctx_st *ssl_ctx, const char *hostname_pattern, int force_sni)
     __attribute__((nonnull(1, 2)));  /* hostname_pattern nullable */
 void *us_listen_socket_find_server_name_userdata(struct us_listen_socket_t *ls,
     const char *hostname_pattern) nonnull_fn_decl;

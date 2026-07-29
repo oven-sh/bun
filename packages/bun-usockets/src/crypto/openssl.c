@@ -2835,7 +2835,7 @@ void us_listen_socket_remove_server_name(struct us_listen_socket_t *ls,
 }
 
 int us_listen_socket_set_ssl_ctx(struct us_listen_socket_t *ls, SSL_CTX *ctx,
-                                 const char *hostname_pattern) {
+                                 const char *hostname_pattern, int force_sni) {
   if (!ls->ssl_ctx) return 0;
   SSL_CTX *old = ls->ssl_ctx;
 
@@ -2850,9 +2850,11 @@ int us_listen_socket_set_ssl_ctx(struct us_listen_socket_t *ls, SSL_CTX *ctx,
 
   if (hostname_pattern && ls->sni) {
     struct sni_node_t *node = (struct sni_node_t *)sni_find(ls->sni, hostname_pattern);
-    /* Only the listen-time hint (which pointed at the retiring default) moves;
-     * an add_server_name() entry on the same name belongs to the caller. */
-    if (node && node->ctx == old) {
+    /* Bun.listen() registers `old` itself in the tree, so the entry belongs to
+     * us iff `node->ctx == old` (a node:tls addContext() on the same name is
+     * the caller's and stays). uWS/Bun.serve registers a separate domainCtx,
+     * so `force_sni` moves the entry unconditionally (node->user survives). */
+    if (node && (force_sni || node->ctx == old)) {
       SSL_CTX_up_ref(ctx);
       SSL_CTX_free(node->ctx);
       node->ctx = ctx;

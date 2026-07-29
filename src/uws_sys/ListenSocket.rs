@@ -90,11 +90,13 @@ impl ListenSocket {
     /// `SSL_CTX_up_ref`s `ssl_ctx` and releases the retiring reference, so the
     /// caller keeps the one `create_ssl_context` handed it. `hostname` is the
     /// name the retiring context was registered under in the SNI tree, if any.
-    /// Returns false for a non-TLS listener.
+    /// With `force_sni` the entry moves unconditionally; otherwise only when it
+    /// pointed at the retiring default. Returns false for a non-TLS listener.
     pub fn set_ssl_ctx(
         &mut self,
         ssl_ctx: *mut SslCtx,
         hostname: Option<&core::ffi::CStr>,
+        force_sni: bool,
     ) -> bool {
         // SAFETY: `self` is a valid listen socket; caller guarantees `ssl_ctx`
         // is non-null and points at a live SSL_CTX (C up-refs and stores it);
@@ -104,6 +106,7 @@ impl ListenSocket {
                 self,
                 ssl_ctx,
                 hostname.map_or(core::ptr::null(), |h| h.as_ptr()),
+                c_int::from(force_sni),
             ) != 0
         }
     }
@@ -135,6 +138,7 @@ unsafe extern "C" {
         ls: *mut ListenSocket,
         ssl_ctx: *mut SslCtx,
         hostname: *const c_char,
+        force_sni: c_int,
     ) -> c_int;
     safe fn us_listen_socket_on_server_name(
         ls: &mut ListenSocket,

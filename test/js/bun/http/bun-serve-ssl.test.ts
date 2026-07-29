@@ -163,8 +163,8 @@ describe("Bun.serve reload({tls})", () => {
     cert: readFileSync(join(import.meta.dir, "../../node/tls/fixtures/rsa_cert.crt"), "utf8"),
   }; // CN=localhost
 
-  async function servedCN(port: number) {
-    const client = connect({ port, host: "127.0.0.1", rejectUnauthorized: false });
+  async function servedCN(port: number, servername?: string) {
+    const client = connect({ port, host: "127.0.0.1", rejectUnauthorized: false, servername });
     try {
       await once(client, "secureConnect");
       return client.getPeerCertificate().subject.CN;
@@ -190,6 +190,23 @@ describe("Bun.serve reload({tls})", () => {
 
     server.reload({ tls: certA, fetch: fetchHandler });
     expect(await servedCN(port)).toBe("server-bun");
+  });
+
+  test("serves the replacement certificate for clients that send the configured serverName as SNI", async () => {
+    // uWS's addServerName registers a separate per-domain context in the SNI
+    // tree (not the app's default ssl_ctx), so the entry has to be moved
+    // unconditionally - browsers and fetch() always send SNI.
+    await using server = Bun.serve({
+      port: 0,
+      tls: { ...certA, serverName: "example.test" },
+      fetch: fetchHandler,
+    });
+    const port = server.port;
+    expect(await servedCN(port, "example.test")).toBe("server-bun");
+
+    server.reload({ tls: { ...certB, serverName: "example.test" }, fetch: fetchHandler });
+    expect(await servedCN(port)).toBe("localhost");
+    expect(await servedCN(port, "example.test")).toBe("localhost");
   });
 
   test("rejects an unusable certificate and keeps serving the previous one", async () => {

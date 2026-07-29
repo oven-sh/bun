@@ -2152,7 +2152,7 @@ impl<'a> PackageInstaller<'a> {
             };
 
             // `defer { destination_dir.close(); }` + `defer increment_tree_install_count`.
-            // No early returns in this branch, so manual calls at end are equivalent.
+            // No early returns after this point, so manual calls at end are equivalent.
 
             let dep = &self.lockfile().buffers.dependencies.as_slice()[dependency_id as usize];
             let dep_behavior = dep.behavior;

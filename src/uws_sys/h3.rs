@@ -421,6 +421,13 @@ impl App {
     pub fn clear_routes(&mut self) {
         c::uws_h3_app_clear_routes(self)
     }
+    pub fn set_slash_normalization(
+        &mut self,
+        ignore_trailing_slash: bool,
+        ignore_duplicate_slashes: bool,
+    ) {
+        c::uws_h3_app_set_slash_normalization(self, ignore_trailing_slash, ignore_duplicate_slashes)
+    }
 
     fn route<UD, H>(which: RouteKind, this: &mut App, pattern: &[u8], ud: *mut UD, _handler: H)
     where
@@ -596,6 +603,11 @@ mod c {
         pub(super) fn uws_h3_app_destroy(app: *mut App);
         pub(super) safe fn uws_h3_app_close(app: &mut App);
         pub(super) safe fn uws_h3_app_clear_routes(app: &mut App);
+        pub(super) safe fn uws_h3_app_set_slash_normalization(
+            app: &mut App,
+            ignore_trailing_slash: bool,
+            ignore_duplicate_slashes: bool,
+        );
         pub(super) fn uws_h3_app_add_server_name(
             app: *mut App,
             hostname: *const c_char,

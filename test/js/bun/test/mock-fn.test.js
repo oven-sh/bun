@@ -1161,15 +1161,15 @@ describe("spyOn", () => {
       );
     });
 
-    test("mockRestore propagates a Proxy defineProperty trap failure and can retry", () => {
+    test("mockRestore propagates a Proxy set trap failure and can retry", () => {
       let allow = true;
       const target = { m: () => "orig" };
       const proxy = new Proxy(target, {
-        defineProperty: (t, k, d) => (allow ? Reflect.defineProperty(t, k, d) : false),
+        set: (t, k, v) => (allow ? Reflect.set(t, k, v) : false),
       });
       const fn = spyOn(proxy, "m");
       allow = false;
-      expect(() => fn.mockRestore()).toThrow();
+      expect(() => fn.mockRestore()).toThrow(TypeError);
       expect(target.m).toBe(fn);
       allow = true;
       fn.mockRestore();
@@ -1178,17 +1178,32 @@ describe("spyOn", () => {
       let armed = false;
       const target2 = { m: () => "orig" };
       const proxy2 = new Proxy(target2, {
-        defineProperty(t, k, d) {
-          if (armed) throw new Error("boom-define");
-          return Reflect.defineProperty(t, k, d);
+        set(t, k, v) {
+          if (armed) throw new Error("boom-set");
+          return Reflect.set(t, k, v);
         },
       });
       const fn2 = spyOn(proxy2, "m");
       armed = true;
-      expect(() => fn2.mockRestore()).toThrow("boom-define");
+      expect(() => fn2.mockRestore()).toThrow("boom-set");
       armed = false;
       fn2.mockRestore();
       expect(target2.m()).toBe("orig");
+    });
+
+    test("installs and restores through a redirecting set trap symmetrically", () => {
+      const store = {};
+      const target = { m: () => "orig" };
+      const proxy = new Proxy(target, {
+        get: (t, k) => (k in store ? store[k] : t[k]),
+        set: (t, k, v) => ((store[k] = v), true),
+      });
+      const fn = spyOn(proxy, "m").mockReturnValue("MRV");
+      expect(proxy.m()).toBe("MRV");
+      expect(store.m).toBe(fn);
+      fn.mockRestore();
+      expect(proxy.m()).toBe("orig");
+      expect(store.m()).toBe("orig");
     });
 
     test("spies on a non-function value through a Proxy", () => {

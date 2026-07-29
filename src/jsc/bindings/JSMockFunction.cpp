@@ -387,8 +387,13 @@ public:
                 }
             } else if (this->spyAttributes & SpyAttributeProxy) {
                 auto scope = DECLARE_THROW_SCOPE(this->vm());
-                JSC::PropertyDescriptor descriptor(implValue, this->spyAttributes & ~SpyAttributeMask);
-                target->methodTable()->defineOwnProperty(target, globalObject(), this->spyIdentifier, descriptor, true);
+                if (implValue.isCell() && implValue.isCallable()) {
+                    PutPropertySlot putSlot(target, true);
+                    target->methodTable()->put(target, globalObject(), this->spyIdentifier, implValue, putSlot);
+                } else {
+                    JSC::PropertyDescriptor descriptor(implValue, this->spyAttributes & ~SpyAttributeMask);
+                    target->methodTable()->defineOwnProperty(target, globalObject(), this->spyIdentifier, descriptor, true);
+                }
                 RETURN_IF_EXCEPTION(scope, );
             } else if (auto index = parseIndex(this->spyIdentifier)) {
                 // Use putDirectIndex for numeric property keys (e.g., spyOn(arr, 0))

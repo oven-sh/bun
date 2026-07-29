@@ -8,6 +8,7 @@ import {
   isDebug,
   isIntelMacOS,
   isLinux,
+  isMacOS,
   isPosix,
   isWindows,
   tempDir,
@@ -2897,6 +2898,87 @@ describe("rm", () => {
     expect(fs.existsSync(dir)).toBe(true);
     fs.rmSync(dir, { recursive: true, force: true });
     expect(fs.existsSync(dir)).toBe(false);
+  });
+
+  // A recursive rm that fails part-way through must identify the entry the
+  // syscall actually failed on (node's async rimraf behavior), not report the
+  // root path with a generic "rm" syscall. Needs POSIX permissions; when
+  // running as root the subprocess drops to nobody so the chmod sticks.
+  // https://github.com/oven-sh/bun/issues/4522
+  it.skipIf(!isPosix)("recursive rm error names the failing entry, not the root", async () => {
+    const fixture = /* js */ `
+      const fs = require("node:fs");
+      const os = require("node:os");
+      const path = require("node:path");
+      const R = fs.mkdtempSync(path.join(os.tmpdir(), "rm-fid-"));
+      if (process.getuid() === 0) {
+        fs.chownSync(R, 65534, 65534);
+        process.setgid(65534);
+        process.setuid(65534);
+      }
+      const root = path.join(R, "tree");
+      fs.mkdirSync(path.join(root, "a", "locked"), { recursive: true });
+      fs.writeFileSync(path.join(root, "a", "locked", "keep"), "");
+      fs.writeFileSync(path.join(root, "free"), "");
+      fs.chmodSync(path.join(root, "a", "locked"), 0o555);
+      const report = e =>
+        JSON.stringify({
+          code: e.code,
+          syscall: e.syscall,
+          path: String(e.path).slice(R.length).split(path.sep).join("/"),
+        });
+      const rearm = () => {
+        fs.chmodSync(path.join(root, "a", "locked"), 0o755);
+        fs.mkdirSync(path.join(root, "a", "locked"), { recursive: true });
+        fs.writeFileSync(path.join(root, "a", "locked", "keep"), "");
+        fs.chmodSync(path.join(root, "a", "locked"), 0o555);
+      };
+      const out = {};
+      try {
+        fs.rmSync(root, { recursive: true });
+        out.sync = "no-error";
+      } catch (e) {
+        out.sync = report(e);
+      }
+      rearm();
+      fs.promises
+        .rm(root, { recursive: true })
+        .then(() => (out.promise = "no-error"), e => (out.promise = report(e)))
+        .then(() => {
+          rearm();
+          return new Promise(r =>
+            fs.rm(root, { recursive: true }, e => {
+              out.cb = e ? report(e) : "no-error";
+              r();
+            }),
+          );
+        })
+        .then(() => {
+          fs.chmodSync(path.join(root, "a", "locked"), 0o755);
+          fs.rmSync(R, { recursive: true, force: true });
+          console.log(JSON.stringify(out));
+        });
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    const out = JSON.parse(stdout.trim());
+    // On Linux/FreeBSD the unlink of /tree/a/locked/keep is denied. On macOS
+    // node (and Bun) report the containing directory's ENOTEMPTY instead.
+    // Either way err.path must point inside the tree, not at its root.
+    const expected = isMacOS
+      ? { code: "ENOTEMPTY", syscall: "rmdir", path: "/tree/a/locked" }
+      : { code: "EACCES", syscall: "unlink", path: "/tree/a/locked/keep" };
+    expect({ sync: JSON.parse(out.sync), promise: JSON.parse(out.promise), cb: JSON.parse(out.cb) }).toEqual({
+      sync: expected,
+      promise: expected,
+      cb: expected,
+    });
+    expect(exitCode).toBe(0);
   });
 });
 

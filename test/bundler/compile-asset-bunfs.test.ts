@@ -285,6 +285,14 @@ describe.concurrent("compile --asset and /$bunfs/ directory semantics", () => {
       "--target browser with --asset",
     ],
     [["build", "--compile", "./index.ts", "--outfile", "app", "--asset", "./does-not-exist"], "failed to read --asset"],
+    ...(process.platform === "win32"
+      ? []
+      : [
+          [
+            ["build", "--compile", "./index.ts", "--outfile", "app", "--asset", "/dev/null"],
+            "is not a regular file or directory",
+          ] as const,
+        ]),
   ])("rejects %j", async (args, expected) => {
     const dir = tempDirWithFiles("bunfs-asset-reject", {
       "index.ts": `console.log("x");`,

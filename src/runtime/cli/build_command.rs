@@ -1386,12 +1386,18 @@ fn collect_compile_assets(
                 dest.extend_from_slice(&rel);
                 push(out, asset, dest, bytes)?;
             }
-        } else {
+        } else if bun_core::S::ISREG(st.st_mode as _) {
             let bytes = match bun_sys::File::read_from(cwd, asset_trimmed) {
                 Ok(b) => b,
                 Err(e) => return fail(e.with_path(asset)),
             };
             push(out, asset, base.to_vec(), bytes)?;
+        } else {
+            Output::err_generic(
+                "--asset {} is not a regular file or directory",
+                (bun_fmt::quote(asset),),
+            );
+            return Err(());
         }
     }
     Ok(())

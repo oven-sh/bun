@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, isMacOS } from "harness";
 import { once } from "node:events";
 import net from "node:net";
 import { join } from "node:path";
@@ -115,13 +115,16 @@ test.concurrent("abort() errors a fully-buffered fetch response body", async () 
 });
 
 // Aborting a fetch that is uploading a large body must close the connection
-// in a way the server can observe from its read side. Node's undici client
-// sends a FIN (socket.destroy()), so a net.Server sees 'end' then 'close'.
-// Bun was sending an SO_LINGER{1,0} RST; on macOS the RST's sequence number
-// (snd_nxt, with body bytes still in the kernel send buffer) can land past
-// the peer's receive window and be dropped, so the server's socket stayed
-// ESTABLISHED and never emitted 'end'/'error'/'close'.
-test("server socket sees 'end' when a fetch upload is aborted mid-body", async () => {
+// in a way the server can observe from its read side. Bun aborts with an
+// SO_LINGER{1,0} RST; on macOS that RST's sequence number (snd_nxt, with body
+// bytes still in the kernel send buffer) can land past the peer's receive
+// window and be dropped, so the server's socket stayed ESTABLISHED and never
+// emitted 'end'/'error'/'close'. On macOS close_and_fail now FINs instead, so
+// the server drains what was buffered and sees end-of-stream. Linux and
+// Windows deliver the RST in window, and a FIN would put every aborted upload
+// into TIME_WAIT (ephemeral-port exhaustion under abort churn), so they keep
+// the RST and this test is macOS-only.
+test.skipIf(!isMacOS)("server socket sees 'end' when a fetch upload is aborted mid-body", async () => {
   const events: string[][] = [];
   const sockets: net.Socket[] = [];
   let gotBody = Promise.withResolvers<void>();
@@ -150,8 +153,8 @@ test("server socket sees 'end' when a fetch upload is aborted mid-body", async (
   try {
     // An SO_LINGER{1,0} RST surfaces to the server as either ECONNRESET or,
     // when the read loop drains the final data and the error on the same
-    // EPOLLHUP event, as an orderly end-of-stream. Several connections make
-    // the former reliably observable on a build that still resets.
+    // hangup event, as an orderly end-of-stream. Several connections make the
+    // former reliably observable on a build that still resets.
     const body = new Uint8Array(16 * 1024 * 1024).fill(83);
     for (let i = 0; i < 8; i++) {
       gotBody = Promise.withResolvers<void>();

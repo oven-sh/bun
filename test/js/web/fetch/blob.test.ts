@@ -103,6 +103,112 @@ test("new Blob", () => {
   expect(blob.type).toBe("");
 });
 
+describe("Blob type", () => {
+  // https://w3c.github.io/FileAPI/#dom-blob-type
+  // An explicit user-supplied `type` must be returned verbatim (lowercased),
+  // without Bun appending `;charset=utf-8` for recognised MIME types.
+  test.each([
+    ["text/plain", "text/plain"],
+    ["application/json", "application/json"],
+    ["text/html", "text/html"],
+    ["text/css", "text/css"],
+    ["text/javascript", "text/javascript"],
+    ["Text/PLAIN", "text/plain"],
+    ["text/plain;charset=utf-8", "text/plain;charset=utf-8"],
+    ["application/octet-stream", "application/octet-stream"],
+    ["a/b", "a/b"],
+    ["", ""],
+  ])("new Blob/File/slice type %j -> %j", (input, expected) => {
+    expect(new Blob([], { type: input }).type).toBe(expected);
+    expect(new Blob(["x"], { type: input }).type).toBe(expected);
+    expect(new File([], "f", { type: input }).type).toBe(expected);
+    expect(new File(["x"], "f", { type: input }).type).toBe(expected);
+    expect(new Blob(["x"]).slice(0, 1, input).type).toBe(expected);
+    expect(new Blob([]).slice(0, 0, input).type).toBe(expected);
+  });
+
+  // https://w3c.github.io/FileAPI/#slice-method-algo
+  // A slice() with no contentType, "", or an invalid contentType has type "";
+  // it must not inherit the parent's type (regardless of whether the parent's
+  // type happens to be in Bun's MIME table).
+  test.each(["text/plain", "application/json", "a/b", "x-weird/y-type"])(
+    "slice() does not inherit parent type %j",
+    parentType => {
+      const parent = new Blob(["x"], { type: parentType });
+      expect(parent.slice(0, 1).type).toBe("");
+      expect(parent.slice(0, 1, "").type).toBe("");
+      expect(parent.slice(0, 1, "x/\u00e9").type).toBe("");
+      expect(parent.slice(0, 1, "\u1234").type).toBe("");
+      // parent is not mutated
+      expect(parent.type).toBe(parentType);
+    },
+  );
+
+  test("Bun.file() explicit type is not canonicalized", async () => {
+    expect(Bun.file("x", { type: "text/plain" }).type).toBe("text/plain");
+    expect(Bun.file("x", { type: "application/json" }).type).toBe("application/json");
+    // extension-sniffed default is still Bun's canonical form
+    expect(Bun.file("x.txt").type).toBe("text/plain;charset=utf-8");
+
+    // .write({type}) must not canonicalize either
+    using dir = tempDir("blob-type-write", { "f": "" });
+    const f = Bun.file(path.join(String(dir), "f"));
+    await f.write("hello", { type: "text/plain" });
+    expect(f.type).toBe("text/plain");
+  });
+
+  test("typeless slice body omits the Content-Type header", async () => {
+    using dir = tempDir("blob-type-slice-ct", { "f.txt": "hello world" });
+    await using server = Bun.serve({
+      port: 0,
+      fetch: req =>
+        new Response(JSON.stringify({ ct: req.headers.get("content-type"), hasCt: req.headers.has("content-type") })),
+    });
+    const post = (body: BodyInit) => fetch(server.url, { method: "POST", body }).then(r => r.json());
+
+    // A typeless slice's type is "", so per Fetch "extract a body" the header
+    // is omitted, never sent with an empty value (this was already latently
+    // broken for the non-table-MIME case before this change).
+    expect(await post(Bun.file(path.join(String(dir), "f.txt")).slice(0, 5))).toEqual({ ct: null, hasCt: false });
+    expect(await post(Bun.file(path.join(String(dir), "f.txt"), { type: "custom/x" }).slice(0, 5))).toEqual({
+      ct: null,
+      hasCt: false,
+    });
+    expect(await post(new Blob(["hello"], { type: "text/plain" }).slice(0, 3))).toEqual({ ct: null, hasCt: false });
+    // control: the unsliced file still carries its extension-sniffed type
+    expect(await post(Bun.file(path.join(String(dir), "f.txt")))).toEqual({
+      ct: "text/plain;charset=utf-8",
+      hasCt: true,
+    });
+  });
+
+  test("serving a typeless file slice falls back to the file's mime type", async () => {
+    using dir = tempDir("blob-type-slice-serve", { "f.txt": "hello world" });
+    const file = path.join(String(dir), "f.txt");
+    await using server = Bun.serve({
+      port: 0,
+      static: {
+        "/static-slice": new Response(Bun.file(file).slice(0, 5)),
+        "/static-full": new Response(Bun.file(file)),
+      },
+      fetch: req =>
+        new URL(req.url).pathname === "/slice"
+          ? new Response(Bun.file(file).slice(0, 5))
+          : new Response(Bun.file(file)),
+    });
+    const headers = async (p: string) => {
+      const r = await fetch(server.url.href + p);
+      return { ct: r.headers.get("content-type"), cd: r.headers.get("content-disposition"), body: await r.text() };
+    };
+    // Matches the unsliced file on both the dynamic and static route paths:
+    // extension-sniffed type, no Content-Disposition, not application/octet-stream.
+    expect(await headers("slice")).toEqual({ ct: "text/plain;charset=utf-8", cd: null, body: "hello" });
+    expect(await headers("full")).toEqual({ ct: "text/plain;charset=utf-8", cd: null, body: "hello world" });
+    expect(await headers("static-slice")).toEqual({ ct: "text/plain;charset=utf-8", cd: null, body: "hello" });
+    expect(await headers("static-full")).toEqual({ ct: "text/plain;charset=utf-8", cd: null, body: "hello world" });
+  });
+});
+
 test("new Blob stringifies non-Blob object parts in order", async () => {
   const url = new URL("https://example.com/path");
   expect(await new Blob([url]).text()).toBe("https://example.com/path");

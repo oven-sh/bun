@@ -335,6 +335,46 @@ describe("web worker", () => {
       expect(err.error).toBe(null);
     });
   });
+
+  test("self.name reflects the name option", async () => {
+    const worker = new Worker(
+      "data:text/javascript," +
+        encodeURIComponent(`postMessage({ name: self.name, global: globalThis.name, type: typeof self.name });`),
+      { name: "wanted-name" },
+    );
+    const [e] = await once(worker, "message");
+    worker.terminate();
+    expect(e.data).toEqual({ name: "wanted-name", global: "wanted-name", type: "string" });
+  });
+
+  test("self.name defaults to the empty string", async () => {
+    const worker = new Worker("data:text/javascript," + encodeURIComponent(`postMessage(self.name);`));
+    const [e] = await once(worker, "message");
+    worker.terminate();
+    expect(e.data).toBe("");
+  });
+
+  test("self.close() ends the worker after the current task", async () => {
+    const src = `
+      const r = { closeType: typeof self.close, name: self.name };
+      try { self.close(); r.afterClose = "reached"; } catch (e) { r.afterClose = "THROW " + e.constructor.name; }
+      postMessage(r);
+      setTimeout(() => postMessage({ late: true }), 0);
+    `;
+    const worker = new Worker("data:text/javascript," + encodeURIComponent(src), { name: "closer" });
+
+    const messages: any[] = [];
+    worker.addEventListener("message", e => messages.push(e.data));
+    const [close] = await once(worker, "close");
+
+    expect(messages).toEqual([{ closeType: "function", name: "closer", afterClose: "reached" }]);
+    expect(close.code).toBe(0);
+  });
+
+  test("close and name are not defined on the main-thread global", () => {
+    expect("close" in globalThis).toBe(false);
+    expect("name" in globalThis).toBe(false);
+  });
 });
 
 // TODO: move to node:worker_threads tests directory

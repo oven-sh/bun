@@ -748,6 +748,7 @@ extern "C" void WebWorker__dispatchError(Zig::GlobalObject* globalObject, Worker
 }
 
 extern "C" WebCore::Worker* WebWorker__getParentWorker(void* bunVM);
+extern "C" void WebWorker__requestClose(void* bunVM);
 
 JSC_DEFINE_HOST_FUNCTION(jsReceiveMessageOnPort, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
@@ -950,6 +951,17 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionPostMessage,
 
     worker->enqueueToParent(MessageWithMessagePorts { serialized.releaseReturnValue(), disentangledPorts.releaseReturnValue() });
 
+    return JSValue::encode(jsUndefined());
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsFunctionWorkerGlobalScopeClose,
+    (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame*))
+{
+    Zig::GlobalObject* globalObject = dynamicDowncast<Zig::GlobalObject>(lexicalGlobalObject);
+    if (!globalObject) [[unlikely]]
+        return JSValue::encode(jsUndefined());
+
+    WebWorker__requestClose(globalObject->bunVM());
     return JSValue::encode(jsUndefined());
 }
 

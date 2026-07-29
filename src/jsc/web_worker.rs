@@ -403,6 +403,19 @@ pub(crate) extern "C" fn WebWorker__getParentWorker(vm: &VirtualMachine) -> *mut
         .unwrap_or(core::ptr::null_mut())
 }
 
+/// `self.close()` inside the worker (DedicatedWorkerGlobalScope.close()).
+/// Worker-thread only. Sets the closing flag so the event loop exits after the
+/// current task completes. Unlike `exit()`, this does not arm the
+/// TerminationException, so the script that called `close()` runs to its
+/// synchronous completion.
+#[unsafe(no_mangle)]
+pub(crate) extern "C" fn WebWorker__requestClose(vm: &VirtualMachine) {
+    if let Some(worker) = vm.worker_ref() {
+        worker.exit_called.store(true, Ordering::Relaxed);
+        let _ = worker.set_requested_terminate();
+    }
+}
+
 impl WebWorker {
     pub fn has_requested_terminate(&self) -> bool {
         self.requested_terminate.load(Ordering::Acquire)

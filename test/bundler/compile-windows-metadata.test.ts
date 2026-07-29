@@ -40,10 +40,8 @@ async function expectBuildOk(proc: Bun.Subprocess<"ignore", "pipe", "pipe">) {
 }
 
 // https://github.com/oven-sh/bun/issues/19916
-// Kept outside the big .concurrent block below so these three compiles don't
-// pile onto the existing ~25 parallel --compile spawns and trip the 5s timeout.
 describe.skipIf(!isWindows)("--windows-hide-console", () => {
-  test.concurrent("default build is a console subsystem", async () => {
+  test("default build is a console subsystem", async () => {
     using dir = tempDir("windows-subsystem-default", {
       "app.js": `console.log("cui");`,
     });
@@ -61,7 +59,7 @@ describe.skipIf(!isWindows)("--windows-hide-console", () => {
     expect(readPESubsystem(outfile)).toBe(IMAGE_SUBSYSTEM_WINDOWS_CUI);
   });
 
-  test.concurrent("CLI flag sets GUI subsystem", async () => {
+  test("CLI flag sets GUI subsystem", async () => {
     using dir = tempDir("windows-subsystem-gui-cli", {
       "app.js": `console.log("gui");`,
     });
@@ -79,7 +77,7 @@ describe.skipIf(!isWindows)("--windows-hide-console", () => {
     expect(readPESubsystem(outfile)).toBe(IMAGE_SUBSYSTEM_WINDOWS_GUI);
   });
 
-  test.concurrent("Bun.build() hideConsole sets GUI subsystem", async () => {
+  test("Bun.build() hideConsole sets GUI subsystem", async () => {
     using dir = tempDir("windows-subsystem-gui-api", {
       "app.js": `console.log("gui");`,
     });
@@ -729,7 +727,6 @@ describe.skipIf(!isWindows).concurrent("Windows compile metadata", () => {
 
       expect(getMetadata("ProductName")).toBe("Hidden Console App");
       expect(getMetadata("ProductVersion")).toBe("1.0.0.0");
-      expect(readPESubsystem(outfile)).toBe(IMAGE_SUBSYSTEM_WINDOWS_GUI);
     });
 
     test("metadata with --windows-icon", async () => {

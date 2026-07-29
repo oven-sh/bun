@@ -971,37 +971,63 @@ describe.concurrent("spawn stdin Response/Request with JS-authored ReadableStrea
     });
   }
 
-  test("Response(Blob) body still works", async () => {
-    await using proc = spawn({
-      cmd: [bunExe(), "-e", childScript],
-      stdin: new Response(new Blob([payload()])),
-      stdout: "pipe",
-      stderr: "pipe",
-      env: bunEnv,
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).toBe("");
-    expect(stdout).toBe("n=12");
-    expect(exitCode).toBe(0);
-  });
-
-  test("Response whose body stream was already consumed throws", async () => {
-    const res = new Response(
-      new ReadableStream({
-        start(c) {
-          c.enqueue(payload());
-          c.close();
-        },
-      }),
-    );
-    await res.arrayBuffer();
-    expect(() =>
-      spawn({
+  for (const [label, mk] of [
+    ["Response(Blob)", () => new Response(new Blob([payload()]))],
+    ["Request(Blob)", () => new Request("http://x/", { method: "POST", body: new Blob([payload()]) })],
+  ] as const) {
+    test(`${label} body still works`, async () => {
+      await using proc = spawn({
         cmd: [bunExe(), "-e", childScript],
-        stdin: res,
+        stdin: mk(),
         stdout: "pipe",
+        stderr: "pipe",
         env: bunEnv,
-      }),
-    ).toThrow(/already.*used/i);
-  });
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("n=12");
+      expect(exitCode).toBe(0);
+    });
+  }
+
+  for (const [label, mk] of [
+    [
+      "Response",
+      () =>
+        new Response(
+          new ReadableStream({
+            start(c) {
+              c.enqueue(payload());
+              c.close();
+            },
+          }),
+        ),
+    ],
+    [
+      "Request",
+      () =>
+        new Request("http://x/", {
+          method: "POST",
+          body: new ReadableStream({
+            start(c) {
+              c.enqueue(payload());
+              c.close();
+            },
+          }),
+        }),
+    ],
+  ] as const) {
+    test(`${label} whose body stream was already consumed throws`, async () => {
+      const owner = mk();
+      await owner.arrayBuffer();
+      expect(() =>
+        spawn({
+          cmd: [bunExe(), "-e", childScript],
+          stdin: owner,
+          stdout: "pipe",
+          env: bunEnv,
+        }),
+      ).toThrow(/already.*used/i);
+    });
+  }
 });

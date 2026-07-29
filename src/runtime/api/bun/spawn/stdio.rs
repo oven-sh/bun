@@ -382,12 +382,8 @@ impl Stdio {
                     }
                 }
 
-                // The Request/Response constructor migrates a Locked body's
-                // ReadableStream out of `locked.readable` into the wrapper's
-                // GC-traced stream slot (see `check_body_stream_ref`), so
-                // `body.to_readable_stream()` would find `readable` empty and
-                // synthesize an unconnected native ByteStream. Use the owner's
-                // actual stream (from `get_body_readable_stream`) when present.
+                // `locked.readable` was moved to the owner's GC `stream` slot by
+                // `check_body_stream_ref`; `body_stream` is that slot's value.
                 let mut stream = match body_stream {
                     Some(s) => s,
                     None => {

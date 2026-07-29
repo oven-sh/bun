@@ -152,12 +152,12 @@ test("server socket sees 'end' when a fetch upload is aborted mid-body", async (
     // when the read loop drains the final data and the error on the same
     // EPOLLHUP event, as an orderly end-of-stream. Several connections make
     // the former reliably observable on a build that still resets.
-    for (let i = 0; i < 4; i++) {
+    const body = new Uint8Array(16 * 1024 * 1024).fill(83);
+    for (let i = 0; i < 8; i++) {
       gotBody = Promise.withResolvers<void>();
       socketClosed = Promise.withResolvers<void>();
 
       const ac = new AbortController();
-      const body = new Uint8Array(16 * 1024 * 1024).fill(83);
       const req = fetch(`http://127.0.0.1:${port}/upload`, {
         method: "POST",
         body,
@@ -176,12 +176,7 @@ test("server socket sees 'end' when a fetch upload is aborted mid-body", async (
       // buffered and then sees end-of-stream.
       await socketClosed.promise;
     }
-    expect(events).toEqual([
-      ["end", "close"],
-      ["end", "close"],
-      ["end", "close"],
-      ["end", "close"],
-    ]);
+    expect(events).toEqual(Array(8).fill(["end", "close"]));
   } finally {
     for (const s of sockets) s.destroy();
     server.close();

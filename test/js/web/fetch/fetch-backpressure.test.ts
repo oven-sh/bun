@@ -8,7 +8,7 @@ import { createServer } from "node:http";
 import { createSecureServer } from "node:http2";
 import { createServer as createHttpsServer } from "node:https";
 import net from "node:net";
-import { brotliCompressSync, constants as zlibConstants, gzipSync, zstdCompressSync } from "node:zlib";
+import { brotliCompressSync, gzipSync, constants as zlibConstants, zstdCompressSync } from "node:zlib";
 
 const CHUNK = 64 * 1024;
 const COUNT = 256; // 16 MiB

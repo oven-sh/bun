@@ -586,7 +586,10 @@ impl AbortHandler {
     pub(crate) fn uninstall() {
         #[cfg(windows)]
         {
-            let _ = bun_sys::windows::SetConsoleCtrlHandler(None, bun_sys::windows::FALSE);
+            let _ = bun_sys::windows::SetConsoleCtrlHandler(
+                Some(Self::windows_ctrl_handler),
+                bun_sys::windows::FALSE,
+            );
         }
     }
 }
@@ -807,6 +810,9 @@ pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infal
         Some(unsafe { &mut *env_ptr }),
         None,
     );
+    // Windows: recursive kill-on-close Job so cmd.exe/.cmd-shim grandchildren
+    // (which escape libuv's SILENT_BREAKAWAY job) die with us. POSIX: no-op.
+    bun_io::ParentDeathWatchdog::ensure_kill_on_close_job();
     // --no-orphans: register the macOS kqueue parent watch on this MiniEventLoop
     // (the VirtualMachine.init path is never reached for --parallel). Linux is
     // already covered by prctl in enable() + linux_pdeathsig on each spawn.

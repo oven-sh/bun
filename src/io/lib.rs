@@ -111,6 +111,25 @@ pub mod parent_death_watchdog {
                 bun_core::w!("BUN_FEATURE_FLAG_NO_ORPHANS\0").as_ptr(),
                 bun_core::w!("1\0").as_ptr(),
             );
+            ensure_kill_on_close_job();
+            arm_parent_watch();
+        }
+    }
+
+    static JOB_ASSIGNED: AtomicBool = AtomicBool::new(false);
+
+    /// Self-assign to a kill-on-close Job Object without `SILENT_BREAKAWAY_OK`,
+    /// so membership is inherited by every descendant (unlike libuv's spawn
+    /// Job). Idempotent; handle leaked for process lifetime. Used by
+    /// `--no-orphans` and unconditionally by `bun --filter`/`--parallel`.
+    #[cold]
+    #[inline(never)]
+    pub fn ensure_kill_on_close_job() {
+        if JOB_ASSIGNED.swap(true, Ordering::Relaxed) {
+            return;
+        }
+        // SAFETY: Win32 FFI; null args are documented-valid (anonymous Job).
+        unsafe {
             let job = windows::CreateJobObjectA(core::ptr::null_mut(), core::ptr::null());
             if !job.is_null() {
                 let mut jeli: windows::JOBOBJECT_EXTENDED_LIMIT_INFORMATION =
@@ -127,8 +146,6 @@ pub mod parent_death_watchdog {
                     windows::CloseHandle(job);
                 }
             }
-
-            arm_parent_watch();
         }
     }
 

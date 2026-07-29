@@ -404,6 +404,50 @@ describe("?query on a bare package specifier does not resolve", () => {
     expect(exitCode).toBe(0);
   });
 
+  test.concurrent("import('#name?v=N') via package.json imports / self-reference by name", async () => {
+    // Both routes go through handle_esm_resolution which sets
+    // IS_FROM_NODE_MODULES, so Result::is_node_module() catches them via the
+    // flag even though the resolved file lives outside any node_modules dir.
+    using dir = tempDir("import-query-bare-hash-self", {
+      "package.json": JSON.stringify({
+        name: "myapp",
+        imports: { "#internal": "./src/util.js" },
+        exports: { ".": "./index.js" },
+      }),
+      "index.js": "globalThis.__ix = (globalThis.__ix || 0) + 1; module.exports = { inst: globalThis.__ix };",
+      "src/util.js": "globalThis.__iu = (globalThis.__iu || 0) + 1; module.exports = { inst: globalThis.__iu };",
+      "entry.mjs": `
+        const out = { insts: [], errors: [] };
+        for (const name of ["#internal", "myapp"]) {
+          out.insts.push((await import(name)).default.inst);
+          for (const spec of [name + "?v=1", name + "?v=2"]) {
+            try {
+              out.insts.push((await import(spec)).default.inst);
+            } catch (e) {
+              out.errors.push(e.code || e.name);
+            }
+          }
+          out.insts.push((await import(name)).default.inst);
+        }
+        console.log(JSON.stringify(out));
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "entry.mjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout.trim())).toEqual({
+      insts: [1, 1, 1, 1],
+      errors: ["ERR_MODULE_NOT_FOUND", "ERR_MODULE_NOT_FOUND", "ERR_MODULE_NOT_FOUND", "ERR_MODULE_NOT_FOUND"],
+    });
+    expect(exitCode).toBe(0);
+  });
+
   test.concurrent("?raw on a bare package subpath still loads as text (control)", async () => {
     using dir = tempDir("import-query-bare-raw", {
       "node_modules/tp/package.json": JSON.stringify({ name: "tp", main: "./i.js" }),

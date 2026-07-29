@@ -5037,7 +5037,7 @@ unsafe fn resolve<'a>(
     // `paths` aliases are Bun extensions and keep their query semantics.
     if query_string != b"?raw"
         && !query_string.is_empty()
-        && bun_paths::is_package_path(specifier)
+        && bun_paths::is_package_path(normalized_specifier)
         && result.is_node_module()
     {
         return Err(crate::Error::ModuleNotFound);

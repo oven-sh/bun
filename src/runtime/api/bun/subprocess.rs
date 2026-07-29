@@ -145,6 +145,13 @@ pub struct Subprocess<'a> {
 
     /// `None` indicates all of the IPC data is uninitialized.
     pub ipc_data: JsCell<Option<IPC::SendQueue>>,
+    /// Parent-side IPC channel keepalive for `node:child_process` semantics:
+    /// an established IPC channel keeps the event loop alive independently of
+    /// the process poller, so `subprocess.unref()` alone does not let the
+    /// parent exit while the channel is open. Node's `channel.ref()` /
+    /// `channel.unref()` toggle this. Inactive by default; `node:child_process`
+    /// activates it on spawn and `handle_ipc_close` disables it.
+    pub ipc_channel_ref: JsCell<bun_io::KeepAlive>,
     pub flags: Cell<Flags>,
 
     /// Weak observer of the stdin `FileSink` — holds no ownership/ref. `onStdinDestroyed`
@@ -856,6 +863,29 @@ impl Subprocess<'_> {
         Ok(JSValue::UNDEFINED)
     }
 
+    #[bun_jsc::host_fn(method)]
+    pub fn set_channel_ref(
+        this: &Self,
+        _global_this: &JSGlobalObject,
+        callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
+        let enabled = callframe.argument(0).to_boolean();
+        let connected = this
+            .ipc_data
+            .get()
+            .as_ref()
+            .map(|d| d.is_connected())
+            .unwrap_or(false);
+        this.ipc_channel_ref.with_mut(|k| {
+            if enabled && connected {
+                k.ref_(bun_io::js_vm_ctx());
+            } else {
+                k.unref(bun_io::js_vm_ctx());
+            }
+        });
+        Ok(JSValue::UNDEFINED)
+    }
+
     #[bun_jsc::host_fn(getter)]
     pub fn get_connected(this: &Self, _global_this: &JSGlobalObject) -> JSValue {
         let connected = this
@@ -1356,6 +1386,7 @@ impl Subprocess<'_> {
         MaxBuf::MaxBuf::remove_from_subprocess(&mut mb);
         this.stderr_maxbuf.set(mb);
 
+        this.ipc_channel_ref.with_mut(|k| k.disable());
         if let Some(ipc_data) = this.ipc_data.replace(None) {
             // In normal operation the socket is already `.closed` by the time we
             // get here (that is what allowed `computeHasPendingActivity` to drop
@@ -1473,6 +1504,7 @@ impl Subprocess<'_> {
         let _keep = jsc::EnsureStillAlive(this_jsvalue);
         let global_this = self.global_this;
         let global_this = global_this.get();
+        self.ipc_channel_ref.with_mut(|k| k.disable());
         self.update_has_pending_activity();
 
         if !this_jsvalue.is_empty() {

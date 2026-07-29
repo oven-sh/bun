@@ -4737,6 +4737,14 @@ fn encode_path_result(bytes: &[u8], encoding: Encoding) -> StringOrBuffer {
 
 impl NodeFS {
     pub fn access(&mut self, args: &args::Access, _: Flavor) -> Maybe<ret::Access> {
+        if let Some(graph) = standalone_module_graph_get() {
+            // SAFETY: see `standalone_module_graph_get`.
+            let graph = unsafe { &mut *graph };
+            let p = args.path.slice();
+            if graph.find(p).is_some() || graph.find_dir(p) {
+                return Ok(Null);
+            }
+        }
         // The `bun_sys::access` Windows
         // arm takes `&ZStr` and performs the kernel32 widening internally
         // (sys/lib.rs `windows_impl::access`), so feed it the UTF-8 path on
@@ -5421,7 +5429,8 @@ impl NodeFS {
             // SAFETY: see `standalone_module_graph_get` — exclusive lookup on
             // the per-process singleton; `find` only mutates lazy per-`File`
             // fields.
-            if unsafe { &mut *graph }.find(path.slice()).is_some() {
+            let graph = unsafe { &mut *graph };
+            if graph.find(path.slice()).is_some() || graph.find_dir(path.slice()) {
                 return Ok(true);
             }
         }
@@ -5642,6 +5651,15 @@ impl NodeFS {
 
     pub fn lstat(&mut self, args: &args::Lstat, _: Flavor) -> Maybe<ret::Lstat> {
         let path = args.path.slice_z(&mut self.sync_error_buf);
+        if let Some(graph) = standalone_module_graph_get() {
+            // SAFETY: see `standalone_module_graph_get`.
+            if let Some(result) = unsafe { &mut *graph }.stat(path.as_bytes()) {
+                return Ok(StatOrNotFound::Stats(Box::new(Stats::init(
+                    &PosixStat::init(&result),
+                    args.big_int,
+                ))));
+            }
+        }
         #[cfg(any(target_os = "linux", target_os = "android"))]
         if sys::SUPPORTS_STATX_ON_LINUX.load(Ordering::Relaxed) {
             return match sys::lstatx(path, sys::STATX_MASK_FOR_STATS) {
@@ -6925,6 +6943,70 @@ impl NodeFS {
         flavor: Flavor,
     ) -> Maybe<ret::Readdir> {
         let path = args.path.slice_z(buf);
+
+        if let Some(graph) = standalone_module_graph_get() {
+            if bun_standalone_graph::is_bun_standalone_file_path(path.as_bytes()) {
+                // SAFETY: see `standalone_module_graph_get`.
+                let graph = unsafe { &*graph };
+                return match graph.readdir(path.as_bytes(), recursive) {
+                    None => Err(sys::Error::from_code(E::ENOENT, sys::Tag::scandir)
+                        .with_path(args.path.slice())),
+                    Some(list) => {
+                        let mut entries: Vec<T> = Vec::with_capacity(list.len());
+                        let root_path = if T::IS_DIRENT {
+                            BunString::clone_utf8(args.path.slice())
+                        } else {
+                            BunString::empty()
+                        };
+                        let mut joined: Vec<u8> = Vec::new();
+                        for (name, is_dir) in list {
+                            let kind = if is_dir {
+                                sys::FileKind::Directory
+                            } else {
+                                sys::FileKind::File
+                            };
+                            if recursive {
+                                let (base, parent) = match strings::last_index_of_char(&name, b'/') {
+                                    Some(i) => (&name[i + 1..], &name[..i]),
+                                    None => (&name[..], b"".as_slice()),
+                                };
+                                let dirent_path = if T::IS_DIRENT && !parent.is_empty() {
+                                    joined.clear();
+                                    joined.extend_from_slice(args.path.slice());
+                                    if joined.last() != Some(&b'/') {
+                                        joined.push(b'/');
+                                    }
+                                    joined.extend_from_slice(parent);
+                                    BunString::clone_utf8(&joined)
+                                } else {
+                                    root_path.dupe_ref()
+                                };
+                                T::append_entry_recursive(
+                                    &mut entries,
+                                    base,
+                                    &name,
+                                    &dirent_path,
+                                    kind,
+                                    args.encoding,
+                                    flavor == Flavor::Sync,
+                                );
+                                dirent_path.deref();
+                            } else {
+                                T::append_entry(
+                                    &mut entries,
+                                    &name,
+                                    &root_path,
+                                    kind,
+                                    args.encoding,
+                                );
+                            }
+                        }
+                        root_path.deref();
+                        Ok(T::into_readdir(entries))
+                    }
+                };
+            }
+        }
 
         if recursive && flavor == Flavor::Sync {
             let mut buf_to_pass = PathBuffer::uninit();

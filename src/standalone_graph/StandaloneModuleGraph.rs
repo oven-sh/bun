@@ -40,6 +40,10 @@ pub struct StandaloneModuleGraph {
     /// them under Stacked/Tree Borrows and make the later foreign write UB.
     pub bytes: *const [u8],
     pub files: StringArrayHashMap<File>,
+    /// Every directory prefix that appears in `files` (no trailing separator,
+    /// normalized to `/`). Lets `node:fs` answer `existsSync` / `statSync` /
+    /// `readdirSync` for virtual directories under `/$bunfs/`.
+    pub dirs: StringArrayHashMap<()>,
     pub entry_point_id: u32,
     pub compile_exec_argv: &'static [u8],
     pub flags: Flags,
@@ -159,8 +163,87 @@ impl StandaloneModuleGraph {
     }
 
     pub fn stat(&mut self, name: &[u8]) -> Option<Stat> {
-        let file = self.find(name)?;
-        Some(file.stat())
+        if !is_bun_standalone_file_path(name) {
+            return None;
+        }
+        if let Some(file) = self.find_assume_standalone_path(name) {
+            return Some(file.stat());
+        }
+        if self.find_dir(name) {
+            return Some(dir_stat());
+        }
+        None
+    }
+
+    /// Normalizes a path into the form stored in `self.dirs` / `self.files`:
+    /// strips NT prefixes on Windows, maps `\` → `/`, and drops a single
+    /// trailing separator. Returns the borrowed slice (possibly into `buf`).
+    fn normalize_dir_path<'a>(name: &'a [u8], buf: &'a mut PathBuffer) -> &'a [u8] {
+        #[cfg(windows)]
+        let name = {
+            let input = strings::paths::without_nt_prefix::<u8>(name);
+            &*path::resolve_path::platform_to_posix_buf::<u8>(input, buf)
+        };
+        #[cfg(not(windows))]
+        let _ = buf;
+        let mut name = name;
+        while name.last() == Some(&b'/') {
+            name = &name[..name.len() - 1];
+        }
+        name
+    }
+
+    pub fn find_dir(&self, name: &[u8]) -> bool {
+        if !is_bun_standalone_file_path(name) {
+            return false;
+        }
+        let mut buf = PathBuffer::uninit();
+        let name = Self::normalize_dir_path(name, &mut buf);
+        self.dirs.contains_key(name)
+    }
+
+    /// Enumerates the virtual directory at `name`, returning `(entry_name, is_dir)`
+    /// pairs. `entry_name` is the immediate child when `recursive` is false, and the
+    /// path relative to `name` (with `/` separators) when `recursive` is true.
+    pub fn readdir(&self, name: &[u8], recursive: bool) -> Option<Vec<(Box<[u8]>, bool)>> {
+        if !is_bun_standalone_file_path(name) {
+            return None;
+        }
+        let mut buf = PathBuffer::uninit();
+        let name = Self::normalize_dir_path(name, &mut buf);
+        if !self.dirs.contains_key(name) {
+            return None;
+        }
+        let mut prefix: Vec<u8> = Vec::with_capacity(name.len() + 1);
+        prefix.extend_from_slice(name);
+        prefix.push(b'/');
+
+        let mut seen: StringArrayHashMap<bool> = StringArrayHashMap::new();
+        let mut push = |key: &[u8], is_dir: bool| {
+            if key.len() <= prefix.len() || !key.starts_with(&prefix) {
+                return;
+            }
+            let rel = &key[prefix.len()..];
+            if recursive {
+                let _ = seen.put(rel, is_dir);
+            } else if let Some(sep) = strings::index_of_char(rel, b'/') {
+                let _ = seen.put(&rel[..sep as usize], true);
+            } else {
+                let _ = seen.put(rel, is_dir);
+            }
+        };
+        for key in self.files.keys() {
+            push(key, false);
+        }
+        for key in self.dirs.keys() {
+            push(key, true);
+        }
+
+        let mut out: Vec<(Box<[u8]>, bool)> = Vec::with_capacity(seen.count());
+        for (k, v) in seen.iter() {
+            out.push ((Box::<[u8]>::from(&k[..]), *v));
+        }
+        Some(out)
     }
 
     pub fn find_assume_standalone_path(&mut self, name: &[u8]) -> Option<&mut File> {
@@ -426,6 +509,13 @@ impl File {
     }
 }
 
+fn dir_stat() -> Stat {
+    // SAFETY: all-zero is a valid `libc::stat` (POD `#[repr(C)]`).
+    let mut result: Stat = unsafe { bun_core::ffi::zeroed_unchecked() };
+    result.st_mode = (libc::S_IFDIR | 0o755) as _;
+    result
+}
+
 pub enum LazySourceMap {
     Serialized(SerializedSourceMap),
     Parsed(Arc<SourceMap::ParsedSourceMap>),
@@ -541,6 +631,7 @@ impl StandaloneModuleGraph {
             return Ok(StandaloneModuleGraph {
                 bytes: core::ptr::slice_from_raw_parts(NonNull::<u8>::dangling().as_ptr(), 0),
                 files: StringArrayHashMap::new(),
+                dirs: StringArrayHashMap::new(),
                 entry_point_id: 0,
                 compile_exec_argv: b"",
                 flags: Flags::default(),
@@ -641,11 +732,28 @@ impl StandaloneModuleGraph {
 
         modules.lock_pointers(); // make the pointers stable forever
 
+        // Derive every directory prefix that appears in a file path so `node:fs`
+        // can answer exists/stat/readdir for them. Keys are already normalized to
+        // `/` (see `to_bytes`), so a byte-wise rfind is sufficient on all platforms.
+        let mut dirs = StringArrayHashMap::<()>::new();
+        for key in modules.keys() {
+            let mut rest: &[u8] = key;
+            while let Some(sep) = strings::last_index_of_char(rest, b'/') {
+                rest = &rest[..sep as usize];
+                if rest.is_empty() || dirs.contains_key(rest) {
+                    break;
+                }
+                let _ = dirs.put(rest, ());
+            }
+        }
+        dirs.lock_pointers();
+
         Ok(StandaloneModuleGraph {
             // Stored as a raw fat pointer — `byte_count` covers the writable
             // bytecode/module_info regions, so a `&'static [u8]` here would alias them.
             bytes: core::ptr::slice_from_raw_parts(raw_const, offsets.byte_count),
             files: modules,
+            dirs,
             entry_point_id: offsets.entry_point_id,
             // SAFETY: read-only argv string subrange, disjoint from writable regions.
             compile_exec_argv: unsafe {
@@ -1004,6 +1112,7 @@ pub(crate) fn to_bytes(
         )?;
         debug_assert_eq!(graph.files.count(), modules.len());
         graph.files.unlock_pointers();
+        graph.dirs.unlock_pointers();
     }
 
     // StringBuilder owns the buffer; hand it back without copying. `cap` may

@@ -12,7 +12,7 @@ use bun_js_parser::parser::Runtime;
 use bun_options_types::context::MacroOptions;
 use bun_options_types::schema::api;
 use bun_paths::{PathBuffer, resolve_path};
-use bun_sys::{self, Fd};
+use bun_sys::{self, Fd, FdExt as _};
 
 extern crate bun_standalone_graph as bun_standalone_module_graph;
 
@@ -729,6 +729,17 @@ impl BuildCommand {
 
             break 'brk build_result.output_files;
         };
+
+        if ctx.bundler_options.compile && !ctx.bundler_options.compile_assets.is_empty() {
+            if let Err(err) = collect_compile_assets(
+                &ctx.bundler_options.compile_assets,
+                &mut output_files,
+            ) {
+                Output::err(&err, "failed to read --asset {}", (bun_fmt::quote(&err.path),));
+                exit_or_watch(1, ctx.debug.hot_reload == HotReload::Watch);
+            }
+        }
+
         let output_files: &mut [options::OutputFile] = &mut output_files;
         let bundled_end = bun_core::time::nano_timestamp();
 
@@ -1215,4 +1226,104 @@ fn print_summary(
     );
     Output::print_elapsed_stdout_trim(bundle_elapsed as f64);
     bun_core::prettyln!("  <green>bundle<r>  {} modules", reachable_file_count);
+}
+
+/// Walks each `--asset` path and appends an `OutputFile` per on-disk file so
+/// `to_bytes` embeds it under `/$bunfs/root/<basename-of-asset>/...` with its
+/// original relative path.
+fn collect_compile_assets(
+    assets: &[Box<[u8]>],
+    out: &mut Vec<options::OutputFile>,
+) -> bun_sys::Maybe<()> {
+    use bun_ast::Loader;
+    use bun_sys::EntryKind;
+
+    let push = |out: &mut Vec<options::OutputFile>, dest: Vec<u8>, bytes: Vec<u8>| {
+        out.push(options::OutputFile {
+            loader: Loader::File,
+            input_loader: Loader::File,
+            output_kind: options::OutputKind::Asset,
+            dest_path: dest.into_boxed_slice(),
+            size: bytes.len(),
+            size_without_sourcemap: bytes.len(),
+            value: options::OutputFileValue::Buffer {
+                bytes: bytes.into_boxed_slice(),
+            },
+            side: Some(options::Side::Client),
+            ..options::OutputFile::zero_value()
+        });
+    };
+
+    let cwd = Fd::cwd();
+    let mut zbuf = bun_paths::path_buffer_pool::get();
+    for asset in assets {
+        let asset_trimmed: &[u8] = {
+            let mut a: &[u8] = asset;
+            while matches!(a.last(), Some(b'/') | Some(b'\\')) {
+                a = &a[..a.len() - 1];
+            }
+            a
+        };
+        let base = bun_paths::basename(asset_trimmed);
+        if base.is_empty() || base == b"." || base == b".." {
+            return Err(bun_sys::Error::from_code(bun_sys::E::EINVAL, bun_sys::Tag::open)
+                .with_path(asset));
+        }
+
+        let n = asset_trimmed.len().min(zbuf.len() - 1);
+        zbuf[..n].copy_from_slice(&asset_trimmed[..n]);
+        zbuf[n] = 0;
+        let asset_z = bun_core::ZStr::from_buf(&zbuf[..], n);
+
+        let st = bun_sys::stat(asset_z).map_err(|e| e.with_path(asset))?;
+        if bun_core::S::ISDIR(st.st_mode as _) {
+            let dir = bun_sys::open_dir_for_iteration(cwd, asset_trimmed)
+                .map_err(|e| e.with_path(asset))?;
+            let _close = scopeguard::guard(dir, |fd| fd.close());
+            let mut walker = bun_sys::walker_skippable::walk(dir, &[], &[])
+                .map_err(|_| bun_sys::Error::from_code(bun_sys::E::ENOMEM, bun_sys::Tag::open))?;
+            while let Some(entry) = walker.next().map_err(|e| e.with_path(asset))? {
+                if entry.kind == EntryKind::Directory {
+                    continue;
+                }
+                #[cfg(windows)]
+                let (rel, bytes) = {
+                    let mut rel_buf = bun_paths::path_buffer_pool::get();
+                    let rel_z =
+                        bun_paths::string_paths::from_w_path(&mut rel_buf[..], entry.path.as_slice());
+                    let mut rel = rel_z.as_bytes().to_vec();
+                    for b in rel.iter_mut() {
+                        if *b == b'\\' {
+                            *b = b'/';
+                        }
+                    }
+                    let mut base_buf = bun_paths::path_buffer_pool::get();
+                    let base_z = bun_paths::string_paths::from_w_path(
+                        &mut base_buf[..],
+                        entry.basename.as_slice(),
+                    );
+                    let bytes = bun_sys::File::read_from(entry.dir, base_z.as_bytes())
+                        .map_err(|e| e.with_path(&rel))?;
+                    (rel, bytes)
+                };
+                #[cfg(not(windows))]
+                let (rel, bytes) = {
+                    let rel = entry.path.as_bytes().to_vec();
+                    let bytes = bun_sys::File::read_from(entry.dir, entry.basename.as_bytes())
+                        .map_err(|e| e.with_path(entry.path.as_bytes()))?;
+                    (rel, bytes)
+                };
+                let mut dest = Vec::with_capacity(base.len() + 1 + rel.len());
+                dest.extend_from_slice(base);
+                dest.push(b'/');
+                dest.extend_from_slice(&rel);
+                push(out, dest, bytes);
+            }
+        } else {
+            let bytes = bun_sys::File::read_from(cwd, asset_trimmed)
+                .map_err(|e| e.with_path(asset))?;
+            push(out, base.to_vec(), bytes);
+        }
+    }
+    Ok(())
 }

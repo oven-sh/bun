@@ -332,10 +332,6 @@ JSC_DECLARE_HOST_FUNCTION(jsWebStreamsCountQueuingStrategySize);
     V(oneShotDirectSinkStructure, JSOneShotDirectSink)                       \
     V(intoArrayOperationStructure, JSReadableStreamIntoArrayOperation)
 
-// Plain struct — not a GC cell. Held BY VALUE on Zig::GlobalObject and visited via
-// `visit()` from the global's visitChildren (the `visitGlobalObjectMember` T&-with-visit
-// overload). Default-constructed alongside the global, then `initialize()` wires the
-// LazyProperty initializers from finishCreation.
 class JSStreamsRuntime final {
     WTF_MAKE_NONCOPYABLE(JSStreamsRuntime);
 

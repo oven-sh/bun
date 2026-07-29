@@ -78,8 +78,6 @@ void JSDirectStreamController::armEndOfTickFlush(JSGlobalObject* globalObject)
     m_endOfTickFlushArmed = true;
     auto* zigGlobal = defaultGlobalObject(globalObject);
     auto* handler = JSStreamsRuntime::from(globalObject)->onDirectEndOfTickFlush();
-    // process.nextTick(handler, undefined, controller) so the controller lands at
-    // argument(1) in the [reaction-convention] position.
     Bun__Process__queueNextTick2(zigGlobal, JSValue::encode(handler), JSValue::encode(jsUndefined()), JSValue::encode(this));
 }
 

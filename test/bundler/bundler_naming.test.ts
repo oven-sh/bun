@@ -344,6 +344,29 @@ describe("bundler", () => {
       },
     });
   }
+  itBundled("naming/ChunkNamingCollisionHint", {
+    backend: "api",
+    files: {
+      "/src/main.js": /* js */ `
+        import { v } from "./sub/modname.js";
+        import("./lazy.js").then(m => console.log(v, m.z));
+      `,
+      "/src/sub/modname.js": `export const v = "V";`,
+      "/src/lazy.js": `export const z = "Z";`,
+    },
+    entryPointsRaw: ["./src/main.js", "./src/sub/modname.js"],
+    outdir: "/out",
+    splitting: true,
+    chunkNaming: "chunks/[name].[ext]",
+    bundleErrors: {
+      "<bun>": ["Multiple files share the same output path"],
+    },
+    onAfterApiBundle(build) {
+      const text = build.logs.map(l => l.message).join("\n");
+      expect(text).toContain("chunk naming is");
+      expect(text).not.toContain("asset naming is");
+    },
+  });
   // A non-ASCII ID_Continue basename char is preserved in the generated
   // CommonJS wrapper symbol, not replaced per-code-point (nor per-UTF-8-byte,
   // which once regressed to `require_caf__utils`).

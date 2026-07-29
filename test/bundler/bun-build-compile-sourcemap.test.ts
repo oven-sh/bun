@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
 import { readdirSync } from "fs";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "path";
 
 describe("Bun.build compile with sourcemap", () => {
@@ -221,54 +221,47 @@ export function greet() {
     ["--sourcemap=inline", false],
     ["--sourcemap=external", true],
   ])("CLI: --compile %s", (flag, expectSidecar) => {
-    test.concurrent(
-      expectSidecar ? "writes a .map sidecar" : "does not write a .map sidecar",
-      async () => {
-        using dir = tempDir(`build-compile-cli-sourcemap-${flag.replace(/[^a-z]/gi, "")}`, {
-          "thr.ts": 'function f() {\n  throw new Error("x");\n}\nf();\n',
-        });
-        const outfile = join(String(dir), "app");
+    test.concurrent(expectSidecar ? "writes a .map sidecar" : "does not write a .map sidecar", async () => {
+      using dir = tempDir(`build-compile-cli-sourcemap-${flag.replace(/[^a-z]/gi, "")}`, {
+        "thr.ts": 'function f() {\n  throw new Error("x");\n}\nf();\n',
+      });
+      const outfile = join(String(dir), "app");
 
-        await using build = Bun.spawn({
-          cmd: [bunExe(), "build", "--compile", "thr.ts", "--outfile", outfile, flag],
-          env: bunEnv,
-          cwd: String(dir),
-          stdout: "pipe",
-          stderr: "pipe",
-        });
-        const [, buildStderr, buildExit] = await Promise.all([
-          build.stdout.text(),
-          build.stderr.text(),
-          build.exited,
-        ]);
-        expect(buildStderr).toBe("");
-        expect(buildExit).toBe(0);
+      await using build = Bun.spawn({
+        cmd: [bunExe(), "build", "--compile", "thr.ts", "--outfile", outfile, flag],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [, buildStderr, buildExit] = await Promise.all([build.stdout.text(), build.stderr.text(), build.exited]);
+      expect(buildStderr).toBe("");
+      expect(buildExit).toBe(0);
 
-        const mapFiles = readdirSync(String(dir)).filter(name => name.endsWith(".map"));
-        if (expectSidecar) {
-          expect(mapFiles.length).toBe(1);
-          const map = JSON.parse(await Bun.file(join(String(dir), mapFiles[0])).text());
-          expect(map.version).toBe(3);
-        } else {
-          expect(mapFiles).toEqual([]);
-        }
+      const mapFiles = readdirSync(String(dir)).filter(name => name.endsWith(".map"));
+      if (expectSidecar) {
+        expect(mapFiles.length).toBe(1);
+        const map = JSON.parse(await Bun.file(join(String(dir), mapFiles[0])).text());
+        expect(map.version).toBe(3);
+      } else {
+        expect(mapFiles).toEqual([]);
+      }
 
-        // The embedded sourcemap should resolve the stack regardless of
-        // whether a sidecar was written.
-        const exe = process.platform === "win32" ? `${outfile}.exe` : outfile;
-        await using run = Bun.spawn({
-          cmd: [exe],
-          env: bunEnv,
-          cwd: String(dir),
-          stdout: "pipe",
-          stderr: "pipe",
-        });
-        const [, runStderr, runExit] = await Promise.all([run.stdout.text(), run.stderr.text(), run.exited]);
-        expect(runStderr).toContain("thr.ts");
-        expect(runStderr).not.toMatch(/(\$bunfs|~BUN)\/root\//);
-        expect(runExit).not.toBe(0);
-      },
-    );
+      // The embedded sourcemap should resolve the stack regardless of
+      // whether a sidecar was written.
+      const exe = process.platform === "win32" ? `${outfile}.exe` : outfile;
+      await using run = Bun.spawn({
+        cmd: [exe],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [, runStderr, runExit] = await Promise.all([run.stdout.text(), run.stderr.text(), run.exited]);
+      expect(runStderr).toContain("thr.ts");
+      expect(runStderr).not.toMatch(/(\$bunfs|~BUN)\/root\//);
+      expect(runExit).not.toBe(0);
+    });
   });
 
   test("compile with --outfile subdir/myapp writes .map next to executable", async () => {

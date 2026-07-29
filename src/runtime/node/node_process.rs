@@ -58,6 +58,7 @@ pub extern "C" fn exit(global_object: &JSGlobalObject, code: u8) {
         // instead to terminate the worker sooner
         worker.exit();
     } else {
+        crate::cli::test_command::on_process_exit_during_tests(vm, code);
         vm.on_exit();
         vm.global_exit();
     }

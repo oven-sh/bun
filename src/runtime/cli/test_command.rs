@@ -1529,6 +1529,49 @@ impl CommandLineReporter {
             .saturating_add(sequence.expect_call_count);
     }
 
+    /// `pass / skip / filtered out / todo / fail / errors` lines.
+    pub fn print_summary_counts(&self, indent: &str) {
+        let summary = self.jest.summary;
+        if summary.pass > 0 {
+            pretty_error!("<r><green>");
+        }
+        pretty_error!("{}{:5>} pass<r>\n", indent, summary.pass);
+
+        if summary.skip > 0 {
+            pretty_error!("{}<r><yellow>{:5>} skip<r>\n", indent, summary.skip);
+        } else if summary.skipped_because_label > 0 {
+            pretty_error!(
+                "{}<r><d>{:5>} filtered out<r>\n",
+                indent,
+                summary.skipped_because_label
+            );
+        }
+
+        if summary.todo > 0 {
+            pretty_error!("{}<r><magenta>{:5>} todo<r>\n", indent, summary.todo);
+        }
+
+        if summary.fail > 0 {
+            pretty_error!("<r><red>");
+        } else {
+            pretty_error!("<r><d>");
+        }
+        pretty_error!("{}{:5>} fail<r>\n", indent, summary.fail);
+
+        if self.jest.unhandled_errors_between_tests > 0 {
+            pretty_error!(
+                "{}<r><red>{:5>} error{}<r>\n",
+                indent,
+                self.jest.unhandled_errors_between_tests,
+                if self.jest.unhandled_errors_between_tests > 1 {
+                    "s"
+                } else {
+                    ""
+                }
+            );
+        }
+    }
+
     pub fn print_summary(&mut self) {
         let summary_ = self.summary();
         let tests = summary_.fail + summary_.pass + summary_.skip + summary_.todo;
@@ -2236,6 +2279,8 @@ impl TestCommand {
                 // process-lifetime CLI context and `exec()` never returns.
                 test_options: unsafe { bun_ptr::detach_lifetime_ref(&ctx.test_options) },
                 unhandled_errors_between_tests: 0,
+                total_test_files: 0,
+                module_load_in_progress: false,
                 summary: Summary::default(),
             },
             last_dot: 0,
@@ -2254,6 +2299,10 @@ impl TestCommand {
         // valid for the process lifetime.
         unsafe {
             jest::Jest::RUNNER.write(Some(core::ptr::NonNull::from(&mut reporter.jest)));
+        }
+        // SAFETY: same single-thread / process-lifetime invariant as `RUNNER`.
+        unsafe {
+            REPORTER.write(Some(core::ptr::NonNull::from(&mut *reporter)));
         }
         // `reporter.jest.test_options` is initialised in the struct
         // literal above (lifetime-erased); the post-init assignment is dropped.
@@ -2685,6 +2734,7 @@ impl TestCommand {
                 }
             }
 
+            reporter.jest.total_test_files = test_files.len() as u32;
             if ctx.test_options.parallel > 0 {
                 ran_parallel = ParallelRunner::run_as_coordinator(
                     &mut reporter,
@@ -2908,45 +2958,7 @@ impl TestCommand {
                     pretty_error!("{}<r>--seed={}<r>\n", &indenter, seed);
                 }
 
-                if summary.pass > 0 {
-                    pretty_error!("<r><green>");
-                }
-
-                pretty_error!("{}{:5>} pass<r>\n", &indenter, summary.pass);
-
-                if summary.skip > 0 {
-                    pretty_error!("{}<r><yellow>{:5>} skip<r>\n", &indenter, summary.skip);
-                } else if summary.skipped_because_label > 0 {
-                    pretty_error!(
-                        "{}<r><d>{:5>} filtered out<r>\n",
-                        &indenter,
-                        summary.skipped_because_label
-                    );
-                }
-
-                if summary.todo > 0 {
-                    pretty_error!("{}<r><magenta>{:5>} todo<r>\n", &indenter, summary.todo);
-                }
-
-                if summary.fail > 0 {
-                    pretty_error!("<r><red>");
-                } else {
-                    pretty_error!("<r><d>");
-                }
-
-                pretty_error!("{}{:5>} fail<r>\n", &indenter, summary.fail);
-                if reporter.jest.unhandled_errors_between_tests > 0 {
-                    pretty_error!(
-                        "{}<r><red>{:5>} error{}<r>\n",
-                        &indenter,
-                        reporter.jest.unhandled_errors_between_tests,
-                        if reporter.jest.unhandled_errors_between_tests > 1 {
-                            "s"
-                        } else {
-                            ""
-                        }
-                    );
-                }
+                reporter.print_summary_counts(if indenter.indent { " " } else { "" });
 
                 let mut print_expect_calls = summary.expectations > 0;
                 if reporter.jest.snapshots.total > 0 {
@@ -3018,6 +3030,14 @@ impl TestCommand {
         Output::flush();
 
         reporter.write_junit_report_if_needed();
+
+        // Run complete: summary printed, JUnit written. Any `process.exit()`
+        // from here on (watch-idle timers, `'exit'` listeners) is a normal
+        // shutdown-time exit, not a mid-run abort.
+        // SAFETY: single-threaded (JS VM thread).
+        unsafe {
+            REPORTER.write(None);
+        }
 
         if vm.hot_reload == jsc::virtual_machine::HOT_RELOAD_WATCH {
             let vm_ptr: *mut VirtualMachine = vm;
@@ -3273,11 +3293,13 @@ impl TestCommand {
             }
             // need to wake up so autoTick() doesn't wait for 16-100ms after loading the entrypoint
             vm.wakeup();
-            let promise = vm.load_entry_point_for_test_runner(file_path)?;
-            // Only count the file once, not once per repeat
             if repeat_index == 0 {
+                // Before load: `on_process_exit_during_tests` must see this file as started.
                 reporter.summary().files += 1;
             }
+            reporter.jest.module_load_in_progress = true;
+            let promise = vm.load_entry_point_for_test_runner(file_path)?;
+            reporter.jest.module_load_in_progress = false;
 
             // S012: `JSInternalPromise` is an `opaque_ffi!` ZST — safe `*mut → &mut` deref.
             match jsc::JSInternalPromise::opaque_mut(promise).status() {
@@ -3413,4 +3435,72 @@ pub(crate) fn handle_top_level_test_error_before_javascript_start(err: &crate::E
         }
     }
     Global::exit(1);
+}
+
+/// Live `CommandLineReporter` while a `bun test` run is in progress (sibling of [`jest::Jest::RUNNER`]).
+static REPORTER: bun_core::RacyCell<Option<core::ptr::NonNull<CommandLineReporter>>> =
+    bun_core::RacyCell::new(None);
+
+/// The Node `common/index.js` re-spawn / `common.skip()` pattern: last file's top-level exit, nothing to hide.
+fn is_last_file_toplevel_exit_with_no_failures(r: &CommandLineReporter, not_run: u32) -> bool {
+    not_run == 0
+        && r.jest.module_load_in_progress
+        && r.jest.summary.fail == 0
+        && r.jest.unhandled_errors_between_tests == 0
+}
+
+/// `Bun__Process__exit` hook: flush the `bun test` summary and force exit 1 so an in-test `process.exit(0)` can't mask later files.
+pub(crate) fn on_process_exit_during_tests(vm: &mut VirtualMachine, requested: u8) {
+    // SAFETY: `REPORTER` is only read/written on the JS VM thread.
+    let Some(reporter_ptr) = (unsafe { REPORTER.read() }) else {
+        return;
+    };
+    // SAFETY: single-threaded; clear-before-use makes re-entry a no-op.
+    unsafe { REPORTER.write(None) };
+    // SAFETY: `REPORTER` was set from `&mut *reporter` in `exec()`, which
+    // owns the `Box<CommandLineReporter>` for the process lifetime. Same
+    // write-provenance raw-ptr escape as `Jest::RUNNER`: ancestor frames hold
+    // a `&mut` but never access it again because `global_exit()` (our caller's
+    // next call) diverges.
+    let reporter = unsafe { &mut *reporter_ptr.as_ptr() };
+
+    if reporter.worker_ipc_file_idx.is_some() {
+        // `--parallel` coordinator accounts for the crash (`reap_worker` → `account_crash`).
+        return;
+    }
+
+    let not_run = reporter
+        .jest
+        .total_test_files
+        .saturating_sub(reporter.jest.summary.files);
+
+    if is_last_file_toplevel_exit_with_no_failures(reporter, not_run) {
+        return;
+    }
+
+    if Output::is_github_action() {
+        pretty_errorln!("<r>\n::endgroup::\n");
+    }
+    pretty_error!(
+        "\n<red>error<r><d>:<r> <b>process.exit({})<r> was called during <b>bun test<r>\n",
+        requested,
+    );
+    if not_run > 0 {
+        pretty_error!(
+            "       <b>{}<r> test file{} {} never reached.\n",
+            not_run,
+            if not_run == 1 { "" } else { "s" },
+            if not_run == 1 { "was" } else { "were" },
+        );
+    }
+    pretty_error!("\n");
+
+    reporter.print_summary_counts(" ");
+    reporter.print_summary();
+    pretty_error!("\n");
+    Output::flush();
+
+    reporter.write_junit_report_if_needed();
+
+    vm.exit_handler.exit_code = 1;
 }

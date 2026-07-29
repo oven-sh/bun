@@ -144,6 +144,10 @@ pub struct TestRunner<'a> {
     pub filter_regex: Option<core::ptr::NonNull<RegularExpression>>,
 
     pub unhandled_errors_between_tests: u32,
+    /// Serial-run file queue length; see `on_process_exit_during_tests`.
+    pub total_test_files: u32,
+    /// True while `TestCommand::run` is inside `load_entry_point_for_test_runner`.
+    pub module_load_in_progress: bool,
     pub summary: Summary,
 
     pub bun_test_root: bun_test::BunTestRoot,

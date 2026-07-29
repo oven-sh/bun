@@ -850,8 +850,7 @@ impl Builtin {
         Cmd::on_exec_done(interp, cmd, exit_code)
     }
 
-    /// POSIX/coreutils builtins exit 1 on any operational failure; errno text
-    /// goes to stderr, not `$?`. 2 is usage, 126/127 the exec path.
+    /// POSIX/coreutils exit 1 on any operational failure; errno goes to stderr, not `$?`.
     #[inline]
     pub fn status_for(_errno: bun_sys::E) -> ExitCode {
         1

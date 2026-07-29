@@ -128,6 +128,7 @@ type LaunchRequest = DAP.LaunchRequest & {
   args?: string[];
   cwd?: string;
   env?: Record<string, string>;
+  console?: "internalConsole" | "integratedTerminal" | "externalTerminal";
   strictEnv?: boolean;
   stopOnEntry?: boolean;
   noDebug?: boolean;
@@ -213,7 +214,7 @@ export type DebugAdapterEventMap = InspectorEventMap & {
   "Adapter.response": [DAP.Response];
   "Adapter.event": [DAP.Event];
   "Adapter.error": [Error];
-  "Adapter.reverseRequest": [DAP.Request];
+  "Adapter.reverseRequest": [DAP.Request, (response: DAP.Response) => void];
 } & {
   "Process.requested": [unknown];
   "Process.spawned": [ChildProcess];
@@ -406,13 +407,26 @@ export abstract class BaseDebugAdapter<T extends Inspector = Inspector>
     });
   }
 
-  #reverseRequest<T extends keyof DAP.RequestMap>(command: T, args?: DAP.RequestMap[T]): void {
-    this.emit("Adapter.reverseRequest", {
-      type: "request",
-      seq: 0,
-      command,
-      arguments: args,
+  protected reverseRequest<T extends keyof DAP.RequestMap>(
+    command: T,
+    args?: DAP.RequestMap[T],
+  ): Promise<DAP.Response> {
+    return new Promise(resolve => {
+      this.emit(
+        "Adapter.reverseRequest",
+        {
+          type: "request",
+          seq: 0,
+          command,
+          arguments: args,
+        },
+        resolve,
+      );
     });
+  }
+
+  protected get initializeRequest(): InitializeRequest | undefined {
+    return this.#initialized;
   }
 
   async ["Adapter.request"](request: DAP.Request): Promise<void> {
@@ -2164,6 +2178,7 @@ export class WebSocketDebugAdapter extends BaseDebugAdapter<WebSocketInspector> 
       args = [],
       cwd,
       env = {},
+      console: console_ = "internalConsole",
       strictEnv = false,
       watchMode = false,
       stopOnEntry = false,
@@ -2202,74 +2217,79 @@ export class WebSocketDebugAdapter extends BaseDebugAdapter<WebSocketInspector> 
           ...env,
         };
 
+    let url: string;
+    let signal: UnixSignal | TCPSocketSignal;
     if (process.platform !== "win32") {
-      // we're on unix
-      const url = `ws+unix://${randomUnixPath()}`;
-      const signal = new UnixSignal();
-
-      signal.on("Signal.received", () => {
-        this.#attach({ url });
-      });
-
-      this.once("Adapter.terminated", () => {
-        signal.close();
-      });
-
-      const query = stopOnEntry ? "break=1" : "wait=1";
-      processEnv["BUN_INSPECT"] = `${url}?${query}`;
-      processEnv["BUN_INSPECT_NOTIFY"] = signal.url;
-
-      // This is probably not correct, but it's the best we can do for now.
-      processEnv["FORCE_COLOR"] = "1";
-      processEnv["BUN_QUIET_DEBUG_LOGS"] = "1";
-      processEnv["BUN_DEBUG_QUIET_LOGS"] = "1";
-
-      const started = await this.#spawn({
-        command: runtime,
-        args: processArgs,
-        env: processEnv,
-        cwd,
-        isDebugee: true,
-      });
-
-      if (!started) {
-        throw new Error("Program could not be started.");
-      }
+      url = `ws+unix://${randomUnixPath()}`;
+      signal = new UnixSignal();
     } else {
-      // we're on windows
-      // Create TCPSocketSignal
-      const url = `ws://127.0.0.1:${await getAvailablePort()}/${getRandomId()}`; // 127.0.0.1 so it resolves correctly on windows
-      const signal = new TCPSocketSignal(await getAvailablePort());
+      // 127.0.0.1 so it resolves correctly on windows
+      url = `ws://127.0.0.1:${await getAvailablePort()}/${getRandomId()}`;
+      signal = new TCPSocketSignal(await getAvailablePort());
+    }
 
-      signal.on("Signal.received", async () => {
-        this.#attach({ url });
+    signal.on("Signal.received", () => {
+      this.#attach({ url });
+    });
+
+    this.once("Adapter.terminated", () => {
+      signal.close();
+    });
+
+    const query = stopOnEntry ? "break=1" : "wait=1";
+    const inspectEnv: Record<string, string> = {
+      BUN_INSPECT: `${url}?${query}`,
+      BUN_INSPECT_NOTIFY: signal.url,
+      BUN_QUIET_DEBUG_LOGS: "1",
+      BUN_DEBUG_QUIET_LOGS: "1",
+    };
+
+    const terminalKind =
+      console_ === "integratedTerminal" ? "integrated" : console_ === "externalTerminal" ? "external" : undefined;
+
+    let started: boolean;
+    if (terminalKind && this.initializeRequest?.supportsRunInTerminalRequest) {
+      started = await this.#runInTerminal({
+        kind: terminalKind,
+        title: "Bun Debugger",
+        cwd: cwd ?? process.cwd(),
+        args: [runtime, ...processArgs],
+        // runInTerminal env is additive to the terminal's own environment, so only send
+        // the inspector variables and the user's explicit overrides.
+        env: { ...env, ...inspectEnv },
       });
-
-      this.once("Adapter.terminated", () => {
-        signal.close();
-      });
-
-      const query = stopOnEntry ? "break=1" : "wait=1";
-      processEnv["BUN_INSPECT"] = `${url}?${query}`;
-      processEnv["BUN_INSPECT_NOTIFY"] = signal.url; // 127.0.0.1 so it resolves correctly on windows
-
+    } else {
+      Object.assign(processEnv, inspectEnv);
       // This is probably not correct, but it's the best we can do for now.
       processEnv["FORCE_COLOR"] = "1";
-      processEnv["BUN_QUIET_DEBUG_LOGS"] = "1";
-      processEnv["BUN_DEBUG_QUIET_LOGS"] = "1";
 
-      const started = await this.#spawn({
+      started = await this.#spawn({
         command: runtime,
         args: processArgs,
         env: processEnv,
         cwd,
         isDebugee: true,
       });
-
-      if (!started) {
-        throw new Error("Program could not be started.");
-      }
     }
+
+    if (!started) {
+      throw new Error("Program could not be started.");
+    }
+  }
+
+  async #runInTerminal(request: DAP.RunInTerminalRequest): Promise<boolean> {
+    const response = await this.reverseRequest("runInTerminal", request);
+    if (!response.success) {
+      throw new Error(response.message || "runInTerminal request failed");
+    }
+    const body = response.body as DAP.RunInTerminalResponse | undefined;
+    this.emitAdapterEvent("process", {
+      name: request.args.join(" "),
+      systemProcessId: body?.processId,
+      isLocalProcess: true,
+      startMethod: "launch",
+    });
+    return true;
   }
 
   async #spawn(options: {

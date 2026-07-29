@@ -983,6 +983,14 @@ impl CompletionStruct for JSBundleCompletionTask {
                 .conditions
                 .append_slice(&[b"development"])?;
         }
+        if let Some(dev) = config.jsx_development_explicit {
+            transpiler.options.jsx.development = dev;
+            transpiler.options.force_node_env = if dev {
+                options::ForceNodeEnv::Development
+            } else {
+                options::ForceNodeEnv::Production
+            };
+        }
         // `transpiler.env` is the dotenv loader installed by
         // `Transpiler::init`; non-null and valid for `'a`.
         transpiler.resolver.env_loader = NonNull::new(transpiler.env);

@@ -100,6 +100,17 @@ pub enum ForceNodeEnv {
     Production,
 }
 
+impl ForceNodeEnv {
+    /// `Some(dev)` to override per-file tsconfig `jsx.development`; `None` keeps it.
+    pub fn jsx_development_override(self) -> Option<bool> {
+        match self {
+            ForceNodeEnv::Development => Some(true),
+            ForceNodeEnv::Production => Some(false),
+            ForceNodeEnv::Unspecified => None,
+        }
+    }
+}
+
 /// package.json `"type"` field.
 #[repr(u8)]
 #[derive(Copy, Clone, Eq, PartialEq, Debug, Default)]

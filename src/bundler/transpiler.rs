@@ -587,14 +587,18 @@ impl<'a> Transpiler<'a> {
             }
         }
 
-        if is_development {
-            self.options.set_production(false);
-            self.resolver.opts.set_production(false);
-            self.options.force_node_env = options::ForceNodeEnv::Development;
-            self.resolver.opts.force_node_env = options::ForceNodeEnv::Development;
-        } else if is_production {
-            self.options.set_production(true);
-            self.resolver.opts.set_production(true);
+        if self.options.force_node_env == options::ForceNodeEnv::Unspecified {
+            if is_development {
+                self.options.set_production(false);
+                self.resolver.opts.set_production(false);
+                self.options.force_node_env = options::ForceNodeEnv::Development;
+                self.resolver.opts.force_node_env = options::ForceNodeEnv::Development;
+            } else if is_production {
+                self.options.set_production(true);
+                self.resolver.opts.set_production(true);
+                self.options.force_node_env = options::ForceNodeEnv::Production;
+                self.resolver.opts.force_node_env = options::ForceNodeEnv::Production;
+            }
         }
         Ok(())
     }

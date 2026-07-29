@@ -2130,7 +2130,9 @@ pub mod bv2_impl {
                     &import_record.source_file,
                     &import_record.specifier,
                 ) {
-                    let file_map_result = _file_map_result;
+                    let mut file_map_result = _file_map_result;
+                    // SAFETY: see `transpiler` note above.
+                    file_map_result.jsx = unsafe { &(*transpiler).options.jsx }.clone();
                     let mut path_primary = file_map_result.path_pair.primary;
                     // reshaped for borrowck — `get_or_put` borrows `*self` mutably via
                     // `self.graph`; capture the slot as `*mut u32` so subsequent `self.*` calls
@@ -2532,13 +2534,13 @@ pub mod bv2_impl {
             task.task.node.next = core::ptr::null_mut();
             task.tree_shaking = self.linker.options.tree_shaking;
             task.known_target = target;
+            if let Some(dev) = self
+                .transpiler_for_target(target)
+                .options
+                .force_node_env
+                .jsx_development_override()
             {
-                let t = self.transpiler_for_target(target);
-                task.jsx.development = match t.options.force_node_env {
-                    options::ForceNodeEnv::Development => true,
-                    options::ForceNodeEnv::Production => false,
-                    options::ForceNodeEnv::Unspecified => t.options.jsx.development,
-                };
+                task.jsx.development = dev;
             }
 
             // Handle onLoad plugins as entry points
@@ -2642,13 +2644,13 @@ pub mod bv2_impl {
             task.tree_shaking = self.linker.options.tree_shaking;
             task.is_entry_point = is_entry_point;
             task.known_target = target;
+            if let Some(dev) = self
+                .transpiler_for_target(target)
+                .options
+                .force_node_env
+                .jsx_development_override()
             {
-                let bundler = self.transpiler_for_target(target);
-                task.jsx.development = match bundler.options.force_node_env {
-                    options::ForceNodeEnv::Development => true,
-                    options::ForceNodeEnv::Production => false,
-                    options::ForceNodeEnv::Unspecified => bundler.options.jsx.development,
-                };
+                task.jsx.development = dev;
             }
 
             // Handle onLoad plugins as entry points
@@ -3471,7 +3473,14 @@ pub mod bv2_impl {
             // SAFETY: arena outlives the bundle pass; reborrow `*mut` as `&mut`.
             let task: &mut ParseTask = self.arena_create(task_val);
             task.loader = Some(loader);
-            task.jsx = self.transpiler_for_target(known_target).options.jsx.clone();
+            if let Some(dev) = self
+                .transpiler_for_target(known_target)
+                .options
+                .force_node_env
+                .jsx_development_override()
+            {
+                task.jsx.development = dev;
+            }
             task.task.node.next = core::ptr::null_mut();
             task.io_task.node.next = core::ptr::null_mut();
             task.tree_shaking = self.linker.options.tree_shaking;
@@ -3533,7 +3542,7 @@ pub mod bv2_impl {
             let contents: &'static [u8] = unsafe { interned_slice(stored.contents()) };
             // Compute borrow-heavy fields up front so the `&self` borrow taken by
             // `arena()` doesn't overlap `&mut self` uses inside the literal.
-            let jsx = if known_target == Target::ServerComponentsSsr
+            let jsx_transpiler = if known_target == Target::ServerComponentsSsr
                 && !self
                     .framework
                     .as_ref()
@@ -3543,10 +3552,18 @@ pub mod bv2_impl {
                     .unwrap()
                     .separate_ssr_graph
             {
-                self.transpiler.options.jsx.clone()
+                &*self.transpiler
             } else {
-                self.transpiler_for_target(known_target).options.jsx.clone()
+                &*self.transpiler_for_target(known_target)
             };
+            let mut jsx = jsx_transpiler.options.jsx.clone();
+            if let Some(dev) = jsx_transpiler
+                .options
+                .force_node_env
+                .jsx_development_override()
+            {
+                jsx.development = dev;
+            }
             let tree_shaking = self.linker.options.tree_shaking;
             // SAFETY: arena (`self.graph.heap`) outlives the bundle pass; coerce the
             // `&mut ParseTask` to `*mut` immediately so the `&self` borrow from
@@ -4646,11 +4663,29 @@ pub mod bv2_impl {
                                     file: bun_sys::Fd::INVALID,
                                 },
                                 side_effects: bun_ast::SideEffects::HasSideEffects,
-                                jsx: this
-                                    .transpiler_for_target(resolve.import_record.original_target)
-                                    .options
-                                    .jsx
-                                    .clone(),
+                                jsx: {
+                                    let t = this.transpiler_for_target(
+                                        resolve.import_record.original_target,
+                                    );
+                                    let mut jsx = t.options.jsx.clone();
+                                    if path.namespace == b"file" {
+                                        let dir =
+                                            Fs::PathName::init(path.text).dir_with_trailing_slash();
+                                        if let Some(tsconfig) = t
+                                            .resolver
+                                            .read_dir_info_ignore_error(dir)
+                                            .and_then(|d| d.enclosing_tsconfig_json)
+                                        {
+                                            jsx = tsconfig.merge_jsx(jsx);
+                                        }
+                                    }
+                                    if let Some(dev) =
+                                        t.options.force_node_env.jsx_development_override()
+                                    {
+                                        jsx.development = dev;
+                                    }
+                                    jsx
+                                },
                                 source_index: bun_ast::Index::init(source_index.get()),
                                 module_type: options::ModuleType::Unknown,
                                 loader: Some(loader),
@@ -6044,13 +6079,11 @@ pub mod bv2_impl {
                         resolve_task.known_target = target;
                         // Use transpiler JSX options, applying force_node_env like the disk path does
                         resolve_task.jsx = transpiler.options.jsx.clone();
-                        resolve_task.jsx.development = match transpiler.options.force_node_env {
-                            options::ForceNodeEnv::Development => true,
-                            options::ForceNodeEnv::Production => false,
-                            options::ForceNodeEnv::Unspecified => {
-                                transpiler.options.jsx.development
-                            }
-                        };
+                        if let Some(dev) =
+                            transpiler.options.force_node_env.jsx_development_override()
+                        {
+                            resolve_task.jsx.development = dev;
+                        }
                         resolve_task.loader = Some(import_record_loader);
                         resolve_task.tree_shaking = transpiler.options.tree_shaking;
                         resolve_task.side_effects = bun_ast::SideEffects::HasSideEffects;
@@ -6413,11 +6446,9 @@ pub mod bv2_impl {
                 };
 
                 resolve_task.jsx = resolve_result.jsx.clone();
-                resolve_task.jsx.development = match transpiler.options.force_node_env {
-                    options::ForceNodeEnv::Development => true,
-                    options::ForceNodeEnv::Production => false,
-                    options::ForceNodeEnv::Unspecified => transpiler.options.jsx.development,
-                };
+                if let Some(dev) = transpiler.options.force_node_env.jsx_development_override() {
+                    resolve_task.jsx.development = dev;
+                }
 
                 resolve_task.loader = Some(import_record_loader);
                 resolve_task.tree_shaking = transpiler.options.tree_shaking;

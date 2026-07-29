@@ -2937,6 +2937,14 @@ fn normalize_specifier_for_resolution<'a>(
     specifier_: &'a [u8],
     query_string: &mut &'a [u8],
 ) -> &'a [u8] {
+    // Node only gives `?` URL-separator meaning for relative/absolute ESM
+    // specifiers. For a bare package specifier (`pkg`, `@scope/pkg/sub`) the
+    // `?` is part of the name/subpath and must reach the resolver verbatim so
+    // `import("pkg?v=1")` fails instead of evaluating a second instance of the
+    // package.
+    if bun_paths::is_package_path(specifier_) {
+        return specifier_;
+    }
     if let Some(i) = bun_core::strings::index_of_char_usize(specifier_, b'?') {
         *query_string = &specifier_[i..];
         &specifier_[..i]

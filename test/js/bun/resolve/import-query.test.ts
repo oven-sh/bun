@@ -1,4 +1,4 @@
-import { beforeEach, expect, test } from "bun:test";
+import { beforeEach, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, normalizeBunSnapshot, tempDir } from "harness";
 globalThis.importQueryFixtureOrder = [];
 const resolvedPath = require.resolve("./import-query-fixture.ts");
@@ -233,4 +233,147 @@ test("Bun.resolveSync with non-ASCII specifier and query string", async () => {
   const resolved = JSON.parse(stdout.trim());
   expect(resolved).toEndWith("target.js?v=caf\u00e9-\u65e5\u672c\u8a9e");
   expect(exitCode).toBe(0);
+});
+
+// Node gives `?` URL-separator meaning only for relative/absolute ESM specifiers.
+// A bare package specifier (`pkg`, `@scope/pkg/sub`) is not a URL: `?` is part of
+// the package name / subpath and must reach the resolver verbatim. Stripping it
+// made `import("pkg?v=1")` evaluate a second instance of the whole package,
+// splitting singleton state.
+describe("?query on a bare package specifier does not resolve", () => {
+  const pkgFiles = {
+    "node_modules/qk/package.json": JSON.stringify({
+      name: "qk",
+      main: "./i.js",
+      exports: { ".": "./i.js", "./s": "./s.js" },
+    }),
+    "node_modules/qk/i.js": "globalThis.__qk = (globalThis.__qk || 0) + 1; module.exports = { inst: globalThis.__qk };",
+    "node_modules/qk/s.js": 'module.exports = "SUB";',
+  };
+
+  test.concurrent("require('pkg?v=N') does not evaluate a new instance of the package", async () => {
+    using dir = tempDir("import-query-bare-require", {
+      ...pkgFiles,
+      "entry.cjs": `
+        const out = { insts: [], errors: [] };
+        out.insts.push(require("qk").inst);
+        for (const spec of ["qk?v=1", "qk?v=2"]) {
+          try {
+            out.insts.push(require(spec).inst);
+          } catch (e) {
+            out.errors.push(e.code || e.name);
+          }
+        }
+        // The un-suffixed specifier must still be the one-and-only instance.
+        out.insts.push(require("qk").inst);
+        console.log(JSON.stringify(out));
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "entry.cjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout.trim())).toEqual({
+      insts: [1, 1],
+      errors: ["MODULE_NOT_FOUND", "MODULE_NOT_FOUND"],
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("import('pkg?v=N') does not evaluate a new instance of the package", async () => {
+    using dir = tempDir("import-query-bare-import", {
+      ...pkgFiles,
+      "entry.mjs": `
+        const out = { insts: [], errors: [] };
+        out.insts.push((await import("qk")).default.inst);
+        for (const spec of ["qk?v=1", "qk?v=2"]) {
+          try {
+            out.insts.push((await import(spec)).default.inst);
+          } catch (e) {
+            out.errors.push(e.code || e.name);
+          }
+        }
+        out.insts.push((await import("qk")).default.inst);
+        console.log(JSON.stringify(out));
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "entry.mjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout.trim())).toEqual({
+      insts: [1, 1],
+      errors: ["ERR_MODULE_NOT_FOUND", "ERR_MODULE_NOT_FOUND"],
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("pkg/subpath?query is not matched against the exports map", async () => {
+    using dir = tempDir("import-query-bare-subpath", {
+      ...pkgFiles,
+      "entry.mjs": `
+        import { createRequire } from "node:module";
+        const require = createRequire(import.meta.url);
+        const out = {};
+        const go = (k, f) => { try { out[k] = f() } catch (e) { out[k] = "ERR:" + (e.code || e.name) } };
+        go("plain", () => require("qk/s"));
+        go("require", () => require("qk/s?x=1"));
+        go("imr", () => import.meta.resolve("qk/s?x=1"));
+        go("resolveSync", () => Bun.resolveSync("qk/s?x=1", import.meta.dir));
+        console.log(JSON.stringify(out));
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "entry.mjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    const out = JSON.parse(stdout.trim());
+    // `./s` is exported; `./s?x=1` is not. Previously `imr` returned a file URL
+    // whose path ended in `/s.js%3Fx=1` (the query percent-encoded into the path).
+    expect(out).toEqual({
+      plain: "SUB",
+      require: "ERR:MODULE_NOT_FOUND",
+      imr: "ERR:ERR_MODULE_NOT_FOUND",
+      resolveSync: "ERR:ERR_MODULE_NOT_FOUND",
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("?query on a relative ESM specifier still cache-busts (control)", async () => {
+    using dir = tempDir("import-query-bare-control", {
+      "rel.mjs": "globalThis.__rel = (globalThis.__rel || 0) + 1; export const inst = globalThis.__rel;",
+      "entry.mjs": `
+        const a = await import("./rel.mjs");
+        const b = await import("./rel.mjs?v=1");
+        const c = await import("./rel.mjs?v=2");
+        console.log(JSON.stringify([a.inst, b.inst, c.inst]));
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "entry.mjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout.trim())).toEqual([1, 2, 3]);
+    expect(exitCode).toBe(0);
+  });
 });

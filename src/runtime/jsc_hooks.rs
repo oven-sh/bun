@@ -4827,11 +4827,20 @@ const STDIN_SUFFIX: &[u8] = b"\\[stdin]";
 const STDIN_SUFFIX: &[u8] = b"/[stdin]";
 
 /// Split off the `?query` suffix.
+///
+/// Node only gives `?` URL-separator meaning for relative/absolute ESM
+/// specifiers. For a bare package specifier (`pkg`, `@scope/pkg/sub`) the `?`
+/// is part of the name/subpath and must reach the resolver verbatim so
+/// `import("pkg?v=1")` fails instead of evaluating a second instance of the
+/// package.
 #[inline]
 fn normalize_specifier_for_resolution<'a>(
     specifier: &'a [u8],
     query_string: &mut &'a [u8],
 ) -> &'a [u8] {
+    if bun_paths::is_package_path(specifier) {
+        return specifier;
+    }
     if let Some(i) = bun_core::strings::index_of_char_usize(specifier, b'?') {
         let i = i as usize;
         *query_string = &specifier[i..];

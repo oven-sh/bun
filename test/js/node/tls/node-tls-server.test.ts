@@ -1213,7 +1213,18 @@ it("setSecureContext() with an unusable certificate throws and keeps the live co
   expect(error?.code).toBe("ERR_OSSL_ASN1_DECODE_ERROR");
   // A rotation whose context fails to build must not take the server down.
   expect(await handshakeWith({ port, host: "127.0.0.1" })).toMatchObject({ cn: "server-bun" });
+  // A later listen() and the STARTTLS wrap both build from `server.cert`
+  // directly, so those fields must not hold the rejected key material.
+  expect((server as any).cert).toBe(COMMON_CERT.cert);
+  expect((server as any).key).toBe(COMMON_CERT.key);
 
+  server.close();
+  await once(server, "close");
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  expect(await handshakeWith({ port: (server.address() as AddressInfo).port, host: "127.0.0.1" })).toMatchObject({
+    cn: "server-bun",
+  });
   server.close();
   await once(server, "close");
 });

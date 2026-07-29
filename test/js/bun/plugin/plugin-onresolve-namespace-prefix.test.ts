@@ -61,7 +61,7 @@ async function run(forms: "A" | "B" | "AB") {
   return { stdout, stderr, exitCode };
 }
 
-describe("onResolve namespace-prefix dispatch is consistent between runtime and Bun.build", () => {
+describe.concurrent("onResolve namespace-prefix dispatch is consistent between runtime and Bun.build", () => {
   test('onResolve({ filter: /^virt:/ }) resolves `import "virt:x"` at runtime and in Bun.build', async () => {
     const { stdout, stderr, exitCode } = await run("A");
     expect(stderr).toBe("");
@@ -93,6 +93,43 @@ describe("onResolve namespace-prefix dispatch is consistent between runtime and 
     expect(out.ok).toBe(true);
     expect(["VIA-A", "VIA-B"]).toContain(out.runtime);
     expect(["VIA-A", "VIA-B"]).toContain(out.bundled);
+    expect(exitCode).toBe(0);
+  });
+
+  test('onResolve({ namespace: "virt" }) returning { path } without namespace resolves to a file on disk in both', async () => {
+    using dir = tempDir("plugin-onresolve-ns-file", {
+      "real.js": `export default "FROM-DISK";`,
+      "entry.ts": `import v from "virt:thing"; export { v };`,
+      "index.ts": `
+        const path = require("path");
+        const real = path.join(import.meta.dir, "real.js");
+        const setup = (b: any) => {
+          b.onResolve({ filter: /.*/, namespace: "virt" }, () => ({ path: real }));
+        };
+        Bun.plugin({ name: "to-file", setup });
+        const runtime = (await import("virt:thing")).default;
+        const r = await Bun.build({
+          entrypoints: [path.join(import.meta.dir, "entry.ts")],
+          plugins: [{ name: "to-file", setup }],
+        });
+        if (!r.success) {
+          console.log(JSON.stringify({ ok: false, logs: r.logs.map((l: any) => l.message) }));
+          process.exit(1);
+        }
+        const bundled = (await r.outputs[0].text()).includes("FROM-DISK") ? "FROM-DISK" : "?";
+        console.log(JSON.stringify({ ok: true, runtime, bundled }));
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "index.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    const out = JSON.parse(stdout);
+    expect(out).toEqual({ ok: true, runtime: "FROM-DISK", bundled: "FROM-DISK" });
     expect(exitCode).toBe(0);
   });
 });

@@ -653,8 +653,7 @@ impl CreateCommand {
 
                     let mut conflicts: Vec<Vec<bun_paths::OSPathChar>> = Vec::new();
                     while let Some(entry) = scan_walker.next()? {
-                        // POSIX no-follow: a symlink is never classified as its
-                        // target (Windows classifies reparse points by target).
+                        // POSIX no-follow; Windows classifies reparse points by target.
                         #[cfg(not(windows))]
                         let existing_kind = bun_sys::lstatat(existing_destination.fd, entry.path)
                             .map(|st| bun_sys::kind_from_mode(st.st_mode as _));

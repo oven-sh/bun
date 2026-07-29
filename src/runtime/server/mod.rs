@@ -2270,16 +2270,30 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         } else {
             trampoline::on_404::<SSL, DEBUG>
         };
-        for route_path in self.config.negative_routes.iter() {
-            let p = route_path.as_bytes();
-            app.head(p, Some(negative_h1), self_ptr.cast());
-            app.any(p, Some(negative_h1), self_ptr.cast());
-            if Self::HAS_H3 {
-                if let Some(h3_app) = self.h3_app {
-                    // S008: `h3::App` is an `opaque_ffi!` ZST — safe deref.
-                    let h3_app = bun_opaque::opaque_deref_mut(h3_app);
-                    h3_app.head(p, self_ptr, Self::on_h3_request);
-                    h3_app.any(p, self_ptr, Self::on_h3_request);
+        for route in self.config.negative_routes.iter() {
+            let p = route.path.as_bytes();
+            match route.method {
+                server_config::RouteMethod::Any => {
+                    app.head(p, Some(negative_h1), self_ptr.cast());
+                    app.any(p, Some(negative_h1), self_ptr.cast());
+                    if Self::HAS_H3 {
+                        if let Some(h3_app) = self.h3_app {
+                            // S008: `h3::App` is an `opaque_ffi!` ZST — safe deref.
+                            let h3_app = bun_opaque::opaque_deref_mut(h3_app);
+                            h3_app.head(p, self_ptr, Self::on_h3_request);
+                            h3_app.any(p, self_ptr, Self::on_h3_request);
+                        }
+                    }
+                }
+                server_config::RouteMethod::Specific(m) => {
+                    app.method(m, p, Some(negative_h1), self_ptr.cast());
+                    if Self::HAS_H3 {
+                        if let Some(h3_app) = self.h3_app {
+                            // S008: `h3::App` is an `opaque_ffi!` ZST — safe deref.
+                            bun_opaque::opaque_deref_mut(h3_app)
+                                .method(m, p, self_ptr, Self::on_h3_request);
+                        }
+                    }
                 }
             }
         }

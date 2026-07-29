@@ -64,7 +64,7 @@ pub struct ServerConfig {
     pub had_routes_object: bool,
 
     pub static_routes: Vec<StaticRouteEntry>,
-    pub negative_routes: Vec<ZBox>,
+    pub negative_routes: Vec<NegativeRoute>,
     pub user_routes_to_build: Vec<UserRouteBuilder>,
 
     pub bake: Option<crate::bake::UserOptions>,
@@ -153,7 +153,7 @@ impl ServerConfig {
         cost += self.id.len();
         cost += self.base_uri.len();
         for route in self.negative_routes.iter() {
-            cost += route.as_bytes().len();
+            cost += route.path.as_bytes().len();
         }
 
         cost
@@ -169,6 +169,14 @@ pub struct RouteDeclaration {
 pub enum RouteMethod {
     Any,
     Specific(Method),
+}
+
+/// A `false` route value: register the path (or one method at the path) so it
+/// dispatches to the default handler ladder instead of being caught by a
+/// wildcard route.
+pub struct NegativeRoute {
+    pub path: ZBox,
+    pub method: RouteMethod,
 }
 
 impl Default for RouteDeclaration {
@@ -889,8 +897,10 @@ impl ServerConfig {
                 if value == JSValue::FALSE {
                     // Appends a sentinel NUL without rejecting interior NULs
                     // (which already passed `is_all_ascii`).
-                    let duped = ZBox::from_bytes(&*path);
-                    args.negative_routes.push(duped);
+                    args.negative_routes.push(NegativeRoute {
+                        path: ZBox::from_bytes(&*path),
+                        method: RouteMethod::Any,
+                    });
                     continue;
                 }
 
@@ -937,6 +947,10 @@ impl ServerConfig {
                                 if method == Method::HEAD {
                                     has_head_route = true;
                                 }
+                                args.negative_routes.push(NegativeRoute {
+                                    path: ZBox::from_bytes(&*path),
+                                    method: RouteMethod::Specific(method),
+                                });
                                 continue;
                             }
 

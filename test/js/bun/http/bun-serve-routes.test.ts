@@ -243,10 +243,7 @@ describe("implicit HEAD for per-method route objects", () => {
     test("sends HEAD to fetch instead of deriving it from GET", async () => {
       await using server = Bun.serve({
         port: 0,
-        routes: {
-          // @ts-expect-error - false is the per-method disable
-          "/x": { GET: makeGet(), HEAD: false },
-        },
+        routes: { "/x": { GET: makeGet(), HEAD: false } },
         fetch: req => new Response(null, { status: 299, headers: { "x-from": "fetch", "x-method": req.method } }),
       });
 
@@ -264,7 +261,6 @@ describe("implicit HEAD for per-method route objects", () => {
     test("sends HEAD to 404 when there is no fetch handler", async () => {
       await using server = Bun.serve({
         port: 0,
-        // @ts-expect-error - false is the per-method disable
         routes: { "/x": { GET: makeGet(), HEAD: false } },
       });
 
@@ -280,11 +276,40 @@ describe("implicit HEAD for per-method route objects", () => {
     });
   });
 
+  test("HEAD: false routes HEAD to the default handler past a /* sibling, like a top-level false", async () => {
+    await using server = Bun.serve({
+      port: 0,
+      routes: {
+        "/per-method": { GET: new Response("g"), HEAD: false },
+        "/top-level": false,
+        "/*": new Response("star-body", { headers: { "x-from": "star" } }),
+      },
+      fetch: req => new Response(null, { status: 299, headers: { "x-from": "fetch", "x-method": req.method } }),
+    });
+
+    const [perMethod, topLevel, getPerMethod, other] = await Promise.all([
+      fetch(new URL("/per-method", server.url), { method: "HEAD" }),
+      fetch(new URL("/top-level", server.url), { method: "HEAD" }),
+      fetch(new URL("/per-method", server.url)),
+      fetch(new URL("/elsewhere", server.url), { method: "HEAD" }),
+    ]);
+    expect({
+      perMethod: { status: perMethod.status, from: perMethod.headers.get("x-from") },
+      topLevel: { status: topLevel.status, from: topLevel.headers.get("x-from") },
+      getPerMethod: { status: getPerMethod.status, body: await getPerMethod.text() },
+      other: { status: other.status, from: other.headers.get("x-from") },
+    }).toEqual({
+      perMethod: { status: 299, from: "fetch" },
+      topLevel: { status: 299, from: "fetch" },
+      getPerMethod: { status: 200, body: "g" },
+      other: { status: 200, from: "star" },
+    });
+  });
+
   test("HEAD: false on one path does not affect the implicit HEAD on another", async () => {
     await using server = Bun.serve({
       port: 0,
       routes: {
-        // @ts-expect-error - false is the per-method disable
         "/a": { GET: new Response("a-body"), HEAD: false },
         "/b": { GET: new Response("b-body") },
       },

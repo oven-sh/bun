@@ -466,6 +466,9 @@ impl Watcher {
             if item == last_item || self.watchlist.len() <= item as usize {
                 continue;
             }
+            if let Backend::Polling(p) = &mut self.platform {
+                p.unregister(self.watchlist.items_hash()[item as usize]);
+            }
             self.watchlist.swap_remove(item as usize);
 
             // swapRemove put a different entry at `item`, but its kqueue registration still

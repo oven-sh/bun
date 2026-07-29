@@ -91,7 +91,7 @@ int inotify_add_watch(int fd, const char *path, unsigned int mask) {
         BUN_WATCHER_POLL_INTERVAL: "50",
       },
       stdout: "pipe",
-      stderr: "pipe",
+      stderr: "inherit",
       stdin: "ignore",
     });
 

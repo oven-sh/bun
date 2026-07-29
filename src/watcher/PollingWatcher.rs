@@ -78,7 +78,7 @@ pub struct PollingWatcher {
     /// Watcher-thread-only scratch, reused across cycles.
     scratch_idx: Vec<(WatchItemIndex, HashType)>,
     scratch_path: Vec<Vec<u8>>,
-    scratch_stat: Vec<Snapshot>,
+    scratch_stat: Vec<Option<Snapshot>>,
 }
 
 impl PollingWatcher {
@@ -95,16 +95,23 @@ impl PollingWatcher {
     /// Baseline stat at registration time so a write between `add_file` and
     /// the first poll cycle is detected. Caller holds `Watcher.mutex`.
     pub(crate) fn register(&mut self, hash: HashType, path: &[u8]) {
-        self.snapshots.insert(hash, stat_path(path));
+        self.snapshots
+            .insert(hash, stat_path(path).unwrap_or_default());
+    }
+
+    /// Caller holds `Watcher.mutex`.
+    pub(crate) fn unregister(&mut self, hash: HashType) {
+        self.snapshots.remove(&hash);
     }
 
     pub fn stop(&mut self) {}
 }
 
-fn stat_path(path: &[u8]) -> Snapshot {
+/// `None` = transient errno (ESTALE/EIO/…); caller keeps the previous snapshot.
+fn stat_path(path: &[u8]) -> Option<Snapshot> {
     let mut buf = bun_paths::path_buffer_pool::get();
     if path.len() >= buf.len() {
-        return Snapshot::default();
+        return Some(Snapshot::default());
     }
     buf[..path.len()].copy_from_slice(path);
     buf[path.len()] = 0;
@@ -116,15 +123,18 @@ fn stat_path(path: &[u8]) -> Snapshot {
             let (size, ino) = (st.st_size as u64, st.st_ino as u64);
             #[cfg(windows)]
             let (size, ino) = (st.st_size, st.st_ino);
-            Snapshot {
+            Some(Snapshot {
                 mtime_sec: mt.sec,
                 mtime_nsec: mt.nsec,
                 size,
                 ino,
                 exists: true,
-            }
+            })
         }
-        Err(_) => Snapshot::default(),
+        Err(err) => match err.get_errno() {
+            sys::E::ENOENT | sys::E::ENOTDIR => Some(Snapshot::default()),
+            _ => None,
+        },
     }
 }
 
@@ -195,7 +205,7 @@ pub(crate) fn watch_loop_cycle(this: &mut Watcher) -> sys::Result<()> {
             unreachable!()
         };
         for (k, &(index, hash)) in scratch_idx.iter().enumerate() {
-            let now = scratch_stat[k];
+            let Some(now) = scratch_stat[k] else { continue };
             let op = match poll.snapshots.get(&hash) {
                 Some(prev) if now.differs(prev) => {
                     if now.exists {
@@ -210,17 +220,20 @@ pub(crate) fn watch_loop_cycle(this: &mut Watcher) -> sys::Result<()> {
                     continue;
                 }
             };
-            poll.snapshots.insert(hash, now);
-
-            if event_id < MAX_COUNT {
-                this.watch_events[event_id] = WatchEvent {
-                    index,
-                    op,
-                    name_off: 0,
-                    name_len: 0,
-                };
-                event_id += 1;
+            // Only advance the baseline when the event is actually emitted, so
+            // changes past MAX_COUNT in one cycle surface on the next cycle
+            // instead of being silently swallowed.
+            if event_id >= MAX_COUNT {
+                break;
             }
+            poll.snapshots.insert(hash, now);
+            this.watch_events[event_id] = WatchEvent {
+                index,
+                op,
+                name_off: 0,
+                name_len: 0,
+            };
+            event_id += 1;
         }
     }
 

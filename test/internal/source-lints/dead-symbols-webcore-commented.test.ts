@@ -19,7 +19,10 @@ function src(p: string): string {
 test("commented-out WebCore IsoSubspace / Event factory blocks do not reappear", () => {
   const checks: Array<[string, RegExp]> = [
     ["src/jsc/bindings/webcore/DOMIsoSubspaces.h", /\/\/\s*std::unique_ptr<IsoSubspace>\s*m_subspaceForTouch\b/],
-    ["src/jsc/bindings/webcore/DOMClientIsoSubspaces.h", /\/\/\s*std::unique_ptr<GCClient::IsoSubspace>\s*m_clientSubspaceForTouch\b/],
+    [
+      "src/jsc/bindings/webcore/DOMClientIsoSubspaces.h",
+      /\/\/\s*std::unique_ptr<GCClient::IsoSubspace>\s*m_clientSubspaceForTouch\b/,
+    ],
     ["src/jsc/bindings/webcore/EventHeaders.h", /\/\/\s*#include "AnimationEvent\.h"/],
     ["src/jsc/bindings/webcore/EventTargetHeaders.h", /\/\/\s*#include "JSClipboard\.h"/],
     ["src/jsc/bindings/webcore/EventFactory.cpp", /\bAnimationEventInterfaceType\b/],

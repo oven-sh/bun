@@ -131,9 +131,8 @@ describe("tsconfig compilerOptions.jsx", () => {
   });
 
   // An explicit jsx.development / jsx.runtime value passed to Bun.build must win
-  // over a conflicting tsconfig "jsx" setting, same as it did before the per-file
-  // merge became load-bearing.
-  describe("Bun.build: explicit jsx.development overrides tsconfig", () => {
+  // over a conflicting tsconfig "jsx" setting.
+  describe.concurrent("Bun.build: explicit jsx.development overrides tsconfig", () => {
     for (const [opt, tsjsx, want] of [
       [{ development: false }, "react-jsxdev", "shim/jsx-runtime"],
       [{ development: true }, "react-jsx", "shim/jsx-dev-runtime"],
@@ -173,7 +172,7 @@ describe("tsconfig compilerOptions.jsx", () => {
   // A plugin onResolve that returns a disk path bypasses the resolver, so the
   // bundler has to look up the enclosing tsconfig itself. Both the disk-resolved
   // entry and the plugin-resolved file should land on the same runtime.
-  test.each([
+  test.concurrent.each([
     ["react-jsx", "shim/jsx-runtime"],
     ["react-jsxdev", "shim/jsx-dev-runtime"],
   ] as const)("Bun.build onResolve -> disk path honors tsconfig %s", async (tsjsx, want) => {

@@ -52,10 +52,9 @@ test("does not hoist a package past an ancestor holding a conflicting version of
   });
 
   async function check() {
-    expect(await readdirSorted(join(packageDir, "node_modules", "hoisting-peer-check-parent", "node_modules"))).toEqual([
-      "hoisting-peer-check-child",
-      "no-deps",
-    ]);
+    expect(await readdirSorted(join(packageDir, "node_modules", "hoisting-peer-check-parent", "node_modules"))).toEqual(
+      ["hoisting-peer-check-child", "no-deps"],
+    );
     expect(await Bun.file(join(packageDir, "node_modules", "no-deps", "package.json")).json()).toMatchObject({
       version: "1.0.0",
     });

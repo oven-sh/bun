@@ -1603,10 +1603,7 @@ impl Run {
                                 break 'brk Some(promise.result(vm.jsc_vm()));
                             }
                             PromiseStatus::Rejected => {
-                                // The unhandled-rejection reporter prints the
-                                // reason (either in the drain loop above or in
-                                // `handle_rejected_promises` below); printing
-                                // it again here would duplicate the output.
+                                // Reported by the unhandled-rejection path; don't print twice.
                                 break 'brk None;
                             }
                         }

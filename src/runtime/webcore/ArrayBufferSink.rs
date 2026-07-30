@@ -214,8 +214,6 @@ impl crate::webcore::sink::JsSinkType for ArrayBufferSink {
     const HAS_CONSTRUCT: bool = true;
     const HAS_FLUSH_FROM_JS: bool = true;
     const START_TAG: Option<streams::StartTag> = Some(streams::StartTag::ArrayBufferSink);
-    // `done` is only ever set by `end_from_js` (and cleared by `start`), so
-    // `done()` here exactly means "user called end()".
     const THROW_ON_WRITE_AFTER_END: bool = true;
 
     fn memory_cost(&self) -> usize {

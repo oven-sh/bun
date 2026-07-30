@@ -1,6 +1,6 @@
 import { spawn } from "bun";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "node:path";
 
 describe("node:test", () => {
@@ -323,6 +323,81 @@ describe("node:test", () => {
       stderr: expect.stringContaining("0 fail"),
     });
   });
+});
+
+describe("node:test run()", () => {
+  // run({ timeout }) is node's root-test timeout, inherited by every test that
+  // does not specify its own. An explicit finite timeout overrides it; Infinity
+  // and null inherit (node Test constructor semantics).
+  test.concurrent(
+    "should enforce run({ timeout }) as the inherited per-test timeout",
+    async () => {
+      using dir = tempDir("node-test-run-timeout", {
+        "inner.mjs":
+          "import t from 'node:test';\n" +
+          "t('slow 1500ms', async () => { await new Promise(r => setTimeout(r, 1500)); });\n" +
+          "t('own 3000', { timeout: 3000 }, async () => { await new Promise(r => setTimeout(r, 1500)); });\n" +
+          "t('quick', () => {});\n",
+        "driver.mjs":
+          "import { run } from 'node:test';\n" +
+          "const s = run({ files: ['inner.mjs'], timeout: 500 });\n" +
+          "const pass = [], fail = [];\n" +
+          "s.on('data', () => {});\n" +
+          "s.on('test:pass', d => pass.push(d.name));\n" +
+          "s.on('test:fail', d => fail.push({ name: d.name, failureType: d.details?.error?.failureType }));\n" +
+          "await new Promise(r => s.on('close', r));\n" +
+          "console.log(JSON.stringify({ pass, fail }));\n",
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "driver.mjs"],
+        env: bunEnv,
+        cwd: String(dir),
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stderr, out: JSON.parse(stdout.trim() || "null") }).toEqual({
+        stderr: "",
+        out: {
+          pass: ["own 3000", "quick"],
+          fail: [{ name: "slow 1500ms", failureType: "testTimeoutFailure" }],
+        },
+      });
+      expect(exitCode).toBe(0);
+    },
+    30_000,
+  );
+
+  test.concurrent(
+    "should tag an explicit per-test timeout failure with testTimeoutFailure",
+    async () => {
+      using dir = tempDir("node-test-run-timeout-own", {
+        "inner.mjs":
+          "import t from 'node:test';\n" +
+          "t('times out', { timeout: 100 }, async () => { await new Promise(r => setTimeout(r, 1500)); });\n",
+        "driver.mjs":
+          "import { run } from 'node:test';\n" +
+          "const s = run({ files: ['inner.mjs'] });\n" +
+          "const fail = [];\n" +
+          "s.on('data', () => {});\n" +
+          "s.on('test:fail', d => fail.push({ name: d.name, failureType: d.details?.error?.failureType, code: d.details?.error?.code }));\n" +
+          "await new Promise(r => s.on('close', r));\n" +
+          "console.log(JSON.stringify(fail));\n",
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "driver.mjs"],
+        env: bunEnv,
+        cwd: String(dir),
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stderr, out: JSON.parse(stdout.trim() || "null") }).toEqual({
+        stderr: "",
+        out: [{ name: "times out", failureType: "testTimeoutFailure", code: "ERR_TEST_FAILURE" }],
+      });
+      expect(exitCode).toBe(0);
+    },
+    30_000,
+  );
 });
 
 async function runTests(filenames: string[], env: Record<string, string> = {}, args: string[] = []) {

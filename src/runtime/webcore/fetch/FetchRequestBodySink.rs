@@ -18,9 +18,11 @@ bun_core::declare_scope!(FetchRequestBodySinkLog, visible);
 /// already honours.
 pub struct FetchRequestBodySink {
     /// Non-owning back-reference; `FetchTasklet` is kept alive by a +1
-    /// intrusive ref taken in `start_request_stream` and released either via
-    /// `write_end_request` (normal end) or by `finalize` (sink dropped without
-    /// `end`). Cleared to `None` once that +1 has been released.
+    /// intrusive ref taken in `start_request_stream` and released exactly once
+    /// by the `assign_to_stream`-result path (`on_resolve_request_stream` /
+    /// `on_reject_request_stream` / synchronous branches), which clears this to
+    /// `None` first. `finalize` releases it as a fallback if that path never
+    /// ran.
     pub task: Option<BackRef<FetchTasklet>>,
     pub signal: Signal,
     pub global_this: Option<BackRef<JSGlobalObject>>,
@@ -167,12 +169,11 @@ impl FetchRequestBodySink {
             return bun_sys::Result::Ok(());
         }
         self.ended = true;
-        // `write_end_request` releases the `+1` taken in `start_request_stream`;
-        // clear `task` so `finalize` does not release it again.
-        if let Some(mut task) = self.task.take() {
-            // SAFETY: see `task_mut` — exclusive while `&mut self` held.
-            unsafe { task.get_mut() }.write_end_request(None);
-        }
+        // Do NOT call `write_end_request` here: the `assign_to_stream` result
+        // (on_resolve/on_reject or the synchronous Fulfilled/Rejected/undefined
+        // branches in `start_request_stream`) is the single balancing release of
+        // the `+1` taken in `start_request_stream`. `task` stays populated so
+        // `finalize()` can release it if that handler never runs.
         self.signal.close(err);
         bun_sys::Result::Ok(())
     }
@@ -185,7 +186,7 @@ impl FetchRequestBodySink {
     pub fn finalize(&mut self) {
         if let Some(task) = self.task.take() {
             // Balances the `ref_()` taken in `start_request_stream` when the
-            // sink is dropped without `end()` having run.
+            // assign_to_stream-result handler never ran to release it.
             FetchTasklet::deref(task.as_ptr());
         }
     }

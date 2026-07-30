@@ -626,8 +626,10 @@ impl FetchTasklet {
         }
 
         let global_this = self.global_this;
-        // +1 on the tasklet; balanced by `write_end_request` (or by the sink's
-        // `finalize` if the JS controller is collected without an explicit end).
+        // +1 on the tasklet; balanced exactly once by `write_end_request` on the
+        // assign_to_stream-result side (on_resolve/on_reject or the synchronous
+        // Fulfilled/Rejected/undefined branches below), or by the sink's
+        // `finalize` as a fallback if that path never runs.
         self.ref_();
 
         if stream.is_locked(&global_this) || stream.is_disturbed(&global_this) {
@@ -692,11 +694,15 @@ impl FetchTasklet {
                         );
                     }
                     bun_jsc::js_promise::Status::Fulfilled => {
+                        // SAFETY: `self.sink` set above and not cleared on this path.
+                        unsafe { (*sink_ptr.as_ptr()).task = None };
                         self.write_end_request(None);
                     }
                     bun_jsc::js_promise::Status::Rejected => {
                         promise.set_handled(global_this.vm());
                         let result = promise.result(global_this.vm());
+                        // SAFETY: `self.sink` set above and not cleared on this path.
+                        unsafe { (*sink_ptr.as_ptr()).task = None };
                         self.write_end_request(Some(result));
                     }
                 }
@@ -705,13 +711,11 @@ impl FetchTasklet {
         }
 
         // undefined/null: the stream drained synchronously inside
-        // assignToStream. If `end()` already ran (which calls
-        // `write_end_request`), the +1 is already balanced; otherwise do it.
+        // assignToStream. `end()` no longer calls `write_end_request`, so this
+        // path always balances the `+1` itself.
         // SAFETY: `self.sink` was set above and not cleared on this path.
-        let ended = unsafe { (*sink_ptr.as_ptr()).ended };
-        if !ended {
-            self.write_end_request(None);
-        }
+        unsafe { (*sink_ptr.as_ptr()).task = None };
+        self.write_end_request(None);
     }
 
     pub(crate) fn on_body_received(&mut self) -> JsTerminatedResult<()> {
@@ -925,8 +929,8 @@ impl FetchTasklet {
                 unsafe { (*vm.event_loop()).request_gc_hint() };
                 // The HTTP response has been fully received. If the request body
                 // is still being uploaded, the HTTP layer will never drain/resume
-                // it again — cancel the sink so the JS side releases the reader
-                // and `write_end_request` drops the `startRequestStream` ref.
+                // it again — cancel the sink so the JS side releases the reader;
+                // the pump-promise settlement drops the `startRequestStream` ref.
                 this.cancel_request_body_sink(JSValue::UNDEFINED);
                 let mut poll_ref = core::mem::take(&mut this.poll_ref);
                 poll_ref.unref(bun_io::js_vm_ctx());
@@ -2360,10 +2364,12 @@ impl FetchTasklet {
         }
     }
 
-    /// Cancel an in-flight request-body sink: marks it ended/done, fires the
-    /// controller's onClose (which cancels the upstream ReadableStream reader),
-    /// and runs `write_end_request(Some(reason))` so `abort_task`/deref still
-    /// happen exactly once. No-op when no sink or already ended.
+    /// Cancel an in-flight request-body sink: stores the abort reason, aborts
+    /// the HTTP task, marks the sink ended/done, and fires the controller's
+    /// onClose (which cancels the upstream ReadableStream reader). The single
+    /// balancing `write_end_request` is left to the `assign_to_stream` pump
+    /// promise settlement (on_resolve/on_reject). No-op when no sink or already
+    /// ended.
     pub(crate) fn cancel_request_body_sink(&mut self, reason: JSValue) {
         let Some(sink) = self.sink_mut() else {
             return;
@@ -2373,8 +2379,15 @@ impl FetchTasklet {
         }
         sink.ended = true;
         sink.done = true;
-        sink.signal.close(None);
-        self.write_end_request(Some(reason));
+        if !reason.is_empty_or_undefined_or_null() && !self.abort_reason.has() {
+            let global_this = self.global_this;
+            self.abort_reason.set(&global_this, reason);
+        }
+        self.abort_task();
+        // Re-borrow after the `&mut self` calls above.
+        if let Some(sink) = self.sink_mut() {
+            sink.signal.close(None);
+        }
     }
 
     pub(crate) fn queue(
@@ -2595,8 +2608,14 @@ fn on_resolve_request_stream(
     let this: *mut FetchTasklet = args[args.len() - 1].as_promise_ptr::<FetchTasklet>();
     // SAFETY: `as_promise_ptr` recovers the `*mut FetchTasklet` stashed by
     // `start_request_stream`; the `ref_()` there keeps it alive, balanced by
-    // `write_end_request`.
-    unsafe { (*this).write_end_request(None) };
+    // `write_end_request` below. Clear `sink.task` first so the sink's
+    // `finalize()` fallback does not release a second time.
+    unsafe {
+        if let Some(sink) = (*this).sink_mut() {
+            sink.task = None;
+        }
+        (*this).write_end_request(None);
+    }
     Ok(JSValue::UNDEFINED)
 }
 
@@ -2609,8 +2628,14 @@ fn on_reject_request_stream(
     let err = args[0];
     // SAFETY: `as_promise_ptr` recovers the `*mut FetchTasklet` stashed by
     // `start_request_stream`; the `ref_()` there keeps it alive, balanced by
-    // `write_end_request`.
-    unsafe { (*this).write_end_request(Some(err)) };
+    // `write_end_request` below. Clear `sink.task` first so the sink's
+    // `finalize()` fallback does not release a second time.
+    unsafe {
+        if let Some(sink) = (*this).sink_mut() {
+            sink.task = None;
+        }
+        (*this).write_end_request(Some(err));
+    }
     Ok(JSValue::UNDEFINED)
 }
 

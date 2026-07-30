@@ -152,7 +152,6 @@ impl Drop for BodyAbortListener {
     fn drop(&mut self) {
         let ctx = core::ptr::from_mut(self).cast::<c_void>();
         self.signal.clean_native_bindings(ctx);
-        // Suppresses `eventListenersDidChange`'s timeout-signal deref; `cancel_all_timeout_objects` may already own it.
         self.signal.pending_activity_unref();
     }
 }

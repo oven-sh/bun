@@ -138,7 +138,7 @@ impl FakeTimers {
     /// `--isolate` file boundary so `swap_global_for_test_isolation`'s
     /// `cancel_all_timeout_objects` (which runs after the outgoing global's
     /// JS has stopped) can walk the still-populated fake heap and release
-    /// both `TimeoutObject` pins and `AbortSignalTimeout` cycle refs.
+    /// `TimeoutObject` pins and unlink `AbortSignalTimeout` timers.
     pub(crate) fn reset_for_isolation(&mut self, global: &JSGlobalObject) {
         CURRENT_TIME.clear(global);
         self.active = false;

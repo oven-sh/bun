@@ -143,6 +143,49 @@ NamedError: console.error a named error
 `);
 });
 
+it.concurrent("console.group indents console.count and console.time/timeLog/timeEnd", async () => {
+  const src = `
+    console.group("G1");
+    console.count("cnt");
+    console.count("cnt");
+    console.group("G2");
+    console.count("cnt");
+    console.time("t");
+    console.timeLog("t");
+    console.timeEnd("t");
+    console.groupEnd();
+    console.count("cnt");
+    console.groupEnd();
+    console.count("cnt");
+    console.time("u");
+    console.timeEnd("u");
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", src],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stdout.replaceAll("\r\n", "\n")).toBe(
+    "G1\n" + //
+      "  cnt: 1\n" +
+      "  cnt: 2\n" +
+      "  G2\n" +
+      "    cnt: 3\n" +
+      "  cnt: 4\n" +
+      "cnt: 5\n",
+  );
+
+  const stderrLines = stderr.replaceAll("\r\n", "\n").replace(/\n$/, "").split("\n");
+  expect(stderrLines.length).toBe(3);
+  expect(stderrLines[0]).toMatch(/^    \[[\d.]+[mnµ]?s\] t$/);
+  expect(stderrLines[1]).toMatch(/^    \[[\d.]+[mnµ]?s\] t$/);
+  expect(stderrLines[2]).toMatch(/^\[[\d.]+[mnµ]?s\] u$/);
+  expect(exitCode).toBe(0);
+});
+
 it("console.log with SharedArrayBuffer", () => {
   // console.log(x) === Bun.inspect(x) + "\n" written to stdout.
   expect(Bun.inspect(new ArrayBuffer(0))).toBe("ArrayBuffer(0) []");

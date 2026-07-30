@@ -2800,7 +2800,7 @@ pub mod formatter {
     /// conflict with the `&self` borrow `Formatter::write_indent` takes.
     /// `self.indent` is a disjoint field read, so passing it by value here
     /// keeps the borrow checker happy.
-    fn write_indent_n(indent: u32, writer: &mut dyn bun_io::Write) -> bun_io::Result<()> {
+    pub(super) fn write_indent_n(indent: u32, writer: &mut dyn bun_io::Write) -> bun_io::Result<()> {
         let mut total_remain: u32 = indent;
         while total_remain > 0 {
             let written: u8 = total_remain.min(32) as u8;
@@ -5785,7 +5785,9 @@ pub(crate) extern "C" fn Bun__ConsoleObject__count(
     } + 1;
     *counter.value_ptr = current;
 
+    let default_indent = this.default_indent;
     let writer = this.writer();
+    let _ = formatter::write_indent_n(u32::from(default_indent), writer);
     if Output::enable_ansi_colors_stdout() {
         let _ = writeln!(
             writer,
@@ -5856,7 +5858,7 @@ pub(crate) extern "C" fn Bun__ConsoleObject__time(
 #[crate::host_call]
 pub(crate) extern "C" fn Bun__ConsoleObject__timeEnd(
     _console: *mut ConsoleObject,
-    _global: &JSGlobalObject,
+    global_this: &JSGlobalObject,
     chars: *const u8,
     len: usize,
 ) {
@@ -5873,6 +5875,10 @@ pub(crate) extern "C" fn Bun__ConsoleObject__timeEnd(
         return;
     };
     let Some(value) = prev else { return };
+    // SAFETY: top-level JS-thread host call ⇒ exclusive access to the
+    // set-once `VirtualMachine.console` box.
+    let default_indent = unsafe { vm_console_mut(global_this) }.default_indent;
+    let _ = formatter::write_indent_n(u32::from(default_indent), Output::error_writer());
     // get the duration in microseconds, then display it in milliseconds
     Output::print_elapsed(
         (value.read() / bun_core::time::NS_PER_US) as f64 / bun_core::time::US_PER_MS as f64,
@@ -5905,6 +5911,10 @@ pub(crate) extern "C" fn Bun__ConsoleObject__timeLog(
     let Some(Some(value)) = PENDING_TIME_LOGS.with_borrow(|m| m.get(&id).copied()) else {
         return;
     };
+    // SAFETY: top-level JS-thread host call ⇒ exclusive access to the
+    // set-once `VirtualMachine.console` box.
+    let default_indent = unsafe { vm_console_mut(global) }.default_indent;
+    let _ = formatter::write_indent_n(u32::from(default_indent), Output::error_writer());
     // get the duration in microseconds, then display it in milliseconds
     Output::print_elapsed(
         (value.read() / bun_core::time::NS_PER_US) as f64 / bun_core::time::US_PER_MS as f64,

@@ -192,12 +192,13 @@ export function bindNativeConsoleMethods(console: typeof globalThis.console) {
     trace: function trace(...args) {
       format ??= require("node:util").format;
       const message = args.length > 0 ? format!.$apply(undefined, args) : "";
-      const err: { stack?: string } = {};
+      const header = message.length > 0 ? `Trace: ${message}` : "Trace";
+      const err: { stack?: unknown } = {};
       captureStackTrace(err, trace);
-      let stack = err.stack ?? "";
+      const stack = err.stack;
+      if (typeof stack !== "string") return this.error(header, stack);
       const nl = StringPrototypeIndexOf.$call(stack, "\n");
-      stack = nl >= 0 ? StringPrototypeSlice.$call(stack, nl) : "";
-      this.error((message.length > 0 ? `Trace: ${message}` : "Trace") + stack);
+      this.error(header + (nl >= 0 ? StringPrototypeSlice.$call(stack, nl) : ""));
     },
     table(tabularData, properties) {
       if (properties !== undefined && !$isJSArray(properties)) {
@@ -208,7 +209,7 @@ export function bindNativeConsoleMethods(console: typeof globalThis.console) {
       }
       inspectTable ??= Bun.inspect.table;
       const stdout = this._stdout;
-      const colors = Bun.enableANSIColors && !!(stdout && stdout.isTTY);
+      const colors = Bun.env["FORCE_COLOR"] !== undefined ? Bun.enableANSIColors : !!(stdout && stdout.isTTY);
       const rendered =
         properties === undefined
           ? inspectTable(tabularData, { depth: 0, colors })

@@ -5859,3 +5859,102 @@ describe("fs.close on stdio descriptors", () => {
     expect(exitCode).toBe(0);
   });
 });
+
+// Node >=21 `{ flush: true }` on fs.appendFile* must fsync the data before
+// returning. Bun's fsync happens in native code, so the Node test suite's
+// jest.spyOn approach can't see it; interpose fsync() via LD_PRELOAD instead.
+describe.skipIf(!isLinux || !(Bun.which("cc") || Bun.which("gcc") || Bun.which("clang")))(
+  "fs.appendFile { flush: true } fsyncs",
+  () => {
+    const cc = Bun.which("cc") || Bun.which("gcc") || Bun.which("clang");
+    it.concurrent("appendFileSync / appendFile / promises.appendFile, path and fd", async () => {
+      using dir = tempDir("appendfile-flush", {
+        "shim.c": `
+#define _GNU_SOURCE
+#include <dlfcn.h>
+#include <stdio.h>
+static int (*real)(int);
+int fsync(int fd) {
+  if (!real) real = dlsym(RTLD_NEXT, "fsync");
+  fprintf(stderr, "[fsync] fd=%d\\n", fd);
+  return real(fd);
+}
+`,
+        "fixture.mjs": `
+import fs from "node:fs";
+const file = process.argv[2];
+const mark = s => process.stderr.write("-- " + s + " --\\n");
+
+mark("appendFileSync flush:true");
+fs.appendFileSync(file, "a", { flush: true });
+
+mark("promises.appendFile flush:true");
+await fs.promises.appendFile(file, "b", { flush: true });
+
+mark("callback appendFile flush:true");
+await new Promise((res, rej) => fs.appendFile(file, "c", { flush: true }, e => e ? rej(e) : res()));
+
+mark("appendFileSync fd flush:true");
+const fd = fs.openSync(file, "a");
+fs.appendFileSync(fd, "d", { flush: true });
+fs.closeSync(fd);
+
+mark("appendFileSync no-flush");
+fs.appendFileSync(file, "e");
+fs.appendFileSync(file, "f", { flush: false });
+
+mark("writeFileSync flush:true");
+fs.writeFileSync(file + ".w", "g", { flush: true });
+
+mark("end");
+process.stdout.write(fs.readFileSync(file, "utf8"));
+`,
+      });
+      const shim = join(String(dir), "shim.so");
+      await using ccProc = Bun.spawn({
+        cmd: [cc!, "-shared", "-fPIC", "-o", shim, join(String(dir), "shim.c"), "-ldl"],
+        env: bunEnv,
+        stderr: "pipe",
+        stdout: "pipe",
+      });
+      const [, ccErr, ccExit] = await Promise.all([ccProc.stdout.text(), ccProc.stderr.text(), ccProc.exited]);
+      if (ccExit !== 0) throw new Error(`shim compile failed: ${ccErr}`);
+
+      const existing = bunEnv.LD_PRELOAD;
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), join(String(dir), "fixture.mjs"), join(String(dir), "out.log")],
+        env: { ...bunEnv, LD_PRELOAD: existing ? `${shim}:${existing}` : shim },
+        stderr: "pipe",
+        stdout: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      // Count fsyncs between each pair of markers.
+      const sections: Record<string, number> = {};
+      let current = "";
+      for (const line of stderr.split("\n")) {
+        const m = line.match(/^-- (.+) --$/);
+        if (m) {
+          current = m[1];
+          sections[current] ??= 0;
+        } else if (line.startsWith("[fsync] ")) {
+          sections[current] = (sections[current] ?? 0) + 1;
+        }
+      }
+
+      expect({ stdout, sections }).toEqual({
+        stdout: "abcdef",
+        sections: {
+          "appendFileSync flush:true": 1,
+          "promises.appendFile flush:true": 1,
+          "callback appendFile flush:true": 1,
+          "appendFileSync fd flush:true": 1,
+          "appendFileSync no-flush": 0,
+          "writeFileSync flush:true": 1,
+          "end": 0,
+        },
+      });
+      expect(exitCode).toBe(0);
+    });
+  },
+);

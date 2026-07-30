@@ -566,10 +566,9 @@ describe("a message listener keeps the event loop alive", () => {
     ).toEqual({ ready: true, outcome: "alive", stderr: "" });
   });
 
-  // Node's [kNewListener] hook calls this.ref() on every 'message' listener add,
-  // so installing a listener after .unref() re-refs the port on every path,
-  // including setEventHandlerAttribute's in-place replace (node's defineEventHandler
-  // fires [kNewListener] there too).
+  // Node's [kNewListener] refs the port on the 0→1 'message' listener transition,
+  // so installing a listener after .unref() re-refs on every install path; the
+  // onmessage replace at count==1 fires [kNewListener] too (defineEventHandler).
   for (const [label, body] of [
     [".onmessage", `port2.unref(); port2.onmessage = () => {};`],
     [".addEventListener('message')", `port2.unref(); port2.addEventListener('message', () => {});`],

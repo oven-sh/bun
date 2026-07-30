@@ -417,11 +417,39 @@ describe("spawn()", () => {
       expect(child.stdout).not.toBeNull();
       expect(child.stderr).not.toBeNull();
     });
-    it.todo("overlapped", () => {
+    it("overlapped", () => {
       const child = spawn(bunExe(), ["-v"], { stdio: "overlapped" });
       expect(!!child).toBe(true);
       expect(child.stdout).not.toBeNull();
       expect(child.stderr).not.toBeNull();
+    });
+    it("overlapped string shorthand behaves like pipe", async () => {
+      const child = spawn(bunExe(), ["-e", "process.stdin.on('data', d => process.stdout.write('out:' + d))"], {
+        env: bunEnv,
+        stdio: "overlapped",
+      });
+      expect(child.stdin).not.toBeNull();
+      expect(child.stdout).not.toBeNull();
+      expect(child.stderr).not.toBeNull();
+      const { promise, resolve } = Promise.withResolvers<string>();
+      let out = "";
+      child.stdout!.on("data", d => {
+        out += d;
+        if (out.includes("\n")) resolve(out);
+      });
+      child.stdin!.end("hi\n");
+      expect(await promise).toBe("out:hi\n");
+      const code = await new Promise<number | null>(r => child.on("close", r));
+      expect(code).toBe(0);
+    });
+    it("overlapped string shorthand works with spawnSync", () => {
+      const { stdout, status } = spawnSync(bunExe(), ["-e", "console.log('ok')"], {
+        env: bunEnv,
+        stdio: "overlapped",
+        encoding: "utf8",
+      });
+      expect(stdout).toBe("ok\n");
+      expect(status).toBe(0);
     });
   });
 

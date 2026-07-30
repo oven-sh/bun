@@ -166,6 +166,28 @@ it(".params keeps a leading percent-decoded slash on a top-level dynamic route",
   expect(name).toBe("/foo");
 });
 
+it("a percent-decoded slash does not satisfy a required following segment", () => {
+  // set up the test
+  const { dir } = make(["[category]/[item].tsx"]);
+
+  const router = new Bun.FileSystemRouter({
+    dir,
+    style: "nextjs",
+  });
+
+  // "foo%2Fbar" is one segment containing a literal slash, so the two-segment
+  // route has no match for it.
+  expect(router.match("/foo%2Fbar")).toBeNull();
+
+  // Neither does a plain single segment: a route with a required following
+  // segment must not match an under-length path with empty params.
+  expect(router.match("/foo")).toBeNull();
+
+  // A real separator still yields both params.
+  const twoSegments = router.match("/foo/bar")!;
+  expect(twoSegments.params).toEqual({ category: "foo", item: "bar" });
+});
+
 it(".params works on dynamic routes", () => {
   // set up the test
   const { dir } = make(["index.tsx", "posts/[id].tsx", "posts.tsx"]);

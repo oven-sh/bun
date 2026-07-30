@@ -1243,15 +1243,19 @@ pub mod pattern {
                                     name: dynamic.str(name),
                                     value: path_,
                                 });
-                                path_ = b"";
-                                let _ = path_;
+                                return true;
                             }
-
-                            return true;
+                            // A required segment follows but no separator is left in
+                            // the path: this route cannot match.
+                            params.clear(); // shrinkRetainingCapacity(0)
+                            return false;
                         }
 
                         if !ALLOW_OPTIONAL_CATCH_ALL {
-                            return true;
+                            // No separator left in the path, but required segments
+                            // remain in the pattern: this route cannot match.
+                            params.clear(); // shrinkRetainingCapacity(0)
+                            return false;
                         }
                     }
                     Value::CatchAll(dynamic) => {

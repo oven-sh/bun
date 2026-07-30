@@ -1370,6 +1370,14 @@ fn report_lockfile_load_error(
     cause: &lockfile::LoadResultErr,
     log_level: Options::LogLevel,
 ) -> crate::Result<()> {
+    // A lockfile whose format version is newer than this build understands was
+    // written by a newer Bun. Falling through to the ignore-and-regenerate path
+    // would silently re-resolve from package.json and overwrite (downgrade) the
+    // committed lockfile with exit 0, so treat it as fatal regardless of
+    // `fail_early`.
+    let fatal = manager.options.enable.fail_early()
+        || matches!(cause.value, crate::Error::UnexpectedLockfileVersion);
+
     if log_level != Options::LogLevel::Silent {
         match cause.step {
             lockfile::LoadStep::OpenFile => Output::err(
@@ -1394,7 +1402,7 @@ fn report_lockfile_load_error(
             ),
         }
 
-        if !manager.options.enable.fail_early() {
+        if !fatal {
             Output::print_errorln("");
             bun_core::warn!("Ignoring lockfile");
         }
@@ -1408,7 +1416,7 @@ fn report_lockfile_load_error(
         Output::flush();
     }
 
-    if manager.options.enable.fail_early() {
+    if fatal {
         Global::crash();
     }
     Ok(())

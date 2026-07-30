@@ -4386,8 +4386,8 @@ impl<'a> Resolver<'a> {
                             // Guard: if the queue is now empty, there is nothing left to walk —
                             // return Ok(None) instead of `continue`-ing into the while-exit path
                             // that would hit the post-loop `unreachable!()` (BUG-01).
-                            if err == bun_core::err!("EACCES")
-                                || err == bun_core::err!("EPERM")
+                            if err == crate::Error::Sys(bun_errno::SystemErrno::EACCES)
+                                || err == crate::Error::Sys(bun_errno::SystemErrno::EPERM)
                             {
                                 if queue_slice_len == 0 {
                                     return Ok(None);

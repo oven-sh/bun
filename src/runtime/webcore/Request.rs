@@ -1214,8 +1214,7 @@ impl Request {
                                     req.headers.set(h.map(|p| {
                                         // SAFETY: clone_this returns a +1 ref FetchHeaders.
                                         let mut h = unsafe { HeadersRef::adopt(p) };
-                                        // Request headers are never immutable;
-                                        // drop any guard copied from the Response.
+                                        // clone_this preserves guard; Request headers are never immutable.
                                         h.set_guard(jsc::HeadersGuard::None);
                                         h
                                     }));

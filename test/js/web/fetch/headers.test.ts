@@ -852,6 +852,17 @@ describe("Headers", () => {
         expect(() => r.headers.set("x-foo", "1")).not.toThrow();
         expect(() => r.headers.delete("x-foo")).not.toThrow();
       });
+
+      test("HTMLRewriter.transform(fetchResponse) output is mutable", async () => {
+        await using server = Bun.serve({
+          port: 0,
+          fetch: () => new Response("<p>x</p>", { headers: { "content-type": "text/html" } }),
+        });
+        const res = await fetch(server.url);
+        const out = new HTMLRewriter().on("p", { element() {} }).transform(res);
+        expect(() => out.headers.set("content-type", "text/html; charset=utf-8")).not.toThrow();
+        expect(out.headers.get("content-type")).toBe("text/html; charset=utf-8");
+      });
     });
   });
 });

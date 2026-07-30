@@ -1966,8 +1966,7 @@ WebCore::FetchHeaders* WebCore__FetchHeaders__cloneThis(WebCore::FetchHeaders* h
     auto* clone = new WebCore::FetchHeaders({ WebCore::FetchHeaders::Guard::None, {} });
     clone->relaxAdoptionRequirement();
     WebCore::propagateException(*lexicalGlobalObject, throwScope, clone->fill(*headers));
-    // Preserve the guard so Response.clone() keeps immutable headers immutable.
-    // fill() runs with Guard::None so copying from an immutable source succeeds.
+    // Preserve the guard after fill() (which needs Guard::None to copy from an immutable source).
     clone->setGuard(headers->guard());
     return clone;
 }
@@ -2056,9 +2055,7 @@ typedef struct PicoHTTPHeaders {
 WebCore::FetchHeaders* WebCore__FetchHeaders__createFromPicoHeaders_(const void* arg1)
 {
     PicoHTTPHeaders pico_headers = *reinterpret_cast<const PicoHTTPHeaders*>(arg1);
-    // https://fetch.spec.whatwg.org/#ref-for-concept-headers-guard%E2%91%A0%E2%91%A1
-    // A Response created by fetch() has its headers guard set to "immutable".
-    // This function's only caller is FetchTasklet::to_response.
+    // Only caller is FetchTasklet::to_response; a fetch() Response's headers guard is "immutable".
     auto* headers = new WebCore::FetchHeaders({ WebCore::FetchHeaders::Guard::Immutable, {} });
     headers->relaxAdoptionRequirement(); // This prevents an assertion later, but may not be the proper approach.
 

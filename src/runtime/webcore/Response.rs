@@ -1170,8 +1170,7 @@ impl Response {
 
         // `get_or_create_headers` already populated init.headers.
         let headers = response.get_or_create_headers(global_this)?;
-        // `Init::init` may have cloned headers from an immutable source; clear
-        // the guard so `put(Location)` below does not throw.
+        // Clear any guard cloned from an immutable init so `put(Location)` does not throw.
         headers.set_guard(HeadersGuard::None);
         // https://fetch.spec.whatwg.org/#dom-response-redirect steps 1 & 6: `Location`
         // gets the serialization of the parsed url, not the raw input. Non-absolute
@@ -1180,8 +1179,7 @@ impl Response {
         // The JS string's own WTF string (no re-encode), same as `Headers.prototype.set`.
         let location = if href.is_empty() { &url_string } else { &href };
         headers.put(HTTPHeaderName::Location, location, global_this)?;
-        // https://fetch.spec.whatwg.org/#dom-response-redirect step 4: the Response
-        // object is created with guard "immutable".
+        // https://fetch.spec.whatwg.org/#dom-response-redirect step 4: guard is "immutable".
         headers.set_guard(HeadersGuard::Immutable);
         Ok(response)
     }
@@ -1190,8 +1188,7 @@ impl Response {
         global_this: &JSGlobalObject,
         _callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        // https://fetch.spec.whatwg.org/#dom-response-error: the Response object
-        // is created with guard "immutable".
+        // https://fetch.spec.whatwg.org/#dom-response-error: guard is "immutable".
         let mut headers = HeadersRef::create_empty();
         headers.set_guard(HeadersGuard::Immutable);
         // Ownership transfers to the JSC wrapper (freed via `finalize`).
@@ -1443,9 +1440,7 @@ impl Init {
                 // JS wrapper cell; rooted by `response_init` for this call.
                 let resp = unsafe { &*resp };
                 let mut init = resp.init.get().clone(global_this)?;
-                // A Response built by a constructor has guard "response" (treated
-                // as "none" here); drop any "immutable" guard carried over from
-                // the source so the new object's headers remain writable.
+                // A Response built from ResponseInit is never immutable.
                 if let Some(h) = init.headers.as_mut() {
                     h.set_guard(HeadersGuard::None);
                 }
@@ -1470,9 +1465,7 @@ impl Init {
                         // SAFETY: `clone_this` returns a fresh +1-ref'd `FetchHeaders*`;
                         // ownership of that ref is transferred into the `HeadersRef`.
                         let mut h = unsafe { HeadersRef::adopt(p) };
-                        // `clone_this` preserves the source guard; a Response
-                        // built from ResponseInit has guard "response" (treated
-                        // as "none" here), so drop any "immutable" copied over.
+                        // A Response built from ResponseInit is never immutable.
                         h.set_guard(HeadersGuard::None);
                         h
                     });

@@ -11,8 +11,7 @@ bun_opaque::opaque_ffi! {
     pub struct FetchHeaders;
 }
 
-/// Mirrors `WebCore::FetchHeaders::Guard` (FetchHeaders.h). Discriminants must
-/// stay in sync with the C++ enum order.
+/// Mirrors `WebCore::FetchHeaders::Guard` (FetchHeaders.h); discriminant order is ABI.
 #[repr(u8)]
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum HeadersGuard {

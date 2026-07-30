@@ -706,7 +706,12 @@ impl BufferOutputSink {
             // `self` (FFI mutates a freshly-allocated clone, not the receiver).
             if let Some(headers) = (*original).get_init_headers_mut() {
                 let cloned = headers.clone_this(global)?;
-                (*result).set_init_headers(cloned.map(|p| HeadersRef::adopt(p)));
+                (*result).set_init_headers(cloned.map(|p| {
+                    let mut h = HeadersRef::adopt(p);
+                    // transform() returns a new Response, not a spec clone().
+                    h.set_guard(jsc::HeadersGuard::None);
+                    h
+                }));
             }
         }
 

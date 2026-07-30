@@ -136,9 +136,7 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSFetchHeadersDOMConstru
     if (argument0.value() && !argument0.value().isUndefined()) {
         if (auto* existingJsFetchHeaders = dynamicDowncast<JSFetchHeaders>(argument0.value())) {
             auto newHeaders = FetchHeaders::create(existingJsFetchHeaders->wrapped());
-            // https://fetch.spec.whatwg.org/#dom-headers: a Headers object created
-            // by the JS constructor always has guard "none", regardless of the
-            // source's guard. The copy constructor above copies m_guard.
+            // The copy constructor copies m_guard; `new Headers(init)` has guard "none".
             newHeaders->setGuard(FetchHeaders::Guard::None);
             auto jsValue = toJSNewlyCreated<IDLInterface<FetchHeaders>>(*lexicalGlobalObject, *castedThis->globalObject(), throwScope, WTF::move(newHeaders));
             if constexpr (IsExceptionOr<decltype(jsValue)>)

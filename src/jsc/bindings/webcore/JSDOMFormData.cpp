@@ -319,7 +319,7 @@ static inline JSC::EncodedJSValue jsDOMFormDataPrototypeFunction_append2Body(JSC
 
     // https://xhr.spec.whatwg.org/#create-an-entry
     if (argument2.value().isUndefined() && Blob__isJSDOMFile(blobValue->impl()))
-        blobValue->setWrapper(vm, asObject(argument1.value()));
+        blobValue->setWrapper(vm, castedThis, asObject(argument1.value()));
 
     RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return impl.append(WTF::move(name), WTF::move(blobValue), WTF::move(filename)); })));
 }
@@ -486,7 +486,7 @@ static inline JSC::EncodedJSValue jsDOMFormDataPrototypeFunction_set2Body(JSC::J
 
     // https://xhr.spec.whatwg.org/#create-an-entry
     if (argument2.value().isUndefined() && Blob__isJSDOMFile(blobValue->impl()))
-        blobValue->setWrapper(vm, asObject(argument1.value()));
+        blobValue->setWrapper(vm, castedThis, asObject(argument1.value()));
 
     RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return impl.set(WTF::move(name), WTF::move(blobValue), WTF::move(filename)); })));
 }
@@ -713,6 +713,35 @@ JSC::GCClient::IsoSubspace* JSDOMFormData::subspaceForImpl(JSC::VM& vm)
         [](auto& spaces) { return spaces.m_subspaceForDOMFormData.get(); },
         [](auto& spaces, auto&& space) { spaces.m_subspaceForDOMFormData = std::forward<decltype(space)>(space); });
 }
+
+template<typename Visitor>
+void JSDOMFormData::visitAdditionalChildrenInGCThread(Visitor& visitor)
+{
+    wrapped().visitWrappers(visitor);
+}
+
+template<typename Visitor>
+void JSDOMFormData::visitChildrenImpl(JSCell* cell, Visitor& visitor)
+{
+    auto* thisObject = uncheckedDowncast<JSDOMFormData>(cell);
+    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
+    Base::visitChildren(thisObject, visitor);
+    thisObject->visitAdditionalChildrenInGCThread(visitor);
+}
+
+DEFINE_VISIT_CHILDREN(JSDOMFormData);
+
+template<typename Visitor>
+void JSDOMFormData::visitOutputConstraints(JSCell* cell, Visitor& visitor)
+{
+    auto* thisObject = uncheckedDowncast<JSDOMFormData>(cell);
+    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
+    Base::visitOutputConstraints(thisObject, visitor);
+    thisObject->visitAdditionalChildrenInGCThread(visitor);
+}
+
+template void JSDOMFormData::visitOutputConstraints(JSCell*, AbstractSlotVisitor&);
+template void JSDOMFormData::visitOutputConstraints(JSCell*, SlotVisitor&);
 
 void JSDOMFormData::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
 {

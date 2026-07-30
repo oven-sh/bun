@@ -1062,16 +1062,43 @@ describe("FormData entry value identity", () => {
   });
 
   it("keeps the entry value alive while the FormData is alive", () => {
-    const fd = new FormData();
-    {
-      const file = new File(["abc"], "f.txt");
-      fd.append("f", file);
+    const iterations = isASAN || isDebug ? 50 : 500;
+    let mismatches = 0;
+    for (let i = 0; i < iterations; i++) {
+      const fd = new FormData();
+      (function () {
+        fd.append("f", new File(["abc"], "f.txt"));
+        fd.append("b", new Blob(["xyz"]));
+      })();
+      Bun.gc(true);
+      const f = fd.get("f") as File;
+      const b = fd.get("b");
+      if (f?.name !== "f.txt") mismatches++;
+      Bun.gc(true);
+      if (fd.get("f") !== f) mismatches++;
+      if (fd.get("b") !== b) mismatches++;
+      if (fd.getAll("f")[0] !== f) mismatches++;
     }
+    expect(mismatches).toBe(0);
+  });
+
+  it("does not leak when an entry's value has an expando referencing the FormData", () => {
+    const refs: WeakRef<FormData>[] = [];
+    (function () {
+      for (let i = 0; i < 256; i++) {
+        const file = new File(["abc"], "f.txt");
+        const fd = new FormData();
+        fd.append("f", file);
+        (file as any).owner = fd;
+        refs.push(new WeakRef(fd));
+      }
+    })();
     Bun.gc(true);
-    const got = fd.get("f") as File;
-    expect(got.name).toBe("f.txt");
     Bun.gc(true);
-    expect(fd.get("f")).toBe(got);
+    Bun.gc(true);
+    const alive = refs.filter(r => r.deref() !== undefined).length;
+    // Conservative stack scanning may pin a handful; a Strong-rooted cycle would keep all 256.
+    expect(alive).toBeLessThanOrEqual(8);
   });
 
   it("can be used as a WeakMap key", () => {

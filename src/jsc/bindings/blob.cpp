@@ -1,11 +1,19 @@
 #include "blob.h"
 #include "ZigGeneratedClasses.h"
-#include <JavaScriptCore/StrongInlines.h>
 
 extern "C" JSC::EncodedJSValue SYSV_ABI Blob__create(JSC::JSGlobalObject* globalObject, void* impl);
 extern "C" void Blob__setAsFile(void* impl, BunString* filename);
 
 namespace WebCore {
+
+void Blob::setWrapper(JSC::VM& vm, const JSC::JSCell* owner, JSC::JSObject* wrapper)
+{
+    JSC::Weak<JSC::JSObject> weak { wrapper };
+    WTF::storeStoreFence();
+    m_wrapper = WTF::move(weak);
+    if (owner)
+        vm.writeBarrier(owner, wrapper);
+}
 
 JSC::JSValue toJS(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* globalObject, WebCore::Blob& impl)
 {
@@ -17,7 +25,7 @@ JSC::JSValue toJS(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* g
 
     JSC::JSValue value = JSC::JSValue::decode(Blob__create(lexicalGlobalObject, Blob__dupe(impl.impl())));
     if (auto* object = value.getObject())
-        impl.setWrapper(lexicalGlobalObject->vm(), object);
+        impl.setWrapper(lexicalGlobalObject->vm(), nullptr, object);
     return value;
 }
 

@@ -100,6 +100,15 @@ describe("FormData", () => {
       expect(e.size).toBe(0);
       expect(e.name).toBe("empty.log");
     });
+
+    it("preserves the filename argument on an empty Blob entry", () => {
+      const fd = new FormData();
+      fd.append("f", new Blob([]), "empty.bin");
+      const f = fd.get("f") as File;
+      expect(f).toBeInstanceOf(File);
+      expect(f.size).toBe(0);
+      expect(f.name).toBe("empty.bin");
+    });
   });
 
   const multipartFormDataFixturesRawBody = [

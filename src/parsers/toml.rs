@@ -273,7 +273,7 @@ impl<'a, 'log> Scanner<'a, 'log> {
             match self.peek_at(end) {
                 0 | b'\n' | b'\r' | b'#' | b',' | b']' | b'}' => break,
                 b'"' | b'\'' | b'\\' => return self.err(pos, GENERIC),
-                c if c < 0x20 => return self.err(pos, GENERIC),
+                c if c < 0x20 || c == 0x7F => return self.err(pos, GENERIC),
                 _ => end += 1,
             }
             if end - pos == 64 {

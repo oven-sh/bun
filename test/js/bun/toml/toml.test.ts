@@ -437,16 +437,18 @@ describe("robustness", () => {
     expect(cur).toEqual({ a: 1 });
   });
 
-  test("extremely deep dotted keys and headers throw instead of crashing", () => {
-    // Parsing these is iterative (every segment is processed before the limit
-    // can trip), so unlike OVERFLOW_DEPTH this depth is paid in full: it must
-    // stay small enough to be fast in debug builds while still overflowing
-    // the JS-conversion recursion at release frame sizes.
-    const depth = 250_000;
-    const path = Buffer.alloc(depth * 2 - 1, "a.").toString();
-    expect(() => TOML.parse(path + " = 1")).toThrow(RangeError);
-    expect(() => TOML.parse(`[${path}]`)).toThrow(RangeError);
-  }, 20_000);
+  // Parsing these is iterative (every segment is processed before the limit
+  // can trip), so unlike OVERFLOW_DEPTH this depth is paid in full: it must
+  // stay small enough to be fast in debug builds while still overflowing the
+  // JS-conversion recursion at release frame sizes. One parse per test so
+  // each stays under the default timeout.
+  const DEEP_DOTTED = Buffer.alloc(250_000 * 2 - 1, "a.").toString();
+  test("an extremely deep dotted key throws instead of crashing", () => {
+    expect(() => TOML.parse(DEEP_DOTTED + " = 1")).toThrow(RangeError);
+  });
+  test("an extremely deep dotted header throws instead of crashing", () => {
+    expect(() => TOML.parse(`[${DEEP_DOTTED}]`)).toThrow(RangeError);
+  });
 
   test("a very long string value round-trips", () => {
     const long = Buffer.alloc(1 << 20, "x").toString();
@@ -568,6 +570,7 @@ describe("error contract", () => {
     expect(syntaxError("a = " + Buffer.alloc(70, "x").toString()).message).toBe(generic);
     expect(syntaxError("a = it's").message).toBe(generic);
     expect(syntaxError("a = has\\back").message).toBe(generic);
+    expect(syntaxError("a = foo\x7Fbar").message).toBe(generic);
   });
 
   test("escape errors inside a drive-letter string name the Windows-path fix", () => {

@@ -46,7 +46,7 @@ test("deleted dead headers stay deleted", () => {
 test("emptied .cpp translation units stay empty", () => {
   // The function bodies were removed; the files stay as config.h-only stubs so
   // the unified-source bundle composition does not shift. Anything other than
-  // a config include and comments means the dead code came back.
+  // the single config include and comments means the dead code came back.
   const stubs = [
     "src/jsc/bindings/webcore/ActiveDOMObject.cpp",
     "src/jsc/bindings/webcore/EventDispatcher.cpp",
@@ -54,12 +54,12 @@ test("emptied .cpp translation units stay empty", () => {
     "src/jsc/bindings/ncrpyto_engine.cpp",
   ];
   const nonStub = stubs.filter(p => {
-    const body = src(p);
-    const stripped = body
+    return src(p)
       .split("\n")
-      .filter(l => !l.startsWith("//") && !l.startsWith("#include") && l.trim() !== "")
-      .join("");
-    return stripped.length > 0;
+      .some(l => {
+        const t = l.trim();
+        return t !== "" && !t.startsWith("//") && t !== '#include "config.h"';
+      });
   });
   expect(nonStub).toEqual([]);
 });

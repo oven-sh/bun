@@ -24,7 +24,7 @@ use crate::hir::{
 /// corresponding `traverse_*` to continue the default recursion.
 ///
 /// TS: `class ReactiveFunctionVisitor<TState>`
-pub trait ReactiveFunctionVisitor {
+pub(crate) trait ReactiveFunctionVisitor {
     type State;
 
     /// Provide Environment access. The default traversal uses this to include
@@ -307,7 +307,7 @@ pub trait ReactiveFunctionVisitor {
 
 /// Entry point for visiting a reactive function.
 /// TS: `visitReactiveFunction`
-pub fn visit_reactive_function<V: ReactiveFunctionVisitor>(
+pub(crate) fn visit_reactive_function<V: ReactiveFunctionVisitor>(
     func: &ReactiveFunction,
     visitor: &V,
     state: &mut V::State,
@@ -321,7 +321,7 @@ pub fn visit_reactive_function<V: ReactiveFunctionVisitor>(
 
 /// Result of transforming a ReactiveStatement.
 /// TS: `Transformed<T>`
-pub enum Transformed<T> {
+pub(crate) enum Transformed<T> {
     Keep,
     Remove,
     Replace(T),
@@ -339,7 +339,7 @@ pub enum Transformed<T> {
 /// transform results to the block.
 ///
 /// TS: `class ReactiveFunctionTransform<TState>`
-pub trait ReactiveFunctionTransform {
+pub(crate) trait ReactiveFunctionTransform {
     type State;
 
     /// Provide Environment access. The default traversal uses this to include
@@ -745,7 +745,7 @@ pub trait ReactiveFunctionTransform {
 
 /// Entry point for transforming a reactive function.
 /// TS: `visitReactiveFunction` (used with transforms too)
-pub fn transform_reactive_function<T: ReactiveFunctionTransform>(
+pub(crate) fn transform_reactive_function<T: ReactiveFunctionTransform>(
     func: &mut ReactiveFunction,
     transform: &mut T,
     state: &mut T::State,

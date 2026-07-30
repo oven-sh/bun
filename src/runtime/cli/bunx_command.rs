@@ -41,21 +41,21 @@ pub struct Options {
     /// CLI arguments to pass to the command being run.
     // `Box<[u8]>` to match `ContextData::passthrough` /
     // `Run::run_binary`'s `&[Box<[u8]>]` param.
-    pub passthrough_list: Vec<Box<[u8]>>,
+    pub(crate) passthrough_list: Vec<Box<[u8]>>,
     /// `bunx <package_name>`
-    pub package_name: &'static [u8],
+    pub(crate) package_name: &'static [u8],
     /// The binary name to run (when using --package)
-    pub binary_name: Option<&'static [u8]>,
+    pub(crate) binary_name: Option<&'static [u8]>,
     /// The package to install (when using --package)
-    pub specified_package: Option<&'static [u8]>,
+    pub(crate) specified_package: Option<&'static [u8]>,
     // `--silent` and `--verbose` are not mutually exclusive. Both the
     // global CLI parser and `bun add` parser use them for different
     // purposes.
-    pub verbose_install: bool,
-    pub silent_install: bool,
+    pub(crate) verbose_install: bool,
+    pub(crate) silent_install: bool,
     /// Skip installing the package, only running the target command if its
     /// already downloaded. If its not, `bunx` exits with an error.
-    pub no_install: bool,
+    pub(crate) no_install: bool,
 }
 
 impl Default for Options {

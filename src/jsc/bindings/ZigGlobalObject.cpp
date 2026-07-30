@@ -2538,10 +2538,7 @@ void GlobalObject::finishCreation(VM& vm)
             init.set(process);
         });
 
-    m_streamsRuntime.initLater(
-        [](const JSC::LazyProperty<JSC::JSGlobalObject, WebCore::JSStreamsRuntime>::Initializer& init) {
-            init.set(WebCore::JSStreamsRuntime::create(init.vm, static_cast<Zig::GlobalObject*>(init.owner)));
-        });
+    m_streamsRuntime.initialize(this);
 
     m_requireMap.initLater(
         [](const JSC::LazyProperty<JSC::JSGlobalObject, JSC::JSMap>::Initializer& init) {

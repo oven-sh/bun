@@ -59,11 +59,11 @@ impl Drop for SecretsCtx {
     }
 }
 
-pub(crate) type SecretsJob = AnyTaskJob<SecretsCtx>;
+type SecretsJob = AnyTaskJob<SecretsCtx>;
 
 // Helper function for C++ to call with opaque pointer
 #[unsafe(no_mangle)]
-pub(crate) extern "C" fn Bun__Secrets__scheduleJob(
+extern "C" fn Bun__Secrets__scheduleJob(
     global: &JSGlobalObject,
     options: *mut SecretsJobOptions,
     promise: JSValue,

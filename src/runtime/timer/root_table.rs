@@ -50,7 +50,7 @@ const SEGMENT_CAPACITY: u32 = 4096;
 
 /// Handle to an occupied root-table slot, stored on `TimerObjectInternals`.
 #[derive(Copy, Clone, Default)]
-pub struct RootSlot {
+pub(crate) struct RootSlot {
     segment: Option<NonNull<Segment>>,
     index: u16,
 }
@@ -63,7 +63,7 @@ impl RootSlot {
 }
 
 #[derive(Default)]
-pub struct RootTable {
+pub(crate) struct RootTable {
     /// Segment most recently returned by `acquire`; checked first on `arm` to
     /// skip the C++ list walk while it still has room.
     cursor: Cell<Option<NonNull<Segment>>>,

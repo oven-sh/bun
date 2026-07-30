@@ -46,56 +46,56 @@ pub type TopLevelSymbolToParts = bun_ast::ast_result::TopLevelSymbolToParts;
 // 26 fields ≤ `multi_array_list::MAX_FIELDS` (32).
 
 pub struct BundledAst<'arena> {
-    pub approximate_newline_count: u32,
-    pub nested_scope_slot_counts: SlotCounts,
+    pub(crate) approximate_newline_count: u32,
+    pub(crate) nested_scope_slot_counts: SlotCounts,
 
-    pub exports_kind: ExportsKind,
+    pub(crate) exports_kind: ExportsKind,
 
     /// These are stored at the AST level instead of on individual AST nodes so
     /// they can be manipulated efficiently without a full AST traversal
-    pub import_records: import_record::List<'arena>,
+    pub(crate) import_records: import_record::List<'arena>,
 
     // Ast.hashbang is `StoreStr`; mirror it here so init/to_ast can
     // round-trip.
-    pub hashbang: StoreStr,
-    pub parts: part::List<'arena>,
+    pub(crate) hashbang: StoreStr,
+    pub(crate) parts: part::List<'arena>,
     // See `CssAstRef` doc for the arena drop-order invariant that backs the
     // safe `Deref`.
-    pub css: CssCol,
-    pub url_for_css: &'arena [u8],
-    pub symbols: symbol::List<'arena>,
-    pub module_scope: Scope,
+    pub(crate) css: CssCol,
+    pub(crate) url_for_css: &'arena [u8],
+    pub(crate) symbols: symbol::List<'arena>,
+    pub(crate) module_scope: Scope,
     // Only meaningful when flags.HAS_CHAR_FREQ is set; zero-initialized otherwise.
-    pub char_freq: CharFreq,
-    pub exports_ref: Ref,
-    pub module_ref: Ref,
-    pub wrapper_ref: Ref,
-    pub require_ref: Ref,
-    pub top_level_await_keyword: bun_ast::Range,
+    pub(crate) char_freq: CharFreq,
+    pub(crate) exports_ref: Ref,
+    pub(crate) module_ref: Ref,
+    pub(crate) wrapper_ref: Ref,
+    pub(crate) require_ref: Ref,
+    pub(crate) top_level_await_keyword: bun_ast::Range,
     pub tla_check: TlaCheck,
 
     // These are used when bundling. They are filled in during the parser pass
     // since we already have to traverse the AST then anyway and the parser pass
     // is conveniently fully parallelized.
-    pub named_imports: NamedImports,
-    pub named_exports: NamedExports,
-    pub export_star_import_records: bun_alloc::AstVec<u32>,
+    pub(crate) named_imports: NamedImports,
+    pub(crate) named_exports: NamedExports,
+    pub(crate) export_star_import_records: bun_alloc::AstVec<u32>,
 
-    pub top_level_symbols_to_parts: TopLevelSymbolToParts,
+    pub(crate) top_level_symbols_to_parts: TopLevelSymbolToParts,
 
-    pub commonjs_named_exports: CommonJSNamedExports,
+    pub(crate) commonjs_named_exports: CommonJSNamedExports,
 
-    pub redirect_import_record_index: u32,
+    pub(crate) redirect_import_record_index: u32,
 
     /// Only populated when bundling. When --server-components is passed, this
     /// will be .browser when it is a client component, and the server's target
     /// on the server.
-    pub target: bun_ast::Target,
+    pub(crate) target: bun_ast::Target,
 
     // const_values: ConstValuesMap,
-    pub ts_enums: bun_ast::ast_result::TsEnumsMap,
+    pub(crate) ts_enums: bun_ast::ast_result::TsEnumsMap,
 
-    pub flags: Flags,
+    pub(crate) flags: Flags,
 }
 
 bun_collections::multi_array_columns! {
@@ -153,7 +153,7 @@ impl<'arena> BundledAst<'arena> {
     // The three `ArenaVec` fields prevent `const fn` here, but spell out the
     // defaults directly instead of round-tripping through `Ast::empty_in` +
     // `init` — this runs once per discovered module on the main thread.
-    pub fn empty_in(arena: &'arena bun_alloc::Arena) -> Self {
+    pub(crate) fn empty_in(arena: &'arena bun_alloc::Arena) -> Self {
         Self {
             approximate_newline_count: 0,
             nested_scope_slot_counts: SlotCounts::default(),
@@ -186,7 +186,7 @@ impl<'arena> BundledAst<'arena> {
 
     // The collection types aren't Copy, so consume `self` to move them (to_ast
     // is a one-shot conversion back to the fat Ast).
-    pub fn to_ast(self) -> Ast<'arena> {
+    pub(crate) fn to_ast(self) -> Ast<'arena> {
         let arena: &'arena bun_alloc::Arena = *self.parts.allocator();
         Ast {
             approximate_newline_count: self.approximate_newline_count as usize,
@@ -263,7 +263,7 @@ impl<'arena> BundledAst<'arena> {
         }
     }
 
-    pub fn init(ast: Ast<'arena>) -> Self {
+    pub(crate) fn init(ast: Ast<'arena>) -> Self {
         let mut flags = Flags::empty();
         flags.set(Flags::USES_EXPORTS_REF, ast.uses_exports_ref);
         flags.set(Flags::USES_MODULE_REF, ast.uses_module_ref);
@@ -329,7 +329,7 @@ impl<'arena> BundledAst<'arena> {
     }
 
     /// TODO: Move this from being done on all parse tasks into the start of the linker. This currently allocates base64 encoding for every small file loaded thing.
-    pub fn add_url_for_css(
+    pub(crate) fn add_url_for_css(
         &mut self,
         bump: &'arena bun_alloc::Arena,
         source: &bun_ast::Source,

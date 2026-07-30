@@ -252,6 +252,85 @@ test(".env value expansion", () => {
   expect(stdout).toBe("foo|foo bar|foo foo bar moo");
 });
 
+test(".env ${VAR:-default} with nested references (issue #32411)", () => {
+  // https://github.com/oven-sh/bun/issues/32411
+  // `${` pairs with its matching `}` by depth and the `:-` default is expanded
+  // recursively; malformed forms (unterminated, non-`:-`) fall through as literals.
+  using dir = tempDir("dotenv-expand-nested", {
+    ".env": [
+      "NSTD_FALLBACK=localhost",
+      "NSTD_SET=hi",
+      "NSTD_HOST=${NSTD_UNSET:-${NSTD_FALLBACK}}",
+      "NSTD_EMPTY=${NSTD_UNSET:-${NSTD_ALSO_UNSET}}",
+      "NSTD_DEEP=${NSTD_UNSET:-${NSTD_ALSO_UNSET:-c}}",
+      "NSTD_PREFIX=${NSTD_UNSET:-x${NSTD_ALSO_UNSET}}",
+      'NSTD_QUOTED="${NSTD_UNSET:-${NSTD_ALSO_UNSET:-${NSTD_FALLBACK}}}suffix"',
+      "NSTD_SET_WINS=${NSTD_SET:-${NSTD_ALSO_UNSET}}",
+      "NSTD_BARE=${NSTD_UNSET:-$NSTD_FALLBACK}",
+      "NSTD_DOLLAR=${NSTD_UNSET:-$}",
+      "NSTD_DUBL=$${NSTD_UNSET:-${NSTD_FALLBACK}}",
+      "NSTD_NOKEY=${:-${NSTD_FALLBACK}}",
+      "NSTD_AROUND=pre${NSTD_UNSET:-$NSTD_FALLBACK}post",
+      "NSTD_TWO=${NSTD_FALLBACK}${NSTD_UNSET:-$NSTD_FALLBACK}",
+      "NSTD_PATH=$NSTD_FALLBACK/${NSTD_UNSET:-$NSTD_FALLBACK}/x",
+      "NSTD_UNTERM=${NSTD_UNSET:-${",
+      "NSTD_UNTERM2=${NSTD_UNSET",
+      "NSTD_BSLASH=${NSTD_UNSET:-a\\b}",
+      "NSTD_DASH=${NSTD_UNSET-${NSTD_FALLBACK}}",
+    ].join("\n"),
+    "index.ts":
+      "const keys = process.argv.slice(2);" +
+      "const out = {};" +
+      "for (const k of keys) out[k] = process.env[k];" +
+      "console.log(JSON.stringify(out));",
+  });
+  const keys = [
+    "NSTD_HOST",
+    "NSTD_EMPTY",
+    "NSTD_DEEP",
+    "NSTD_PREFIX",
+    "NSTD_QUOTED",
+    "NSTD_SET_WINS",
+    "NSTD_BARE",
+    "NSTD_DOLLAR",
+    "NSTD_DUBL",
+    "NSTD_NOKEY",
+    "NSTD_AROUND",
+    "NSTD_TWO",
+    "NSTD_PATH",
+    "NSTD_UNTERM",
+    "NSTD_UNTERM2",
+    "NSTD_BSLASH",
+    "NSTD_DASH",
+  ];
+  const result = Bun.spawnSync([bunExe(), `${dir}/index.ts`, ...keys], {
+    cwd: String(dir),
+    env: { ...bunEnv, NODE_ENV: undefined },
+  });
+  const stdout = result.stdout.toString("utf8").trim();
+  expect(stdout).toStartWith("{");
+  expect(JSON.parse(stdout)).toEqual({
+    NSTD_HOST: "localhost",
+    NSTD_EMPTY: "",
+    NSTD_DEEP: "c",
+    NSTD_PREFIX: "x",
+    NSTD_QUOTED: "localhostsuffix",
+    NSTD_SET_WINS: "hi",
+    NSTD_BARE: "localhost",
+    NSTD_DOLLAR: "$",
+    NSTD_DUBL: "$localhost",
+    NSTD_NOKEY: "localhost",
+    NSTD_AROUND: "prelocalhostpost",
+    NSTD_TWO: "localhostlocalhost",
+    NSTD_PATH: "localhost/localhost/x",
+    NSTD_UNTERM: "${NSTD_UNSET:-${",
+    NSTD_UNTERM2: "${NSTD_UNSET",
+    NSTD_BSLASH: "a\\b",
+    NSTD_DASH: "${NSTD_UNSET-${NSTD_FALLBACK}}",
+  });
+  expect(result.exitCode).toBe(0);
+});
+
 test(".env comments", () => {
   using dir = tempDir("dotenv-comments", {
     ".env": "#FOZ\nFOO = foo#FAIL\nBAR='bar' #BAZ",

@@ -1460,6 +1460,19 @@ where
             return;
         }
 
+        if let Some(byte_stream) = this.byte_stream.take() {
+            // Source::Bytes pipe: cancel upstream; deref balances the pipe ref.
+            shim::byte_stream_unpipe(byte_stream);
+            if let Some(stream) = this.response_body_readable_stream_ref.get(global_this) {
+                let _keep = jsc::EnsureStillAlive(stream.value);
+                stream.abort(global_this);
+                any_js_calls.set(true);
+            }
+            this.response_body_readable_stream_ref.deinit();
+            this.deref();
+            return;
+        }
+
         // if we can, free the request now.
         if this.is_dead_request() {
             this.finalize_without_deinit();
@@ -3320,6 +3333,12 @@ where
         let is_done = stream.is_done();
         // Drop one ref only when the stream signals completion.
         let _ref = is_done.then(|| RequestContextRef(std::ptr::from_mut::<Self>(this)));
+        if is_done {
+            // Invariant for on_abort: byte_stream Some iff the pipe ref is live.
+            if let Some(byte_stream) = this.byte_stream.take() {
+                shim::byte_stream_unpipe(byte_stream);
+            }
+        }
 
         if this.is_aborted_or_ended() {
             return;

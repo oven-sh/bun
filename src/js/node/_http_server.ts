@@ -1066,8 +1066,6 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
           }
         }
 
-        socket.cork();
-
         if (isPipelined) {
           // Completion of a queued response is tracked through the pipeline
           // (advanceResponsePipeline) and its native handle, not this dispatch.

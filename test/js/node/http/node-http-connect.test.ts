@@ -820,3 +820,121 @@ test("CONNECT: process exits after the tunnel socket is re-emitted as a connecti
     signalCode: null,
   });
 });
+
+// The dispatcher used to cork() the socket's Duplex after every request and never
+// uncork it. ServerResponse writes go through the native handle so this was
+// invisible until the socket was handed to 'upgrade'/'connect' on a reused
+// connection: user writes then hit the corked Duplex and buffered forever.
+describe("server socket handed to 'upgrade'/'connect' after a prior keep-alive request", () => {
+  async function readUntil(sock: import("node:net").Socket, needle: string): Promise<string> {
+    let raw = "";
+    while (!raw.includes(needle)) {
+      const [chunk] = (await once(sock, "data")) as [Buffer];
+      raw += chunk.toString("latin1");
+    }
+    return raw;
+  }
+
+  test.concurrent("'upgrade' socket writes reach the client", async () => {
+    const got = { head: "", data: "", wlAfterWrite: -1 };
+    const sockReady = Promise.withResolvers<import("node:net").Socket>();
+    await using server = http.createServer((req, res) => res.end("ok"));
+    server.on("upgrade", (req, sock, head) => {
+      got.head = head.toString();
+      sock.on("data", d => {
+        got.data += d.toString();
+        sock.write("ECHO:" + d);
+      });
+      sock.write("HTTP/1.1 101 Switching Protocols\r\n\r\nSRV0");
+      got.wlAfterWrite = sock.writableLength;
+      sockReady.resolve(sock);
+    });
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const addr = server.address() as AddressInfo;
+
+    const client = net.connect(addr.port, addr.address);
+    try {
+      await once(client, "connect");
+      // First: an ordinary request on the connection.
+      client.write("GET /a HTTP/1.1\r\nHost: h\r\n\r\n");
+      await readUntil(client, "\r\n\r\nok");
+      // Second: the upgrade, on the same (kept-alive) connection.
+      client.write("GET /up HTTP/1.1\r\nHost: h\r\nConnection: Upgrade\r\nUpgrade: p\r\n\r\nT");
+      const serverSock = await sockReady.promise;
+      const firstReply = await readUntil(client, "SRV0");
+      client.write("MORE");
+      const echoReply = await readUntil(client, "ECHO:MORE");
+
+      expect({ ...got, firstReply, echoReply, serverCorked: serverSock.writableCorked }).toEqual({
+        head: "T",
+        data: "MORE",
+        wlAfterWrite: 0,
+        firstReply: "HTTP/1.1 101 Switching Protocols\r\n\r\nSRV0",
+        echoReply: "ECHO:MORE",
+        serverCorked: 0,
+      });
+    } finally {
+      client.destroy();
+    }
+  });
+
+  test.concurrent("'connect' socket writes reach the client", async () => {
+    const sockReady = Promise.withResolvers<import("node:net").Socket>();
+    await using server = http.createServer((req, res) => res.end("ok"));
+    server.on("connect", (req, sock, head) => {
+      sock.on("data", d => sock.write("ECHO:" + d));
+      sock.write("HTTP/1.1 200 Connection Established\r\n\r\nSRV0");
+      sockReady.resolve(sock);
+    });
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const addr = server.address() as AddressInfo;
+
+    const client = net.connect(addr.port, addr.address);
+    try {
+      await once(client, "connect");
+      client.write("GET /a HTTP/1.1\r\nHost: h\r\n\r\n");
+      await readUntil(client, "\r\n\r\nok");
+      client.write("CONNECT target:1 HTTP/1.1\r\nHost: target:1\r\n\r\n");
+      const serverSock = await sockReady.promise;
+      const firstReply = await readUntil(client, "SRV0");
+      client.write("MORE");
+      const echoReply = await readUntil(client, "ECHO:MORE");
+
+      expect({
+        firstReply,
+        echoReply,
+        serverCorked: serverSock.writableCorked,
+        serverWritableLength: serverSock.writableLength,
+      }).toEqual({
+        firstReply: "HTTP/1.1 200 Connection Established\r\n\r\nSRV0",
+        echoReply: "ECHO:MORE",
+        serverCorked: 0,
+        serverWritableLength: 0,
+      });
+    } finally {
+      client.destroy();
+    }
+  });
+
+  test.concurrent("socket.writableCorked stays 0 across keep-alive requests", async () => {
+    const corked: number[] = [];
+    await using server = http.createServer((req, res) => {
+      corked.push(req.socket.writableCorked);
+      res.end("ok");
+    });
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const addr = server.address() as AddressInfo;
+
+    const client = net.connect(addr.port, addr.address);
+    try {
+      await once(client, "connect");
+      for (let i = 0; i < 3; i++) {
+        client.write("GET / HTTP/1.1\r\nHost: h\r\n\r\n");
+        await readUntil(client, "\r\n\r\nok");
+      }
+      expect(corked).toEqual([0, 0, 0]);
+    } finally {
+      client.destroy();
+    }
+  });
+});

@@ -2060,6 +2060,10 @@ pub struct NetworkSink {
     /// is allocated on that path.
     pub flush_promise: JSPromiseStrong,
     pub end_promise: JSPromiseStrong,
+    /// Upstream ByteStream error stashed by `end_from_stream` so the upload
+    /// failure callback can reject with the original JS error (e.g. S3
+    /// `NoSuchKey`) instead of the generic `UnknownError` passed to `fail()`.
+    pub upstream_error: jsc::strong::Optional,
     pub ended: bool,
     pub done: bool,
     pub cancel: bool,
@@ -2074,6 +2078,7 @@ impl Default for NetworkSink {
             high_water_mark: 2048,
             flush_promise: JSPromiseStrong::default(),
             end_promise: JSPromiseStrong::default(),
+            upstream_error: jsc::strong::Optional::empty(),
             ended: false,
             done: false,
             cancel: false,
@@ -2288,6 +2293,54 @@ impl NetworkSink {
 
         self.source.close(err);
         bun_sys::Result::Ok(())
+    }
+
+    /// Native-path terminator called from `SinkHandle::end`. Unlike `end()`
+    /// (clean EOF / commit), an upstream error on the ByteStream fast-path must
+    /// abort the upload and surface the original JS error to the caller.
+    pub fn end_from_stream(&mut self, err: Option<StreamError>) {
+        let Some(err) = err else {
+            let _ = self.end(None);
+            return;
+        };
+        if !matches!(self.source, SourceHandle::ByteStream(_)) {
+            let sys_err = match err {
+                StreamError::Error(e) => Some(e),
+                _ => None,
+            };
+            let _ = self.end(sys_err);
+            return;
+        }
+        if self.ended {
+            return;
+        }
+        self.ended = true;
+        self.done = true;
+        self.source.close(None);
+        self.source.clear();
+        let global = self
+            .global_this
+            .expect("NetworkSink.global_this set at construction");
+        let js_err = err.to_js(&global);
+        if !js_err.is_empty_or_undefined_or_null() {
+            self.upstream_error.set(&global, js_err);
+        }
+        // `task.fail()` fires the upload callback synchronously, which may
+        // re-borrow this sink via `*mut NetworkSink`; launder `self` so the
+        // call does not derive from the `&mut self` provenance.
+        let this: *mut Self = core::hint::black_box(core::ptr::from_mut(self));
+        // SAFETY: `this` is the live heap `NetworkSink`; `task` holds a
+        // counted ref on the upload while `Some` (released in
+        // `detach_writable`).
+        if let Some(task) = unsafe { (*this).task.as_ref().map(|t| t.as_ptr()) } {
+            // SAFETY: counted ref held by `self.task`; single-threaded.
+            let _ = unsafe {
+                (*task).fail(bun_s3_signing::error::S3Error {
+                    code: b"UnknownError",
+                    message: b"ReadableStream ended with an error",
+                })
+            };
+        }
     }
 
     pub fn end_from_js(&mut self, _global_this: &JSGlobalObject) -> bun_sys::Result<JSValue> {

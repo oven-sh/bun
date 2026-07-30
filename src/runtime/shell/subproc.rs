@@ -13,7 +13,7 @@ use crate::shell::interpreter::{Interpreter, NodeId};
 use crate::shell::io_writer::{self, IOWriter};
 use crate::shell::states::cmd::Cmd as ShellCmd;
 use crate::shell::{self as sh, Yield};
-use crate::webcore::{self, FileSink, blob};
+use crate::webcore::{self, FileSink};
 use bun_alloc::Arena;
 use bun_collections::VecExt;
 use bun_io::Loop as AsyncLoop;
@@ -900,8 +900,6 @@ impl Writable {
         }
         *self = Writable::Ignore;
     }
-    pub fn on_ready(&mut self, _: Option<blob::SizeType>, _: Option<blob::SizeType>) {}
-    pub fn on_start(&mut self) {}
 }
 
 impl Writable {

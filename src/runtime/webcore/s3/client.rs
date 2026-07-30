@@ -695,7 +695,15 @@ impl S3UploadStreamWrapper {
                 }
             }
             S3UploadResult::Failure(err) => {
-                let js_err = s3_error_to_js(err, &self_.global, Some(self_.path.slice()));
+                // If the native ByteStream source errored, prefer the original
+                // JS error it stashed on the sink (preserves `.code` /
+                // `.name`) over the generic `UnknownError` passed to `fail()`.
+                let stashed = self_.sink.and_then(|p| {
+                    // SAFETY: sink is live while held in `self_.sink`.
+                    unsafe { (*p.as_ptr()).upstream_error.try_swap() }
+                });
+                let js_err = stashed
+                    .unwrap_or_else(|| s3_error_to_js(err, &self_.global, Some(self_.path.slice())));
                 js_err.ensure_still_alive();
                 if let Some(sink_ptr) = self_.sink {
                     // Sink pump still in-flight: fire source.close() so the JSSink

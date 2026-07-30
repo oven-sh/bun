@@ -1,13 +1,12 @@
 use bun_collections::ByteVecExt;
 use bun_ptr::BackRef;
 use bun_sys::Error as SysError;
-use bun_sys_jsc::SystemErrorJsc;
 
 use crate::webcore::blob::SizeType as BlobSizeType;
 use crate::webcore::fetch::fetch_tasklet::FetchTasklet;
 use crate::webcore::jsc::{JSGlobalObject, JSPromise, JSPromiseStrong, JSValue};
 use crate::webcore::sink::JSSink;
-use crate::webcore::streams::{SourceHandle, Start, StartTag, StreamResult, Writable};
+use crate::webcore::streams::{SourceHandle, Start, StartTag, StreamError, StreamResult, Writable};
 
 bun_core::declare_scope!(FetchRequestBodySinkLog, visible);
 
@@ -178,8 +177,16 @@ impl FetchRequestBodySink {
     }
 
     pub fn end(&mut self, err: Option<SysError>) -> bun_sys::Result<()> {
+        self.end_from_stream(err.map(StreamError::Error));
+        bun_sys::Result::Ok(())
+    }
+
+    /// Native-path terminator called from `SinkHandle::end`. Carries the full
+    /// `StreamError` so a JS-valued upstream error (e.g. fetch reset) reaches
+    /// `write_end_request(Some(js))` instead of being silently dropped to EOF.
+    pub fn end_from_stream(&mut self, err: Option<StreamError>) {
         if self.ended {
-            return bun_sys::Result::Ok(());
+            return;
         }
         self.ended = true;
         if matches!(self.source, SourceHandle::ByteStream(_)) {
@@ -190,17 +197,20 @@ impl FetchRequestBodySink {
                 // SAFETY: the `+1` taken in `start_request_stream` keeps the
                 // tasklet live while `task` was `Some`.
                 let global = unsafe { (*task_ptr).global_this };
-                let err_js = err.map(|e| e.to_system_error().to_error_instance(&global));
+                let err_js = err.map(|e| e.to_js(&global));
                 // SAFETY: `task_ptr` live (see above); `write_end_request` is
                 // the balancing release and may free `*self` via `clear_sink`,
                 // so do not touch `self` afterwards.
                 unsafe { (*task_ptr).write_end_request(err_js) };
             }
-            return bun_sys::Result::Ok(());
+            return;
         }
         // JS pump path: the assign_to_stream result handler is the single balancing release.
-        self.source.close(err);
-        bun_sys::Result::Ok(())
+        let sys_err = match err {
+            Some(StreamError::Error(e)) => Some(e),
+            _ => None,
+        };
+        self.source.close(sys_err);
     }
 
     pub fn end_from_js(&mut self, _global_this: &JSGlobalObject) -> bun_sys::Result<JSValue> {

@@ -439,30 +439,16 @@ impl SinkHandle {
             | SinkHandle::HttpsResponse { ctx, end, .. }
             | SinkHandle::H3Response { ctx, end, .. } => end(ctx, err.as_ref()),
             // SAFETY: see fn-level invariant — pointee outlives the handle.
-            SinkHandle::FetchRequestBody(ptr) => {
-                let _ = unsafe { (*ptr).end(Self::to_sys_error(err)) };
-            }
+            SinkHandle::FetchRequestBody(ptr) => unsafe { (*ptr).end_from_stream(err) },
             // SAFETY: see fn-level invariant.
-            SinkHandle::S3Upload(ptr) => {
-                let _ = unsafe { (*ptr).end(Self::to_sys_error(err)) };
-            }
+            SinkHandle::S3Upload(ptr) => unsafe { (*ptr).end_from_stream(err) },
             // SAFETY: see fn-level invariant.
-            SinkHandle::FileSink(ptr) => {
-                let _ = unsafe { (*ptr).end(Self::to_sys_error(err)) };
-            }
+            SinkHandle::FileSink(ptr) => unsafe { (*ptr).end_from_stream(err) },
             SinkHandle::ValueBufferer(ctx, write) => {
                 if let Some(e) = err {
                     let _ = write(ctx, &streams::Result::Err(e));
                 }
             }
-        }
-    }
-
-    #[inline]
-    fn to_sys_error(err: Option<streams::StreamError>) -> Option<bun_sys::Error> {
-        match err {
-            Some(streams::StreamError::Error(e)) => Some(e),
-            _ => None,
         }
     }
 }

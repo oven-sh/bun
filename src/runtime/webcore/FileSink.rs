@@ -1052,6 +1052,30 @@ impl FileSink {
         self.to_result(rc, accepted)
     }
 
+    /// Native-path terminator called from `SinkHandle::end`. On upstream error
+    /// (ByteStream source), close the writer without flushing — mirrors
+    /// `handle_reject_stream` — so a truncated write is not committed as EOF.
+    pub fn end_from_stream(&self, err: Option<streams::StreamError>) {
+        if err.is_none()
+            || !matches!(self.source.get(), streams::SourceHandle::ByteStream(_))
+        {
+            let sys_err = match err {
+                Some(streams::StreamError::Error(e)) => Some(e),
+                _ => None,
+            };
+            let _ = self.end(sys_err);
+            return;
+        }
+        if self.done.get() {
+            return;
+        }
+        self.done.set(true);
+        self.source.with_mut(|s| s.clear());
+        self.readable_stream
+            .with_mut(|rs| *rs = readable_stream::Strong::default());
+        self.writer.with_mut(|w| w.close());
+    }
+
     pub fn end(&self, _err: Option<sys::Error>) -> sys::Result<()> {
         if self.done.get() {
             return sys::Result::Ok(());

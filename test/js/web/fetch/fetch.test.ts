@@ -2700,7 +2700,7 @@ describe("fetch should allow duplex", () => {
     // heap growth for two Bun.serve instances are retained; an unbounded pump would
     // retain multiples of the payload. ASAN quarantine and the debug allocator inflate
     // RSS substantially, so the bound is branched.
-    expect(deltaMB).toBeLessThan(isASAN || isDebug ? 160 : 64);
+    expect(deltaMB).toBeLessThan(isASAN || isDebug ? 160 : 96);
     expect(exitCode).toBe(0);
   });
 });

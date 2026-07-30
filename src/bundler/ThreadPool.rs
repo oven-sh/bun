@@ -524,6 +524,43 @@ impl WorkerData {
     pub fn uses_other_transpiler_for(&self, target: Target) -> bool {
         target == Target::Browser && self.transpiler.options.target != target
     }
+
+    /// Raw pointers for `get_ast`: `resolver` from the `resolver_target` slot
+    /// and `transpiler` from the `transpiler_target` slot. Raw because when both
+    /// targets route to the same slot `resolver == &(*transpiler).resolver`.
+    /// Caller must have initialized `other_transpiler` (via
+    /// [`Worker::transpiler_for_target`]) for any target that needs it.
+    pub(crate) fn resolver_and_transpiler_for(
+        &mut self,
+        resolver_target: Target,
+        transpiler_target: Target,
+    ) -> (*mut bun_resolver::Resolver<'static>, *mut Transpiler<'static>) {
+        let resolver_uses_other = self.uses_other_transpiler_for(resolver_target);
+        let transpiler_uses_other = self.uses_other_transpiler_for(transpiler_target);
+        let other: Option<*mut Transpiler<'static>> =
+            if resolver_uses_other || transpiler_uses_other {
+                Some(
+                    &raw mut **self
+                        .other_transpiler
+                        .as_mut()
+                        .expect("other_transpiler initialized by transpiler_for_target"),
+                )
+            } else {
+                None
+            };
+        let transpiler: *mut Transpiler<'static> = if transpiler_uses_other {
+            other.unwrap()
+        } else {
+            &raw mut self.transpiler
+        };
+        let resolver: *mut bun_resolver::Resolver<'static> = if resolver_uses_other {
+            // SAFETY: `other` was just derived from a live `&mut Box<Transpiler>`.
+            unsafe { &raw mut (*other.unwrap()).resolver }
+        } else {
+            &raw mut self.transpiler.resolver
+        };
+        (resolver, transpiler)
+    }
 }
 
 impl Worker {

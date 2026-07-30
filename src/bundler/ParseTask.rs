@@ -2290,46 +2290,21 @@ pub mod parse_worker {
             (use_directive, rebind_to_browser)
         };
 
-        if rebind_to_browser {
+        let final_target = if rebind_to_browser {
             // Lazily initialize `other_transpiler` before borrowing into `this.data`.
             let _ = this.transpiler_for_target(options::Target::Browser);
-        }
+            options::Target::Browser
+        } else {
+            task.known_target
+        };
 
-        // `resolver` comes from the `known_target` slot; `transpiler` from the
-        // final (possibly rebound) slot. `get_ast` takes both raw because
-        // `resolver` may equal `&(*transpiler).resolver`.
-        let data = this.data.as_mut().expect("Worker.data set in create()");
-        let known_uses_other = data.uses_other_transpiler_for(task.known_target);
-        let final_uses_other = if rebind_to_browser {
-            data.uses_other_transpiler_for(options::Target::Browser)
-        } else {
-            known_uses_other
-        };
-        let (resolver, transpiler): (*mut Resolver, *mut Transpiler<'static>) = if known_uses_other
-        {
-            debug_assert!(final_uses_other);
-            let t: *mut Transpiler<'static> = &raw mut **data
-                .other_transpiler
-                .as_mut()
-                .expect("other_transpiler initialized by transpiler_for_target above");
-            // SAFETY: `t` was just derived from a live `&mut Box<Transpiler>`.
-            (unsafe { &raw mut (*t).resolver }, t)
-        } else if final_uses_other {
-            (
-                &raw mut data.transpiler.resolver,
-                &raw mut **data
-                    .other_transpiler
-                    .as_mut()
-                    .expect("other_transpiler initialized by transpiler_for_target above"),
-            )
-        } else {
-            let t: *mut Transpiler<'static> = &raw mut data.transpiler;
-            // SAFETY: `t` was just derived from a live `&mut WorkerData` field.
-            (unsafe { &raw mut (*t).resolver }, t)
-        };
-        // SAFETY: `transpiler` is a live worker-owned `*mut Transpiler` (see
-        // match above); reborrow only the disjoint `options` field so `resolver`
-        // (which may target `(*transpiler).resolver`) remains valid.
+        let (resolver, transpiler) = this
+            .data
+            .as_mut()
+            .expect("Worker.data set in create()")
+            .resolver_and_transpiler_for(task.known_target, final_target);
+        // SAFETY: `transpiler` is live for the worker; reborrow only the disjoint
+        // `options` field so `resolver` (which may be `&(*transpiler).resolver`) stays valid.
         let topts = unsafe { &(*transpiler).options };
 
         // Allocated in the worker arena so `js_parser::new_lazy_export_ast`'s

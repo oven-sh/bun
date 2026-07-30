@@ -1613,7 +1613,7 @@ pub mod bv2_impl {
         /// Same caller contract as [`Transpiler::log_mut`]: the log is raw-pointer
         /// storage disjoint from `self.graph`; do not hold two results live at once.
         #[allow(clippy::mut_from_ref)]
-        pub fn log_for_resolution_failures<'r>(
+        pub(crate) fn log_for_resolution_failures<'r>(
             &self,
             abs_path: &[u8],
             bake_graph: bake::Graph,

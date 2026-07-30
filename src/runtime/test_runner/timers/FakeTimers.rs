@@ -134,6 +134,16 @@ impl FakeTimers {
         pinned
     }
 
+    /// Restore real timers without draining the fake heap. Used by the
+    /// `--isolate` file boundary so `swap_global_for_test_isolation`'s
+    /// `cancel_all_timeout_objects` (which runs after the outgoing global's
+    /// JS has stopped) can walk the still-populated fake heap and release
+    /// both `TimeoutObject` pins and `AbortSignalTimeout` cycle refs.
+    pub(crate) fn reset_for_isolation(&mut self, global: &JSGlobalObject) {
+        CURRENT_TIME.clear(global);
+        self.active = false;
+    }
+
     /// Marking `state = CANCELLED` alone strands the `Box<TimeoutObject>`: its
     /// refcount sticks at 2 (wrapper +1 from `init_with`, heap +1 from
     /// `reschedule`) and `internals.this_value` still GC-roots the wrapper, so

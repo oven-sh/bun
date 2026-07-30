@@ -534,8 +534,7 @@ impl Options {
 
             if let Some(n) = config.lockfile_format_version {
                 // Unknown (future) versions cap above CURRENT and are a no-op.
-                self.lockfile_format_version =
-                    crate::lockfile::bun_lock::Version::from_int(n);
+                self.lockfile_format_version = crate::lockfile::bun_lock::Version::from_int(n);
             }
 
             if let Some(jobs) = config.concurrent_scripts {

@@ -318,7 +318,6 @@ static inline JSC::EncodedJSValue jsDOMFormDataPrototypeFunction_append2Body(JSC
     RETURN_IF_EXCEPTION(throwScope, {});
 
     // https://xhr.spec.whatwg.org/#create-an-entry
-    // If value is a File and filename was not given, the entry's value is the File itself.
     if (argument2.value().isUndefined() && Blob__isJSDOMFile(blobValue->impl()))
         blobValue->setWrapper(vm, asObject(argument1.value()));
 
@@ -486,7 +485,6 @@ static inline JSC::EncodedJSValue jsDOMFormDataPrototypeFunction_set2Body(JSC::J
     RETURN_IF_EXCEPTION(throwScope, {});
 
     // https://xhr.spec.whatwg.org/#create-an-entry
-    // If value is a File and filename was not given, the entry's value is the File itself.
     if (argument2.value().isUndefined() && Blob__isJSDOMFile(blobValue->impl()))
         blobValue->setWrapper(vm, asObject(argument1.value()));
 

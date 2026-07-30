@@ -104,10 +104,7 @@ private:
 
     BlobRefPtr m_impl;
     String m_fileName;
-    // Caches the JS wrapper returned by toJS so that FormData get/getAll/iteration
-    // return the same JS object each time. For a File appended without a filename
-    // override this is the user's original File; otherwise it is created lazily on
-    // first access.
+    // Cached JS wrapper so FormData accessors return the same object each time.
     JSC::Strong<JSC::JSObject> m_wrapper;
 };
 

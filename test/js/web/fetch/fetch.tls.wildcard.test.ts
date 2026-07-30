@@ -551,5 +551,13 @@ describe("TLS certificate name matching: fetch() / checkServerIdentity / checkHo
     ] as const)("SAN %j checkHost(%j) -> %j", (san, host, expected) => {
       expect(checkHost(makeCert("x", [["dns", san]]).x509, host)).toBe(expected);
     });
+
+    // {wildcards: false} is also an OpenSSL-semantics mode (equal_nocase).
+    it.each([
+      ["a..b.test", "a..b.test", "a..b.test"],
+      ["exact.test.", "exact.test.", "exact.test."],
+    ] as const)("SAN %j checkHost(%j, {wildcards:false}) -> %j", (san, host, expected) => {
+      expect(checkHost(makeCert("x", [["dns", san]]).x509, host, { wildcards: false })).toBe(expected);
+    });
   });
 });

@@ -273,10 +273,9 @@ pub fn match_hostname(pattern: &[u8], hostname: &[u8], opts: MatchOpts) -> bool 
     if pattern.is_empty() {
         return false;
     }
-    let openssl_mode = matches!(
-        opts.wildcards,
-        Wildcards::FullLabel | Wildcards::EdgePartial
-    );
+    // Only `Anywhere` is Node lib/tls.js check(); every other variant is
+    // reached from Bun__X509__checkHost and follows OpenSSL X509_check_host.
+    let openssl_mode = opts.wildcards != Wildcards::Anywhere;
 
     // Pattern-side validation. OpenSSL `valid_star` falls through to
     // `equal_nocase` on any failure; Node lib/tls.js `check()` hard-rejects on

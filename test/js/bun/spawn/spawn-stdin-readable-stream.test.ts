@@ -1015,9 +1015,13 @@ describe("spawn stdin ReadableStream", () => {
     expect(exitCode).toBe(0);
   });
 
-  // Bun.write(Bun.file(), response) where response.body is a native ByteStream
-  // reaches the same FileSink.assign_to_stream caller (Blob.rs) and must take
-  // the native hookup path too.
+  // Bun.write(Bun.file(), response) where response.body is a native ByteStream.
+  // NOTE: the `Response` overload with a Locked body routes through
+  // WriteFileWaitFromLockedValueTask (Blob.rs), which buffers the full body
+  // then writes — it does NOT reach pipe_readable_stream_to_blob /
+  // FileSink.assign_to_stream. This is therefore a regression test for the
+  // buffered-write path with a fetch-sourced body, not the native
+  // ByteStream→FileSink hookup.
   test("Bun.write(Bun.file, fetch response) with native ByteStream body", async () => {
     const chunkSize = 64 * 1024;
     const chunkCount = 16; // 1 MB

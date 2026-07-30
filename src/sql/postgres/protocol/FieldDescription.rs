@@ -28,7 +28,7 @@ impl FieldDescription {
         types::Tag(self.type_oid as Short)
     }
 
-    pub fn decode_internal<Container: super::new_reader::ReaderContext>(
+    pub(crate) fn decode_internal<Container: super::new_reader::ReaderContext>(
         reader: &mut NewReader<Container>,
     ) -> Result<Self, AnyPostgresError> {
         let name = reader.read_z()?;

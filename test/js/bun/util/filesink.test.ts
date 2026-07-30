@@ -599,6 +599,51 @@ it("Bun.file(fd).writer() write/end under GC pressure does not crash", async () 
   expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({ stdout: "ok", stderr: "", exitCode: 0 });
 });
 
+// Skipped on Windows: the Windows FileSink writer hands bytes to uv_fs_write on
+// the libuv threadpool and never registers an AutoFlusher synchronously, so the
+// on_exit drain this suite exercises is a no-op there and every process.exit()
+// variant is a threadpool-vs-ExitProcess race rather than the POSIX buffered
+// flush being tested here.
+describe.skipIf(isWindows)("FileSink buffered data is flushed on process exit", () => {
+  const line = "LAST-LOG-LINE:fatal error, exiting\n";
+  async function check(tail: string, expected: string) {
+    const dir = tmpdirSync();
+    const out = join(dir, "sink.log");
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const path = ${JSON.stringify(out)};
+          const w = Bun.file(path).writer();
+          w.write(${JSON.stringify(line)});
+          ${tail}
+        `,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    const contents = await Bun.file(out).text();
+    expect({ stderr, contents, exitCode }).toEqual({ stderr: "", contents: expected, exitCode: 0 });
+  }
+
+  // write() then process.exit() in the same synchronous tick: the write is
+  // buffered (below the auto-flush threshold) and the deferred auto-flush
+  // task hasn't run yet. Previously this produced a 0-byte file.
+  it.concurrent("same-tick process.exit()", () => check(`process.exit(0);`, line));
+  // Control cases that already worked: after a tick, via process.exitCode,
+  // and natural fall-through. Kept so a future change doesn't regress them.
+  it.concurrent("next-tick process.exit()", () => check(`await Bun.sleep(0); process.exit(0);`, line));
+  it.concurrent("process.exitCode then fall-through", () => check(`process.exitCode = 0;`, line));
+  it.concurrent("natural fall-through", () => check(``, line));
+  // A FileSink write performed inside a process.on('exit') listener should
+  // also reach the file.
+  it.concurrent("write inside 'exit' listener", () =>
+    check(`process.on("exit", () => { w.write(${JSON.stringify(line)}); }); process.exit(0);`, line + line),
+  );
+});
+
 it("fs.promises.writeFile with iterables under GC pressure does not crash", async () => {
   const dir = tmpdirSync();
   await using proc = Bun.spawn({

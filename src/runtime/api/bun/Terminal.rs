@@ -82,7 +82,7 @@ pub mod js {
             }
         }
     }
-    pub use gc::GcValue;
+    pub(crate) use gc::GcValue;
 }
 
 /// Reference counting for Terminal.
@@ -186,18 +186,19 @@ bitflags::bitflags! {
 pub type IOWriter = StreamingWriter<Terminal>;
 
 /// Poll type alias for FilePoll Owner registration
-pub type Poll = IOWriter;
+#[cfg(not(windows))]
+pub(crate) type Poll = IOWriter;
 
 pub type IOReader = BufferedReader;
 
 /// Options for creating a Terminal
 pub struct Options {
-    pub cols: u16,
-    pub rows: u16,
-    pub term_name: ZigStringSlice,
-    pub data_callback: Option<JSValue>,
-    pub exit_callback: Option<JSValue>,
-    pub drain_callback: Option<JSValue>,
+    pub(crate) cols: u16,
+    pub(crate) rows: u16,
+    pub(crate) term_name: ZigStringSlice,
+    pub(crate) data_callback: Option<JSValue>,
+    pub(crate) exit_callback: Option<JSValue>,
+    pub(crate) drain_callback: Option<JSValue>,
 }
 
 impl Default for Options {
@@ -240,10 +241,13 @@ impl JSValueTerminalExt for JSValue {
 impl Options {
     /// Maximum length for terminal name (e.g., "xterm-256color")
     /// Longest known terminfo names are ~23 chars; 128 allows for custom terminals
-    pub const MAX_TERM_NAME_LEN: usize = 128;
+    pub(crate) const MAX_TERM_NAME_LEN: usize = 128;
 
     /// Parse terminal options from a JS object
-    pub fn parse_from_js(global_object: &JSGlobalObject, js_options: JSValue) -> JsResult<Options> {
+    pub(crate) fn parse_from_js(
+        global_object: &JSGlobalObject,
+        js_options: JSValue,
+    ) -> JsResult<Options> {
         let mut options = Options::default();
         // errdefer options.deinit() — handled by Drop on early return.
 
@@ -390,7 +394,7 @@ impl Terminal {
 
     // ─────────────────────────────────────────────────────────────────────────
 
-    pub(crate) fn ref_(&self) {
+    fn ref_(&self) {
         // SAFETY: `self` derived from a heap-allocated allocation; intrusive
         // refcount mixin only reads/writes the `ref_count` field via shared
         // access (Cell), so the &T→*mut cast is sound for `ref_` (no &mut
@@ -398,7 +402,7 @@ impl Terminal {
         unsafe { bun_ptr::RefCount::<Terminal>::ref_(self.as_ctx_ptr()) };
     }
 
-    pub(crate) fn deref_(&self) {
+    fn deref_(&self) {
         // SAFETY: `self` derived from a heap-allocated allocation; the RefCount
         // mixin's `deref` reads/writes `ref_count` via Cell and runs
         // `destructor()` (→ deinit_and_destroy) iff the count hits zero.
@@ -797,14 +801,12 @@ impl Terminal {
 }
 
 pub struct PtyResult {
-    pub master: Fd,
-    pub read_fd: Fd,
-    pub write_fd: Fd,
-    pub slave: Fd,
+    pub(crate) master: Fd,
+    pub(crate) read_fd: Fd,
+    pub(crate) write_fd: Fd,
+    pub(crate) slave: Fd,
     #[cfg(windows)]
-    pub hpcon: windows::HPCON,
-    #[cfg(not(windows))]
-    pub hpcon: (),
+    pub(crate) hpcon: windows::HPCON,
 }
 
 #[derive(thiserror::Error, Debug, strum::IntoStaticStr)]
@@ -872,7 +874,7 @@ mod lib_util {
         core::sync::atomic::AtomicPtr::new(core::ptr::null_mut());
     static LOADED: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
 
-    pub(super) fn get_handle() -> Option<*mut c_void> {
+    fn get_handle() -> Option<*mut c_void> {
         use core::sync::atomic::Ordering::Relaxed;
         if LOADED.load(Relaxed) {
             let h = HANDLE.load(Relaxed);
@@ -1075,12 +1077,11 @@ fn create_pty_posix(cols: u16, rows: u16) -> Result<PtyResult, CreatePtyError> {
         read_fd,
         write_fd,
         slave: slave_fd_desc,
-        hpcon: (),
     })
 }
 
 #[cfg(windows)]
-pub(crate) struct PipePair {
+struct PipePair {
     pub server: windows::HANDLE,
     pub client: windows::HANDLE,
 }
@@ -1698,7 +1699,7 @@ impl Terminal {
         ))
     }
 
-    pub(crate) fn close_internal(&self) {
+    fn close_internal(&self) {
         if self.flags.get().contains(Flags::CLOSED) {
             return;
         }
@@ -1790,13 +1791,13 @@ impl Terminal {
     }
 
     // IOReader callbacks
-    pub(crate) fn on_reader_done(&self) {
+    fn on_reader_done(&self) {
         bun_output::scoped_log!(Terminal, "onReaderDone");
         // exit_code 0 = clean EOF on PTY stream (not subprocess exit code)
         self.on_reader_finished(0);
     }
 
-    pub(crate) fn on_reader_error(&self, err: &sys::Error) {
+    fn on_reader_error(&self, err: &sys::Error) {
         bun_output::scoped_log!(Terminal, "onReaderError: {:?}", err);
         // exit_code 1 = I/O error on PTY stream (not subprocess exit code)
         self.on_reader_finished(1);
@@ -1856,7 +1857,7 @@ impl Terminal {
 
     // Called when data is available from the reader
     // Returns true to continue reading, false to pause
-    pub(crate) fn on_read_chunk(&self, chunk: &[u8], has_more: ReadState) -> bool {
+    fn on_read_chunk(&self, chunk: &[u8], has_more: ReadState) -> bool {
         let _ = has_more;
         bun_output::scoped_log!(Terminal, "onReadChunk: {} bytes", chunk.len());
 
@@ -1907,7 +1908,7 @@ impl Terminal {
         true // Continue reading
     }
 
-    pub(crate) fn loop_(&self) -> *mut AsyncLoop {
+    fn loop_(&self) -> *mut AsyncLoop {
         #[cfg(windows)]
         {
             self.event_loop_handle.uv_loop()

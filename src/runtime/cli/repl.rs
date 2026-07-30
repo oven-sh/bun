@@ -134,7 +134,7 @@ enum Key {
 }
 
 impl Key {
-    pub(crate) fn from_byte(byte: u8) -> Key {
+    fn from_byte(byte: u8) -> Key {
         match byte {
             1 => Key::CtrlA,
             2 => Key::CtrlB,
@@ -173,7 +173,7 @@ struct History {
 }
 
 impl History {
-    pub(crate) fn init() -> History {
+    fn init() -> History {
         History {
             entries: Vec::new(),
             position: 0,
@@ -183,7 +183,7 @@ impl History {
         }
     }
 
-    pub(crate) fn load(&mut self) -> Result<(), crate::Error> {
+    fn load(&mut self) -> Result<(), crate::Error> {
         let Some(home_path) = env_var::HOME.get() else {
             return Ok(());
         };
@@ -218,7 +218,7 @@ impl History {
         Ok(())
     }
 
-    pub(crate) fn save(&mut self) {
+    fn save(&mut self) {
         if !self.modified {
             return;
         }
@@ -253,7 +253,7 @@ impl History {
         self.modified = false;
     }
 
-    pub(crate) fn add(&mut self, line: &[u8]) -> Result<(), bun_alloc::AllocError> {
+    fn add(&mut self, line: &[u8]) -> Result<(), bun_alloc::AllocError> {
         if line.is_empty() {
             return Ok(());
         }
@@ -278,7 +278,7 @@ impl History {
         Ok(())
     }
 
-    pub(crate) fn prev(&mut self, current_line: &[u8]) -> Option<&[u8]> {
+    fn prev(&mut self, current_line: &[u8]) -> Option<&[u8]> {
         if self.entries.is_empty() {
             return None;
         }
@@ -296,7 +296,7 @@ impl History {
         None
     }
 
-    pub(crate) fn next(&mut self) -> Option<&[u8]> {
+    fn next(&mut self) -> Option<&[u8]> {
         if self.position < self.entries.len() {
             self.position += 1;
         }
@@ -314,7 +314,7 @@ impl History {
         None
     }
 
-    pub(crate) fn reset_position(&mut self) {
+    fn reset_position(&mut self) {
         self.position = self.entries.len();
         self.temp_line = None;
     }
@@ -330,26 +330,26 @@ struct LineEditor {
 }
 
 impl LineEditor {
-    pub(crate) fn init() -> LineEditor {
+    fn init() -> LineEditor {
         LineEditor {
             buffer: Vec::new(),
             cursor: 0,
         }
     }
 
-    pub(crate) fn clear(&mut self) {
+    fn clear(&mut self) {
         self.buffer.clear();
         self.cursor = 0;
     }
 
-    pub(crate) fn set(&mut self, text: &[u8]) -> Result<(), bun_alloc::AllocError> {
+    fn set(&mut self, text: &[u8]) -> Result<(), bun_alloc::AllocError> {
         self.buffer.clear();
         self.buffer.extend_from_slice(text);
         self.cursor = text.len();
         Ok(())
     }
 
-    pub(crate) fn insert(&mut self, ch: u8) -> Result<(), bun_alloc::AllocError> {
+    fn insert(&mut self, ch: u8) -> Result<(), bun_alloc::AllocError> {
         if self.cursor == self.buffer.len() {
             self.buffer.push(ch);
         } else {
@@ -359,7 +359,7 @@ impl LineEditor {
         Ok(())
     }
 
-    pub(crate) fn insert_slice(&mut self, slice: &[u8]) -> Result<(), bun_alloc::AllocError> {
+    fn insert_slice(&mut self, slice: &[u8]) -> Result<(), bun_alloc::AllocError> {
         if self.cursor == self.buffer.len() {
             self.buffer.extend_from_slice(slice);
         } else {
@@ -394,14 +394,14 @@ impl LineEditor {
         (pos + step).min(self.buffer.len())
     }
 
-    pub(crate) fn delete_char(&mut self) {
+    fn delete_char(&mut self) {
         if self.cursor < self.buffer.len() {
             let end = self.next_boundary(self.cursor);
             self.buffer.drain(self.cursor..end);
         }
     }
 
-    pub(crate) fn backspace(&mut self) {
+    fn backspace(&mut self) {
         if self.cursor > 0 {
             let start = self.prev_boundary(self.cursor);
             self.buffer.drain(start..self.cursor);
@@ -409,7 +409,7 @@ impl LineEditor {
         }
     }
 
-    pub(crate) fn delete_word(&mut self) {
+    fn delete_word(&mut self) {
         // Delete word forward
         while self.cursor < self.buffer.len() && self.buffer[self.cursor].is_ascii_whitespace() {
             self.buffer.remove(self.cursor);
@@ -419,7 +419,7 @@ impl LineEditor {
         }
     }
 
-    pub(crate) fn backspace_word(&mut self) {
+    fn backspace_word(&mut self) {
         // Delete word backward
         while self.cursor > 0 && self.buffer[self.cursor - 1].is_ascii_whitespace() {
             self.cursor -= 1;
@@ -431,28 +431,28 @@ impl LineEditor {
         }
     }
 
-    pub(crate) fn delete_to_end(&mut self) {
+    fn delete_to_end(&mut self) {
         self.buffer.truncate(self.cursor);
     }
 
-    pub(crate) fn delete_to_start(&mut self) {
+    fn delete_to_start(&mut self) {
         self.buffer.drain_front(self.cursor);
         self.cursor = 0;
     }
 
-    pub(crate) fn move_left(&mut self) {
+    fn move_left(&mut self) {
         if self.cursor > 0 {
             self.cursor = self.prev_boundary(self.cursor);
         }
     }
 
-    pub(crate) fn move_right(&mut self) {
+    fn move_right(&mut self) {
         if self.cursor < self.buffer.len() {
             self.cursor = self.next_boundary(self.cursor);
         }
     }
 
-    pub(crate) fn move_word_left(&mut self) {
+    fn move_word_left(&mut self) {
         while self.cursor > 0 && self.buffer[self.cursor - 1].is_ascii_whitespace() {
             self.cursor -= 1;
         }
@@ -461,7 +461,7 @@ impl LineEditor {
         }
     }
 
-    pub(crate) fn move_word_right(&mut self) {
+    fn move_word_right(&mut self) {
         while self.cursor < self.buffer.len() && !self.buffer[self.cursor].is_ascii_whitespace() {
             self.cursor += 1;
         }
@@ -470,15 +470,15 @@ impl LineEditor {
         }
     }
 
-    pub(crate) fn move_to_start(&mut self) {
+    fn move_to_start(&mut self) {
         self.cursor = 0;
     }
 
-    pub(crate) fn move_to_end(&mut self) {
+    fn move_to_end(&mut self) {
         self.cursor = self.buffer.len();
     }
 
-    pub(crate) fn swap(&mut self) {
+    fn swap(&mut self) {
         // Transpose two whole codepoints (not bytes), so multi-byte UTF-8 is
         // not split. Mid-line swaps the codepoint before the cursor with the
         // one at it and advances past both; at end-of-line it transposes the
@@ -501,7 +501,7 @@ impl LineEditor {
         self.cursor = right_end;
     }
 
-    pub(crate) fn get_line(&self) -> &[u8] {
+    fn get_line(&self) -> &[u8] {
         &self.buffer
     }
 }
@@ -518,7 +518,7 @@ struct ReplCommand {
 }
 
 impl ReplCommand {
-    pub(crate) const ALL: [ReplCommand; 9] = [
+    const ALL: [ReplCommand; 9] = [
         ReplCommand {
             name: b".help",
             help: "Print this help message",
@@ -566,7 +566,7 @@ impl ReplCommand {
         },
     ];
 
-    pub(crate) fn find(name: &[u8]) -> Option<&'static ReplCommand> {
+    fn find(name: &[u8]) -> Option<&'static ReplCommand> {
         Self::ALL.iter().find(|&cmd| {
             strings::eql_long(cmd.name, name, true)
                 || (name.len() > 1 && cmd.name.starts_with(name))

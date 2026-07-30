@@ -5,13 +5,13 @@ use crate::parser::{self, Parser};
 use crate::types::{SpanType, TextType, VerbatimLine};
 
 /// Emphasis delimiter entry for CommonMark emphasis algorithm.
-pub const MAX_EMPH_MATCHES: usize = 6;
+pub(crate) const MAX_EMPH_MATCHES: usize = 6;
 
 /// Snapshot of an enclosing slice's walk state while one of its link/image/
 /// wikilink labels is rendered. `base..end` locate the enclosing slice
 /// within the block's inline content; `i`/`text_start`/`delim_cursor` are
 /// local to that slice. See `process_inline_content`.
-pub struct LabelFrame {
+pub(crate) struct LabelFrame {
     base: usize,
     end: usize,
     i: usize,
@@ -23,20 +23,20 @@ pub struct LabelFrame {
 
 #[derive(Clone, Copy)]
 pub struct EmphDelim {
-    pub pos: usize,    // start position in content
-    pub count: usize,  // original run length
-    pub emph_char: u8, // * or _
-    pub can_open: bool,
-    pub can_close: bool,
-    pub remaining: usize,   // chars not yet consumed
-    pub open_count: usize,  // total chars consumed as opener
-    pub close_count: usize, // total chars consumed as closer
+    pub(crate) pos: usize,    // start position in content
+    pub(crate) count: usize,  // original run length
+    pub(crate) emph_char: u8, // * or _
+    pub(crate) can_open: bool,
+    pub(crate) can_close: bool,
+    pub(crate) remaining: usize,   // chars not yet consumed
+    pub(crate) open_count: usize,  // total chars consumed as opener
+    pub(crate) close_count: usize, // total chars consumed as closer
     // Individual match sizes in order (each is 1 for em, 2 for strong)
-    pub open_sizes: [u8; MAX_EMPH_MATCHES],
-    pub open_num: u8, // number of open matches
-    pub close_sizes: [u8; MAX_EMPH_MATCHES],
-    pub close_num: u8, // number of close matches
-    pub active: bool,  // false if deactivated between matched pairs
+    pub(crate) open_sizes: [u8; MAX_EMPH_MATCHES],
+    pub(crate) open_num: u8, // number of open matches
+    pub(crate) close_sizes: [u8; MAX_EMPH_MATCHES],
+    pub(crate) close_num: u8, // number of close matches
+    pub(crate) active: bool,  // false if deactivated between matched pairs
 }
 
 impl Default for EmphDelim {
@@ -72,7 +72,7 @@ pub enum HtmlScanKind {
     Cdata = 3,
 }
 
-pub const HTML_SCAN_KIND_COUNT: usize = 4;
+pub(crate) const HTML_SCAN_KIND_COUNT: usize = 4;
 
 /// Memo of failed closing-delimiter searches in `find_html_tag`.
 ///
@@ -101,7 +101,7 @@ pub struct HtmlScanMemo {
 }
 
 impl HtmlScanMemo {
-    pub const EMPTY: HtmlScanMemo = HtmlScanMemo {
+    pub(crate) const EMPTY: HtmlScanMemo = HtmlScanMemo {
         slice_addr: 0,
         slice_len: 0,
         no_terminator_from: [usize::MAX; HTML_SCAN_KIND_COUNT],
@@ -127,7 +127,7 @@ impl Parser<'_> {
     /// Merge all lines into buffer with \n between them (unmodified),
     /// then process inlines on the merged text. Hard/soft breaks are detected
     /// during inline processing when \n is encountered.
-    pub fn process_leaf_block(
+    pub(crate) fn process_leaf_block(
         &mut self,
         block_lines: &[VerbatimLine],
         trim_trailing: bool,
@@ -171,7 +171,7 @@ impl Parser<'_> {
         ret
     }
 
-    pub fn process_inline_content(&mut self, content: &[u8]) -> Result<(), parser::Error> {
+    pub(crate) fn process_inline_content(&mut self, content: &[u8]) -> Result<(), parser::Error> {
         if !self.stack_check.is_safe_to_recurse() {
             return Err(parser::Error::StackOverflow);
         }
@@ -589,26 +589,30 @@ impl Parser<'_> {
         Ok(())
     }
 
-    pub fn enter_span(&mut self, span_type: SpanType) -> crate::types::JsResult<()> {
+    pub(crate) fn enter_span(&mut self, span_type: SpanType) -> crate::types::JsResult<()> {
         if self.image_nesting_level > 0 {
             return Ok(());
         }
         self.renderer.enter_span(span_type, Default::default())
     }
 
-    pub fn leave_span(&mut self, span_type: SpanType) -> crate::types::JsResult<()> {
+    pub(crate) fn leave_span(&mut self, span_type: SpanType) -> crate::types::JsResult<()> {
         if self.image_nesting_level > 0 {
             return Ok(());
         }
         self.renderer.leave_span(span_type)
     }
 
-    pub fn emit_text(&mut self, text_type: TextType, content: &[u8]) -> crate::types::JsResult<()> {
+    pub(crate) fn emit_text(
+        &mut self,
+        text_type: TextType,
+        content: &[u8],
+    ) -> crate::types::JsResult<()> {
         self.renderer.text(text_type, content)
     }
 
     /// Emit emphasis opening tags (outermost to innermost).
-    pub fn emit_emph_open_tags(&mut self, sizes: &[u8]) -> crate::types::JsResult<()> {
+    pub(crate) fn emit_emph_open_tags(&mut self, sizes: &[u8]) -> crate::types::JsResult<()> {
         // First match = innermost, so emit in reverse (outermost first in HTML)
         for idx in 0..sizes.len() {
             let j = sizes.len() - 1 - idx;
@@ -623,7 +627,7 @@ impl Parser<'_> {
 
     /// Emit emphasis closing tags (innermost to outermost).
     /// First entry in sizes was matched first (innermost), emit in forward order.
-    pub fn emit_emph_close_tags(&mut self, sizes: &[u8]) -> crate::types::JsResult<()> {
+    pub(crate) fn emit_emph_close_tags(&mut self, sizes: &[u8]) -> crate::types::JsResult<()> {
         for &size in sizes {
             if size == 2 {
                 self.leave_span(SpanType::Strong)?;
@@ -636,7 +640,12 @@ impl Parser<'_> {
 
     /// Find the matching closing backtick run. Returns end position of content (before closing ticks),
     /// or null if no matching closer found.
-    pub fn find_code_span_end(&self, content: &[u8], start: usize, count: usize) -> Option<usize> {
+    pub(crate) fn find_code_span_end(
+        &self,
+        content: &[u8],
+        start: usize,
+        count: usize,
+    ) -> Option<usize> {
         let mut pos = start;
         while let Some(backtick_pos) = bun_core::strings::index_of_char_pos(content, b'`', pos) {
             pos = backtick_pos + 1;
@@ -650,7 +659,7 @@ impl Parser<'_> {
         None
     }
 
-    pub fn normalize_code_span_content<'a>(&self, content: &'a [u8]) -> &'a [u8] {
+    pub(crate) fn normalize_code_span_content<'a>(&self, content: &'a [u8]) -> &'a [u8] {
         // Strip one leading and trailing space if both exist and content isn't all spaces.
         // Newlines (from merged lines) are treated as spaces here.
         if content.len() >= 2 {
@@ -669,7 +678,7 @@ impl Parser<'_> {
     /// Collect emphasis delimiter runs from content, skipping code spans and
     /// HTML tags. `base` is the offset of `content` within the slice
     /// `brackets` was built for.
-    pub fn collect_emphasis_delimiters(
+    pub(crate) fn collect_emphasis_delimiters(
         &mut self,
         content: &[u8],
         brackets: &BracketMatches,
@@ -772,7 +781,7 @@ impl Parser<'_> {
     }
 
     /// Resolve emphasis delimiters using the CommonMark algorithm.
-    pub fn resolve_emphasis_delimiters(&mut self) {
+    pub(crate) fn resolve_emphasis_delimiters(&mut self) {
         // reshaped for borrowck — index directly into self.emph_delims
         // instead of binding `delims` + `opener` aliases.
         let len = self.emph_delims.len();
@@ -910,7 +919,7 @@ impl Parser<'_> {
         }
     }
 
-    pub fn find_entity(&self, content: &[u8], start: usize) -> Option<usize> {
+    pub(crate) fn find_entity(&self, content: &[u8], start: usize) -> Option<usize> {
         helpers::find_entity(content, start)
     }
 
@@ -951,7 +960,7 @@ impl Parser<'_> {
         self.html_scan_memo.set(memo);
     }
 
-    pub fn find_html_tag(&self, content: &[u8], start: usize) -> Option<usize> {
+    pub(crate) fn find_html_tag(&self, content: &[u8], start: usize) -> Option<usize> {
         if start + 1 >= content.len() {
             return None;
         }
@@ -1185,7 +1194,7 @@ impl Parser<'_> {
 }
 
 /// Count consecutive backticks starting at `start`.
-pub fn count_backticks(content: &[u8], start: usize) -> usize {
+pub(crate) fn count_backticks(content: &[u8], start: usize) -> usize {
     let mut pos = start;
     while pos < content.len() && content[pos] == b'`' {
         pos += 1;
@@ -1194,7 +1203,7 @@ pub fn count_backticks(content: &[u8], start: usize) -> usize {
 }
 
 /// Check if a delimiter run is left-flanking per CommonMark spec.
-pub fn is_left_flanking(content: &[u8], run_start: usize, run_end: usize) -> bool {
+pub(crate) fn is_left_flanking(content: &[u8], run_start: usize, run_end: usize) -> bool {
     // Not followed by Unicode whitespace
     if run_end >= content.len() {
         return false;
@@ -1216,7 +1225,7 @@ pub fn is_left_flanking(content: &[u8], run_start: usize, run_end: usize) -> boo
 }
 
 /// Check if a delimiter run is right-flanking per CommonMark spec.
-pub fn is_right_flanking(content: &[u8], run_start: usize, run_end: usize) -> bool {
+pub(crate) fn is_right_flanking(content: &[u8], run_start: usize, run_end: usize) -> bool {
     // Not preceded by Unicode whitespace
     if run_start == 0 {
         return false;
@@ -1237,7 +1246,12 @@ pub fn is_right_flanking(content: &[u8], run_start: usize, run_end: usize) -> bo
     true
 }
 
-pub fn can_open_emphasis(emph_char: u8, content: &[u8], run_start: usize, run_end: usize) -> bool {
+pub(crate) fn can_open_emphasis(
+    emph_char: u8,
+    content: &[u8],
+    run_start: usize,
+    run_end: usize,
+) -> bool {
     let lf = is_left_flanking(content, run_start, run_end);
     if !lf {
         return false;
@@ -1253,7 +1267,12 @@ pub fn can_open_emphasis(emph_char: u8, content: &[u8], run_start: usize, run_en
         ))
 }
 
-pub fn can_close_emphasis(emph_char: u8, content: &[u8], run_start: usize, run_end: usize) -> bool {
+pub(crate) fn can_close_emphasis(
+    emph_char: u8,
+    content: &[u8],
+    run_start: usize,
+    run_end: usize,
+) -> bool {
     let rf = is_right_flanking(content, run_start, run_end);
     if !rf {
         return false;

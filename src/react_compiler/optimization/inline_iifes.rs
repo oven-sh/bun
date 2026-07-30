@@ -58,7 +58,7 @@ use crate::optimization::merge_consecutive_blocks::merge_consecutive_blocks;
 
 /// Inline immediately invoked function expressions into the enclosing function's
 /// control flow graph.
-pub fn inline_immediately_invoked_function_expressions(
+pub(crate) fn inline_immediately_invoked_function_expressions(
     func: &mut HirFunction,
     env: &mut Environment,
 ) {

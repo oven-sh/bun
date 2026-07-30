@@ -21,7 +21,7 @@ pub mod w_path_buffer_pool {
         PathBufferPoolT::<WPathBuffer>::get()
     }
     #[inline]
-    pub fn put(buf: Box<WPathBuffer>) {
+    pub(crate) fn put(buf: Box<WPathBuffer>) {
         PathBufferPoolT::<WPathBuffer>::put(buf)
     }
 }
@@ -106,7 +106,7 @@ pub fn is_absolute_windows_wtf16(p: &[u16]) -> bool {
 /// rejects a third leading separator, and requires BOTH server and share
 /// tokens — otherwise returns `b""`.
 #[inline]
-pub(crate) fn disk_designator_windows(p: &[u8]) -> &[u8] {
+fn disk_designator_windows(p: &[u8]) -> &[u8] {
     &p[..crate::path::disk_designator_len_windows::<u8>(p)]
 }
 
@@ -462,7 +462,8 @@ pub mod windows {
 
     /// Per-width long-path prefix so `Path::<U, ..>::from_long_path` stays width-generic.
     #[inline]
-    pub fn long_path_prefix_for<U: crate::path::PathUnit>() -> &'static [U] {
+    #[cfg(windows)]
+    pub(crate) fn long_path_prefix_for<U: crate::path::PathUnit>() -> &'static [U] {
         U::LONG_PATH_PREFIX
     }
 }
@@ -539,7 +540,7 @@ pub mod fs {
 
     impl FileSystem {
         #[inline]
-        pub fn instance_loaded() -> bool {
+        pub(crate) fn instance_loaded() -> bool {
             INSTANCE_LOADED.load(Ordering::Relaxed)
         }
 
@@ -835,7 +836,7 @@ pub mod fs {
             }
         }
 
-        pub const EMPTY: Path<'static> = Path {
+        pub(crate) const EMPTY: Path<'static> = Path {
             pretty: b"",
             text: b"",
             namespace: b"file",

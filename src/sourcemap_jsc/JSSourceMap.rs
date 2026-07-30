@@ -13,17 +13,17 @@ use bun_sourcemap::{Mapping, Ordinal, ParseResult, ParsedSourceMap, mapping};
 // `to_js`/cached-setter helpers below forward to the codegen-emitted C++
 // symbols by hand.
 pub struct JSSourceMap {
-    pub sourcemap: Arc<ParsedSourceMap>,
-    pub sources: Box<[bstring::String]>,
-    pub names: Box<[bstring::String]>,
+    pub(crate) sourcemap: Arc<ParsedSourceMap>,
+    pub(crate) sources: Box<[bstring::String]>,
+    pub(crate) names: Box<[bstring::String]>,
 }
 
 /// TODO: when we implement --enable-source-map CLI flag, set this to true.
 // Mutable global; AtomicBool for safe mutation.
-pub(crate) static ENABLE_SOURCE_MAPS: AtomicBool = AtomicBool::new(false);
+static ENABLE_SOURCE_MAPS: AtomicBool = AtomicBool::new(false);
 
 #[bun_jsc::host_fn(export = "Bun__JSSourceMap__find")]
-pub(crate) fn find_source_map(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+fn find_source_map(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     // Node.js doesn't enable source maps by default.
     // In Bun, we do use them for almost all files since we transpile almost all files
     // If we enable this by default, we don't have a `payload` object since we don't internally create one.

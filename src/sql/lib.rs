@@ -149,7 +149,7 @@ pub mod postgres {
         #[path = "TransactionStatusIndicator.rs"]
         pub mod transaction_status_indicator;
         #[path = "zHelpers.rs"]
-        pub mod z_helpers;
+        pub(crate) mod z_helpers;
 
         #[path = "Authentication.rs"]
         pub mod authentication;

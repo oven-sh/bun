@@ -1459,7 +1459,7 @@ pub(crate) fn inject(
                 }
             }
             // Always strip authenticode when adding .bun section for --compile
-            if let Err(e) = pe_file.add_bun_section(bytes, bun_pe::StripMode::StripAlways) {
+            if let Err(e) = pe_file.add_bun_section(bytes) {
                 bun_core::pretty_errorln!("Error adding Bun section to PE file: {}", e);
                 cleanup(zname, cloned_executable_fd);
                 return Fd::INVALID;

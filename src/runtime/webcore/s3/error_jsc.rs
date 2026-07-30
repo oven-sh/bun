@@ -16,7 +16,7 @@ fn msg(bytes: &'static [u8]) -> &'static str {
     unsafe { core::str::from_utf8_unchecked(bytes) }
 }
 
-pub fn get_js_sign_error(err: SignError, global_this: &JSGlobalObject) -> JSValue {
+pub(crate) fn get_js_sign_error(err: SignError, global_this: &JSGlobalObject) -> JSValue {
     match err {
         SignError::MissingCredentials => global_this
             .err(
@@ -66,7 +66,7 @@ pub fn get_js_sign_error(err: SignError, global_this: &JSGlobalObject) -> JSValu
     }
 }
 
-pub fn throw_sign_error(err: SignError, global_this: &JSGlobalObject) -> JsError {
+pub(crate) fn throw_sign_error(err: SignError, global_this: &JSGlobalObject) -> JsError {
     match err {
         SignError::MissingCredentials => global_this
             .err(
@@ -134,7 +134,7 @@ impl Default for JSS3Error {
 }
 
 impl JSS3Error {
-    pub(crate) fn init(code: &[u8], message: &[u8], path: Option<&[u8]>) -> Self {
+    fn init(code: &[u8], message: &[u8], path: Option<&[u8]>) -> Self {
         Self {
             // lets make sure we can reuse code and message and keep it service independent
             code: BunString::create_atom_if_possible(code),
@@ -150,7 +150,7 @@ impl JSS3Error {
     // The three `bun_core::String` fields deref themselves via `Drop`, so no
     // explicit `Drop` impl is needed here.
 
-    pub(crate) fn to_error_instance(self, global: &JSGlobalObject) -> JSValue {
+    fn to_error_instance(self, global: &JSGlobalObject) -> JSValue {
         // `defer this.deinit()` → `self` is consumed and dropped at scope exit.
         S3Error__toErrorInstance(&self, global)
     }
@@ -163,7 +163,7 @@ bun_jsc::jsc_abi_extern! {
     safe fn S3Error__toErrorInstance(this: &JSS3Error, global: &JSGlobalObject) -> JSValue;
 }
 
-pub fn s3_error_to_js(
+pub(crate) fn s3_error_to_js(
     err: &S3Error,
     global_object: &JSGlobalObject,
     path: Option<&[u8]>,

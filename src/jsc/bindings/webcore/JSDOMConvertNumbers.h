@@ -147,11 +147,6 @@ template<> struct JSConverter<IDLUnsignedShort> {
 };
 
 template<> struct Converter<IDLLong> : DefaultConverter<IDLLong> {
-    static inline int32_t convert(JSC::JSGlobalObject&, JSC::ThrowScope&, double number)
-    {
-        return JSC::toInt32(number);
-    }
-
     static int32_t convert(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value)
     {
         return convertToInteger<int32_t>(lexicalGlobalObject, value);
@@ -276,14 +271,6 @@ template<typename T> struct JSConverter<IDLEnforceRangeAdaptor<T>> {
 // MARK: Floating point types
 
 template<> struct Converter<IDLFloat> : DefaultConverter<IDLFloat> {
-
-    static inline float convert(JSC::JSGlobalObject& lexicalGlobalObject, JSC::ThrowScope& scope, double number)
-    {
-        if (!std::isfinite(number)) [[unlikely]]
-            throwNonFiniteTypeError(lexicalGlobalObject, scope);
-        return static_cast<float>(number);
-    }
-
     static float convert(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value)
     {
         auto& vm = JSC::getVM(&lexicalGlobalObject);
@@ -311,11 +298,6 @@ template<> struct JSConverter<IDLFloat> {
 };
 
 template<> struct Converter<IDLUnrestrictedFloat> : DefaultConverter<IDLUnrestrictedFloat> {
-    static inline float convert(JSC::JSGlobalObject&, JSC::ThrowScope&, double number)
-    {
-        return static_cast<float>(number);
-    }
-
     static float convert(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value)
     {
         auto& vm = JSC::getVM(&lexicalGlobalObject);
@@ -344,13 +326,6 @@ template<> struct JSConverter<IDLUnrestrictedFloat> {
 };
 
 template<> struct Converter<IDLDouble> : DefaultConverter<IDLDouble> {
-    static inline double convert(JSC::JSGlobalObject& lexicalGlobalObject, JSC::ThrowScope& scope, double number)
-    {
-        if (!std::isfinite(number)) [[unlikely]]
-            throwNonFiniteTypeError(lexicalGlobalObject, scope);
-        return number;
-    }
-
     static double convert(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value)
     {
         auto& vm = JSC::getVM(&lexicalGlobalObject);
@@ -377,11 +352,6 @@ template<> struct JSConverter<IDLDouble> {
 };
 
 template<> struct Converter<IDLUnrestrictedDouble> : DefaultConverter<IDLUnrestrictedDouble> {
-    static inline double convert(JSC::JSGlobalObject&, JSC::ThrowScope&, double number)
-    {
-        return number;
-    }
-
     static double convert(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value)
     {
         return value.toNumber(&lexicalGlobalObject);

@@ -186,14 +186,6 @@ struct IDLByteString : IDLString<String> {
 struct IDLUSVString : IDLString<String> {
 };
 
-template<typename T> struct IDLLegacyNullToEmptyStringAdaptor : IDLString<String> {
-    using InnerType = T;
-};
-
-template<typename T> struct IDLLegacyNullToEmptyAtomStringAdaptor : IDLString<AtomString> {
-    using InnerType = T;
-};
-
 template<typename T> struct IDLAtomStringAdaptor : IDLString<AtomString> {
     using InnerType = T;
 };

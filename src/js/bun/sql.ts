@@ -7,7 +7,26 @@ const { Query, SQLQueryFlags } = require("internal/sql/query");
 const { PostgresAdapter } = require("internal/sql/postgres");
 const { MySQLAdapter } = require("internal/sql/mysql");
 const { SQLiteAdapter } = require("internal/sql/sqlite");
-const { SQLHelper, parseOptions } = require("internal/sql/shared");
+const {
+  SQLHelper,
+  parseOptions,
+  camel,
+  pascal,
+  kebab,
+  snake,
+  toCamel,
+  toPascal,
+  toKebab,
+  toSnake,
+  toCamelTransform,
+  fromCamelTransform,
+  toPascalTransform,
+  fromPascalTransform,
+  toKebabTransform,
+  fromKebabTransform,
+  toSnakeTransform,
+  fromSnakeTransform,
+} = require("internal/sql/shared");
 
 const { SQLError, PostgresError, SQLiteError, MySQLError } = require("internal/sql/errors");
 
@@ -1037,6 +1056,31 @@ SQL.SQLError = SQLError;
 SQL.PostgresError = PostgresError;
 SQL.SQLiteError = SQLiteError;
 SQL.MySQLError = MySQLError;
+SQL.camel = camel;
+SQL.pascal = pascal;
+SQL.kebab = kebab;
+SQL.snake = snake;
+SQL.toCamel = toCamel;
+SQL.toPascal = toPascal;
+SQL.toKebab = toKebab;
+SQL.toSnake = toSnake;
+SQL.fromCamel = fromCamelTransform;
+SQL.fromPascal = fromPascalTransform;
+SQL.fromKebab = fromKebabTransform;
+SQL.fromSnake = fromSnakeTransform;
+
+defaultSQLObject.camel = camel;
+defaultSQLObject.pascal = pascal;
+defaultSQLObject.kebab = kebab;
+defaultSQLObject.snake = snake;
+defaultSQLObject.toCamel = toCamel;
+defaultSQLObject.toPascal = toPascal;
+defaultSQLObject.toKebab = toKebab;
+defaultSQLObject.toSnake = toSnake;
+defaultSQLObject.fromCamel = fromCamelTransform;
+defaultSQLObject.fromPascal = fromPascalTransform;
+defaultSQLObject.fromKebab = fromKebabTransform;
+defaultSQLObject.fromSnake = fromSnakeTransform;
 
 // // Helper functions for native code to create error instances
 // // These are internal functions used by native code
@@ -1076,4 +1120,16 @@ export default {
   PostgresError,
   MySQLError,
   SQLiteError,
+  camel,
+  pascal,
+  kebab,
+  snake,
+  toCamel,
+  toPascal,
+  toKebab,
+  toSnake,
+  fromCamel: fromCamelTransform,
+  fromPascal: fromPascalTransform,
+  fromKebab: fromKebabTransform,
+  fromSnake: fromSnakeTransform,
 };

@@ -190,6 +190,17 @@ class Query<T, Handle extends BaseQueryHandle<any>> extends PublicPromise<T> {
 
     handle.done?.();
 
+    const transform = (this[_adapter] as any)?.connectionInfo?.transform;
+    if (transform) {
+      try {
+        const { applyResultTransform } = require("./shared");
+        applyResultTransform(x, transform);
+      } catch (err) {
+        this[_queryStatus] |= SQLQueryStatus.error;
+        return this.reject(err as Error);
+      }
+    }
+
     return this[_resolve](x);
   }
 

@@ -30,6 +30,7 @@ pub type ByteListPoolNode = bun_collections::pool::Node<Vec<u8>>;
 // for callers that still spell it that way.
 pub mod bun_s3 {
     pub use crate::webcore::s3::MultiPartUpload;
+    pub use crate::webcore::s3::multipart::UploadBackpressure;
 }
 
 /// `Blob.SizeType` is `u64` (see `webcore::blob::SizeType`).
@@ -2185,6 +2186,9 @@ impl NetworkSink {
             this.flush_promise
                 .resolve(&global, JSValue::js_number(flushed as f64))?;
         }
+        // Wake the `assign_to_stream` pump (onPull). No-op when the signal is
+        // dead-cleared (the `writer()` path), so this is safe for both callers.
+        this.signal.ready(None, None);
         Ok(())
     }
 
@@ -2230,6 +2234,12 @@ impl NetworkSink {
         self.finalize();
     }
 
+    pub fn cancel_from_native(&mut self, _err: Option<JSValue>) {
+        self.ended = true;
+        self.done = true;
+        self.signal.close(None);
+    }
+
     pub fn write(&mut self, data: &StreamResult) -> Writable {
         if self.ended {
             return Writable::Owned(0);
@@ -2238,9 +2248,12 @@ impl NetworkSink {
         let len = bytes.len() as BlobSizeType;
 
         if let Some(task) = self.task_mut() {
-            if task.write_bytes(bytes, false).is_err() {
-                return Writable::Err(SysError::from_code(sys::E::ENOMEM, sys::Tag::write));
-            }
+            return match task.write_bytes(bytes, false) {
+                Ok(bun_s3::UploadBackpressure::Backpressure) => Writable::Backpressure(len),
+                Ok(bun_s3::UploadBackpressure::Done) => Writable::Done,
+                Ok(bun_s3::UploadBackpressure::WantMore) => Writable::Owned(len),
+                Err(_) => Writable::Err(SysError::from_code(sys::E::ENOMEM, sys::Tag::write)),
+            };
         }
         Writable::Owned(len)
     }
@@ -2258,9 +2271,12 @@ impl NetworkSink {
         let len = bytes.len() as BlobSizeType;
 
         if let Some(task) = self.task_mut() {
-            if task.write_latin1(bytes, false).is_err() {
-                return Writable::Err(SysError::from_code(sys::E::ENOMEM, sys::Tag::write));
-            }
+            return match task.write_latin1(bytes, false) {
+                Ok(bun_s3::UploadBackpressure::Backpressure) => Writable::Backpressure(len),
+                Ok(bun_s3::UploadBackpressure::Done) => Writable::Done,
+                Ok(bun_s3::UploadBackpressure::WantMore) => Writable::Owned(len),
+                Err(_) => Writable::Err(SysError::from_code(sys::E::ENOMEM, sys::Tag::write)),
+            };
         }
         Writable::Owned(len)
     }
@@ -2270,15 +2286,19 @@ impl NetworkSink {
             return Writable::Owned(0);
         }
         let bytes = data.slice();
+        let len = bytes.len() as BlobSizeType;
         if let Some(task) = self.task_mut() {
             // we must always buffer UTF-16
             // we assume the case of all-ascii UTF-16 string is pretty uncommon
-            if task.write_utf16(bytes, false).is_err() {
-                return Writable::Err(SysError::from_code(sys::E::ENOMEM, sys::Tag::write));
-            }
+            return match task.write_utf16(bytes, false) {
+                Ok(bun_s3::UploadBackpressure::Backpressure) => Writable::Backpressure(len),
+                Ok(bun_s3::UploadBackpressure::Done) => Writable::Done,
+                Ok(bun_s3::UploadBackpressure::WantMore) => Writable::Owned(len),
+                Err(_) => Writable::Err(SysError::from_code(sys::E::ENOMEM, sys::Tag::write)),
+            };
         }
 
-        Writable::Owned(bytes.len() as BlobSizeType)
+        Writable::Owned(len)
     }
 
     pub fn end(&mut self, err: Option<SysError>) -> bun_sys::Result<()> {

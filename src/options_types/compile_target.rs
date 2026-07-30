@@ -20,7 +20,7 @@ pub struct CompileTarget {
     pub os: OperatingSystem,
     pub(crate) arch: Architecture,
     pub(crate) baseline: bool,
-    pub(crate) version: Version,
+    pub version: Version,
     pub(crate) libc: Libc,
 }
 
@@ -178,7 +178,7 @@ impl CompileTarget {
         })
     }
 
-    pub(crate) fn to_npm_registry_url_with_url<'a>(
+    pub fn to_npm_registry_url_with_url<'a>(
         &self,
         buf: &'a mut [u8],
         registry_url: &[u8],

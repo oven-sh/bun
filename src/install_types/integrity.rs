@@ -93,7 +93,7 @@ impl Integrity {
         Ok(integrity)
     }
 
-    pub(crate) fn parse(buf: &[u8]) -> Integrity {
+    pub fn parse(buf: &[u8]) -> Integrity {
         let mut strongest = Integrity::default();
         for entry in buf.split(|c: &u8| c.is_ascii_whitespace()) {
             let parsed = Self::parse_entry(entry);
@@ -176,7 +176,7 @@ impl Integrity {
     }
 
     /// Compute a sha512 integrity hash from raw bytes (e.g. a downloaded tarball).
-    pub(crate) fn for_bytes(bytes: &[u8]) -> Integrity {
+    pub fn for_bytes(bytes: &[u8]) -> Integrity {
         const LEN: usize = SHA512_DIGEST_LEN;
         let mut value: [u8; DIGEST_BUF_LEN] = EMPTY_DIGEST_BUF;
         // SAFETY: engine is null (default).
@@ -282,22 +282,22 @@ pub struct Tag(pub u8);
 unsafe impl bytemuck::NoUninit for Tag {}
 
 impl Tag {
-    pub(crate) const UNKNOWN: Tag = Tag(0);
+    pub const UNKNOWN: Tag = Tag(0);
     /// "shasum" in the metadata
-    pub(crate) const SHA1: Tag = Tag(1);
+    pub const SHA1: Tag = Tag(1);
     /// The value is a [Subresource Integrity](https://developer.mozilla.org/en-US/docs/Web/Security/Subresource_Integrity) value
     pub const SHA256: Tag = Tag(2);
     /// The value is a [Subresource Integrity](https://developer.mozilla.org/en-US/docs/Web/Security/Subresource_Integrity) value
-    pub(crate) const SHA384: Tag = Tag(3);
+    pub const SHA384: Tag = Tag(3);
     /// The value is a [Subresource Integrity](https://developer.mozilla.org/en-US/docs/Web/Security/Subresource_Integrity) value
-    pub(crate) const SHA512: Tag = Tag(4);
+    pub const SHA512: Tag = Tag(4);
 
     #[inline]
     pub fn is_supported(self) -> bool {
         self.0 >= Tag::SHA1.0 && self.0 <= Tag::SHA512.0
     }
 
-    pub(crate) fn parse(buf: &[u8]) -> (Tag, usize) {
+    pub fn parse(buf: &[u8]) -> (Tag, usize) {
         let Some(i) = strings::index_of_char(&buf[0..buf.len().min(7)], b'-') else {
             return (Tag::UNKNOWN, 0);
         };

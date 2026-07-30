@@ -1478,6 +1478,12 @@ pub(crate) fn inject(
                 cleanup(zname, cloned_executable_fd);
                 return Fd::INVALID;
             }
+            // Stripping Authenticode can make the PE shorter than the cloned base file,
+            // so drop any stale tail past the in-memory image (matches the ELF path).
+            let _ = Syscall::ftruncate(
+                cloned_executable_fd,
+                i64::try_from(pe_file.len()).expect("int cast"),
+            );
             // Set executable permissions when running on POSIX hosts, even for Windows targets
             #[cfg(not(windows))]
             {

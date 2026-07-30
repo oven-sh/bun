@@ -3275,6 +3275,7 @@ mod spawn_process_body {
                 // Same approach as wait_linux_signalfd but without signalfd/pidfd
                 // on the child (which hangs on OHOS).
                 #[cfg(target_env = "ohos")]
+                #[allow(unused)]
                 let (ohos_ppid, ohos_ppid_fd): (libc::pid_t, AutoCloseFd) = if no_orphans
                 {
                     // Only trade PDEATHSIG away for the pidfd/getppid watch if the

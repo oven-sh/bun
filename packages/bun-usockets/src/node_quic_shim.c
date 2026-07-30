@@ -479,6 +479,8 @@ NQ_SET(scid_len, unsigned)
 NQ_SET(silent_close, int)
 NQ_SET(cc_algo, unsigned)
 NQ_SET(delay_onclose, int)
+NQ_SET(force_retry, int)
+NQ_SET(retry_token_duration, unsigned)
 
 #define NQ_GET(f, ty) \
     ty us_nq_settings_get_##f(const struct lsquic_engine_settings *s) { return s->es_##f; }

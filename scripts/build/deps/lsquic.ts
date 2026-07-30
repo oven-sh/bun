@@ -128,6 +128,9 @@ export const lsquic: Dependency = {
     // never be encrypted and the peer idled out instead of learning of the
     // close. Select the PNS by handshake progress, as ngtcp2 does.
     "patches/lsquic/connection-close-pns.patch",
+    // node:quic validateAddress: ENG_FORCE_RETRY from a settings field
+    // (release-safe) plus a Retry counter the endpoint stats can read.
+    "patches/lsquic/node-quic-retry.patch",
   ],
 
   fetchDeps: ["zlib", "lshpack", "lsqpack", "boringssl"],

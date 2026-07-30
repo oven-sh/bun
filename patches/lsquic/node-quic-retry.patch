@@ -1,0 +1,86 @@
+--- a/include/lsquic.h
++++ b/include/lsquic.h
+@@ -1276,6 +1276,13 @@
+      * maxIdleTimeout transport parameter is specified in milliseconds).
+      */
+     unsigned        es_idle_timeout_ms;
++
++    /**
++     * bun: when nonzero, the server answers every tokenless Initial with a
++     * Retry packet (RFC 9000 Section 8.1 address validation).  Implies
++     * @ref es_support_srej.  node:quic's validateAddress.
++     */
++    int             es_force_retry;
+ };
+ 
+ /* Initialize `settings' to default values */
+@@ -2175,6 +2182,12 @@
+                             uint64_t *limited);
+ 
+ /**
++ * Retry packets this (server) engine has scheduled so far.
++ */
++uint64_t
++lsquic_engine_retry_count (const lsquic_engine_t *);
++
++/**
+  * PING frames received on this connection.
+  */
+ uint64_t
+--- a/src/liblsquic/lsquic_engine.c
++++ b/src/liblsquic/lsquic_engine.c
+@@ -223,6 +223,8 @@
+     uint64_t                           sreset_limited;
+     double                             sreset_tokens;
+     lsquic_time_t                      sreset_refill;
++    /* bun: Retry packets scheduled (address-validation counter). */
++    uint64_t                           retry_sent;
+     enum {
+         ENG_SERVER      = LSENG_SERVER,
+         ENG_HTTP        = LSENG_HTTP,
+@@ -759,6 +761,15 @@
+             return NULL;
+         }
+     }
++    /* bun: es_force_retry makes a server answer every tokenless Initial with
++     * a Retry (RFC 9000 Section 8.1), in release builds and without the env
++     * hook.  Implies es_support_srej so the token check on the follow-up
++     * Initial runs. */
++    if ((flags & LSENG_SERVER) && engine->pub.enp_settings.es_force_retry)
++    {
++        engine->flags |= ENG_FORCE_RETRY;
++        engine->pub.enp_settings.es_support_srej = 1;
++    }
+     engine->attq = lsquic_attq_create();
+     eng_hist_init(&engine->history);
+     if (engine->pub.enp_settings.es_max_batch_size)
+@@ -1518,6 +1529,13 @@
+ }
+ 
+ 
++uint64_t
++lsquic_engine_retry_count (const lsquic_engine_t *engine)
++{
++    return engine->retry_sent;
++}
++
++
+ static lsquic_conn_t *
+ find_or_create_conn (lsquic_engine_t *engine, lsquic_packet_in_t *packet_in,
+          struct packin_parse_state *ppstate, const struct sockaddr *sa_local,
+@@ -1686,6 +1704,7 @@
+             case (1 << 1) | 0:
+                 break;
+             }
++            ++engine->retry_sent;
+             schedule_req_packet(engine, PACKET_REQ_RETRY, packet_in, sa_local,
+                                                             sa_peer, peer_ctx);
+             return NULL;
+@@ -3286,6 +3305,7 @@
+         if (tick_st & TICK_RETRY)
+         {
+             assert(conn->cn_flags & LSCONN_MINI);
++            ++engine->retry_sent;
+             schedule_mini_retry(engine, conn, now);
+         }
+         if (tick_st & TICK_SEND)

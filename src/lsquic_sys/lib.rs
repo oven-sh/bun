@@ -276,6 +276,9 @@ unsafe extern "C" {
     pub fn us_nq_settings_set_silent_close(s: *mut lsquic_engine_settings, v: c_int);
     pub fn us_nq_settings_set_cc_algo(s: *mut lsquic_engine_settings, v: c_uint);
     pub fn us_nq_settings_set_delay_onclose(s: *mut lsquic_engine_settings, v: c_int);
+    pub fn us_nq_settings_set_force_retry(s: *mut lsquic_engine_settings, v: c_int);
+    pub fn us_nq_settings_set_retry_token_duration(s: *mut lsquic_engine_settings, v: c_uint);
+    pub fn lsquic_engine_retry_count(e: *const lsquic_engine) -> u64;
 }
 
 pub struct Settings {
@@ -388,6 +391,8 @@ settings_setters! {
     silent_close => us_nq_settings_set_silent_close : c_int,
     cc_algo => us_nq_settings_set_cc_algo : c_uint,
     delay_onclose => us_nq_settings_set_delay_onclose : c_int,
+    force_retry => us_nq_settings_set_force_retry : c_int,
+    retry_token_duration => us_nq_settings_set_retry_token_duration : c_uint,
 }
 
 pub struct Engine(*mut lsquic_engine);

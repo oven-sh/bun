@@ -218,8 +218,14 @@ impl Impl {
         // `is_shutting_down` is set before either path reaches the final
         // collection, and the handle carries no allocation, so skipping the
         // slot release is the whole of teardown. The Rust VM TLS outlives ~VM.
-        if crate::virtual_machine::VirtualMachine::get().is_shutting_down() {
-            return;
+        // A few `unsafe impl Send` wrappers (e.g. `ConcurrentPromiseTask`)
+        // carry a `Strong` across the thread pool by value; if such a wrapper
+        // is dropped off the JS thread the VM TLS is unset and the block cell
+        // lives in another thread's heap, so skip the release (the slot leaks
+        // until VM teardown, matching the handle's own no-allocation footprint).
+        match crate::virtual_machine::VirtualMachine::get_or_null() {
+            Some(vm) if !unsafe { (*vm).is_shutting_down() } => {}
+            _ => return,
         }
         // SAFETY: caller contract guarantees `this` is a live handle from
         // `Bun__StrongRef__new`; C++ releases the block slot it encodes.

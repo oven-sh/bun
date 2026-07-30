@@ -79,6 +79,11 @@ extern "C" void Bun__StrongRef__delete(StrongRefImpl* _Nonnull ref)
 {
     auto* block = decodeStrongRefBlock(ref);
     auto* clientData = s_clientData;
+    // s_clientData is set by the first Bun__StrongRef__new on this thread; the
+    // C++ Bun::StrongRef deleter and a handful of unsafe-Send wrappers can
+    // reach here without that having happened.
+    if (!clientData) [[unlikely]]
+        s_clientData = clientData = WebCore::clientData(block->vm());
     // This block just freed a slot, so the next acquire() should try it first
     // (covers the FIFO pattern where the oldest-armed block gets room while
     // the cursor sits at a full head).

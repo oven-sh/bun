@@ -3400,42 +3400,44 @@ where
     fn do_render_null_body_status_corked(this: *mut Self) {
         // SAFETY: caller upholds the fn-level contract.
         let this = unsafe { &mut *this };
-        let Some(resp) = this.resp else { return };
 
         let (status, app_content_length) = {
             let response: &mut Response = this.response_weakref.get().unwrap();
             let status = response.status_code();
             let app_cl = (status == 304)
                 .then(|| {
-                    response
+                    // Parse before render_metadata(): do_write_headers()
+                    // fast_remove()s ContentLength and derefs the FetchHeaders.
+                    // A non-1*DIGIT value is dropped rather than coerced to 0.
+                    let s = response
                         .get_init_headers_mut()?
-                        .fast_get(jsc::HTTPHeaderName::ContentLength)
-                        .map(|cl| {
-                            // Parse before render_metadata(): do_write_headers()
-                            // fast_remove()s ContentLength and derefs the FetchHeaders.
-                            let s = cl.to_slice();
-                            HTTP::parse_content_length(s.slice()) as u64
-                        })
+                        .fast_get(jsc::HTTPHeaderName::ContentLength)?
+                        .to_slice();
+                    bun_core::parse_int::<u64>(s.slice(), 10).ok()
                 })
                 .flatten();
             (status, app_cl)
         };
 
-        if status != 304 {
-            this.render_metadata();
-            this.render_bytes();
-            return;
-        }
-
         this.render_metadata();
-        if let Some(len) = app_content_length {
-            resp.write_header_int(b"content-length", len);
+
+        if status == 304 {
+            if let Some(resp) = this.resp {
+                if let Some(len) = app_content_length {
+                    resp.write_header_int(b"content-length", len);
+                }
+                // uws_res_end_without_body bypasses internalEnd's writeMark();
+                // emit Date here so 304 keeps it (try_end did, and RFC 9110
+                // §6.6.1 MUSTs it for origin servers with a clock).
+                resp.write_mark();
+                this.end_without_body(this.should_close_connection());
+                return;
+            }
         }
-        // uws_res_end_without_body bypasses internalEnd's writeMark(); emit
-        // Date here so 304 keeps it (try_end did, and RFC 9110 §6.6.1 MUSTs
-        // it for origin servers with a clock).
-        resp.write_mark();
-        this.end_without_body(this.should_close_connection());
+        // Non-304, and the 304 resp-gone edge: render_bytes unconditionally
+        // runs detach_response/end_request_streaming_and_drain/deref, matching
+        // the base-ref release do_render_blob_corked always provided.
+        this.render_bytes();
     }
 
     /// `render_metadata` adapter for `run_corked_with_type` (takes `fn(*mut U)`).

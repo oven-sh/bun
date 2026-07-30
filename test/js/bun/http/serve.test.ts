@@ -1582,9 +1582,9 @@ describe("response framing", () => {
         hostname: "127.0.0.1",
         fetch: () => new Response(null, { status: 205 }),
       });
-      const { statusLine, headerNames } = await rawRequest(server.port, method);
+      const { statusLine, headers } = await rawRequest(server.port, method);
       expect(statusLine).toStartWith(`HTTP/1.1 205 `);
-      expect(headerNames).toContain("content-length");
+      expect(headers["content-length"]).toBe("0");
     });
 
     // RFC 9110 8.6: a 304 MAY carry Content-Length but MUST NOT unless it
@@ -1595,6 +1595,7 @@ describe("response framing", () => {
       [undefined, null],
       ["1234", "1234"],
       ["0", "0"],
+      ["abc", null],
     ])("a 304 response passes the handler's Content-Length through (%p -> %p)", async (appCL, expected) => {
       using server = Bun.serve({
         port: 0,

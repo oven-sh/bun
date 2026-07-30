@@ -1,5 +1,4 @@
 use bun_core::strings;
-use bun_http as http;
 use bun_ptr::BackRef;
 use bun_sys::{self as sys, Error as SysError};
 
@@ -86,77 +85,22 @@ impl FetchRequestBodySink {
         bun_sys::Result::Ok(())
     }
 
-    /// Core write path — lifted verbatim from `FetchTasklet::write_request_data`
-    /// so the chunked-framing bytes and `needs_schedule` semantics are
-    /// identical, except that the high-water-mark comes from `self` (the sink)
-    /// instead of being read back through `FetchTasklet.sink`.
+    /// Core write path — delegates to `FetchTasklet::write_request_data` so the
+    /// chunked-framing bytes and `needs_schedule` / `schedule_request_write`
+    /// semantics stay in a single place, with the high-water-mark coming from
+    /// `self` (the sink) instead of being read back through `FetchTasklet.sink`.
     pub fn write(&mut self, data: &StreamResult) -> Writable {
         if self.ended {
             return Writable::Done;
         }
         let bytes = data.slice();
-        let len = bytes.len() as BlobSizeType;
-        bun_core::scoped_log!(FetchRequestBodySinkLog, "write({})", len);
+        bun_core::scoped_log!(FetchRequestBodySinkLog, "write({})", bytes.len());
 
         let high_water_mark = self.high_water_mark as usize;
         let Some(task) = self.task_mut() else {
             return Writable::Done;
         };
-        if task.signal_aborted() {
-            return Writable::Done;
-        }
-        // An empty chunk is a no-op on every framing path. It must not reach
-        // the chunked framer below, which would serialize it as "0\r\n\r\n",
-        // the chunked-body TERMINATOR (RFC 9112 section 7.1), ending the
-        // message mid-upload. It must also never report Backpressure: nothing
-        // gets buffered, so the HTTP thread's report_drain (what resumes a
-        // paused sink) can never fire, and the upload stalls forever.
-        if bytes.is_empty() {
-            return Writable::Owned(0);
-        }
-        let Some(thread_safe_stream_buffer) = task.stream_buffer_mut() else {
-            return Writable::Done;
-        };
-        // Mutex guards `buffer` against the HTTP thread; released when
-        // `stream_buffer` drops. Borrow is detached from `self` (see accessor).
-        let mut stream_buffer = thread_safe_stream_buffer.lock();
-
-        // dont have backpressure so we will schedule the data to be written
-        // if we have backpressure the onWritable will drain the buffer
-        let needs_schedule = stream_buffer.is_empty();
-        if task.skip_chunked_framing() {
-            let _ = stream_buffer.write(bytes);
-        } else {
-            //16 is the max size of a hex number size that represents 64 bits + 2 for the \r\n
-            let mut formated_size_buffer = [0u8; 18];
-            use std::io::Write;
-            let formated_size = {
-                let mut cursor = &mut formated_size_buffer[..];
-                write!(cursor, "{:x}\r\n", bytes.len()).expect("unreachable");
-                let written = 18 - cursor.len();
-                &formated_size_buffer[..written]
-            };
-            let _ = stream_buffer.ensure_unused_capacity(formated_size.len() + bytes.len() + 2);
-            stream_buffer.write_assume_capacity(formated_size);
-            stream_buffer.write_assume_capacity(bytes);
-            stream_buffer.write_assume_capacity(b"\r\n");
-        }
-
-        let has_backpressure = stream_buffer.size() >= high_water_mark;
-
-        if needs_schedule {
-            // wakeup the http thread to write the data
-            http::http_thread().schedule_request_write(
-                task.http.as_mut().unwrap(),
-                http::http_thread::WriteMessageType::Data,
-            );
-        }
-
-        if has_backpressure {
-            Writable::Backpressure(len)
-        } else {
-            Writable::Owned(len)
-        }
+        task.write_request_data(bytes, high_water_mark)
     }
 
     pub fn write_latin1(&mut self, data: &StreamResult) -> Writable {

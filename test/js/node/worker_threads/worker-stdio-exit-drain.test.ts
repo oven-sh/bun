@@ -114,3 +114,54 @@ describe("auto-piped stdio drains on synchronous process.exit()", () => {
     expect(exitCode).toBe(0);
   });
 });
+
+// A worker that dies from an uncaught exception or unhandled rejection still
+// runs process.on('exit') with _exiting === true, so the same flush applies:
+// logs written before the crash must all reach the parent. Subprocess-spawned
+// so the worker's uncaught-error handling is the runtime's, not bun:test's.
+describe("auto-piped stdio drains when a worker dies from an uncaught error", () => {
+  const N = 300;
+
+  async function run(trailer: string) {
+    const workerBody = `for (let i = 0; i < ${N}; i++) console.log("LINE-" + i); ${trailer}`;
+    const parent =
+      `const { Worker } = require("node:worker_threads");` +
+      `const w = new Worker(${JSON.stringify(workerBody)}, { eval: true });` +
+      `w.on("error", e => console.error("[worker error " + e.message + "]"));` +
+      `w.on("exit", c => console.error("[worker exit " + c + "]"));`;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", parent],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return {
+      lines: stdout.split("\n").filter(Boolean),
+      stderr: stderr.split("\n").filter(Boolean).sort(),
+      exitCode,
+    };
+  }
+
+  test("uncaught exception after N logs", async () => {
+    const { lines, stderr, exitCode } = await run(`throw new Error("CRASH-AFTER-LOGS");`);
+    expect({ first: lines[0], last: lines.at(-1), count: lines.length, stderr }).toEqual({
+      first: "LINE-0",
+      last: `LINE-${N - 1}`,
+      count: N,
+      stderr: ["[worker error CRASH-AFTER-LOGS]", "[worker exit 1]"],
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  test("unhandled rejection after N logs", async () => {
+    const { lines, stderr, exitCode } = await run(`Promise.reject(new Error("REJECT-AFTER-LOGS"));`);
+    expect({ first: lines[0], last: lines.at(-1), count: lines.length, stderr }).toEqual({
+      first: "LINE-0",
+      last: `LINE-${N - 1}`,
+      count: N,
+      stderr: ["[worker error REJECT-AFTER-LOGS]", "[worker exit 1]"],
+    });
+    expect(exitCode).toBe(0);
+  });
+});

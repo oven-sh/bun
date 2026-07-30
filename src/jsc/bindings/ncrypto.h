@@ -209,7 +209,6 @@ using DeleteFnPtr = typename FunctionDeleter<T, function>::Pointer;
 using PKCS8Pointer = DeleteFnPtr<PKCS8_PRIV_KEY_INFO, PKCS8_PRIV_KEY_INFO_free>;
 using RSAPointer = DeleteFnPtr<RSA, RSA_free>;
 
-
 class BIOPointer;
 class BignumPointer;
 class CipherCtxPointer;

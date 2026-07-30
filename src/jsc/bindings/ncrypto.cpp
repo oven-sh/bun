@@ -2830,7 +2830,6 @@ bool EVPKeyPointer::validateDsaParameters() const
     return true;
 }
 
-
 // ============================================================================
 
 const Cipher Cipher::FromName(WTF::StringView name)

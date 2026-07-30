@@ -24,8 +24,7 @@ public:
     static JSC::Structure* createStructure(JSC::VM&, JSC::JSGlobalObject*, JSC::JSValue prototype);
 
     DECLARE_INFO;
-    // visitChildrenImpl MUST visit ALL FIVE barriers: m_stream, m_reader, m_sink, m_result,
-    // m_pendingBatch.
+    // visitChildrenImpl MUST visit: m_stream, m_reader, m_sink, m_result, m_pendingBatch.
     DECLARE_VISIT_CHILDREN;
     static void analyzeHeap(JSCell*, JSC::HeapAnalyzer&);
 

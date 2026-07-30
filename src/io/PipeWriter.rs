@@ -604,9 +604,7 @@ pub struct PosixStreamingWriter<Parent: PosixStreamingWriterParent> {
     pub is_done: bool,
     pub closed_without_reporting: bool,
     pub force_sync: bool,
-    /// Mirrors the last `WriteStatus` reported to the parent, which is `Pending`
-    /// exactly when `write(2)` returned `EAGAIN`. `Cell` because the single site
-    /// that maintains it, `parent_on_write`, only holds `&self`.
+    /// Last reported `WriteStatus == Pending` (i.e. write(2) returned EAGAIN).
     backed_up: core::cell::Cell<bool>,
 }
 
@@ -689,8 +687,7 @@ impl<Parent: PosixStreamingWriterParent> PosixStreamingWriter<Parent> {
     /// through this accessor.
     #[inline]
     fn parent_on_write(&self, amount: usize, status: WriteStatus) {
-        // Record before dispatching: `on_write` may re-enter `write()`, whose own
-        // `parent_on_write` then leaves the newer value in place.
+        // on_write may re-enter write(); record first so re-entry leaves the newer value.
         self.backed_up.set(status == WriteStatus::Pending);
         // SAFETY: type invariant — set-once parent backref outlives writer.
         unsafe { Parent::on_write(self.parent(), amount, status) }
@@ -719,10 +716,7 @@ impl<Parent: PosixStreamingWriterParent> PosixStreamingWriter<Parent> {
         self.outgoing.is_not_empty()
     }
 
-    /// The destination refused bytes we offered it: `write(2)` returned `EAGAIN`,
-    /// so the remainder is sitting in `outgoing`. Not the same as
-    /// `has_pending_data()`, which is also true while writes below `CHUNK_SIZE`
-    /// coalesce in a buffer the kernel has not been shown yet.
+    /// write(2) returned EAGAIN (distinct from has_pending_data()'s coalesce buffer).
     pub fn is_backed_up(&self) -> bool {
         self.backed_up.get()
     }
@@ -999,8 +993,7 @@ impl<Parent: PosixStreamingWriterParent> PosixStreamingWriter<Parent> {
                 self.outgoing.reset();
             }
         }
-        // `drain_buffered_data` does not report to the parent, so maintain the
-        // flag here: anything left over is the kernel refusing the rest.
+        // drain_buffered_data skips parent_on_write; leftover bytes = kernel refused them.
         self.backed_up.set(self.outgoing.is_not_empty());
         rc
     }
@@ -2042,10 +2035,7 @@ impl<Parent: WindowsStreamingWriterParent> WindowsStreamingWriter<Parent> {
         self.outgoing.is_not_empty() || self.current_payload.is_not_empty()
     }
 
-    /// libuv refused bytes we offered it: `process_send` found a `uv_write`
-    /// already in flight and left them in `outgoing`. (`uv_write` is always
-    /// async, so a pending write on its own says nothing — `current_payload` is
-    /// the buffer the OS currently has, which is not backpressure.)
+    /// process_send found a uv_write already in flight (current_payload alone is not backpressure).
     pub fn is_backed_up(&self) -> bool {
         self.outgoing.is_not_empty()
     }

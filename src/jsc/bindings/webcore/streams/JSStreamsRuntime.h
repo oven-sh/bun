@@ -242,8 +242,7 @@ namespace WebCore {
 //   boundReadDirectStreamOnClose(state, streamOrUndefined, reason): readDirectStream's
 //     JSSink onClose.
 //   boundReadStreamIntoSinkOnClose(op, stream, reason): readStreamIntoSink's JSSink onClose.
-//   boundReadStreamIntoSinkOnReady(op, controller, amt, offset): readStreamIntoSink's JSSink
-//     m_onPull — resumes the pump after sink backpressure (replaces the flush(true) promise).
+//   boundReadStreamIntoSinkOnReady(op, controller, amt, offset): JSSink m_onPull resume after backpressure.
 #define FOR_EACH_WEB_STREAMS_BOUND_HANDLER_TARGET_BUN_SOURCE(V) \
     V(boundOnNativeSourceClose)                                 \
     V(boundOnNativeSourceDrain)                                 \

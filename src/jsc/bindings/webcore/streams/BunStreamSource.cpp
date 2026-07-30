@@ -1067,10 +1067,7 @@ static void rsisAbrupt(JSC::VM& vm, JSGlobalObject* globalObject, JSReadStreamIn
     RELEASE_AND_RETURN(scope, rejectPromise(globalObject, result, rejectionValue));
 }
 
-// One sink.write(chunk). `wrote < 0` = sink backpressure: stash the unwritten batch tail on
-// `op->m_pendingBatch` and suspend; the JSSink controller's m_onPull (boundReadStreamIntoSinkOnReady)
-// resumes when the sink drains. A Promise `wrote` is deliberately NOT awaited, only marked as
-// handled.
+// One sink.write(chunk). wrote<0 = backpressure: stash tail on m_pendingBatch, suspend; m_onPull resumes.
 static std::optional<bool> rsisWriteChunk(JSC::VM& vm, JSGlobalObject* globalObject, JSReadStreamIntoSinkOperation* op, JSValue chunk, JSObject* batchValues, unsigned nextIndex, unsigned length)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -1124,8 +1121,7 @@ static void rsisAfterBatch(JSGlobalObject* globalObject, JSReadStreamIntoSinkOpe
     rsisIssueRead(globalObject, op);
 }
 
-// Resumes after the JSSink's m_onPull fires: drain the stashed batch tail (if any), then the
-// read loop.
+// m_onPull fired: drain stashed batch tail then resume the read loop.
 static void rsisContinueAfterReady(JSC::VM& vm, JSGlobalObject* globalObject, JSReadStreamIntoSinkOperation* op)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -1302,9 +1298,7 @@ static void readStreamIntoSinkOnCloseImpl(JSC::VM& vm, JSGlobalObject* globalObj
         }
     }
     op->m_didClose = true;
-    // end() above detached the controller (m_onPull cleared), so a pump parked on sink
-    // backpressure has lost its only resume signal. Drive it to completion now so m_result
-    // settles — rsisContinueAfterReady sees m_didClose and takes the rsisFinish path.
+    // end() detached m_onPull; drive a parked pump to completion so m_result settles.
     if (op->m_waitingOnSink) {
         op->m_waitingOnSink = false;
         scope.release();

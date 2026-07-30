@@ -431,6 +431,7 @@ describe("spawn()", () => {
       expect(child.stdin).not.toBeNull();
       expect(child.stdout).not.toBeNull();
       expect(child.stderr).not.toBeNull();
+      child.stderr!.resume();
       const { promise, resolve, reject } = Promise.withResolvers<string>();
       let out = "";
       const closed = new Promise<number | null>(r => child.on("close", r));

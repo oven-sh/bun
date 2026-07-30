@@ -16,6 +16,7 @@ test("pending ref'd timer does not stall subsequent test files", async () => {
       import { test, expect } from "bun:test";
       test("leaves one pending ref'd timer", () => {
         setTimeout(() => {}, 300_000);
+        globalThis.__timerArmed36450 = true;
         expect(1).toBe(1);
       });
     `,
@@ -26,6 +27,11 @@ test("pending ref'd timer does not stall subsequent test files", async () => {
     files[`plain${i}.test.ts`] = `
       import { test, expect } from "bun:test";
       import { v } from "./mod${i}";
+      // All files share one process; prove the leak file ran first so the
+      // measured run really has a pending ref'd timer.
+      if (process.env.ISSUE_36450_EXPECT_TIMER === "1" && !globalThis.__timerArmed36450) {
+        throw new Error("expected leak.test.ts to arm its timer before this file");
+      }
       const loadedAt = performance.now();
       test("t${i}", () => {
         console.log("GAP${i}:" + (performance.now() - loadedAt).toFixed(2));
@@ -39,7 +45,7 @@ test("pending ref'd timer does not stall subsequent test files", async () => {
   async function medianGap(withLeak: boolean): Promise<number> {
     await using proc = Bun.spawn({
       cmd: [bunExe(), "test", ...(withLeak ? ["leak.test.ts"] : []), ...plainFiles],
-      env: bunEnv,
+      env: { ...bunEnv, ISSUE_36450_EXPECT_TIMER: withLeak ? "1" : "0" },
       cwd: String(dir),
       stdout: "pipe",
       stderr: "pipe",

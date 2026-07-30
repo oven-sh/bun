@@ -477,7 +477,7 @@ pub mod ast {
             self.contains(Self::STDERR)
         }
         #[inline]
-        pub(crate) fn append(self) -> bool {
+        pub fn append(self) -> bool {
             self.contains(Self::APPEND)
         }
         #[inline]

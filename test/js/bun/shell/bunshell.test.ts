@@ -1547,6 +1547,59 @@ describe("deno_task", () => {
       .fileEquals("test.txt", "1\n2\n")
       .runAsTest("appending");
 
+    describe(">> to a Buffer/ArrayBuffer is rejected (no silent overwrite)", () => {
+      // A fixed-size buffer has no write cursor, so `>>` cannot append. Before
+      // this was rejected, `>>` silently overwrote from offset 0 (identical to
+      // `>`), losing data without warning.
+      const msg = "bun: can't append (>>) output to a Buffer or ArrayBuffer";
+
+      test(">> Buffer (builtin)", async () => {
+        const buf = Buffer.alloc(16, ".");
+        const { stderr, exitCode } = await $`echo AAAA >> ${buf}`.quiet();
+        expect(stderr.toString()).toContain(msg);
+        expect(buf.toString()).toBe(Buffer.alloc(16, ".").toString());
+        expect(exitCode).toBe(1);
+      });
+
+      test(">> ArrayBuffer (builtin)", async () => {
+        const ab = new ArrayBuffer(16);
+        const { stderr, exitCode } = await $`echo AAAA >> ${ab}`.quiet();
+        expect(stderr.toString()).toContain(msg);
+        expect(new Uint8Array(ab).every(b => b === 0)).toBe(true);
+        expect(exitCode).toBe(1);
+      });
+
+      test("2>> Buffer (builtin)", async () => {
+        const buf = Buffer.alloc(16, ".");
+        const { stderr, exitCode } = await $`echo AAAA 2>> ${buf}`.quiet();
+        expect(stderr.toString()).toContain(msg);
+        expect(exitCode).toBe(1);
+      });
+
+      test("&>> Buffer (builtin)", async () => {
+        const buf = Buffer.alloc(16, ".");
+        const { stderr, exitCode } = await $`echo AAAA &>> ${buf}`.quiet();
+        expect(stderr.toString()).toContain(msg);
+        expect(exitCode).toBe(1);
+      });
+
+      test(">> Buffer (external command)", async () => {
+        const buf = Buffer.alloc(16, ".");
+        const { stderr, exitCode } = await $`${BUN} -e 'console.log("AAAA")' >> ${buf}`.env(bunEnv).quiet();
+        expect(stderr.toString()).toContain(msg);
+        expect(buf.toString()).toBe(Buffer.alloc(16, ".").toString());
+        expect(exitCode).toBe(1);
+      });
+
+      test("> Buffer still overwrites from offset 0", async () => {
+        const buf = Buffer.alloc(16, ".");
+        const { stderr, exitCode } = await $`echo AAAA > ${buf}`.quiet();
+        expect(stderr.toString()).toBe("");
+        expect(buf.subarray(0, 5).toString()).toBe("AAAA\n");
+        expect(exitCode).toBe(0);
+      });
+    });
+
     // &> and &>> redirect
     await TestBuilder.command`BUN_TEST_VAR=1 ${BUN} -e 'console.log(1); setTimeout(() => console.error(23), 10)' &> file.txt && BUN_TEST_VAR=1 ${BUN} -e 'console.log(456); setTimeout(() => console.error(789), 10)' &>> file.txt`
       .fileEquals("file.txt", "1\n23\n456\n789\n")

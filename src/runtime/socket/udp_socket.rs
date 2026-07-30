@@ -1871,7 +1871,7 @@ impl UDPSocket {
             BinaryType::Buffer => global_this.common_strings().buffer(),
             BinaryType::Uint8Array => global_this.common_strings().uint8array(),
             BinaryType::ArrayBuffer => global_this.common_strings().arraybuffer(),
-            _ => panic!("Invalid binary type"),
+            other => BunString::static_(other.as_lowercase_str()).to_js(global_this)?,
         })
     }
 

@@ -541,6 +541,7 @@ describe("udpSocket()", () => {
                 socket: {
                   data(socket, data) {
                     resolve({
+                      binaryType: server.binaryType,
                       ctor: data?.constructor?.name ?? String(data),
                       byteLength: data?.byteLength,
                       length: data?.length,
@@ -571,6 +572,7 @@ describe("udpSocket()", () => {
           .join("\n");
         expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
           stdout: JSON.stringify({
+            binaryType,
             ctor: ctorName,
             byteLength: 8,
             length: expectedLen,
@@ -700,7 +702,7 @@ describe("udpSocket()", () => {
             error: "not a function" as any,
           },
         }),
-      ).toThrow();
+      ).toThrow('Expected "socket.error" to be a function');
       expect(server.binaryType).toBe("arraybuffer");
 
       await using client = await udpSocket({ hostname: "127.0.0.1", port: 0 });

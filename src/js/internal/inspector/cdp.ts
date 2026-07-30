@@ -87,21 +87,23 @@ function dropAsyncWrapperFrames(frames: AnyObject[]): AnyObject[] {
         body.functionName === frame.functionName &&
         body.location?.scriptId === frame.location?.scriptId &&
         $isArray(bodyScopes) &&
-        $isArray(wrapperScopes) &&
-        wrapperScopes.length > 0 &&
-        bodyScopes.length > wrapperScopes.length
+        $isArray(wrapperScopes)
       ) {
-        const offset = bodyScopes.length - wrapperScopes.length;
-        let isSuffix = true;
-        for (let k = 0; k < wrapperScopes.length; k++) {
-          if (scopeKey(bodyScopes[offset + k]) !== scopeKey(wrapperScopes[k])) {
-            isSuffix = false;
-            break;
+        const bodyScopeCount = bodyScopes.length;
+        const wrapperScopeCount = wrapperScopes.length;
+        if (wrapperScopeCount > 0 && bodyScopeCount > wrapperScopeCount) {
+          const offset = bodyScopeCount - wrapperScopeCount;
+          let isSuffix = true;
+          for (let k = 0; k < wrapperScopeCount; k++) {
+            if (scopeKey(bodyScopes[offset + k]) !== scopeKey(wrapperScopes[k])) {
+              isSuffix = false;
+              break;
+            }
           }
-        }
-        if (isSuffix) {
-          previousDropped = true;
-          continue;
+          if (isSuffix) {
+            previousDropped = true;
+            continue;
+          }
         }
       }
     }

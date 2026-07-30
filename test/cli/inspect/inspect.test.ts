@@ -638,32 +638,31 @@ test("--inspect inline sourcemap sources[0] is a valid path under cwd", async ()
 
   const ws = new WebSocket(url);
   try {
-    await new Promise<void>((resolve, reject) => {
-      ws.addEventListener("open", () => resolve());
+    const failed = new Promise<never>((_, reject) => {
       ws.addEventListener("error", cause => reject(new Error("WebSocket error", { cause })));
+      ws.addEventListener("close", cause => reject(new Error("WebSocket closed", { cause })));
+      proc.exited.then(code => reject(new Error(`inspectee exited (${code})`)));
     });
+    failed.catch(() => {});
 
-    const scriptParsed = new Promise<any>((resolve, reject) => {
+    await Promise.race([new Promise<void>(resolve => ws.addEventListener("open", () => resolve())), failed]);
+
+    const scriptParsed = new Promise<any>(resolve => {
       ws.addEventListener("message", ({ data }) => {
         const msg = JSON.parse(data.toString());
         if (msg.method === "Debugger.scriptParsed" && String(msg.params?.url ?? "").endsWith("target.mjs")) {
           resolve(msg.params);
         }
       });
-      ws.addEventListener("error", cause => reject(new Error("WebSocket error", { cause })));
-      ws.addEventListener("close", cause => reject(new Error("WebSocket closed before scriptParsed", { cause })));
-      proc.exited.then(code => reject(new Error(`inspectee exited (${code}) before scriptParsed`)));
     });
     ws.send(JSON.stringify({ id: 1, method: "Inspector.enable" }));
     ws.send(JSON.stringify({ id: 2, method: "Debugger.enable" }));
-    const params = await scriptParsed;
+    const params = await Promise.race([scriptParsed, failed]);
 
     const m = String(params.sourceMapURL ?? "").match(/base64,([A-Za-z0-9+/=]+)/);
     expect(m).not.toBeNull();
     const map = JSON.parse(Buffer.from(m![1], "base64").toString());
 
-    // The inline map's sources[0] must name the script by a path that resolves
-    // to the real file. Before the fix it was "<last char of cwd>/sub/target.mjs".
     expect(map.sources[0]).toBe("/sub/target.mjs");
   } finally {
     ws.close();

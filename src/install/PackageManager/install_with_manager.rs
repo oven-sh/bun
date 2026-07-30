@@ -1370,11 +1370,7 @@ fn report_lockfile_load_error(
     cause: &lockfile::LoadResultErr,
     log_level: Options::LogLevel,
 ) -> crate::Result<()> {
-    // A lockfile whose format version is newer than this build understands was
-    // written by a newer Bun. Falling through to the ignore-and-regenerate path
-    // would silently re-resolve from package.json and overwrite (downgrade) the
-    // committed lockfile with exit 0, so treat it as fatal regardless of
-    // `fail_early`.
+    // Never regenerate over a lockfile written by a newer Bun.
     let fatal = manager.options.enable.fail_early()
         || matches!(cause.value, crate::Error::UnexpectedLockfileVersion);
 

@@ -173,6 +173,32 @@ describe("--print for cjs/esm", () => {
     expect(stdout.toString()).toBe("true\n");
     expect(exitCode).toBe(0);
   });
+
+  test.each([
+    'Promise.reject(new Error("rej"))',
+    'new Promise((_, rej) => setTimeout(() => rej(new Error("rej")), 1))',
+    'Promise.resolve().then(() => { throw new Error("rej") })',
+  ])("-p reports a rejected promise once: %s", async expr => {
+    const { stdout, stderr, exitCode } = Bun.spawnSync({
+      cmd: [bunExe(), "-p", expr],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const count = (stderr.toString("utf8").match(/^error: rej$/gm) ?? []).length;
+    expect({ count, stdout: stdout.toString("utf8") }).toEqual({ count: 1, stdout: "" });
+    expect(exitCode).toBe(1);
+  });
+
+  test("-p on a fulfilled promise still prints the value", async () => {
+    const { stdout, stderr, exitCode } = Bun.spawnSync({
+      cmd: [bunExe(), "-p", "Promise.resolve(41)"],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    expect(stderr.toString("utf8")).toBe("");
+    expect(stdout.toString("utf8")).toBe("41\n");
+    expect(exitCode).toBe(0);
+  });
 });
 
 function group(run: (code: string) => SyncSubprocess<"pipe", "inherit">) {

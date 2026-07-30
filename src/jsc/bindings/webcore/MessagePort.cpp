@@ -593,6 +593,8 @@ void MessagePort::jsRef(JSGlobalObject* lexicalGlobalObject)
 
 void MessagePort::jsUnref(JSGlobalObject* lexicalGlobalObject)
 {
+    // deref() below releases the self-ref taken by jsRef(); keep `this` alive past it.
+    Ref protectedThis { *this };
     // Also release the listener loop-ref; otherwise an always-listening transferred
     // port (a postMessageToThread control port) would pin the event loop forever.
     m_isRefd = false;

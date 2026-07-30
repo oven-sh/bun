@@ -4787,6 +4787,9 @@ impl NodeFS {
         let _close = close_guard;
         while !data.is_empty() {
             let written = Syscall::write(fd, data)?;
+            if written == 0 {
+                break;
+            }
             data = &data[written..];
         }
         if args.flush {

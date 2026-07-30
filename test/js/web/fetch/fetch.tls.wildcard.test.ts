@@ -438,15 +438,17 @@ describe("TLS certificate name matching: fetch() / checkServerIdentity / checkHo
   });
 
   // Rejections Node's check() applies to the pattern that the native matcher
-  // must not relax.
-  const rejectSans: Array<[san: string, host: string]> = [
-    ["f**.partial.test", "foo.partial.test"],
-    ["*.test", "foo.test"],
-    ["xn--f*.partial.test", "xn--foo.partial.test"],
-    ["a..b.test", "a..b.test"],
+  // must not relax. The checkHost column is Node/OpenSSL's verdict; where that
+  // falls through to equal_nocase (a..b.test) it matches even though Node's
+  // lib/tls.js check() hard-rejects the same pattern.
+  const rejectSans: Array<[san: string, host: string, checkHost: string | undefined]> = [
+    ["f**.partial.test", "foo.partial.test", undefined],
+    ["*.test", "foo.test", undefined],
+    ["xn--f*.partial.test", "xn--foo.partial.test", undefined],
+    ["a..b.test", "a..b.test", "a..b.test"],
   ];
   describe.concurrent("pattern rejections", () => {
-    it.each(rejectSans)("SAN %j must not match %j", async (san, host) => {
+    it.each(rejectSans)("SAN %j must not match %j", async (san, host, checkHostResult) => {
       const m = makeCert("x", [["dns", san]]);
       expect({
         csi: csi(m.x509, host),
@@ -454,7 +456,7 @@ describe("TLS certificate name matching: fetch() / checkServerIdentity / checkHo
         fetch: await fetchOk(m, host),
       }).toEqual({
         csi: false,
-        checkHost: undefined,
+        checkHost: checkHostResult,
         fetch: { ok: false, code: "ERR_TLS_CERT_ALTNAME_INVALID" },
       });
     });
@@ -528,7 +530,9 @@ describe("TLS certificate name matching: fetch() / checkServerIdentity / checkHo
     });
 
     // OpenSSL valid_star pattern-side scan: every pattern label must be LDH
-    // with no boundary hyphen, else the `*` is never expanded.
+    // with no boundary hyphen, else the `*` is never expanded; a failed scan
+    // falls through to equal_nocase rather than hard-rejecting. LABEL_IDNA is
+    // only set when a label *starts* with xn-- (not Node's includes()).
     it.each([
       ["*_x.wild.test", "foo_x.wild.test", undefined],
       ["*.a_b.test", "foo.a_b.test", undefined],
@@ -538,6 +542,12 @@ describe("TLS certificate name matching: fetch() / checkServerIdentity / checkHo
       ["*.-wild.test", "foo.-wild.test", undefined],
       ["*.wild-.test", "foo.wild-.test", undefined],
       ["*-b.wild.test", "a-b.wild.test", "*-b.wild.test"],
+      ["a..b.test", "a..b.test", "a..b.test"],
+      ["exact.test.", "exact.test.", "exact.test."],
+      ["exact.test.", "exact.test", undefined],
+      ["exact test.a.b", "exact test.a.b", "exact test.a.b"],
+      ["axn--b*.c.d", "axn--bZ.c.d", "axn--b*.c.d"],
+      ["xn--a*.c.d", "xn--aZ.c.d", undefined],
     ] as const)("SAN %j checkHost(%j) -> %j", (san, host, expected) => {
       expect(checkHost(makeCert("x", [["dns", san]]).x509, host)).toBe(expected);
     });

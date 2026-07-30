@@ -273,25 +273,36 @@ pub fn match_hostname(pattern: &[u8], hostname: &[u8], opts: MatchOpts) -> bool 
     if pattern.is_empty() {
         return false;
     }
+    let openssl_mode = matches!(
+        opts.wildcards,
+        Wildcards::FullLabel | Wildcards::EdgePartial
+    );
 
-    // Node's `isBad` regex rejects any byte outside U+0021..=U+007F anywhere in
-    // the pattern, and `splitHost` + `includes("")` rejects empty labels.
-    let mut label_start = true;
-    for &b in pattern {
-        if !(0x21..=0x7f).contains(&b) {
-            return false;
+    // Pattern-side validation. OpenSSL `valid_star` falls through to
+    // `equal_nocase` on any failure; Node lib/tls.js `check()` hard-rejects on
+    // a byte outside U+0021..=U+007F or an empty label.
+    if openssl_mode {
+        if !openssl_valid_pattern(pattern) {
+            return eq_nocase(pattern, hostname);
         }
-        if b == b'.' {
-            if label_start {
+    } else {
+        let mut label_start = true;
+        for &b in pattern {
+            if !(0x21..=0x7f).contains(&b) {
                 return false;
             }
-            label_start = true;
-        } else {
-            label_start = false;
+            if b == b'.' {
+                if label_start {
+                    return false;
+                }
+                label_start = true;
+            } else {
+                label_start = false;
+            }
         }
-    }
-    if label_start {
-        return false;
+        if label_start {
+            return false;
+        }
     }
 
     // Wildcards are only recognised in the pattern's left-most label; every
@@ -309,24 +320,27 @@ pub fn match_hostname(pattern: &[u8], hostname: &[u8], opts: MatchOpts) -> bool 
     let prefix = &pat_first[..star];
     let suffix = &pat_first[star + 1..];
     let is_full_label = prefix.is_empty() && suffix.is_empty();
-    let openssl_mode = matches!(
-        opts.wildcards,
-        Wildcards::FullLabel | Wildcards::EdgePartial
-    );
 
-    // A second `*`, an IDNA A-label, fewer than three labels, a partial
-    // wildcard the caller's mode does not permit, or (for the OpenSSL modes) a
-    // pattern that fails `valid_star`'s LDH scan all reduce to a literal
+    // An IDNA A-label in the first label suppresses wildcard expansion. Node's
+    // `includes("xn--")` checks anywhere in the lowercased label; OpenSSL's
+    // `valid_star` sets LABEL_IDNA only when a label *starts* with `xn--`.
+    let pat_idna = if openssl_mode {
+        strings::starts_with_case_insensitive_ascii(pat_first, b"xn--")
+    } else {
+        strings::contains_case_insensitive_ascii(pat_first, b"xn--")
+    };
+
+    // A second `*`, an IDNA A-label, fewer than three labels, or a partial
+    // wildcard the caller's mode does not permit all reduce to a literal
     // comparison (the `*` can never appear in a real hostname, so this is a
     // rejection in practice).
     if strings::index_of_char(suffix, b'*').is_some()
-        || strings::contains_case_insensitive_ascii(pat_first, b"xn--")
+        || pat_idna
         || strings::index_of_char(pat_rest, b'.').is_none()
         || (matches!(opts.wildcards, Wildcards::FullLabel) && !is_full_label)
         || (matches!(opts.wildcards, Wildcards::EdgePartial)
             && !prefix.is_empty()
             && !suffix.is_empty())
-        || (openssl_mode && !openssl_valid_pattern(pattern))
     {
         return eq_nocase(pattern, hostname);
     }

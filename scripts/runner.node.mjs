@@ -97,6 +97,10 @@ function getNodeParallelTestTimeout(testPath) {
   if (testPath.includes("test-cluster-")) return 60_000; // cluster IPC + socket-handle passing is process-heavy under runner concurrency
   if (testPath.includes("-docker-")) return 60_000;
   if (testPath.includes("test-stdin-pipe-large")) return 60_000; // pipes 1MB stdin->stdout through an extra child process; slow under runner concurrency
+  // test-fs-read-stream-pos.js exit condition is a pure timing race (writer must append
+  // between two consecutive ReadStream preads) with a 90s safety timer; solo runtimes are
+  // ~1s on linux-x64 but 1-40s on windows/aarch64. 120s lets the safety timer fire.
+  if (testPath.includes("test-fs-read-stream-pos")) return 120_000;
   if (!isCI) return 60_000; // everything slower in debug mode
   if (options["step"]?.includes("-asan-")) return 60_000;
   return 20_000;
@@ -634,7 +638,14 @@ async function runTests() {
   const parallelSafeLimit = parallelism > 1 ? limit : pLimit(parallelSafeWidth);
   const isParallelSafeTest = testPath => {
     const p = testPath.replaceAll("\\", "/");
-    return p.includes("js/node/test/parallel/") || p.includes("js/bun/test/parallel/");
+    if (!p.includes("js/node/test/parallel/") && !p.includes("js/bun/test/parallel/")) return false;
+    // test-fs-read-stream-pos.js arms a common.mustCallAtLeast per stream; under
+    // I/O-heavy neighbours (e.g. test-fs-read-stream-fd-leak) the 1ms append
+    // interval is starved long enough for a stream to catch cur == EOF and get
+    // zero 'data' events, failing the mustCallAtLeast check on exit. Run it in
+    // the serial phase so the writer keeps its 1ms cadence.
+    if (p.endsWith("test-fs-read-stream-pos.js")) return false;
+    return true;
   };
   console.log("parallel-safe width", parallelSafeWidth);
   const validationApplies = basename(execPath).includes("asan") || !isCI;

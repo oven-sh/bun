@@ -467,8 +467,6 @@ static JSValue convertChunksToArrayBuffer(JSGlobalObject* globalObject, JSValue 
     if (length == 1) {
         JSValue chunk = chunks->getIndex(globalObject, 0);
         RETURN_IF_EXCEPTION(scope, {});
-        // Fetch's body-read builds arrayBuffer() as a fresh buffer over the concatenated
-        // bytes; never hand back the producer's own backing store.
         std::span<const uint8_t> span;
         bool isBinary = false;
         if (auto* jsBuffer = dynamicDowncast<JSC::JSArrayBuffer>(chunk)) {
@@ -511,8 +509,6 @@ static JSValue convertChunksToBytes(JSGlobalObject* globalObject, JSValue chunks
     if (length == 1) {
         JSValue chunk = chunks->getIndex(globalObject, 0);
         RETURN_IF_EXCEPTION(scope, {});
-        // Fetch's body-read builds bytes() as "create a Uint8Array from bytes" over a
-        // fresh buffer; never hand back or wrap the producer's own backing store.
         std::span<const uint8_t> span;
         bool isBinary = false;
         if (auto* view = dynamicDowncast<JSC::JSArrayBufferView>(chunk)) {

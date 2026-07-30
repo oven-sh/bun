@@ -2496,10 +2496,8 @@ describe("fetch should allow duplex", () => {
   });
 
   // A node Readable whose _read() pushes synchronously produces an async iterator whose
-  // .next() fulfills synchronously. The request-body pump writes that straight into the
-  // ResumableSink, whose write() reports backpressure once the HTTP buffer fills so the pump
-  // suspends on flush(true); the old materialized-ArrayBufferSink path never signalled
-  // backpressure and span forever.
+  // .next() fulfills synchronously; the request-body sink must report backpressure so the
+  // pump suspends on flush(true) instead of spinning.
   it("does not wedge on Readable.destroy() when _read pushes synchronously", async () => {
     const fixture = `
       const net = require("node:net");

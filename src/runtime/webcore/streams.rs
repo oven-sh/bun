@@ -2234,12 +2234,6 @@ impl NetworkSink {
         self.finalize();
     }
 
-    pub fn cancel_from_native(&mut self, _err: Option<JSValue>) {
-        self.ended = true;
-        self.done = true;
-        self.signal.close(None);
-    }
-
     pub fn write(&mut self, data: &StreamResult) -> Writable {
         if self.ended {
             return Writable::Owned(0);

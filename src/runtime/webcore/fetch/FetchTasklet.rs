@@ -652,7 +652,6 @@ impl FetchTasklet {
             // SAFETY: `self_ptr` is the live heap tasklet; the +1 above keeps it
             // alive until `write_end_request`/`finalize` clears `task`.
             task: Some(unsafe { bun_ptr::BackRef::from_raw(self_ptr) }),
-            global_this: Some(bun_ptr::BackRef::new(&*global_this)),
             high_water_mark: 16384,
             ..Default::default()
         }));

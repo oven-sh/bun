@@ -59,7 +59,6 @@ pub struct FetchRequestBodySink {
     /// ran.
     pub task: Option<BackRef<FetchTasklet>>,
     pub signal: Signal,
-    pub global_this: Option<BackRef<JSGlobalObject>>,
     pub high_water_mark: BlobSizeType,
     pub flush_promise: JSPromiseStrong,
     /// Bytes handed to `write_request_data` since the last `on_drain` ack.
@@ -80,7 +79,6 @@ impl Default for FetchRequestBodySink {
         Self {
             task: None,
             signal: Signal::default(),
-            global_this: None,
             high_water_mark: 16384,
             flush_promise: JSPromiseStrong::default(),
             pending_bytes: 0,
@@ -92,18 +90,6 @@ impl Default for FetchRequestBodySink {
 
 impl FetchRequestBodySink {
     pub const NAME: &'static str = "FetchRequestBodySink";
-
-    pub fn new(init: FetchRequestBodySink) -> Box<FetchRequestBodySink> {
-        Box::new(init)
-    }
-
-    #[inline]
-    pub fn global_this(&self) -> &JSGlobalObject {
-        self.global_this
-            .as_ref()
-            .expect("FetchRequestBodySink.global_this used before init")
-            .get()
-    }
 
     /// Exclusive borrow of the owning `FetchTasklet`, if still attached.
     ///

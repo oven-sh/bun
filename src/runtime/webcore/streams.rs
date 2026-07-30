@@ -2057,6 +2057,7 @@ pub struct NetworkSink {
     // JSC_BORROW: process-lifetime VM global; safe `Deref` via `BackRef`.
     pub global_this: Option<BackRef<JSGlobalObject>>,
     pub high_water_mark: BlobSizeType,
+    pub flush_promise: JSPromiseStrong,
     pub end_promise: JSPromiseStrong,
     pub ended: bool,
     pub done: bool,
@@ -2070,6 +2071,7 @@ impl Default for NetworkSink {
             source: SourceHandle::default(),
             global_this: None,
             high_water_mark: 2048,
+            flush_promise: JSPromiseStrong::default(),
             end_promise: JSPromiseStrong::default(),
             ended: false,
             done: false,
@@ -2161,7 +2163,12 @@ impl NetworkSink {
             flushed,
             task.state as u8
         );
-        let _ = (task, flushed);
+        let _ = task;
+        if this.flush_promise.has_value() {
+            let global = this.global_this.expect("global_this set at construction");
+            this.flush_promise
+                .resolve(&global, JSValue::js_number(flushed as f64))?;
+        }
         // Wake the upstream source (JS controller onPull or native ByteStream
         // resume). No-op when `source` is `None` (the `writer()` path).
         this.source.ready(None, None);
@@ -2177,8 +2184,27 @@ impl NetworkSink {
         global_this: &JSGlobalObject,
         _wait: bool,
     ) -> bun_sys::Result<JSValue> {
-        // Backpressure is signalled to the upstream via `source.ready()`; no
-        // per-flush promise is allocated.
+        if !matches!(self.source, SourceHandle::None) {
+            // Streamed path: backpressure is signalled to the upstream via
+            // `source.ready()`; no per-flush promise is allocated.
+            return bun_sys::Result::Ok(JSPromise::resolved_promise_value(
+                global_this,
+                JSValue::js_number(0.0),
+            ));
+        }
+        if self.flush_promise.has_value() {
+            return bun_sys::Result::Ok(self.flush_promise.value());
+        }
+        if self.done {
+            return bun_sys::Result::Ok(JSPromise::resolved_promise_value(
+                global_this,
+                JSValue::js_number(0.0),
+            ));
+        }
+        if self.task_ref().is_some_and(|t| !t.is_queue_empty()) {
+            self.flush_promise = JSPromiseStrong::init(global_this);
+            return bun_sys::Result::Ok(self.flush_promise.value());
+        }
         bun_sys::Result::Ok(JSPromise::resolved_promise_value(
             global_this,
             JSValue::js_number(0.0),

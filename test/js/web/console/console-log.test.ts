@@ -149,6 +149,9 @@ it.concurrent("console.group indents count/time/assert and the no-args log paths
     console.count("cnt");
     console.count("cnt");
     console.log();
+    console.info();
+    console.warn();
+    console.error();
     console.group("G2");
     console.count("cnt");
     console.assert(false);
@@ -177,6 +180,7 @@ it.concurrent("console.group indents count/time/assert and the no-args log paths
       "  cnt: 1\n" +
       "  cnt: 2\n" +
       "  \n" +
+      "  \n" +
       "  G2\n" +
       "    cnt: 3\n" +
       "  cnt: 4\n" +
@@ -185,12 +189,14 @@ it.concurrent("console.group indents count/time/assert and the no-args log paths
   );
 
   const stderrLines = stderr.replaceAll("\r\n", "\n").replace(/\n$/, "").split("\n");
-  expect(stderrLines.length).toBe(5);
-  expect(stderrLines[0]).toBe("    Assertion failed");
-  expect(stderrLines[1]).toMatch(/^    \[[\d.]+[mnµ]?s\] t$/);
-  expect(stderrLines[2]).toMatch(/^    \[[\d.]+[mnµ]?s\] t$/);
-  expect(stderrLines[3]).toBe("Assertion failed");
-  expect(stderrLines[4]).toMatch(/^\[[\d.]+[mnµ]?s\] u$/);
+  expect(stderrLines.length).toBe(7);
+  expect(stderrLines[0]).toBe("  ");
+  expect(stderrLines[1]).toBe("  ");
+  expect(stderrLines[2]).toBe("    Assertion failed");
+  expect(stderrLines[3]).toMatch(/^    \[[\d.]+[mnµ]?s\] t$/);
+  expect(stderrLines[4]).toMatch(/^    \[[\d.]+[mnµ]?s\] t$/);
+  expect(stderrLines[5]).toBe("Assertion failed");
+  expect(stderrLines[6]).toMatch(/^\[[\d.]+[mnµ]?s\] u$/);
   expect(exitCode).toBe(0);
 });
 

@@ -448,10 +448,7 @@ fn message_with_type_and_level_(
     let default_indent = unsafe { vm_console_mut(global) }.default_indent;
 
     // SAFETY: see [`vm_console`] — `console` points at the live boxed
-    // `ConsoleObject` for this VM; JS-thread-only. Kept as a raw deref (not
-    // `vm_console_mut`) so the resulting `writer` borrow does not pin a
-    // long-lived `&mut ConsoleObject` across the re-derive in the empty-`Log`
-    // arm below.
+    // `ConsoleObject` for this VM; JS-thread-only.
     let raw_writer: &mut bun_core::io::Writer = unsafe {
         if matches!(level, MessageLevel::Warning | MessageLevel::Error) {
             (*console).error_writer()
@@ -544,13 +541,9 @@ fn message_with_type_and_level_(
             print_options,
         )?;
     } else if message_type == MessageType::Log {
-        // SAFETY: see [`vm_console`]. `writer` (above) is dead in this arm —
-        // the only later uses are in the mutually-exclusive `Trace` block, and
-        // `message_type == Log` here.
-        let w = unsafe { (*console).writer() };
-        let _ = formatter::write_indent_n(u32::from(default_indent), w);
-        let _ = w.write_all(b"\n");
-        let _ = w.flush();
+        let _ = formatter::write_indent_n(u32::from(default_indent), writer);
+        let _ = writer.write_all(b"\n");
+        let _ = writer.flush();
     } else if message_type != MessageType::Trace {
         let _ = formatter::write_indent_n(u32::from(default_indent), writer);
         let _ = writer.write_all(b"undefined\n");

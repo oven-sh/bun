@@ -336,22 +336,31 @@ test("Console.enable replays console messages logged before the debugger attache
   try {
     const messages: string[] = [];
     let nextId = 1;
-    const pending = new Map<number, (x: unknown) => void>();
+    let failed: Error | undefined;
+    const pending = new Map<number, { resolve: (x: unknown) => void; reject: (e: unknown) => void }>();
     const send = (method: string, params: object = {}) =>
-      new Promise(resolve => {
+      new Promise((resolve, reject) => {
+        if (failed) return reject(failed);
         const id = nextId++;
-        pending.set(id, resolve);
+        pending.set(id, { resolve, reject });
         ws.send(JSON.stringify({ id, method, params }));
       });
+    const fail = (e: Error) => {
+      failed ??= e;
+      for (const p of pending.values()) p.reject(failed);
+      pending.clear();
+    };
     ws.addEventListener("message", ev => {
       const msg = JSON.parse(String(ev.data));
       if (msg.id && pending.has(msg.id)) {
-        pending.get(msg.id)!(msg);
+        pending.get(msg.id)!.resolve(msg);
         pending.delete(msg.id);
       } else if (msg.method === "Console.messageAdded") {
         messages.push(msg.params.message.text);
       }
     });
+    ws.addEventListener("error", cause => fail(new Error("WebSocket error", { cause })));
+    ws.addEventListener("close", cause => fail(new Error("WebSocket closed", { cause })));
     await new Promise<void>((resolve, reject) => {
       ws.addEventListener("open", () => resolve());
       ws.addEventListener("error", cause => reject(new Error("WebSocket error", { cause })));
@@ -369,7 +378,6 @@ test("Console.enable replays console messages logged before the debugger attache
     expect(messages).toContain("BOOT-B");
   } finally {
     ws.close();
-    proc.kill();
   }
 });
 

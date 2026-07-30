@@ -676,6 +676,22 @@ impl ByteStream {
         Vec::<u8>::default()
     }
 
+    /// Take a `StreamResult::Err` stashed by [`Self::append`] before a native
+    /// sink was attached, so the fast-path hookups can surface it instead of
+    /// emitting a clean EOF.
+    pub fn take_pending_error(&self) -> Option<streams::StreamError> {
+        self.pending.with_mut(|p| {
+            if matches!(p.result, streams::Result::Err(_)) {
+                match core::mem::replace(&mut p.result, streams::Result::Done) {
+                    streams::Result::Err(e) => Some(e),
+                    _ => None,
+                }
+            } else {
+                None
+            }
+        })
+    }
+
     pub(crate) fn to_any_blob(&self) -> Option<blob::Any> {
         if self.has_received_last_chunk.get() {
             let buffer = self.buffer.replace(Vec::new());

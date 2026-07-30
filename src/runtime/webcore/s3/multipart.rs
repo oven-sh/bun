@@ -558,8 +558,10 @@ impl MultiPartUpload {
             if let Some(callback) = self.on_writable {
                 callback(self, self.callback_context, flushed);
             }
-            if self.ended {
-                // we are done and no more parts are running
+            // `on_writable` may re-enter (source.ready → sink.end → write_bytes)
+            // and enqueue a final part; re-check the queue so `done()` does not
+            // commit while that part is still in flight.
+            if self.ended && self.is_queue_empty() {
                 self.done()?;
             }
         } else if !self.has_backpressure() && flushed > 0 {
@@ -619,7 +621,7 @@ impl MultiPartUpload {
 
     /// Finalize successful the upload
     fn done(&mut self) -> JsTerminatedResult<()> {
-        if self.state == State::MultipartCompleted {
+        if self.state == State::MultipartCompleted && self.is_queue_empty() {
             // we are a multipart upload so we need to send the etags and commit
             self.state = State::Finished;
             // sort the etags

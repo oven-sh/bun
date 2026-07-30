@@ -1564,6 +1564,12 @@ impl FileSink {
             byte_stream.sink.set(webcore::SinkHandle::FileSink(self_ptr));
             byte_stream.sink_paused.set(false);
 
+            if let Some(err) = byte_stream.take_pending_error() {
+                byte_stream.sink.set(webcore::SinkHandle::None);
+                self.end_from_stream(Some(err));
+                return JSValue::UNDEFINED;
+            }
+
             let buffered = byte_stream.drain();
             let has_last = byte_stream.has_received_last_chunk.get();
             if !buffered.is_empty() {

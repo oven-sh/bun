@@ -670,6 +670,16 @@ impl FetchTasklet {
                 .set(SinkHandle::FetchRequestBody(sink_ptr.as_ptr()));
             byte_stream.sink_paused.set(false);
 
+            if let Some(err) = byte_stream.take_pending_error() {
+                byte_stream.sink.set(SinkHandle::None);
+                // SAFETY: `self.sink` set above; sink live.
+                unsafe { (*sink_ptr.as_ptr()).task = None };
+                let err_js = err.to_js(&global_this);
+                err_js.ensure_still_alive();
+                self.write_end_request(Some(err_js));
+                return;
+            }
+
             let buffered = byte_stream.drain();
             let has_last = byte_stream.has_received_last_chunk.get();
             if !buffered.is_empty() {

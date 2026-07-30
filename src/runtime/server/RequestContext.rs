@@ -4003,8 +4003,12 @@ where
 
                 // What `on_data` buffered; `on_stream_drained` resumes once it empties.
                 let buffered = bytes.buffer.get().len().saturating_sub(bytes.offset.get());
-                if bytes.buffer_action.get().is_some() || bytes.sink.get().is_some() {
-                    // `.text()`-after-`.body` / native pipe want it all; no `on_pull` will fire.
+                if bytes.buffer_action.get().is_some()
+                    || (bytes.sink.get().is_some() && !bytes.sink_paused.get())
+                {
+                    // `.text()`-after-`.body` wants it all; a draining native sink
+                    // likewise has no `on_pull` to fire. A paused sink falls
+                    // through to the HWM check so the socket back-pressures.
                     this.resume_request_body_socket();
                 } else if buffered >= REQUEST_BODY_HIGH_WATER_MARK {
                     this.pause_request_body_socket();

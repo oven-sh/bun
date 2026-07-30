@@ -1041,6 +1041,13 @@ pub fn upload_stream(
         byte_stream.sink_paused.set(false);
         ctx.readable_stream_ref = ReadableStreamStrong::init(readable_stream, global_this);
 
+        if let Some(err) = byte_stream.take_pending_error() {
+            let err_js = err.to_js(global_this);
+            err_js.ensure_still_alive();
+            ctx.handle_reject_stream(err_js);
+            return Ok(end_promise_value);
+        }
+
         let buffered = byte_stream.drain();
         let has_last = byte_stream.has_received_last_chunk.get();
         if !buffered.is_empty() {

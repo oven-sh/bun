@@ -146,6 +146,7 @@ describe("ArrayBufferSink", () => {
         try {
           wrote += sink.write(chunk);
         } catch (e) {
+          if (e?.code !== "ERR_STREAM_WRITE_AFTER_END") throw e;
           threw++;
         }
       }

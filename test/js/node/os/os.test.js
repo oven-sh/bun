@@ -300,7 +300,7 @@ it.skipIf(isWindows)(
       out += d;
       if (!sent && out.includes("READY")) { sent = true; kid.kill("SIGTERM"); }
     });
-    kid.on("exit", (code, sig) => {
+    kid.on("close", (code, sig) => {
       console.log(JSON.stringify({ out: out.trim().split("\\n"), code, sig }));
     });
   `;

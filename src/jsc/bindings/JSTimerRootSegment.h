@@ -22,7 +22,9 @@ class JSTimerRootSegment final : public JSC::JSCell {
 public:
     using Base = JSC::JSCell;
 
-    static constexpr unsigned capacity = 4096;
+    // Sized so the cell fits under MarkedSpace::largeCutoff (half a 16 KB
+    // MarkedBlock payload) and the IsoSubspace can allocate it from a block.
+    static constexpr unsigned capacity = 960;
 
     static JSTimerRootSegment* create(JSC::VM& vm, JSC::Structure* structure);
 

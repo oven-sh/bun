@@ -1,8 +1,12 @@
 #include "JSTimerRootSegment.h"
 #include "BunClientData.h"
 #include "ZigGlobalObject.h"
+#include <JavaScriptCore/MarkedSpace.h>
 
 namespace Bun {
+
+static_assert(sizeof(JSTimerRootSegment) <= JSC::MarkedSpace::largeCutoff,
+    "JSTimerRootSegment must fit in a MarkedBlock; lower capacity if this fires");
 
 // for CREATE_METHOD_TABLE
 namespace JSCastingHelpers = JSC::JSCastingHelpers;

@@ -8,8 +8,9 @@
 //! every eden GC.
 //!
 //! Wrappers are stored in fixed-size `JSTimerRootSegment` cells
-//! (see `src/jsc/bindings/JSTimerRootSegment.cpp`). Each segment holds 4096
-//! `WriteBarrier<Unknown>` slots plus a `WTF::BitSet<4096>` occupancy map.
+//! (see `src/jsc/bindings/JSTimerRootSegment.cpp`). Each segment holds a
+//! fixed-size `std::array` of `WriteBarrier<Unknown>` slots plus a matching
+//! `WTF::BitSet` occupancy map, sized to fit within a JSC `MarkedBlock`.
 //! Active segments form a singly-linked list whose head is a `WriteBarrier` on
 //! `ZigGlobalObject` visited by `GlobalObject::visitChildren`, so no strong
 //! handle is held for any segment. A barriered slot store dirties only that
@@ -46,7 +47,7 @@ unsafe extern "C" {
 }
 
 /// Must match `JSTimerRootSegment::capacity`.
-const SEGMENT_CAPACITY: u32 = 4096;
+const SEGMENT_CAPACITY: u32 = 960;
 
 /// Handle to an occupied root-table slot, stored on `TimerObjectInternals`.
 #[derive(Copy, Clone, Default)]

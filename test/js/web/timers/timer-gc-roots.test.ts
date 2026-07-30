@@ -66,8 +66,9 @@ describe.concurrent("armed timers do not each hold a JSC strong handle", () => {
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
     const { armedSegments, clearedSegments } = JSON.parse(stdout);
-    // 10000 / 4096 rounds up to 3 segments while armed; after clearing, all
-    // but one spare segment are released for GC.
+    // Several segments are needed while armed (the exact count depends on
+    // JSTimerRootSegment::capacity); after clearing, all but one spare
+    // segment are released for GC.
     expect(armedSegments).toBeGreaterThanOrEqual(3);
     expect(clearedSegments).toBeLessThanOrEqual(1);
     expect(exitCode).toBe(0);

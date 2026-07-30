@@ -1,19 +1,23 @@
 
 #include "root.h"
 
+// Engine-native FFI (oven-sh/WebKit#319): only available when the WebKit
+// build includes the FFI headers.  If absent (e.g. OHOS local WebKit has
+// not yet rebased), define stubs so callers in ffi_body.rs can fall back
+// to the TinyCC-based FFI at runtime.
+#if __has_include(<JavaScriptCore/BunFFI.h>)
+
 #include <JavaScriptCore/BunFFI.h>
 #include <JavaScriptCore/FFISignature.h>
 #include <JavaScriptCore/FFIType.h>
 #include <JavaScriptCore/FFIContext.h>
 #include <JavaScriptCore/JSFFICallback.h>
 #include <JavaScriptCore/JSFFIFunction.h>
+
 #include "ScriptExecutionContext.h"
 #include <JavaScriptCore/JSCJSValueInlines.h>
 #include <JavaScriptCore/JSCast.h>
 #include <JavaScriptCore/JSObject.h>
-
-#include "ZigGlobalObject.h"
-#include "headers-handwritten.h"
 
 static_assert(static_cast<uint8_t>(JSC::FFI::Type::Char) == 0, "FFI::Type tag drift");
 static_assert(static_cast<uint8_t>(JSC::FFI::Type::Pointer) == 12, "FFI::Type tag drift");
@@ -119,3 +123,40 @@ extern "C" void Bun__JSCFFICallbackClose(JSC::EncodedJSValue callbackValue)
     if (auto* callback = dynamicDowncast<JSC::JSFFICallback>(JSC::JSValue::decode(callbackValue)))
         callback->close();
 }
+
+#else // !__has_include(<JavaScriptCore/BunFFI.h>)
+
+// Stub implementation: engine-native FFI is not available in this WebKit
+// build.  The callers in ffi_body.rs detect the absence at runtime and
+// fall back to TinyCC-based FFI.
+#include <JavaScriptCore/JSObjectRef.h>
+#include <JavaScriptCore/JSValueRef.h>
+
+extern "C" JSC::EncodedJSValue Bun__CreateJSCFFIFunction(
+    Zig::GlobalObject* globalObject,
+    const ZigString* symbolName,
+    const uint8_t* argTypes,
+    unsigned argCount,
+    uint8_t returnType,
+    void* target,
+    JSC::EncodedJSValue ownerValue)
+{
+    return JSC::JSValue::encode(JSC::jsUndefined());
+}
+
+extern "C" JSC::EncodedJSValue Bun__CreateJSCFFICallback(
+    Zig::GlobalObject* globalObject,
+    JSC::EncodedJSValue callableValue,
+    const uint8_t* argTypes,
+    unsigned argCount,
+    uint8_t returnType,
+    bool threadsafe)
+{
+    return JSC::JSValue::encode(JSC::jsUndefined());
+}
+
+extern "C" void Bun__JSCFFICallbackClose(JSC::EncodedJSValue callbackValue)
+{
+}
+
+#endif // __has_include(<JavaScriptCore/BunFFI.h>)

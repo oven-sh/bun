@@ -222,12 +222,6 @@ pub fn parse(possibly_encoded_pathname_: &[u8]) -> Result<URLPath, bun_url::Deco
 
     Ok(URLPath {
         literal_slashes,
-        extname: extend(if !is_source_map {
-            extname
-        } else {
-            backup_extname
-        }),
-        is_source_map,
         pathname: extend(decoded_pathname),
         path: extend(if decoded_pathname.len() == 1 {
             b"."

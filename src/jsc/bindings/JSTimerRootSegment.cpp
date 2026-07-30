@@ -1,4 +1,5 @@
 #include "JSTimerRootSegment.h"
+#include "BunClientData.h"
 #include "ZigGlobalObject.h"
 
 namespace Bun {
@@ -13,6 +14,16 @@ const JSC::ClassInfo JSTimerRootSegment::s_info = {
     nullptr,
     CREATE_METHOD_TABLE(JSTimerRootSegment)
 };
+
+JSC::GCClient::IsoSubspace* JSTimerRootSegment::subspaceForImpl(JSC::VM& vm)
+{
+    return WebCore::subspaceForImpl<JSTimerRootSegment, WebCore::UseCustomHeapCellType::No>(
+        vm,
+        [](auto& spaces) { return spaces.m_clientSubspaceForJSTimerRootSegment.get(); },
+        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForJSTimerRootSegment = std::forward<decltype(space)>(space); },
+        [](auto& spaces) { return spaces.m_subspaceForJSTimerRootSegment.get(); },
+        [](auto& spaces, auto&& space) { spaces.m_subspaceForJSTimerRootSegment = std::forward<decltype(space)>(space); });
+}
 
 JSTimerRootSegment* JSTimerRootSegment::create(JSC::VM& vm, JSC::Structure* structure)
 {
@@ -31,7 +42,6 @@ void JSTimerRootSegment::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 
     visitor.append(thisObject->m_next);
     visitor.append(thisObject->m_slots.begin(), thisObject->m_slots.end());
-    visitor.reportExtraMemoryVisited(capacity * sizeof(JSC::WriteBarrier<JSC::Unknown>));
 }
 
 DEFINE_VISIT_CHILDREN(JSTimerRootSegment);
@@ -90,7 +100,7 @@ static void release(Zig::GlobalObject* zigGlobal, JSTimerRootSegment* segment)
 
 extern "C" bool Bun__TimerRootSegment__clear(JSC::JSGlobalObject* globalObject, JSTimerRootSegment* segment, uint32_t index)
 {
-    if (segment->clear(index) > 0)
+    if (!segment->clear(index))
         return false;
     release(defaultGlobalObject(globalObject), segment);
     return true;

@@ -1,8 +1,8 @@
 #pragma once
 
-#include "BunClientData.h"
 #include "root.h"
 #include <wtf/BitSet.h>
+#include <array>
 
 namespace Bun {
 
@@ -36,48 +36,33 @@ public:
     {
         if constexpr (mode == JSC::SubspaceAccess::Concurrently)
             return nullptr;
-        return WebCore::subspaceForImpl<JSTimerRootSegment, WebCore::UseCustomHeapCellType::Yes>(
-            vm,
-            [](auto& spaces) { return spaces.m_clientSubspaceForJSTimerRootSegment.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForJSTimerRootSegment = std::forward<decltype(space)>(space); },
-            [](auto& spaces) { return spaces.m_subspaceForJSTimerRootSegment.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_subspaceForJSTimerRootSegment = std::forward<decltype(space)>(space); },
-            [](auto& server) -> JSC::HeapCellType& { return server.m_heapCellTypeForJSTimerRootSegment; });
+        return subspaceForImpl(vm);
     }
+    static JSC::GCClient::IsoSubspace* subspaceForImpl(JSC::VM& vm);
 
     DECLARE_INFO;
     DECLARE_VISIT_CHILDREN;
 
-    static constexpr JSC::DestructionMode needsDestruction = JSC::DestructionMode::NeedsDestruction;
-    static void destroy(JSC::JSCell* cell)
-    {
-        static_cast<JSTimerRootSegment*>(cell)->~JSTimerRootSegment();
-    }
-    ~JSTimerRootSegment() = default;
-
-    unsigned set(unsigned index, JSC::JSValue value)
+    void set(unsigned index, JSC::JSValue value)
     {
         ASSERT(index < capacity);
         ASSERT(!m_occupied.get(index));
         m_slots[index].set(vm(), this, value);
         m_occupied.set(index);
-        return ++m_occupiedCount;
     }
 
-    unsigned clear(unsigned index)
+    bool clear(unsigned index)
     {
         ASSERT(index < capacity);
         ASSERT(m_occupied.get(index));
         m_slots[index].clear();
         m_occupied.clear(index);
-        return --m_occupiedCount;
+        return m_occupied.isEmpty();
     }
 
     // Returns the lowest free slot index, or `capacity` if full.
     unsigned findFreeSlot() const
     {
-        if (m_occupiedCount == capacity)
-            return capacity;
         return static_cast<unsigned>(m_occupied.findBit(0, false));
     }
 
@@ -88,11 +73,8 @@ private:
     using Slot = JSC::WriteBarrier<JSC::Unknown>;
 
     JSC::WriteBarrier<JSTimerRootSegment> m_next;
-    // Fixed-size, never resized: set()/clear() and visitChildren may run
-    // concurrently on JS and GC threads without a cellLock.
-    WTF::Vector<Slot> m_slots;
     WTF::BitSet<capacity> m_occupied;
-    unsigned m_occupiedCount { 0 };
+    std::array<Slot, capacity> m_slots {};
 
     JSTimerRootSegment(JSC::VM& vm, JSC::Structure* structure)
         : Base(vm, structure)
@@ -102,8 +84,6 @@ private:
     void finishCreation(JSC::VM& vm)
     {
         Base::finishCreation(vm);
-        m_slots.grow(capacity);
-        vm.heap.reportExtraMemoryAllocated(this, capacity * sizeof(Slot));
     }
 };
 

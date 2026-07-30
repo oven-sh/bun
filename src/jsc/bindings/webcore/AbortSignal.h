@@ -130,16 +130,13 @@ public:
     bool hasAliveDependentSignals() const { return m_dependentSignals.begin() != m_dependentSignals.end(); }
 
     // Read-only interested-party probe for GC marker threads: true if anything
-    // would observe this timeout signal aborting (JS/native abort listener,
-    // addAlgorithm hook, addAbortAlgorithmToSignal hook, AbortSignal.any
-    // dependent, or pending native activity). m_abortAlgorithms is probed
-    // without its lock; Vector::isEmpty reads a single word, and a torn-zero
-    // read while the mutator is mid-append is benign because the algorithm
-    // being appended is still on the appending thread's stack.
-    bool hasTimeoutObserver() const WTF_IGNORES_THREAD_SAFETY_ANALYSIS
+    // would observe this timeout signal aborting. m_algorithmCount tracks
+    // entries in both m_algorithms and m_abortAlgorithms so the probe avoids
+    // touching either vector.
+    bool hasTimeoutObserver() const
     {
         return hasAbortEventListener() || hasPendingActivity()
-            || !m_algorithms.isEmpty() || !m_abortAlgorithms.isEmpty()
+            || m_algorithmCount.load(std::memory_order_relaxed) > 0
             || hasAliveDependentSignals();
     }
 
@@ -221,6 +218,9 @@ private:
     Vector<NativeCallbackTuple, 2> m_native_callbacks;
     Vector<NativeCallbackTuple, 2>* m_nativeCallbacksBeingDispatched { nullptr };
     std::atomic<uint32_t> pendingActivityCount { 0 };
+    // Tracks m_algorithms.size() + m_abortAlgorithms.size() for
+    // hasTimeoutObserver() to read without either vector's lock.
+    std::atomic<uint32_t> m_algorithmCount { 0 };
     uint32_t m_algorithmIdentifier { 0 };
     AbortSignalTimeout m_timeout { nullptr };
     uint8_t m_flags { 0 };

@@ -320,28 +320,32 @@ uint32_t AbortSignal::addAbortAlgorithmToSignal(AbortSignal& signal, Ref<AbortAl
     auto identifier = ++signal.m_algorithmIdentifier;
     Locker locker { signal.m_abortAlgorithmsLock };
     signal.m_abortAlgorithms.append(std::make_pair(identifier, WTF::move(algorithm)));
+    signal.m_algorithmCount.fetch_add(1, std::memory_order_relaxed);
     return identifier;
 }
 
 void AbortSignal::removeAbortAlgorithmFromSignal(AbortSignal& signal, uint32_t algorithmIdentifier)
 {
     Locker locker { signal.m_abortAlgorithmsLock };
-    signal.m_abortAlgorithms.removeFirstMatching([algorithmIdentifier](auto& pair) {
-        return pair.first == algorithmIdentifier;
-    });
+    if (signal.m_abortAlgorithms.removeFirstMatching([algorithmIdentifier](auto& pair) {
+            return pair.first == algorithmIdentifier;
+        }))
+        signal.m_algorithmCount.fetch_sub(1, std::memory_order_relaxed);
 }
 
 uint32_t AbortSignal::addAlgorithm(Algorithm&& algorithm)
 {
     m_algorithms.append(std::make_pair(++m_algorithmIdentifier, WTF::move(algorithm)));
+    m_algorithmCount.fetch_add(1, std::memory_order_relaxed);
     return m_algorithmIdentifier;
 }
 
 void AbortSignal::removeAlgorithm(uint32_t algorithmIdentifier)
 {
-    m_algorithms.removeFirstMatching([algorithmIdentifier](auto& pair) {
-        return pair.first == algorithmIdentifier;
-    });
+    if (m_algorithms.removeFirstMatching([algorithmIdentifier](auto& pair) {
+            return pair.first == algorithmIdentifier;
+        }))
+        m_algorithmCount.fetch_sub(1, std::memory_order_relaxed);
 }
 
 void AbortSignal::throwIfAborted(JSC::JSGlobalObject& lexicalGlobalObject)

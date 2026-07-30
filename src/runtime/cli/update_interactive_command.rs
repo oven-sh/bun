@@ -841,10 +841,7 @@ impl UpdateInteractiveCommand {
     fn group_catalog_dependencies(
         packages: Vec<OutdatedPackage>,
     ) -> crate::Result<Vec<OutdatedPackage>> {
-        // Group catalog dependencies by (package name, catalog name). A package
-        // may appear in more than one named catalog with different version
-        // ranges; keying by name alone would collapse those into a single row
-        // and only one catalog entry would be rewritten on update.
+        // Key by (name, catalog) so each catalog definition is its own row.
         let mut catalog_map: StringHashMap<Vec<OutdatedPackage>> = StringHashMap::default();
 
         let mut result: Vec<OutdatedPackage> = Vec::new();
@@ -1107,9 +1104,7 @@ impl UpdateInteractiveCommand {
             if a_priority != b_priority {
                 return a_priority.cmp(&b_priority);
             }
-            // Then by name, then by catalog name so multiple catalog rows for
-            // the same package have a defined relative order (default catalog
-            // sorts first).
+            // Then by name, then by catalog name (default catalog sorts first).
             strings::order(&a.name, &b.name).then_with(|| {
                 strings::order(
                     a.catalog_name.as_deref().unwrap_or(b""),

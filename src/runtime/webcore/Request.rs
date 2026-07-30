@@ -1211,8 +1211,8 @@ impl Request {
                             // repopulate headers from a different source.
                             match headers.clone_this(global_this) {
                                 Ok(h) => {
-                                    // SAFETY: clone_this returns a +1 ref FetchHeaders.
                                     req.headers.set(h.map(|p| {
+                                        // SAFETY: clone_this returns a +1 ref FetchHeaders.
                                         let mut h = unsafe { HeadersRef::adopt(p) };
                                         // Request headers are never immutable;
                                         // drop any guard copied from the Response.

@@ -60,7 +60,7 @@ describe("bun run: --define process.env.NODE_ENV overrides env NODE_ENV for jsx 
     ["development", '"production"', "react-jsxdev", "prod jsx"], // --define > env > tsconfig
     ["production", '"development"', "react-jsx", "dev jsxDEV"], // --define > env > tsconfig
   ] as const)(
-    "env NODE_ENV=%s + --define process.env.NODE_ENV=%s -> %s",
+    "env NODE_ENV=%s + --define process.env.NODE_ENV=%s (tsconfig %s) -> %s",
     async (envValue, defineValue, jsx, expected) => {
       using dir = tempDir("jsx-tsconfig-define", {
         ...shimFiles,

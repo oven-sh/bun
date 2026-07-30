@@ -1,5 +1,4 @@
 use core::cell::Cell;
-use core::ffi::c_void;
 use core::sync::atomic::{AtomicI32, Ordering};
 
 #[cfg(windows)]
@@ -44,6 +43,11 @@ pub struct FileSink {
     pub done: Cell<bool>,
     pub started: Cell<bool>,
     pub must_be_kept_alive_until_eof: Cell<bool>,
+    /// Set when `to_result` hands `Backpressure` back to a pump-capable source
+    /// (JSController/ByteStream); cleared when `on_write`/`on_ready` resumes it.
+    /// POSIX `PosixStreamingWriter` never dispatches `on_ready`, so `on_write`
+    /// checks this flag on `Drained` to drive the resume itself.
+    pub source_pending_pull: Cell<bool>,
 
     // TODO: these fields are duplicated on writer()
     // we should not duplicate these fields...
@@ -449,6 +453,13 @@ impl FileSink {
                 }
             }
 
+            if status == WriteStatus::Drained
+                && !has_pending_data
+                && (*this).source_pending_pull.replace(false)
+            {
+                (*this).source.with_mut(|s| s.ready(None, None));
+            }
+
             if status == WriteStatus::EndOfFile {
                 (*this).source.with_mut(|s| s.close(None));
                 FileSink::clear_keep_alive_ref(this);
@@ -491,7 +502,11 @@ impl FileSink {
     pub unsafe fn on_ready(this: *mut FileSink) {
         bun_core::scoped_log!(FileSink, "onReady()");
         // SAFETY: caller contract — `this` is live; only `source` is reborrowed.
-        unsafe { (*this).source.with_mut(|s| s.ready(None, None)) };
+        unsafe {
+            if (*this).source_pending_pull.replace(false) {
+                (*this).source.with_mut(|s| s.ready(None, None));
+            }
+        }
     }
 
     /// # Safety
@@ -1354,11 +1369,6 @@ impl FileSink {
                 streams::Writable::Done
             }
             WriteResult::Wrote(amt) => {
-                if self.writer.get().is_backed_up()
-                    && !matches!(self.source.get(), streams::SourceHandle::None)
-                {
-                    return streams::Writable::Backpressure(amt as u64);
-                }
                 if amt > 0 {
                     return streams::Writable::Owned(amt as u64);
                 }
@@ -1375,8 +1385,13 @@ impl FileSink {
                     p.result = streams::Writable::Owned(p.consumed);
                 });
                 if self.writer.get().is_backed_up()
-                    && !matches!(self.source.get(), streams::SourceHandle::None)
+                    && matches!(
+                        self.source.get(),
+                        streams::SourceHandle::JSController(_)
+                            | streams::SourceHandle::ByteStream(_)
+                    )
                 {
+                    self.source_pending_pull.set(true);
                     return streams::Writable::Backpressure(accepted);
                 }
                 streams::Writable::Pending(self.pending.as_ptr())
@@ -1404,6 +1419,7 @@ impl FileSink {
             done: Cell::new(false),
             started: Cell::new(false),
             must_be_kept_alive_until_eof: Cell::new(false),
+            source_pending_pull: Cell::new(false),
             pollable: Cell::new(false),
             nonblocking: Cell::new(false),
             force_sync: Cell::new(false),

@@ -2363,7 +2363,7 @@ void GlobalObject::finishCreation(VM& vm)
             init.set(JSFunction::create(init.vm, init.owner, 2, ""_s, functionNativeMicrotaskTrampoline, ImplementationVisibility::Private));
         });
 
-    m_navigatorObject.initLater(
+    m_navigatorConstructor.initLater(
         [](const Initializer<JSObject>& init) {
             JSC::JSGlobalObject* globalObject = init.owner;
             unsigned accessorAttributes = PropertyAttribute::Accessor | 0;
@@ -2384,7 +2384,14 @@ void GlobalObject::finishCreation(VM& vm)
             constructor->putDirect(init.vm, init.vm.propertyNames->prototype, prototype, PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
             prototype->putDirect(init.vm, init.vm.propertyNames->constructor, constructor, static_cast<unsigned>(PropertyAttribute::DontEnum));
 
-            init.set(JSC::constructEmptyObject(globalObject, prototype, 0));
+            init.set(constructor);
+        });
+
+    m_navigatorObject.initLater(
+        [](const Initializer<JSObject>& init) {
+            JSObject* constructor = uncheckedDowncast<Zig::GlobalObject>(init.owner)->m_navigatorConstructor.get(init.owner);
+            JSObject* prototype = constructor->getDirect(init.vm, init.vm.propertyNames->prototype).getObject();
+            init.set(JSC::constructEmptyObject(init.owner, prototype, 0));
         });
 
     m_navigatorLanguages.initLater(
@@ -3098,9 +3105,8 @@ JSValue GlobalObject_getGlobalThis(VM& vm, JSObject* globalObject)
 
 JSValue NavigatorConstructorCallback(VM& vm, JSObject* globalObject)
 {
-    JSObject* instance = uncheckedDowncast<Zig::GlobalObject>(globalObject)->navigatorObject();
-    JSObject* prototype = instance->getPrototypeDirect().getObject();
-    return prototype->getDirect(vm, vm.propertyNames->constructor);
+    auto* zigGlobalObject = uncheckedDowncast<Zig::GlobalObject>(globalObject);
+    return zigGlobalObject->m_navigatorConstructor.get(zigGlobalObject);
 }
 
 // This is like `putDirectBuiltinFunction` but for the global static list.

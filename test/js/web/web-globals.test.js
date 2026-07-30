@@ -1,6 +1,6 @@
 import { spawn } from "bun";
 import { expect, it, test } from "bun:test";
-import { bunEnv, bunExe, isLinux, isMacOS, isWindows, withoutAggressiveGC } from "harness";
+import { bunEnv, bunExe, isLinux, isMacOS, isWindows, tempDir, withoutAggressiveGC } from "harness";
 
 test("exists", () => {
   expect(typeof URL !== "undefined").toBe(true);
@@ -278,6 +278,30 @@ test("globalThis.Navigator", () => {
     enumerable: false,
     configurable: false,
   });
+});
+
+test.concurrent("globalThis.Navigator is not derived through mutable navigator state", async () => {
+  using dir = tempDir("navigator-tamper", {
+    "index.js": `
+      const nav = globalThis.navigator;
+      Object.setPrototypeOf(nav, null);
+      console.log(JSON.stringify({
+        Navigator: typeof globalThis.Navigator,
+        name: globalThis.Navigator.name,
+        hasProto: typeof globalThis.Navigator.prototype,
+      }));
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "index.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(JSON.parse(stdout)).toEqual({ Navigator: "function", name: "Navigator", hasProto: "object" });
+  expect(exitCode).toBe(0);
 });
 
 // https://github.com/oven-sh/bun/issues/21585

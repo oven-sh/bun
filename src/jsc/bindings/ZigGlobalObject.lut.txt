@@ -60,9 +60,9 @@
   FormData                        DOMFormDataConstructorCallback                       PropertyCallback
   Headers                         FetchHeadersConstructorCallback                      PropertyCallback
   MessageChannel                  MessageChannelConstructorCallback                    PropertyCallback
-  Navigator                       NavigatorConstructorCallback                         PropertyCallback
   MessageEvent                    MessageEventConstructorCallback                      PropertyCallback
   MessagePort                     MessagePortConstructorCallback                       PropertyCallback
+  Navigator                       NavigatorConstructorCallback                         PropertyCallback
   Performance                     PerformanceConstructorCallback                       PropertyCallback
   PerformanceEntry                PerformanceEntryConstructorCallback                  PropertyCallback
   PerformanceMark                 PerformanceMarkConstructorCallback                   PropertyCallback

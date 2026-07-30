@@ -659,6 +659,7 @@ public:
     V(public, LazyPropertyOfGlobalObject<JSObject>, m_bunObject)                                             \
     V(public, LazyPropertyOfGlobalObject<JSObject>, m_cryptoObject)                                          \
     V(public, LazyPropertyOfGlobalObject<JSObject>, m_navigatorObject)                                       \
+    V(public, LazyPropertyOfGlobalObject<JSObject>, m_navigatorConstructor)                                  \
     V(private, LazyPropertyOfGlobalObject<JSC::JSArray>, m_navigatorLanguages)                               \
     V(public, LazyPropertyOfGlobalObject<JSObject>, m_performanceObject)                                     \
     V(public, LazyPropertyOfGlobalObject<Bun::Process>, m_processObject)                                     \

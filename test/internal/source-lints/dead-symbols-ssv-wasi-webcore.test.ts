@@ -87,6 +87,7 @@ test("dead Performance/PerformanceObserver/EventTarget/AbortSignal members do no
     // signalFollow was unreferenced and the only writer of m_followingSignal;
     // JSAbortSignalCustom's isFollowingSignal() check was therefore always false.
     ["src/jsc/bindings/webcore/AbortSignal.cpp", /AbortSignal::signalFollow/],
+    ["src/jsc/bindings/webcore/AbortSignal.h", /void signalFollow\(AbortSignal&\)/],
     ["src/jsc/bindings/webcore/AbortSignal.h", /m_followingSignal/],
   ];
   expect(resurrected(checks)).toEqual([]);
@@ -126,6 +127,13 @@ test("dead windows/rescle.cpp resource-editing methods do not reappear", () => {
     ["src/jsc/bindings/windows/rescle.cpp", /ResourceUpdater::GetString/],
     ["src/jsc/bindings/windows/rescle.cpp", /OnEnumResourceManifest/],
     ["src/jsc/bindings/windows/rescle.h", /RU_VS_LEGAL_TRADEMARKS/],
+    ["src/jsc/bindings/windows/rescle.h", /bool SetExecutionLevel\(/],
+    ["src/jsc/bindings/windows/rescle.h", /bool SetApplicationManifest\(/],
+    ["src/jsc/bindings/windows/rescle.h", /GetVersionString\(/],
+    ["src/jsc/bindings/windows/rescle.h", /bool ChangeString\(/],
+    ["src/jsc/bindings/windows/rescle.h", /bool ChangeRcData\(/],
+    ["src/jsc/bindings/windows/rescle.h", /GetString\(/],
+    ["src/jsc/bindings/windows/rescle.h", /OnEnumResourceManifest/],
   ];
   expect(resurrected(checks)).toEqual([]);
 });

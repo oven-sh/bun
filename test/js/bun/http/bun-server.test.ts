@@ -1,6 +1,15 @@
 import type { Server, ServerWebSocket, Socket } from "bun";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows, normalizeBunSnapshot, rejectUnauthorizedScope, tempDir, tls } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  bunRun,
+  isWindows,
+  normalizeBunSnapshot,
+  rejectUnauthorizedScope,
+  tempDir,
+  tls,
+} from "harness";
 import path from "path";
 
 describe.concurrent("Server", () => {
@@ -481,11 +490,11 @@ describe.concurrent("Server", () => {
 
 // By not timing out, this test passes.
 test("Bun.serve().unref() works", async () => {
-  expect([path.join(import.meta.dir, "unref-fixture.ts")]).toRun();
+  expect(await bunRun(path.join(import.meta.dir, "unref-fixture.ts"))).toSpawn();
 });
 
 test("unref keeps process alive for ongoing connections", async () => {
-  expect([path.join(import.meta.dir, "unref-fixture-2.ts")]).toRun();
+  expect(await bunRun(path.join(import.meta.dir, "unref-fixture-2.ts"))).toSpawn();
 });
 
 test("Bun does not crash when given invalid config", async () => {

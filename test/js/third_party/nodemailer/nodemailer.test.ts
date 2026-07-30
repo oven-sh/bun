@@ -9,7 +9,7 @@ const smtpToFrom = getSecret("SMTP_MAILGUN_TO_FROM");
 describe.skipIf(!smtpPass || !smtpUser || !smtpToFrom)("nodemailer", () => {
   test("basic smtp", async () => {
     try {
-      const info = bunRun(path.join(import.meta.dir, "nodemailer.fixture.js"), {
+      const info = await bunRun(path.join(import.meta.dir, "nodemailer.fixture.js"), {
         SMTP_MAILGUN_USER: process.env.SMTP_MAILGUN_USER as string,
         SMTP_MAILGUN_PASS: process.env.SMTP_MAILGUN_PASS as string,
         SMTP_MAILGUN_TO_FROM: process.env.SMTP_MAILGUN_TO_FROM as string,

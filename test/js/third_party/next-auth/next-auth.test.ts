@@ -27,7 +27,7 @@ describe("next-auth", () => {
       await runBunInstall(bunEnv, testDir, { savesLockfile: false });
 
       console.log("starting server");
-      const result = bunRun(join(testDir, "server.js"), {
+      const result = await bunRun(join(testDir, "server.js"), {
         AUTH_SECRET: "I7Jiq12TSMlPlAzyVAT+HxYX7OQb/TTqIbfTTpr1rg8=",
       });
 

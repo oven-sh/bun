@@ -42,7 +42,7 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
 
     describe("Basic Operations", () => {
       test("should keep process alive when connecting", async () => {
-        const result = bunRun(join(import.meta.dir, "valkey.connecting.fixture.ts"), {
+        const result = await bunRun(join(import.meta.dir, "valkey.connecting.fixture.ts"), {
           "BUN_VALKEY_URL": connectionType === ConnectionType.TLS ? TLS_REDIS_URL : DEFAULT_REDIS_URL,
           "BUN_VALKEY_TLS": connectionType === ConnectionType.TLS ? JSON.stringify(TLS_REDIS_OPTIONS.tlsPaths) : "",
         });

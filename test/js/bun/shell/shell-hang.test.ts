@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import "harness";
+import { bunRun } from "harness";
 import path from "path";
 
 // Pass by not hanging
@@ -17,20 +17,22 @@ const pass = [
 ];
 
 describe("fail", () => {
-  test.each(fail)(
+  test.concurrent.each(fail)(
     "%s",
-    fixture => {
-      expect([path.join(import.meta.dir, fixture)]).not.toRun();
+    async fixture => {
+      expect(await bunRun(path.join(import.meta.dir, fixture))).not.toSpawn();
     },
     700,
   );
 });
 
 describe("pass", () => {
-  test.each(pass)(
+  test.concurrent.each(pass)(
     "%s",
-    fixture => {
-      expect([path.join(import.meta.dir, fixture)]).toRun();
+    async fixture => {
+      const { stderr, exitCode } = await bunRun(path.join(import.meta.dir, fixture));
+      if (exitCode !== 0) console.error(stderr);
+      expect(exitCode).toBe(0);
     },
     700,
   );

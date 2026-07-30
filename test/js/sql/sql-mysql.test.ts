@@ -125,7 +125,7 @@ if (isDockerEnabled()) {
         });
 
         test("process should exit when idle", async () => {
-          const { stderr } = bunRun(path.join(import.meta.dir, "sql-idle-exit-fixture.ts"), {
+          const { stderr } = await bunRun(path.join(import.meta.dir, "sql-idle-exit-fixture.ts"), {
             ...bunEnv,
             MYSQL_URL: getOptions().url,
             CA_PATH: image.name === "MySQL with TLS" ? path.join(import.meta.dir, "mysql-tls", "ssl", "ca.pem") : "",

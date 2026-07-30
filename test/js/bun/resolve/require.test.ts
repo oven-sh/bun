@@ -59,9 +59,9 @@ describe("require(specifier)", () => {
       fs.rmSync(dir, { recursive: true, force: true });
     });
 
-    it.failing("is a Module object when a file is run directly", () => {
+    it.failing("is a Module object when a file is run directly", async () => {
       const file = path.join(dir, "index.js");
-      const { stdout, stderr } = bunRun(file);
+      const { stdout, stderr } = await bunRun(file);
       expect(stderr).toBeEmpty();
 
       // FIXME: most of these properties exist, but are non-enumerable and are

@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv } from "harness";
+import { bunEnv, bunRun } from "harness";
 import http from "node:http";
 import path from "path";
 
@@ -71,15 +71,21 @@ test("maxHeaderSize", async () => {
 test("--max-http-header-size=1024", async () => {
   const size = 1024;
   bunEnv.BUN_HTTP_MAX_HEADER_SIZE = size;
-  expect(["--max-http-header-size=" + size, path.join(import.meta.dir, "max-header-size-fixture.ts")]).toRun();
+  expect(
+    await bunRun(["--max-http-header-size=" + size, path.join(import.meta.dir, "max-header-size-fixture.ts")]),
+  ).toSpawn();
 });
 
 test("--max-http-header-size=NaN", async () => {
-  expect(["--max-http-header-size=" + "NaN", path.join(import.meta.dir, "max-header-size-fixture.ts")]).not.toRun();
+  expect(
+    await bunRun(["--max-http-header-size=" + "NaN", path.join(import.meta.dir, "max-header-size-fixture.ts")]),
+  ).not.toSpawn();
 });
 
 test("--max-http-header-size=16*1024", async () => {
   const size = 16 * 1024;
   bunEnv.BUN_HTTP_MAX_HEADER_SIZE = size;
-  expect(["--max-http-header-size=" + size, path.join(import.meta.dir, "max-header-size-fixture.ts")]).toRun();
+  expect(
+    await bunRun(["--max-http-header-size=" + size, path.join(import.meta.dir, "max-header-size-fixture.ts")]),
+  ).toSpawn();
 });

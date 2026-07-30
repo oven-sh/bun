@@ -359,13 +359,6 @@ pub struct Pipe {
     pub on_pipe: Option<Function>,
 }
 
-impl Pipe {
-    #[inline]
-    pub(crate) fn is_empty(&self) -> bool {
-        self.ctx.is_none() && self.on_pipe.is_none()
-    }
-}
-
 pub type Function = fn(ctx: NonNull<()>, stream: streams::Result);
 
 // Callers implement `PipeHandler` for their type instead of passing a free fn

@@ -599,6 +599,26 @@ ZIG_DECL void H3ResponseSink__updateRef(void* arg0, bool arg1);
 BUN_DECLARE_HOST_FUNCTION(H3ResponseSink__write);
 #endif
 
+CPP_DECL JSC::EncodedJSValue FetchRequestBodySink__assignToStream(JSC::JSGlobalObject* arg0, JSC::EncodedJSValue JSValue1, void* arg2, void** arg3);
+CPP_DECL JSC::EncodedJSValue FetchRequestBodySink__createObject(JSC::JSGlobalObject* arg0, void* arg1, uintptr_t destructor);
+CPP_DECL void FetchRequestBodySink__detachPtr(JSC::EncodedJSValue JSValue0);
+CPP_DECL void* FetchRequestBodySink__fromJS(JSC::EncodedJSValue JSValue1);
+CPP_DECL void FetchRequestBodySink__onClose(JSC::EncodedJSValue JSValue0, JSC::EncodedJSValue JSValue1);
+CPP_DECL void FetchRequestBodySink__onReady(JSC::EncodedJSValue JSValue0, JSC::EncodedJSValue JSValue1, JSC::EncodedJSValue JSValue2);
+
+#ifdef __cplusplus
+
+ZIG_DECL JSC::EncodedJSValue FetchRequestBodySink__close(JSC::JSGlobalObject* arg0, void* arg1);
+BUN_DECLARE_HOST_FUNCTION(FetchRequestBodySink__construct);
+BUN_DECLARE_HOST_FUNCTION(FetchRequestBodySink__end);
+ZIG_DECL JSC::EncodedJSValue SYSV_ABI SYSV_ABI FetchRequestBodySink__endWithSink(void* arg0, JSC::JSGlobalObject* arg1);
+ZIG_DECL void FetchRequestBodySink__finalize(void* arg0);
+BUN_DECLARE_HOST_FUNCTION(FetchRequestBodySink__flush);
+BUN_DECLARE_HOST_FUNCTION(FetchRequestBodySink__start);
+ZIG_DECL void FetchRequestBodySink__updateRef(void* arg0, bool arg1);
+BUN_DECLARE_HOST_FUNCTION(FetchRequestBodySink__write);
+#endif
+
 #ifdef __cplusplus
 
 ZIG_DECL void Bun__WebSocketHTTPClient__cancel(WebSocketHTTPClient* arg0);

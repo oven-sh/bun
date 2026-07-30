@@ -2588,8 +2588,9 @@ impl<'a> ValueBufferer<'a> {
                         std::ptr::from_mut::<Self>(self).cast::<c_void>(),
                         |ctx, stream| {
                             // SAFETY: `ctx` is the `*mut Self` stored at hook-in time;
-                            // `ValueBufferer` is heap-pinned by its owner and kept alive
-                            // via `self.readable_stream_ref` for the stream's duration.
+                            // `ValueBufferer` is heap-pinned by its owner (BufferOutputSink).
+                            // `ValueBufferer::Drop` clears `byte_stream.sink` before releasing
+                            // `readable_stream_ref`, so this handle never outlives the pointee.
                             unsafe { &mut *ctx.cast::<Self>() }.write_chunk(stream)
                         },
                     ));

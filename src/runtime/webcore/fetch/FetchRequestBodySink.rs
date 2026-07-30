@@ -1,6 +1,6 @@
-use bun_core::strings;
+use bun_collections::ByteVecExt;
 use bun_ptr::BackRef;
-use bun_sys::{self as sys, Error as SysError};
+use bun_sys::Error as SysError;
 
 use crate::webcore::blob::SizeType as BlobSizeType;
 use crate::webcore::fetch::fetch_tasklet::FetchTasklet;
@@ -9,6 +9,40 @@ use crate::webcore::sink::JSSink;
 use crate::webcore::streams::{Signal, Start, StartTag, StreamResult, Writable};
 
 bun_core::declare_scope!(FetchRequestBodySinkLog, visible);
+
+/// One sink chunk in its source encoding; `write_request_data` converts
+/// directly into the locked stream buffer so no intermediate UTF-8 buffer is
+/// allocated.
+#[derive(Clone, Copy)]
+pub enum RequestBodyChunk<'a> {
+    Bytes(&'a [u8]),
+    Latin1(&'a [u8]),
+    Utf16(&'a [u16]),
+}
+
+impl<'a> RequestBodyChunk<'a> {
+    #[inline]
+    pub fn utf8_len(&self) -> usize {
+        match *self {
+            Self::Bytes(b) => b.len(),
+            Self::Latin1(b) => bun_simdutf_sys::simdutf::length::utf8::from::latin1(b),
+            Self::Utf16(u) => bun_simdutf_sys::simdutf::length::utf8::from::utf16::le(u),
+        }
+    }
+
+    #[inline]
+    pub fn append_utf8_into(&self, out: &mut Vec<u8>) {
+        match *self {
+            Self::Bytes(b) => out.extend_from_slice(b),
+            Self::Latin1(b) => {
+                let _ = out.write_latin1(b);
+            }
+            Self::Utf16(u) => {
+                let _ = out.write_utf16(u);
+            }
+        }
+    }
+}
 
 /// JSSink that streams a fetch() request body into the HTTP thread's
 /// `ThreadSafeStreamBuffer`, applying chunked transfer-encoding framing when
@@ -97,20 +131,13 @@ impl FetchRequestBodySink {
         bun_sys::Result::Ok(())
     }
 
-    /// Core write path — delegates to `FetchTasklet::write_request_data` so the
-    /// chunked-framing bytes and `needs_schedule` / `schedule_request_write`
-    /// semantics stay in a single place, with the high-water-mark coming from
-    /// `self` (the sink) instead of being read back through `FetchTasklet.sink`.
-    pub fn write(&mut self, data: &StreamResult) -> Writable {
+    fn write_chunk(&mut self, chunk: RequestBodyChunk<'_>) -> Writable {
         if self.ended {
             return Writable::Done;
         }
-        let bytes = data.slice();
-        bun_core::scoped_log!(FetchRequestBodySinkLog, "write({})", bytes.len());
-
         let high_water_mark = self.high_water_mark;
         let result = match self.task_mut() {
-            Some(task) => task.write_request_data(bytes, high_water_mark as usize),
+            Some(task) => task.write_request_data(chunk, high_water_mark as usize),
             None => return Writable::Done,
         };
         match result {
@@ -129,29 +156,22 @@ impl FetchRequestBodySink {
         }
     }
 
+    pub fn write(&mut self, data: &StreamResult) -> Writable {
+        bun_core::scoped_log!(FetchRequestBodySinkLog, "write({})", data.slice().len());
+        self.write_chunk(RequestBodyChunk::Bytes(data.slice()))
+    }
+
     pub fn write_latin1(&mut self, data: &StreamResult) -> Writable {
-        if self.ended {
-            return Writable::Done;
-        }
         let bytes = data.slice();
-        if strings::is_all_ascii(bytes) {
-            return self.write(data);
+        if bun_core::strings::is_all_ascii(bytes) {
+            return self.write_chunk(RequestBodyChunk::Bytes(bytes));
         }
-        let utf8 = match strings::allocate_latin1_into_utf8(bytes) {
-            Ok(v) => v,
-            Err(_) => return Writable::Err(SysError::from_code(sys::E::ENOMEM, sys::Tag::write)),
-        };
-        self.write(&StreamResult::Temporary(bun_ptr::RawSlice::new(&utf8)))
+        self.write_chunk(RequestBodyChunk::Latin1(bytes))
     }
 
     pub fn write_utf16(&mut self, data: &StreamResult) -> Writable {
-        if self.ended {
-            return Writable::Done;
-        }
         // Caller guarantees u16 alignment / even length; bytemuck checks at runtime.
-        let utf16: &[u16] = bytemuck::cast_slice(data.slice());
-        let utf8 = strings::to_utf8_alloc_with_type(utf16);
-        self.write(&StreamResult::Temporary(bun_ptr::RawSlice::new(&utf8)))
+        self.write_chunk(RequestBodyChunk::Utf16(bytemuck::cast_slice(data.slice())))
     }
 
     pub fn flush(&mut self) -> bun_sys::Result<()> {

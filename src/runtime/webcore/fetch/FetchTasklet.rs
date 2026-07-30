@@ -30,7 +30,7 @@ use crate::webcore::blob::{Any as AnyBlob, Blob, SizeType as BlobSizeType, Store
 use crate::webcore::body::{self, Body, Value as BodyValue, ValueError as BodyValueError};
 use crate::webcore::readable_stream::{ReadableStream, Strong as ReadableStreamStrong};
 use crate::webcore::response::HeadersRef;
-use crate::webcore::fetch::fetch_request_body_sink::FetchRequestBodySink;
+use crate::webcore::fetch::fetch_request_body_sink::{FetchRequestBodySink, RequestBodyChunk};
 use crate::webcore::sink::JSSink;
 use crate::webcore::streams::{StreamError, StreamResult, Writable};
 use crate::webcore::{AbortSignal, DrainResult, FetchHeaders, InternalBlob, Response};
@@ -2241,12 +2241,14 @@ impl FetchTasklet {
                 && self.request_headers.get(b"transfer-encoding").is_none())
     }
 
-    /// Called from `FetchRequestBodySink::write_bytes`; `high_water_mark` is the
+    /// Called from `FetchRequestBodySink::write_*`; `high_water_mark` is the
     /// sink's configured HWM so the backpressure threshold tracks
     /// `start({ highWaterMark })`.
-    pub(crate) fn write_request_data(&mut self, data: &[u8], high_water_mark: usize) -> Writable {
-        bun_output::scoped_log!(FetchTasklet, "writeRequestData {}", data.len());
-        let len = data.len() as BlobSizeType;
+    pub(crate) fn write_request_data(
+        &mut self,
+        data: RequestBodyChunk<'_>,
+        high_water_mark: usize,
+    ) -> Writable {
         if self.signal_aborted() {
             return Writable::Done;
         }
@@ -2256,9 +2258,12 @@ impl FetchTasklet {
         // message mid-upload. It must also never report Backpressure: nothing
         // gets buffered, so the HTTP thread's report_drain (what resumes a
         // paused sink) can never fire, and the upload stalls forever.
-        if data.is_empty() {
+        let utf8_len = data.utf8_len();
+        bun_output::scoped_log!(FetchTasklet, "writeRequestData {}", utf8_len);
+        if utf8_len == 0 {
             return Writable::Owned(0);
         }
+        let len = utf8_len as BlobSizeType;
         let Some(thread_safe_stream_buffer) = self.stream_buffer_mut() else {
             return Writable::Done;
         };
@@ -2270,20 +2275,20 @@ impl FetchTasklet {
         // if we have backpressure the onWritable will drain the buffer
         let needs_schedule = stream_buffer.is_empty();
         if self.skip_chunked_framing() {
-            let _ = stream_buffer.write(data); // OOM/capacity: fire-and-forget
+            data.append_utf8_into(&mut stream_buffer.list);
         } else {
             //16 is the max size of a hex number size that represents 64 bits + 2 for the \r\n
             let mut formated_size_buffer = [0u8; 18];
             use std::io::Write;
             let formated_size = {
                 let mut cursor = &mut formated_size_buffer[..];
-                write!(cursor, "{:x}\r\n", data.len()).expect("unreachable");
+                write!(cursor, "{:x}\r\n", utf8_len).expect("unreachable");
                 let written = 18 - cursor.len();
                 &formated_size_buffer[..written]
             };
-            let _ = stream_buffer.ensure_unused_capacity(formated_size.len() + data.len() + 2); // OOM/capacity: fire-and-forget
+            let _ = stream_buffer.ensure_unused_capacity(formated_size.len() + utf8_len + 2); // OOM/capacity: fire-and-forget
             stream_buffer.write_assume_capacity(formated_size);
-            stream_buffer.write_assume_capacity(data);
+            data.append_utf8_into(&mut stream_buffer.list);
             stream_buffer.write_assume_capacity(b"\r\n");
         }
 

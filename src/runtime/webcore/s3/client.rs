@@ -656,14 +656,14 @@ impl S3UploadStreamWrapper {
             // if we have a explicit error, reject the promise
             // if not when calling .fail will create a S3Error instance
             // this match the previous behavior
-            let _ = self.end_promise.reject(&self.global, Ok(err)); // TODO: properly propagate exception upwards
+            let _ = self.end_promise.reject(&self.global, Ok(err));
             self.end_promise = bun_jsc::JSPromiseStrong::empty();
         }
         if !self.task_mut().ended {
             let _ = self.task_mut().fail(Error::S3Error {
                 code: b"UnknownError",
                 message: b"ReadableStream ended with an error",
-            }); // TODO: properly propagate exception upwards
+            });
         }
     }
 

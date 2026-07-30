@@ -104,9 +104,7 @@ test.skipIf(!isDebug && !isASAN)(
     // getOwnNonIndexPropertyNames ... unchecked as of get") inside toInspectorValue before
     // replying to Console.enable, so the socket closes 1006 and reply is { closed: ... }.
     if (child.signalCode === "SIGABRT") {
-      throw new Error(
-        `inspectee aborted under validateExceptionChecks (reply=${JSON.stringify(reply)}):\n${stderr}`,
-      );
+      throw new Error(`inspectee aborted under validateExceptionChecks (reply=${JSON.stringify(reply)}):\n${stderr}`);
     }
     expect(reply).toMatchObject({ id: expect.any(Number), result: {} });
     expect(replayed).toEqual(expect.arrayContaining(["BUFFER-A", "BUFFER-B"]));

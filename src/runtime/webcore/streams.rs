@@ -95,6 +95,7 @@ pub enum StartTag {
     HTTPResponseSink,
     H3ResponseSink,
     NetworkSink,
+    FetchRequestBodySink,
     Ready,
     OwnedAndDone,
     Done,
@@ -162,6 +163,9 @@ impl Start {
             }
             StartTag::H3ResponseSink => {
                 Self::from_js_with_tag::<{ StartTag::H3ResponseSink }>(global_this, value)
+            }
+            StartTag::FetchRequestBodySink => {
+                Self::from_js_with_tag::<{ StartTag::FetchRequestBodySink }>(global_this, value)
             }
             // No `Start` variant carries these tags from JS.
             _ => Self::from_js(global_this, value),
@@ -277,7 +281,8 @@ impl Start {
             StartTag::NetworkSink
             | StartTag::HTTPSResponseSink
             | StartTag::HTTPResponseSink
-            | StartTag::H3ResponseSink => {
+            | StartTag::H3ResponseSink
+            | StartTag::FetchRequestBodySink => {
                 let mut empty = true;
                 let mut chunk_size: BlobSizeType = 2048;
 

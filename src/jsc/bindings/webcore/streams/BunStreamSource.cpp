@@ -15,7 +15,6 @@
 #include "JSReadStreamIntoSinkOperation.h"
 #include "JSReadableStream.h"
 #include "JSReadableStreamDefaultReader.h"
-#include "JSResumableSinkPumpOperation.h"
 #include "JSSink.h"
 #include "JSStreamsRuntime.h"
 #include "WebStreamsHeapAnalyzer.h"
@@ -345,6 +344,7 @@ static void startJSSinkController(JSC::VM& vm, JSGlobalObject* globalObject, JSO
     BUN_START_JSSINK_CONTROLLER(JSReadableHTTPSResponseSinkController)
     BUN_START_JSSINK_CONTROLLER(JSReadableH3ResponseSinkController)
     BUN_START_JSSINK_CONTROLLER(JSReadableNetworkSinkController)
+    BUN_START_JSSINK_CONTROLLER(JSReadableFetchRequestBodySinkController)
 #undef BUN_START_JSSINK_CONTROLLER
     throwTypeError(globalObject, scope, "Unknown direct controller. This is a bug in Bun."_s);
 }

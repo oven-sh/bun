@@ -7,6 +7,7 @@ const classes = [
   "HTTPSResponseSink",
   "H3ResponseSink",
   "NetworkSink",
+  "FetchRequestBodySink",
 ];
 
 function names(name) {
@@ -1044,6 +1045,7 @@ function rustSink() {
     HTTPSResponseSink: "crate::webcore::streams::HTTPSResponseSink",
     H3ResponseSink: "crate::webcore::streams::H3ResponseSink",
     NetworkSink: "crate::webcore::streams::NetworkSink",
+    FetchRequestBodySink: "crate::webcore::fetch::fetch_request_body_sink::FetchRequestBodySink",
   };
 
   const symbols: string[] = [];

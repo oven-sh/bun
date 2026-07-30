@@ -1011,12 +1011,7 @@ pub fn upload_stream(
 
     if !assignment_result.is_empty_or_undefined_or_null() {
         if let Some(promise) = assignment_result.as_any_promise() {
-            let js_promise: *mut bun_jsc::JSPromise = match promise {
-                bun_jsc::AnyPromise::Normal(p) => p,
-                bun_jsc::AnyPromise::Internal(p) => p.cast::<bun_jsc::JSPromise>(),
-            };
-            // SAFETY: `as_any_promise` returned non-null.
-            match unsafe { (*js_promise).status() } {
+            match promise.status() {
                 bun_jsc::js_promise::Status::Pending => {
                     assignment_result.then(
                         global_this,
@@ -1029,8 +1024,8 @@ pub fn upload_stream(
                     ctx.handle_resolve_stream();
                 }
                 bun_jsc::js_promise::Status::Rejected => {
-                    // SAFETY: `js_promise` is non-null (`as_any_promise`).
-                    let result = unsafe { (*js_promise).result(global_this.vm()) };
+                    promise.set_handled(global_this.vm());
+                    let result = promise.result(global_this.vm());
                     ctx.handle_reject_stream(result);
                 }
             }

@@ -20,7 +20,7 @@ set -euo pipefail
 
 # ─── 路径配置 ────────────────────────────────────────────────────────────────
 DEV_SRC="${DEV_SRC:-/home/user/sources/bun}"
-CI_SRC="${CI_SRC:-/home/user/actions-runner/_work/bun/bun}"
+CI_SRC="${CI_SRC:-/home/user/actions-runner/_work/bun/bun/bun}"
 BUILD_DIR="${BUILD_DIR:-${CI_SRC}/build/release-ohos}"
 SHARED_DIR="${SHARED_DIR:-/mnt/linux_share/ci-test/bun}"
 

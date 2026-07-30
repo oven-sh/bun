@@ -20,7 +20,8 @@ describe("fail", () => {
   test.concurrent.each(fail)(
     "%s",
     async fixture => {
-      expect(await bunRun(path.join(import.meta.dir, fixture))).not.toSpawn();
+      const { exitCode } = await bunRun(path.join(import.meta.dir, fixture));
+      expect(exitCode).not.toBe(0);
     },
     700,
   );

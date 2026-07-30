@@ -78,9 +78,11 @@ test.concurrent("--max-http-header-size=1024", async () => {
 });
 
 test.concurrent("--max-http-header-size=NaN", async () => {
-  expect(
-    await bunRun(["--max-http-header-size=" + "NaN", path.join(import.meta.dir, "max-header-size-fixture.ts")]),
-  ).not.toSpawn();
+  const { exitCode } = await bunRun([
+    "--max-http-header-size=" + "NaN",
+    path.join(import.meta.dir, "max-header-size-fixture.ts"),
+  ]);
+  expect(exitCode).not.toBe(0);
 });
 
 test.concurrent("--max-http-header-size=16*1024", async () => {

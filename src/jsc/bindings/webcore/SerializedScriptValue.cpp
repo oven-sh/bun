@@ -2270,7 +2270,7 @@ public:
             return std::make_pair(jsNull(), SerializationReturnCode::UnspecifiedError);
         CloneDeserializer deserializer(lexicalGlobalObject, globalObject, messagePorts, arrayBufferContentsArray, std::span<uint8_t> { buffer.begin(), buffer.end() }, blobURLs, blobFilePaths, sharedBuffers
 #if ENABLE(WEBASSEMBLY)
-                ,
+            ,
             wasmModules, wasmMemoryHandles
 #endif
         );
@@ -4752,10 +4752,10 @@ ExceptionOr<Ref<SerializedScriptValue>> SerializedScriptValue::create(JSGlobalOb
     scope.releaseAssertNoException();
     auto result = adoptRef(*new SerializedScriptValue(WTF::move(buffer), arrayBufferContentsArray.releaseReturnValue(), context == SerializationContext::WorkerPostMessage ? WTF::move(sharedBuffers) : nullptr
 #if ENABLE(WEBASSEMBLY)
-            ,
+        ,
         makeUnique<WasmModuleArray>(wasmModules), context == SerializationContext::WorkerPostMessage ? makeUnique<WasmMemoryHandleArray>(wasmMemoryHandles) : nullptr
 #endif
-            ));
+        ));
     result->m_serializedBlockListRefs = WTF::move(serializedBlockListRefs);
     return result;
 }

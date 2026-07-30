@@ -534,7 +534,10 @@ impl WorkerData {
         &mut self,
         resolver_target: Target,
         transpiler_target: Target,
-    ) -> (*mut bun_resolver::Resolver<'static>, *mut Transpiler<'static>) {
+    ) -> (
+        *mut bun_resolver::Resolver<'static>,
+        *mut Transpiler<'static>,
+    ) {
         let resolver_uses_other = self.uses_other_transpiler_for(resolver_target);
         let transpiler_uses_other = self.uses_other_transpiler_for(transpiler_target);
         let other: Option<*mut Transpiler<'static>> =

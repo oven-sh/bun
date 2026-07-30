@@ -2460,6 +2460,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             // Kernel rejected the send (peer gone): return the negative errno so
             // JS fails the write; never close from under the caller's stack, and
             // leave the undeliverable buffer to the caller (aliasing).
+            #[cfg(not(windows))] // same quarantine as on_writable (a5e7ba5905)
             if self.fatal_write_errno.get() == 0 {
                 self.fatal_write_errno.set(fatal_errno);
             }
@@ -2970,6 +2971,7 @@ impl<const SSL: bool> NewSocket<SSL> {
                     // buffer, stop re-arming the writable retry, and report the
                     // errno so the event-loop caller surfaces it (the data was
                     // already acknowledged to JS, so only an 'error' can).
+                    #[cfg(not(windows))] // same quarantine as on_writable (a5e7ba5905)
                     if self.fatal_write_errno.get() == 0 {
                         self.fatal_write_errno.set(fatal_errno);
                     }

@@ -2455,8 +2455,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         if fatal_errno != 0 {
             // Kernel rejected the send (peer gone): return the negative errno so
             // JS fails the write; never close from under the caller's stack, and
-            // leave the undeliverable buffer to the caller (aliasing). Latch the
-            // first errno for `on_end`/`on_close`.
+            // leave the undeliverable buffer to the caller (aliasing).
             if self.fatal_write_errno.get() == 0 {
                 self.fatal_write_errno.set(fatal_errno);
             }

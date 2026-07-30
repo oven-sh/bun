@@ -59,23 +59,19 @@ DEFINE_VISIT_CHILDREN(StrongRootBlock);
 // rooted by a SimpleMarkingConstraint (BunClientData.cpp) that runs on every
 // return to Fixpoint, so a freshly-prepended block is always appended before
 // marking converges.
-StrongRootBlock* StrongRootBlock::acquire(JSC::VM& vm, unsigned& outFreeSlot)
+StrongRootBlock* StrongRootBlock::acquire(WebCore::JSVMClientData* clientData, JSC::VM& vm, unsigned& outFreeSlot)
 {
-    auto* clientData = WebCore::clientData(vm);
-
     if (auto* cursor = clientData->m_strongRootBlockCursor) {
-        unsigned slot = cursor->findFreeSlot();
-        if (slot < capacity) {
-            outFreeSlot = slot;
+        if (!cursor->isFull()) {
+            outFreeSlot = cursor->findFreeSlot();
             return cursor;
         }
     }
 
     for (auto* b = clientData->m_strongRootBlockHead; b; b = b->next()) {
-        unsigned slot = b->findFreeSlot();
-        if (slot < capacity) {
+        if (!b->isFull()) {
             clientData->m_strongRootBlockCursor = b;
-            outFreeSlot = slot;
+            outFreeSlot = b->findFreeSlot();
             return b;
         }
     }
@@ -98,9 +94,8 @@ StrongRootBlock* StrongRootBlock::acquire(JSC::VM& vm, unsigned& outFreeSlot)
 
 // Unlink `block` from the active list and either park it in the free slot (one
 // block of slack) or leave it unreachable so GC reclaims it.
-void StrongRootBlock::release(JSC::VM& vm, StrongRootBlock* block)
+void StrongRootBlock::release(WebCore::JSVMClientData* clientData, JSC::VM& vm, StrongRootBlock* block)
 {
-    auto* clientData = WebCore::clientData(vm);
     if (clientData->m_strongRootBlockCursor == block)
         clientData->m_strongRootBlockCursor = nullptr;
     StrongRootBlock* head = clientData->m_strongRootBlockHead;

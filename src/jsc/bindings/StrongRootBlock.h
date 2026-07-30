@@ -4,6 +4,10 @@
 #include <wtf/BitSet.h>
 #include <array>
 
+namespace WebCore {
+class JSVMClientData;
+}
+
 namespace Bun {
 
 // One fixed-size page of strong GC roots backing bun_jsc::Strong. Each live
@@ -44,20 +48,21 @@ public:
     DECLARE_INFO;
     DECLARE_VISIT_CHILDREN;
 
-    void set(unsigned index, JSC::JSValue value)
+    void set(JSC::VM& vm, unsigned index, JSC::JSValue value)
     {
         ASSERT(index < capacity);
         ASSERT(!m_occupied.get(index));
-        m_slots[index].set(vm(), this, value);
+        m_slots[index].set(vm, this, value);
         m_occupied.set(index);
+        ++m_occupiedCount;
     }
 
     // Overwrite an already-occupied slot (Bun__StrongRef__set).
-    void write(unsigned index, JSC::JSValue value)
+    void write(JSC::VM& vm, unsigned index, JSC::JSValue value)
     {
         ASSERT(index < capacity);
         ASSERT(m_occupied.get(index));
-        m_slots[index].set(vm(), this, value);
+        m_slots[index].set(vm, this, value);
     }
 
     JSC::JSValue read(unsigned index) const
@@ -72,8 +77,10 @@ public:
         ASSERT(m_occupied.get(index));
         m_slots[index].clear();
         m_occupied.clear(index);
-        return m_occupied.isEmpty();
+        return !--m_occupiedCount;
     }
+
+    bool isFull() const { return m_occupiedCount == capacity; }
 
     // Clear the stored value but keep the slot occupied so a later write()
     // reuses it without touching the bitset (Bun__StrongRef__clear).
@@ -93,8 +100,8 @@ public:
     StrongRootBlock* next() const { return m_next.get(); }
     void setNext(JSC::VM& vm, StrongRootBlock* next) { m_next.setMayBeNull(vm, this, next); }
 
-    static StrongRootBlock* acquire(JSC::VM& vm, unsigned& outFreeSlot);
-    static void release(JSC::VM& vm, StrongRootBlock* block);
+    static StrongRootBlock* acquire(WebCore::JSVMClientData* clientData, JSC::VM& vm, unsigned& outFreeSlot);
+    static void release(WebCore::JSVMClientData* clientData, JSC::VM& vm, StrongRootBlock* block);
 
     template<typename Functor>
     void forEachOccupiedCell(const Functor& func) const
@@ -106,10 +113,14 @@ public:
         });
     }
 
-private:
     using Slot = JSC::WriteBarrier<JSC::Unknown>;
 
+    ALWAYS_INLINE Slot* slotAt(unsigned index) { return &m_slots[index]; }
+    static constexpr ptrdiff_t slotsOffset() { return OBJECT_OFFSETOF(StrongRootBlock, m_slots); }
+
+private:
     JSC::WriteBarrier<StrongRootBlock> m_next;
+    unsigned m_occupiedCount { 0 };
     WTF::BitSet<capacity> m_occupied;
     std::array<Slot, capacity> m_slots {};
 

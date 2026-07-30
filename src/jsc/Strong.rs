@@ -167,13 +167,26 @@ bun_opaque::opaque_ffi! {
 }
 
 impl Impl {
+    // Low 48 bits of the handle point at the `WriteBarrier<Unknown>` slot (a
+    // `JSC::JSValue`); see `encodeStrongRef` in StrongRef.cpp.
+    const SLOT_MASK: usize = (1usize << 48) - 1;
+
+    #[inline(always)]
+    fn slot_ptr(this: NonNull<Impl>) -> *mut crate::DecodedJSValue {
+        (this.as_ptr() as usize & Self::SLOT_MASK) as *mut crate::DecodedJSValue
+    }
+
     pub(crate) fn init(global: &JSGlobalObject, value: JSValue) -> NonNull<Impl> {
         crate::mark_binding!();
         NonNull::new(Bun__StrongRef__new(global, value)).expect("Bun__StrongRef__new returned null")
     }
 
+    #[inline(always)]
     pub fn get(this: NonNull<Impl>) -> JSValue {
-        Bun__StrongRef__get(Impl::opaque_ref(this.as_ptr()))
+        // SAFETY: StrongRef.cpp guarantees the low 48 bits address a live
+        // `JSC::JSValue`-sized slot for the lifetime of the handle;
+        // `DecodedJSValue` is its `#[repr(C)]` ABI mirror.
+        unsafe { (*Self::slot_ptr(this)).encode() }
     }
 
     pub fn set(this: NonNull<Impl>, global: &JSGlobalObject, value: JSValue) {
@@ -181,9 +194,11 @@ impl Impl {
         Bun__StrongRef__set(Impl::opaque_ref(this.as_ptr()), global, value);
     }
 
+    #[inline(always)]
     pub(crate) fn clear(this: NonNull<Impl>) {
-        crate::mark_binding!();
-        Bun__StrongRef__clear(Impl::opaque_ref(this.as_ptr()));
+        // SAFETY: same slot-pointer invariant as `get`; clearing holds no
+        // barrier (WriteBarrier<Unknown>::clear() just stores encoded 0).
+        unsafe { (Self::slot_ptr(this) as *mut i64).write(0) };
     }
 
     /// SAFETY: `this` must be a valid handle from `init`; consumed here (do not reuse).
@@ -196,6 +211,16 @@ impl Impl {
                 this.as_ptr(),
             );
         }
+        // destructOnExit / WebWorker__teardownJSCVM unprotect the global and
+        // run a final full GC whose sweep-time finalizers (and
+        // deinit_runtime_state after ~VM) can drop `Strong`s; past that point
+        // the encoded StrongRootBlock cell may be unmarked or the heap freed.
+        // `is_shutting_down` is set before either path reaches the final
+        // collection, and the handle carries no allocation, so skipping the
+        // slot release is the whole of teardown. The Rust VM TLS outlives ~VM.
+        if crate::virtual_machine::VirtualMachine::get().is_shutting_down() {
+            return;
+        }
         // SAFETY: caller contract guarantees `this` is a live handle from
         // `Bun__StrongRef__new`; C++ releases the block slot it encodes.
         unsafe { Bun__StrongRef__delete(this.as_ptr()) };
@@ -205,12 +230,10 @@ impl Impl {
 // `Impl` and `JSGlobalObject` are opaque `UnsafeCell`-backed ZST handles, so
 // `&Impl`/`&JSGlobalObject` are ABI-identical to non-null `*const T` and C++
 // mutating through them (block slot write) is interior mutation invisible to
-// Rust. The handle is an encoded `(StrongRootBlock*, index)` with no heap
-// allocation of its own; `delete` releases the slot and so stays `unsafe fn`.
+// Rust. The handle's low 48 bits point at the slot and the top 16 hold the
+// index (no heap allocation); `delete` releases the slot and so stays `unsafe fn`.
 unsafe extern "C" {
     fn Bun__StrongRef__delete(this: *mut Impl);
     safe fn Bun__StrongRef__new(global: &JSGlobalObject, value: JSValue) -> *mut Impl;
-    safe fn Bun__StrongRef__get(this: &Impl) -> JSValue;
     safe fn Bun__StrongRef__set(this: &Impl, global: &JSGlobalObject, value: JSValue);
-    safe fn Bun__StrongRef__clear(this: &Impl);
 }

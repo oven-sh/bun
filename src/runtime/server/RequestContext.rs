@@ -839,7 +839,7 @@ where
             wrapper.sink.finalize();
             if let Some(sink_global) = wrapper.sink.global_this {
                 ResponseStreamJSSink::<SSL_ENABLED, HTTP3>::detach(
-                    &mut wrapper.sink.signal,
+                    &mut wrapper.sink.source,
                     &sink_global,
                 );
             }
@@ -1229,25 +1229,6 @@ where
             // that would alias `&mut self` through a captured raw pointer.
             self.deref();
         }
-    }
-
-    /// # Safety
-    /// `this` must be the live `RequestContext` user-data pointer registered with uWS.
-    pub(crate) fn on_writable_response_buffer(
-        this: *mut Self,
-        _write_offset: u64,
-        _resp: uws::AnyResponse,
-    ) -> bool {
-        ctx_log!("onWritableResponseBuffer");
-        // SAFETY: caller upholds the fn-level contract — `this` is the live
-        // `RequestContext` user-data pointer registered with uWS.
-        let this = unsafe { &mut *this };
-        debug_assert!(this.resp.is_some());
-        if this.is_aborted_or_ended() {
-            return false;
-        }
-        this.end(b"", this.should_close_connection());
-        false
     }
 
     /// # Safety
@@ -2078,7 +2059,7 @@ where
         if let Some(err_value) = assignment_result.to_error() {
             stream_log!("returned an error");
             ResponseStreamJSSink::<SSL_ENABLED, HTTP3>::detach(
-                &mut response_stream.sink.signal,
+                &mut response_stream.sink.source,
                 global_this,
             );
             this.sink = None;
@@ -2089,7 +2070,7 @@ where
         if resp.has_responded() {
             stream_log!("done");
             ResponseStreamJSSink::<SSL_ENABLED, HTTP3>::detach(
-                &mut response_stream.sink.signal,
+                &mut response_stream.sink.source,
                 global_this,
             );
             this.sink = None;
@@ -2204,7 +2185,7 @@ where
                 // if is not a promise we treat it as Error
                 stream_log!("returned an error");
                 ResponseStreamJSSink::<SSL_ENABLED, HTTP3>::detach(
-                    &mut response_stream.sink.signal,
+                    &mut response_stream.sink.source,
                     global_this,
                 );
                 this.sink = None;
@@ -2215,7 +2196,7 @@ where
 
         if this.is_aborted_or_ended() {
             ResponseStreamJSSink::<SSL_ENABLED, HTTP3>::detach(
-                &mut response_stream.sink.signal,
+                &mut response_stream.sink.source,
                 global_this,
             );
             stream.cancel(global_this);
@@ -2246,7 +2227,7 @@ where
                     response_stream.sink.on_first_write = None;
                     response_stream.sink.ctx = None;
                     ResponseStreamJSSink::<SSL_ENABLED, HTTP3>::detach(
-                        &mut response_stream.sink.signal,
+                        &mut response_stream.sink.source,
                         global_this,
                     );
                     response_stream.sink.mark_done();
@@ -2264,7 +2245,7 @@ where
         response_stream.sink.on_first_write = None;
         response_stream.sink.ctx = None;
         ResponseStreamJSSink::<SSL_ENABLED, HTTP3>::detach(
-            &mut response_stream.sink.signal,
+            &mut response_stream.sink.source,
             global_this,
         );
         stream.cancel(global_this);
@@ -2886,7 +2867,7 @@ where
                 .global_this
                 .expect("sink.global_this set in do_render_stream");
             ResponseStreamJSSink::<SSL_ENABLED, HTTP3>::detach(
-                &mut wrapper.sink.signal,
+                &mut wrapper.sink.source,
                 &sink_global,
             );
             Self::destroy_sink(wrapper_ptr);
@@ -2985,7 +2966,7 @@ where
                 .global_this
                 .expect("sink.global_this set in do_render_stream");
             ResponseStreamJSSink::<SSL_ENABLED, HTTP3>::detach(
-                &mut wrapper.sink.signal,
+                &mut wrapper.sink.source,
                 &sink_global,
             );
             Self::destroy_sink(wrapper_ptr);
@@ -3361,13 +3342,14 @@ where
     ) -> bool {
         ctx_log!("onWritableByteStream");
         // SAFETY: caller upholds the fn-level contract — `this` is the live
-        // `RequestContext` user-data pointer registered with uWS.
-        let this = unsafe { &mut *this };
-        debug_assert!(this.resp.is_some());
-        if this.is_aborted_or_ended() {
+        // `RequestContext` user-data pointer registered with uWS. `resume()`
+        // re-enters `write_chunk`/`end_chunk` which form `&mut Self` via the
+        // SinkHandle thunk, so dispatch off the raw pointer (`borrow = ptr`).
+        debug_assert!(unsafe { (*this).resp.is_some() });
+        if unsafe { (*this).is_aborted_or_ended() } {
             return false;
         }
-        if let Some(bs) = this.byte_stream {
+        if let Some(bs) = unsafe { (*this).byte_stream } {
             bun_ptr::BackRef::from(bs).resume();
         }
         true

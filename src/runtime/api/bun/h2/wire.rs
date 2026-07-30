@@ -119,9 +119,7 @@ pub mod lib_error {
     pub const TOO_MANY_CONTINUATIONS: i32 = -905;
 }
 
-/// nghttp2's NGHTTP2_DEFAULT_MAX_CONTINUATIONS (CVE-2024-28182): the per-header-block CONTINUATION
-/// frame cap. A peer that exceeds it is a connection error regardless of payload size, so a drip of
-/// zero-length CONTINUATION frames (never END_HEADERS) cannot pin the receiver in header-block state.
+/// nghttp2 NGHTTP2_DEFAULT_MAX_CONTINUATIONS (CVE-2024-28182): per-header-block CONTINUATION cap.
 pub const DEFAULT_MAX_CONTINUATIONS: u32 = 8;
 
 /// RFC 9113 §6.5.2 SETTINGS parameter registry (+ RFC 8441, RFC 9218).

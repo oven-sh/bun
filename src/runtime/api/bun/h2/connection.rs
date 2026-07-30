@@ -235,12 +235,9 @@ pub struct Connection {
     /// Header-block reassembly across CONTINUATION (RFC 9113 §4.3). 0 = not assembling; otherwise
     /// the stream id whose header block is mid-flight and which the next frame MUST continue.
     continuation_stream: u32,
-    /// CONTINUATION frames received for the in-progress header block. Bounded by
-    /// `max_continuations` so a peer dripping zero-length CONTINUATIONs (which the size cap below
-    /// cannot catch) cannot hold the connection in header-block state indefinitely.
+    /// CONTINUATION frames received for the in-progress header block.
     continuation_count: u32,
-    /// Per-header-block CONTINUATION frame cap (nghttp2 NGHTTP2_DEFAULT_MAX_CONTINUATIONS,
-    /// CVE-2024-28182). Not a SETTINGS parameter.
+    /// Per-header-block CONTINUATION cap (nghttp2 NGHTTP2_DEFAULT_MAX_CONTINUATIONS, CVE-2024-28182).
     pub max_continuations: u32,
     header_block: Vec<u8>,
     /// In-progress partial DATA frame streamed incrementally. nghttp2 delivers DATA in
@@ -1011,10 +1008,7 @@ impl Connection {
     /// RFC 9113 §6.10 CONTINUATION: append the fragment; complete the block on END_HEADERS.
     fn handle_continuation(&mut self, sink: &impl Sink, hdr: &FrameHeader, payload: &[u8]) -> bool {
         // dispatch() already enforced that we are assembling this exact stream.
-        // nghttp2 NGHTTP2_DEFAULT_MAX_CONTINUATIONS (CVE-2024-28182): cap the frame count
-        // independently of the byte cap below so a zero-length CONTINUATION drip cannot pin the
-        // connection in header-block state. nghttp2 surfaces this as the fatal
-        // NGHTTP2_ERR_TOO_MANY_CONTINUATIONS and terminates with INTERNAL_ERROR.
+        // Frame-count cap (the byte cap below cannot catch a zero-length CONTINUATION drip).
         self.continuation_count += 1;
         if self.continuation_count > self.max_continuations {
             self.local_connection_error(

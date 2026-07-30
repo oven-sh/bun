@@ -13,6 +13,7 @@ import {
   isFlaky,
   isMacOS,
   isWindows,
+  tempDir,
   tls,
   tmpdirSync,
   withoutAggressiveGC,
@@ -2615,6 +2616,41 @@ describe("fetch should allow duplex", () => {
 
       await response.text();
     }).not.toThrow();
+  });
+
+  // Bun.file(path).stream() is a native FileReader source; when used as a duplex
+  // fetch body it should pipe through the native sink without a JS pump, and an
+  // open() failure must reject the fetch rather than send an empty body.
+  it("streams a Bun.file().stream() request body and rejects on open failure", async () => {
+    using dir = tempDir("fetch-duplex-file", {
+      "payload.bin": Buffer.alloc(256 * 1024, 0x42).toString("latin1"),
+    });
+    await using echo = Bun.serve({
+      port: 0,
+      async fetch(req) {
+        const buf = new Uint8Array(await req.arrayBuffer());
+        return Response.json({ len: buf.length, head: buf[0] ?? -1, tail: buf[buf.length - 1] ?? -1 });
+      },
+    });
+
+    const res = await fetch(echo.url, {
+      method: "POST",
+      body: Bun.file(join(String(dir), "payload.bin")).stream(),
+      duplex: "half",
+    });
+    expect(await res.json()).toEqual({ len: 256 * 1024, head: 0x42, tail: 0x42 });
+
+    let caught: any = null;
+    try {
+      await fetch(echo.url, {
+        method: "POST",
+        body: Bun.file(join(String(dir), "does-not-exist.bin")).stream(),
+        duplex: "half",
+      });
+    } catch (e: any) {
+      caught = { code: e?.code, syscall: e?.syscall };
+    }
+    expect(caught).toEqual({ code: "ENOENT", syscall: "open" });
   });
 
   // Piping the response body of one fetch directly into the request body of another

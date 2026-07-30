@@ -189,7 +189,10 @@ impl FetchRequestBodySink {
             return;
         }
         self.ended = true;
-        if matches!(self.source, SourceHandle::ByteStream(_)) {
+        if matches!(
+            self.source,
+            SourceHandle::ByteStream(_) | SourceHandle::FileReader(_)
+        ) {
             // Native ByteStream source: no pump promise, so drive write_end_request here.
             self.source.close(None);
             if let Some(task) = self.task.take() {

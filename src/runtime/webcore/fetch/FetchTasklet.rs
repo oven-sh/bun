@@ -695,6 +695,50 @@ impl FetchTasklet {
             return;
         }
 
+        // Native FileReader fast-path: same wiring as ByteStream, but the
+        // reader is pull-driven so kick it with `pull_into_sink` instead of
+        // draining a pre-buffered chunk. Bun's file streams defer `start()`
+        // to the first read, so drive it here; an error or synchronous
+        // completion is delivered immediately.
+        if let readable_stream::Source::File(fr_ptr) = stream.ptr {
+            // SAFETY: `Source::File` stores the live `*mut FileReader` (the
+            // `NewSource.context` field); the JS wrapper is rooted by
+            // `self.request_body`'s `Strong` for this tasklet's lifetime.
+            let file_reader = unsafe { &*fr_ptr };
+            if !file_reader.done.get() && file_reader.sink.get().is_none() {
+                match file_reader.start_for_sink(&global_this) {
+                    Some(crate::webcore::streams::Start::Err(e)) => {
+                        use bun_sys_jsc::SystemErrorJsc;
+                        let err_js = e.to_system_error().to_error_instance(&global_this);
+                        err_js.ensure_still_alive();
+                        // SAFETY: `self.sink` set above; sink live.
+                        unsafe { (*sink_ptr.as_ptr()).task = None };
+                        self.write_end_request(Some(err_js));
+                        return;
+                    }
+                    Some(crate::webcore::streams::Start::OwnedAndDone(bytes)) => {
+                        // SAFETY: `self.sink` set above; sink live.
+                        let _ = unsafe {
+                            (*sink_ptr.as_ptr()).write(&StreamResult::OwnedAndDone(bytes))
+                        };
+                        // SAFETY: `self.sink` set above and not cleared on this path.
+                        unsafe { (*sink_ptr.as_ptr()).task = None };
+                        self.write_end_request(None);
+                        return;
+                    }
+                    Some(_) => {}
+                    None => {}
+                }
+                sink.source = SourceHandle::FileReader(fr_ptr);
+                file_reader
+                    .sink
+                    .set(SinkHandle::FetchRequestBody(sink_ptr.as_ptr()));
+                file_reader.sink_paused.set(true);
+                file_reader.pull_into_sink();
+                return;
+            }
+        }
+
         let assignment_result =
             JSSink::<FetchRequestBodySink>::assign_to_stream(&global_this, stream.value, sink);
         assignment_result.ensure_still_alive();
@@ -2404,7 +2448,10 @@ impl FetchTasklet {
         }
         sink.ended = true;
         sink.done = true;
-        let is_native = matches!(sink.source, SourceHandle::ByteStream(_));
+        let is_native = matches!(
+            sink.source,
+            SourceHandle::ByteStream(_) | SourceHandle::FileReader(_)
+        );
         if !reason.is_empty_or_undefined_or_null() && !self.abort_reason.has() {
             let global_this = self.global_this;
             self.abort_reason.set(&global_this, reason);

@@ -536,6 +536,14 @@ describe("error contract", () => {
     expect(syntaxError("a = { b = isolated }").message).toBe(
       'TOML Parse error: String values must be quoted; write: b = "isolated"',
     );
+    // A quoted key containing a stop byte would otherwise truncate mid-key;
+    // the prefix is dropped so the suggestion is never garbled.
+    expect(syntaxError('"a,b" = isolated').message).toBe(
+      'TOML Parse error: String values must be quoted; write: "isolated"',
+    );
+    expect(syntaxError("'a[b' = isolated").message).toBe(
+      'TOML Parse error: String values must be quoted; write: "isolated"',
+    );
   });
 
   test("escape errors inside a drive-letter string name the Windows-path fix", () => {

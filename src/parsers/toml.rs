@@ -286,7 +286,12 @@ impl<'a, 'log> Scanner<'a, 'log> {
             key_start += 1;
         }
         let prefix = &self.src[key_start..pos];
-        if bun_core::strings::contains(prefix, b"=") {
+        // A stop byte inside a quoted key (`"a,b" = v`) truncates the scan
+        // mid-key; an unbalanced quote in the prefix is the tell, so drop the
+        // prefix rather than print a garbled one.
+        let balanced = prefix.iter().filter(|&&c| c == b'"').count() % 2 == 0
+            && prefix.iter().filter(|&&c| c == b'\'').count() % 2 == 0;
+        if balanced && bun_core::strings::contains(prefix, b"=") {
             self.err_fmt(
                 pos,
                 format_args!(

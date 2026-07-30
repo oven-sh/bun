@@ -145,7 +145,7 @@ test.skipIf(skip)(
 // The explicit timeout matches the low-prio fixture above: this spawns child
 // Bun processes and drives hundreds of concurrent TLS handshakes across
 // several rounds, which runs long on a debug+ASAN build.
-test.skipIf(isWindows)(
+test(
   "TLS server.stop(true): a close handler that closes a sibling does not crash the teardown walk",
   async () => {
     await using proc = Bun.spawn({

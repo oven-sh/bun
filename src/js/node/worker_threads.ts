@@ -468,9 +468,8 @@ function setupWorkerStdio(stdio) {
       enumerable: true,
     });
   }
-  // node's flushSync (internal/bootstrap/switches/is_not_main_thread): complete
-  // the parked writev cb on exit so buffered chunks post via the _exiting branch.
   if (stdoutStream || stderrStream) {
+    // node's flushSync (internal/bootstrap/switches/is_not_main_thread)
     process.on("exit", function flushSync() {
       stdoutStream?.flushInFlightForExit();
       stderrStream?.flushInFlightForExit();

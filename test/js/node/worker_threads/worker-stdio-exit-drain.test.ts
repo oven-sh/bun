@@ -6,7 +6,7 @@ import { Worker } from "worker_threads";
 // A writev issued before process.exit() parks its cb awaiting a reader ack that
 // never arrives; without an exit-time flush every chunk buffered after the first
 // batch is dropped (node registers a process.on('exit') that completes the cb).
-describe("captured stdio drains on synchronous process.exit()", () => {
+describe.concurrent("captured stdio drains on synchronous process.exit()", () => {
   async function collect(worker: Worker, stream: "stdout" | "stderr") {
     worker[stream].setEncoding("utf8");
     let out = "";
@@ -68,7 +68,7 @@ describe("captured stdio drains on synchronous process.exit()", () => {
 // Default worker stdio (no { stdout: true }) is also port-backed and auto-pipes
 // to the parent's stdout/stderr: the same parked-writev drop applies, so a
 // worker that logs N lines then calls process.exit() must surface all N.
-describe("auto-piped stdio drains on synchronous process.exit()", () => {
+describe.concurrent("auto-piped stdio drains on synchronous process.exit()", () => {
   const N = 300;
   function parentScript(exitCall: string) {
     const workerBody = `for (let i = 0; i < ${N}; i++) console.log("W" + i);` + `console.error("WERR");` + exitCall;
@@ -119,7 +119,7 @@ describe("auto-piped stdio drains on synchronous process.exit()", () => {
 // runs process.on('exit') with _exiting === true, so the same flush applies:
 // logs written before the crash must all reach the parent. Subprocess-spawned
 // so the worker's uncaught-error handling is the runtime's, not bun:test's.
-describe("auto-piped stdio drains when a worker dies from an uncaught error", () => {
+describe.concurrent("auto-piped stdio drains when a worker dies from an uncaught error", () => {
   const N = 300;
 
   async function run(trailer: string) {

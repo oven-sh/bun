@@ -2,7 +2,7 @@ import { spawnSync } from "bun";
 import { timerInternals } from "bun:internal-for-testing";
 import { heapStats } from "bun:jsc";
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, isLinux, isWindows, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, bunRun, isLinux, isWindows, tempDirWithFiles } from "harness";
 import path from "node:path";
 
 it("setTimeout", async () => {
@@ -517,16 +517,16 @@ __attribute__((constructor)) static void arm(void) {
   });
 });
 
-it("Returning a Promise in setTimeout doesnt keep the event loop alive forever", async () => {
-  expect([path.join(import.meta.dir, "setTimeout-unref-fixture-6.js")]).toRun();
+it.concurrent("Returning a Promise in setTimeout doesnt keep the event loop alive forever", async () => {
+  expect(await bunRun(path.join(import.meta.dir, "setTimeout-unref-fixture-6.js"))).toSpawn();
 });
 
-it("Returning a Promise in setTimeout (unref'd) doesnt keep the event loop alive forever", async () => {
-  expect([path.join(import.meta.dir, "setTimeout-unref-fixture-7.js")]).toRun();
+it.concurrent("Returning a Promise in setTimeout (unref'd) doesnt keep the event loop alive forever", async () => {
+  expect(await bunRun(path.join(import.meta.dir, "setTimeout-unref-fixture-7.js"))).toSpawn();
 });
 
-it("setTimeout canceling with unref, close, _idleTimeout, and _onTimeout", () => {
-  expect([path.join(import.meta.dir, "timers-fixture-unref.js"), "setTimeout"]).toRun();
+it.concurrent("setTimeout canceling with unref, close, _idleTimeout, and _onTimeout", async () => {
+  expect(await bunRun([path.join(import.meta.dir, "timers-fixture-unref.js"), "setTimeout"])).toSpawn();
 });
 
 for (const mode of ["clear", "refresh", "repeat"]) {

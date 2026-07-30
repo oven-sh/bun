@@ -6,6 +6,7 @@ import { closeSync } from "fs";
 import {
   bunEnv,
   bunExe,
+  bunRun,
   expectMaxObjectTypeCount,
   getMaxFD,
   isLinux,
@@ -351,11 +352,13 @@ describe.concurrent("socket", () => {
   }, 60_000);
 
   it("should allow large amounts of data to be sent and received", async () => {
-    expect([fileURLToPath(new URL("./socket-huge-fixture.js", import.meta.url))]).toRun();
+    const { stderr, exitCode } = await bunRun(fileURLToPath(new URL("./socket-huge-fixture.js", import.meta.url)));
+    if (exitCode !== 0) console.error(stderr);
+    expect(exitCode).toBe(0);
   }, 60_000);
 
   it.skipIf(isWindows)("kqueue should not dispatch spurious drain events on readable", async () => {
-    expect([fileURLToPath(new URL("./kqueue-filter-coalesce-fixture.ts", import.meta.url))]).toRun();
+    expect(await bunRun(fileURLToPath(new URL("./kqueue-filter-coalesce-fixture.ts", import.meta.url)))).toSpawn();
   });
 
   it("reload() should preserve active_connections (no UAF / counter underflow)", async () => {
@@ -490,7 +493,7 @@ describe.concurrent("socket", () => {
   });
 
   it.skipIf(isWindows)("should not leak file descriptors when connecting", async () => {
-    expect([fileURLToPath(new URL("./socket-leak-fixture.js", import.meta.url))]).toRun();
+    expect(await bunRun(fileURLToPath(new URL("./socket-leak-fixture.js", import.meta.url)))).toSpawn();
   });
 
   it("should not call open if the connection had an error", async () => {

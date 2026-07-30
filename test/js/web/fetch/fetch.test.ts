@@ -13,6 +13,7 @@ import {
   isFlaky,
   isMacOS,
   isWindows,
+  rss,
   tls,
   tmpdirSync,
   withoutAggressiveGC,
@@ -2925,11 +2926,11 @@ it("releases interim 1xx response bytes as they are parsed while waiting for the
 
   try {
     Bun.gc(true);
-    const rssBefore = process.memoryUsage.rss();
+    const rssBefore = rss();
     const responsePromise = fetch(`http://localhost:${port}/`);
     await floodDone;
     Bun.gc(true);
-    const rssDuringFlood = process.memoryUsage.rss();
+    const rssDuringFlood = rss();
 
     // Complete the partially written interim response, then send the real response.
     const socket = sockets[0];

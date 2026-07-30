@@ -205,6 +205,7 @@ test("fetch(data:) with percent-encoding does not leak", async () => {
   // base64 output buffer on decode error). Each fetch of a percent-encoded
   // data: URL leaked ~len(url.data) bytes from bun.default_allocator.
   const script = `
+    const rss = process.platform === "darwin" && typeof Bun.unsafe.memoryFootprint === "function" ? Bun.unsafe.memoryFootprint : process.memoryUsage.rss;
     // ~240KB of percent-encoded payload; the intermediate percent-decoded
     // buffer is allocated at url.data.len bytes and was previously leaked.
     const plain = "data:text/plain," + Buffer.alloc(240000, "%41").toString();
@@ -223,11 +224,11 @@ test("fetch(data:) with percent-encoding does not leak", async () => {
 
     for (let i = 0; i < 40; i++) await hit();
     Bun.gc(true);
-    const baseline = process.memoryUsage.rss();
+    const baseline = rss();
 
     for (let i = 0; i < 200; i++) await hit();
     Bun.gc(true);
-    const final = process.memoryUsage.rss();
+    const final = rss();
 
     const deltaMB = (final - baseline) / 1024 / 1024;
     console.log(JSON.stringify({ baselineMB: (baseline / 1024 / 1024) | 0, finalMB: (final / 1024 / 1024) | 0, deltaMB: Math.round(deltaMB) }));
@@ -275,6 +276,7 @@ test("fetch() compress option does not leak bodies or compressor state", async (
     // > 512 KiB shared buffer → slow path; large enough that the compressed
     // output also spans multiple socket writes.
     const big = Buffer.alloc(700 * 1024, "abcdefghij");
+    const rss = process.platform === "darwin" && typeof Bun.unsafe.memoryFootprint === "function" ? Bun.unsafe.memoryFootprint : process.memoryUsage.rss;
     const opts = [
       { compress: "gzip" },
       { compress: "deflate" },
@@ -297,11 +299,11 @@ test("fetch() compress option does not leak bodies or compressor state", async (
     // shared_buffer) is allocated once here and stays for the process.
     for (let i = 0; i < 10; i++) await round();
     Bun.gc(true);
-    const baseline = process.memoryUsage.rss();
+    const baseline = rss();
 
     for (let i = 0; i < 80; i++) await round();
     Bun.gc(true);
-    const final = process.memoryUsage.rss();
+    const final = rss();
 
     const deltaMB = (final - baseline) / 1024 / 1024;
     console.log(JSON.stringify({ baselineMB: (baseline / 1024 / 1024) | 0, finalMB: (final / 1024 / 1024) | 0, deltaMB: Math.round(deltaMB) }));
@@ -334,6 +336,7 @@ test("fetch() does not leak streaming decompressor state across fragmented compr
   const script = /* js */ `
     import { createServer } from "node:net";
     import { gzipSync, brotliCompressSync, zstdCompressSync } from "node:zlib";
+    const rss = process.platform === "darwin" && typeof Bun.unsafe.memoryFootprint === "function" ? Bun.unsafe.memoryFootprint : process.memoryUsage.rss;
 
     const plain = Buffer.alloc(64 * 1024, "abcdefghij");
     const bodies = {
@@ -404,11 +407,11 @@ test("fetch() does not leak streaming decompressor state across fragmented compr
 
     for (let i = 0; i < 10; i++) await round();
     Bun.gc(true);
-    const baseline = process.memoryUsage.rss();
+    const baseline = rss();
 
     for (let i = 0; i < 60; i++) await round();
     Bun.gc(true);
-    const final = process.memoryUsage.rss();
+    const final = rss();
 
     server.close();
     const deltaMB = (final - baseline) / 1024 / 1024;
@@ -451,6 +454,7 @@ describe.each(["string", "object"])("fetch({proxy}) %s form does not leak the pr
         // JS string would make href_from_js return the same StringImpl every
         // call (only the refcount grows, RSS stays flat) and hide the leak.
         const pad = Buffer.alloc(256 * 1024, "a").toString();
+        const rss = process.platform === "darwin" && typeof Bun.unsafe.memoryFootprint === "function" ? Bun.unsafe.memoryFootprint : process.memoryUsage.rss;
 
         async function hit(i) {
           const proxyUrl = "http://127.0.0.1:1/" + i + "/" + pad;
@@ -463,12 +467,12 @@ describe.each(["string", "object"])("fetch({proxy}) %s form does not leak the pr
         // Warm up (JIT, allocator page commit).
         for (let i = 0; i < 20; i++) await hit(-i);
         Bun.gc(true);
-        const baseline = process.memoryUsage.rss();
+        const baseline = rss();
 
         const ITERS = 150;
         for (let i = 0; i < ITERS; i++) await hit(i);
         Bun.gc(true);
-        const final = process.memoryUsage.rss();
+        const final = rss();
 
         const deltaMB = (final - baseline) / 1024 / 1024;
         console.log(JSON.stringify({
@@ -529,6 +533,7 @@ test.concurrent(
     // Windows strips the leading "/" then asserts is_absolute_windows() in
     // PosixToWinNormalizer under debug_assertions, which needs a drive letter.
     const prefix = process.platform === "win32" ? "file:///C:/" : "file:///";
+    const rss = process.platform === "darwin" && typeof Bun.unsafe.memoryFootprint === "function" ? Bun.unsafe.memoryFootprint : process.memoryUsage.rss;
     async function hit(i) {
       // Fresh path per iteration so each leaked ref pins a distinct impl.
       // The file does not exist; the Response is created (with url_string set)
@@ -537,7 +542,7 @@ test.concurrent(
     }
     for (let i = 0; i < 200; i++) { try { await hit(-i); } catch {} }
     Bun.gc(true);
-    const baseline = process.memoryUsage.rss();
+    const baseline = rss();
 
     const ITERS = 20000;
     for (let i = 0; i < ITERS; i++) {
@@ -545,7 +550,7 @@ test.concurrent(
       if ((i & 1023) === 0) Bun.gc(true);
     }
     Bun.gc(true);
-    const final = process.memoryUsage.rss();
+    const final = rss();
 
     const deltaMB = (final - baseline) / 1024 / 1024;
     console.log(JSON.stringify({
@@ -670,6 +675,7 @@ describe("Request body HiveRef pool returns slot via Body.Value.deinit (does not
         const payload = Buffer.alloc(128 * 1024, 0x61); // 128 KiB of 'a'
         const str = payload.toString("latin1");
         const sharedBlob = new Blob([payload]);
+        const rss = process.platform === "darwin" && typeof Bun.unsafe.memoryFootprint === "function" ? Bun.unsafe.memoryFootprint : process.memoryUsage.rss;
 
         function makeBody() {
           ${
@@ -690,11 +696,11 @@ describe("Request body HiveRef pool returns slot via Body.Value.deinit (does not
 
         for (let i = 0; i < 8; i++) cycle();
         Bun.gc(true);
-        const baseline = process.memoryUsage.rss();
+        const baseline = rss();
 
         for (let i = 0; i < 32; i++) cycle();
         Bun.gc(true);
-        const final = process.memoryUsage.rss();
+        const final = rss();
 
         const deltaMB = (final - baseline) / 1024 / 1024;
         console.log(JSON.stringify({ kind: "${kind}", baselineMB: (baseline / 1024 / 1024) | 0, finalMB: (final / 1024 / 1024) | 0, deltaMB: Math.round(deltaMB) }));

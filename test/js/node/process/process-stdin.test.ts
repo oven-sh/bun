@@ -460,13 +460,14 @@ describe.skipIf(isWindows)("pipe backpressure", () => {
 
   test.concurrent("Bun.stdin.stream(): a single read does not ingest the whole pipe", async () => {
     const { first, deltaMB } = await run(`
+      const rss = process.platform === "darwin" && typeof Bun.unsafe.memoryFootprint === "function" ? Bun.unsafe.memoryFootprint : process.memoryUsage.rss;
       const rd = Bun.stdin.stream().getReader();
       const c = await rd.read();
-      const base = process.memoryUsage().rss;
+      const base = rss();
       // Give the event loop time to (incorrectly) drain the pipe. The loop is
       // native (no JS on the no-pending path), so debug/ASAN overhead is small.
       await new Promise(r => setTimeout(r, 1500));
-      const deltaMB = Math.round((process.memoryUsage().rss - base) / 1048576);
+      const deltaMB = Math.round((rss() - base) / 1048576);
       process.stdout.write(JSON.stringify({ first: c.value?.length ?? 0, deltaMB }));
       process.exit(0);
     `);
@@ -476,15 +477,16 @@ describe.skipIf(isWindows)("pipe backpressure", () => {
 
   test.concurrent("process.stdin.pause() stops the fd from being read", async () => {
     const { bytesAfter, deltaMB } = await run(`
+      const rss = process.platform === "darwin" && typeof Bun.unsafe.memoryFootprint === "function" ? Bun.unsafe.memoryFootprint : process.memoryUsage.rss;
       let bytes = 0, pausedAt = 0;
       process.stdin.on("data", chunk => {
         bytes += chunk.length;
         if (!pausedAt && bytes >= 1 << 20) {
           pausedAt = bytes;
           process.stdin.pause();
-          const base = process.memoryUsage().rss;
+          const base = rss();
           setTimeout(() => {
-            const deltaMB = Math.round((process.memoryUsage().rss - base) / 1048576);
+            const deltaMB = Math.round((rss() - base) / 1048576);
             process.stdout.write(JSON.stringify({ bytesAtPause: pausedAt, bytesAfter: bytes, deltaMB }));
             process.exit(0);
           }, 1500);

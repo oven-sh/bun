@@ -1,7 +1,17 @@
 import assert from "assert";
 import { afterEach, describe, expect, test } from "bun:test";
 import { mkdirSync, readFileSync, symlinkSync, writeFileSync } from "fs";
-import { bunEnv, bunExe, isASAN, isDebug, isWindows, tempDir, tempDirWithFiles, tempDirWithFilesAnon } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  bunRun,
+  isASAN,
+  isDebug,
+  isWindows,
+  tempDir,
+  tempDirWithFiles,
+  tempDirWithFilesAnon,
+} from "harness";
 import path, { join } from "path";
 import { SourceMapConsumer } from "source-map";
 import { buildNoThrow } from "./buildNoThrow";
@@ -58,7 +68,7 @@ describe("Bun.build", () => {
     expect(build.outputs).toHaveLength(2);
     expect(build.outputs[0].kind).toBe("entry-point");
     expect(build.outputs[1].kind).toBe("bytecode");
-    expect([build.outputs[0].path]).toRun("world\n");
+    expect(await bunRun(build.outputs[0].path)).toSpawn("world");
   });
 
   test("passing undefined doesnt segfault", () => {
@@ -1334,6 +1344,7 @@ test.skipIf(!isDebug && !isASAN)(
     const dir = tempDirWithFiles("bun-build-inline-sourcemap-leak", {
       "entry.ts": "export const a = 1;\n/* " + Buffer.alloc(30 * 1024 * 1024, "x").toString() + " */\n",
       "run.ts": `
+        const rss = process.platform === "darwin" && typeof Bun.unsafe.memoryFootprint === "function" ? Bun.unsafe.memoryFootprint : process.memoryUsage.rss;
         const entry = process.argv[2];
         async function build() {
           const res = await Bun.build({ entrypoints: [entry], sourcemap: "inline" });
@@ -1344,10 +1355,10 @@ test.skipIf(!isDebug && !isASAN)(
         }
         for (let i = 0; i < 2; i++) await build();
         await settle();
-        const before = process.memoryUsage.rss();
+        const before = rss();
         for (let i = 0; i < 8; i++) await build();
         await settle();
-        const after = process.memoryUsage.rss();
+        const after = rss();
         console.log(JSON.stringify({ before, after, growth: after - before }));
       `,
     });
@@ -1412,6 +1423,7 @@ test.skip("Bun.build NumberRenamer does not leak intermediate NumberScope.name_c
   const dir = tempDirWithFiles("bun-build-number-renamer-leak", {
     "entry.js": entry,
     "run.ts": `
+        const rss = process.platform === "darwin" && typeof Bun.unsafe.memoryFootprint === "function" ? Bun.unsafe.memoryFootprint : process.memoryUsage.rss;
         const entry = process.argv[2];
         async function build() {
           // No identifier minification → NumberRenamer path (not MinifyRenamer).
@@ -1425,10 +1437,10 @@ test.skip("Bun.build NumberRenamer does not leak intermediate NumberScope.name_c
         // steady-state so the measured window only reflects per-build retention.
         for (let i = 0; i < 2; i++) await build();
         await settle();
-        const before = process.memoryUsage.rss();
+        const before = rss();
         for (let i = 0; i < 20; i++) await build();
         await settle();
-        const after = process.memoryUsage.rss();
+        const after = rss();
         console.log(JSON.stringify({ before, after, growth: after - before }));
       `,
   });

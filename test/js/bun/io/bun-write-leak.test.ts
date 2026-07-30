@@ -1,11 +1,10 @@
 import { expect, test } from "bun:test";
 import path from "node:path";
 
-import "harness";
-import { tempDir } from "harness";
+import { bunRun, tempDir } from "harness";
 
 // https://github.com/oven-sh/bun/issues/10588
-test(
+test.concurrent(
   "Bun.write should not leak the output data",
   async () => {
     await using dir = tempDir("bun-write-leak-fixture", {
@@ -14,7 +13,7 @@ test(
     });
 
     const dest = path.join(dir, "out.bin");
-    expect([path.join(dir, "bun-write-leak-fixture.js"), dest]).toRun();
+    expect(await bunRun([path.join(dir, "bun-write-leak-fixture.js"), dest])).toSpawn();
   },
   30 * 1000,
 );

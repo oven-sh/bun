@@ -1385,7 +1385,7 @@ impl BlobExt for Blob {
     fn pipe_readable_stream_to_blob(
         &self,
         global_this: &JSGlobalObject,
-        mut readable_stream: ReadableStream,
+        readable_stream: ReadableStream,
         extra_options: Option<JSValue>,
     ) -> JsResult<JSValue> {
         let Some(store) = self.store.get().clone() else {
@@ -1596,25 +1596,19 @@ impl BlobExt for Blob {
             }
         };
 
-        // Native `Source::Bytes` pre-check: route through the inherent
-        // `FileSink::assign_to_stream` (which wires `SourceHandle::ByteStream`
-        // ↔ `SinkHandle::FileSink` and drains pre-buffered bytes) instead of
-        // the generic JS pump. Current callers never pass a `Source::Bytes`
-        // stream, so this branch is defensive only.
-        let assignment_result: JSValue = if matches!(
-            readable_stream.ptr,
-            webcore::readable_stream::Source::Bytes(_)
-        ) {
+        // Do NOT short-circuit `Source::Bytes` through the inherent
+        // `FileSink::assign_to_stream` here: its native ByteStream hookup
+        // returns `UNDEFINED` while the pump is still in flight, which would
+        // fall through to the resolved-0 tail below and make
+        // `await Bun.write(Bun.file(p), s3file)` resolve before the download
+        // completes. Stay on the JS pump (which yields a pending promise) until
+        // the native path can expose a completion promise.
+        let assignment_result: JSValue = webcore::file_sink::JSSink::assign_to_stream(
+            global_this,
+            readable_stream.value,
             // SAFETY: file_sink is a live +1 *mut FileSink.
-            unsafe { (*file_sink).assign_to_stream(&mut readable_stream, global_this) }
-        } else {
-            webcore::file_sink::JSSink::assign_to_stream(
-                global_this,
-                readable_stream.value,
-                // SAFETY: file_sink is a live +1 *mut FileSink.
-                unsafe { &mut *file_sink },
-            )
-        };
+            unsafe { &mut *file_sink },
+        );
 
         assignment_result.ensure_still_alive();
 

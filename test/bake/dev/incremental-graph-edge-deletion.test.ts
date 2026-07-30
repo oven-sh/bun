@@ -1,10 +1,11 @@
 import { expect } from "bun:test";
 import { devTest } from "../bake-harness";
 
-// Regression test for disconnectEdgeFromDependencyList: when an edge at the
-// head of an imported file's dependency list is removed but still has a
+// Regression test for disconnect_edge_from_dependency_list in
+// src/runtime/bake/dev_server/incremental_graph.rs: when an edge at the head
+// of an imported file's dependency list is removed but still has a
 // next_dependency, the head must advance to that next edge instead of being
-// cleared. The old code cleared it and tripped an assertion on the next
+// cleared. The old code cleared it and tripped a debug assertion on the next
 // rebuild. https://github.com/oven-sh/bun/issues/20529
 devTest("incremental graph handles edge deletion with next dependency", {
   files: {
@@ -44,7 +45,7 @@ console.log('util.js loaded');
   },
   async test(dev) {
     // Populate the module graph. The assertion this covers fires server-side
-    // in finalizeBundle, so a browser client is unnecessary; fetching the
+    // in finalize_bundle, so a browser client is unnecessary; fetching the
     // page is enough to bundle index.js and its three util.js importers.
     const scriptSrc = (await dev.fetch("/").text()).match(/src="(\/_bun\/client\/[^"]+\.js)"/)![1];
     await dev.fetch(scriptSrc).expect.toInclude(`"A" + `);
@@ -81,15 +82,22 @@ console.log('a.js loaded');
       }
     });
 
-    // After the churn the graph must still be intact: a synchronized write
-    // to util.js should rebundle cleanly and the new value should reach the
-    // client bundle through all three importers.
+    // If the head of first_dep[util.js] was wrongly cleared during the churn,
+    // the b→util / c→util edges are now orphaned (prev_dependency = None but
+    // not at the list head). Dropping each of them here forces the head-path
+    // debug_assert in disconnect_edge_from_dependency_list to fire for an
+    // orphaned edge.
+    await dev.write("b.js", `export const b = 'B-no-util';`);
+    await dev.write("c.js", `export const c = 'C-no-util';`);
+
+    // Sanity: a synchronized util.js write still rebundles and reaches the
+    // client bundle via the remaining a.js importer.
     await dev.write("util.js", `export const util = '-after-stress';`);
     const newScriptSrc = (await dev.fetch("/").text()).match(/src="(\/_bun\/client\/[^"]+\.js)"/)![1];
     const bundle = await dev.fetch(newScriptSrc).text();
     expect(bundle).toInclude(`"A" + `);
-    expect(bundle).toInclude(`"B" + `);
-    expect(bundle).toInclude(`"C" + `);
+    expect(bundle).toInclude(`"B-no-util"`);
+    expect(bundle).toInclude(`"C-no-util"`);
     expect(bundle).toInclude(`"-after-stress"`);
   },
 });

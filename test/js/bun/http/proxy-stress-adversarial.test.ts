@@ -279,16 +279,11 @@ describe("checkServerIdentity through tunnel", () => {
         const proxy = sharedProxy(proxyTls);
         const N = 20;
         let called = 0;
-        // All N fetches start before any completes, so every one opens a
-        // fresh tunnel and runs the callback (keepalive reuse cannot kick
-        // in mid-batch). That's N parked tunnels with Bun.gc() firing from
-        // each callback concurrently, which is strictly more stress than
-        // the previous sequential loop where keepalive reused one tunnel.
         const results = await Promise.all(
           Array.from({ length: N }, () =>
             fetch(origin.url, {
               proxy: proxy.url,
-              keepalive: true,
+              keepalive: false,
               tls: {
                 ca: tlsCert.cert,
                 rejectUnauthorized: true,

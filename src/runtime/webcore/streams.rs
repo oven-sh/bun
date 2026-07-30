@@ -838,30 +838,12 @@ impl StreamResult {
 // Signal
 // ──────────────────────────────────────────────────────────────────────────
 
-// `#[repr(C)]` is load-bearing: C++ (`*Sink__assignToStream` in JSSink.cpp)
-// receives `&mut signal.ptr` cast to `void**` and writes the controller cell's
-// encoded `JSValue` bits through it. Callers project to `.ptr` directly via
-// `addr_of_mut!`, so field *order* is not strictly required, but we pin the
-// layout anyway so the FFI contract is auditable and the const-asserts below
-// hold by construction rather than by repr(Rust) accident.
 #[repr(C)]
 #[derive(Default)]
 pub struct Signal {
     pub ptr: Option<NonNull<c_void>>,
     pub vtable: SignalVTable,
 }
-
-// Layout guarantees the FFI cast `*mut Option<NonNull<c_void>>` → `*mut *mut
-// c_void` relies on (Rust guarantees the niche optimisation for
-// `Option<NonNull<T>>`, but make it a hard compile error if that ever changes
-// or someone reorders/retypes the field):
-const _: () = {
-    assert!(core::mem::offset_of!(Signal, ptr) == 0);
-    assert!(core::mem::size_of::<Option<NonNull<c_void>>>() == core::mem::size_of::<*mut c_void>());
-    assert!(
-        core::mem::align_of::<Option<NonNull<c_void>>>() == core::mem::align_of::<*mut c_void>()
-    );
-};
 
 impl Signal {
     pub fn clear(&mut self) {
@@ -969,6 +951,136 @@ impl SignalVTable {
             close: on_close::<W>,
             ready: on_ready::<W>,
             start: on_start::<W>,
+        }
+    }
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// SourceHandle
+// ──────────────────────────────────────────────────────────────────────────
+
+/// Tagged handle a sink holds to its upstream source, replacing the open
+/// fn-ptr [`Signal`] vtable with a closed set of variants so native
+/// source↔sink pairs can pump without a JS round-trip.
+///
+/// Generic over the sink's [`JsSinkAbi`] so the `JSController` arm can call
+/// the correct `${abi}__onReady` / `${abi}__onClose` externs.
+pub enum SourceHandle<T: crate::webcore::sink::JsSinkAbi> {
+    /// No source attached.
+    None,
+    /// Encoded `JSValue` bits of the C++ controller cell written by
+    /// `${abi}__assignToStream`. Never dereferenced as a Rust pointer.
+    JSController(usize),
+    ByteStream(*mut crate::webcore::ByteStream),
+    FileReader(*mut crate::webcore::FileReader),
+    BlobLoader(*mut crate::webcore::ByteBlobLoader),
+    /// `*mut Subprocess<'_>` — type-erased to keep this enum lifetime-free.
+    Subprocess(*mut c_void),
+    /// `*mut shell::subproc::Writable` — type-erased to avoid a module cycle.
+    ShellWritable(*mut c_void),
+    #[doc(hidden)]
+    _Marker(
+        core::marker::PhantomData<fn() -> T>,
+        core::convert::Infallible,
+    ),
+}
+
+impl<T: crate::webcore::sink::JsSinkAbi> Copy for SourceHandle<T> {}
+impl<T: crate::webcore::sink::JsSinkAbi> Clone for SourceHandle<T> {
+    #[inline]
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+impl<T: crate::webcore::sink::JsSinkAbi> Default for SourceHandle<T> {
+    #[inline]
+    fn default() -> Self {
+        SourceHandle::None
+    }
+}
+
+impl<T: crate::webcore::sink::JsSinkAbi> SourceHandle<T> {
+    #[inline]
+    pub fn is_dead(&self) -> bool {
+        matches!(self, SourceHandle::None)
+    }
+
+    #[inline]
+    pub fn clear(&mut self) {
+        *self = SourceHandle::None;
+    }
+
+    pub fn close(&mut self, err: Option<SysError>) {
+        match *self {
+            SourceHandle::None => {}
+            SourceHandle::JSController(bits) => {
+                let cpp = JSValue::from_encoded(bits);
+                // TODO: this should be got from a parameter / properly propagate exception upwards.
+                let global = VirtualMachine::get().global();
+                if global.has_exception() {
+                    return;
+                }
+                let _ = ::bun_jsc::call_check_slow(global, || {
+                    T::on_close_extern(cpp, JSValue::UNDEFINED)
+                });
+            }
+            SourceHandle::ByteStream(ptr) => {
+                // SAFETY: `ptr` was stored as a live `*mut ByteStream` and is
+                // cleared before the ByteStream is freed.
+                unsafe { (*ptr).cancel_from_sink(err) };
+            }
+            SourceHandle::FileReader(_) | SourceHandle::BlobLoader(_) => {}
+            SourceHandle::Subprocess(ptr) => {
+                // SAFETY: `ptr` is the boxed `*mut Subprocess` registered at
+                // spawn time; it outlives the FileSink that holds this handle.
+                let p = ptr.cast::<crate::api::bun::subprocess::Subprocess<'static>>();
+                unsafe { SignalHandler::on_close(&mut *p, err) };
+            }
+            SourceHandle::ShellWritable(ptr) => {
+                // SAFETY: `ptr` is the `*mut shell::subproc::Writable` stdin
+                // registered at spawn time; it outlives this handle.
+                let p = ptr.cast::<crate::shell::subproc::Writable>();
+                unsafe { SignalHandler::on_close(&mut *p, err) };
+            }
+            SourceHandle::_Marker(_, never) => match never {},
+        }
+    }
+
+    pub fn ready(&mut self, _amount: Option<BlobSizeType>, _offset: Option<BlobSizeType>) {
+        match *self {
+            SourceHandle::None => {}
+            SourceHandle::JSController(bits) => {
+                let cpp = JSValue::from_encoded(bits);
+                // TODO: this should be got from a parameter / properly propagate exception upwards.
+                let global = VirtualMachine::get().global();
+                if global.has_exception() {
+                    return;
+                }
+                let _ = ::bun_jsc::call_check_slow(global, || {
+                    T::on_ready_extern(cpp, JSValue::UNDEFINED, JSValue::UNDEFINED)
+                });
+            }
+            SourceHandle::ByteStream(ptr) => {
+                // SAFETY: `ptr` was stored as a live `*mut ByteStream` and is
+                // cleared before the ByteStream is freed.
+                unsafe { (*ptr).resume() };
+            }
+            SourceHandle::FileReader(_) | SourceHandle::BlobLoader(_) => {}
+            SourceHandle::Subprocess(_) | SourceHandle::ShellWritable(_) => {}
+            SourceHandle::_Marker(_, never) => match never {},
+        }
+    }
+
+    pub fn start(&mut self) {
+        match *self {
+            SourceHandle::None
+            | SourceHandle::JSController(_)
+            | SourceHandle::ByteStream(_)
+            | SourceHandle::FileReader(_)
+            | SourceHandle::BlobLoader(_)
+            | SourceHandle::Subprocess(_)
+            | SourceHandle::ShellWritable(_) => {}
+            SourceHandle::_Marker(_, never) => match never {},
         }
     }
 }
@@ -2069,11 +2181,10 @@ pub struct NetworkSink {
     // (set-once); while `Some` the sink holds a counted ref on the intrusively
     // ref-counted `MultiPartUpload`, released in `detach_writable`.
     pub task: Option<BackRef<bun_s3::MultiPartUpload>>,
-    pub signal: Signal,
+    pub source: SourceHandle<NetworkSink>,
     // JSC_BORROW: process-lifetime VM global; safe `Deref` via `BackRef`.
     pub global_this: Option<BackRef<JSGlobalObject>>,
     pub high_water_mark: BlobSizeType,
-    pub flush_promise: JSPromiseStrong,
     pub end_promise: JSPromiseStrong,
     pub ended: bool,
     pub done: bool,
@@ -2084,10 +2195,9 @@ impl Default for NetworkSink {
     fn default() -> Self {
         Self {
             task: None,
-            signal: Signal::default(),
+            source: SourceHandle::default(),
             global_this: None,
             high_water_mark: 2048,
-            flush_promise: JSPromiseStrong::default(),
             end_promise: JSPromiseStrong::default(),
             ended: false,
             done: false,
@@ -2153,7 +2263,7 @@ impl NetworkSink {
             }
         }
         self.ended = false;
-        self.signal.start();
+        self.source.start();
         bun_sys::Result::Ok(())
     }
 
@@ -2168,8 +2278,6 @@ impl NetworkSink {
         }
     }
 
-    /// Narrowed like
-    /// `flushPromise`; promise resolution only fails on VM termination.
     pub fn on_writable(
         task: &mut bun_s3::MultiPartUpload,
         this: &mut NetworkSink,
@@ -2181,14 +2289,10 @@ impl NetworkSink {
             flushed,
             task.state as u8
         );
-        if this.flush_promise.has_value() {
-            let global = this.global_this.expect("global_this set at construction");
-            this.flush_promise
-                .resolve(&global, JSValue::js_number(flushed as f64))?;
-        }
-        // Wake the `assign_to_stream` pump (onPull). No-op when the signal is
-        // dead-cleared (the `writer()` path), so this is safe for both callers.
-        this.signal.ready(None, None);
+        let _ = flushed;
+        // Wake the upstream source (JS controller onPull or native ByteStream
+        // resume). No-op when `source` is `None` (the `writer()` path).
+        this.source.ready(None, None);
         Ok(())
     }
 
@@ -2201,25 +2305,8 @@ impl NetworkSink {
         global_this: &JSGlobalObject,
         _wait: bool,
     ) -> bun_sys::Result<JSValue> {
-        // still waiting for more data tobe flushed
-        if self.flush_promise.has_value() {
-            return bun_sys::Result::Ok(self.flush_promise.value());
-        }
-
-        // nothing todo here
-        if self.done {
-            return bun_sys::Result::Ok(JSPromise::resolved_promise_value(
-                global_this,
-                JSValue::js_number(0.0),
-            ));
-        }
-        // flush more
-        if self.task_ref().is_some_and(|t| !t.is_queue_empty()) {
-            // we have something queued, we need to wait for the next flush
-            self.flush_promise = JSPromiseStrong::init(global_this);
-            return bun_sys::Result::Ok(self.flush_promise.value());
-        }
-        // we are done flushing no backpressure
+        // Backpressure is signalled to the upstream via `source.ready()`; no
+        // per-flush promise is allocated.
         bun_sys::Result::Ok(JSPromise::resolved_promise_value(
             global_this,
             JSValue::js_number(0.0),
@@ -2229,7 +2316,7 @@ impl NetworkSink {
     pub fn abort(&mut self) {
         self.ended = true;
         self.done = true;
-        self.signal.close(None);
+        self.source.close(None);
         self.cancel = true;
         self.finalize();
     }
@@ -2308,7 +2395,7 @@ impl NetworkSink {
             // bun.handleOom → Rust aborts on OOM
         }
 
-        self.signal.close(err);
+        self.source.close(err);
         bun_sys::Result::Ok(())
     }
 
@@ -2328,7 +2415,7 @@ impl NetworkSink {
                 if let Some(task) = self.task_mut() {
                     let _ = task.write_bytes(b"", true);
                 }
-                self.signal.close(None);
+                self.source.close(None);
             }
             return bun_sys::Result::Ok(value);
         }
@@ -2389,8 +2476,8 @@ impl crate::webcore::sink::JsSinkType for NetworkSink {
     fn start(&mut self, config: Start) -> bun_sys::Result<()> {
         Self::start(self, &config)
     }
-    fn signal(&mut self) -> Option<&mut Signal> {
-        Some(&mut self.signal)
+    fn source(&mut self) -> Option<&mut SourceHandle<Self>> {
+        Some(&mut self.source)
     }
     fn done(&self) -> bool {
         self.done

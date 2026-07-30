@@ -57,7 +57,9 @@ extern "C" void JSC__IdentifierArray__setFromUtf8(Identifier* identifierArray, s
 
 extern "C" JSModuleRecord* JSC_JSModuleRecord__create(JSGlobalObject* globalObject, VM& vm, const Identifier* moduleKey, const SourceCode& sourceCode, bool hasImportMeta, bool isTypescript, bool hasTLA)
 {
-    JSModuleRecord* result = JSModuleRecord::create(globalObject, vm, globalObject->moduleRecordStructure(), *moduleKey, sourceCode, hasImportMeta ? ImportMetaFeature : 0);
+    JSC::VariableEnvironment emptyDeclaredVariables;
+    JSC::VariableEnvironment emptyLexicalVariables;
+    JSModuleRecord* result = JSModuleRecord::create(globalObject, vm, globalObject->moduleRecordStructure(), *moduleKey, sourceCode, emptyDeclaredVariables, emptyLexicalVariables, hasImportMeta ? ImportMetaFeature : 0);
     result->m_isTypeScript = isTypescript;
     result->setHasTLA(hasTLA);
     return result;
@@ -203,7 +205,9 @@ static EncodedJSValue fallbackParse(JSGlobalObject* globalObject, const Identifi
         RELEASE_AND_RETURN(scope, JSValue::encode(rejectWithError(error.toErrorObject(globalObject, sourceCode))));
     ASSERT(moduleProgramNode);
 
-    ModuleAnalyzer moduleAnalyzer(globalObject, moduleKey, sourceCode, moduleProgramNode->features());
+    JSC::VariableEnvironment emptyDeclaredVars;
+    JSC::VariableEnvironment emptyLexicalVars;
+    ModuleAnalyzer moduleAnalyzer(globalObject, moduleKey, sourceCode, emptyDeclaredVars, emptyLexicalVars, moduleProgramNode->features());
     RETURN_IF_EXCEPTION(scope, JSValue::encode(promise->rejectWithCaughtException(vm, scope)));
 
     auto result = moduleAnalyzer.analyze(*moduleProgramNode);

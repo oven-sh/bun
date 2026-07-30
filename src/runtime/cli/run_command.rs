@@ -1572,7 +1572,7 @@ impl Run {
             }
 
             if ctx.runtime_options.eval.eval_and_print {
-                let to_print: Option<JSValue> = 'brk: {
+                let to_print: JSValue = 'brk: {
                     let result = vm
                         .entry_point_result
                         .value
@@ -1597,32 +1597,27 @@ impl Run {
                                     vm.tick();
                                     vm.auto_tick_active();
                                 }
-                                break 'brk Some(result);
+                                break 'brk result;
                             }
-                            PromiseStatus::Fulfilled => {
-                                break 'brk Some(promise.result(vm.jsc_vm()));
-                            }
-                            PromiseStatus::Rejected => {
-                                // Reported by the unhandled-rejection path; don't print twice.
-                                break 'brk None;
-                            }
+                            PromiseStatus::Fulfilled => break 'brk promise.result(vm.jsc_vm()),
+                            // Print the promise itself (like Node); unwrapping
+                            // the reason re-emits the unhandled-rejection block.
+                            PromiseStatus::Rejected => break 'brk result,
                         }
                     }
-                    Some(result)
+                    result
                 };
-                if let Some(to_print) = to_print {
-                    // SAFETY: `vals[..1]` is the single stack `to_print`; null
-                    // `ctype` routes to the VM's stdout/stderr default.
-                    unsafe {
-                        bun_jsc::ConsoleObject::message_with_type_and_level(
-                            ::core::ptr::null_mut(),
-                            bun_jsc::ConsoleObject::MessageType::Log,
-                            bun_jsc::ConsoleObject::MessageLevel::Log,
-                            vm.global(),
-                            &raw const to_print,
-                            1,
-                        );
-                    }
+                // SAFETY: `vals[..1]` is the single stack `to_print`; null
+                // `ctype` routes to the VM's stdout/stderr default.
+                unsafe {
+                    bun_jsc::ConsoleObject::message_with_type_and_level(
+                        ::core::ptr::null_mut(),
+                        bun_jsc::ConsoleObject::MessageType::Log,
+                        bun_jsc::ConsoleObject::MessageLevel::Log,
+                        vm.global(),
+                        &raw const to_print,
+                        1,
+                    );
                 }
             }
 

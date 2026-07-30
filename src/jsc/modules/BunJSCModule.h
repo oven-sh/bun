@@ -46,7 +46,7 @@
 #include "JSDOMConvertBase.h"
 #include "ZigSourceProvider.h"
 #include "StrongRootBlock.h"
-#include "ZigGlobalObject.h"
+#include "BunClientData.h"
 #include "mimalloc.h"
 extern "C" char* mi_stats_get_json(size_t, char*);
 extern "C" char* mi_heap_dump_json(bool include_blocks, bool hash_addresses);
@@ -278,7 +278,7 @@ JSC_DEFINE_HOST_FUNCTION(functionMemoryUsageStatistics,
     // HandleSet, so merge those slots into the protected counts.
     TypeCountSet protectedTypeCounts = vm.heap.protectedObjectTypeCounts();
     size_t strongRootCount = 0;
-    for (auto* block = defaultGlobalObject(globalObject)->m_strongRootBlockHead.get(); block; block = block->next()) {
+    for (auto* block = WebCore::clientData(vm)->m_strongRootBlockHead; block; block = block->next()) {
         block->forEachOccupiedCell([&](JSC::JSCell* cell) {
             protectedTypeCounts.add(cell->classInfo()->className);
             ++strongRootCount;
@@ -602,9 +602,12 @@ JSC_DECLARE_HOST_FUNCTION(functionGetProtectedObjects);
 JSC_DEFINE_HOST_FUNCTION(functionGetProtectedObjects,
     (JSGlobalObject * globalObject, CallFrame*))
 {
+    auto& vm = globalObject->vm();
     MarkedArgumentBuffer list;
-    globalObject->vm().heap.forEachProtectedCell(
+    vm.heap.forEachProtectedCell(
         [&](JSCell* cell) { list.append(cell); });
+    for (auto* block = WebCore::clientData(vm)->m_strongRootBlockHead; block; block = block->next())
+        block->forEachOccupiedCell([&](JSCell* cell) { list.append(cell); });
     RELEASE_ASSERT(!list.hasOverflowed());
     return JSC::JSValue::encode(constructArray(
         globalObject, static_cast<JSC::ArrayAllocationProfile*>(nullptr), list));

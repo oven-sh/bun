@@ -2,10 +2,6 @@
 #include <JavaScriptCore/JSCJSValue.h>
 #include <memory>
 
-namespace Zig {
-class GlobalObject;
-}
-
 namespace Bun {
 // One occupied slot in a StrongRootBlock; see StrongRef.cpp.
 struct StrongRefImpl;
@@ -16,7 +12,6 @@ extern "C" Bun::StrongRefImpl* Bun__StrongRef__new(JSC::JSGlobalObject* globalOb
 extern "C" JSC::EncodedJSValue Bun__StrongRef__get(Bun::StrongRefImpl* _Nonnull ref);
 extern "C" void Bun__StrongRef__set(Bun::StrongRefImpl* _Nonnull ref, JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue encodedValue);
 extern "C" void Bun__StrongRef__clear(Bun::StrongRefImpl* _Nonnull ref);
-extern "C" void Bun__StrongRef__transferBlocks(Zig::GlobalObject* from, Zig::GlobalObject* to);
 
 namespace Bun {
 

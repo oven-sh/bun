@@ -10,7 +10,8 @@ use crate::{JSGlobalObject, JSValue};
 pub struct Strong {
     handle: NonNull<Impl>,
     // NonNull<T> is already !Send + !Sync, matching the requirement that
-    // Strong must be dropped on the JS thread (HandleSet is VM-owned).
+    // Strong must be dropped on the JS thread (the StrongRootBlock list hangs
+    // off the per-VM JSVMClientData).
 }
 
 impl Strong {
@@ -196,7 +197,7 @@ impl Impl {
             );
         }
         // SAFETY: caller contract guarantees `this` is a live handle from
-        // `Bun__StrongRef__new`; ownership is transferred to C++ which frees it.
+        // `Bun__StrongRef__new`; C++ releases the block slot it encodes.
         unsafe { Bun__StrongRef__delete(this.as_ptr()) };
     }
 }
@@ -204,7 +205,8 @@ impl Impl {
 // `Impl` and `JSGlobalObject` are opaque `UnsafeCell`-backed ZST handles, so
 // `&Impl`/`&JSGlobalObject` are ABI-identical to non-null `*const T` and C++
 // mutating through them (block slot write) is interior mutation invisible to
-// Rust. `delete` consumes the C++ allocation and so stays `unsafe fn`.
+// Rust. The handle is an encoded `(StrongRootBlock*, index)` with no heap
+// allocation of its own; `delete` releases the slot and so stays `unsafe fn`.
 unsafe extern "C" {
     fn Bun__StrongRef__delete(this: *mut Impl);
     safe fn Bun__StrongRef__new(global: &JSGlobalObject, value: JSValue) -> *mut Impl;

@@ -1,6 +1,5 @@
 #include "StrongRootBlock.h"
 #include "BunClientData.h"
-#include "ZigGlobalObject.h"
 #include <JavaScriptCore/MarkedSpace.h>
 
 namespace Bun {
@@ -54,34 +53,42 @@ DEFINE_VISIT_CHILDREN(StrongRootBlock);
 // head, reuses the parked spare if nothing has room, and allocates only as a
 // last resort. JSC does not relocate cells, so the returned pointer is stable
 // while the block is on the active list.
-StrongRootBlock* StrongRootBlock::acquire(Zig::GlobalObject* zigGlobal)
+//
+// The head/free pointers on JSVMClientData are raw (no WriteBarrier): they are
+// rooted by a SimpleMarkingConstraint (BunClientData.cpp) that runs on every
+// return to Fixpoint, so a freshly-prepended block is always appended before
+// marking converges.
+StrongRootBlock* StrongRootBlock::acquire(JSC::VM& vm)
 {
-    auto& vm = JSC::getVM(zigGlobal);
+    auto* clientData = WebCore::clientData(vm);
 
-    for (auto* b = zigGlobal->m_strongRootBlockHead.get(); b; b = b->next()) {
+    for (auto* b = clientData->m_strongRootBlockHead; b; b = b->next()) {
         if (b->findFreeSlot() < capacity)
             return b;
     }
 
-    StrongRootBlock* block = zigGlobal->m_strongRootBlockFree.get();
-    if (block)
-        zigGlobal->m_strongRootBlockFree.clear();
-    else
-        block = StrongRootBlock::create(vm, zigGlobal->StrongRootBlockStructure());
+    StrongRootBlock* block = clientData->m_strongRootBlockFree;
+    if (block) {
+        clientData->m_strongRootBlockFree = nullptr;
+    } else {
+        if (!clientData->m_strongRootBlockStructure)
+            clientData->m_strongRootBlockStructure = StrongRootBlock::createStructure(vm, nullptr);
+        block = StrongRootBlock::create(vm, clientData->m_strongRootBlockStructure);
+    }
 
-    block->setNext(vm, zigGlobal->m_strongRootBlockHead.get());
-    zigGlobal->m_strongRootBlockHead.set(vm, zigGlobal, block);
+    block->setNext(vm, clientData->m_strongRootBlockHead);
+    clientData->m_strongRootBlockHead = block;
     return block;
 }
 
 // Unlink `block` from the active list and either park it in the free slot (one
 // block of slack) or leave it unreachable so GC reclaims it.
-void StrongRootBlock::release(Zig::GlobalObject* zigGlobal, StrongRootBlock* block)
+void StrongRootBlock::release(JSC::VM& vm, StrongRootBlock* block)
 {
-    auto& vm = JSC::getVM(zigGlobal);
-    StrongRootBlock* head = zigGlobal->m_strongRootBlockHead.get();
+    auto* clientData = WebCore::clientData(vm);
+    StrongRootBlock* head = clientData->m_strongRootBlockHead;
     if (head == block) {
-        zigGlobal->m_strongRootBlockHead.setMayBeNull(vm, zigGlobal, block->next());
+        clientData->m_strongRootBlockHead = block->next();
     } else {
         for (auto* prev = head; prev; prev = prev->next()) {
             if (prev->next() == block) {
@@ -92,8 +99,8 @@ void StrongRootBlock::release(Zig::GlobalObject* zigGlobal, StrongRootBlock* blo
     }
     block->setNext(vm, nullptr);
 
-    if (!zigGlobal->m_strongRootBlockFree.get())
-        zigGlobal->m_strongRootBlockFree.set(vm, zigGlobal, block);
+    if (!clientData->m_strongRootBlockFree)
+        clientData->m_strongRootBlockFree = block;
 }
 
 } // namespace Bun

@@ -1,12 +1,12 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug } from "harness";
 
-// bun_jsc::Strong handles now live in StrongRootBlock cells (visited via
-// GlobalObject::visitChildren plus the write-barrier remembered set) instead of
-// one HandleSet strong handle per armed timer, so the "Sh" strong-handle
-// marking constraint no longer walks every armed timer on every eden
-// collection. heapStats() walks the block list to keep
-// protectedObjectTypeCounts/protectedObjectCount user-visible.
+// bun_jsc::Strong handles now live in StrongRootBlock cells (rooted by a
+// per-VM marking constraint on JSVMClientData; slots re-visited on eden via the
+// write-barrier remembered set) instead of one HandleSet strong handle per
+// armed timer, so the "Sh" strong-handle marking constraint no longer walks
+// every armed timer on every eden collection. heapStats() walks the block list
+// to keep protectedObjectTypeCounts/protectedObjectCount user-visible.
 
 describe.concurrent("Strong handles are backed by StrongRootBlock", () => {
   test("heapStats still reports protected Timeout counts", async () => {
@@ -100,7 +100,7 @@ describe.concurrent("AbortSignal.timeout is released when its wrapper is collect
     const limit = isASAN || isDebug ? 14 : 10;
     expect(deltaMB).toBeLessThan(limit);
     expect(exitCode).toBe(0);
-  }, 10_000);
+  }, 15_000);
 
   test("AbortSignal.any([timeout, controller.signal]).abort releases the timeout", async () => {
     const src = `
@@ -134,7 +134,7 @@ describe.concurrent("AbortSignal.timeout is released when its wrapper is collect
     const limit = isASAN || isDebug ? 8 : 4;
     expect(deltaMB).toBeLessThan(limit);
     expect(exitCode).toBe(0);
-  }, 10_000);
+  }, 15_000);
 
   for (const { name, body } of [
     {

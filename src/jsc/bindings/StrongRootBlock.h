@@ -4,10 +4,6 @@
 #include <wtf/BitSet.h>
 #include <array>
 
-namespace Zig {
-class GlobalObject;
-}
-
 namespace Bun {
 
 // One fixed-size page of strong GC roots backing bun_jsc::Strong. Each live
@@ -17,9 +13,9 @@ namespace Bun {
 // barriered slot store dirties only the owning block; blocks untouched since
 // the last full GC stay old-gen-marked and are skipped on eden.
 //
-// Active blocks form a singly-linked list via m_next whose head lives in
-// ZigGlobalObject::m_strongRootBlockHead. One spare empty block is kept in
-// ZigGlobalObject::m_strongRootBlockFree; further empties are unlinked and
+// Active blocks form a singly-linked list via m_next whose head is rooted by
+// JSVMClientData::m_strongRootBlockHead. One spare empty block is kept in
+// JSVMClientData::m_strongRootBlockFree; further empties are unlinked and
 // reclaimed by GC.
 class StrongRootBlock final : public JSC::JSCell {
 public:
@@ -97,8 +93,8 @@ public:
     StrongRootBlock* next() const { return m_next.get(); }
     void setNext(JSC::VM& vm, StrongRootBlock* next) { m_next.setMayBeNull(vm, this, next); }
 
-    static StrongRootBlock* acquire(Zig::GlobalObject* global);
-    static void release(Zig::GlobalObject* global, StrongRootBlock* block);
+    static StrongRootBlock* acquire(JSC::VM& vm);
+    static void release(JSC::VM& vm, StrongRootBlock* block);
 
     template<typename Functor>
     void forEachOccupiedCell(const Functor& func) const

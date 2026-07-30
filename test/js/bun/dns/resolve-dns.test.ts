@@ -111,7 +111,7 @@ describe("dns", () => {
     test.concurrent.each(malformedHostnames)("'%s'", async hostname => {
       // @ts-expect-error
       await expect(dns.lookup(hostname, { backend })).rejects.toMatchObject({
-        code: expect.stringMatching(/^DNS_ENOTFOUND|DNS_ESERVFAIL|DNS_ENOTIMP$/),
+        code: expect.stringMatching(/^(?:DNS_ENOTFOUND|DNS_ESERVFAIL|DNS_ENOTIMP)$/),
         name: "DNSException",
       });
     });

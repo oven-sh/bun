@@ -382,13 +382,9 @@ impl Debugger {
         dbg.script_execution_context_id = Bun__createJSDebugger(global_object);
 
         // Install Bun's inspector controller and mark the global inspectable
-        // now so `console.*` output emitted before any frontend connects is
-        // buffered by InspectorConsoleAgent and replayed on Console.enable.
-        // Plain `--inspect` (Wait::Off) returns from
-        // `wait_for_debugger_if_necessary` before that function's own call,
-        // which would otherwise leave `inspectable()` false until a client's
-        // `doConnect`. The wait-path call still runs afterwards to set
-        // `waitingForConnection` for `--inspect-wait` / `--inspect-brk`.
+        // before user code so pre-connect console output reaches
+        // InspectorConsoleAgent's replay buffer; wait_for_debugger_if_necessary
+        // only reaches its own call on the `--inspect-wait` / `--inspect-brk` path.
         Bun__ensureDebugger(dbg.script_execution_context_id, false);
 
         if !this_ref.has_started_debugger {

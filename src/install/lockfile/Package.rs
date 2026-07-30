@@ -600,11 +600,18 @@ impl Package<u64> {
         let resolutions: &mut [PackageID] =
             &mut new.buffers.resolutions[prev_len as usize..end as usize];
         debug_assert_eq!(old_resolutions.len(), resolutions.len());
+        debug_assert_eq!(old_dependencies.len(), resolutions.len());
         for (i, (old_resolution, resolution)) in old_resolutions
             .iter()
             .zip(resolutions.iter_mut())
             .enumerate()
         {
+            // Optional-peer slots are re-derived by `hoist` (Cloner::flush), not carried over.
+            if old_dependencies[i].behavior.is_optional_peer() {
+                *resolution = invalid_package_id;
+                continue;
+            }
+
             if *old_resolution >= max_package_id {
                 *resolution = invalid_package_id;
                 continue;

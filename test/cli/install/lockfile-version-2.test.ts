@@ -134,6 +134,41 @@ it("bunfig [install.lockfile] lockfileVersion = 2 does not bump a loaded v1 lock
   expect(exitCode).toBe(0);
 });
 
+// cap = 0 is floored to 1 at config-load time, so a v1 lockfile with no other
+// change is not spuriously re-saved on every install.
+it("bunfig [install.lockfile] lockfileVersion = 0 does not re-save an unchanged v1 lockfile", async () => {
+  using dir = tempDir("lockfile-bunfig-cap0-noop", {
+    "package.json": JSON.stringify({ name: "root", dependencies: { a: "file:./a" } }),
+    "a/package.json": JSON.stringify({ name: "a", version: "1.0.0" }),
+    "bunfig.toml": `[install.lockfile]\nlockfileVersion = 0\n`,
+  });
+
+  await using first = spawn({
+    cmd: [bunExe(), "install", "--save-text-lockfile"],
+    cwd: String(dir),
+    env,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  await Promise.all([first.stdout.text(), first.stderr.text(), first.exited]);
+  const before = await file(join(String(dir), "bun.lock")).text();
+  expect(before).toContain(`"lockfileVersion": 1,`);
+
+  await using second = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: String(dir),
+    env,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [out, err, exitCode] = await Promise.all([second.stdout.text(), second.stderr.text(), second.exited]);
+
+  expect(err).not.toContain("error:");
+  expect(out).not.toContain("Saved lockfile");
+  expect(await file(join(String(dir), "bun.lock")).text()).toBe(before);
+  expect(exitCode).toBe(0);
+});
+
 // 0 is floored to 1 (the writer cannot emit v0 content). Equal to or above the
 // current version is a no-op cap.
 it.each([

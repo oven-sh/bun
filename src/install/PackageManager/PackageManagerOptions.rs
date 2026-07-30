@@ -531,7 +531,9 @@ impl Options {
             }
 
             if let Some(n) = config.lockfile_format_version {
-                self.lockfile_format_version = crate::lockfile::bun_lock::Version::from_int(n);
+                use crate::lockfile::bun_lock::Version;
+                // Floor to V1 (the writer never emits v0 content).
+                self.lockfile_format_version = Version::from_int(n.max(Version::V1 as u32));
             }
 
             if let Some(jobs) = config.concurrent_scripts {

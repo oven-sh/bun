@@ -1810,16 +1810,11 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                     body.detach();
                     return Ok(rejected_value);
                 }
-                Ok(mut result) => {
+                Ok(result) => {
                     body.detach();
                     body = HTTPRequestBody::AnyBlob(blob::Any::from_owned_slice(
                         result.slice().to_vec(),
                     ));
-                    // StringOrBuffer::Drop is a no-op for Buffer; release the
-                    // readFile allocation now that the bytes are copied out.
-                    if let crate::node::types::StringOrBuffer::Buffer(buf) = &mut result {
-                        buf.destroy();
-                    }
                 }
             }
         }

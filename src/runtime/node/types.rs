@@ -274,9 +274,26 @@ impl Drop for StringOrBuffer {
             Self::EncodedSlice(_encoded) => {
                 // ZigStringSlice has Drop; cleanup is implicit.
             }
-            Self::Buffer(_) => {}
+            Self::Buffer(buffer) => {
+                buffer.destroy();
+            }
         }
     }
+}
+
+#[cold]
+#[inline(never)]
+fn snapshot_resizable(global: &JSGlobalObject, ab: &jsc::ArrayBuffer) -> Buffer {
+    let bytes = ab.byte_slice();
+    let mut owned = if bytes.is_empty() {
+        Buffer::EMPTY
+    } else {
+        global.vm().report_extra_memory(bytes.len());
+        bun_core::handle_oom(Buffer::from_string(bytes))
+    };
+    owned.buffer.value = ab.value;
+    owned.buffer.typed_array_type = ab.typed_array_type;
+    owned
 }
 
 impl bun_jsc::Unprotect for BlobOrStringOrBuffer {
@@ -356,7 +373,9 @@ impl StringOrBuffer {
                 if buffer.buffer.value != JSValue::ZERO {
                     return Ok(buffer.buffer.value);
                 }
-                Ok(buffer.to_node_buffer(ctx))
+                let js = buffer.to_node_buffer(ctx);
+                buffer.owns_buffer = false;
+                Ok(js)
             }
         }
     }
@@ -369,6 +388,40 @@ impl StringOrBuffer {
         } else {
             None
         }
+    }
+
+    /// `pin()` guards `transfer()` but not `ArrayBuffer.prototype.resize()`,
+    /// so resizable non-shared inputs are snapshotted (growable SAB only grows
+    /// in-place; captured extent stays readable). `snapshot_volatile = false`
+    /// opts out for callers that run no more user JS before reading.
+    #[inline]
+    fn array_buffer_into(
+        out: &mut Self,
+        global: &JSGlobalObject,
+        value: JSValue,
+        is_async: bool,
+        snapshot_volatile: bool,
+    ) {
+        let ab = value.as_array_buffer(global).unwrap_or_default();
+        let buffer = if snapshot_volatile && ab.resizable && !ab.shared {
+            snapshot_resizable(global, &ab)
+        } else if is_async {
+            Buffer::from_js_pinned(global, value).unwrap_or(Buffer {
+                buffer: ab,
+                owns_buffer: false,
+                pinned: false,
+            })
+        } else {
+            Buffer {
+                buffer: ab,
+                owns_buffer: false,
+                pinned: false,
+            }
+        };
+        if is_async {
+            buffer.buffer.value.protect();
+        }
+        *out = Self::Buffer(buffer);
     }
 
     /// Out-param core of [`from_js_maybe_async`]. Writes the decoded payload
@@ -437,18 +490,7 @@ impl StringOrBuffer {
             | JSType::BigInt64Array
             | JSType::BigUint64Array
             | JSType::DataView => {
-                let buffer = if is_async {
-                    Buffer::from_js_pinned(global, value)
-                        .unwrap_or_else(|| Buffer::from_array_buffer(global, value))
-                } else {
-                    Buffer::from_array_buffer(global, value)
-                };
-
-                if is_async {
-                    buffer.buffer.value.protect();
-                }
-
-                *out = Self::Buffer(buffer);
+                Self::array_buffer_into(out, global, value, is_async, true);
                 Ok(true)
             }
             _ => Ok(false),
@@ -484,7 +526,8 @@ impl StringOrBuffer {
         Self::from_js_with_encoding_maybe_async(global, value, encoding, false, true)
     }
 
-    /// Out-param convenience wrapper — see [`from_js_with_encoding_maybe_async_into`].
+    /// Out-param wrapper for `NodeHTTPResponse`; it evaluates encoding/callback
+    /// before capture and spills resizable tails itself (`snapshot_volatile=false`).
     #[inline]
     pub(crate) fn from_js_with_encoding_into(
         out: &mut StringOrBuffer,
@@ -492,7 +535,9 @@ impl StringOrBuffer {
         value: JSValue,
         encoding: Encoding,
     ) -> JsResult<bool> {
-        Self::from_js_with_encoding_maybe_async_into(out, global, value, encoding, false, true)
+        Self::from_js_with_encoding_maybe_async_into(
+            out, global, value, encoding, false, true, false,
+        )
     }
 
     /// Out-param core of [`from_js_with_encoding_maybe_async`]. Writes into
@@ -506,18 +551,10 @@ impl StringOrBuffer {
         encoding: Encoding,
         is_async: bool,
         allow_string_object: bool,
+        snapshot_volatile: bool,
     ) -> JsResult<bool> {
         if value.is_cell() && value.js_type().is_array_buffer_like() {
-            let buffer = if is_async {
-                Buffer::from_js_pinned(global, value)
-                    .unwrap_or_else(|| Buffer::from_array_buffer(global, value))
-            } else {
-                Buffer::from_array_buffer(global, value)
-            };
-            if is_async {
-                buffer.buffer.value.protect();
-            }
-            *out = Self::Buffer(buffer);
+            Self::array_buffer_into(out, global, value, is_async, snapshot_volatile);
             return Ok(true);
         }
 
@@ -570,6 +607,7 @@ impl StringOrBuffer {
             encoding,
             is_async,
             allow_string_object,
+            true,
         )? {
             Ok(Some(out))
         } else {

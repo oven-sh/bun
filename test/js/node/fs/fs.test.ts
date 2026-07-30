@@ -5700,6 +5700,34 @@ it("fs.write keeps the source buffer attached while the write is in flight", asy
   expect(readFileSync(file, "latin1")).toBe("DDDDDDDD");
 });
 
+it("fs.write writes the bytes captured at call time when a resizable source is resized to 0 while in flight", async () => {
+  using dir = tempDir("fs-write-resizable", {
+    "run.js": `
+      const fs = require("node:fs");
+      const fd = fs.openSync("out.bin", "w");
+      const buf = new Uint8Array(new ArrayBuffer(1 << 16, { maxByteLength: 1 << 16 })).fill(0x44);
+      fs.write(fd, buf, 0, buf.byteLength, 0, (err, written) => {
+        fs.closeSync(fd);
+        if (err) throw err;
+        const got = fs.readFileSync("out.bin");
+        console.log(JSON.stringify({ written, len: got.length, allD: got.every(b => b === 0x44) }));
+      });
+      buf.buffer.resize(0);
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "run.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(JSON.parse(stdout.trim())).toEqual({ written: 1 << 16, len: 1 << 16, allD: true });
+  expect(exitCode).toBe(0);
+});
+
 it("fs.promises.writeFile keeps the source buffer attached while the write is in flight", async () => {
   using dir = tempDir("fs-writefile-pin", {});
   const file = join(String(dir), "out.bin");

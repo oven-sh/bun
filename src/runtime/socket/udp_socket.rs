@@ -335,9 +335,7 @@ impl Default for UDPSocketConfig {
     }
 }
 
-/// Parsed `binaryType` + `socket.{data,drain,error}` from an options object.
-/// Validation only; callers apply the handlers so a thrown error leaves a
-/// live socket unchanged.
+/// Validation-only parse of `binaryType` + `socket.{data,drain,error}`; callers apply.
 #[derive(Default)]
 struct ReloadOptions {
     binary_type: Option<BinaryType>,

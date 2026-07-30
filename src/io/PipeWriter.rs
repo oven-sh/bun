@@ -711,6 +711,10 @@ impl<Parent: PosixStreamingWriterParent> PosixStreamingWriter<Parent> {
         self.outgoing.is_not_empty()
     }
 
+    pub fn is_backed_up(&self) -> bool {
+        self.outgoing.is_not_empty()
+    }
+
     /// Bytes accepted from callers that have not reached the fd yet.
     pub fn buffered_len(&self) -> usize {
         self.outgoing.size()
@@ -2021,6 +2025,10 @@ impl<Parent: WindowsStreamingWriterParent> WindowsStreamingWriter<Parent> {
 
     pub fn has_pending_data(&self) -> bool {
         self.outgoing.is_not_empty() || self.current_payload.is_not_empty()
+    }
+
+    pub fn is_backed_up(&self) -> bool {
+        self.current_payload.is_not_empty() || self.outgoing.is_not_empty()
     }
 
     /// Bytes accepted from callers that have not reached the fd yet: queued in

@@ -262,15 +262,16 @@ impl<'a, 'log> Scanner<'a, 'log> {
     /// back to the start of the `key = ` expression so the suggestion is a
     /// drop-in replacement for the whole line.
     fn err_unquoted_string(&mut self, pos: usize) -> PErr {
+        const GENERIC: &[u8] = b"String values must be quoted; wrap the value in double quotes";
         let mut end = pos;
-        while end < self.src.len() && is_bare_key_char(self.peek_at(end)) && end - pos < 64 {
+        while is_bare_key_char(self.peek_at(end)) {
             end += 1;
+            if end - pos == 64 {
+                return self.err(pos, GENERIC);
+            }
         }
         if self.redact || end == pos {
-            return self.err(
-                pos,
-                b"String values must be quoted; wrap the value in double quotes",
-            );
+            return self.err(pos, GENERIC);
         }
         let mut key_start = pos;
         let mut capped = false;
@@ -287,10 +288,8 @@ impl<'a, 'log> Scanner<'a, 'log> {
             key_start += 1;
         }
         let prefix = &self.src[key_start..pos];
-        // A prefix the scan did not reach the start of (length cap, or a
-        // stop byte inside a quoted key) is dropped rather than printed
-        // half-formed; `\` in the prefix means a basic-key escape makes the
-        // quote-parity check untrustworthy.
+        // An unbalanced quote or a `\` in the prefix means a stop byte sat
+        // inside a quoted key, so the prefix is a fragment; drop it.
         let whole = !capped
             && !bun_core::strings::contains(prefix, b"\\")
             && prefix.iter().filter(|&&c| c == b'"').count() % 2 == 0

@@ -551,6 +551,11 @@ describe("error contract", () => {
     expect(syntaxError(Buffer.alloc(70, "a").toString() + " = isolated").message).toBe(
       'TOML Parse error: String values must be quoted; write: "isolated"',
     );
+    // When the value itself exceeds the scan cap the suggestion is generic
+    // rather than a truncated quote.
+    expect(syntaxError("a = " + Buffer.alloc(70, "x").toString()).message).toBe(
+      "TOML Parse error: String values must be quoted; wrap the value in double quotes",
+    );
   });
 
   test("escape errors inside a drive-letter string name the Windows-path fix", () => {

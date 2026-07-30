@@ -2387,7 +2387,16 @@ declare module "bun" {
     compilerOptions?: {
       paths?: Record<string, string[]>;
       baseUrl?: string;
-      /** "preserve" is not supported yet */
+      /**
+       * How JSX is transformed.
+       *
+       * - `"react"`: classic runtime. Emits `React.createElement(...)` (or the configured {@link jsxFactory}).
+       * - `"react-jsx"`: automatic runtime, production. Emits `jsx`/`jsxs` imported from `<jsxImportSource>/jsx-runtime`.
+       * - `"react-jsxdev"`: automatic runtime, development. Emits `jsxDEV` imported from `<jsxImportSource>/jsx-dev-runtime`, including source location and `__self` for React DevTools.
+       * - `"preserve"`: not supported yet; currently falls back to the automatic runtime.
+       *
+       * Prior to Bun 1.4, `"react-jsx"` emitted the development runtime. It now matches TypeScript and esbuild.
+       */
       jsx?: "preserve" | "react" | "react-jsx" | "react-jsxdev";
       jsxFactory?: string;
       jsxFragmentFactory?: string;
@@ -2899,11 +2908,45 @@ declare module "bun" {
      * JSX configuration options
      */
     jsx?: {
+      /**
+       * - `"automatic"`: auto-import `jsx`/`jsxs` (or `jsxDEV`) from `<importSource>/jsx-runtime`.
+       * - `"classic"`: emit `factory(type, props, ...children)` with no auto-import.
+       *
+       * @default "automatic"
+       */
       runtime?: "automatic" | "classic";
+      /**
+       * Package the automatic runtime imports from. Bun appends `/jsx-runtime` or `/jsx-dev-runtime`.
+       * Only used when `runtime` is `"automatic"`.
+       *
+       * @default "react"
+       */
       importSource?: string;
+      /**
+       * Function called for each JSX element when `runtime` is `"classic"`.
+       *
+       * @default "React.createElement"
+       */
       factory?: string;
+      /**
+       * Value used for JSX fragments (`<>...</>`) when `runtime` is `"classic"`.
+       *
+       * @default "React.Fragment"
+       */
       fragment?: string;
+      /**
+       * Treat the auto-imported JSX runtime module as having side effects, disabling tree-shaking of the import.
+       *
+       * @default false
+       */
       sideEffects?: boolean;
+      /**
+       * Use the development automatic runtime: import `jsxDEV` from `<importSource>/jsx-dev-runtime` and
+       * pass source location / `__self` for React DevTools. When `false`, import `jsx`/`jsxs` from
+       * `<importSource>/jsx-runtime`. Only used when `runtime` is `"automatic"`.
+       *
+       * When not set, derived from `NODE_ENV` and tsconfig `compilerOptions.jsx`.
+       */
       development?: boolean;
     };
 

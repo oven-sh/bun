@@ -542,6 +542,7 @@ bun::N_AVX3::MemMemImpl                                              [AVX, AVX51
 bun::N_AVX3::MemRMemImpl                                             [AVX, AVX512BW, AVX512F, BMI2]
 bun::N_AVX3::MemMem16Impl                                            [AVX, AVX512BW, AVX512F, BMI1]
 bun::N_AVX3::MemRMem16Impl                                           [AVX, AVX512F]
+bun::N_AVX3::MemMemReverse<unsigned short>                           [AVX, AVX512BW, AVX512F, BMI2]
 bun::N_AVX3::JsonIndexImpl                                           [AVX, AVX512BW, AVX512F, AVX512VL, BMI1, BMI2]
 bun::N_AVX3::VisibleLatin1WidthExcludeANSIImpl                       [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, BMI1, BMI2]
 bun::N_AVX3::VisibleLatin1WidthImpl                                  [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL]

@@ -1617,6 +1617,17 @@ describe("deno_task", () => {
           exitCode: 0,
         });
       });
+
+      test(">> Bun.file(path) still appends", async () => {
+        using dir = tempDir("shell-append-bunfile", { "out.txt": "AAAA\n" });
+        const p = join(String(dir), "out.txt");
+        const { stderr, exitCode } = await $`echo BB >> ${Bun.file(p)}`.quiet();
+        expect({ stderr: stderr.toString(), text: await Bun.file(p).text(), exitCode }).toEqual({
+          stderr: "",
+          text: "AAAA\nBB\n",
+          exitCode: 0,
+        });
+      });
     });
 
     // &> and &>> redirect

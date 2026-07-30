@@ -698,6 +698,7 @@ impl S3UploadStreamWrapper {
             }
             S3UploadResult::Failure(err) => {
                 let js_err = s3_error_to_js(err, &self_.global, Some(self_.path.slice()));
+                js_err.ensure_still_alive();
                 if let Some(sink_ptr) = self_.sink {
                     // Sink pump still in-flight: fire signal.close() so the JSSink
                     // controller's onClose cancels the upstream ReadableStream. The

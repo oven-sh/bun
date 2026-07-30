@@ -663,6 +663,42 @@ describe("udpSocket()", () => {
       await using client = await udpSocket({ hostname: "127.0.0.1", port: 0 });
       client.send("x", server.port, "127.0.0.1");
       expect(await got.promise).toBe("Uint8Array");
+
+      // binaryType can be reloaded without a `socket` key; the existing
+      // handler keeps dispatching with the new payload type.
+      got = Promise.withResolvers<string>();
+      server.reload({ socket: { data: (_sk, b) => got.resolve(b.constructor.name) } });
+      server.reload({ binaryType: "buffer" });
+      expect(server.binaryType).toBe("buffer");
+      client.send("y", server.port, "127.0.0.1");
+      expect(await got.promise).toBe("Buffer");
+    });
+
+    test("does not partially apply when a later handler is invalid", async () => {
+      let got = Promise.withResolvers<string>();
+      await using server = await udpSocket({
+        hostname: "127.0.0.1",
+        port: 0,
+        binaryType: "arraybuffer",
+        socket: { data: (_sk, b) => got.resolve("original:" + b.constructor.name) },
+      });
+
+      // `data` is valid but `error` is not: the whole reload must be rejected
+      // and the original `data` handler and binaryType must stay in place.
+      expect(() =>
+        server.reload({
+          binaryType: "buffer",
+          socket: {
+            data: (_sk, b) => got.resolve("replaced:" + b.constructor.name),
+            error: "not a function" as any,
+          },
+        }),
+      ).toThrow();
+      expect(server.binaryType).toBe("arraybuffer");
+
+      await using client = await udpSocket({ hostname: "127.0.0.1", port: 0 });
+      client.send("x", server.port, "127.0.0.1");
+      expect(await got.promise).toBe("original:ArrayBuffer");
     });
   });
 });

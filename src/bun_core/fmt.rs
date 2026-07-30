@@ -1328,7 +1328,10 @@ pub(crate) fn github_action_writer(writer: &mut impl fmt::Write, self_: &[u8]) -
 /// escapes the property-class metacharacters per the actions/toolkit spec:
 /// `%`->`%25`, `\r`->`%0D`, `\n`->`%0A`, `:`->`%3A`, `,`->`%2C`.
 /// ANSI colour sequences are dropped, matching [`github_action`].
-pub(crate) fn github_action_property_writer(writer: &mut impl fmt::Write, self_: &[u8]) -> fmt::Result {
+pub(crate) fn github_action_property_writer(
+    writer: &mut impl fmt::Write,
+    self_: &[u8],
+) -> fmt::Result {
     let mut start: usize = 0;
     let mut i: usize = 0;
     while i < self_.len() {

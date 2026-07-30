@@ -1,7 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { createHash, randomBytes } from "crypto";
 import { bunEnv, bunExe, isASAN, tempDir, tls } from "harness";
-import { connect } from "node:quic";
 import { join } from "path";
 
 // Native HTTP/3 fetch wrapper. Every request in this file forces

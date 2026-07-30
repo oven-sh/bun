@@ -829,11 +829,12 @@ it("escapes quotes and newlines in requested version literals when writing yarn.
 it("refuses to overwrite a lockfile whose version is newer than this build supports", async () => {
   const { packageDir, packageJson } = await registry.createTestDir();
 
+  await write(join(packageDir, "vendor", "leaf", "package.json"), JSON.stringify({ name: "leaf", version: "1.2.3" }));
   await write(
     packageJson,
     JSON.stringify({
       name: "future-lockfile",
-      dependencies: {},
+      dependencies: { leaf: "file:./vendor/leaf" },
     }),
   );
 
@@ -866,10 +867,7 @@ it("refuses to overwrite a lockfile whose version is newer than this build suppo
   // the old message gave no hint at all
   expect(err).not.toContain("Unknown lockfile version");
 
-  // Previously this fell through to the generic "warn: Ignoring lockfile" path,
-  // re-resolved from package.json, rewrote/deleted the newer lockfile and
-  // exited 0. An older client must not silently downgrade a lockfile written
-  // by a newer Bun.
+  // An older client must not silently downgrade a lockfile written by a newer Bun.
   expect(err).not.toContain("Ignoring lockfile");
   expect(err).not.toContain("Saved lockfile");
   expect(await file(join(packageDir, "bun.lock")).text()).toBe(futureLockfile);

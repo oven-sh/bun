@@ -213,9 +213,7 @@ impl Stringifier {
     /// `pkg_resolutions` buffer (migration can leave pruned/unreferenced entries
     /// there that never reach the written `packages` object).
     ///
-    /// `cap` is `[install.lockfile] formatVersion` from bunfig: when set, the
-    /// result never exceeds it, so a project shared with older Bun versions can
-    /// keep producing a lockfile they read. The v0→v1 floor still applies.
+    /// `cap` is `[install.lockfile] lockfileVersion` from bunfig.
     fn version_to_write(lockfile: &BinaryLockfile, cap: Option<Version>) -> Version {
         // An older on-disk lockfile keeps its version; only a no-prior-version
         // lockfile (the `Version::CURRENT` default) is a candidate for v2. v0 is

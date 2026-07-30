@@ -321,8 +321,7 @@ pub mod api {
         pub minimum_release_age_excludes: Option<Vec<Box<[u8]>>>,
         pub public_hoist_pattern: Option<PnpmMatcher>,
         pub hoist_pattern: Option<PnpmMatcher>,
-        /// `[install.lockfile] formatVersion` — caps the `lockfileVersion`
-        /// stamped into a written `bun.lock`.
+        /// `[install.lockfile] lockfileVersion`
         pub lockfile_format_version: Option<u32>,
     }
 

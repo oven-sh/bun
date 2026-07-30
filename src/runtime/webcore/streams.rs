@@ -2379,9 +2379,6 @@ impl NetworkSink {
                 self.upstream_error.set(&global, js_err);
             }
         }
-        // The terminal action may re-borrow this sink via the wrapper; launder
-        // `self` so those reads do not derive from the live `&mut self`.
-        let _ = core::hint::black_box(core::ptr::from_mut(self));
         if err.is_some() {
             // SAFETY: counted ref held by `self.task`; single-threaded.
             let _ = unsafe {

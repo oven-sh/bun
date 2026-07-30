@@ -43,9 +43,7 @@ pub struct FileSink {
     pub done: Cell<bool>,
     pub started: Cell<bool>,
     pub must_be_kept_alive_until_eof: Cell<bool>,
-    /// Set when `to_result` hands `Backpressure` to a native ByteStream source;
-    /// POSIX `on_write(Drained)`/`on_auto_flush` drive the resume since
-    /// `PosixStreamingWriter` never fires `on_ready`.
+    /// `to_result` returned `Backpressure` to a ByteStream; drain callbacks resume it.
     pub source_pending_pull: Cell<bool>,
 
     // TODO: these fields are duplicated on writer()
@@ -456,11 +454,13 @@ impl FileSink {
                 && !has_pending_data
                 && (*this).source_pending_pull.replace(false)
             {
-                (*this).source.with_mut(|s| s.ready(None, None));
+                let mut src = *(*this).source.get();
+                src.ready(None, None);
             }
 
             if status == WriteStatus::EndOfFile {
-                (*this).source.with_mut(|s| s.close(None));
+                let mut src = *(*this).source.get();
+                src.close(None);
                 FileSink::clear_keep_alive_ref(this);
             }
         }
@@ -503,7 +503,8 @@ impl FileSink {
         // SAFETY: caller contract — `this` is live; only `source` is reborrowed.
         unsafe {
             if (*this).source_pending_pull.replace(false) {
-                (*this).source.with_mut(|s| s.ready(None, None));
+                let mut src = *(*this).source.get();
+                src.ready(None, None);
             }
         }
     }
@@ -525,7 +526,8 @@ impl FileSink {
                 }
             }
 
-            (*this).source.with_mut(|s| s.close(None));
+            let mut src = *(*this).source.get();
+            src.close(None);
 
             // The writer is fully closed; no further callbacks will arrive. Release
             // the ref taken when a write returned `.pending`. This must be the last
@@ -870,14 +872,10 @@ impl FileSink {
                     if amount_drained == amount_buffered {
                         (*this).update_ref(false);
                         (*this).run_pending_later();
-                        // `flush()` drained via `drain_buffered_data` which
-                        // never calls `parent_on_write`, so `on_write(Drained)`
-                        // (the other drain-resume site) is skipped. Resume a
-                        // parked ByteStream here or the already-registered
-                        // one-shot writable poll fires on an empty buffer and
-                        // the source stays paused forever.
+                        // `flush()`'s drain bypasses `on_write(Drained)`; resume the parked ByteStream here.
                         if (*this).source_pending_pull.replace(false) {
-                            (*this).source.with_mut(|s| s.ready(None, None));
+                            let mut src = *(*this).source.get();
+                            src.ready(None, None);
                         }
                     }
                 }
@@ -1418,13 +1416,7 @@ impl FileSink {
                 if self.writer.get().is_backed_up()
                     && matches!(self.source.get(), streams::SourceHandle::ByteStream(_))
                 {
-                    // Native ByteStream source handles `Backpressure` by
-                    // parking on `sink_paused`; the drain callbacks fire
-                    // `source.ready()` to resume it. `JSController` stays on
-                    // the `Pending` promise path: `readStreamIntoSink` marks
-                    // that promise handled and keeps pumping, so returning
-                    // `Backpressure` there would park the pump behind a
-                    // kill-triggering write that never drains.
+                    // ByteStream parks on `Backpressure`; JSController must stay on the `Pending` path.
                     self.source_pending_pull.set(true);
                     return streams::Writable::Backpressure(accepted);
                 }

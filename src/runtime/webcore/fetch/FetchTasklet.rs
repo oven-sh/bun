@@ -2463,7 +2463,11 @@ impl FetchTasklet {
         }
         self.abort_task();
         // Re-borrow after the `&mut self` calls above.
+        let global_this = self.global_this;
         if let Some(sink) = self.sink_mut() {
+            if sink.flush_promise.has_value() {
+                let _ = sink.flush_promise.reject(&global_this, Ok(reason));
+            }
             sink.source.close(None);
             if is_native {
                 sink.task = None;

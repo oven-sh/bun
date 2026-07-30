@@ -107,8 +107,7 @@ pub fn install_with_manager(
                     // if loaded from binary and save-text-lockfile is passed
                     || (load_result.ok().format == lockfile::Format::Binary
                         && manager.options.save_text_lockfile.unwrap_or(false))
-                    // if `[install.lockfile] lockfileVersion` caps below the
-                    // loaded text-lockfile version, re-save to apply it
+                    // if bunfig lockfileVersion caps below the loaded version
                     || (load_result.ok().format == lockfile::Format::Text
                         && manager.options.lockfile_format_version.is_some_and(|cap| {
                             !cap.at_least(load_result.ok().lockfile.text_lockfile_version)

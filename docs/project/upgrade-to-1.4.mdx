@@ -4,9 +4,14 @@ sidebarTitle: Upgrading to 1.4
 description: "A guide to the behavior changes in Bun 1.4 and how to migrate a project from Bun 1.3."
 ---
 
-Bun 1.4 is largely backward compatible with Bun 1.3, but a handful of defaults and validation rules changed. This page lists every change that could affect an existing project and how to update it.
+Bun 1.4 is largely backward compatible with Bun 1.3, but a handful of defaults and validation rules changed. This page covers the changes most likely to require a code or configuration update and what to do about each one.
 
 Most projects will upgrade without any code changes. Run your test suite after upgrading; the sections below are a reference for anything that surfaces.
+
+<Note>
+  The exhaustive list of 1.4 behavior changes, including narrow validation fixes not covered here, is tracked at
+  [oven-sh/bun#28792](https://github.com/oven-sh/bun/issues/28792).
+</Note>
 
 ```sh terminal icon="terminal"
 bun upgrade
@@ -182,7 +187,51 @@ Bun 1.4 reports Node.js `26.3.0`:
 
 Native addons built against the V8 C++ API (not N-API) must be rebuilt; the module loader rejects a mismatched ABI version. N-API addons are ABI-stable and continue to load.
 
-Bun 1.4 also ships the corresponding Node.js 26 semver-major changes in `node:stream` and `node:http`.
+Bun 1.4 also ships the corresponding Node.js 26 semver-major changes, including:
+
+- `node:http`: `response.writeHeader()` (deprecated alias for `writeHead()`) is removed.
+- `node:stream`: `readable.read()` in paused mode returns one chunk at a time instead of concatenating the internal buffer.
+- `node:dgram`: `bind()` on an already-bound socket and calls after `close()` throw synchronously.
+
+---
+
+## `fetch` and `Headers`
+
+When a server sends the same response header more than once (or a client sends a duplicate request header to `Bun.serve`), the values are now combined with `", "` as the Fetch Standard specifies, instead of the last value silently replacing the earlier ones. A header that arrives once with an empty value now reads back as `""` instead of `null`. `Set-Cookie`, `Headers.set()`, and `Headers.append()` are unchanged.
+
+```ts
+// server sends:  X-Thing: a
+//                X-Thing: b
+const res = await fetch(url);
+res.headers.get("x-thing");
+// Bun 1.3: "b"
+// Bun 1.4: "a, b"
+```
+
+Related `fetch` correctness changes:
+
+- `Request#clone()` and `Response#clone()` throw `TypeError` when the body has already been read or is locked, instead of returning a clone with an empty body.
+- `Response.redirect(url)` parses the URL and serializes it into the `Location` header.
+- A compressed response body that is truncated mid-stream (when the server closes the connection to delimit the body) now rejects instead of resolving with partial data.
+- `fetch()` rejects its returned promise when an option conversion throws, instead of throwing synchronously.
+
+---
+
+## Sockets and SQL
+
+### `Bun.Socket#setKeepAlive` delay is milliseconds
+
+The second argument to `socket.setKeepAlive(enable, initialDelay)` is now interpreted as **milliseconds** (matching `node:net`). In Bun 1.3 the value was passed to the kernel as seconds, so the effective delay was 1000× longer than requested.
+
+```ts
+socket.setKeepAlive(true, 60_000); // 1.3: ~16.7 hours; 1.4: 60 seconds
+```
+
+`setKeepAlive(true)` with no delay now returns `true` instead of `false`.
+
+### MySQL `DATETIME` / `TIMESTAMP` decode as UTC
+
+The MySQL driver now decodes `DATETIME` and `TIMESTAMP` columns as UTC to match how it encodes them. In Bun 1.3 these were decoded as local time, so values round-tripped through the driver came back shifted by the local UTC offset. Reading existing rows after upgrading returns the value actually stored in the database.
 
 ---
 
@@ -196,14 +245,42 @@ No action is needed. CPUs that previously required the `-baseline` build now run
 
 ## Other changes you may notice
 
-These are correctness fixes that tighten validation. They only affect code that was relying on the previous (incorrect) behavior.
+These are correctness fixes that tighten validation or align with a specification. They only affect code that was relying on the previous (incorrect) behavior.
 
-- **`bun test`**: `jest.resetAllMocks()` now resets mock implementations (matching Jest). Use `jest.clearAllMocks()` if you only want to clear call data.
-- **`bun test`**: `expect(array).toContain(value)` now uses `===` instead of `Object.is`. `expect([NaN]).toContain(NaN)` now fails (use `toContainEqual`).
-- **`Bun.serve`**: an out-of-range `port` throws `RangeError` instead of being clamped.
-- **`Bun.spawn`**: passing an already-aborted `AbortSignal` throws immediately instead of spawning; `timeout: NaN` and `killSignal: 0` are rejected.
-- **`bun:ffi`**: validation errors from `viewSource()` and `new JSCallback()` are thrown instead of returned.
-- **`tls.Server`** with `requestCert: true` now enforces the default `rejectUnauthorized: true` for client certificates.
+**`bun test`**
+
+- `jest.resetAllMocks()` now resets mock implementations (matching Jest). Use `jest.clearAllMocks()` if you only want to clear call data.
+- `expect(array).toContain(value)` now uses `===` instead of `Object.is`. `expect([NaN]).toContain(NaN)` now fails (use `toContainEqual`).
+
+**`Bun.serve` and WebSocket**
+
+- An out-of-range `port` throws `RangeError` instead of being clamped.
+- A `Response` status outside `100..=999` is routed through the `error()` handler as a 500 instead of writing an invalid status line.
+- Per-method route objects (`{ GET, POST, ... }`) serve `HEAD` with the `GET` handler.
+- `ServerWebSocket#publish()` and `server.publish()` return `0` / `-1` when a subscriber hits backpressure, instead of always returning the payload length.
+- Client and server WebSockets reject `close()` with invalid codes (`InvalidAccessError`) or reasons over 123 UTF-8 bytes (`SyntaxError`), reject `ping()` / `pong()` payloads over 125 bytes (`RangeError`), and reject unmasked client frames per RFC 6455.
+
+**Bun APIs**
+
+- `Bun.spawn`: passing an already-aborted `AbortSignal` throws immediately instead of spawning; `timeout: NaN`, `killSignal: 0`, and NUL bytes in `argv0` / `cwd` are rejected.
+- `bun:ffi`: validation errors from `viewSource()` and `new JSCallback()` are thrown instead of returned.
+- `structuredClone` / `postMessage`: transfer lists are validated before serialization instead of silently dropping invalid entries.
+- `FileSystemRouter#match()` returns `null` for paths that do not start with `/`.
+- `Bun.mmap()` returns a view starting at the requested `offset` instead of the page-aligned offset.
+- `Bun.color`: `"ansi-16"` output is a real SGR escape sequence; `"ansi-256"`, `"hsl"`, and `"lab"` output is now round-trip parseable.
+- `Bun.Cookie`: `Expires` is serialized as an IMF-fixdate.
+- `Bun.randomUUIDv7()`: timestamps at or above 2⁴⁸, or `NaN`, throw instead of being truncated.
+- `Bun.YAML.parse()` rejects NUL bytes with `SyntaxError` instead of silently truncating.
+
+**Node.js compatibility**
+
+- `tls.Server` with `requestCert: true` now enforces the default `rejectUnauthorized: true` for client certificates.
+
+**CLI**
+
+- `bun init` templates pin `"typescript": "^6"`.
+
+See [oven-sh/bun#28792](https://github.com/oven-sh/bun/issues/28792) for the full list, including narrow protocol and bounds checks not repeated here.
 
 ---
 

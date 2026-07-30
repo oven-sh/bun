@@ -115,6 +115,121 @@ export function asyncIterator(this: Console) {
   return ConsoleAsyncIterator();
 }
 
+// Installed on the global `console` at startup so `count` / `table` / `group` /
+// `time*` / `trace` / `assert` / `dirxml` dispatch through `this.log` /
+// `this.warn` / `this.error`. This lets user overrides of those slots capture
+// the derived output, matching Node's `lib/internal/console/constructor.js`.
+// The native `log` / `info` / `warn` / `error` / `debug` / `dir` slots remain
+// JSC host functions, so the common path is unchanged.
+export function bindNativeConsoleMethods(console: typeof globalThis.console) {
+  // JSC's native group/groupEnd maintain the Rust-side indent that the native
+  // `log` formatter honours. We keep calling them (with no args, which is a
+  // pure indent bump) so indentation still applies to subsequent native `log`
+  // calls; only the label is routed through `this.log`.
+  const nativeGroup = console.group;
+  const nativeGroupEnd = console.groupEnd;
+
+  const MapGet = Map.prototype.get;
+  const MapSet = Map.prototype.set;
+  const MapDelete = Map.prototype.delete;
+
+  const counts = new Map<string, number>();
+  const times = new Map<string, number>();
+
+  let format: typeof import("node:util").format | undefined;
+  let inspectTable: typeof Bun.inspect.table | undefined;
+
+  const nanoseconds = Bun.nanoseconds;
+  const enableColors = Bun.enableANSIColors;
+
+  function elapsed(ns: number) {
+    const ms = ns / 1e6;
+    return Math.round(ms) > 1500 ? `[${(ms / 1000).toFixed(2)}s]` : `[${ms.toFixed(2)}ms]`;
+  }
+
+  const methods: Record<string, (this: typeof console, ...args: any[]) => void> = {
+    count(label = "default") {
+      label = `${label}`;
+      const n = ((MapGet.$call(counts, label) as number | undefined) ?? 0) + 1;
+      MapSet.$call(counts, label, n);
+      this.log(`${label}: ${n}`);
+    },
+    countReset(label = "default") {
+      MapDelete.$call(counts, `${label}`);
+    },
+    time(label = "default") {
+      MapSet.$call(times, `${label}`, nanoseconds());
+    },
+    timeLog(label = "default", ...data) {
+      label = `${label}`;
+      const start = MapGet.$call(times, label) as number | undefined;
+      if (start === undefined) return;
+      const prefix = label.length > 0 ? `${elapsed(nanoseconds() - start)} ${label}` : elapsed(nanoseconds() - start);
+      if (data.length > 0) this.log(prefix, ...data);
+      else this.log(prefix);
+    },
+    timeEnd(label = "default") {
+      label = `${label}`;
+      const start = MapGet.$call(times, label) as number | undefined;
+      if (start === undefined) return;
+      MapDelete.$call(times, label);
+      this.log(label.length > 0 ? `${elapsed(nanoseconds() - start)} ${label}` : elapsed(nanoseconds() - start));
+    },
+    assert(expression, ...args) {
+      if (!expression) {
+        if (args.length === 0) this.warn("Assertion failed");
+        else this.warn.$apply(this, args);
+      }
+    },
+    trace: function trace(...args) {
+      format ??= require("node:util").format;
+      const err: { name: string; message: string; stack?: string } = {
+        name: "Trace",
+        message: args.length > 0 ? format!.$apply(undefined, args) : "",
+      };
+      Error.captureStackTrace(err, trace);
+      let stack = err.stack ?? "";
+      const nl = stack.indexOf("\n");
+      stack = nl >= 0 ? stack.slice(nl) : "";
+      this.error((err.message.length > 0 ? `Trace: ${err.message}` : "Trace") + stack);
+    },
+    table(tabularData, properties) {
+      if (properties !== undefined && !$isJSArray(properties)) {
+        throw new TypeError('The "properties" argument must be an instance of Array.');
+      }
+      if (tabularData === null || typeof tabularData !== "object") {
+        return this.log(tabularData);
+      }
+      inspectTable ??= Bun.inspect.table;
+      const rendered =
+        properties === undefined
+          ? inspectTable(tabularData, { depth: 0, colors: enableColors })
+          : inspectTable(tabularData, properties, { depth: 0, colors: enableColors });
+      this.log(rendered.endsWith("\n") ? rendered.slice(0, -1) : rendered);
+    },
+    group(...data) {
+      if (data.length > 0) this.log.$apply(this, data);
+      nativeGroup.$call(this);
+    },
+    groupCollapsed(...data) {
+      if (data.length > 0) this.log.$apply(this, data);
+      nativeGroup.$call(this);
+    },
+    groupEnd() {
+      nativeGroupEnd.$call(this);
+    },
+    dirxml(...data) {
+      this.log.$apply(this, data);
+    },
+  };
+
+  for (const key in methods) {
+    const fn = methods[key];
+    $Object.$defineProperty(fn, "name", { value: key, configurable: true });
+    console[key] = fn;
+  }
+}
+
 export function write(this: Console, input) {
   if (!$isObject(this)) throw $ERR_INVALID_THIS("Console");
 

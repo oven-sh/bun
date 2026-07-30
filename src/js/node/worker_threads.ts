@@ -442,9 +442,6 @@ function makePortWritable(port) {
       cb(err);
     },
   });
-  // process.on('exit') runs this while _exiting is already true: completing the
-  // parked cb re-enters writev with every buffered chunk, which then completes
-  // synchronously — so writes queued before process.exit() still reach the port.
   stream.flushInFlightForExit = onAck;
   return stream;
 }
@@ -472,8 +469,7 @@ function setupWorkerStdio(stdio) {
     });
   }
   // node's flushSync (internal/bootstrap/switches/is_not_main_thread): complete
-  // the parked writev cb on exit so the Writable flushes its buffered chunks,
-  // which writev's _exiting branch then posts synchronously.
+  // the parked writev cb on exit so buffered chunks post via the _exiting branch.
   if (stdoutStream || stderrStream) {
     process.on("exit", function flushSync() {
       stdoutStream?.flushInFlightForExit();

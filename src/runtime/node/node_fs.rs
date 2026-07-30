@@ -4776,24 +4776,42 @@ impl NodeFS {
         _: Flavor,
     ) -> Maybe<ret::AppendFile> {
         let mut data = args.data.slice();
-        match &args.file {
-            PathOrFileDescriptor::Fd(fd) => {
-                while !data.is_empty() {
-                    let written = Syscall::write(*fd, data)?;
-                    data = &data[written..];
-                }
-                Ok(())
-            }
+        let (fd, close_guard) = match &args.file {
+            PathOrFileDescriptor::Fd(fd) => (*fd, None),
             PathOrFileDescriptor::Path(path_) => {
                 let path = path_.slice_z(&mut self.sync_error_buf);
                 let fd = Syscall::open(path, FileSystemFlags::A.as_int(), args.mode)?;
-                let _close = scopeguard::guard(fd, |fd| fd.close());
-                while !data.is_empty() {
-                    let written = Syscall::write(fd, data)?;
-                    data = &data[written..];
-                }
-                Ok(())
+                (fd, Some(scopeguard::guard(fd, |fd| fd.close())))
             }
+        };
+        let _close = close_guard;
+        while !data.is_empty() {
+            let written = Syscall::write(fd, data)?;
+            if written == 0 {
+                break;
+            }
+            data = &data[written..];
+        }
+        if args.flush {
+            Self::flush_file_buffers(fd)?;
+        }
+        Ok(())
+    }
+
+    #[inline]
+    fn flush_file_buffers(fd: FD) -> Maybe<()> {
+        #[cfg(windows)]
+        {
+            if unsafe { windows::kernel32::FlushFileBuffers(fd.native()) } == 0 {
+                return Err(
+                    sys::Error::from_code(windows::get_last_errno(), sys::Tag::fsync).with_fd(fd),
+                );
+            }
+            Ok(())
+        }
+        #[cfg(not(windows))]
+        {
+            Syscall::fsync(fd)
         }
     }
 
@@ -7623,14 +7641,7 @@ impl NodeFS {
         }
 
         if args.flush {
-            #[cfg(windows)]
-            {
-                let _ = unsafe { windows::kernel32::FlushFileBuffers(fd.native()) };
-            }
-            #[cfg(not(windows))]
-            {
-                let _ = Syscall::fsync(fd);
-            }
+            Self::flush_file_buffers(fd)?;
         }
 
         Ok(())

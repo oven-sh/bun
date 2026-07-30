@@ -2340,40 +2340,49 @@ impl NetworkSink {
     /// (clean EOF / commit), an upstream error on the ByteStream fast-path must
     /// abort the upload and surface the original JS error to the caller.
     pub fn end_from_stream(&mut self, err: Option<StreamError>) {
-        let Some(err) = err else {
-            let _ = self.end(None);
+        if self.ended {
             return;
-        };
+        }
         if !matches!(self.source, SourceHandle::ByteStream(_)) {
             let sys_err = match err {
-                StreamError::Error(e) => Some(e),
+                Some(StreamError::Error(e)) => Some(e),
                 _ => None,
             };
             let _ = self.end(sys_err);
             return;
         }
-        if self.ended {
-            return;
-        }
+        // ByteStream fast-path: the source drove this call and already cleared
+        // its own `sink` field, so detach (not cancel).
         self.ended = true;
-        self.done = true;
-        self.source.close(None);
         self.source.clear();
-        let global = self
-            .global_this
-            .expect("NetworkSink.global_this set at construction");
-        let js_err = err.to_js(&global);
-        if !js_err.is_empty_or_undefined_or_null() {
-            self.upstream_error.set(&global, js_err);
+        let Some(task) = self.task.as_ref().map(|t| t.as_ptr()) else {
+            return;
+        };
+        // Captured before the terminal action: `fail()`/`write_bytes(EOF)` may
+        // synchronously fire `S3UploadStreamWrapper::resolve`, which re-borrows
+        // this sink and derefs the wrapper; `fail()` also derefs `task`.
+        // SAFETY: `self.task` holds a counted ref on the upload; on this path
+        // `callback_context` is the `S3UploadStreamWrapper` (set in
+        // `upload_stream`).
+        let wrapper = unsafe {
+            (*task)
+                .callback_context
+                .cast::<crate::webcore::s3::client::S3UploadStreamWrapper>()
+        };
+        if let Some(err) = &err {
+            self.done = true;
+            let global = self
+                .global_this
+                .expect("NetworkSink.global_this set at construction");
+            let js_err = err.to_js(&global);
+            if !js_err.is_empty_or_undefined_or_null() {
+                self.upstream_error.set(&global, js_err);
+            }
         }
-        // `task.fail()` fires the upload callback synchronously, which may
-        // re-borrow this sink via `*mut NetworkSink`; launder `self` so the
-        // call does not derive from the `&mut self` provenance.
-        let this: *mut Self = core::hint::black_box(core::ptr::from_mut(self));
-        // SAFETY: `this` is the live heap `NetworkSink`; `task` holds a
-        // counted ref on the upload while `Some` (released in
-        // `detach_writable`).
-        if let Some(task) = unsafe { (*this).task.as_ref().map(|t| t.as_ptr()) } {
+        // The terminal action may re-borrow this sink via the wrapper; launder
+        // `self` so those reads do not derive from the live `&mut self`.
+        let _ = core::hint::black_box(core::ptr::from_mut(self));
+        if err.is_some() {
             // SAFETY: counted ref held by `self.task`; single-threaded.
             let _ = unsafe {
                 (*task).fail(bun_s3_signing::error::S3Error {
@@ -2381,7 +2390,17 @@ impl NetworkSink {
                     message: b"ReadableStream ended with an error",
                 })
             };
+        } else {
+            // SAFETY: counted ref held by `self.task`; single-threaded.
+            let _ = unsafe { (*task).write_bytes(b"", true) };
         }
+        // Balance the stream-pump +1 `upload_stream` left on the wrapper so
+        // `resolve()` above saw rc 2→1 and the sink stayed allocated across
+        // the re-entry. May drop rc to 0 and free `*self` via `detach_sink`;
+        // must be the last action here.
+        // SAFETY: `wrapper` is the live Box allocation (rc ≥ 1 after the
+        // terminal action).
+        unsafe { crate::webcore::s3::client::S3UploadStreamWrapper::deref_(wrapper) };
     }
 
     pub fn end_from_js(&mut self, _global_this: &JSGlobalObject) -> bun_sys::Result<JSValue> {

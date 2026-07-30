@@ -1032,11 +1032,22 @@ pub fn upload_stream(
                 crate::webcore::streams::StreamResult::Owned(buffered)
             };
             // SAFETY: `ctx.sink` set above; sink live.
-            if matches!(
-                unsafe { (*sink_ptr).write(&chunk) },
-                crate::webcore::streams::Writable::Backpressure(_)
-            ) {
-                byte_stream.sink_paused.set(true);
+            match unsafe { (*sink_ptr).write(&chunk) } {
+                crate::webcore::streams::Writable::Backpressure(_) => {
+                    byte_stream.sink_paused.set(true);
+                }
+                crate::webcore::streams::Writable::Done
+                | crate::webcore::streams::Writable::Err(_) => {
+                    byte_stream.sink.set(crate::webcore::SinkHandle::None);
+                    // SAFETY: `ctx.sink` set above; sink live.
+                    let sink = unsafe { &mut *sink_ptr };
+                    if !sink.ended {
+                        let _ = sink.end(None);
+                    }
+                    ctx.handle_resolve_stream();
+                    return Ok(end_promise_value);
+                }
+                _ => {}
             }
         }
         if has_last {
@@ -1047,13 +1058,10 @@ pub fn upload_stream(
                 let _ = sink.end(None);
             }
             ctx.handle_resolve_stream();
-        } else {
-            // No pump promise `.then` to balance the stream-pump +1; release it
-            // now. `resolve` (upload-completion callback) releases the remaining
-            // ref, whose `Drop` then `detach_sink`s.
-            // SAFETY: `ctx_ptr` is the live Box allocation with ref_count == 2.
-            unsafe { S3UploadStreamWrapper::deref_(ctx_ptr) };
         }
+        // `!has_last`: the stream-pump +1 (rc=2) is released by
+        // `NetworkSink::end_from_stream` after the terminal write/fail so the
+        // sink outlives the synchronous `resolve()` re-entry.
         return Ok(end_promise_value);
     }
 

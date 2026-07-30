@@ -679,11 +679,16 @@ impl FetchTasklet {
                     StreamResult::Owned(buffered)
                 };
                 // SAFETY: `self.sink` set above; sink live.
-                if matches!(
-                    unsafe { (*sink_ptr.as_ptr()).write(&chunk) },
-                    Writable::Backpressure(_)
-                ) {
-                    byte_stream.sink_paused.set(true);
+                match unsafe { (*sink_ptr.as_ptr()).write(&chunk) } {
+                    Writable::Backpressure(_) => byte_stream.sink_paused.set(true),
+                    Writable::Done | Writable::Err(_) => {
+                        byte_stream.sink.set(SinkHandle::None);
+                        // SAFETY: `self.sink` set above; sink live.
+                        unsafe { (*sink_ptr.as_ptr()).task = None };
+                        self.write_end_request(None);
+                        return;
+                    }
+                    _ => {}
                 }
             }
             if has_last {

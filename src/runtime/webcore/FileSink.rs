@@ -1056,9 +1056,13 @@ impl FileSink {
     /// (ByteStream source), close the writer without flushing — mirrors
     /// `handle_reject_stream` — so a truncated write is not committed as EOF.
     pub fn end_from_stream(&self, err: Option<streams::StreamError>) {
-        if err.is_none()
-            || !matches!(self.source.get(), streams::SourceHandle::ByteStream(_))
-        {
+        let is_byte_stream = matches!(self.source.get(), streams::SourceHandle::ByteStream(_));
+        if is_byte_stream {
+            // Source drove this call and already cleared its own `sink` field;
+            // detach so the writer's `on_close` → `source.close()` is a no-op.
+            self.source.with_mut(|s| s.clear());
+        }
+        if err.is_none() || !is_byte_stream {
             let sys_err = match err {
                 Some(streams::StreamError::Error(e)) => Some(e),
                 _ => None,
@@ -1070,7 +1074,6 @@ impl FileSink {
             return;
         }
         self.done.set(true);
-        self.source.with_mut(|s| s.clear());
         self.readable_stream
             .with_mut(|rs| *rs = readable_stream::Strong::default());
         self.writer.with_mut(|w| w.close());
@@ -1566,8 +1569,15 @@ impl FileSink {
                 } else {
                     streams::Result::Owned(buffered)
                 };
-                if matches!(self.write(&chunk), streams::Writable::Backpressure(_)) {
-                    byte_stream.sink_paused.set(true);
+                match self.write(&chunk) {
+                    streams::Writable::Backpressure(_) => byte_stream.sink_paused.set(true),
+                    streams::Writable::Done | streams::Writable::Err(_) => {
+                        byte_stream.sink.set(webcore::SinkHandle::None);
+                        self.source.set(streams::SourceHandle::None);
+                        let _ = self.end(None);
+                        return JSValue::UNDEFINED;
+                    }
+                    _ => {}
                 }
             }
             if has_last {

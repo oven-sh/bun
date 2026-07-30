@@ -193,8 +193,10 @@ impl FetchRequestBodySink {
             self.source,
             SourceHandle::ByteStream(_) | SourceHandle::FileReader(_)
         ) {
-            // Native ByteStream source: no pump promise, so drive write_end_request here.
-            self.source.close(None);
+            // Native source drove this call and already cleared its own `sink`
+            // field; detach (not cancel) so we don't re-enter the source while
+            // it is still on the stack (FileReader.on_reader_error ref-leak).
+            self.source.clear();
             if let Some(task) = self.task.take() {
                 let task_ptr = task.as_ptr();
                 // SAFETY: the `+1` taken in `start_request_stream` keeps the

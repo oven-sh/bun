@@ -461,11 +461,13 @@ impl EventLoop {
     /// timer is due so `tick()` returns and `auto_tick*` can run them (Node
     /// interleaves timers/check between thread-pool completion batches). The
     /// `concurrent_tasks` guard keeps the clock-read probe off the path when
-    /// nothing arrived.
+    /// nothing arrived; `immediate_tasks` is same-thread so it is checked
+    /// unconditionally (no TOCTOU against a late cross-thread push).
     fn tick_concurrent_unless_due(&mut self) {
-        if !self.concurrent_tasks.is_empty()
-            && (!self.immediate_tasks.is_empty() || __bun_has_due_timer())
-        {
+        if !self.immediate_tasks.is_empty() {
+            return;
+        }
+        if !self.concurrent_tasks.is_empty() && __bun_has_due_timer() {
             return;
         }
         self.tick_concurrent();

@@ -246,35 +246,37 @@ it("should defer microtasks when an exception is thrown in an immediate", async 
   expect(await bunRun(["run", path.join(import.meta.dir, "timers-immediate-exception-fixture.js")])).toSpawn();
 });
 
-test("chained fs.read callbacks yield to due timers", async () => {
+test("chained thread-pool callbacks yield to due timers", async () => {
   // Node/libuv delivers thread-pool completions once per poll and runs the
-  // timers phase between polls, so a chain of fs.read callbacks that each
-  // submit the next read interleaves with an overdue setInterval. Bun used to
-  // keep re-draining thread-pool completions inside one EventLoop::tick(),
-  // which meant the chain ran to completion before any due timer fired.
+  // timers phase between polls, so a chain of callbacks that each submit the
+  // next job interleaves with an overdue setInterval. Bun used to keep
+  // re-draining thread-pool completions inside one EventLoop::tick(), so the
+  // chain ran to completion before any due timer fired.
+  //
+  // crypto.pbkdf2 is used (not fs.read) because its completion goes through
+  // enqueue_task_concurrent on every platform; fs.read on Windows goes through
+  // libuv's own callback and never reaches the re-drain this test covers.
   const script = `
-    const fs = require('fs');
-    const fd = fs.openSync(process.execPath, 'r');
+    const crypto = require('crypto');
     let order = '';
     setInterval(() => { order += 'T'; }, 1).unref();
     setTimeout(() => {
       (function go(i) {
         if (i >= 20) {
-          const first = order.indexOf('R');
-          const last = order.lastIndexOf('R');
-          const between = order.slice(first, last + 1).split('T').length - 1;
-          console.log(JSON.stringify({ order, between }));
+          const runs = order.match(/R+/g) || [];
+          const maxRun = Math.max(0, ...runs.map(r => r.length));
+          console.log(JSON.stringify({ order, maxRun }));
           process.exit(0);
         }
-        fs.read(fd, Buffer.alloc(1), 0, 1, 0, () => {
+        crypto.pbkdf2('a', 'b', 1, 8, 'sha256', () => {
           order += 'R';
           go(i + 1);
         });
-        // Spin so the 1ms interval is overdue and the thread-pool read has
+        // Spin so the 1ms interval is overdue and the thread-pool job has
         // landed before the event loop decides whether to re-drain mid-tick.
-        // The spin is wall-clock, not a wait-for-condition: it constructs the
-        // state the yield check must observe.
-        const s = Date.now(); while (Date.now() - s < 2);
+        // Wall-clock, not wait-for-condition: it constructs the state the
+        // yield check must observe.
+        const s = Date.now(); while (Date.now() - s < 3);
       })(0);
     }, 5);
   `;
@@ -286,29 +288,29 @@ test("chained fs.read callbacks yield to due timers", async () => {
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(stderr).toBe("");
   const out = JSON.parse(stdout.trim());
-  // Node fires ~N-1 intervals between N reads with this shape; the fix only
-  // needs to guarantee the chain yields at all, so assert at least one.
-  expect({ between: out.between > 0, order: out.order }).toEqual({ between: true, order: out.order });
+  // Node and fixed Bun yield between every job (max consecutive R's = 1).
+  // Unfixed Bun runs the whole chain in one tick (max = 20); under CPU load
+  // the chain breaks up but the longest burst stays well above 3.
+  expect({ maxRunAtMost3: out.maxRun <= 3, order: out.order }).toEqual({ maxRunAtMost3: true, order: out.order });
   expect(exitCode).toBe(0);
 });
 
-test("chained fs.read callbacks yield to pending setImmediate", async () => {
-  // Same mid-tick re-drain: a setImmediate queued from the first read
-  // callback must run before the rest of the chain, matching Node's
-  // poll/check alternation.
+test("chained thread-pool callbacks yield to pending setImmediate", async () => {
+  // Same mid-tick re-drain: a setImmediate queued from the first callback
+  // must run before the rest of the chain, matching Node's poll/check
+  // alternation.
   const script = `
-    const fs = require('fs');
-    const fd = fs.openSync(process.execPath, 'r');
+    const crypto = require('crypto');
     let order = '';
     setTimeout(() => {
       (function go(i) {
         if (i >= 20) { console.log(JSON.stringify({ order })); process.exit(0); }
-        fs.read(fd, Buffer.alloc(1), 0, 1, 0, () => {
+        crypto.pbkdf2('a', 'b', 1, 8, 'sha256', () => {
           order += 'R';
           if (i === 0) setImmediate(() => { order += 'I'; });
           go(i + 1);
         });
-        const s = Date.now(); while (Date.now() - s < 2);
+        const s = Date.now(); while (Date.now() - s < 3);
       })(0);
     }, 1);
   `;
@@ -320,8 +322,8 @@ test("chained fs.read callbacks yield to pending setImmediate", async () => {
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(stderr).toBe("");
   const out = JSON.parse(stdout.trim());
-  // Node: "RIRRRR...". Bun before the fix: "RRRR...RI" (or "RRRR...R" with
-  // the immediate dropped by process.exit).
+  // Node: "RIRRRR...". Bun before the fix: "RRRR...R" (immediate dropped by
+  // process.exit) or "RRRR...RI".
   expect(out.order.slice(0, 2)).toBe("RI");
   expect(exitCode).toBe(0);
 });

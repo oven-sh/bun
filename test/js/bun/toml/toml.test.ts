@@ -536,12 +536,19 @@ describe("error contract", () => {
     expect(syntaxError("a = { b = isolated }").message).toBe(
       'TOML Parse error: String values must be quoted; write: b = "isolated"',
     );
-    // A quoted key containing a stop byte would otherwise truncate mid-key;
-    // the prefix is dropped so the suggestion is never garbled.
+    // The prefix is dropped (never printed half-formed) when the backward
+    // scan did not provably reach its start: a stop byte inside a quoted
+    // key, an escape that defeats quote-parity, or the length cap.
     expect(syntaxError('"a,b" = isolated').message).toBe(
       'TOML Parse error: String values must be quoted; write: "isolated"',
     );
     expect(syntaxError("'a[b' = isolated").message).toBe(
+      'TOML Parse error: String values must be quoted; write: "isolated"',
+    );
+    expect(syntaxError('"a,\\"b" = isolated').message).toBe(
+      'TOML Parse error: String values must be quoted; write: "isolated"',
+    );
+    expect(syntaxError(Buffer.alloc(70, "a").toString() + " = isolated").message).toBe(
       'TOML Parse error: String values must be quoted; write: "isolated"',
     );
   });

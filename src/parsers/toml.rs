@@ -273,21 +273,29 @@ impl<'a, 'log> Scanner<'a, 'log> {
             );
         }
         let mut key_start = pos;
+        let mut capped = false;
         while key_start > 0
-            && pos - key_start < 64
             && !matches!(self.src[key_start - 1], b'\n' | b'\r' | b'[' | b'{' | b',')
         {
+            if pos - key_start == 64 {
+                capped = true;
+                break;
+            }
             key_start -= 1;
         }
         while key_start < pos && matches!(self.src[key_start], b' ' | b'\t') {
             key_start += 1;
         }
         let prefix = &self.src[key_start..pos];
-        // Unbalanced quotes mean a stop byte sat inside a quoted key; drop
-        // the prefix rather than print half a key.
-        let balanced = prefix.iter().filter(|&&c| c == b'"').count() % 2 == 0
+        // A prefix the scan did not reach the start of (length cap, or a
+        // stop byte inside a quoted key) is dropped rather than printed
+        // half-formed; `\` in the prefix means a basic-key escape makes the
+        // quote-parity check untrustworthy.
+        let whole = !capped
+            && !bun_core::strings::contains(prefix, b"\\")
+            && prefix.iter().filter(|&&c| c == b'"').count() % 2 == 0
             && prefix.iter().filter(|&&c| c == b'\'').count() % 2 == 0;
-        if balanced && bun_core::strings::contains(prefix, b"=") {
+        if whole && bun_core::strings::contains(prefix, b"=") {
             self.err_fmt(
                 pos,
                 format_args!(

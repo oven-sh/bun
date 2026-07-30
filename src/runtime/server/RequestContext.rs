@@ -2502,7 +2502,7 @@ where
         // not derive framing from that body (or the user headers) either
         // (RFC 9110 §9.3.2): render the exact metadata+framing GET would.
         if HTTPStatusText::is_null_body(response.status_code()) {
-            Self::do_render_blob_corked(std::ptr::from_mut::<Self>(this));
+            Self::do_render_null_body_status_corked(std::ptr::from_mut::<Self>(this));
             return;
         }
 
@@ -3374,6 +3374,70 @@ where
         this.render_bytes();
     }
 
+    pub(crate) fn do_render_null_body_status(&mut self) {
+        if self.flags.has_abort_handler() {
+            if let Some(resp) = self.resp {
+                resp.run_corked_with_type(Self::do_render_null_body_status_corked, self);
+            }
+        } else {
+            Self::do_render_null_body_status_corked(std::ptr::from_mut::<Self>(self));
+        }
+    }
+
+    /// Render a response whose status forbids a body (RFC 9112 §6.3).
+    ///
+    /// `render_bytes()` → `try_end` emits `Content-Length: <blob size>` on the
+    /// wire. uWS suppresses that for 1xx/204 via `HTTP_NO_BODY_STATUS`, but a
+    /// 304 falls through and gets `Content-Length: 0`, which RFC 9110 §8.6
+    /// forbids unless it equals what the 200 would have carried. A downstream
+    /// cache updates its stored headers from a 304 (RFC 9111 §4.3.4), so the
+    /// fabricated zero overwrites the cached body's real length. Pass the
+    /// handler's Content-Length through (only it knows the 200 length) and
+    /// otherwise emit none.
+    ///
+    /// # Safety
+    /// `this` must point to a live `RequestContext` threaded through cork user-data.
+    fn do_render_null_body_status_corked(this: *mut Self) {
+        // SAFETY: caller upholds the fn-level contract.
+        let this = unsafe { &mut *this };
+        let Some(resp) = this.resp else { return };
+
+        let (status, app_content_length) = {
+            let response: &mut Response = this.response_weakref.get().unwrap();
+            let status = response.status_code();
+            let app_cl = (status == 304)
+                .then(|| {
+                    response
+                        .get_init_headers_mut()?
+                        .fast_get(jsc::HTTPHeaderName::ContentLength)
+                        .map(|cl| {
+                            // Parse before render_metadata(): do_write_headers()
+                            // fast_remove()s ContentLength and derefs the FetchHeaders.
+                            let s = cl.to_slice();
+                            HTTP::parse_content_length(s.slice()) as u64
+                        })
+                })
+                .flatten();
+            (status, app_cl)
+        };
+
+        if status != 304 {
+            this.render_metadata();
+            this.render_bytes();
+            return;
+        }
+
+        this.render_metadata();
+        if let Some(len) = app_content_length {
+            resp.write_header_int(b"content-length", len);
+        }
+        // uws_res_end_without_body bypasses internalEnd's writeMark(); emit
+        // Date here so 304 keeps it (try_end did, and RFC 9110 §6.6.1 MUSTs
+        // it for origin servers with a clock).
+        resp.write_mark();
+        this.end_without_body(this.should_close_connection());
+    }
+
     /// `render_metadata` adapter for `run_corked_with_type` (takes `fn(*mut U)`).
     fn render_metadata_corked(this: *mut Self) {
         // SAFETY: this is the live RequestContext threaded through cork user-data.
@@ -3904,7 +3968,7 @@ where
 
         // SAFETY: caller contract — `response` is live.
         if HTTPStatusText::is_null_body(unsafe { (*response).status_code() }) {
-            self.do_render_blob();
+            self.do_render_null_body_status();
             return;
         }
 

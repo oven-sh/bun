@@ -303,12 +303,17 @@ impl StaticRoute {
         // `do_render_blob_corked` drops the body for a null-body status, so
         // HEAD reports the zero bytes GET actually sends (RFC 9110 §9.3.2).
         // (For 1xx/204 uWS suppresses the Content-Length header entirely.)
-        let size = if HTTPStatusText::is_null_body(self.status_code) {
-            0
-        } else {
-            self.cached_blob_size
-        };
-        resp.write_header_int(b"Content-Length", size);
+        // 304 carries no synthesized Content-Length at all: RFC 9110 §8.6
+        // only allows the value a 200 would carry, and `from_js` already
+        // stripped any handler-supplied one, so there is nothing to forward.
+        if self.status_code != 304 {
+            let size = if HTTPStatusText::is_null_body(self.status_code) {
+                0
+            } else {
+                self.cached_blob_size
+            };
+            resp.write_header_int(b"Content-Length", size);
+        }
         resp.end_without_body(resp.should_close_connection());
     }
 
@@ -436,7 +441,17 @@ impl StaticRoute {
         // `render` and `FileRoute` already do. Writing them here with no
         // Content-Length (uWS suppresses it for 1xx/204) desyncs keep-alive.
         if HTTPStatusText::is_null_body(self.status_code) {
-            *did_finish = resp.try_end(b"", 0, resp.should_close_connection());
+            // try_end fabricates `Content-Length: 0` on a 304 (uWS only sets
+            // HTTP_NO_BODY_STATUS for 1xx/204). RFC 9110 §8.6 forbids any 304
+            // Content-Length that is not the 200's, and `from_js` stripped the
+            // handler's, so emit none. write_mark keeps the Date try_end wrote.
+            if self.status_code == 304 {
+                resp.write_mark();
+                resp.end_without_body(resp.should_close_connection());
+                *did_finish = true;
+            } else {
+                *did_finish = resp.try_end(b"", 0, resp.should_close_connection());
+            }
             return;
         }
         self.render_bytes(resp, did_finish);

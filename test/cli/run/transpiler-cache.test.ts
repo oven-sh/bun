@@ -146,26 +146,26 @@ describe("transpiler cache", () => {
     // No per-user cache location is available (no BUN_RUNTIME_TRANSPILER_CACHE_PATH,
     // no XDG_CACHE_HOME, no HOME) — the only remaining candidate is the shared
     // temp dir, so the cache must be disabled instead of using it.
-    const a = await bunRun(join(temp_dir, "a.js"), {
-      ...env,
-      BUN_RUNTIME_TRANSPILER_CACHE_PATH: undefined,
-      XDG_CACHE_HOME: undefined,
-      HOME: undefined,
-      USERPROFILE: undefined,
-      BUN_TMPDIR: undefined,
-      TMPDIR: shared_tmp,
-      TMP: shared_tmp,
-      TEMP: shared_tmp,
-    });
-    expect(a.stdout).toBe("no-tmpdir-cache");
+    expect(
+      await bunRun(join(temp_dir, "a.js"), {
+        ...env,
+        BUN_RUNTIME_TRANSPILER_CACHE_PATH: undefined,
+        XDG_CACHE_HOME: undefined,
+        HOME: undefined,
+        USERPROFILE: undefined,
+        BUN_TMPDIR: undefined,
+        TMPDIR: shared_tmp,
+        TMP: shared_tmp,
+        TEMP: shared_tmp,
+      }),
+    ).toSpawn("no-tmpdir-cache");
 
     // No cache entry may be written into (or read back from) a directory that
     // another local user could own and pre-populate.
     expect(readdirSync(shared_cache)).toEqual([]);
 
     // A per-user cache location still works.
-    const b = await bunRun(join(temp_dir, "a.js"), env);
-    expect(b.stdout).toBe("no-tmpdir-cache");
+    expect(await bunRun(join(temp_dir, "a.js"), env)).toSpawn("no-tmpdir-cache");
     expect(newCacheCount()).toBe(1);
   });
   test("works if the cache is not user-readable", async () => {

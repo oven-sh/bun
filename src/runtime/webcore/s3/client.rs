@@ -705,6 +705,7 @@ impl S3UploadStreamWrapper {
                 let js_err = stashed
                     .unwrap_or_else(|| s3_error_to_js(err, &self_.global, Some(self_.path.slice())));
                 js_err.ensure_still_alive();
+                let mut is_native = false;
                 if let Some(sink_ptr) = self_.sink {
                     // Sink pump still in-flight: fire source.close() so the JSSink
                     // controller's onClose cancels the upstream ReadableStream. The
@@ -712,6 +713,16 @@ impl S3UploadStreamWrapper {
                     // calls `detach_sink` and releases the pump ref.
                     // SAFETY: sink is live while held in `self_.sink`.
                     let sink = unsafe { &mut *sink_ptr.as_ptr() };
+                    // Captured before `source.close()`: on the native fast-path
+                    // there is no pump promise, so the pump +1 must be released
+                    // inline below (mirrors `FetchTasklet::cancel_request_body_sink`).
+                    // `end_from_stream` cleared `source` when it drove this call,
+                    // so this is only true when the S3 side failed first.
+                    is_native = matches!(
+                        sink.source,
+                        crate::webcore::streams::SourceHandle::ByteStream(_)
+                            | crate::webcore::streams::SourceHandle::FileReader(_)
+                    );
                     sink.ended = true;
                     sink.done = true;
                     if sink.flush_promise.has_value() {
@@ -721,6 +732,13 @@ impl S3UploadStreamWrapper {
                         sink.end_promise.reject(&self_.global, Ok(js_err))?;
                     }
                     sink.source.close(None);
+                }
+                if is_native {
+                    self_.detach_sink();
+                    // SAFETY: `self_` is the live Box allocation; this balances the
+                    // pump +1 from `upload_stream` (rc 2→1). The scopeguard above
+                    // releases the remaining ref at scope exit.
+                    unsafe { Self::deref_(std::ptr::from_mut::<Self>(self_)) };
                 }
                 if self_.end_promise.has_value() {
                     self_.end_promise.reject(&self_.global, Ok(js_err))?;

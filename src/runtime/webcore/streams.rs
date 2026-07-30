@@ -887,7 +887,10 @@ impl<T: crate::webcore::sink::JsSinkAbi> SourceHandle<T> {
 
     pub fn close(&mut self, err: Option<SysError>) {
         match *self {
-            SourceHandle::None => {}
+            // `JSController(0)` is the `assign_to_stream` pre-seed placeholder;
+            // the real controller bits haven't been installed yet, so there is
+            // no cell to notify.
+            SourceHandle::None | SourceHandle::JSController(0) => {}
             SourceHandle::JSController(bits) => {
                 let cpp = JSValue::from_encoded(bits);
                 // TODO: this should be got from a parameter / properly propagate exception upwards.
@@ -923,7 +926,7 @@ impl<T: crate::webcore::sink::JsSinkAbi> SourceHandle<T> {
 
     pub fn ready(&mut self, _amount: Option<BlobSizeType>, _offset: Option<BlobSizeType>) {
         match *self {
-            SourceHandle::None => {}
+            SourceHandle::None | SourceHandle::JSController(0) => {}
             SourceHandle::JSController(bits) => {
                 let cpp = JSValue::from_encoded(bits);
                 // TODO: this should be got from a parameter / properly propagate exception upwards.

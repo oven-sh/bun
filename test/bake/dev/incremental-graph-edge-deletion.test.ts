@@ -1,9 +1,12 @@
+import { expect } from "bun:test";
 import { devTest } from "../bake-harness";
 
-// This test is specifically testing the fix for disconnectEdgeFromDependencyList
-// where it was incorrectly setting first_dep to .none when there was still a next dependency
+// Regression test for disconnectEdgeFromDependencyList: when an edge at the
+// head of an imported file's dependency list is removed but still has a
+// next_dependency, the head must advance to that next edge instead of being
+// cleared. The old code cleared it and tripped an assertion on the next
+// rebuild. https://github.com/oven-sh/bun/issues/20529
 devTest("incremental graph handles edge deletion with next dependency", {
-  timeoutMultiplier: 4, // 1 minute timeout
   files: {
     "index.html": `<html>
 <head><title>Test</title></head>
@@ -40,20 +43,20 @@ console.log('util.js loaded');
     `.trim(),
   },
   async test(dev) {
-    await using client = await dev.client("/", { allowUnlimitedReloads: true });
+    // Populate the module graph. The assertion this covers fires server-side
+    // in finalizeBundle, so a browser client is unnecessary; fetching the
+    // page is enough to bundle index.js and its three util.js importers.
+    const scriptSrc = (await dev.fetch("/").text()).match(/src="(\/_bun\/client\/[^"]+\.js)"/)![1];
+    await dev.fetch(scriptSrc).expect.toInclude(`"A" + `);
 
-    // This creates a stress test scenario where multiple files import util.js
-    // When we delete and recreate files rapidly, it tests the edge case where
-    // disconnectEdgeFromDependencyList needs to properly handle multiple dependencies
+    // util.js now has three dependents (a, b, c). Repeatedly drop and
+    // re-add the a→util edge; whichever dependent is currently at the head
+    // of util.js's list exercises the prev=null, next!=null unlink path.
     await dev.stressTest(async () => {
       for (let i = 0; i < 10; i++) {
-        console.log(`Cycle ${i + 1}/10`);
-
-        // Delete util.js which is imported by multiple files
         await Bun.write(dev.join("util.js"), "");
         await Bun.sleep(10);
 
-        // Recreate it
         await Bun.write(
           dev.join("util.js"),
           `
@@ -63,7 +66,6 @@ console.log('util.js loaded');
         );
         await Bun.sleep(10);
 
-        // Delete and recreate one of the importers
         await Bun.write(dev.join("a.js"), "");
         await Bun.sleep(10);
 
@@ -79,10 +81,15 @@ console.log('a.js loaded');
       }
     });
 
-    // If we get here without crashing, the test passed
-    console.log("Test completed successfully - no crash occurred");
-
-    // Clear the messages array to satisfy the test harness
-    client.messages.length = 0;
+    // After the churn the graph must still be intact: a synchronized write
+    // to util.js should rebundle cleanly and the new value should reach the
+    // client bundle through all three importers.
+    await dev.write("util.js", `export const util = '-after-stress';`);
+    const newScriptSrc = (await dev.fetch("/").text()).match(/src="(\/_bun\/client\/[^"]+\.js)"/)![1];
+    const bundle = await dev.fetch(newScriptSrc).text();
+    expect(bundle).toInclude(`"A" + `);
+    expect(bundle).toInclude(`"B" + `);
+    expect(bundle).toInclude(`"C" + `);
+    expect(bundle).toInclude(`"-after-stress"`);
   },
 });

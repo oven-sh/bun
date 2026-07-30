@@ -3384,16 +3384,10 @@ where
         }
     }
 
-    /// Render a response whose status forbids a body (RFC 9112 §6.3).
-    ///
-    /// `render_bytes()` → `try_end` emits `Content-Length: <blob size>` on the
-    /// wire. uWS suppresses that for 1xx/204 via `HTTP_NO_BODY_STATUS`, but a
-    /// 304 falls through and gets `Content-Length: 0`, which RFC 9110 §8.6
-    /// forbids unless it equals what the 200 would have carried. A downstream
-    /// cache updates its stored headers from a 304 (RFC 9111 §4.3.4), so the
-    /// fabricated zero overwrites the cached body's real length. Pass the
-    /// handler's Content-Length through (only it knows the 200 length) and
-    /// otherwise emit none.
+    /// Render a response whose status forbids a body (RFC 9112 §6.3). `try_end`
+    /// would put `Content-Length: 0` on a 304 (uWS only suppresses it for
+    /// 1xx/204); RFC 9110 §8.6 only allows the 200's length, so forward the
+    /// handler's value or emit none.
     ///
     /// # Safety
     /// `this` must point to a live `RequestContext` threaded through cork user-data.
@@ -3404,11 +3398,9 @@ where
         let (status, app_content_length) = {
             let response: &mut Response = this.response_weakref.get().unwrap();
             let status = response.status_code();
+            // Parsed before render_metadata() fast_remove()s it and derefs the headers.
             let app_cl = (status == 304)
                 .then(|| {
-                    // Parse before render_metadata(): do_write_headers()
-                    // fast_remove()s ContentLength and derefs the FetchHeaders.
-                    // A non-1*DIGIT value is dropped rather than coerced to 0.
                     let s = response
                         .get_init_headers_mut()?
                         .fast_get(jsc::HTTPHeaderName::ContentLength)?
@@ -3426,17 +3418,13 @@ where
                 if let Some(len) = app_content_length {
                     resp.write_header_int(b"content-length", len);
                 }
-                // uws_res_end_without_body bypasses internalEnd's writeMark();
-                // emit Date here so 304 keeps it (try_end did, and RFC 9110
-                // §6.6.1 MUSTs it for origin servers with a clock).
+                // end_without_body skips writeMark(); keep Date as try_end did.
                 resp.write_mark();
                 this.end_without_body(this.should_close_connection());
                 return;
             }
         }
-        // Non-304, and the 304 resp-gone edge: render_bytes unconditionally
-        // runs detach_response/end_request_streaming_and_drain/deref, matching
-        // the base-ref release do_render_blob_corked always provided.
+        // render_bytes releases the base ref on every path (resp gone included).
         this.render_bytes();
     }
 

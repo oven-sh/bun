@@ -302,10 +302,8 @@ impl StaticRoute {
         self.render_metadata(resp);
         // `do_render_blob_corked` drops the body for a null-body status, so
         // HEAD reports the zero bytes GET actually sends (RFC 9110 §9.3.2).
-        // (For 1xx/204 uWS suppresses the Content-Length header entirely.)
-        // 304 carries no synthesized Content-Length at all: RFC 9110 §8.6
-        // only allows the value a 200 would carry, and `from_js` already
-        // stripped any handler-supplied one, so there is nothing to forward.
+        // 304: no synthesized Content-Length (RFC 9110 §8.6 only allows the
+        // 200's length; `from_js` already stripped the handler's).
         if self.status_code != 304 {
             let size = if HTTPStatusText::is_null_body(self.status_code) {
                 0
@@ -441,10 +439,8 @@ impl StaticRoute {
         // `render` and `FileRoute` already do. Writing them here with no
         // Content-Length (uWS suppresses it for 1xx/204) desyncs keep-alive.
         if HTTPStatusText::is_null_body(self.status_code) {
-            // try_end fabricates `Content-Length: 0` on a 304 (uWS only sets
-            // HTTP_NO_BODY_STATUS for 1xx/204). RFC 9110 §8.6 forbids any 304
-            // Content-Length that is not the 200's, and `from_js` stripped the
-            // handler's, so emit none. write_mark keeps the Date try_end wrote.
+            // 304: try_end would write Content-Length: 0 (RFC 9110 §8.6 forbids
+            // any but the 200's length); write_mark keeps Date.
             if self.status_code == 304 {
                 resp.write_mark();
                 resp.end_without_body(resp.should_close_connection());

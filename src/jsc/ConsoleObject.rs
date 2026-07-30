@@ -425,7 +425,10 @@ fn message_with_type_and_level_(
         // SAFETY: no other borrow of the console is live in this
         // early-return arm (the deferred `_indent_guard` only holds the raw
         // pointer, not a reference).
-        let ew = unsafe { vm_console_mut(global) }.error_writer();
+        let this = unsafe { vm_console_mut(global) };
+        let default_indent = this.default_indent;
+        let ew = this.error_writer();
+        let _ = formatter::write_indent_n(u32::from(default_indent), ew);
         let _ = ew.write_all(text.as_bytes());
         let _ = ew.flush();
         return Ok(());
@@ -545,9 +548,11 @@ fn message_with_type_and_level_(
         // the only later uses are in the mutually-exclusive `Trace` block, and
         // `message_type == Log` here.
         let w = unsafe { (*console).writer() };
+        let _ = formatter::write_indent_n(u32::from(default_indent), w);
         let _ = w.write_all(b"\n");
         let _ = w.flush();
     } else if message_type != MessageType::Trace {
+        let _ = formatter::write_indent_n(u32::from(default_indent), writer);
         let _ = writer.write_all(b"undefined\n");
     }
 

@@ -143,13 +143,15 @@ NamedError: console.error a named error
 `);
 });
 
-it.concurrent("console.group indents console.count and console.time/timeLog/timeEnd", async () => {
+it.concurrent("console.group indents count/time/assert and the no-args log paths", async () => {
   const src = `
     console.group("G1");
     console.count("cnt");
     console.count("cnt");
+    console.log();
     console.group("G2");
     console.count("cnt");
+    console.assert(false);
     console.time("t");
     console.timeLog("t");
     console.timeEnd("t");
@@ -157,6 +159,8 @@ it.concurrent("console.group indents console.count and console.time/timeLog/time
     console.count("cnt");
     console.groupEnd();
     console.count("cnt");
+    console.log();
+    console.assert(false);
     console.time("u");
     console.timeEnd("u");
   `;
@@ -172,17 +176,21 @@ it.concurrent("console.group indents console.count and console.time/timeLog/time
     "G1\n" + //
       "  cnt: 1\n" +
       "  cnt: 2\n" +
+      "  \n" +
       "  G2\n" +
       "    cnt: 3\n" +
       "  cnt: 4\n" +
-      "cnt: 5\n",
+      "cnt: 5\n" +
+      "\n",
   );
 
   const stderrLines = stderr.replaceAll("\r\n", "\n").replace(/\n$/, "").split("\n");
-  expect(stderrLines.length).toBe(3);
-  expect(stderrLines[0]).toMatch(/^    \[[\d.]+[mnµ]?s\] t$/);
+  expect(stderrLines.length).toBe(5);
+  expect(stderrLines[0]).toBe("    Assertion failed");
   expect(stderrLines[1]).toMatch(/^    \[[\d.]+[mnµ]?s\] t$/);
-  expect(stderrLines[2]).toMatch(/^\[[\d.]+[mnµ]?s\] u$/);
+  expect(stderrLines[2]).toMatch(/^    \[[\d.]+[mnµ]?s\] t$/);
+  expect(stderrLines[3]).toBe("Assertion failed");
+  expect(stderrLines[4]).toMatch(/^\[[\d.]+[mnµ]?s\] u$/);
   expect(exitCode).toBe(0);
 });
 

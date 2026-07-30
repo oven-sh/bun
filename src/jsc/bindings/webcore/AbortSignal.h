@@ -105,7 +105,6 @@ public:
     bool hasActiveTimeoutTimer() const { return m_timeout != nullptr; }
     void cancelTimer();
     void releaseTimerIfUnobserved();
-    void jsWrapperIsBeingFinalized();
     bool hasAbortEventListener() const { return m_flags & static_cast<uint8_t>(AbortSignalFlags::HasAbortEventListener); }
     bool isFiringEventListeners() const { return m_flags & static_cast<uint8_t>(AbortSignalFlags::IsFiringEventListeners); }
 

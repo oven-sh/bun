@@ -408,7 +408,11 @@ void JSAbortSignalOwner::finalize(JSC::Handle<JSC::Unknown> handle, void* contex
     auto& world = *static_cast<DOMWrapperWorld*>(context);
     auto& signal = jsAbortSignal->wrapped();
     uncacheWrapper(world, &signal, jsAbortSignal);
-    signal.jsWrapperIsBeingFinalized();
+    // JS can no longer observe the abort. Native holders that may observe
+    // later root this wrapper (Request caches it on m_signal; fetch et al.
+    // register pending activity), so reaching finalize with no observer means
+    // the m_timeout cycle is all that keeps the signal alive.
+    signal.releaseTimerIfUnobserved();
 }
 
 #if ENABLE(BINDING_INTEGRITY)

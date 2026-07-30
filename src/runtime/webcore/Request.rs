@@ -1518,6 +1518,23 @@ impl Request {
         Ok(req)
     }
 
+    /// Root the stored signal's JS wrapper on `this_value`'s codegen'd
+    /// `m_signal` cache slot (WriteBarrier, GC-visited). Keeps the signal
+    /// wrapper alive while this Request is, so `JSAbortSignalOwner::finalize`'s
+    /// unobserved-timer release only runs once no JS-reachable holder remains.
+    fn cache_signal_wrapper(&self, this_value: JSValue, global_this: &JSGlobalObject) {
+        if let Some(signal) = self.signal.get() {
+            let js_signal = signal.to_js(global_this);
+            if !js_signal.is_empty_or_undefined_or_null() {
+                crate::generated_classes::js_Request::signal_set_cached(
+                    this_value,
+                    global_this,
+                    js_signal,
+                );
+            }
+        }
+    }
+
     pub(crate) fn constructor(
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
@@ -1526,6 +1543,7 @@ impl Request {
         let arguments = callframe.arguments();
 
         let request = Self::construct_into(global_this, arguments, this_value)?;
+        request.cache_signal_wrapper(this_value, global_this);
         Ok(Request::new(request))
     }
 
@@ -1542,6 +1560,8 @@ impl Request {
         // SAFETY: cloned_ptr was just created via heap::alloc above; toJS adopts ownership.
         let js_wrapper = unsafe { (*cloned_ptr).to_js(global_this) };
         self.sync_cloned_body_stream_caches(this_value, js_wrapper, global_this);
+        // SAFETY: cloned_ptr is live (owned by js_wrapper's m_ctx).
+        unsafe { &*cloned_ptr }.cache_signal_wrapper(js_wrapper, global_this);
         Ok(js_wrapper)
     }
 

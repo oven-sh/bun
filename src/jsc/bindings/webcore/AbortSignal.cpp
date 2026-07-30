@@ -72,18 +72,6 @@ Ref<AbortSignal> AbortSignal::timeout(ScriptExecutionContext& context, uint64_t 
     return signal;
 }
 
-// With only the JS wrapper and timeout() above holding the signal, nothing
-// can observe the abort once the wrapper is collected; break the m_timeout
-// cycle now instead of at the deadline. This is the count seen from
-// JSAbortSignalOwner::finalize before the cell's m_wrapped Ref is released.
-static constexpr unsigned timeoutCycleRefCount = 2;
-
-void AbortSignal::jsWrapperIsBeingFinalized()
-{
-    if (m_timeout && refCount() == timeoutCycleRefCount)
-        releaseTimerIfUnobserved();
-}
-
 Ref<AbortSignal> AbortSignal::any(ScriptExecutionContext& context, const Vector<RefPtr<AbortSignal>>& signals)
 {
     Ref resultSignal = AbortSignal::create(&context);

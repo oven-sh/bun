@@ -3141,8 +3141,7 @@ mod posix_impl {
     pub fn lseek_allow_espipe(fd: Fd, offset: i64, whence: i32) -> Maybe<i64> {
         #[cfg(target_env = "ohos")]
         {
-            // SAFETY: fd is a live descriptor.
-            let rc = unsafe { safe_libc::lseek(fd.native(), offset, whence) };
+            let rc = safe_libc::lseek(fd.native(), offset, whence);
             if rc < 0 {
                 let raw_errno = crate::last_errno();
                 if raw_errno == libc::ESPIPE as i32 {

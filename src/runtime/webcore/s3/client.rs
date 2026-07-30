@@ -680,6 +680,10 @@ impl S3UploadStreamWrapper {
                 if let Some(sink_ptr) = self_.sink {
                     // SAFETY: sink is live while held in `self_.sink`.
                     let sink = unsafe { &mut *sink_ptr.as_ptr() };
+                    if sink.flush_promise.has_value() {
+                        sink.flush_promise
+                            .resolve(&self_.global, JSValue::js_number(0.0))?;
+                    }
                     if sink.end_promise.has_value() {
                         sink.end_promise
                             .resolve(&self_.global, JSValue::js_number(0.0))?;
@@ -991,6 +995,11 @@ pub fn upload_stream(
     // early-error paths below (which detach_sink → finalize → deref) stay balanced.
     task.ref_count.set(task.ref_count.get() + 1);
 
+    // Captured before `assign_to_stream`: a synchronously-draining stream may
+    // resolve + clear `ctx.end_promise` before control returns here.
+    let end_promise_value = ctx.end_promise.value();
+    end_promise_value.ensure_still_alive();
+
     // `Option<NonNull<c_void>>` is layout-compatible with `*mut c_void` (niche).
     let signal_ptr_slot = (&raw mut sink.signal.ptr).cast::<*mut c_void>();
     // `assignToStream` routes through `readStreamIntoSink` which uses the default
@@ -1001,8 +1010,6 @@ pub fn upload_stream(
     assignment_result.ensure_still_alive();
 
     task.continue_stream();
-
-    let end_promise_value = ctx.end_promise.value();
 
     if let Some(err_value) = assignment_result.to_error() {
         ctx.handle_reject_stream(err_value);
@@ -1033,9 +1040,15 @@ pub fn upload_stream(
         }
     }
 
-    // The stream drained synchronously inside `assign_to_stream` (no promise returned).
-    if !sink.ended {
-        let _ = sink.end(None);
+    // The stream drained synchronously inside `assign_to_stream` (no promise
+    // returned). `handle_resolve_stream` destroys the sink, so re-borrow from
+    // `ctx.sink` rather than the `sink` reference taken before assign_to_stream.
+    if let Some(sink_ptr) = ctx.sink {
+        // SAFETY: sink is live while held in `ctx.sink`.
+        let sink = unsafe { &mut *sink_ptr.as_ptr() };
+        if !sink.ended {
+            let _ = sink.end(None);
+        }
     }
     ctx.handle_resolve_stream();
     Ok(end_promise_value)

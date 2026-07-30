@@ -726,6 +726,13 @@ describe.concurrent("bun update --interactive", () => {
     const packageJson = await Bun.file(join(dir, "package.json")).json();
     expect(packageJson.workspaces.catalog).toEqual({ "no-deps": "^2.0.0" });
     expect(packageJson.workspaces.catalogs).toEqual({ pinned: { "no-deps": "~2.0.0" } });
+
+    const appJson = await Bun.file(join(dir, "packages", "app", "package.json")).json();
+    const libJson = await Bun.file(join(dir, "packages", "lib", "package.json")).json();
+    const otherJson = await Bun.file(join(dir, "packages", "other", "package.json")).json();
+    expect(appJson.dependencies).toEqual({ "no-deps": "catalog:" });
+    expect(libJson.dependencies).toEqual({ "no-deps": "catalog:pinned" });
+    expect(otherJson.dependencies).toEqual({ "no-deps": "catalog:pinned" });
   });
 
   it("should handle version ranges with multiple conditions", async () => {

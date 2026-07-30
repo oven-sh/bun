@@ -283,9 +283,10 @@ pub static OVERRIDDEN_DEFAULT_USER_AGENT: std::sync::OnceLock<&'static [u8]> =
     std::sync::OnceLock::new();
 
 /// Idle timeout for HTTP client sockets, in seconds. The timer is armed in
-/// `on_open` (so it covers the TLS handshake) and re-armed on every read/write;
-/// if no bytes move in either direction for this long the request fails with
-/// `error.Timeout`. 0 disables the timer (matching `disable_timeout = true`).
+/// `on_open` (so it covers the TLS handshake) and re-armed on writes and on
+/// body-phase reads; response-header reads do not re-arm it, so it is an
+/// absolute deadline for the header block to complete (undici `headersTimeout`
+/// semantics). 0 disables the timer (matching `disable_timeout = true`).
 /// Overridable via `BUN_CONFIG_HTTP_IDLE_TIMEOUT`. Default is 5 minutes — the
 /// previous hard-coded value — so unchanged environments see identical
 /// behaviour except that the handshake phase is now also covered. Values
@@ -3658,11 +3659,12 @@ impl<'a> HTTPClient<'a> {
             buffer.list.as_slice()
         };
 
-        // Persist the unparsed tail for the next `on_data` and re-arm the
-        // receive timeout. When `needs_move`, `to_read` is a suffix of
-        // `incoming_data` and is copied into the (currently empty) accumulation
-        // buffer; otherwise `to_read` is a suffix of `buffer`, so the consumed
-        // prefix is drained and `buffer` is moved back into state.
+        // Persist the unparsed tail for the next `on_data`. When `needs_move`,
+        // `to_read` is a suffix of `incoming_data` and is copied into the
+        // (currently empty) accumulation buffer; otherwise `to_read` is a suffix
+        // of `buffer`, so the consumed prefix is drained and `buffer` is moved
+        // back into state. Does not re-arm the idle timer (header phase is an
+        // absolute deadline; see [`IDLE_TIMEOUT_SECONDS`]).
         macro_rules! short_read {
             () => {{
                 bun_core::scoped_log!(fetch, "handleShortRead");
@@ -3678,7 +3680,6 @@ impl<'a> HTTPClient<'a> {
                         .drain_front(buffer.list.len().saturating_sub(keep));
                     self.state.response_message_buffer = buffer;
                 }
-                self.set_timeout(&socket);
                 return;
             }};
         }
@@ -3766,6 +3767,8 @@ impl<'a> HTTPClient<'a> {
                 return;
             }
         };
+        // Headers complete: start the body-idle window fresh (see [`IDLE_TIMEOUT_SECONDS`]).
+        self.set_timeout(&socket);
 
         if (self.state.content_encoding_i as usize) < response.headers.list.len()
             && !self.state.flags.did_set_content_encoding
@@ -3822,7 +3825,6 @@ impl<'a> HTTPClient<'a> {
                 return;
             }
         } else if self.state.response_stage == ResponseStage::BodyChunk {
-            self.set_timeout(&socket);
             let report_progress = match self.handle_response_body_chunked_encoding(to_read) {
                 Ok(b) => b,
                 Err(err) => {
@@ -3857,8 +3859,15 @@ impl<'a> HTTPClient<'a> {
         }
 
         if self.proxy_tunnel.is_some() {
-            // if we have a tunnel we dont care about the other stages, we will just tunnel the data
-            self.set_timeout(&socket);
+            // Body phase only, mirroring the non-proxy dispatch below (header
+            // phase is an absolute deadline; see [`IDLE_TIMEOUT_SECONDS`]).
+            debug_assert!(!self.state.flags.receive_paused); // maybe_pause_receive bails on proxy_tunnel
+            if matches!(
+                self.state.response_stage,
+                ResponseStage::Body | ResponseStage::BodyChunk
+            ) {
+                self.set_timeout(&socket);
+            }
             self.proxy_tunnel_mut().unwrap().receive(incoming_data);
             return;
         }

@@ -1552,43 +1552,58 @@ describe("deno_task", () => {
       // this was rejected, `>>` silently overwrote from offset 0 (identical to
       // `>`), losing data without warning.
       const msg = "bun: can't append (>>) output to a Buffer or ArrayBuffer";
+      const targets: Array<[string, () => ArrayBufferLike | ArrayBufferView]> = [
+        ["Buffer", () => Buffer.alloc(16, ".")],
+        ["ArrayBuffer", () => new ArrayBuffer(16)],
+        ["Uint8Array", () => new Uint8Array(16)],
+      ];
+      const bytes = (b: ArrayBufferLike | ArrayBufferView) =>
+        b instanceof ArrayBuffer || b instanceof SharedArrayBuffer ? new Uint8Array(b) : new Uint8Array(b.buffer);
 
-      test(">> Buffer (builtin)", async () => {
-        const buf = Buffer.alloc(16, ".");
-        const { stderr, exitCode } = await $`echo AAAA >> ${buf}`.quiet();
-        expect(stderr.toString()).toContain(msg);
-        expect(buf.toString()).toBe(Buffer.alloc(16, ".").toString());
-        expect(exitCode).toBe(1);
+      describe.each(targets)("builtin -> %s", (_name, make) => {
+        test(">>", async () => {
+          const buf = make();
+          const before = bytes(buf).slice();
+          const { stderr, exitCode } = await $`echo AAAA >> ${buf}`.quiet();
+          expect(stderr.toString()).toContain(msg);
+          expect(bytes(buf)).toEqual(before);
+          expect(exitCode).toBe(1);
+        });
+        test("2>>", async () => {
+          const buf = make();
+          const { stderr, exitCode } = await $`echo AAAA 2>> ${buf}`.quiet();
+          expect(stderr.toString()).toContain(msg);
+          expect(exitCode).toBe(1);
+        });
+        test("&>>", async () => {
+          const buf = make();
+          const { stderr, exitCode } = await $`echo AAAA &>> ${buf}`.quiet();
+          expect(stderr.toString()).toContain(msg);
+          expect(exitCode).toBe(1);
+        });
       });
 
-      test(">> ArrayBuffer (builtin)", async () => {
-        const ab = new ArrayBuffer(16);
-        const { stderr, exitCode } = await $`echo AAAA >> ${ab}`.quiet();
-        expect(stderr.toString()).toContain(msg);
-        expect(new Uint8Array(ab).every(b => b === 0)).toBe(true);
-        expect(exitCode).toBe(1);
-      });
-
-      test("2>> Buffer (builtin)", async () => {
-        const buf = Buffer.alloc(16, ".");
-        const { stderr, exitCode } = await $`echo AAAA 2>> ${buf}`.quiet();
-        expect(stderr.toString()).toContain(msg);
-        expect(exitCode).toBe(1);
-      });
-
-      test("&>> Buffer (builtin)", async () => {
-        const buf = Buffer.alloc(16, ".");
-        const { stderr, exitCode } = await $`echo AAAA &>> ${buf}`.quiet();
-        expect(stderr.toString()).toContain(msg);
-        expect(exitCode).toBe(1);
-      });
-
-      test(">> Buffer (external command)", async () => {
-        const buf = Buffer.alloc(16, ".");
-        const { stderr, exitCode } = await $`${BUN} -e 'console.log("AAAA")' >> ${buf}`.env(bunEnv).quiet();
-        expect(stderr.toString()).toContain(msg);
-        expect(buf.toString()).toBe(Buffer.alloc(16, ".").toString());
-        expect(exitCode).toBe(1);
+      describe.each(targets)("external -> %s", (_name, make) => {
+        test.concurrent(">>", async () => {
+          const buf = make();
+          const before = bytes(buf).slice();
+          const { stderr, exitCode } = await $`${BUN} -e 'console.log("AAAA")' >> ${buf}`.env(bunEnv).quiet();
+          expect(stderr.toString()).toContain(msg);
+          expect(bytes(buf)).toEqual(before);
+          expect(exitCode).toBe(1);
+        });
+        test.concurrent("2>>", async () => {
+          const buf = make();
+          const { stderr, exitCode } = await $`${BUN} -e 'console.error("AAAA")' 2>> ${buf}`.env(bunEnv).quiet();
+          expect(stderr.toString()).toContain(msg);
+          expect(exitCode).toBe(1);
+        });
+        test.concurrent("&>>", async () => {
+          const buf = make();
+          const { stderr, exitCode } = await $`${BUN} -e 'console.log("AAAA")' &>> ${buf}`.env(bunEnv).quiet();
+          expect(stderr.toString()).toContain(msg);
+          expect(exitCode).toBe(1);
+        });
       });
 
       test("> Buffer still overwrites from offset 0", async () => {

@@ -478,9 +478,9 @@ impl FetchTasklet {
 
         self.scheduled_response_buffer = MutableString::default();
         // Always detach request_body regardless of type.
-        // When request_body is a ReadableStream, startRequestStream() creates
-        // an independent Strong reference in ResumableSink, so FetchTasklet's
-        // reference becomes redundant and must be released to avoid leaks.
+        // When request_body is a ReadableStream, startRequestStream() hands
+        // the stream off to `assign_to_stream`, so FetchTasklet's reference
+        // becomes redundant and must be released to avoid leaks.
         self.request_body.detach();
 
         self.abort_reason.deinit();

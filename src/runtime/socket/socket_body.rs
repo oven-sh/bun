@@ -2966,6 +2966,9 @@ impl<const SSL: bool> NewSocket<SSL> {
                     // buffer, stop re-arming the writable retry, and report the
                     // errno so the event-loop caller surfaces it (the data was
                     // already acknowledged to JS, so only an 'error' can).
+                    if self.fatal_write_errno.get() == 0 {
+                        self.fatal_write_errno.set(fatal_errno);
+                    }
                     self.buffered_data_for_node_net
                         .with_mut(|b| b.clear_and_free());
                     return fatal_errno;

@@ -1,6 +1,7 @@
 import assert from "assert";
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdirSync, readFileSync, symlinkSync, writeFileSync } from "fs";
+import { execFileSync } from "child_process";
+import { mkdirSync, promises as fsPromises, readFileSync, symlinkSync, writeFileSync } from "fs";
 import {
   bunEnv,
   bunExe,
@@ -22,9 +23,6 @@ describe("Bun.build", () => {
   // pending. Before the batch-scoped WaitGroup, Bun.build() waited for the whole
   // pool to drain, so it finished only after the blocker did.
   test.skipIf(isWindows)("is not blocked by unrelated WorkPool tasks", async () => {
-    const { promises: fs } = await import("fs");
-    const { execFileSync } = await import("child_process");
-
     using dir = tempDir("bun-build-pool-independence", {
       "entry.js": "export const x = 1;\n",
     });
@@ -34,7 +32,7 @@ describe("Bun.build", () => {
     // Occupies one WorkPool worker: node:fs readFile is an AsyncFSTask, and
     // opening a FIFO with no writer parks the worker until a writer appears.
     let blockerSettled = false;
-    const blocker = fs.readFile(fifo).then(
+    const blocker = fsPromises.readFile(fifo).then(
       () => void (blockerSettled = true),
       () => void (blockerSettled = true),
     );
@@ -43,17 +41,17 @@ describe("Bun.build", () => {
     const release = async () => {
       if (released) return;
       released = true;
-      const w = await fs.open(fifo, "w");
+      const w = await fsPromises.open(fifo, "w");
       await w.write("x");
       await w.close();
     };
 
-    // There is no observable signal for "a pool worker is parked", so wait for
-    // the worker to reach open(2) before building. The safety release bounds a
-    // regression: without it a pool-wide barrier would deadlock this test rather
-    // than fail it.
-    await Bun.sleep(50);
-    const safety = setTimeout(release, isDebug || isASAN ? 8000 : 2000);
+    // No wait is needed before building: the pool counts a task at schedule
+    // time, synchronously inside readFile(), not when the worker parks. The
+    // safety release bounds a regression -- without it a pool-wide barrier would
+    // deadlock here. It must stay under the 5s default test timeout so a
+    // regression reports the assertion below rather than a timeout.
+    const safety = setTimeout(release, isDebug || isASAN ? 3000 : 1500);
 
     let settledAtBuildEnd: boolean;
     try {

@@ -4,7 +4,7 @@ use bun_sys::Error as SysError;
 
 use crate::webcore::blob::SizeType as BlobSizeType;
 use crate::webcore::fetch::fetch_tasklet::FetchTasklet;
-use crate::webcore::jsc::{JSGlobalObject, JSPromise, JSValue};
+use crate::webcore::jsc::{JSGlobalObject, JSPromise, JSPromiseStrong, JSValue};
 use crate::webcore::sink::JSSink;
 use crate::webcore::streams::{SourceHandle, Start, StartTag, StreamResult, Writable};
 
@@ -62,6 +62,19 @@ pub struct FetchRequestBodySink {
     pub task: Option<BackRef<FetchTasklet>>,
     pub source: SourceHandle<FetchRequestBodySink>,
     pub high_water_mark: BlobSizeType,
+    /// Pending `flush(true)` promise for the `readDirectStream` /
+    /// `BunAsyncIterableSource` pump, which parks on this promise (not
+    /// `m_onPull`) on `Writable::Backpressure`. Resolved by `on_drain`.
+    pub flush_promise: JSPromiseStrong,
+    /// Bytes handed to `write_request_data` since the last `on_drain` ack.
+    /// JS-thread-only accounting: the shared `stream_buffer` is drained
+    /// concurrently by the HTTP thread, so its `size()` cannot gate
+    /// backpressure without racing (the pump would never yield when the HTTP
+    /// thread keeps up). `on_drain` — dispatched from `report_drain` via a
+    /// `ConcurrentTask` — is the sole writer that resets this, so
+    /// `pending_bytes > 0` guarantees an `on_drain` is in flight to resolve
+    /// `flush_promise`.
+    pub pending_bytes: BlobSizeType,
     pub ended: bool,
     pub done: bool,
 }
@@ -72,6 +85,8 @@ impl Default for FetchRequestBodySink {
             task: None,
             source: SourceHandle::default(),
             high_water_mark: 16384,
+            flush_promise: JSPromiseStrong::default(),
+            pending_bytes: 0,
             ended: false,
             done: false,
         }
@@ -122,7 +137,10 @@ impl FetchRequestBodySink {
             // loop returns to `auto_tick()` and polls I/O between writes;
             // batching lets the HTTP thread's `report_drain` ConcurrentTask
             // re-arm inside `tick()` and livelock an in-process peer.
+            // `pending_bytes` remains the "drain ack owed" sentinel for
+            // `flush_from_js(wait=true)`.
             Writable::Owned(len) | Writable::Backpressure(len) if len > 0 => {
+                self.pending_bytes = self.pending_bytes.saturating_add(len);
                 Writable::Backpressure(len)
             }
             other => other,
@@ -154,10 +172,23 @@ impl FetchRequestBodySink {
     pub fn flush_from_js(
         &mut self,
         global_this: &JSGlobalObject,
-        _wait: bool,
+        wait: bool,
     ) -> bun_sys::Result<JSValue> {
-        // Backpressure is signalled to the upstream via `source.ready()`; no
-        // per-flush promise is allocated.
+        if self.flush_promise.has_value() {
+            return bun_sys::Result::Ok(self.flush_promise.value());
+        }
+        if self.done || self.ended {
+            return bun_sys::Result::Ok(JSPromise::resolved_promise_value(
+                global_this,
+                JSValue::js_number(0.0),
+            ));
+        }
+        if wait && self.pending_bytes > 0 {
+            // Bytes were scheduled to the HTTP thread since the last drain ack,
+            // so an `on_drain` is guaranteed to arrive and resolve this.
+            self.flush_promise = JSPromiseStrong::init(global_this);
+            return bun_sys::Result::Ok(self.flush_promise.value());
+        }
         bun_sys::Result::Ok(JSPromise::resolved_promise_value(
             global_this,
             JSValue::js_number(0.0),
@@ -193,10 +224,17 @@ impl FetchRequestBodySink {
 
     /// Called from `FetchTasklet::resume_request_data_stream` (main thread)
     /// after the HTTP thread reports the shared stream buffer has drained.
-    /// Wakes the upstream source (JS controller `m_onPull` or native
+    /// Resolves any pending `flush(true)` promise (async-iterable pump) and
+    /// wakes the upstream source (JS controller `m_onPull` or native
     /// `ByteStream::resume`) so the pump resumes pulling.
-    pub fn on_drain(&mut self, _global_this: &JSGlobalObject) {
+    pub fn on_drain(&mut self, global_this: &JSGlobalObject) {
         bun_core::scoped_log!(FetchRequestBodySinkLog, "onDrain");
+        self.pending_bytes = 0;
+        if self.flush_promise.has_value() {
+            let _ = self
+                .flush_promise
+                .resolve(global_this, JSValue::js_number(0.0));
+        }
         self.source.ready(None, None);
     }
 

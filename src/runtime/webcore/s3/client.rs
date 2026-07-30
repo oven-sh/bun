@@ -678,6 +678,10 @@ impl S3UploadStreamWrapper {
                 if let Some(sink_ptr) = self_.sink {
                     // SAFETY: sink is live while held in `self_.sink`.
                     let sink = unsafe { &mut *sink_ptr.as_ptr() };
+                    if sink.flush_promise.has_value() {
+                        sink.flush_promise
+                            .resolve(&self_.global, JSValue::js_number(0.0))?;
+                    }
                     if sink.end_promise.has_value() {
                         sink.end_promise
                             .resolve(&self_.global, JSValue::js_number(0.0))?;
@@ -702,6 +706,9 @@ impl S3UploadStreamWrapper {
                     let sink = unsafe { &mut *sink_ptr.as_ptr() };
                     sink.ended = true;
                     sink.done = true;
+                    if sink.flush_promise.has_value() {
+                        sink.flush_promise.reject(&self_.global, Ok(js_err))?;
+                    }
                     if sink.end_promise.has_value() {
                         sink.end_promise.reject(&self_.global, Ok(js_err))?;
                     }

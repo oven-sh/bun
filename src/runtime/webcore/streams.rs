@@ -2060,10 +2060,12 @@ pub struct NetworkSink {
     // JSC_BORROW: process-lifetime VM global; safe `Deref` via `BackRef`.
     pub global_this: Option<BackRef<JSGlobalObject>>,
     pub high_water_mark: BlobSizeType,
-    /// Pending promise for user `s3file.writer().flush()` — only ever set when
-    /// `source == SourceHandle::None`. The streamed-pump path (`upload_stream`)
-    /// short-circuits in `flush_from_js` and signals backpressure via
-    /// `source.ready()` instead, so no flush promise is allocated there.
+    /// Pending `flush()` promise. Serves both the user `s3file.writer().flush()`
+    /// API and the `readDirectStream` / `BunAsyncIterableSource` pump, which
+    /// parks on `controller.flush(true)` (not `m_onPull`) on backpressure.
+    /// Resolved by `on_writable`. The `readStreamIntoSink` pump no longer calls
+    /// `flush()` — it resumes via `source.ready()` → `m_onPull` — so no promise
+    /// is allocated on that path.
     pub flush_promise: JSPromiseStrong,
     pub end_promise: JSPromiseStrong,
     pub ended: bool,
@@ -2191,14 +2193,6 @@ impl NetworkSink {
         global_this: &JSGlobalObject,
         _wait: bool,
     ) -> bun_sys::Result<JSValue> {
-        if !matches!(self.source, SourceHandle::None) {
-            // Streamed path: backpressure is signalled to the upstream via
-            // `source.ready()`; no per-flush promise is allocated.
-            return bun_sys::Result::Ok(JSPromise::resolved_promise_value(
-                global_this,
-                JSValue::js_number(0.0),
-            ));
-        }
         if self.flush_promise.has_value() {
             return bun_sys::Result::Ok(self.flush_promise.value());
         }

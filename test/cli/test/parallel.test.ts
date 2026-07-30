@@ -214,12 +214,9 @@ test.skipIf(isWindows)(
     });
     await using proc = Bun.spawn({
       cmd: [bunExe(), "test", "--parallel=2", "--bail=1"],
-      // BUN_CRASH_REPORT_URL="": this segfault is deliberate. On CI the runner
-      // sets BUN_CRASH_REPORT_URL to its remap server and only drains /traces
-      // when a later test exits non-zero, so an upload from here gets pinned on
-      // the next unrelated failing test as "crash reported" and blocks its
-      // retries (observed as a spurious 0xDEADBEEF crash on
-      // proxy-stress-concurrent.test.ts in build 85618).
+      // BUN_CRASH_REPORT_URL="": this segfault is deliberate; uploading it to
+      // CI's remap server pins a spurious "crash reported" error on the next
+      // unrelated failing test (runner only drains /traces on non-zero exit).
       env: { ...bunEnv, BUN_TEST_PARALLEL_SCALE_MS: "0", BUN_CRASH_REPORT_URL: "", BUN_ENABLE_CRASH_REPORTING: "0" },
       cwd: String(dir),
       stderr: "pipe",

@@ -31,7 +31,11 @@ it.concurrent("console.timeEnd with non-empty label emits exactly one trailing n
 
 it.concurrent("console.timeLog/timeEnd with % in label prints the label verbatim", async () => {
   await using proc = Bun.spawn({
-    cmd: [bunExe(), "-e", `console.time("100%done"); console.timeLog("100%done", "extra"); console.timeEnd("100%done");`],
+    cmd: [
+      bunExe(),
+      "-e",
+      `console.time("100%done"); console.timeLog("100%done", "extra"); console.timeEnd("100%done");`,
+    ],
     env: bunEnv,
     stdout: "pipe",
     stderr: "pipe",

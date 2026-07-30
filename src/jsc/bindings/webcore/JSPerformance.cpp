@@ -21,7 +21,6 @@
 #include "config.h"
 #include "JSPerformance.h"
 
-#include "ActiveDOMObject.h"
 #include "ErrorCode.h"
 #include "EventNames.h"
 #include "ExtendedDOMClientIsoSubspaces.h"

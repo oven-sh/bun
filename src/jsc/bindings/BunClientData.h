@@ -19,9 +19,7 @@ class DOMWrapperWorld;
 // #include "WorkerThreadType.h"
 #include <wtf/Function.h>
 #include <wtf/HashSet.h>
-#include <wtf/WeakHashSet.h>
 #include <wtf/RefPtr.h>
-#include "JSVMClientDataClient.h"
 #include <JavaScriptCore/WeakInlines.h>
 #include <wtf/StdLibExtras.h>
 #include "JSCTaskScheduler.h"
@@ -135,8 +133,6 @@ public:
     // after every swap.
     WTF::UncheckedKeyHashMap<WTF::String, RefPtr<JSC::SourceProvider>> isolationSourceProviderCache;
 
-    void addClient(JSVMClientDataClient& client) { m_clients.add(client); }
-
 private:
     bool isWebCoreJSClientData() const final { return true; }
 
@@ -169,7 +165,6 @@ private:
     Vector<JSC::IsoSubspace*> m_outputConstraintSpaces;
 
     WebCore::HTTPHeaderIdentifiers m_httpHeaderIdentifiers;
-    WeakHashSet<JSVMClientDataClient> m_clients;
 };
 
 } // namespace WebCore

@@ -1513,6 +1513,15 @@ pub(crate) fn inject(
                 cleanup(zname, cloned_executable_fd);
                 return Fd::INVALID;
             }
+            // Truncate to the in-memory PE size; Authenticode strip can make it shorter than the base.
+            if let Err(err) = Syscall::ftruncate(
+                cloned_executable_fd,
+                i64::try_from(pe_file.len()).expect("int cast"),
+            ) {
+                bun_core::pretty_errorln!("Error truncating PE file: {}", err);
+                cleanup(zname, cloned_executable_fd);
+                return Fd::INVALID;
+            }
             // Set executable permissions when running on POSIX hosts, even for Windows targets
             #[cfg(not(windows))]
             {
@@ -1563,10 +1572,14 @@ pub(crate) fn inject(
                 return Fd::INVALID;
             }
             // Truncate the file to the exact size of the modified ELF
-            let _ = Syscall::ftruncate(
+            if let Err(err) = Syscall::ftruncate(
                 cloned_executable_fd,
                 i64::try_from(elf_file.data.len()).expect("int cast"),
-            );
+            ) {
+                bun_core::pretty_errorln!("Error truncating ELF file: {}", err);
+                cleanup(zname, cloned_executable_fd);
+                return Fd::INVALID;
+            }
 
             #[cfg(not(windows))]
             {

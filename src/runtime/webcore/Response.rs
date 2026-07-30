@@ -152,7 +152,6 @@ impl Drop for BodyAbortListener {
     fn drop(&mut self) {
         let ctx = core::ptr::from_mut(self).cast::<c_void>();
         self.signal.clean_native_bindings(ctx);
-        // Suppresses `eventListenersDidChange`'s timeout-signal deref; `cancel_all_timeout_objects` may already own it.
         self.signal.pending_activity_unref();
     }
 }
@@ -911,7 +910,7 @@ impl Response {
             //   (Body.rs renames `deinit` → `reset`). `drop_in_place` here
             //   would leak refcounted payloads (WTFStringImpl, Blob store).
             // - `url: OwnedString` — assignment drops the old value (WTF deref).
-            // - `JsRef` — assignment drops the `Strong` arm (HandleSlot freed).
+            // - `JsRef` — assignment drops the `Strong` arm (block slot released).
             (*this).init.set(Init::default());
             (*this).body.get_mut().reset();
             (*this).url.set(OwnedString::new(BunString::empty()));

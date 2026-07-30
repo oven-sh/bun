@@ -1599,7 +1599,7 @@ impl VirtualMachine {
             // `on_progress_update` would have dropped the JS-side ref, and
             // without it the tasklet ⇄ `Box<AsyncHTTP>` cycle leaks. Must
             // precede `destructOnExit` so `FetchTasklet::deinit` can drop its
-            // JSC `Strong`/`Weak` handles against a live HandleSet.
+            // JSC `Strong`/`Weak` handles against a live heap.
             self.event_loop_mut().release_queued_tasks_for_shutdown();
 
             if let Some(rare) = self.rare_data.as_deref_mut() {

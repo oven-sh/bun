@@ -9,7 +9,7 @@ bun_opaque::opaque_ffi! {
 
 impl JSCell {
     #[track_caller]
-    pub fn get_type(&self) -> JSType {
+    pub(crate) fn get_type(&self) -> JSType {
         crate::mark_member_binding("JSCell", core::panic::Location::caller());
         // `JSType` is a `#[repr(transparent)]` newtype over `u8`, so any byte
         // returned by the extern is a valid value (see the extern's NOTE).
@@ -20,7 +20,7 @@ impl JSCell {
         JSValue::from_cell(std::ptr::from_ref::<JSCell>(self))
     }
 
-    pub fn get_getter_setter(&self) -> &GetterSetter {
+    pub(crate) fn get_getter_setter(&self) -> &GetterSetter {
         debug_assert!(self.get_type() == JSType::GetterSetter);
         // Caller-asserted invariant — this cell's JSType is GetterSetter.
         // `GetterSetter` is an `opaque_ffi!` ZST handle; `opaque_ref` is the
@@ -28,7 +28,7 @@ impl JSCell {
         GetterSetter::opaque_ref(std::ptr::from_ref::<JSCell>(self).cast::<GetterSetter>())
     }
 
-    pub fn get_custom_getter_setter(&self) -> &CustomGetterSetter {
+    pub(crate) fn get_custom_getter_setter(&self) -> &CustomGetterSetter {
         debug_assert!(self.get_type() == JSType::CustomGetterSetter);
         // Caller-asserted invariant — this cell's JSType is CustomGetterSetter.
         // `CustomGetterSetter` is an `opaque_ffi!` ZST handle; see `get_getter_setter`.

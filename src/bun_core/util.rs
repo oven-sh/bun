@@ -49,13 +49,6 @@ impl<T: Copy> Unaligned<T> {
         self.0
     }
 
-    #[inline(always)]
-    pub fn set(&mut self, value: T) {
-        // SAFETY: `self` points to `size_of::<T>()` writable bytes; alignment
-        // is 1 by `#[repr(packed)]`, hence `write_unaligned`.
-        unsafe { core::ptr::addr_of_mut!(self.0).write_unaligned(value) }
-    }
-
     #[inline]
     pub fn slice_align_cast_mut(slice: &mut [Unaligned<T>]) -> &mut [T] {
         if slice.is_empty() {
@@ -635,7 +628,7 @@ impl<T> Mutex<T> {
     }
 
     #[inline]
-    pub fn try_lock(&self) -> Option<MutexGuard<'_, T>> {
+    pub(crate) fn try_lock(&self) -> Option<MutexGuard<'_, T>> {
         match self.0.try_lock() {
             Ok(g) => Some(g),
             Err(std::sync::TryLockError::Poisoned(e)) => Some(e.into_inner()),
@@ -717,8 +710,6 @@ pub type OSPathChar = u16;
 pub type OSPathChar = u8;
 
 pub type OSPathSlice<'a> = &'a [OSPathChar];
-#[cfg(windows)]
-pub type OSPathSliceZ = WStr;
 
 pub use bun_alloc::SEP;
 
@@ -804,12 +795,6 @@ impl WPathBuffer {
         // track the written length out-of-band.
         unsafe { core::mem::MaybeUninit::uninit().assume_init() }
     }
-    /// Inherent `as_slice` so `wbuf.as_slice()` resolves here instead of the
-    /// unstable `<[u16]>::as_slice` (`str_as_str` feature) via `Deref`.
-    #[inline]
-    pub fn as_slice(&self) -> &[u16] {
-        &self.0
-    }
     #[inline]
     pub fn as_mut_slice(&mut self) -> &mut [u16] {
         &mut self.0
@@ -834,8 +819,6 @@ impl core::ops::DerefMut for WPathBuffer {
         &mut self.0
     }
 }
-#[cfg(windows)]
-pub type OSPathBuffer = WPathBuffer;
 
 /// Directory portion of `path` (handles trailing-sep stripping and root).
 pub fn dirname(path: &[u8]) -> Option<&[u8]> {
@@ -1196,12 +1179,6 @@ impl Fd {
         self.native()
     }
 
-    /// Properly converts `Fd::INVALID` into `FdOptional::NONE`.
-    #[inline]
-    pub const fn to_optional(self) -> FdOptional {
-        FdOptional(self.0)
-    }
-
     pub fn stdio_tag(self) -> Option<Stdio> {
         #[cfg(not(windows))]
         {
@@ -1290,10 +1267,6 @@ impl Stdio {
             _ => None,
         }
     }
-    #[inline]
-    pub fn to_int(self) -> i32 {
-        self as i32
-    }
 }
 
 /// Niche-packed `Option<Fd>`: the invalid-fd bit pattern is the `none` sentinel.
@@ -1304,25 +1277,12 @@ pub struct FdOptional(FdBacking);
 impl FdOptional {
     pub const NONE: FdOptional = FdOptional(Fd::INVALID.0);
     #[inline]
-    pub const fn init(maybe: Option<Fd>) -> FdOptional {
-        match maybe {
-            Some(fd) => fd.to_optional(),
-            None => FdOptional::NONE,
-        }
-    }
-    #[inline]
     pub const fn unwrap(self) -> Option<Fd> {
         if self.0 == FdOptional::NONE.0 {
             None
         } else {
             Some(Fd(self.0))
         }
-    }
-    #[inline]
-    pub fn take(&mut self) -> Option<Fd> {
-        let r = self.unwrap();
-        *self = FdOptional::NONE;
-        r
     }
 }
 
@@ -1519,17 +1479,22 @@ impl core::fmt::Display for Fd {
 /// Fd module-level statics + Windows libuv/PEB FFI shims (T0 → no
 /// crate dep, just `extern` symbols; libuv is linked into the final binary).
 pub mod fd {
+    #[cfg(windows)]
     use super::Fd;
     #[cfg(windows)]
     use core::ffi::{c_int, c_void};
 
     // Written once in windows_stdio::init() during single-threaded startup
     // (S015: write-once → `Once`; readers fall back to `Fd::INVALID`).
-    pub static WINDOWS_CACHED_STDIN: crate::Once<Fd> = crate::Once::new();
-    pub static WINDOWS_CACHED_STDOUT: crate::Once<Fd> = crate::Once::new();
-    pub static WINDOWS_CACHED_STDERR: crate::Once<Fd> = crate::Once::new();
+    #[cfg(windows)]
+    pub(crate) static WINDOWS_CACHED_STDIN: crate::Once<Fd> = crate::Once::new();
+    #[cfg(windows)]
+    pub(crate) static WINDOWS_CACHED_STDOUT: crate::Once<Fd> = crate::Once::new();
+    #[cfg(windows)]
+    pub(crate) static WINDOWS_CACHED_STDERR: crate::Once<Fd> = crate::Once::new();
+    #[cfg(windows)]
     #[cfg(debug_assertions)]
-    pub static WINDOWS_CACHED_FD_SET: core::sync::atomic::AtomicBool =
+    pub(crate) static WINDOWS_CACHED_FD_SET: core::sync::atomic::AtomicBool =
         core::sync::atomic::AtomicBool::new(false);
 
     #[cfg(windows)]
@@ -1549,7 +1514,7 @@ pub mod fd {
     #[cfg(windows)]
     pub use crate::windows_sys::{STD_ERROR_HANDLE, STD_INPUT_HANDLE, STD_OUTPUT_HANDLE};
     #[cfg(windows)]
-    pub fn is_stdio_handle(id: u32, handle: *mut c_void) -> bool {
+    pub(crate) fn is_stdio_handle(id: u32, handle: *mut c_void) -> bool {
         // The `GetStdHandle` wrapper maps both NULL and
         // INVALID_HANDLE_VALUE to `None`, so use the Option-returning
         // wrapper here. Without the INVALID_HANDLE_VALUE filter, a detached
@@ -1567,13 +1532,13 @@ pub mod fd {
     /// read here, so a minimal view is exposed via accessor fns.
     #[cfg(windows)]
     #[repr(C)]
-    pub struct ProcessParametersStdio {
-        pub hStdInput: *mut c_void,
-        pub hStdOutput: *mut c_void,
-        pub hStdError: *mut c_void,
+    pub(crate) struct ProcessParametersStdio {
+        pub(crate) hStdInput: *mut c_void,
+        pub(crate) hStdOutput: *mut c_void,
+        pub(crate) hStdError: *mut c_void,
     }
     #[cfg(windows)]
-    pub fn windows_process_parameters() -> ProcessParametersStdio {
+    pub(crate) fn windows_process_parameters() -> ProcessParametersStdio {
         // PEB → ProcessParameters → {hStdInput,hStdOutput,hStdError}. Snapshot
         // the three handles by value (raw-pointer reads — no `&` formed over
         // OS-mutable memory) so the call site is safe.
@@ -1590,7 +1555,7 @@ pub mod fd {
         }
     }
     #[cfg(windows)]
-    pub fn windows_current_directory_handle() -> *mut c_void {
+    pub(crate) fn windows_current_directory_handle() -> *mut c_void {
         // Reads `peb().ProcessParameters.CurrentDirectory.Handle`. Offset 0x48 on
         // x64, asserted in `bun_core::windows_sys`. The OS updates this handle
         // on `SetCurrentDirectoryW`, so re-read on every call rather than
@@ -1978,19 +1943,14 @@ pub struct Version {
 }
 
 impl Version {
-    pub const ZERO: Self = Self {
-        major: 0,
-        minor: 0,
-        patch: 0,
-    };
-
     /// Parse leading `"MAJOR.MINOR.PATCH"` from a byte slice. Per field:
     /// accumulate ASCII digits (wrapping on overflow), stop at the first
     /// non-digit, then advance past a single `'.'` to the next field; missing
     /// or empty fields default to 0. Tolerates trailing junk (e.g. uname's
     /// `"5.10.16-microsoft-standard"` → {5,10,16}). `const fn` so it can
     /// populate `static`/`const` initializers.
-    pub const fn parse_dotted(bytes: &[u8]) -> Self {
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    pub(crate) const fn parse_dotted(bytes: &[u8]) -> Self {
         let mut nums = [0u32; 3];
         let mut idx = 0usize;
         let mut i = 0usize;
@@ -2511,11 +2471,6 @@ impl<T> Once<T> {
         }
     }
 
-    #[inline(always)]
-    pub fn done(&self) -> bool {
-        self.state.load(core::sync::atomic::Ordering::Acquire) == ONCE_DONE
-    }
-
     /// `OnceLock::get_or_init` equivalent. Hot path is the inlined DONE check;
     /// the init closure runs at most once.
     #[inline(always)]
@@ -2564,7 +2519,7 @@ impl<T> Once<T> {
     /// `Err(value)` rather than waiting, which is fine for the write-once
     /// startup statics that use it (`START_TIME`, `STD*_DESCRIPTOR_TYPE`, …).
     #[inline]
-    pub fn set(&self, value: T) -> Result<(), T> {
+    pub(crate) fn set(&self, value: T) -> Result<(), T> {
         use core::sync::atomic::Ordering::{Acquire, Release};
         if self
             .state
@@ -2627,7 +2582,8 @@ pub enum Pollable {
 impl Pollable {
     /// Lowercase tag name for the `[sys]` debug log.
     #[inline]
-    pub const fn tag_name(self) -> &'static str {
+    #[cfg(not(windows))]
+    pub(crate) const fn tag_name(self) -> &'static str {
         match self {
             Pollable::Ready => "ready",
             Pollable::NotReady => "not_ready",
@@ -2969,52 +2925,19 @@ pub mod time {
     pub fn timestamp() -> i64 {
         (nano_timestamp() / NS_PER_S as i128) as i64
     }
-
-    /// Monotonic stopwatch.
-    #[derive(Clone, Copy, Debug)]
-    pub struct Timer {
-        start: std::time::Instant,
-    }
-    impl Timer {
-        #[inline]
-        pub fn start() -> crate::CrateResult<Self> {
-            Ok(Self {
-                start: std::time::Instant::now(),
-            })
-        }
-        #[inline]
-        pub fn read(&self) -> u64 {
-            self.start.elapsed().as_nanos() as u64
-        }
-        #[inline]
-        pub fn reset(&mut self) {
-            self.start = std::time::Instant::now();
-        }
-    }
 }
 
 // ── runtime_embed_file ────────────────────────────────────────────────────
 // A per-call-site `static once` cache cannot be manufactured
 // from a plain fn without leaking, so the canonical form is the
 // `runtime_embed_file!` macro below (per-site `OnceLock<String>` — sanctioned
-// by PORTING.md §Forbidden, "true process-lifetime singleton"). The fn form is
-// kept so existing draft callers type-check; it's only reachable when the
-// `codegen_embed` feature is off (debug fast-iteration), where it panics with
-// a migration hint.
+// by PORTING.md §Forbidden, "true process-lifetime singleton").
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum EmbedKind {
     Codegen,
     CodegenEager,
     Src,
     SrcEager,
-}
-
-pub fn runtime_embed_file(_root: EmbedKind, sub_path: &'static str) -> &'static str {
-    panic!(
-        "runtime_embed_file({sub_path}): non-embedded debug load requires a per-site \
-         static cache — migrate this call to `bun_core::runtime_embed_file!` or rebuild \
-         with codegen_embed",
-    );
 }
 
 #[doc(hidden)]
@@ -3133,10 +3056,6 @@ impl StringPointer {
     #[inline]
     pub fn slice<'a>(self, buf: &'a [u8]) -> &'a [u8] {
         &buf[self.offset as usize..(self.offset + self.length) as usize]
-    }
-    #[inline]
-    pub fn is_empty(self) -> bool {
-        self.length == 0
     }
 }
 
@@ -3432,22 +3351,12 @@ impl<I: GenericIndexInt, M> GenericIndex<I, M> {
     pub fn get_usize(self) -> usize {
         I::to_usize(self.get())
     }
-    /// `init()` from a `usize` source (Vec length etc.). Debug-panics on
-    /// truncation.
-    #[inline]
-    pub fn from_usize(n: usize) -> Self {
-        Self::init(I::from_usize(n))
-    }
     #[inline]
     pub fn to_optional(self) -> GenericIndexOptional<I, M> {
         GenericIndexOptional(self.0, core::marker::PhantomData)
     }
 }
 impl<I: GenericIndexInt, M> GenericIndexOptional<I, M> {
-    #[inline]
-    pub fn is_none(self) -> bool {
-        self.0 == I::NULL_VALUE
-    }
     #[inline]
     pub fn is_some(self) -> bool {
         !self.is_none()
@@ -3477,19 +3386,17 @@ impl<I: core::fmt::Debug, M> core::fmt::Debug for GenericIndexOptional<I, M> {
     }
 }
 impl<I: GenericIndexInt, M> GenericIndexOptional<I, M> {
+    #[inline]
+    pub fn is_none(self) -> bool {
+        self.0 == I::NULL_VALUE
+    }
+
     pub const NONE: Self = Self(I::NULL_VALUE, core::marker::PhantomData);
     /// Alias for `unwrap()` matching the local-newtype API that pre-existed in
     /// `bun_bundler::output_file::IndexOptional`.
     #[inline]
     pub fn get(self) -> Option<GenericIndex<I, M>> {
         self.unwrap()
-    }
-    #[inline]
-    pub fn init(maybe: Option<I>) -> Self {
-        match maybe {
-            Some(i) => GenericIndex::<I, M>::init(i).to_optional(),
-            None => Self::NONE,
-        }
     }
     #[inline]
     pub fn unwrap(self) -> Option<GenericIndex<I, M>> {
@@ -3589,8 +3496,6 @@ impl_native_endian_int!(u8, i8, u16, i16, u32, i32, u64, i64);
 // ── mach_port ─────────────────────────────────────────────────────────────
 #[cfg(target_os = "macos")]
 pub type mach_port = libc::mach_port_t;
-#[cfg(not(target_os = "macos"))]
-pub type mach_port = u32;
 
 // ── rand ──────────────────────────────────────────────────────────────────
 // xoshiro256++; the exact algorithm keeps `bun.fastRandom()` output
@@ -3958,10 +3863,6 @@ impl Argv {
         self.0.len()
     }
     #[inline]
-    pub fn is_empty(&self) -> bool {
-        self.0.is_empty()
-    }
-    #[inline]
     pub fn get(&self, i: usize) -> Option<&'static ZStr> {
         self.0.get(i).copied()
     }
@@ -4030,7 +3931,7 @@ pub fn bun_options_argc() -> usize {
 }
 /// Write accessor (single-threaded startup).
 #[inline]
-pub fn set_bun_options_argc(n: usize) {
+pub(crate) fn set_bun_options_argc(n: usize) {
     BUN_OPTIONS_ARGC.store(n, core::sync::atomic::Ordering::Relaxed);
 }
 
@@ -4297,7 +4198,13 @@ pub fn getcwd(buf: &mut PathBuffer) -> crate::CrateResult<&ZStr> {
 /// for an executable named `bin`; returns the NUL-terminated match written
 /// into `buf`. POSIX semantics; Windows `PATHEXT` handling stays in
 /// `bun_which` (tier-2).
-pub fn which<'a>(buf: &'a mut PathBuffer, path: &[u8], cwd: &[u8], bin: &[u8]) -> Option<&'a ZStr> {
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
+pub(crate) fn which<'a>(
+    buf: &'a mut PathBuffer,
+    path: &[u8],
+    cwd: &[u8],
+    bin: &[u8],
+) -> Option<&'a ZStr> {
     if bin.is_empty() {
         return None;
     }
@@ -4322,19 +4229,12 @@ pub fn which<'a>(buf: &'a mut PathBuffer, path: &[u8], cwd: &[u8], bin: &[u8]) -
         buf.0[n..n + bin.len()].copy_from_slice(bin);
         n += bin.len();
         buf.0[n] = 0;
-        #[cfg(unix)]
         // SAFETY: `buf.0[n] == 0` was just written, so `buf.0.as_ptr()` is a
         // valid NUL-terminated C string for `access(2)`.
         unsafe {
             if libc::access(buf.0.as_ptr().cast(), libc::X_OK) == 0 {
                 return Some(n);
             }
-        }
-        #[cfg(not(unix))]
-        {
-            // No X_OK probe here: this tier-0 helper is only reached from the
-            // linux/freebsd `spawn_sync_inherit` path. Windows callers resolve
-            // executables via `bun_which` (PATHEXT-aware) instead.
         }
         None
     };
@@ -4356,8 +4256,7 @@ pub fn which<'a>(buf: &'a mut PathBuffer, path: &[u8], cwd: &[u8], bin: &[u8]) -
         return check(buf, cwd, bin).map(|n| ZStr::from_buf(&buf.0, n));
     }
     // Bare names go straight to PATH — do NOT consult cwd.
-    let delim: u8 = if cfg!(windows) { b';' } else { b':' };
-    for dir in path.split(|&b| b == delim) {
+    for dir in path.split(|&b| b == b':') {
         if dir.is_empty() {
             continue;
         }
@@ -4396,7 +4295,7 @@ pub fn is_process_reload_in_progress_on_another_thread() -> bool {
 
 /// Terminate the current OS thread without unwinding.
 /// POSIX `pthread_exit`; Windows `ExitThread`. Called from worker `shutdown()`.
-pub fn exit_thread() -> ! {
+pub(crate) fn exit_thread() -> ! {
     #[cfg(unix)]
     {
         // `retval` is stored opaquely for `pthread_join` and never
@@ -4568,7 +4467,7 @@ pub fn reload_process(clear_terminal: bool, may_return: bool) {
 /// Full `bun.spawnSync` (with buffered stdio, env, cwd) is in bun_spawn.
 #[derive(Debug, Clone, Copy)]
 pub struct SpawnStatus {
-    pub code: i32,
+    pub(crate) code: i32,
 }
 impl SpawnStatus {
     #[inline]
@@ -5021,14 +4920,6 @@ impl Timespec {
             .unwrap_or(i64::MAX as u64)
     }
 
-    /// Signed nanoseconds (wrapping). Port of `bun.timespec.nsSigned`.
-    #[inline]
-    pub fn ns_signed(&self) -> i64 {
-        let ns_per_sec = self.sec.wrapping_mul(Self::NS_PER_S);
-        let ns_from_nsec = self.nsec.div_euclid(Self::NS_PER_MS);
-        ns_per_sec.wrapping_add(ns_from_nsec)
-    }
-
     /// Milliseconds (signed, wrapping).
     #[inline]
     pub fn ms(&self) -> i64 {
@@ -5084,15 +4975,6 @@ impl Timespec {
         t
     }
 
-    #[inline]
-    pub fn min(a: Timespec, b: Timespec) -> Timespec {
-        if a.order(&b).is_lt() { a } else { b }
-    }
-    #[inline]
-    pub fn max(a: Timespec, b: Timespec) -> Timespec {
-        if a.order(&b).is_gt() { a } else { b }
-    }
-
     /// `bun.timespec.orderIgnoreEpoch` — EPOCH = "no timeout", treated as +∞.
     pub fn order_ignore_epoch(a: Timespec, b: Timespec) -> core::cmp::Ordering {
         if a == b {
@@ -5119,7 +5001,7 @@ impl Timespec {
     /// Construct from a signed nanosecond count. Euclidean division keeps
     /// `nsec ∈ [0, 1e9)` for negative inputs so `ns()`/`order()` round-trip.
     #[inline]
-    pub const fn from_ns(ns: i64) -> Timespec {
+    pub(crate) const fn from_ns(ns: i64) -> Timespec {
         Timespec {
             sec: ns.div_euclid(Self::NS_PER_S),
             nsec: ns.rem_euclid(Self::NS_PER_S),
@@ -5234,7 +5116,7 @@ pub mod mock_time {
     }
     /// Current mocked wall-clock time in ms, or `None` if not mocked.
     #[inline]
-    pub fn wall_ms() -> Option<f64> {
+    pub(crate) fn wall_ms() -> Option<f64> {
         let v = f64::from_bits(MOCKED_WALL_MS.load(Ordering::Relaxed));
         if v.is_nan() { None } else { Some(v) }
     }
@@ -5248,11 +5130,11 @@ pub mod mock_time {
 #[allow(non_camel_case_types)]
 #[repr(transparent)]
 #[derive(Clone, Copy, PartialEq, Eq, Default, Debug)]
-pub struct f16(pub u16);
+pub struct f16(pub(crate) u16);
 
 impl f16 {
     /// Widen to `f64` (exact).
-    pub fn to_f64(self) -> f64 {
+    pub(crate) fn to_f64(self) -> f64 {
         let h = self.0 as u32;
         let sign = (h >> 15) & 1;
         let exp = (h >> 10) & 0x1F;
@@ -5327,7 +5209,7 @@ pub mod perf {
         linux: Option<Linux>,
     }
     impl Ctx {
-        pub const DISABLED: Ctx = Ctx {
+        pub(crate) const DISABLED: Ctx = Ctx {
             #[cfg(any(target_os = "linux", target_os = "android"))]
             linux: None,
         };
@@ -5374,11 +5256,29 @@ pub mod perf {
     }
 
     #[inline]
-    pub fn is_enabled() -> bool {
+    pub(crate) fn is_enabled() -> bool {
         match IS_ENABLED.load(Ordering::Relaxed) {
             DISABLED => false,
             ENABLED => true,
             _ => is_enabled_init(),
+        }
+    }
+
+    /// Single source of truth for the Linux ftrace FFI decls (defined in
+    /// `src/jsc/bindings/linux_perf_tracing.cpp`). Re-exported so `bun_perf`
+    /// (the canonical signpost/ftrace entry point) imports these instead of
+    /// re-declaring them.
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    pub mod sys {
+        unsafe extern "C" {
+            /// No preconditions; returns 0/1 based on tracefs availability.
+            pub safe fn Bun__linux_trace_init() -> core::ffi::c_int;
+            /// No preconditions.
+            pub safe fn Bun__linux_trace_close();
+            pub fn Bun__linux_trace_emit(
+                event_name: *const core::ffi::c_char,
+                duration_ns: i64,
+            ) -> core::ffi::c_int;
         }
     }
 
@@ -5447,24 +5347,6 @@ pub mod perf {
                     i64::try_from(duration).unwrap_or(i64::MAX),
                 )
             };
-        }
-    }
-
-    /// Single source of truth for the Linux ftrace FFI decls (defined in
-    /// `src/jsc/bindings/linux_perf_tracing.cpp`). Re-exported so `bun_perf`
-    /// (the canonical signpost/ftrace entry point) imports these instead of
-    /// re-declaring them.
-    #[cfg(any(target_os = "linux", target_os = "android"))]
-    pub mod sys {
-        unsafe extern "C" {
-            /// No preconditions; returns 0/1 based on tracefs availability.
-            pub safe fn Bun__linux_trace_init() -> core::ffi::c_int;
-            /// No preconditions.
-            pub safe fn Bun__linux_trace_close();
-            pub fn Bun__linux_trace_emit(
-                event_name: *const core::ffi::c_char,
-                duration_ns: i64,
-            ) -> core::ffi::c_int;
         }
     }
 }

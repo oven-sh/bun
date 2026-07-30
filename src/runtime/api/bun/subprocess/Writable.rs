@@ -51,7 +51,7 @@ impl<'a> Writable<'a> {
     /// borrow. Single JS-mutator thread — no concurrent `&mut FileSink`.
     #[inline]
     #[allow(clippy::mut_from_ref)]
-    pub(in crate::api) fn pipe_sink_mut(pipe: &NonNull<FileSink>) -> &mut FileSink {
+    fn pipe_sink_mut(pipe: &NonNull<FileSink>) -> &mut FileSink {
         // SAFETY: see fn doc — +1-intrusive-ref'd, heap-disjoint, single-thread.
         unsafe { &mut *pipe.as_ptr() }
     }
@@ -90,7 +90,7 @@ impl<'a> Writable<'a> {
         unsafe { &mut *buffer.as_ptr() }
     }
 
-    pub fn memory_cost(&self) -> usize {
+    pub(crate) fn memory_cost(&self) -> usize {
         match self {
             Writable::Pipe(pipe) => Self::pipe_sink(*pipe).memory_cost(),
             Writable::Buffer(buffer) => buffer.memory_cost(),
@@ -99,7 +99,7 @@ impl<'a> Writable<'a> {
         }
     }
 
-    pub fn has_pending_activity(&self) -> bool {
+    pub(crate) fn has_pending_activity(&self) -> bool {
         match self {
             Writable::Pipe(_) => false,
 
@@ -109,7 +109,7 @@ impl<'a> Writable<'a> {
         }
     }
 
-    pub fn r#ref(&mut self) {
+    pub(crate) fn r#ref(&mut self) {
         match self {
             Writable::Pipe(pipe) => {
                 Self::pipe_sink(*pipe).update_ref(true);
@@ -121,7 +121,7 @@ impl<'a> Writable<'a> {
         }
     }
 
-    pub fn unref(&mut self) {
+    pub(crate) fn unref(&mut self) {
         match self {
             Writable::Pipe(pipe) => {
                 Self::pipe_sink(*pipe).update_ref(false);
@@ -170,7 +170,7 @@ impl<'a> Writable<'a> {
     }
     pub fn on_ready(&mut self, _: Option<BlobSizeType>, _: Option<BlobSizeType>) {}
 
-    pub fn init(
+    pub(crate) fn init(
         stdio: &mut Stdio,
         event_loop: &EventLoop,
         subprocess: &mut Subprocess<'a>,

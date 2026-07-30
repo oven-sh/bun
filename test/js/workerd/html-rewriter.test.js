@@ -154,12 +154,18 @@ describe("HTMLRewriter", () => {
     function settle(promise) {
       return promise.then(
         value => ({ rejected: false, value }),
-        error => ({ rejected: true, message: String(error?.message) }),
+        error => ({ rejected: true, name: error?.name, message: String(error?.message) }),
       );
     }
     const rejectedWithConnectionError = {
       rejected: true,
+      name: "TypeError",
       message: expect.stringMatching(connectionError),
+    };
+    const rejectedWithBodyAlreadyUsed = {
+      rejected: true,
+      name: "TypeError",
+      message: "Body already used",
     };
 
     it("control: .text() on the untransformed response rejects", async () => {
@@ -180,9 +186,9 @@ describe("HTMLRewriter", () => {
         // Must reject with the upstream connection error, and must never
         // resolve with the truncated document.
         expect(await text).toEqual(rejectedWithConnectionError);
-        // The body is now in its error state. A second read must report the
-        // same failure, not resolve as an empty "successful" document.
-        expect(await settle(transformed.text())).toEqual(rejectedWithConnectionError);
+        // The failed read consumed the body; a second read must reject as
+        // already-used, not resolve as an empty "successful" document.
+        expect(await settle(transformed.text())).toEqual(rejectedWithBodyAlreadyUsed);
       });
     });
 
@@ -195,17 +201,20 @@ describe("HTMLRewriter", () => {
       });
     });
 
-    it(".body on the transformed response is an errored stream", async () => {
+    it(".body on the transformed response is unusable after a failed read", async () => {
       await withPartialBodyServer(async (url, release) => {
         const res = await fetch(url);
         const transformed = rewriter().transform(res);
         const text = settle(transformed.text());
         release();
-        // Barrier: once this has rejected, the body is in its error state.
+        // Barrier: once this has rejected, the body has been consumed.
         expect(await text).toEqual(rejectedWithConnectionError);
-        // Reading `.body` must reject with the same upstream error instead of
-        // closing cleanly as an empty "successful" document.
-        expect(await settle(transformed.body.getReader().read())).toEqual(rejectedWithConnectionError);
+        // `.body` must surface the consumed state, not close cleanly as an
+        // empty "successful" document. The pending-reader-before-failure case
+        // is covered by the test below.
+        expect(() => transformed.body.getReader()).toThrow(
+          expect.objectContaining({ name: "TypeError", code: "ERR_INVALID_STATE" }),
+        );
       });
     });
 
@@ -222,17 +231,17 @@ describe("HTMLRewriter", () => {
       });
     });
 
-    it(".clone() of a failed transformed body is also failed", async () => {
+    it(".clone() after a failed read throws", async () => {
       await withPartialBodyServer(async (url, release) => {
         const res = await fetch(url);
         const transformed = rewriter().transform(res);
         const text = settle(transformed.text());
         release();
-        // Barrier: the body is now in its error state.
+        // Barrier: the body has now been consumed by the failed read.
         expect(await text).toEqual(rejectedWithConnectionError);
-        // Cloning a failed body must produce a failed body, not an empty one
-        // that reads back as a complete (and empty) document.
-        expect(await settle(transformed.clone().text())).toEqual(rejectedWithConnectionError);
+        // A disturbed body is not clonable; it must not read back as a
+        // complete (and empty) document.
+        expect(() => transformed.clone()).toThrow("Body is disturbed or locked");
       });
     });
 
@@ -271,10 +280,11 @@ describe("HTMLRewriter", () => {
       // not an unrelated (and usually empty) HTMLRewriter internal error.
       await withPartialBodyServer(async (url, release) => {
         const res = await fetch(url);
-        const text = res.text();
+        // Drain via a clone so `res` itself stays undisturbed while we wait
+        // for the upstream failure to land.
+        const barrier = res.clone().arrayBuffer();
         release();
-        // Awaiting the rejection is the barrier: the body is now Value::Error.
-        await expect(text).rejects.toThrow(connectionError);
+        await expect(barrier).rejects.toThrow(connectionError);
         expect(() => rewriter().transform(res)).toThrow(connectionError);
       });
     });
@@ -286,9 +296,9 @@ describe("HTMLRewriter", () => {
         const controller = new AbortController();
         const res = await fetch(url, { signal: controller.signal });
         // The body is mid-stream (the server is stalled until release()).
-        const text = res.text();
+        const barrier = res.clone().arrayBuffer();
         controller.abort();
-        await expect(text).rejects.toThrow(/abort/i);
+        await expect(barrier).rejects.toThrow(/abort/i);
         let thrown;
         try {
           rewriter().transform(res);

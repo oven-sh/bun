@@ -5,10 +5,10 @@ bun_output::declare_scope!(S3Stat, visible);
 
 #[bun_jsc::JsClass]
 pub struct S3Stat {
-    pub size: u64,
-    pub etag: BunString,
-    pub content_type: BunString,
-    pub last_modified: f64,
+    pub(crate) size: u64,
+    pub(crate) etag: BunString,
+    pub(crate) content_type: BunString,
+    pub(crate) last_modified: f64,
 }
 
 impl S3Stat {

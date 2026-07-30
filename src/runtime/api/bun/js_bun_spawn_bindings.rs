@@ -56,7 +56,7 @@ fn signal_code_from_js(val: JSValue, global: &JSGlobalObject) -> JsResult<Signal
 /// `Terminal.CreateResult` — local mirror that flattens `IntrusiveRc<Terminal>`
 /// to a `BackRef<Terminal>` used by `Subprocess.terminal`, so the scopeguard /
 /// field-assignment paths share one pointer type with `existing_terminal`.
-pub(crate) struct TerminalCreateResult {
+struct TerminalCreateResult {
     /// BACKREF — the `IntrusiveRc<Terminal>` pointer leaked via `into_raw()`
     /// when this struct was populated; the +1 ref is held until
     /// `Subprocess::finalize` (or the spawn-error scopeguard's
@@ -69,7 +69,7 @@ impl TerminalCreateResult {
     /// Shared borrow of the held `Terminal` (BackRef invariant: +1-ref'd
     /// IntrusiveRc, live while this struct is held).
     #[inline]
-    pub(crate) fn term(&self) -> &Terminal {
+    fn term(&self) -> &Terminal {
         self.terminal.get()
     }
 }
@@ -310,7 +310,7 @@ fn get_argv(
 }
 
 /// Bun.spawn() calls this.
-pub fn spawn(
+pub(crate) fn spawn(
     global_this: &JSGlobalObject,
     args: JSValue,
     secondary_args_value: Option<JSValue>,
@@ -319,7 +319,7 @@ pub fn spawn(
 }
 
 /// Bun.spawnSync() calls this.
-pub fn spawn_sync(
+pub(crate) fn spawn_sync(
     global_this: &JSGlobalObject,
     args: JSValue,
     secondary_args_value: Option<JSValue>,
@@ -327,7 +327,7 @@ pub fn spawn_sync(
     spawn_maybe_sync::<true>(global_this, args, secondary_args_value)
 }
 
-pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
+fn spawn_maybe_sync<const IS_SYNC: bool>(
     global_this: &JSGlobalObject,
     args_: JSValue,
     secondary_args_value: Option<JSValue>,
@@ -1279,7 +1279,7 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
     // stores it as `*mut Process`; the matching `deref()` in
     // `Subprocess::finalize` (or the error path below) frees the Box when the
     // refcount reaches zero.
-    let process: *mut Process = spawned.to_process(loop_handle, IS_SYNC);
+    let process: *mut Process = spawned.to_process(loop_handle);
 
     #[cfg(unix)]
     let posix_ipc_fd = if !IS_SYNC && maybe_ipc_mode.is_some() {
@@ -2097,7 +2097,7 @@ fn throw_command_not_found(global_this: &JSGlobalObject, command: &[u8]) -> JsEr
 /// `storage` receives ownership of every `K=V\0` line whose pointer is pushed
 /// into `envp` (and, for `PATH=`, sliced into `*path`); the caller's
 /// `Vec<ZBox>` is dropped after `spawn_process` returns.
-pub(crate) fn append_envp_from_js(
+fn append_envp_from_js(
     global_this: &JSGlobalObject,
     object: &JSObject,
     envp: &mut Vec<CStrPtr>,

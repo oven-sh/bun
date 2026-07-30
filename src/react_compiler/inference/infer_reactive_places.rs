@@ -37,7 +37,7 @@ use crate::inference::infer_reactive_scope_variables::find_disjoint_mutable_valu
 /// Infer which places in a function are reactive.
 ///
 /// Corresponds to TS `inferReactivePlaces(fn: HIRFunction): void`.
-pub fn infer_reactive_places(
+pub(crate) fn infer_reactive_places(
     func: &mut HirFunction,
     env: &mut Environment,
 ) -> Result<(), CompilerDiagnostic> {

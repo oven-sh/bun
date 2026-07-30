@@ -84,7 +84,7 @@ fn data_to_js_with_check(
     }
 }
 
-pub(crate) fn array_to_js(
+fn array_to_js(
     this: &E::Array,
     global: &JSGlobalObject,
     stack_check: StackCheck,
@@ -105,11 +105,11 @@ pub(crate) fn array_to_js(
     Ok(array)
 }
 
-pub(crate) fn number_to_js(this: E::Number) -> JSValue {
+fn number_to_js(this: E::Number) -> JSValue {
     JSValue::js_number(this.value())
 }
 
-pub(crate) fn object_to_js(
+fn object_to_js(
     this: &E::Object,
     global: &JSGlobalObject,
     stack_check: StackCheck,
@@ -145,7 +145,7 @@ pub(crate) fn object_to_js(
     Ok(obj)
 }
 
-pub(crate) fn object_json_to_js(
+fn object_json_to_js(
     this: &E::ObjectJSON,
     global: &JSGlobalObject,
     stack_check: StackCheck,
@@ -163,7 +163,7 @@ pub(crate) fn object_json_to_js(
     Ok(obj)
 }
 
-pub(crate) fn array_json_to_js(
+fn array_json_to_js(
     this: &E::ArrayJSON,
     global: &JSGlobalObject,
     stack_check: StackCheck,

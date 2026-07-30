@@ -40,7 +40,7 @@ impl Strong {
     /// # Safety
     /// `handle` must have been produced by `Bun__StrongRef__new` (or equivalent)
     /// and must not be owned by any other `Strong`/`Optional`.
-    pub unsafe fn adopt(handle: NonNull<Impl>) -> Strong {
+    pub(crate) unsafe fn adopt(handle: NonNull<Impl>) -> Strong {
         Strong { handle }
     }
 }
@@ -75,7 +75,7 @@ impl Optional {
     /// # Safety
     /// If `Some`, `handle` must have been produced by `Bun__StrongRef__new`
     /// (or equivalent) and must not be owned by any other `Strong`/`Optional`.
-    pub unsafe fn adopt(handle: Option<NonNull<Impl>>) -> Optional {
+    pub(crate) unsafe fn adopt(handle: Option<NonNull<Impl>>) -> Optional {
         Optional { handle }
     }
 
@@ -94,15 +94,6 @@ impl Optional {
     pub fn clear_without_deallocation(&mut self) {
         let Some(r) = self.handle else { return };
         Impl::clear(r);
-    }
-
-    pub fn call(&mut self, global: &JSGlobalObject, args: &[JSValue]) -> JSValue {
-        let Some(function) = self.try_swap() else {
-            return JSValue::ZERO;
-        };
-        function
-            .call(global, JSValue::UNDEFINED, args)
-            .unwrap_or(JSValue::ZERO)
     }
 
     pub fn get(&self) -> Option<JSValue> {
@@ -174,7 +165,7 @@ bun_opaque::opaque_ffi! {
 }
 
 impl Impl {
-    pub fn init(global: &JSGlobalObject, value: JSValue) -> NonNull<Impl> {
+    pub(crate) fn init(global: &JSGlobalObject, value: JSValue) -> NonNull<Impl> {
         crate::mark_binding!();
         NonNull::new(Bun__StrongRef__new(global, value)).expect("Bun__StrongRef__new returned null")
     }
@@ -192,13 +183,13 @@ impl Impl {
         Bun__StrongRef__set(Impl::opaque_ref(this.as_ptr()), global, value);
     }
 
-    pub fn clear(this: NonNull<Impl>) {
+    pub(crate) fn clear(this: NonNull<Impl>) {
         crate::mark_binding!();
         Bun__StrongRef__clear(Impl::opaque_ref(this.as_ptr()));
     }
 
     /// SAFETY: `this` must be a valid handle from `init`; consumed here (do not reuse).
-    pub unsafe fn destroy(this: NonNull<Impl>) {
+    pub(crate) unsafe fn destroy(this: NonNull<Impl>) {
         crate::mark_binding!();
         // Defensive: a corrupted slot pointer here segfaults inside JSC's
         // HandleBlock::handleSet (the backing block is recovered by masking

@@ -7,7 +7,7 @@ pub(crate) struct CharAndCount {
     pub index: usize,
 }
 
-pub(crate) type CharAndCountArray = [CharAndCount; CHAR_FREQ_COUNT];
+type CharAndCountArray = [CharAndCount; CHAR_FREQ_COUNT];
 
 // PERF: candidate for SIMD adds — profile
 type Buffer = [i32; CHAR_FREQ_COUNT];

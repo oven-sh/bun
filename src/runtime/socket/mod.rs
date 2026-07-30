@@ -24,9 +24,11 @@ pub mod listener;
 #[path = "UpgradedDuplex.rs"]
 pub mod upgraded_duplex;
 
+#[cfg(windows)]
 #[path = "WindowsNamedPipe.rs"]
 pub mod windows_named_pipe;
 
+#[cfg(windows)]
 #[path = "WindowsNamedPipeContext.rs"]
 pub mod windows_named_pipe_context;
 
@@ -40,7 +42,7 @@ pub mod ssl_wrapper {
 
     /// Thin wrapper over `SSLWrapper::init_from_options` so callers in this
     /// tier can keep passing `&SSLConfig` directly.
-    pub fn init<T: Copy>(
+    pub(crate) fn init<T: Copy>(
         ssl_options: &crate::server::server_config::SSLConfig,
         is_client: bool,
         handlers: Handlers<T>,

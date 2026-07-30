@@ -74,7 +74,7 @@ unsafe extern "C" {
     fn Reader__f64__put(global: *mut JSGlobalObject, value: JSValue);
 }
 
-pub(crate) fn new_cstring(
+fn new_cstring(
     global_this: &JSGlobalObject,
     value: JSValue,
     byte_offset: Option<JSValue>,
@@ -111,7 +111,7 @@ unsafe extern "C" {
 // descriptor. The `DOMEffect.forRead(.TypedArrayProperties)` argument is consumed
 // by the C++ codegen, not the runtime descriptor; it lives in the generated
 // `ZigLazyStaticFunctions-inlines.h` already.
-pub(crate) const DOM_CALL: DomCall = DomCall {
+const DOM_CALL: DomCall = DomCall {
     class_name: "FFI",
     function_name: "ptr",
     put: FFI__ptr__put,
@@ -149,7 +149,7 @@ pub mod reader {
     // `DOMEffect.forRead(.World)` argument is encoded on the C++ side
     // (generated `Reader__*__put` in ZigLazyStaticFunctions-inlines.h); the
     // runtime descriptor here only needs the `put` extern.
-    pub(crate) const DOM_CALLS: &[(&str, DomCall)] = &[
+    const DOM_CALLS: &[(&str, DomCall)] = &[
         (
             "u8",
             DomCall {
@@ -298,7 +298,7 @@ pub mod reader {
     /// JS-supplied and **not validated** — a bad value is UB, matching the
     /// `bun:ffi` contract (an unaligned read of `T` at `addr`).
     #[inline(always)]
-    pub(super) unsafe fn read_unaligned_at<T: Copy>(addr: usize) -> T {
+    unsafe fn read_unaligned_at<T: Copy>(addr: usize) -> T {
         // SAFETY: precondition delegated to caller (see fn-level Safety doc).
         unsafe { (addr as *const T).read_unaligned() }
     }
@@ -637,7 +637,7 @@ fn get_cptr(value: JSValue) -> Option<usize> {
     None
 }
 
-pub(crate) fn to_array_buffer(
+fn to_array_buffer(
     global_this: &JSGlobalObject,
     value: JSValue,
     byte_offset: Option<JSValue>,
@@ -697,7 +697,7 @@ pub(crate) fn to_array_buffer(
     }
 }
 
-pub(crate) fn to_buffer(
+fn to_buffer(
     global_this: &JSGlobalObject,
     value: JSValue,
     byte_offset: Option<JSValue>,

@@ -18,14 +18,14 @@ type OsPath = Path<
     { bun_paths::path_options::PathSeparators::AUTO },
 >;
 
-pub struct Hardlinker {
-    pub src: OsAbsPath,
-    pub dest: OsPath,
-    pub walker: Walker,
+pub(crate) struct Hardlinker {
+    pub(crate) src: OsAbsPath,
+    pub(crate) dest: OsPath,
+    pub(crate) walker: Walker,
 }
 
 impl Hardlinker {
-    pub fn init(
+    pub(crate) fn init(
         folder_dir: Fd,
         src: OsAbsPath,
         dest: OsPath,
@@ -47,7 +47,7 @@ impl Hardlinker {
         })
     }
 
-    pub fn link(&mut self) -> Result<sys::Result<()>, AllocError> {
+    pub(crate) fn link(&mut self) -> Result<sys::Result<()>, AllocError> {
         if crate::PackageManager::verbose_install() {
             bun_core::pretty_errorln!(
                 "Hardlinking {} to {}",

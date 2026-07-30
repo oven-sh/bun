@@ -438,14 +438,17 @@ describe("robustness", () => {
   });
 
   test("extremely deep dotted keys and headers throw instead of crashing", () => {
-    // Parsing these is iterative (every segment is processed before the limit
-    // can trip), so unlike OVERFLOW_DEPTH this depth is paid in full: it must
-    // stay small enough to be fast in debug builds while still overflowing
-    // the JS-conversion recursion at release frame sizes.
-    const depth = 250_000;
+    // The parser caps a single dotted path at 4096 segments and reports it as
+    // a stack overflow; before the cap, parsing was iterative and had to build
+    // the full chain of nested tables before the (recursive) JS conversion
+    // could trip its own stack guard, which took seconds under ASAN. The cap
+    // is well above the old parser's 512 and far beyond any real document.
+    const depth = 5000;
     const path = Buffer.alloc(depth * 2 - 1, "a.").toString();
     expect(() => TOML.parse(path + " = 1")).toThrow(RangeError);
     expect(() => TOML.parse(`[${path}]`)).toThrow(RangeError);
+    expect(() => TOML.parse(`[[${path}]]`)).toThrow(RangeError);
+    expect(() => TOML.parse(`a = { ${path} = 1 }`)).toThrow(RangeError);
   });
 
   test("a very long string value round-trips", () => {

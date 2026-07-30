@@ -4603,8 +4603,7 @@ impl VirtualMachine {
             self.wait_for_promise(jsc::AnyPromise::Internal(promise));
         }
 
-        // The promise has settled; pre-arm the waker so this tick drains I/O
-        // without parking until the next timer deadline (#36450).
+        // Pre-arm the waker so this settled-promise tick cannot park (#36450).
         self.wakeup();
         self.auto_tick();
         Ok(self.pending_internal_promise.unwrap())

@@ -659,12 +659,15 @@ impl S3UploadStreamWrapper {
             let _ = self.end_promise.reject(&self.global, Ok(err));
             self.end_promise = bun_jsc::JSPromiseStrong::empty();
         }
-        if !self.task_mut().ended {
-            let _ = self.task_mut().fail(Error::S3Error {
-                code: b"UnknownError",
-                message: b"ReadableStream ended with an error",
-            });
-        }
+        // `rsisAbrupt` already called `controller.close()` → `NetworkSink::end(None)`
+        // → `task.write_bytes(b"", true)` before rejecting the pump promise, so
+        // `task.ended` is always true here and cannot be the guard. `fail()` is
+        // idempotent (`state != Finished`); it sets `state = Finished` so the
+        // in-flight PUT / part callbacks early-return instead of firing Success.
+        let _ = self.task_mut().fail(Error::S3Error {
+            code: b"UnknownError",
+            message: b"ReadableStream ended with an error",
+        });
     }
 
     pub(crate) fn resolve(result: S3UploadResult, self_: &mut Self) -> JsTerminatedResult<()> {

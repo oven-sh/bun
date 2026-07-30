@@ -276,10 +276,8 @@ pub struct NewSocket<const SSL: bool> {
     pub(crate) server_name: JsCell<Option<Box<[u8]>>>,
     pub(crate) buffered_data_for_node_net: JsCell<Vec<u8>>,
     pub(crate) bytes_written: Cell<u64>,
-    /// First fatal `send()` errno observed by a JS-driven `write()`/`end()`
-    /// (ECONNRESET/EPIPE while the loop was blocked in JS). `on_end` suppresses
-    /// the bogus peer-FIN it would otherwise report, and `on_close` reports it
-    /// as the close error when the later poll delivers only HUP.
+    /// First fatal `send()` errno a JS write observed (peer RST while the loop
+    /// was blocked). Consumed by `on_close` as the close error; gates `on_end`.
     pub(crate) fatal_write_errno: Cell<i32>,
 
     pub(crate) native_callback: JsCell<NativeCallbacks>,
@@ -1592,9 +1590,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             return;
         }
         if this.fatal_write_errno.get() != 0 {
-            // A JS-driven write already observed the peer-gone errno while the
-            // loop was blocked; the HUP the loop just polled is not a clean
-            // FIN. Skip the `end` dispatch and let `on_close` report the error.
+            // A write already saw the RST; this HUP is not a peer FIN.
             return;
         }
         let handlers = this.get_handlers();
@@ -1978,8 +1974,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         reason: Option<*mut c_void>,
     ) -> JsResult<()> {
         jsc::mark_binding!();
-        // Per-transport: consume (and clear) the first fatal send errno recorded
-        // by a JS-driven write so a wrapper reused for a reconnect starts clean.
+        // Per-transport; consumed here so a reconnected wrapper starts clean.
         let fatal_write_errno = this.fatal_write_errno.replace(0);
         // A late close on a socket that already released its Handlers through
         // a path that did not route back through this dispatch - e.g. a
@@ -2070,9 +2065,7 @@ impl<const SSL: bool> NewSocket<SSL> {
                 &global,
             );
         } else if fatal_write_errno != 0 {
-            // The loop reported a clean close, but a JS-driven write already
-            // saw the kernel reject the send (peer RST while the loop was
-            // blocked in JS). Report that errno so the reset is not lost.
+            // Loop saw a clean HUP but a JS write already observed the RST.
             js_error = <sys::Error as jsc::SysErrorJsc>::to_js(
                 &sys::Error::from_code_int(fatal_write_errno, sys::Tag::write),
                 &global,
@@ -2286,8 +2279,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         Ok(
             match this.write_or_end::<false>(global, args.mut_(), false) {
                 WriteResult::Fail => JSValue::ZERO,
-                // Fatal send errnos (wrote < -1) are recorded on the socket for
-                // the close dispatch; the documented native return is -1.
+                // `wrote < -1` is a fatal errno (recorded); native API returns -1.
                 WriteResult::Success { wrote, .. } => JSValue::js_number_from_int32(wrote.max(-1)),
             },
         )
@@ -2463,10 +2455,8 @@ impl<const SSL: bool> NewSocket<SSL> {
         if fatal_errno != 0 {
             // Kernel rejected the send (peer gone): return the negative errno so
             // JS fails the write; never close from under the caller's stack, and
-            // leave the undeliverable buffer to the caller (aliasing).
-            // Record the first errno (ECONNRESET precedes the EPIPE tail) so the
-            // later loop-driven `on_end`/`on_close` can report the reset instead
-            // of a clean FIN.
+            // leave the undeliverable buffer to the caller (aliasing). Latch the
+            // first errno for `on_end`/`on_close`.
             if self.fatal_write_errno.get() == 0 {
                 self.fatal_write_errno.set(fatal_errno);
             }

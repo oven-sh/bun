@@ -643,13 +643,16 @@ test("--inspect inline sourcemap sources[0] is a valid path under cwd", async ()
       ws.addEventListener("error", cause => reject(new Error("WebSocket error", { cause })));
     });
 
-    const scriptParsed = new Promise<any>(resolve => {
+    const scriptParsed = new Promise<any>((resolve, reject) => {
       ws.addEventListener("message", ({ data }) => {
         const msg = JSON.parse(data.toString());
         if (msg.method === "Debugger.scriptParsed" && String(msg.params?.url ?? "").endsWith("target.mjs")) {
           resolve(msg.params);
         }
       });
+      ws.addEventListener("error", cause => reject(new Error("WebSocket error", { cause })));
+      ws.addEventListener("close", cause => reject(new Error("WebSocket closed before scriptParsed", { cause })));
+      proc.exited.then(code => reject(new Error(`inspectee exited (${code}) before scriptParsed`)));
     });
     ws.send(JSON.stringify({ id: 1, method: "Inspector.enable" }));
     ws.send(JSON.stringify({ id: 2, method: "Debugger.enable" }));
@@ -661,11 +664,8 @@ test("--inspect inline sourcemap sources[0] is a valid path under cwd", async ()
 
     // The inline map's sources[0] must name the script by a path that resolves
     // to the real file. Before the fix it was "<last char of cwd>/sub/target.mjs".
-    const bogusPrefix = cwd.slice(-1) + "/";
-    expect(map.sources[0].startsWith(bogusPrefix)).toBe(false);
-    expect(map.sources[0]).toBe("/" + join("sub", "target.mjs").replaceAll("\\", "/"));
+    expect(map.sources[0]).toBe("/sub/target.mjs");
   } finally {
     ws.close();
-    proc.kill();
   }
 });

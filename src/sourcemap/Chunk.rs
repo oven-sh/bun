@@ -84,15 +84,23 @@ fn print_source_map_contents_json<const ASCII_ONLY: bool>(
     let mut filename: &[u8] = source.path.text;
     // `top_level_dir` may or may not carry a trailing separator depending on
     // how it was seeded (raw `getcwd()` vs. a later `chdir`). Normalize it
-    // away and require the next byte to be the separator so `/foo` does not
-    // match `/foobar/...` and the sliced result always begins with `/`.
+    // away and require the next byte to be the native separator so `/foo`
+    // does not match `/foobar/...` and the sliced result always begins with
+    // a separator. Source-map `sources` entries are URL-shaped, so on Windows
+    // the sliced native-separator path is flipped to forward slashes.
     let top_level_dir: &[u8] =
         strings::without_trailing_slash(FileSystem::instance().top_level_dir());
     if filename.len() > top_level_dir.len()
         && strings::has_prefix(filename, top_level_dir)
-        && filename[top_level_dir.len()] == b'/'
+        && bun_paths::is_sep_native(filename[top_level_dir.len()])
     {
         filename = &filename[top_level_dir.len()..];
+        if cfg!(windows) {
+            let n = filename.len();
+            filename_buf[..n].copy_from_slice(filename);
+            bun_paths::resolve_path::platform_to_posix_in_place(&mut filename_buf[..n]);
+            filename = &filename_buf[..n];
+        }
     } else if !filename.is_empty() && filename[0] != b'/' {
         filename_buf[0] = b'/';
         filename_buf[1..][..filename.len()].copy_from_slice(filename);

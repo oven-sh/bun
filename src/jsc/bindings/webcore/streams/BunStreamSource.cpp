@@ -900,11 +900,12 @@ JSValue readDirectStream(JSGlobalObject* globalObject, JSReadableStream* stream,
 
     auto* closeBound = createBoundHandler(globalObject, runtime->boundReadDirectStreamOnClose(), state);
     RETURN_IF_EXCEPTION(scope, {});
-    JSValue onPull = wrapWithAsyncContext(globalObject, stream, pull);
-    RETURN_IF_EXCEPTION(scope, {});
     JSValue onClose = wrapWithAsyncContext(globalObject, stream, closeBound);
     RETURN_IF_EXCEPTION(scope, {});
-    startJSSinkController(vm, globalObject, sinkController, stream, onPull, onClose);
+    // A direct-stream `pull` is invoked once below and runs to completion; it
+    // is not a resume hook. Leaving m_onPull empty makes the sink's onReady()
+    // a no-op so a backpressure drain cannot re-enter the still-running pull.
+    startJSSinkController(vm, globalObject, sinkController, stream, jsUndefined(), onClose);
     RETURN_IF_EXCEPTION(scope, {});
 
     stream->m_lockedWithoutReader = true;

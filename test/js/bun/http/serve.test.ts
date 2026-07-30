@@ -3631,6 +3631,66 @@ it("type: direct stream awaiting flush(true) under backpressure does not re-ente
   }
 });
 
+// Same as the test above but the pull does *not* await flush(true) — it keeps
+// writing through backpressure and then parks on an unrelated promise. The
+// sink's onWritable drain must not re-invoke pull; a second entry would
+// duplicate the already-written bytes into the response body.
+it("type: direct stream that ignores backpressure is not re-entered on drain", async () => {
+  const CHUNK = Buffer.alloc(256 * 1024, 69);
+  const TOTAL_CHUNKS = 128; // 32 MiB — well past any localhost send buffer
+  let pullEntries = 0;
+  let sawBackpressure = false;
+  const gate = Promise.withResolvers<void>();
+
+  using server = serve({
+    port: 0,
+    fetch() {
+      return new Response(
+        new ReadableStream({
+          type: "direct",
+          async pull(controller) {
+            pullEntries++;
+            for (let i = 0; i < TOTAL_CHUNKS; i++) {
+              if ((controller.write(CHUNK) as number) < 0) sawBackpressure = true;
+              await controller.flush();
+            }
+            await gate.promise;
+            controller.close();
+          },
+        }),
+      );
+    },
+  });
+
+  const socket = net.connect(server.port, "127.0.0.1");
+  const { promise: bodyDone, resolve: onBodyDone, reject: onSocketError } = Promise.withResolvers<void>();
+  socket.on("error", onSocketError);
+  socket.on("close", () => onBodyDone());
+  socket.on("connect", () => {
+    socket.pause();
+    socket.write("GET / HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n");
+  });
+
+  try {
+    // Hold the client paused while pull pushes 32 MiB and parks on `gate`,
+    // then drain: onWritable fires while pull is still suspended.
+    while (!sawBackpressure) await Bun.sleep(1);
+    await Bun.sleep(50);
+    let received = 0;
+    socket.on("data", d => (received += d.length));
+    socket.resume();
+    while (received < TOTAL_CHUNKS * CHUNK.length) await Bun.sleep(10);
+
+    expect(pullEntries).toBe(1);
+    gate.resolve();
+    await bodyDone;
+    expect(pullEntries).toBe(1);
+  } finally {
+    gate.resolve();
+    socket.destroy();
+  }
+});
+
 // https://github.com/oven-sh/bun/issues/32469
 it("applies backpressure to a Response(async generator) body when the client stalls", async () => {
   const CHUNK = Buffer.alloc(64 * 1024, 68);

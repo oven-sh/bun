@@ -2289,7 +2289,7 @@ impl NetworkSink {
             flushed,
             task.state as u8
         );
-        let _ = flushed;
+        let _ = (task, flushed);
         // Wake the upstream source (JS controller onPull or native ByteStream
         // resume). No-op when `source` is `None` (the `writer()` path).
         this.source.ready(None, None);

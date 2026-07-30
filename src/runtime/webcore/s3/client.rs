@@ -48,7 +48,7 @@ use crate::webcore::ReadableStream;
 use crate::webcore::readable_stream::Source as ReadableStreamPtr;
 use crate::webcore::readable_stream::Strong as ReadableStreamStrong;
 use crate::webcore::s3::multipart::State as MultiPartUploadState;
-use crate::webcore::sink::{JSSink, SinkSignal};
+use crate::webcore::sink::JSSink;
 use crate::webcore::streams::{NetworkSink, NetworkSinkJSSink};
 use bun_jsc::CallFrame;
 use bun_collections::IntegerBitSet;
@@ -435,7 +435,7 @@ pub(crate) fn writable_stream(
             .global_this
             .expect("NetworkSink.global_this set at construction");
         let global = global.get();
-        if sink.end_promise.has_value() || sink.flush_promise.has_value() {
+        if sink.end_promise.has_value() {
             // SAFETY: `bun_vm()` returns the live per-thread VM pointer.
             let event_loop = global.bun_vm().as_mut().event_loop();
             // SAFETY: event_loop is initialised for the lifetime of the VM.
@@ -443,19 +443,12 @@ pub(crate) fn writable_stream(
             let _exit_guard = unsafe { bun_jsc::event_loop::EventLoop::enter_scope(event_loop) };
             match result {
                 S3UploadResult::Success => {
-                    if sink.flush_promise.has_value() {
-                        sink.flush_promise
-                            .resolve(global, JSValue::js_number(0.0))?;
-                    }
                     if sink.end_promise.has_value() {
                         sink.end_promise.resolve(global, JSValue::js_number(0.0))?;
                     }
                 }
                 S3UploadResult::Failure(err) => {
                     let js_err = s3_error_to_js(&err, global, sink.path());
-                    if sink.flush_promise.has_value() {
-                        sink.flush_promise.reject(global, Ok(js_err))?;
-                    }
                     if sink.end_promise.has_value() {
                         sink.end_promise.reject(global, Ok(js_err))?;
                     }
@@ -547,12 +540,9 @@ pub(crate) fn writable_stream(
     // SAFETY: freshly heap-allocated; exclusive access here. Ownership transfers to the JS
     // wrapper via `to_js()` (the C++ side stores it as m_ctx and calls `finalize` on collect).
     let sink = unsafe { &mut *response_stream };
-    sink.signal = SinkSignal::<NetworkSink>::init(JSValue::ZERO);
-
-    // explicitly set it to a dead pointer
-    // we use this memory address to disable signals being sent
-    sink.signal.clear();
-    assert!(sink.signal.is_dead());
+    // `source` defaults to `SourceHandle::None`; no stream is attached on the
+    // `writer()` path, so ready/close/start are no-ops.
+    debug_assert!(sink.source.is_dead());
     Ok(sink.to_js(global_this))
 }
 
@@ -589,7 +579,7 @@ impl S3UploadStreamWrapper {
         if let Some(sink_ptr) = self.sink.take() {
             // SAFETY: sink is a live Box-allocated NetworkSink owned by this wrapper.
             let sink = unsafe { &mut *sink_ptr.as_ptr() };
-            JSSink::<NetworkSink>::detach(&mut sink.signal, &self.global);
+            JSSink::<NetworkSink>::detach(&mut sink.source, &self.global);
             // releases NetworkSink's counted ref on the MultiPartUpload
             sink.finalize();
             // SAFETY: allocated via `heap::into_raw` in `upload_stream`; consumed once here.
@@ -626,8 +616,7 @@ impl S3UploadStreamWrapper {
         if let Some(sink_ptr) = self_.sink {
             // SAFETY: sink is live while held in `self_.sink`.
             let sink = unsafe { &mut *sink_ptr.as_ptr() };
-            // Resolves any pending `flush_promise` and fires `signal.ready()` so
-            // `readStreamIntoSink` resumes the pump.
+            // Fires `source.ready()` so the upstream pump resumes.
             let _ = NetworkSink::on_writable(task, sink, flushed);
         }
     }
@@ -679,10 +668,6 @@ impl S3UploadStreamWrapper {
                 if let Some(sink_ptr) = self_.sink {
                     // SAFETY: sink is live while held in `self_.sink`.
                     let sink = unsafe { &mut *sink_ptr.as_ptr() };
-                    if sink.flush_promise.has_value() {
-                        sink.flush_promise
-                            .resolve(&self_.global, JSValue::js_number(0.0))?;
-                    }
                     if sink.end_promise.has_value() {
                         sink.end_promise
                             .resolve(&self_.global, JSValue::js_number(0.0))?;
@@ -699,7 +684,7 @@ impl S3UploadStreamWrapper {
                 let js_err = s3_error_to_js(err, &self_.global, Some(self_.path.slice()));
                 js_err.ensure_still_alive();
                 if let Some(sink_ptr) = self_.sink {
-                    // Sink pump still in-flight: fire signal.close() so the JSSink
+                    // Sink pump still in-flight: fire source.close() so the JSSink
                     // controller's onClose cancels the upstream ReadableStream. The
                     // pump promise settles after, triggering the `.then` shim which
                     // calls `detach_sink` and releases the pump ref.
@@ -710,10 +695,7 @@ impl S3UploadStreamWrapper {
                     if sink.end_promise.has_value() {
                         sink.end_promise.reject(&self_.global, Ok(js_err))?;
                     }
-                    if sink.flush_promise.has_value() {
-                        sink.flush_promise.reject(&self_.global, Ok(js_err))?;
-                    }
-                    sink.signal.close(None);
+                    sink.source.close(None);
                 }
                 if self_.end_promise.has_value() {
                     self_.end_promise.reject(&self_.global, Ok(js_err))?;
@@ -984,11 +966,6 @@ pub fn upload_stream(
     // `assign_to_stream` detaches (`m_sinkPtr = null`) via `controller.end()/close()`
     // before GC so its destructor never calls `finalize` on this allocation.
     let sink = unsafe { &mut *sink_ptr };
-    sink.signal = SinkSignal::<NetworkSink>::init(JSValue::ZERO);
-    // explicitly set it to a dead pointer
-    // we use this memory address to disable signals being sent
-    sink.signal.clear();
-    debug_assert!(sink.signal.is_dead());
 
     // NetworkSink.task now holds a counted ref on the MultiPartUpload (released in
     // `detach_writable`). Take it here rather than bump the initial ref_count so the
@@ -1005,13 +982,12 @@ pub fn upload_stream(
     // default-controller stream synchronously inside `assign_to_stream`.
     task.continue_stream();
 
-    // `Option<NonNull<c_void>>` is layout-compatible with `*mut c_void` (niche).
-    let signal_ptr_slot = (&raw mut sink.signal.ptr).cast::<*mut c_void>();
     // `assignToStream` routes through `readStreamIntoSink` which uses the default
     // reader's `readMany()`; ByteStream-backed streams drain their buffered chunks
     // in one batch so the native `byte_stream.pipe` fast-path is not re-implemented.
+    // The controller cell is installed into `sink.source` by `assign_to_stream`.
     let assignment_result: JSValue =
-        NetworkSinkJSSink::assign_to_stream(global_this, readable_stream.value, sink, signal_ptr_slot);
+        NetworkSinkJSSink::assign_to_stream(global_this, readable_stream.value, sink);
     assignment_result.ensure_still_alive();
 
     if let Some(err_value) = assignment_result.to_error() {

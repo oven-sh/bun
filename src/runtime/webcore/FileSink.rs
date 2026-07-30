@@ -438,16 +438,6 @@ impl FileSink {
                 }
 
                 FileSink::run_pending(this);
-
-                // this.done == true means ended was called
-                let ended_and_done = (*this).done.get() && status == WriteStatus::EndOfFile;
-
-                if (*this).done.get() && status == WriteStatus::Drained {
-                    // if we call end/endFromJS and we have some pending returned from .flush() we should call writer.end()
-                    (*this).writer.with_mut(|w| w.end());
-                } else if ended_and_done && !has_pending_data {
-                    (*this).writer.with_mut(|w| w.close());
-                }
             }
 
             if status == WriteStatus::Drained
@@ -456,6 +446,17 @@ impl FileSink {
             {
                 let mut src = *(*this).source.get();
                 src.ready(None, None);
+            }
+
+            // `end()`/`end_from_js()` set `done` but only call `writer.end()` when
+            // `flush()` drains synchronously; on the `Pending` flush branch (Windows
+            // uv_write always, POSIX under EAGAIN) the writer is left running and
+            // this drain callback finishes the teardown. Independent of
+            // `pending.state` so the native ByteStream path (no JS promise) closes.
+            if (*this).done.get() && status == WriteStatus::Drained {
+                (*this).writer.with_mut(|w| w.end());
+            } else if (*this).done.get() && status == WriteStatus::EndOfFile && !has_pending_data {
+                (*this).writer.with_mut(|w| w.close());
             }
 
             if status == WriteStatus::EndOfFile {

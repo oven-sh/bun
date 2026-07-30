@@ -1,7 +1,7 @@
 use crate::mal_prelude::*;
 
 use bun_alloc::{Arena as Bump, ArenaVec, ArenaVecExt};
-use bun_threading::thread_pool as ThreadPoolLib;
+use bun_threading::{WaitGroup, thread_pool as ThreadPoolLib};
 
 use crate::{BundleV2, Chunk, LinkerContext};
 
@@ -29,6 +29,9 @@ pub(crate) struct PrepareCssAstTask {
     pub(crate) task: ThreadPoolLib::Task,
     pub(crate) chunk: *mut Chunk,
     pub(crate) linker: *mut LinkerContext<'static>,
+    /// Owned by the scheduling stack frame, which blocks in `wait()` until every
+    /// task in the batch has finished.
+    pub(crate) wait_group: *const WaitGroup,
 }
 
 // SAFETY: scheduled on the worker pool via raw `*mut Task` (bypassing the
@@ -60,6 +63,9 @@ pub(crate) unsafe fn prepare_css_asts_for_chunk(task: *mut ThreadPoolLib::Task) 
         unsafe { &*bun_core::from_field_ptr!(PrepareCssAstTask, task, task) };
     let linker: *mut LinkerContext = prepare_css_asts.linker;
     let chunk: *mut Chunk = prepare_css_asts.chunk;
+    // Copied out before the body runs: releasing the barrier may free the frame
+    // that owns `prepare_css_asts`.
+    let wait_group: *const WaitGroup = prepare_css_asts.wait_group;
     let worker = {
         // SAFETY: `linker` is a raw `*mut` to `BundleV2.linker` (embedded by value),
         // carrying provenance over the full `BundleV2` allocation. Recover the
@@ -77,6 +83,14 @@ pub(crate) unsafe fn prepare_css_asts_for_chunk(task: *mut ThreadPoolLib::Task) 
     // was initialized in `Worker::create()` and points at the worker's heap
     // arena.
     prepare_css_asts_for_chunk_impl(unsafe { &*linker }, unsafe { &mut *chunk }, worker.arena());
+
+    // Ordering: return the `Worker` before releasing the barrier, since doing so
+    // lets the scheduling frame (owner of this task) be destroyed.
+    drop(worker);
+    // SAFETY: the caller's `WaitGroup` outlives every task in its batch by
+    // construction (it blocks on `wait()`), and `finish()` does not touch
+    // `self` after publishing zero (see WaitGroup.rs).
+    unsafe { (*wait_group).finish() };
 }
 
 fn prepare_css_asts_for_chunk_impl(c: &LinkerContext, chunk: &mut Chunk, bump: &Bump) {

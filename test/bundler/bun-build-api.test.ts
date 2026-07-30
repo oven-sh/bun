@@ -17,6 +17,58 @@ import { SourceMapConsumer } from "source-map";
 import { buildNoThrow } from "./buildNoThrow";
 
 describe("Bun.build", () => {
+  // A blocked task on the shared WorkPool must not delay Bun.build(). Asserts
+  // ordering, not timing: the build must finish while the blocker is still
+  // pending. Before the batch-scoped WaitGroup, Bun.build() waited for the whole
+  // pool to drain, so it finished only after the blocker did.
+  test.skipIf(isWindows)("is not blocked by unrelated WorkPool tasks", async () => {
+    const { promises: fs } = await import("fs");
+    const { execFileSync } = await import("child_process");
+
+    using dir = tempDir("bun-build-pool-independence", {
+      "entry.js": "export const x = 1;\n",
+    });
+    const fifo = join(String(dir), "blocker.fifo");
+    execFileSync("mkfifo", [fifo]);
+
+    // Occupies one WorkPool worker: node:fs readFile is an AsyncFSTask, and
+    // opening a FIFO with no writer parks the worker until a writer appears.
+    let blockerSettled = false;
+    const blocker = fs.readFile(fifo).then(
+      () => void (blockerSettled = true),
+      () => void (blockerSettled = true),
+    );
+
+    let released = false;
+    const release = async () => {
+      if (released) return;
+      released = true;
+      const w = await fs.open(fifo, "w");
+      await w.write("x");
+      await w.close();
+    };
+
+    // There is no observable signal for "a pool worker is parked", so wait for
+    // the worker to reach open(2) before building. The safety release bounds a
+    // regression: without it a pool-wide barrier would deadlock this test rather
+    // than fail it.
+    await Bun.sleep(50);
+    const safety = setTimeout(release, isDebug || isASAN ? 8000 : 2000);
+
+    let settledAtBuildEnd: boolean;
+    try {
+      const build = await Bun.build({ entrypoints: [join(String(dir), "entry.js")] });
+      settledAtBuildEnd = blockerSettled;
+      expect(build.success).toBe(true);
+    } finally {
+      clearTimeout(safety);
+      await release();
+      await blocker;
+    }
+
+    expect(settledAtBuildEnd).toBe(false);
+  });
+
   test("css works", async () => {
     const dir = tempDirWithFiles("bun-build-api-css", {
       "a.css": `

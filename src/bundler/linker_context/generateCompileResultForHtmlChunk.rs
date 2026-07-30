@@ -51,7 +51,8 @@ use crate::{Chunk, CompileResult};
 pub(crate) unsafe fn generate_compile_result_for_html_chunk(task: *mut ThreadPoolLibTask) {
     // SAFETY: `task` is the intrusive `task` field of a `PendingPartRange`
     // scheduled by `generate_chunks_in_parallel`; see the helper's contract.
-    let (part_range, _c_ptr, chunk_ptr, _worker) =
+    // `_batch_done` must stay first: binding order is drop order (see `BatchDone`).
+    let (_batch_done, part_range, _c_ptr, chunk_ptr, _worker) =
         unsafe { crate::linker_context_mod::pending_part_range_prologue(task) };
     let i = part_range.i as usize;
     let ctx: &GenerateChunkCtx = part_range.ctx;

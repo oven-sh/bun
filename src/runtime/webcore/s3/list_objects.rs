@@ -38,7 +38,7 @@ pub struct S3ListObjectsContents<'a> {
     // a maybe-owned slice.
     etag: Option<Cow<'a, [u8]>>,
     checksum_type: Option<&'a [u8]>,
-    checksum_algorithme: Option<&'a [u8]>,
+    checksum_algorithm: Option<&'a [u8]>,
     last_modified: Option<&'a [u8]>,
     object_size: Option<i64>,
     storage_class: Option<&'a [u8]>,
@@ -100,8 +100,8 @@ impl<'a> S3ListObjectsV2Result<'a> {
                 object_info.put_optional_utf8(global_object, b"eTag", item.etag.as_deref())?;
                 object_info.put_optional_utf8(
                     global_object,
-                    b"checksumAlgorithme",
-                    item.checksum_algorithme,
+                    b"checksumAlgorithm",
+                    item.checksum_algorithm,
                 )?;
                 object_info.put_optional_utf8(
                     global_object,
@@ -202,10 +202,10 @@ pub(crate) fn parse_s3_list_objects_result(xml: &[u8]) -> S3ListObjectsV2Result<
 
             if let Some(end) = strings::index_of(&xml[i + 1..], b">") {
                 i += 1;
-                let tag_name_end_pos = i + end; // +1 for <
+                let tag_name_end_pos = i + end;
 
                 let tag_name = &xml[i..tag_name_end_pos];
-                i = tag_name_end_pos + 1; // +1 for >
+                i = tag_name_end_pos + 1;
 
                 if tag_name == b"Contents" {
                     let mut looking_for_end_tag = true;
@@ -217,7 +217,7 @@ pub(crate) fn parse_s3_list_objects_result(xml: &[u8]) -> S3ListObjectsV2Result<
                     let mut etag: Option<&[u8]> = None;
                     let mut etag_owned: Option<Vec<u8>> = None;
                     let mut checksum_type: Option<&[u8]> = None;
-                    let mut checksum_algorithme: Option<&[u8]> = None;
+                    let mut checksum_algorithm: Option<&[u8]> = None;
                     let mut owner_id: Option<&[u8]> = None;
                     let mut owner_display_name: Option<&[u8]> = None;
 
@@ -284,7 +284,7 @@ pub(crate) fn parse_s3_list_objects_result(xml: &[u8]) -> S3ListObjectsV2Result<
                                     if let Some(__tag_end) =
                                         strings::index_of(&xml[i..], b"</ChecksumAlgorithm>")
                                     {
-                                        checksum_algorithme = Some(&xml[i..i + __tag_end]);
+                                        checksum_algorithm = Some(&xml[i..i + __tag_end]);
                                         i = i + __tag_end + 20;
                                     } else {
                                         i = xml.len();
@@ -295,12 +295,11 @@ pub(crate) fn parse_s3_list_objects_result(xml: &[u8]) -> S3ListObjectsV2Result<
                                     {
                                         let input = &xml[i..i + __tag_end];
 
-                                        // unescape "&quot;" → "\""
                                         let output =
                                             strings::replace_owned(input, b"&quot;", b"\"");
                                         if output.len() != input.len() {
                                             etag_owned = Some(output);
-                                            etag = None; // sentinel: owned path uses etag_owned
+                                            etag = None;
                                         } else {
                                             etag = Some(input);
                                         }
@@ -357,7 +356,6 @@ pub(crate) fn parse_s3_list_objects_result(xml: &[u8]) -> S3ListObjectsV2Result<
                                 i = xml.len();
                             }
                         } else {
-                            // char is not <
                             i += 1;
                         }
                     }
@@ -380,7 +378,7 @@ pub(crate) fn parse_s3_list_objects_result(xml: &[u8]) -> S3ListObjectsV2Result<
                                 (None, None) => None,
                             },
                             checksum_type,
-                            checksum_algorithme,
+                            checksum_algorithm,
                             last_modified,
                             object_size,
                             storage_class,
@@ -509,12 +507,10 @@ pub(crate) fn parse_s3_list_objects_result(xml: &[u8]) -> S3ListObjectsV2Result<
         if !contents.is_empty() {
             result.contents = Some(contents);
         }
-        // else branch: Vec drops itself
 
         if !common_prefixes.is_empty() {
             result.common_prefixes = Some(common_prefixes);
         }
-        // else branch: Vec drops itself
     }
 
     result
@@ -553,8 +549,6 @@ pub(crate) fn get_list_objects_options_from_js(
         list_objects_options.encoding_type = Some(slice);
     }
 
-    // `JSValue::get_boolean_loose` is not yet exposed in bun_jsc; emulate via
-    // `get_truthy` + `to_boolean()`.
     if let Some(val) = list_options.get_truthy(global_this, b"fetchOwner")? {
         list_objects_options.fetch_owner = Some(val.to_boolean());
     }

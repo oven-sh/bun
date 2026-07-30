@@ -255,12 +255,12 @@ impl ReadableStream {
     }
 
     /// Like [`Self::cancel`] but pending reads reject with `reason` instead of resolving `{done: true}`.
-    pub fn error(&self, global_this: &JSGlobalObject, reason: JSValue) {
+    pub(crate) fn error(&self, global_this: &JSGlobalObject, reason: JSValue) {
         ReadableStream__error(self.value, global_this, reason);
         self.done(global_this);
     }
 
-    pub fn force_detach(&self, global_object: &JSGlobalObject) {
+    pub(crate) fn force_detach(&self, global_object: &JSGlobalObject) {
         // SAFETY: FFI call; value is a valid ReadableStream JSValue.
         ReadableStream__detach(self.value, global_object);
     }
@@ -328,7 +328,10 @@ impl ReadableStream {
 
     /// Same as [`from_native`] but the native source adapter UTF-8-decodes each
     /// chunk to a string before enqueue (Body.textStream()).
-    pub fn from_native_text(global_this: &JSGlobalObject, native: JSValue) -> JsResult<JSValue> {
+    pub(crate) fn from_native_text(
+        global_this: &JSGlobalObject,
+        native: JSValue,
+    ) -> JsResult<JSValue> {
         bun_jsc::from_js_host_call(global_this, || {
             ZigGlobalObject__createNativeTextReadableStream(global_this, native)
         })
@@ -336,7 +339,10 @@ impl ReadableStream {
 
     /// A closed stream with `string` (a JS string) as its only chunk. An empty
     /// string produces an empty closed stream.
-    pub fn from_decoded_text(global_this: &JSGlobalObject, string: JSValue) -> JsResult<JSValue> {
+    pub(crate) fn from_decoded_text(
+        global_this: &JSGlobalObject,
+        string: JSValue,
+    ) -> JsResult<JSValue> {
         bun_jsc::from_js_host_call(global_this, || {
             ReadableStream__fromDecodedText(global_this, string)
         })
@@ -344,13 +350,16 @@ impl ReadableStream {
 
     /// Locks a default reader on `source` and returns a stream that
     /// UTF-8-decodes each chunk from it to a string.
-    pub fn text_decode_from(global_this: &JSGlobalObject, source: JSValue) -> JsResult<JSValue> {
+    pub(crate) fn text_decode_from(
+        global_this: &JSGlobalObject,
+        source: JSValue,
+    ) -> JsResult<JSValue> {
         bun_jsc::from_js_host_call(global_this, || {
             ReadableStream__textDecodeFrom(global_this, source)
         })
     }
 
-    pub fn from_owned_slice(
+    pub(crate) fn from_owned_slice(
         global_this: &JSGlobalObject,
         bytes: impl Into<Vec<u8>>,
         recommended_chunk_size: webcore::blob::SizeType,
@@ -870,20 +879,10 @@ impl<C: SourceContext> NewSource<C> {
         unsafe { &mut *Self::new(init) }
     }
 
-    pub fn unref(&mut self) {
-        if C::SUPPORTS_REF {
-            self.context.set_ref_unref(false);
-        }
-    }
-
     pub fn set_ref(&mut self, value: bool) {
         if C::SUPPORTS_REF {
             self.context.set_ref_unref(value);
         }
-    }
-
-    pub fn start(&mut self) -> streams::Start {
-        self.context.on_start()
     }
 
     pub fn on_pull_from_js(&mut self, buf: &mut [u8], view: JSValue) -> streams::Result {
@@ -1022,11 +1021,14 @@ impl<C: SourceContext> NewSource<C> {
         from_native(global_this, out_value)
     }
 
-    pub fn to_readable_stream(&mut self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
+    pub(crate) fn to_readable_stream(&mut self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
         self.to_readable_stream_with(global_this, ReadableStream::from_native)
     }
 
-    pub fn to_text_readable_stream(&mut self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
+    pub(crate) fn to_text_readable_stream(
+        &mut self,
+        global_this: &JSGlobalObject,
+    ) -> JsResult<JSValue> {
         self.to_readable_stream_with(global_this, ReadableStream::from_native_text)
     }
 

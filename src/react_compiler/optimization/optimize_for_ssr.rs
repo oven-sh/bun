@@ -31,7 +31,7 @@ use crate::hir::{
 /// removing event handlers, and stripping known event handler / ref JSX props.
 ///
 /// Corresponds to TS `optimizeForSSR(fn: HIRFunction): void`.
-pub fn optimize_for_ssr(func: &mut HirFunction, env: &Environment) {
+pub(crate) fn optimize_for_ssr(func: &mut HirFunction, env: &Environment) {
     // Phase 1: Identify useState/useReducer calls that can be safely inlined.
     //
     // For useState(initialValue) where initialValue is primitive/object/array,

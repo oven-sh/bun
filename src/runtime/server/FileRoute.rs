@@ -17,7 +17,7 @@ use crate::node::types::PathOrFileDescriptor;
 use crate::server::file_response_stream::StartOptions as FileResponseStreamOptions;
 use crate::server::jsc::{JSGlobalObject, JSValue, JsResult, VirtualMachine};
 
-use crate::server::{AnyServer, FileResponseStream, HTTPStatusText, RangeRequest, write_status};
+use crate::server::{AnyServer, FileResponseStream, HTTPStatusText, RangeRequest};
 use crate::webcore::blob::store::Data as StoreData;
 use crate::webcore::body::Value as BodyValue;
 use crate::webcore::{Blob, FetchHeaders, Response};
@@ -47,9 +47,9 @@ pub struct FileRoute {
 }
 
 pub struct InitOptions<'a> {
-    pub server: Option<AnyServer>,
-    pub status_code: u16, // default 200
-    pub headers: Option<&'a FetchHeaders>,
+    pub(crate) server: Option<AnyServer>,
+    pub(crate) status_code: u16, // default 200
+    pub(crate) headers: Option<&'a FetchHeaders>,
 }
 
 impl<'a> Default for InitOptions<'a> {
@@ -77,17 +77,17 @@ fn sp_slice<'a>(ptr: StringPointer, buf: &'a [u8]) -> &'a [u8] {
 impl FileRoute {
     /// Exposes the private `server` Cell to the route table (`AnyRoute::set_server`).
     #[inline]
-    pub fn set_server(&self, server: Option<AnyServer>) {
+    pub(crate) fn set_server(&self, server: Option<AnyServer>) {
         self.server.set(server);
     }
 
-    pub fn memory_cost(&self) -> usize {
+    pub(crate) fn memory_cost(&self) -> usize {
         size_of::<FileRoute>()
             + self.headers.memory_cost()
             + self.blob.reported_estimated_size.get()
     }
 
-    pub fn last_modified_date(&self) -> JsResult<Option<u64>> {
+    pub(crate) fn last_modified_date(&self) -> JsResult<Option<u64>> {
         if self.has_last_modified_header {
             if let Some(last_modified) = self.headers.get(b"last-modified") {
                 let mut string = BunString::borrow_utf8(last_modified);
@@ -115,7 +115,7 @@ impl FileRoute {
         Ok(None)
     }
 
-    pub fn init_from_blob(blob: Blob, opts: &InitOptions<'_>) -> *mut FileRoute {
+    pub(crate) fn init_from_blob(blob: Blob, opts: &InitOptions<'_>) -> *mut FileRoute {
         let headers = headers_from(opts.headers, &blob);
         bun_core::heap::into_raw(Box::new(FileRoute {
             ref_count: Cell::new(1),
@@ -273,26 +273,13 @@ impl FileRoute {
         }
     }
 
-    fn write_status_code(&self, status: u16, resp: AnyResponse) {
-        match resp {
-            AnyResponse::SSL(r) => write_status::<true>(r, status),
-            AnyResponse::TCP(r) => write_status::<false>(r, status),
-            AnyResponse::H3(r) => {
-                let mut b = bun_core::fmt::ItoaBuf::new();
-                let s = bun_core::fmt::itoa(&mut b, status);
-                // S008: `h3::Response` is an `opaque_ffi!` ZST — safe deref.
-                bun_opaque::opaque_deref_mut(r).write_status(s);
-            }
-        }
-    }
-
     /// # Safety
     /// `this` must point to a live heap `FileRoute` (intrusive ref held by the
     /// route table) for the duration of the call.
     // Forwards `this` to `Self::on` without dereferencing; not_unsafe_ptr_arg_deref
     // is a false positive on opaque-token forwarding.
     #[allow(clippy::not_unsafe_ptr_arg_deref)]
-    pub fn on_head_request(this: *mut FileRoute, req: AnyRequest, resp: AnyResponse) {
+    pub(crate) fn on_head_request(this: *mut FileRoute, req: AnyRequest, resp: AnyResponse) {
         // SAFETY: forwarded with the same precondition.
         unsafe { Self::on(this, req, resp, Method::HEAD) };
     }
@@ -300,7 +287,7 @@ impl FileRoute {
     // Forwards `this` to `Self::on` without dereferencing; not_unsafe_ptr_arg_deref
     // is a false positive on opaque-token forwarding.
     #[allow(clippy::not_unsafe_ptr_arg_deref)]
-    pub fn on_request(this: *mut FileRoute, req: AnyRequest, resp: AnyResponse) {
+    pub(crate) fn on_request(this: *mut FileRoute, req: AnyRequest, resp: AnyResponse) {
         let method = Method::find(req.method()).unwrap_or(Method::GET);
         // SAFETY: `this` is a live heap FileRoute — intrusive ref held by the
         // route table; only reached from the uWS route callback.
@@ -319,7 +306,7 @@ impl FileRoute {
     /// this call. The `ref_()` taken below keeps it alive until
     /// `on_response_complete`. All mutation through `this` goes via `Cell`, so
     /// the shared borrow is sound.
-    pub unsafe fn on(
+    pub(crate) unsafe fn on(
         this_ptr: *mut FileRoute,
         mut req: AnyRequest,
         resp: AnyResponse,
@@ -386,16 +373,6 @@ impl FileRoute {
             }
         });
 
-        // `parse_http_date` maps a parse failure to `None`, so a
-        // malformed If-Modified-Since header degrades to "serve the file
-        // unconditionally" — the RFC 9110 §13.1.3-correct behaviour.
-        //
-        // LAYERING: the parse step lives HERE (T6) because it needs `bun_jsc` —
-        // so `bun_uws_sys` (T0) carries no upward hook.
-        let input_if_modified_since_date: Option<u64> = req
-            .header(b"if-modified-since")
-            .and_then(crate::jsc_hooks::parse_http_date);
-
         let (can_serve_file, size, file_type, pollable): (bool, u64, FileType, bool) = 'brk: {
             let stat = match bun_sys::fstat(fd) {
                 Ok(s) => s,
@@ -448,79 +425,29 @@ impl FileRoute {
             RangeRequest::Result::None
         };
 
-        let status_code: u16 = 'brk: {
-            // RFC 9110 §13.2.2: preconditions evaluate before Range, in order:
-            // (1) If-Match, else (2) If-Unmodified-Since; then (3) If-None-Match,
-            // else (4) If-Modified-Since. Steps 1/2 yield 412 on failure and must
-            // run before steps 3/4 can yield 304.
-            if (method == Method::HEAD || method == Method::GET) && this.status_code == 200 {
-                // Step 1: If-Match (strong comparison).
-                if let Some(im) = req.header(b"if-match").filter(|v| !v.is_empty()) {
-                    let etag = this.headers.get(b"etag").filter(|v| !v.is_empty());
-                    if !ETag::if_match(etag, im) {
-                        break 'brk 412;
-                    }
-                // Step 2: If-Unmodified-Since (only when If-Match is absent).
-                } else if let Some(ius) = req
-                    .header(b"if-unmodified-since")
-                    .and_then(crate::jsc_hooks::parse_http_date)
-                {
-                    let Ok(lmd) = this.last_modified_date() else {
-                        return;
-                    };
-                    if let Some(lm) = lmd {
-                        if lm / 1000 > ius / 1000 {
-                            break 'brk 412;
-                        }
-                    }
-                }
-            }
-
-            if method == Method::HEAD || method == Method::GET {
-                if let Some(inm) = req.header(b"if-none-match").filter(|v| !v.is_empty()) {
-                    if this.status_code == 200 {
-                        let matched = match this.headers.get(b"etag").filter(|v| !v.is_empty()) {
-                            Some(etag) => ETag::if_none_match(etag, inm),
-                            // No stored ETag: only `*` can match (RFC 9110
-                            // §13.1.2 — any current representation).
-                            None => strings::trim(inm, b" \t") == b"*",
-                        };
-                        if matched {
-                            break 'brk 304;
-                        }
-                    }
-                    // If-None-Match present but did not match: condition is
-                    // true, fall through to Range/200 without consulting
-                    // If-Modified-Since.
-                } else if let Some(requested_if_modified_since) = input_if_modified_since_date {
-                    let Ok(lmd) = this.last_modified_date() else {
-                        return;
-                    }; // TODO: properly propagate exception upwards
-                    if let Some(actual_last_modified_at) = lmd {
-                        // Compare at second precision: the Last-Modified header we
-                        // emit is second-granular (HTTP-date), so a sub-second
-                        // mtime would otherwise never satisfy `<=` against the
-                        // client's echoed value.
-                        if actual_last_modified_at / 1000 <= requested_if_modified_since / 1000 {
-                            break 'brk 304;
-                        }
-                    }
-                }
-            }
-
-            if matches!(range, RangeRequest::Result::Unsatisfiable) {
-                break 'brk 416;
-            }
-            if matches!(range, RangeRequest::Result::Satisfiable { .. }) {
-                break 'brk 206;
-            }
-
-            this.status_code
+        let etag = this.headers.get(b"etag").filter(|v| !v.is_empty());
+        let last_modified_ms = if req.header(b"if-modified-since").is_some()
+            || req.header(b"if-unmodified-since").is_some()
+        {
+            let Ok(lmd) = this.last_modified_date() else {
+                return;
+            };
+            lmd
+        } else {
+            None
         };
+        let status_code = status_for_preconditions(
+            &req,
+            method,
+            this.status_code,
+            etag,
+            last_modified_ms,
+            range,
+        );
 
         req.set_yield(false);
 
-        this.write_status_code(status_code, resp);
+        write_any_status(resp, status_code);
         if this.has_date_header {
             resp.mark_wrote_date_header();
         }
@@ -540,22 +467,12 @@ impl FileRoute {
         }
 
         let (body_offset, body_len): (u64, Option<u64>) = match range {
-            RangeRequest::Result::Satisfiable { start, end } => {
-                let mut crbuf = [0u8; RangeRequest::CONTENT_RANGE_BUF];
-                resp.write_header(
-                    b"content-range",
-                    RangeRequest::format_content_range(&mut crbuf, range, Some(size)),
-                );
-                resp.write_header(b"accept-ranges", b"bytes");
-                (this.blob.offset.get() + start, Some(end - start + 1))
+            RangeRequest::Result::Satisfiable { .. } => {
+                let (start, len) = write_content_range(resp, range, size).unwrap();
+                (this.blob.offset.get() + start, Some(len))
             }
             RangeRequest::Result::Unsatisfiable => {
-                let mut crbuf = [0u8; RangeRequest::CONTENT_RANGE_BUF];
-                resp.write_header(
-                    b"content-range",
-                    RangeRequest::format_content_range(&mut crbuf, range, Some(size)),
-                );
-                resp.write_header(b"accept-ranges", b"bytes");
+                write_content_range(resp, range, size);
                 resp.end(b"", resp.should_close_connection());
                 return;
             }
@@ -623,4 +540,96 @@ fn on_stream_complete(ctx: *mut c_void, resp: AnyResponse) {
 
 fn on_stream_error(ctx: *mut c_void, resp: AnyResponse, _err: bun_sys::Error) {
     FileRoute::on_response_complete(ctx.cast::<FileRoute>(), resp);
+}
+
+/// RFC 9110 §13.2.2 precondition evaluation for a GET/HEAD file response.
+/// Order: (1) If-Match, else (2) If-Unmodified-Since; then (3) If-None-Match,
+/// else (4) If-Modified-Since. Steps 1/2 yield 412 on failure and must run
+/// before steps 3/4 can yield 304. Preconditions only apply when the selected
+/// representation would otherwise be 200 (§13.1.1).
+pub(crate) fn status_for_preconditions(
+    req: &AnyRequest,
+    method: Method,
+    base_status: u16,
+    etag: Option<&[u8]>,
+    last_modified_ms: Option<u64>,
+    range: RangeRequest::Result,
+) -> u16 {
+    if (method == Method::HEAD || method == Method::GET) && base_status == 200 {
+        if let Some(im) = req.header(b"if-match").filter(|v| !v.is_empty()) {
+            if !ETag::if_match(etag, im) {
+                return 412;
+            }
+        } else if let Some(ius) = req
+            .header(b"if-unmodified-since")
+            .and_then(crate::jsc_hooks::parse_http_date)
+        {
+            if let Some(lm) = last_modified_ms {
+                if lm / 1000 > ius / 1000 {
+                    return 412;
+                }
+            }
+        }
+
+        if let Some(inm) = req.header(b"if-none-match").filter(|v| !v.is_empty()) {
+            let matched = match etag {
+                Some(etag) => ETag::if_none_match(etag, inm),
+                // No stored ETag: only `*` can match (§13.1.2).
+                None => strings::trim(inm, b" \t") == b"*",
+            };
+            if matched {
+                return 304;
+            }
+            // Did not match: fall through to Range/200 without consulting IMS.
+        } else if let Some(ims) = req
+            .header(b"if-modified-since")
+            .and_then(crate::jsc_hooks::parse_http_date)
+        {
+            // Compare at second precision: the Last-Modified we emit is
+            // second-granular (HTTP-date), so a sub-second mtime would never
+            // satisfy `<=` against the client's echoed value otherwise.
+            if let Some(lm) = last_modified_ms {
+                if lm / 1000 <= ims / 1000 {
+                    return 304;
+                }
+            }
+        }
+    }
+
+    match range {
+        RangeRequest::Result::Unsatisfiable => 416,
+        RangeRequest::Result::Satisfiable { .. } => 206,
+        RangeRequest::Result::None => base_status,
+    }
+}
+
+/// Write a 206/416 `Content-Range` header plus `Accept-Ranges: bytes`, and
+/// return the `(offset, length)` to stream for a 206, or `None` for 416.
+pub(crate) fn write_content_range(
+    resp: AnyResponse,
+    range: RangeRequest::Result,
+    size: u64,
+) -> Option<(u64, u64)> {
+    let mut crbuf = [0u8; RangeRequest::CONTENT_RANGE_BUF];
+    resp.write_header(
+        b"content-range",
+        RangeRequest::format_content_range(&mut crbuf, range, Some(size)),
+    );
+    resp.write_header(b"accept-ranges", b"bytes");
+    match range {
+        RangeRequest::Result::Satisfiable { start, end } => Some((start, end - start + 1)),
+        _ => None,
+    }
+}
+
+pub(crate) fn write_any_status(resp: AnyResponse, status: u16) {
+    match resp {
+        AnyResponse::SSL(r) => crate::server::write_status::<true>(r, status),
+        AnyResponse::TCP(r) => crate::server::write_status::<false>(r, status),
+        AnyResponse::H3(r) => {
+            let mut b = bun_core::fmt::ItoaBuf::new();
+            let s = bun_core::fmt::itoa(&mut b, status);
+            bun_opaque::opaque_deref_mut(r).write_status(s);
+        }
+    }
 }

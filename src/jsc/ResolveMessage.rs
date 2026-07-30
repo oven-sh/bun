@@ -21,8 +21,8 @@ pub struct ResolveMessage {
     // Note: only the referrer path's `.text` is ever read;
     // store the duped text directly so we don't pull in `bun_paths::fs::Path`
     // (which is lifetime-parameterised over its backing buffer).
-    pub referrer: Option<Box<[u8]>>,
-    pub logged: Cell<bool>,
+    pub(crate) referrer: Option<Box<[u8]>>,
+    pub(crate) logged: Cell<bool>,
 }
 
 impl Default for ResolveMessage {
@@ -223,7 +223,7 @@ impl ResolveMessage {
         out
     }
 
-    pub fn to_string_fn(&self, global: &JSGlobalObject) -> JSValue {
+    pub(crate) fn to_string_fn(&self, global: &JSGlobalObject) -> JSValue {
         let mut text = Vec::new();
         if write!(
             &mut text,

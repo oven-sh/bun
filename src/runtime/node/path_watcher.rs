@@ -148,7 +148,7 @@ impl Default for PathWatcherManager {
 }
 
 impl PathWatcherManager {
-    pub(crate) fn get() -> sys::Result<&'static PathWatcherManager> {
+    fn get() -> sys::Result<&'static PathWatcherManager> {
         // No unlocked fast path: `default_manager` is a plain global and an unsynchronized
         // read here would be textbook broken DCLP (a concurrent Worker's first `fs.watch()`
         // on ARM64 could observe the non-null pointer before `m.* = .{}` is visible and
@@ -246,12 +246,12 @@ impl ChangeEvent {
     }
 }
 
-pub type Callback = fn(ctx: Option<*mut c_void>, event: Event, is_file: bool);
+pub(crate) type Callback = fn(ctx: Option<*mut c_void>, event: Event, is_file: bool);
 pub(crate) type UpdateEndCallback = fn(ctx: Option<*mut c_void>);
 
 impl PathWatcher {
     /// Heap-allocate and return a raw pointer.
-    pub(crate) fn new(init: PathWatcher) -> *mut PathWatcher {
+    fn new(init: PathWatcher) -> *mut PathWatcher {
         bun_core::heap::into_raw(Box::new(init))
     }
 
@@ -406,7 +406,7 @@ impl PathWatcher {
 // watch()
 // ────────────────────────────────────────────────────────────────────────────────
 
-pub fn watch(
+pub(crate) fn watch(
     vm: &VirtualMachine,
     path: &ZStr,
     recursive: bool,

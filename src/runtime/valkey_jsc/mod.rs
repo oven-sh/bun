@@ -35,9 +35,6 @@ pub use self::js_valkey as js_valkey_body;
 
 // ─── public re-exports ───────────────────────────────────────────────────────
 pub use js_valkey::JSValkeyClient;
-pub use protocol_jsc::{
-    ToJSOptions, resp_value_to_js, resp_value_to_js_with_options, valkey_error_to_js,
-};
 pub use valkey::{Options, Protocol, Status, ValkeyClient};
 
 // ── ValkeyCommand ────────────────────────────────────────────────────────────
@@ -67,7 +64,7 @@ impl JSValkeyClient {
     /// Wrap an already-heap-allocated client pointer in its JS object.
     /// Ownership transfers to the C++ wrapper (freed via `finalize`).
     #[inline]
-    pub fn ptr_to_js(ptr: *mut Self, global: &JSGlobalObject) -> JSValue {
+    pub(crate) fn ptr_to_js(ptr: *mut Self, global: &JSGlobalObject) -> JSValue {
         // `ptr` was produced by `JSValkeyClient::new` (heap-allocated) and is
         // hereby owned by the JS wrapper.
         js_RedisClient::to_js(ptr, global)

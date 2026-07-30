@@ -16,9 +16,9 @@ pub enum SideEffects {
 
 #[derive(Clone, Copy, Debug)]
 pub struct Result {
-    pub side_effects: SideEffects,
-    pub ok: bool,
-    pub value: bool,
+    pub(crate) side_effects: SideEffects,
+    pub(crate) ok: bool,
+    pub(crate) value: bool,
 }
 
 impl Default for Result {
@@ -34,11 +34,11 @@ impl Default for Result {
 #[derive(Clone, Copy)]
 pub struct BinaryExpressionSimplifyVisitor {
     // ARENA: points into the AST store (see LIFETIMES.tsv)
-    pub bin: StoreRef<E::Binary>,
+    pub(crate) bin: StoreRef<E::Binary>,
 }
 
 impl SideEffects {
-    pub fn can_change_strict_to_loose(lhs: &ExprData, rhs: &ExprData) -> bool {
+    pub(crate) fn can_change_strict_to_loose(lhs: &ExprData, rhs: &ExprData) -> bool {
         let left = lhs.known_primitive();
         let right = rhs.known_primitive();
         left == right
@@ -46,7 +46,7 @@ impl SideEffects {
             && left != bun_ast::expr::PrimitiveType::Mixed
     }
 
-    pub fn simplify_boolean<'a, const TS: bool, const SCAN: bool>(
+    pub(crate) fn simplify_boolean<'a, const TS: bool, const SCAN: bool>(
         p: &P<'a, TS, SCAN>,
         expr: Expr,
     ) -> Expr {
@@ -109,15 +109,15 @@ impl SideEffects {
 
     // Re-exports of ExprData methods.
     #[inline(always)]
-    pub fn to_number(data: &ExprData) -> Option<f64> {
+    pub(crate) fn to_number(data: &ExprData) -> Option<f64> {
         data.to_number()
     }
     #[inline(always)]
-    pub fn typeof_(data: &ExprData) -> Option<&'static [u8]> {
+    pub(crate) fn typeof_(data: &ExprData) -> Option<&'static [u8]> {
         data.to_typeof()
     }
 
-    pub fn is_primitive_to_reorder(data: &ExprData) -> bool {
+    pub(crate) fn is_primitive_to_reorder(data: &ExprData) -> bool {
         matches!(
             data,
             ExprData::ENull(_)
@@ -132,7 +132,7 @@ impl SideEffects {
         )
     }
 
-    pub fn simplify_unused_expr<'a, const TS: bool, const SCAN: bool>(
+    pub(crate) fn simplify_unused_expr<'a, const TS: bool, const SCAN: bool>(
         p: &mut P<'a, TS, SCAN>,
         expr: Expr,
     ) -> Option<Expr> {
@@ -606,7 +606,7 @@ impl SideEffects {
     /// assign to a global variable instead.
     ///
     /// Caller is expected to first check `p.options.dead_code_elimination` so we only check it once.
-    pub fn should_keep_stmt_in_dead_control_flow(stmt: Stmt, bump: &Bump) -> bool {
+    pub(crate) fn should_keep_stmt_in_dead_control_flow(stmt: Stmt, bump: &Bump) -> bool {
         match stmt.data {
             // Omit these statements entirely
             StmtData::SEmpty(_)
@@ -724,7 +724,7 @@ impl SideEffects {
         }
     }
 
-    pub fn is_primitive_with_side_effects<'a, const TS: bool, const SCAN: bool>(
+    pub(crate) fn is_primitive_with_side_effects<'a, const TS: bool, const SCAN: bool>(
         p: &P<'a, TS, SCAN>,
         loc: bun_ast::Loc,
         data: &ExprData,
@@ -793,7 +793,7 @@ impl SideEffects {
         }
     }
 
-    pub fn to_null_or_undefined<'a, const TS: bool, const SCAN: bool>(
+    pub(crate) fn to_null_or_undefined<'a, const TS: bool, const SCAN: bool>(
         p: &P<'a, TS, SCAN>,
         exp: &ExprData,
     ) -> Result {
@@ -880,7 +880,7 @@ impl SideEffects {
         }
     }
 
-    pub fn to_boolean<'a, const TS: bool, const SCAN: bool>(
+    pub(crate) fn to_boolean<'a, const TS: bool, const SCAN: bool>(
         p: &P<'a, TS, SCAN>,
         exp: &ExprData,
     ) -> Result {

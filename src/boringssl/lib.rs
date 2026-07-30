@@ -12,11 +12,11 @@ use bun_core::strings;
 
 // MOVE_DOWN: lives here so `boringssl` does not depend on `bun_runtime`
 // (tier-6).
-pub mod x509 {
+pub(crate) mod x509 {
     /// Returns `true` iff `name` contains no characters that would require
     /// escaping in a subjectAltName entry.
     #[inline]
-    pub fn is_safe_alt_name(name: &[u8], utf8: bool) -> bool {
+    pub(crate) fn is_safe_alt_name(name: &[u8], utf8: bool) -> bool {
         for &c in name {
             match c {
                 // These mess with encoding rules.
@@ -83,7 +83,7 @@ pub fn load() {
 // ──────────────────────────────────────────────────────────────────────────
 
 /// `#define SSL_DEFAULT_CIPHER_LIST "ALL"`
-pub const SSL_DEFAULT_CIPHER_LIST: &core::ffi::CStr = c"ALL";
+pub(crate) const SSL_DEFAULT_CIPHER_LIST: &core::ffi::CStr = c"ALL";
 
 use boring::{
     CRYPTO_BUFFER_POOL, CRYPTO_BUFFER_POOL_new, SSL_CTX_set_cipher_list, SSL_CTX_set0_buffer_pool,
@@ -140,7 +140,7 @@ pub unsafe fn ssl_ctx_setup(ctx: *mut boring::SSL_CTX) {
 // may result in deadlocks, crashes, or memory corruption.
 
 #[unsafe(no_mangle)]
-pub extern "C" fn OPENSSL_memory_alloc(size: usize) -> *mut c_void {
+pub(crate) extern "C" fn OPENSSL_memory_alloc(size: usize) -> *mut c_void {
     bun_alloc::mimalloc::mi_malloc(size)
 }
 
@@ -149,7 +149,7 @@ pub extern "C" fn OPENSSL_memory_alloc(size: usize) -> *mut c_void {
 /// `ptr` must be non-null and have been returned by `OPENSSL_memory_alloc`
 /// (i.e. `mi_malloc`); BoringSSL guarantees both for this hook.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn OPENSSL_memory_free(ptr: *mut c_void) {
+pub(crate) unsafe extern "C" fn OPENSSL_memory_free(ptr: *mut c_void) {
     // SAFETY: BoringSSL guarantees ptr is non-null and was returned by
     // OPENSSL_memory_alloc above (i.e. mi_malloc).
     unsafe {
@@ -160,7 +160,7 @@ pub unsafe extern "C" fn OPENSSL_memory_free(ptr: *mut c_void) {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn OPENSSL_memory_get_size(ptr: *const c_void) -> usize {
+pub(crate) extern "C" fn OPENSSL_memory_get_size(ptr: *const c_void) -> usize {
     // ptr was returned by mi_malloc (or is null, which usable_size handles).
     bun_alloc::usable_size(ptr.cast())
 }

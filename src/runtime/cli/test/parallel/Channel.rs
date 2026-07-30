@@ -50,12 +50,12 @@ pub trait ChannelOwner: bun_core::IntrusiveField<Channel<Self>> {
 // on `Drop` than on the struct, so Drop/Default below are unbounded too.)
 pub struct Channel<Owner> {
     /// Incoming bytes that don't yet form a complete frame.
-    pub r#in: Vec<u8>,
+    pub(crate) r#in: Vec<u8>,
     /// Outgoing bytes the kernel didn't accept yet.
     pub out: Vec<u8>,
-    pub done: bool,
+    pub(crate) done: bool,
 
-    pub backend: Backend,
+    pub(crate) backend: Backend,
 
     _owner: PhantomData<*mut Owner>,
 }
@@ -90,11 +90,10 @@ impl<Owner: ChannelOwner> Channel<Owner> {
 
 #[cfg(not(windows))]
 pub type Socket = uws::NewSocketHandler<false>;
-#[cfg(windows)]
-pub type Socket = ();
 
+#[cfg(not(windows))]
 pub struct PosixBackend {
-    pub socket: Socket,
+    pub(crate) socket: Socket,
 }
 
 #[cfg(not(windows))]
@@ -135,15 +134,15 @@ impl<Owner: ChannelOwner> Channel<Owner> {
 
 #[cfg(windows)]
 pub struct WindowsBackend {
-    pub pipe: Option<Box<uv::Pipe>>,
+    pub(crate) pipe: Option<Box<uv::Pipe>>,
     /// Read scratch — libuv asks us to allocate before each read.
-    pub read_chunk: [u8; 16 * 1024],
+    pub(crate) read_chunk: [u8; 16 * 1024],
     /// Payload owned by the in-flight uv_write; must stay stable until the
     /// callback. New writes go to `out` until this completes, then the buffers
     /// swap.
-    pub inflight: Vec<u8>,
-    pub write_req: uv::uv_write_t,
-    pub write_buf: uv::uv_buf_t,
+    pub(crate) inflight: Vec<u8>,
+    pub(crate) write_req: uv::uv_write_t,
+    pub(crate) write_buf: uv::uv_buf_t,
 }
 
 #[cfg(windows)]
@@ -171,7 +170,7 @@ impl<Owner: ChannelOwner> Channel<Owner> {
     // parameter would trip `invalid_reference_casting` on the `&T → &mut T`
     // promotion; the raw-pointer route sidesteps that lint while keeping both
     // call sites (which pass `&`/`&mut` and coerce) unchanged.
-    pub fn adopt(&mut self, vm: *const VirtualMachine, fd: Fd) -> bool {
+    pub(crate) fn adopt(&mut self, vm: *const VirtualMachine, fd: Fd) -> bool {
         // VM is process-singleton and accessed only from the main
         // thread here; route through the safe singleton accessor.
         let _ = vm;
@@ -249,7 +248,7 @@ impl<Owner: ChannelOwner> Channel<Owner> {
     /// `close()` / `Drop`, and both sides exit via Global.exit / drive()
     /// returning, so the extra ref never holds the process open.
     #[cfg(windows)]
-    pub fn adopt_pipe(&mut self, _vm: *const VirtualMachine, pipe: *mut uv::Pipe) -> bool {
+    pub(crate) fn adopt_pipe(&mut self, _vm: *const VirtualMachine, pipe: *mut uv::Pipe) -> bool {
         // The read callbacks are expressed via the `StreamReader` trait impl
         // below and routed through `read_start_ctx`, which stashes `self` in
         // `handle.data`.
@@ -276,7 +275,7 @@ impl<Owner: ChannelOwner> Channel<Owner> {
     /// Queue and write a complete encoded frame. If the kernel accepts only
     /// part of it (or there's already a backlog), the remainder lands in `out`
     /// and the writable callback finishes it.
-    pub fn send(&mut self, frame_bytes: &[u8]) {
+    pub(crate) fn send(&mut self, frame_bytes: &[u8]) {
         if self.done {
             return;
         }
@@ -373,7 +372,7 @@ impl<Owner: ChannelOwner> Channel<Owner> {
     /// True while the underlying socket/pipe is still open. When `done` is set
     /// with the transport still attached, it was a protocol error (corrupt
     /// frame), not a clean close.
-    pub fn is_attached(&self) -> bool {
+    pub(crate) fn is_attached(&self) -> bool {
         #[cfg(windows)]
         {
             return self.backend.pipe.is_some();
@@ -385,7 +384,7 @@ impl<Owner: ChannelOwner> Channel<Owner> {
     }
 
     /// True while any encoded bytes are still queued or in flight.
-    pub fn has_pending_writes(&self) -> bool {
+    pub(crate) fn has_pending_writes(&self) -> bool {
         if !self.out.is_empty() {
             return true;
         }
@@ -525,18 +524,18 @@ impl<Owner> Drop for Channel<Owner> {
 /// owner (`WorkerCommands<'a>`) carries a lifetime. The trampolines below are
 /// the exact shape `vtable::make` would have produced.
 #[cfg(not(windows))]
-pub(crate) struct PosixHandlers<Owner: ChannelOwner>(PhantomData<Owner>);
+struct PosixHandlers<Owner: ChannelOwner>(PhantomData<Owner>);
 
 /// Ext slot type for the usockets vtable: the slot holds a `*mut Channel<Owner>`.
 // Inherent associated types are unstable in Rust, so this lives as a free alias.
 #[cfg(not(windows))]
-pub(crate) type PosixExt<Owner> = *mut Channel<Owner>;
+type PosixExt<Owner> = *mut Channel<Owner>;
 
 #[cfg(not(windows))]
 impl<Owner: ChannelOwner> PosixHandlers<Owner> {
     /// Per-Owner static vtable. `&Self::VTABLE` const-promotes to
     /// `&'static SocketGroupVTable` (all fields are `Option<fn>`; no Drop).
-    pub(crate) const VTABLE: uws::SocketGroupVTable = uws::SocketGroupVTable {
+    const VTABLE: uws::SocketGroupVTable = uws::SocketGroupVTable {
         on_open: None,
         on_data: Some(Self::raw_on_data),
         on_fd: None,
@@ -601,15 +600,15 @@ impl<Owner: ChannelOwner> PosixHandlers<Owner> {
 }
 
 #[cfg(windows)]
-pub(crate) struct WindowsHandlers<Owner: ChannelOwner>(PhantomData<Owner>);
+struct WindowsHandlers<Owner: ChannelOwner>(PhantomData<Owner>);
 
 #[cfg(windows)]
 impl<Owner: ChannelOwner> WindowsHandlers<Owner> {
-    pub(crate) fn on_alloc(self_: &mut Channel<Owner>, suggested: usize) -> &mut [u8] {
+    fn on_alloc(self_: &mut Channel<Owner>, suggested: usize) -> &mut [u8] {
         let _ = suggested;
         &mut self_.backend.read_chunk[..]
     }
-    pub(crate) fn on_error(self_: &mut Channel<Owner>, _err: bun_sys::E) {
+    fn on_error(self_: &mut Channel<Owner>, _err: bun_sys::E) {
         // Mirror the POSIX on_close path: detach the transport before
         // signalling done so the owner can tell EOF apart from a protocol
         // error (where the pipe is still attached).
@@ -619,7 +618,7 @@ impl<Owner: ChannelOwner> WindowsHandlers<Owner> {
         }
         self_.mark_done();
     }
-    pub(crate) fn on_write(self_: &mut Channel<Owner>, status: uv::ReturnCode) {
+    fn on_write(self_: &mut Channel<Owner>, status: uv::ReturnCode) {
         self_.backend.inflight.clear();
         if self_.done {
             return;

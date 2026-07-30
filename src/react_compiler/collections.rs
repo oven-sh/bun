@@ -31,7 +31,7 @@ pub type FxHashSet<K> = std::collections::HashSet<K, rustc_hash::FxBuildHasher>;
 
 type Inner<K, V> = ArrayHashMap<K, V, AutoContext, AstAlloc>;
 
-pub type Entry<'a, K, V> = MapEntry<'a, K, V, AutoContext, AstAlloc>;
+pub(crate) type Entry<'a, K, V> = MapEntry<'a, K, V, AutoContext, AstAlloc>;
 pub use bun_collections::array_hash_map::{OccupiedEntry, VacantEntry};
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -43,69 +43,46 @@ pub struct IndexMap<K, V>(Inner<K, V>);
 
 impl<K, V> IndexMap<K, V> {
     #[inline]
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self(Inner::new())
-    }
-    #[inline]
-    pub fn with_capacity(n: usize) -> Self {
-        Self(Inner::with_capacity(n))
     }
 
     #[inline]
-    pub fn len(&self) -> usize {
+    pub(crate) fn len(&self) -> usize {
         self.0.len()
     }
     #[inline]
-    pub fn is_empty(&self) -> bool {
+    pub(crate) fn is_empty(&self) -> bool {
         self.0.is_empty()
-    }
-    #[inline]
-    pub fn clear(&mut self) {
-        self.0.clear();
-    }
-    #[inline]
-    pub fn reserve(&mut self, additional: usize) {
-        self.0.reserve(additional);
     }
 
     #[inline]
-    pub fn keys(&self) -> slice::Iter<'_, K> {
+    pub(crate) fn keys(&self) -> slice::Iter<'_, K> {
         self.0.keys().iter()
     }
     #[inline]
-    pub fn values(&self) -> slice::Iter<'_, V> {
+    pub(crate) fn values(&self) -> slice::Iter<'_, V> {
         self.0.values().iter()
     }
     #[inline]
-    pub fn values_mut(&mut self) -> slice::IterMut<'_, V> {
+    pub(crate) fn values_mut(&mut self) -> slice::IterMut<'_, V> {
         self.0.values_mut().iter_mut()
     }
     #[inline]
-    pub fn iter(&self) -> Zip<slice::Iter<'_, K>, slice::Iter<'_, V>> {
+    pub(crate) fn iter(&self) -> Zip<slice::Iter<'_, K>, slice::Iter<'_, V>> {
         self.0.iter()
     }
-    pub fn iter_mut(&mut self) -> impl Iterator<Item = (&K, &mut V)> {
+    pub(crate) fn iter_mut(&mut self) -> impl Iterator<Item = (&K, &mut V)> {
         self.0.iterator().map(|e| (&*e.key_ptr, &mut *e.value_ptr))
     }
 
-    /// `(key, value)` at insertion-order position `i`.
     #[inline]
-    pub fn get_index(&self, i: usize) -> Option<(&K, &V)> {
-        let k = self.0.keys().get(i)?;
-        Some((k, &self.0.values()[i]))
-    }
-    #[inline]
-    pub fn first(&self) -> Option<(&K, &V)> {
-        self.get_index(0)
-    }
-
-    #[inline]
-    pub fn retain<F: FnMut(&K, &mut V) -> bool>(&mut self, f: F) {
+    pub(crate) fn retain<F: FnMut(&K, &mut V) -> bool>(&mut self, f: F) {
         self.0.retain(f);
     }
 
     /// Remove every entry, yielding `(K, V)` in insertion order.
-    pub fn drain(&mut self, range: core::ops::RangeFull) -> IntoIter<K, V> {
+    pub(crate) fn drain(&mut self, range: core::ops::RangeFull) -> IntoIter<K, V> {
         let _ = range;
         core::mem::take(self).into_iter()
     }
@@ -113,38 +90,38 @@ impl<K, V> IndexMap<K, V> {
 
 impl<K: Hash + Eq, V> IndexMap<K, V> {
     #[inline]
-    pub fn get(&self, key: &K) -> Option<&V> {
+    pub(crate) fn get(&self, key: &K) -> Option<&V> {
         self.0.get(key)
     }
     #[inline]
-    pub fn get_mut(&mut self, key: &K) -> Option<&mut V> {
+    pub(crate) fn get_mut(&mut self, key: &K) -> Option<&mut V> {
         self.0.get_mut(key)
     }
     #[inline]
-    pub fn contains_key(&self, key: &K) -> bool {
+    pub(crate) fn contains_key(&self, key: &K) -> bool {
         self.0.contains(key)
     }
     #[inline]
-    pub fn insert(&mut self, key: K, value: V) -> Option<V> {
+    pub(crate) fn insert(&mut self, key: K, value: V) -> Option<V> {
         self.0.insert(key, value)
     }
     #[inline]
-    pub fn entry(&mut self, key: K) -> Entry<'_, K, V> {
+    pub(crate) fn entry(&mut self, key: K) -> Entry<'_, K, V> {
         self.0.entry(key)
     }
     /// Order-preserving remove. O(n).
     #[inline]
-    pub fn shift_remove(&mut self, key: &K) -> Option<V> {
+    pub(crate) fn shift_remove(&mut self, key: &K) -> Option<V> {
         self.0.remove(key)
     }
     /// O(1) remove; does not preserve order.
     #[inline]
-    pub fn swap_remove(&mut self, key: &K) -> Option<V> {
+    pub(crate) fn swap_remove(&mut self, key: &K) -> Option<V> {
         self.0.fetch_swap_remove(key).map(|(_, v)| v)
     }
     /// Alias for [`shift_remove`](Self::shift_remove).
     #[inline]
-    pub fn remove(&mut self, key: &K) -> Option<V> {
+    pub(crate) fn remove(&mut self, key: &K) -> Option<V> {
         self.0.remove(key)
     }
 }
@@ -256,65 +233,41 @@ pub struct IndexSet<K>(Inner<K, ()>);
 
 impl<K> IndexSet<K> {
     #[inline]
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self(Inner::new())
-    }
-    #[inline]
-    pub fn with_capacity(n: usize) -> Self {
-        Self(Inner::with_capacity(n))
     }
 
     #[inline]
-    pub fn len(&self) -> usize {
+    pub(crate) fn len(&self) -> usize {
         self.0.len()
     }
     #[inline]
-    pub fn is_empty(&self) -> bool {
+    pub(crate) fn is_empty(&self) -> bool {
         self.0.is_empty()
     }
     #[inline]
-    pub fn clear(&mut self) {
+    pub(crate) fn clear(&mut self) {
         self.0.clear();
-    }
-    #[inline]
-    pub fn reserve(&mut self, additional: usize) {
-        self.0.reserve(additional);
     }
 
     #[inline]
-    pub fn iter(&self) -> slice::Iter<'_, K> {
+    pub(crate) fn iter(&self) -> slice::Iter<'_, K> {
         self.0.keys().iter()
-    }
-    #[inline]
-    pub fn get_index(&self, i: usize) -> Option<&K> {
-        self.0.keys().get(i)
-    }
-    #[inline]
-    pub fn first(&self) -> Option<&K> {
-        self.0.keys().first()
     }
 }
 
 impl<K: Hash + Eq> IndexSet<K> {
     /// Returns `true` if the value was newly inserted.
     #[inline]
-    pub fn insert(&mut self, key: K) -> bool {
+    pub(crate) fn insert(&mut self, key: K) -> bool {
         self.0.insert(key, ()).is_none()
     }
     #[inline]
-    pub fn contains(&self, key: &K) -> bool {
+    pub(crate) fn contains(&self, key: &K) -> bool {
         self.0.contains(key)
     }
     #[inline]
-    pub fn get(&self, key: &K) -> Option<&K> {
-        self.0.get_index(key).map(|i| &self.0.keys()[i])
-    }
-    #[inline]
-    pub fn shift_remove(&mut self, key: &K) -> bool {
-        self.0.remove(key).is_some()
-    }
-    #[inline]
-    pub fn remove(&mut self, key: &K) -> bool {
+    pub(crate) fn shift_remove(&mut self, key: &K) -> bool {
         self.0.remove(key).is_some()
     }
 }
@@ -396,54 +349,54 @@ pub struct IdMap<K, V>(IndexMap<u32, V>, core::marker::PhantomData<K>);
 
 impl<K: Copy + Into<u32>, V> IdMap<K, V> {
     #[inline]
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self(IndexMap::new(), core::marker::PhantomData)
     }
     #[inline]
-    pub fn get(&self, k: K) -> Option<&V> {
+    pub(crate) fn get(&self, k: K) -> Option<&V> {
         self.0.get(&k.into())
     }
     #[inline]
-    pub fn get_mut(&mut self, k: K) -> Option<&mut V> {
+    pub(crate) fn get_mut(&mut self, k: K) -> Option<&mut V> {
         self.0.get_mut(&k.into())
     }
     #[inline]
-    pub fn insert(&mut self, k: K, v: V) -> Option<V> {
+    pub(crate) fn insert(&mut self, k: K, v: V) -> Option<V> {
         self.0.insert(k.into(), v)
     }
     #[inline]
-    pub fn contains_key(&self, k: K) -> bool {
+    pub(crate) fn contains_key(&self, k: K) -> bool {
         self.0.contains_key(&k.into())
     }
     #[inline]
-    pub fn entry(&mut self, k: K) -> Entry<'_, u32, V> {
+    pub(crate) fn entry(&mut self, k: K) -> Entry<'_, u32, V> {
         self.0.entry(k.into())
     }
     #[inline]
-    pub fn remove(&mut self, k: K) -> Option<V> {
+    pub(crate) fn remove(&mut self, k: K) -> Option<V> {
         self.0.remove(&k.into())
     }
     #[inline]
-    pub fn iter(&self) -> impl Iterator<Item = (K, &V)>
+    pub(crate) fn iter(&self) -> impl Iterator<Item = (K, &V)>
     where
         K: From<u32>,
     {
         self.0.iter().map(|(k, v)| (K::from(*k), v))
     }
     #[inline]
-    pub fn len(&self) -> usize {
+    pub(crate) fn len(&self) -> usize {
         self.0.len()
     }
     #[inline]
-    pub fn is_empty(&self) -> bool {
+    pub(crate) fn is_empty(&self) -> bool {
         self.0.is_empty()
     }
     #[inline]
-    pub fn values(&self) -> slice::Iter<'_, V> {
+    pub(crate) fn values(&self) -> slice::Iter<'_, V> {
         self.0.values()
     }
     #[inline]
-    pub fn values_mut(&mut self) -> slice::IterMut<'_, V> {
+    pub(crate) fn values_mut(&mut self) -> slice::IterMut<'_, V> {
         self.0.values_mut()
     }
 }

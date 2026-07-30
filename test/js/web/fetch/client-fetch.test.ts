@@ -448,7 +448,7 @@ test("unresolvable hostname rejects with the resolver error", async () => {
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   const notFound = (hostname: string) => ({
-    name: "Error",
+    name: "TypeError",
     code: "ENOTFOUND",
     syscall: "getaddrinfo",
     hostname,

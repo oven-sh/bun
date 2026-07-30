@@ -7,10 +7,10 @@ use crate::shell::states::stmt::Stmt;
 use crate::shell::yield_::Yield;
 
 pub struct If {
-    pub base: Base,
+    pub(crate) base: Base,
     pub node: bun_ptr::BackRef<ast::If>,
-    pub io: IO,
-    pub state: IfState,
+    pub(crate) io: IO,
+    pub(crate) state: IfState,
 }
 
 #[derive(Default, strum::IntoStaticStr)]
@@ -23,13 +23,13 @@ pub enum IfState {
 }
 
 pub struct Exec {
-    pub state: ExecBranch,
+    pub(crate) state: ExecBranch,
     /// Back-reference to the current `SmolList<ast::Stmt, 1>` being walked.
     /// Points into the AST arena, which the interpreter holds for its entire
     /// lifetime — it outlives every state node.
-    pub stmts: bun_ptr::BackRef<ast::SmolList<ast::Stmt, 1>>,
-    pub stmt_idx: u32,
-    pub last_exit_code: ExitCode,
+    pub(crate) stmts: bun_ptr::BackRef<ast::SmolList<ast::Stmt, 1>>,
+    pub(crate) stmt_idx: u32,
+    pub(crate) last_exit_code: ExitCode,
 }
 
 impl Exec {
@@ -57,7 +57,7 @@ pub enum ExecBranch {
 }
 
 impl If {
-    pub fn init(
+    pub(crate) fn init(
         interp: &Interpreter,
         shell: *mut ShellExecEnv,
         node: &ast::If,
@@ -72,11 +72,11 @@ impl If {
         }))
     }
 
-    pub fn start(_interp: &Interpreter, this: NodeId) -> Yield {
+    pub(crate) fn start(_interp: &Interpreter, this: NodeId) -> Yield {
         Yield::Next(this)
     }
 
-    pub fn next(interp: &Interpreter, this: NodeId) -> Yield {
+    pub(crate) fn next(interp: &Interpreter, this: NodeId) -> Yield {
         let parent = interp.as_if(this).base.parent;
         loop {
             // Read/mutate `state` via a short-lived borrow, decide an action,
@@ -182,7 +182,7 @@ impl If {
         }
     }
 
-    pub fn child_done(
+    pub(crate) fn child_done(
         interp: &Interpreter,
         this: NodeId,
         child: NodeId,
@@ -199,13 +199,13 @@ impl If {
         Yield::Next(this)
     }
 
-    pub fn deinit(interp: &Interpreter, this: NodeId) {
+    pub(crate) fn deinit(interp: &Interpreter, this: NodeId) {
         log!("If {} deinit", this);
         interp.as_if_mut(this).base.end_scope();
     }
 }
 
-pub enum Action {
+pub(crate) enum Action {
     Done(ExitCode),
     SpawnStmt(*const ast::Stmt),
 }

@@ -112,7 +112,7 @@ impl Default for Body {
 
 impl Body {
     #[inline]
-    pub fn new(value: Value) -> Self {
+    pub(crate) fn new(value: Value) -> Self {
         Self {
             value: JsCell::new(value),
         }
@@ -124,28 +124,20 @@ impl Body {
     /// JS and may touch this same body.
     #[inline]
     #[allow(clippy::mut_from_ref)]
-    pub fn value_mut(&self) -> &mut Value {
+    pub(crate) fn value_mut(&self) -> &mut Value {
         // SAFETY: single-JS-thread invariant — `Body` lives inside a
         // `Request`/`Response` JSC heap cell; concurrent access is impossible
         // and re-entrant host fns each form a fresh short-lived borrow.
         unsafe { self.value.get_mut() }
     }
 
-    pub fn len(&self) -> blob::SizeType {
+    pub(crate) fn len(&self) -> blob::SizeType {
         self.value_mut().size()
-    }
-
-    pub fn slice(&self) -> &[u8] {
-        self.value.get().slice()
-    }
-
-    pub fn clone(&self, global_this: &JSGlobalObject) -> JsResult<Body> {
-        Ok(Body::new(self.value_mut().clone(global_this)?))
     }
 }
 
 impl Body {
-    pub fn write_format<F, W: core::fmt::Write, const ENABLE_ANSI_COLORS: bool>(
+    pub(crate) fn write_format<F, W: core::fmt::Write, const ENABLE_ANSI_COLORS: bool>(
         &self,
         formatter: &mut F,
         writer: &mut W,
@@ -225,8 +217,8 @@ impl Body {
 // ────────────────────────────────────────────────────────────────────────────
 
 pub struct PendingValue {
-    pub promise: Option<JSValue>,
-    pub readable: webcore::readable_stream::Strong,
+    pub(crate) promise: Option<JSValue>,
+    pub(crate) readable: webcore::readable_stream::Strong,
     // writable: webcore::Sink
 
     // LIFETIMES.tsv JSC_BORROW → `&JSGlobalObject`, but `Value::Locked`
@@ -237,20 +229,20 @@ pub struct PendingValue {
     pub task: Option<*mut c_void>,
 
     /// runs after the data is available.
-    pub on_receive_value: Option<fn(ctx: *mut c_void, value: &mut Value)>,
+    pub(crate) on_receive_value: Option<fn(ctx: *mut c_void, value: &mut Value)>,
 
     /// conditionally runs when requesting data
     /// used in HTTP server to ignore request bodies unless asked for it
-    pub on_start_buffering: Option<fn(ctx: *mut c_void)>,
-    pub on_start_streaming: Option<fn(ctx: *mut c_void) -> DrainResult>,
-    pub on_readable_stream_available:
+    pub(crate) on_start_buffering: Option<fn(ctx: *mut c_void)>,
+    pub(crate) on_start_streaming: Option<fn(ctx: *mut c_void) -> DrainResult>,
+    pub(crate) on_readable_stream_available:
         Option<fn(ctx: *mut c_void, global_this: &JSGlobalObject, readable: ReadableStream)>,
-    pub on_stream_cancelled: Option<fn(ctx: Option<*mut c_void>)>,
-    pub on_stream_drained: Option<fn(ctx: Option<*mut c_void>)>,
-    pub size_hint: blob::SizeType,
+    pub(crate) on_stream_cancelled: Option<fn(ctx: Option<*mut c_void>)>,
+    pub(crate) on_stream_drained: Option<fn(ctx: Option<*mut c_void>)>,
+    pub(crate) size_hint: blob::SizeType,
 
-    pub deinit: bool,
-    pub action: Action,
+    pub(crate) deinit: bool,
+    pub(crate) action: Action,
 }
 
 impl PendingValue {
@@ -310,7 +302,7 @@ impl PendingValue {
         self.size_hint
     }
 
-    pub(crate) fn to_any_blob(&mut self) -> Option<AnyBlob> {
+    fn to_any_blob(&mut self) -> Option<AnyBlob> {
         if self.promise.is_some() {
             return None;
         }
@@ -352,7 +344,7 @@ impl PendingValue {
         false
     }
 
-    pub(crate) fn to_any_blob_allow_promise(&mut self) -> Option<AnyBlob> {
+    fn to_any_blob_allow_promise(&mut self) -> Option<AnyBlob> {
         let global = self.global();
         let mut stream = self.readable.get(global)?;
 
@@ -364,7 +356,7 @@ impl PendingValue {
         None
     }
 
-    pub(crate) fn set_promise(
+    fn set_promise(
         &mut self,
         global_this: &JSGlobalObject,
         action: Action,
@@ -499,12 +491,14 @@ pub enum Value {
     ///
     /// Example code:
     ///
-    ///     Bun.serve({
-    ///         fetch(req) {
-    ///              /* Body.Value becomes InternalBlob */
-    ///              return new Response("hello world 🤭");
-    ///         }
-    ///     })
+    /// ```js
+    /// Bun.serve({
+    ///     fetch(req) {
+    ///          /* Body.Value becomes InternalBlob */
+    ///          return new Response("hello world 🤭");
+    ///     }
+    /// })
+    /// ```
     ///
     /// This works for .json(), too.
     // `bun_core::WTFStringImpl` = `*mut WTFStringImplStruct` — a Copy raw
@@ -564,6 +558,8 @@ pub enum Tag {
 pub enum ValueError {
     AbortReason(CommonAbortReason),
     SystemError(SystemError),
+    /// `SystemError` surfaced as a JS `TypeError` (fetch network errors).
+    SystemTypeError(SystemError),
     Message(BunString),
     /// Surfaces as a JS `TypeError`. The fetch spec maps every "network
     /// error" to TypeError, so use this for fetch-layer rejections that
@@ -578,7 +574,7 @@ impl ValueError {
     pub fn reset(&mut self) {
         match self {
             // The bun.String fields are dropped by the assignment below.
-            ValueError::SystemError(_system_error) => {}
+            ValueError::SystemError(_) | ValueError::SystemTypeError(_) => {}
             ValueError::Message(message) => message.deref(),
             ValueError::TypeError(message) => message.deref(),
             ValueError::JSValue(v) => v.deinit(),
@@ -590,7 +586,7 @@ impl ValueError {
 }
 
 impl ValueError {
-    pub fn to_stream_error(
+    pub(crate) fn to_stream_error(
         &mut self,
         global_object: &JSGlobalObject,
     ) -> streams::result::StreamError {
@@ -612,6 +608,9 @@ impl ValueError {
             ValueError::SystemError(system_error) => {
                 core::mem::take(system_error).to_error_instance(global_object)
             }
+            ValueError::SystemTypeError(system_error) => {
+                core::mem::take(system_error).to_type_error_instance(global_object)
+            }
             ValueError::Message(message) => message.to_error_instance(global_object),
             ValueError::TypeError(message) => message.to_type_error_instance(global_object),
             // do an early return in this case we don't need to create a new Strong
@@ -623,11 +622,12 @@ impl ValueError {
         js_value
     }
 
-    pub fn dupe(&self, global_object: &JSGlobalObject) -> Self {
+    pub(crate) fn dupe(&self, global_object: &JSGlobalObject) -> Self {
         match self {
             // `.clone()` on BunString/SystemError already bumps the refcount (paired
             // with their Drop deref); an extra `.ref_()` here would leak +1 per dupe.
             ValueError::SystemError(e) => ValueError::SystemError(e.clone()),
+            ValueError::SystemTypeError(e) => ValueError::SystemTypeError(e.clone()),
             ValueError::Message(m) => ValueError::Message(m.clone()),
             ValueError::TypeError(m) => ValueError::TypeError(m.clone()),
             ValueError::JSValue(js_ref) => {
@@ -655,7 +655,7 @@ impl Value {
     /// Returns a raw pointer; the storage is owned
     /// by the JSC heap cell and outlives the call only as long as `value` is
     /// kept alive by the caller.
-    pub fn from_request_or_response(value: JSValue) -> Option<*mut Value> {
+    pub(crate) fn from_request_or_response(value: JSValue) -> Option<*mut Value> {
         if value.is_empty_or_undefined_or_null() {
             return None;
         }
@@ -668,7 +668,7 @@ impl Value {
         None
     }
 
-    pub fn was_string(&self) -> bool {
+    pub(crate) fn was_string(&self) -> bool {
         match self {
             Value::InternalBlob(blob) => blob.was_string,
             Value::WTFStringImpl(_) => true,
@@ -681,7 +681,7 @@ impl Value {
     // We may not have all the data yet
     // So we can't know for sure if it's empty or not
     // We CAN know that it is definitely empty.
-    pub fn is_definitely_empty(&self) -> bool {
+    pub(crate) fn is_definitely_empty(&self) -> bool {
         match self {
             Value::Null => true,
             Value::Used | Value::Empty => true,
@@ -692,7 +692,7 @@ impl Value {
         }
     }
 
-    pub fn to_blob_if_possible(&mut self) {
+    pub(crate) fn to_blob_if_possible(&mut self) {
         if let Value::WTFStringImpl(str) = *self {
             if let Some(bytes) = wtf_impl(&str).to_utf8_if_needed() {
                 // The UTF-8 buffer is already heap-owned by the slice wrapper;
@@ -719,7 +719,7 @@ impl Value {
         }
     }
 
-    pub fn size(&mut self) -> blob::SizeType {
+    pub(crate) fn size(&mut self) -> blob::SizeType {
         match self {
             Value::Blob(b) => b.get_size_for_bindings() as blob::SizeType,
             Value::InternalBlob(b) => b.slice_const().len() as blob::SizeType,
@@ -730,7 +730,7 @@ impl Value {
         }
     }
 
-    pub fn memory_cost(&self) -> usize {
+    pub(crate) fn memory_cost(&self) -> usize {
         match self {
             Value::InternalBlob(b) => b.memory_cost(),
             Value::WTFStringImpl(s) => wtf_impl(s).memory_cost(),
@@ -740,7 +740,7 @@ impl Value {
         }
     }
 
-    pub fn estimated_size(&self) -> usize {
+    pub(crate) fn estimated_size(&self) -> usize {
         match self {
             Value::InternalBlob(b) => b.slice_const().len(),
             Value::WTFStringImpl(s) => wtf_impl(s).byte_slice().len(),
@@ -752,7 +752,7 @@ impl Value {
 
     // pub const empty = Value::Empty;
 
-    pub fn to_readable_stream(&mut self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
+    pub(crate) fn to_readable_stream(&mut self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
         jsc::mark_binding();
 
         match self {
@@ -792,7 +792,10 @@ impl Value {
     /// content, decoded directly from the body's backing bytes without
     /// materializing a separate byte `ReadableStream` for native-backed bodies.
     /// Returns `NULL` for `Null` (caller substitutes an empty stream).
-    pub fn to_text_readable_stream(&mut self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
+    pub(crate) fn to_text_readable_stream(
+        &mut self,
+        global_this: &JSGlobalObject,
+    ) -> JsResult<JSValue> {
         jsc::mark_binding();
 
         match self {
@@ -1062,7 +1065,7 @@ impl Value {
         Ok(Value::Blob(blob))
     }
 
-    pub fn from_readable_stream_without_lock_check(
+    pub(crate) fn from_readable_stream_without_lock_check(
         readable: ReadableStream,
         global_this: &JSGlobalObject,
     ) -> Value {
@@ -1072,7 +1075,7 @@ impl Value {
         })
     }
 
-    pub fn resolve(
+    pub(crate) fn resolve(
         &mut self,
         new: &mut Value,
         global: &JSGlobalObject,
@@ -1180,24 +1183,7 @@ impl Value {
         Ok(())
     }
 
-    pub fn slice(&self) -> &[u8] {
-        match self {
-            Value::Blob(b) => b.shared_view(),
-            Value::InternalBlob(b) => b.slice_const(),
-            Value::WTFStringImpl(s) => {
-                let s = wtf_impl(s);
-                if s.can_use_as_utf8() {
-                    s.latin1_slice()
-                } else {
-                    b""
-                }
-            }
-            // Value::InlineBlob(b) => b.slice_const(),
-            _ => b"",
-        }
-    }
-
-    pub fn use_(&mut self) -> Blob {
+    pub(crate) fn use_(&mut self) -> Blob {
         self.to_blob_if_possible();
 
         match self {
@@ -1259,7 +1245,7 @@ impl Value {
         }
     }
 
-    pub fn try_use_as_any_blob(&mut self) -> Option<AnyBlob> {
+    pub(crate) fn try_use_as_any_blob(&mut self) -> Option<AnyBlob> {
         let any_blob: AnyBlob = match self {
             Value::Blob(b) => AnyBlob::Blob(core::mem::take(b)),
             Value::InternalBlob(b) => AnyBlob::InternalBlob(core::mem::take(b)),
@@ -1284,7 +1270,7 @@ impl Value {
         Some(any_blob)
     }
 
-    pub fn use_as_any_blob(&mut self) -> AnyBlob {
+    pub(crate) fn use_as_any_blob(&mut self) -> AnyBlob {
         let was_null = matches!(self, Value::Null);
         // `Value` has `Drop`, so we cannot `mem::replace` then
         // destructure by value (E0509). Match by `&mut` and `mem::take` the
@@ -1322,7 +1308,7 @@ impl Value {
         any_blob
     }
 
-    pub fn use_as_any_blob_allow_non_utf8_string(&mut self) -> AnyBlob {
+    pub(crate) fn use_as_any_blob_allow_non_utf8_string(&mut self) -> AnyBlob {
         let was_null = matches!(self, Value::Null);
         // see `use_as_any_blob` — match by `&mut` to avoid E0509.
         let any_blob: AnyBlob = match self {
@@ -1345,7 +1331,7 @@ impl Value {
         any_blob
     }
 
-    pub fn to_error_instance(
+    pub(crate) fn to_error_instance(
         &mut self,
         err: ValueError,
         global: &JSGlobalObject,
@@ -1358,6 +1344,9 @@ impl Value {
                 Value::Locked(l) => core::mem::take(l),
                 _ => unreachable!(),
             };
+            let was_disturbed = !locked.action.is_none()
+                || locked.promise.is_some()
+                || locked.readable.is_disturbed(global);
             *self = Value::Error(err);
             let Value::Error(err_ref) = self else {
                 unreachable!()
@@ -1398,6 +1387,10 @@ impl Value {
                 // `task` is the live request-ctx pointer registered alongside
                 // this callback.
                 on_receive_value(locked.task.unwrap(), self);
+            }
+
+            if was_disturbed {
+                *self = Value::Used;
             }
 
             return Ok(());
@@ -1456,7 +1449,7 @@ impl Drop for Value {
 }
 
 impl Value {
-    pub fn tee(
+    pub(crate) fn tee(
         &mut self,
         global_this: &JSGlobalObject,
         owned_readable: Option<&mut ReadableStream>,
@@ -1578,11 +1571,11 @@ impl Value {
         }))
     }
 
-    pub fn clone(&mut self, global_this: &JSGlobalObject) -> JsResult<Value> {
+    pub(crate) fn clone(&mut self, global_this: &JSGlobalObject) -> JsResult<Value> {
         self.clone_with_readable_stream(global_this, None)
     }
 
-    pub fn clone_with_readable_stream(
+    pub(crate) fn clone_with_readable_stream(
         &mut self,
         global_this: &JSGlobalObject,
         readable: Option<&mut ReadableStream>,
@@ -2245,7 +2238,9 @@ fn handle_body_error(value: &mut Value, global_object: &JSGlobalObject) -> Optio
     let Value::Error(err) = value else {
         return None;
     };
-    Some(JSPromise::rejected_promise(global_object, err.to_js(global_object)).to_js())
+    let js = err.to_js(global_object);
+    *value = Value::Used;
+    Some(JSPromise::rejected_promise(global_object, js).to_js())
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -2257,13 +2252,13 @@ pub(crate) type ValueBuffererCallback =
 
 pub struct ValueBufferer<'a> {
     pub ctx: *mut c_void,
-    pub on_finished_buffering: ValueBuffererCallback,
+    pub(crate) on_finished_buffering: ValueBuffererCallback,
 
-    pub js_sink: Option<Box<ArrayBufferJSSink>>,
-    pub byte_stream: Option<NonNull<ByteStream>>,
+    pub(crate) js_sink: Option<Box<ArrayBufferJSSink>>,
+    pub(crate) byte_stream: Option<NonNull<ByteStream>>,
     // readable stream strong ref to keep byte stream alive
-    pub readable_stream_ref: webcore::readable_stream::Strong,
-    pub stream_buffer: MutableString,
+    pub(crate) readable_stream_ref: webcore::readable_stream::Strong,
+    pub(crate) stream_buffer: MutableString,
     // allocator dropped — global mimalloc
     pub global: &'a JSGlobalObject,
 }
@@ -2431,10 +2426,7 @@ impl<'a> ValueBufferer<'a> {
         crate::api::NativePromiseContext::take::<Self>(cell).map(|mut p| unsafe { p.as_mut() })
     }
 
-    pub(crate) fn on_resolve_stream(
-        _global: &JSGlobalObject,
-        callframe: &CallFrame,
-    ) -> JsResult<JSValue> {
+    fn on_resolve_stream(_global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         let args = callframe.arguments();
         let Some(sink) = Self::take_ctx(args[args.len() - 1]) else {
             return Ok(JSValue::UNDEFINED);
@@ -2443,10 +2435,7 @@ impl<'a> ValueBufferer<'a> {
         Ok(JSValue::UNDEFINED)
     }
 
-    pub(crate) fn on_reject_stream(
-        _global: &JSGlobalObject,
-        callframe: &CallFrame,
-    ) -> JsResult<JSValue> {
+    fn on_reject_stream(_global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         let args = callframe.arguments();
         let Some(sink) = Self::take_ctx(args[args.len() - 1]) else {
             return Ok(JSValue::UNDEFINED);

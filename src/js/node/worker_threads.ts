@@ -386,6 +386,8 @@ function makePortReadable(port, incrementsPortRef) {
   return stream;
 }
 
+const kStdioWantsMoreDataCallback = Symbol("kStdioWantsMoreDataCallback");
+
 // Writable that forwards chunks over a control MessagePort (worker.stdin on the
 // parent, process.stdout/stderr in the worker). final() posts null as EOF.
 function makePortWritable(port) {
@@ -442,7 +444,7 @@ function makePortWritable(port) {
       cb(err);
     },
   });
-  stream.flushInFlightForExit = onAck;
+  stream[kStdioWantsMoreDataCallback] = onAck;
   return stream;
 }
 
@@ -471,8 +473,8 @@ function setupWorkerStdio(stdio) {
   if (stdoutStream || stderrStream) {
     // node's flushSync (internal/bootstrap/switches/is_not_main_thread)
     process.on("exit", function flushSync() {
-      stdoutStream?.flushInFlightForExit();
-      stderrStream?.flushInFlightForExit();
+      stdoutStream?.[kStdioWantsMoreDataCallback]();
+      stderrStream?.[kStdioWantsMoreDataCallback]();
     });
   }
   // node always replaces a worker's process.stdin: port-backed when { stdin: true },

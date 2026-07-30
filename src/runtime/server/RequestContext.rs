@@ -375,7 +375,7 @@ mod shim {
         // `self.byte_stream`; the allocation is kept alive by
         // `response_body_readable_stream_ref` (BackRef invariant: pointee
         // outlives this temporary). R-2: `unpipe_without_deref` takes `&self`
-        // (interior-mutable `JsCell<Pipe>`), so shared deref is sufficient.
+        // (interior-mutable `JsCell<SinkHandle>`), so shared deref is sufficient.
         bun_ptr::BackRef::from(s).unpipe_without_deref()
     }
 }
@@ -3221,7 +3221,7 @@ where
                             let byte_stream_nn = NonNull::new(byte_stream_ptr)
                                 .expect("Source::Bytes payload is non-null");
                             let byte_stream = bun_ptr::BackRef::from(byte_stream_nn);
-                            debug_assert!(byte_stream.pipe.get().ctx.is_none());
+                            debug_assert!(byte_stream.sink.get().is_none());
                             debug_assert!(this.byte_stream.is_none());
                             if this.resp.is_none() {
                                 // we don't have a response, so we can discard the stream
@@ -3246,7 +3246,21 @@ where
                             // body is in flight, so `handle_reject` must not
                             // fall through to render_missing() and end it.
                             this.flags.set_has_marked_pending(true);
-                            byte_stream.pipe.set(WebCore::Wrap::<Self>::init(this));
+                            byte_stream.sink.set(
+                                WebCore::SinkHandle::http_response::<SSL_ENABLED, HTTP3>(
+                                    std::ptr::from_mut::<Self>(this).cast::<c_void>(),
+                                    |ctx, stream| {
+                                        // SAFETY: `ctx` is the `*mut Self` stored at hook-in time;
+                                        // the `+1` ref taken just above keeps it alive until
+                                        // `end_chunk` drops it.
+                                        Self::write_chunk(unsafe { &mut *ctx.cast::<Self>() }, stream)
+                                    },
+                                    |ctx, err| {
+                                        // SAFETY: same as the write thunk above.
+                                        Self::end_chunk(unsafe { &mut *ctx.cast::<Self>() }, err)
+                                    },
+                                ),
+                            );
                             // Deinit the old Strong reference before creating a new one
                             // to avoid leaking the Strong.Impl memory
                             this.response_body_readable_stream_ref.deinit();
@@ -3299,13 +3313,12 @@ where
         this.do_render_blob();
     }
 
-    pub fn on_pipe(this: &mut Self, stream: &WebCore::streams::Result) {
-        let is_done = stream.is_done();
-        // Drop one ref only when the stream signals completion.
-        let _ref = is_done.then(|| RequestContextRef(std::ptr::from_mut::<Self>(this)));
-
+    pub fn write_chunk(
+        this: &mut Self,
+        stream: &WebCore::streams::Result,
+    ) -> WebCore::streams::Writable {
         if this.is_aborted_or_ended() {
-            return;
+            return WebCore::streams::Writable::Done;
         }
         let resp = this.resp.expect("infallible: resp bound");
 
@@ -3315,21 +3328,49 @@ where
         // uSockets will append and manage the buffer
         // so any write will buffer if the write fails
         // SAFETY: FFI handle
-        if matches!(resp.write(chunk), uws::WriteResult::WantMore(_)) {
-            if is_done {
-                this.end_stream(this.should_close_connection());
-            }
-        } else {
-            // when it's the last one, we just want to know if it's done
-            if is_done {
+        match resp.write(chunk) {
+            uws::WriteResult::WantMore(n) => WebCore::streams::Writable::Owned(n as BlobSizeType),
+            uws::WriteResult::Backpressure(n) => {
                 this.flags.set_has_marked_pending(true);
                 // SAFETY: FFI handle
                 resp.on_writable(
-                    |this, off, resp| Self::on_writable_response_buffer(this, off, resp),
+                    |this, off, resp| Self::on_writable_byte_stream(this, off, resp),
                     this,
                 );
+                WebCore::streams::Writable::Backpressure(n as BlobSizeType)
             }
         }
+    }
+
+    pub fn end_chunk(this: &mut Self, _err: Option<&WebCore::streams::StreamError>) {
+        // Drop the ref taken when the ByteStream sink was installed.
+        let _ref = RequestContextRef(std::ptr::from_mut::<Self>(this));
+
+        if this.is_aborted_or_ended() {
+            return;
+        }
+        this.end_stream(this.should_close_connection());
+    }
+
+    /// # Safety
+    /// `this` must be the live `RequestContext` user-data pointer registered with uWS.
+    pub(crate) fn on_writable_byte_stream(
+        this: *mut Self,
+        _write_offset: u64,
+        _resp: uws::AnyResponse,
+    ) -> bool {
+        ctx_log!("onWritableByteStream");
+        // SAFETY: caller upholds the fn-level contract — `this` is the live
+        // `RequestContext` user-data pointer registered with uWS.
+        let this = unsafe { &mut *this };
+        debug_assert!(this.resp.is_some());
+        if this.is_aborted_or_ended() {
+            return false;
+        }
+        if let Some(bs) = this.byte_stream {
+            bun_ptr::BackRef::from(bs).resume();
+        }
+        true
     }
 
     pub fn do_render_blob(&mut self) {
@@ -3987,7 +4028,7 @@ where
 
                 // What `on_data` buffered; `on_stream_drained` resumes once it empties.
                 let buffered = bytes.buffer.get().len().saturating_sub(bytes.offset.get());
-                if bytes.buffer_action.get().is_some() || bytes.pipe.get().ctx.is_some() {
+                if bytes.buffer_action.get().is_some() || bytes.sink.get().is_some() {
                     // `.text()`-after-`.body` / native pipe want it all; no `on_pull` will fire.
                     this.resume_request_body_socket();
                 } else if buffered >= REQUEST_BODY_HIGH_WATER_MARK {
@@ -4505,19 +4546,6 @@ where
         }
 
         writer.write_str("/")
-    }
-}
-
-// `WebCore::Wrap<Self>::init(this)` requires `Self: PipeHandler`.
-impl<ThisServer, const SSL_ENABLED: bool, const DEBUG_MODE: bool, const HTTP3: bool>
-    WebCore::PipeHandler for RequestContext<ThisServer, SSL_ENABLED, DEBUG_MODE, HTTP3>
-where
-    ThisServer: ServerLike + 'static,
-{
-    fn on_pipe(&mut self, stream: WebCore::streams::Result) {
-        // Forward to the inherent associated fn (not method-dispatched to avoid
-        // recursing into this trait impl).
-        RequestContext::on_pipe(self, &stream)
     }
 }
 

@@ -432,6 +432,21 @@ impl SinkHandle {
         !self.is_none()
     }
 
+    #[inline]
+    pub fn http_response<const SSL: bool, const H3: bool>(
+        ctx: *mut core::ffi::c_void,
+        write: SinkWriteFn,
+        end: SinkEndFn,
+    ) -> Self {
+        if H3 {
+            SinkHandle::H3Response { ctx, write, end }
+        } else if SSL {
+            SinkHandle::HttpsResponse { ctx, write, end }
+        } else {
+            SinkHandle::HttpResponse { ctx, write, end }
+        }
+    }
+
     /// Dispatch a chunk to the attached sink. Returns the sink's own
     /// `Writable` status so the source can pause on `Backpressure` or detach
     /// on `Done`/`Err`.

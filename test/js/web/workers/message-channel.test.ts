@@ -658,7 +658,10 @@ describe("a message listener keeps the event loop alive", () => {
   for (const [label, body] of [
     [".unref()", `port2.onmessage = () => {}; port2.unref();`],
     [".close()", `port2.onmessage = () => {}; port2.close();`],
-    ["removing the last listener", `const f = () => {}; port2.addEventListener('message', f); port2.removeEventListener('message', f);`],
+    [
+      "removing the last listener",
+      `const f = () => {}; port2.addEventListener('message', f); port2.removeEventListener('message', f);`,
+    ],
     ["onmessage = null", `port2.onmessage = () => {}; port2.onmessage = null;`],
     ["onmessageerror alone", `port2.onmessageerror = () => {};`],
     ["peer .close()", `port2.onmessage = () => {}; port1.close();`],

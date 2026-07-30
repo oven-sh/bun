@@ -496,14 +496,13 @@ void MessagePort::updateListenerEventLoopRef()
 {
     bool shouldHold = m_isRefd && m_messageEventCount > 0;
     if (shouldHold != m_listenerLoopRefActive) {
-        auto* context = scriptExecutionContext();
-        if (!context)
-            return;
-        if (shouldHold)
-            context->refEventLoop();
-        else
-            context->unrefEventLoop();
-        m_listenerLoopRefActive = shouldHold;
+        if (auto* context = scriptExecutionContext()) {
+            if (shouldHold)
+                context->refEventLoop();
+            else
+                context->unrefEventLoop();
+            m_listenerLoopRefActive = shouldHold;
+        }
     }
     // Publish jsHasRef() to the pipe so the peer's hasPendingActivity() can pin itself.
     if (!m_isDetached)

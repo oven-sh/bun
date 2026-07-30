@@ -519,8 +519,8 @@ describe("a message listener keeps the event loop alive", () => {
       Bun.sleep(releaseWindowMs).then(() => ({ kind: "hung" as const, exitCode: -1 })),
     ]);
     if (outcome.kind === "hung") proc.kill();
-    const [stdout] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    return { ...outcome, stdout: stdout.trim() };
+    const [stdout, stderr] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { ...outcome, stdout: stdout.trim(), stderr: stderr.trim() };
   }
 
   // Same-context: the listener is on one port of a local MessageChannel and the
@@ -676,7 +676,7 @@ describe("a message listener keeps the event loop alive", () => {
           globalThis.__keep = { port1, port2 };
           ${body}
         `),
-        ).toEqual({ kind: "exited", exitCode: 0, stdout: "" });
+        ).toEqual({ kind: "exited", exitCode: 0, stdout: "", stderr: "" });
       },
       releaseWindowMs + 2000,
     );
@@ -693,6 +693,6 @@ describe("a message listener keeps the event loop alive", () => {
         const n = heapStats().objectTypeCounts.MessagePort ?? 0;
         if (n > 20) throw new Error('MessagePort wrappers retained: ' + n);
       `),
-    ).toEqual({ kind: "exited", exitCode: 0, stdout: "" });
+    ).toEqual({ kind: "exited", exitCode: 0, stdout: "", stderr: "" });
   });
 });

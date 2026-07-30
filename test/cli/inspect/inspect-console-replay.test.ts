@@ -14,9 +14,11 @@ test("Console.enable replays console messages logged before the debugger attache
   // followed by an unchecked get); that is a pre-existing JSC-side issue
   // reproducible under --inspect-wait as well, so don't propagate the ASAN
   // lane's validation flags into the inspectee.
-  const env = { ...bunEnv };
-  delete env.BUN_JSC_validateExceptionChecks;
-  delete env.BUN_JSC_dumpSimulatedThrows;
+  const env = {
+    ...bunEnv,
+    BUN_JSC_validateExceptionChecks: undefined,
+    BUN_JSC_dumpSimulatedThrows: undefined,
+  };
   await using proc = spawn({
     cmd: [
       bunExe(),

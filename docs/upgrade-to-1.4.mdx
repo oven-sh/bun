@@ -23,7 +23,7 @@ bun upgrade
 | --------------------- | ---------------------------------------------------------------- | ----------------------------------------------------------------------- |
 | `bun install`         | New lockfiles are written as `lockfileVersion: 2`                | Upgrade CI and teammates to Bun ≥ 1.4, or keep your existing `bun.lock` |
 | `bunfig.toml` / TOML  | Strict TOML parsing; unquoted string values are rejected         | Quote string values                                                     |
-| JSX                   | `"jsx": "react-jsx"` now emits the production runtime            | Use `"react-jsxdev"` or set `NODE_ENV=development`                      |
+| JSX                   | `"jsx": "react-jsx"` now emits the production runtime            | Use `"jsx": "react-jsxdev"` for development output                      |
 | `Bun.cron`            | Schedules now use local time instead of UTC                      | Pass `{ tz: "UTC" }` to keep UTC                                        |
 | Bun Shell             | Glob characters in `${interpolated}` values are literal          | Write the pattern inline or use `{ raw: pattern }`                      |
 | CSS imports           | `import styles from "./x.css"` default export is `{}` at runtime | Use `with { type: "file" }` for the asset path                          |
@@ -114,7 +114,7 @@ See the [TOML docs](/runtime/toml) for the full supported syntax.
 
 Previously, `"jsx": "react-jsx"` in `tsconfig.json` behaved the same as `"react-jsxdev"` and emitted the development runtime (`jsxDEV` from `react/jsx-dev-runtime`). Bun 1.4 matches TypeScript, Babel, and esbuild: `"react-jsx"` emits the production runtime (`jsx` / `jsxs` from `react/jsx-runtime`).
 
-If you relied on development JSX output (component stack traces, extra runtime checks) without setting `NODE_ENV`, pick one of:
+If you relied on development JSX output (component stack traces, extra runtime checks), set `"jsx": "react-jsxdev"` in `tsconfig.json`:
 
 ```jsonc tsconfig.json icon="file-json"
 {
@@ -124,9 +124,7 @@ If you relied on development JSX output (component stack traces, extra runtime c
 }
 ```
 
-or set `NODE_ENV=development` explicitly. An explicitly set `NODE_ENV` (env var or `--define process.env.NODE_ENV`) still takes precedence over `tsconfig.json`.
-
-See [JSX](/runtime/jsx) for details.
+See [JSX](/runtime/jsx) for how `NODE_ENV` and `--define process.env.NODE_ENV` interact with this setting in `bun build`.
 
 ---
 

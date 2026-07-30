@@ -42,14 +42,10 @@
 #include "PerformanceEntry.h"
 #include "PerformanceMarkOptions.h"
 #include "PerformanceMeasureOptions.h"
-// #include "PerformanceNavigation.h"
-// #include "PerformanceNavigationTiming.h"
 #include "PerformanceObserver.h"
-// #include "PerformancePaintTiming.h"
 #include "PerformanceResourceTiming.h"
 #include "PerformanceTiming.h"
 #include "PerformanceUserTiming.h"
-// #include "ResourceResponse.h"
 #include "ScriptExecutionContext.h"
 #include <wtf/TZoneMallocInlines.h>
 #include "BunClientData.h"
@@ -212,13 +208,10 @@ void Performance::appendBufferedEntriesByType(const String& entryType, Vector<Re
 void Performance::clearResourceTimings()
 {
     m_resourceTimingBuffer.clear();
-    m_resourceTimingBufferFullFlag = false;
 }
 
-void Performance::setResourceTimingBufferSize(unsigned size)
+void Performance::setResourceTimingBufferSize(unsigned)
 {
-    m_resourceTimingBufferSize = size;
-    m_resourceTimingBufferFullFlag = false;
 }
 
 ExceptionOr<Ref<PerformanceMark>> Performance::mark(JSC::JSGlobalObject& globalObject, const String& markName, std::optional<PerformanceMarkOptions>&& markOptions)

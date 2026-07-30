@@ -68,10 +68,7 @@ class PerformanceMeasure;
 class PerformanceNavigation;
 class PerformanceNavigationTiming;
 class PerformanceObserver;
-class PerformancePaintTiming;
 class PerformanceTiming;
-class ResourceResponse;
-class ResourceTiming;
 class ScriptExecutionContext;
 struct PerformanceMarkOptions;
 struct PerformanceMeasureOptions;
@@ -144,18 +141,12 @@ private:
     // mutable RefPtr<PerformanceNavigation> m_navigation;
     mutable RefPtr<PerformanceTiming> m_timing;
 
-    // https://w3c.github.io/resource-timing/#extensions-performance-interface recommends size of 150.
     Vector<RefPtr<PerformanceEntry>> m_resourceTimingBuffer;
-    unsigned m_resourceTimingBufferSize { 150 };
 
-    // https://w3c.github.io/resource-timing/#dfn-resource-timing-buffer-full-flag
-    bool m_resourceTimingBufferFullFlag { false };
     bool m_hasScheduledTimingBufferDeliveryTask { false };
 
     MonotonicTime m_timeOrigin;
 
-    // RefPtr<PerformanceNavigationTiming> m_navigationTiming;
-    // RefPtr<PerformancePaintTiming> m_firstContentfulPaint;
     std::unique_ptr<PerformanceUserTiming> m_userTiming;
 
     ListHashSet<RefPtr<PerformanceObserver>> m_observers;

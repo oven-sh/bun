@@ -735,4 +735,123 @@ describe("Headers", () => {
       expect(lowercaseHeaderNameSIMD(s)).toBe("x-ab\u0100cd\u0101ef\uffffgz");
     });
   });
+
+  // https://fetch.spec.whatwg.org/#concept-headers-guard
+  describe("immutable guard", () => {
+    const immutableMsg = /guard is 'immutable'/;
+
+    function expectImmutable(h: Headers) {
+      expect(() => h.set("x-foo", "1")).toThrow(TypeError);
+      expect(() => h.set("x-foo", "1")).toThrow(immutableMsg);
+      expect(() => h.append("x-foo", "1")).toThrow(TypeError);
+      expect(() => h.delete("x-foo")).toThrow(TypeError);
+      expect(() => h.delete("location")).toThrow(TypeError);
+      expect(h.get("x-foo")).toBeNull();
+    }
+
+    test("Response.redirect() headers reject set/append/delete", () => {
+      const r = Response.redirect("http://example.com/good");
+      expect(r.headers.get("location")).toBe("http://example.com/good");
+      expectImmutable(r.headers);
+      expect(() => r.headers.set("location", "http://example.com/evil")).toThrow(TypeError);
+      expect(r.headers.get("location")).toBe("http://example.com/good");
+    });
+
+    test("Response.redirect() with headers init rejects set/append/delete", () => {
+      // Bun extension: second arg may be a ResponseInit.
+      const r = Response.redirect("http://example.com/good", {
+        status: 301,
+        headers: { "x-extra": "a" },
+      });
+      expect(r.headers.get("location")).toBe("http://example.com/good");
+      expect(r.headers.get("x-extra")).toBe("a");
+      expectImmutable(r.headers);
+    });
+
+    test("Response.error() headers reject set/append/delete", () => {
+      const r = Response.error();
+      expectImmutable(r.headers);
+    });
+
+    test("fetch() response headers reject set/append/delete", async () => {
+      await using server = Bun.serve({
+        port: 0,
+        fetch: () => new Response("ok", { headers: { "x-orig": "1" } }),
+      });
+      const res = await fetch(server.url);
+      expect(res.headers.get("x-orig")).toBe("1");
+      expectImmutable(res.headers);
+      expect(() => res.headers.delete("x-orig")).toThrow(TypeError);
+      expect(res.headers.get("x-orig")).toBe("1");
+    });
+
+    test("Response.prototype.clone() preserves the immutable guard", () => {
+      const r = Response.redirect("http://example.com/good");
+      const c = r.clone();
+      expect(c.headers.get("location")).toBe("http://example.com/good");
+      expectImmutable(c.headers);
+    });
+
+    test("Bun.serve sends Location as set by Response.redirect()", async () => {
+      await using server = Bun.serve({
+        port: 0,
+        fetch: () => {
+          const r = Response.redirect("http://example.com/good");
+          // The handler can still observe the Location it set but cannot
+          // rewrite it; a sanitizer relying on spec immutability is sound.
+          try {
+            r.headers.set("location", "http://example.com/evil");
+          } catch {}
+          return r;
+        },
+      });
+      const res = await fetch(server.url, { redirect: "manual" });
+      expect(res.status).toBe(302);
+      expect(res.headers.get("location")).toBe("http://example.com/good");
+    });
+
+    test("delete() still validates the header name first", () => {
+      const r = Response.error();
+      expect(() => r.headers.delete("bad header\n")).toThrow(/Invalid header name/);
+    });
+
+    describe("sources that must stay mutable", () => {
+      test("new Headers(immutable) is mutable", () => {
+        const src = Response.redirect("http://example.com/good").headers;
+        const h = new Headers(src);
+        expect(h.get("location")).toBe("http://example.com/good");
+        expect(() => h.set("location", "http://example.com/other")).not.toThrow();
+        expect(h.get("location")).toBe("http://example.com/other");
+        expect(() => h.delete("location")).not.toThrow();
+      });
+
+      test("new Response(body, { headers: immutable }) is mutable", () => {
+        const src = Response.redirect("http://example.com/good").headers;
+        const r = new Response("", { headers: src });
+        expect(r.headers.get("location")).toBe("http://example.com/good");
+        expect(() => r.headers.set("x-foo", "1")).not.toThrow();
+        expect(r.headers.get("x-foo")).toBe("1");
+      });
+
+      test("Response.json(data, { headers: immutable }) is mutable", () => {
+        const src = Response.redirect("http://example.com/good").headers;
+        const r = Response.json({}, { headers: src });
+        expect(r.headers.get("content-type")).toContain("application/json");
+        expect(() => r.headers.set("x-foo", "1")).not.toThrow();
+      });
+
+      test("new Response(body, immutableResponse) is mutable", () => {
+        // Bun fast-path: ResponseInit may be a Response instance.
+        const src = Response.redirect("http://example.com/good");
+        const r = new Response("", src);
+        expect(() => r.headers.set("x-foo", "1")).not.toThrow();
+      });
+
+      test("new Response() with no init is mutable", () => {
+        const r = new Response("ok");
+        expect(() => r.headers.set("x-foo", "1")).not.toThrow();
+        expect(() => r.headers.delete("x-foo")).not.toThrow();
+      });
+    });
+  });
 });

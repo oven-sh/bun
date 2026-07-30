@@ -1212,7 +1212,13 @@ impl Request {
                             match headers.clone_this(global_this) {
                                 Ok(h) => {
                                     // SAFETY: clone_this returns a +1 ref FetchHeaders.
-                                    req.headers.set(h.map(|p| unsafe { HeadersRef::adopt(p) }));
+                                    req.headers.set(h.map(|p| {
+                                        let mut h = unsafe { HeadersRef::adopt(p) };
+                                        // Request headers are never immutable;
+                                        // drop any guard copied from the Response.
+                                        h.set_guard(jsc::HeadersGuard::None);
+                                        h
+                                    }));
                                     fields.insert(Fields::Headers);
                                 }
                                 Err(e) => bail!(Err(e)),

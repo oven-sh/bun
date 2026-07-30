@@ -8,8 +8,8 @@ use bun_jsc::{AbortSignal, AbortSignalRef, GlobalRef};
 
 use crate::webcore::BlobExt as _;
 use crate::webcore::jsc::{
-    BuiltinName, CallFrame, HTTPHeaderName, JSGlobalObject, JSType, JSValue, JsError, JsRef,
-    JsResult, StringJsc as _,
+    BuiltinName, CallFrame, HTTPHeaderName, HeadersGuard, JSGlobalObject, JSType, JSValue, JsError,
+    JsRef, JsResult, StringJsc as _,
 };
 use bun_core::Output;
 use bun_core::{OwnedString, String as BunString, WTFStringImplExt as _, ZigStringSlice};
@@ -1170,6 +1170,9 @@ impl Response {
 
         // `get_or_create_headers` already populated init.headers.
         let headers = response.get_or_create_headers(global_this)?;
+        // `Init::init` may have cloned headers from an immutable source; clear
+        // the guard so `put(Location)` below does not throw.
+        headers.set_guard(HeadersGuard::None);
         // https://fetch.spec.whatwg.org/#dom-response-redirect steps 1 & 6: `Location`
         // gets the serialization of the parsed url, not the raw input. Non-absolute
         // input keeps the raw string: relative redirects are documented Bun behavior.
@@ -1177,6 +1180,9 @@ impl Response {
         // The JS string's own WTF string (no re-encode), same as `Headers.prototype.set`.
         let location = if href.is_empty() { &url_string } else { &href };
         headers.put(HTTPHeaderName::Location, location, global_this)?;
+        // https://fetch.spec.whatwg.org/#dom-response-redirect step 4: the Response
+        // object is created with guard "immutable".
+        headers.set_guard(HeadersGuard::Immutable);
         Ok(response)
     }
 
@@ -1184,10 +1190,15 @@ impl Response {
         global_this: &JSGlobalObject,
         _callframe: &CallFrame,
     ) -> JsResult<JSValue> {
+        // https://fetch.spec.whatwg.org/#dom-response-error: the Response object
+        // is created with guard "immutable".
+        let mut headers = HeadersRef::create_empty();
+        headers.set_guard(HeadersGuard::Immutable);
         // Ownership transfers to the JSC wrapper (freed via `finalize`).
         let response = bun_core::heap::into_raw(Box::new(Response {
             init: JsCell::new(Init {
                 status_code: 0,
+                headers: Some(headers),
                 ..Default::default()
             }),
             body: JsCell::new(Body::new(BodyValue::Empty)),
@@ -1431,7 +1442,14 @@ impl Init {
                 // SAFETY: `as_direct` returned a live `*mut Response` owned by the
                 // JS wrapper cell; rooted by `response_init` for this call.
                 let resp = unsafe { &*resp };
-                return Ok(Some(resp.init.get().clone(global_this)?));
+                let mut init = resp.init.get().clone(global_this)?;
+                // A Response built by a constructor has guard "response" (treated
+                // as "none" here); drop any "immutable" guard carried over from
+                // the source so the new object's headers remain writable.
+                if let Some(h) = init.headers.as_mut() {
+                    h.set_guard(HeadersGuard::None);
+                }
+                return Ok(Some(init));
             }
         }
 
@@ -1451,7 +1469,12 @@ impl Init {
                     result.headers = orig.clone_this(global_this)?.map(|p| {
                         // SAFETY: `clone_this` returns a fresh +1-ref'd `FetchHeaders*`;
                         // ownership of that ref is transferred into the `HeadersRef`.
-                        unsafe { HeadersRef::adopt(p) }
+                        let mut h = unsafe { HeadersRef::adopt(p) };
+                        // `clone_this` preserves the source guard; a Response
+                        // built from ResponseInit has guard "response" (treated
+                        // as "none" here), so drop any "immutable" copied over.
+                        h.set_guard(HeadersGuard::None);
+                        h
                     });
                 }
             } else {

@@ -11,6 +11,18 @@ bun_opaque::opaque_ffi! {
     pub struct FetchHeaders;
 }
 
+/// Mirrors `WebCore::FetchHeaders::Guard` (FetchHeaders.h). Discriminants must
+/// stay in sync with the C++ enum order.
+#[repr(u8)]
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum HeadersGuard {
+    None = 0,
+    Immutable = 1,
+    Request = 2,
+    RequestNoCors = 3,
+    Response = 4,
+}
+
 // `FetchHeaders`/`JSGlobalObject`/`VM` are opaque `UnsafeCell`-backed ZST
 // handles, so `&T` is ABI-identical to a non-null `*const T` and C++ mutating
 // header storage / VM state through them is interior mutation invisible to
@@ -89,6 +101,7 @@ unsafe extern "C" {
         value: &BunString,
         global: &JSGlobalObject,
     );
+    safe fn WebCore__FetchHeaders__setGuard(this: &FetchHeaders, guard: u8);
 }
 
 #[repr(C)]
@@ -180,6 +193,10 @@ impl FetchHeaders {
     pub fn create_empty() -> NonNull<FetchHeaders> {
         NonNull::new(WebCore__FetchHeaders__createEmpty())
             .expect("WebCore__FetchHeaders__createEmpty returned null")
+    }
+
+    pub fn set_guard(&mut self, guard: HeadersGuard) {
+        WebCore__FetchHeaders__setGuard(self, guard as u8)
     }
 
     pub fn create_from_pico_headers<T>(pico_headers_list: &[T]) -> NonNull<FetchHeaders> {

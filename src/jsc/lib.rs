@@ -967,7 +967,7 @@ pub use self::resolved_source_tag::ResolvedSourceTag;
 // ──────────────────────────────────────────────────────────────────────────
 #[path = "FetchHeaders.rs"]
 pub mod fetch_headers;
-pub use self::fetch_headers::{FetchHeaders, HTTPHeaderName};
+pub use self::fetch_headers::{FetchHeaders, HTTPHeaderName, HeadersGuard};
 
 /// `BuiltinName` — fast-path property keys preallocated as `JSC::Identifier`s
 /// in C++ (`BunBuiltinNames.h`). Passed to `JSValue::fast_get` as a `u8` index

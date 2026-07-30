@@ -240,10 +240,10 @@ ExceptionOr<void> FetchHeaders::append(const String& name, const String& value)
 // https://fetch.spec.whatwg.org/#dom-headers-delete
 ExceptionOr<void> FetchHeaders::remove(const StringView name)
 {
-    ASSERT_WITH_MESSAGE(m_guard == FetchHeaders::Guard::None, "We don't use guards in Bun");
-
     HTTPHeaderName headerName;
     if (findHTTPHeaderName(name, headerName)) {
+        if (m_guard == FetchHeaders::Guard::Immutable)
+            return Exception { TypeError, "Headers object's guard is 'immutable'"_s };
         ++m_updateCounter;
         m_headers.remove(headerName);
         return {};
@@ -251,6 +251,8 @@ ExceptionOr<void> FetchHeaders::remove(const StringView name)
 
     if (!isValidHTTPToken(name))
         return Exception { TypeError, makeString("Invalid header name: '"_s, name, "'"_s) };
+    if (m_guard == FetchHeaders::Guard::Immutable)
+        return Exception { TypeError, "Headers object's guard is 'immutable'"_s };
 
     ++m_updateCounter;
     m_headers.removeUncommonHeader(name);

@@ -143,7 +143,6 @@ inline FetchHeaders::FetchHeaders(const FetchHeaders& other)
 
 inline void FetchHeaders::setGuard(Guard guard)
 {
-    ASSERT(!m_headers.size());
     m_guard = guard;
 }
 

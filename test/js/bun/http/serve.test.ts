@@ -1831,9 +1831,13 @@ it("should support multiple Set-Cookie headers", async () => {
       const cloned = response.clone().headers;
       expect(response.headers.getAll("Set-Cookie")).toEqual(["foo=bar", "baz=qux"]);
 
-      response.headers.delete("Set-Cookie");
-      expect(response.headers.getAll("Set-Cookie")).toEqual([]);
-      response.headers.delete("Set-Cookie");
+      // fetch() response headers are immutable; exercise Set-Cookie deletion on
+      // a mutable copy and verify the original and clone are untouched.
+      const copy = new Headers(response.headers);
+      copy.delete("Set-Cookie");
+      expect(copy.getAll("Set-Cookie")).toEqual([]);
+      copy.delete("Set-Cookie");
+      expect(response.headers.getAll("Set-Cookie")).toEqual(["foo=bar", "baz=qux"]);
       expect(cloned.getAll("Set-Cookie")).toEqual(["foo=bar", "baz=qux"]);
       expect(new Headers(cloned).getAll("Set-Cookie")).toEqual(["foo=bar", "baz=qux"]);
     },

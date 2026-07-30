@@ -414,7 +414,10 @@ impl MultiPartUpload {
         this: *mut c_void,
     ) -> JsTerminatedResult<()> {
         let this = this.cast::<Self>();
-        // SAFETY: callback context — `this` was passed as opaque ctx and is live (holds final ref)
+        // `adopt` consumes the ref `process_buffered` took for this request.
+        // SAFETY: callback context — `this` is the live allocation ref'd before dispatch.
+        let _deref_guard = unsafe { bun_ptr::ScopedRef::<Self>::adopt(this) };
+        // SAFETY: live under the adopted ref.
         let this = unsafe { &mut *this };
         if this.state == State::Finished {
             return Ok(());
@@ -428,6 +431,7 @@ impl MultiPartUpload {
                         this.options.retry
                     );
                     this.options.retry -= 1;
+                    this.ref_();
                     let callback_context: *mut c_void =
                         std::ptr::from_mut::<Self>(this).cast::<c_void>();
                     execute_simple_s3_request(
@@ -1019,6 +1023,7 @@ impl MultiPartUpload {
             );
             self.state = State::SinglefileStarted;
             // we can do only 1 request
+            self.ref_();
             let callback_context: *mut c_void = std::ptr::from_mut::<Self>(self).cast::<c_void>();
             let _ = execute_simple_s3_request(
                 &*self.credentials,

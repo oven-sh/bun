@@ -1801,3 +1801,58 @@ describe("s3 multipart upload id validation", () => {
     expect(exitCode).toBe(0);
   }, 60_000);
 });
+
+describe("s3 upload stream body error", () => {
+  // The readStreamIntoSink abrupt path dispatches a single-file PUT before
+  // the pump promise rejects; the PUT's response callback must not read a
+  // freed MultiPartUpload when fail() runs from the reject handler.
+  it("does not UAF when a ReadableStream body errors after enqueue", async () => {
+    const fixture = `
+      const server = Bun.serve({
+        port: 0,
+        async fetch(req) {
+          await req.arrayBuffer();
+          return new Response(undefined, { status: 200, headers: { ETag: '"etag"' } });
+        },
+      });
+      const client = new Bun.S3Client({
+        accessKeyId: "test",
+        secretAccessKey: "test",
+        region: "eu-west-3",
+        bucket: "my_bucket",
+        endpoint: \`http://127.0.0.1:\${server.port}\`,
+        virtualHostedStyle: false,
+      });
+      for (let i = 0; i < 5; i++) {
+        const rs = new ReadableStream({
+          async pull(controller) {
+            controller.enqueue(new Uint8Array(1024));
+            await Bun.sleep(1);
+            controller.error(new Error("boom"));
+          },
+        });
+        let caught = "none";
+        try {
+          await client.write("obj", new Request("https://example.com", { method: "PUT", body: rs }));
+        } catch (e) { caught = e.message; }
+        console.log("iter", i, caught);
+        Bun.gc(true);
+        await Bun.sleep(5);
+      }
+      server.stop(true);
+      console.log("done");
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr }).toEqual({
+      stdout: "iter 0 boom\niter 1 boom\niter 2 boom\niter 3 boom\niter 4 boom\ndone",
+      stderr: "",
+    });
+    expect(exitCode).toBe(0);
+  }, 30_000);
+});

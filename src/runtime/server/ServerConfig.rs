@@ -109,6 +109,8 @@ pub enum Address {
     },
     /// Leading NUL is valid (Linux abstract sockets).
     Unix(ZBox),
+    /// An fd inherited already bound and listening (systemd `LISTEN_FDS`, inetd).
+    Fd(i32),
 }
 
 impl Default for Address {
@@ -595,6 +597,9 @@ impl ServerConfig {
                 } else {
                     let _ = write!(&mut arraylist, "tcp:localhost:{}", port);
                 }
+            }
+            Address::Fd(fd) => {
+                let _ = write!(&mut arraylist, "fd:{}", fd);
             }
             Address::Unix(addr) => {
                 let _ = write!(&mut arraylist, "unix:{}", bstr::BStr::new(addr.as_bytes()));
@@ -1249,6 +1254,21 @@ impl ServerConfig {
                 }
 
                 args.address = Address::Unix(bun_core::ZBox::from_bytes(unix_str.slice()));
+            }
+        }
+        if global.has_exception() {
+            return Err(JsError::Thrown);
+        }
+
+        if let Some(fd_js) = arg.get_truthy(global, "fd")? {
+            if fd_js.is_number() {
+                let fd = fd_js.to_int32();
+                if fd < 0 {
+                    return Err(
+                        global.throw_invalid_arguments(format_args!("Expected \"fd\" to be >= 0"))
+                    );
+                }
+                args.address = Address::Fd(fd);
             }
         }
         if global.has_exception() {

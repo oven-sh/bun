@@ -541,6 +541,8 @@ export const webkit: Dependency = {
       resolve(buildDir, "bmalloc", "Headers"),
       resolve(buildDir, "WTF", "Headers"),
       resolve(buildDir, "JavaScriptCore", "PrivateHeaders", "JavaScriptCore"),
+      // ffi subdirectory for BunFFI.h (used by JSCFFIBridge.cpp).
+      resolve(buildDir, "JavaScriptCore", "PrivateHeaders", "JavaScriptCore", "ffi"),
     ];
     // Windows: ICU headers from preBuild output.
     if (cfg.windows) includes.push(resolve(icuDir(cfg), "include"));

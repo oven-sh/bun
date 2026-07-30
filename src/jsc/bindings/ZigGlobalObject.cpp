@@ -52,6 +52,7 @@
 #include "JavaScriptCore/LazyClassStructure.h"
 #include "JavaScriptCore/LazyClassStructureInlines.h"
 #include "JavaScriptCore/ObjectConstructor.h"
+#include "JavaScriptCore/IntlObject.h"
 #include "JavaScriptCore/JSBasePrivate.h"
 #include "JavaScriptCore/ScriptExecutable.h"
 #include "JavaScriptCore/ScriptFetchParameters.h"
@@ -1732,6 +1733,24 @@ JSC_DEFINE_HOST_FUNCTION(functionNavigatorGetHardwareConcurrency, (JSC::JSGlobal
     return JSValue::encode(JSC::jsNumber(WTF::numberOfProcessorCores()));
 }
 
+JSC_DEFINE_HOST_FUNCTION(functionNavigatorGetLanguage, (JSC::JSGlobalObject * globalObject, JSC::CallFrame*))
+{
+    auto& vm = JSC::getVM(globalObject);
+    return JSValue::encode(JSC::jsString(vm, JSC::defaultLocale(globalObject)));
+}
+
+JSC_DEFINE_HOST_FUNCTION(functionNavigatorGetLanguages, (JSC::JSGlobalObject * globalObject, JSC::CallFrame*))
+{
+    return JSValue::encode(uncheckedDowncast<Zig::GlobalObject>(globalObject)->navigatorLanguages());
+}
+
+JSC_DEFINE_HOST_FUNCTION(functionNavigatorConstructor, (JSC::JSGlobalObject * globalObject, JSC::CallFrame*))
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    return Bun::throwError(globalObject, scope, Bun::ErrorCode::ERR_ILLEGAL_CONSTRUCTOR, "Illegal constructor"_s);
+}
+
 JSC_DECLARE_HOST_FUNCTION(makeGetterTypeErrorForBuiltins);
 JSC_DECLARE_HOST_FUNCTION(makeDOMExceptionForBuiltins);
 JSC_DECLARE_HOST_FUNCTION(isAbortSignal);
@@ -2349,16 +2368,32 @@ void GlobalObject::finishCreation(VM& vm)
             JSC::JSGlobalObject* globalObject = init.owner;
             unsigned accessorAttributes = PropertyAttribute::Accessor | 0;
 
-            JSC::JSObject* obj = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 4);
+            JSC::JSObject* prototype = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 7);
+            prototype->structure()->setMayBePrototype(true);
 
-            obj->putDirectNativeIntrinsicGetter(init.vm, globalObject, JSC::Identifier::fromString(init.vm, "userAgent"_s), functionNavigatorGetUserAgent, JSC::NoIntrinsic, accessorAttributes);
-            obj->putDirectNativeIntrinsicGetter(init.vm, globalObject, JSC::Identifier::fromString(init.vm, "platform"_s), functionNavigatorGetPlatform, JSC::NoIntrinsic, accessorAttributes);
-            obj->putDirectNativeIntrinsicGetter(init.vm, globalObject, JSC::Identifier::fromString(init.vm, "hardwareConcurrency"_s), functionNavigatorGetHardwareConcurrency, JSC::NoIntrinsic, accessorAttributes);
+            prototype->putDirectNativeIntrinsicGetter(init.vm, globalObject, JSC::Identifier::fromString(init.vm, "hardwareConcurrency"_s), functionNavigatorGetHardwareConcurrency, JSC::NoIntrinsic, accessorAttributes);
+            prototype->putDirectNativeIntrinsicGetter(init.vm, globalObject, JSC::Identifier::fromString(init.vm, "language"_s), functionNavigatorGetLanguage, JSC::NoIntrinsic, accessorAttributes);
+            prototype->putDirectNativeIntrinsicGetter(init.vm, globalObject, JSC::Identifier::fromString(init.vm, "languages"_s), functionNavigatorGetLanguages, JSC::NoIntrinsic, accessorAttributes);
+            prototype->putDirectNativeIntrinsicGetter(init.vm, globalObject, JSC::Identifier::fromString(init.vm, "userAgent"_s), functionNavigatorGetUserAgent, JSC::NoIntrinsic, accessorAttributes);
+            prototype->putDirectNativeIntrinsicGetter(init.vm, globalObject, JSC::Identifier::fromString(init.vm, "platform"_s), functionNavigatorGetPlatform, JSC::NoIntrinsic, accessorAttributes);
 
-            obj->putDirect(init.vm, init.vm.propertyNames->toStringTagSymbol,
+            prototype->putDirect(init.vm, init.vm.propertyNames->toStringTagSymbol,
                 jsNontrivialString(init.vm, "Navigator"_s), PropertyAttribute::DontEnum | PropertyAttribute::ReadOnly);
 
-            init.set(obj);
+            JSC::JSFunction* constructor = JSC::JSFunction::create(init.vm, globalObject, 0, "Navigator"_s, functionNavigatorConstructor, ImplementationVisibility::Public, NoIntrinsic, functionNavigatorConstructor);
+            constructor->putDirect(init.vm, init.vm.propertyNames->prototype, prototype, PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
+            prototype->putDirect(init.vm, init.vm.propertyNames->constructor, constructor, static_cast<unsigned>(PropertyAttribute::DontEnum));
+
+            init.set(JSC::constructEmptyObject(globalObject, prototype, 0));
+        });
+
+    m_navigatorLanguages.initLater(
+        [](const Initializer<JSC::JSArray>& init) {
+            JSC::JSGlobalObject* globalObject = init.owner;
+            JSC::JSArray* array = JSC::constructEmptyArray(globalObject, nullptr, 1);
+            array->putDirectIndex(globalObject, 0, JSC::jsString(init.vm, JSC::defaultLocale(globalObject)));
+            JSC::objectConstructorFreeze(globalObject, array);
+            init.set(array);
         });
 
     this->m_jsonlParseResultStructure.initLater(
@@ -3059,6 +3094,13 @@ JSValue GlobalObject_getPerformanceObject(VM& vm, JSObject* globalObject)
 JSValue GlobalObject_getGlobalThis(VM& vm, JSObject* globalObject)
 {
     return uncheckedDowncast<Zig::GlobalObject>(globalObject)->globalThis();
+}
+
+JSValue NavigatorConstructorCallback(VM& vm, JSObject* globalObject)
+{
+    JSObject* instance = uncheckedDowncast<Zig::GlobalObject>(globalObject)->navigatorObject();
+    JSObject* prototype = instance->getPrototypeDirect().getObject();
+    return prototype->getDirect(vm, vm.propertyNames->constructor);
 }
 
 // This is like `putDirectBuiltinFunction` but for the global static list.

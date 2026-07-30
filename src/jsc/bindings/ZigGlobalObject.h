@@ -659,6 +659,7 @@ public:
     V(public, LazyPropertyOfGlobalObject<JSObject>, m_bunObject)                                             \
     V(public, LazyPropertyOfGlobalObject<JSObject>, m_cryptoObject)                                          \
     V(public, LazyPropertyOfGlobalObject<JSObject>, m_navigatorObject)                                       \
+    V(private, LazyPropertyOfGlobalObject<JSC::JSArray>, m_navigatorLanguages)                               \
     V(public, LazyPropertyOfGlobalObject<JSObject>, m_performanceObject)                                     \
     V(public, LazyPropertyOfGlobalObject<Bun::Process>, m_processObject)                                     \
     V(public, LazyPropertyOfGlobalObject<CustomGetterSetter>, m_lazyStackCustomGetterSetter)                 \
@@ -719,6 +720,7 @@ public:
     }
 
     JSObject* navigatorObject();
+    JSC::JSArray* navigatorLanguages() { return m_navigatorLanguages.getInitializedOnMainThread(this); }
     JSFunction* nativeMicrotaskTrampoline() const { return m_nativeMicrotaskTrampoline.getInitializedOnMainThread(this); }
 
     String agentClusterID() const;

@@ -244,8 +244,44 @@ test("navigator", () => {
   }
 });
 
+// https://github.com/oven-sh/bun/issues/3168
+test("navigator.language / navigator.languages", () => {
+  const locale = Intl.DateTimeFormat().resolvedOptions().locale;
+  expect(typeof navigator.language).toBe("string");
+  expect(navigator.language).toBe(locale);
+  expect(navigator.language.split("-")[0].length).toBeGreaterThanOrEqual(2);
+
+  expect(Array.isArray(navigator.languages)).toBe(true);
+  expect(navigator.languages).toEqual([locale]);
+  expect(Object.isFrozen(navigator.languages)).toBe(true);
+  expect(navigator.languages).toBe(navigator.languages);
+});
+
+test("globalThis.Navigator", () => {
+  expect(typeof Navigator).toBe("function");
+  expect(Navigator.name).toBe("Navigator");
+  expect(Navigator.length).toBe(0);
+  expect(navigator instanceof Navigator).toBe(true);
+  expect(Object.getPrototypeOf(navigator)).toBe(Navigator.prototype);
+  expect(Navigator.prototype.constructor).toBe(Navigator);
+
+  expect(() => new Navigator()).toThrow(expect.objectContaining({ code: "ERR_ILLEGAL_CONSTRUCTOR" }));
+
+  expect(Object.getOwnPropertyNames(navigator)).toEqual([]);
+  expect(Object.getOwnPropertyNames(Navigator.prototype).sort()).toEqual(
+    expect.arrayContaining(["constructor", "hardwareConcurrency", "language", "languages", "platform", "userAgent"]),
+  );
+
+  expect(Object.getOwnPropertyDescriptor(Navigator, "prototype")).toEqual({
+    value: Navigator.prototype,
+    writable: false,
+    enumerable: false,
+    configurable: false,
+  });
+});
+
 // https://github.com/oven-sh/bun/issues/21585
-test.concurrent.each(["userAgent", "platform", "hardwareConcurrency"])(
+test.concurrent.each(["userAgent", "platform", "hardwareConcurrency", "language", "languages"])(
   "navigator.%s is a getter-only accessor",
   async key => {
     // Spawn a fresh process so we don't mutate the test runner's own navigator object.
@@ -253,7 +289,7 @@ test.concurrent.each(["userAgent", "platform", "hardwareConcurrency"])(
     const src = `
     const nav = globalThis.navigator;
     const before = nav[${k}];
-    const desc = Object.getOwnPropertyDescriptor(nav, ${k});
+    const desc = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(nav), ${k});
     let strictErr = null;
     try {
       (function () { "use strict"; nav[${k}] = "overwritten"; })();
@@ -265,6 +301,7 @@ test.concurrent.each(["userAgent", "platform", "hardwareConcurrency"])(
     console.log(JSON.stringify({
       before,
       after: nav[${k}],
+      hasOwn: Object.hasOwn(nav, ${k}),
       desc: { get: typeof desc.get, set: typeof desc.set, enumerable: desc.enumerable, configurable: desc.configurable, hasWritable: "writable" in desc },
       strictErr,
     }));
@@ -279,6 +316,7 @@ test.concurrent.each(["userAgent", "platform", "hardwareConcurrency"])(
     expect({ ...result, stderr, exitCode }).toEqual({
       before: result.before,
       after: result.before,
+      hasOwn: false,
       desc: { get: "function", set: "undefined", enumerable: true, configurable: true, hasWritable: false },
       strictErr: "TypeError",
       stderr: expect.any(String),

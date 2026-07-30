@@ -70,7 +70,6 @@ impl URLPath {
 pub fn parse(possibly_encoded_pathname_: &[u8]) -> Result<URLPath, bun_url::DecodeError> {
     let mut decoded_pathname: &[u8] = possibly_encoded_pathname_;
     let mut decoded_storage: Option<Box<[u8]>> = None;
-    let mut needs_redirect = false;
     let mut query_start: Option<usize> =
         possibly_encoded_pathname_.iter().rposition(|&b| b == b'?');
     let mut literal_slash_offsets: Vec<usize> = Vec::new();
@@ -88,11 +87,7 @@ pub fn parse(possibly_encoded_pathname_: &[u8]) -> Result<URLPath, bun_url::Deco
                 .windows(3)
                 .position(|w| w[0] == b'%' && w[1] == b'2' && matches!(w[2], b'F' | b'f'));
             let chunk = &rest[..encoded_slash.unwrap_or(rest.len())];
-            PercentEncoding::decode_fault_tolerant::<_, true>(
-                &mut buf,
-                chunk,
-                Some(&mut needs_redirect),
-            )?;
+            PercentEncoding::decode_fault_tolerant::<_, true>(&mut buf, chunk)?;
             let Some(encoded_slash) = encoded_slash else {
                 break;
             };
@@ -103,11 +98,7 @@ pub fn parse(possibly_encoded_pathname_: &[u8]) -> Result<URLPath, bun_url::Deco
         query_start = None;
         if let Some(q) = raw_query_start {
             query_start = Some(buf.len());
-            PercentEncoding::decode_fault_tolerant::<_, true>(
-                &mut buf,
-                &capped[q..],
-                Some(&mut needs_redirect),
-            )?;
+            PercentEncoding::decode_fault_tolerant::<_, true>(&mut buf, &capped[q..])?;
         }
         // Freeze into a heap-stable Box and park it in `decoded_storage` before
         // borrowing: the slice fields in the returned URLPath borrow from this

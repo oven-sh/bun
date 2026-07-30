@@ -272,9 +272,6 @@ impl<'a, 'log> Scanner<'a, 'log> {
                 b"String values must be quoted; wrap the value in double quotes",
             );
         }
-        // Back up to the start of the enclosing `key = ` (stopping at a line
-        // break or an array/inline-table opener) so the fix reads as the
-        // whole expression, not just the word.
         let mut key_start = pos;
         while key_start > 0
             && pos - key_start < 64
@@ -286,9 +283,8 @@ impl<'a, 'log> Scanner<'a, 'log> {
             key_start += 1;
         }
         let prefix = &self.src[key_start..pos];
-        // A stop byte inside a quoted key (`"a,b" = v`) truncates the scan
-        // mid-key; an unbalanced quote in the prefix is the tell, so drop the
-        // prefix rather than print a garbled one.
+        // Unbalanced quotes mean a stop byte sat inside a quoted key; drop
+        // the prefix rather than print half a key.
         let balanced = prefix.iter().filter(|&&c| c == b'"').count() % 2 == 0
             && prefix.iter().filter(|&&c| c == b'\'').count() % 2 == 0;
         if balanced && bun_core::strings::contains(prefix, b"=") {
@@ -1175,8 +1171,7 @@ impl<'a, 'log> Scanner<'a, 'log> {
         }
 
         let start = self.pos;
-        // A single-line basic string that opens with `<letter>:` is almost
-        // certainly a Windows path; escape errors then name that fix.
+        // `"<letter>:...` is treated as a Windows path for escape errors.
         let path_drive = if !multiline
             && self.peek_at(start).is_ascii_alphabetic()
             && self.peek_at(start + 1) == b':'

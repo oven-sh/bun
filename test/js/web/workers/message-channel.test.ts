@@ -501,8 +501,8 @@ describe("a message listener keeps the event loop alive", () => {
       Bun.sleep(isDebug || isASAN ? 1500 : 500).then(() => "alive" as const),
     ]);
     proc.kill();
-    await Promise.all([stderrDrained, proc.exited]);
-    return { ready: found, outcome };
+    const [stderr] = await Promise.all([stderrDrained, proc.exited]);
+    return { ready: found, outcome, stderr: stderr.trim() };
   }
 
   const releaseWindowMs = isDebug || isASAN ? 4000 : 2000;
@@ -544,7 +544,7 @@ describe("a message listener keeps the event loop alive", () => {
           if (!port2.hasRef()) throw new Error('hasRef() must be true');
           console.log('READY');
         `),
-      ).toEqual({ ready: true, outcome: "alive" });
+      ).toEqual({ ready: true, outcome: "alive", stderr: "" });
     });
   }
 
@@ -563,7 +563,7 @@ describe("a message listener keeps the event loop alive", () => {
         if (!port2.hasRef()) throw new Error('hasRef() must be true');
         console.log('READY');
       `),
-    ).toEqual({ ready: true, outcome: "alive" });
+    ).toEqual({ ready: true, outcome: "alive", stderr: "" });
   });
 
   // Cross-context: a worker is kept alive only by a transferred port's listener,
@@ -618,7 +618,7 @@ describe("a message listener keeps the event loop alive", () => {
         stdout += decoder.decode(value, { stream: true });
       }
       const ready = stdout.includes("READY");
-      // After READY the child's main thread is idle (worker unref'd). On a broken
+      // After READY main is held open only by the ref'd worker. On a broken
       // build the worker's peerClosed() task releases its only loop ref and it
       // exits, so main's 'exit' listener prints WORKER_EXITED and the process
       // ends. On a fixed build the worker holds and the process stays alive.
@@ -710,11 +710,12 @@ describe("a message listener keeps the event loop alive", () => {
 
   // An idle channel with no listener on either side must stay collectible: the
   // new HoldsLoopRef pin is per-side and only set while a side holds a loop ref.
+  // Destructure both ports so the JSMessagePort wrappers are materialized.
   test.concurrent("idle channels with no listener remain collectible", async () => {
     expect(
       await runRelease(`
         const { heapStats } = require('bun:jsc');
-        for (let i = 0; i < 200; i++) new MessageChannel();
+        for (let i = 0; i < 200; i++) { const { port1, port2 } = new MessageChannel(); }
         for (let i = 0; i < 10; i++) Bun.gc(true);
         const n = heapStats().objectTypeCounts.MessagePort ?? 0;
         if (n > 20) throw new Error('MessagePort wrappers retained: ' + n);

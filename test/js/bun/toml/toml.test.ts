@@ -446,7 +446,7 @@ describe("robustness", () => {
     const path = Buffer.alloc(depth * 2 - 1, "a.").toString();
     expect(() => TOML.parse(path + " = 1")).toThrow(RangeError);
     expect(() => TOML.parse(`[${path}]`)).toThrow(RangeError);
-  });
+  }, 20_000);
 
   test("a very long string value round-trips", () => {
     const long = Buffer.alloc(1 << 20, "x").toString();

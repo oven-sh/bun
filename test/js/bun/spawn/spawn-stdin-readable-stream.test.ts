@@ -1066,4 +1066,147 @@ describe("spawn stdin ReadableStream", () => {
     expect(ok).toBe(true);
     expect(written).toBe(totalBytes);
   });
+
+  // request.body (native ByteStream) → spawn stdin via SinkHandle::FileSink;
+  // spawn stdout (native FileReader) → HTTP response via the ResponseStream
+  // sink. The handler is a pure pass-through: no user-land read()/write() loop.
+  test("Bun.serve request.body → spawn stdin, spawn stdout → Response (native source/sink round-trip)", async () => {
+    const totalBytes = 256 * 1024;
+    const body = Buffer.alloc(totalBytes);
+    for (let i = 0; i < totalBytes; i++) body[i] = i & 0xff;
+
+    await using server = Bun.serve({
+      port: 0,
+      async fetch(req) {
+        const proc = spawn({
+          cmd: [bunExe(), "-e", "process.stdin.pipe(process.stdout)"],
+          stdin: req.body!,
+          stdout: "pipe",
+          stderr: "inherit",
+          env: bunEnv,
+        });
+        return new Response(proc.stdout);
+      },
+    });
+
+    const res = await fetch(server.url, { method: "POST", body });
+    const echoed = Buffer.from(await res.arrayBuffer());
+
+    expect(echoed.length).toBe(totalBytes);
+    expect(echoed.equals(body)).toBe(true);
+    expect(res.status).toBe(200);
+  });
+
+  // Subprocess stdout is a native FileReader-backed stream; handing it to
+  // fetch() as the request body wires SourceHandle::FileReader →
+  // SinkHandle::FetchRequestBody so bytes flow subprocess pipe → HTTP upload
+  // without a JS read()/write() loop.
+  test("spawn stdout → fetch request body (native FileReader → FetchRequestBodySink)", async () => {
+    const totalBytes = 256 * 1024;
+    const expected = Buffer.alloc(totalBytes, 65);
+
+    await using server = Bun.serve({
+      port: 0,
+      async fetch(req) {
+        const buf = Buffer.from(await req.arrayBuffer());
+        return Response.json({ length: buf.length, hash: Bun.hash(buf).toString() });
+      },
+    });
+
+    await using proc = spawn({
+      cmd: [bunExe(), "-e", `process.stdout.write(Buffer.alloc(${totalBytes}, 65))`],
+      stdout: "pipe",
+      stderr: "inherit",
+      env: bunEnv,
+    });
+
+    const res = await fetch(server.url, {
+      method: "POST",
+      body: proc.stdout,
+      // @ts-expect-error duplex
+      duplex: "half",
+    });
+    const { length, hash } = await res.json();
+
+    expect(length).toBe(totalBytes);
+    expect(hash).toBe(Bun.hash(expected).toString());
+    expect(await proc.exited).toBe(0);
+  });
+
+  // for-await over a subprocess stderr pipe is pull-driven: when the consumer
+  // stalls, the OS pipe fills and the child's write() blocks on drain, so the
+  // child cannot race to completion while the reader is slow. The child reports
+  // each stderr write's index on stdout (tiny, never fills its pipe); the parent
+  // drains stdout concurrently and samples the child's progress while the
+  // stderr reader is deliberately stalled.
+  test("spawn stderr for-await applies backpressure to the writer", async () => {
+    const chunkSize = 64 * 1024;
+    const chunkCount = 128; // 8 MB — well above the OS pipe + ByteStream buffers
+    const totalBytes = chunkSize * chunkCount;
+
+    const writer = `
+      const chunk = Buffer.alloc(${chunkSize}, 66);
+      function write(i) {
+        if (i >= ${chunkCount}) {
+          process.stdout.write("done\\n");
+          return;
+        }
+        process.stdout.write(i + "\\n");
+        if (!process.stderr.write(chunk)) {
+          process.stderr.once("drain", () => write(i + 1));
+        } else {
+          setImmediate(() => write(i + 1));
+        }
+      }
+      write(0);
+    `;
+
+    await using proc = spawn({
+      cmd: [bunExe(), "-e", writer],
+      stdout: "pipe",
+      stderr: "pipe",
+      env: bunEnv,
+    });
+
+    let writerProgress = 0;
+    let writerDone = false;
+    const stdoutDrain = (async () => {
+      let buf = "";
+      for await (const c of proc.stdout) {
+        buf += Buffer.from(c).toString();
+        const lines = buf.split("\n");
+        buf = lines.pop()!;
+        for (const line of lines) {
+          if (line === "done") writerDone = true;
+          else if (line) writerProgress = parseInt(line) + 1;
+        }
+      }
+    })();
+
+    let received = 0;
+    let progressWhileStalled = -1;
+    let doneWhileStalled: boolean | null = null;
+    for await (const chunk of proc.stderr) {
+      received += chunk.length;
+      // Once a quarter of the payload has arrived, stall the reader and sample
+      // the writer's progress. With backpressure the writer is parked on drain;
+      // without it, 8 MB of writes complete in well under 50 ms.
+      if (progressWhileStalled < 0 && received >= totalBytes / 4) {
+        await Bun.sleep(50);
+        progressWhileStalled = writerProgress;
+        doneWhileStalled = writerDone;
+      }
+      await Bun.sleep(10);
+    }
+
+    await stdoutDrain;
+    const exitCode = await proc.exited;
+
+    expect(received).toBe(totalBytes);
+    expect(progressWhileStalled).toBeGreaterThan(0);
+    expect(progressWhileStalled).toBeLessThan(chunkCount);
+    expect(doneWhileStalled).toBe(false);
+    expect(writerDone).toBe(true);
+    expect(exitCode).toBe(0);
+  });
 });

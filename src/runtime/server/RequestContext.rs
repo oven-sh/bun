@@ -2044,14 +2044,6 @@ where
         // SAFETY: just allocated; sole live mutable view (this.sink only stores the ptr).
         let response_stream = unsafe { &mut *response_stream_ptr.as_ptr() };
 
-        response_stream.sink.signal = crate::webcore::sink::SinkSignal::<
-            ResponseStream<SSL_ENABLED, HTTP3>,
-        >::init(JSValue::ZERO);
-
-        // explicitly set it to a dead pointer
-        // we use this memory address to disable signals being sent
-        response_stream.sink.signal.clear();
-        debug_assert!(response_stream.sink.signal.is_dead());
         // we need to render metadata before assignToStream because the stream can call res.end
         // and this would auto write an 200 status
         if !this.flags.has_written_status() {
@@ -2059,22 +2051,19 @@ where
         }
 
         // We are already corked!
-        // `Option<NonNull<c_void>>` is layout-compatible with `*mut c_void` (niche).
-        let signal_ptr_slot = (&raw mut response_stream.sink.signal.ptr).cast::<*mut c_void>();
         let assignment_result: JSValue =
             ResponseStreamJSSink::<SSL_ENABLED, HTTP3>::assign_to_stream(
                 global_this,
                 stream.value,
                 &mut response_stream.sink,
-                signal_ptr_slot,
             );
 
         assignment_result.ensure_still_alive();
 
         // assignToStream stored the controller's encoded JSValue in
-        // signal.ptr. If the stream already finished synchronously inside the
-        // call, controller.end()/.close() detached the controller and cleared
-        // the signal again (`__controllerDetached`), so the signal may be
+        // `sink.source`. If the stream already finished synchronously inside
+        // the call, controller.end()/.close() detached the controller and
+        // cleared the source again (`__controllerDetached`), so it may be
         // legitimately dead here; the has_responded()/promise-status branches
         // below handle that state.
 

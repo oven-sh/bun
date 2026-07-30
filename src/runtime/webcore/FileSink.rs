@@ -1502,26 +1502,16 @@ impl FileSink {
         stream: &mut ReadableStream,
         global_this: &JSGlobalObject,
     ) -> JSValue {
-        self.source.set(streams::SourceHandle::None);
         // SAFETY: `&mut self` carries write+dealloc provenance over the allocation.
         let _guard = unsafe { FileSinkRef::new_ref(std::ptr::from_mut::<FileSink>(self)) };
 
         self.readable_stream
             .set(readable_stream::Strong::init(*stream, global_this));
-        // The C++ `${abi}__assignToStream` writes the encoded controller JSValue
-        // bits back through this `void**`; wrap into `SourceHandle::JSController`
-        // after the call so the enum tag stays in sync.
-        let mut bits: usize = 0;
-        let signal_ptr: *mut *mut c_void =
-            std::ptr::from_mut::<usize>(&mut bits).cast::<*mut c_void>();
         // No per-wrapper +1 for the controller (only the transient `_guard`
         // above): the JS builtins always call `controller.end()`/`.close()`
         // (`${controller}__end/close` → `controller->detach()` → m_sinkPtr=null)
         // before GC, so the controller's dtor never reaches `finalize`.
-        let promise_result = JSSink::assign_to_stream(global_this, stream.value, self, signal_ptr);
-        if bits != 0 {
-            self.source.set(streams::SourceHandle::JSController(bits));
-        }
+        let promise_result = JSSink::assign_to_stream(global_this, stream.value, self);
 
         if let Some(err) = promise_result.to_error() {
             self.readable_stream.set(readable_stream::Strong::default());

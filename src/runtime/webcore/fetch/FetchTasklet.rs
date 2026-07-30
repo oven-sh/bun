@@ -428,7 +428,7 @@ impl FetchTasklet {
             // `detach` may fire the controller's onClose; every terminal path
             // here has already cleared it, so this just unprotects the cell and
             // nulls m_sinkPtr.
-            JSSink::<FetchRequestBodySink>::detach(&mut sink.signal, &self.global_this);
+            JSSink::<FetchRequestBodySink>::detach(&mut sink.source, &self.global_this);
             // SAFETY: the JS controller's back-pointer was already cleared via
             // `detach_ptr` (inside `detach` above / `end_from_js`); sole owner.
             unsafe { bun_core::heap::destroy(sink_ptr.as_ptr()) };
@@ -608,8 +608,6 @@ impl FetchTasklet {
     }
 
     pub(crate) fn start_request_stream(&mut self) {
-        use crate::webcore::sink::SinkSignal;
-
         self.is_waiting_request_stream_start = false;
         debug_assert!(matches!(
             self.request_body,
@@ -660,20 +658,12 @@ impl FetchTasklet {
         // SAFETY: just allocated; sole live mutable view (self.sink only stores the ptr).
         let sink = unsafe { &mut *sink_ptr.as_ptr() };
 
-        sink.signal = SinkSignal::<FetchRequestBodySink>::init(JSValue::ZERO);
-        // explicitly set it to a dead pointer; this address disables signals
-        // until assignToStream writes the controller cell back through it.
-        sink.signal.clear();
-
-        // `Option<NonNull<c_void>>` is layout-compatible with `*mut c_void` (niche).
-        let signal_ptr = (&raw mut sink.signal.ptr).cast::<*mut c_void>();
-
         // ByteStream-backed streams are handled by `assignToStream` →
         // `readStreamIntoSink` via `readMany()` (pulls all buffered chunks at
         // once); the old native `byte_stream.pipe` fast-path is intentionally
         // not re-implemented here.
         let assignment_result =
-            JSSink::<FetchRequestBodySink>::assign_to_stream(&global_this, stream.value, sink, signal_ptr);
+            JSSink::<FetchRequestBodySink>::assign_to_stream(&global_this, stream.value, sink);
         assignment_result.ensure_still_alive();
 
         if let Some(err) = assignment_result.to_error() {
@@ -2396,7 +2386,7 @@ impl FetchTasklet {
                     .flush_promise
                     .resolve(&global_this, JSValue::js_number(0.0));
             }
-            sink.signal.close(None);
+            sink.source.close(None);
         }
     }
 

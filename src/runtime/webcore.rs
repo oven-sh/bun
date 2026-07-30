@@ -17,8 +17,6 @@ pub mod byte_stream;
 pub mod cookie_map;
 #[path = "webcore/Crypto.rs"]
 pub mod crypto;
-#[path = "webcore/ResumableSink.rs"]
-pub mod resumable_sink;
 #[path = "webcore/S3Client.rs"]
 pub mod s3_client;
 #[path = "webcore/S3File.rs"]
@@ -34,11 +32,7 @@ pub mod text_encoder_stream_encoder;
 pub use bun_jsc::js_error_code::DOMExceptionCode;
 pub use bun_jsc::web_worker;
 pub use s3_stat::S3Stat;
-// `ResumableSink` is the `m_ctx` payload of a JS wrapper; it stores its
-// `JSGlobalObject` as a raw pointer (the FFI boundary cannot carry a Rust
-// lifetime), so the type aliases are lifetime-free and re-exported directly.
 pub use cookie_map::{CookieMap, CookieMapRef};
-pub use resumable_sink::{ResumableFetchSink, ResumableS3UploadSink, ResumableSinkBackpressure};
 pub use s3_client::S3Client;
 pub use streams::{
     H3ResponseSink, HTTPResponseSink, HTTPSResponseSink, HTTPServerWritable, NetworkSink,

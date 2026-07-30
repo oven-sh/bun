@@ -2515,15 +2515,9 @@ impl<'a> Resolver<'a> {
         }
         // NOTE: `decrease_indent()` is called explicitly at every return point below.
 
-        // On POSIX, `\` is a valid filename character, not a path separator.
-        // Node treats it as such and never resolves a bare specifier containing
-        // `\` to a real node_modules path. Bun's `abs_buf*` helpers use
-        // Platform::Loose normalization, which rewrites `\` to `/` on every
-        // platform; without this guard a `\` spelling reaches
-        // `load_as_file_or_directory` as a normalized `/` path, bypassing both
-        // the `exports` encapsulation check (because `Package::parse` returns
-        // `None` for a name containing `\`) and the `..` traversal guard in the
-        // exports resolver.
+        // On POSIX `\` is a filename character, not a separator. The `abs_buf*`
+        // joins below use Platform::Loose (which rewrites `\` to `/`), so reject
+        // `\` here to match Node and keep the exports / `..` guards effective.
         #[cfg(not(windows))]
         if strings::index_of_char(import_path, b'\\').is_some() {
             if let Some(d) = self.debug_logs.as_mut() {

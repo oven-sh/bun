@@ -3,7 +3,9 @@
 **Target:** WebKit/WebKit @ `e84d51e6c5` (main, 2026-07-30)
 **Scope:** `Source/JavaScriptCore/runtime/Temporal*.{cpp,h}`, `runtime/temporal/core/*`, `runtime/ISO8601.{cpp,h}` (~22k LOC)
 **Method:** Static swarm review (33 files, refute-verified), differential fuzzing vs `@js-temporal/polyfill` and V8 native (10k seeded cases), targeted crash probes (35 adversarial inputs), ASAN + UBSan dynamic analysis, JSTests/stress suite, cross-platform verification.
-**Platforms tested:** Linux x64 (Debian, clang-21, ICU 76.1, debug+ASAN + release+UBSan) · Windows x64 (Server 2019, clang-cl 21, ICU 76.1, release) · macOS (blocked — see §Cross-platform).
+**Platforms tested:** Linux x64 (Debian, clang-21, libstdc++, ICU 76.1, debug+ASAN + release+UBSan) · Windows x64 (Server 2019, clang-cl 21, MSVC STL, ICU 76.1, release) · macOS 15.1 arm64 (Apple clang, libc++, Apple libicucore 74.2, release).
+
+**All four primary bugs (A1-A3, B1) reproduce with byte-identical output on all three platforms.** No OS-specific or stdlib-specific divergence was observed in Temporal behavior; variance is limited to ICU data (calendar set) and two upstream port build bugs (§D).
 
 ---
 
@@ -32,13 +34,13 @@ Reproduces on Linux+ASAN and Windows release identically. Spec (`IsValidDuration
 
 For chinese and hebrew (lunisolar) calendars with `largestUnit:"month"`, the fixed-solar fast path at line 1775 is skipped and the year fast-forward at line 1805 only applies to `largestUnit:"year"`, so the month loop at 1847 walks **one `ucal_add(UCAL_MONTH)` per month** across the entire span.
 
-| span (years) | chinese, debug | hebrew, debug | Windows release (chinese) |
-|---|---|---|---|
-| 100 | 447 ms | 32 ms | — |
-| 1000 | 4 425 ms | 284 ms | — |
-| 3000 | — | — | 8 601 ms |
-| 4000 | — | 557 ms | — |
-| 8000+ | >15 s (killed) | 3 107 ms | — |
+| span (years) | chinese, Linux debug | hebrew, Linux debug | chinese, Windows rel | chinese, macOS rel |
+|---|---|---|---|---|
+| 100 | 447 ms | 32 ms | — | — |
+| 1000 | 4 425 ms | 284 ms | — | — |
+| 3000 | — | — | 8 601 ms | 8 436 ms |
+| 4000 | — | 557 ms | — | — |
+| 8000+ | >15 s (killed) | 3 107 ms | — | — |
 
 A single attacker-supplied line (`new Temporal.PlainDate(2000,1,1,"chinese").until(new Temporal.PlainDate(275000,1,1,"chinese"),{largestUnit:"month"})`) runs for tens of minutes. All other calendars complete the same span in 3-5 ms.
 
@@ -102,9 +104,9 @@ The spec re-invokes `GetPossibleEpochNanoseconds` on the shifted datetime, which
 
 ## C. Environment / ICU-dependent
 
-### C1. `JSTests/stress/temporal-calendar-canonical-set.js` fails under ICU 76.1
+### C1. `JSTests/stress/temporal-calendar-canonical-set.js` fails under ICU 74.2 and 76.1
 
-On both Linux (system libicu 76.1) and Windows (ICU4C 76.1 download) the test asserts `Temporal rejects islamic` but JSC accepts it, because `intlAvailableCalendars()` inherits `islamic` and `islamic-rgsa` from ICU data. The test was written for an ICU that excludes these (or for the `--useIntlEraMonthcode=1` filtering path not being the default). This is exactly the "ICU differences" risk: the same binary passes or fails depending solely on the ICU data shipped alongside it.
+The test asserts `Temporal rejects islamic`, but it passes on Linux (ICU 76.1), Windows (ICU4C 76.1), and macOS (Apple libicucore 74.2) because `intlAvailableCalendars()` inherits `islamic` and `islamic-rgsa` from ICU data on all three. The filtering the test expects only happens when `Options::useIntlEraMonthcode()` is true; the `//@ requireOptions("--useIntlEraMonthcode=1")` header is honored by `run-jsc-stress-tests` but not by a bare `jsc file.js`, so anyone running the file directly sees a failure. Not a code bug, but it reads as one to anyone validating Temporal outside the harness.
 
 ### C2. ICU chinese-calendar reliable range
 
@@ -118,7 +120,11 @@ ICU 76's `Calendar` for `chinese` stops returning consistent fields beyond ~ISO 
 
 `winnt.h` defines `RotateLeft32`/`RotateLeft64`/`RotateRight32`/`RotateRight64` as macros. `AirOpcodeGenerated.h` already has a `push_macro`/`undef`/`pop_macro` guard, but the `#include "CCallHelpers.h"` block sits **after** the `#undef` and transitively re-includes `winnt.h`, re-defining the macros before the enum `case Opcode::RotateLeft32:` uses start at line ~13883. Workaround applied locally: add a second `#undef` block immediately after the `#include`s. Proper fix: move the `#include` lines above the `push_macro` block in `opcode_generator.rb`.
 
-### D2. LeakSanitizer reports process-lifetime `AtomStringImpl`/`WatchpointSet` allocations
+### D2. macOS JSCOnly: duplicate `WTF::listenForTimeZoneChangeNotifications` at link
+
+`PlatformJSCOnly.cmake:96` adds `cocoa/TimeZoneCocoa.cpp` on APPLE, but `PlatformUse.h:73` only sets `USE_TIME_ZONE_CHANGE_NOTIFICATIONS` for `PLATFORM(COCOA) || USE(GLIB)`, neither of which is true for JSCOnly on macOS. So the stub in `TimeZone.cpp:48` (guarded by `!USE(TIME_ZONE_CHANGE_NOTIFICATIONS)`) and the Cocoa implementation both compile and the link fails. Temporal-adjacent: this function exists to make `Temporal.Now.timeZoneId()` react to system timezone changes. Workaround for this run: removed `cocoa/TimeZoneCocoa.cpp` from the cmake list.
+
+### D3. LeakSanitizer reports process-lifetime `AtomStringImpl`/`WatchpointSet` allocations
 
 `USE_SYSTEM_MALLOC=ON` + ASAN on a fresh JSCOnly build reports direct leaks from `IdentifierArena::makeIdentifier` and `InlineWatchpointSet::inflate` on a trivial `-e 'print(1)'`. These are pre-existing and not Temporal-specific; noted because anyone reproducing A1-A3 under LSan will see them.
 

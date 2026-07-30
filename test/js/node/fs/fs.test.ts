@@ -5864,22 +5864,44 @@ describe("fs.close on stdio descriptors", () => {
 // returning. Bun's fsync happens in native code, so the Node test suite's
 // jest.spyOn approach can't see it; interpose fsync() via LD_PRELOAD instead.
 describe.skipIf(!isLinux || !(Bun.which("cc") || Bun.which("gcc") || Bun.which("clang")))(
-  "fs.appendFile { flush: true } fsyncs",
+  "fs.appendFile / fs.writeFile { flush: true } fsyncs",
   () => {
     const cc = Bun.which("cc") || Bun.which("gcc") || Bun.which("clang");
-    it.concurrent("appendFileSync / appendFile / promises.appendFile, path and fd", async () => {
-      using dir = tempDir("appendfile-flush", {
-        "shim.c": `
+    const SHIM_C = `
 #define _GNU_SOURCE
 #include <dlfcn.h>
+#include <errno.h>
 #include <stdio.h>
+#include <stdlib.h>
 static int (*real)(int);
+static int fail = -1;
 int fsync(int fd) {
-  if (!real) real = dlsym(RTLD_NEXT, "fsync");
+  if (!real) {
+    real = dlsym(RTLD_NEXT, "fsync");
+    fail = getenv("FAIL_FSYNC") != NULL;
+  }
   fprintf(stderr, "[fsync] fd=%d\\n", fd);
+  if (fail) { errno = EIO; return -1; }
   return real(fd);
 }
-`,
+`;
+    async function compileShim(dir: string) {
+      const shim = join(dir, "shim.so");
+      await using ccProc = Bun.spawn({
+        cmd: [cc!, "-shared", "-fPIC", "-o", shim, join(dir, "shim.c"), "-ldl"],
+        env: bunEnv,
+        stderr: "pipe",
+        stdout: "pipe",
+      });
+      const [, ccErr, ccExit] = await Promise.all([ccProc.stdout.text(), ccProc.stderr.text(), ccProc.exited]);
+      if (ccExit !== 0) throw new Error(`shim compile failed: ${ccErr}`);
+      const existing = bunEnv.LD_PRELOAD;
+      return existing ? `${shim}:${existing}` : shim;
+    }
+
+    it.concurrent("appendFileSync / appendFile / promises.appendFile, path and fd", async () => {
+      using dir = tempDir("appendfile-flush", {
+        "shim.c": SHIM_C,
         "fixture.mjs": `
 import fs from "node:fs";
 const file = process.argv[2];
@@ -5910,20 +5932,10 @@ mark("end");
 process.stdout.write(fs.readFileSync(file, "utf8"));
 `,
       });
-      const shim = join(String(dir), "shim.so");
-      await using ccProc = Bun.spawn({
-        cmd: [cc!, "-shared", "-fPIC", "-o", shim, join(String(dir), "shim.c"), "-ldl"],
-        env: bunEnv,
-        stderr: "pipe",
-        stdout: "pipe",
-      });
-      const [, ccErr, ccExit] = await Promise.all([ccProc.stdout.text(), ccProc.stderr.text(), ccProc.exited]);
-      if (ccExit !== 0) throw new Error(`shim compile failed: ${ccErr}`);
-
-      const existing = bunEnv.LD_PRELOAD;
+      const preload = await compileShim(String(dir));
       await using proc = Bun.spawn({
         cmd: [bunExe(), join(String(dir), "fixture.mjs"), join(String(dir), "out.log")],
-        env: { ...bunEnv, LD_PRELOAD: existing ? `${shim}:${existing}` : shim },
+        env: { ...bunEnv, LD_PRELOAD: preload },
         stderr: "pipe",
         stdout: "pipe",
       });
@@ -5953,6 +5965,42 @@ process.stdout.write(fs.readFileSync(file, "utf8"));
           "writeFileSync flush:true": 1,
           "end": 0,
         },
+      });
+      expect(exitCode).toBe(0);
+    });
+
+    // Node surfaces the fsync error (it calls fsyncSync / passes it to the
+    // callback). With FAIL_FSYNC=1 the shim returns EIO for every fsync.
+    it.concurrent("propagates fsync errors from { flush: true }", async () => {
+      using dir = tempDir("appendfile-flush-err", {
+        "shim.c": SHIM_C,
+        "fixture.mjs": `
+import fs from "node:fs";
+const file = process.argv[2];
+const out = [];
+for (const [name, run] of [
+  ["appendFileSync", () => fs.appendFileSync(file, "a", { flush: true })],
+  ["writeFileSync", () => fs.writeFileSync(file, "b", { flush: true })],
+  ["promises.appendFile", () => fs.promises.appendFile(file, "c", { flush: true })],
+]) {
+  try { await run(); out.push(name + ":ok"); }
+  catch (e) { out.push(name + ":" + e.code + ":" + e.syscall); }
+}
+process.stdout.write(JSON.stringify(out));
+`,
+      });
+      const preload = await compileShim(String(dir));
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), join(String(dir), "fixture.mjs"), join(String(dir), "out.log")],
+        env: { ...bunEnv, LD_PRELOAD: preload, FAIL_FSYNC: "1" },
+        stderr: "pipe",
+        stdout: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect({ out: JSON.parse(stdout || "null"), stderr: stderr.match(/\[fsync\]/g)?.length }).toEqual({
+        out: ["appendFileSync:EIO:fsync", "writeFileSync:EIO:fsync", "promises.appendFile:EIO:fsync"],
+        stderr: 3,
       });
       expect(exitCode).toBe(0);
     });

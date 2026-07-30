@@ -4793,16 +4793,29 @@ impl NodeFS {
             data = &data[written..];
         }
         if args.flush {
-            #[cfg(windows)]
-            {
-                let _ = unsafe { windows::kernel32::FlushFileBuffers(fd.native()) };
-            }
-            #[cfg(not(windows))]
-            {
-                let _ = Syscall::fsync(fd);
-            }
+            Self::flush_file_buffers(fd)?;
         }
         Ok(())
+    }
+
+    /// The `{ flush: true }` fsync for `writeFile` / `appendFile`. Node surfaces
+    /// this error (it calls `fsyncSync(fd)` / passes the fsync error to the
+    /// callback), so an EIO/ENOSPC here must reach the caller.
+    #[inline]
+    fn flush_file_buffers(fd: FD) -> Maybe<()> {
+        #[cfg(windows)]
+        {
+            if unsafe { windows::kernel32::FlushFileBuffers(fd.native()) } == 0 {
+                return Err(
+                    sys::Error::from_code(windows::get_last_errno(), sys::Tag::fsync).with_fd(fd),
+                );
+            }
+            Ok(())
+        }
+        #[cfg(not(windows))]
+        {
+            Syscall::fsync(fd)
+        }
     }
 
     pub fn close(&mut self, args: &args::Close, _: Flavor) -> Maybe<ret::Close> {
@@ -7631,14 +7644,7 @@ impl NodeFS {
         }
 
         if args.flush {
-            #[cfg(windows)]
-            {
-                let _ = unsafe { windows::kernel32::FlushFileBuffers(fd.native()) };
-            }
-            #[cfg(not(windows))]
-            {
-                let _ = Syscall::fsync(fd);
-            }
+            Self::flush_file_buffers(fd)?;
         }
 
         Ok(())

@@ -292,7 +292,7 @@ it("fs.readv returns object", async done => {
 });
 
 it("fs.writev returns object", async done => {
-  const outpath = tempDirWithFiles("fswritevtest", { "a.txt": "b" });
+  await using outpath = tempDir("fswritevtest", { "a.txt": "b" });
   const fd = await promisify(fs.open)(join(outpath, "b.txt"), "w");
   const buffers = [Buffer.alloc(10), Buffer.alloc(10)];
   fs.writev(fd, buffers, 0, (err, bytesWritten, output) => {
@@ -2155,7 +2155,7 @@ describe("readFile", () => {
   });
 
   it("works with flags", async () => {
-    const mydir = tempDirWithFiles("fs-read", {});
+    await using mydir = tempDir("fs-read", {});
     console.log(mydir);
 
     for (const [flag, code] of [
@@ -4804,6 +4804,66 @@ it("new Stats", () => {
   expect(Math.abs(withBigInt.mtime.getTime() - withoutBigInt.mtime.getTime())).toBeLessThanOrEqual(1);
   expect(Math.abs(withBigInt.ctime.getTime() - withoutBigInt.ctime.getTime())).toBeLessThanOrEqual(1);
   expect(Math.abs(withBigInt.birthtime.getTime() - withoutBigInt.birthtime.getTime())).toBeLessThanOrEqual(1);
+});
+
+// On Windows, Node.js deliberately reinterprets stat times via `unsigned long` (see
+// libuv Y2038 note), so pre-epoch semantics there are not "negative ns".
+it.skipIf(isWindows)("BigIntStats *Ns fields are negative for pre-epoch timestamps", () => {
+  using dir = tempDir("bigintstats-pre-epoch", { "f.txt": "x" });
+  const f = join(String(dir), "f.txt");
+
+  // 1969-12-20T10:13:19.750Z; kernel stores this as {sec: -1000001, nsec: 750000000}.
+  const preEpoch = new Date(-1_000_000_250);
+  fs.utimesSync(f, preEpoch, preEpoch);
+
+  const st = statSync(f, { bigint: true });
+  expect({
+    atimeNs: st.atimeNs,
+    mtimeNs: st.mtimeNs,
+    atimeMs: st.atimeMs,
+    mtimeMs: st.mtimeMs,
+  }).toEqual({
+    atimeNs: -1_000_000_250_000_000n,
+    mtimeNs: -1_000_000_250_000_000n,
+    atimeMs: -1_000_000_250n,
+    mtimeMs: -1_000_000_250n,
+  });
+  // Documented invariant: xtimeNs / 1_000_000n === xtimeMs
+  expect(st.mtimeNs / 1_000_000n).toBe(st.mtimeMs);
+  expect(st.atimeNs / 1_000_000n).toBe(st.atimeMs);
+  expect(st.mtime.toISOString()).toBe("1969-12-20T10:13:19.750Z");
+
+  // A small negative offset just below the epoch.
+  fs.utimesSync(f, new Date(-500), new Date(-500));
+  const st2 = statSync(f, { bigint: true });
+  expect({ atimeNs: st2.atimeNs, mtimeNs: st2.mtimeNs }).toEqual({
+    atimeNs: -500_000_000n,
+    mtimeNs: -500_000_000n,
+  });
+  expect(st2.atimeNs / 1_000_000n).toBe(st2.atimeMs);
+});
+
+it.skipIf(isWindows)("BigIntStats *Ns does not clamp for post-2262 timestamps", () => {
+  using dir = tempDir("bigintstats-far-future", { "f.txt": "x" });
+  const f = join(String(dir), "f.txt");
+
+  // sec = 13_569_465_600 (> i64::MAX / 1e9); ext4/btrfs/XFS-bigtime store this exactly.
+  const far = new Date("2400-01-01T00:00:00.000Z");
+  fs.utimesSync(f, far, far);
+  const st = statSync(f, { bigint: true });
+
+  // The invariant must hold regardless of what the filesystem stored.
+  expect(st.mtimeNs / 1_000_000n).toBe(st.mtimeMs);
+  expect(st.atimeNs / 1_000_000n).toBe(st.atimeMs);
+
+  // Round-trip check via the independent non-bigint (f64) path; APFS stores i64 ns
+  // and clamps year-2400 at exactly i64::MAX, so only FSes that store wider sec run this.
+  if (statSync(f).mtimeMs === far.getTime()) {
+    expect({ mtimeNs: st.mtimeNs, atimeNs: st.atimeNs }).toEqual({
+      mtimeNs: 13_569_465_600_000_000_000n,
+      atimeNs: 13_569_465_600_000_000_000n,
+    });
+  }
 });
 
 it("test syscall errno, issue#4198", () => {

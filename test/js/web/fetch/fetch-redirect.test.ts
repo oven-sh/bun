@@ -246,12 +246,13 @@ it("fetch() does not leak intermediate redirect URLs in multi-hop chains", async
   // pollute the RSS we measure. The child samples RSS after warmup and
   // again after two equal batches so we can assert on steady-state growth.
   const script = `
+    const rss = process.platform === "darwin" && typeof Bun.unsafe.memoryFootprint === "function" ? Bun.unsafe.memoryFootprint : process.memoryUsage.rss;
     const url = "${server.url.origin}/hop/0";
     async function once() {
       const res = await fetch(url, { redirect: "follow" });
       if (await res.text() !== "ok") throw new Error("unexpected body: " + res.status);
     }
-    function sample() { Bun.gc(true); return process.memoryUsage.rss(); }
+    function sample() { Bun.gc(true); return rss(); }
     for (let i = 0; i < 15; i++) await once();
     const rss0 = sample();
     for (let i = 0; i < 25; i++) await once();

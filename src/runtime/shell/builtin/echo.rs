@@ -8,7 +8,7 @@ pub struct Echo {
     /// The fully-rendered output (joined argv + optional trailing newline).
     /// Kept on the state so the async IOWriter path can borrow it across
     /// yields.
-    pub output: Vec<u8>,
+    pub(crate) output: Vec<u8>,
     state: State,
 }
 

@@ -23,13 +23,13 @@ use crate::cli::pm_version_command::PmVersionCommand;
 use crate::cli::pm_view_command as PmViewCommand;
 use crate::cli::pm_why_command::PmWhyCommand;
 
-pub use crate::cli::pack_command::PackCommand;
-pub use crate::cli::scan_command::ScanCommand;
+pub(crate) use crate::cli::pack_command::PackCommand;
+pub(crate) use crate::cli::scan_command::ScanCommand;
 
 // Owned snapshot of `Lockfile.Tree.Iterator(.node_modules).Next`.
 // `tree::IteratorNext` borrows the iterator's internal `path_buf`; we copy
 // into owned storage so the `directories` Vec can outlive each `next()` call.
-pub struct NodeModulesFolder {
+pub(crate) struct NodeModulesFolder {
     relative_path: bun_core::ZBox,
     dependencies: Box<[DependencyID]>,
 }
@@ -41,7 +41,7 @@ struct ByName<'a> {
 }
 
 impl<'a> ByName<'a> {
-    pub(crate) fn cmp(&self, lhs: DependencyID, rhs: DependencyID) -> Ordering {
+    fn cmp(&self, lhs: DependencyID, rhs: DependencyID) -> Ordering {
         self.dependencies[lhs as usize]
             .name
             .slice(self.buf)
@@ -49,13 +49,13 @@ impl<'a> ByName<'a> {
     }
 }
 
-pub struct PackageManagerCommand;
+pub(crate) struct PackageManagerCommand;
 
 impl PackageManagerCommand {
     // Takes `LogLevel` instead of `&mut PackageManager` so callers
     // can keep `pm` mutably borrowed by `LoadResult` (which holds
     // `&mut Lockfile` into `pm.lockfile`) across this call.
-    pub fn handle_load_lockfile_errors(load_lockfile: &LoadResult<'_>, log_level: LogLevel) {
+    pub(crate) fn handle_load_lockfile_errors(load_lockfile: &LoadResult<'_>, log_level: LogLevel) {
         let not_silent = log_level != LogLevel::Silent;
 
         if matches!(load_lockfile, LoadResult::NotFound) {
@@ -74,7 +74,7 @@ impl PackageManagerCommand {
     }
 
     #[cold]
-    pub fn print_hash(ctx: Command::Context, file: &File) -> crate::Result<()> {
+    pub(crate) fn print_hash(ctx: Command::Context, file: &File) -> crate::Result<()> {
         let cli = CommandLineArguments::parse(Subcommand::Pm)?;
         let (pm, _cwd) = PackageManager::init(ctx, cli, Subcommand::Pm)?;
 
@@ -130,7 +130,7 @@ impl PackageManagerCommand {
         subcommand
     }
 
-    pub fn print_help() {
+    pub(crate) fn print_help() {
         // the output of --help uses the following syntax highlighting
         // template: <b>Usage<r>: <b><green>bun <command><r> <cyan>[flags]<r> <blue>[arguments]<r>
         // use [foo] for multiple arguments or flags for foo.
@@ -189,7 +189,7 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
         Output::flush();
     }
 
-    pub fn exec(ctx: Command::Context) -> crate::Result<()> {
+    pub(crate) fn exec(ctx: Command::Context) -> crate::Result<()> {
         // `bun_core::argv()` includes argv[0]; skip it and collect into a
         // borrowed-slice Vec so `&[&[u8]]` callers (TrustCommand/UntrustedCommand,
         // `left_has_any_in_right`) keep their shape.

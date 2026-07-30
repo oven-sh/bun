@@ -142,7 +142,7 @@ impl From<AddToLogError> for crate::Error {
 }
 
 impl Error {
-    pub fn add_to_log(&self, source: &Source, log: &mut Log) -> Result<(), AddToLogError> {
+    pub(crate) fn add_to_log(&self, source: &Source, log: &mut Log) -> Result<(), AddToLogError> {
         let loc: Loc = match *self {
             Error::Oom => return Err(AddToLogError::OutOfMemory),
             Error::StackOverflow => return Err(AddToLogError::StackOverflow),

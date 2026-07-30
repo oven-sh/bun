@@ -40,41 +40,14 @@ pub enum Error {
     InsufficientSpace,
 }
 
-// Enums for strip modes and options
-#[derive(Copy, Clone, Eq, PartialEq)]
-pub enum StripMode {
-    None,
-    StripIfSigned,
-    StripAlways,
-}
-
-#[derive(Copy, Clone)]
-pub struct StripOpts {
-    pub require_overlay: bool,
-    pub recompute_checksum: bool,
-}
-
-impl Default for StripOpts {
-    fn default() -> Self {
-        Self {
-            require_overlay: true,
-            recompute_checksum: true,
-        }
-    }
-}
-
 /// Windows PE Binary manipulation for codesigning standalone executables
 pub struct PEFile {
-    pub data: Vec<u8>,
+    pub(crate) data: Vec<u8>,
     // Store offsets instead of pointers to avoid invalidation after resize
-    pub pe_header_offset: usize,
-    pub optional_header_offset: usize,
-    pub section_headers_offset: usize,
-    pub num_sections: u16,
-    // Cached values from init
-    pub first_raw: u32,
-    pub last_file_end: u32,
-    pub last_va_end: u32,
+    pub(crate) pe_header_offset: usize,
+    pub(crate) optional_header_offset: usize,
+    pub(crate) section_headers_offset: usize,
+    pub(crate) num_sections: u16,
 }
 
 // PE/COFF on-disk header structs are byte-packed (no padding) per spec, and may
@@ -186,6 +159,8 @@ const IMAGE_SCN_MEM_READ: u32 = 0x4000_0000;
 const IMAGE_DIRECTORY_ENTRY_SECURITY: usize = 4;
 const IMAGE_DLLCHARACTERISTICS_FORCE_INTEGRITY: u16 = 0x0080;
 
+pub const IMAGE_SUBSYSTEM_WINDOWS_GUI: u16 = 2;
+
 // Section name constant for exact comparison
 const BUN_SECTION_NAME: [u8; 8] = [b'.', b'b', b'u', b'n', 0, 0, 0, 0];
 
@@ -244,10 +219,6 @@ impl PEFile {
     // Helper methods to safely access headers using unaligned pointers
     fn get_pe_header_mut(&mut self) -> Result<*mut PEHeader, Error> {
         view_at_mut::<PEHeader>(&mut self.data, self.pe_header_offset)
-    }
-
-    fn get_optional_header(&self) -> Result<*const OptionalHeader64, Error> {
-        view_at_const::<OptionalHeader64>(&self.data, self.optional_header_offset)
     }
 
     fn get_optional_header_mut(&mut self) -> Result<*mut OptionalHeader64, Error> {
@@ -344,38 +315,19 @@ impl PEFile {
             return Err(Error::InvalidPEFile);
         }
 
-        // 7. Precompute first_raw, last_file_end, last_va_end
-        let mut first_raw: u32 = u32::try_from(data.len()).expect("int cast");
-        let mut last_file_end: u32 = 0;
-        let mut last_va_end: u32 = 0;
-
+        // 7. Validate each section's aligned virtual extent up front.
         let section_alignment = optional_header.section_alignment;
-
-        if num_sections > 0 {
-            for i in 0..num_sections as usize {
-                let sh_off = section_headers_offset + i * size_of::<SectionHeader>();
-                // SAFETY: `sh_off + size_of::<SectionHeader>()` is within `data` per the
-                // `section_headers_offset + section_headers_size <= data.len()` check above.
-                let section = unsafe {
-                    ptr::read_unaligned(data.as_ptr().add(sh_off).cast::<SectionHeader>())
-                };
-                if section.size_of_raw_data > 0 {
-                    if section.pointer_to_raw_data < first_raw {
-                        first_raw = section.pointer_to_raw_data;
-                    }
-                    let file_end = section.pointer_to_raw_data + section.size_of_raw_data;
-                    if file_end > last_file_end {
-                        last_file_end = file_end;
-                    }
-                }
-                // Use effective virtual size (max of virtual_size and size_of_raw_data)
-                let vs_effective = section.virtual_size.max(section.size_of_raw_data);
-                let va_end =
-                    section.virtual_address + align_up_u32(vs_effective, section_alignment)?;
-                if va_end > last_va_end {
-                    last_va_end = va_end;
-                }
-            }
+        for i in 0..num_sections as usize {
+            let sh_off = section_headers_offset + i * size_of::<SectionHeader>();
+            // SAFETY: `sh_off + size_of::<SectionHeader>()` is within `data` per the
+            // `section_headers_offset + section_headers_size <= data.len()` check above.
+            let section =
+                unsafe { ptr::read_unaligned(data.as_ptr().add(sh_off).cast::<SectionHeader>()) };
+            let vs_effective = section.virtual_size.max(section.size_of_raw_data);
+            section
+                .virtual_address
+                .checked_add(align_up_u32(vs_effective, section_alignment)?)
+                .ok_or(Error::Overflow)?;
         }
 
         Ok(Box::new(PEFile {
@@ -384,16 +336,13 @@ impl PEFile {
             optional_header_offset,
             section_headers_offset,
             num_sections,
-            first_raw,
-            last_file_end,
-            last_va_end,
         }))
     }
 
     // deinit: Drop is automatic — Vec<u8> field freed; Box<PEFile> dropped by caller.
 
     /// Strip Authenticode signatures from the PE file
-    pub fn strip_authenticode(&mut self, opts: StripOpts) -> Result<(), Error> {
+    pub(crate) fn strip_authenticode(&mut self) -> Result<(), Error> {
         let opt = view_at_mut::<OptionalHeader64>(&mut self.data, self.optional_header_offset)?;
 
         // Read Security directory (index 4)
@@ -426,7 +375,7 @@ impl PEFile {
         if sec_off >= file_len || sec_size == 0 {
             return Err(Error::InvalidSecurityDirectory);
         }
-        if opts.require_overlay && sec_off < last_raw_end as usize {
+        if sec_off < last_raw_end as usize {
             return Err(Error::SecurityDirInsideImage);
         }
 
@@ -468,9 +417,7 @@ impl PEFile {
         }
 
         // Recompute checksum (recommended)
-        if opts.recompute_checksum {
-            self.recompute_pe_checksum()?;
-        }
+        self.recompute_pe_checksum()?;
 
         // After strip, ensure no remaining overlay beyond last section
         let after_strip_len = self.data.len();
@@ -503,12 +450,10 @@ impl PEFile {
             sum += data[data.len() - 1] as u64;
         }
 
-        // Final folds + add length
+        // Fold to 16 bits, then add file length (no fold after: result is 32-bit).
         sum = (sum & 0xffff) + (sum >> 16);
         sum = (sum & 0xffff) + (sum >> 16);
-        sum += u64::try_from(data.len()).expect("int cast");
-        sum = (sum & 0xffff) + (sum >> 16);
-        let final_sum: u32 = u32::try_from((sum & 0xffff) + (sum >> 16)).expect("int cast");
+        let final_sum: u32 = (sum as u32).wrapping_add(data.len() as u32);
 
         let opt = self.get_optional_header_mut()?;
         // SAFETY: opt points into self.data at validated offset
@@ -519,25 +464,9 @@ impl PEFile {
     }
 
     /// Add a new section to the PE file for storing Bun module data
-    pub fn add_bun_section(&mut self, data_to_embed: &[u8], strip: StripMode) -> Result<(), Error> {
-        // 1. Optional strip (before any addition)
-        if strip == StripMode::StripAlways {
-            self.strip_authenticode(StripOpts {
-                require_overlay: true,
-                recompute_checksum: true,
-            })?;
-        } else if strip == StripMode::StripIfSigned {
-            // Read Security directory to check if signed
-            let opt = self.get_optional_header()?;
-            // SAFETY: opt points into self.data at validated offset
-            let dd = unsafe { (*opt).data_directories[IMAGE_DIRECTORY_ENTRY_SECURITY] };
-            if dd.virtual_address != 0 || dd.size != 0 {
-                self.strip_authenticode(StripOpts {
-                    require_overlay: true,
-                    recompute_checksum: true,
-                })?;
-            }
-        }
+    pub fn add_bun_section(&mut self, data_to_embed: &[u8]) -> Result<(), Error> {
+        // 1. Strip Authenticode (before any addition)
+        self.strip_authenticode()?;
 
         // 2. Re-read PE/Optional (pointers may have moved due to resize in strip)
         let opt = self.get_optional_header_mut()?;
@@ -686,10 +615,24 @@ impl PEFile {
         Ok(())
     }
 
+    /// Set the Windows subsystem field in the optional header. Does not recompute the checksum.
+    pub fn set_subsystem(&mut self, subsystem: u16) -> Result<(), Error> {
+        let opt = self.get_optional_header_mut()?;
+        // SAFETY: opt points into self.data at validated offset
+        unsafe {
+            (*opt).subsystem = subsystem;
+        }
+        Ok(())
+    }
+
     /// Write the modified PE file
     pub fn write(&self, writer: &mut impl std::io::Write) -> crate::Result<()> {
         writer.write_all(&self.data)?;
         Ok(())
+    }
+
+    pub fn len(&self) -> usize {
+        self.data.len()
     }
 }
 

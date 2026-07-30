@@ -1,9 +1,9 @@
-import { test } from "bun:test";
-import { bunRun, tempDirWithFiles } from "harness";
+import { expect, test } from "bun:test";
+import { bunRun, tempDir } from "harness";
 import { join } from "path";
 
-test("does not segfault", () => {
-  const dir = tempDirWithFiles("segfault", {
+test.concurrent("does not segfault", async () => {
+  using dir = tempDir("segfault", {
     "dir/a.ts": `
       import { mock } from "bun:test";
 
@@ -42,5 +42,5 @@ test("does not segfault", () => {
       },
     }),
   });
-  bunRun(join(dir, "dir/a.ts"));
+  expect(await bunRun(join(dir, "dir/a.ts"))).toSpawn();
 });

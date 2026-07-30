@@ -84,11 +84,11 @@ impl<'a> HTMLScanner<'a> {
         Ok(())
     }
 
-    pub(crate) fn on_write_html(&mut self, bytes: &[u8]) {
+    fn on_write_html(&mut self, bytes: &[u8]) {
         let _ = bytes; // bytes are not written in scan phase
     }
 
-    pub(crate) fn on_html_parse_error(&mut self, message: &[u8]) {
+    fn on_html_parse_error(&mut self, message: &[u8]) {
         // Vec/Box allocations abort on OOM; just call. `IntoText for
         // Vec<u8>` → `Cow::Owned`, so the Log owns and drops the copy.
         let _ = self
@@ -96,7 +96,7 @@ impl<'a> HTMLScanner<'a> {
             .add_error(Some(self.source), Loc::EMPTY, message.to_vec());
     }
 
-    pub(crate) fn on_tag(
+    fn on_tag(
         &mut self,
         _element: &mut Element<'_, '_>,
         path: &[u8],
@@ -167,11 +167,11 @@ pub(crate) struct HTMLProcessor<T, const VISIT_DOCUMENT_TAGS: bool>(PhantomData<
 #[derive(Clone, Copy)]
 pub struct TagHandler {
     /// CSS selector to match elements
-    pub selector: &'static str,
+    pub(crate) selector: &'static str,
     /// The attribute to extract the URL from
-    pub url_attribute: &'static str,
+    pub(crate) url_attribute: &'static str,
     /// The kind of import to create
-    pub kind: ImportKind,
+    pub(crate) kind: ImportKind,
 }
 
 impl TagHandler {
@@ -184,7 +184,7 @@ impl TagHandler {
     }
 }
 
-pub(crate) const TAG_HANDLERS: [TagHandler; 16] = [
+const TAG_HANDLERS: [TagHandler; 16] = [
     // Module scripts with src
     TagHandler::new("script[src]", "src", ImportKind::Stmt),
     // CSS Stylesheets

@@ -17,8 +17,8 @@ pub use bv2_impl::bake_types;
 pub use bv2_impl::dispatch;
 pub use bv2_impl::{
     CompileResult, CompileResultForSourceMap, CompileResultForSourceMapColumns, ContentHasher,
-    DeclInfo, DeclInfoKind, EventLoop, ImportTracker, PartRange, StableRef, WrapKind,
-    generic_path_with_pretty_initialized, target_from_hashbang,
+    EventLoop, ImportTracker, PartRange, StableRef, WrapKind, generic_path_with_pretty_initialized,
+    target_from_hashbang,
 };
 pub use bv2_impl::{DevServerInput, DevServerOutput, ImportTrackerIterator, ImportTrackerStatus};
 // Flatten the impl-body module into this file's namespace so external callers
@@ -27,7 +27,7 @@ pub use bv2_impl::{DevServerInput, DevServerOutput, ImportTrackerIterator, Impor
 use self::bake_types as bake;
 pub use bv2_impl::{
     BuildResult, BundleV2Result, CompletionStruct, DependenciesScanner, DependenciesScannerResult,
-    EXTERNAL_FREE_VTABLE, OnDependenciesAnalyze, singleton,
+    OnDependenciesAnalyze, singleton,
 };
 
 pub use crate::DeferredBatchTask::DeferredBatchTask;
@@ -40,9 +40,6 @@ use crate::transpiler::Transpiler;
 use crate::{Index, IndexInt, LinkerContext};
 
 // ── re-exports so callers can reference these via `bundle_v2::…` ──
-/// `BundleThread` — owns the worker pool + completion
-/// queue for `BundleV2`. Re-exported so callers reference `bundle_v2::BundleThread`.
-pub use crate::BundleThread::BundleThread;
 pub use crate::ParseTask;
 
 /// `jsc::api::JSBundler::Plugin` — re-exported from the canonical def below.
@@ -56,8 +53,8 @@ pub use api::JSBundler::FileMap;
 
 #[derive(Clone, Copy)]
 pub struct PendingImport {
-    pub to_source_index: Index,
-    pub import_record_index: u32,
+    pub(crate) to_source_index: Index,
+    pub(crate) import_record_index: u32,
 }
 
 pub struct BundleV2<'a> {
@@ -74,7 +71,7 @@ pub struct BundleV2<'a> {
     /// so the safe `Deref` removes the per-accessor `unsafe { p.as_ref() }`.
     /// The two `&mut` sites in `transpiler_for_target` go through the explicit
     /// `unsafe assume_mut` escape hatch.
-    pub client_transpiler: Option<bun_ptr::ParentRef<Transpiler<'a>>>,
+    pub(crate) client_transpiler: Option<bun_ptr::ParentRef<Transpiler<'a>>>,
     /// Owns the storage backing `client_transpiler` when it was lazily created
     /// by `initialize_client_transpiler` (browser-target request from a
     /// server-side build). Stays `None` when `client_transpiler` is borrowed
@@ -82,11 +79,11 @@ pub struct BundleV2<'a> {
     /// `deinit_without_freeing_arena` so the deep-cloned `BundleOptions` /
     /// `Resolver` global-heap fields are released — `arena.alloc` would leak
     /// them since bumpalo never runs `Drop`.
-    pub owned_client_transpiler: Option<Box<Transpiler<'a>>>,
+    pub(crate) owned_client_transpiler: Option<Box<Transpiler<'a>>>,
     /// See `bake.Framework.ServerComponents.separate_ssr_graph`.
-    pub ssr_transpiler: *mut Transpiler<'a>,
+    pub(crate) ssr_transpiler: *mut Transpiler<'a>,
     /// When Bun Bake is used, the resolved framework is passed here.
-    pub framework: Option<bake::Framework>,
+    pub(crate) framework: Option<bake::Framework>,
     pub graph: Graph<'a>,
     // `LinkerContext<'a>` borrows the same arena lifetime as `transpiler`.
     pub linker: LinkerContext<'a>,
@@ -102,31 +99,32 @@ pub struct BundleV2<'a> {
     /// In-memory files that can be used as entrypoints or imported.
     /// This is a pointer to the FileMap in the completion config.
     pub file_map: Option<&'a FileMap>,
-    pub source_code_length: usize,
+    pub(crate) source_code_length: usize,
 
     /// There is a race condition where an onResolve plugin may schedule a task
     /// on the bundle thread before its parsing task completes.
-    pub resolve_tasks_waiting_for_import_source_index: ArrayHashMap<IndexInt, Vec<PendingImport>>,
+    pub(crate) resolve_tasks_waiting_for_import_source_index:
+        ArrayHashMap<IndexInt, Vec<PendingImport>>,
 
     /// Allocations not tracked by a threadlocal heap.
-    pub free_list: Vec<Box<[u8]>>,
+    pub(crate) free_list: Vec<Box<[u8]>>,
 
     /// See the comment in `Chunk.OutputPiece`.
-    pub unique_key: u64,
-    pub dynamic_import_entry_points: ArrayHashMap<IndexInt, ()>,
+    pub(crate) unique_key: u64,
+    pub(crate) dynamic_import_entry_points: ArrayHashMap<IndexInt, ()>,
 
-    pub finalizers: Vec<ExternalFreeFunction>,
+    pub(crate) finalizers: Vec<ExternalFreeFunction>,
 
-    pub drain_defer_task: DeferredBatchTask,
+    pub(crate) drain_defer_task: DeferredBatchTask,
 
     /// Set true by DevServer. Currently every usage of the transpiler (Bun.build
     /// and `bun build` CLI) runs at the top of an event loop. When this is true,
     /// a callback is executed after all work is complete (`finishFromBakeDevServer`).
     pub asynchronous: bool,
-    pub thread_lock: ThreadLock,
+    pub(crate) thread_lock: ThreadLock,
 
     /// If false we can skip TLA validation and propagation.
-    pub has_any_top_level_await_modules: bool,
+    pub(crate) has_any_top_level_await_modules: bool,
 
     /// Barrel optimization: tracks which exports have been requested from each
     /// module encountered during barrel BFS. Keys are source indices. Values
@@ -138,7 +136,7 @@ pub struct BundleV2<'a> {
     /// instead of a hash map because the key space is
     /// dense and this is probed once per import in `on_parse_task_complete`
     /// (the main-thread parse-phase throughput limiter).
-    pub requested_exports: Vec<Option<RequestedExports>>,
+    pub(crate) requested_exports: Vec<Option<RequestedExports>>,
 }
 
 bun_core::declare_scope!(Bundle, visible);
@@ -161,7 +159,7 @@ impl<'a> BundleV2<'a> {
     // (same pointer in both slots when no SSR graph).
     // Callers go through these accessors so the unsafe deref is centralized.
     #[inline]
-    pub fn transpiler(&self) -> &Transpiler<'a> {
+    pub(crate) fn transpiler(&self) -> &Transpiler<'a> {
         &*self.transpiler
     }
 
@@ -173,7 +171,7 @@ impl<'a> BundleV2<'a> {
     /// `switch (this.loop().*)` — `linker.loop` is a non-owning backref to the
     /// `AnyEventLoop` that owns this bundle pass and outlives it.
     #[inline]
-    pub fn any_loop_mut(&mut self) -> &mut bun_event_loop::AnyEventLoop {
+    pub(crate) fn any_loop_mut(&mut self) -> &mut bun_event_loop::AnyEventLoop {
         // BACKREF deref centralised in `LinkerContext::any_loop_mut`.
         self.linker
             .any_loop_mut()
@@ -181,7 +179,7 @@ impl<'a> BundleV2<'a> {
     }
 
     #[inline]
-    pub fn dev_server_handle(&self) -> Option<&dispatch::DevServerHandle> {
+    pub(crate) fn dev_server_handle(&self) -> Option<&dispatch::DevServerHandle> {
         self.dev_server.as_ref()
     }
 
@@ -189,7 +187,7 @@ impl<'a> BundleV2<'a> {
     /// (from `BakeOptions` or `initialize_client_transpiler`); the pointee is
     /// live for `'a`.
     #[inline]
-    pub fn client_transpiler_ref(&self) -> Option<&Transpiler<'a>> {
+    pub(crate) fn client_transpiler_ref(&self) -> Option<&Transpiler<'a>> {
         self.client_transpiler.as_deref()
     }
 
@@ -197,7 +195,7 @@ impl<'a> BundleV2<'a> {
     /// Set once in `init` from `BakeOptions` / completion config; live for the
     /// bundle pass.
     #[inline]
-    pub fn plugins_ref(&self) -> Option<&JSBundlerPlugin> {
+    pub(crate) fn plugins_ref(&self) -> Option<&JSBundlerPlugin> {
         // SAFETY: BACKREF — opaque C++ object owned by the completion task /
         // bake DevServer, outlives the bundle pass. All `&self` methods on it
         // are FFI calls that take `*const`.
@@ -207,7 +205,7 @@ impl<'a> BundleV2<'a> {
     /// Mutable projection of the `plugins` backref for FFI calls that take
     /// `*mut` (`drain_deferred`). The pointee is disjoint from `self` storage.
     #[inline]
-    pub fn plugins_mut(&mut self) -> Option<&mut JSBundlerPlugin> {
+    pub(crate) fn plugins_mut(&mut self) -> Option<&mut JSBundlerPlugin> {
         // SAFETY: BACKREF — see `plugins_ref`. `&mut self` ensures no other
         // `&JSBundlerPlugin` projection from this `BundleV2` overlaps.
         self.plugins.map(|mut p| unsafe { p.as_mut() })
@@ -217,7 +215,7 @@ impl<'a> BundleV2<'a> {
     /// Centralises the two open-coded `unsafe { ptr.as_mut() }` sites so the
     /// liveness/exclusivity argument lives in one place.
     #[inline]
-    pub fn bun_watcher_mut(&mut self) -> Option<&mut bun_watcher::Watcher> {
+    pub(crate) fn bun_watcher_mut(&mut self) -> Option<&mut bun_watcher::Watcher> {
         // SAFETY: BACKREF — heap-owned by hot_reloader / DevServer (set via
         // `install_bun_watcher`), live for the process under `--watch`. The
         // watcher storage is disjoint from `self`; `&mut self` excludes any
@@ -227,14 +225,14 @@ impl<'a> BundleV2<'a> {
     }
 
     #[inline]
-    pub fn path_to_source_index_map(
+    pub(crate) fn path_to_source_index_map(
         &mut self,
         target: options::Target,
     ) -> &mut PathToSourceIndexMap {
         self.graph.path_to_source_index_map(target)
     }
 
-    pub fn transpiler_for_target(&mut self, target: options::Target) -> &mut Transpiler<'a> {
+    pub(crate) fn transpiler_for_target(&mut self, target: options::Target) -> &mut Transpiler<'a> {
         // SAFETY: all three pointers are live for `'a` (set in `init`); the
         // `client_transpiler` arm is only reached when bake populated it.
         // Outside of server-components / dev-server,
@@ -320,7 +318,6 @@ pub mod bv2_impl {
     //     make mimalloc-debug
     //
 
-    use core::ffi::c_void;
     use core::ptr::NonNull;
     use std::io::Write as _;
 
@@ -411,25 +408,25 @@ pub mod bv2_impl {
         #[derive(Copy, Clone, Default, Eq, PartialEq)]
         pub struct EntryPointFlags(pub u8);
         impl EntryPointFlags {
-            pub const CLIENT: u8 = 1 << 0;
-            pub const SERVER: u8 = 1 << 1;
-            pub const SSR: u8 = 1 << 2;
+            pub(crate) const CLIENT: u8 = 1 << 0;
+            pub(crate) const SERVER: u8 = 1 << 1;
+            pub(crate) const SSR: u8 = 1 << 2;
             /// When set, `.CLIENT` is also set.
-            pub const CSS: u8 = 1 << 3;
+            pub(crate) const CSS: u8 = 1 << 3;
             #[inline]
-            pub fn client(self) -> bool {
+            pub(crate) fn client(self) -> bool {
                 self.0 & Self::CLIENT != 0
             }
             #[inline]
-            pub fn server(self) -> bool {
+            pub(crate) fn server(self) -> bool {
                 self.0 & Self::SERVER != 0
             }
             #[inline]
-            pub fn ssr(self) -> bool {
+            pub(crate) fn ssr(self) -> bool {
                 self.0 & Self::SSR != 0
             }
             #[inline]
-            pub fn css(self) -> bool {
+            pub(crate) fn css(self) -> bool {
                 self.0 & Self::CSS != 0
             }
         }
@@ -453,16 +450,16 @@ pub mod bv2_impl {
         /// stays in T6 because only `bake::FrameworkRouter` reads it.
         #[non_exhaustive]
         pub struct Framework {
-            pub built_in_modules: bun_collections::StringArrayHashMap<BuiltInModule>,
+            pub(crate) built_in_modules: bun_collections::StringArrayHashMap<BuiltInModule>,
             /// Mirrors `Framework.server_components`.
-            pub server_components: Option<ServerComponents>,
+            pub(crate) server_components: Option<ServerComponents>,
             /// Mirrors `Framework.react_fast_refresh` — read by the parser
             /// (`js_parser/ast/Parser.rs:1997` resolves `framework.react_fast_refresh
             /// .import_source`) when `features.react_fast_refresh` is on.
-            pub react_fast_refresh: Option<ReactFastRefresh>,
+            pub(crate) react_fast_refresh: Option<ReactFastRefresh>,
             /// Mirrors `Framework.is_built_in_react` — read by
             /// `linker_context::generateChunksInParallel` to gate `BakeExtra`.
-            pub is_built_in_react: bool,
+            pub(crate) is_built_in_react: bool,
         }
         impl Framework {
             /// Construct the bundler-side TYPE_ONLY view. Called from
@@ -504,15 +501,15 @@ pub mod bv2_impl {
         /// linker can splice the runtime preamble without depending on bun_bake.
         #[derive(Clone, Copy)]
         pub struct HmrRuntime {
-            pub code: &'static [u8],
+            pub(crate) code: &'static [u8],
         }
         impl HmrRuntime {
-            pub const fn init(code: &'static [u8]) -> Self {
+            pub(crate) const fn init(code: &'static [u8]) -> Self {
                 Self { code }
             }
         }
         /// Alias used at the crate root (`crate::HmrRuntimeSide`); identical to `Side`.
-        pub type HmrRuntimeSide = Side;
+        pub(crate) type HmrRuntimeSide = Side;
 
         /// MOVE_DOWN bake→bundler:
         /// the codegen'd `bake.client.js` / `bake.server.js` are loaded via
@@ -524,7 +521,7 @@ pub mod bv2_impl {
         /// NUL-termination dance is unnecessary. Per-side `OnceLock<HmrRuntime>`
         /// memoizes the `\n` count (`runtime_embed_file!` already caches the file
         /// load, this caches the `init` scan so repeat calls are a `Copy`).
-        pub fn get_hmr_runtime(side: Side) -> HmrRuntime {
+        pub(crate) fn get_hmr_runtime(side: Side) -> HmrRuntime {
             static CLIENT: std::sync::OnceLock<HmrRuntime> = std::sync::OnceLock::new();
             static SERVER: std::sync::OnceLock<HmrRuntime> = std::sync::OnceLock::new();
             match side {
@@ -587,10 +584,10 @@ pub mod bv2_impl {
             /// the FFI boundary.
             #[repr(transparent)]
             #[derive(Copy, Clone, Eq, PartialEq, Hash)]
-            pub struct OpaqueFileId(pub u32);
+            pub struct OpaqueFileId(pub(crate) u32);
             impl OpaqueFileId {
                 #[inline]
-                pub const fn init(i: u32) -> Self {
+                pub(crate) const fn init(i: u32) -> Self {
                     Self(i)
                 }
                 #[inline]
@@ -606,11 +603,11 @@ pub mod bv2_impl {
             #[derive(Copy, Clone)]
             pub struct InputFile {
                 abs_path: bun_ptr::RawSlice<u8>,
-                pub side: Side,
+                pub(crate) side: Side,
             }
             impl InputFile {
                 #[inline]
-                pub fn init(abs_path: &[u8], side: Side) -> Self {
+                pub(crate) fn init(abs_path: &[u8], side: Side) -> Self {
                     Self {
                         abs_path: bun_ptr::RawSlice::new(abs_path),
                         side,
@@ -765,17 +762,17 @@ pub mod bv2_impl {
                 /// only bundler caller (`DeferredBatchTask::run_on_js_thread`)
                 /// ignores failures, so the void FFI call is the observable
                 /// behaviour at this tier.
-                pub fn drain_deferred(&mut self, rejected: bool) {
+                pub(crate) fn drain_deferred(&mut self, rejected: bool) {
                     JSBundlerPlugin__drainDeferred(self, rejected)
                 }
 
                 #[inline]
-                pub fn has_on_before_parse_plugins(&self) -> bool {
+                pub(crate) fn has_on_before_parse_plugins(&self) -> bool {
                     JSBundlerPlugin__hasOnBeforeParsePlugins(self) != 0
                 }
 
                 #[inline]
-                pub fn call_on_before_parse_plugins(
+                pub(crate) fn call_on_before_parse_plugins(
                     &self,
                     ctx: *mut core::ffi::c_void,
                     namespace: &BunString,
@@ -798,7 +795,7 @@ pub mod bv2_impl {
                     )
                 }
 
-                pub fn has_any_matches(
+                pub(crate) fn has_any_matches(
                     &self,
                     path: &crate::bun_fs::Path,
                     is_on_load: bool,
@@ -817,7 +814,7 @@ pub mod bv2_impl {
                     )
                 }
 
-                pub fn match_on_load(
+                pub(crate) fn match_on_load(
                     &mut self,
                     path: &[u8],
                     namespace: &[u8],
@@ -842,7 +839,7 @@ pub mod bv2_impl {
                     );
                 }
 
-                pub fn match_on_resolve(
+                pub(crate) fn match_on_resolve(
                     &mut self,
                     path: &[u8],
                     namespace: &[u8],
@@ -879,7 +876,7 @@ pub mod bv2_impl {
                 pub map: bun_collections::StringHashMap<Box<[u8]>>,
             }
             impl FileMap {
-                pub fn get(&self, specifier: &[u8]) -> Option<&[u8]> {
+                pub(crate) fn get(&self, specifier: &[u8]) -> Option<&[u8]> {
                     if self.map.is_empty() {
                         return None;
                     }
@@ -922,7 +919,7 @@ pub mod bv2_impl {
                 /// `bun_resolver::Result`'s `Path<'static>` borrows arena memory
                 /// (lives for the entire build pass) instead of the map's key
                 /// storage.
-                pub fn resolve(
+                pub(crate) fn resolve(
                     &self,
                     arena: &bun_alloc::Arena,
                     source_file: &[u8],
@@ -1045,14 +1042,14 @@ pub mod bv2_impl {
             /// Owned snapshot of an import record handed to onResolve plugins.
             #[derive(Clone, Default)]
             pub struct MiniImportRecord {
-                pub kind: ImportKind,
+                pub(crate) kind: ImportKind,
                 pub source_file: Box<[u8]>,
-                pub namespace: Box<[u8]>,
-                pub specifier: Box<[u8]>,
-                pub importer_source_index: u32,
-                pub import_record_index: u32,
-                pub range: bun_ast::Range,
-                pub original_target: Target,
+                pub(crate) namespace: Box<[u8]>,
+                pub(crate) specifier: Box<[u8]>,
+                pub(crate) importer_source_index: u32,
+                pub(crate) import_record_index: u32,
+                pub(crate) range: bun_ast::Range,
+                pub(crate) original_target: Target,
             }
 
             /// Mirrors `JSBundler.Resolve.Value.success` payload.
@@ -1074,7 +1071,7 @@ pub mod bv2_impl {
             }
             impl ResolveValue {
                 #[inline]
-                pub fn consume(&mut self) -> ResolveValue {
+                pub(crate) fn consume(&mut self) -> ResolveValue {
                     core::mem::replace(self, ResolveValue::Consumed)
                 }
             }
@@ -1086,9 +1083,9 @@ pub mod bv2_impl {
                 pub bv2: *mut BundleV2<'static>,
                 pub import_record: MiniImportRecord,
                 pub value: ResolveValue,
-                pub js_task: bun_event_loop::AnyTask::AnyTask,
+                pub(crate) js_task: bun_event_loop::AnyTask::AnyTask,
                 /// `jsc.AnyEventLoop.Task` — intrusive node for the Mini-loop queue.
-                pub task: bun_event_loop::AnyTaskWithExtraContext::AnyTaskWithExtraContext,
+                pub(crate) task: bun_event_loop::AnyTaskWithExtraContext::AnyTaskWithExtraContext,
             }
             impl Default for Resolve {
                 fn default() -> Self {
@@ -1102,7 +1099,7 @@ pub mod bv2_impl {
                 }
             }
             impl Resolve {
-                pub fn init(bv2: &mut BundleV2<'_>, record: MiniImportRecord) -> Self {
+                pub(crate) fn init(bv2: &mut BundleV2<'_>, record: MiniImportRecord) -> Self {
                     Self {
                     // SAFETY: lifetime erased — Resolve is owned by the dispatch
                     // chain and never outlives `bv2`.
@@ -1114,7 +1111,7 @@ pub mod bv2_impl {
                 }
                 }
                 /// Hops to the JS thread to call the `onResolve` plugin chain.
-                pub fn dispatch(&mut self) {
+                pub(crate) fn dispatch(&mut self) {
                     self.js_task = bun_event_loop::AnyTask::AnyTask {
                         ctx: core::ptr::NonNull::new(
                             std::ptr::from_mut::<Self>(self).cast::<core::ffi::c_void>(),
@@ -1127,7 +1124,7 @@ pub mod bv2_impl {
                     // Some (asserted by `enqueue_on_js_loop_for_plugins`).
                     unsafe { (*self.bv2).enqueue_on_js_loop_for_plugins(task) };
                 }
-                pub fn run_on_js_thread(&mut self) {
+                pub(crate) fn run_on_js_thread(&mut self) {
                     let kind = self.import_record.kind;
                     // reshaped for borrowck — capture the erased self
                     // pointer before borrowing fields immutably for the FFI call.
@@ -1174,7 +1171,7 @@ pub mod bv2_impl {
             }
             impl LoadValue {
                 #[inline]
-                pub fn consume(&mut self) -> LoadValue {
+                pub(crate) fn consume(&mut self) -> LoadValue {
                     core::mem::replace(self, LoadValue::Consumed)
                 }
             }
@@ -1182,24 +1179,24 @@ pub mod bv2_impl {
             /// Task driving an onLoad plugin invocation for one source file.
             pub struct Load {
                 pub bv2: *mut BundleV2<'static>,
-                pub source_index: bun_ast::Index,
-                pub default_loader: Loader,
+                pub(crate) source_index: bun_ast::Index,
+                pub(crate) default_loader: Loader,
                 pub path: Box<[u8]>,
-                pub namespace: Box<[u8]>,
+                pub(crate) namespace: Box<[u8]>,
                 pub value: LoadValue,
                 pub parse_task: bun_ptr::BackRef<ParseTask>,
                 /// Faster path: skip the extra threadpool dispatch when the file is not found.
                 pub was_file: bool,
                 /// Defer may only be called once.
                 pub called_defer: bool,
-                pub js_task: bun_event_loop::AnyTask::AnyTask,
+                pub(crate) js_task: bun_event_loop::AnyTask::AnyTask,
                 /// `jsc.AnyEventLoop.Task` — intrusive node for the Mini-loop queue
                 /// (used by `onDefer` to notify the bundler thread when it runs
                 /// under a `MiniEventLoop`).
                 pub task: bun_event_loop::AnyTaskWithExtraContext::AnyTaskWithExtraContext,
             }
             impl Load {
-                pub fn init(bv2: &mut BundleV2<'_>, parse: &mut ParseTask) -> Self {
+                pub(crate) fn init(bv2: &mut BundleV2<'_>, parse: &mut ParseTask) -> Self {
                     let default_loader = parse
                         .path
                         .loader(&bv2.transpiler.options.loaders)
@@ -1225,7 +1222,7 @@ pub mod bv2_impl {
                 /// handed to the thread-pool *after* the plugin load resolves, so
                 /// no concurrent mutation overlaps a `&` borrow here.
                 #[inline]
-                pub fn parse_task(&self) -> &ParseTask {
+                pub(crate) fn parse_task(&self) -> &ParseTask {
                     self.parse_task.get()
                 }
                 /// Exclusive access to the wrapped `ParseTask`.
@@ -1234,17 +1231,17 @@ pub mod bv2_impl {
                 /// the `Load` itself is uniquely borrowed; the `ParseTask` is not
                 /// yet scheduled at any call site that uses this accessor.
                 #[inline]
-                pub fn parse_task_mut(&mut self) -> &mut ParseTask {
+                pub(crate) fn parse_task_mut(&mut self) -> &mut ParseTask {
                     // SAFETY: see fn doc — exclusivity established by `&mut self`;
                     // backref liveness established by the `BackRef` invariant.
                     unsafe { self.parse_task.get_mut() }
                 }
                 #[inline]
-                pub fn bake_graph(&self) -> crate::bake_types::Graph {
+                pub(crate) fn bake_graph(&self) -> crate::bake_types::Graph {
                     self.parse_task().known_target.bake_graph()
                 }
                 /// Hops to the JS thread to call the `onLoad` plugin chain.
-                pub fn dispatch(&mut self) {
+                pub(crate) fn dispatch(&mut self) {
                     self.js_task = bun_event_loop::AnyTask::AnyTask {
                         ctx: core::ptr::NonNull::new(
                             std::ptr::from_mut::<Self>(self).cast::<core::ffi::c_void>(),
@@ -1259,7 +1256,7 @@ pub mod bv2_impl {
                         (*self.bv2).enqueue_on_js_loop_for_plugins(concurrent_task);
                     }
                 }
-                pub fn run_on_js_thread(&mut self) {
+                pub(crate) fn run_on_js_thread(&mut self) {
                     let is_server_side = self.bake_graph() != crate::bake_types::Graph::Client;
                     let default_loader = self.default_loader;
                     // reshaped for borrowck — capture the erased self
@@ -1307,14 +1304,9 @@ pub mod bv2_impl {
     use crate::parse_task::{self, ParseTask};
     use crate::thread_pool::ThreadPool;
 
-    pub use crate::BundleThread::BundleThread;
-
-    bun_core::declare_scope!(part_dep_tree, visible);
     bun_core::declare_scope!(Bundle, visible);
     bun_core::declare_scope!(scan_counter, visible);
     bun_core::declare_scope!(ReachableFiles, visible);
-    bun_core::declare_scope!(TreeShake, hidden);
-    bun_core::declare_scope!(PartRanges, hidden);
     bun_core::declare_scope!(watcher, visible);
 
     pub use bun_js_printer::MangledProps;
@@ -1329,7 +1321,7 @@ pub mod bv2_impl {
 
         impl DevServerHandle {
             #[inline]
-            pub fn put_or_overwrite_asset_erased<P>(
+            pub(crate) fn put_or_overwrite_asset_erased<P>(
                 &self,
                 path: &P,
                 contents: &[u8],
@@ -1388,7 +1380,7 @@ pub mod bv2_impl {
         /// Bytecode generation entry point for the linker: marks the calling
         /// thread as bundler-for-bytecode-cache, initializes JSC, and generates.
         #[inline]
-        pub fn generate_cached_bytecode(
+        pub(crate) fn generate_cached_bytecode(
             format: crate::options_impl::Format,
             source: &[u8],
             source_provider_url: &mut bun_core::String,
@@ -1430,12 +1422,12 @@ pub mod bv2_impl {
         // type `Sync`.
         impl CompletionHandle {
             #[inline]
-            pub fn result_is_err(&self) -> bool {
+            pub(crate) fn result_is_err(&self) -> bool {
                 // SAFETY: vtable contract.
                 unsafe { (self.vtable.result_is_err)(self.owner) }
             }
             #[inline]
-            pub fn enqueue_task_concurrent(
+            pub(crate) fn enqueue_task_concurrent(
                 &self,
                 task: core::ptr::NonNull<bun_event_loop::ConcurrentTask::ConcurrentTask>,
             ) {
@@ -1472,7 +1464,7 @@ pub mod bv2_impl {
     /// arena-erasure convention (PORTING.md §Type Mapping: arena-owned struct
     /// fields use erased lifetimes).
     #[inline(always)]
-    pub(crate) unsafe fn interned_slice(s: &[u8]) -> &'static [u8] {
+    unsafe fn interned_slice(s: &[u8]) -> &'static [u8] {
         // SAFETY: upheld by caller per fn contract.
         unsafe { bun_ptr::detach_lifetime(s) }
     }
@@ -1480,7 +1472,7 @@ pub mod bv2_impl {
     /// caller passes paths whose backing bytes are arena-interned for the bundle's
     /// lifetime (see `interned_slice` / `dupe_alloc`).
     #[inline]
-    pub(crate) fn path_as_static(p: &Fs::Path<'_>) -> Fs::Path<'static> {
+    fn path_as_static(p: &Fs::Path<'_>) -> Fs::Path<'static> {
         // SAFETY: caller contract above.
         unsafe { (*p).into_static() }
     }
@@ -1495,7 +1487,7 @@ pub mod bv2_impl {
         /// Folds the JS-loop lookup + enqueue so the bundler never dereferences
         /// `JSBundleCompletionTask` (its layout lives in `bun_runtime`); the
         /// `completion` handle carries the `&'static` vtable.
-        pub fn enqueue_on_js_loop_for_plugins(
+        pub(crate) fn enqueue_on_js_loop_for_plugins(
             &mut self,
             task: NonNull<bun_event_loop::ConcurrentTask::ConcurrentTask>,
         ) {
@@ -1528,7 +1520,9 @@ pub mod bv2_impl {
             }
         }
 
-        pub fn initialize_client_transpiler(&mut self) -> Result<&mut Transpiler<'a>, Error> {
+        pub(crate) fn initialize_client_transpiler(
+            &mut self,
+        ) -> Result<&mut Transpiler<'a>, Error> {
             // Builds a fresh owned `Transpiler` via `Transpiler::for_worker`
             // (per-field deep clone), mutates the browser-specific options with
             // ordinary assignment (every field is owned by the clone, so `Drop` on
@@ -1631,24 +1625,25 @@ pub mod bv2_impl {
         }
     }
 
-    pub struct ReachableFileVisitor<'a> {
-        pub reachable: Vec<Index>,
-        pub visited: DynamicBitSet,
-        pub all_import_records: &'a mut [import_record::List<'a>],
-        pub all_loaders: &'a [Loader],
-        pub all_urls_for_css: &'a [&'a [u8]],
-        pub redirects: &'a [u32],
-        pub dynamic_import_entry_points: &'a mut ArrayHashMap<IndexInt, ()>,
+    pub(crate) struct ReachableFileVisitor<'a> {
+        pub(crate) reachable: Vec<Index>,
+        pub(crate) visited: DynamicBitSet,
+        pub(crate) all_import_records: &'a mut [import_record::List<'a>],
+        pub(crate) all_loaders: &'a [Loader],
+        pub(crate) all_urls_for_css: &'a [&'a [u8]],
+        pub(crate) redirects: &'a [u32],
+        pub(crate) dynamic_import_entry_points: &'a mut ArrayHashMap<IndexInt, ()>,
         /// Files which are Server Component Boundaries
-        pub scb_bitset: Option<DynamicBitSetUnmanaged>,
-        pub scb_list: server_component_boundary::Slice<'a>,
+        pub(crate) scb_bitset: Option<DynamicBitSetUnmanaged>,
+        pub(crate) scb_list: server_component_boundary::Slice<'a>,
 
         /// Files which are imported by JS and inlined in CSS
-        pub additional_files_imported_by_js_and_inlined_in_css: &'a mut DynamicBitSetUnmanaged,
+        pub(crate) additional_files_imported_by_js_and_inlined_in_css:
+            &'a mut DynamicBitSetUnmanaged,
         /// Files which are imported by CSS and inlined in CSS
-        pub additional_files_imported_by_css_and_inlined: &'a mut DynamicBitSetUnmanaged,
+        pub(crate) additional_files_imported_by_css_and_inlined: &'a mut DynamicBitSetUnmanaged,
 
-        pub stack: Vec<ReachFrame>,
+        pub(crate) stack: Vec<ReachFrame>,
     }
 
     #[derive(Copy, Clone)]
@@ -1675,7 +1670,7 @@ pub mod bv2_impl {
         // pre-order work and queues successors; `Leave` performs the
         // post-order append. Successors are pushed in pop order then the tail
         // is reversed so LIFO pop reproduces the original recursion order.
-        pub fn visit<const CHECK_DYNAMIC_IMPORTS: bool>(
+        pub(crate) fn visit<const CHECK_DYNAMIC_IMPORTS: bool>(
             &mut self,
             source_index: Index,
             was_dynamic_import: bool,
@@ -1865,7 +1860,7 @@ pub mod bv2_impl {
     }
 
     impl<'a> BundleV2<'a> {
-        pub fn find_reachable_files(&mut self) -> Result<Box<[Index]>, Error> {
+        pub(crate) fn find_reachable_files(&mut self) -> Result<Box<[Index]>, Error> {
             // RAII guard — `Ctx` ends the span on Drop.
             let _trace = crate::perf::trace("Bundler.findReachableFiles");
 
@@ -2010,7 +2005,7 @@ pub mod bv2_impl {
             false
         }
 
-        pub fn wait_for_parse(&mut self) {
+        pub(crate) fn wait_for_parse(&mut self) {
             // `tick_raw` (not `tick`) — `is_done` reborrows `*ctx` as
             // `&mut BundleV2`, and `BundleV2` (via `linker.r#loop`) owns the
             // `AnyEventLoop` slot, so holding `&mut AnyEventLoop` across the
@@ -2040,11 +2035,11 @@ pub mod bv2_impl {
         /// `BUN_THREADPOOL_STATS=1` instrumentation hook — dump aggregate worker
         /// idle/busy time since the previous call. No-op when env var unset.
         #[inline]
-        pub fn dump_pool_stats(&self, label: &str) {
+        pub(crate) fn dump_pool_stats(&self, label: &str) {
             self.graph.pool().worker_pool().dump_stats(label);
         }
 
-        pub fn scan_for_secondary_paths(&mut self) {
+        pub(crate) fn scan_for_secondary_paths(&mut self) {
             if !self.graph.has_any_secondary_paths {
                 // Assert the boolean is accurate.
                 #[cfg(debug_assertions)]
@@ -2107,7 +2102,7 @@ pub mod bv2_impl {
         }
 
         /// This runs on the Bundle Thread.
-        pub fn run_resolver(
+        pub(crate) fn run_resolver(
             &mut self,
             import_record: &jsc_api::JSBundler::MiniImportRecord,
             target: options::Target,
@@ -2559,7 +2554,7 @@ pub mod bv2_impl {
             Ok(())
         }
 
-        pub fn enqueue_entry_item(
+        pub(crate) fn enqueue_entry_item(
             &mut self,
             resolve: &mut _resolver::Result,
             is_entry_point: bool,
@@ -2844,7 +2839,7 @@ pub mod bv2_impl {
             Ok(this)
         }
 
-        pub fn arena(&self) -> &'a bun_alloc::Arena {
+        pub(crate) fn arena(&self) -> &'a bun_alloc::Arena {
             self.graph.heap
         }
 
@@ -2866,7 +2861,7 @@ pub mod bv2_impl {
             unsafe { bun_ptr::detach_lifetime_mut(self.arena().alloc(value)) }
         }
 
-        pub fn increment_scan_counter(&mut self) {
+        pub(crate) fn increment_scan_counter(&mut self) {
             self.thread_lock.assert_locked();
             self.graph.pending_items += 1;
             bun_core::scoped_log!(
@@ -2876,7 +2871,7 @@ pub mod bv2_impl {
             );
         }
 
-        pub fn decrement_scan_counter(&mut self) {
+        pub(crate) fn decrement_scan_counter(&mut self) {
             self.thread_lock.assert_locked();
             self.graph.pending_items -= 1;
             bun_core::scoped_log!(
@@ -2887,7 +2882,7 @@ pub mod bv2_impl {
             self.on_after_decrement_scan_counter();
         }
 
-        pub fn on_after_decrement_scan_counter(&mut self) {
+        pub(crate) fn on_after_decrement_scan_counter(&mut self) {
             if self.asynchronous && self.is_done() {
                 let dev = self
                     .dev_server
@@ -2899,7 +2894,7 @@ pub mod bv2_impl {
         /// RAII guard that decrements the scan counter on drop. Captures `self` as
         /// a raw pointer so the returned guard does not hold a `&mut` borrow for the
         /// rest of the scope; the caller must ensure `self` outlives the guard.
-        pub fn decrement_scan_counter_on_drop(&mut self) -> ScanCounterGuard {
+        pub(crate) fn decrement_scan_counter_on_drop(&mut self) -> ScanCounterGuard {
             ScanCounterGuard {
                 bv2: std::ptr::from_mut::<BundleV2<'a>>(self).cast::<BundleV2<'static>>(),
             }
@@ -2907,7 +2902,7 @@ pub mod bv2_impl {
 
         // A const-generic enum param with variant-dependent data cannot be
         // expressed on stable Rust, so this is split into three monomorphic fns.
-        pub fn enqueue_entry_points_normal<P: AsRef<[u8]>>(
+        pub(crate) fn enqueue_entry_points_normal<P: AsRef<[u8]>>(
             &mut self,
             data: &[P],
         ) -> Result<(), Error> {
@@ -2969,7 +2964,7 @@ pub mod bv2_impl {
             Ok(())
         }
 
-        pub fn enqueue_entry_points_dev_server(
+        pub(crate) fn enqueue_entry_points_dev_server(
             &mut self,
             files: &bake_types::EntryPointList,
             css_data: &mut ArrayHashMap<Index, CssEntryPointMeta>,
@@ -3089,7 +3084,7 @@ pub mod bv2_impl {
             Ok(())
         }
 
-        pub fn enqueue_entry_points_bake_production(
+        pub(crate) fn enqueue_entry_points_bake_production(
             &mut self,
             data: &bake_types::production::EntryPointMap,
         ) -> Result<(), Error> {
@@ -3189,7 +3184,7 @@ pub mod bv2_impl {
 
         /// This generates the two asts for 'bun:bake/client' and 'bun:bake/server'. Both are generated
         /// at the same time in one pass over the SCB list.
-        pub fn process_server_component_manifest_files(&mut self) -> Result<(), AllocError> {
+        pub(crate) fn process_server_component_manifest_files(&mut self) -> Result<(), AllocError> {
             // If a server components is not configured, do nothing
             let Some(fw) = &self.framework else {
                 return Ok(());
@@ -3444,7 +3439,7 @@ pub mod bv2_impl {
             Ok(())
         }
 
-        pub fn enqueue_parse_task(
+        pub(crate) fn enqueue_parse_task(
             &mut self,
             resolve_result: &_resolver::Result,
             source: &mut bun_ast::Source,
@@ -3498,7 +3493,7 @@ pub mod bv2_impl {
             Ok(source_index.get())
         }
 
-        pub fn enqueue_parse_task2(
+        pub(crate) fn enqueue_parse_task2(
             &mut self,
             source: &mut bun_ast::Source,
             loader: Loader,
@@ -3597,7 +3592,7 @@ pub mod bv2_impl {
 
         /// Enqueue a ServerComponentParseTask.
         /// `source_without_index` is copied and assigned a new source index. That index is returned.
-        pub fn enqueue_server_component_generated_file(
+        pub(crate) fn enqueue_server_component_generated_file(
             &mut self,
             data: crate::ServerComponentParseTask::Data,
             source_without_index: bun_ast::Source,
@@ -3652,9 +3647,10 @@ pub mod bv2_impl {
     }
 
     pub struct DependenciesScanner {
-        pub ctx: *mut (),
+        pub(crate) ctx: *mut (),
         pub entry_points: Box<[Box<[u8]>]>,
-        pub on_fetch: fn(ctx: *mut (), result: &mut DependenciesScannerResult) -> Result<(), Error>,
+        pub(crate) on_fetch:
+            fn(ctx: *mut (), result: &mut DependenciesScannerResult) -> Result<(), Error>,
     }
 
     pub struct DependenciesScannerResult<'r, 'a> {
@@ -3700,7 +3696,7 @@ pub mod bv2_impl {
     }
 
     impl<'a> BundleV2<'a> {
-        pub fn get_all_dependencies(
+        pub(crate) fn get_all_dependencies(
             &mut self,
             reachable_files: &[Index],
             fetcher: &DependenciesScanner,
@@ -4002,7 +3998,7 @@ pub mod bv2_impl {
             result
         }
 
-        pub fn add_server_component_boundaries_as_extra_entry_points(
+        pub(crate) fn add_server_component_boundaries_as_extra_entry_points(
             &mut self,
         ) -> Result<(), Error> {
             // Prepare server component boundaries. Each boundary turns into two
@@ -4032,7 +4028,10 @@ pub mod bv2_impl {
             Ok(())
         }
 
-        pub fn process_files_to_copy(&mut self, reachable_files: &[Index]) -> Result<(), Error> {
+        pub(crate) fn process_files_to_copy(
+            &mut self,
+            reachable_files: &[Index],
+        ) -> Result<(), Error> {
             if self.graph.estimated_file_loader_count > 0 {
                 // SAFETY: MultiArrayList columns are disjoint backing storage; raw-ptr
                 // sidestep so we can hold several read-only column slices, one mutable
@@ -4240,7 +4239,7 @@ pub mod bv2_impl {
         BundleV2::on_resolve(unsafe { &mut *resolve }, unsafe { &mut *this });
     }
 
-    pub(crate) fn on_load_from_js_loop(load: &mut jsc_api::JSBundler::Load) {
+    fn on_load_from_js_loop(load: &mut jsc_api::JSBundler::Load) {
         // SAFETY: `bv2` is a live backref set in `Load::init`.
         let bv2 = unsafe { &mut *load.bv2 };
         BundleV2::on_load(load, bv2);
@@ -4255,7 +4254,7 @@ pub mod bv2_impl {
     }
 
     impl<'a> BundleV2<'a> {
-        pub fn on_load(load: &mut jsc_api::JSBundler::Load, this: &mut BundleV2) {
+        pub(crate) fn on_load(load: &mut jsc_api::JSBundler::Load, this: &mut BundleV2) {
             // `Load` is arena-allocated (no Drop); free its owned heap fields on every exit path.
             struct LoadDeinitGuard(*mut jsc_api::JSBundler::Load);
             impl Drop for LoadDeinitGuard {
@@ -4430,7 +4429,7 @@ pub mod bv2_impl {
         }
     }
 
-    pub(crate) fn on_resolve_from_js_loop(resolve: &mut jsc_api::JSBundler::Resolve) {
+    fn on_resolve_from_js_loop(resolve: &mut jsc_api::JSBundler::Resolve) {
         // SAFETY: `bv2` is a live backref set in `Resolve::init`.
         let bv2 = unsafe { &mut *resolve.bv2 };
         BundleV2::on_resolve(resolve, bv2);
@@ -4445,7 +4444,7 @@ pub mod bv2_impl {
     }
 
     impl<'a> BundleV2<'a> {
-        pub fn on_resolve(resolve: &mut jsc_api::JSBundler::Resolve, this: &mut BundleV2) {
+        pub(crate) fn on_resolve(resolve: &mut jsc_api::JSBundler::Resolve, this: &mut BundleV2) {
             // RAII guard captures `this`
             // as a raw pointer so it does not hold a unique borrow across the body.
             let _dec_guard = this.decrement_scan_counter_on_drop();
@@ -5088,7 +5087,7 @@ pub mod bv2_impl {
         // css_entry_points, etc.). After tier-6 collapse this fn should be hoisted into
         // bun_runtime::bake (which can name DevServer concretely) and call back into BundleV2
         // helpers. Until then the entry-point fields are reached through the vtable.
-        pub fn finish_from_bake_dev_server(
+        pub(crate) fn finish_from_bake_dev_server(
             &mut self,
             dev_server: &dispatch::DevServerHandle,
         ) -> Result<(), AllocError> {
@@ -5430,7 +5429,7 @@ pub mod bv2_impl {
                 .map_err(|_| AllocError)
         }
 
-        pub fn enqueue_on_resolve_plugin_if_needed(
+        pub(crate) fn enqueue_on_resolve_plugin_if_needed(
             &mut self,
             source_index: IndexInt,
             import_record: &ImportRecord,
@@ -5485,7 +5484,7 @@ pub mod bv2_impl {
             false
         }
 
-        pub fn enqueue_entry_point_on_resolve_plugin_if_needed(
+        pub(crate) fn enqueue_entry_point_on_resolve_plugin_if_needed(
             &mut self,
             entry_point: &[u8],
             target: options::Target,
@@ -5527,7 +5526,7 @@ pub mod bv2_impl {
             false
         }
 
-        pub fn enqueue_on_load_plugin_if_needed(&mut self, parse: &mut ParseTask) -> bool {
+        pub(crate) fn enqueue_on_load_plugin_if_needed(&mut self, parse: &mut ParseTask) -> bool {
             let had_matches = self.enqueue_on_load_plugin_if_needed_impl(parse);
             if had_matches {
                 return true;
@@ -5564,7 +5563,10 @@ pub mod bv2_impl {
             false
         }
 
-        pub fn enqueue_on_load_plugin_if_needed_impl(&mut self, parse: &mut ParseTask) -> bool {
+        pub(crate) fn enqueue_on_load_plugin_if_needed_impl(
+            &mut self,
+            parse: &mut ParseTask,
+        ) -> bool {
             if let Some(plugins) = self.plugins_ref() {
                 if plugins.has_any_matches(&parse.path, true) {
                     // This is where onLoad plugins are enqueued
@@ -5756,16 +5758,16 @@ pub mod bv2_impl {
         }
     }
 
-    pub struct ResolveImportRecordCtx<'a> {
-        pub import_records: &'a mut [ImportRecord],
-        pub source: &'a bun_ast::Source,
-        pub loader: Loader,
-        pub target: options::Target,
+    pub(crate) struct ResolveImportRecordCtx<'a> {
+        pub(crate) import_records: &'a mut [ImportRecord],
+        pub(crate) source: &'a bun_ast::Source,
+        pub(crate) loader: Loader,
+        pub(crate) target: options::Target,
     }
 
-    pub struct ResolveImportRecordResult {
-        pub resolve_queue: ResolveQueue,
-        pub last_error: Option<Error>,
+    pub(crate) struct ResolveImportRecordResult {
+        pub(crate) resolve_queue: ResolveQueue,
+        pub(crate) last_error: Option<Error>,
     }
 
     impl<'a> BundleV2<'a> {
@@ -5773,7 +5775,7 @@ pub mod bv2_impl {
         /// are already resolved (valid source_index), unused, or internal.
         /// Returns a resolve queue of new modules to schedule, plus any fatal error.
         /// Used by both initial parse resolution and barrel un-deferral.
-        pub fn resolve_import_records(
+        pub(crate) fn resolve_import_records(
             &mut self,
             ctx: &mut ResolveImportRecordCtx,
         ) -> ResolveImportRecordResult {
@@ -6445,7 +6447,7 @@ pub mod bv2_impl {
 
         /// Process a resolve queue: create input file slots and schedule parse tasks.
         /// Returns the number of newly scheduled tasks (for pending_items accounting).
-        pub fn process_resolve_queue(
+        pub(crate) fn process_resolve_queue(
             &mut self,
             resolve_queue: &ResolveQueue,
             target: options::Target,
@@ -6582,14 +6584,14 @@ pub mod bv2_impl {
     /// `&mut self` the body needs for `path_to_source_index_map`.
     #[derive(Clone, Copy)]
     pub struct PatchImportRecordsCtx<'a> {
-        pub source_index: Index,
-        pub source_path: &'a [u8],
-        pub loader: Loader,
-        pub target: options::Target,
-        pub redirect_import_record_index: u32,
+        pub(crate) source_index: Index,
+        pub(crate) source_path: &'a [u8],
+        pub(crate) loader: Loader,
+        pub(crate) target: options::Target,
+        pub(crate) redirect_import_record_index: u32,
         /// When true, always save source indices regardless of dev_server/loader.
         /// Used for barrel un-deferral where records must always be connected.
-        pub force_save: bool,
+        pub(crate) force_save: bool,
     }
 
     impl Default for PatchImportRecordsCtx<'_> {
@@ -6609,7 +6611,7 @@ pub mod bv2_impl {
         /// Patch source_index on import records from pathToSourceIndexMap and
         /// resolve_tasks_waiting_for_import_source_index. Called after
         /// processResolveQueue has registered new modules.
-        pub fn patch_import_record_source_indices(
+        pub(crate) fn patch_import_record_source_indices(
             &mut self,
             import_records: &mut import_record::List,
             ctx: PatchImportRecordsCtx,
@@ -6769,7 +6771,10 @@ pub mod bv2_impl {
             this.on_notify_defer();
         }
 
-        pub fn on_parse_task_complete(parse_result: &mut parse_task::Result, this: &mut BundleV2) {
+        pub(crate) fn on_parse_task_complete(
+            parse_result: &mut parse_task::Result,
+            this: &mut BundleV2,
+        ) {
             let _trace = crate::perf::trace("Bundler.onParseTaskComplete");
             // Borrowck rejects holding a `&this.graph` alias
             // across the `this.*` method calls below (each takes
@@ -7140,10 +7145,6 @@ pub mod bv2_impl {
                     }
                 }
                 parse_task::ResultValue::Err(err) => {
-                    if cfg!(feature = "debug_logs") {
-                        bun_core::scoped_log!(Bundle, "onParse() = err");
-                    }
-
                     if process_log {
                         if let Some(dev_server) = this.dev_server {
                             // Copy out the `'static` path slice so the `input_files`
@@ -7221,19 +7222,19 @@ pub mod bv2_impl {
     #[derive(Clone, Copy, Default)]
     pub struct PartRange {
         pub source_index: Index,
-        pub part_index_begin: u32,
-        pub part_index_end: u32,
+        pub(crate) part_index_begin: u32,
+        pub(crate) part_index_end: u32,
     }
 
     #[repr(C, packed)]
     #[derive(Clone, Copy)]
     pub struct StableRef {
-        pub stable_source_index: IndexInt,
-        pub r#ref: bun_ast::Ref,
+        pub(crate) stable_source_index: IndexInt,
+        pub(crate) r#ref: bun_ast::Ref,
     }
 
     impl StableRef {
-        pub fn is_less_than(_: (), a: StableRef, b: StableRef) -> bool {
+        pub(crate) fn is_less_than(_: (), a: StableRef, b: StableRef) -> bool {
             let (a_idx, b_idx) = (a.stable_source_index, b.stable_source_index);
             a_idx < b_idx
                 || (a_idx == b_idx && { a.r#ref }.inner_index() < { b.r#ref }.inner_index())
@@ -7266,28 +7267,15 @@ pub mod bv2_impl {
 
     #[derive(Clone, Copy, Default, PartialEq, Eq)]
     pub struct ImportTracker {
-        pub source_index: Index,
-        pub name_loc: bun_ast::Loc,
-        pub import_ref: bun_ast::Ref,
-    }
-
-    #[repr(u8)]
-    #[derive(Clone, Copy, PartialEq, Eq)]
-    pub enum DeclInfoKind {
-        Declared,
-        Lexical,
-    }
-    #[derive(Clone)]
-    pub struct DeclInfo {
-        pub name: Box<[u8]>,
-        pub kind: DeclInfoKind,
+        pub(crate) source_index: Index,
+        pub(crate) name_loc: bun_ast::Loc,
+        pub(crate) import_ref: bun_ast::Ref,
     }
 
     pub enum CompileResult {
         Javascript {
             source_index: IndexInt,
             result: bun_js_printer::PrintResult,
-            decls: Box<[DeclInfo]>,
         },
         Css {
             result: crate::Result<Box<[u8]>>,
@@ -7302,7 +7290,7 @@ pub mod bv2_impl {
     }
 
     impl CompileResult {
-        pub fn source_index(&self) -> IndexInt {
+        pub(crate) fn source_index(&self) -> IndexInt {
             match self {
                 CompileResult::Javascript { source_index, .. }
                 | CompileResult::Css { source_index, .. }
@@ -7324,7 +7312,7 @@ pub mod bv2_impl {
             }
         }
 
-        pub fn into_code(self) -> Box<[u8]> {
+        pub(crate) fn into_code(self) -> Box<[u8]> {
             match self {
                 CompileResult::Javascript { result, .. } => match result {
                     bun_js_printer::PrintResult::Result(r) => r.code,
@@ -7353,7 +7341,6 @@ pub mod bv2_impl {
                 CompileResult::Javascript {
                     source_index,
                     result,
-                    decls,
                 } => CompileResult::Javascript {
                     source_index: *source_index,
                     result: match result {
@@ -7367,7 +7354,6 @@ pub mod bv2_impl {
                         }
                         bun_js_printer::PrintResult::Err(e) => bun_js_printer::PrintResult::Err(*e),
                     },
-                    decls: decls.clone(),
                 },
                 CompileResult::Css {
                     result,
@@ -7399,7 +7385,6 @@ pub mod bv2_impl {
                     code: Box::new([]),
                     source_map: None,
                 }),
-                decls: Box::new([]),
             }
         }
     }
@@ -7420,7 +7405,7 @@ pub mod bv2_impl {
 
     #[derive(Default)]
     pub struct ContentHasher {
-        pub hasher: bun_hash::XxHash64Streaming,
+        pub(crate) hasher: bun_hash::XxHash64Streaming,
     }
     bun_core::declare_scope!(ContentHasher, hidden);
     impl ContentHasher {
@@ -7573,13 +7558,13 @@ pub mod bv2_impl {
     /// the pointer stays valid for the iterator's lifetime; the caller only reads
     /// `.data` from each entry.
     pub struct ImportTrackerIterator {
-        pub status: ImportTrackerStatus,
-        pub value: crate::ImportTracker,
+        pub(crate) status: ImportTrackerStatus,
+        pub(crate) value: crate::ImportTracker,
         /// Backref into the link-graph SoA (`graph.meta[..].resolved_exports[..].
         /// potentially_ambiguous_export_star_refs`). `BackRef` (not `*const [T]`)
         /// so the single read site in `match_import_with_export` is a safe `Deref`;
         /// the pointee slab is never reallocated while the iterator is live.
-        pub import_data: bun_ptr::BackRef<[crate::ImportData]>,
+        pub(crate) import_data: bun_ptr::BackRef<[crate::ImportData]>,
     }
 
     impl Default for ImportTrackerIterator {
@@ -7607,7 +7592,7 @@ pub mod bv2_impl {
 
     /// The lifetime of this structure is tied to the bundler's arena
     pub struct DevServerInput {
-        pub css_entry_points: ArrayHashMap<Index, CssEntryPointMeta>,
+        pub(crate) css_entry_points: ArrayHashMap<Index, CssEntryPointMeta>,
     }
 
     /// The lifetime of this structure is tied to the bundler's arena
@@ -7617,7 +7602,7 @@ pub mod bv2_impl {
         pub html_files: ArrayHashMap<Index, ()>,
     }
 
-    pub fn generate_unique_key() -> u64 {
+    pub(crate) fn generate_unique_key() -> u64 {
         let key = bun_core::fast_random() & 0x0FFFFFFF_FFFFFFFF_u64;
         // without this check, putting unique_key in an object key would
         // sometimes get converted to an identifier. ensuring it starts
@@ -7641,34 +7626,6 @@ pub mod bv2_impl {
         key
     }
 
-    struct ExternalFreeFunctionAllocator {
-        free_callback: unsafe extern "C" fn(*mut c_void),
-        context: *mut c_void,
-    }
-
-    impl ExternalFreeFunctionAllocator {
-        // (Could implement `bun_alloc::Allocator` instead of the manual vtable.)
-
-        fn free(ext_free_function: *mut c_void, _: &mut [u8], _: bun_alloc::Alignment, _: usize) {
-            // SAFETY: ptr was created by ExternalFreeFunctionAllocator::create
-            let info: &mut ExternalFreeFunctionAllocator =
-                unsafe { &mut *ext_free_function.cast::<ExternalFreeFunctionAllocator>() };
-            // SAFETY: free_callback is a valid C fn provided by plugin
-            unsafe { (info.free_callback)(info.context) };
-            // SAFETY: info was heap-allocated in create()
-            drop(unsafe { bun_core::heap::take(info) });
-        }
-    }
-
-    /// `pub` so `bun_runtime::allocators::register_safety_vtables` can push the
-    /// address into the `bun_safety` registry.
-    pub static EXTERNAL_FREE_VTABLE: bun_alloc::AllocatorVTable = bun_alloc::AllocatorVTable {
-        alloc: |_, _, _, _| core::ptr::null_mut(),
-        resize: |_, _, _, _, _| false,
-        remap: |_, _, _, _, _| core::ptr::null_mut(),
-        free: |ctx, buf, a, ra| ExternalFreeFunctionAllocator::free(ctx, buf, a, ra),
-    };
-
     // LAYERING: `BuildResult` / `BundleV2Result` are defined once in
     // `BundleThread.rs` (the trait that consumes them lives there). The previous
     // duplicate here meant `CompletionStruct::set_result` and `BundleV2::
@@ -7678,7 +7635,6 @@ pub mod bv2_impl {
     pub use crate::BundleThread::{BuildResult, BundleV2Result, CompletionStruct, singleton};
 
     // re-exports
-    pub use crate::HTMLScanner::HTMLScanner;
     pub use crate::IndexStringMap::IndexStringMap;
     pub use bun_ast::Loc;
 

@@ -6,7 +6,7 @@
  */
 import { $ } from "bun";
 import { beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
-import { bunEnv, bunExe, tempDir, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { existsSync, mkdirSync, renameSync, symlinkSync, writeFileSync } from "node:fs";
 import path from "path";
 import { createTestBuilder, sortedShellOutput } from "../util";
@@ -34,7 +34,7 @@ describe.concurrent("bunshell rm", () => {
     const files = {
       "existent.txt": "",
     };
-    const tempdir = tempDirWithFiles("rmforce", files);
+    await using tempdir = tempDir("rmforce", files);
 
     expect(await $`rm -f ${tempdir}/non_existent.txt`.then(o => o.exitCode)).toBe(0);
 
@@ -58,7 +58,7 @@ describe.concurrent("bunshell rm", () => {
       "existent.txt": "",
     };
 
-    const tempdir = tempDirWithFiles("rmrecursive", files);
+    await using tempdir = tempDir("rmrecursive", files);
 
     // test on a file
     {
@@ -121,7 +121,7 @@ foo/
       "sub_dir_files/file.txt": "",
     };
 
-    const tempdir = tempDirWithFiles("rmdir", files);
+    await using tempdir = tempDir("rmdir", files);
 
     {
       const { stdout, stderr, exitCode } = await $`rm -d ${tempdir}/existent.txt`;
@@ -262,7 +262,7 @@ test.skipIf(process.platform === "win32")(
           files[`target/d${i}/f${j}.txt`] = "";
         }
       }
-      const root = tempDirWithFiles(`rm-swap-${iter}`, files);
+      await using root = tempDir(`rm-swap-${iter}`, files);
       const victimDir = path.join(root, "victim");
       const victimFile = path.join(victimDir, "keep.txt");
       const target = path.join(root, "target");

@@ -14,7 +14,7 @@ use crate::hir::dominator::compute_unconditional_blocks;
 use crate::hir::environment::Environment;
 use crate::hir::{HirFunction, Identifier, IdentifierId, InstructionValue, SourceLocation, Type};
 
-pub fn validate_no_set_state_in_render(
+pub(crate) fn validate_no_set_state_in_render(
     func: &HirFunction,
     env: &mut Environment,
 ) -> Result<(), CompilerDiagnostic> {

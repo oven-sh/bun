@@ -72,14 +72,6 @@ impl Default for Route {
     }
 }
 
-impl Route {
-    pub fn params(&self) -> &[BunString] {
-        // SAFETY: param_names points to param_names_len contiguous BunString
-        // values (or is `(null, 0)`, which `ffi::slice` tolerates).
-        unsafe { bun_core::ffi::slice(self.param_names, self.param_names_len) }
-    }
-}
-
 impl Drop for Route {
     fn drop(&mut self) {
         if !self.param_names.is_null() {
@@ -236,7 +228,7 @@ impl InspectorHTTPServerAgent {
 // #region C++ entry points
 
 #[unsafe(no_mangle)]
-pub extern "C" fn Bun__HTTPServerAgent__setEnabled(agent: *mut InspectorHTTPServerAgent) {
+pub(crate) extern "C" fn Bun__HTTPServerAgent__setEnabled(agent: *mut InspectorHTTPServerAgent) {
     // SAFETY: VM singleton is process-lifetime.
     let vm = VirtualMachine::get().as_mut();
     if let Some(debugger) = &mut vm.debugger {
@@ -248,7 +240,7 @@ pub extern "C" fn Bun__HTTPServerAgent__setEnabled(agent: *mut InspectorHTTPServ
 
 // Typedefs from HTTPServer.json
 pub type ServerId = crate::debugger::DebuggerId;
-pub type RequestId = i32;
+pub(crate) type RequestId = i32;
 pub type RouteId = i32;
 pub type HotReloadId = i32;
-pub type HTTPMethod = bun_http::Method;
+pub(crate) type HTTPMethod = bun_http::Method;

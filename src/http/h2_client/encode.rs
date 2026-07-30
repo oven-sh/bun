@@ -12,7 +12,7 @@ use crate::internal_state::HTTPStage;
 use bun_core::strings;
 use bun_picohttp as picohttp;
 
-pub fn write_preface(session: &mut ClientSession) {
+pub(crate) fn write_preface(session: &mut ClientSession) {
     session.queue(wire::CLIENT_PREFACE);
 
     let mut settings = [0u8; 3 * wire::SettingsPayloadUnit::BYTE_SIZE];
@@ -85,7 +85,7 @@ fn classify_request_header(name: &[u8]) -> Option<RequestHeader> {
     })
 }
 
-pub fn write_request(
+pub(crate) fn write_request(
     session: &mut ClientSession,
     client: &mut HTTPClient,
     stream: &mut Stream,
@@ -212,7 +212,7 @@ pub fn write_request(
     Ok(())
 }
 
-pub fn write_header_block(
+pub(crate) fn write_header_block(
     session: &mut ClientSession,
     stream_id: u32,
     block: &[u8],
@@ -252,7 +252,7 @@ pub fn write_header_block(
 /// Frame `data` into DATA frames respecting `remote_max_frame_size` and
 /// both flow-control windows. Returns bytes consumed; END_STREAM is set
 /// on the final frame only when `end_stream` and all of `data` fit.
-pub fn write_data_windowed(
+pub(crate) fn write_data_windowed(
     session: &mut ClientSession,
     stream: &mut Stream,
     data: &[u8],
@@ -393,7 +393,7 @@ pub(crate) fn drain_send_bodies(session: &mut ClientSession) {
     }
 }
 
-pub(crate) fn encode_header(
+fn encode_header(
     session: &mut ClientSession,
     encoded: &mut Vec<u8>,
     name: &[u8],
@@ -419,7 +419,7 @@ pub(crate) fn encode_header(
 /// RFC 7541 §6.3 Dynamic Table Size Update: `001` prefix, 5-bit-prefix
 /// integer. Must be the first opcode in a header block. Caller guarantees
 /// at least 6 bytes of capacity (max for a u32).
-pub(crate) fn encode_hpack_table_size_update(encoded: &mut Vec<u8>, value: u32) {
+fn encode_hpack_table_size_update(encoded: &mut Vec<u8>, value: u32) {
     if value < 31 {
         encoded.push(0x20 | u8::try_from(value).expect("int cast"));
         return;

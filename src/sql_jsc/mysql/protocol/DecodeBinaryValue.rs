@@ -12,7 +12,7 @@ bun_core::declare_scope!(MySQLDecodeBinaryValue, visible);
 /// with binary collations (e.g., utf8mb4_bin) which have different character_set values.
 pub(crate) const BINARY_CHARSET: u16 = 63;
 
-pub fn decode_binary_value<Context: ReaderContext>(
+pub(crate) fn decode_binary_value<Context: ReaderContext>(
     global_object: &JSGlobalObject,
     field_type: types::FieldType,
     column_length: u32,
@@ -244,7 +244,7 @@ pub fn decode_binary_value<Context: ReaderContext>(
             if column_length == 1 {
                 let data = reader.encode_len_string()?;
                 let slice = data.slice();
-                Ok(SQLDataCell::bool_(!slice.is_empty() && slice[0] == 1))
+                Ok(SQLDataCell::bool(!slice.is_empty() && slice[0] == 1))
             } else {
                 let data = reader.encode_len_string()?;
                 Ok(SQLDataCell::raw(Some(&data)))

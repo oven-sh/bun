@@ -27,7 +27,7 @@ use crate::reactive_scopes::visitors::{
 /// Prunes DeclareContexts lowered for HoistedConsts and transforms any
 /// references back to their original instruction kind.
 /// TS: `pruneHoistedContexts`
-pub fn prune_hoisted_contexts(
+pub(crate) fn prune_hoisted_contexts(
     func: &mut ReactiveFunction,
     env: &Environment,
 ) -> Result<(), CompilerError> {

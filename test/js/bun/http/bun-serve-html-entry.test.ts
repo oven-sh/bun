@@ -1,6 +1,6 @@
 import type { Subprocess } from "bun";
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 
 async function getServerUrl(process: Subprocess) {
   // Read the port number from stdout
@@ -39,7 +39,7 @@ async function getServerUrl(process: Subprocess) {
 }
 
 test.concurrent("bun ./index.html", async () => {
-  const dir = tempDirWithFiles("html-entry-test", {
+  await using dir = tempDir("html-entry-test", {
     "index.html": /*html*/ `
       <!DOCTYPE html>
       <html>
@@ -145,7 +145,7 @@ test.concurrent("bun ./index.html", async () => {
 });
 
 test.concurrent("bun ./index.html ./about.html", async () => {
-  const dir = tempDirWithFiles("html-multiple-entries-test", {
+  await using dir = tempDir("html-multiple-entries-test", {
     "index.html": /*html*/ `
       <!DOCTYPE html>
       <html>
@@ -295,7 +295,7 @@ env = "BUN_PUBLIC_*"
 });
 
 test.concurrent("bun *.html", async () => {
-  const dir = tempDirWithFiles("html-glob-test", {
+  await using dir = tempDir("html-glob-test", {
     "index.html": /*html*/ `
       <!DOCTYPE html>
       <html>
@@ -489,7 +489,7 @@ test.concurrent("bun *.html", async () => {
 });
 
 test.concurrent("bun serve svg files with correct Content-Type", async () => {
-  const dir = tempDirWithFiles("svg-content-type-test", {
+  await using dir = tempDir("svg-content-type-test", {
     "index.html": /*html*/ `
       <!DOCTYPE html>
       <html>
@@ -545,7 +545,7 @@ test.concurrent("bun serve svg files with correct Content-Type", async () => {
 });
 
 test.concurrent("bun serve files with correct Content-Type headers", async () => {
-  const dir = tempDirWithFiles("content-type-test", {
+  await using dir = tempDir("content-type-test", {
     "index.html": /*html*/ `
       <!DOCTYPE html>
       <html>
@@ -636,7 +636,7 @@ test.concurrent("bun serve files with correct Content-Type headers", async () =>
 });
 
 test("importing bun:main from HTML entry preload does not crash", async () => {
-  const dir = tempDirWithFiles("html-entry-bun-main", {
+  await using dir = tempDir("html-entry-bun-main", {
     "index.html": /*html*/ `
       <!DOCTYPE html>
       <html>

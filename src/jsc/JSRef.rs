@@ -96,8 +96,8 @@ use crate::{JSGlobalObject, JSValue};
 /// See ServerWebSocket, UDPSocket, MySQLConnection, and ValkeyClient for examples.
 ///
 /// `JsRef` is `!Send + !Sync` (transitively via `JSValue` and `Strong`): the
-/// `HandleSlot` backing `Strong` is owned by the VM's `HandleSet` and must be
-/// dropped on the JS thread.
+/// `StrongRootBlock` slot backing `Strong` hangs off the per-VM JSVMClientData
+/// and must be dropped on the JS thread.
 pub enum JsRef {
     Weak(JSValue),
     Strong(Strong),
@@ -151,7 +151,7 @@ impl JsRef {
         match self {
             JsRef::Weak(_) => {}
             JsRef::Strong(_) => {
-                // `Strong`'s `Drop` deallocates the HandleSlot when `*self` is
+                // `Strong`'s `Drop` releases the block slot when `*self` is
                 // overwritten below, so no explicit deinit is needed.
             }
             JsRef::Finalized => {
@@ -222,7 +222,7 @@ impl JsRef {
 
     pub fn finalize(&mut self) {
         // Overwriting `*self` drops the prior variant (releasing the `Strong`
-        // HandleSlot via its `Drop`), so no explicit deinit step is needed.
+        // block slot via its `Drop`), so no explicit deinit step is needed.
         // External `jsref.deinit()` callers become `*jsref = JsRef::empty()`.
         *self = JsRef::Finalized;
     }

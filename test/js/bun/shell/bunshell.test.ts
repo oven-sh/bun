@@ -8,13 +8,13 @@ import { $ } from "bun";
 import { afterAll, beforeAll, describe, expect, it, test } from "bun:test";
 import { chmodSync, mkdirSync } from "fs";
 import { mkdir, rm, stat } from "fs/promises";
-import { bunExe, isPosix, isWindows, runWithErrorPromise, tempDir, tempDirWithFiles, tmpdirSync } from "harness";
+import { bunExe, isPosix, isWindows, rss, runWithErrorPromise, tempDir, tempDirWithFiles, tmpdirSync } from "harness";
 import { join, sep } from "path";
 import { createTestBuilder, sortedShellOutput } from "./util";
 const TestBuilder = createTestBuilder(import.meta.path);
 
-afterAll(() => console.error("After all RSS", process.memoryUsage.rss() / 1024 / 1024));
-beforeAll(() => console.error("Before all RSS", process.memoryUsage.rss() / 1024 / 1024));
+afterAll(() => console.error("After all RSS", rss() / 1024 / 1024));
+beforeAll(() => console.error("Before all RSS", rss() / 1024 / 1024));
 
 export const bunEnv: NodeJS.ProcessEnv = {
   ...process.env,
@@ -915,7 +915,7 @@ booga"
     });
 
     test.if(isPosix && !isRoot)("glob over an unreadable directory reports the real error", async () => {
-      const dir = tempDirWithFiles("glob-eacces", { "placeholder.txt": "" });
+      await using dir = tempDir("glob-eacces", { "placeholder.txt": "" });
       const noaccess = join(dir, "noaccess").replaceAll("\\", "/");
       mkdirSync(noaccess);
       chmodSync(noaccess, 0o000);
@@ -1142,7 +1142,7 @@ booga"
     // to stderr or calling done(), so any errno other than NOTDIR/NOENT/NAMETOOLONG
     // (e.g. EACCES, ELOOP) left the shell promise unresolved forever.
     test.if(isPosix && !isRoot)("cd with EACCES fails with exit code 1 instead of hanging", async () => {
-      const dir = tempDirWithFiles("cd-eacces", { "placeholder.txt": "" });
+      await using dir = tempDir("cd-eacces", { "placeholder.txt": "" });
       const noaccess = join(dir, "noaccess");
       mkdirSync(noaccess);
       chmodSync(noaccess, 0o000);

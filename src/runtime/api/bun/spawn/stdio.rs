@@ -1,3 +1,4 @@
+#[cfg(any(target_os = "linux", target_os = "android"))]
 use bun_collections::VecExt;
 use bun_jsc::{self as jsc, JSGlobalObject, JSValue, JsResult};
 #[cfg(windows)]
@@ -35,14 +36,15 @@ pub struct Capture {
     // BACKREF: raw pointer to a capture buffer owned by the shell interpreter.
     // The shell keeps the buffer alive for the lifetime
     // of the spawned process; this struct never frees it.
-    pub buf: *mut Vec<u8>,
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    pub(crate) buf: *mut Vec<u8>,
 }
 
 /// Payload of `Stdio::Dup2`.
 #[derive(Clone, Copy)]
 pub struct Dup2 {
     pub out: StdioKind,
-    pub to: StdioKind,
+    pub(crate) to: StdioKind,
 }
 
 // Constructed/matched in many other files (subprocess, shell); boxing `Blob`
@@ -72,37 +74,36 @@ pub enum Stdio {
 
 // These live at module scope and callers reference them as `stdio::Result` etc.
 
-pub enum ResultT<T> {
+pub(crate) enum ResultT<T> {
     Result(T),
     Err(ToSpawnOptsError),
 }
 
-pub type Result = ResultT<SpawnOptionsStdio>;
+pub(crate) type Result = ResultT<SpawnOptionsStdio>;
 
-pub enum ToSpawnOptsError {
+pub(crate) enum ToSpawnOptsError {
     StdinUsedAsOut,
     OutUsedAsStdin,
     BlobUsedAsOut,
-    UvPipe(sys::E),
 }
 
 impl ToSpawnOptsError {
-    pub fn to_str(&self) -> &'static [u8] {
+    pub(crate) fn to_str(&self) -> &'static [u8] {
         match self {
             Self::StdinUsedAsOut => b"Stdin cannot be used for stdout or stderr",
             Self::OutUsedAsStdin => b"Stdout and stderr cannot be used for stdin",
             Self::BlobUsedAsOut => b"Blobs are immutable, and cannot be used for stdout/stderr",
-            Self::UvPipe(_) => panic!("TODO"),
         }
     }
 
-    pub fn throw_js(&self, global: &JSGlobalObject) -> jsc::JsError {
+    pub(crate) fn throw_js(&self, global: &JSGlobalObject) -> jsc::JsError {
         global.throw(format_args!("{}", bstr::BStr::new(self.to_str())))
     }
 }
 
 impl Stdio {
-    pub fn byte_slice(&self) -> &[u8] {
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    pub(crate) fn byte_slice(&self) -> &[u8] {
         match self {
             // SAFETY: `buf` is a live backref owned by the caller (shell); the
             // returned slice borrows `self` and the caller guarantees the
@@ -114,7 +115,7 @@ impl Stdio {
         }
     }
 
-    pub fn can_use_memfd(&self) -> bool {
+    pub(crate) fn can_use_memfd(&self) -> bool {
         #[cfg(not(any(target_os = "linux", target_os = "android")))]
         {
             return false;
@@ -130,7 +131,7 @@ impl Stdio {
         }
     }
 
-    pub fn use_memfd(&mut self, index: u32) -> bool {
+    pub(crate) fn use_memfd(&mut self, index: u32) -> bool {
         #[cfg(not(any(target_os = "linux", target_os = "android")))]
         {
             let _ = index;
@@ -201,7 +202,7 @@ impl Stdio {
         }
     }
 
-    pub fn to_sync(&mut self, i: u32) {
+    pub(crate) fn to_sync(&mut self, i: u32) {
         // Piping an empty stdin doesn't make sense
         if i == 0 && matches!(self, Self::Pipe) {
             *self = Self::Ignore;
@@ -211,7 +212,7 @@ impl Stdio {
     /// On windows this function allocates a `*mut uv::Pipe` (via `heap::alloc`);
     /// the caller must transfer ownership (e.g. into `WindowsStdioResult::Buffer`
     /// via `heap::take`) or free it with `close_and_destroy`.
-    pub fn as_spawn_option(&mut self, i: i32) -> Result {
+    pub(crate) fn as_spawn_option(&mut self, i: i32) -> Result {
         // `SpawnOptionsStdio` is already a cfg-gated alias to PosixStdio /
         // WindowsStdio; only three variant *constructors* differ in arity
         // between targets, so spell those per-cfg and share the rest.
@@ -309,7 +310,7 @@ impl Stdio {
         ResultT::Result(result)
     }
 
-    pub fn is_piped(&self) -> bool {
+    pub(crate) fn is_piped(&self) -> bool {
         match self {
             Self::Capture(_)
             | Self::ArrayBuffer(_)
@@ -404,7 +405,7 @@ impl Stdio {
         Ok(())
     }
 
-    pub fn extract(
+    pub(crate) fn extract(
         out_stdio: &mut Stdio,
         global: &JSGlobalObject,
         i: i32,
@@ -575,7 +576,7 @@ impl Stdio {
         )))
     }
 
-    pub fn extract_blob(
+    pub(crate) fn extract_blob(
         &mut self,
         global: &JSGlobalObject,
         blob: webcore::blob::Any,

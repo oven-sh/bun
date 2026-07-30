@@ -567,11 +567,14 @@ describe("a message listener keeps the event loop alive", () => {
   });
 
   // Node's [kNewListener] hook calls this.ref() on every 'message' listener add,
-  // so installing a listener after .unref() re-refs the port on every path.
-  for (const [label, attach] of [
-    [".onmessage", `port2.onmessage = () => {};`],
-    [".addEventListener('message')", `port2.addEventListener('message', () => {});`],
-    [".on('message')", `port2.on('message', () => {});`],
+  // so installing a listener after .unref() re-refs the port on every path,
+  // including setEventHandlerAttribute's in-place replace (node's defineEventHandler
+  // fires [kNewListener] there too).
+  for (const [label, body] of [
+    [".onmessage", `port2.unref(); port2.onmessage = () => {};`],
+    [".addEventListener('message')", `port2.unref(); port2.addEventListener('message', () => {});`],
+    [".on('message')", `port2.unref(); port2.on('message', () => {});`],
+    [".onmessage replacing an existing handler", `port2.onmessage = () => {}; port2.unref(); port2.onmessage = () => {};`],
   ] as const) {
     test.concurrent(`${label} after .unref() re-refs the port`, async () => {
       expect(
@@ -579,8 +582,7 @@ describe("a message listener keeps the event loop alive", () => {
           require('node:worker_threads');
           const { port1, port2 } = new MessageChannel();
           globalThis.__keep = { port1, port2 };
-          port2.unref();
-          ${attach}
+          ${body}
           if (!port2.hasRef()) throw new Error('hasRef() must be true after listener add');
           console.log('READY');
         `),

@@ -198,9 +198,11 @@ static inline bool setJSMessagePort_onmessageSetter(JSGlobalObject& lexicalGloba
 {
     auto& vm = JSC::getVM(&lexicalGlobalObject);
     UNUSED_PARAM(vm);
-    // No jsRef(): onDidChangeListener already tracks this handler's loop ref, and the
-    // second unbalanced keepalive made `onmessage = null` stick.
     setEventHandlerAttribute<JSEventListener>(thisObject.wrapped(), eventNames().messageEvent, value, thisObject);
+    // setEventHandlerAttribute's in-place replace path never fires onDidChangeListener,
+    // so re-ref here too (node's defineEventHandler fires [kNewListener] on replace).
+    if (value.isObject())
+        thisObject.wrapped().refFromMessageListener();
     vm.writeBarrier(&thisObject, value);
     ensureStillAliveHere(value);
 

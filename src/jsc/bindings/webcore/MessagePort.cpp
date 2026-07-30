@@ -515,6 +515,17 @@ void MessagePort::updateListenerEventLoopRef()
         m_pipe->setHoldsLoopRef(m_side, m_listenerLoopRefActive || m_hasRef);
 }
 
+// Node's [kNewListener] hook calls this.ref() on every 'message' listener install
+// (including an onmessage replace), so .unref() before a listener is undone. Gated
+// like jsRef(): on an already-closed handle node's ref() is a no-op.
+void MessagePort::refFromMessageListener()
+{
+    if (m_isDetached || m_pipe->isOtherSideClosedByRequest(m_side))
+        return;
+    m_isRefd = true;
+    updateListenerEventLoopRef();
+}
+
 void MessagePort::onDidChangeListenerImpl(EventTarget& self, const AtomString& eventType, OnDidChangeListenerKind kind)
 {
     if (eventType != eventNames().messageEvent)
@@ -524,12 +535,7 @@ void MessagePort::onDidChangeListenerImpl(EventTarget& self, const AtomString& e
     switch (kind) {
     case Add:
         port.m_messageEventCount++;
-        // Node's [kNewListener] hook calls this.ref() on every 'message' listener
-        // add, so a listener installed after .unref() re-refs on every path.
-        // Gated like jsRef(): once the peer has explicitly closed, node's ref()
-        // is a no-op on the already-closed handle.
-        if (!port.m_isDetached && !port.m_pipe->isOtherSideClosedByRequest(port.m_side))
-            port.m_isRefd = true;
+        port.refFromMessageListener();
         break;
     case Remove:
         if (port.m_messageEventCount > 0)

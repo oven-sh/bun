@@ -228,9 +228,17 @@ impl<T: JsSinkAbi> JSSink<T> {
         T: JsSinkType,
     {
         // C++ `${abi}__assignToStream` writes the controller cell's encoded
-        // JSValue bits through a `void**`; capture into a stack local and wrap
-        // into `SourceHandle::JSController` after the call so the FFI contract
-        // stays a plain pointer store (no enum layout exposed across the ABI).
+        // JSValue bits through a `void**` *before* calling
+        // `globalObject->assignToStream(...)`. A fully-synchronous stream can
+        // drain and fire `${abi}__controllerDetached` inside that call, so the
+        // sink must already be tagged `JSController` for `js_controller_detached`
+        // to match-and-clear. Pre-seed a placeholder (bits=0), let C++ run, then
+        // only install the real bits if the placeholder survived — if sync-end
+        // cleared it to `None`, the controller is already dead and must not be
+        // stored.
+        if let Some(src) = ptr.source() {
+            *src = streams::SourceHandle::JSController(0);
+        }
         let mut bits: usize = 0;
         let result = T::assign_to_stream_extern(
             global,
@@ -238,9 +246,13 @@ impl<T: JsSinkAbi> JSSink<T> {
             std::ptr::from_mut::<T>(ptr).cast::<c_void>(),
             (&raw mut bits).cast::<*mut c_void>(),
         );
-        if bits != 0 {
-            if let Some(src) = ptr.source() {
-                *src = streams::SourceHandle::JSController(bits);
+        if let Some(src) = ptr.source() {
+            if matches!(*src, streams::SourceHandle::JSController(_)) {
+                *src = if bits != 0 {
+                    streams::SourceHandle::JSController(bits)
+                } else {
+                    streams::SourceHandle::None
+                };
             }
         }
         result
@@ -589,7 +601,10 @@ impl<T: JsSinkType + JsSinkAbi> JSSink<T> {
     pub fn js_controller_detached(this: &mut T, controller: crate::webcore::jsc::JSValue) {
         if let Some(src) = this.source() {
             if let SourceHandle::JSController(bits) = *src {
-                if bits == controller.encoded() {
+                // bits == 0 is the `assign_to_stream` placeholder: the detach
+                // fired synchronously inside `__assignToStream` before the real
+                // bits were installed, so the placeholder must be cleared too.
+                if bits == controller.encoded() || bits == 0 {
                     src.clear();
                 }
             }

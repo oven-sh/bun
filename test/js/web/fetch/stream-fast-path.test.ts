@@ -1,5 +1,6 @@
 import { readableStreamToArrayBuffer, readableStreamToBlob, readableStreamToBytes, readableStreamToText } from "bun";
 import { describe, expect, test } from "bun:test";
+import { arrayBuffer as consumersArrayBuffer, bytes as consumersBytes } from "node:stream/consumers";
 
 // Fetch's body-read algorithms ("get a byte sequence … create a Uint8Array from
 // bytes" / "an ArrayBuffer whose contents are bytes") return fresh buffers. The
@@ -15,10 +16,17 @@ describe("single-chunk stream consumers return a fresh buffer", () => {
       },
     });
 
+  const detached = () => {
+    const buf = new Uint8Array([1, 2, 3]).buffer;
+    structuredClone(buf, { transfer: [buf] });
+    return buf;
+  };
+
   describe.each([
     ["Response.bytes()", (s: ReadableStream) => new Response(s).bytes()],
     ["Request.bytes()", (s: ReadableStream) => new Request("http://x", { method: "POST", body: s }).bytes()],
     ["Bun.readableStreamToBytes", (s: ReadableStream) => readableStreamToBytes(s)],
+    ["stream/consumers.bytes", (s: ReadableStream) => consumersBytes(s)],
   ] as const)("%s", (_, consume) => {
     test("Uint8Array chunk", async () => {
       const src = new Uint8Array([1, 2, 3]);
@@ -56,6 +64,14 @@ describe("single-chunk stream consumers return a fresh buffer", () => {
       expect(out).toEqual(new Uint8Array(new Float32Array([1.5]).buffer));
     });
 
+    test("detached chunk yields a fresh empty result", async () => {
+      const src = detached();
+      const out = await consume(one(src));
+      expect(out.buffer).not.toBe(src);
+      expect(out.byteLength).toBe(0);
+      expect(out.buffer.detached).toBe(false);
+    });
+
     test("transferring the result does not detach the producer", async () => {
       const src = new Uint8Array([1, 2, 3]);
       const out = await consume(one(src));
@@ -72,6 +88,7 @@ describe("single-chunk stream consumers return a fresh buffer", () => {
       (s: ReadableStream) => new Request("http://x", { method: "POST", body: s }).arrayBuffer(),
     ],
     ["Bun.readableStreamToArrayBuffer", (s: ReadableStream) => readableStreamToArrayBuffer(s)],
+    ["stream/consumers.arrayBuffer", (s: ReadableStream) => consumersArrayBuffer(s)],
   ] as const)("%s", (_, consume) => {
     test("Uint8Array chunk", async () => {
       const src = new Uint8Array([1, 2, 3]);
@@ -83,12 +100,37 @@ describe("single-chunk stream consumers return a fresh buffer", () => {
       expect(src[0]).toBe(1);
     });
 
+    test("Buffer chunk", async () => {
+      const src = Buffer.from([9, 8, 7]);
+      const out = await consume(one(src));
+      expect(out).toBeInstanceOf(ArrayBuffer);
+      expect(out).not.toBe(src.buffer);
+      expect([...new Uint8Array(out)]).toEqual([9, 8, 7]);
+    });
+
     test("ArrayBuffer chunk", async () => {
       const src = new Uint8Array([7, 7, 7]).buffer;
       const out = await consume(one(src));
       expect(out).toBeInstanceOf(ArrayBuffer);
       expect(out).not.toBe(src);
       expect([...new Uint8Array(out)]).toEqual([7, 7, 7]);
+    });
+
+    test("non-Uint8 view chunk", async () => {
+      const src = new Float32Array([1.5]);
+      const out = await consume(one(src));
+      expect(out).toBeInstanceOf(ArrayBuffer);
+      expect(out).not.toBe(src.buffer);
+      expect(new Uint8Array(out)).toEqual(new Uint8Array(new Float32Array([1.5]).buffer));
+    });
+
+    test("detached chunk yields a fresh empty result", async () => {
+      const src = detached();
+      const out = await consume(one(src));
+      expect(out).toBeInstanceOf(ArrayBuffer);
+      expect(out).not.toBe(src);
+      expect(out.byteLength).toBe(0);
+      expect((out as ArrayBuffer).detached).toBe(false);
     });
 
     test("transferring the result does not detach the producer", async () => {

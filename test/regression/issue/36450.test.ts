@@ -56,8 +56,13 @@ test("pending ref'd timer does not stall subsequent test files", async () => {
     for (const match of (stdout + stderr).matchAll(/GAP\d+:([\d.]+)/g)) {
       gaps.push(Number(match[1]));
     }
-    expect(gaps).toHaveLength(fileCount);
-    expect(exitCode).toBe(0);
+    // Include stderr so a child failure (e.g. the fixture guard) prints its
+    // own error instead of just a short gap count.
+    expect({ gapCount: gaps.length, exitCode, stderr }).toEqual({
+      gapCount: fileCount,
+      exitCode: 0,
+      stderr: expect.any(String),
+    });
     return gaps.toSorted((a, b) => a - b)[Math.floor(gaps.length / 2)];
   }
 

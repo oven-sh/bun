@@ -28,6 +28,15 @@ pub struct FetchRequestBodySink {
     pub global_this: Option<BackRef<JSGlobalObject>>,
     pub high_water_mark: BlobSizeType,
     pub flush_promise: JSPromiseStrong,
+    /// Bytes handed to `write_request_data` since the last `on_drain` ack.
+    /// JS-thread-only accounting: the shared `stream_buffer` is drained
+    /// concurrently by the HTTP thread, so its `size()` cannot gate
+    /// backpressure without racing (the pump would never yield when the HTTP
+    /// thread keeps up). `on_drain` — dispatched from `report_drain` via a
+    /// `ConcurrentTask` — is the sole writer that resets this, so
+    /// `pending_bytes > 0` guarantees an `on_drain` is in flight to resolve
+    /// `flush_promise`.
+    pub pending_bytes: BlobSizeType,
     pub ended: bool,
     pub done: bool,
 }
@@ -40,6 +49,7 @@ impl Default for FetchRequestBodySink {
             global_this: None,
             high_water_mark: 16384,
             flush_promise: JSPromiseStrong::default(),
+            pending_bytes: 0,
             ended: false,
             done: false,
         }
@@ -98,11 +108,25 @@ impl FetchRequestBodySink {
         let bytes = data.slice();
         bun_core::scoped_log!(FetchRequestBodySinkLog, "write({})", bytes.len());
 
-        let high_water_mark = self.high_water_mark as usize;
-        let Some(task) = self.task_mut() else {
-            return Writable::Done;
+        let high_water_mark = self.high_water_mark;
+        let result = match self.task_mut() {
+            Some(task) => task.write_request_data(bytes, high_water_mark as usize),
+            None => return Writable::Done,
         };
-        task.write_request_data(bytes, high_water_mark)
+        match result {
+            // Data was buffered for the HTTP thread; gate backpressure on the
+            // JS-thread-only `pending_bytes` (the shared buffer's `size()` is
+            // drained concurrently and cannot be used without racing).
+            Writable::Owned(len) | Writable::Backpressure(len) if len > 0 => {
+                self.pending_bytes = self.pending_bytes.saturating_add(len);
+                if self.pending_bytes >= high_water_mark {
+                    Writable::Backpressure(len)
+                } else {
+                    Writable::Owned(len)
+                }
+            }
+            other => other,
+        }
     }
 
     pub fn write_latin1(&mut self, data: &StreamResult) -> Writable {
@@ -148,15 +172,11 @@ impl FetchRequestBodySink {
                 JSValue::js_number(0.0),
             ));
         }
-        if wait {
-            let has_buffered = self
-                .task_mut()
-                .and_then(|t| t.stream_buffer_mut())
-                .is_some_and(|b| !b.lock().is_empty());
-            if has_buffered {
-                self.flush_promise = JSPromiseStrong::init(global_this);
-                return bun_sys::Result::Ok(self.flush_promise.value());
-            }
+        if wait && self.pending_bytes > 0 {
+            // Bytes were scheduled to the HTTP thread since the last drain ack,
+            // so an `on_drain` is guaranteed to arrive and resolve this.
+            self.flush_promise = JSPromiseStrong::init(global_this);
+            return bun_sys::Result::Ok(self.flush_promise.value());
         }
         bun_sys::Result::Ok(JSPromise::resolved_promise_value(
             global_this,
@@ -197,6 +217,7 @@ impl FetchRequestBodySink {
     /// `readStreamIntoSink`'s pump resumes pulling.
     pub fn on_drain(&mut self, global_this: &JSGlobalObject) {
         bun_core::scoped_log!(FetchRequestBodySinkLog, "onDrain");
+        self.pending_bytes = 0;
         if self.flush_promise.has_value() {
             let _ = self
                 .flush_promise

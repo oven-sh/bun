@@ -422,12 +422,13 @@ impl FetchTasklet {
             // SAFETY: FetchTasklet owns the heap allocation from
             // `start_request_stream`; JS-thread-only.
             let sink = unsafe { &mut *sink_ptr.as_ptr() };
-            // Unprotect the controller cell + clear onClose so the stream graph
-            // is collectible; runs no JS callbacks.
-            JSSink::<FetchRequestBodySink>::detach(&mut sink.signal, &self.global_this);
             // Prevent the sink's `finalize()` / `Drop` from double-releasing the
             // FetchTasklet ref — `write_end_request` is the canonical release.
             sink.task = None;
+            // `detach` may fire the controller's onClose; every terminal path
+            // here has already cleared it, so this just unprotects the cell and
+            // nulls m_sinkPtr.
+            JSSink::<FetchRequestBodySink>::detach(&mut sink.signal, &self.global_this);
             // SAFETY: the JS controller's back-pointer was already cleared via
             // `detach_ptr` (inside `detach` above / `end_from_js`); sole owner.
             unsafe { bun_core::heap::destroy(sink_ptr.as_ptr()) };
@@ -2323,6 +2324,11 @@ impl FetchTasklet {
             }
             self.abort_task();
         } else {
+            if self.signal_store.aborted.load(Ordering::Relaxed) {
+                // SAFETY: `this_ptr` derived from live `&mut self`; we hold a ref.
+                FetchTasklet::deref(this_ptr);
+                return;
+            }
             if !self.skip_chunked_framing() {
                 // Using chunked transfer encoding, send the terminating chunk
                 let Some(thread_safe_stream_buffer) = self.stream_buffer_mut() else {

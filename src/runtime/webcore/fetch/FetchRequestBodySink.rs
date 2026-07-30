@@ -26,7 +26,9 @@ impl<'a> RequestBodyChunk<'a> {
         match *self {
             Self::Bytes(b) => b.len(),
             Self::Latin1(b) => bun_simdutf_sys::simdutf::length::utf8::from::latin1(b),
-            Self::Utf16(u) => bun_simdutf_sys::simdutf::length::utf8::from::utf16::le(u),
+            Self::Utf16(u) => {
+                bun_simdutf_sys::simdutf::length::utf8::from::utf16::le_with_replacement(u)
+            }
         }
     }
 

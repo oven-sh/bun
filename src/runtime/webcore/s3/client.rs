@@ -993,12 +993,17 @@ pub fn upload_stream(
     // NetworkSink.task now holds a counted ref on the MultiPartUpload (released in
     // `detach_writable`). Take it here rather than bump the initial ref_count so the
     // early-error paths below (which detach_sink → finalize → deref) stay balanced.
-    task.ref_count.set(task.ref_count.get() + 1);
+    task.ref_();
 
     // Captured before `assign_to_stream`: a synchronously-draining stream may
     // resolve + clear `ctx.end_promise` before control returns here.
     let end_promise_value = ctx.end_promise.value();
     end_promise_value.ensure_still_alive();
+
+    // Transition WaitStreamCheck → NotStarted before the pump can deliver the
+    // first chunk: `readStreamIntoSink`'s `readMany()` drains a pre-enqueued
+    // default-controller stream synchronously inside `assign_to_stream`.
+    task.continue_stream();
 
     // `Option<NonNull<c_void>>` is layout-compatible with `*mut c_void` (niche).
     let signal_ptr_slot = (&raw mut sink.signal.ptr).cast::<*mut c_void>();
@@ -1008,8 +1013,6 @@ pub fn upload_stream(
     let assignment_result: JSValue =
         NetworkSinkJSSink::assign_to_stream(global_this, readable_stream.value, sink, signal_ptr_slot);
     assignment_result.ensure_still_alive();
-
-    task.continue_stream();
 
     if let Some(err_value) = assignment_result.to_error() {
         ctx.handle_reject_stream(err_value);

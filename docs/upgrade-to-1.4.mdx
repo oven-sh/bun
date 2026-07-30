@@ -124,7 +124,7 @@ If you relied on development JSX output (component stack traces, extra runtime c
 }
 ```
 
-See [JSX](/runtime/jsx) for how `NODE_ENV` and `--define process.env.NODE_ENV` interact with this setting in `bun build`.
+See [JSX](/runtime/jsx) for the full set of `jsx` values and pragma options.
 
 ---
 
@@ -266,7 +266,7 @@ These are correctness fixes that tighten validation or align with a specificatio
 - A `Response` status outside `100..=999` is routed through the `error()` handler as a 500 instead of writing an invalid status line.
 - Per-method route objects (`{ GET, POST, ... }`) serve `HEAD` with the `GET` handler.
 - `ServerWebSocket#publish()` and `server.publish()` return `0` / `-1` when a subscriber hits backpressure, instead of always returning the payload length.
-- Client and server WebSockets reject `close()` with invalid codes (`InvalidAccessError`) or reasons over 123 UTF-8 bytes (`SyntaxError`), reject `ping()` / `pong()` payloads over 125 bytes (`RangeError`), and reject unmasked client frames per RFC 6455.
+- The client `WebSocket` rejects `close()` with an invalid code (`InvalidAccessError`) or a reason over 123 UTF-8 bytes (`SyntaxError`). Client and server WebSockets reject `ping()` / `pong()` payloads over 125 bytes (`RangeError`), and the server rejects unmasked client frames per RFC 6455.
 
 **Bun APIs**
 

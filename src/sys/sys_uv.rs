@@ -322,7 +322,7 @@ pub fn unlink(file_path: &ZStr) -> Result<()> {
     }
 }
 
-pub fn readlink<'a>(file_path: &ZStr, buf: &'a mut [u8]) -> Result<&'a mut ZStr> {
+pub(crate) fn readlink<'a>(file_path: &ZStr, buf: &'a mut [u8]) -> Result<&'a mut ZStr> {
     // `uv_fs_readlink` heap-allocates the target
     // string into `req.ptr` (plus the WCHAR path copy); only `uv_fs_req_cleanup`
     // frees them. The guard covers all four return paths below; the bytes are
@@ -534,7 +534,7 @@ pub fn lstat(path: &ZStr) -> Result<Stat> {
     }
 }
 
-pub fn close(fd: Fd) -> Option<Error> {
+pub(crate) fn close(fd: Fd) -> Option<Error> {
     fd.close_allowing_bad_file_descriptor(None)
 }
 

@@ -30,13 +30,13 @@ bun_core::declare_scope!(quic, hidden);
 #[repr(C)]
 pub struct EndpointState {
     pub bound: u8,
-    pub receiving: u8,
-    pub listening: u8,
-    pub closing: u8,
-    pub busy: u8,
-    pub max_connections_per_host: u16,
-    pub max_connections_total: u16,
-    pub pending_callbacks: u64,
+    pub(crate) receiving: u8,
+    pub(crate) listening: u8,
+    pub(crate) closing: u8,
+    pub(crate) busy: u8,
+    pub(crate) max_connections_per_host: u16,
+    pub(crate) max_connections_total: u16,
+    pub(crate) pending_callbacks: u64,
 }
 
 pub(crate) const ENDPOINT_STATS_FIELDS: &[&str] = &[
@@ -359,7 +359,7 @@ impl QuicEndpoint {
 /// # Safety
 /// `owner` must be the pointer `link_loop_driver` installed.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn Bun__nodeQuic__drainEndpoint(owner: *mut c_void) {
+pub(crate) unsafe extern "C" fn Bun__nodeQuic__drainEndpoint(owner: *mut c_void) {
     // SAFETY: guaranteed by this function's contract.
     unsafe { QuicEndpoint::from_driver_owner(owner) }.run_driver_pass(true);
 }
@@ -370,7 +370,7 @@ pub unsafe extern "C" fn Bun__nodeQuic__drainEndpoint(owner: *mut c_void) {
 /// # Safety
 /// `owner` must be the pointer `link_loop_driver` installed.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn Bun__nodeQuic__processEndpoint(owner: *mut c_void) {
+pub(crate) unsafe extern "C" fn Bun__nodeQuic__processEndpoint(owner: *mut c_void) {
     // SAFETY: guaranteed by this function's contract.
     unsafe { QuicEndpoint::from_driver_owner(owner) }.run_driver_pass(false);
 }
@@ -1414,7 +1414,7 @@ impl QuicEndpoint {
             .with_mut(|p| if busy { p.ref_(ctx) } else { p.unref(ctx) });
     }
 
-    pub(super) fn process(&self, global: &JSGlobalObject) {
+    fn process(&self, global: &JSGlobalObject) {
         if self.closed.get() {
             return;
         }
@@ -2124,7 +2124,7 @@ impl QuicEndpoint {
 
     /// Without this, buffered lines outlive the freed `SSL*` and a later
     /// handshake at the recycled address claims a dead handshake's secrets.
-    pub(super) fn discard_early_keylog(&self, peer: &StoredAddr) {
+    fn discard_early_keylog(&self, peer: &StoredAddr) {
         let peer_decoded = peer.decode();
         self.early_keylog
             .with_mut(|v| v.retain(|(_, p, _)| p.decode() != peer_decoded));

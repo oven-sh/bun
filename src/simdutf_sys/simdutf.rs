@@ -517,7 +517,7 @@ pub mod length {
 }
 
 pub mod trim {
-    pub(crate) fn utf16_len(buf: &[u16]) -> usize {
+    fn utf16_len(buf: &[u16]) -> usize {
         let len = buf.len();
 
         if len == 0 {

@@ -125,15 +125,15 @@ pub struct Transpiler<'a> {
     // Bundler is an AST crate per PORTING.md, so an arena is threaded even
     // though callers usually pass `bun.default_allocator`.
     pub arena: &'a Arena,
-    pub result: options::TransformResult,
+    pub(crate) result: options::TransformResult,
     pub resolver: Resolver<'a>,
     // Raw ptr — points at the shared global `FileSystem` singleton; a stored
     // `&'a mut` would assert uniqueness it cannot have.
     pub fs: *mut Fs::FileSystem,
-    pub output_files: Vec<options::OutputFile>,
-    pub resolve_results: Box<ResolveResults>,
-    pub resolve_queue: ResolveQueue,
-    pub elapsed: u64,
+    pub(crate) output_files: Vec<options::OutputFile>,
+    pub(crate) resolve_results: Box<ResolveResults>,
+    pub(crate) resolve_queue: ResolveQueue,
+    pub(crate) elapsed: u64,
 
     // `ModuleLoader::transpile_source_code` (jsc_hooks.rs) calls
     // `transpiler.linker.link()`. Back-pointers wired
@@ -203,7 +203,7 @@ impl<'a> Transpiler<'a> {
 
     /// Shared borrow of the process-lifetime `Fs::FileSystem` singleton.
     #[inline]
-    pub fn fs(&self) -> &Fs::FileSystem {
+    pub(crate) fn fs(&self) -> &Fs::FileSystem {
         // SAFETY: `self.fs` is set in `Transpiler::init` to the
         // `Fs::FileSystem::instance` singleton (process-lifetime, never null,
         // never freed). Reads of `top_level_dir` (the dominant use) are sound
@@ -311,7 +311,7 @@ impl<'a> Transpiler<'a> {
     /// `env_loader`) are widened from `from`'s lifetime to `'a` via a
     /// layout-preserving transmute — sound because those reference
     /// process-lifetime data in every caller, but unprovable to borrowck.
-    pub unsafe fn for_worker(
+    pub(crate) unsafe fn for_worker(
         from: &Transpiler<'_>,
         arena: &'a Arena,
         log: *mut bun_ast::Log,
@@ -364,7 +364,7 @@ impl<'a> Transpiler<'a> {
     /// Wire the self-referential `linker` back-pointers and `macro_context`
     /// after this `Transpiler` has reached its final address (post-move into
     /// `WorkerData` / arena slot).
-    pub fn wire_after_move(&mut self) {
+    pub(crate) fn wire_after_move(&mut self) {
         // `self.log` was already set inside `for_worker` via direct field
         // init; re-thread into `options.log` / `resolver.log` /
         // `linker.log` here so all four aliases agree.
@@ -396,7 +396,7 @@ impl<'a> Transpiler<'a> {
 
     /// Reset the thread-local AST block stores (`Expr`/`Stmt`) and the side
     /// `AstAlloc` arena.
-    pub fn reset_store(&self) {
+    pub(crate) fn reset_store(&self) {
         bun_ast::Expr::data_store_reset();
         bun_ast::Stmt::data_store_reset();
         // Side-arena for `AstAlloc` (e.g. `Vec<Property>` inside arena
@@ -859,7 +859,7 @@ pub struct ParseResult<'a> {
 
     /// SAFETY: erased — bundler stores it
     /// and hands it back to the runtime side; never dereferenced here.
-    pub runtime_transpiler_cache: Option<core::ptr::NonNull<RuntimeTranspilerCache>>,
+    pub(crate) runtime_transpiler_cache: Option<core::ptr::NonNull<RuntimeTranspilerCache>>,
 
     /// Owns the bytes that `source.contents` points into when they came from
     /// `cache::Fs::read_file_with_allocator` (non-shared-buffer path) or a
@@ -918,7 +918,7 @@ impl<'a> ParseResult<'a> {
         }
     }
 
-    pub fn is_pending_import(&self, id: u32) -> bool {
+    pub(crate) fn is_pending_import(&self, id: u32) -> bool {
         // AoS scan (see field comment); SoA column iteration restored
         // when `PendingResolution: MultiArrayElement` lands.
         self.pending_imports
@@ -1044,7 +1044,7 @@ fn init_file_system(top_level_dir: Option<&'static [u8]>) -> crate::Result<*mut 
 /// is the icache/decode footprint of the prologue, not the cold body itself.
 #[cold]
 #[inline(never)]
-pub(crate) fn resolver_bundle_options_subset(
+fn resolver_bundle_options_subset(
     src: &options::BundleOptions<'_>,
 ) -> resolver::options::BundleOptions {
     use resolver::options as ropts;
@@ -1166,7 +1166,7 @@ impl<'a> Transpiler<'a> {
     /// On `Ok(())`, every field of `dst` is initialised. On `Err`, `dst` is
     /// untouched (all fallible work happens before the first field write), so the
     /// caller must not `assume_init` it.
-    pub fn init_in_place(
+    pub(crate) fn init_in_place(
         dst: &mut core::mem::MaybeUninit<Transpiler<'a>>,
         arena: &'a Arena,
         log: *mut bun_ast::Log,
@@ -2268,7 +2268,7 @@ pub use js_printer::Format as PrintFormat;
 // JSTranspiler.rs, and the in-crate `transform()` path) passes the same concrete
 // `&mut BufferPrinter`. Leaving the public entry points generic forced each
 // downstream crate (bun_runtime / bun_jsc / bun_install / bun_bundler) to stamp
-// out its own copy of the 109-fn `Printer<W,A,B,C,D,E>` recursion tree —
+// out its own copy of the 109-fn `Printer<W,A,B,C,D>` recursion tree —
 // `llvm-nm --print-size` showed `bun_js_printer` .text at 1,367 KB,
 // with both the `_11bun_runtime` and `_7bun_jsc` copies of
 // `print_expr<…>` live in `perf` and thrashing icache against each other
@@ -2307,10 +2307,6 @@ impl<'a> Transpiler<'a> {
                 .collect(),
         );
 
-        // `runtime_imports` is now forwarded — after Round-G `Ast.runtime_imports`
-        // is the real `parser::Runtime::Imports`, the same type
-        // `js_printer::Options.runtime_imports` takes (via `js_ast::runtime`),
-        // so the seam is gone.
         // `target` is now forwarded via `to_bundle_enums_target` below — it
         // *does* affect the EsmAscii/bun-runtime path (js_printer/lib.rs:6872
         // gates the `var {require}=import.meta;` hoist on `target == Bun`;
@@ -2324,13 +2320,13 @@ impl<'a> Transpiler<'a> {
         let exports_kind = ast.exports_kind;
 
         // PERF: each `js_printer::print_*::<W, …>` call below stamps out a full
-        // `__gated_printer::Printer<W,A,B,C,D,E>` instantiation tree (~35 kB of
+        // `__gated_printer::Printer<W,A,B,C,D>` instantiation tree (~35 kB of
         // .text per leaf method, 109 fns total). For `bun run` only the
-        // `EsmAscii + is_bun=true` arm executes, but rustc lays the Cjs / Esm /
+        // `EsmAscii + is_bun=true` arm executes, but rustc lays the Esm /
         // `is_bun=false` trees out adjacent in .text, so the live variant
-        // shares 64 kB faultaround windows with ~888 kB of dead code. Hoist the
-        // three cold arms behind `#[cold] #[inline(never)]` thunks so their
-        // instantiation trees land in `.text.unlikely` instead.
+        // shares 64 kB faultaround windows with dead code. Hoist the cold arms
+        // behind `#[cold] #[inline(never)]` thunks so their instantiation trees
+        // land in `.text.unlikely` instead.
         //
         // `print_arena` is the same per-call arena that built `ast` (the one
         // passed in `ParseOptions.arena`). Do NOT use `self.arena` here: on the
@@ -2339,16 +2335,6 @@ impl<'a> Transpiler<'a> {
         // printer's rope/template-string flattening (`Str::resolve_rope_if_needed`)
         // would strand its bytes in `mi_heap_main` on every print.
         match format {
-            js_printer::Format::Cjs => self.print_cjs_cold::<ENABLE_SOURCE_MAP>(
-                print_arena,
-                writer,
-                &ast,
-                symbols,
-                source,
-                source_map_context,
-                runtime_transpiler_cache,
-            ),
-
             js_printer::Format::Esm => self.print_esm_cold::<ENABLE_SOURCE_MAP>(
                 print_arena,
                 writer,
@@ -2389,55 +2375,7 @@ impl<'a> Transpiler<'a> {
                     )
                 }
             }
-
-            js_printer::Format::CjsAscii => unreachable!(),
         }
-    }
-
-    // PERF: cold thunk — see `print_with_source_map_maybe` comment. Body is
-    // verbatim from the former `Format::Cjs` match arm; `#[cold]` moves the
-    // `print_common_js::<W,false,SM>` Printer<…> tree to `.text.unlikely`.
-    #[cold]
-    #[inline(never)]
-    #[allow(clippy::too_many_arguments)]
-    fn print_cjs_cold<const ENABLE_SOURCE_MAP: bool>(
-        &mut self,
-        print_arena: &Arena,
-        writer: &mut js_printer::BufferPrinter,
-        ast: &bun_ast::Ast,
-        symbols: bun_ast::symbol::Map,
-        source: &bun_ast::Source,
-        source_map_context: Option<js_printer::SourceMapHandler<'_>>,
-        runtime_transpiler_cache: Option<core::ptr::NonNull<RuntimeTranspilerCache>>,
-    ) -> crate::Result<usize> {
-        js_printer::print_common_js::<_, false, ENABLE_SOURCE_MAP>(
-            writer,
-            // The printer's per-call scratch arena (rope/template-string
-            // flattening via `Str::resolve_rope_if_needed` / `Str::slice`).
-            // Same arena that `ParseOptions.arena` used to build this AST —
-            // see `print_with_source_map_maybe`.
-            print_arena,
-            ast,
-            symbols,
-            source,
-            js_printer::Options {
-                bundling: false,
-                runtime_imports: ast.runtime_imports.clone(),
-                require_ref: Some(ast.require_ref),
-                css_import_behavior: self.options.css_import_behavior(),
-                source_map_handler: source_map_context,
-                minify_whitespace: self.options.minify_whitespace,
-                minify_syntax: self.options.minify_syntax,
-                minify_identifiers: self.options.minify_identifiers,
-                transform_only: self.options.transform_only,
-                print_dce_annotations: self.options.emit_dce_annotations,
-                runtime_transpiler_cache,
-                hmr_ref: ast.wrapper_ref,
-                mangled_props: None,
-                ..Default::default()
-            },
-        )
-        .map_err(Into::into)
     }
 
     // PERF: cold thunk — see `print_with_source_map_maybe` comment. Body is
@@ -2458,7 +2396,6 @@ impl<'a> Transpiler<'a> {
     ) -> crate::Result<usize> {
         let opts = js_printer::Options {
             bundling: false,
-            runtime_imports: ast.runtime_imports.clone(),
             require_ref: Some(ast.require_ref),
             css_import_behavior: self.options.css_import_behavior(),
             source_map_handler: source_map_context,
@@ -2475,7 +2412,6 @@ impl<'a> Transpiler<'a> {
         };
         js_printer::print_ast::<_, false, ENABLE_SOURCE_MAP>(
             writer,
-            // Per-call scratch arena (rope flattening) — same as the Cjs arm.
             print_arena,
             ast,
             symbols,
@@ -2539,7 +2475,6 @@ impl<'a> Transpiler<'a> {
         let module_info = module_info.map(|p| unsafe { &mut *p });
         let opts = js_printer::Options {
             bundling: false,
-            runtime_imports: ast.runtime_imports.clone(),
             require_ref: Some(ast.require_ref),
             css_import_behavior: self.options.css_import_behavior(),
             source_map_handler: source_map_context,
@@ -2572,7 +2507,6 @@ impl<'a> Transpiler<'a> {
         };
         js_printer::print_ast::<_, IS_BUN, ENABLE_SOURCE_MAP>(
             writer,
-            // Per-call scratch arena (rope flattening) — same as the Cjs arm.
             print_arena,
             ast,
             symbols,
@@ -2614,7 +2548,7 @@ impl<'a> Transpiler<'a> {
     // PERF: `#[inline(never)]` + concrete `&mut BufferPrinter` — see `print`
     // above. This is the hot entry from jsc_hooks.rs / RuntimeTranspilerStore.rs
     // / AsyncModule.rs; keeping it non-generic collapses the four cross-crate
-    // copies of `print_expr<true,false,true,false,true>` (244 KB → ~61 KB).
+    // copies of `print_expr<…>` (244 KB → ~61 KB).
     /// `print_arena` is the same per-call arena that built `result.ast` —
     /// see [`Self::print`].
     #[inline(never)]
@@ -3168,13 +3102,6 @@ impl<'a> Transpiler<'a> {
         Ok(crate::output_file::Value::Copy(
             crate::output_file::FileOperation {
                 pathname: pathname.into_boxed_slice(),
-                dir: self
-                    .options
-                    .output_dir_handle
-                    .as_ref()
-                    .map(bun_sys::Dir::fd)
-                    .unwrap_or(bun_sys::Fd::INVALID),
-                ..Default::default()
             },
         ))
     }

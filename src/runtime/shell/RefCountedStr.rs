@@ -10,7 +10,7 @@ pub struct RefCountedStr {
 
 impl RefCountedStr {
     // Takes ownership of `slice` (global mimalloc) and stores it directly.
-    pub fn init(slice: Box<[u8]>) -> *mut RefCountedStr {
+    pub(crate) fn init(slice: Box<[u8]>) -> *mut RefCountedStr {
         bun_core::scoped_log!(RefCountedEnvStr, "init: {}", bstr::BStr::new(&*slice));
         // bun.handleOom(bun.default_allocator.create(...)) → Box::new (aborts on OOM)
         bun_core::heap::into_raw(Box::new(RefCountedStr {
@@ -19,7 +19,7 @@ impl RefCountedStr {
         }))
     }
 
-    pub fn byte_slice(&self) -> &[u8] {
+    pub(crate) fn byte_slice(&self) -> &[u8] {
         &self.data
     }
 

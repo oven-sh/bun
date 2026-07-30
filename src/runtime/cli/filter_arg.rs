@@ -150,11 +150,11 @@ pub enum PatternKind {
     Path,
 }
 
-pub struct Pattern {
+pub(crate) struct Pattern {
     // PERF: both kinds are `Box<[u8]>` so `Drop` is uniform; revisit if
     // filter-arg construction shows up in profiles.
-    pub pattern: Box<[u8]>,
-    pub kind: PatternKind,
+    pub(crate) pattern: Box<[u8]>,
+    pub(crate) kind: PatternKind,
     // negate: bool = false,
 }
 
@@ -223,7 +223,7 @@ impl FilterSet {
 
     // No explicit deinit: `Vec<Pattern>` drops each `Box<[u8]>` automatically.
 
-    pub(crate) fn matches_path(&self, path: &[u8]) -> bool {
+    fn matches_path(&self, path: &[u8]) -> bool {
         for filter in &self.filters {
             if glob::r#match(&filter.pattern, path).matches() {
                 return true;
@@ -232,7 +232,7 @@ impl FilterSet {
         false
     }
 
-    pub(crate) fn matches_path_name(&self, path: &[u8], name: &[u8]) -> bool {
+    fn matches_path_name(&self, path: &[u8], name: &[u8]) -> bool {
         for filter in &self.filters {
             let target = match filter.kind {
                 PatternKind::Name => name,

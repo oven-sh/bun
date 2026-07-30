@@ -150,12 +150,12 @@ impl<T: SourceMapFormatCtx> SourceMapFormat<T> {
     }
 
     #[inline(always)]
-    pub fn append_line_separator(&mut self) -> Result<(), crate::Error> {
+    pub(crate) fn append_line_separator(&mut self) -> Result<(), crate::Error> {
         self.ctx.append_line_separator()
     }
 
     #[inline(always)]
-    pub fn append(
+    pub(crate) fn append(
         &mut self,
         current_state: SourceMapState,
         prev_state: SourceMapState,
@@ -169,19 +169,19 @@ impl<T: SourceMapFormatCtx> SourceMapFormat<T> {
     }
 
     #[inline]
-    pub fn get_buffer(&mut self) -> &mut MutableString {
+    pub(crate) fn get_buffer(&mut self) -> &mut MutableString {
         // Returns `&mut` to avoid a double-ownership footgun;
         // callers mutate in place.
         self.ctx.get_buffer()
     }
 
     #[inline]
-    pub fn take_buffer(&mut self) -> MutableString {
+    pub(crate) fn take_buffer(&mut self) -> MutableString {
         self.ctx.take_buffer()
     }
 
     #[inline]
-    pub fn get_count(&self) -> usize {
+    pub(crate) fn get_count(&self) -> usize {
         self.ctx.get_count()
     }
 }
@@ -189,8 +189,8 @@ impl<T: SourceMapFormatCtx> SourceMapFormat<T> {
 pub struct VLQSourceMap {
     pub data: MutableString,
     pub internal: Option<internal_source_map::Builder>,
-    pub count: usize,
-    pub offset: usize,
+    pub(crate) count: usize,
+    pub(crate) offset: usize,
 }
 
 impl Default for VLQSourceMap {
@@ -287,9 +287,9 @@ pub struct NewBuilder<T: SourceMapFormatCtx> {
     pub source_map: SourceMapFormat<T>,
     /// `ManuallyDrop` because in the bundler `printWithWriter` path this is a
     /// shallow bitwise copy of `LinkerGraph.files[i].line_offset_table` and
-    /// must not be dropped here. The runtime/transpiler `printAst`/`printCommonJS`
-    /// paths now defer table construction (see `lazy_line_offset_tables`), so
-    /// this is left `EMPTY` there.
+    /// must not be dropped here. The runtime/transpiler `printAst` path defers
+    /// table construction (see `lazy_line_offset_tables`), so this is left
+    /// `EMPTY` there.
     pub line_offset_tables: core::mem::ManuallyDrop<line_offset_table::List<bun_alloc::AstAlloc>>,
 
     /// Lazily-generated, *owned* line-offset table for the runtime/transpiler
@@ -390,14 +390,14 @@ impl<T: SourceMapFormatCtx + Default> Default for NewBuilder<T> {
 /// `MultiArrayList::Drop` is **slab-only** — it frees the SoA buffer but never
 /// runs column destructors (a bitwise `clone` can alias two lists onto the same
 /// column heap pointers; see its docs). The bundler's eager
-/// `print_ast`/`print_common_js` paths now use `List<AstAlloc>` (bulk-freed
-/// with the per-worker AST heap) and leave `Builder.line_offset_tables` empty,
+/// `print_ast` path now uses `List<AstAlloc>` (bulk-freed
+/// with the per-worker AST heap) and leaves `Builder.line_offset_tables` empty,
 /// so they no longer need a guard. The lazily-built table here is `List<Global>`
 /// and still needs the per-row drain, so wrap it in a type that does it
 /// automatically. (A `Drop` impl on `NewBuilder` itself would forbid the
 /// `..Default::default()` struct-update used to build it in
 /// `get_source_map_builder`, hence the newtype.)
-pub struct OwnedLineOffsetTables(pub line_offset_table::List);
+pub struct OwnedLineOffsetTables(pub(crate) line_offset_table::List);
 
 impl Drop for OwnedLineOffsetTables {
     fn drop(&mut self) {
@@ -472,7 +472,7 @@ impl NewBuilder<VLQSourceMap> {
     // WTF-8 decode loop is out of line in `_slow` and reached only when a
     // newline or non-ASCII byte actually exists in the window.
     #[inline]
-    pub fn update_generated_line_and_column(&mut self, output: &[u8]) {
+    pub(crate) fn update_generated_line_and_column(&mut self, output: &[u8]) {
         let slice = &output[self.last_generated_update as usize..];
         // The window between consecutive mappings is usually a handful of bytes
         // (one token, often less under --minify). Below the narrowest highway
@@ -585,12 +585,12 @@ impl NewBuilder<VLQSourceMap> {
     }
 
     #[inline(always)]
-    pub fn append_mapping(&mut self, current_state: SourceMapState) {
+    pub(crate) fn append_mapping(&mut self, current_state: SourceMapState) {
         self.append_mapping_without_remapping(current_state);
     }
 
     #[inline(always)]
-    pub fn append_mapping_without_remapping(&mut self, current_state: SourceMapState) {
+    pub(crate) fn append_mapping_without_remapping(&mut self, current_state: SourceMapState) {
         self.source_map
             .append(current_state, self.prev_state)
             .expect("unreachable");

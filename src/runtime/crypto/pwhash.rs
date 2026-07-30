@@ -70,7 +70,7 @@ pub mod argon2 {
     #[derive(Copy, Clone)]
     pub struct Params {
         /// Time cost (iterations).
-        pub t: u32,
+        pub(crate) t: u32,
         /// Memory cost in KiB.
         pub m: u32,
         /// Parallelism degree.
@@ -79,8 +79,8 @@ pub mod argon2 {
 
     impl Params {
         /// Interactive argon2id preset: `t=2`, `m=67108864/1024` KiB.
-        pub const INTERACTIVE_2ID_T: u32 = 2;
-        pub const INTERACTIVE_2ID_M: u32 = 67_108_864 / 1024;
+        pub(crate) const INTERACTIVE_2ID_T: u32 = 2;
+        pub(crate) const INTERACTIVE_2ID_M: u32 = 67_108_864 / 1024;
     }
 
     /// Options for `str_hash`.
@@ -254,7 +254,7 @@ pub mod bcrypt {
     use ::bcrypt as vendor;
 
     /// Length of a modular-crypt bcrypt hash string.
-    pub(crate) const HASH_LENGTH: usize = 60;
+    const HASH_LENGTH: usize = 60;
     const SALT_LENGTH: usize = 16;
     const DK_LENGTH: usize = 23;
 
@@ -262,8 +262,8 @@ pub mod bcrypt {
     #[derive(Copy, Clone)]
     pub struct Params {
         /// log2 rounds (clamped 4..=31 by caller).
-        pub rounds_log: u8,
-        pub silently_truncate_password: bool,
+        pub(crate) rounds_log: u8,
+        pub(crate) silently_truncate_password: bool,
     }
 
     /// Options for `str_hash`.

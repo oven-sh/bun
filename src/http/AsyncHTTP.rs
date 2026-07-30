@@ -33,7 +33,7 @@ pub struct AsyncHTTP<'a> {
     // Caller-owned response buffer (raw pointer, lifetime-erased); never freed here.
     pub response_buffer: *mut MutableString,
     pub request_body: HTTPRequestBody<'a>,
-    pub method: Method,
+    pub(crate) method: Method,
     pub url: URL<'a>,
     // Backref to the JS-thread `real` AsyncHTTP this HTTP-thread copy mirrors.
     // Cleared in finalize. Same `'a` — the copy never outlives the original.
@@ -41,10 +41,10 @@ pub struct AsyncHTTP<'a> {
     /// Intrusive link for `UnboundedQueue(AsyncHTTP, .next)` in HTTPThread.
     /// Lifetime-erased (`'static`) — the queue mixes requests with unrelated
     /// borrow scopes; consumers never read borrowed fields through `next`.
-    pub next: bun_threading::Link<AsyncHTTP<'static>>,
+    pub(crate) next: bun_threading::Link<AsyncHTTP<'static>>,
 
-    pub task: thread_pool::Task,
-    pub result_callback: HTTPClientResultCallback,
+    pub(crate) task: thread_pool::Task,
+    pub(crate) result_callback: HTTPClientResultCallback,
 
     pub client: HTTPClient<'a>,
     pub err: Option<crate::Error>,
@@ -52,7 +52,7 @@ pub struct AsyncHTTP<'a> {
 
     pub elapsed: u64,
 
-    pub signals: Signals,
+    pub(crate) signals: Signals,
 }
 
 bun_threading::intrusive_work_task!(['a] AsyncHTTP<'a>, task);
@@ -68,7 +68,7 @@ unsafe impl bun_threading::Linked for AsyncHTTP<'static> {
     }
 }
 
-pub static ACTIVE_REQUESTS_COUNT: AtomicUsize = AtomicUsize::new(0);
+pub(crate) static ACTIVE_REQUESTS_COUNT: AtomicUsize = AtomicUsize::new(0);
 pub static MAX_SIMULTANEOUS_REQUESTS: AtomicUsize = AtomicUsize::new(256);
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -108,10 +108,10 @@ fn http_thread_timer_read() -> u64 {
     crate::http_thread().timer.elapsed().as_nanos() as u64
 }
 
-/// Build the `Proxy-Authorization: Basic <b64(user[:pass])>` header value.
+/// Build the `Proxy-Authorization: Basic <b64(user:pass)>` header value.
 /// Returns `None` (and logs) if percent-decoding fails.
 pub(crate) fn build_proxy_authorization(proxy: &URL<'_>) -> Option<Vec<u8>> {
-    if proxy.username.is_empty() {
+    if proxy.username.is_empty() && proxy.password.is_empty() {
         return None;
     }
 
@@ -123,24 +123,17 @@ pub(crate) fn build_proxy_authorization(proxy: &URL<'_>) -> Option<Vec<u8>> {
         }
     };
 
-    let auth: Vec<u8> = if !proxy.password.is_empty() {
-        let password = match PercentEncoding::decode_alloc(proxy.password) {
-            Ok(p) => p,
-            Err(err) => {
-                bun_core::scoped_log!(AsyncHTTP, "failed to decode proxy password: {:?}", err);
-                return None;
-            }
-        };
-        // concat user and password
-        let mut auth: Vec<u8> = Vec::with_capacity(username.len() + 1 + password.len());
-        auth.extend_from_slice(&username);
-        auth.push(b':');
-        auth.extend_from_slice(&password);
-        auth
-    } else {
-        // only use user
-        username.into_vec()
+    let password = match PercentEncoding::decode_alloc(proxy.password) {
+        Ok(p) => p,
+        Err(err) => {
+            bun_core::scoped_log!(AsyncHTTP, "failed to decode proxy password: {:?}", err);
+            return None;
+        }
     };
+    let mut auth: Vec<u8> = Vec::with_capacity(username.len() + 1 + password.len());
+    auth.extend_from_slice(&username);
+    auth.push(b':');
+    auth.extend_from_slice(&password);
 
     let size = bun_base64::encode_len_from_size(auth.len());
     let mut buf = vec![0u8; size + b"Basic ".len()];
@@ -276,7 +269,7 @@ impl<'a> AsyncHTTP<'a> {
     /// Erase the borrow lifetime for storage in intrusive queues / raw-pointer
     /// callback contexts. See [`HTTPClient::as_erased_ptr`] for rationale.
     #[inline(always)]
-    pub fn as_erased_ptr(&self) -> *mut AsyncHTTP<'static> {
+    pub(crate) fn as_erased_ptr(&self) -> *mut AsyncHTTP<'static> {
         std::ptr::from_ref::<Self>(self)
             .cast_mut()
             .cast::<AsyncHTTP<'static>>()
@@ -560,13 +553,13 @@ impl<'a> AsyncHTTP<'a> {
 // Note: `bun_threading::Channel` requires `T: Copy`, which
 // `HTTPClientResult` is not. `send_sync` is a one-shot blocking handoff, so a
 // Guarded<Option<T>>+Condvar is the exact semantics needed.
-pub struct SingleHTTPChannel {
+pub(crate) struct SingleHTTPChannel {
     slot: bun_threading::Guarded<Option<HTTPClientResult<'static>>>,
     cv: bun_threading::Condvar,
 }
 
 impl SingleHTTPChannel {
-    pub fn init() -> SingleHTTPChannel {
+    pub(crate) fn init() -> SingleHTTPChannel {
         SingleHTTPChannel {
             slot: bun_threading::Guarded::new(None),
             cv: bun_threading::Condvar::new(),
@@ -608,7 +601,9 @@ fn send_sync_callback(
     if let Some(mut real) = async_http.real {
         // SAFETY: `real` outlives the HTTP-thread copy by construction.
         let real = unsafe { real.as_mut() };
-        real.response = async_http.response;
+        // `response` aliases the metadata `send_sync` hands to the caller; a
+        // stored copy would dangle once that metadata is dropped.
+        real.response = None;
         real.err = async_http.err;
         real.elapsed = async_http.elapsed;
         real.response_buffer = async_http.response_buffer;
@@ -623,7 +618,7 @@ fn send_sync_callback(
 }
 
 impl<'a> AsyncHTTP<'a> {
-    pub fn send_sync(&mut self) -> crate::Result<picohttp::Response<'static>> {
+    pub fn send_sync(&mut self) -> crate::Result<crate::HTTPResponseMetadata> {
         crate::http_thread::init(&Default::default());
 
         // Note: `Box::leak` is forbidden (PORTING.md §Forbidden);
@@ -653,11 +648,7 @@ impl<'a> AsyncHTTP<'a> {
             // a network error rather than panicking on network-driven state.
             return Err(crate::Error::ConnectionClosed);
         };
-        // The returned `Response` borrows `metadata.owned_buf` (status text +
-        // header slices); suppress Drop so the borrowed buffer outlives the
-        // call. `send_sync` is one-shot CLI.
-        let metadata = core::mem::ManuallyDrop::new(metadata);
-        Ok(metadata.response)
+        Ok(metadata)
     }
 
     // ──────────────────────────────────────────────────────────────────────
@@ -832,7 +823,7 @@ impl<'a> AsyncHTTP<'a> {
 /// # Safety
 /// `task` must point to the `task` field of a live `AsyncHTTP` scheduled via
 /// `schedule()`.
-pub unsafe fn start_async_http(task: *mut Task) {
+pub(crate) unsafe fn start_async_http(task: *mut Task) {
     // SAFETY: caller upholds the invariant above — `from_task_ptr` recovers the
     // live heap `AsyncHTTP` parent via container_of; the trampoline is its sole
     // borrower (HTTP-thread-only). Same single-step shape as every other
@@ -842,7 +833,7 @@ pub unsafe fn start_async_http(task: *mut Task) {
 }
 
 impl<'a> AsyncHTTP<'a> {
-    pub fn on_start(&mut self) {
+    pub(crate) fn on_start(&mut self) {
         let _ = ACTIVE_REQUESTS_COUNT.fetch_add(1, Ordering::Relaxed);
         self.err = None;
         self.client.result_callback = HTTPClientResultCallback::new::<AsyncHTTP<'static>>(

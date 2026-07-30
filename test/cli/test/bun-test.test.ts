@@ -1325,7 +1325,7 @@ describe("bun test", () => {
   });
 
   test("--tsconfig-override works", () => {
-    const dir = tempDirWithFiles("test-tsconfig-override", {
+    using dir = tempDir("test-tsconfig-override", {
       "math.test.ts": `
         import { describe, test, expect } from "bun:test";
         import { add } from "@utils/math";
@@ -1391,7 +1391,7 @@ describe("bun test", () => {
   });
 
   test("--tsconfig-override works with monorepo spec tsconfig", () => {
-    const dir = tempDirWithFiles("test-tsconfig-monorepo", {
+    using dir = tempDir("test-tsconfig-monorepo", {
       "packages/app/src/index.ts": `
         export function getMessage() {
           return "Hello from app";

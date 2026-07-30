@@ -44,7 +44,7 @@ pub(crate) struct TerminalHyperlink<'a> {
 }
 
 impl<'a> TerminalHyperlink<'a> {
-    pub(crate) fn new(link: &'a [u8], text: &'a [u8], enabled: bool) -> TerminalHyperlink<'a> {
+    fn new(link: &'a [u8], text: &'a [u8], enabled: bool) -> TerminalHyperlink<'a> {
         TerminalHyperlink {
             link,
             text,
@@ -110,7 +110,7 @@ struct PackageUpdate {
     workspace_path: Box<[u8]>,
 }
 
-pub(crate) struct CatalogUpdateRequest {
+struct CatalogUpdateRequest {
     // Owned copies keep the type lifetime-free (a few small allocations in
     // an interactive UI).
     package_name: Box<[u8]>,
@@ -2243,7 +2243,7 @@ fn leak_dup(bytes: &[u8]) -> &'static [u8] {
 // No `manager` parameter: a local `Bump` is used instead
 // (`E::Object::put` ignores its allocator arg), which keeps
 // `update_catalog_definitions` borrowck-clean.
-pub(crate) fn edit_catalog_definitions(
+fn edit_catalog_definitions(
     updates: &mut [CatalogUpdateRequest],
     current_package_json: &mut Expr,
 ) -> crate::Result<()> {

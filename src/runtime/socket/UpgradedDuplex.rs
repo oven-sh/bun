@@ -70,9 +70,9 @@ bun_event_loop::impl_timer_owner!(UpgradedDuplex; from_timer_ptr => event_loop_t
 
 #[derive(Default)]
 pub struct CertError {
-    pub error_no: i32,
+    pub(crate) error_no: i32,
     // Owned NUL-terminated copies. `None` represents the default `""`.
-    pub code: Option<Box<CStr>>,
+    pub(crate) code: Option<Box<CStr>>,
     pub reason: Option<Box<CStr>>,
 }
 // `Box<CStr>` drops automatically — no explicit Drop needed.
@@ -93,19 +93,19 @@ pub(crate) struct ServerVerify {
 pub struct Handlers {
     // BACKREF per LIFETIMES.tsv — container holding self as `.upgrade`.
     pub ctx: *mut (),
-    pub on_open: fn(*mut ()),
-    pub on_handshake: fn(*mut (), bool, us_bun_verify_error_t),
-    pub on_data: fn(*mut (), &[u8]),
+    pub(crate) on_open: fn(*mut ()),
+    pub(crate) on_handshake: fn(*mut (), bool, us_bun_verify_error_t),
+    pub(crate) on_data: fn(*mut (), &[u8]),
     pub on_close: fn(*mut ()),
-    pub on_end: fn(*mut ()),
-    pub on_writable: fn(*mut ()),
-    pub on_error: fn(*mut (), JSValue),
-    pub on_timeout: fn(*mut ()),
+    pub(crate) on_end: fn(*mut ()),
+    pub(crate) on_writable: fn(*mut ()),
+    pub(crate) on_error: fn(*mut (), JSValue),
+    pub(crate) on_timeout: fn(*mut ()),
     /// A new resumable TLS session (serialized SSL_SESSION) - node's
     /// `'session'` event on the wrapping TLSSocket.
-    pub on_session: fn(*mut (), &[u8]),
+    pub(crate) on_session: fn(*mut (), &[u8]),
     /// An NSS key-log line - node's `'keylog'` event.
-    pub on_keylog: fn(*mut (), &[u8]),
+    pub(crate) on_keylog: fn(*mut (), &[u8]),
 }
 
 use crate::jsc_hooks::timer_all_mut as timer_all;
@@ -573,7 +573,7 @@ impl UpgradedDuplex {
         !self.is_closed()
     }
 
-    pub(crate) fn ssl(&self) -> Option<*mut bun_boringssl_sys::SSL> {
+    fn ssl(&self) -> Option<*mut bun_boringssl_sys::SSL> {
         if let Some(wrapper) = &self.wrapper {
             return wrapper.ssl.map(|p| p.as_ptr());
         }
@@ -599,11 +599,11 @@ impl UpgradedDuplex {
         }
     }
 
-    pub(crate) fn reset_timeout(&mut self) {
+    fn reset_timeout(&mut self) {
         self.set_timeout_in_milliseconds(self.current_timeout);
     }
 
-    pub(crate) fn set_timeout_in_milliseconds(&mut self, ms: c_uint) {
+    fn set_timeout_in_milliseconds(&mut self, ms: c_uint) {
         if self.event_loop_timer.state == EventLoopTimerState::ACTIVE {
             timer_all().remove(&raw mut self.event_loop_timer);
         }
@@ -793,7 +793,7 @@ fn on_close_js(_global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue>
 // ──────────────────────────────────────────────────────────────────────────
 
 #[unsafe(no_mangle)]
-pub(crate) extern "C" fn UpgradedDuplex__ssl(this: *const c_void) -> *mut bun_boringssl_sys::SSL {
+extern "C" fn UpgradedDuplex__ssl(this: *const c_void) -> *mut bun_boringssl_sys::SSL {
     // SAFETY: `this` is a live `*const UpgradedDuplex` from the uws_sys opaque handle.
     unsafe {
         (*this.cast::<UpgradedDuplex>())

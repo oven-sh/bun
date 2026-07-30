@@ -2353,7 +2353,7 @@ JSC::EncodedJSValue JSGlobalObject__createOutOfMemoryError(JSC::JSGlobalObject* 
     return JSValue::encode(exception);
 }
 
-JSC::EncodedJSValue SystemError__toErrorInstance(const SystemError* arg0, JSC::JSGlobalObject* globalObject)
+static JSC::EncodedJSValue systemErrorToErrorInstance(const SystemError* arg0, JSC::JSGlobalObject* globalObject, JSC::ErrorType errorType)
 {
     SystemError err = *arg0;
 
@@ -2367,7 +2367,7 @@ JSC::EncodedJSValue SystemError__toErrorInstance(const SystemError* arg0, JSC::J
 
     auto& names = WebCore::builtinNames(vm);
 
-    JSC::JSObject* result = createError(globalObject, ErrorType::Error, message);
+    JSC::JSObject* result = createError(globalObject, errorType, message);
 
     auto clientData = WebCore::clientData(vm);
 
@@ -2424,6 +2424,16 @@ JSC::EncodedJSValue SystemError__toErrorInstance(const SystemError* arg0, JSC::J
     result->putDirect(vm, names.errnoPublicName(), jsNumber(err.errno_), JSC::PropertyAttribute::DontDelete | 0);
 
     return JSC::JSValue::encode(result);
+}
+
+JSC::EncodedJSValue SystemError__toErrorInstance(const SystemError* arg0, JSC::JSGlobalObject* globalObject)
+{
+    return systemErrorToErrorInstance(arg0, globalObject, ErrorType::Error);
+}
+
+JSC::EncodedJSValue SystemError__toTypeErrorInstance(const SystemError* arg0, JSC::JSGlobalObject* globalObject)
+{
+    return systemErrorToErrorInstance(arg0, globalObject, ErrorType::TypeError);
 }
 
 JSC::EncodedJSValue SystemError__toErrorInstanceWithInfoObject(const SystemError* arg0, JSC::JSGlobalObject* globalObject)
@@ -5424,12 +5434,11 @@ extern "C" [[ZIG_EXPORT(nothrow)]] bool JSC__isBigIntInUInt64Range(JSC::EncodedJ
         return false;
 
     JSC::JSBigInt* bigInt = jsValue.asHeapBigInt();
-    auto result = bigInt->compare(bigInt, min);
-    if (result == JSBigInt::ComparisonResult::GreaterThan || result == JSBigInt::ComparisonResult::Equal) {
-        return true;
-    }
-    result = bigInt->compare(bigInt, max);
-    return result == JSBigInt::ComparisonResult::LessThan || result == JSBigInt::ComparisonResult::Equal;
+    auto low = bigInt->compare(bigInt, min);
+    if (low != JSBigInt::ComparisonResult::GreaterThan && low != JSBigInt::ComparisonResult::Equal)
+        return false;
+    auto high = bigInt->compare(bigInt, max);
+    return high == JSBigInt::ComparisonResult::LessThan || high == JSBigInt::ComparisonResult::Equal;
 }
 
 extern "C" [[ZIG_EXPORT(nothrow)]] bool JSC__isBigIntInInt64Range(JSC::EncodedJSValue value, int64_t max, int64_t min)
@@ -5439,12 +5448,11 @@ extern "C" [[ZIG_EXPORT(nothrow)]] bool JSC__isBigIntInInt64Range(JSC::EncodedJS
         return false;
 
     JSC::JSBigInt* bigInt = jsValue.asHeapBigInt();
-    auto result = bigInt->compare(bigInt, min);
-    if (result == JSBigInt::ComparisonResult::GreaterThan || result == JSBigInt::ComparisonResult::Equal) {
-        return true;
-    }
-    result = bigInt->compare(bigInt, max);
-    return result == JSBigInt::ComparisonResult::LessThan || result == JSBigInt::ComparisonResult::Equal;
+    auto low = bigInt->compare(bigInt, min);
+    if (low != JSBigInt::ComparisonResult::GreaterThan && low != JSBigInt::ComparisonResult::Equal)
+        return false;
+    auto high = bigInt->compare(bigInt, max);
+    return high == JSBigInt::ComparisonResult::LessThan || high == JSBigInt::ComparisonResult::Equal;
 }
 
 [[ZIG_EXPORT(check_slow)]] void JSC__JSValue__forEachPropertyOrdered(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* globalObject, void* arg2, void (*iter)([[ZIG_NONNULL]] JSC::JSGlobalObject* arg0, void* ctx, [[ZIG_NONNULL]] ZigString* arg2, JSC::EncodedJSValue JSValue3, bool isSymbol, bool isPrivateSymbol))
@@ -6052,7 +6060,7 @@ CPP_DECL void JSC__VM__setControlFlowProfiler(JSC::VM* vm, bool isEnabled)
 
 CPP_DECL void JSC__VM__performOpportunisticallyScheduledTasks(JSC::VM* vm, double until)
 {
-    vm->performOpportunisticallyScheduledTasks(MonotonicTime::now() + Seconds(until), {});
+    vm->performOpportunisticallyScheduledTasks(ApproximateTime::now() + Seconds(until), {});
 }
 
 extern "C" EncodedJSValue JSC__createError(JSC::JSGlobalObject* globalObject, const BunString* str)

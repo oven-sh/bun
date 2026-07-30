@@ -116,7 +116,7 @@ const TJPARAM_SAVEMARKERS: c_int = 25;
 const TJPF_RGBA: c_int = 7;
 const TJSAMP_420: c_int = 2;
 
-pub fn decode(
+pub(crate) fn decode(
     bytes: &[u8],
     max_pixels: u64,
     hint: codecs::DecodeHint,

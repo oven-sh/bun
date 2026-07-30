@@ -317,18 +317,18 @@ pub enum Kind {
 
 impl Kind {
     #[inline]
-    pub fn is_private(self) -> bool {
+    pub(crate) fn is_private(self) -> bool {
         (self as u8) >= (Kind::PrivateField as u8)
             && (self as u8) <= (Kind::PrivateStaticGetSetPair as u8)
     }
 
     #[inline]
-    pub fn is_hoisted(self) -> bool {
+    pub(crate) fn is_hoisted(self) -> bool {
         matches!(self, Kind::Hoisted | Kind::HoistedFunction)
     }
 
     #[inline]
-    pub fn is_hoisted_or_function(self) -> bool {
+    pub(crate) fn is_hoisted_or_function(self) -> bool {
         matches!(
             self,
             Kind::Hoisted | Kind::HoistedFunction | Kind::GeneratorOrAsyncFunction
@@ -354,7 +354,7 @@ pub type List<'a> = bun_alloc::ArenaVec<'a, Symbol>;
 pub type NestedList = Vec<Vec<Symbol>>;
 
 impl Symbol {
-    pub fn merge_contents_with(&mut self, old: &mut Symbol) {
+    pub(crate) fn merge_contents_with(&mut self, old: &mut Symbol) {
         self.use_count_estimate += old.use_count_estimate;
         if old.must_not_be_renamed() {
             self.original_name = old.original_name;
@@ -379,6 +379,7 @@ pub struct Map {
 
 impl Map {
     // Debug-only dump of the symbol table.
+    #[cfg(debug_assertions)]
     pub fn dump(&self) {
         for (i, symbols) in self.symbols_for_source.iter().enumerate() {
             bun_core::prettyln!("\n\n-- Source ID: {} ({} symbols) --\n", i, symbols.len(),);
@@ -423,7 +424,7 @@ impl Map {
         }
 
         impl Iterator<'_> {
-            pub(crate) fn next(&mut self, ref_: Ref) {
+            fn next(&mut self, ref_: Ref) {
                 let symbol = self.map.get_const(ref_).unwrap();
                 // Thread-confinement invariant: a top-level symbol's
                 // declarations are all assigned to one chunk, so any prior
@@ -580,14 +581,6 @@ impl Map {
         self.symbols_for_source.get_mut(src)?.get_mut(idx)
     }
 
-    pub fn get_with_link_const(&self, ref_: Ref) -> Option<&Symbol> {
-        let symbol = self.get_const(ref_)?;
-        if symbol.has_link() {
-            return Some(self.get_const(symbol.link.get()).unwrap_or(symbol));
-        }
-        Some(symbol)
-    }
-
     pub fn follow_all(&mut self) {
         // The returned `Ctx` is RAII and ends the span on drop.
         let _trace = bun_perf::trace(bun_perf::PerfEvent::SymbolsFollowAll);
@@ -687,11 +680,11 @@ impl Symbol {
         kind.is_function()
     }
     #[inline]
-    pub fn is_kind_hoisted(kind: Kind) -> bool {
+    pub(crate) fn is_kind_hoisted(kind: Kind) -> bool {
         kind.is_hoisted()
     }
     #[inline]
-    pub fn is_kind_hoisted_or_function(kind: Kind) -> bool {
+    pub(crate) fn is_kind_hoisted_or_function(kind: Kind) -> bool {
         kind.is_hoisted_or_function()
     }
     #[inline]

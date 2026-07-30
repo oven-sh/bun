@@ -16,17 +16,20 @@ function makeRawHttpServer() {
         // First line is the request line, rest are headers.
         let customCount = 0;
         const headerNames: string[] = [];
+        const headers: Record<string, string> = {};
         for (let i = 1; i < lines.length; i++) {
           const lower = lines[i].toLowerCase();
           const colonIdx = lines[i].indexOf(":");
           if (colonIdx > 0) {
-            headerNames.push(lines[i].substring(0, colonIdx).toLowerCase());
+            const name = lines[i].substring(0, colonIdx).toLowerCase();
+            headerNames.push(name);
+            headers[name] = lines[i].substring(colonIdx + 1).trim();
           }
           if (lower.startsWith("x-h-")) {
             customCount++;
           }
         }
-        const body = JSON.stringify({ customCount, headerNames });
+        const body = JSON.stringify({ customCount, headerNames, headers });
         socket.write(
           `HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: ${body.length}\r\nConnection: close\r\n\r\n${body}`,
         );
@@ -82,7 +85,7 @@ test("user-supplied Host/User-Agent/Accept are sent alongside >250 other headers
   // Headers object, so the special headers land past the inline-scratch
   // boundary and exercise the overflow path.
   const headers = new Headers();
-  for (let i = 0; i < 250; i++) {
+  for (let i = 0; i < 251; i++) {
     headers.set(`a-${String(i).padStart(4, "0")}`, `v${i}`);
   }
   headers.set("Host", "custom-host.example.com");
@@ -92,9 +95,15 @@ test("user-supplied Host/User-Agent/Accept are sent alongside >250 other headers
   const res = await fetch(`http://127.0.0.1:${port}/test`, { headers });
   expect(res.status).toBe(200);
 
-  const { headerNames } = await res.json();
+  const { headers: received } = await res.json();
 
-  expect(headerNames).toContain("host");
-  expect(headerNames).toContain("user-agent");
-  expect(headerNames).toContain("accept");
+  expect({
+    host: received.host,
+    "user-agent": received["user-agent"],
+    accept: received.accept,
+  }).toEqual({
+    host: "custom-host.example.com",
+    "user-agent": "custom-agent",
+    accept: "text/html",
+  });
 });

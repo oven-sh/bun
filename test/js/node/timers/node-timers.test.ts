@@ -247,15 +247,9 @@ it("should defer microtasks when an exception is thrown in an immediate", async 
 });
 
 test("chained thread-pool callbacks yield to due timers", async () => {
-  // Node/libuv delivers thread-pool completions once per poll and runs the
-  // timers phase between polls, so a chain of callbacks that each submit the
-  // next job interleaves with an overdue setInterval. Bun used to keep
-  // re-draining thread-pool completions inside one EventLoop::tick(), so the
-  // chain ran to completion before any due timer fired.
-  //
-  // crypto.pbkdf2 is used (not fs.read) because its completion goes through
-  // enqueue_task_concurrent on every platform; fs.read on Windows goes through
-  // libuv's own callback and never reaches the re-drain this test covers.
+  // crypto.pbkdf2 completes via enqueue_task_concurrent on every platform
+  // (fs.read on Windows goes through libuv's callback and would not exercise
+  // the mid-tick re-drain path).
   const script = `
     const crypto = require('crypto');
     let order = '';
@@ -273,9 +267,7 @@ test("chained thread-pool callbacks yield to due timers", async () => {
           go(i + 1);
         });
         // Spin so the 1ms interval is overdue and the thread-pool job has
-        // landed before the event loop decides whether to re-drain mid-tick.
-        // Wall-clock, not wait-for-condition: it constructs the state the
-        // yield check must observe.
+        // landed before the mid-tick re-drain decision.
         const s = Date.now(); while (Date.now() - s < 3);
       })(0);
     }, 5);
@@ -288,17 +280,12 @@ test("chained thread-pool callbacks yield to due timers", async () => {
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(stderr).toBe("");
   const out = JSON.parse(stdout.trim());
-  // Node and fixed Bun yield between every job (max consecutive R's = 1).
-  // Unfixed Bun runs the whole chain in one tick (max = 20); under CPU load
-  // the chain breaks up but the longest burst stays well above 3.
+  // Due timers must break the chain every iteration; allow small jitter.
   expect({ maxRunAtMost3: out.maxRun <= 3, order: out.order }).toEqual({ maxRunAtMost3: true, order: out.order });
   expect(exitCode).toBe(0);
 });
 
 test("chained thread-pool callbacks yield to pending setImmediate", async () => {
-  // Same mid-tick re-drain: a setImmediate queued from the first callback
-  // must run before the rest of the chain, matching Node's poll/check
-  // alternation.
   const script = `
     const crypto = require('crypto');
     let order = '';
@@ -322,8 +309,6 @@ test("chained thread-pool callbacks yield to pending setImmediate", async () => 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(stderr).toBe("");
   const out = JSON.parse(stdout.trim());
-  // Node: "RIRRRR...". Bun before the fix: "RRRR...R" (immediate dropped by
-  // process.exit) or "RRRR...RI".
   expect(out.order.slice(0, 2)).toBe("RI");
   expect(exitCode).toBe(0);
 });

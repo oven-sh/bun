@@ -457,20 +457,22 @@ impl EventLoop {
         let _ = self.tick_concurrent_with_count();
     }
 
-    /// Mid-tick re-drain, skipped when a `setImmediate` is pending or a JS
-    /// timer is due so `tick()` returns and `auto_tick*` can run them (Node
-    /// interleaves timers/check between thread-pool completion batches). The
-    /// `concurrent_tasks` guard keeps the clock-read probe off the path when
-    /// nothing arrived; `immediate_tasks` is same-thread so it is checked
-    /// unconditionally (no TOCTOU against a late cross-thread push).
+    /// Mid-tick re-drain: the ref-count/signal/GC maintenance always runs;
+    /// only the `concurrent_tasks` pop is skipped when a `setImmediate` is
+    /// pending or a JS timer is due, so `tick()` returns and `auto_tick*`
+    /// can run them (Node interleaves timers/check between thread-pool
+    /// completion batches). `immediate_tasks` is same-thread and checked
+    /// first so a late cross-thread push cannot slip ahead of it; the
+    /// `concurrent_tasks` guard keeps the clock read off the path when
+    /// nothing arrived.
     fn tick_concurrent_unless_due(&mut self) {
-        if !self.immediate_tasks.is_empty() {
+        self.tick_concurrent_maintenance();
+        if !self.immediate_tasks.is_empty()
+            || (!self.concurrent_tasks.is_empty() && __bun_has_due_timer())
+        {
             return;
         }
-        if !self.concurrent_tasks.is_empty() && __bun_has_due_timer() {
-            return;
-        }
-        self.tick_concurrent();
+        let _ = self.tick_concurrent_pop_batch();
     }
 
     /// Check whether refConcurrently has been called but the change has not yet been applied to the
@@ -492,7 +494,7 @@ impl EventLoop {
         }
     }
 
-    pub fn tick_concurrent_with_count(&mut self) -> usize {
+    fn tick_concurrent_maintenance(&mut self) {
         self.update_counts();
 
         #[cfg(unix)]
@@ -507,7 +509,14 @@ impl EventLoop {
         }
 
         self.run_imminent_gc_timer();
+    }
 
+    pub fn tick_concurrent_with_count(&mut self) -> usize {
+        self.tick_concurrent_maintenance();
+        self.tick_concurrent_pop_batch()
+    }
+
+    fn tick_concurrent_pop_batch(&mut self) -> usize {
         let concurrent = self.concurrent_tasks.pop_batch();
         let count = concurrent.count;
         if count == 0 {

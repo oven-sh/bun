@@ -127,6 +127,11 @@ public:
     void* bunVM;
     Bun::JSCTaskScheduler deferredWorkTimer;
 
+    // A CyclicModuleRecord outside the calling global's JSModuleLoader map can
+    // reach status Evaluating on this VM (a ShadowRealm's own loader, a node:vm
+    // SourceTextModule), so $esmLoadSync must skip its microtask checkpoint.
+    bool hasModuleRecordsOutsideLoaderMap { false };
+
     // Backing storage for Bun::IsolatedModuleCache (see IsolatedModuleCache.h).
     // All access should go through that class. Stored as the JSC base type to
     // avoid pulling ZigSourceProvider.h into this header; the cache class

@@ -1,6 +1,7 @@
 use bun_collections::ByteVecExt;
 use bun_ptr::BackRef;
 use bun_sys::Error as SysError;
+use bun_sys_jsc::SystemErrorJsc;
 
 use crate::webcore::blob::SizeType as BlobSizeType;
 use crate::webcore::fetch::fetch_tasklet::FetchTasklet;
@@ -200,11 +201,32 @@ impl FetchRequestBodySink {
             return bun_sys::Result::Ok(());
         }
         self.ended = true;
-        // Do NOT call `write_end_request` here: the `assign_to_stream` result
-        // (on_resolve/on_reject or the synchronous Fulfilled/Rejected/undefined
-        // branches in `start_request_stream`) is the single balancing release of
-        // the `+1` taken in `start_request_stream`. `task` stays populated so
-        // `finalize()` can release it if that handler never runs.
+        if matches!(self.source, SourceHandle::ByteStream(_)) {
+            // Native ByteStream source: no `assign_to_stream` pump promise
+            // exists to drive `write_end_request`, so mirror
+            // `on_resolve/on_reject_request_stream` here — clear `task` first,
+            // then release the `+1` via `write_end_request` (covers both
+            // success and upstream-error termination).
+            self.source.close(None);
+            if let Some(task) = self.task.take() {
+                let task_ptr = task.as_ptr();
+                // SAFETY: the `+1` taken in `start_request_stream` keeps the
+                // tasklet live while `task` was `Some`.
+                let global = unsafe { (*task_ptr).global_this };
+                let err_js = err.map(|e| e.to_system_error().to_error_instance(&global));
+                // SAFETY: `task_ptr` live (see above); `write_end_request` is
+                // the balancing release and may free `*self` via `clear_sink`,
+                // so do not touch `self` afterwards.
+                unsafe { (*task_ptr).write_end_request(err_js) };
+            }
+            return bun_sys::Result::Ok(());
+        }
+        // JS pump path: do NOT call `write_end_request` here — the
+        // `assign_to_stream` result (on_resolve/on_reject or the synchronous
+        // Fulfilled/Rejected/undefined branches in `start_request_stream`) is
+        // the single balancing release of the `+1` taken in
+        // `start_request_stream`. `task` stays populated so `finalize()` can
+        // release it if that handler never runs.
         self.source.close(err);
         bun_sys::Result::Ok(())
     }

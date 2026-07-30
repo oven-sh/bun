@@ -2392,10 +2392,11 @@ impl FetchTasklet {
 
     /// Cancel an in-flight request-body sink: stores the abort reason, aborts
     /// the HTTP task, marks the sink ended/done, and fires the controller's
-    /// onClose (which cancels the upstream ReadableStream reader). The single
-    /// balancing `write_end_request` is left to the `assign_to_stream` pump
-    /// promise settlement (on_resolve/on_reject). No-op when no sink or already
-    /// ended.
+    /// onClose (which cancels the upstream ReadableStream reader). On the JS
+    /// pump path the single balancing `write_end_request` is left to the
+    /// `assign_to_stream` pump-promise settlement (on_resolve/on_reject); on
+    /// the native ByteStream path there is no pump promise, so balance it
+    /// here. No-op when no sink or already ended.
     pub(crate) fn cancel_request_body_sink(&mut self, reason: JSValue) {
         let Some(sink) = self.sink_mut() else {
             return;
@@ -2405,6 +2406,7 @@ impl FetchTasklet {
         }
         sink.ended = true;
         sink.done = true;
+        let is_native = matches!(sink.source, SourceHandle::ByteStream(_));
         if !reason.is_empty_or_undefined_or_null() && !self.abort_reason.has() {
             let global_this = self.global_this;
             self.abort_reason.set(&global_this, reason);
@@ -2413,6 +2415,15 @@ impl FetchTasklet {
         // Re-borrow after the `&mut self` calls above.
         if let Some(sink) = self.sink_mut() {
             sink.source.close(None);
+            if is_native {
+                sink.task = None;
+            }
+        }
+        if is_native {
+            // No pump promise exists to balance the `+1` from
+            // `start_request_stream`; `aborted` is set above so
+            // `write_end_request(Some(_))` is just the balancing deref.
+            self.write_end_request(Some(reason));
         }
     }
 

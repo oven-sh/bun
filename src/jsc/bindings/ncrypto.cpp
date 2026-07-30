@@ -39,6 +39,16 @@ using BignumGenCallbackPointer = DeleteFnPtr<BN_GENCB, BN_GENCB_free>;
 using NetscapeSPKIPointer = DeleteFnPtr<NETSCAPE_SPKI, NETSCAPE_SPKI_free>;
 
 static constexpr int kX509NameFlagsRFC2253WithinUtf8JSON = XN_FLAG_RFC2253 & ~ASN1_STRFLGS_ESC_MSB & ~ASN1_STRFLGS_ESC_CTRL;
+
+// BoringSSL's PEM reader rejects a leading UTF-8 BOM; OpenSSL (Node.js) does not.
+static inline Buffer<const unsigned char> SkipPEMUTF8BOM(
+    const Buffer<const unsigned char>& buffer)
+{
+    if (buffer.len >= 3 && buffer.data[0] == 0xef && buffer.data[1] == 0xbb && buffer.data[2] == 0xbf) {
+        return { buffer.data + 3, buffer.len - 3 };
+    }
+    return buffer;
+}
 } // namespace
 
 // ============================================================================
@@ -1417,6 +1427,7 @@ Result<X509Pointer, int> X509Pointer::Parse(
     Buffer<const unsigned char> buffer)
 {
     ClearErrorOnReturn clearErrorOnReturn;
+    buffer = SkipPEMUTF8BOM(buffer);
     BIOPointer bio(BIO_new_mem_buf(buffer.data, buffer.len));
     if (!bio) return Result<X509Pointer, int>(ERR_get_error());
 
@@ -2452,7 +2463,7 @@ bool EVPKeyPointer::IsRSAPrivateKey(const Buffer<const unsigned char>& buffer)
 EVPKeyPointer::ParseKeyResult EVPKeyPointer::TryParsePublicKeyPEM(
     const Buffer<const unsigned char>& buffer)
 {
-    auto bp = BIOPointer::New(buffer.data, buffer.len);
+    auto bp = BIOPointer::New(SkipPEMUTF8BOM(buffer));
     if (!bp) return ParseKeyResult(PKParseError::FAILED);
 
     // Try parsing as SubjectPublicKeyInfo (SPKI) first.
@@ -2557,7 +2568,8 @@ EVPKeyPointer::ParseKeyResult EVPKeyPointer::TryParsePrivateKey(
         return ParseKeyResult(WTF::move(pkey));
     };
 
-    auto bio = BIOPointer::New(buffer);
+    auto bio = BIOPointer::New(
+        config.format == PKFormatType::PEM ? SkipPEMUTF8BOM(buffer) : buffer);
     if (!bio) return ParseKeyResult(PKParseError::FAILED);
 
     auto passphrase = GetPassphrase(config);

@@ -479,14 +479,9 @@ static void fromErrorInstance(ZigException& except, JSC::JSGlobalObject* global,
     auto& vm = JSC::getVM(global);
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
 
-    // Prefer the Error's own stack over the JSC::Exception wrapper stack.
-    // Node prints `err.stack`, which reflects where the Error was constructed
-    // (or, for a structuredClone'd Error, the original stack string carried
-    // across the clone). The wrapper stack points at the last `throw` site,
-    // which for a rethrown or deserialized Error is just Bun's internals
-    // (e.g. node:events emitError for an unhandled worker 'error' event).
-    // The wrapper stack is kept as a last resort below for Errors that have
-    // neither captured frames nor a `.stack` string.
+    // Node prints `err.stack`: prefer the Error's own frames / `.stack` string
+    // over the JSC::Exception wrapper's throw-site stack (used only as a last
+    // resort below).
     bool getFromSourceURL = false;
     if (err->stackTrace() != nullptr && err->stackTrace()->size() > 0) {
         populateStackTrace(vm, *err->stackTrace(), except.stack, global, flags, FinalizerSafety::MustNotTriggerGC);
@@ -641,9 +636,7 @@ static void fromErrorInstance(ZigException& except, JSC::JSGlobalObject* global,
     }
 
     if (except.stack.frames_len == 0 && stackTrace != nullptr && stackTrace->size() > 0) {
-        // The Error had no captured frames and `.stack` produced none either;
-        // fall back to the JSC::Exception wrapper's throw-site stack so we
-        // still show something.
+        // Last resort: the wrapper's throw-site stack.
         populateStackTrace(vm, *stackTrace, except.stack, global, flags);
         getFromSourceURL = false;
     }
@@ -890,10 +883,8 @@ extern "C" void ZigException__collectSourceLines(JSC::EncodedJSValue jsException
         auto* jscException = uncheckedDowncast<JSC::Exception>(value);
         JSValue unwrapped = jscException->value();
 
-        // Mirror the stack-source selection in `fromErrorInstance`:
-        // OnlySourceLines indexes into the same frame vector that
-        // OnlyPosition recorded via ZigStackFrame::jsc_stack_frame_index,
-        // so both passes must choose the same source.
+        // Mirrors `fromErrorInstance`: OnlySourceLines indexes frames via
+        // jsc_stack_frame_index, so both passes must pick the same vector.
         if (auto* error = dynamicDowncast<JSC::ErrorInstance>(unwrapped);
             error && error->stackTrace() != nullptr && error->stackTrace()->size() > 0) {
             populateStackTrace(global->vm(), *error->stackTrace(), exception->stack, global, PopulateStackTraceFlags::OnlySourceLines, FinalizerSafety::MustNotTriggerGC);

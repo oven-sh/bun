@@ -49,22 +49,35 @@ void StrongRootBlock::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 
 DEFINE_VISIT_CHILDREN(StrongRootBlock);
 
-// Returns a block with at least one free slot. Walks the active list from the
-// head, reuses the parked spare if nothing has room, and allocates only as a
-// last resort. JSC does not relocate cells, so the returned pointer is stable
-// while the block is on the active list.
+// Returns a block with at least one free slot. Tries the allocation cursor
+// first, walks the active list only when that block is full, reuses the parked
+// spare if nothing has room, and allocates only as a last resort. JSC does not
+// relocate cells, so the returned pointer is stable while the block is on the
+// active list.
 //
 // The head/free pointers on JSVMClientData are raw (no WriteBarrier): they are
 // rooted by a SimpleMarkingConstraint (BunClientData.cpp) that runs on every
 // return to Fixpoint, so a freshly-prepended block is always appended before
 // marking converges.
-StrongRootBlock* StrongRootBlock::acquire(JSC::VM& vm)
+StrongRootBlock* StrongRootBlock::acquire(JSC::VM& vm, unsigned& outFreeSlot)
 {
     auto* clientData = WebCore::clientData(vm);
 
+    if (auto* cursor = clientData->m_strongRootBlockCursor) {
+        unsigned slot = cursor->findFreeSlot();
+        if (slot < capacity) {
+            outFreeSlot = slot;
+            return cursor;
+        }
+    }
+
     for (auto* b = clientData->m_strongRootBlockHead; b; b = b->next()) {
-        if (b->findFreeSlot() < capacity)
+        unsigned slot = b->findFreeSlot();
+        if (slot < capacity) {
+            clientData->m_strongRootBlockCursor = b;
+            outFreeSlot = slot;
             return b;
+        }
     }
 
     StrongRootBlock* block = clientData->m_strongRootBlockFree;
@@ -78,6 +91,8 @@ StrongRootBlock* StrongRootBlock::acquire(JSC::VM& vm)
 
     block->setNext(vm, clientData->m_strongRootBlockHead);
     clientData->m_strongRootBlockHead = block;
+    clientData->m_strongRootBlockCursor = block;
+    outFreeSlot = 0;
     return block;
 }
 
@@ -86,6 +101,8 @@ StrongRootBlock* StrongRootBlock::acquire(JSC::VM& vm)
 void StrongRootBlock::release(JSC::VM& vm, StrongRootBlock* block)
 {
     auto* clientData = WebCore::clientData(vm);
+    if (clientData->m_strongRootBlockCursor == block)
+        clientData->m_strongRootBlockCursor = nullptr;
     StrongRootBlock* head = clientData->m_strongRootBlockHead;
     if (head == block) {
         clientData->m_strongRootBlockHead = block->next();

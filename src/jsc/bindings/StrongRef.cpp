@@ -39,8 +39,8 @@ static ALWAYS_INLINE unsigned decodeStrongRefIndex(StrongRefImpl* ref)
 
 extern "C" StrongRefImpl* Bun__StrongRef__new(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue encodedValue)
 {
-    auto* block = StrongRootBlock::acquire(JSC::getVM(globalObject));
-    unsigned index = block->findFreeSlot();
+    unsigned index;
+    auto* block = StrongRootBlock::acquire(JSC::getVM(globalObject), index);
     block->set(index, JSC::JSValue::decode(encodedValue));
     return encodeStrongRef(block, index);
 }

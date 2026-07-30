@@ -138,6 +138,9 @@ public:
     // node:vm / `bun test --isolate` globals share one list).
     Bun::StrongRootBlock* m_strongRootBlockHead { nullptr };
     Bun::StrongRootBlock* m_strongRootBlockFree { nullptr };
+    // Last block acquire() found room in; always on the active list (cleared by
+    // release() if unlinked), so it is already rooted via m_strongRootBlockHead.
+    Bun::StrongRootBlock* m_strongRootBlockCursor { nullptr };
     JSC::Structure* m_strongRootBlockStructure { nullptr };
 
     // Backing storage for Bun::IsolatedModuleCache (see IsolatedModuleCache.h).

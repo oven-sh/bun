@@ -93,7 +93,7 @@ public:
     StrongRootBlock* next() const { return m_next.get(); }
     void setNext(JSC::VM& vm, StrongRootBlock* next) { m_next.setMayBeNull(vm, this, next); }
 
-    static StrongRootBlock* acquire(JSC::VM& vm);
+    static StrongRootBlock* acquire(JSC::VM& vm, unsigned& outFreeSlot);
     static void release(JSC::VM& vm, StrongRootBlock* block);
 
     template<typename Functor>

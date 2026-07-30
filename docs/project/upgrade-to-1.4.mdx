@@ -44,7 +44,7 @@ error: Unknown lockfile version
     at bun.lock:2:22
 ```
 
-Existing `bun.lock` files are **not** upgraded in place. A version 0 or version 1 lockfile stays at its current version when Bun 1.4 rewrites it, so committing your existing lockfile keeps the repo installable by older Bun releases.
+Existing `bun.lock` files are **not** upgraded to version 2 in place. A version 1 lockfile stays at version 1 when Bun 1.4 rewrites it (a version 0 lockfile is bumped to version 1, which Bun 1.3 also reads), so committing your existing lockfile keeps the repo installable by older Bun releases.
 
 Bun 1.4 can read all previous lockfile versions.
 
@@ -82,11 +82,14 @@ linker = isolated   # [!code --]
 linker = "isolated" # [!code ++]
 ```
 
-The error message names the fix:
+The error points at the location:
 
 ```
-TOML Parse error: Strings must be quoted: "isolated"
+error: Strings must be quoted
+    at bunfig.toml:2:10
 ```
+
+For `Bun.TOML.parse()` and imported `.toml` files, the offending value is included in the message (`Strings must be quoted: "isolated"`); `bunfig.toml` redacts it because the file can contain registry tokens.
 
 Other newly rejected input includes bare keys containing `@` / `$` / `:`, invalid backslash escapes inside `"…"` strings (notably Windows paths), duplicate keys, leading zeros, and control characters. For Windows paths in `bunfig.toml`, use a literal string or escape the backslashes:
 
@@ -171,7 +174,7 @@ If you were importing a CSS file to obtain its path, use the `file` loader:
 import stylesPath from "./app.css" with { type: "file" };
 ```
 
-[CSS modules](/bundler/loaders#css) (`.module.css`) are unaffected.
+[CSS modules](/bundler/css#css-modules) (`.module.css`) are unaffected.
 
 ---
 

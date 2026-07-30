@@ -83,34 +83,34 @@ fn nn(p: Option<*mut ExecutionEntry>) -> Option<NonNull<ExecutionEntry>> {
 bun_core::declare_scope!(jest, visible);
 
 pub struct Execution {
-    pub groups: Box<[ConcurrentGroup]>,
+    pub(crate) groups: Box<[ConcurrentGroup]>,
     // was `pub(self)`; widened so `RefDataValue::sequence` can
     // split-borrow `groups`/`sequences` without re-entering `sequences_mut`.
     /// the entries themselves are owned by BunTest, which owns Execution.
-    pub sequences: Box<[ExecutionSequence]>,
-    pub group_index: usize,
+    pub(crate) sequences: Box<[ExecutionSequence]>,
+    pub(crate) group_index: usize,
     /// The entry whose callback is synchronously on the stack right now. Set
     /// around `run_test_callback` so code re-entered from a test body (e.g.
     /// spawnSync's wait loop) can read the calling entry's own deadline.
-    pub on_stack_entry: core::cell::Cell<Option<NonNull<ExecutionEntry>>>,
+    pub(crate) on_stack_entry: core::cell::Cell<Option<NonNull<ExecutionEntry>>>,
     /// The (group_index, sequence_index, entry, repeat) for `on_stack_entry`,
     /// set/restored alongside it. `get_current_state_data()` can't name a
     /// sequence inside a concurrent group; this can, for code re-entered from
     /// the microtask drain inside `run_test_callback` (node:test's runtime
     /// `t.skip()`/`t.todo()` mark lands there before the DoneCallback is
     /// stamped).
-    pub on_stack_entry_data: core::cell::Cell<Option<super::bun_test::EntryData>>,
+    pub(crate) on_stack_entry_data: core::cell::Cell<Option<super::bun_test::EntryData>>,
 }
 
 pub struct ConcurrentGroup {
-    pub sequence_start: usize,
-    pub sequence_end: usize,
+    pub(crate) sequence_start: usize,
+    pub(crate) sequence_end: usize,
     /// Index of the next sequence that has not been started yet
-    pub next_sequence_index: usize,
-    pub executing: bool,
-    pub remaining_incomplete_entries: usize,
+    pub(crate) next_sequence_index: usize,
+    pub(crate) executing: bool,
+    pub(crate) remaining_incomplete_entries: usize,
     /// used by beforeAll to skip directly to afterAll if it fails
-    pub failure_skip_to: usize,
+    pub(crate) failure_skip_to: usize,
 }
 
 impl ConcurrentGroup {
@@ -153,20 +153,20 @@ pub enum ExpectAssertions {
 }
 
 pub struct ExecutionSequence {
-    pub first_entry: Option<NonNull<ExecutionEntry>>,
+    pub(crate) first_entry: Option<NonNull<ExecutionEntry>>,
     /// Index into ExecutionSequence.entries() for the entry that is not started or currently running
-    pub active_entry: Option<NonNull<ExecutionEntry>>,
-    pub test_entry: Option<NonNull<ExecutionEntry>>,
-    pub remaining_repeat_count: u32,
-    pub remaining_retry_count: u32,
-    pub result: Result,
-    pub executing: bool,
-    pub started_at: Timespec,
+    pub(crate) active_entry: Option<NonNull<ExecutionEntry>>,
+    pub(crate) test_entry: Option<NonNull<ExecutionEntry>>,
+    pub(crate) remaining_repeat_count: u32,
+    pub(crate) remaining_retry_count: u32,
+    pub(crate) result: Result,
+    pub(crate) executing: bool,
+    pub(crate) started_at: Timespec,
     /// Number of expect() calls observed in this sequence.
-    pub expect_call_count: u32,
+    pub(crate) expect_call_count: u32,
     /// Expectation set by expect.hasAssertions() or expect.assertions(n).
-    pub expect_assertions: ExpectAssertions,
-    pub maybe_skip: bool,
+    pub(crate) expect_assertions: ExpectAssertions,
+    pub(crate) maybe_skip: bool,
 }
 
 impl ExecutionSequence {
@@ -237,7 +237,7 @@ pub enum PendingIs {
 }
 
 impl Result {
-    pub fn basic_result(self) -> Basic {
+    pub(crate) fn basic_result(self) -> Basic {
         match self {
             Result::Pending => Basic::Pending,
             Result::Pass => Basic::Pass,
@@ -255,7 +255,7 @@ impl Result {
         }
     }
 
-    pub fn is_pass(self, pending_is: PendingIs) -> bool {
+    pub(crate) fn is_pass(self, pending_is: PendingIs) -> bool {
         match self.basic_result() {
             Basic::Pass | Basic::Skip | Basic::Todo => true,
             Basic::Fail => false,
@@ -263,7 +263,7 @@ impl Result {
         }
     }
 
-    pub fn is_fail(self) -> bool {
+    pub(crate) fn is_fail(self) -> bool {
         !self.is_pass(PendingIs::PendingIsPass)
     }
 }
@@ -275,7 +275,7 @@ impl Result {
 bun_core::impl_field_parent! { Execution => BunTest.execution; fn nonnull bun_test; }
 
 impl Execution {
-    pub fn init() -> Execution {
+    pub(crate) fn init() -> Execution {
         Execution {
             groups: Box::default(),
             sequences: Box::default(),
@@ -288,14 +288,14 @@ impl Execution {
     // `groups` / `sequences` are `Box<[T]>` and drop automatically — no explicit Drop impl needed.
 
     /// Infallible: the `Vec` → `Box<[T]>` conversion cannot fail.
-    pub fn load_from_order(&mut self, order: &mut Order::Order) {
+    pub(crate) fn load_from_order(&mut self, order: &mut Order::Order) {
         debug_assert!(self.groups.is_empty());
         debug_assert!(self.sequences.is_empty());
         self.groups = core::mem::take(&mut order.groups).into_boxed_slice();
         self.sequences = core::mem::take(&mut order.sequences).into_boxed_slice();
     }
 
-    pub fn handle_timeout(&mut self, global_this: &JSGlobalObject) -> JsResult<()> {
+    pub(crate) fn handle_timeout(&mut self, global_this: &JSGlobalObject) -> JsResult<()> {
         let _g = group_begin!();
 
         // if the concurrent group has one sequence and the sequence has an active entry that has timed out,
@@ -333,7 +333,7 @@ impl Execution {
         Ok(())
     }
 
-    pub fn step(
+    pub(crate) fn step(
         buntest_strong: &BunTestPtr,
         global_this: &JSGlobalObject,
         data: &RefDataValue,
@@ -419,7 +419,7 @@ impl Execution {
         }
     }
 
-    pub fn active_group(&mut self) -> Option<&mut ConcurrentGroup> {
+    pub(crate) fn active_group(&mut self) -> Option<&mut ConcurrentGroup> {
         if self.group_index >= self.groups.len() {
             return None;
         }
@@ -428,7 +428,7 @@ impl Execution {
 
     /// Shared-borrow variant of [`active_group`] for read-only inspection
     /// (e.g. `BunTest::get_current_state_data`, which only reads).
-    pub fn active_group_ref(&self) -> Option<&ConcurrentGroup> {
+    pub(crate) fn active_group_ref(&self) -> Option<&ConcurrentGroup> {
         if self.group_index >= self.groups.len() {
             return None;
         }
@@ -438,7 +438,7 @@ impl Execution {
     /// Returns `NonNull` pointers (not `&mut`) into `self.sequences` / `self.groups` so the
     /// caller can hold both alongside other borrows of `self` without aliased-`&mut` UB.
     /// Dereference at point-of-use only.
-    pub fn get_current_and_valid_execution_sequence(
+    pub(crate) fn get_current_and_valid_execution_sequence(
         &mut self,
         data: &RefDataValue,
     ) -> Option<(NonNull<ExecutionSequence>, NonNull<ConcurrentGroup>)> {
@@ -716,7 +716,7 @@ impl Execution {
         }
     }
 
-    pub fn reset_sequence(sequence: &mut ExecutionSequence) {
+    pub(crate) fn reset_sequence(sequence: &mut ExecutionSequence) {
         debug_assert!(!sequence.executing);
         {
             // reset the entries
@@ -759,7 +759,7 @@ impl Execution {
         }
     }
 
-    pub fn handle_uncaught_exception(
+    pub(crate) fn handle_uncaught_exception(
         &mut self,
         user_data: &RefDataValue,
     ) -> HandleUncaughtExceptionResult {
@@ -806,7 +806,7 @@ impl Execution {
     }
 }
 
-pub(crate) fn step_group(
+fn step_group(
     buntest_strong: &BunTestPtr,
     global_this: &JSGlobalObject,
     now: &mut Timespec,

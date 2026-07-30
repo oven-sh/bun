@@ -60,7 +60,7 @@ bun_core::comptime_string_map! {
 }
 
 #[inline]
-pub(crate) fn lookup(name: &[u8]) -> Option<KnownGlobal> {
+fn lookup(name: &[u8]) -> Option<KnownGlobal> {
     KNOWN_GLOBALS.get(name).copied()
 }
 

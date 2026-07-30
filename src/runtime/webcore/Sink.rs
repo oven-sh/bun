@@ -20,7 +20,7 @@ impl JSSink<ArrayBufferSink> {
     // `JSSink<T: JsSinkAbi>::detach(signal, global)` associated fn — Rust
     // forbids same-name items across impl blocks for the same type even with
     // different signatures (E0592).
-    pub fn detach_self(&mut self, global: &JSGlobalObject) {
+    pub(crate) fn detach_self(&mut self, global: &JSGlobalObject) {
         JSSink::<ArrayBufferSink>::detach(&mut self.sink.signal, global);
     }
 }
@@ -185,11 +185,11 @@ pub trait JsSinkAbi {
 
 /// `from_js_extern` encodes two distinct failure types using 0 and 1. Any other
 /// value is `*ThisSink`.
-pub mod from_js_result {
+pub(crate) mod from_js_result {
     /// The sink has been closed and the wrapped type is freed.
-    pub const DETACHED: usize = 0;
+    pub(crate) const DETACHED: usize = 0;
     /// JS exception has not yet been thrown.
-    pub const CAST_FAILED: usize = 1;
+    pub(crate) const CAST_FAILED: usize = 1;
 }
 
 impl<T: JsSinkAbi> JSSink<T> {
@@ -235,7 +235,7 @@ impl<T: JsSinkAbi> JSSink<T> {
 
     /// `JSSink.detach(globalThis)` — disconnect the C++ controller cell stashed
     /// in `signal.ptr` (a JSValue's encoded bits, see `SinkSignal::init`).
-    pub fn detach(signal: &mut Signal, _global: &crate::webcore::jsc::JSGlobalObject) {
+    pub(crate) fn detach(signal: &mut Signal, _global: &crate::webcore::jsc::JSGlobalObject) {
         use crate::webcore::jsc::JSValue;
         let Some(ptr) = signal.ptr else { return }; // is_dead()
         signal.clear();
@@ -260,10 +260,10 @@ impl<T: JsSinkAbi> JSSink<T> {
 // Inherent associated types are unstable, so this is a free generic;
 // let each caller alias via `type SinkSignal = sink::SinkSignal<Self>;`.
 #[repr(C)]
-pub struct SinkSignal<T>(core::marker::PhantomData<T>);
+pub(crate) struct SinkSignal<T>(core::marker::PhantomData<T>);
 
 impl<T: JsSinkAbi> SinkSignal<T> {
-    pub fn init(cpp: crate::webcore::jsc::JSValue) -> Signal {
+    pub(crate) fn init(cpp: crate::webcore::jsc::JSValue) -> Signal {
         use crate::webcore::jsc::JSValue;
         // Bypass `Signal::init_with_type` (which would form a fake
         // `&mut SinkSignal<T>` ref); build the vtable directly so `this` stays
@@ -418,7 +418,7 @@ impl<T: JsSinkType + JsSinkAbi> JSSink<T> {
     }
 
     /// `${abi_name}__construct` host-fn body.
-    pub fn js_construct(
+    pub(crate) fn js_construct(
         global: &crate::webcore::jsc::JSGlobalObject,
         _frame: &crate::webcore::jsc::CallFrame,
     ) -> crate::webcore::jsc::JsResult<crate::webcore::jsc::JSValue> {
@@ -437,7 +437,7 @@ impl<T: JsSinkType + JsSinkAbi> JSSink<T> {
     }
 
     /// `${abi_name}__write` host-fn body.
-    pub fn js_write(
+    pub(crate) fn js_write(
         global: &crate::webcore::jsc::JSGlobalObject,
         frame: &crate::webcore::jsc::CallFrame,
     ) -> crate::webcore::jsc::JsResult<crate::webcore::jsc::JSValue> {
@@ -516,7 +516,7 @@ impl<T: JsSinkType + JsSinkAbi> JSSink<T> {
     }
 
     /// `${abi_name}__flush` host-fn body.
-    pub fn js_flush(
+    pub(crate) fn js_flush(
         global: &crate::webcore::jsc::JSGlobalObject,
         frame: &crate::webcore::jsc::CallFrame,
     ) -> crate::webcore::jsc::JsResult<crate::webcore::jsc::JSValue> {
@@ -547,7 +547,7 @@ impl<T: JsSinkType + JsSinkAbi> JSSink<T> {
     }
 
     /// `${abi_name}__start` host-fn body.
-    pub fn js_start(
+    pub(crate) fn js_start(
         global: &crate::webcore::jsc::JSGlobalObject,
         frame: &crate::webcore::jsc::CallFrame,
     ) -> crate::webcore::jsc::JsResult<crate::webcore::jsc::JSValue> {
@@ -580,7 +580,7 @@ impl<T: JsSinkType + JsSinkAbi> JSSink<T> {
     }
 
     /// `${abi_name}__end` host-fn body.
-    pub fn js_end(
+    pub(crate) fn js_end(
         global: &crate::webcore::jsc::JSGlobalObject,
         frame: &crate::webcore::jsc::CallFrame,
     ) -> crate::webcore::jsc::JsResult<crate::webcore::jsc::JSValue> {
@@ -612,7 +612,7 @@ impl<T: JsSinkType + JsSinkAbi> JSSink<T> {
 
     /// `${abi_name}__finalize` body.
     #[inline]
-    pub fn js_finalize(this: &mut T) {
+    pub(crate) fn js_finalize(this: &mut T) {
         this.finalize();
     }
 
@@ -630,7 +630,7 @@ impl<T: JsSinkType + JsSinkAbi> JSSink<T> {
     /// controller's bits — `connect()`-style signals store a live native
     /// pointer instead, and a sink re-assigned to a new stream holds the
     /// newer controller's bits.
-    pub fn js_controller_detached(this: &mut T, controller: crate::webcore::jsc::JSValue) {
+    pub(crate) fn js_controller_detached(this: &mut T, controller: crate::webcore::jsc::JSValue) {
         if let Some(signal) = this.signal() {
             if signal.ptr.map(|p| p.as_ptr() as usize) == Some(controller.encoded()) {
                 signal.clear();
@@ -641,7 +641,7 @@ impl<T: JsSinkType + JsSinkAbi> JSSink<T> {
     /// `${abi_name}__close` body — called from
     /// `${controller}__close` and `${name}__doClose` in JSSink.cpp with a raw
     /// `m_sinkPtr` (not a host-fn callframe), so exceptions become `.zero`.
-    pub fn js_close(
+    pub(crate) fn js_close(
         global: &crate::webcore::jsc::JSGlobalObject,
         this: &mut T,
     ) -> crate::webcore::jsc::JSValue {
@@ -672,7 +672,7 @@ impl<T: JsSinkType + JsSinkAbi> JSSink<T> {
 
     /// `${abi_name}__endWithSink` body —
     /// called from `JSReadable${name}Controller__end` with a raw `m_sinkPtr`.
-    pub fn js_end_with_sink(
+    pub(crate) fn js_end_with_sink(
         this: &mut T,
         global: &crate::webcore::jsc::JSGlobalObject,
     ) -> crate::webcore::jsc::JSValue {
@@ -700,7 +700,7 @@ impl<T: JsSinkType + JsSinkAbi> JSSink<T> {
 
     /// `${abi_name}__updateRef` body.
     #[inline]
-    pub fn js_update_ref(this: &mut T, value: bool) {
+    pub(crate) fn js_update_ref(this: &mut T, value: bool) {
         bun_core::mark_binding!();
         if T::HAS_UPDATE_REF {
             this.update_ref(value);
@@ -709,7 +709,7 @@ impl<T: JsSinkType + JsSinkAbi> JSSink<T> {
 
     /// `${abi_name}__getInternalFd` body.
     #[inline]
-    pub fn js_get_internal_fd(this: &mut T) -> crate::webcore::jsc::JSValue {
+    pub(crate) fn js_get_internal_fd(this: &mut T) -> crate::webcore::jsc::JSValue {
         use crate::webcore::jsc::JSValue;
         if T::HAS_GET_FD {
             return JSValue::js_number(this.get_fd() as f64);
@@ -719,7 +719,7 @@ impl<T: JsSinkType + JsSinkAbi> JSSink<T> {
 
     /// `${abi_name}__memoryCost` body.
     #[inline]
-    pub fn js_memory_cost(this: &T) -> usize {
+    pub(crate) fn js_memory_cost(this: &T) -> usize {
         core::mem::size_of::<JSSink<T>>() + this.memory_cost()
     }
 }
@@ -740,14 +740,14 @@ bun_opaque::opaque_ffi! {
 // (`Subprocess<'_>`) carries a lifetime so it cannot implement
 // `UnionMember`; only `Detached` is a typed member, and the Subprocess arm
 // in `Bun__onSinkDestroyed` casts the raw pointer manually.
-pub struct DestructorTypes;
+pub(crate) struct DestructorTypes;
 impl bun_ptr::tagged_pointer::TypeList for DestructorTypes {
     const MIN_TAG: bun_ptr::tagged_pointer::TagType = 1024 - 1;
 }
 impl bun_ptr::tagged_pointer::UnionMember<DestructorTypes> for Detached {
     const TAG: bun_ptr::tagged_pointer::TagType = 1024;
 }
-pub type DestructorPtr = TaggedPtrUnion<DestructorTypes>;
+pub(crate) type DestructorPtr = TaggedPtrUnion<DestructorTypes>;
 
 /// Encode a `*Subprocess` as the second `DestructorPtr` tag (1023). Manual
 /// re-encoding of `TaggedPtr::init(ptr, 1023)` because `Subprocess<'_>` carries
@@ -756,7 +756,7 @@ pub type DestructorPtr = TaggedPtrUnion<DestructorTypes>;
 /// `usize` directly) and round-tripped through C++ back to
 /// `Bun__onSinkDestroyed`.
 #[inline]
-pub fn destructor_ptr_subprocess(ptr: *const c_void) -> usize {
+pub(crate) fn destructor_ptr_subprocess(ptr: *const c_void) -> usize {
     const ADDR_BITS: u32 = 49;
     const ADDR_MASK: u64 = (1u64 << ADDR_BITS) - 1;
     const SUBPROCESS_TAG: u64 = 1023; // second variant: 1024 - 1
@@ -764,7 +764,7 @@ pub fn destructor_ptr_subprocess(ptr: *const c_void) -> usize {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn Bun__onSinkDestroyed(ptr_value: *mut c_void, sink_ptr: *mut c_void) {
+pub(crate) extern "C" fn Bun__onSinkDestroyed(ptr_value: *mut c_void, sink_ptr: *mut c_void) {
     let _ = sink_ptr; // autofix
     let ptr = DestructorPtr::from(Some(ptr_value));
 

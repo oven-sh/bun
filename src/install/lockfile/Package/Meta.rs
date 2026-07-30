@@ -13,17 +13,17 @@ use crate::lockfile_real::StringBuilder as LockfileStringBuilder;
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct Meta {
-    pub origin: Origin,
-    pub _padding_origin: u8,
+    pub(crate) origin: Origin,
+    pub(crate) _padding_origin: u8,
 
-    pub arch: Architecture,
-    pub os: OperatingSystem,
-    pub _padding_os: u16,
+    pub(crate) arch: Architecture,
+    pub(crate) os: OperatingSystem,
+    pub(crate) _padding_os: u16,
 
-    pub id: PackageID,
+    pub(crate) id: PackageID,
 
-    pub man_dir: String,
-    pub integrity: Integrity,
+    pub(crate) man_dir: String,
+    pub(crate) integrity: Integrity,
 
     /// Shouldn't be used directly. Use `Meta.has_install_script()` and
     /// `Meta.set_has_install_script()` instead.
@@ -31,9 +31,9 @@ pub struct Meta {
     /// `.Old` represents the value of this field before it was used
     /// in the lockfile and should never be saved to a new lockfile.
     /// There is a debug assert for this in `Lockfile.Package.Serializer.save()`.
-    pub has_install_script: HasInstallScript,
+    pub(crate) has_install_script: HasInstallScript,
 
-    pub _padding_integrity: [u8; 2],
+    pub(crate) _padding_integrity: [u8; 2],
 }
 
 #[repr(u8)]
@@ -65,11 +65,11 @@ impl Default for Meta {
 impl Meta {
     /// Does the `cpu` arch and `os` match the requirements listed in the package?
     /// This is completely unrelated to "devDependencies", "peerDependencies", "optionalDependencies" etc
-    pub fn is_disabled(&self, cpu: Architecture, os: OperatingSystem) -> bool {
+    pub(crate) fn is_disabled(&self, cpu: Architecture, os: OperatingSystem) -> bool {
         !self.arch.is_match(cpu) || !self.os.is_match(os)
     }
 
-    pub fn has_install_script(&self) -> bool {
+    pub(crate) fn has_install_script(&self) -> bool {
         self.has_install_script == HasInstallScript::True
     }
 
@@ -81,24 +81,24 @@ impl Meta {
         };
     }
 
-    pub fn needs_update(&self) -> bool {
+    pub(crate) fn needs_update(&self) -> bool {
         self.has_install_script == HasInstallScript::Old
     }
 
     // The only concrete builder type used in install is the lockfile
     // `StringBuilder`, so take it directly instead of a placeholder trait that
     // nothing implements.
-    pub fn count(&self, buf: &[u8], builder: &mut LockfileStringBuilder<'_>) {
+    pub(crate) fn count(&self, buf: &[u8], builder: &mut LockfileStringBuilder<'_>) {
         builder.count(self.man_dir.slice(buf));
     }
 
-    pub fn init() -> Meta {
+    pub(crate) fn init() -> Meta {
         Meta::default()
     }
 
     /// Named `clone_into` (not `clone`) to avoid shadowing `Clone::clone` now
     /// that `Meta: Clone + Copy`.
-    pub fn clone_into(
+    pub(crate) fn clone_into(
         &self,
         id: PackageID,
         buf: &[u8],

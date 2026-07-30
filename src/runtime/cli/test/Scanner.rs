@@ -17,31 +17,31 @@ declare_scope!(jest, hidden);
 
 pub struct Scanner<'a> {
     /// Memory is borrowed.
-    pub exclusion_names: &'a [&'a [u8]],
+    pub(crate) exclusion_names: &'a [&'a [u8]],
     /// When this list is empty, no filters are applied.
     /// "test" suffixes (e.g. .spec.*) are always applied when traversing directories.
-    pub filter_names: &'a [&'a [u8]],
+    pub(crate) filter_names: &'a [&'a [u8]],
     /// Glob patterns for paths to ignore. Matched against the path relative to the
     /// project root (top_level_dir). When a file matches any pattern, it is excluded.
-    pub path_ignore_patterns: &'a [&'a [u8]],
-    pub dirs_to_scan: Fifo,
+    pub(crate) path_ignore_patterns: &'a [&'a [u8]],
+    pub(crate) dirs_to_scan: Fifo,
     /// Paths to test files found while scanning.
-    pub test_files: Vec<Interned>,
-    pub fs: *mut FileSystem,
-    pub open_dir_buf: PathBuffer,
-    pub options: &'a BundleOptions<'a>,
-    pub has_iterated: bool,
-    pub search_count: usize,
+    pub(crate) test_files: Vec<Interned>,
+    pub(crate) fs: *mut FileSystem,
+    pub(crate) open_dir_buf: PathBuffer,
+    pub(crate) options: &'a BundleOptions<'a>,
+    pub(crate) has_iterated: bool,
+    pub(crate) search_count: usize,
 }
 
 // FIFO queue of scan entries (pop_front / push_back).
 pub(crate) type Fifo = VecDeque<ScanEntry>;
 
 pub struct ScanEntry {
-    pub relative_dir: Fd,
+    pub(crate) relative_dir: Fd,
     // `'static` is sound here: borrows from FileSystem.dirname_store, a
     // process-lifetime arena that is never reset.
-    pub dir_path: &'static [u8],
+    pub(crate) dir_path: &'static [u8],
     pub name: StringOrTinyString,
 }
 
@@ -75,7 +75,7 @@ impl<'a> DirEntryIterator for ScannerDirIter<'a> {
 }
 
 impl<'a> Scanner<'a> {
-    pub fn init(
+    pub(crate) fn init(
         transpiler: &'a Transpiler,
         initial_results_capacity: usize,
     ) -> Result<Scanner<'a>, AllocError> {
@@ -123,11 +123,11 @@ impl<'a> Scanner<'a> {
 
     /// Take the list of test files out of this scanner. Caller owns the returned
     /// allocation.
-    pub fn take_found_test_files(&mut self) -> Result<Box<[Interned]>, AllocError> {
+    pub(crate) fn take_found_test_files(&mut self) -> Result<Box<[Interned]>, AllocError> {
         Ok(core::mem::take(&mut self.test_files).into_boxed_slice())
     }
 
-    pub fn scan(&mut self, path_literal: &[u8]) -> Result<(), ScanError> {
+    pub(crate) fn scan(&mut self, path_literal: &[u8]) -> Result<(), ScanError> {
         let mut scan_dir_buf = PathBuffer::uninit();
         let parts: [&[u8]; 2] = [self.top_level_dir(), path_literal];
         let path: &[u8] = Self::abs_buf_projected(self.top_level_dir(), &parts, &mut scan_dir_buf);
@@ -262,7 +262,7 @@ impl<'a> Scanner<'a> {
             .map_err(Into::into)
     }
 
-    pub fn could_be_test_file<const NEEDS_TEST_SUFFIX: bool>(&self, name: &[u8]) -> bool {
+    pub(crate) fn could_be_test_file<const NEEDS_TEST_SUFFIX: bool>(&self, name: &[u8]) -> bool {
         let extname = bun_paths::extension(name);
         if extname.is_empty() || !self.options.loader(extname).is_javascript_like() {
             return false;
@@ -280,7 +280,7 @@ impl<'a> Scanner<'a> {
         false
     }
 
-    pub fn does_absolute_path_match_filter(&self, name: &[u8]) -> bool {
+    pub(crate) fn does_absolute_path_match_filter(&self, name: &[u8]) -> bool {
         if self.filter_names.is_empty() {
             return true;
         }
@@ -294,7 +294,7 @@ impl<'a> Scanner<'a> {
         false
     }
 
-    pub fn does_path_match_filter(&self, name: &[u8]) -> bool {
+    pub(crate) fn does_path_match_filter(&self, name: &[u8]) -> bool {
         if self.filter_names.is_empty() {
             return true;
         }
@@ -310,7 +310,7 @@ impl<'a> Scanner<'a> {
 
     /// Returns true if the given path matches any of the path ignore patterns.
     /// The path is matched as a relative path from the project root.
-    pub fn matches_path_ignore_pattern(&self, abs_path: &[u8]) -> bool {
+    pub(crate) fn matches_path_ignore_pattern(&self, abs_path: &[u8]) -> bool {
         if self.path_ignore_patterns.is_empty() {
             return false;
         }
@@ -348,13 +348,13 @@ impl<'a> Scanner<'a> {
         false
     }
 
-    pub fn is_test_file(&self, name: &[u8]) -> bool {
+    pub(crate) fn is_test_file(&self, name: &[u8]) -> bool {
         self.could_be_test_file::<false>(name)
             && self.does_path_match_filter(name)
             && !self.matches_path_ignore_pattern(name)
     }
 
-    pub fn next(&mut self, entry: &mut fs::Entry, fd: Fd) {
+    pub(crate) fn next(&mut self, entry: &mut fs::Entry, fd: Fd) {
         let name = entry.base_lowercase();
         self.has_iterated = true;
         // SAFETY: `self.fs` is the process singleton.

@@ -13,7 +13,7 @@ fn rewrite_place(place: &mut Place, rewrites: &IdMap<IdentifierId, IdentifierId>
     }
 }
 
-pub fn eliminate_redundant_phi(func: &mut HirFunction, env: &mut Environment) {
+pub(crate) fn eliminate_redundant_phi(func: &mut HirFunction, env: &mut Environment) {
     let mut rewrites: IdMap<IdentifierId, IdentifierId> = IdMap::new();
     eliminate_redundant_phi_impl(func, env, &mut rewrites);
 }

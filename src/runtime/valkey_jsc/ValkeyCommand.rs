@@ -17,9 +17,9 @@ type BlobOrStringOrBuffer = crate::node::types::BlobOrStringOrBuffer;
 // borrow caller-owned data for the duration of serialization.
 #[derive(Copy, Clone)]
 pub struct Command<'a> {
-    pub command: &'a [u8],
+    pub(crate) command: &'a [u8],
     pub args: Args<'a>,
-    pub meta: Meta,
+    pub(crate) meta: Meta,
 }
 
 impl<'a> Default for Command<'a> {
@@ -46,7 +46,7 @@ impl<'a> Default for Args<'a> {
 }
 
 impl<'a> Args<'a> {
-    pub(crate) fn len(&self) -> usize {
+    fn len(&self) -> usize {
         match self {
             Args::Slices(args) => args.len(),
             Args::Args(args) => args.len(),
@@ -90,14 +90,14 @@ impl<'a> Command<'a> {
         Ok(())
     }
 
-    pub fn byte_length(&self) -> usize {
+    pub(crate) fn byte_length(&self) -> usize {
         // DiscardingWriter is bun_io's byte-counting null sink.
         let mut counter = bun_io::DiscardingWriter::default();
         self.write(&mut counter).expect("unreachable");
         counter.count
     }
 
-    pub fn serialize(&self) -> Result<Box<[u8]>, crate::Error> {
+    pub(crate) fn serialize(&self) -> Result<Box<[u8]>, crate::Error> {
         let mut buf: Vec<u8> = Vec::with_capacity(self.byte_length());
         self.write(&mut buf)?;
         Ok(buf.into_boxed_slice())
@@ -106,9 +106,9 @@ impl<'a> Command<'a> {
 
 /// Command stored in offline queue when disconnected
 pub struct Entry {
-    pub serialized_data: Box<[u8]>, // Pre-serialized RESP protocol bytes
-    pub meta: Meta,
-    pub promise: Promise,
+    pub(crate) serialized_data: Box<[u8]>, // Pre-serialized RESP protocol bytes
+    pub(crate) meta: Meta,
+    pub(crate) promise: Promise,
 }
 
 // Inherent associated
@@ -119,7 +119,7 @@ pub mod entry {
 
 impl Entry {
     // Create an Offline by serializing the Valkey command directly
-    pub fn create(command: &Command<'_>, promise: Promise) -> Result<Entry, crate::Error> {
+    pub(crate) fn create(command: &Command<'_>, promise: Promise) -> Result<Entry, crate::Error> {
         Ok(Entry {
             serialized_data: command.serialize()?,
             // We should be calling .check against command here but due
@@ -172,7 +172,7 @@ bun_core::comptime_string_set! {
 }
 
 impl Meta {
-    pub fn check(self, command: &Command<'_>) -> Self {
+    pub(crate) fn check(self, command: &Command<'_>) -> Self {
         let mut new = self;
         new.set(
             Meta::SUPPORTS_AUTO_PIPELINING,
@@ -184,17 +184,17 @@ impl Meta {
 
 /// Promise for a Valkey command
 pub struct Promise {
-    pub meta: Meta,
-    pub promise: jsc::JSPromiseStrong,
+    pub(crate) meta: Meta,
+    pub(crate) promise: jsc::JSPromiseStrong,
 }
 
 impl Promise {
-    pub fn create(global_object: &JSGlobalObject, meta: Meta) -> Promise {
+    pub(crate) fn create(global_object: &JSGlobalObject, meta: Meta) -> Promise {
         let promise = jsc::JSPromiseStrong::init(global_object);
         Promise { meta, promise }
     }
 
-    pub fn resolve(
+    pub(crate) fn resolve(
         &mut self,
         global_object: &JSGlobalObject,
         value: &mut protocol::RESPValue,
@@ -214,7 +214,7 @@ impl Promise {
         Ok(())
     }
 
-    pub fn reject(
+    pub(crate) fn reject(
         &mut self,
         global_object: &JSGlobalObject,
         jsvalue: JsResult<JSValue>,
@@ -226,8 +226,8 @@ impl Promise {
 
 // Command+Promise pair for tracking which command corresponds to which promise
 pub struct PromisePair {
-    pub meta: Meta,
-    pub promise: Promise,
+    pub(crate) meta: Meta,
+    pub(crate) promise: Promise,
 }
 
 // See `entry` note above.
@@ -237,7 +237,7 @@ pub mod promise_pair {
 }
 
 impl PromisePair {
-    pub fn reject_command(
+    pub(crate) fn reject_command(
         &mut self,
         global_object: &JSGlobalObject,
         jsvalue: JSValue,

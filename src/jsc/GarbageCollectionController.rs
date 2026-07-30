@@ -13,11 +13,11 @@ const SLOW_REPEAT_INTERVAL_MS: i32 = 30_000;
 pub struct GarbageCollectionController {
     pub gc_repeating_timer: EventLoopTimer,
     /// Written by every `perform_gc()` caller, so the fast/slow comparison sees the last such call, not strictly the last fire; external callers are one-shot so worst case is one extra 30 s slow interval.
-    pub gc_last_heap_size: usize,
-    pub heap_size_didnt_change_for_repeating_timer_ticks_count: u8,
-    pub gc_timer_interval: i32,
-    pub gc_repeating_timer_fast: bool,
-    pub disabled: bool,
+    pub(crate) gc_last_heap_size: usize,
+    pub(crate) heap_size_didnt_change_for_repeating_timer_ticks_count: u8,
+    pub(crate) gc_timer_interval: i32,
+    pub(crate) gc_repeating_timer_fast: bool,
+    pub(crate) disabled: bool,
 }
 
 bun_event_loop::impl_timer_owner!(
@@ -63,7 +63,7 @@ impl GarbageCollectionController {
         }
     }
 
-    pub fn init(&mut self, vm: &mut VirtualMachine) {
+    pub(crate) fn init(&mut self, vm: &mut VirtualMachine) {
         // SAFETY: uws::Loop::get() returns the live process-global loop.
         let actual = unsafe { &mut *uws::Loop::get() };
         actual.internal_loop_data.jsc_vm = vm.jsc_vm.cast();
@@ -86,7 +86,7 @@ impl GarbageCollectionController {
     /// Idempotent. Must run before JSC teardown: `~RunLoop::Timer` frees the
     /// `WTFTimer` nodes sharing the heap, so an unlink afterwards walks freed
     /// siblings.
-    pub fn deinit(&mut self) {
+    pub(crate) fn deinit(&mut self) {
         self.disabled = true;
         let Some(vm) = VirtualMachine::get_or_null() else {
             return;
@@ -114,7 +114,7 @@ impl GarbageCollectionController {
         );
     }
 
-    pub fn perform_gc(&mut self) {
+    pub(crate) fn perform_gc(&mut self) {
         if self.disabled {
             return;
         }

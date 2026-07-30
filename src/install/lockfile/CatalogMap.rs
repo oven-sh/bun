@@ -41,11 +41,11 @@ fn ctx(buf: &[u8]) -> ArrayHashContext<'_> {
 }
 
 impl CatalogMap {
-    pub fn has_any(&self) -> bool {
+    pub(crate) fn has_any(&self) -> bool {
         self.default.count() > 0 || self.groups.count() > 0
     }
 
-    pub fn get(
+    pub(crate) fn get(
         &self,
         lockfile: &Lockfile,
         catalog_name: String,
@@ -73,7 +73,7 @@ impl CatalogMap {
     /// `&mut lockfile.catalogs` while only borrowing `buffers.string_bytes`
     /// (disjoint field), instead of forcing a whole-`Lockfile` borrow that
     /// conflicts with the `&mut self` receiver.
-    pub fn get_or_put_group(
+    pub(crate) fn get_or_put_group(
         &mut self,
         buf: &[u8],
         catalog_name: String,
@@ -93,7 +93,7 @@ impl CatalogMap {
 
     // Deliberately takes no `Lockfile` param so `lockfile.catalogs.parse_count`
     // call sites avoid the `&mut self` vs `&mut Lockfile` self-alias.
-    pub fn parse_count(&mut self, expr: Expr, builder: &mut StringBuilder) {
+    pub(crate) fn parse_count(&mut self, expr: Expr, builder: &mut StringBuilder) {
         if let Some(default_catalog) = expr.get(b"catalog") {
             Self::count_catalog_group(&default_catalog, builder);
         }
@@ -118,7 +118,7 @@ impl CatalogMap {
     /// `builder` already holds `&mut string_bytes`, so the string buffer is
     /// read through it rather than taking a `lockfile` param — otherwise call
     /// sites would alias `&mut lockfile.catalogs` against `&mut lockfile`.
-    pub fn parse_append(
+    pub(crate) fn parse_append(
         &mut self,
         pm: &mut PackageManager,
         log: &mut Log,
@@ -205,7 +205,7 @@ impl CatalogMap {
     // `lockfile.string_pool`). Taking `&mut Lockfile` here would alias those
     // borrows, so narrow to `&mut CatalogMap` and let the caller split the
     // disjoint fields.
-    pub fn from_pnpm_lockfile(
+    pub(crate) fn from_pnpm_lockfile(
         catalogs: &mut CatalogMap,
         log: &mut Log,
         catalogs_obj: &mut E::Object,
@@ -243,7 +243,7 @@ impl CatalogMap {
     // `lockfile.buffers` immutably (disjoint fields), instead of forcing a
     // whole-`Lockfile` shared borrow that conflicts with the `&mut self`
     // receiver.
-    pub fn sort(&mut self, buffers: &Buffers) {
+    pub(crate) fn sort(&mut self, buffers: &Buffers) {
         let buf = buffers.string_bytes.as_slice();
         let dep_less_than = |_: &[String], deps: &[Dependency], l: usize, r: usize| -> bool {
             deps[l].name.order(deps[r].name, buf, buf) == Ordering::Less
@@ -267,7 +267,7 @@ impl CatalogMap {
     /// Accepts `lockfile.buffers.string_bytes` directly (rather than the whole
     /// `Lockfile`) so callers can split-borrow the lockfile alongside a live
     /// `StringBuilder`.
-    pub fn count(&self, string_bytes: &[u8], builder: &mut StringBuilder) {
+    pub(crate) fn count(&self, string_bytes: &[u8], builder: &mut StringBuilder) {
         let buf = string_bytes;
         // `ArrayHashMap::iterator()` requires `&mut`; iterate the
         // `keys()`/`values()` slices instead so `count` can stay `&self`.
@@ -292,7 +292,7 @@ impl CatalogMap {
     /// `pm` is generic over `NpmAliasRegistry` (was `&mut PackageManager`) so a
     /// caller already holding `&mut manager.lockfile` can pass
     /// `&mut manager.known_npm_aliases` instead of the whole manager.
-    pub fn clone<PM: crate::dependency::NpmAliasRegistry>(
+    pub(crate) fn clone<PM: crate::dependency::NpmAliasRegistry>(
         &self,
         pm: &mut PM,
         old_buf: &[u8],

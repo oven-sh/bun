@@ -19,7 +19,7 @@ use super::channel::{Channel, ChannelOwner};
 use super::coordinator::{Coordinator, abort_handler};
 use super::file_range::FileRange;
 use super::frame::{self, Frame};
-use super::worker::{PipeRole, Worker, WorkerPipe};
+use super::worker::{Worker, WorkerPipe};
 use crate::Command;
 use crate::test_command::{self, CommandLineReporter, TestCommand};
 use crate::test_runner::bun_test::FirstLast;
@@ -28,12 +28,12 @@ use bun_options_types::code_coverage_options::CodeCoverageOptions;
 /// All workers are busy for at least this long before another is spawned.
 /// Overridable via BUN_TEST_PARALLEL_SCALE_MS for tests, where debug-build
 /// module load alone can exceed the production 5ms threshold.
-pub(crate) const DEFAULT_SCALE_UP_AFTER_MS: i64 = 5;
+const DEFAULT_SCALE_UP_AFTER_MS: i64 = 5;
 
 /// Returns true if files were actually run via the worker pool, false if it
 /// fell back to the sequential path (≤1 effective worker). The caller uses
 /// this to decide whether to run the serial coverage/JUnit reporters.
-pub fn run_as_coordinator(
+pub(crate) fn run_as_coordinator(
     reporter: &mut CommandLineReporter,
     vm: *mut VirtualMachine,
     files: &[Interned],
@@ -109,8 +109,8 @@ pub fn run_as_coordinator(
                 lo: idx * n / k,
                 hi: (idx + 1) * n / k,
             },
-            out: WorkerPipe::new(PipeRole::Stdout, core::ptr::null()),
-            err: WorkerPipe::new(PipeRole::Stderr, core::ptr::null()),
+            out: WorkerPipe::new(core::ptr::null()),
+            err: WorkerPipe::new(core::ptr::null()),
             process: None,
             ipc: Channel::default(),
             inflight: None,
@@ -452,18 +452,17 @@ fn jsx_runtime_tag_name(r: bun_options_types::schema::api::JsxRuntime) -> &'stat
 /// abstraction as the coordinator side: usockets over the socketpair on POSIX,
 /// `uv.Pipe` over the inherited duplex named-pipe on Windows.
 pub struct WorkerCommands {
-    pub vm: *mut VirtualMachine,
-    pub channel: Channel<WorkerCommands>,
+    pub(crate) channel: Channel<WorkerCommands>,
     /// Coordinator dispatches one `.run` and waits for `.file_done` before
     /// the next, so a single slot is sufficient. Owned path storage.
-    pub pending_idx: Option<u32>,
-    pub pending_path: Vec<u8>,
+    pub(crate) pending_idx: Option<u32>,
+    pub(crate) pending_path: Vec<u8>,
     /// EOF, error, `.shutdown`, or a corrupt frame.
-    pub done: bool,
+    pub(crate) done: bool,
 }
 
 impl WorkerCommands {
-    pub fn send(&mut self, frame_bytes: &[u8]) {
+    pub(crate) fn send(&mut self, frame_bytes: &[u8]) {
         self.channel.send(frame_bytes);
     }
 }
@@ -496,7 +495,7 @@ struct WorkerLoop<'a> {
 }
 
 impl<'a> WorkerLoop<'a> {
-    pub(crate) fn begin(&mut self) {
+    fn begin(&mut self) {
         // SAFETY: vm pointer is valid for the worker's lifetime.
         let vm = unsafe { &mut *self.vm };
         if !self.cmds.channel.adopt(vm, Fd::from_uv(3)) {
@@ -600,7 +599,7 @@ impl<'a> WorkerLoop<'a> {
 // while a `&mut` derived from it (`vm_ref`) is also live, so a reference param
 // would alias. The `# Safety` contract above documents the caller's obligation.
 #[allow(clippy::not_unsafe_ptr_arg_deref)]
-pub fn run_as_worker(
+pub(crate) fn run_as_worker(
     reporter: &mut CommandLineReporter,
     vm: *mut VirtualMachine,
     ctx: Command::Context,
@@ -632,7 +631,6 @@ pub fn run_as_worker(
         reporter,
         vm,
         cmds: WorkerCommands {
-            vm,
             channel: Channel::default(),
             pending_idx: None,
             pending_path: Vec::new(),
@@ -718,7 +716,7 @@ static WORKER_CMDS: bun_core::RacyCell<Option<*mut WorkerCommands>> = bun_core::
 /// Called from `CommandLineReporter.handleTestCompleted` in the worker with the
 /// fully-formatted status line (✓/✗ + scopes + name + duration, including ANSI
 /// codes). The coordinator prints these bytes verbatim so output matches serial.
-pub fn worker_emit_test_done(file_idx: u32, formatted_line: &[u8]) {
+pub(crate) fn worker_emit_test_done(file_idx: u32, formatted_line: &[u8]) {
     // SAFETY: single-threaded worker; WORKER_CMDS only written/read on this thread.
     let Some(cmds_ptr) = (unsafe { WORKER_CMDS.read() }) else {
         return;

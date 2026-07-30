@@ -56,7 +56,7 @@ impl FieldMessage {
         }
     }
 
-    pub fn decode_list<Context: super::new_reader::ReaderContext>(
+    pub(crate) fn decode_list<Context: super::new_reader::ReaderContext>(
         mut reader: NewReader<Context>,
         mut remaining: usize,
     ) -> Result<Vec<FieldMessage>, AnyPostgresError> {
@@ -81,7 +81,7 @@ impl FieldMessage {
         Ok(messages)
     }
 
-    pub fn init(tag: FieldType, message: &[u8]) -> crate::Result<FieldMessage> {
+    pub(crate) fn init(tag: FieldType, message: &[u8]) -> crate::Result<FieldMessage> {
         Ok(match tag {
             FieldType::SEVERITY => FieldMessage::Severity(String::clone_utf8(message)),
             // Ignore this one for now.

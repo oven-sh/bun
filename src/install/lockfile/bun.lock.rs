@@ -117,14 +117,14 @@ pub enum Version {
 }
 
 impl Version {
-    pub const CURRENT: Version = Version::V2;
+    pub(crate) const CURRENT: Version = Version::V2;
 
     #[inline]
-    pub const fn current() -> Version {
+    pub(crate) const fn current() -> Version {
         Version::CURRENT
     }
 
-    pub const fn from_int(n: u32) -> Option<Version> {
+    pub(crate) const fn from_int(n: u32) -> Option<Version> {
         match n {
             0 => Some(Version::V0),
             1 => Some(Version::V1),
@@ -136,7 +136,7 @@ impl Version {
     /// `true` when this lockfile version is at least `other`. Used to gate
     /// strict parse-time checks introduced in a later version.
     #[inline]
-    pub const fn at_least(self, other: Version) -> bool {
+    pub(crate) const fn at_least(self, other: Version) -> bool {
         (self as u32) >= (other as u32)
     }
 }
@@ -149,7 +149,7 @@ struct TreeDepsSortCtx<'a> {
 }
 
 impl<'a> TreeDepsSortCtx<'a> {
-    pub(crate) fn is_less_than(&self, lhs: DependencyID, rhs: DependencyID) -> bool {
+    fn is_less_than(&self, lhs: DependencyID, rhs: DependencyID) -> bool {
         let l = &self.deps_buf[lhs as usize];
         let r = &self.deps_buf[rhs as usize];
         strings::cmp_strings_asc(
@@ -289,7 +289,7 @@ impl Stringifier {
         Version::CURRENT
     }
 
-    pub(crate) fn save_from_binary_inner(
+    fn save_from_binary_inner(
         lockfile: &mut BinaryLockfile,
         load_result: &LoadResult,
         options: &PackageManagerOptions,
@@ -1457,9 +1457,9 @@ pub enum ParseError {
 
 bun_core::oom_from_alloc!(ParseError);
 
-pub(crate) type PkgPathSet = PkgMap<()>;
+type PkgPathSet = PkgMap<()>;
 
-pub(crate) struct PkgMap<T> {
+struct PkgMap<T> {
     pub map: StringHashMap<T>,
 }
 
@@ -1473,7 +1473,7 @@ impl<T> PkgMap<T> {
     // No `Entry` alias — inherent associated types are
     // unstable; callers name `T` directly.
 
-    pub(crate) fn init() -> Self {
+    fn init() -> Self {
         Self {
             map: StringHashMap::default(),
         }
@@ -1481,7 +1481,7 @@ impl<T> PkgMap<T> {
 
     // deinit → Drop (StringHashMap drops itself)
 
-    pub(crate) fn get_or_put(
+    fn get_or_put(
         &mut self,
         name: &[u8],
     ) -> Result<bun_collections::string_hash_map::GetOrPutResult<'_, T>, bun_alloc::AllocError>
@@ -1491,19 +1491,19 @@ impl<T> PkgMap<T> {
         self.map.get_or_put(name)
     }
 
-    pub(crate) fn put(&mut self, name: impl AsRef<[u8]>, value: T) {
+    fn put(&mut self, name: impl AsRef<[u8]>, value: T) {
         self.map.put_assume_capacity(name.as_ref(), value);
     }
 
-    pub(crate) fn get(&self, name: &[u8]) -> Option<&T> {
+    fn get(&self, name: &[u8]) -> Option<&T> {
         self.map.get(name)
     }
 
-    pub(crate) fn contains(&self, path: &[u8]) -> bool {
+    fn contains(&self, path: &[u8]) -> bool {
         self.map.contains_key(path)
     }
 
-    pub(crate) fn find_resolution(
+    fn find_resolution(
         &self,
         pkg_path: &[u8],
         dep: &Dependency,
@@ -1599,7 +1599,7 @@ fn item_loc(source: &bun_ast::Source, key_loc: bun_ast::Loc, index: usize) -> bu
     JSON::array_item_loc(&source.contents, array_loc, index).unwrap_or(array_loc)
 }
 
-pub fn parse_into_binary_lockfile(
+pub(crate) fn parse_into_binary_lockfile(
     lockfile: &mut BinaryLockfile,
     root: JSON::Expr,
     source: &bun_ast::Source,

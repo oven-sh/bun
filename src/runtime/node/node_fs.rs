@@ -7588,7 +7588,7 @@ impl NodeFS {
         // FUSE returns Ok(0) instead of EFBIG when a write exceeds the file
         // system's size limit), synthesize EFBIG to match Node.js behavior.
         if write_err.is_none() && !buf.is_empty() {
-            write_err = Some(sys::Error::from_code(E::EFBIG as u16, sys::Tag::write));
+            write_err = Some(sys::Error::from_code(E::EFBIG, sys::Tag::write));
         }
 
         // https://github.com/oven-sh/bun/issues/2931

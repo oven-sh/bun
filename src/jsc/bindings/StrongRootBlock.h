@@ -1,0 +1,131 @@
+#pragma once
+
+#include "root.h"
+#include <wtf/BitSet.h>
+#include <array>
+
+namespace Zig {
+class GlobalObject;
+}
+
+namespace Bun {
+
+// One fixed-size page of strong GC roots backing bun_jsc::Strong. Each live
+// StrongRef (see StrongRef.cpp) occupies one WriteBarrier slot in one of these
+// cells instead of a HandleSet strong handle, so the "Sh" strong-handle
+// marking constraint does not become O(N Strongs) on every eden collection. A
+// barriered slot store dirties only the owning block; blocks untouched since
+// the last full GC stay old-gen-marked and are skipped on eden.
+//
+// Active blocks form a singly-linked list via m_next whose head lives in
+// ZigGlobalObject::m_strongRootBlockHead. One spare empty block is kept in
+// ZigGlobalObject::m_strongRootBlockFree; further empties are unlinked and
+// reclaimed by GC.
+class StrongRootBlock final : public JSC::JSCell {
+public:
+    using Base = JSC::JSCell;
+
+    // Sized so the cell fits under MarkedSpace::largeCutoff (half a 16 KB
+    // MarkedBlock payload) and the IsoSubspace can allocate it from a block.
+    static constexpr unsigned capacity = 960;
+
+    static StrongRootBlock* create(JSC::VM& vm, JSC::Structure* structure);
+
+    static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
+    {
+        return JSC::Structure::create(vm, globalObject, JSC::jsNull(), JSC::TypeInfo(JSC::CellType, StructureFlags), info(), 0, 0);
+    }
+
+    template<typename, JSC::SubspaceAccess mode>
+    static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
+    {
+        if constexpr (mode == JSC::SubspaceAccess::Concurrently)
+            return nullptr;
+        return subspaceForImpl(vm);
+    }
+    static JSC::GCClient::IsoSubspace* subspaceForImpl(JSC::VM& vm);
+
+    DECLARE_INFO;
+    DECLARE_VISIT_CHILDREN;
+
+    void set(unsigned index, JSC::JSValue value)
+    {
+        ASSERT(index < capacity);
+        ASSERT(!m_occupied.get(index));
+        m_slots[index].set(vm(), this, value);
+        m_occupied.set(index);
+    }
+
+    // Overwrite an already-occupied slot (Bun__StrongRef__set).
+    void write(unsigned index, JSC::JSValue value)
+    {
+        ASSERT(index < capacity);
+        ASSERT(m_occupied.get(index));
+        m_slots[index].set(vm(), this, value);
+    }
+
+    JSC::JSValue read(unsigned index) const
+    {
+        ASSERT(index < capacity);
+        return m_slots[index].get();
+    }
+
+    bool clear(unsigned index)
+    {
+        ASSERT(index < capacity);
+        ASSERT(m_occupied.get(index));
+        m_slots[index].clear();
+        m_occupied.clear(index);
+        return m_occupied.isEmpty();
+    }
+
+    // Clear the stored value but keep the slot occupied so a later write()
+    // reuses it without touching the bitset (Bun__StrongRef__clear).
+    void clearValue(unsigned index)
+    {
+        ASSERT(index < capacity);
+        ASSERT(m_occupied.get(index));
+        m_slots[index].clear();
+    }
+
+    // Returns the lowest free slot index, or `capacity` if full.
+    unsigned findFreeSlot() const
+    {
+        return static_cast<unsigned>(m_occupied.findBit(0, false));
+    }
+
+    StrongRootBlock* next() const { return m_next.get(); }
+    void setNext(JSC::VM& vm, StrongRootBlock* next) { m_next.setMayBeNull(vm, this, next); }
+
+    static StrongRootBlock* acquire(Zig::GlobalObject* global);
+    static void release(Zig::GlobalObject* global, StrongRootBlock* block);
+
+    template<typename Functor>
+    void forEachOccupiedCell(const Functor& func) const
+    {
+        m_occupied.forEachSetBit([&](size_t i) {
+            JSC::JSValue v = m_slots[i].get();
+            if (v && v.isCell())
+                func(v.asCell());
+        });
+    }
+
+private:
+    using Slot = JSC::WriteBarrier<JSC::Unknown>;
+
+    JSC::WriteBarrier<StrongRootBlock> m_next;
+    WTF::BitSet<capacity> m_occupied;
+    std::array<Slot, capacity> m_slots {};
+
+    StrongRootBlock(JSC::VM& vm, JSC::Structure* structure)
+        : Base(vm, structure)
+    {
+    }
+
+    void finishCreation(JSC::VM& vm)
+    {
+        Base::finishCreation(vm);
+    }
+};
+
+} // namespace Bun

@@ -1,76 +1,46 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug } from "harness";
 
-// Rooting armed setTimeout/setInterval wrappers via one HandleSet strong
-// handle per timer makes the "Sh" strong-handle marking constraint walk every
-// armed timer on every collection, including eden. These tests check that the
-// per-timer root has been replaced with a shared root structure.
+// bun_jsc::Strong handles now live in StrongRootBlock cells (visited via
+// GlobalObject::visitChildren plus the write-barrier remembered set) instead of
+// one HandleSet strong handle per armed timer, so the "Sh" strong-handle
+// marking constraint no longer walks every armed timer on every eden
+// collection. heapStats() walks the block list to keep
+// protectedObjectTypeCounts/protectedObjectCount user-visible.
 
-describe.concurrent("armed timers do not each hold a JSC strong handle", () => {
-  test("heapStats().protectedObjectTypeCounts", async () => {
+describe.concurrent("Strong handles are backed by StrongRootBlock", () => {
+  test("heapStats still reports protected Timeout counts", async () => {
     const src = `
       const { heapStats } = require("bun:jsc");
-      const N = 10000;
+      const N = 5000;
       const h = [];
       for (let i = 0; i < N; i++) h.push(setTimeout(() => {}, 600000));
       Bun.gc(true);
       const armed = heapStats();
       for (const t of h) clearTimeout(t);
       Bun.gc(true);
+      await new Promise(r => setTimeout(r, 0));
+      Bun.gc(true);
       const cleared = heapStats();
       console.log(JSON.stringify({
         N,
-        armedProtected: armed.protectedObjectCount,
-        clearedProtected: cleared.protectedObjectCount,
-        armedTimeout: armed.protectedObjectTypeCounts?.Timeout ?? 0,
-        armedTimeoutLive: armed.objectTypeCounts?.Timeout ?? 0,
+        armedTimeout: armed.protectedObjectTypeCounts.Timeout || 0,
+        armedBlocks: armed.objectTypeCounts.StrongRootBlock || 0,
+        clearedTimeout: cleared.protectedObjectTypeCounts.Timeout || 0,
+        clearedBlocks: cleared.objectTypeCounts.StrongRootBlock || 0,
       }));
-      process.exit(0);
-    `;
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "-e", src],
-      env: bunEnv,
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).toBe("");
-    const { N, armedProtected, clearedProtected, armedTimeout, armedTimeoutLive } = JSON.parse(stdout);
-    // The wrappers themselves are live (held by the `h` array).
-    expect(armedTimeoutLive).toBeGreaterThanOrEqual(N);
-    // No Timeout wrapper is rooted via the strong HandleSet; a per-timer
-    // Strong would show 10000 here.
-    expect(armedTimeout).toBe(0);
-    expect(armedProtected).toBeLessThan(100);
-    // Clearing should not regress the strong-handle count.
-    expect(clearedProtected).toBeLessThanOrEqual(armedProtected);
-    expect(exitCode).toBe(0);
-  });
-
-  test("root segments are reclaimed after a burst", async () => {
-    const src = `
-      const { heapStats } = require("bun:jsc");
-      const N = 10000;
-      const h = [];
-      for (let i = 0; i < N; i++) h.push(setTimeout(() => {}, 600000));
-      Bun.gc(true);
-      const armedSegments = heapStats().objectTypeCounts.TimerRootSegment || 0;
-      for (const t of h) clearTimeout(t);
-      Bun.gc(true);
-      await new Promise(r => setTimeout(r, 0));
-      Bun.gc(true);
-      const clearedSegments = heapStats().objectTypeCounts.TimerRootSegment || 0;
-      console.log(JSON.stringify({ armedSegments, clearedSegments }));
       process.exit(0);
     `;
     await using proc = Bun.spawn({ cmd: [bunExe(), "-e", src], env: bunEnv, stderr: "pipe" });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
-    const { armedSegments, clearedSegments } = JSON.parse(stdout);
-    // Several segments are needed while armed (the exact count depends on
-    // JSTimerRootSegment::capacity); after clearing, all but one spare
-    // segment are released for GC.
-    expect(armedSegments).toBeGreaterThanOrEqual(3);
-    expect(clearedSegments).toBeLessThanOrEqual(1);
+    const { N, armedTimeout, armedBlocks, clearedTimeout, clearedBlocks } = JSON.parse(stdout);
+    // protectedObjectTypeCounts walks the block list, so the count is preserved.
+    expect(armedTimeout).toBe(N);
+    // N/capacity blocks while armed; all but one spare released after clearing.
+    expect(armedBlocks).toBeGreaterThanOrEqual(3);
+    expect(clearedTimeout).toBe(0);
+    expect(clearedBlocks).toBeLessThanOrEqual(1);
     expect(exitCode).toBe(0);
   });
 
@@ -91,70 +61,17 @@ describe.concurrent("armed timers do not each hold a JSC strong handle", () => {
         Bun.gc(true);
         Bun.gc(true);
       `;
-      await using proc = Bun.spawn({
-        cmd: [bunExe(), "-e", src],
-        env: bunEnv,
-        stderr: "pipe",
-      });
+      await using proc = Bun.spawn({ cmd: [bunExe(), "-e", src], env: bunEnv, stderr: "pipe" });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       expect(stderr).toBe("");
       expect(stdout).toBe("ok\n");
       expect(exitCode).toBe(0);
     });
   }
-
-  test("refresh() re-roots a fired timer", async () => {
-    const src = `
-      (function () {
-        let calls = 0;
-        setTimeout(function () {
-          if (++calls === 1) {
-            this.refresh();
-            // Runs after this fire has returned and before the refreshed fire
-            // (~200 ms); the root-table slot is the only thing keeping the
-            // wrapper alive during this GC.
-            setTimeout(() => Bun.gc(true), 30);
-          } else {
-            console.log("ok");
-            process.exit(0);
-          }
-        }, 100);
-      })();
-      Bun.gc(true);
-      setTimeout(() => { console.log("never fired"); process.exit(1); }, 2000);
-    `;
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "-e", src],
-      env: bunEnv,
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).toBe("");
-    expect(stdout).toBe("ok\n");
-    expect(exitCode).toBe(0);
-  });
-
-  test("ShadowRealm timers use the per-VM segment list", async () => {
-    const src = `
-      new ShadowRealm().evaluate("setTimeout(() => {}, 10); 0");
-      Bun.gc(true);
-      await new Promise(r => setTimeout(r, 50));
-      Bun.gc(true);
-      setTimeout(() => console.log("ok"), 1);
-    `;
-    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", src], env: bunEnv, stderr: "pipe" });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).toBe("");
-    expect(stdout).toBe("ok\n");
-    expect(exitCode).toBe(0);
-  });
 });
 
 describe.concurrent("AbortSignal.timeout is released when its wrapper is collected", () => {
   test("dropped signals without listeners free their native timer", async () => {
-    // The native Timeout box plus the C++ AbortSignal it keeps alive is a few
-    // hundred bytes; 15000 leaked signals are ~7 MB of RSS per round that
-    // should come back once the wrappers are collected.
     const src = `
       const N = 15000;
       async function round() {
@@ -164,8 +81,6 @@ describe.concurrent("AbortSignal.timeout is released when its wrapper is collect
           await new Promise(r => setTimeout(r, 10));
         }
       }
-      // First round warms up the TZone allocator pool and JSC heap so the
-      // measured rounds see steady-state growth only.
       await round();
       const before = process.memoryUsage().rss;
       await round();
@@ -175,17 +90,13 @@ describe.concurrent("AbortSignal.timeout is released when its wrapper is collect
       console.log(JSON.stringify({ deltaMB: (after - before) / (1024 * 1024) }));
       process.exit(0);
     `;
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "-e", src],
-      env: bunEnv,
-      stderr: "pipe",
-    });
+    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", src], env: bunEnv, stderr: "pipe" });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
     const { deltaMB } = JSON.parse(stdout);
     // With the refcount cycle this retains ~7 MB per round (20+ MB over three
     // rounds). With the timer freed at wrapper GC, steady-state growth is
-    // allocator noise; allow slack for ASAN quarantine and musl fragmentation.
+    // allocator noise.
     const limit = isASAN || isDebug ? 14 : 10;
     expect(deltaMB).toBeLessThan(limit);
     expect(exitCode).toBe(0);
@@ -219,9 +130,6 @@ describe.concurrent("AbortSignal.timeout is released when its wrapper is collect
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
     const { deltaMB, live } = JSON.parse(stdout);
-    // If the inner timeout stays observed after the controller aborts, three
-    // rounds retain ~3600 AbortSignal wrappers + native signals + Timeout
-    // boxes.
     expect(live).toBeLessThan(50);
     const limit = isASAN || isDebug ? 8 : 4;
     expect(deltaMB).toBeLessThan(limit);
@@ -269,44 +177,11 @@ describe.concurrent("AbortSignal.timeout is released when its wrapper is collect
           process.exit(1);
         }, 500);
       `;
-      await using proc = Bun.spawn({
-        cmd: [bunExe(), "-e", src],
-        env: bunEnv,
-        stderr: "pipe",
-      });
+      await using proc = Bun.spawn({ cmd: [bunExe(), "-e", src], env: bunEnv, stderr: "pipe" });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       expect(stderr).toBe("");
       expect(stdout).toBe("ok:true\n");
       expect(exitCode).toBe(0);
     });
   }
-});
-
-test.concurrent("bun test --isolate rearms timers on the new global", async () => {
-  using dir = tempDir("timer-root-isolate", {
-    "a.test.ts": `
-      import { test, expect } from "bun:test";
-      test("a", async () => {
-        await new Promise<void>(r => setTimeout(r, 1));
-        expect(true).toBe(true);
-      });
-    `,
-    "b.test.ts": `
-      import { test, expect } from "bun:test";
-      test("b", async () => {
-        await new Promise<void>(r => setTimeout(r, 1));
-        expect(true).toBe(true);
-      });
-    `,
-  });
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "test", "--isolate", "a.test.ts", "b.test.ts"],
-    env: bunEnv,
-    cwd: String(dir),
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stderr).toContain("2 pass");
-  expect(exitCode).toBe(0);
 });

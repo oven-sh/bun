@@ -34,7 +34,7 @@ class JSBuiltinInternalFunctions;
 namespace Bun {
 class InternalModuleRegistry;
 class NapiHandleScopeImpl;
-class JSTimerRootSegment;
+class StrongRootBlock;
 class JSNextTickQueue;
 class Process;
 class SecureContextCache;
@@ -328,7 +328,7 @@ public:
     Structure* NapiExternalStructure() const { return m_NapiExternalStructure.getInitializedOnMainThread(this); }
     Structure* NapiPrototypeStructure() const { return m_NapiPrototypeStructure.getInitializedOnMainThread(this); }
     Structure* NapiHandleScopeImplStructure() const { return m_NapiHandleScopeImplStructure.getInitializedOnMainThread(this); }
-    Structure* JSTimerRootSegmentStructure() const { return m_JSTimerRootSegmentStructure.getInitializedOnMainThread(this); }
+    Structure* StrongRootBlockStructure() const { return m_StrongRootBlockStructure.getInitializedOnMainThread(this); }
     Structure* NapiTypeTagStructure() const { return m_NapiTypeTagStructure.getInitializedOnMainThread(this); }
     Structure* NativePromiseContextStructure() const { return m_NativePromiseContextStructure.getInitializedOnMainThread(this); }
 
@@ -512,12 +512,10 @@ public:
     /* move them off the stack which will cause them to get collected if not in the handle scope. */         \
     V(public, JSC::WriteBarrier<Bun::NapiHandleScopeImpl>, m_currentNapiHandleScopeImpl)                     \
                                                                                                              \
-    /* Linked list of timer root segments (see JSTimerRootSegment.h); each */                                \
-    /* segment roots up to JSTimerRootSegment::capacity armed setTimeout/  */                                \
-    /* setInterval/setImmediate wrappers. One spare empty segment is parked */                               \
-    /* in the free slot. */                                                                                  \
-    V(public, JSC::WriteBarrier<Bun::JSTimerRootSegment>, m_timerRootSegmentHead)                            \
-    V(public, JSC::WriteBarrier<Bun::JSTimerRootSegment>, m_timerRootSegmentFree)                            \
+    /* Linked list of StrongRootBlock cells backing bun_jsc::Strong handles */                               \
+    /* (see StrongRootBlock.h). One spare empty block is parked in the free slot. */                         \
+    V(public, JSC::WriteBarrier<Bun::StrongRootBlock>, m_strongRootBlockHead)                                \
+    V(public, JSC::WriteBarrier<Bun::StrongRootBlock>, m_strongRootBlockFree)                                \
                                                                                                              \
     /* Supports getEnvironmentData() and setEnvironmentData(), and is cloned into newly-created */           \
     /* Workers. Initialized in createNodeWorkerThreadsBinding. */                                            \
@@ -659,7 +657,7 @@ public:
     V(private, LazyPropertyOfGlobalObject<Structure>, m_NapiExternalStructure)                               \
     V(private, LazyPropertyOfGlobalObject<Structure>, m_NapiPrototypeStructure)                              \
     V(private, LazyPropertyOfGlobalObject<Structure>, m_NapiHandleScopeImplStructure)                        \
-    V(private, LazyPropertyOfGlobalObject<Structure>, m_JSTimerRootSegmentStructure)                         \
+    V(private, LazyPropertyOfGlobalObject<Structure>, m_StrongRootBlockStructure)                            \
     V(private, LazyPropertyOfGlobalObject<Structure>, m_NapiTypeTagStructure)                                \
     V(private, LazyPropertyOfGlobalObject<Structure>, m_NativePromiseContextStructure)                       \
                                                                                                              \

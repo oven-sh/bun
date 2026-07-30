@@ -156,7 +156,8 @@
 #include "ModuleLoader.h"
 #include "napi_external.h"
 #include "napi_handle_scope.h"
-#include "JSTimerRootSegment.h"
+#include "StrongRootBlock.h"
+#include "StrongRef.h"
 #include "napi_type_tag.h"
 #include "NativePromiseContext.h"
 #include "napi.h"
@@ -657,6 +658,10 @@ extern "C" JSC::JSGlobalObject* Zig__GlobalObject__createForTestIsolation(Zig::G
     globalObject->isThreadLocalDefaultGlobalObject = true;
     Bun__setDefaultGlobalObject(globalObject);
     JSC::gcProtect(globalObject);
+
+    // Strong handles are per-VM; move the block list so any outstanding
+    // bun_jsc::Strong survives the per-file global swap.
+    Bun__StrongRef__transferBlocks(oldGlobal, globalObject);
 
     // NapiEnv holds a raw Zig::GlobalObject*; deferred napi finalizers for
     // the old global's objects run on the next event-loop tick — after this
@@ -2449,8 +2454,8 @@ void GlobalObject::finishCreation(VM& vm)
         init.set(Bun::NapiHandleScopeImpl::createStructure(init.vm, init.owner));
     });
 
-    m_JSTimerRootSegmentStructure.initLater([](const JSC::LazyProperty<JSC::JSGlobalObject, Structure>::Initializer& init) {
-        init.set(Bun::JSTimerRootSegment::createStructure(init.vm, init.owner));
+    m_StrongRootBlockStructure.initLater([](const JSC::LazyProperty<JSC::JSGlobalObject, Structure>::Initializer& init) {
+        init.set(Bun::StrongRootBlock::createStructure(init.vm, init.owner));
     });
 
     m_NapiTypeTagStructure.initLater([](const JSC::LazyProperty<JSC::JSGlobalObject, Structure>::Initializer& init) {

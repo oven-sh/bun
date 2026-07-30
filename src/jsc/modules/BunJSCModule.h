@@ -45,6 +45,8 @@
 
 #include "JSDOMConvertBase.h"
 #include "ZigSourceProvider.h"
+#include "StrongRootBlock.h"
+#include "ZigGlobalObject.h"
 #include "mimalloc.h"
 extern "C" char* mi_stats_get_json(size_t, char*);
 extern "C" char* mi_heap_dump_json(bool include_blocks, bool hash_addresses);
@@ -271,7 +273,18 @@ JSC_DEFINE_HOST_FUNCTION(functionMemoryUsageStatistics,
     };
 
     JSValue objectTypeCounts = createdSortedTypeCounts(vm.heap.objectTypeCounts());
-    JSValue protectedCounts = createdSortedTypeCounts(vm.heap.protectedObjectTypeCounts());
+
+    // bun_jsc::Strong handles live in StrongRootBlock cells instead of the
+    // HandleSet, so merge those slots into the protected counts.
+    TypeCountSet protectedTypeCounts = vm.heap.protectedObjectTypeCounts();
+    size_t strongRootCount = 0;
+    for (auto* block = defaultGlobalObject(globalObject)->m_strongRootBlockHead.get(); block; block = block->next()) {
+        block->forEachOccupiedCell([&](JSC::JSCell* cell) {
+            protectedTypeCounts.add(cell->classInfo()->className);
+            ++strongRootCount;
+        });
+    }
+    JSValue protectedCounts = createdSortedTypeCounts(WTF::move(protectedTypeCounts));
 
     JSObject* object = constructEmptyObject(globalObject);
     object->putDirect(vm, Identifier::fromString(vm, "objectTypeCounts"_s),
@@ -289,7 +302,7 @@ JSC_DEFINE_HOST_FUNCTION(functionMemoryUsageStatistics,
     object->putDirect(vm, Identifier::fromString(vm, "objectCount"_s),
         jsNumber(vm.heap.objectCount()));
     object->putDirect(vm, Identifier::fromString(vm, "protectedObjectCount"_s),
-        jsNumber(vm.heap.protectedObjectCount()));
+        jsNumber(vm.heap.protectedObjectCount() + strongRootCount));
     object->putDirect(vm, Identifier::fromString(vm, "globalObjectCount"_s),
         jsNumber(vm.heap.globalObjectCount()));
     object->putDirect(vm,

@@ -271,9 +271,6 @@ mod date_header_timer_draft;
 #[path = "EventLoopDelayMonitor.rs"]
 mod event_loop_delay_monitor_draft;
 
-pub(crate) mod root_table;
-pub(crate) use root_table::{RootSlot, RootTable};
-
 // ─── TimerHeap ───────────────────────────────────────────────────────────────
 // Real intrusive pairing-heap (meld/remove/combine_siblings) implemented in
 // `bun_io::heap::Intrusive`. `EventLoopTimer` now embeds the real
@@ -611,7 +608,6 @@ pub(crate) struct All {
     pub(crate) last_id: i32,
     pub(crate) thread_id: std::thread::ThreadId,
     pub(crate) timers: TimerHeap,
-    pub(crate) roots: RootTable,
     pub(crate) active_timer_count: i32,
     #[cfg(windows)]
     pub(crate) uv_timer: bun_sys::windows::libuv::Timer,
@@ -638,7 +634,6 @@ impl All {
             last_id: 1,
             thread_id: std::thread::current().id(),
             timers: TimerHeap::default(),
-            roots: RootTable::default(),
             active_timer_count: 0,
             #[cfg(windows)]
             uv_timer: bun_core::ffi::zeroed(),
@@ -1263,12 +1258,6 @@ impl All {
                 (*t).signal = core::ptr::null_mut();
             }
         }
-
-        // Segments live on the outgoing global and are collected with it, so
-        // only the allocation cursor needs resetting here; the next `arm`
-        // walks the new global's (empty) list.
-        // SAFETY: `this` is the live per-thread `All` (JS thread only).
-        unsafe { (*this).roots.reset() };
     }
 }
 

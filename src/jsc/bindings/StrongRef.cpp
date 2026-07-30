@@ -1,49 +1,70 @@
 #include "root.h"
 #include "StrongRef.h"
-#include <JavaScriptCore/Strong.h>
-#include <JavaScriptCore/StrongInlines.h>
+#include "StrongRootBlock.h"
 #include "BunClientData.h"
-#include "wtf/DebugHeap.h"
 #include "ZigGlobalObject.h"
 
-extern "C" __attribute__((__always_inline__)) void Bun__StrongRef__delete(JSC::JSValue* _Nonnull handleSlot)
+namespace Bun {
+
+// Backing store for bun_jsc::Strong. One instance per live Strong handle on the
+// Rust side; the Rust `Impl*` is a pointer to this. Each instance owns one
+// occupied slot in a StrongRootBlock on the per-VM main global.
+struct StrongRefImpl {
+    WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(StrongRefImpl);
+
+    StrongRootBlock* block;
+    uint32_t index;
+};
+
+} // namespace Bun
+
+using Bun::StrongRefImpl;
+using Bun::StrongRootBlock;
+
+extern "C" StrongRefImpl* Bun__StrongRef__new(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue encodedValue)
 {
-    // deallocate() will correctly remove the handle from the strong list if it's currently on it.
-    JSC::HandleSet::heapFor(handleSlot)->deallocate(handleSlot);
+    // Always hang the slot off the per-thread main global so a ShadowRealm or
+    // node:vm caller does not create a per-realm block list.
+    UNUSED_PARAM(globalObject);
+    auto* zigGlobal = defaultGlobalObject();
+    auto* block = StrongRootBlock::acquire(zigGlobal);
+    unsigned index = block->findFreeSlot();
+    block->set(index, JSC::JSValue::decode(encodedValue));
+    return new StrongRefImpl { block, index };
 }
 
-extern "C" __attribute__((__always_inline__)) JSC::JSValue* Bun__StrongRef__new(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue encodedValue)
+extern "C" JSC::EncodedJSValue Bun__StrongRef__get(StrongRefImpl* _Nonnull ref)
 {
-    auto& vm = globalObject->vm();
-    JSC::HandleSet* handleSet = vm.heap.handleSet();
-    JSC::HandleSlot handleSlot = handleSet->allocate();
-    JSC::JSValue value = JSC::JSValue::decode(encodedValue);
-
-    // The write barrier must be called to add the handle to the strong
-    // list if the new value is a cell. We must use <false> because the value
-    // might be a primitive.
-    handleSet->writeBarrier<false>(handleSlot, value);
-    *handleSlot = value;
-    return handleSlot;
+    return JSC::JSValue::encode(ref->block->read(ref->index));
 }
 
-extern "C" void Bun__StrongRef__set(JSC::JSValue* _Nonnull handleSlot, JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue encodedValue)
+extern "C" void Bun__StrongRef__set(StrongRefImpl* _Nonnull ref, JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue encodedValue)
 {
-    auto& vm = globalObject->vm();
-    JSC::JSValue value = JSC::JSValue::decode(encodedValue);
-
-    // The write barrier must be called *before* the value in the slot is updated
-    // to correctly update the handle's status in the strong list (e.g. moving
-    // from strong to not strong or vice versa).
-    // Use <false> because the new value can be a primitive.
-    vm.heap.handleSet()->writeBarrier<false>(handleSlot, value);
-    *handleSlot = value;
+    UNUSED_PARAM(globalObject);
+    ref->block->write(ref->index, JSC::JSValue::decode(encodedValue));
 }
 
-extern "C" void Bun__StrongRef__clear(JSC::JSValue* _Nonnull handleSlot)
+extern "C" void Bun__StrongRef__clear(StrongRefImpl* _Nonnull ref)
 {
-    // The write barrier must be called *before* the value is cleared
-    // to correctly remove the handle from the strong list if it held a cell.
-    JSC::HandleSet::heapFor(handleSlot)->writeBarrier<false>(handleSlot, {});
-    *handleSlot = {};
+    ref->block->clearValue(ref->index);
+}
+
+extern "C" void Bun__StrongRef__delete(StrongRefImpl* _Nonnull ref)
+{
+    if (ref->block->clear(ref->index))
+        StrongRootBlock::release(defaultGlobalObject(), ref->block);
+    delete ref;
+}
+
+// Called from swap_global_for_test_isolation so Strong handles outlive a
+// per-file global swap the same way HandleSet-backed handles did.
+extern "C" void Bun__StrongRef__transferBlocks(Zig::GlobalObject* from, Zig::GlobalObject* to)
+{
+    auto& vm = JSC::getVM(to);
+    ASSERT(!to->m_strongRootBlockHead.get());
+    ASSERT(!to->m_strongRootBlockFree.get());
+    to->m_strongRootBlockHead.setMayBeNull(vm, to, from->m_strongRootBlockHead.get());
+    to->m_strongRootBlockFree.setMayBeNull(vm, to, from->m_strongRootBlockFree.get());
+    from->m_strongRootBlockHead.clear();
+    from->m_strongRootBlockFree.clear();
 }

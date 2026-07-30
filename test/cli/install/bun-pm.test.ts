@@ -906,3 +906,57 @@ test("bun pm cache rm does not create the directory named by a project-local .en
   expect(stderr).not.toContain("error");
   expect(exitCode).toBe(0);
 });
+
+// Globally installed packages and their bins are data, not cache. Selecting
+// their location from XDG_CACHE_HOME put them outside the ~/.bun/bin the
+// installer adds to PATH, and inside a directory cache-cleaning tools own.
+it("global bin dir ignores XDG_CACHE_HOME", async () => {
+  using dir = tempDir("global-xdg", {
+    ".bun/install/global/package.json": JSON.stringify({ name: "globals" }),
+    "xdg-cache/.keep": "",
+  });
+  const dirStr = String(dir);
+
+  const spawnEnv = { ...bunEnv, HOME: dirStr, XDG_CACHE_HOME: join(dirStr, "xdg-cache") };
+  delete spawnEnv.BUN_INSTALL;
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "pm", "bin", "-g"],
+    cwd: dirStr,
+    stdout: "pipe",
+    stderr: "pipe",
+    env: spawnEnv,
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stdout.trim()).toBe(join(dirStr, ".bun", "bin"));
+  expect(stderr).not.toContain("error");
+  expect(exitCode).toBe(0);
+});
+
+// An install that already lives in the old XDG_CACHE_HOME location keeps
+// resolving there, so upgrading doesn't strand anyone's global binaries.
+it("global bin dir keeps using an existing XDG_CACHE_HOME location", async () => {
+  using dir = tempDir("global-xdg-legacy", {
+    "xdg-cache/.bun/install/global/package.json": JSON.stringify({ name: "globals" }),
+    "xdg-cache/.bun/bin/.keep": "",
+  });
+  const dirStr = String(dir);
+  const cacheHome = join(dirStr, "xdg-cache");
+
+  const spawnEnv = { ...bunEnv, HOME: dirStr, XDG_CACHE_HOME: cacheHome };
+  delete spawnEnv.BUN_INSTALL;
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "pm", "bin", "-g"],
+    cwd: dirStr,
+    stdout: "pipe",
+    stderr: "pipe",
+    env: spawnEnv,
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stdout.trim()).toBe(join(cacheHome, ".bun", "bin"));
+  expect(stderr).not.toContain("error");
+  expect(exitCode).toBe(0);
+});

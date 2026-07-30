@@ -2387,16 +2387,7 @@ declare module "bun" {
     compilerOptions?: {
       paths?: Record<string, string[]>;
       baseUrl?: string;
-      /**
-       * How JSX is transformed.
-       *
-       * - `"react"`: classic runtime. Emits `React.createElement(...)` (or the configured {@link jsxFactory}).
-       * - `"react-jsx"`: automatic runtime, production. Emits `jsx`/`jsxs` imported from `<jsxImportSource>/jsx-runtime`.
-       * - `"react-jsxdev"`: automatic runtime, development. Emits `jsxDEV` imported from `<jsxImportSource>/jsx-dev-runtime`.
-       * - `"preserve"`: not supported yet; currently falls back to the automatic runtime.
-       *
-       * Prior to Bun 1.4, `"react-jsx"` emitted the development runtime. It now matches TypeScript and esbuild.
-       */
+      /** "preserve" is not supported yet */
       jsx?: "preserve" | "react" | "react-jsx" | "react-jsxdev";
       jsxFactory?: string;
       jsxFragmentFactory?: string;
@@ -2908,44 +2899,11 @@ declare module "bun" {
      * JSX configuration options
      */
     jsx?: {
-      /**
-       * - `"automatic"`: auto-import `jsx`/`jsxs` from `<importSource>/jsx-runtime`, or `jsxDEV` from
-       *   `<importSource>/jsx-dev-runtime` when {@link development} is `true`.
-       * - `"classic"`: emit `factory(type, props, ...children)` with no auto-import.
-       *
-       * @default "automatic"
-       */
       runtime?: "automatic" | "classic";
-      /**
-       * Package the automatic runtime imports from. Bun appends `/jsx-runtime` or `/jsx-dev-runtime`.
-       * Only used when `runtime` is `"automatic"`.
-       *
-       * @default "react"
-       */
       importSource?: string;
-      /**
-       * Function called for each JSX element when `runtime` is `"classic"`.
-       *
-       * @default "React.createElement"
-       */
       factory?: string;
-      /**
-       * Value used for JSX fragments (`<>...</>`) when `runtime` is `"classic"`.
-       *
-       * @default "React.Fragment"
-       */
       fragment?: string;
-      /**
-       * Treat JSX elements as having side effects. Disables the pure annotation on each emitted
-       * `jsx(...)` / `createElement(...)` call so unused JSX elements are not removed.
-       *
-       * @default false
-       */
       sideEffects?: boolean;
-      /**
-       * Use the development automatic runtime: import `jsxDEV` from `<importSource>/jsx-dev-runtime`. When `false`,
-       * import `jsx`/`jsxs` from `<importSource>/jsx-runtime`. Only used when `runtime` is `"automatic"`.
-       */
       development?: boolean;
     };
 

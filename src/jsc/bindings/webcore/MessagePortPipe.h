@@ -46,11 +46,9 @@ public:
         Attached = 1ull << 2, // ctxId/port are valid; ok to schedule drains.
         ContextKnown = 1ull << 3, // ctxId/port are valid for close-notification only (no drains).
         ClosedByRequest = 1ull << 4, // the Closed above came from close(), not from the port being collected.
-        // This side's MessagePort holds an event-loop ref (message listener while
-        // ref'd, or explicit .ref()). The entangled wrapper reads this from the GC
-        // thread: a side whose peer is holding the loop must not be collected, or
-        // peerClosed() would release that ref at GC timing. Node never collects an
-        // entangled port; this narrows retention to "peer is actively waiting".
+        // This side's MessagePort is holding an event-loop ref (jsHasRef()). Read from
+        // the GC thread by the peer's hasPendingActivity(): a side whose peer is waiting
+        // must not be collected or peerClosed() releases that ref at GC timing.
         HoldsLoopRef = 1ull << 5,
 
         QueuedShift = 8,
@@ -89,8 +87,7 @@ public:
     bool isOtherSideClosedByRequest(uint8_t side) const { return state(1 - side) & ClosedByRequest; }
     bool otherSideHoldsLoopRef(uint8_t side) const { return state(1 - side) & HoldsLoopRef; }
 
-    // Called from the owning port's thread when its jsHasRef() transitions. Takes
-    // the side lock: send() rewrites the same word from the peer thread.
+    // Owning-thread only. Takes the side lock: send() rewrites the same word from the peer.
     void setHoldsLoopRef(uint8_t side, bool value);
 
     // Equality is by identity; used to reject "port posted through itself".

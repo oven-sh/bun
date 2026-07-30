@@ -259,8 +259,7 @@ void MessagePortPipe::setHoldsLoopRef(uint8_t side, bool value)
 {
     ASSERT(side < 2);
     auto& s = m_sides[side];
-    // Cheap unlocked probe: only the owning port's thread flips this bit, so a
-    // matching read means no transition is needed and we skip the lock.
+    // Only the owning thread flips this bit, so a matching unlocked read skips the lock.
     uint64_t st = s.state.load(std::memory_order_acquire);
     if ((st & Closed) || !!(st & HoldsLoopRef) == value)
         return;

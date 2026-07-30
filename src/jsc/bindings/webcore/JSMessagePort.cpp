@@ -198,9 +198,8 @@ static inline bool setJSMessagePort_onmessageSetter(JSGlobalObject& lexicalGloba
 {
     auto& vm = JSC::getVM(&lexicalGlobalObject);
     UNUSED_PARAM(vm);
-    // The listener-count loop-ref (onDidChangeListener → updateListenerEventLoopRef)
-    // tracks this handler via setEventHandlerAttribute's add/remove, so no separate
-    // jsRef() here: a second unbalanced keepalive made `onmessage = null` stick.
+    // No jsRef(): onDidChangeListener already tracks this handler's loop ref, and the
+    // second unbalanced keepalive made `onmessage = null` stick.
     setEventHandlerAttribute<JSEventListener>(thisObject.wrapped(), eventNames().messageEvent, value, thisObject);
     vm.writeBarrier(&thisObject, value);
     ensureStillAliveHere(value);
@@ -228,8 +227,7 @@ static inline bool setJSMessagePort_onmessageerrorSetter(JSGlobalObject& lexical
 {
     auto& vm = JSC::getVM(&lexicalGlobalObject);
     UNUSED_PARAM(vm);
-    // Node only refs the event loop for 'message' listeners; a messageerror
-    // handler alone must not keep the process alive.
+    // No jsRef(): node never refs the loop for a messageerror handler.
     setEventHandlerAttribute<JSEventListener>(thisObject.wrapped(), eventNames().messageerrorEvent, value, thisObject);
     vm.writeBarrier(&thisObject, value);
     ensureStillAliveHere(value);

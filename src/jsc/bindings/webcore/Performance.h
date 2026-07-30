@@ -93,7 +93,7 @@ public:
     Vector<RefPtr<PerformanceEntry>> getEntries() const;
     Vector<RefPtr<PerformanceEntry>> getEntriesByType(const String& entryType) const;
     Vector<RefPtr<PerformanceEntry>> getEntriesByName(const String& name, const String& entryType) const;
-    void appendBufferedEntriesByType(const String& entryType, Vector<RefPtr<PerformanceEntry>>&, PerformanceObserver&) const;
+    void appendBufferedEntriesByType(const String& entryType, Vector<RefPtr<PerformanceEntry>>&) const;
 
     void clearResourceTimings();
     void setResourceTimingBufferSize(unsigned);

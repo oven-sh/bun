@@ -32,13 +32,9 @@
 // http://code.google.com/p/rescle/
 #include "rescle.h"
 
-#include <assert.h>
 #include <atlstr.h>
 #include <sstream> // wstringstream
 #include <iomanip> // setw, setfill
-#include <fstream>
-#include <codecvt>
-#include <algorithm>
 
 namespace rescle {
 

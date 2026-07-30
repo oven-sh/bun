@@ -58,11 +58,11 @@ test("dead WebSocket create/connect overloads and commented-out WebKit blocks do
     ["src/jsc/bindings/webcore/WebSocket.cpp", /MixedContentChecker/],
     ["src/jsc/bindings/webcore/WebSocket.cpp", /WebSocket::didUpdateBufferedAmount/],
     ["src/jsc/bindings/webcore/WebSocket.cpp", /ConnectedWebSocketKind::Server:/],
-    ["src/jsc/bindings/webcore/WebSocket.h", /void didReceiveData\(const char\*, size_t\);/],
+    ["src/jsc/bindings/webcore/WebSocket.h", /void didReceiveData\(const char\* data, size_t length\);/],
     ["src/jsc/bindings/webcore/WebSocket.h", /void didUpdateBufferedAmount\(unsigned/],
     ["src/jsc/bindings/webcore/WebSocket.h", /WebSocket\(ScriptExecutionContext&, const String& url\);/],
-    ["src/jsc/bindings/webcore/WebSocket.h", /void connect\(const String& url\);/],
-    ["src/jsc/bindings/webcore/WebSocket.h", /void connect\(const String& url, const String& protocol\);/],
+    ["src/jsc/bindings/webcore/WebSocket.h", /ExceptionOr<void> connect\(const String& url\);/],
+    ["src/jsc/bindings/webcore/WebSocket.h", /ExceptionOr<void> connect\(const String& url, const String& protocol\);/],
   ];
   expect(resurrected(checks)).toEqual([]);
 });

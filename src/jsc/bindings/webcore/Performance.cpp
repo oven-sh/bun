@@ -58,7 +58,7 @@ namespace WebCore {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(Performance);
 
-static Seconds timePrecision { 1_ms };
+static constexpr Seconds timePrecision { 1_ms };
 
 Performance::Performance(ScriptExecutionContext* context, MonotonicTime timeOrigin)
     : ContextDestructionObserver(context)
@@ -197,21 +197,10 @@ Vector<RefPtr<PerformanceEntry>> Performance::getEntriesByName(const String& nam
     return entries;
 }
 
-void Performance::appendBufferedEntriesByType(const String& entryType, Vector<RefPtr<PerformanceEntry>>& entries, PerformanceObserver& observer) const
+void Performance::appendBufferedEntriesByType(const String& entryType, Vector<RefPtr<PerformanceEntry>>& entries) const
 {
-    // if (m_navigationTiming
-    //     && entryType == "navigation"_s
-    //     && !observer.hasNavigationTiming()) {
-    //     entries.append(m_navigationTiming);
-    //     observer.addedNavigationTiming();
-    // }
-
     if (entryType == "resource"_s)
         entries.appendVector(m_resourceTimingBuffer);
-
-    // if (entryType == "paint"_s && m_firstContentfulPaint)
-    //     entries.append(m_firstContentfulPaint);
-
     if (m_userTiming) {
         if (entryType.isNull() || entryType == "mark"_s)
             entries.appendVector(m_userTiming->getMarks());
@@ -282,13 +271,6 @@ void Performance::removeAllObservers()
 void Performance::registerPerformanceObserver(PerformanceObserver& observer)
 {
     m_observers.add(&observer);
-
-    // if (m_navigationTiming
-    //     && observer.typeFilter().contains(PerformanceEntry::Type::Navigation)
-    //     && !observer.hasNavigationTiming()) {
-    //     observer.queueEntry(*m_navigationTiming);
-    //     observer.addedNavigationTiming();
-    // }
 }
 
 void Performance::unregisterPerformanceObserver(PerformanceObserver& observer)

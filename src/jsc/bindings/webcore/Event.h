@@ -72,7 +72,6 @@ public:
     bool isInitialized() const { return m_isInitialized; }
 
     const AtomString& type() const { return m_type; }
-    void setType(const AtomString& type) { m_type = type; }
 
     EventTarget* target() const { return m_target.get(); }
     void setTarget(RefPtr<EventTarget>&&);

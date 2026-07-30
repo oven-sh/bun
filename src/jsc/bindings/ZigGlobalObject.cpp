@@ -2397,9 +2397,13 @@ void GlobalObject::finishCreation(VM& vm)
     m_navigatorLanguages.initLater(
         [](const Initializer<JSC::JSArray>& init) {
             JSC::JSGlobalObject* globalObject = init.owner;
+            auto scope = DECLARE_THROW_SCOPE(init.vm);
             JSC::JSArray* array = JSC::constructEmptyArray(globalObject, nullptr, 1);
+            scope.assertNoException();
             array->putDirectIndex(globalObject, 0, JSC::jsString(init.vm, JSC::defaultLocale(globalObject)));
+            scope.assertNoException();
             JSC::objectConstructorFreeze(globalObject, array);
+            scope.assertNoException();
             init.set(array);
         });
 

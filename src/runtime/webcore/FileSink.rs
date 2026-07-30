@@ -1534,6 +1534,7 @@ impl FileSink {
             // wrapper's `m_ctx` heap payload); `self.readable_stream` pins that
             // wrapper for this sink's lifetime.
             let byte_stream = unsafe { &*bs_ptr };
+            debug_assert!(byte_stream.sink.get().is_none());
             self.source.set(streams::SourceHandle::ByteStream(bs_ptr));
             byte_stream.sink.set(webcore::SinkHandle::FileSink(self_ptr));
             byte_stream.sink_paused.set(false);

@@ -286,8 +286,10 @@ it("os.constants.signals is frozen", () => {
   expect(os.constants.signals.SIGTERM).toBe(15);
 });
 
-it.skipIf(isWindows)("child_process signal name resolution is not affected by mutating os.constants.signals", async () => {
-  const script = `
+it.skipIf(isWindows)(
+  "child_process signal name resolution is not affected by mutating os.constants.signals",
+  async () => {
+    const script = `
     const os = require("node:os");
     const { spawn } = require("node:child_process");
     try { os.constants.signals.SIGTERM = 9; } catch {}
@@ -302,21 +304,22 @@ it.skipIf(isWindows)("child_process signal name resolution is not affected by mu
       console.log(JSON.stringify({ out: out.trim().split("\\n"), code, sig }));
     });
   `;
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "-e", script],
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stderr).toBe("");
-  expect(JSON.parse(stdout.trim())).toEqual({
-    out: ["READY", "CAUGHT-SIGTERM"],
-    code: 42,
-    sig: null,
-  });
-  expect(exitCode).toBe(0);
-});
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout.trim())).toEqual({
+      out: ["READY", "CAUGHT-SIGTERM"],
+      code: 42,
+      sig: null,
+    });
+    expect(exitCode).toBe(0);
+  },
+);
 
 it("getPriority system error object", () => {
   try {

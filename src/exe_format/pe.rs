@@ -630,6 +630,10 @@ impl PEFile {
         writer.write_all(&self.data)?;
         Ok(())
     }
+
+    pub fn len(&self) -> usize {
+        self.data.len()
+    }
 }
 
 // External C interface declarations - these are implemented in C++ bindings

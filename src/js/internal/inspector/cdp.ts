@@ -54,56 +54,8 @@ function breakpointUrlRegex(url: string): string {
   return Array.from(candidates, candidate => `^${escapeRegex(candidate)}$`).join("|");
 }
 
-function scopeKey(scope: AnyObject): string {
-  const location = scope.location;
-  return `${scope.type}|${scope.name ?? ""}|${location?.scriptId ?? ""}|${location?.lineNumber ?? ""}|${location?.columnNumber ?? ""}`;
-}
-
-// JSC splits an `async function` that uses `await` into a wrapper and a body
-// (Parser.cpp parseAsyncFunctionSourceElements); before the first suspend both
-// are on the VM stack, so the backend lists the function twice in callFrames.
-// V8 lists it once. The body closes over the wrapper's activation, so the
-// wrapper's scope chain is a proper suffix of the body's; drop that caller.
-function dropAsyncWrapperFrames(frames: AnyObject[]): AnyObject[] {
-  if (frames.length < 2) return frames;
-  const result: AnyObject[] = [frames[0]];
-  let previousDropped = false;
-  for (let i = 1; i < frames.length; i++) {
-    const frame = frames[i];
-    // A wrapper always immediately follows its body: once a frame is dropped,
-    // its caller is a distinct body and must be kept.
-    if (!previousDropped) {
-      const body = frames[i - 1];
-      const bodyScopes = body.scopeChain;
-      const wrapperScopes = frame.scopeChain;
-      if (
-        body.functionName === frame.functionName &&
-        body.location?.scriptId === frame.location?.scriptId &&
-        $isArray(bodyScopes) &&
-        $isArray(wrapperScopes)
-      ) {
-        const bodyScopeCount = bodyScopes.length;
-        const wrapperScopeCount = wrapperScopes.length;
-        if (wrapperScopeCount > 0 && bodyScopeCount > wrapperScopeCount) {
-          const offset = bodyScopeCount - wrapperScopeCount;
-          let isSuffix = true;
-          for (let k = 0; k < wrapperScopeCount; k++) {
-            if (scopeKey(bodyScopes[offset + k]) !== scopeKey(wrapperScopes[k])) {
-              isSuffix = false;
-              break;
-            }
-          }
-          if (isSuffix) {
-            previousDropped = true;
-            continue;
-          }
-        }
-      }
-    }
-    result.push(frame);
-    previousDropped = false;
-  }
-  return result;
+function locationKey(location: AnyObject | undefined): string {
+  return location ? `${location.scriptId}:${location.lineNumber}:${location.columnNumber}` : "";
 }
 
 const SCOPE_TYPE_MAP: Record<string, string> = {
@@ -153,6 +105,7 @@ class InspectorCDPAdapter {
     { clientId: number | string | null; method: string; onResult?: (result: AnyObject, error?: AnyObject) => void }
   >();
   #scripts = new Map<string, { cdpUrl: string; endLine: number; endColumn: number }>();
+  #asyncWrapperLocations: Set<string> | undefined;
 
   constructor(writeToBackend: (message: string) => void, writeToClient: (message: string) => void) {
     this.#writeToBackend = writeToBackend;
@@ -640,20 +593,32 @@ class InspectorCDPAdapter {
         return;
       }
 
+      // Bun emits this from the inspected thread immediately before
+      // Debugger.paused with the pause locations of JSC's generator/async
+      // wrapper frames (see BunInspectorConnection::sendMessageToFrontend), so
+      // the translation below can drop them to match V8's one-frame view.
+      case "Bun.asyncWrapperFrames":
+        this.#asyncWrapperLocations = new Set((params.locations ?? []).map(locationKey));
+        return;
+
       case "Debugger.paused": {
-        const callFrames = dropAsyncWrapperFrames(params.callFrames ?? []).map((frame: AnyObject) => ({
-          callFrameId: frame.callFrameId,
-          functionName: frame.functionName ?? "",
-          location: frame.location,
-          url: this.#scripts.$get(frame.location?.scriptId)?.cdpUrl ?? "",
-          scopeChain: (frame.scopeChain ?? []).map((scope: AnyObject) => ({
-            type: SCOPE_TYPE_MAP[scope.type] ?? "closure",
-            object: scope.object,
-            name: scope.name,
-          })),
-          this: frame.this,
-          canBeRestarted: false,
-        }));
+        const wrapperLocations = this.#asyncWrapperLocations;
+        this.#asyncWrapperLocations = undefined;
+        const callFrames = (params.callFrames ?? [])
+          .filter((frame: AnyObject) => !wrapperLocations?.has(locationKey(frame.location)))
+          .map((frame: AnyObject) => ({
+            callFrameId: frame.callFrameId,
+            functionName: frame.functionName ?? "",
+            location: frame.location,
+            url: this.#scripts.$get(frame.location?.scriptId)?.cdpUrl ?? "",
+            scopeChain: (frame.scopeChain ?? []).map((scope: AnyObject) => ({
+              type: SCOPE_TYPE_MAP[scope.type] ?? "closure",
+              object: scope.object,
+              name: scope.name,
+            })),
+            this: frame.this,
+            canBeRestarted: false,
+          }));
         const { data, asyncStackTrace } = params;
         const cdpParams: AnyObject = { callFrames, reason: "other", data };
         switch (params.reason) {

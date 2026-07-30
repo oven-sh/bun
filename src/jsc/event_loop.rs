@@ -191,9 +191,7 @@ unsafe extern "Rust" {
     /// `WTFTimer::run` — `timer` is an erased `*mut bun_runtime::timer::WTFTimer`.
     /// Defined in `bun_runtime::dispatch`. Link-time resolved.
     fn __bun_run_wtf_timer(timer: *mut (), vm: *mut VirtualMachine);
-    /// `timer::All::has_due_regular_timer` — peek the JS timer heap and
-    /// report whether its soonest entry is already due. Defined in
-    /// `bun_runtime::dispatch`. Link-time resolved.
+    /// `timer::All::has_due_regular_timer`. Defined in `bun_runtime::dispatch`.
     safe fn __bun_has_due_timer() -> bool;
     /// Tag-specific shutdown release for a queued-but-never-run task. Called
     /// from `release_queued_tasks_for_shutdown` (after `shutdown_for_exit`,
@@ -459,20 +457,11 @@ impl EventLoop {
         let _ = self.tick_concurrent_with_count();
     }
 
-    /// Re-drain the concurrent queue mid-tick only when nothing is waiting on
-    /// `tick()` to return. libuv delivers thread-pool completions once per
-    /// poll and runs the timers/check phases between polls, so Node interleaves
-    /// due `setInterval`/`setTimeout` (and `setImmediate`) with a chain of
-    /// `fs.read` callbacks that each submit the next read. The unconditional
-    /// `tick_concurrent()` at the start of `tick()` is that once-per-iteration
-    /// batch boundary; re-draining here is a throughput nicety that must yield
-    /// when a timer is due or an immediate is pending.
-    ///
-    /// The yield probe is guarded on `concurrent_tasks` being non-empty so the
-    /// clock read in `__bun_has_due_timer` is only paid when there is actually
-    /// something to re-drain (an HTTP server always has `DateHeaderTimer`
-    /// armed, so an unguarded probe would add a `clock_gettime` to every
-    /// inner-loop iteration of `tick()`).
+    /// Mid-tick re-drain, skipped when a `setImmediate` is pending or a JS
+    /// timer is due so `tick()` returns and `auto_tick*` can run them (Node
+    /// interleaves timers/check between thread-pool completion batches). The
+    /// `concurrent_tasks` guard keeps the clock-read probe off the path when
+    /// nothing arrived.
     fn tick_concurrent_unless_due(&mut self) {
         if !self.concurrent_tasks.is_empty()
             && (!self.immediate_tasks.is_empty() || __bun_has_due_timer())

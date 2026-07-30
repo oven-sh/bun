@@ -878,12 +878,8 @@ unsafe fn __bun_cancel_pending_immediate(
     }
 }
 
-/// `__bun_has_due_timer` body — declared `extern "Rust"` in
-/// `bun_jsc::event_loop`. `EventLoop::tick()` polls this to decide whether to
-/// keep re-draining `concurrent_tasks` mid-tick or yield so `auto_tick*` can
-/// run the timers phase (Node interleaves due timers between thread-pool
-/// completion batches; without this a self-feeding `fs.read` chain starves
-/// `setInterval`).
+/// Declared `extern "Rust"` in `bun_jsc::event_loop`; `tick()`'s mid-tick
+/// yield check.
 #[unsafe(no_mangle)]
 fn __bun_has_due_timer() -> bool {
     let all = crate::jsc_hooks::timer_all();

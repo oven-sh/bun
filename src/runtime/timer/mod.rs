@@ -1013,13 +1013,8 @@ impl All {
         }
     }
 
-    /// Cheap "is the soonest JS timer already due" probe for
-    /// `EventLoop::tick()`'s mid-tick yield check. Reads the clock only when
-    /// the regular heap is non-empty. WTF timers are ignored: taking the
-    /// `wtf_timers` lock on every inner-loop iteration of `tick()` is not
-    /// worth it, and the `drain_due_wtf_timers` call at the next
-    /// `get_timeout`/`drain_timers` is never more than one loop iteration
-    /// away once `tick()` returns.
+    /// `EventLoop::tick()`'s mid-tick yield probe. WTF timers are skipped to
+    /// avoid the `wtf_timers` lock; they drain at the next `get_timeout`.
     pub(crate) fn has_due_regular_timer(&self) -> bool {
         let Some(timer) = self.timers.peek() else {
             return false;

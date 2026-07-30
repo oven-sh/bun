@@ -467,16 +467,21 @@ static JSValue convertChunksToArrayBuffer(JSGlobalObject* globalObject, JSValue 
     if (length == 1) {
         JSValue chunk = chunks->getIndex(globalObject, 0);
         RETURN_IF_EXCEPTION(scope, {});
-        if (auto* jsBuffer = dynamicDowncast<JSC::JSArrayBuffer>(chunk))
-            return jsBuffer;
-        if (auto* view = dynamicDowncast<JSC::JSArrayBufferView>(chunk)) {
-            RefPtr<JSC::ArrayBuffer> impl = view->possiblySharedBuffer();
-            if (impl && !view->byteOffset() && view->byteLength() == impl->byteLength()) {
-                auto* jsBuffer = view->possiblySharedJSBuffer(globalObject);
-                RETURN_IF_EXCEPTION(scope, {});
-                return jsBuffer;
-            }
-            auto copied = JSC::ArrayBuffer::tryCreate(view->span());
+        // Fetch's body-read builds arrayBuffer() as a fresh buffer over the concatenated
+        // bytes; never hand back the producer's own backing store.
+        std::span<const uint8_t> span;
+        bool isBinary = false;
+        if (auto* jsBuffer = dynamicDowncast<JSC::JSArrayBuffer>(chunk)) {
+            isBinary = true;
+            if (auto* impl = jsBuffer->impl(); impl && !impl->isDetached())
+                span = impl->span();
+        } else if (auto* view = dynamicDowncast<JSC::JSArrayBufferView>(chunk)) {
+            isBinary = true;
+            if (!view->isDetached())
+                span = view->span();
+        }
+        if (isBinary) {
+            auto copied = JSC::ArrayBuffer::tryCreate(span);
             if (!copied) [[unlikely]] {
                 throwOutOfMemoryError(globalObject, scope);
                 return {};
@@ -506,18 +511,26 @@ static JSValue convertChunksToBytes(JSGlobalObject* globalObject, JSValue chunks
     if (length == 1) {
         JSValue chunk = chunks->getIndex(globalObject, 0);
         RETURN_IF_EXCEPTION(scope, {});
-        if (auto* uint8 = dynamicDowncast<JSC::JSUint8Array>(chunk))
-            return uint8;
+        // Fetch's body-read builds bytes() as "create a Uint8Array from bytes" over a
+        // fresh buffer; never hand back or wrap the producer's own backing store.
+        std::span<const uint8_t> span;
+        bool isBinary = false;
         if (auto* view = dynamicDowncast<JSC::JSArrayBufferView>(chunk)) {
-            size_t byteOffset = view->byteOffset();
-            size_t byteLength = view->byteLength();
-            RefPtr<JSC::ArrayBuffer> impl = view->possiblySharedBuffer();
-            RELEASE_AND_RETURN(scope, JSC::JSUint8Array::create(globalObject, structure, WTF::move(impl), byteOffset, byteLength));
+            isBinary = true;
+            if (!view->isDetached())
+                span = view->span();
+        } else if (auto* jsBuffer = dynamicDowncast<JSC::JSArrayBuffer>(chunk)) {
+            isBinary = true;
+            if (auto* impl = jsBuffer->impl(); impl && !impl->isDetached())
+                span = impl->span();
         }
-        if (auto* jsBuffer = dynamicDowncast<JSC::JSArrayBuffer>(chunk)) {
-            RefPtr<JSC::ArrayBuffer> impl = jsBuffer->impl();
-            size_t byteLength = impl ? impl->byteLength() : 0;
-            RELEASE_AND_RETURN(scope, JSC::JSUint8Array::create(globalObject, structure, WTF::move(impl), 0, byteLength));
+        if (isBinary) {
+            auto copied = JSC::ArrayBuffer::tryCreate(span);
+            if (!copied) [[unlikely]] {
+                throwOutOfMemoryError(globalObject, scope);
+                return {};
+            }
+            RELEASE_AND_RETURN(scope, JSC::JSUint8Array::create(globalObject, structure, WTF::move(copied), 0, span.size()));
         }
         if (chunk.isString())
             RELEASE_AND_RETURN(scope, encodeStringToUint8Array(vm, globalObject, chunk));

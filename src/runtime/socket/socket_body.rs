@@ -1283,6 +1283,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         self.socket.set(SocketHandler::<SSL>::DETACHED);
         self.buffered_data_for_node_net
             .with_mut(|b| b.clear_and_free());
+        self.fatal_write_errno.set(0);
         self.detach_native_callback();
         old.close(uws::CloseCode::Failure);
         self.poll_ref.with_mut(|p| p.unref(js_loop_ctx()));
@@ -1977,6 +1978,9 @@ impl<const SSL: bool> NewSocket<SSL> {
         reason: Option<*mut c_void>,
     ) -> JsResult<()> {
         jsc::mark_binding!();
+        // Per-transport: consume (and clear) the first fatal send errno recorded
+        // by a JS-driven write so a wrapper reused for a reconnect starts clean.
+        let fatal_write_errno = this.fatal_write_errno.replace(0);
         // A late close on a socket that already released its Handlers through
         // a path that did not route back through this dispatch - e.g. a
         // JS-side destroy on a TLS socket driven by an upgraded duplex. There
@@ -2065,12 +2069,12 @@ impl<const SSL: bool> NewSocket<SSL> {
                 &sys::Error::from_code_int(err, sys::Tag::read),
                 &global,
             );
-        } else if this.fatal_write_errno.get() != 0 {
+        } else if fatal_write_errno != 0 {
             // The loop reported a clean close, but a JS-driven write already
             // saw the kernel reject the send (peer RST while the loop was
             // blocked in JS). Report that errno so the reset is not lost.
             js_error = <sys::Error as jsc::SysErrorJsc>::to_js(
-                &sys::Error::from_code_int(this.fatal_write_errno.get(), sys::Tag::write),
+                &sys::Error::from_code_int(fatal_write_errno, sys::Tag::write),
                 &global,
             );
         }

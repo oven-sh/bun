@@ -43,8 +43,11 @@ describe("Bun.build", () => {
       released = true;
       try {
         const w = await fsPromises.open(fifo, "w");
-        await w.write("x");
-        await w.close();
+        try {
+          await w.write("x");
+        } finally {
+          await w.close();
+        }
       } catch (e) {
         // Let the `finally` retry and surface the failure instead of it
         // becoming an unhandled rejection from the timer.

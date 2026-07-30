@@ -4214,11 +4214,9 @@ impl Resolver {
             let state = crate::jsc_hooks::runtime_state();
             // SAFETY: `state` is the boxed per-thread `RuntimeState`; single-threaded JS heap.
             unsafe { (*state).timer.increment_timer_ref(-1, uws_loop) };
-            // SAFETY: `deref_this` is the heap allocation from `init`. This releases the
-            // ref taken by `add_timer` (no local `ref_()` pairing). The timer is
-            // only ACTIVE while at least one pending request also holds an
-            // `IntrusiveRc<Resolver>`, so this `deref` cannot drop the last ref
-            // and `*self` stays live for the rest of the function body.
+            // SAFETY: `deref_this` is the heap allocation from `init`; releases
+            // `add_timer`'s ref. May be the final release; nothing touches
+            // `*self` after this point.
             unsafe { Self::deref(deref_this) };
         }
 
@@ -4233,7 +4231,12 @@ impl Resolver {
                     c_ares::ARES_SOCKET_BAD,
                     c_ares::ARES_SOCKET_BAD,
                 );
-                let _ = self.add_timer(Some(&now));
+                // See `on_dns_poll` — c-ares detaches post-callback, so re-check.
+                if self.any_requests_pending() {
+                    let _ = self.add_timer(Some(&now));
+                } else {
+                    self.remove_timer();
+                }
             }
         }
     }

@@ -3585,7 +3585,11 @@ impl<'a> HTTPClient<'a> {
         socket: HttpSocket<IS_SSL>,
     ) {
         bun_core::scoped_log!(fetch, "closeAndFail: {:?}", err);
-        GenHttpContext::<IS_SSL>::terminate_socket(socket);
+        if cfg!(target_os = "macos") && self.state.original_request_body.len() > 0 {
+            GenHttpContext::<IS_SSL>::fail_socket(socket);
+        } else {
+            GenHttpContext::<IS_SSL>::terminate_socket(socket);
+        }
         self.fail(err);
     }
 
@@ -4898,19 +4902,20 @@ impl<'a> HTTPClient<'a> {
                     location = header.value();
                 }
                 h if h == hash_header_const(b"Connection") => {
-                    if response.status_code >= 200 && response.status_code <= 299 {
-                        // HTTP headers are case-insensitive (RFC 7230)
-                        if bun_core::strings::eql_case_insensitive_ascii_check_length(
-                            header.value(),
-                            b"close",
-                        ) {
-                            self.state.flags.allow_keepalive = false;
-                        } else if bun_core::strings::eql_case_insensitive_ascii_check_length(
+                    // `close` applies on any status (RFC 9112 §9.6); only an
+                    // explicit `keep-alive` is gated on a 2xx success.
+                    if bun_core::strings::eql_case_insensitive_ascii_check_length(
+                        header.value(),
+                        b"close",
+                    ) {
+                        self.state.flags.allow_keepalive = false;
+                    } else if (200..=299).contains(&response.status_code)
+                        && bun_core::strings::eql_case_insensitive_ascii_check_length(
                             header.value(),
                             b"keep-alive",
-                        ) {
-                            self.state.flags.allow_keepalive = true;
-                        }
+                        )
+                    {
+                        self.state.flags.allow_keepalive = true;
                     }
                 }
                 h if h == hash_header_const(b"Last-Modified") => {

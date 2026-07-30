@@ -988,7 +988,6 @@ test.concurrent("bun build --compile truncates the PE output when Authenticode s
   const lastEnd = lastSectionEnd(out);
   expect({ fileSize: out.length, lastEnd }).toEqual({ fileSize: lastEnd, lastEnd });
   expect(out.length).toBeLessThan(tmpl.length);
-  expect(out.indexOf(0xab, lastEnd)).toBe(-1);
 
   const { stored, expected } = peChecksum(out);
   expect(stored).toBe(expected);

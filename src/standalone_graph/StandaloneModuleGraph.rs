@@ -1479,11 +1479,15 @@ pub(crate) fn inject(
                 return Fd::INVALID;
             }
             // Stripping Authenticode can make the PE shorter than the cloned base file,
-            // so drop any stale tail past the in-memory image (matches the ELF path).
-            let _ = Syscall::ftruncate(
+            // so drop any stale tail past the in-memory image.
+            if let Err(err) = Syscall::ftruncate(
                 cloned_executable_fd,
                 i64::try_from(pe_file.len()).expect("int cast"),
-            );
+            ) {
+                bun_core::pretty_errorln!("Error truncating PE file: {}", err);
+                cleanup(zname, cloned_executable_fd);
+                return Fd::INVALID;
+            }
             // Set executable permissions when running on POSIX hosts, even for Windows targets
             #[cfg(not(windows))]
             {
@@ -1534,10 +1538,14 @@ pub(crate) fn inject(
                 return Fd::INVALID;
             }
             // Truncate the file to the exact size of the modified ELF
-            let _ = Syscall::ftruncate(
+            if let Err(err) = Syscall::ftruncate(
                 cloned_executable_fd,
                 i64::try_from(elf_file.data.len()).expect("int cast"),
-            );
+            ) {
+                bun_core::pretty_errorln!("Error truncating ELF file: {}", err);
+                cleanup(zname, cloned_executable_fd);
+                return Fd::INVALID;
+            }
 
             #[cfg(not(windows))]
             {

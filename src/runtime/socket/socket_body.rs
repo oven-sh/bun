@@ -915,11 +915,11 @@ impl<const SSL: bool> NewSocket<SSL> {
                 &sys::Error::from_code_int(fatal_send_errno, sys::Tag::write),
                 &global,
             );
+            this.fatal_write_errno.set(0); // delivered below; on_close must not re-report it
             let _ = handlers.call_error_handler(this_value, &[this_value, err_value]);
             // The error handler can destroy the socket itself; only close a
             // still-attached socket. Close without detaching so on_close runs
             // and JS observes 'close' (mirrors h2's dead-transport close).
-            this.fatal_write_errno.set(0); // delivered above; on_close must not re-report it
             if !this.socket.get().is_detached() {
                 this.socket.get().close(uws::CloseCode::Normal);
             }

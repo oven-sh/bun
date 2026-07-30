@@ -141,7 +141,6 @@ export function bindNativeConsoleMethods(console: typeof globalThis.console) {
   let inspectTable: typeof Bun.inspect.table | undefined;
 
   const nanoseconds = Bun.nanoseconds;
-  const enableColors = Bun.enableANSIColors;
 
   function elapsed(ns: number) {
     const ms = ns / 1e6;
@@ -170,15 +169,15 @@ export function bindNativeConsoleMethods(console: typeof globalThis.console) {
       const start = MapGet.$call(times, label) as number | undefined;
       if (start === undefined) return;
       const prefix = label.length > 0 ? `${elapsed(nanoseconds() - start)} ${label}` : elapsed(nanoseconds() - start);
-      if (data.length > 0) this.log(prefix, ...data);
-      else this.log(prefix);
+      if (data.length > 0) this.log("%s", prefix, ...data);
+      else this.log("%s", prefix);
     },
     timeEnd(label = "default") {
       label = `${label}`;
       const start = MapGet.$call(times, label) as number | undefined;
       if (start === undefined) return;
       MapDelete.$call(times, label);
-      this.log(label.length > 0 ? `${elapsed(nanoseconds() - start)} ${label}` : elapsed(nanoseconds() - start));
+      this.log("%s", label.length > 0 ? `${elapsed(nanoseconds() - start)} ${label}` : elapsed(nanoseconds() - start));
     },
     assert(expression, ...args) {
       if (!expression) {
@@ -204,10 +203,12 @@ export function bindNativeConsoleMethods(console: typeof globalThis.console) {
         return this.log(tabularData);
       }
       inspectTable ??= Bun.inspect.table;
+      const stdout = this._stdout;
+      const colors = Bun.enableANSIColors && !!(stdout && stdout.isTTY);
       const rendered =
         properties === undefined
-          ? inspectTable(tabularData, { depth: 0, colors: enableColors })
-          : inspectTable(tabularData, properties, { depth: 0, colors: enableColors });
+          ? inspectTable(tabularData, { depth: 0, colors })
+          : inspectTable(tabularData, properties, { depth: 0, colors });
       this.log(StringPrototypeEndsWith.$call(rendered, "\n") ? StringPrototypeSlice.$call(rendered, 0, -1) : rendered);
     },
     group(...data) {

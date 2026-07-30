@@ -263,6 +263,16 @@ impl ByteStream {
         // `JsCell` borrow may be live across that call.
         let sink = *self.sink.get();
         if sink.is_some() {
+            // Upstream error must reach the sink even if it is back-pressured:
+            // `append()` would park the error in `pending.result` (JS-pull only)
+            // and a later `resume()` would send a clean `end(None)`.
+            if let streams::Result::Err(err) = stream {
+                self.sink.set(SinkHandle::None);
+                self.sink_paused.set(false);
+                sink.end(Some(err));
+                return Ok(());
+            }
+
             if self.sink_paused.get() {
                 bun_output::scoped_log!(ByteStream, "ByteStream.onData sink paused → buffer");
                 self.append(stream, 0)

@@ -884,10 +884,6 @@ const makeInstallRunner = (cwd: string) => async (args: string[]) => {
 };
 
 // https://github.com/oven-sh/bun/issues/8662#issuecomment-3379529330
-// `bun remove` of a package that also happened to satisfy some other package's
-// *optional* peer dependency must drop it from bun.lock. The optional peer's
-// resolution slot was carried forward by Lockfile::clean_with_logger and kept
-// the removed package (and its transitives) alive forever.
 it("bun remove drops a package that was only otherwise an optional peer", async () => {
   const { packageDir, packageJson } = await registry.createTestDir({ bunfigOpts: { saveTextLockfile: true } });
   const run = makeInstallRunner(packageDir);

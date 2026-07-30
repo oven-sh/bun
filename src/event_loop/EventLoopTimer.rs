@@ -200,7 +200,6 @@ pub enum Tag {
     BunTest,
     EventLoopDelayMonitor,
     CronJob,
-    GcOneShot,
     GcRepeating,
     QuicEndpoint,
 }
@@ -212,7 +211,7 @@ impl Tag {
             | Tag::BunTest // for test timeouts
             | Tag::EventLoopDelayMonitor // probably important
             | Tag::StatWatcherScheduler
-            | Tag::GcOneShot | Tag::GcRepeating // internal GC pacing
+            | Tag::GcRepeating // internal GC pacing
             | Tag::QuicEndpoint
             => false,
             _ => true,

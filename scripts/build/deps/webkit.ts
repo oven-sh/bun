@@ -400,6 +400,25 @@ export const webkit: Dependency = {
       ...(cfg.asan ? { ENABLE_SANITIZERS: "address" } : {}),
     };
 
+    const srcDir = webkitSrcDir(cfg);
+    // FFI headers (BunFFI.h, FFISignature.h, etc.) live in the ffi/
+    // subdirectory but are included as <JavaScriptCore/*.h> from Bun's
+    // JSCFFIBridge.cpp. Symlink them into the parent JSC directory so the
+    // include resolves without adding every subdirectory to the include path.
+    const ffiHeaders = [
+      "BunFFI.h", "FFICallHost.h", "FFICallbackThunk.h",
+      "FFICallingConvention.h", "FFIContext.h", "FFIConversions.h",
+      "FFIDFG.h", "FFIICStub.h", "FFIInvokeThunk.h",
+      "FFISignature.h", "FFIType.h", "JSFFICallback.h", "JSFFIFunction.h",
+    ];
+    for (const h of ffiHeaders) {
+      const target = resolve(srcDir, "Source", "JavaScriptCore", h);
+      const source = resolve(srcDir, "Source", "JavaScriptCore", "ffi", h);
+      if (existsSync(source) && !existsSync(target)) {
+        symlinkSync(source, target);
+      }
+    }
+
     const spec: NestedCmakeBuild = {
       kind: "nested-cmake",
       targets: ["jsc"],
@@ -541,8 +560,10 @@ export const webkit: Dependency = {
       resolve(buildDir, "bmalloc", "Headers"),
       resolve(buildDir, "WTF", "Headers"),
       resolve(buildDir, "JavaScriptCore", "PrivateHeaders", "JavaScriptCore"),
-      // ffi subdirectory for BunFFI.h (used by JSCFFIBridge.cpp).
-      resolve(buildDir, "JavaScriptCore", "PrivateHeaders", "JavaScriptCore", "ffi"),
+      // FFI headers (BunFFI.h, FFISignature.h, etc.) live in the source
+      // tree's ffi/ subdirectory but are included as <JavaScriptCore/*.h>.
+      // Add the Source root so the JavaScriptCore/ prefix resolves.
+      resolve(webkitSrcDir(cfg), "Source"),
     ];
     // Windows: ICU headers from preBuild output.
     if (cfg.windows) includes.push(resolve(icuDir(cfg), "include"));

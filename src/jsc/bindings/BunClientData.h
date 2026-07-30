@@ -30,6 +30,10 @@ namespace Zig {
 class GlobalObject;
 }
 
+namespace Bun {
+class NodeVMEvalTimeout;
+}
+
 namespace WebCore {
 using namespace JSC;
 using namespace Zig;
@@ -126,6 +130,11 @@ public:
 
     void* bunVM;
     Bun::JSCTaskScheduler deferredWorkTimer;
+
+    // Innermost armed `node:vm` evaluation deadline on this VM, forming an
+    // intrusive stack through NodeVMEvalTimeout::m_enclosing (evaluations
+    // nest strictly). Read by JSC__VM__hasExecutionTimeLimit.
+    Bun::NodeVMEvalTimeout* nodeVMEvalTimeouts { nullptr };
 
     // Backing storage for Bun::IsolatedModuleCache (see IsolatedModuleCache.h).
     // All access should go through that class. Stored as the JSC base type to

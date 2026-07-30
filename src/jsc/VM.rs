@@ -110,7 +110,7 @@ impl VM {
         JSC__VM__executionForbidden(self)
     }
 
-    // These four functions fire VM traps. To understand what that means, see VMTraps.h for a giant explainer.
+    // These functions fire VM traps. To understand what that means, see VMTraps.h for a giant explainer.
     // These may be called concurrently from another thread.
 
     /// Fires NeedTermination Trap. Thread safe. See jsc's "VMTraps.h" for explaination on traps.

@@ -61,6 +61,7 @@
 #include "NodeVMScriptFetcher.h"
 #include "wtf/FileHandle.h"
 
+#include "../vm/NodeVMEvalTimeout.h"
 #include "../vm/SigintWatcher.h"
 
 #include "JavaScriptCore/GetterSetter.h"
@@ -638,6 +639,37 @@ void decorateParseErrorStack(JSGlobalObject* globalObject, VM& vm, JSObject* err
     }
 
     writeArrowHeaderStack(vm, errorInstance, url, reportedLine, sourceLineText, caretColumn, stack);
+}
+
+bool checkForTermination(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSGlobalObject* evaluationGlobalObject, JSC::ThrowScope& scope, SigintReceiver* receiver, NodeVMEvalTimeout* deadline)
+{
+    bool timedOut = deadline && deadline->expired();
+    bool sigintReceived = receiver->getSigintReceived();
+
+    if (vm.hasTerminationRequest()) {
+        // A foreign termination (e.g. Worker.terminate()) keeps propagating.
+        if (!sigintReceived && !timedOut)
+            return false;
+        // clearForGlobalObject(nullptr) is a no-op.
+        vm.drainMicrotasksForGlobalObject(evaluationGlobalObject);
+        // The termination may have fired inside an afterEvaluate microtask
+        // checkpoint, leaving the termination exception pending; clear it so
+        // the ERR_SCRIPT_EXECUTION_* error below replaces it.
+        if (vm.hasPendingTerminationException())
+            DECLARE_TOP_EXCEPTION_SCOPE(vm).clearException();
+        vm.clearHasTerminationRequest();
+    } else if (!timedOut) {
+        return false;
+    }
+
+    if (sigintReceived) {
+        receiver->setSigintReceived(false);
+        throwError(globalObject, scope, ErrorCode::ERR_SCRIPT_EXECUTION_INTERRUPTED, "Script execution was interrupted by `SIGINT`"_s);
+    } else {
+        throwError(globalObject, scope, ErrorCode::ERR_SCRIPT_EXECUTION_TIMEOUT, makeString("Script execution timed out after "_s, deadline->milliseconds(), "ms"_s));
+    }
+    NodeVMEvalTimeout::raiseExpiredDeadline(vm);
+    return true;
 }
 
 // Returns an encoded exception if the options are invalid.

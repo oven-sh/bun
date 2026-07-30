@@ -2264,12 +2264,19 @@ impl NetworkSink {
         }
         let bytes = data.slice();
         let len = bytes.len() as BlobSizeType;
+        // `Backpressure`/`Done` are control signals for the native ByteStream/
+        // JS-controller pump. The direct `.writer()` API (`source == None`)
+        // exposes `write()` as `number | Promise<number>`, so surface the byte
+        // count there and let `flush()` provide the async backpressure hook.
+        let has_source = !matches!(self.source, SourceHandle::None);
 
         if let Some(task) = self.task_mut() {
             return match task.write_bytes(bytes, false) {
-                Ok(bun_s3::UploadBackpressure::Backpressure) => Writable::Backpressure(len),
-                Ok(bun_s3::UploadBackpressure::Done) => Writable::Done,
-                Ok(bun_s3::UploadBackpressure::WantMore) => Writable::Owned(len),
+                Ok(bun_s3::UploadBackpressure::Backpressure) if has_source => {
+                    Writable::Backpressure(len)
+                }
+                Ok(bun_s3::UploadBackpressure::Done) if has_source => Writable::Done,
+                Ok(_) => Writable::Owned(len),
                 Err(_) => Writable::Err(SysError::from_code(sys::E::ENOMEM, sys::Tag::write)),
             };
         }
@@ -2287,12 +2294,15 @@ impl NetworkSink {
 
         let bytes = data.slice();
         let len = bytes.len() as BlobSizeType;
+        let has_source = !matches!(self.source, SourceHandle::None);
 
         if let Some(task) = self.task_mut() {
             return match task.write_latin1(bytes, false) {
-                Ok(bun_s3::UploadBackpressure::Backpressure) => Writable::Backpressure(len),
-                Ok(bun_s3::UploadBackpressure::Done) => Writable::Done,
-                Ok(bun_s3::UploadBackpressure::WantMore) => Writable::Owned(len),
+                Ok(bun_s3::UploadBackpressure::Backpressure) if has_source => {
+                    Writable::Backpressure(len)
+                }
+                Ok(bun_s3::UploadBackpressure::Done) if has_source => Writable::Done,
+                Ok(_) => Writable::Owned(len),
                 Err(_) => Writable::Err(SysError::from_code(sys::E::ENOMEM, sys::Tag::write)),
             };
         }
@@ -2305,13 +2315,16 @@ impl NetworkSink {
         }
         let bytes = data.slice();
         let len = bytes.len() as BlobSizeType;
+        let has_source = !matches!(self.source, SourceHandle::None);
         if let Some(task) = self.task_mut() {
             // we must always buffer UTF-16
             // we assume the case of all-ascii UTF-16 string is pretty uncommon
             return match task.write_utf16(bytes, false) {
-                Ok(bun_s3::UploadBackpressure::Backpressure) => Writable::Backpressure(len),
-                Ok(bun_s3::UploadBackpressure::Done) => Writable::Done,
-                Ok(bun_s3::UploadBackpressure::WantMore) => Writable::Owned(len),
+                Ok(bun_s3::UploadBackpressure::Backpressure) if has_source => {
+                    Writable::Backpressure(len)
+                }
+                Ok(bun_s3::UploadBackpressure::Done) if has_source => Writable::Done,
+                Ok(_) => Writable::Owned(len),
                 Err(_) => Writable::Err(SysError::from_code(sys::E::ENOMEM, sys::Tag::write)),
             };
         }

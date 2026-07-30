@@ -3640,6 +3640,7 @@ it("type: direct stream that ignores backpressure is not re-entered on drain", a
   const TOTAL_CHUNKS = 128; // 32 MiB — well past any localhost send buffer
   let pullEntries = 0;
   let sawBackpressure = false;
+  let parked = false;
   const gate = Promise.withResolvers<void>();
 
   using server = serve({
@@ -3654,6 +3655,7 @@ it("type: direct stream that ignores backpressure is not re-entered on drain", a
               if ((controller.write(CHUNK) as number) < 0) sawBackpressure = true;
               await controller.flush();
             }
+            parked = true;
             await gate.promise;
             controller.close();
           },
@@ -3674,12 +3676,20 @@ it("type: direct stream that ignores backpressure is not re-entered on drain", a
   try {
     // Hold the client paused while pull pushes 32 MiB and parks on `gate`,
     // then drain: onWritable fires while pull is still suspended.
-    while (!sawBackpressure) await Bun.sleep(1);
-    await Bun.sleep(50);
+    {
+      const t0 = Date.now();
+      while (!sawBackpressure && Date.now() - t0 < 30000) await Bun.sleep(1);
+      expect(sawBackpressure).toBe(true);
+    }
+    while (!parked) await Bun.sleep(1);
     let received = 0;
     socket.on("data", d => (received += d.length));
     socket.resume();
-    while (received < TOTAL_CHUNKS * CHUNK.length) await Bun.sleep(10);
+    {
+      const t0 = Date.now();
+      while (received < TOTAL_CHUNKS * CHUNK.length && Date.now() - t0 < 30000) await Bun.sleep(10);
+      expect(received).toBeGreaterThanOrEqual(TOTAL_CHUNKS * CHUNK.length);
+    }
 
     expect(pullEntries).toBe(1);
     gate.resolve();

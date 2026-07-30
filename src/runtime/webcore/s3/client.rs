@@ -1034,60 +1034,64 @@ pub fn upload_stream(
         // wrapper is pinned by `ctx.readable_stream_ref` below for the upload's
         // lifetime.
         let byte_stream = unsafe { &*bs_ptr };
-        sink.source = crate::webcore::streams::SourceHandle::ByteStream(bs_ptr);
-        byte_stream
-            .sink
-            .set(crate::webcore::SinkHandle::S3Upload(sink_ptr));
-        byte_stream.sink_paused.set(false);
-        ctx.readable_stream_ref = ReadableStreamStrong::init(readable_stream, global_this);
+        if byte_stream.sink.get().is_none() {
+            sink.source = crate::webcore::streams::SourceHandle::ByteStream(bs_ptr);
+            byte_stream
+                .sink
+                .set(crate::webcore::SinkHandle::S3Upload(sink_ptr));
+            byte_stream.sink_paused.set(false);
+            ctx.readable_stream_ref = ReadableStreamStrong::init(readable_stream, global_this);
 
-        if let Some(err) = byte_stream.take_pending_error() {
-            let err_js = err.to_js(global_this);
-            err_js.ensure_still_alive();
-            ctx.handle_reject_stream(err_js);
+            if let Some(err) = byte_stream.take_pending_error() {
+                let err_js = err.to_js(global_this);
+                err_js.ensure_still_alive();
+                ctx.handle_reject_stream(err_js);
+                return Ok(end_promise_value);
+            }
+
+            let buffered = byte_stream.drain();
+            let has_last = byte_stream.has_received_last_chunk.get();
+            if !buffered.is_empty() {
+                let chunk = if has_last {
+                    crate::webcore::streams::StreamResult::OwnedAndDone(buffered)
+                } else {
+                    crate::webcore::streams::StreamResult::Owned(buffered)
+                };
+                // SAFETY: `ctx.sink` set above; sink live.
+                match unsafe { (*sink_ptr).write(&chunk) } {
+                    crate::webcore::streams::Writable::Backpressure(_) => {
+                        byte_stream.sink_paused.set(true);
+                    }
+                    crate::webcore::streams::Writable::Done
+                    | crate::webcore::streams::Writable::Err(_) => {
+                        byte_stream.sink.set(crate::webcore::SinkHandle::None);
+                        // SAFETY: `ctx.sink` set above; sink live.
+                        let sink = unsafe { &mut *sink_ptr };
+                        if !sink.ended {
+                            let _ = sink.end(None);
+                        }
+                        ctx.handle_resolve_stream();
+                        return Ok(end_promise_value);
+                    }
+                    _ => {}
+                }
+            }
+            if has_last {
+                byte_stream.sink.set(crate::webcore::SinkHandle::None);
+                // SAFETY: `ctx.sink` set above; sink live.
+                let sink = unsafe { &mut *sink_ptr };
+                if !sink.ended {
+                    let _ = sink.end(None);
+                }
+                ctx.handle_resolve_stream();
+            }
+            // `!has_last`: the stream-pump +1 (rc=2) is released by
+            // `NetworkSink::end_from_stream` after the terminal write/fail so the
+            // sink outlives the synchronous `resolve()` re-entry.
             return Ok(end_promise_value);
         }
-
-        let buffered = byte_stream.drain();
-        let has_last = byte_stream.has_received_last_chunk.get();
-        if !buffered.is_empty() {
-            let chunk = if has_last {
-                crate::webcore::streams::StreamResult::OwnedAndDone(buffered)
-            } else {
-                crate::webcore::streams::StreamResult::Owned(buffered)
-            };
-            // SAFETY: `ctx.sink` set above; sink live.
-            match unsafe { (*sink_ptr).write(&chunk) } {
-                crate::webcore::streams::Writable::Backpressure(_) => {
-                    byte_stream.sink_paused.set(true);
-                }
-                crate::webcore::streams::Writable::Done
-                | crate::webcore::streams::Writable::Err(_) => {
-                    byte_stream.sink.set(crate::webcore::SinkHandle::None);
-                    // SAFETY: `ctx.sink` set above; sink live.
-                    let sink = unsafe { &mut *sink_ptr };
-                    if !sink.ended {
-                        let _ = sink.end(None);
-                    }
-                    ctx.handle_resolve_stream();
-                    return Ok(end_promise_value);
-                }
-                _ => {}
-            }
-        }
-        if has_last {
-            byte_stream.sink.set(crate::webcore::SinkHandle::None);
-            // SAFETY: `ctx.sink` set above; sink live.
-            let sink = unsafe { &mut *sink_ptr };
-            if !sink.ended {
-                let _ = sink.end(None);
-            }
-            ctx.handle_resolve_stream();
-        }
-        // `!has_last`: the stream-pump +1 (rc=2) is released by
-        // `NetworkSink::end_from_stream` after the terminal write/fail so the
-        // sink outlives the synchronous `resolve()` re-entry.
-        return Ok(end_promise_value);
+        // sink already attached: fall through to `assign_to_stream`, which
+        // surfaces the proper locked-stream error.
     }
 
     // The controller cell is installed into `sink.source` by `assign_to_stream`.

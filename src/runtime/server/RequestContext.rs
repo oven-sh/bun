@@ -3319,12 +3319,24 @@ where
         }
     }
 
-    pub fn end_chunk(this: &mut Self, _err: Option<&WebCore::streams::StreamError>) {
+    pub fn end_chunk(this: &mut Self, err: Option<&WebCore::streams::StreamError>) {
         // Drop the ref taken when the ByteStream sink was installed.
         let _ref = RequestContextRef(std::ptr::from_mut::<Self>(this));
 
         if this.is_aborted_or_ended() {
             return;
+        }
+        if err.is_some()
+            && let Some(resp) = this.resp
+        {
+            // Body bytes are already on the wire: close without the terminating
+            // chunk (RFC 9112 section 7) so the client sees an incomplete
+            // message rather than a truncated-but-clean response.
+            let state = resp.state();
+            if state.is_http_write_called() && state.is_response_pending() {
+                this.force_close();
+                return;
+            }
         }
         this.end_stream(this.should_close_connection());
     }

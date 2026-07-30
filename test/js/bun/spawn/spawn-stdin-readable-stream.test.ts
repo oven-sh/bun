@@ -1201,7 +1201,7 @@ describe("spawn stdin ReadableStream", () => {
         progressWhileStalled = writerProgress;
         doneWhileStalled = writerDone;
       }
-      await Bun.sleep(10);
+      if (progressWhileStalled < 0) await Bun.sleep(10);
     }
 
     await stdoutDrain;

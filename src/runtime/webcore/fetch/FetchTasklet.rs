@@ -664,50 +664,54 @@ impl FetchTasklet {
             // `NewSource.context` field); the JS wrapper is rooted by
             // `self.request_body`'s `Strong` for this tasklet's lifetime.
             let byte_stream = unsafe { &*bs_ptr };
-            sink.source = SourceHandle::ByteStream(bs_ptr);
-            byte_stream
-                .sink
-                .set(SinkHandle::FetchRequestBody(sink_ptr.as_ptr()));
-            byte_stream.sink_paused.set(false);
+            if byte_stream.sink.get().is_none() {
+                sink.source = SourceHandle::ByteStream(bs_ptr);
+                byte_stream
+                    .sink
+                    .set(SinkHandle::FetchRequestBody(sink_ptr.as_ptr()));
+                byte_stream.sink_paused.set(false);
 
-            if let Some(err) = byte_stream.take_pending_error() {
-                byte_stream.sink.set(SinkHandle::None);
-                // SAFETY: `self.sink` set above; sink live.
-                unsafe { (*sink_ptr.as_ptr()).task = None };
-                let err_js = err.to_js(&global_this);
-                err_js.ensure_still_alive();
-                self.write_end_request(Some(err_js));
+                if let Some(err) = byte_stream.take_pending_error() {
+                    byte_stream.sink.set(SinkHandle::None);
+                    // SAFETY: `self.sink` set above; sink live.
+                    unsafe { (*sink_ptr.as_ptr()).task = None };
+                    let err_js = err.to_js(&global_this);
+                    err_js.ensure_still_alive();
+                    self.write_end_request(Some(err_js));
+                    return;
+                }
+
+                let buffered = byte_stream.drain();
+                let has_last = byte_stream.has_received_last_chunk.get();
+                if !buffered.is_empty() {
+                    let chunk = if has_last {
+                        StreamResult::OwnedAndDone(buffered)
+                    } else {
+                        StreamResult::Owned(buffered)
+                    };
+                    // SAFETY: `self.sink` set above; sink live.
+                    match unsafe { (*sink_ptr.as_ptr()).write(&chunk) } {
+                        Writable::Backpressure(_) => byte_stream.sink_paused.set(true),
+                        Writable::Done | Writable::Err(_) => {
+                            byte_stream.sink.set(SinkHandle::None);
+                            // SAFETY: `self.sink` set above; sink live.
+                            unsafe { (*sink_ptr.as_ptr()).task = None };
+                            self.write_end_request(None);
+                            return;
+                        }
+                        _ => {}
+                    }
+                }
+                if has_last {
+                    byte_stream.sink.set(SinkHandle::None);
+                    // SAFETY: `self.sink` set above and not cleared on this path.
+                    unsafe { (*sink_ptr.as_ptr()).task = None };
+                    self.write_end_request(None);
+                }
                 return;
             }
-
-            let buffered = byte_stream.drain();
-            let has_last = byte_stream.has_received_last_chunk.get();
-            if !buffered.is_empty() {
-                let chunk = if has_last {
-                    StreamResult::OwnedAndDone(buffered)
-                } else {
-                    StreamResult::Owned(buffered)
-                };
-                // SAFETY: `self.sink` set above; sink live.
-                match unsafe { (*sink_ptr.as_ptr()).write(&chunk) } {
-                    Writable::Backpressure(_) => byte_stream.sink_paused.set(true),
-                    Writable::Done | Writable::Err(_) => {
-                        byte_stream.sink.set(SinkHandle::None);
-                        // SAFETY: `self.sink` set above; sink live.
-                        unsafe { (*sink_ptr.as_ptr()).task = None };
-                        self.write_end_request(None);
-                        return;
-                    }
-                    _ => {}
-                }
-            }
-            if has_last {
-                byte_stream.sink.set(SinkHandle::None);
-                // SAFETY: `self.sink` set above and not cleared on this path.
-                unsafe { (*sink_ptr.as_ptr()).task = None };
-                self.write_end_request(None);
-            }
-            return;
+            // sink already attached: fall through to `assign_to_stream`, which
+            // surfaces the proper locked-stream error.
         }
 
         // Native FileReader fast-path: same wiring as ByteStream, but the

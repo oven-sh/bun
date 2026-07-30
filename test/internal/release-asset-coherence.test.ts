@@ -80,15 +80,25 @@ describe("release asset coherence", () => {
     expect(missing).toEqual([]);
   });
 
-  test("docs do not claim x64 requires AVX2/Haswell", () => {
+  test("docs and npm READMEs do not claim x64 requires/lacks AVX2", () => {
     // The single x64 binary targets Nehalem (SSE4.2); AVX2 is runtime-dispatched.
-    // Keeps installation and --compile docs from re-introducing the old
-    // "pick baseline if your CPU lacks AVX2" guidance.
-    for (const file of ["docs/installation.mdx", "docs/bundler/executables.mdx"]) {
+    // Keeps installation/--compile docs and the npmjs.com-visible READMEs from
+    // re-introducing the old "pick baseline if your CPU lacks AVX2" guidance.
+    const files = [
+      "docs/installation.mdx",
+      "docs/bundler/executables.mdx",
+      "packages/bun-release/npm/bun/README.md",
+      "packages/bun-release/npm/@oven/bun-darwin-x64-baseline/README.md",
+      "packages/bun-release/npm/@oven/bun-linux-x64-baseline/README.md",
+      "packages/bun-release/npm/@oven/bun-windows-x64-baseline/README.md",
+    ];
+    const stale = /target the Haswell|require.{0,20}AVX2|without AVX2|do not support.{0,20}AVX2|modern is faster/i;
+    const offenders: string[] = [];
+    for (const file of files) {
       const doc = readFileSync(join(repo, file), "utf8");
-      expect(doc).not.toMatch(/target the Haswell/i);
-      expect(doc).not.toMatch(/require.{0,20}AVX2/i);
-      expect(doc).not.toMatch(/modern is faster/i);
+      const m = doc.match(stale);
+      if (m) offenders.push(`${file}: "${m[0]}"`);
     }
+    expect(offenders).toEqual([]);
   });
 });

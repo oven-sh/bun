@@ -242,6 +242,79 @@ describe.concurrent("long import path overflow", () => {
   });
 });
 
+// load_as_file copies the full path into a fixed PathBuffer and then probes
+// extensions by appending to that buffer. When the specifier's dirname names
+// a real directory (so read_directory succeeds), a basename long enough to
+// push the total path to MAX_PATH_BYTES used to abort the process instead of
+// returning MODULE_NOT_FOUND.
+describe.concurrent("absolute specifier with long basename (load_as_file buffer)", () => {
+  // MAX_PATH_BYTES: 1024 darwin, 4096 linux, 32767*3+1 windows.
+  const max = process.platform === "darwin" ? 1024 : process.platform === "win32" ? 32767 * 3 + 1 : 4096;
+  const root = process.platform === "win32" ? "C:/" : "/";
+
+  async function expectNotFound(specExpr: string, how: "require.resolve" | "import" | "Bun.resolveSync") {
+    const body =
+      how === "require.resolve"
+        ? `require.resolve(p)`
+        : how === "import"
+          ? `await import(p)`
+          : `Bun.resolveSync(p, process.cwd())`;
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const p = ${specExpr}; try { ${body} } catch (e) { console.log("ERR", e.code ?? e.name) }`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+      stdout: expect.stringMatching(/^ERR (MODULE_NOT_FOUND|ERR_MODULE_NOT_FOUND|ResolveMessage)$/),
+      stderr: "",
+      exitCode: 0,
+    });
+  }
+
+  // Well past MAX_PATH_BYTES: the raw copy into bufs!(load_as_file) panicked.
+  for (const how of ["require.resolve", "import", "Bun.resolveSync"] as const) {
+    it(`${how}: path > MAX_PATH_BYTES`, async () => {
+      await expectNotFound(`${JSON.stringify(root)} + Buffer.alloc(${max + 1000}, "a").toString() + ".ts"`, how);
+    });
+  }
+
+  // Just under MAX_PATH_BYTES so the copy fits, but appending the longest
+  // probed extension (".json", 5 bytes) pushes past it: load_extension
+  // panicked slicing `[0..path.len() + ext.len()]`.
+  it("require.resolve: path + probed extension > MAX_PATH_BYTES", async () => {
+    const pathLen = max - 4;
+    await expectNotFound(
+      `${JSON.stringify(root)} + Buffer.alloc(${pathLen - root.length - 3}, "a").toString() + ".ts"`,
+      "require.resolve",
+    );
+  });
+
+  // Exactly MAX_PATH_BYTES: load_as_file returns not-found, then the
+  // fall-through directory probe in dir_info_cached_miss slices
+  // `[..len + 1]` for its NUL-splice.
+  it("require.resolve: path == MAX_PATH_BYTES (dir_info_cached_miss +1 slice)", async () => {
+    await expectNotFound(
+      `${JSON.stringify(root)} + Buffer.alloc(${max - root.length - 3}, "a").toString() + ".ts"`,
+      "require.resolve",
+    );
+  });
+
+  // Byte length governs, not char length.
+  it("require.resolve: multibyte basename past MAX_PATH_BYTES", async () => {
+    const chars = Math.ceil((max + 100) / 3);
+    await expectNotFound(
+      `${JSON.stringify(root)} + Buffer.alloc(${chars * 3}, "\\u20ac", "utf8").toString() + ".ts"`,
+      "require.resolve",
+    );
+  });
+});
+
 // matchTSConfigPaths sliced `path[prefix.len()..path.len() - suffix.len()]`
 // after only checking starts_with/ends_with. When the prefix and suffix bytes
 // overlap inside the import path (e.g. key "ab*ba" vs import "aba"), the slice

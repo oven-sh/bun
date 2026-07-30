@@ -1604,7 +1604,7 @@ pub fn parse_into_binary_lockfile(
     root: JSON::Expr,
     source: &bun_ast::Source,
     log: &mut bun_ast::Log,
-    mut manager: Option<&mut PackageManager>,
+    manager: Option<&PackageManager>,
 ) -> Result<(), ParseError> {
     lockfile.init_empty();
 
@@ -1776,11 +1776,9 @@ pub fn parse_into_binary_lockfile(
                 name_hash,
                 version: match dependency::parse(
                     name,
-                    name_hash,
                     version_sliced.slice,
                     &version_sliced,
                     &mut *log,
-                    manager.as_deref_mut(),
                 ) {
                     Some(v) => v,
                     None => {
@@ -1837,11 +1835,9 @@ pub fn parse_into_binary_lockfile(
                 name_hash: dep_name_hash,
                 version: match dependency::parse(
                     dep_name,
-                    dep_name_hash,
                     version_sliced.slice,
                     &version_sliced,
                     &mut *log,
-                    manager.as_deref_mut(),
                 ) {
                     Some(v) => v,
                     None => {
@@ -1935,11 +1931,9 @@ pub fn parse_into_binary_lockfile(
                     name_hash: dep_name_hash,
                     version: match dependency::parse(
                         dep_name,
-                        dep_name_hash,
                         version_sliced.slice,
                         &version_sliced,
                         &mut *log,
-                        manager.as_deref_mut(),
                     ) {
                         Some(v) => v,
                         None => {
@@ -3302,11 +3296,9 @@ fn parse_append_dependencies<const CHECK_FOR_BUNDLED: bool, const IS_ROOT: bool>
                     },
                     version: match dependency::parse(
                         name.value,
-                        name.hash,
                         version_sliced.slice,
                         &version_sliced,
                         &mut *log,
-                        None,
                     ) {
                         Some(v) => v,
                         None => {

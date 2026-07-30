@@ -3002,7 +3002,6 @@ impl<'a> Resolver<'a> {
                             string_buf = esm.version;
                             dependency_version = match manager!().parse_dependency(
                                 Semver::String::init(esm.name, esm.name),
-                                None,
                                 esm.version,
                                 &sliced_string,
                                 Some(self.log_mut()),

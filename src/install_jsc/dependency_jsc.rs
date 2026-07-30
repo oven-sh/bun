@@ -182,11 +182,9 @@ pub fn dependency_from_js(global: &JSGlobalObject, frame: &CallFrame) -> JsResul
 
     let dep: dependency::Version = match dependency::parse(
         SlicedString::init(buf, alias).value(),
-        None,
         buf,
         &sliced,
         Some(&mut log),
-        None,
     ) {
         Some(d) => d,
         None => {

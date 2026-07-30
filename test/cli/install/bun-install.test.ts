@@ -3154,13 +3154,13 @@ describe.concurrent("bun-install", () => {
     });
   });
 
-  it("should get npm alias with matching version", async () => {
+  it("should resolve a same-named workspace dependency independently of a root npm alias", async () => {
     await withContext(defaultOpts, async ctx => {
       const urls: string[] = [];
       setContextHandler(
         ctx,
         dummyRegistryForContext(ctx, urls, {
-          "0.0.3": { as: "0.0.3" },
+          "0.0.2": {},
           "0.0.5": { as: "0.0.5" },
         }),
       );
@@ -3180,9 +3180,9 @@ describe.concurrent("bun-install", () => {
         join(ctx.package_dir, "moo", "package.json"),
         JSON.stringify({
           name: "moo",
-          version: "0.0.2",
+          version: "0.0.4",
           dependencies: {
-            boba: ">=0.0.3",
+            boba: "0.0.2",
           },
         }),
       );
@@ -3202,17 +3202,31 @@ describe.concurrent("bun-install", () => {
         "",
         "+ boba@0.0.5",
         "",
-        "2 packages installed",
+        "3 packages installed",
       ]);
       expect(await exited).toBe(0);
-      expect(urls.sort()).toEqual([`${ctx.registry_url}baz`, `${ctx.registry_url}baz-0.0.5.tgz`]);
-      expect(ctx.requested).toBe(2);
+      expect(urls.sort()).toEqual([
+        `${ctx.registry_url}baz`,
+        `${ctx.registry_url}baz-0.0.5.tgz`,
+        `${ctx.registry_url}boba`,
+        `${ctx.registry_url}boba-0.0.2.tgz`,
+      ]);
+      expect(ctx.requested).toBe(4);
       expect(await readdirSorted(join(ctx.package_dir, "node_modules"))).toEqual([".cache", "boba", "moo"]);
       expect(await file(join(ctx.package_dir, "node_modules", "boba", "package.json")).json()).toEqual({
         name: "baz",
         version: "0.0.5",
         bin: {
           "baz-exec": "index.js",
+        },
+      });
+      expect(await readlink(join(ctx.package_dir, "node_modules", "moo"))).toBeWorkspaceLink(join("..", "moo"));
+      expect(await readdirSorted(join(ctx.package_dir, "moo", "node_modules"))).toEqual(["boba"]);
+      expect(await file(join(ctx.package_dir, "moo", "node_modules", "boba", "package.json")).json()).toEqual({
+        name: "boba",
+        version: "0.0.2",
+        peerDependencies: {
+          peer: "0.0.1",
         },
       });
       await access(join(ctx.package_dir, "bun.lockb"));

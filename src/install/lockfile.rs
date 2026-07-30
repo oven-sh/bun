@@ -479,7 +479,7 @@ impl Lockfile {
     pub fn load_from_dir<'a, const ATTEMPT_LOADING_FROM_OTHER_LOCKFILE: bool>(
         &'a mut self,
         dir: Fd,
-        mut manager: Option<&mut PackageManager>,
+        manager: Option<&mut PackageManager>,
         log: &mut bun_ast::Log,
     ) -> LoadResult<'a> {
         debug_assert!(Fs::INSTANCE_LOADED.load(core::sync::atomic::Ordering::Relaxed));
@@ -561,9 +561,13 @@ impl Lockfile {
                 }
             };
 
-            if let Err(e) =
-                TextLockfile::parse_into_binary_lockfile(self, parsed.root, &source, log, manager)
-            {
+            if let Err(e) = TextLockfile::parse_into_binary_lockfile(
+                self,
+                parsed.root,
+                &source,
+                log,
+                manager.as_deref(),
+            ) {
                 if matches!(e, TextLockfile::ParseError::OutOfMemory) {
                     bun_core::out_of_memory();
                 }
@@ -586,7 +590,7 @@ impl Lockfile {
             });
         }
 
-        let mut result = self.load_from_bytes(manager.as_deref_mut(), buf, log);
+        let mut result = self.load_from_bytes(manager.as_deref(), buf, log);
 
         // When BUN_DEBUG_TEST_TEXT_LOCKFILE is set, convert
         // the freshly loaded binary lockfile into a text lockfile in memory,
@@ -636,7 +640,7 @@ impl Lockfile {
                     parsed.root,
                     &source,
                     log,
-                    Some(manager),
+                    Some(&*manager),
                 ) {
                     Output::panic(format_args!(
                         "failed to parse text lockfile converted from binary lockfile: {}",
@@ -653,7 +657,7 @@ impl Lockfile {
 
     pub fn load_from_bytes<'a>(
         &'a mut self,
-        pm: Option<&mut PackageManager>,
+        pm: Option<&PackageManager>,
         buf: Vec<u8>,
         log: &mut bun_ast::Log,
     ) -> LoadResult<'a> {
@@ -832,15 +836,9 @@ impl Lockfile {
                                 let sliced = external_version
                                     .value
                                     .sliced(string_builder.string_bytes.as_slice());
-                                dep.version = dependency::parse(
-                                    dep.name,
-                                    dep.name_hash,
-                                    sliced.slice,
-                                    &sliced,
-                                    None,
-                                    &mut *manager,
-                                )
-                                .unwrap_or_default();
+                                dep.version =
+                                    dependency::parse(dep.name, sliced.slice, &sliced, None)
+                                        .unwrap_or_default();
                             }
                         }
                     }
@@ -1020,8 +1018,8 @@ impl Lockfile {
             old.overrides.count(old_buf, &mut builder);
             old.catalogs.count(old_buf, &mut builder);
             builder.allocate()?;
-            *lf.overrides = old.overrides.clone(manager, old_buf, &mut builder)?;
-            *lf.catalogs = old.catalogs.clone(manager, old_buf, &mut builder)?;
+            *lf.overrides = old.overrides.clone(old_buf, &mut builder)?;
+            *lf.catalogs = old.catalogs.clone(old_buf, &mut builder)?;
         }
 
         // Step 1. Recreate the lockfile with only the packages that are still alive

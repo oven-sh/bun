@@ -271,9 +271,6 @@ type ResolveTaskQueue = UnboundedQueue<Task::Task<'static> /* , .next */>;
 type RepositoryMap = HashMap<Task::Id, Fd /* , IdentityContext<Task::Id>, 80 */>;
 pub(crate) type FolderResolutionMap =
     HashMap<u64, FolderResolutionEntry /* , IdentityContext<u64>, 80 */>;
-pub(crate) type NpmAliasMap =
-    HashMap<PackageNameHash, crate::dependency::Version /* , IdentityContext<u64>, 80 */>;
-
 type NetworkQueue = LinearFifo<*mut NetworkTask, StaticBuffer<*mut NetworkTask, 32>>;
 type PatchTaskFifo = LinearFifo<*mut PatchTask, StaticBuffer<*mut PatchTask, 32>>;
 
@@ -394,9 +391,6 @@ pub struct PackageManager {
     pub on_wake: WakeHandler,
 
     pub peer_dependencies: LinearFifo<DependencyID, DynamicBuffer<DependencyID>>,
-
-    // name hash from alias package name -> aliased package dependency version info
-    pub known_npm_aliases: NpmAliasMap,
 
     pub event_loop: AnyEventLoop,
 
@@ -1960,7 +1954,6 @@ pub fn init(
             peer_dependencies,
             LinearFifo::<DependencyID, DynamicBuffer<DependencyID>>::init()
         );
-        wr!(known_npm_aliases, NpmAliasMap::default());
         wr!(trusted_deps_to_add_to_package_json, Vec::new());
         wr!(any_failed_to_install, false);
         wr!(updating_packages, StringArrayHashMap::default());
@@ -2393,7 +2386,6 @@ pub(crate) fn init_with_runtime_once(
             peer_dependencies,
             LinearFifo::<DependencyID, DynamicBuffer<DependencyID>>::init()
         );
-        wr!(known_npm_aliases, NpmAliasMap::default());
         wr!(trusted_deps_to_add_to_package_json, Vec::new());
         wr!(any_failed_to_install, false);
         wr!(workspace_name_hash, None);

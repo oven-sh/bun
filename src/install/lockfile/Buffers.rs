@@ -404,7 +404,7 @@ impl Buffers {
 pub(crate) fn load(
     stream: &mut Stream,
     log: &mut bun_ast::Log,
-    pm_: Option<&mut PackageManager>,
+    pm_: Option<&PackageManager>,
 ) -> crate::Result<Buffers> {
     let mut this = Buffers::default();
     let external_dependency_list_: Vec<dependency::External>;
@@ -418,7 +418,7 @@ pub(crate) fn load(
             let _pos: usize = stream.pos;
 
             this.$field = read_array::<$elem>(stream)?;
-            if let Some(pm) = pm_.as_deref() {
+            if let Some(pm) = pm_ {
                 if pm.options.log_level.is_verbose() {
                     bun_core::pretty_errorln!("Loaded {} {}", this.$field.len(), $name);
                 }
@@ -455,7 +455,7 @@ pub(crate) fn load(
         let _pos: usize = stream.pos;
 
         external_dependency_list_ = read_array::<dependency::External>(stream)?;
-        if let Some(pm) = pm_.as_deref() {
+        if let Some(pm) = pm_ {
             if pm.options.log_level.is_verbose() {
                 bun_core::pretty_errorln!(
                     "Loaded {} {}",
@@ -481,7 +481,6 @@ pub(crate) fn load(
         log,
         // allocator dropped — global mimalloc
         buffer: string_buf,
-        package_manager: pm_,
     };
     // `set_len` then `as_mut_slice()` would form `&mut Dependency` to
     // uninitialized memory (UB even when write-only), so we push into the

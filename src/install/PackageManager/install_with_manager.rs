@@ -256,11 +256,10 @@ pub fn install_with_manager(
                 // Split-borrow `manager.lockfile` so the `StringBuilder`
                 // (which owns `buffers.string_bytes` + `string_pool`) and the
                 // remaining lockfile columns can coexist without raw-pointer
-                // reborrows. `manager.{summary, known_npm_aliases,
-                // patched_dependencies_to_remove}` are disjoint top-level
-                // fields and can be accessed alongside `manager.lockfile`.
+                // reborrows. `manager.{summary, patched_dependencies_to_remove}`
+                // are disjoint top-level fields and can be accessed alongside
+                // `manager.lockfile`.
                 let summary = &manager.summary;
-                let known_npm_aliases = &mut manager.known_npm_aliases;
                 let patched_dependencies_to_remove = &mut manager.patched_dependencies_to_remove;
                 let (mut builder_, lf) = manager.lockfile.string_builder_split();
                 let builder = &mut builder_;
@@ -338,16 +337,12 @@ pub fn install_with_manager(
                         break 'brk all_name_hashes;
                     };
 
-                    *lf.overrides = lockfile.overrides.clone(
-                        known_npm_aliases,
-                        &lockfile.buffers.string_bytes,
-                        builder,
-                    )?;
-                    *lf.catalogs = lockfile.catalogs.clone(
-                        known_npm_aliases,
-                        &lockfile.buffers.string_bytes,
-                        builder,
-                    )?;
+                    *lf.overrides = lockfile
+                        .overrides
+                        .clone(&lockfile.buffers.string_bytes, builder)?;
+                    *lf.catalogs = lockfile
+                        .catalogs
+                        .clone(&lockfile.buffers.string_bytes, builder)?;
 
                     // `ArrayHashMap::clone()` is an inherent fallible method,
                     // not the `Clone` trait, so
@@ -381,11 +376,7 @@ pub fn install_with_manager(
                     debug_assert_eq!(lf.resolutions.len(), (off + len) as usize);
 
                     for (i, new_dep) in new_dependencies.iter().enumerate() {
-                        let cloned = new_dep.clone_in(
-                            known_npm_aliases,
-                            &lockfile.buffers.string_bytes,
-                            builder,
-                        )?;
+                        let cloned = new_dep.clone_in(&lockfile.buffers.string_bytes, builder)?;
                         lf.dependencies[off as usize + i] = cloned;
                         if mapping[i] != invalid_package_id {
                             lf.resolutions[off as usize + i] = old_resolutions[mapping[i] as usize];

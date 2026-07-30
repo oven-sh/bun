@@ -574,7 +574,7 @@ impl Package<u64> {
                 &mut new.buffers.dependencies[prev_len as usize..end as usize];
             debug_assert_eq!(old_dependencies.len(), dependencies.len());
             for (old_dep, new_dep) in old_dependencies.iter().zip(dependencies.iter_mut()) {
-                *new_dep = old_dep.clone_in(cloner.manager, old_string_buf, &mut *builder)?;
+                *new_dep = old_dep.clone_in(old_string_buf, &mut *builder)?;
             }
         }
 
@@ -627,7 +627,6 @@ impl Package<u64> {
     }
 
     pub fn from_npm(
-        pm: &mut PackageManager,
         lockfile: &mut Lockfile,
         log: &mut bun_ast::Log,
         manifest: &Npm::PackageManifest,
@@ -806,11 +805,9 @@ impl Package<u64> {
                         behavior,
                         version: Dependency::parse(
                             name.value,
-                            Some(name.hash),
                             sliced.slice,
                             &sliced,
                             Some(&mut *log),
-                            Some(&mut *pm),
                         )
                         .unwrap_or_default(),
                     };
@@ -1669,12 +1666,10 @@ impl Package<u64> {
 
         let mut dependency_version = Dependency::parse_with_optional_tag(
             external_alias.value,
-            Some(external_alias.hash),
             sliced.slice,
             tag,
             &sliced,
             Some(&mut *log),
-            Some(&mut *pm),
         )
         .unwrap_or_default();
         let mut workspace_range: Option<semver::query::Group> = None;
@@ -1770,12 +1765,10 @@ impl Package<u64> {
                         let path = wp.sliced(buf);
                         if let Some(mut dep) = dependency::parse_with_tag(
                             external_alias.value,
-                            Some(external_alias.hash),
                             path.slice,
                             dependency::version::Tag::Workspace,
                             &path,
                             Some(&mut *log),
-                            Some(&mut *pm),
                         ) {
                             // Whole-struct move so `Drop` frees the old npm
                             // chain; keep the existing `literal`.
@@ -2894,7 +2887,6 @@ impl Package<u64> {
         // This function depends on package.dependencies being set, so it is done at the very end.
         if FEATURES.is_main {
             lockfile.overrides.parse_append(
-                pm,
                 lockfile.buffers.dependencies.as_slice(),
                 self,
                 log,
@@ -2907,7 +2899,6 @@ impl Package<u64> {
             let mut has_workspaces = false;
             if let Some(workspaces_expr) = json.get(b"workspaces") {
                 found_any_catalog_or_catalog_object = lockfile.catalogs.parse_append(
-                    pm,
                     log,
                     source,
                     workspaces_expr,
@@ -2921,10 +2912,9 @@ impl Package<u64> {
             // allow "catalog" and "catalogs" in top-level "package.json"
             // so it's easier to guess.
             if !found_any_catalog_or_catalog_object && has_workspaces {
-                let _ =
-                    lockfile
-                        .catalogs
-                        .parse_append(pm, log, source, json, &mut string_builder)?;
+                let _ = lockfile
+                    .catalogs
+                    .parse_append(log, source, json, &mut string_builder)?;
             }
         }
 

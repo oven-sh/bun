@@ -343,11 +343,9 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
                     name_hash,
                     version: match Dependency::parse(
                         name,
-                        name_hash,
                         version_sliced.slice,
                         &version_sliced,
                         Some(&mut *log),
-                        Some(&mut *manager),
                     ) {
                         Some(v) => v,
                         None => return Err(invalid_pnpm_lockfile()),
@@ -1244,11 +1242,9 @@ fn parse_append_package_dependencies(
                     behavior,
                     version: match Dependency::parse(
                         name.value,
-                        name.hash,
                         version_sliced.slice,
                         &version_sliced,
                         Some(&mut *log),
-                        None,
                     ) {
                         Some(v) => v,
                         None => return Err(ParseAppendDependenciesError::InvalidPnpmLockfile),
@@ -1359,11 +1355,9 @@ fn parse_append_package_dependencies(
                             behavior,
                             version: match Dependency::parse(
                                 alias.map(|a| a.value).unwrap_or(name.value),
-                                alias.map(|a| a.hash).unwrap_or(name.hash),
                                 version_sliced.slice,
                                 &version_sliced,
                                 Some(&mut *log),
-                                None,
                             ) {
                                 Some(v) => v,
                                 None => {
@@ -1384,11 +1378,9 @@ fn parse_append_package_dependencies(
                 behavior: dependency::Behavior::PROD,
                 version: match Dependency::parse(
                     alias.map(|a| a.value).unwrap_or(name.value),
-                    alias.map(|a| a.hash).unwrap_or(name.hash),
                     version_sliced.slice,
                     &version_sliced,
                     Some(&mut *log),
-                    None,
                 ) {
                     Some(v) => v,
                     None => return Err(ParseAppendDependenciesError::InvalidPnpmLockfile),
@@ -1525,11 +1517,9 @@ fn parse_append_importer_dependencies(
                     behavior,
                     version: match Dependency::parse(
                         name.value,
-                        name.hash,
                         specifier_sliced.slice,
                         &specifier_sliced,
                         Some(&mut *log),
-                        None,
                     ) {
                         Some(v) => v,
                         None => return Err(ParseAppendDependenciesError::InvalidPnpmLockfile),

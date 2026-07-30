@@ -197,14 +197,7 @@ impl hooks::AutoInstaller for PackageManager {
         // `PackageJsonView` interface so this impl does not need to name
         // `bun_resolver::PackageJSON` directly.
 
-        // Reshaped for borrowck — `string_builder!` borrows
-        // `self.lockfile` mutably while `dep.clone_in` needs `&mut self`.
-        // Use a raw pointer for the disjoint reborrow (same approach as
-        // `Package::from_package_json`).
-        let pm: *mut PackageManager = self;
-        // SAFETY: `pm` derives from `&mut self`; reborrows below are disjoint
-        // from `string_builder`'s borrow of `lockfile.{string_bytes,string_pool}`.
-        let lockfile: &mut lockfile::Lockfile = unsafe { &mut *(*pm).lockfile };
+        let lockfile: &mut lockfile::Lockfile = &mut self.lockfile;
 
         let mut package = Package::default();
         let mut string_builder = crate::string_builder!(lockfile);
@@ -248,10 +241,7 @@ impl hooks::AutoInstaller for PackageManager {
             if !dep.behavior.is_enabled(features) {
                 continue;
             }
-            // SAFETY: `pm` is the unique owner; `string_builder` borrows
-            // disjoint lockfile fields.
-            let pm_ref: &mut PackageManager = unsafe { &mut *pm };
-            match dep.clone_in(pm_ref, source_buf, &mut string_builder) {
+            match dep.clone_in(source_buf, &mut string_builder) {
                 Ok(cloned) => dependencies[0] = cloned,
                 Err(e) => {
                     // `string_builder.clamp()` must run on the
@@ -397,36 +387,24 @@ impl hooks::AutoInstaller for PackageManager {
     // ── Dependency parsing ────────────────────────────────────────────────
 
     fn parse_dependency(
-        &mut self,
+        &self,
         name: SemverString,
-        name_hash: Option<u64>,
         version: &[u8],
         sliced: &SlicedString,
         log: Option<&mut bun_ast::Log>,
     ) -> Option<hooks::DependencyVersion> {
-        // `pm` is threaded so `parse_with_tag` can record `npm:` aliases into
-        // `pm.known_npm_aliases`.
-        dependency::parse(name, name_hash, version, sliced, log, Some(self))
+        dependency::parse(name, version, sliced, log)
     }
 
     fn parse_dependency_with_tag(
-        &mut self,
+        &self,
         name: SemverString,
-        name_hash: u64,
         version: &[u8],
         tag: hooks::DependencyVersionTag,
         sliced: &SlicedString,
         log: Option<&mut bun_ast::Log>,
     ) -> Option<hooks::DependencyVersion> {
-        dependency::parse_with_tag(
-            name,
-            Some(name_hash),
-            version,
-            tag,
-            sliced,
-            log,
-            Some(self as &mut dyn dependency::NpmAliasRegistry),
-        )
+        dependency::parse_with_tag(name, version, tag, sliced, log)
     }
 
     fn infer_dependency_tag(&self, dep: &[u8]) -> hooks::DependencyVersionTag {

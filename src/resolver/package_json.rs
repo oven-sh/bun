@@ -817,7 +817,6 @@ impl PackageJSON {
                             );
                             if let Some(dependency_version) = pm.parse_dependency_with_tag(
                                 SemverString::init(&package_json.name, &package_json.name),
-                                Semver::semver_string::Builder::string_hash(&package_json.name),
                                 &package_json.version,
                                 DependencyVersionTag::Npm,
                                 &sliced,
@@ -928,7 +927,6 @@ impl PackageJSON {
                                     let dependency_version = match r.auto_installer() {
                                         Some(pm) => pm.parse_dependency(
                                             name,
-                                            Some(name_hash),
                                             version_str,
                                             &sliced_str,
                                             Some(&mut *r_log),

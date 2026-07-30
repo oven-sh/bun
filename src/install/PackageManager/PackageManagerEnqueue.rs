@@ -432,10 +432,6 @@ pub fn enqueue_dependency_to_root(
             break 'brk id;
         }
 
-        // `clone_with_different_buffers` only needs the npm-alias registry,
-        // so split-borrow `this.known_npm_aliases` alongside the lockfile
-        // string builder + the `dependencies`/`resolutions` columns.
-        let known_npm_aliases = &mut this.known_npm_aliases;
         let (mut builder, lf) = this.lockfile.string_builder_split();
         let dummy = Dependency {
             name: SemverString::init(name, name),
@@ -450,7 +446,7 @@ pub fn enqueue_dependency_to_root(
         }
 
         let dep = dummy
-            .clone_with_different_buffers(known_npm_aliases, name, version_buf, &mut builder)
+            .clone_with_different_buffers(name, version_buf, &mut builder)
             .expect("unreachable");
         builder.clamp();
         let index = lf.dependencies.len();
@@ -655,34 +651,6 @@ pub fn enqueue_dependency_with_main_and_success_fn(
     };
 
     let version: dependency::Version = 'version: {
-        if dependency.version.tag == dependency::version::Tag::Npm {
-            if let Some(aliased) = this.known_npm_aliases.get(&name_hash) {
-                let group = &dependency.version.npm().version;
-                let buf = this.lockfile.buffers.string_bytes.as_slice();
-                // SAFETY: `aliased` is always tag == Npm (known_npm_aliases only stores npm versions).
-                let mut curr_list: Option<&Semver::semver_query::List> =
-                    Some(&aliased.npm().version.head);
-                while let Some(queries) = curr_list {
-                    let mut curr: Option<&Semver::Query> = Some(&queries.head);
-                    while let Some(query) = curr {
-                        if group.satisfies(query.range.left.version, buf, buf)
-                            || group.satisfies(query.range.right.version, buf, buf)
-                        {
-                            name = aliased.npm().name;
-                            name_hash =
-                                Semver::string::Builder::string_hash(this.lockfile.str(&name));
-                            break 'version aliased.clone();
-                        }
-                        curr = query.next.as_deref();
-                    }
-                    curr_list = queries.next.as_deref();
-                }
-
-                // fallthrough. a package that matches the name of an alias but does not match
-                // the version should be enqueued as a normal npm dependency, overrides allowed
-            }
-        }
-
         // allow overriding all dependencies unless the dependency is coming directly from an alias, "npm:<this dep>" or
         // if it's a workspaceOnly dependency
         if !dependency.behavior.is_workspace()
@@ -2028,20 +1996,17 @@ fn get_or_put_resolved_package_with_find_result(
     }
 
     // appendPackage sets the PackageID on the package
-    // reshaped for borrowck — `from_npm` takes both `&mut PackageManager`
-    // and `&mut Lockfile`, which alias through `this.lockfile`. Split via raw root.
-    let this_ptr: *mut PackageManager = this;
-    // SAFETY: `from_npm` reads `pm` fields disjoint from `pm.lockfile` (options /
-    // updating_packages), so the raw-pointer split does not alias.
-    let package = unsafe { &mut *(*this_ptr).lockfile }.append_package(&Package::from_npm(
-        unsafe { &mut *this_ptr },
-        unsafe { &mut *(*this_ptr).lockfile },
-        this.log_mut(),
+    let log = this.log_mut();
+    let new_package = Package::from_npm(
+        &mut this.lockfile,
+        log,
         manifest,
         find_result.version,
         find_result.package,
         Features::NPM,
-    )?)?;
+    )?;
+    let package = this.lockfile.append_package(&new_package)?;
+    let this_ptr: *mut PackageManager = this;
 
     debug_assert!(package.meta.id != invalid_package_id);
     // Record exact-version pins so `Lockfile::get_package_id`'s

@@ -1723,6 +1723,118 @@ test("process.debugPort defaults to 9229 on the main thread", async () => {
   expect(exitCode).toBe(0);
 });
 
+// node:vm's post-evaluation termination check must not claim a termination it
+// did not raise. If it converts a foreign termination into a catchable
+// ERR_SCRIPT_EXECUTION_* (or RELEASE_ASSERTs because it can't classify it),
+// worker.terminate() either aborts the whole process or is swallowed by the
+// guest's try/catch and the worker keeps running for as long as the guest
+// chooses.
+describe.concurrent("worker.terminate() / process.exit() landing inside a node:vm evaluation", () => {
+  const terminateFixture = (evalExpr: string) => `
+    const { Worker } = require("node:worker_threads");
+    const fs = require("fs");
+    const spin = new Int32Array(new SharedArrayBuffer(4));
+    const body = \`
+      const { workerData } = require("node:worker_threads");
+      const vm = require("node:vm");
+      const fs = require("fs");
+      try { ${evalExpr}; }
+      catch (e) { fs.writeSync(2, "caught:" + (e && e.code)); }
+      fs.writeSync(2, "after-body");
+    \`;
+    const w = new Worker(body, { eval: true, workerData: { spin } });
+    w.on("error", e => { fs.writeSync(2, "worker-error:" + e); process.exit(1); });
+    (async () => {
+      while (Atomics.load(spin, 0) === 0) await new Promise(r => setImmediate(r));
+      const code = await w.terminate();
+      console.log("terminated code=" + code);
+      process.exit(0);
+    })();
+  `;
+
+  async function run(fixture: string) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout: stdout.trim(), stderr, exitCode, signalCode: proc.signalCode };
+  }
+
+  test("untimed vm.runInNewContext: terminate() propagates instead of aborting", async () => {
+    expect(
+      await run(
+        terminateFixture(
+          `vm.runInNewContext("while(true){ Atomics.store(spin,0,1) }", { spin: workerData.spin, Atomics })`,
+        ),
+      ),
+    ).toEqual({ stdout: "terminated code=1", stderr: "", exitCode: 0, signalCode: null });
+  });
+
+  test("timed vm.runInNewContext: terminate() is not converted to ERR_SCRIPT_EXECUTION_TIMEOUT", async () => {
+    expect(
+      await run(
+        terminateFixture(
+          `vm.runInNewContext("while(true){ Atomics.store(spin,0,1) }", { spin: workerData.spin, Atomics }, { timeout: 60000 })`,
+        ),
+      ),
+    ).toEqual({ stdout: "terminated code=1", stderr: "", exitCode: 0, signalCode: null });
+  });
+
+  test("untimed Script#runInThisContext: terminate() propagates", async () => {
+    expect(
+      await run(
+        terminateFixture(
+          `globalThis.__spin = workerData.spin; new vm.Script("while(true){ Atomics.store(__spin,0,1) }").runInThisContext()`,
+        ),
+      ),
+    ).toEqual({ stdout: "terminated code=1", stderr: "", exitCode: 0, signalCode: null });
+  });
+
+  test("retry loop of timed evals: terminate() is not deferred to the guest's schedule", async () => {
+    // Before the fix each inner eval cleared the termination request and threw
+    // a catchable ERR_SCRIPT_EXECUTION_TIMEOUT, so the guest's outer while kept
+    // re-entering vm.runInNewContext until its own wall-clock budget ran out.
+    expect(
+      await run(
+        terminateFixture(
+          `(() => {
+             const t0 = Date.now();
+             while (Date.now() - t0 < 8000) {
+               try {
+                 vm.runInNewContext("while(true){ Atomics.store(spin,0,1) }",
+                                    { spin: workerData.spin, Atomics },
+                                    { timeout: 200 });
+               } catch {}
+             }
+           })()`,
+        ),
+      ),
+    ).toEqual({ stdout: "terminated code=1", stderr: "", exitCode: 0, signalCode: null });
+  });
+
+  test("process.exit() inside the eval stops the worker with that code", async () => {
+    expect(
+      await run(`
+        const { Worker } = require("node:worker_threads");
+        const fs = require("fs");
+        const body = \`
+          const vm = require("node:vm");
+          const fs = require("fs");
+          try { vm.runInNewContext("exit(7); while(true){}", { exit: process.exit.bind(process) }); }
+          catch (e) { fs.writeSync(2, "caught:" + (e && e.code)); }
+          fs.writeSync(2, "after-body");
+        \`;
+        const w = new Worker(body, { eval: true });
+        w.on("error", e => { fs.writeSync(2, "worker-error:" + e); process.exit(1); });
+        w.on("exit", code => { console.log("exit code=" + code); process.exit(0); });
+      `),
+    ).toEqual({ stdout: "exit code=7", stderr: "", exitCode: 0, signalCode: null });
+  });
+});
+
 // Founding a SHARE_ENV tree replaces the founding thread's process.env object. If the
 // replacement were orphaned, the founder's later writes would go nowhere. child_process
 // enumerates the JS process.env (a var deleted from the map is invisible to the child),

@@ -1383,3 +1383,142 @@ describe("node:vm SourceTextModule cyclic graph linking", () => {
     expect(exitCode).toBe(0);
   });
 });
+
+// An outer evaluation's watchdog can fire while an inner vm evaluation with no
+// {timeout} of its own is on the stack. The inner post-evaluation check must
+// not claim that termination: the uncatchable exception should unwind past the
+// inner try/catch to the outer evaluation, which owns it.
+describe.concurrent("node:vm nested evaluation propagates an enclosing termination", () => {
+  async function run(fixture: string) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout: stdout.trim(), stderr, exitCode, signalCode: proc.signalCode };
+  }
+
+  test("outer timeout fires inside an inner untimed runInNewContext", async () => {
+    expect(
+      await run(`
+        const vm = require("node:vm");
+        const inner = () => {
+          try { return vm.runInNewContext("const t0=Date.now(); while(Date.now()-t0<10000); 'done'", {}); }
+          catch (e) { return "inner-threw:" + (e && e.code); }
+        };
+        try { console.log("outer:" + vm.runInNewContext("inner()", { inner }, { timeout: 70 })); }
+        catch (e) { console.log("outer:" + (e && e.code)); }
+        console.log("alive");
+      `),
+    ).toEqual({ stdout: "outer:ERR_SCRIPT_EXECUTION_TIMEOUT\nalive", stderr: "", exitCode: 0, signalCode: null });
+  });
+
+  test("outer timeout fires inside an inner runInNewContext with a longer timeout", async () => {
+    expect(
+      await run(`
+        const vm = require("node:vm");
+        const inner = () => {
+          try { return vm.runInNewContext("while(true){}", {}, { timeout: 60000 }); }
+          catch (e) { return "inner-threw:" + (e && e.code); }
+        };
+        try { console.log("outer:" + vm.runInNewContext("inner()", { inner }, { timeout: 70 })); }
+        catch (e) { console.log("outer:" + (e && e.code)); }
+        console.log("alive");
+      `),
+    ).toEqual({ stdout: "outer:ERR_SCRIPT_EXECUTION_TIMEOUT\nalive", stderr: "", exitCode: 0, signalCode: null });
+  });
+
+  test("three-level nesting: outer's fire after a tighter inner disarms is attributed to outer", async () => {
+    // outer{100ms} / middle{60000ms, clamped so not installed} / inner{50ms}.
+    // inner disarms back to the nearest *installed* ancestor (outer), not to
+    // middle, so the 100ms fire sets outer's flag and middle propagates.
+    expect(
+      await run(`
+        const vm = require("node:vm");
+        const inner = () => vm.runInNewContext("1", {}, { timeout: 50 });
+        const middle = () => {
+          try { return vm.runInNewContext("inner(); while(true){}", { inner }, { timeout: 60000 }); }
+          catch (e) { return "middle-threw:" + (e && e.code); }
+        };
+        try { console.log("outer:" + vm.runInNewContext("middle()", { middle }, { timeout: 100 })); }
+        catch (e) { console.log("outer:" + (e && e.code)); }
+        console.log("alive");
+      `),
+    ).toEqual({ stdout: "outer:ERR_SCRIPT_EXECUTION_TIMEOUT\nalive", stderr: "", exitCode: 0, signalCode: null });
+  });
+
+  test("outer timeout fires inside an inner untimed runInThisContext", async () => {
+    expect(
+      await run(`
+        const vm = require("node:vm");
+        globalThis.__inner = () => {
+          try { return new vm.Script("const t0=Date.now(); while(Date.now()-t0<10000); 'done'").runInThisContext(); }
+          catch (e) { return "inner-threw:" + (e && e.code); }
+        };
+        try { console.log("outer:" + new vm.Script("__inner()").runInThisContext({ timeout: 70 })); }
+        catch (e) { console.log("outer:" + (e && e.code)); }
+        delete globalThis.__inner;
+        console.log("alive");
+      `),
+    ).toEqual({ stdout: "outer:ERR_SCRIPT_EXECUTION_TIMEOUT\nalive", stderr: "", exitCode: 0, signalCode: null });
+  });
+
+  test("a context-less SourceTextModule's own timeout does not discard the caller's pending microtasks", async () => {
+    // vm.drainMicrotasksForGlobalObject discards (not runs) queued microtasks
+    // for the given global. For a module with no {context}, passing the
+    // caller's global there would drop the unrelated `await` continuations
+    // that were already queued before the spinning evaluate() grabbed the
+    // thread, so they never resume.
+    const { stdout, stderr, exitCode, signalCode } = await run(`
+      const vm = require("node:vm");
+      (async () => {
+        const m = new vm.SourceTextModule("globalThis.__hit = true;");
+        await m.link(() => {});
+        await m.evaluate();
+        console.log("sibling:done hit=" + globalThis.__hit);
+      })();
+      (async () => {
+        const m = new vm.SourceTextModule("while (true) {}");
+        await m.link(() => {});
+        try { await m.evaluate({ timeout: 200 }); console.log("timed:UNEXPECTED"); }
+        catch (e) { console.log("timed:" + (e && e.code)); }
+      })();
+    `);
+    expect({ lines: stdout.split("\n").sort(), stderr, exitCode, signalCode }).toEqual({
+      lines: ["sibling:done hit=true", "timed:ERR_SCRIPT_EXECUTION_TIMEOUT"],
+      stderr: "",
+      exitCode: 0,
+      signalCode: null,
+    });
+  });
+
+  test("outer timeout fires inside a SourceTextModule evaluation: re-evaluate stays catchable", async () => {
+    // The inner module's post-evaluation check propagates the foreign
+    // termination but must not record the VM's TerminationException singleton
+    // as the module's evaluation error: re-throwing that singleton from the
+    // errored-module branch is uncatchable (and asserts under debug JSC).
+    expect(
+      await run(`
+        const vm = require("node:vm");
+        (async () => {
+          const ctx = vm.createContext({ t0: Date.now(), Date });
+          const mod = new vm.SourceTextModule("while (Date.now() - t0 < 10000);", { context: ctx });
+          await mod.link(() => {});
+          try { vm.runInNewContext("m.evaluate()", { m: mod }, { timeout: 70 }); }
+          catch (e) { console.log("outer:" + (e && e.code)); }
+          console.log("status=" + mod.status);
+          try { await mod.evaluate(); console.log("re-eval:resolved"); }
+          catch { console.log("re-eval:rejected"); }
+          console.log("alive");
+        })();
+      `),
+    ).toEqual({
+      stdout: "outer:ERR_SCRIPT_EXECUTION_TIMEOUT\nstatus=errored\nre-eval:rejected\nalive",
+      stderr: "",
+      exitCode: 0,
+      signalCode: null,
+    });
+  });
+});

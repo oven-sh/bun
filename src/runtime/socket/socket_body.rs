@@ -919,9 +919,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             // The error handler can destroy the socket itself; only close a
             // still-attached socket. Close without detaching so on_close runs
             // and JS observes 'close' (mirrors h2's dead-transport close).
-            // The errno was just delivered; drop the latch so on_close doesn't
-            // report it a second time.
-            this.fatal_write_errno.set(0);
+            this.fatal_write_errno.set(0); // delivered above; on_close must not re-report it
             if !this.socket.get().is_detached() {
                 this.socket.get().close(uws::CloseCode::Normal);
             }

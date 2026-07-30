@@ -2361,19 +2361,30 @@ fn parse_build_command_options(
         ctx.bundler_options.code_splitting = true;
     }
 
-    if let Some(entry_naming) = args.option(b"--entry-naming") {
-        ctx.bundler_options.entry_naming =
-            strings::concat(&[b"./", strings::remove_leading_dot_slash(entry_naming)]);
-    }
-
-    if let Some(chunk_naming) = args.option(b"--chunk-naming") {
-        ctx.bundler_options.chunk_naming =
-            strings::concat(&[b"./", strings::remove_leading_dot_slash(chunk_naming)]);
-    }
-
-    if let Some(asset_naming) = args.option(b"--asset-naming") {
-        ctx.bundler_options.asset_naming =
-            strings::concat(&[b"./", strings::remove_leading_dot_slash(asset_naming)]);
+    for (flag, slot) in [
+        (
+            b"--entry-naming".as_slice(),
+            &mut ctx.bundler_options.entry_naming,
+        ),
+        (
+            b"--chunk-naming".as_slice(),
+            &mut ctx.bundler_options.chunk_naming,
+        ),
+        (
+            b"--asset-naming".as_slice(),
+            &mut ctx.bundler_options.asset_naming,
+        ),
+    ] {
+        if let Some(value) = args.option(flag) {
+            if let Some((pos, tail)) = options::find_unterminated_placeholder(value) {
+                Output::err_generic(
+                    "{}: unterminated \"{}\" placeholder (missing \"]\") at position {}",
+                    (BStr::new(flag), BStr::new(tail), pos),
+                );
+                Global::exit(1);
+            }
+            *slot = strings::concat(&[b"./", strings::remove_leading_dot_slash(value)]);
+        }
     }
 
     if args.flag(b"--server-components") {

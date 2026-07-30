@@ -2085,6 +2085,34 @@ fn path_template_needs(data: &[u8], field: PlaceholderField) -> bool {
     strings::contains(data, needle)
 }
 
+/// `Some((index_of_open_bracket, &template[index..]))` when a `[` has no matching `]`.
+pub fn find_unterminated_placeholder(template: &[u8]) -> Option<(usize, &[u8])> {
+    let mut remain = template;
+    while let Some(j) = strings::index_of_char(remain, b'[') {
+        let j = j as usize;
+        let open_at = template.len() - remain.len() + j;
+        remain = &remain[j + 1..];
+        let mut count: isize = 1;
+        let mut close: Option<usize> = None;
+        for (idx, c) in remain.iter().enumerate() {
+            count += match *c {
+                b'[' => 1,
+                b']' => -1,
+                _ => 0,
+            };
+            if count == 0 {
+                close = Some(idx);
+                break;
+            }
+        }
+        let Some(end) = close else {
+            return Some((open_at, &template[open_at..]));
+        };
+        remain = &remain[end + 1..];
+    }
+    None
+}
+
 // Shared body for PathTemplate::print / PathTemplateConst::print (D064).
 // Writes raw path bytes via a byte-writer free fn (not `core::fmt::Display`).
 fn path_template_print<W: bun_io::Write>(
@@ -2102,11 +2130,6 @@ fn path_template_print<W: bun_io::Write>(
         let j = j as usize;
         PathTemplate::write_replacing_slashes_on_windows(writer, &remain[0..j])?;
         remain = &remain[j + 1..];
-        if remain.is_empty() {
-            // TODO: throw error
-            writer.write_all(b"[")?;
-            break;
-        }
 
         let mut count: isize = 1;
         let mut end_len: usize = remain.len();
@@ -2119,16 +2142,25 @@ fn path_template_print<W: bun_io::Write>(
 
             if count == 0 {
                 end_len = idx;
-                debug_assert!(end_len <= remain.len());
+                debug_assert!(end_len < remain.len());
                 break;
             }
+        }
+
+        if count != 0 {
+            // No matching `]`: emit `[` and fall through to write `remain` literally.
+            writer.write_all(b"[")?;
+            break;
         }
 
         let placeholder = &remain[0..end_len];
 
         let Some(field) = PLACEHOLDER_MAP.get(placeholder).copied() else {
+            // Unknown placeholder: keep `[placeholder]` verbatim in the output.
+            writer.write_all(b"[")?;
             PathTemplate::write_replacing_slashes_on_windows(writer, placeholder)?;
-            remain = &remain[end_len..];
+            writer.write_all(b"]")?;
+            remain = &remain[end_len + 1..];
             continue;
         };
 
@@ -2208,6 +2240,55 @@ fn write_sanitized_parent_dirs_rewrites_every_dotdot_segment() {
     // POSIX: `\` is an ordinary filename byte, not a separator.
     #[cfg(not(windows))]
     assert_eq!(run(br"weird\dir/x.js"), br"weird\dir/x.js");
+}
+
+#[cfg(test)]
+#[test]
+fn path_template_print_tolerates_malformed_brackets() {
+    fn run(template: &[u8]) -> Vec<u8> {
+        let mut out = Vec::new();
+        path_template_print(&mut out, template, b"D", b"N", b"E", Some(0), b"T", false).unwrap();
+        out
+    }
+    // Unterminated known placeholder: used to slice one past the end.
+    assert_eq!(run(b"[name"), b"[name");
+    assert_eq!(run(b"[dir"), b"[dir");
+    assert_eq!(run(b"[hash"), b"[hash");
+    assert_eq!(run(b"[ext"), b"[ext");
+    assert_eq!(run(b"[target"), b"[target");
+    // A closed placeholder before the unterminated one is still substituted.
+    assert_eq!(run(b"[name]-[ext"), b"N-[ext");
+    // Unknown placeholders and stray brackets pass through untouched.
+    assert_eq!(run(b"[foo]-[name].[ext]"), b"[foo]-N.E");
+    assert_eq!(run(b"a[b"), b"a[b");
+    assert_eq!(run(b"foo["), b"foo[");
+    assert_eq!(run(b"["), b"[");
+    assert_eq!(run(b"]"), b"]");
+    assert_eq!(run(b""), b"");
+    // No change to well-formed templates.
+    assert_eq!(run(b"[dir]/[name].[ext]"), b"D/N.E");
+
+    // The up-front validator agrees with the printer on what is unterminated.
+    assert_eq!(
+        find_unterminated_placeholder(b"[name"),
+        Some((0, b"[name".as_slice()))
+    );
+    assert_eq!(
+        find_unterminated_placeholder(b"foo["),
+        Some((3, b"[".as_slice()))
+    );
+    assert_eq!(
+        find_unterminated_placeholder(b"[name]-[ext"),
+        Some((7, b"[ext".as_slice()))
+    );
+    assert_eq!(
+        find_unterminated_placeholder(b"a[b.js"),
+        Some((1, b"[b.js".as_slice()))
+    );
+    assert_eq!(find_unterminated_placeholder(b""), None);
+    assert_eq!(find_unterminated_placeholder(b"]"), None);
+    assert_eq!(find_unterminated_placeholder(b"[dir]/[name].[ext]"), None);
+    assert_eq!(find_unterminated_placeholder(b"[foo]-[name].[ext]"), None);
 }
 
 impl PathTemplate {

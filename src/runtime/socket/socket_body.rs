@@ -276,6 +276,11 @@ pub struct NewSocket<const SSL: bool> {
     pub(crate) server_name: JsCell<Option<Box<[u8]>>>,
     pub(crate) buffered_data_for_node_net: JsCell<Vec<u8>>,
     pub(crate) bytes_written: Cell<u64>,
+    /// First fatal `send()` errno observed by a JS-driven `write()`/`end()`
+    /// (ECONNRESET/EPIPE while the loop was blocked in JS). `on_end` suppresses
+    /// the bogus peer-FIN it would otherwise report, and `on_close` reports it
+    /// as the close error when the later poll delivers only HUP.
+    pub(crate) fatal_write_errno: Cell<i32>,
 
     pub(crate) native_callback: JsCell<NativeCallbacks>,
     /// `upgradeTLS` produces two `TLSSocket` wrappers over one
@@ -1585,6 +1590,12 @@ impl<const SSL: bool> NewSocket<SSL> {
         if this.socket.get().is_detached() {
             return;
         }
+        if this.fatal_write_errno.get() != 0 {
+            // A JS-driven write already observed the peer-gone errno while the
+            // loop was blocked; the HUP the loop just polled is not a clean
+            // FIN. Skip the `end` dispatch and let `on_close` report the error.
+            return;
+        }
         let handlers = this.get_handlers();
         log!(
             "onEnd {}",
@@ -2054,6 +2065,14 @@ impl<const SSL: bool> NewSocket<SSL> {
                 &sys::Error::from_code_int(err, sys::Tag::read),
                 &global,
             );
+        } else if this.fatal_write_errno.get() != 0 {
+            // The loop reported a clean close, but a JS-driven write already
+            // saw the kernel reject the send (peer RST while the loop was
+            // blocked in JS). Report that errno so the reset is not lost.
+            js_error = <sys::Error as jsc::SysErrorJsc>::to_js(
+                &sys::Error::from_code_int(this.fatal_write_errno.get(), sys::Tag::write),
+                &global,
+            );
         }
 
         if let Err(e) = callback.call(&global, this_value, &[this_value, js_error]) {
@@ -2263,7 +2282,9 @@ impl<const SSL: bool> NewSocket<SSL> {
         Ok(
             match this.write_or_end::<false>(global, args.mut_(), false) {
                 WriteResult::Fail => JSValue::ZERO,
-                WriteResult::Success { wrote, .. } => JSValue::js_number_from_int32(wrote),
+                // Fatal send errnos (wrote < -1) are recorded on the socket for
+                // the close dispatch; the documented native return is -1.
+                WriteResult::Success { wrote, .. } => JSValue::js_number_from_int32(wrote.max(-1)),
             },
         )
     }
@@ -2439,6 +2460,12 @@ impl<const SSL: bool> NewSocket<SSL> {
             // Kernel rejected the send (peer gone): return the negative errno so
             // JS fails the write; never close from under the caller's stack, and
             // leave the undeliverable buffer to the caller (aliasing).
+            // Record the first errno (ECONNRESET precedes the EPIPE tail) so the
+            // later loop-driven `on_end`/`on_close` can report the reset instead
+            // of a clean FIN.
+            if self.fatal_write_errno.get() == 0 {
+                self.fatal_write_errno.set(fatal_errno);
+            }
             return -fatal_errno;
         }
         let uwrote: usize = usize::try_from(res.max(0)).expect("int cast");
@@ -3119,7 +3146,7 @@ impl<const SSL: bool> NewSocket<SSL> {
                 if wrote >= 0 && usize::try_from(wrote).expect("int cast") == total {
                     let _ = this.internal_flush();
                 }
-                JSValue::js_number(wrote as f64)
+                JSValue::js_number(f64::from(wrote.max(-1)))
             }
         };
         Ok(result)
@@ -3505,6 +3532,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             ref_pollref_on_connect: Cell::new(true),
             buffered_data_for_node_net: JsCell::new(Vec::new()),
             bytes_written: Cell::new(0),
+            fatal_write_errno: Cell::new(0),
             native_callback: JsCell::new(NativeCallbacks::None),
             twin: JsCell::new(None),
             verify_error: JsCell::new(None),
@@ -3612,6 +3640,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             ref_pollref_on_connect: Cell::new(true),
             buffered_data_for_node_net: JsCell::new(Vec::new()),
             bytes_written: Cell::new(0),
+            fatal_write_errno: Cell::new(0),
             native_callback: JsCell::new(NativeCallbacks::None),
             twin: JsCell::new(None),
             verify_error: JsCell::new(None),
@@ -4610,6 +4639,7 @@ pub fn js_upgrade_duplex_to_tls(
         ref_pollref_on_connect: Cell::new(true),
         buffered_data_for_node_net: JsCell::new(Vec::new()),
         bytes_written: Cell::new(0),
+        fatal_write_errno: Cell::new(0),
         native_callback: JsCell::new(NativeCallbacks::None),
         twin: JsCell::new(None),
         verify_error: JsCell::new(None),

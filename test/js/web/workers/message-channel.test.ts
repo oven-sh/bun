@@ -566,6 +566,28 @@ describe("a message listener keeps the event loop alive", () => {
     ).toEqual({ ready: true, outcome: "alive", stderr: "" });
   });
 
+  // Node's [kNewListener] hook calls this.ref() on every 'message' listener add,
+  // so installing a listener after .unref() re-refs the port on every path.
+  for (const [label, attach] of [
+    [".onmessage", `port2.onmessage = () => {};`],
+    [".addEventListener('message')", `port2.addEventListener('message', () => {});`],
+    [".on('message')", `port2.on('message', () => {});`],
+  ] as const) {
+    test.concurrent(`${label} after .unref() re-refs the port`, async () => {
+      expect(
+        await runKeepalive(`
+          require('node:worker_threads');
+          const { port1, port2 } = new MessageChannel();
+          globalThis.__keep = { port1, port2 };
+          port2.unref();
+          ${attach}
+          if (!port2.hasRef()) throw new Error('hasRef() must be true after listener add');
+          console.log('READY');
+        `),
+      ).toEqual({ ready: true, outcome: "alive", stderr: "" });
+    });
+  }
+
   // Cross-context: a worker is kept alive only by a transferred port's listener,
   // and the main thread drops its side. On the broken build the worker receives a
   // GC-timed 'close' and exits; Node keeps the worker (and its port) alive.

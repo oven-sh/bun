@@ -158,7 +158,7 @@ private:
     bool m_hasRef { false };
 
     // Whether .ref()/.unref() want this port to keep the loop alive (default refd);
-    // independent of m_hasRef (the .onmessage=/.ref() keepalive).
+    // independent of m_hasRef (the explicit .ref() keepalive).
     bool m_isRefd { true };
     // Whether the message-listener mechanism currently holds an event-loop ref
     // (held iff m_isRefd && m_messageEventCount > 0).

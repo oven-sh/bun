@@ -7625,6 +7625,8 @@ declare module "bun" {
     /**
      * IANA time-zone name to interpret the schedule in (e.g. `"UTC"`,
      * `"America/New_York"`). Defaults to the system's local time zone.
+     *
+     * Prior to Bun v1.4 the default was UTC; pass `"UTC"` to keep that behavior.
      */
     tz?: string;
   }

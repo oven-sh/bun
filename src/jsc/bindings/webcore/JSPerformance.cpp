@@ -148,10 +148,7 @@ JSC_DEFINE_HOST_FUNCTION(jsPerformancePrototypeFunction_markResourceTiming, (JSG
     return JSValue::encode(jsUndefined());
 }
 
-// Node.js defines eventLoopUtilization/timerify/nodeTiming on Performance.prototype
-// from process start. Bun's implementations live in src/js/node/perf_hooks.ts, so the
-// first touch of one of these on the global lazily evaluates that module, whose body
-// replaces this accessor with the real data property on the prototype.
+// node:perf_hooks' module body overwrites this accessor with the real data property.
 static JSC::EncodedJSValue jsPerformancePrototypeLoadNodePerfHooks(JSGlobalObject* lexicalGlobalObject, PropertyName propertyName)
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
@@ -183,9 +180,7 @@ static JSC_DEFINE_CUSTOM_GETTER(jsPerformance_nodeTiming, (JSGlobalObject * lexi
     return jsPerformancePrototypeLoadNodePerfHooks(lexicalGlobalObject, propertyName);
 }
 
-// Node's properties are writable data properties; an accessor with a null setter would
-// swallow `performance.eventLoopUtilization = x`. Shadow on the receiver instead so
-// assignment before the lazy load behaves like assignment through a writable prototype slot.
+// Shadow on the receiver so assignment matches Node's writable data slot.
 static JSC_DEFINE_CUSTOM_SETTER(setJSPerformance_nodePerfHooksLazy, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, EncodedJSValue encodedValue, PropertyName propertyName))
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);

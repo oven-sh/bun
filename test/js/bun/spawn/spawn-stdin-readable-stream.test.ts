@@ -1,7 +1,7 @@
 import { spawn } from "bun";
 import { fileSinkInternals } from "bun:internal-for-testing";
 import { describe, expect, mock, test } from "bun:test";
-import { bunEnv, bunExe, expectMaxObjectTypeCount, isASAN, isDebug, tempDir } from "harness";
+import { bunEnv, bunExe, expectMaxObjectTypeCount, isASAN, isDebug, isWindows, tempDir } from "harness";
 import path from "node:path";
 
 describe("spawn stdin ReadableStream", () => {
@@ -1139,7 +1139,12 @@ describe("spawn stdin ReadableStream", () => {
   // each stderr write's index on stdout (tiny, never fills its pipe); the parent
   // drains stdout concurrently and samples the child's progress while the
   // stderr reader is deliberately stalled.
-  test("spawn stderr for-await applies backpressure to the writer", async () => {
+  //
+  // Windows: WindowsBufferedReader::on_read discards the on_read_chunk return
+  // value, so FileReader's highwater mark never propagates to uv_read_stop and
+  // the pipe drains at socket speed regardless of JS demand. Same limitation as
+  // the process-stdin.test.ts "pipe backpressure" suite; skipped there too.
+  test.skipIf(isWindows)("spawn stderr for-await applies backpressure to the writer", async () => {
     const chunkSize = 64 * 1024;
     const chunkCount = 128; // 8 MB — well above the OS pipe + ByteStream buffers
     const totalBytes = chunkSize * chunkCount;

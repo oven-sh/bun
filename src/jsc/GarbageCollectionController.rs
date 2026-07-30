@@ -102,7 +102,7 @@ impl GarbageCollectionController {
 
     /// Arms the idle timer on first call; kept at the event-loop call sites so the first deadline is in the poll that follows.
     #[inline]
-    pub fn process_gc_timer(&mut self) {
+    pub(crate) fn process_gc_timer(&mut self) {
         if self.disabled || self.gc_repeating_timer.state != TimerState::PENDING {
             return;
         }

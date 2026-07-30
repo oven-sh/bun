@@ -271,7 +271,7 @@ static NextStep asyncIterHandleNextResult(JSGlobalObject* globalObject, JSAsyncI
         if (scope.exception()) [[unlikely]]
             goto abrupt;
         if (wrote && wrote.isNumber() && wrote.asNumber() < 0) {
-            // The HTTP sink reports backpressure with a negative return: wait for the drain.
+            // The sink reports backpressure with a negative return: wait for the drain.
             MarkedArgumentBuffer flushArgs;
             flushArgs.append(jsBoolean(true));
             JSValue flushed = invokeOptionalMethod(globalObject, controller, builtinNames(vm).flushPublicName(), flushArgs);
@@ -286,8 +286,20 @@ static NextStep asyncIterHandleNextResult(JSGlobalObject* globalObject, JSAsyncI
             flushPromise->performPromiseThenWithContext(vm, globalObject, runtime->onAsyncIterableSourceFlushFulfilled(), runtime->onAsyncIterableSourceErrored(), jsUndefined(), op);
             return NextStep::Suspended;
         }
-        if (auto* wrotePromise = asPromise(wrote))
+        if (auto* wrotePromise = asPromise(wrote)) {
             markPromiseAsHandled(vm, wrotePromise);
+            // A FileSink/NetworkSink write that could not complete returns its pending
+            // promise; the sink's own drain callback resolves it.
+            auto status = wrotePromise->status();
+            if (status == JSPromise::Status::Pending) {
+                wrotePromise->performPromiseThenWithContext(vm, globalObject, runtime->onAsyncIterableSourceFlushFulfilled(), runtime->onAsyncIterableSourceErrored(), jsUndefined(), op);
+                return NextStep::Suspended;
+            }
+            if (status == JSPromise::Status::Rejected) {
+                asyncIterFinishWithError(globalObject, op, wrotePromise->result());
+                return NextStep::Finished;
+            }
+        }
     }
 
     if (op->m_iteratorDone) {

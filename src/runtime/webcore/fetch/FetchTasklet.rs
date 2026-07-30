@@ -1858,21 +1858,6 @@ impl FetchTasklet {
 
     fn ignore_remaining_response_body(&mut self, from_finalizer: bool) {
         bun_output::scoped_log!(FetchTasklet, "ignoreRemainingResponseBody");
-        // The response is being abandoned. If the request body is still
-        // uploading, clear the sink's signal so the controller (and the
-        // reader/stream graph it captures) becomes collectible.
-        //
-        // When reached from `on_response_finalize` (a JSC Weak finalizer inside
-        // `WeakBlock::sweep`), this and `clear_stream_handlers()` must be
-        // skipped: both reach `JSCell::classInfo()` via generated cached-value
-        // setters / `ReadableStreamTag__tagged`, and touching any cell during
-        // `MutatorState::Sweeping` is forbidden. `clear_sink()` in `deinit()` (an
-        // event-loop task, outside sweep) performs the deferred detach.
-        if !from_finalizer {
-            if let Some(sink) = self.sink_mut() {
-                sink.signal.clear();
-            }
-        }
         // enabling streaming will make the http thread to drain into the main thread (aka stop buffering)
         // without a stream ref, response body or response instance alive it will just ignore the result
         // An aborted fetch is already shutting down; don't re-arm receive/resume
@@ -1894,7 +1879,13 @@ impl FetchTasklet {
         // we should not keep the process alive if we are ignoring the body
         let _ = self.javascript_vm;
         self.poll_ref.unref(bun_io::js_vm_ctx());
-        // clean any remaining references
+        // When reached from `on_response_finalize` (a JSC Weak finalizer inside
+        // `WeakBlock::sweep`), `clear_stream_handlers()` must be skipped: it
+        // reaches `JSCell::classInfo()` via generated cached-value setters /
+        // `ReadableStreamTag__tagged`, and touching any cell during
+        // `MutatorState::Sweeping` is forbidden. The request-body sink is left
+        // for `clear_sink()` in `deinit()` (an event-loop task, outside sweep)
+        // to detach.
         if !from_finalizer {
             self.clear_stream_handlers();
         }
@@ -2385,7 +2376,16 @@ impl FetchTasklet {
         }
         self.abort_task();
         // Re-borrow after the `&mut self` calls above.
+        let global_this = self.global_this;
         if let Some(sink) = self.sink_mut() {
+            // Unblock a pump parked on `flush(true)` so it can finish and
+            // settle the assign_to_stream result (which owns the balancing
+            // `write_end_request`).
+            if sink.flush_promise.has_value() {
+                let _ = sink
+                    .flush_promise
+                    .resolve(&global_this, JSValue::js_number(0.0));
+            }
             sink.signal.close(None);
         }
     }

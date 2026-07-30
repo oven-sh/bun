@@ -88,13 +88,37 @@ Temporal.PlainDate.from("2025-01-01[" + "A".repeat(15) + "]");
 
 The current grammar has no length cap on `TimeZoneIANANameComponent`; `ToTemporalDate` never consults the parsed `[[TimeZone]]`, so an unrecognised annotation is simply ignored. Line 701 `if (componentLength > 14)` should be removed.
 
-### B2. `nudgeToDayOrTime` is missing the spec `truncate()` (comment is wrong)
+### B2. `Duration.round({smallestUnit:'day'})` drops sub-ULP remainders for ceil/floor/expand
+
+**File:** `Source/JavaScriptCore/runtime/temporal/core/Rounding.cpp:146` and `TemporalDuration.cpp:762`
+**Severity:** Observable wrong result; V8 correct
+
+The no-`relativeTo` day branch of `Duration#round` collapses the exact Int128 time to a `double` via `fractionToDouble(time, nsPerDay)` before calling `roundNumberToIncrementDouble`. For `days >= 128`, a 1 ns remainder is below ULP(`days`) so the quotient is exactly `days.0`; `roundNumberToIncrementDouble` then short-circuits at line 146 (`trunc(q)==q`) and returns `days` without consulting the rounding mode.
+
+```js
+new Temporal.Duration(0,0,0,128,0,0,0,0,0,1)
+  .round({smallestUnit:"day", roundingMode:"ceil"}).days;
+// JSC: 128   V8: 129   spec: 129
+new Temporal.Duration(0,0,0,127,0,0,0,0,0,1)
+  .round({smallestUnit:"day", roundingMode:"ceil"}).days;
+// JSC: 128 (correct; below ULP threshold)
+```
+
+Fix: route this case through the Int128 overload (`roundNumberToIncrementInt128(timeNs, increment*nsPerDay, mode) / nsPerDay`) instead of the double overload.
+
+### B3. `NudgeToCalendarUnit` decides d1 vs d2 in double precision (shared with V8)
+
+**File:** `Source/JavaScriptCore/runtime/temporal/core/DurationArithmetic.cpp:700-716`
+
+`total` is computed via `fractionToDouble` before `applyUnsignedRoundingMode`, so for year-scale spans (ns > 2^53) a value 1 ns past the mathematical midpoint rounds to the midpoint and the tie-break path is taken. V8 shows identical output, so this is a cross-engine precision limitation rather than a JSC-specific regression; noted because the spec text operates on mathematical values.
+
+### B4. `nudgeToDayOrTime` is missing the spec `truncate()` (comment is wrong)
 
 **File:** `Source/JavaScriptCore/runtime/temporal/core/DurationArithmetic.cpp:~811`
 
 Comment claims `totalTimeDuration` already truncates; it does not (`fractionToDouble` returns a fractional double). `didExpandDays` is therefore spuriously true on any sub-day rounding that increases magnitude, wasting a `bubbleRelativeDuration`/`calendarDateAdd` call. Traced scenarios show the spurious bubble is a no-op on output, so this is latent correctness + measurable perf.
 
-### B3. `disambiguatePossibleEpochNanoseconds` gap branch skips `IsValidEpochNanoseconds`
+### B5. `disambiguatePossibleEpochNanoseconds` gap branch skips `IsValidEpochNanoseconds`
 
 **File:** `Source/JavaScriptCore/runtime/temporal/core/TimeZoneICUBridge.cpp:425-427`
 

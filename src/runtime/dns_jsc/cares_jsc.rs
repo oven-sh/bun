@@ -19,6 +19,12 @@ fn utf8_to_js(global: &JSGlobalObject, bytes: &[u8]) -> JsResult<JSValue> {
     bun_string_jsc::create_utf8_for_js(global, bytes)
 }
 
+/// Create a JS string from raw octets, one byte per code unit (Latin-1).
+#[inline]
+fn latin1_to_js(global: &JSGlobalObject, bytes: &[u8]) -> JsResult<JSValue> {
+    bstr::String::clone_latin1(bytes).transfer_to_js(global)
+}
+
 // ── struct_hostent ─────────────────────────────────────────────────────────
 pub(crate) fn hostent_to_js_response(
     this: &mut c_ares::struct_hostent,
@@ -300,7 +306,7 @@ fn caa_reply_to_js(
 
     let property = this.property_bytes();
     let value = this.value_bytes();
-    obj.put(global_this, property, utf8_to_js(global_this, value)?);
+    obj.put(global_this, property, latin1_to_js(global_this, value)?);
 
     Ok(obj)
 }
@@ -381,7 +387,7 @@ fn txt_reply_to_js(
 ) -> JsResult<JSValue> {
     let array = JSValue::create_empty_array(global_this, 1)?;
     let value = this.txt_bytes();
-    array.put_index(global_this, 0, utf8_to_js(global_this, value)?)?;
+    array.put_index(global_this, 0, latin1_to_js(global_this, value)?)?;
     Ok(array)
 }
 
@@ -390,8 +396,9 @@ fn txt_reply_to_js_for_any(
     global_this: &JSGlobalObject,
     _lookup_name: &'static [u8],
 ) -> JsResult<JSValue> {
-    let array =
-        cares_list_to_js_array(this, global_this, |node, g| utf8_to_js(g, node.txt_bytes()))?;
+    let array = cares_list_to_js_array(this, global_this, |node, g| {
+        latin1_to_js(g, node.txt_bytes())
+    })?;
     let obj = JSValue::create_empty_object(global_this, 1);
     obj.put(global_this, b"entries", array);
     Ok(obj)
@@ -421,22 +428,22 @@ fn naptr_reply_to_js(
 
     // SAFETY: flags is a non-null NUL-terminated C string from c-ares.
     let flags = unsafe { bun_core::ffi::cstr(this.flags.cast()) }.to_bytes();
-    obj.put(global_this, b"flags", utf8_to_js(global_this, flags)?);
+    obj.put(global_this, b"flags", latin1_to_js(global_this, flags)?);
 
     // SAFETY: service is a non-null NUL-terminated C string from c-ares.
     let service = unsafe { bun_core::ffi::cstr(this.service.cast()) }.to_bytes();
-    obj.put(global_this, b"service", utf8_to_js(global_this, service)?);
+    obj.put(global_this, b"service", latin1_to_js(global_this, service)?);
 
     // SAFETY: regexp is a non-null NUL-terminated C string from c-ares.
     let regexp = unsafe { bun_core::ffi::cstr(this.regexp.cast()) }.to_bytes();
-    obj.put(global_this, b"regexp", utf8_to_js(global_this, regexp)?);
+    obj.put(global_this, b"regexp", latin1_to_js(global_this, regexp)?);
 
     // SAFETY: replacement is a non-null NUL-terminated C string from c-ares.
     let replacement = unsafe { bun_core::ffi::cstr(this.replacement.cast()) }.to_bytes();
     obj.put(
         global_this,
         b"replacement",
-        utf8_to_js(global_this, replacement)?,
+        latin1_to_js(global_this, replacement)?,
     );
 
     Ok(obj)

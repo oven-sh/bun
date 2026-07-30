@@ -1,7 +1,9 @@
 import { beforeAll, describe, expect, it, setDefaultTimeout, test } from "bun:test";
 import { isWindows } from "harness";
+import * as dgram from "node:dgram";
 import * as dns from "node:dns";
 import * as dns_promises from "node:dns/promises";
+import { once } from "node:events";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as util from "node:util";
@@ -659,5 +661,89 @@ describe("dns.lookupService with a numeric-string port", () => {
     expect(() => dns_promises.lookupService("127.0.0.1", "nope")).toThrow(
       expect.objectContaining({ code: "ERR_SOCKET_BAD_PORT" }),
     );
+  });
+});
+
+// TXT/CAA/NAPTR RDATA fields that carry length-delimited arbitrary octets
+// (RFC 1035 §3.3 <character-string>, RFC 8659 §4.1.1 CAA value) are exposed by
+// Node's cares_wrap as one-byte-per-code-unit strings (OneByteString), so the
+// original bytes round-trip via Buffer.from(s, "latin1"); decoding as UTF-8
+// would replace e.g. 0xFF and lone 0x80 with U+FFFD and lose data.
+describe("node:dns preserves raw RDATA octets as latin1", () => {
+  // Loopback server that answers every question with one RR of `type`/`rdata`.
+  async function withServer(type, rdata, fn) {
+    const udp = dgram.createSocket("udp4");
+    udp.on("message", (msg, rinfo) => {
+      let off = 12;
+      while (off < msg.length && msg[off] !== 0) off += msg[off] + 1;
+      const question = msg.subarray(12, off + 5);
+      const answer = Buffer.concat([
+        Buffer.from([0xc0, 0x0c, type >> 8, type & 0xff, 0x00, 0x01, 0x00, 0x00, 0x00, 0x3c]),
+        Buffer.from([rdata.length >> 8, rdata.length & 0xff]),
+        rdata,
+      ]);
+      const header = Buffer.from([msg[0], msg[1], 0x81, 0x80, 0, 1, 0, 1, 0, 0, 0, 0]);
+      udp.send(Buffer.concat([header, question, answer]), rinfo.port, rinfo.address);
+    });
+    udp.bind(0, "127.0.0.1");
+    await once(udp, "listening");
+    try {
+      const r = new dns_promises.Resolver({ timeout: 1000, tries: 1 });
+      r.setServers([`127.0.0.1:${udp.address().port}`]);
+      await fn(r, udp.address().port);
+    } finally {
+      udp.close();
+    }
+  }
+  const charString = s => Buffer.concat([Buffer.from([s.length]), s]);
+  const codes = s => [...s].map(c => c.charCodeAt(0));
+
+  const bytes = Buffer.from([0x00, 0xff, 0x41, 0x0a, 0x80, 0xe9, 0xc3]);
+  const expectedCodes = [0x00, 0xff, 0x41, 0x0a, 0x80, 0xe9, 0xc3];
+
+  it("promises.Resolver#resolveTxt returns bytes losslessly", async () => {
+    await withServer(16, charString(bytes), async r => {
+      const [[str]] = await r.resolveTxt("txtbin.test");
+      expect(codes(str)).toEqual(expectedCodes);
+      expect(Buffer.from(str, "latin1").equals(bytes)).toBe(true);
+    });
+  });
+
+  it("callback Resolver#resolveTxt returns bytes losslessly", async () => {
+    await withServer(16, charString(bytes), async (_, port) => {
+      const r = new dns.Resolver({ timeout: 1000, tries: 1 });
+      r.setServers([`127.0.0.1:${port}`]);
+      const { promise, resolve, reject } = Promise.withResolvers();
+      r.resolveTxt("txtbin.test", (err, records) => (err ? reject(err) : resolve(records)));
+      const [[str]] = await promise;
+      expect(codes(str)).toEqual(expectedCodes);
+      expect(Buffer.from(str, "latin1").equals(bytes)).toBe(true);
+    });
+  });
+
+  it("all-ASCII TXT data is unchanged", async () => {
+    await withServer(16, charString(Buffer.from("hello world")), async r => {
+      expect(await r.resolveTxt("txtbin.test")).toEqual([["hello world"]]);
+    });
+  });
+
+  it("resolveAny TXT entries return bytes losslessly", async () => {
+    await withServer(16, charString(bytes), async r => {
+      const results = await r.resolveAny("txtbin.test");
+      const txt = results.find(e => e.type === "TXT");
+      expect(codes(txt.entries[0])).toEqual(expectedCodes);
+      expect(Buffer.from(txt.entries[0], "latin1").equals(bytes)).toBe(true);
+    });
+  });
+
+  it("resolveCaa value returns bytes losslessly", async () => {
+    // CAA RDATA: flags(1) tag-len(1) tag(n) value(rest)
+    const value = Buffer.from([0x63, 0x61, 0x2e, 0x65, 0x78, 0xff, 0x80]); // "ca.ex" + 0xFF 0x80
+    const rdata = Buffer.concat([Buffer.from([0, 5]), Buffer.from("issue"), value]);
+    await withServer(257, rdata, async r => {
+      const [rec] = await r.resolveCaa("caa.test");
+      expect(codes(rec.issue)).toEqual([0x63, 0x61, 0x2e, 0x65, 0x78, 0xff, 0x80]);
+      expect(Buffer.from(rec.issue, "latin1").equals(value)).toBe(true);
+    });
   });
 });

@@ -850,13 +850,9 @@ describe.skipIf(!isWindows).concurrent("Windows compile metadata", () => {
   });
 });
 
-// The PE OptionalHeader.CheckSum field is defined as `fold16(word_sum) + file_length`
-// (the same algorithm Windows' MapFileAndCheckSum uses).
-//
-// This test crafts a minimal PE64 template (large enough that the correct checksum
-// exceeds 0xffff) and cross-compiles via `--compile-executable-path`, so it runs on
-// every platform without downloading a real bun.exe.
-test("bun build --compile writes a valid PE OptionalHeader.CheckSum", async () => {
+// Build a minimal PE32+ image with one .text section and an optional Authenticode
+// overlay past it. Large enough that the correct CheckSum exceeds 0xffff.
+function minimalPE64Template(certSize = 0): Buffer {
   const fileAlign = 512;
   const sectAlign = 4096;
   const peOff = 64;
@@ -864,11 +860,11 @@ test("bun build --compile writes a valid PE OptionalHeader.CheckSum", async () =
   const optSize = 240;
   const shOff = optOff + optSize;
   const textRaw = 512;
-  // Big enough that the correct checksum exceeds 0xffff (asserted below).
   const textRawSize = 128 * 1024;
   const textVA = sectAlign;
+  const lastRawEnd = textRaw + textRawSize;
 
-  const tmpl = Buffer.alloc(textRaw + textRawSize);
+  const tmpl = Buffer.alloc(lastRawEnd + certSize);
   // DOS header
   tmpl.writeUInt16LE(0x5a4d, 0); // "MZ"
   tmpl.writeUInt32LE(peOff, 0x3c); // e_lfanew
@@ -891,6 +887,12 @@ test("bun build --compile writes a valid PE OptionalHeader.CheckSum", async () =
   tmpl.writeUInt32LE(512, optOff + 60); // SizeOfHeaders
   tmpl.writeUInt16LE(3, optOff + 68); // Subsystem = CUI
   tmpl.writeUInt32LE(16, optOff + 108); // NumberOfRvaAndSizes
+  if (certSize > 0) {
+    // Security directory (index 4): VirtualAddress is a file offset for this entry.
+    const secDir = optOff + 112 + 4 * 8;
+    tmpl.writeUInt32LE(lastRawEnd, secDir);
+    tmpl.writeUInt32LE(certSize, secDir + 4);
+  }
   // Section header: .text
   tmpl.write(".text\0\0\0", shOff, 8, "latin1");
   tmpl.writeUInt32LE(textRawSize, shOff + 8); // VirtualSize
@@ -898,42 +900,17 @@ test("bun build --compile writes a valid PE OptionalHeader.CheckSum", async () =
   tmpl.writeUInt32LE(textRawSize, shOff + 16); // SizeOfRawData
   tmpl.writeUInt32LE(textRaw, shOff + 20); // PointerToRawData
   tmpl.writeUInt32LE(0x60000020, shOff + 36); // Characteristics
-  tmpl.fill(0xcc, textRaw); // .text body
+  tmpl.fill(0xcc, textRaw, lastRawEnd); // .text body
+  if (certSize > 0) tmpl.fill(0xab, lastRawEnd); // cert overlay marker
+  return tmpl;
+}
 
-  using dir = tempDir("pe-checksum", {
-    "entry.js": `console.log("hi");`,
-  });
-  const cwd = String(dir);
-  const tmplPath = join(cwd, "template.exe");
-  const outPath = join(cwd, "out.exe");
-  await Bun.write(tmplPath, tmpl);
-
-  await using proc = Bun.spawn({
-    cmd: [
-      bunExe(),
-      "build",
-      "--compile",
-      "--target=bun-windows-x64",
-      "--compile-executable-path",
-      tmplPath,
-      join(cwd, "entry.js"),
-      "--outfile",
-      outPath,
-    ],
-    env: bunEnv,
-    cwd,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  await expectBuildOk(proc);
-
-  const out = Buffer.from(await Bun.file(outPath).arrayBuffer());
-  const outPeOff = out.readUInt32LE(0x3c);
-  const ckOff = outPeOff + 24 + 64;
-  const stored = out.readUInt32LE(ckOff);
-
-  // Recompute the reference checksum over the output with the CheckSum field zeroed.
-  const copy = Buffer.from(out);
+// Recompute the reference PE CheckSum over `bytes` with the CheckSum field zeroed.
+function peChecksum(bytes: Buffer): { stored: number; expected: number } {
+  const peOff = bytes.readUInt32LE(0x3c);
+  const ckOff = peOff + 24 + 64;
+  const stored = bytes.readUInt32LE(ckOff);
+  const copy = Buffer.from(bytes);
   copy.writeUInt32LE(0, ckOff);
   let sum = 0;
   for (let i = 0; i + 1 < copy.length; i += 2) {
@@ -943,10 +920,75 @@ test("bun build --compile writes a valid PE OptionalHeader.CheckSum", async () =
   if (copy.length & 1) sum += copy[copy.length - 1];
   sum = (sum & 0xffff) + (sum >>> 16);
   sum = (sum & 0xffff) + (sum >>> 16);
-  const expected = (sum + copy.length) >>> 0;
+  return { stored, expected: (sum + copy.length) >>> 0 };
+}
 
+function lastSectionEnd(bytes: Buffer): number {
+  const peOff = bytes.readUInt32LE(0x3c);
+  const nSect = bytes.readUInt16LE(peOff + 6);
+  const shOff = peOff + 24 + bytes.readUInt16LE(peOff + 20);
+  let end = 0;
+  for (let i = 0; i < nSect; i++) {
+    const o = shOff + i * 40;
+    const rawEnd = bytes.readUInt32LE(o + 20) + bytes.readUInt32LE(o + 16);
+    if (rawEnd > end) end = rawEnd;
+  }
+  return end;
+}
+
+async function compileWindowsTemplate(dir: string, tmpl: Buffer): Promise<Buffer> {
+  const tmplPath = join(dir, "template.exe");
+  const outPath = join(dir, "out.exe");
+  await Bun.write(tmplPath, tmpl);
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "build",
+      "--compile",
+      "--target=bun-windows-x64",
+      "--compile-executable-path",
+      tmplPath,
+      join(dir, "entry.js"),
+      "--outfile",
+      outPath,
+    ],
+    env: bunEnv,
+    cwd: dir,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  await expectBuildOk(proc);
+  return Buffer.from(await Bun.file(outPath).arrayBuffer());
+}
+
+// The PE OptionalHeader.CheckSum field is defined as `fold16(word_sum) + file_length`
+// (the same algorithm Windows' MapFileAndCheckSum uses).
+//
+// These tests craft a minimal PE64 template and cross-compile via
+// `--compile-executable-path`, so they run on every platform without downloading
+// a real bun.exe.
+test.concurrent("bun build --compile writes a valid PE OptionalHeader.CheckSum", async () => {
+  using dir = tempDir("pe-checksum", { "entry.js": `console.log("hi");` });
+  const out = await compileWindowsTemplate(String(dir), minimalPE64Template());
+  const { stored, expected } = peChecksum(out);
   // Guard against the template shrinking to where the checksum fits in 16 bits
   // and the assertion below becomes vacuous.
   expect(expected).toBeGreaterThan(0xffff);
+  expect(stored).toBe(expected);
+});
+
+test.concurrent("bun build --compile truncates the PE output when Authenticode strip shrinks it", async () => {
+  // 16 KiB cert overlay: larger than the .bun section a trivial entry produces, so
+  // strip_authenticode makes the in-memory PE shorter than the cloned base file.
+  const certSize = 16 * 1024;
+  const tmpl = minimalPE64Template(certSize);
+  using dir = tempDir("pe-truncate", { "entry.js": `console.log("hi");` });
+  const out = await compileWindowsTemplate(String(dir), tmpl);
+
+  const lastEnd = lastSectionEnd(out);
+  expect({ fileSize: out.length, lastEnd }).toEqual({ fileSize: lastEnd, lastEnd });
+  expect(out.length).toBeLessThan(tmpl.length);
+
+  const { stored, expected } = peChecksum(out);
   expect(stored).toBe(expected);
 });

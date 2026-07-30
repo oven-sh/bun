@@ -4046,28 +4046,12 @@ impl bun_event_loop::Taskable for ServerAllConnectionsClosedTask {
     const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::ServerAllConnectionsClosedTask;
 }
 
-impl Drop for ServerAllConnectionsClosedTask {
-    fn drop(&mut self) {
-        // The owned `Box` may be reclaimed by `EventLoop::deinit()` *after*
-        // `~VM` has already torn down the JSC `HandleSet`. `JSPromiseStrong`'s
-        // own `Drop` would dereference the freed slot
-        // (`Bun__StrongRef__delete`), so leak the handle slot instead — `~VM`
-        // already freed the whole `HandleSet`, so nothing dangles. On the
-        // happy path (`run_from_js_thread` consumed `self.promise`), the slot
-        // is empty and this is a no-op; otherwise, this only fires at process
-        // exit where the slot's storage is already gone.
-        if jsc::VirtualMachine::get().is_shutting_down() {
-            let _ = std::mem::ManuallyDrop::new(std::mem::take(&mut self.promise));
-        }
-    }
-}
-
 impl ServerAllConnectionsClosedTask {
     /// Use `ManagedTask::new_owned` (not `Task::init`) so a still-pending task
     /// at process exit is freed by `EventLoop::deinit()`. Without this the
     /// `Box` (and its `JSPromiseStrong`) leaks 24 bytes per `server.stop()`
-    /// that races `process.exit()`. The custom `Drop` impl above keeps the
-    /// late free from UAFing the freed `HandleSet`.
+    /// that races `process.exit()`. `JSPromiseStrong`'s own `Drop` is already
+    /// a no-op past `is_shutting_down()` (see `bun_jsc::Strong::Impl::destroy`).
     pub(crate) fn schedule(this: Self, vm: &mut jsc::VirtualMachine) {
         fn call_erased(this: *mut ServerAllConnectionsClosedTask) -> bun_event_loop::JsResult<()> {
             // `this` is the unique owning pointer heap-allocated below

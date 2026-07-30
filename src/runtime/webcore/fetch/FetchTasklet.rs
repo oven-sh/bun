@@ -396,9 +396,9 @@ impl FetchTasklet {
         if self_.javascript_vm.is_shutting_down() {
             // SAFETY: last ref; exclusive access. `deinit()` would run
             // `clear_data()` + `Drop` for the JSC `Strong`/`Weak` fields, which
-            // reach into the VM's HandleSet from this (HTTP) thread — not
-            // thread-safe. Reclaim only the Rust-side boxes; the HandleSet is
-            // freed wholesale by `destructOnExit`.
+            // reach into the VM's StrongRootBlock list / WeakSet from this
+            // (HTTP) thread — not thread-safe. Reclaim only the Rust-side
+            // boxes; those structures are freed wholesale by `destructOnExit`.
             unsafe { FetchTasklet::dealloc_for_shutdown(this) };
             return;
         }
@@ -509,8 +509,8 @@ impl FetchTasklet {
     /// Last-ref reclaim from the HTTP thread once the VM has begun shutdown.
     ///
     /// Neither `clear_data()` nor dropping the box is safe here:
-    ///   * the JSC `Strong`/`Weak` fields touch the VM's HandleSet/WeakSet on
-    ///     `Drop` (JS-thread-only), and
+    ///   * the JSC `Strong`/`Weak` fields touch the VM's StrongRootBlock list /
+    ///     WeakSet on `Drop` (JS-thread-only), and
     ///   * the leaked `response: jsc::Weak` keeps a finalize callback
     ///     (`on_response_finalize`) registered against `this`, so freeing the
     ///     box before `destructOnExit` sweeps the Response is a UAF.

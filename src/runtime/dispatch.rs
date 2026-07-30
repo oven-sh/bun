@@ -1174,7 +1174,7 @@ fn __bun_release_task_at_shutdown(task: bun_event_loop::Task) -> bool {
         }
         // `AsyncFSTask`s are `Box::leak`'d in `create()` and freed by
         // `destroy()` (called from `run_from_js_thread`'s scopeguard).
-        // `destroy()` resets `JSPromiseStrong` (touches the JSC HandleSet)
+        // `destroy()` resets `JSPromiseStrong` (touches the StrongRootBlock list)
         // and unrefs the loop `KeepAlive`, both of which are still valid
         // here — we're before `destructOnExit`. Before
         // `release_queued_tasks_for_shutdown` existed these boxes stayed

@@ -2817,10 +2817,6 @@ pub fn hex_int_lower<const NIBBLES: usize>(value: u64) -> HexIntFormatter<true, 
     HexIntFormatter { value }
 }
 
-pub fn hex_int_upper<const NIBBLES: usize>(value: u64) -> HexIntFormatter<false, NIBBLES> {
-    HexIntFormatter { value }
-}
-
 /// `{:0N x}` / `{:0N X}` — zero-padded fixed-width hex of a u64 into a stack
 /// buffer. Thin alias over [`HexIntFormatter::get_out_buf`] for callers that
 /// want bytes, not a `Display` adapter.

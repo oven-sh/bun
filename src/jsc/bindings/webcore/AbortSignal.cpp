@@ -103,10 +103,7 @@ AbortSignal::AbortSignal(ScriptExecutionContext* context, Aborted aborted, JSC::
 
 AbortSignal::~AbortSignal()
 {
-    // This dependent is going away; release the observer count taken on each
-    // source by addDependentSignal().
-    for (Ref source : m_sourceSignals)
-        source->m_timeoutObserverCount.fetch_sub(1, std::memory_order_relaxed);
+    releaseSourceObserverCounts();
 
     // Invalidate WeakPtrs to this signal before our members (notably
     // m_algorithms) are destroyed. A listener registered on this signal
@@ -147,14 +144,23 @@ void AbortSignal::addSourceSignal(AbortSignal& signal)
     }
     ASSERT(!signal.aborted());
     ASSERT(signal.sourceSignals().isEmptyIgnoringNullReferences());
-    m_sourceSignals.add(signal);
-    signal.addDependentSignal(*this);
+    if (m_sourceSignals.add(signal).isNewEntry)
+        signal.addDependentSignal(*this);
 }
 
 void AbortSignal::addDependentSignal(AbortSignal& signal)
 {
-    m_dependentSignals.add(signal);
-    m_timeoutObserverCount.fetch_add(1, std::memory_order_relaxed);
+    if (m_dependentSignals.add(signal).isNewEntry)
+        m_timeoutObserverCount.fetch_add(1, std::memory_order_relaxed);
+}
+
+// Release the observer count this dependent took on each source in
+// addDependentSignal(). Called from both markAborted() (which clears
+// m_sourceSignals) and ~AbortSignal().
+void AbortSignal::releaseSourceObserverCounts()
+{
+    for (Ref source : m_sourceSignals)
+        source->m_timeoutObserverCount.fetch_sub(1, std::memory_order_relaxed);
 }
 
 void AbortSignal::cancelTimer()
@@ -167,6 +173,7 @@ void AbortSignal::cancelTimer()
 void AbortSignal::markAborted(JSC::JSValue reason)
 {
     applyFlags(static_cast<uint8_t>(AbortSignalFlags::Aborted) | static_cast<uint8_t>(AbortSignalFlags::IsFiringEventListeners));
+    releaseSourceObserverCounts();
     m_sourceSignals.clear();
 
     ASSERT(reason);

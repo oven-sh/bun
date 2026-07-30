@@ -513,8 +513,9 @@ public:
     V(public, JSC::WriteBarrier<Bun::NapiHandleScopeImpl>, m_currentNapiHandleScopeImpl)                     \
                                                                                                              \
     /* Linked list of timer root segments (see JSTimerRootSegment.h); each */                                \
-    /* segment roots up to 4096 armed setTimeout/setInterval/setImmediate */                                 \
-    /* wrappers. One spare empty segment is parked in the free slot. */                                      \
+    /* segment roots up to JSTimerRootSegment::capacity armed setTimeout/  */                                \
+    /* setInterval/setImmediate wrappers. One spare empty segment is parked */                               \
+    /* in the free slot. */                                                                                  \
     V(public, JSC::WriteBarrier<Bun::JSTimerRootSegment>, m_timerRootSegmentHead)                            \
     V(public, JSC::WriteBarrier<Bun::JSTimerRootSegment>, m_timerRootSegmentFree)                            \
                                                                                                              \

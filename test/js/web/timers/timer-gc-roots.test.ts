@@ -191,6 +191,43 @@ describe.concurrent("AbortSignal.timeout is released when its wrapper is collect
     expect(exitCode).toBe(0);
   }, 10_000);
 
+  test("AbortSignal.any([timeout, controller.signal]).abort releases the timeout", async () => {
+    const src = `
+      const N = 1200;
+      async function round() {
+        for (let i = 0; i < N; i++) {
+          const c = new AbortController();
+          const s = AbortSignal.any([AbortSignal.timeout(600000), c.signal]);
+          s.addEventListener("abort", () => {});
+          c.abort();
+        }
+        for (let k = 0; k < 4; k++) {
+          Bun.gc(true);
+          await new Promise(r => setTimeout(r, 10));
+        }
+      }
+      await round();
+      const before = process.memoryUsage().rss;
+      await round();
+      await round();
+      const after = process.memoryUsage().rss;
+      const live = require("bun:jsc").heapStats().objectTypeCounts.AbortSignal || 0;
+      console.log(JSON.stringify({ deltaMB: (after - before) / (1024 * 1024), live }));
+      process.exit(0);
+    `;
+    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", src], env: bunEnv, stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    const { deltaMB, live } = JSON.parse(stdout);
+    // If the inner timeout stays observed after the controller aborts, three
+    // rounds retain ~3600 AbortSignal wrappers + native signals + Timeout
+    // boxes.
+    expect(live).toBeLessThan(50);
+    const limit = isASAN || isDebug ? 8 : 4;
+    expect(deltaMB).toBeLessThan(limit);
+    expect(exitCode).toBe(0);
+  }, 10_000);
+
   for (const { name, body } of [
     {
       name: "with an abort listener",

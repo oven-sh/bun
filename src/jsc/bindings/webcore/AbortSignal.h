@@ -164,6 +164,7 @@ private:
     void markAsDependent() { setIsDependent(true); }
     void addSourceSignal(AbortSignal&);
     void addDependentSignal(AbortSignal&);
+    void releaseSourceObserverCounts();
     void cancelTimer();
 
     void applyFlags(uint8_t flags) { m_flags |= flags; }

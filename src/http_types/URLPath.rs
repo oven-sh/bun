@@ -28,7 +28,7 @@ pub struct URLPath {
 /// Addresses of the `/` bytes within a decoded path buffer that came from a
 /// percent-encoded input byte. Identity is by address, so any sub-slice of the
 /// path can be queried. Sorted ascending; empty for un-encoded input.
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct LiteralSlashes(Vec<*const u8>);
 
 impl LiteralSlashes {

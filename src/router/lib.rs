@@ -271,6 +271,7 @@ impl Routes {
                     pathname: url_path.pathname,
                     file_path: index.abs_path.as_bytes(),
                     query_string: url_path.query_string,
+                    literal_slashes: url_path.literal_slashes.clone(),
                 });
             }
 
@@ -287,6 +288,7 @@ impl Routes {
                 pathname: url_path.pathname,
                 file_path: route.abs_path.as_bytes(),
                 query_string: url_path.query_string,
+                literal_slashes: url_path.literal_slashes.clone(),
             });
         }
 
@@ -1086,6 +1088,12 @@ pub struct Match<'a> {
     // moment any `&mut MatchedRoute` is taken.
     pub params: *mut route_param::List<'a>,
     pub query_string: &'a [u8],
+    /// Which `/` bytes in `pathname` are literal (percent-decoded) rather
+    /// than separators. Owned: the `URLPath` that produced it does not
+    /// outlive the match, but the byte addresses it records stay valid
+    /// because the decode buffer is moved, not copied, into the match's
+    /// backing allocation.
+    pub literal_slashes: LiteralSlashes,
 }
 
 impl<'a> Match<'a> {
@@ -1119,11 +1127,21 @@ impl<'a> Match<'a> {
             // pointer value itself.
             params: self.params.cast::<route_param::List<'static>>(),
             query_string: d(self.query_string),
+            literal_slashes: self.literal_slashes,
         }
     }
 
+    /// Strips leading separator slashes only; a leading `/` that was
+    /// percent-decoded from the input is param content and is kept.
     pub fn pathname_without_leading_slash(&self) -> &[u8] {
-        strings::trim_left(self.pathname, b"/")
+        let mut s = self.pathname;
+        while let [first, rest @ ..] = s {
+            if !self.literal_slashes.is_separator(first) {
+                break;
+            }
+            s = rest;
+        }
+        s
     }
 }
 

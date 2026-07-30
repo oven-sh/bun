@@ -148,6 +148,24 @@ it("should match dynamic routes", () => {
   expect(filePath).toBe(`${dir}/posts/[id].tsx`);
 });
 
+it(".params keeps a leading percent-decoded slash on a top-level dynamic route", () => {
+  // set up the test
+  const { dir } = make(["[name].tsx"]);
+
+  const router = new Bun.FileSystemRouter({
+    dir,
+    style: "nextjs",
+  });
+
+  const {
+    params: { name },
+  } = router.match("/%2Ffoo")!;
+
+  // The decoded slash is param content, not a separator, so it must not be
+  // stripped along with the leading route separator.
+  expect(name).toBe("/foo");
+});
+
 it(".params works on dynamic routes", () => {
   // set up the test
   const { dir } = make(["index.tsx", "posts/[id].tsx", "posts.tsx"]);

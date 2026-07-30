@@ -25,7 +25,7 @@ test("deleted whole files stay deleted", () => {
   // Each of these had zero live references outside its own content.
   // ActiveDOMObject.{h,cpp}: every line was a // comment; the 39 #include
   // lines pulled in an empty file.
-  // EventDispatcher.{h,cpp}: only reference was a FIXME comment in
+  // EventDispatcher.{h,cpp}: only references were a code comment in
   // EventTarget.cpp and an unrelated RemoteLayerTreeEventDispatcher mention.
   // EventModifierInit / JSEventModifierInit / UIEventInit: a closed dead
   // cluster (only referenced each other); convertDictionary<EventModifierInit>

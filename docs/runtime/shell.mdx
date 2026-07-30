@@ -619,7 +619,7 @@ await $`echo ${{ raw: '$(foo) `bar` "baz"' }}`;
 // => baz
 ```
 
-This is also how you pass a [dynamic glob pattern](#dynamic-glob-patterns) to a command.
+The same `{ raw }` escape hatch can carry a trusted glob pattern; for patterns built from runtime or user input, use [`Bun.Glob`](#dynamic-glob-patterns) instead.
 
 ---
 

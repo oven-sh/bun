@@ -542,9 +542,6 @@ impl<'a> Transpiler<'a> {
 
         let env_loader = self.env_mut();
         let mut is_production = env_loader.is_production();
-        // `bun run` uses `LoadAllWithoutInlining`, which skips injecting env
-        // `NODE_ENV` into `define.dots` — so the define-map check below never
-        // sees it. Sample development here too so it is symmetric with production.
         let mut is_development = env_loader.get_node_env() == Some(b"development");
 
         // `load_defines` injects a default `process.env.NODE_ENV`; sample the

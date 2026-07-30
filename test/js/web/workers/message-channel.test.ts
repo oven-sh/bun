@@ -574,7 +574,10 @@ describe("a message listener keeps the event loop alive", () => {
     [".onmessage", `port2.unref(); port2.onmessage = () => {};`],
     [".addEventListener('message')", `port2.unref(); port2.addEventListener('message', () => {});`],
     [".on('message')", `port2.unref(); port2.on('message', () => {});`],
-    [".onmessage replacing an existing handler", `port2.onmessage = () => {}; port2.unref(); port2.onmessage = () => {};`],
+    [
+      ".onmessage replacing an existing handler",
+      `port2.onmessage = () => {}; port2.unref(); port2.onmessage = () => {};`,
+    ],
   ] as const) {
     test.concurrent(`${label} after .unref() re-refs the port`, async () => {
       expect(

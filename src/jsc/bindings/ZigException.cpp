@@ -581,11 +581,8 @@ static void fromErrorInstance(ZigException& except, JSC::JSGlobalObject* global,
         JSC::JSValue stackValue = obj->getIfPropertyExists(global, vm.propertyNames->stack);
         if (!scope.clearExceptionExceptTermination()) [[unlikely]]
             return;
-        if (stackValue) {
-            // Prevent infinite recursion if stack property is the error object itself
-            if (stackValue == val) {
-                return;
-            }
+        // Skip self-referential `.stack` (fall through to the wrapper-stack fallback below).
+        if (stackValue && stackValue != val) {
             if (stackValue.isString()) {
                 WTF::String stack = stackValue.toWTFString(global);
                 if (!scope.clearExceptionExceptTermination()) [[unlikely]] {

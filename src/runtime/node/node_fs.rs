@@ -4798,9 +4798,6 @@ impl NodeFS {
         Ok(())
     }
 
-    /// The `{ flush: true }` fsync for `writeFile` / `appendFile`. Node surfaces
-    /// this error (it calls `fsyncSync(fd)` / passes the fsync error to the
-    /// callback), so an EIO/ENOSPC here must reach the caller.
     #[inline]
     fn flush_file_buffers(fd: FD) -> Maybe<()> {
         #[cfg(windows)]

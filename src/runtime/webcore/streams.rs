@@ -2318,7 +2318,7 @@ impl NetworkSink {
             // we are already waiting for the end
             return bun_sys::Result::Ok(self.end_promise.value());
         }
-        if self.task.is_some() {
+        if self.task.is_some() && !self.done {
             // we need to wait for the task to end
             self.end_promise = JSPromiseStrong::init(self.global_this());
             let value = self.end_promise.value();

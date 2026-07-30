@@ -1854,5 +1854,5 @@ describe("s3 upload stream body error", () => {
       stderr: "",
     });
     expect(exitCode).toBe(0);
-  }, 30_000);
+  });
 });

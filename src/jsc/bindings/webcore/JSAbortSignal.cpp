@@ -406,15 +406,9 @@ void JSAbortSignalOwner::finalize(JSC::Handle<JSC::Unknown> handle, void* contex
 {
     auto* jsAbortSignal = static_cast<JSAbortSignal*>(handle.slot()->asCell());
     auto& world = *static_cast<DOMWrapperWorld*>(context);
-    Ref signal = jsAbortSignal->protectedWrapped();
-    uncacheWrapper(world, signal.ptr(), jsAbortSignal);
-    // JS can no longer observe the abort; drop the native timer so nothing
-    // survives until the deadline. refCount == 3 is exactly m_wrapped (+1) +
-    // timeout()'s ref (+1) + our local Ref (+1): higher means a bare native
-    // holder (e.g. Request) may still observe, lower means timeout()'s ref was
-    // already released elsewhere and derefing here would over-deref.
-    if (signal->hasActiveTimeoutTimer() && signal->refCount() == 3)
-        signal->releaseTimerIfUnobserved();
+    auto& signal = jsAbortSignal->wrapped();
+    uncacheWrapper(world, &signal, jsAbortSignal);
+    signal.jsWrapperIsBeingFinalized();
 }
 
 #if ENABLE(BINDING_INTEGRITY)

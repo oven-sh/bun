@@ -467,10 +467,19 @@ impl EventLoop {
     /// `tick_concurrent()` at the start of `tick()` is that once-per-iteration
     /// batch boundary; re-draining here is a throughput nicety that must yield
     /// when a timer is due or an immediate is pending.
+    ///
+    /// The yield probe is guarded on `concurrent_tasks` being non-empty so the
+    /// clock read in `__bun_has_due_timer` is only paid when there is actually
+    /// something to re-drain (an HTTP server always has `DateHeaderTimer`
+    /// armed, so an unguarded probe would add a `clock_gettime` to every
+    /// inner-loop iteration of `tick()`).
     fn tick_concurrent_unless_due(&mut self) {
-        if self.immediate_tasks.is_empty() && !__bun_has_due_timer() {
-            self.tick_concurrent();
+        if !self.concurrent_tasks.is_empty()
+            && (!self.immediate_tasks.is_empty() || __bun_has_due_timer())
+        {
+            return;
         }
+        self.tick_concurrent();
     }
 
     /// Check whether refConcurrently has been called but the change has not yet been applied to the

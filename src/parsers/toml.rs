@@ -263,14 +263,27 @@ impl<'a, 'log> Scanner<'a, 'log> {
     /// drop-in replacement for the whole line.
     fn err_unquoted_string(&mut self, pos: usize) -> PErr {
         const GENERIC: &[u8] = b"String values must be quoted; wrap the value in double quotes";
+        if self.redact {
+            return self.err(pos, GENERIC);
+        }
+        // Capture everything up to the end of the value expression, then trim
+        // trailing whitespace, so URLs and file names are quoted whole.
         let mut end = pos;
-        while is_bare_key_char(self.peek_at(end)) {
-            end += 1;
+        loop {
+            match self.peek_at(end) {
+                0 | b'\n' | b'\r' | b'#' | b',' | b']' | b'}' => break,
+                b'"' | b'\'' | b'\\' => return self.err(pos, GENERIC),
+                c if c < 0x20 => return self.err(pos, GENERIC),
+                _ => end += 1,
+            }
             if end - pos == 64 {
                 return self.err(pos, GENERIC);
             }
         }
-        if self.redact || end == pos {
+        while end > pos && matches!(self.src[end - 1], b' ' | b'\t') {
+            end -= 1;
+        }
+        if end == pos {
             return self.err(pos, GENERIC);
         }
         let mut key_start = pos;

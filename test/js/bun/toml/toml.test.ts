@@ -526,6 +526,17 @@ describe("error contract", () => {
     expect(syntaxError("unit = nanoseconds").message).toBe(
       'TOML Parse error: String values must be quoted; write: unit = "nanoseconds"',
     );
+    // The captured value runs to the end of the value expression (not just
+    // bare-key characters) so URLs and file names are quoted whole.
+    expect(syntaxError("registry = https://registry.npmjs.org/").message).toBe(
+      'TOML Parse error: String values must be quoted; write: registry = "https://registry.npmjs.org/"',
+    );
+    expect(syntaxError("preload = setup.ts").message).toBe(
+      'TOML Parse error: String values must be quoted; write: preload = "setup.ts"',
+    );
+    expect(syntaxError("a = foo bar  # c").message).toBe(
+      'TOML Parse error: String values must be quoted; write: a = "foo bar"',
+    );
     // Inside an array or inline table the `key = ` part is omitted.
     expect(syntaxError("a = [isolated]").message).toBe(
       'TOML Parse error: String values must be quoted; write: "isolated"',
@@ -551,11 +562,12 @@ describe("error contract", () => {
     expect(syntaxError(Buffer.alloc(70, "a").toString() + " = isolated").message).toBe(
       'TOML Parse error: String values must be quoted; write: "isolated"',
     );
-    // When the value itself exceeds the scan cap the suggestion is generic
-    // rather than a truncated quote.
-    expect(syntaxError("a = " + Buffer.alloc(70, "x").toString()).message).toBe(
-      "TOML Parse error: String values must be quoted; wrap the value in double quotes",
-    );
+    // Values that would need escaping to quote, or that exceed the scan cap,
+    // fall back to the generic instruction rather than a broken suggestion.
+    const generic = "TOML Parse error: String values must be quoted; wrap the value in double quotes";
+    expect(syntaxError("a = " + Buffer.alloc(70, "x").toString()).message).toBe(generic);
+    expect(syntaxError("a = it's").message).toBe(generic);
+    expect(syntaxError("a = has\\back").message).toBe(generic);
   });
 
   test("escape errors inside a drive-letter string name the Windows-path fix", () => {

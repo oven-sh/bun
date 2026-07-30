@@ -2721,7 +2721,9 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
-    expect((err as SyntaxError).message).toBe('TOML Parse error: String values must be quoted; write: "I"');
+    expect((err as SyntaxError).message).toBe(
+      "TOML Parse error: String values must be quoted; wrap the value in double quotes",
+    );
   });
 
   test("invalid/bool/almost-false-with-extra", () => {
@@ -2874,7 +2876,7 @@ describe("toml-test/invalid", () => {
     }
     expect(err).toBeInstanceOf(SyntaxError);
     expect((err as SyntaxError).message).toBe(
-      'TOML Parse error: String values must be quoted; write: mixed-case              = "valid"',
+      'TOML Parse error: String values must be quoted; write: mixed-case              = "valid   = False"',
     );
   });
 
@@ -3822,7 +3824,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
-    expect((err as SyntaxError).message).toBe('TOML Parse error: String values must be quoted; write: foo = "T"');
+    expect((err as SyntaxError).message).toBe('TOML Parse error: String values must be quoted; write: foo = "T."');
   });
 
   test("invalid/datetime/second-over", () => {
@@ -6084,7 +6086,7 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
-    expect((err as SyntaxError).message).toBe('TOML Parse error: String values must be quoted; write: a="b"');
+    expect((err as SyntaxError).message).toBe('TOML Parse error: String values must be quoted; write: a="b=1"');
   });
 
   test("invalid/key/without-value-01", () => {
@@ -7544,7 +7546,9 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
-    expect((err as SyntaxError).message).toBe('TOML Parse error: String values must be quoted; write: s = "a"');
+    expect((err as SyntaxError).message).toBe(
+      "TOML Parse error: String values must be quoted; wrap the value in double quotes",
+    );
   });
 
   test("invalid/string/no-open-02", () => {
@@ -7556,7 +7560,9 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
-    expect((err as SyntaxError).message).toBe('TOML Parse error: String values must be quoted; write: "a"');
+    expect((err as SyntaxError).message).toBe(
+      "TOML Parse error: String values must be quoted; wrap the value in double quotes",
+    );
   });
 
   test("invalid/string/no-open-03", () => {
@@ -7568,7 +7574,9 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
-    expect((err as SyntaxError).message).toBe('TOML Parse error: String values must be quoted; write: s = "a"');
+    expect((err as SyntaxError).message).toBe(
+      "TOML Parse error: String values must be quoted; wrap the value in double quotes",
+    );
   });
 
   test("invalid/string/no-open-04", () => {
@@ -7580,7 +7588,9 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
-    expect((err as SyntaxError).message).toBe('TOML Parse error: String values must be quoted; write: "a"');
+    expect((err as SyntaxError).message).toBe(
+      "TOML Parse error: String values must be quoted; wrap the value in double quotes",
+    );
   });
 
   test("invalid/string/no-open-05", () => {
@@ -7592,7 +7602,9 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
-    expect((err as SyntaxError).message).toBe('TOML Parse error: String values must be quoted; write: a = "a"');
+    expect((err as SyntaxError).message).toBe(
+      "TOML Parse error: String values must be quoted; wrap the value in double quotes",
+    );
   });
 
   test("invalid/string/no-open-06", () => {
@@ -7604,7 +7616,9 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
-    expect((err as SyntaxError).message).toBe('TOML Parse error: String values must be quoted; write: "a"');
+    expect((err as SyntaxError).message).toBe(
+      "TOML Parse error: String values must be quoted; wrap the value in double quotes",
+    );
   });
 
   test("invalid/string/no-open-07", () => {
@@ -7616,7 +7630,9 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
-    expect((err as SyntaxError).message).toBe('TOML Parse error: String values must be quoted; write: a = "a"');
+    expect((err as SyntaxError).message).toBe(
+      "TOML Parse error: String values must be quoted; wrap the value in double quotes",
+    );
   });
 
   test("invalid/string/no-open-08", () => {
@@ -7628,7 +7644,9 @@ describe("toml-test/invalid", () => {
       err = e;
     }
     expect(err).toBeInstanceOf(SyntaxError);
-    expect((err as SyntaxError).message).toBe('TOML Parse error: String values must be quoted; write: "a"');
+    expect((err as SyntaxError).message).toBe(
+      "TOML Parse error: String values must be quoted; wrap the value in double quotes",
+    );
   });
 
   test("invalid/string/text-after-string", () => {

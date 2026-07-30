@@ -209,7 +209,11 @@ export function bindNativeConsoleMethods(console: typeof globalThis.console) {
       }
       inspectTable ??= Bun.inspect.table;
       const stdout = this._stdout;
-      const colors = Bun.env["FORCE_COLOR"] !== undefined ? Bun.enableANSIColors : !!(stdout && stdout.isTTY);
+      const env = Bun.env;
+      const colors =
+        env["FORCE_COLOR"] !== undefined || env["NO_COLOR"] !== undefined
+          ? Bun.enableANSIColors
+          : !!(stdout && stdout.isTTY);
       const rendered =
         properties === undefined
           ? inspectTable(tabularData, { depth: 0, colors })

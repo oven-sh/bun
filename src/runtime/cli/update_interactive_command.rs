@@ -1107,8 +1107,15 @@ impl UpdateInteractiveCommand {
             if a_priority != b_priority {
                 return a_priority.cmp(&b_priority);
             }
-            // Then by name
-            strings::order(&a.name, &b.name)
+            // Then by name, then by catalog name so multiple catalog rows for
+            // the same package have a defined relative order (default catalog
+            // sorts first).
+            strings::order(&a.name, &b.name).then_with(|| {
+                strings::order(
+                    a.catalog_name.as_deref().unwrap_or(b""),
+                    b.catalog_name.as_deref().unwrap_or(b""),
+                )
+            })
         });
 
         Ok(grouped_result)

@@ -508,8 +508,9 @@ impl<'a> LinkerGraph<'a> {
     #[inline]
     #[allow(clippy::mut_from_ref)]
     pub(crate) unsafe fn symbol_mut(&self, ref_: Ref) -> &mut Symbol {
-        // SAFETY: see `symbol` for liveness/validity; caller guarantees the
-        // mutated slot is disjoint from any other borrow held at the call site.
+        // SAFETY: `ref_` was produced by this symbol table, so `get` is
+        // infallible and points at a live slot; caller guarantees the mutated
+        // slot is disjoint from any other borrow held at the call site.
         unsafe {
             &mut *self
                 .symbols

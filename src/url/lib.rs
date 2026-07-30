@@ -121,7 +121,7 @@ pub mod whatwg {
         pub fn from_utf8(input: &[u8]) -> Option<core::ptr::NonNull<URL>> {
             Self::from_string(&String::borrow_utf8(input))
         }
-        /// Exactly the same as `hash`, excluding the leading '#'.
+        /// The URL fragment (the part after `#`), excluding the leading '#'.
         pub fn fragment_identifier(&self) -> String {
             URL__fragmentIdentifier(self)
         }
@@ -133,8 +133,8 @@ pub mod whatwg {
         }
         /// Returns the host WITH the port.
         ///
-        /// Note that this does NOT match JS behavior which returns the host without the port. See
-        /// `host` for the JS equivalent of `hostname`.
+        /// Note that this does NOT match JS `hostname`, which excludes the port (that
+        /// port-less form is `bun_jsc::URL::host`).
         ///
         /// ```text
         /// URL("http://example.com:8080").hostname() => "example.com:8080"

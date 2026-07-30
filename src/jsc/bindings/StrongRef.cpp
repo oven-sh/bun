@@ -6,9 +6,14 @@
 using Bun::StrongRefImpl;
 using Bun::StrongRootBlock;
 
-// One JSVMClientData per JS thread; cache it so the hot path skips the
-// `downcast<JSVMClientData>` RELEASE_ASSERT virtual call on every new/delete.
-static thread_local WebCore::JSVMClientData* s_clientData = nullptr;
+// Hot-path clientData lookup without the `downcast<JSVMClientData>`
+// RELEASE_ASSERT virtual call; vm.clientData is unconditionally a
+// JSVMClientData* in bun (set in JSVMClientData::create).
+static ALWAYS_INLINE WebCore::JSVMClientData* clientDataFast(JSC::VM& vm)
+{
+    ASSERT(WebCore::clientData(vm));
+    return static_cast<WebCore::JSVMClientData*>(vm.clientData);
+}
 
 // Handle layout for bun_jsc::Strong. The Rust side treats the return of
 // Bun__StrongRef__new as an opaque non-null pointer; there is no heap
@@ -46,11 +51,8 @@ static ALWAYS_INLINE StrongRootBlock* decodeStrongRefBlock(StrongRefImpl* ref)
 extern "C" StrongRefImpl* Bun__StrongRef__new(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue encodedValue)
 {
     auto& vm = JSC::getVM(globalObject);
-    auto* clientData = s_clientData;
-    if (!clientData) [[unlikely]]
-        s_clientData = clientData = WebCore::clientData(vm);
     unsigned index;
-    auto* block = StrongRootBlock::acquire(clientData, vm, index);
+    auto* block = StrongRootBlock::acquire(clientDataFast(vm), vm, index);
     block->set(vm, index, JSC::JSValue::decode(encodedValue));
     return encodeStrongRef(block, index);
 }
@@ -78,16 +80,12 @@ extern "C" void Bun__StrongRef__clear(StrongRefImpl* _Nonnull ref)
 extern "C" void Bun__StrongRef__delete(StrongRefImpl* _Nonnull ref)
 {
     auto* block = decodeStrongRefBlock(ref);
-    auto* clientData = s_clientData;
-    // s_clientData is set by the first Bun__StrongRef__new on this thread; the
-    // C++ Bun::StrongRef deleter and a handful of unsafe-Send wrappers can
-    // reach here without that having happened.
-    if (!clientData) [[unlikely]]
-        s_clientData = clientData = WebCore::clientData(block->vm());
+    auto& vm = block->vm();
+    auto* clientData = clientDataFast(vm);
     // This block just freed a slot, so the next acquire() should try it first
     // (covers the FIFO pattern where the oldest-armed block gets room while
     // the cursor sits at a full head).
     clientData->m_strongRootBlockCursor = block;
     if (block->clear(decodeStrongRefIndex(ref))) [[unlikely]]
-        StrongRootBlock::release(clientData, block->vm(), block);
+        StrongRootBlock::release(clientData, vm, block);
 }

@@ -89,8 +89,7 @@ test("Console.enable replays console messages logged before the debugger attache
     await send("Console.enable");
     await send("Runtime.evaluate", { expression: "1" });
 
-    expect(messages).toContain("BOOT-A");
-    expect(messages).toContain("BOOT-B");
+    expect(messages).toEqual(["BOOT-A", "BOOT-B"]);
   } finally {
     ws.close();
   }

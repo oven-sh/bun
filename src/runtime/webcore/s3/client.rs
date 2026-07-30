@@ -435,7 +435,7 @@ pub(crate) fn writable_stream(
             .global_this
             .expect("NetworkSink.global_this set at construction");
         let global = global.get();
-        if sink.end_promise.has_value() {
+        if sink.end_promise.has_value() || sink.flush_promise.has_value() {
             // SAFETY: `bun_vm()` returns the live per-thread VM pointer.
             let event_loop = global.bun_vm().as_mut().event_loop();
             // SAFETY: event_loop is initialised for the lifetime of the VM.
@@ -443,12 +443,19 @@ pub(crate) fn writable_stream(
             let _exit_guard = unsafe { bun_jsc::event_loop::EventLoop::enter_scope(event_loop) };
             match result {
                 S3UploadResult::Success => {
+                    if sink.flush_promise.has_value() {
+                        sink.flush_promise
+                            .resolve(global, JSValue::js_number(0.0))?;
+                    }
                     if sink.end_promise.has_value() {
                         sink.end_promise.resolve(global, JSValue::js_number(0.0))?;
                     }
                 }
                 S3UploadResult::Failure(err) => {
                     let js_err = s3_error_to_js(&err, global, sink.path());
+                    if sink.flush_promise.has_value() {
+                        sink.flush_promise.reject(global, Ok(js_err))?;
+                    }
                     if sink.end_promise.has_value() {
                         sink.end_promise.reject(global, Ok(js_err))?;
                     }

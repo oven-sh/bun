@@ -2060,6 +2060,10 @@ pub struct NetworkSink {
     // JSC_BORROW: process-lifetime VM global; safe `Deref` via `BackRef`.
     pub global_this: Option<BackRef<JSGlobalObject>>,
     pub high_water_mark: BlobSizeType,
+    /// Pending promise for user `s3file.writer().flush()` — only ever set when
+    /// `source == SourceHandle::None`. The streamed-pump path (`upload_stream`)
+    /// short-circuits in `flush_from_js` and signals backpressure via
+    /// `source.ready()` instead, so no flush promise is allocated there.
     pub flush_promise: JSPromiseStrong,
     pub end_promise: JSPromiseStrong,
     pub ended: bool,

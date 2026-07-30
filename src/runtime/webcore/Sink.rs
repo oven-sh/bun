@@ -450,6 +450,11 @@ impl<T: JsSinkType + JsSinkAbi> JSSink<T> {
             return Err(global.throw_value(err));
         }
 
+        if this.sink.done() {
+            return Err(bun_jsc::ErrorCode::ERR_STREAM_WRITE_AFTER_END
+                .throw(global, format_args!("write after end")));
+        }
+
         if frame.arguments_count() == 0 {
             return Err(global.throw_value(global.to_type_error(
                 bun_jsc::ErrorCode::MISSING_ARGS,

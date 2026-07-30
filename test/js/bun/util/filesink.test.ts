@@ -442,8 +442,8 @@ it.skipIf(!isPosix)(
       expect(caught?.code).toBe("EPIPE");
 
       // The Err arm also moves the sink to its terminal state: further writes
-      // short-circuit to Writable::Done (=> true).
-      expect(sink.write("x")).toBe(true);
+      // are rejected at the js_write layer.
+      expect(() => sink.write("x")).toThrow(expect.objectContaining({ code: "ERR_STREAM_WRITE_AFTER_END" }));
 
       // end() after the error reports the bytes that actually reached the fd;
       // the point is it doesn't claim the full chunk was delivered.
@@ -555,8 +555,8 @@ it.skipIf(!isPosix)("writing after end() fails during flush does not crash", asy
   }
   expect(endErr).toBeDefined();
   // Previously this would attempt to write to an invalid fd and crash with a
-  // debug assertion; now it should behave as if the sink is closed.
-  expect(() => writer.write("y")).not.toThrow();
+  // debug assertion; now it is rejected cleanly as a write after end().
+  expect(() => writer.write("y")).toThrow(expect.objectContaining({ code: "ERR_STREAM_WRITE_AFTER_END" }));
   expect(() => writer.start({})).not.toThrow();
   expect(() => writer.write("z")).not.toThrow();
   expect(() => writer.flush()).not.toThrow();

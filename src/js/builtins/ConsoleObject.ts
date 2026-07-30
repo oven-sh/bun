@@ -115,17 +115,11 @@ export function asyncIterator(this: Console) {
   return ConsoleAsyncIterator();
 }
 
-// Installed on the global `console` at startup so `count` / `table` / `group` /
-// `time*` / `trace` / `assert` / `dirxml` dispatch through `this.log` /
-// `this.warn` / `this.error`. This lets user overrides of those slots capture
-// the derived output, matching Node's `lib/internal/console/constructor.js`.
-// The native `log` / `info` / `warn` / `error` / `debug` / `dir` slots remain
-// JSC host functions, so the common path is unchanged.
+// Route the global console's derived methods through this.log/warn/error so
+// user overrides of those slots capture their output (Node compat).
 export function bindNativeConsoleMethods(console: typeof globalThis.console) {
-  // JSC's native group/groupEnd maintain the Rust-side indent that the native
-  // `log` formatter honours. We keep calling them (with no args, which is a
-  // pure indent bump) so indentation still applies to subsequent native `log`
-  // calls; only the label is routed through `this.log`.
+  // Native group()/groupEnd() with no args is a pure indent bump on the
+  // Rust-side counter that the native `log` formatter reads.
   const nativeGroup = console.group;
   const nativeGroupEnd = console.groupEnd;
 

@@ -58,12 +58,10 @@ namespace WebCore {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(Performance);
 
-constexpr Seconds highTimePrecision { 20_us };
 static Seconds timePrecision { 1_ms };
 
 Performance::Performance(ScriptExecutionContext* context, MonotonicTime timeOrigin)
     : ContextDestructionObserver(context)
-    // , m_resourceTimingBufferFullTimer(*this, &Performance::resourceTimingBufferFullTimerFired) // FIXME: Migrate this to the event loop as well. https://bugs.webkit.org/show_bug.cgi?id=229044
     , m_timeOrigin(timeOrigin)
 {
     ASSERT(m_timeOrigin);
@@ -73,7 +71,6 @@ Performance::~Performance() = default;
 
 void Performance::contextDestroyed()
 {
-    // m_resourceTimingBufferFullTimer.stop();
     ContextDestructionObserver::contextDestroyed();
 }
 
@@ -102,37 +99,10 @@ Seconds Performance::reduceTimeResolution(Seconds seconds)
     return Seconds(reduced);
 }
 
-void Performance::allowHighPrecisionTime()
-{
-    timePrecision = highTimePrecision;
-}
-
-Seconds Performance::timeResolution()
-{
-    return timePrecision;
-}
-
-DOMHighResTimeStamp Performance::relativeTimeFromTimeOriginInReducedResolution(MonotonicTime timestamp) const
-{
-    Seconds seconds = timestamp - m_timeOrigin;
-    return reduceTimeResolution(seconds).milliseconds();
-}
-
 MonotonicTime Performance::monotonicTimeFromRelativeTime(DOMHighResTimeStamp relativeTime) const
 {
     return m_timeOrigin + Seconds::fromMilliseconds(relativeTime);
 }
-
-// PerformanceNavigation* Performance::navigation()
-// {
-//     if (!is<Document>(scriptExecutionContext()))
-//         return nullptr;
-
-//     ASSERT(isMainThread());
-//     if (!m_navigation)
-//         m_navigation = PerformanceNavigation::create(downcast<Document>(*scriptExecutionContext()).domWindow());
-//     return m_navigation.get();
-// }
 
 PerformanceTiming* Performance::timing()
 {
@@ -261,110 +231,6 @@ void Performance::setResourceTimingBufferSize(unsigned size)
     m_resourceTimingBufferSize = size;
     m_resourceTimingBufferFullFlag = false;
 }
-
-// void Performance::reportFirstContentfulPaint()
-// {
-//     ASSERT(!m_firstContentfulPaint);
-//     m_firstContentfulPaint = PerformancePaintTiming::createFirstContentfulPaint(now());
-//     queueEntry(*m_firstContentfulPaint);
-// }
-
-// void Performance::addNavigationTiming(DocumentLoader& documentLoader, Document& document, CachedResource& resource, const DocumentLoadTiming& timing, const NetworkLoadMetrics& metrics)
-// {
-//     ASSERT(document.settings().performanceNavigationTimingAPIEnabled());
-//     m_navigationTiming = PerformanceNavigationTiming::create(m_timeOrigin, resource, timing, metrics, document.eventTiming(), document.securityOrigin(), documentLoader.triggeringAction().type());
-// }
-
-// void Performance::navigationFinished(const NetworkLoadMetrics& metrics)
-// {
-//     if (!m_navigationTiming)
-//         return;
-//     m_navigationTiming->navigationFinished(metrics);
-
-//     queueEntry(*m_navigationTiming);
-// }
-
-void Performance::addResourceTiming(ResourceTiming&& resourceTiming)
-{
-    ASSERT(scriptExecutionContext());
-
-    auto entry = PerformanceResourceTiming::create(m_timeOrigin, WTF::move(resourceTiming));
-
-    if (m_waitingForBackupBufferToBeProcessed) {
-        m_backupResourceTimingBuffer.append(WTF::move(entry));
-        return;
-    }
-
-    if (m_resourceTimingBufferFullFlag) {
-        // We fired resourcetimingbufferfull event but the author script didn't clear the buffer.
-        // Notify performance observers but don't add it to the buffer.
-        queueEntry(entry.get());
-        return;
-    }
-
-    if (isResourceTimingBufferFull()) {
-        // ASSERT(!m_resourceTimingBufferFullTimer.isActive());
-        m_backupResourceTimingBuffer.append(WTF::move(entry));
-        m_waitingForBackupBufferToBeProcessed = true;
-        // m_resourceTimingBufferFullTimer.startOneShot(0_s);
-        return;
-    }
-
-    queueEntry(entry.get());
-    m_resourceTimingBuffer.append(WTF::move(entry));
-}
-
-bool Performance::isResourceTimingBufferFull() const
-{
-    return m_resourceTimingBuffer.size() >= m_resourceTimingBufferSize;
-}
-
-// void Performance::resourceTimingBufferFullTimerFired()
-// {
-//     ASSERT(scriptExecutionContext());
-
-//     while (!m_backupResourceTimingBuffer.isEmpty()) {
-//         auto beforeCount = m_backupResourceTimingBuffer.size();
-
-//         auto backupBuffer = WTF::move(m_backupResourceTimingBuffer);
-//         ASSERT(m_backupResourceTimingBuffer.isEmpty());
-
-//         if (isResourceTimingBufferFull()) {
-//             m_resourceTimingBufferFullFlag = true;
-//             dispatchEvent(Event::create(eventNames().resourcetimingbufferfullEvent, Event::CanBubble::No, Event::IsCancelable::No));
-//         }
-
-//         if (m_resourceTimingBufferFullFlag) {
-//             for (auto& entry : backupBuffer)
-//                 queueEntry(*entry);
-//             // Dispatching resourcetimingbufferfull event may have inserted more entries.
-//             for (auto& entry : m_backupResourceTimingBuffer)
-//                 queueEntry(*entry);
-//             m_backupResourceTimingBuffer.clear();
-//             break;
-//         }
-
-//         // More entries may have added while dispatching resourcetimingbufferfull event.
-//         backupBuffer.appendVector(m_backupResourceTimingBuffer);
-//         m_backupResourceTimingBuffer.clear();
-
-//         for (auto& entry : backupBuffer) {
-//             if (!isResourceTimingBufferFull()) {
-//                 m_resourceTimingBuffer.append(entry.copyRef());
-//                 queueEntry(*entry);
-//             } else
-//                 m_backupResourceTimingBuffer.append(entry.copyRef());
-//         }
-
-//         auto afterCount = m_backupResourceTimingBuffer.size();
-
-//         if (beforeCount <= afterCount) {
-//             m_backupResourceTimingBuffer.clear();
-//             break;
-//         }
-//     }
-//     m_waitingForBackupBufferToBeProcessed = false;
-// }
 
 ExceptionOr<Ref<PerformanceMark>> Performance::mark(JSC::JSGlobalObject& globalObject, const String& markName, std::optional<PerformanceMarkOptions>&& markOptions)
 {

@@ -61,9 +61,6 @@ public:
 
     OptionSet<PerformanceEntry::Type> typeFilter() const { return m_typeFilter; }
 
-    bool hasNavigationTiming() const { return m_hasNavigationTiming; }
-    void addedNavigationTiming() { m_hasNavigationTiming = true; }
-
     void queueEntry(PerformanceEntry&);
     void deliver();
 
@@ -79,7 +76,6 @@ private:
     OptionSet<PerformanceEntry::Type> m_typeFilter;
     bool m_registered { false };
     bool m_isTypeObserver { false };
-    bool m_hasNavigationTiming { false };
 };
 
 } // namespace WebCore

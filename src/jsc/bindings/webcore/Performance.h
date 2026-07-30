@@ -105,23 +105,14 @@ public:
     ExceptionOr<Ref<PerformanceMeasure>> measure(JSC::JSGlobalObject&, const String& measureName, std::optional<StartOrMeasureOptions>&&, const String& endMark);
     void clearMeasures(const String& measureName);
 
-    // void addNavigationTiming(DocumentLoader&, Document&, CachedResource&, const DocumentLoadTiming&, const NetworkLoadMetrics&);
-    // void navigationFinished(const NetworkLoadMetrics&);
-    void addResourceTiming(ResourceTiming&&);
-
-    // void reportFirstContentfulPaint();
-
     size_t memoryCost() const;
 
     void removeAllObservers();
     void registerPerformanceObserver(PerformanceObserver&);
     void unregisterPerformanceObserver(PerformanceObserver&);
 
-    static void allowHighPrecisionTime();
-    static Seconds timeResolution();
     static Seconds reduceTimeResolution(Seconds);
 
-    DOMHighResTimeStamp relativeTimeFromTimeOriginInReducedResolution(MonotonicTime) const;
     MonotonicTime monotonicTimeFromRelativeTime(DOMHighResTimeStamp) const;
 
     ScriptExecutionContext* scriptExecutionContext() const final { return ContextDestructionObserver::scriptExecutionContext(); }
@@ -147,9 +138,6 @@ private:
     void refEventTarget() final { ref(); }
     void derefEventTarget() final { deref(); }
 
-    bool isResourceTimingBufferFull() const;
-    // void resourceTimingBufferFullTimerFired();
-
     void queueEntry(PerformanceEntry&);
     void scheduleTaskIfNeeded();
 
@@ -160,12 +148,8 @@ private:
     Vector<RefPtr<PerformanceEntry>> m_resourceTimingBuffer;
     unsigned m_resourceTimingBufferSize { 150 };
 
-    // Timer m_resourceTimingBufferFullTimer;
-    Vector<RefPtr<PerformanceEntry>> m_backupResourceTimingBuffer;
-
     // https://w3c.github.io/resource-timing/#dfn-resource-timing-buffer-full-flag
     bool m_resourceTimingBufferFullFlag { false };
-    bool m_waitingForBackupBufferToBeProcessed { false };
     bool m_hasScheduledTimingBufferDeliveryTask { false };
 
     MonotonicTime m_timeOrigin;

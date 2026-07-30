@@ -285,25 +285,6 @@ void AbortSignal::cleanNativeBindings(void* ref)
     this->eventListenersDidChange();
 }
 
-// https://dom.spec.whatwg.org/#abortsignal-follow
-void AbortSignal::signalFollow(AbortSignal& signal)
-{
-    if (aborted())
-        return;
-
-    if (signal.aborted()) {
-        signalAbort(signal.jsReason(*scriptExecutionContext()->jsGlobalObject()));
-        return;
-    }
-
-    ASSERT(!m_followingSignal);
-    m_followingSignal = signal;
-    signal.addAlgorithm([weakThis = WeakPtr { *this }](JSC::JSValue reason) {
-        if (RefPtr signal = weakThis.get())
-            signal->signalAbort(reason);
-    });
-}
-
 void AbortSignal::eventListenersDidChange()
 {
     bool hadListeners = hasAbortEventListener();

@@ -17,13 +17,17 @@ test.concurrent("console.count/table/group/time*/trace/assert route through this
     console.count("cc");
     console.table([{ a: 1 }]);
     console.group("g"); console.groupEnd();
+    console.groupCollapsed("gc"); console.groupEnd();
     console.time("t"); console.timeLog("t"); console.timeEnd("t");
     console.trace("tr");
     console.assert(false, "as");
+    console.assert(false, { a: 1 });
     console.dirxml("dx");
     console.dir({ d: 1 });
+    let tableThrew;
+    try { console.table([{}], "notArray"); } catch (e) { tableThrew = e.code; }
     for (const m of Object.keys(orig)) console[m] = orig[m];
-    process.stdout.write("CAPTURED=" + JSON.stringify(cap) + "\\n");
+    process.stdout.write("CAPTURED=" + JSON.stringify(cap) + "|" + tableThrew + "\\n");
   `;
   await using proc = Bun.spawn({
     cmd: [bunExe(), "-e", script],
@@ -39,22 +43,27 @@ test.concurrent("console.count/table/group/time*/trace/assert route through this
   expect(lines.length).toBe(1);
   expect(lines[0].startsWith("CAPTURED=")).toBe(true);
 
-  const captured = JSON.parse(lines[0].slice("CAPTURED=".length));
+  const [capturedJson, tableThrew] = lines[0].slice("CAPTURED=".length).split("|");
+  const captured = JSON.parse(capturedJson);
   const sinks = captured.map((s: string) => s.split(":", 1)[0]);
   expect(sinks).toEqual([
     "log", // count
     "log", // table
     "log", // group label
+    "log", // groupCollapsed label
     "log", // timeLog
     "log", // timeEnd
     "error", // trace
-    "warn", // assert
+    "warn", // assert (string)
+    "warn", // assert (object)
     "log", // dirxml
     "dir", // dir (replaced directly)
   ]);
   expect(captured[0]).toBe("log:cc: 1");
-  expect(captured[5].startsWith("error:Trace")).toBe(true);
-  expect(captured[6]).toBe("warn:Assertion failed: as");
+  expect(captured[6].startsWith("error:Trace")).toBe(true);
+  expect(captured[7]).toBe("warn:Assertion failed: as");
+  expect(captured[8]).toBe("warn:Assertion failed");
+  expect(tableThrew).toBe("ERR_INVALID_ARG_TYPE");
   expect(exitCode).toBe(0);
 });
 

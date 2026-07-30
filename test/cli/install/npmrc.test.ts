@@ -200,6 +200,73 @@ registry = http://localhost:${registry.port}/
       .throws(true);
   });
 
+  it("falls back to $HOME/.npmrc when $XDG_CONFIG_HOME has none", async () => {
+    const { packageDir, packageJson } = await registry.createTestDir();
+
+    const homeDir = join(packageDir, "home_dir");
+    const xdgDir = join(packageDir, "xdg_dir");
+    await Bun.$`mkdir -p ${homeDir} ${xdgDir}`;
+
+    await Promise.all([
+      write(join(homeDir, ".npmrc"), "cache=from-home-npmrc"),
+      write(packageJson, JSON.stringify({ name: "foo", version: "1.0.0" })),
+      rm(join(packageDir, "bunfig.toml"), { force: true }),
+    ]);
+
+    const { BUN_INSTALL_CACHE_DIR, ...testEnv } = env;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "pm", "cache"],
+      cwd: packageDir,
+      env: { ...testEnv, HOME: homeDir, XDG_CONFIG_HOME: xdgDir },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [out, err, exitCode] = await Promise.all([
+      proc.stdout.text(),
+      proc.stderr.text().then(stderrForInstall),
+      proc.exited,
+    ]);
+
+    expect(err).toBeEmpty();
+    expect(out.trim().endsWith("from-home-npmrc")).toBeTrue();
+    expect(exitCode).toBe(0);
+  });
+
+  it("prefers $XDG_CONFIG_HOME/.npmrc over $HOME/.npmrc", async () => {
+    const { packageDir, packageJson } = await registry.createTestDir();
+
+    const homeDir = join(packageDir, "home_dir");
+    const xdgDir = join(packageDir, "xdg_dir");
+    await Bun.$`mkdir -p ${homeDir} ${xdgDir}`;
+
+    await Promise.all([
+      write(join(homeDir, ".npmrc"), "cache=from-home-npmrc"),
+      write(join(xdgDir, ".npmrc"), "cache=from-xdg-npmrc"),
+      write(packageJson, JSON.stringify({ name: "foo", version: "1.0.0" })),
+      rm(join(packageDir, "bunfig.toml"), { force: true }),
+    ]);
+
+    const { BUN_INSTALL_CACHE_DIR, ...testEnv } = env;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "pm", "cache"],
+      cwd: packageDir,
+      env: { ...testEnv, HOME: homeDir, XDG_CONFIG_HOME: xdgDir },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [out, err, exitCode] = await Promise.all([
+      proc.stdout.text(),
+      proc.stderr.text().then(stderrForInstall),
+      proc.exited,
+    ]);
+
+    expect(err).toBeEmpty();
+    expect(out.trim().endsWith("from-xdg-npmrc")).toBeTrue();
+    expect(exitCode).toBe(0);
+  });
+
   it("default registry from env variable", async () => {
     const { packageDir, packageJson } = await registry.createTestDir();
 

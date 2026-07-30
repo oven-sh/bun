@@ -1747,36 +1747,19 @@ pub fn init(
 
     initialize_store();
 
-    if let Some(data_dir) = bun_core::env_var::XDG_CONFIG_HOME
-        .get()
-        .or_else(|| bun_core::env_var::HOME.get())
-    {
-        let mut buf = PathBuffer::uninit();
-        let parts = [b"./.npmrc" as &[u8]];
-
-        let install_ref = ctx.install.get_or_insert_with(|| {
-            // `Api::BunInstall` derives `Default` (all fields `None`/empty).
-            // Own via `Box` — never `Box::leak`.
-            Box::new(Api::BunInstall::default())
-        });
-        let npmrc_local = ZBox::from_bytes(b".npmrc");
-        ini::load_npmrc_config(
-            &mut **install_ref,
-            env,
-            true,
-            &[
-                resolve_path::join_abs_string_buf_z::<platform::Auto>(data_dir, &mut buf, &parts),
-                &*npmrc_local,
-            ],
-        );
-    } else {
-        let install_ref = ctx.install.get_or_insert_with(|| {
-            // `Api::BunInstall` derives `Default` (all fields `None`/empty).
-            // Own via `Box` — never `Box::leak`.
-            Box::new(Api::BunInstall::default())
-        });
-        let npmrc_local = ZBox::from_bytes(b".npmrc");
-        ini::load_npmrc_config(&mut **install_ref, env, true, &[&*npmrc_local]);
+    let mut buf = PathBuffer::uninit();
+    let npmrc_global = ::bun_bunfig::arguments::user_config_path(&mut buf, b".npmrc");
+    let install_ref = ctx.install.get_or_insert_with(|| {
+        // `Api::BunInstall` derives `Default` (all fields `None`/empty).
+        // Own via `Box` — never `Box::leak`.
+        Box::new(Api::BunInstall::default())
+    });
+    let npmrc_local = ZBox::from_bytes(b".npmrc");
+    match npmrc_global {
+        Some(global) => {
+            ini::load_npmrc_config(&mut **install_ref, env, true, &[global, &*npmrc_local])
+        }
+        None => ini::load_npmrc_config(&mut **install_ref, env, true, &[&*npmrc_local]),
     }
     let cpu_count: u32 = u32::from(bun_core::get_thread_count());
     // Captured before `cli` is moved into `options.load(Some(cli), ...)` below.

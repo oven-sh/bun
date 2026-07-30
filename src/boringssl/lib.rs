@@ -443,7 +443,7 @@ pub fn check_x509_server_identity(x509: &mut boring::X509, hostname: &[u8]) -> b
     // SAN, and never for IP hosts. Non-DNS SANs (email / IP / URI) do not
     // suppress the fallback.
     if !host_is_ip && !has_dns_san {
-        return x509.common_names().any(|cn| match_dns_name(cn, hostname));
+        return x509.common_names().any(|cn| match_dns_name(&cn, hostname));
     }
     false
 }
@@ -464,10 +464,7 @@ pub mod host_check {
 /// with that suffix; `SINGLE_LABEL_SUBDOMAINS` restricts the stripped prefix to
 /// a single label.
 fn match_dot_subdomain(pattern: &[u8], host: &[u8], single_label: bool) -> bool {
-    if pattern.len() < host.len()
-        || strings::index_of_char(pattern, 0).is_some()
-        || !pattern.iter().all(|b| (0x21..=0x7f).contains(b))
-    {
+    if pattern.len() < host.len() || strings::index_of_char(pattern, 0).is_some() {
         return false;
     }
     let skip = &pattern[..pattern.len() - host.len()];
@@ -577,8 +574,8 @@ pub unsafe extern "C" fn Bun__X509__checkHost(
         return 0;
     }
     for cn in x509.common_names() {
-        if matches(cn) {
-            alloc_peer(cn, out_peer, out_len);
+        if matches(&cn) {
+            alloc_peer(&cn, out_peer, out_len);
             return 1;
         }
     }
@@ -718,7 +715,7 @@ pub fn write_server_identity_mismatch_reason(
         }
     }
     match x509.common_names().next() {
-        Some(cn) => write!(out, "Host: {host}. is not cert's CN: {}", NameBytes(cn)),
+        Some(cn) => write!(out, "Host: {host}. is not cert's CN: {}", NameBytes(&cn)),
         None => out.write_str(NO_DNS),
     }
 }

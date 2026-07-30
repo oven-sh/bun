@@ -559,5 +559,33 @@ describe("TLS certificate name matching: fetch() / checkServerIdentity / checkHo
     ] as const)("SAN %j checkHost(%j, {wildcards:false}) -> %j", (san, host, expected) => {
       expect(checkHost(makeCert("x", [["dns", san]]).x509, host, { wildcards: false })).toBe(expected);
     });
+
+    // The dot-host suffix path rejects only on NUL, like OpenSSL equal_nocase.
+    it("SAN 'a b.wild.test' checkHost('.wild.test') -> matched", () => {
+      expect(checkHost(makeCert("x", [["dns", "a b.wild.test"]]).x509, ".wild.test")).toBe("a b.wild.test");
+    });
+
+    // CN fallback transcodes BMPString (UTF-16BE) via ASN1_STRING_to_UTF8 the
+    // way OpenSSL do_check_string does.
+    it("BMPString CN matches via CN fallback", () => {
+      const bmp = Buffer.from("bmp.a.test", "utf16le").swap16();
+      const { privateKey, publicKey } = crypto.generateKeyPairSync("ec", { namedCurve: "prime256v1" });
+      const subj = seq(set(seq(oid("550403"), tlv(0x1e, bmp))));
+      const tbs = seq(
+        tlv(0xa0, tlv(0x02, Buffer.from([2]))),
+        tlv(0x02, Buffer.from([9])),
+        ecdsaWithSha256,
+        subj,
+        seq(tlv(0x17, Buffer.from("240101000000Z")), tlv(0x17, Buffer.from("340101000000Z"))),
+        subj,
+        publicKey.export({ type: "spki", format: "der" }) as Buffer,
+      );
+      const der = seq(
+        tbs,
+        ecdsaWithSha256,
+        tlv(0x03, Buffer.concat([Buffer.from([0]), crypto.sign("sha256", tbs, privateKey)])),
+      );
+      expect(new crypto.X509Certificate(der).checkHost("bmp.a.test")).toBe("bmp.a.test");
+    });
   });
 });

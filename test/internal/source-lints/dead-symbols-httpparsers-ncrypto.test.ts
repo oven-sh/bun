@@ -21,32 +21,47 @@ function resurrected(checks: Array<[string, RegExp]>): string[] {
   return checks.filter(([file, re]) => re.test(src(file))).map(([file, re]) => `${file}: ${re.source}`);
 }
 
-test("deleted whole files stay deleted", () => {
+test("deleted dead headers stay deleted", () => {
   // Each of these had zero live references outside its own content.
-  // ActiveDOMObject.{h,cpp}: every line was a // comment; the 39 #include
-  // lines pulled in an empty file.
-  // EventDispatcher.{h,cpp}: only references were a code comment in
-  // EventTarget.cpp and an unrelated RemoteLayerTreeEventDispatcher mention.
+  // ActiveDOMObject.h: every line was a // comment; the 39 #include lines
+  // pulled in an empty file.
+  // EventDispatcher.h: only references were a code comment in EventTarget.cpp
+  // and an unrelated RemoteLayerTreeEventDispatcher mention.
   // EventModifierInit / JSEventModifierInit / UIEventInit: a closed dead
-  // cluster (only referenced each other); convertDictionary<EventModifierInit>
-  // was never called.
-  // ncrpyto_engine.cpp: EnginePointer impl; no caller anywhere.
-  // JSVMClientDataClient.h: addClient() was never called so m_clients was
-  // always empty.
+  // cluster (only referenced each other).
+  // The corresponding .cpp files are kept as empty translation units so the
+  // unified-source bundle composition for ~130 other webcore/*.cpp files does
+  // not shift (see scripts/build/unified.ts); they are asserted empty below.
   const deleted = [
     "src/jsc/bindings/webcore/ActiveDOMObject.h",
-    "src/jsc/bindings/webcore/ActiveDOMObject.cpp",
     "src/jsc/bindings/webcore/EventDispatcher.h",
-    "src/jsc/bindings/webcore/EventDispatcher.cpp",
     "src/jsc/bindings/webcore/EventModifierInit.h",
     "src/jsc/bindings/webcore/JSEventModifierInit.h",
-    "src/jsc/bindings/webcore/JSEventModifierInit.cpp",
     "src/jsc/bindings/webcore/UIEventInit.h",
-    "src/jsc/bindings/ncrpyto_engine.cpp",
-    "src/jsc/bindings/JSVMClientDataClient.h",
   ];
   const reappeared = deleted.filter(p => existsSync(path.join(repoRoot, p)));
   expect(reappeared).toEqual([]);
+});
+
+test("emptied .cpp translation units stay empty", () => {
+  // The function bodies were removed; the files stay as config.h-only stubs so
+  // the unified-source bundle composition does not shift. Anything other than
+  // a config include and comments means the dead code came back.
+  const stubs = [
+    "src/jsc/bindings/webcore/ActiveDOMObject.cpp",
+    "src/jsc/bindings/webcore/EventDispatcher.cpp",
+    "src/jsc/bindings/webcore/JSEventModifierInit.cpp",
+    "src/jsc/bindings/ncrpyto_engine.cpp",
+  ];
+  const nonStub = stubs.filter(p => {
+    const body = src(p);
+    const stripped = body
+      .split("\n")
+      .filter(l => !l.startsWith("//") && !l.startsWith("#include") && l.trim() !== "")
+      .join("");
+    return stripped.length > 0;
+  });
+  expect(nonStub).toEqual([]);
 });
 
 test("dead HTTPParsers functions do not reappear", () => {
@@ -90,6 +105,7 @@ test("dead ncrypto SSL/Engine/X509Name wrappers do not reappear", () => {
     ["src/jsc/bindings/ncrypto.cpp", /\bX509Name::/],
     ["src/jsc/bindings/ncrypto.cpp", /\bX509Pointer::IssuerFrom\b/],
     ["src/jsc/bindings/ncrypto.cpp", /\bX509Pointer::PeerFrom\b/],
+    ["src/jsc/bindings/ncrpyto_engine.cpp", /\bEnginePointer::/],
   ];
   expect(resurrected(checks)).toEqual([]);
 });
@@ -99,24 +115,17 @@ test("dead misc C++ symbols do not reappear", () => {
     // validateBufferEncoding<bool>: defined + two specializations, never called.
     ["src/jsc/bindings/JSBufferEncodingType.h", /\bvalidateBufferEncoding\b/],
     ["src/jsc/bindings/JSBufferEncodingType.cpp", /\bvalidateBufferEncoding\b/],
-    // JSVMClientData::addClient was never called, so m_clients was always empty
-    // and the willDestroyVM() dispatch in the destructor ran over nothing.
-    ["src/jsc/bindings/BunClientData.h", /\bJSVMClientDataClient\b/],
-    ["src/jsc/bindings/BunClientData.h", /\bm_clients\b/],
     // Every includer of the all-comments ActiveDOMObject.h pulled in nothing.
     ["src/jsc/bindings/ScriptExecutionContext.h", /#include "ActiveDOMObject\.h"/],
     ["src/codegen/generate-jssink.ts", /#include "ActiveDOMObject\.h"/],
+    ["src/jsc/bindings/webcore/EventDispatcher.cpp", /\bdispatchEvent\b/],
+    ["src/jsc/bindings/webcore/JSEventModifierInit.cpp", /\bconvertDictionary\b/],
   ];
   expect(resurrected(checks)).toEqual([]);
 });
 
 test("dead src/js symbols do not reappear", () => {
   const checks: Array<[string, RegExp]> = [
-    // Both symbols were write-only: local Symbol()s assigned once and never
-    // read. kServerSocket was introduced for cluster but the reader side was
-    // never added; kpendingRead was leftover from a refactor.
-    ["src/js/node/net.ts", /\bkServerSocket\b/],
-    ["src/js/node/net.ts", /\bkpendingRead\b/],
     // The live _createSocketHandle lives in src/js/internal/dgram.ts; the
     // dgram.ts copy was a commented-out duplicate.
     ["src/js/node/dgram.ts", /\b_createSocketHandle\b/],

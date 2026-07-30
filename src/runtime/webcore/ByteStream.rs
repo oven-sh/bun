@@ -676,9 +676,7 @@ impl ByteStream {
         Vec::<u8>::default()
     }
 
-    /// Take a `StreamResult::Err` stashed by [`Self::append`] before a native
-    /// sink was attached, so the fast-path hookups can surface it instead of
-    /// emitting a clean EOF.
+    /// Take a pre-attach `StreamResult::Err` stashed by [`Self::append`].
     pub fn take_pending_error(&self) -> Option<streams::StreamError> {
         self.pending.with_mut(|p| {
             if matches!(p.result, streams::Result::Err(_)) {

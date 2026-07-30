@@ -558,9 +558,7 @@ impl MultiPartUpload {
             if let Some(callback) = self.on_writable {
                 callback(self, self.callback_context, flushed);
             }
-            // `on_writable` may re-enter (source.ready → sink.end → write_bytes)
-            // and enqueue a final part; re-check the queue so `done()` does not
-            // commit while that part is still in flight.
+            // `on_writable` may re-enter and enqueue a final part; re-check.
             if self.ended && self.is_queue_empty() {
                 self.done()?;
             }

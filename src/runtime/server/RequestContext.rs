@@ -4006,9 +4006,7 @@ where
                 if bytes.buffer_action.get().is_some()
                     || (bytes.sink.get().is_some() && !bytes.sink_paused.get())
                 {
-                    // `.text()`-after-`.body` wants it all; a draining native sink
-                    // likewise has no `on_pull` to fire. A paused sink falls
-                    // through to the HWM check so the socket back-pressures.
+                    // buffer-action / draining sink: no `on_pull`; keep reading.
                     this.resume_request_body_socket();
                 } else if buffered >= REQUEST_BODY_HIGH_WATER_MARK {
                     this.pause_request_body_socket();

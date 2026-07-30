@@ -330,8 +330,7 @@ pub trait JsSinkType: Sized {
     /// Mirrors `@hasField(streams.Start, abi_name)` — selects the
     /// `Start::from_js_with_tag` branch in `JSSink::js_start`.
     const START_TAG: Option<streams::StartTag> = None;
-    /// When true, `js_write` throws `ERR_STREAM_WRITE_AFTER_END` once `done()`
-    /// reports true. Opt-in: `done()` does not uniformly mean "user ended".
+    /// `js_write` throws `ERR_STREAM_WRITE_AFTER_END` when `done()` is true.
     const THROW_ON_WRITE_AFTER_END: bool = false;
 
     fn memory_cost(&self) -> usize;

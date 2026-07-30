@@ -519,8 +519,7 @@ pub struct WorkerData {
 }
 
 impl WorkerData {
-    /// The routing predicate for [`Worker::transpiler_for_target`]: `true` when
-    /// `target` is served by `other_transpiler` instead of `transpiler`.
+    /// Routing predicate for [`Worker::transpiler_for_target`].
     #[inline]
     pub fn uses_other_transpiler_for(&self, target: Target) -> bool {
         target == Target::Browser && self.transpiler.options.target != target

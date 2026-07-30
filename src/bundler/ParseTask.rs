@@ -2291,17 +2291,13 @@ pub mod parse_worker {
         };
 
         if rebind_to_browser {
-            // Ensure the browser transpiler is initialized before taking
-            // long-lived borrows into `this.data` below.
+            // Lazily initialize `other_transpiler` before borrowing into `this.data`.
             let _ = this.transpiler_for_target(options::Target::Browser);
         }
 
-        // `resolver` always comes from the `known_target` transpiler;
-        // `transpiler` is the (possibly rebound) browser transpiler. Both
-        // `WorkerData` slots are disjoint (inline vs. `Box`), so the two
-        // pointers never alias one another's whole struct even when different.
-        // `get_ast` takes them raw because `resolver` may equal
-        // `&(*transpiler).resolver` (see its doc).
+        // `resolver` comes from the `known_target` slot; `transpiler` from the
+        // final (possibly rebound) slot. `get_ast` takes both raw because
+        // `resolver` may equal `&(*transpiler).resolver`.
         let data = this.data.as_mut().expect("Worker.data set in create()");
         let known_uses_other = data.uses_other_transpiler_for(task.known_target);
         let final_uses_other = if rebind_to_browser {
@@ -2566,9 +2562,7 @@ pub mod parse_worker {
         // SAFETY: task.ctx backref valid for the bundle pass (outlives `'r`).
         let task_ctx = unsafe { task.ctx() };
         let module_type = opts.module_type;
-        // `topts` (a `&BundleOptions`) is dead past this point; the callees
-        // reborrow `(*transpiler).options` mutably.
-        let _ = topts;
+        let _ = topts; // dead past here; callees reborrow `(*transpiler).options` mutably
         let ast_result: core::result::Result<JSAst, AnyError> =
             if !is_empty || loader.handles_empty_file() {
                 get_ast(

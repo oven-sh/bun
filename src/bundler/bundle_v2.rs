@@ -1610,11 +1610,8 @@ pub mod bv2_impl {
         /// written to. For DevServer, this allocates a per-file log for the sources
         /// it is called on. Function must be called on the bundle thread.
         ///
-        /// The returned log lives in either the DevServer or `*self.transpiler.log`,
-        /// both raw-pointer storage disjoint from `self.graph`; the unbounded `'r`
-        /// lets callers hold the `&mut Log` across `self.graph` accesses. Same
-        /// caller contract as [`Transpiler::log_mut`]: do not hold two results
-        /// live at once.
+        /// Same caller contract as [`Transpiler::log_mut`]: the log is raw-pointer
+        /// storage disjoint from `self.graph`; do not hold two results live at once.
         #[allow(clippy::mut_from_ref)]
         pub fn log_for_resolution_failures<'r>(
             &self,

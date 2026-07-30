@@ -82,12 +82,6 @@ fn print_source_map_contents_json<const ASCII_ONLY: bool>(
 ) -> Result<(), crate::Error> {
     let mut filename_buf = PathBuffer::uninit();
     let mut filename: &[u8] = source.path.text;
-    // `top_level_dir` may or may not carry a trailing separator depending on
-    // how it was seeded (raw `getcwd()` vs. a later `chdir`). Normalize it
-    // away and require the next byte to be the native separator so `/foo`
-    // does not match `/foobar/...` and the sliced result always begins with
-    // a separator. Source-map `sources` entries are URL-shaped, so on Windows
-    // the sliced native-separator path is flipped to forward slashes.
     let top_level_dir: &[u8] =
         strings::without_trailing_slash(FileSystem::instance().top_level_dir());
     if filename.len() > top_level_dir.len()

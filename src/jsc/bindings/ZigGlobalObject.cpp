@@ -3200,9 +3200,9 @@ void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
         JSC::MarkedArgumentBuffer args;
         args.append(consoleObject);
         JSC::CallData callData = JSC::getCallData(bindNativeConsoleMethods);
-        NakedPtr<JSC::Exception> returnedException = nullptr;
-        JSC::profiledCall(this, ProfilingReason::API, bindNativeConsoleMethods, callData, consoleObject, args, returnedException);
+        JSC::profiledCall(this, ProfilingReason::API, bindNativeConsoleMethods, callData, consoleObject, args);
         scope.assertNoExceptionExceptTermination();
+        RETURN_IF_EXCEPTION(scope, );
     }
 }
 

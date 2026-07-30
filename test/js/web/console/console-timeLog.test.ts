@@ -30,19 +30,20 @@ it.concurrent("console.timeEnd with non-empty label emits exactly one trailing n
 });
 
 it("should log to console correctly", async () => {
-  const { stdout, exited } = spawn({
+  await using proc = spawn({
     cmd: [bunExe(), join(import.meta.dir, "console-timeLog.js")],
     stdin: null,
     stdout: "pipe",
     stderr: "pipe",
     env: bunEnv,
   });
-  expect(await exited).toBe(0);
-  const outText = await stdout.text();
+  const [outText, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   const expectedText = (await file(join(import.meta.dir, "console-timeLog.expected.txt")).text()).replaceAll(
     "\r\n",
     "\n",
   );
 
+  expect(stderr).toBe("");
   expect(outText.replace(/^\[.+?s\] /gm, "")).toBe(expectedText.replace(/^\[.+?s\] /gm, ""));
+  expect(exitCode).toBe(0);
 });

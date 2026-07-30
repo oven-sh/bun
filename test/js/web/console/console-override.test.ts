@@ -6,7 +6,7 @@ import { bunEnv, bunExe } from "harness";
 // so replacing those slots captures their output. Bun's native console used to
 // write these straight to the fd via the JSC ConsoleClient, so a spy on
 // `console.log` saw nothing.
-test("console.count/table/group/time*/trace/assert route through this.log/warn/error", async () => {
+test.concurrent("console.count/table/group/time*/trace/assert route through this.log/warn/error", async () => {
   const script = `
     const cap = [];
     const orig = {};
@@ -58,7 +58,7 @@ test("console.count/table/group/time*/trace/assert route through this.log/warn/e
   expect(exitCode).toBe(0);
 });
 
-test("console.group still indents subsequent native console.log output", async () => {
+test.concurrent("console.group still indents subsequent native console.log output", async () => {
   const script = `
     const orig = console.log;
     let captured;

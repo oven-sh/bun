@@ -126,6 +126,13 @@ export function bindNativeConsoleMethods(console: typeof globalThis.console) {
   const MapGet = Map.prototype.get;
   const MapSet = Map.prototype.set;
   const MapDelete = Map.prototype.delete;
+  const StringPrototypeIndexOf = String.prototype.indexOf;
+  const StringPrototypeSlice = String.prototype.slice;
+  const StringPrototypeEndsWith = String.prototype.endsWith;
+  const NumberPrototypeToFixed = Number.prototype.toFixed;
+  const FunctionBind = Function.prototype.bind;
+  const MathRound = Math.round;
+  const captureStackTrace = Error.captureStackTrace;
 
   const counts = new Map<string, number>();
   const times = new Map<string, number>();
@@ -138,7 +145,9 @@ export function bindNativeConsoleMethods(console: typeof globalThis.console) {
 
   function elapsed(ns: number) {
     const ms = ns / 1e6;
-    return Math.round(ms) > 1500 ? `[${(ms / 1000).toFixed(2)}s]` : `[${ms.toFixed(2)}ms]`;
+    return MathRound(ms) > 1500
+      ? `[${NumberPrototypeToFixed.$call(ms / 1000, 2)}s]`
+      : `[${NumberPrototypeToFixed.$call(ms, 2)}ms]`;
   }
 
   const methods: Record<string, (this: typeof console, ...args: any[]) => void> = {
@@ -152,7 +161,9 @@ export function bindNativeConsoleMethods(console: typeof globalThis.console) {
       MapDelete.$call(counts, `${label}`);
     },
     time(label = "default") {
-      MapSet.$call(times, `${label}`, nanoseconds());
+      label = `${label}`;
+      if (MapGet.$call(times, label) !== undefined) return;
+      MapSet.$call(times, label, nanoseconds());
     },
     timeLog(label = "default", ...data) {
       label = `${label}`;
@@ -177,19 +188,17 @@ export function bindNativeConsoleMethods(console: typeof globalThis.console) {
     },
     trace: function trace(...args) {
       format ??= require("node:util").format;
-      const err: { name: string; message: string; stack?: string } = {
-        name: "Trace",
-        message: args.length > 0 ? format!.$apply(undefined, args) : "",
-      };
-      Error.captureStackTrace(err, trace);
+      const message = args.length > 0 ? format!.$apply(undefined, args) : "";
+      const err: { stack?: string } = {};
+      captureStackTrace(err, trace);
       let stack = err.stack ?? "";
-      const nl = stack.indexOf("\n");
-      stack = nl >= 0 ? stack.slice(nl) : "";
-      this.error((err.message.length > 0 ? `Trace: ${err.message}` : "Trace") + stack);
+      const nl = StringPrototypeIndexOf.$call(stack, "\n");
+      stack = nl >= 0 ? StringPrototypeSlice.$call(stack, nl) : "";
+      this.error((message.length > 0 ? `Trace: ${message}` : "Trace") + stack);
     },
     table(tabularData, properties) {
       if (properties !== undefined && !$isJSArray(properties)) {
-        throw new TypeError('The "properties" argument must be an instance of Array.');
+        throw $ERR_INVALID_ARG_TYPE("properties", "Array", properties);
       }
       if (tabularData === null || typeof tabularData !== "object") {
         return this.log(tabularData);
@@ -199,7 +208,7 @@ export function bindNativeConsoleMethods(console: typeof globalThis.console) {
         properties === undefined
           ? inspectTable(tabularData, { depth: 0, colors: enableColors })
           : inspectTable(tabularData, properties, { depth: 0, colors: enableColors });
-      this.log(rendered.endsWith("\n") ? rendered.slice(0, -1) : rendered);
+      this.log(StringPrototypeEndsWith.$call(rendered, "\n") ? StringPrototypeSlice.$call(rendered, 0, -1) : rendered);
     },
     group(...data) {
       if (data.length > 0) this.log.$apply(this, data);
@@ -217,7 +226,6 @@ export function bindNativeConsoleMethods(console: typeof globalThis.console) {
     },
   };
 
-  const FunctionBind = Function.prototype.bind;
   for (const key in methods) {
     const fn = FunctionBind.$call(methods[key], console);
     $Object.$defineProperty(fn, "name", { value: key, configurable: true });

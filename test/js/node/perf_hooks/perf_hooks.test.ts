@@ -178,6 +178,10 @@ test("eventLoopUtilization/timerify/nodeTiming exist on globalThis.performance w
       bunExe(),
       "-e",
       `const p = globalThis.performance;
+       // Assignment before any lazy read must shadow on the instance (Node's slot is a writable data property).
+       p.timerify = 1;
+       const ownTimerify = Object.getOwnPropertyDescriptor(p, "timerify")?.value;
+       delete p.timerify;
        const before = {
          elu: typeof p.eventLoopUtilization,
          timerify: typeof p.timerify,
@@ -187,6 +191,7 @@ test("eventLoopUtilization/timerify/nodeTiming exist on globalThis.performance w
        const elu = p.eventLoopUtilization();
        const ph = require("node:perf_hooks");
        console.log(JSON.stringify({
+         ownTimerify,
          before,
          desc: { writable: desc.writable, enumerable: desc.enumerable, configurable: desc.configurable, hasValue: typeof desc.value },
          eluKeys: Object.keys(elu).sort(),
@@ -200,6 +205,7 @@ test("eventLoopUtilization/timerify/nodeTiming exist on globalThis.performance w
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(stderr).toBe("");
   expect(JSON.parse(stdout)).toEqual({
+    ownTimerify: 1,
     before: { elu: "function", timerify: "function", nodeTiming: "object" },
     desc: { writable: true, enumerable: false, configurable: true, hasValue: "function" },
     eluKeys: ["active", "idle", "utilization"],

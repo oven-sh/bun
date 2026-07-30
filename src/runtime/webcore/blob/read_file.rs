@@ -826,9 +826,12 @@ impl ReadFile {
                 // then extend_from_slice into self.buffer — this keeps the &mut
                 // self borrow in do_read disjoint from self.buffer's storage.
                 #[cfg(target_env = "ohos")]
-                let (buf_ptr, buf_len) = (stack_ptr, stack_buffer.len());
+                let (buf_ptr, buf_len, use_stack) = (stack_ptr, stack_buffer.len(), true);
                 #[cfg(not(target_env = "ohos"))]
-                let (buf_ptr, buf_len) = self.remaining_buffer(&mut stack_buffer);
+                let (buf_ptr, buf_len, use_stack) = {
+                    let (ptr, len) = self.remaining_buffer(&mut stack_buffer);
+                    (ptr, len, ptr == stack_ptr)
+                };
 
                 // SAFETY: reconstructed from the raw (ptr, len) pair above.
                 let buf = unsafe { core::slice::from_raw_parts_mut(buf_ptr, buf_len) };

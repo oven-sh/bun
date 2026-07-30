@@ -252,7 +252,26 @@ void MessagePortPipe::detach(uint8_t side)
     // drainAndDispatch()'s s.ctxId != expectedCtx check makes it a no-op —
     // even if a new owner attach()es to a different context before it runs.
     // Messages remain queued for the next owner.
-    s.state.fetch_and(~uint64_t(Attached | ContextKnown | DrainScheduled), std::memory_order_acq_rel);
+    s.state.fetch_and(~uint64_t(Attached | ContextKnown | DrainScheduled | HoldsLoopRef), std::memory_order_acq_rel);
+}
+
+void MessagePortPipe::setHoldsLoopRef(uint8_t side, bool value)
+{
+    ASSERT(side < 2);
+    auto& s = m_sides[side];
+    // Cheap unlocked probe: only the owning port's thread flips this bit, so a
+    // matching read means no transition is needed and we skip the lock.
+    uint64_t st = s.state.load(std::memory_order_acquire);
+    if ((st & Closed) || !!(st & HoldsLoopRef) == value)
+        return;
+    Locker locker { s.lock };
+    st = s.state.load(std::memory_order_relaxed);
+    if (st & Closed)
+        return;
+    if (value)
+        s.state.store(st | HoldsLoopRef, std::memory_order_release);
+    else
+        s.state.store(st & ~uint64_t(HoldsLoopRef), std::memory_order_release);
 }
 
 void MessagePortPipe::close(uint8_t side, CloseKind kind)

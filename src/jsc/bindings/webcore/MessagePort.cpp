@@ -67,8 +67,26 @@ MessagePort::MessagePort(ScriptExecutionContext& context, Ref<MessagePortPipe>&&
 
 MessagePort::~MessagePort()
 {
-    if (!m_isDetached)
-        m_pipe->close(m_side, MessagePortPipe::CloseKind::Collected);
+    if (m_isDetached)
+        return;
+    // A peer holding its event loop open is waiting on this side. Node would never
+    // destroy an entangled port, so a Collected close delivering peerClosed() here is
+    // the GC making a keep-alive decision. Leave this side's pipe state untouched so
+    // the peer stays pinned via isOtherSideOpen() until it unrefs/closes.
+    //
+    // During VM teardown (markTerminating() precedes the lastChanceToFinalize sweep
+    // that reaches this destructor) the context is going away and nothing else will
+    // ever notify the peer, so close explicitly as contextDestroyed() would have.
+    // A wrapper pinned by hasPendingActivity() is only swept at teardown, so "not
+    // terminating && peer waiting" is exactly the no-wrapper/normal-GC case.
+    if (m_pipe->otherSideHoldsLoopRef(m_side)) {
+        auto* context = scriptExecutionContext();
+        if (!context || !context->isTerminating())
+            return;
+        m_pipe->close(m_side, MessagePortPipe::CloseKind::Explicit);
+        return;
+    }
+    m_pipe->close(m_side, MessagePortPipe::CloseKind::Collected);
 }
 
 ExceptionOr<void> MessagePort::postMessage(JSC::JSGlobalObject& state, JSC::JSValue messageValue, StructuredSerializeOptions&& options)
@@ -422,6 +440,14 @@ bool MessagePort::hasPendingActivity() const
     // the context dies; node retains more — it never collects an entangled port at all.
     if (m_hasCloseEventListener.load(std::memory_order_acquire) && !m_closeEventDispatched)
         return true;
+    // The peer is holding its event loop open waiting on this port (message listener
+    // while ref'd, or an explicit .ref()). Collecting this wrapper would fire a
+    // GC-timed 'close' on that peer and release its loop ref via peerClosed(), so a
+    // thread kept alive only by that port exits. Node never collects an entangled
+    // port; pin this side only while the peer actually holds a ref, so a channel
+    // with neither side listening is still collectible.
+    if (m_pipe->otherSideHoldsLoopRef(m_side))
+        return true;
     if (!m_hasMessageEventListener)
         return false;
 
@@ -479,16 +505,20 @@ Vector<RefPtr<MessagePort>> MessagePort::entanglePorts(ScriptExecutionContext& c
 void MessagePort::updateListenerEventLoopRef()
 {
     bool shouldHold = m_isRefd && m_messageEventCount > 0;
-    if (shouldHold == m_listenerLoopRefActive)
-        return;
-    auto* context = scriptExecutionContext();
-    if (!context)
-        return;
-    if (shouldHold)
-        context->refEventLoop();
-    else
-        context->unrefEventLoop();
-    m_listenerLoopRefActive = shouldHold;
+    if (shouldHold != m_listenerLoopRefActive) {
+        auto* context = scriptExecutionContext();
+        if (!context)
+            return;
+        if (shouldHold)
+            context->refEventLoop();
+        else
+            context->unrefEventLoop();
+        m_listenerLoopRefActive = shouldHold;
+    }
+    // Publish the combined loop-ref state to the pipe so the entangled wrapper's
+    // hasPendingActivity() can pin itself while this side is waiting on it.
+    if (!m_isDetached)
+        m_pipe->setHoldsLoopRef(m_side, m_listenerLoopRefActive || m_hasRef);
 }
 
 void MessagePort::onDidChangeListenerImpl(EventTarget& self, const AtomString& eventType, OnDidChangeListenerKind kind)
@@ -564,31 +594,30 @@ void MessagePort::jsRef(JSGlobalObject* lexicalGlobalObject)
         return;
 
     // Re-acquire the message-listener loop-ref (if a listener is present) that .unref() released.
-    if (!m_isRefd) {
+    if (!m_isRefd)
         m_isRefd = true;
-        updateListenerEventLoopRef();
-    }
 
     if (!m_hasRef) {
         m_hasRef = true;
         ref();
         Bun__eventLoop__incrementRefConcurrently(WebCore::clientData(lexicalGlobalObject->vm())->bunVM, 1);
     }
+    // After both flags are settled so the pipe's HoldsLoopRef reflects the union.
+    updateListenerEventLoopRef();
 }
 
 void MessagePort::jsUnref(JSGlobalObject* lexicalGlobalObject)
 {
     // Also release the listener loop-ref; otherwise an always-listening transferred
     // port (a postMessageToThread control port) would pin the event loop forever.
-    if (m_isRefd) {
+    if (m_isRefd)
         m_isRefd = false;
-        updateListenerEventLoopRef();
-    }
     if (m_hasRef) {
         m_hasRef = false;
         deref();
         Bun__eventLoop__incrementRefConcurrently(WebCore::clientData(lexicalGlobalObject->vm())->bunVM, -1);
     }
+    updateListenerEventLoopRef();
 }
 
 } // namespace WebCore

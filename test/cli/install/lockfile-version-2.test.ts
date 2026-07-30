@@ -161,10 +161,10 @@ it("bunfig [install.lockfile] lockfileVersion = 0 does not re-save an unchanged 
     stdout: "pipe",
     stderr: "pipe",
   });
-  const [out, err, exitCode] = await Promise.all([second.stdout.text(), second.stderr.text(), second.exited]);
+  const [, err, exitCode] = await Promise.all([second.stdout.text(), second.stderr.text(), second.exited]);
 
   expect(err).not.toContain("error:");
-  expect(out).not.toContain("Saved lockfile");
+  expect(err).not.toContain("Saved lockfile");
   expect(await file(join(String(dir), "bun.lock")).text()).toBe(before);
   expect(exitCode).toBe(0);
 });

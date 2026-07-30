@@ -2376,16 +2376,7 @@ impl FetchTasklet {
         }
         self.abort_task();
         // Re-borrow after the `&mut self` calls above.
-        let global_this = self.global_this;
         if let Some(sink) = self.sink_mut() {
-            // Unblock a pump parked on `flush(true)` so it can finish and
-            // settle the assign_to_stream result (which owns the balancing
-            // `write_end_request`).
-            if sink.flush_promise.has_value() {
-                let _ = sink
-                    .flush_promise
-                    .resolve(&global_this, JSValue::js_number(0.0));
-            }
             sink.source.close(None);
         }
     }

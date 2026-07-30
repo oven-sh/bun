@@ -4,9 +4,9 @@ use bun_sys::Error as SysError;
 
 use crate::webcore::blob::SizeType as BlobSizeType;
 use crate::webcore::fetch::fetch_tasklet::FetchTasklet;
-use crate::webcore::jsc::{JSGlobalObject, JSPromise, JSPromiseStrong, JSValue};
+use crate::webcore::jsc::{JSGlobalObject, JSPromise, JSValue};
 use crate::webcore::sink::JSSink;
-use crate::webcore::streams::{Signal, Start, StartTag, StreamResult, Writable};
+use crate::webcore::streams::{SourceHandle, Start, StartTag, StreamResult, Writable};
 
 bun_core::declare_scope!(FetchRequestBodySinkLog, visible);
 
@@ -48,10 +48,10 @@ impl<'a> RequestBodyChunk<'a> {
 
 /// JSSink that streams a fetch() request body into the HTTP thread's
 /// `ThreadSafeStreamBuffer`, applying chunked transfer-encoding framing when
-/// required. Replaces the bespoke `ResumableFetchSink` so request-body
-/// streaming speaks the standard `Writable::Backpressure` / `flush(true)` →
-/// pending-promise / `Signal::ready` protocol that `readStreamIntoSink`
-/// already honours.
+/// required. Request-body streaming speaks the standard
+/// `Writable::Backpressure` / `SourceHandle::ready` protocol that
+/// `readStreamIntoSink` honours: every write signals backpressure, and the
+/// HTTP-thread drain ack calls `source.ready()` to resume the upstream pump.
 pub struct FetchRequestBodySink {
     /// Non-owning back-reference; `FetchTasklet` is kept alive by a +1
     /// intrusive ref taken in `start_request_stream` and released exactly once
@@ -60,18 +60,8 @@ pub struct FetchRequestBodySink {
     /// `None` first. `finalize` releases it as a fallback if that path never
     /// ran.
     pub task: Option<BackRef<FetchTasklet>>,
-    pub signal: Signal,
+    pub source: SourceHandle<FetchRequestBodySink>,
     pub high_water_mark: BlobSizeType,
-    pub flush_promise: JSPromiseStrong,
-    /// Bytes handed to `write_request_data` since the last `on_drain` ack.
-    /// JS-thread-only accounting: the shared `stream_buffer` is drained
-    /// concurrently by the HTTP thread, so its `size()` cannot gate
-    /// backpressure without racing (the pump would never yield when the HTTP
-    /// thread keeps up). `on_drain` — dispatched from `report_drain` via a
-    /// `ConcurrentTask` — is the sole writer that resets this, so
-    /// `pending_bytes > 0` guarantees an `on_drain` is in flight to resolve
-    /// `flush_promise`.
-    pub pending_bytes: BlobSizeType,
     pub ended: bool,
     pub done: bool,
 }
@@ -80,10 +70,8 @@ impl Default for FetchRequestBodySink {
     fn default() -> Self {
         Self {
             task: None,
-            signal: Signal::default(),
+            source: SourceHandle::default(),
             high_water_mark: 16384,
-            flush_promise: JSPromiseStrong::default(),
-            pending_bytes: 0,
             ended: false,
             done: false,
         }
@@ -115,7 +103,7 @@ impl FetchRequestBodySink {
             }
         }
         self.ended = false;
-        self.signal.start();
+        self.source.start();
         bun_sys::Result::Ok(())
     }
 
@@ -134,10 +122,7 @@ impl FetchRequestBodySink {
             // loop returns to `auto_tick()` and polls I/O between writes;
             // batching lets the HTTP thread's `report_drain` ConcurrentTask
             // re-arm inside `tick()` and livelock an in-process peer.
-            // `pending_bytes` remains the "drain ack owed" sentinel for
-            // `flush_from_js(wait=true)`.
             Writable::Owned(len) | Writable::Backpressure(len) if len > 0 => {
-                self.pending_bytes = self.pending_bytes.saturating_add(len);
                 Writable::Backpressure(len)
             }
             other => other,
@@ -169,23 +154,10 @@ impl FetchRequestBodySink {
     pub fn flush_from_js(
         &mut self,
         global_this: &JSGlobalObject,
-        wait: bool,
+        _wait: bool,
     ) -> bun_sys::Result<JSValue> {
-        if self.flush_promise.has_value() {
-            return bun_sys::Result::Ok(self.flush_promise.value());
-        }
-        if self.done || self.ended {
-            return bun_sys::Result::Ok(JSPromise::resolved_promise_value(
-                global_this,
-                JSValue::js_number(0.0),
-            ));
-        }
-        if wait && self.pending_bytes > 0 {
-            // Bytes were scheduled to the HTTP thread since the last drain ack,
-            // so an `on_drain` is guaranteed to arrive and resolve this.
-            self.flush_promise = JSPromiseStrong::init(global_this);
-            return bun_sys::Result::Ok(self.flush_promise.value());
-        }
+        // Backpressure is signalled to the upstream via `source.ready()`; no
+        // per-flush promise is allocated.
         bun_sys::Result::Ok(JSPromise::resolved_promise_value(
             global_this,
             JSValue::js_number(0.0),
@@ -202,7 +174,7 @@ impl FetchRequestBodySink {
         // branches in `start_request_stream`) is the single balancing release of
         // the `+1` taken in `start_request_stream`. `task` stays populated so
         // `finalize()` can release it if that handler never runs.
-        self.signal.close(err);
+        self.source.close(err);
         bun_sys::Result::Ok(())
     }
 
@@ -221,17 +193,11 @@ impl FetchRequestBodySink {
 
     /// Called from `FetchTasklet::resume_request_data_stream` (main thread)
     /// after the HTTP thread reports the shared stream buffer has drained.
-    /// Resolves any pending `flush(true)` promise and signals readiness so
-    /// `readStreamIntoSink`'s pump resumes pulling.
-    pub fn on_drain(&mut self, global_this: &JSGlobalObject) {
+    /// Wakes the upstream source (JS controller `m_onPull` or native
+    /// `ByteStream::resume`) so the pump resumes pulling.
+    pub fn on_drain(&mut self, _global_this: &JSGlobalObject) {
         bun_core::scoped_log!(FetchRequestBodySinkLog, "onDrain");
-        self.pending_bytes = 0;
-        if self.flush_promise.has_value() {
-            let _ = self
-                .flush_promise
-                .resolve(global_this, JSValue::js_number(0.0));
-        }
-        self.signal.ready(None, None);
+        self.source.ready(None, None);
     }
 
     pub fn memory_cost(&self) -> usize {
@@ -281,8 +247,8 @@ impl crate::webcore::sink::JsSinkType for FetchRequestBodySink {
     fn start(&mut self, config: Start) -> bun_sys::Result<()> {
         Self::start(self, &config)
     }
-    fn signal(&mut self) -> Option<&mut Signal> {
-        Some(&mut self.signal)
+    fn source(&mut self) -> Option<&mut SourceHandle<Self>> {
+        Some(&mut self.source)
     }
     fn done(&self) -> bool {
         self.done

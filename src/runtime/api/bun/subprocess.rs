@@ -1075,16 +1075,8 @@ impl Subprocess<'_> {
             // call below stays unsafe.
             let pipe = bun_ptr::BackRef::from(pipe_ptr);
 
-            // `onAttachedProcessExit()` → `writer.close()` → `FileSink.onClose`
-            // fires `pipe.source` synchronously on POSIX. When the source still
-            // targets `&self.stdin` (the user never read `.stdin`, or did and
-            // `Writable.toJS` left it wired), that would re-enter
-            // `Writable.onClose` → `pipe.deref()` while `onAttachedProcessExit`
-            // is still running on `pipe`. Detach the source first and drive the
-            // `onStdinDestroyed()` deref ourselves instead; this also leaves
-            // `self.stdin` as `.pipe` so reading `.stdin` after exit still
-            // returns the sink. (Source back-pointer is the `*mut Subprocess`,
-            // not `&self.stdin` — see `SourceHandle::Subprocess`.)
+            // Detach the source first so onAttachedProcessExit's sync FileSink.onClose cannot
+            // re-enter Writable.onClose → pipe.deref() on the still-running pipe.
             let self_ptr = self.as_ctx_ptr().cast::<c_void>();
             if matches!(
                 *pipe.source.get(),

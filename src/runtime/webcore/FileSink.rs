@@ -43,10 +43,8 @@ pub struct FileSink {
     pub done: Cell<bool>,
     pub started: Cell<bool>,
     pub must_be_kept_alive_until_eof: Cell<bool>,
-    /// Set when `to_result` hands `Backpressure` back to a pump-capable source
-    /// (JSController/ByteStream); cleared when `on_write`/`on_ready` resumes it.
-    /// POSIX `PosixStreamingWriter` never dispatches `on_ready`, so `on_write`
-    /// checks this flag on `Drained` to drive the resume itself.
+    /// Set when to_result hands Backpressure to a pump source; POSIX on_write drives resume
+    /// since PosixStreamingWriter never fires on_ready.
     pub source_pending_pull: Cell<bool>,
 
     // TODO: these fields are duplicated on writer()
@@ -1524,10 +1522,7 @@ impl FileSink {
         self.readable_stream
             .set(readable_stream::Strong::init(*stream, global_this));
 
-        // Native ByteStream fast-path: wire the source/sink handles directly so
-        // bytes flow via `ByteStream::on_data` → `SinkHandle::write` without the
-        // JS `readStreamIntoSink` pump. `to_result` returns `Backpressure` for a
-        // ByteStream source; `on_write`/`on_ready` resume it via `source.ready()`.
+        // Native ByteStream fast-path: wire SinkHandle directly, skip the JS pump.
         if let readable_stream::Source::Bytes(bs_ptr) = stream.ptr {
             let self_ptr = std::ptr::from_mut::<FileSink>(self);
             // SAFETY: `Source::Bytes` stores the live `*mut ByteStream` (the JS

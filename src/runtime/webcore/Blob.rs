@@ -1596,13 +1596,8 @@ impl BlobExt for Blob {
             }
         };
 
-        // Do NOT short-circuit `Source::Bytes` through the inherent
-        // `FileSink::assign_to_stream` here: its native ByteStream hookup
-        // returns `UNDEFINED` while the pump is still in flight, which would
-        // fall through to the resolved-0 tail below and make
-        // `await Bun.write(Bun.file(p), s3file)` resolve before the download
-        // completes. Stay on the JS pump (which yields a pending promise) until
-        // the native path can expose a completion promise.
+        // Stay on the JS pump here: the native ByteStream path returns UNDEFINED before
+        // completion, which would resolve-0 early.
         let assignment_result: JSValue = webcore::file_sink::JSSink::assign_to_stream(
             global_this,
             readable_stream.value,

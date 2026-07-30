@@ -227,15 +227,8 @@ impl<T: JsSinkAbi> JSSink<T> {
     where
         T: JsSinkType,
     {
-        // C++ `${abi}__assignToStream` writes the controller cell's encoded
-        // JSValue bits through a `void**` *before* calling
-        // `globalObject->assignToStream(...)`. A fully-synchronous stream can
-        // drain and fire `${abi}__controllerDetached` inside that call, so the
-        // sink must already be tagged `JSController` for `js_controller_detached`
-        // to match-and-clear. Pre-seed a placeholder (bits=0), let C++ run, then
-        // only install the real bits if the placeholder survived — if sync-end
-        // cleared it to `None`, the controller is already dead and must not be
-        // stored.
+        // Pre-seed JSController(0) so a sync drain's __controllerDetached can match-and-clear;
+        // only install real bits if the placeholder survived.
         if let Some(src) = ptr.source() {
             *src = streams::SourceHandle::JSController(0);
         }
@@ -258,12 +251,7 @@ impl<T: JsSinkAbi> JSSink<T> {
         result
     }
 
-    /// `JSSink.detach(globalThis)` — disconnect the upstream source handle.
-    /// For `JSController` this unprotects the controller cell and tells C++ to
-    /// drop its back-pointer; for `ByteStream` this clears the stream's
-    /// `SinkHandle` so a later `on_data`/`resume` never writes through a freed
-    /// sink. Other native-source variants have no back-pointer to this sink
-    /// and are left to the caller's own teardown.
+    /// Disconnect the upstream source: JSController → unprotect + detachPtr; ByteStream → clear its SinkHandle.
     pub fn detach(source: &mut SourceHandle<T>, _global: &crate::webcore::jsc::JSGlobalObject) {
         use crate::webcore::jsc::JSValue;
         match *source {
@@ -271,12 +259,7 @@ impl<T: JsSinkAbi> JSSink<T> {
                 source.clear();
                 let value = JSValue::from_encoded(bits);
                 value.unprotect();
-                // `${abi}__detachPtr` runs the JS `onClose` callback through the bare
-                // `AsyncContextFrame::call` overload (no TopExceptionScope of its own)
-                // and RELEASE_AND_RETURNs its ThrowScope, so `m_needExceptionCheck` is
-                // left set when it returns into this scope-less thunk. Wrap in a
-                // TopExceptionScope so the verifier is satisfied; discard the result.
-                // TODO: properly propagate exception upwards.
+                // detachPtr leaves m_needExceptionCheck set; wrap to satisfy the verifier.
                 let _ = ::bun_jsc::call_check_slow(_global, || T::detach_ptr_extern(value));
             }
             SourceHandle::ByteStream(bs) => {
@@ -595,26 +578,12 @@ impl<T: JsSinkType + JsSinkAbi> JSSink<T> {
         this.finalize();
     }
 
-    /// `${abi_name}__controllerDetached` body — called from
-    /// `JSReadable*Controller::detach()` (controller `.end()`/`.close()` host
-    /// fns) and from the controller's destructor, i.e. whenever the
-    /// controller stops being attached to this sink.
-    ///
-    /// `SourceHandle::JSController` stores the controller's encoded JSValue
-    /// bits (written by `__assignToStream`) without rooting the cell, so the
-    /// controller can be collected while the native sink still has a flush in
-    /// flight (e.g. a response stream parked on tryEnd() backpressure). Once
-    /// the controller detaches or dies the handle must never fire again:
-    /// `onClose`/`onReady` would decode a dead cell. Clear it, but only when
-    /// it still holds this controller's bits — native-source variants hold a
-    /// live Rust pointer instead, and a sink re-assigned to a new stream holds
-    /// the newer controller's bits.
+    /// JSController stores unrooted encoded bits; clear only if still this controller's bits
+    /// so a dead cell is never decoded.
     pub fn js_controller_detached(this: &mut T, controller: crate::webcore::jsc::JSValue) {
         if let Some(src) = this.source() {
             if let SourceHandle::JSController(bits) = *src {
-                // bits == 0 is the `assign_to_stream` placeholder: the detach
-                // fired synchronously inside `__assignToStream` before the real
-                // bits were installed, so the placeholder must be cleared too.
+                // bits==0 = assign_to_stream placeholder; clear it too.
                 if bits == controller.encoded() || bits == 0 {
                     src.clear();
                 }

@@ -893,7 +893,6 @@ impl<T: crate::webcore::sink::JsSinkAbi> SourceHandle<T> {
             SourceHandle::None | SourceHandle::JSController(0) => {}
             SourceHandle::JSController(bits) => {
                 let cpp = JSValue::from_encoded(bits);
-                // TODO: this should be got from a parameter / properly propagate exception upwards.
                 let global = VirtualMachine::get().global();
                 if global.has_exception() {
                     return;
@@ -929,7 +928,6 @@ impl<T: crate::webcore::sink::JsSinkAbi> SourceHandle<T> {
             SourceHandle::None | SourceHandle::JSController(0) => {}
             SourceHandle::JSController(bits) => {
                 let cpp = JSValue::from_encoded(bits);
-                // TODO: this should be got from a parameter / properly propagate exception upwards.
                 let global = VirtualMachine::get().global();
                 if global.has_exception() {
                     return;

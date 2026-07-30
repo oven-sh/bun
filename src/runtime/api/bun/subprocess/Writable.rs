@@ -136,11 +136,8 @@ impl<'a> Writable<'a> {
     // When the stream has closed we need to be notified to prevent a use-after-free
     // We can test for this use-after-free by enabling hot module reloading on a file and then saving it twice
     //
-    // Note: deriving the parent from `&mut self` would be out-of-provenance
-    // (the `&mut` only covers the `stdin` field). Instead the FileSink's
-    // `SourceHandle::Subprocess` stores the `*mut Subprocess` and hands us the
-    // parent directly; field accesses here are disjoint and sequential so a
-    // plain `&Subprocess` suffices.
+    // Parent comes via `SourceHandle::Subprocess` (the whole `*mut Subprocess`), not `&mut self`
+    // on the `stdin` field; accesses are disjoint so `&Subprocess` suffices.
     pub fn on_close(process: &Subprocess<'a>, _: Option<bun_sys::Error>) {
         if let Some(this_jsvalue) = process.this_value.get().try_get() {
             if let Some(existing_value) = js::stdin_get_cached(this_jsvalue) {
@@ -499,9 +496,7 @@ impl<'a> Writable<'a> {
             }
         }
 
-        // The source back-pointer is the `*mut Subprocess` (see
-        // `SourceHandle::Subprocess` / `to_js`); compare against that, not the
-        // `stdin` address.
+        // Source back-pointer is the `*mut Subprocess`, not the `stdin` address.
         let parent_ptr = subprocess.as_ctx_ptr().cast::<c_void>();
         match subprocess.stdin.replace(Writable::Ignore) {
             Writable::Pipe(pipe_nn) => {

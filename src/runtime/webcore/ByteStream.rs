@@ -33,12 +33,9 @@ pub struct ByteStream {
     pub pending_value: JsCell<StrongOptional>, // jsc.Strong.Optional
     pub offset: Cell<usize>,
     pub high_water_mark: blob::SizeType,
-    /// Native sink this stream is piped into (replaces the fn-ptr `Pipe`).
-    /// `on_data` dispatches through it and honors the returned `Writable`.
+    /// Native sink this stream is piped into; `on_data` dispatches and honors `Writable`.
     pub sink: JsCell<SinkHandle>,
-    /// Set when `sink.write()` returns `Writable::Backpressure`; while set,
-    /// `on_data` buffers instead of writing. Cleared by [`Self::resume`]
-    /// (driven from the sink's `ready()` / `SourceHandle::ready`).
+    /// Set on `Writable::Backpressure` (buffer instead of write); cleared by [`Self::resume`].
     pub sink_paused: Cell<bool>,
     pub size_hint: Cell<blob::SizeType>,
     pub buffer_action: JsCell<Option<BufferAction>>,
@@ -164,11 +161,7 @@ impl ByteStream {
         self.sink_paused.set(false);
     }
 
-    /// Called from the attached sink's drain notification
-    /// (`SourceHandle::ready`) once it can accept more bytes. Unpauses, pushes
-    /// any buffered bytes through `sink.write()`, re-pauses on
-    /// `Backpressure`, and — if the last chunk has already arrived — ends and
-    /// detaches the sink.
+    /// Sink's drain ack: unpause, push buffered bytes, end if last chunk already arrived.
     pub fn resume(&self) {
         if !self.sink_paused.get() {
             return;
@@ -215,10 +208,7 @@ impl ByteStream {
         }
     }
 
-    /// Called from the attached sink's close notification
-    /// (`SourceHandle::close`) when the sink is torn down before the source
-    /// finished. Detaches the sink and drives the parent `NewSource` cancel
-    /// path so the upstream producer stops.
+    /// Sink closed early: detach and drive the NewSource cancel path.
     pub fn cancel_from_sink(&self, _err: Option<SysError>) {
         self.sink.set(SinkHandle::None);
         self.sink_paused.set(false);
@@ -258,14 +248,10 @@ impl ByteStream {
         );
         self.has_received_last_chunk.set(stream.is_done());
 
-        // R-2: snapshot `sink` (Copy) — `write`/`end` re-enter their target,
-        // which may call back into `ByteStream` (e.g. `drain`, `resume`); no
-        // `JsCell` borrow may be live across that call.
+        // Snapshot `sink` (Copy): write/end may re-enter ByteStream; no JsCell borrow across that.
         let sink = *self.sink.get();
         if sink.is_some() {
-            // Upstream error must reach the sink even if it is back-pressured:
-            // `append()` would park the error in `pending.result` (JS-pull only)
-            // and a later `resume()` would send a clean `end(None)`.
+            // Upstream error must reach the sink even while back-pressured.
             if let streams::Result::Err(err) = stream {
                 self.sink.set(SinkHandle::None);
                 self.sink_paused.set(false);

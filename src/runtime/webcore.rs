@@ -354,12 +354,8 @@ pub enum PathOrFileDescriptor {
 }
 
 // ─── SinkHandle ──────────────────────────────────────────────────────────────
-// Tagged enum held by a `ByteStream` to point at its native sink so bytes flow
-// without a JS round-trip and
-// `ByteStream::on_data` can honor `Writable::Backpressure`. Each `Http*`
-// variant stores monomorphized `write`/`end` thunks captured at hook-in time
-// because `RequestContext` carries four generic params (incl. `ThisServer` /
-// `DEBUG_MODE`) and cannot be named concretely here.
+// Held by ByteStream; dispatches write()/end() to the native sink. Http* variants carry
+// thunks since RequestContext is generic.
 
 pub type SinkWriteFn = fn(ctx: *mut core::ffi::c_void, data: &streams::Result) -> streams::Writable;
 pub type SinkEndFn = fn(ctx: *mut core::ffi::c_void, err: Option<&streams::StreamError>);
@@ -415,13 +411,8 @@ impl SinkHandle {
         }
     }
 
-    /// Dispatch a chunk to the attached sink. Returns the sink's own
-    /// `Writable` status so the source can pause on `Backpressure` or detach
-    /// on `Done`/`Err`.
-    ///
-    /// SAFETY (invariant): every non-`None` variant's pointee is kept alive by
-    /// the hook-in site (a `+1` ref / `Strong` / `NonNull` back-reference held
-    /// for at least as long as this handle is installed on the `ByteStream`).
+    /// SAFETY: every non-None variant's pointee is kept alive by the hook-in site for as long
+    /// as this handle is installed.
     pub fn write(&self, data: &streams::Result) -> streams::Writable {
         match *self {
             SinkHandle::None => streams::Writable::Done,
@@ -459,9 +450,7 @@ impl SinkHandle {
             SinkHandle::FileSink(ptr) => {
                 let _ = unsafe { (*ptr).end(Self::to_sys_error(err)) };
             }
-            // `ValueBufferer`'s write thunk already observes the terminal
-            // `StreamResult` (Done/Err) and fires its completion callback;
-            // there is no separate `end` to drive.
+            // ValueBufferer's write thunk observes Done/Err itself; no separate end.
             SinkHandle::ValueBufferer(_, _) => {}
         }
     }

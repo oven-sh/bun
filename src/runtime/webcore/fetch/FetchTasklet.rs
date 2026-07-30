@@ -658,9 +658,7 @@ impl FetchTasklet {
         // SAFETY: just allocated; sole live mutable view (self.sink only stores the ptr).
         let sink = unsafe { &mut *sink_ptr.as_ptr() };
 
-        // Native ByteStream fast-path: wire the source/sink handles directly so
-        // bytes flow via `ByteStream::on_data` → `SinkHandle::write` without the
-        // JS `readStreamIntoSink` pump.
+        // Native ByteStream fast-path: wire SinkHandle directly, skip the JS pump.
         if let readable_stream::Source::Bytes(bs_ptr) = stream.ptr {
             // SAFETY: `Source::Bytes` stores the live `*mut ByteStream` (the
             // `NewSource.context` field); the JS wrapper is rooted by

@@ -2041,12 +2041,8 @@ where
 
         assignment_result.ensure_still_alive();
 
-        // assignToStream stored the controller's encoded JSValue in
-        // `sink.source`. If the stream already finished synchronously inside
-        // the call, controller.end()/.close() detached the controller and
-        // cleared the source again (`__controllerDetached`), so it may be
-        // legitimately dead here; the has_responded()/promise-status branches
-        // below handle that state.
+        // assignToStream stored the controller in `sink.source`; a sync-finished stream's
+        // `__controllerDetached` may already have cleared it again (handled below).
 
         #[cfg(debug_assertions)]
         if resp.has_responded() {
@@ -3341,10 +3337,7 @@ where
         _resp: uws::AnyResponse,
     ) -> bool {
         ctx_log!("onWritableByteStream");
-        // SAFETY: caller upholds the fn-level contract — `this` is the live
-        // `RequestContext` user-data pointer registered with uWS. `resume()`
-        // re-enters `write_chunk`/`end_chunk` which form `&mut Self` via the
-        // SinkHandle thunk, so dispatch off the raw pointer (`borrow = ptr`).
+        // SAFETY: fn-level contract; resume() re-enters write_chunk, so dispatch off raw ptr.
         debug_assert!(unsafe { (*this).resp.is_some() });
         if unsafe { (*this).is_aborted_or_ended() } {
             return false;

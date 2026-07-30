@@ -47,12 +47,8 @@ impl<'a> RequestBodyChunk<'a> {
     }
 }
 
-/// JSSink that streams a fetch() request body into the HTTP thread's
-/// `ThreadSafeStreamBuffer`, applying chunked transfer-encoding framing when
-/// required. Request-body streaming speaks the standard
-/// `Writable::Backpressure` / `SourceHandle::ready` protocol that
-/// `readStreamIntoSink` honours: every write signals backpressure, and the
-/// HTTP-thread drain ack calls `source.ready()` to resume the upstream pump.
+/// JSSink streaming a fetch() request body into the HTTP thread's ThreadSafeStreamBuffer
+/// with chunked framing; one write per drain-ack.
 pub struct FetchRequestBodySink {
     /// Non-owning back-reference; `FetchTasklet` is kept alive by a +1
     /// intrusive ref taken in `start_request_stream` and released exactly once
@@ -63,18 +59,9 @@ pub struct FetchRequestBodySink {
     pub task: Option<BackRef<FetchTasklet>>,
     pub source: SourceHandle<FetchRequestBodySink>,
     pub high_water_mark: BlobSizeType,
-    /// Pending `flush(true)` promise for the `readDirectStream` /
-    /// `BunAsyncIterableSource` pump, which parks on this promise (not
-    /// `m_onPull`) on `Writable::Backpressure`. Resolved by `on_drain`.
+    /// Pending flush(true) promise for readDirectStream's pump (parks on this, not m_onPull).
     pub flush_promise: JSPromiseStrong,
-    /// Bytes handed to `write_request_data` since the last `on_drain` ack.
-    /// JS-thread-only accounting: the shared `stream_buffer` is drained
-    /// concurrently by the HTTP thread, so its `size()` cannot gate
-    /// backpressure without racing (the pump would never yield when the HTTP
-    /// thread keeps up). `on_drain` — dispatched from `report_drain` via a
-    /// `ConcurrentTask` — is the sole writer that resets this, so
-    /// `pending_bytes > 0` guarantees an `on_drain` is in flight to resolve
-    /// `flush_promise`.
+    /// Bytes written since last on_drain; >0 guarantees a drain ack is owed.
     pub pending_bytes: BlobSizeType,
     pub ended: bool,
     pub done: bool,
@@ -133,13 +120,7 @@ impl FetchRequestBodySink {
             None => return Writable::Done,
         };
         match result {
-            // Data was buffered for the HTTP thread. Signal backpressure on
-            // every successful write (one write per drain ack) so the event
-            // loop returns to `auto_tick()` and polls I/O between writes;
-            // batching lets the HTTP thread's `report_drain` ConcurrentTask
-            // re-arm inside `tick()` and livelock an in-process peer.
-            // `pending_bytes` remains the "drain ack owed" sentinel for
-            // `flush_from_js(wait=true)`.
+            // Report Backpressure on every nonzero write so the event loop ticks between them.
             Writable::Owned(len) | Writable::Backpressure(len) if len > 0 => {
                 self.pending_bytes = self.pending_bytes.saturating_add(len);
                 Writable::Backpressure(len)
@@ -202,11 +183,7 @@ impl FetchRequestBodySink {
         }
         self.ended = true;
         if matches!(self.source, SourceHandle::ByteStream(_)) {
-            // Native ByteStream source: no `assign_to_stream` pump promise
-            // exists to drive `write_end_request`, so mirror
-            // `on_resolve/on_reject_request_stream` here — clear `task` first,
-            // then release the `+1` via `write_end_request` (covers both
-            // success and upstream-error termination).
+            // Native ByteStream source: no pump promise, so drive write_end_request here.
             self.source.close(None);
             if let Some(task) = self.task.take() {
                 let task_ptr = task.as_ptr();
@@ -221,12 +198,7 @@ impl FetchRequestBodySink {
             }
             return bun_sys::Result::Ok(());
         }
-        // JS pump path: do NOT call `write_end_request` here — the
-        // `assign_to_stream` result (on_resolve/on_reject or the synchronous
-        // Fulfilled/Rejected/undefined branches in `start_request_stream`) is
-        // the single balancing release of the `+1` taken in
-        // `start_request_stream`. `task` stays populated so `finalize()` can
-        // release it if that handler never runs.
+        // JS pump path: the assign_to_stream result handler is the single balancing release.
         self.source.close(err);
         bun_sys::Result::Ok(())
     }
@@ -244,11 +216,7 @@ impl FetchRequestBodySink {
         }
     }
 
-    /// Called from `FetchTasklet::resume_request_data_stream` (main thread)
-    /// after the HTTP thread reports the shared stream buffer has drained.
-    /// Resolves any pending `flush(true)` promise (async-iterable pump) and
-    /// wakes the upstream source (JS controller `m_onPull` or native
-    /// `ByteStream::resume`) so the pump resumes pulling.
+    /// HTTP-thread drain ack: resolves flush_promise and wakes source.ready().
     pub fn on_drain(&mut self, global_this: &JSGlobalObject) {
         bun_core::scoped_log!(FetchRequestBodySinkLog, "onDrain");
         self.pending_bytes = 0;

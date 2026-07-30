@@ -205,7 +205,7 @@ describe("spawn stdin ReadableStream", () => {
     expect(await proc.exited).toBe(0);
   });
 
-  test.todo("ReadableStream cancellation when process exits early", async () => {
+  test("ReadableStream cancellation when process exits early", async () => {
     let cancelled = false;
     let chunksEnqueued = 0;
 
@@ -246,8 +246,10 @@ describe("spawn stdin ReadableStream", () => {
     const text = await proc.stdout.text();
     await proc.exited;
 
-    // Give some time for cancellation to happen
-    await Bun.sleep(100);
+    // Wait for the sink to propagate cancellation back to the source; poll the
+    // flag itself rather than sleeping a fixed interval.
+    const deadline = Date.now() + 5_000;
+    while (!cancelled && Date.now() < deadline) await Bun.sleep(10);
 
     expect(cancelled).toBe(true);
     expect(chunksEnqueued).toBeGreaterThanOrEqual(2);

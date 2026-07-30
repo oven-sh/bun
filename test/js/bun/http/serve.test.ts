@@ -3964,3 +3964,56 @@ it.each([
 
   expect(statusLine).toBe("HTTP/1.1 400 Bad Request");
 });
+
+// When the client drains slowly, the server-side ReadableStream's pull() must be
+// paused by backpressure from the response sink instead of being re-invoked in a
+// tight loop. pull() should run on the order of once per chunk actually sent, not
+// once per microtask while the socket is blocked.
+it("pauses a ReadableStream response's pull() while the client is not draining", async () => {
+  const chunk = Buffer.alloc(256 * 1024, 0x61);
+  const chunkCount = 16;
+  let pullCalls = 0;
+  const allEnqueued = Promise.withResolvers<void>();
+
+  using server = serve({
+    port: 0,
+    idleTimeout: 0,
+    fetch() {
+      let sent = 0;
+      return new Response(
+        new ReadableStream({
+          pull(controller) {
+            pullCalls++;
+            if (sent < chunkCount) {
+              controller.enqueue(chunk);
+              sent++;
+            }
+            if (sent === chunkCount) {
+              controller.close();
+              allEnqueued.resolve();
+            }
+          },
+        }),
+      );
+    },
+  });
+
+  const response = await fetch(server.url);
+  const reader = response.body!.getReader();
+  let received = 0;
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    received += value.byteLength;
+    // Slow consumer: yield between reads so the server's socket send buffer fills
+    // and the sink reports backpressure before the next pull().
+    await Bun.sleep(5);
+  }
+  await allEnqueued.promise;
+
+  expect(received).toBe(chunk.byteLength * chunkCount);
+  // O(chunks): at most a small constant factor over the number of chunks enqueued.
+  // Without backpressure the pull loop would free-run into the hundreds/thousands.
+  expect(pullCalls).toBeLessThanOrEqual(chunkCount * 4);
+  expect(pullCalls).toBeGreaterThanOrEqual(chunkCount);
+});

@@ -3,7 +3,7 @@ import { S3Client, s3 as defaultS3, file, randomUUIDv7 } from "bun";
 import { describe, expect, it } from "bun:test";
 import child_process from "child_process";
 import { randomUUID } from "crypto";
-import { bunEnv, bunExe, dockerExe, getSecret, isCI, isDockerEnabled, tempDir, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, dockerExe, getSecret, isASAN, isCI, isDebug, isDockerEnabled, tempDir, tempDirWithFiles } from "harness";
 import path from "path";
 const s3 = (...args) => defaultS3.file(...args);
 const S3 = (...args) => new S3Client(...args);
@@ -1853,6 +1853,88 @@ describe("s3 upload stream body error", () => {
       stdout: "iter 0 boom\niter 1 boom\niter 2 boom\niter 3 boom\niter 4 boom\ndone",
       stderr: "",
     });
+    expect(exitCode).toBe(0);
+  });
+
+  // A fetch response body is a native ByteStream; passing it to s3.write must pipe it
+  // into the S3 NetworkSink without buffering the whole object and without spinning.
+  it("uploads a fetch response body stream without buffering the whole object", async () => {
+    const fixture = `
+      const chunkSize = 64 * 1024;
+      const chunkCount = 160; // ~10 MB
+      const totalBytes = chunkSize * chunkCount;
+      let received = 0;
+      const server = Bun.serve({
+        port: 0,
+        async fetch(req) {
+          const url = new URL(req.url);
+          if (url.pathname === "/big") {
+            let sent = 0;
+            return new Response(
+              new ReadableStream({
+                type: "direct",
+                async pull(controller) {
+                  while (sent < chunkCount) {
+                    controller.write(Buffer.alloc(chunkSize, 0x42));
+                    sent++;
+                    await controller.flush();
+                  }
+                  controller.close();
+                },
+              }),
+            );
+          }
+          if (req.method === "POST" && url.search.includes("uploads")) {
+            return new Response(
+              '<?xml version="1.0"?><InitiateMultipartUploadResult><Bucket>my_bucket</Bucket><Key>obj</Key><UploadId>upload-1</UploadId></InitiateMultipartUploadResult>',
+              { headers: { "content-type": "application/xml" } },
+            );
+          }
+          if (req.method === "PUT") {
+            received += (await req.arrayBuffer()).byteLength;
+            return new Response(undefined, { status: 200, headers: { ETag: '"etag"' } });
+          }
+          if (req.method === "POST" && url.search.includes("uploadId")) {
+            await req.arrayBuffer();
+            return new Response(
+              '<?xml version="1.0"?><CompleteMultipartUploadResult><ETag>"etag"</ETag></CompleteMultipartUploadResult>',
+              { headers: { "content-type": "application/xml" } },
+            );
+          }
+          return new Response(undefined, { status: 200, headers: { ETag: '"etag"' } });
+        },
+      });
+      const client = new Bun.S3Client({
+        accessKeyId: "test",
+        secretAccessKey: "test",
+        region: "eu-west-3",
+        bucket: "my_bucket",
+        endpoint: \`http://127.0.0.1:\${server.port}\`,
+        virtualHostedStyle: false,
+      });
+      Bun.gc(true);
+      const rssBefore = process.memoryUsage.rss();
+      const upstream = await fetch(\`http://127.0.0.1:\${server.port}/big\`);
+      await client.write("obj", upstream.body);
+      Bun.gc(true);
+      const rssAfter = process.memoryUsage.rss();
+      server.stop(true);
+      console.log(JSON.stringify({ received, deltaMB: (rssAfter - rssBefore) / 1024 / 1024, totalBytes }));
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    const { received, deltaMB, totalBytes } = JSON.parse(stdout.trim());
+    expect(received).toBe(totalBytes);
+    // The multipart uploader may hold up to one part (~5 MB) plus socket buffers, but
+    // never the full ~10 MB payload at once. ASAN quarantine / debug allocator overhead
+    // inflate RSS, so the bound is branched.
+    expect(deltaMB).toBeLessThan(isASAN || isDebug ? 96 : 32);
     expect(exitCode).toBe(0);
   });
 });

@@ -2616,6 +2616,72 @@ describe("fetch should allow duplex", () => {
       await response.text();
     }).not.toThrow();
   });
+
+  // Piping the response body of one fetch directly into the request body of another
+  // (native ByteStream source → native FetchRequestBody sink) must move bytes through
+  // without buffering the whole payload in memory and without a JS round-trip per chunk.
+  it("streams an upstream fetch response body as the request body with bounded memory", async () => {
+    const chunkSize = 64 * 1024;
+    const chunkCount = 160; // ~10 MB total
+    const totalBytes = chunkSize * chunkCount;
+
+    using source = Bun.serve({
+      port: 0,
+      fetch() {
+        let sent = 0;
+        return new Response(
+          new ReadableStream({
+            type: "direct",
+            async pull(controller) {
+              while (sent < chunkCount) {
+                controller.write(Buffer.alloc(chunkSize, (sent + 1) & 0xff));
+                sent++;
+                await controller.flush();
+              }
+              controller.close();
+            },
+          }),
+          { headers: { "content-type": "application/octet-stream" } },
+        );
+      },
+    });
+    using echo = Bun.serve({
+      port: 0,
+      async fetch(req) {
+        return new Response(req.body);
+      },
+    });
+
+    Bun.gc(true);
+    const rssBefore = process.memoryUsage.rss();
+
+    const upstream = await fetch(source.url);
+    const response = await fetch(echo.url, {
+      method: "POST",
+      body: upstream.body,
+      duplex: "half",
+    });
+    const echoed = new Uint8Array(await response.arrayBuffer());
+
+    Bun.gc(true);
+    const rssAfter = process.memoryUsage.rss();
+
+    expect(echoed.length).toBe(totalBytes);
+    // Verify every chunk's bytes were delivered unchanged and in order.
+    let ok = true;
+    for (let i = 0; i < chunkCount && ok; i++) {
+      const expected = (i + 1) & 0xff;
+      const base = i * chunkSize;
+      if (echoed[base] !== expected || echoed[base + chunkSize - 1] !== expected) ok = false;
+    }
+    expect(ok).toBe(true);
+
+    // Only the final echoed buffer (~10 MB) plus transient socket buffers should be
+    // retained; an unbounded pump would retain ≥2x the payload. ASAN quarantine and
+    // debug allocator overhead inflate RSS, so the threshold is branched accordingly.
+    const deltaMB = (rssAfter - rssBefore) / 1024 / 1024;
+    expect(deltaMB).toBeLessThan(isASAN || isDebug ? 96 : 32);
+  });
 });
 
 it("should allow to follow redirect if connection is closed, abort should work even if the socket was closed before the redirect", async () => {

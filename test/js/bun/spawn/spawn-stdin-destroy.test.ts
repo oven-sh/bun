@@ -15,8 +15,8 @@ test("stdin destroy after exit crash", async () => {
     // The child throws on startup, so by the time we write the stdin pipe is
     // already closed; write() now throws ERR_STREAM_WRITE_AFTER_END instead of
     // silently dropping the data. The assertion below is that child.exited
-    // resolves (the original bug rejected it with code "TODO") and nothing
-    // crashes under GC.
+    // resolves cleanly and nothing crashes under GC (see the original bug note
+    // above the Promise.all).
     try {
       await child.stdin.write("dylan\n");
       await child.stdin.write("999\n");

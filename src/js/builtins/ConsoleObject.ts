@@ -171,8 +171,8 @@ export function bindNativeConsoleMethods(console: typeof globalThis.console) {
     },
     assert(expression, ...args) {
       if (!expression) {
-        if (args.length === 0) this.warn("Assertion failed");
-        else this.warn.$apply(this, args);
+        args[0] = `Assertion failed${args.length === 0 ? "" : `: ${args[0]}`}`;
+        this.warn.$apply(this, args);
       }
     },
     trace: function trace(...args) {
@@ -217,8 +217,9 @@ export function bindNativeConsoleMethods(console: typeof globalThis.console) {
     },
   };
 
+  const FunctionBind = Function.prototype.bind;
   for (const key in methods) {
-    const fn = methods[key];
+    const fn = FunctionBind.$call(methods[key], console);
     $Object.$defineProperty(fn, "name", { value: key, configurable: true });
     console[key] = fn;
   }

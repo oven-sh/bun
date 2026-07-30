@@ -54,6 +54,7 @@ test("console.count/table/group/time*/trace/assert route through this.log/warn/e
   ]);
   expect(captured[0]).toBe("log:cc: 1");
   expect(captured[5].startsWith("error:Trace")).toBe(true);
+  expect(captured[6]).toBe("warn:Assertion failed: as");
   expect(exitCode).toBe(0);
 });
 

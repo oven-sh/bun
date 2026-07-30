@@ -2392,7 +2392,7 @@ declare module "bun" {
        *
        * - `"react"`: classic runtime. Emits `React.createElement(...)` (or the configured {@link jsxFactory}).
        * - `"react-jsx"`: automatic runtime, production. Emits `jsx`/`jsxs` imported from `<jsxImportSource>/jsx-runtime`.
-       * - `"react-jsxdev"`: automatic runtime, development. Emits `jsxDEV` imported from `<jsxImportSource>/jsx-dev-runtime`, including source location and `__self` for React DevTools.
+       * - `"react-jsxdev"`: automatic runtime, development. Emits `jsxDEV` imported from `<jsxImportSource>/jsx-dev-runtime` with the extra arguments React uses for development-mode checks.
        * - `"preserve"`: not supported yet; currently falls back to the automatic runtime.
        *
        * Prior to Bun 1.4, `"react-jsx"` emitted the development runtime. It now matches TypeScript and esbuild.
@@ -2941,8 +2941,8 @@ declare module "bun" {
        */
       sideEffects?: boolean;
       /**
-       * Use the development automatic runtime: import `jsxDEV` from `<importSource>/jsx-dev-runtime` and
-       * pass source location / `__self` for React DevTools. When `false`, import `jsx`/`jsxs` from
+       * Use the development automatic runtime: import `jsxDEV` from `<importSource>/jsx-dev-runtime` with the
+       * extra arguments React uses for development-mode checks. When `false`, import `jsx`/`jsxs` from
        * `<importSource>/jsx-runtime`. Only used when `runtime` is `"automatic"`.
        *
        * When not set, derived from `NODE_ENV` and tsconfig `compilerOptions.jsx`.

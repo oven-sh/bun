@@ -41,8 +41,8 @@ How JSX constructs are transformed into vanilla JavaScript internally. The follo
 <Note>
   `"react-jsx"` selects the production automatic runtime (`jsx`/`jsxs` from `<source>/jsx-runtime`) and `"react-jsxdev"`
   selects the development runtime (`jsxDEV` from `<source>/jsx-dev-runtime`), matching TypeScript and esbuild. If you
-  rely on the extra debug information `jsxDEV` provides (component source locations for React DevTools, key warnings),
-  use `"react-jsxdev"` during development.
+  rely on React's development-mode checks that `jsxDEV` enables (for example, missing `key` warnings), use
+  `"react-jsxdev"` during development.
 
 Prior to Bun 1.4, `"react-jsx"` behaved like `"react-jsxdev"` and emitted the development runtime.
 

@@ -3,8 +3,9 @@ use core::cell::Cell;
 use bun_collections::VecExt;
 use bun_jsc::strong::Optional as StrongOptional;
 use bun_jsc::{self as jsc, JSGlobalObject, JSValue, JsCell};
+use bun_sys::Error as SysError;
 
-use crate::webcore::Pipe;
+use crate::webcore::SinkHandle;
 use crate::webcore::streams::{self, BufferAction, IntoArray};
 use crate::webcore::{blob, readable_stream};
 
@@ -32,7 +33,13 @@ pub struct ByteStream {
     pub pending_value: JsCell<StrongOptional>, // jsc.Strong.Optional
     pub offset: Cell<usize>,
     pub high_water_mark: blob::SizeType,
-    pub pipe: JsCell<Pipe>,
+    /// Native sink this stream is piped into (replaces the fn-ptr `Pipe`).
+    /// `on_data` dispatches through it and honors the returned `Writable`.
+    pub sink: JsCell<SinkHandle>,
+    /// Set when `sink.write()` returns `Writable::Backpressure`; while set,
+    /// `on_data` buffers instead of writing. Cleared by [`Self::resume`]
+    /// (driven from the sink's `ready()` / `SourceHandle::ready`).
+    pub sink_paused: Cell<bool>,
     pub size_hint: Cell<blob::SizeType>,
     pub buffer_action: JsCell<Option<BufferAction>>,
 }
@@ -51,7 +58,8 @@ impl Default for ByteStream {
             pending_value: JsCell::new(StrongOptional::empty()),
             offset: Cell::new(0),
             high_water_mark: 0,
-            pipe: JsCell::new(Pipe::default()),
+            sink: JsCell::new(SinkHandle::None),
+            sink_paused: Cell::new(false),
             size_hint: Cell::new(0),
             buffer_action: JsCell::new(None),
         }
@@ -152,10 +160,77 @@ impl ByteStream {
     }
 
     pub(crate) fn unpipe_without_deref(&self) {
-        self.pipe.with_mut(|p| {
-            p.ctx = None;
-            p.on_pipe = None;
-        });
+        self.sink.set(SinkHandle::None);
+        self.sink_paused.set(false);
+    }
+
+    /// Called from the attached sink's drain notification
+    /// (`SourceHandle::ready`) once it can accept more bytes. Unpauses, pushes
+    /// any buffered bytes through `sink.write()`, re-pauses on
+    /// `Backpressure`, and — if the last chunk has already arrived — ends and
+    /// detaches the sink.
+    pub fn resume(&self) {
+        if !self.sink_paused.get() {
+            return;
+        }
+        self.sink_paused.set(false);
+
+        let sink = *self.sink.get();
+        if sink.is_none() {
+            return;
+        }
+
+        if !self.buffer.get().is_empty() {
+            let buffered = self.buffer.replace(Vec::new());
+            self.offset.set(0);
+            let result = if self.has_received_last_chunk.get() {
+                streams::Result::OwnedAndDone(buffered)
+            } else {
+                streams::Result::Owned(buffered)
+            };
+            match sink.write(&result) {
+                streams::Writable::Backpressure(_) => {
+                    self.sink_paused.set(true);
+                    return;
+                }
+                streams::Writable::Err(e) => {
+                    self.sink.set(SinkHandle::None);
+                    sink.end(Some(streams::StreamError::Error(e)));
+                    return;
+                }
+                streams::Writable::Done => {
+                    self.sink.set(SinkHandle::None);
+                    sink.end(None);
+                    return;
+                }
+                _ => {}
+            }
+        }
+
+        self.signal_drained();
+
+        if self.has_received_last_chunk.get() && self.sink.get().is_some() {
+            self.sink.set(SinkHandle::None);
+            sink.end(None);
+        }
+    }
+
+    /// Called from the attached sink's close notification
+    /// (`SourceHandle::close`) when the sink is torn down before the source
+    /// finished. Detaches the sink and drives the parent `NewSource` cancel
+    /// path so the upstream producer stops.
+    pub fn cancel_from_sink(&self, _err: Option<SysError>) {
+        self.sink.set(SinkHandle::None);
+        self.sink_paused.set(false);
+        if self.done.get() {
+            return;
+        }
+        self.has_received_last_chunk.set(true);
+        self.on_cancel();
+        let source = self.parent_const();
+        if let Some(handler) = source.cancel_handler.take() {
+            handler(source.cancel_ctx.get());
+        }
     }
 
     #[inline]
@@ -183,16 +258,48 @@ impl ByteStream {
         );
         self.has_received_last_chunk.set(stream.is_done());
 
-        // R-2: snapshot `pipe` (two `Option<Copy>` fields) — `on_pipe` re-enters
-        // its handler, which may call back into `ByteStream` (e.g. `drain`); no
+        // R-2: snapshot `sink` (Copy) — `write`/`end` re-enter their target,
+        // which may call back into `ByteStream` (e.g. `drain`, `resume`); no
         // `JsCell` borrow may be live across that call.
-        let (pipe_ctx, pipe_fn) = {
-            let p = self.pipe.get();
-            (p.ctx, p.on_pipe)
-        };
-        if let Some(ctx) = pipe_ctx {
-            self.signal_drained();
-            (pipe_fn.unwrap())(ctx, stream);
+        let sink = *self.sink.get();
+        if sink.is_some() {
+            if self.sink_paused.get() {
+                bun_output::scoped_log!(ByteStream, "ByteStream.onData sink paused → buffer");
+                self.append(stream, 0)
+                    .unwrap_or_else(|_| panic!("Out of memory while copying request body"));
+                return Ok(());
+            }
+
+            let is_done = stream.is_done();
+            match sink.write(&stream) {
+                streams::Writable::Backpressure(_) => {
+                    self.sink_paused.set(true);
+                }
+                streams::Writable::Err(e) => {
+                    self.sink.set(SinkHandle::None);
+                    self.sink_paused.set(false);
+                    sink.end(Some(streams::StreamError::Error(e)));
+                    return Ok(());
+                }
+                streams::Writable::Done => {
+                    self.sink.set(SinkHandle::None);
+                    self.sink_paused.set(false);
+                    sink.end(None);
+                    return Ok(());
+                }
+                _ => {
+                    self.signal_drained();
+                }
+            }
+
+            if is_done && !self.sink_paused.get() && self.sink.get().is_some() {
+                self.sink.set(SinkHandle::None);
+                let err = match stream {
+                    streams::Result::Err(e) => Some(e),
+                    _ => None,
+                };
+                sink.end(err);
+            }
             return Ok(());
         }
 

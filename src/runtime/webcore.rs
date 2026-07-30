@@ -385,6 +385,113 @@ impl<T: PipeHandler> Wrap<T> {
     }
 }
 
+// ─── SinkHandle ──────────────────────────────────────────────────────────────
+// Tagged enum replacing the `Pipe` fn-ptr vtable. Held by a `ByteStream` to
+// point at its native sink so bytes flow without a JS round-trip and
+// `ByteStream::on_data` can honor `Writable::Backpressure`. Each `Http*`
+// variant stores monomorphized `write`/`end` thunks captured at hook-in time
+// because `RequestContext` carries four generic params (incl. `ThisServer` /
+// `DEBUG_MODE`) and cannot be named concretely here.
+
+pub type SinkWriteFn = fn(ctx: *mut core::ffi::c_void, data: &streams::Result) -> streams::Writable;
+pub type SinkEndFn = fn(ctx: *mut core::ffi::c_void, err: Option<&streams::StreamError>);
+
+#[derive(Copy, Clone, Default)]
+pub enum SinkHandle {
+    #[default]
+    None,
+    HttpResponse {
+        ctx: *mut core::ffi::c_void,
+        write: SinkWriteFn,
+        end: SinkEndFn,
+    },
+    HttpsResponse {
+        ctx: *mut core::ffi::c_void,
+        write: SinkWriteFn,
+        end: SinkEndFn,
+    },
+    H3Response {
+        ctx: *mut core::ffi::c_void,
+        write: SinkWriteFn,
+        end: SinkEndFn,
+    },
+    FetchRequestBody(*mut fetch::FetchRequestBodySink),
+    S3Upload(*mut streams::NetworkSink),
+    FileSink(*mut file_sink::FileSink),
+    ValueBufferer(*mut core::ffi::c_void, SinkWriteFn),
+}
+
+impl SinkHandle {
+    #[inline]
+    pub fn is_none(&self) -> bool {
+        matches!(self, SinkHandle::None)
+    }
+
+    #[inline]
+    pub fn is_some(&self) -> bool {
+        !self.is_none()
+    }
+
+    /// Dispatch a chunk to the attached sink. Returns the sink's own
+    /// `Writable` status so the source can pause on `Backpressure` or detach
+    /// on `Done`/`Err`.
+    ///
+    /// SAFETY (invariant): every non-`None` variant's pointee is kept alive by
+    /// the hook-in site (a `+1` ref / `Strong` / `NonNull` back-reference held
+    /// for at least as long as this handle is installed on the `ByteStream`).
+    pub fn write(&self, data: &streams::Result) -> streams::Writable {
+        match *self {
+            SinkHandle::None => streams::Writable::Done,
+            SinkHandle::HttpResponse { ctx, write, .. }
+            | SinkHandle::HttpsResponse { ctx, write, .. }
+            | SinkHandle::H3Response { ctx, write, .. } => write(ctx, data),
+            // SAFETY: see fn-level invariant — pointee outlives the handle.
+            SinkHandle::FetchRequestBody(ptr) => unsafe { (*ptr).write(data) },
+            // SAFETY: see fn-level invariant.
+            SinkHandle::S3Upload(ptr) => unsafe { (*ptr).write(data) },
+            // SAFETY: see fn-level invariant.
+            SinkHandle::FileSink(ptr) => unsafe { (*ptr).write(data) },
+            SinkHandle::ValueBufferer(ctx, write) => write(ctx, data),
+        }
+    }
+
+    /// Signal end-of-stream (or terminal error) to the attached sink.
+    ///
+    /// SAFETY: same pointee-liveness invariant as [`Self::write`].
+    pub fn end(&self, err: Option<streams::StreamError>) {
+        match *self {
+            SinkHandle::None => {}
+            SinkHandle::HttpResponse { ctx, end, .. }
+            | SinkHandle::HttpsResponse { ctx, end, .. }
+            | SinkHandle::H3Response { ctx, end, .. } => end(ctx, err.as_ref()),
+            // SAFETY: see fn-level invariant — pointee outlives the handle.
+            SinkHandle::FetchRequestBody(ptr) => {
+                let _ = unsafe { (*ptr).end(Self::to_sys_error(err)) };
+            }
+            // SAFETY: see fn-level invariant.
+            SinkHandle::S3Upload(ptr) => {
+                let _ = unsafe { (*ptr).end(Self::to_sys_error(err)) };
+            }
+            // SAFETY: see fn-level invariant.
+            SinkHandle::FileSink(ptr) => {
+                let _ = unsafe { (*ptr).end(Self::to_sys_error(err)) };
+            }
+            // `ValueBufferer`'s write thunk already observes the terminal
+            // `StreamResult` (Done/Err) and fires its completion callback;
+            // there is no separate `end` to drive.
+            SinkHandle::ValueBufferer(_, _) => {}
+        }
+    }
+
+    #[inline]
+    fn to_sys_error(err: Option<streams::StreamError>) -> Option<bun_sys::Error> {
+        match err {
+            Some(streams::StreamError::Error(e)) => Some(e),
+            _ => None,
+        }
+    }
+}
+
 pub enum DrainResult {
     Owned { list: Vec<u8>, size_hint: usize },
     EstimatedSize(usize),

@@ -4341,9 +4341,7 @@ pub(crate) extern "C" fn Blob__setAsFile(this: &mut Blob, path_str: &mut BunStri
             }
         }
     } else if !path_str.is_empty() {
-        // A zero-byte `Blob` has no store; create an empty `Bytes` store to carry
-        // the name so `get_file_name()` (and thus `File.prototype.name`) works.
-        // Same shape as the `new File([], name)` path in `jsdom_file_construct`.
+        // Zero-byte Blob has no store; create one to carry the name.
         this.store.set(Some(StoreRef::from(Store::new(Store {
             data: store::Data::Bytes(store::Bytes::init_empty_with_name(
                 path_str.to_owned_slice().into_boxed_slice(),

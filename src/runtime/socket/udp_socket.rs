@@ -506,7 +506,7 @@ pub mod js {
     bun_jsc::codegen_cached_accessors!(
         "UDPSocket";
         on_data, on_drain, on_error,
-        address, remoteAddress
+        address, remoteAddress, binaryType
     );
 }
 
@@ -1744,9 +1744,61 @@ impl UDPSocket {
         let Some(this_value) = this.this_value.get().try_get() else {
             return Ok(JSValue::UNDEFINED);
         };
-        let config = UDPSocketConfig::from_js(global_this, options, this_value)?;
 
-        let _ = this.config.replace(config);
+        if options.is_empty_or_undefined_or_null() || !options.is_object() {
+            return Err(global_this.throw_invalid_arguments(format_args!("Expected an object")));
+        }
+
+        // reload() is a handler hot-swap, not a rebind: parse only the handler
+        // set and (optionally) binaryType, and merge into the live config.
+        // hostname/port/flags/fd/connect are bind-time options and are ignored
+        // here so unspecified options keep their creation values.
+        let mut new_binary_type: Option<BinaryType> = None;
+
+        if let Some(socket) = options.get_truthy(global_this, "socket")? {
+            if !socket.is_object() {
+                return Err(global_this
+                    .throw_invalid_arguments(format_args!("Expected \"socket\" to be an object")));
+            }
+
+            if let Some(value) = options.get_truthy(global_this, "binaryType")? {
+                if !value.is_string() {
+                    return Err(global_this.throw_invalid_arguments(format_args!(
+                        "Expected \"socket.binaryType\" to be a string"
+                    )));
+                }
+                new_binary_type = Some(match BinaryType::from_js_value(global_this, value)? {
+                    Some(bt) => bt,
+                    None => {
+                        return Err(global_this.throw_invalid_arguments(format_args!(
+                            "Expected \"socket.binaryType\" to be 'arraybuffer', 'uint8array', or 'buffer'"
+                        )));
+                    }
+                });
+            }
+
+            macro_rules! handler {
+                ($name:literal, $set:path) => {
+                    if let Some(value) = socket.get_truthy(global_this, $name)? {
+                        if !value.is_cell() || !value.is_callable() {
+                            return Err(global_this.throw_invalid_arguments(format_args!(
+                                concat!("Expected \"socket.", $name, "\" to be a function")
+                            )));
+                        }
+                        let callback = value.with_async_context_if_needed(global_this);
+                        $set(this_value, global_this, callback);
+                    }
+                };
+            }
+            handler!("data", js::on_data_set_cached);
+            handler!("drain", js::on_drain_set_cached);
+            handler!("error", js::on_error_set_cached);
+        }
+
+        if let Some(bt) = new_binary_type {
+            this.config.with_mut(|c| c.binary_type = bt);
+            js::binary_type_set_cached(this_value, global_this, JSValue::ZERO);
+        }
 
         Ok(JSValue::UNDEFINED)
     }

@@ -583,6 +583,88 @@ describe("udpSocket()", () => {
       30_000,
     );
   });
+
+  // reload() is a handler hot-swap: options not explicitly passed must keep
+  // their creation values. Previously reload() built a fresh config over
+  // defaults and replaced the live one wholesale, so a handler-only reload
+  // reset binaryType to 'buffer' and hostname to '0.0.0.0'.
+  describe("reload()", () => {
+    test("preserves binaryType and hostname when only handlers are reloaded", async () => {
+      let pre = Promise.withResolvers<string>();
+      let post = Promise.withResolvers<string>();
+      await using server = await udpSocket({
+        hostname: "127.0.0.1",
+        port: 0,
+        binaryType: "arraybuffer",
+        socket: { data: (_sk, b) => pre.resolve(b.constructor.name) },
+      });
+      // Read once before reload so the cached-getter path is exercised too.
+      const binaryTypeBefore = server.binaryType;
+      const hostnameBefore = server.hostname;
+
+      await using client = await udpSocket({ hostname: "127.0.0.1", port: 0 });
+      client.send("1", server.port, "127.0.0.1");
+      const preName = await pre.promise;
+
+      server.reload({ socket: { data: (_sk, b) => post.resolve(b.constructor.name) } });
+      client.send("2", server.port, "127.0.0.1");
+      const postName = await post.promise;
+
+      // A second socket whose getters are first read AFTER reload: previously
+      // these reported the reset defaults ('buffer', '0.0.0.0').
+      await using fresh = await udpSocket({
+        hostname: "127.0.0.1",
+        port: 0,
+        binaryType: "arraybuffer",
+        socket: { data() {} },
+      });
+      fresh.reload({ socket: { data() {} } });
+
+      expect({
+        preName,
+        postName,
+        binaryTypeBefore,
+        hostnameBefore,
+        binaryTypeAfter: server.binaryType,
+        hostnameAfter: server.hostname,
+        freshBinaryType: fresh.binaryType,
+        freshHostname: fresh.hostname,
+        freshBound: fresh.address.address,
+      }).toEqual({
+        preName: "ArrayBuffer",
+        postName: "ArrayBuffer",
+        binaryTypeBefore: "arraybuffer",
+        hostnameBefore: "127.0.0.1",
+        binaryTypeAfter: "arraybuffer",
+        hostnameAfter: "127.0.0.1",
+        freshBinaryType: "arraybuffer",
+        freshHostname: "127.0.0.1",
+        freshBound: "127.0.0.1",
+      });
+    });
+
+    test("updates binaryType when explicitly passed and invalidates the cached getter", async () => {
+      let got = Promise.withResolvers<string>();
+      await using server = await udpSocket({
+        hostname: "127.0.0.1",
+        port: 0,
+        binaryType: "arraybuffer",
+        socket: { data() {} },
+      });
+      expect(server.binaryType).toBe("arraybuffer");
+
+      server.reload({
+        binaryType: "uint8array",
+        socket: { data: (_sk, b) => got.resolve(b.constructor.name) },
+      });
+      // The getter is `cache: true`; reload must invalidate it when the value changes.
+      expect(server.binaryType).toBe("uint8array");
+
+      await using client = await udpSocket({ hostname: "127.0.0.1", port: 0 });
+      client.send("x", server.port, "127.0.0.1");
+      expect(await got.promise).toBe("Uint8Array");
+    });
+  });
 });
 
 // us_udp_socket_send batches at most ~204 messages per sendmmsg; a >batch-size

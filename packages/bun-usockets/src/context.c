@@ -94,9 +94,17 @@ void us_socket_group_close_all_ex(struct us_socket_group_t *group, int also_list
         c = nextC;
     }
 
-    struct us_socket_t *s = group->head_sockets;
-    while (s) {
-        struct us_socket_t *nextS = s->next;
+    /* Drive the walk off group->iterator rather than a cached s->next: each
+     * us_socket_close dispatches a JS close/handshake handler that may close a
+     * *sibling*, and the sibling is what a plain cached `next` would point at.
+     * us_internal_socket_group_unlink_socket advances group->iterator past any
+     * socket it unlinks, so parking the next pointer there lets a handler free
+     * it without leaving us a dangling step (same pattern as the timeout sweep
+     * in loop.c). */
+    group->iterator = group->head_sockets;
+    while (group->iterator) {
+        struct us_socket_t *s = group->iterator;
+        group->iterator = s->next;
         if (us_internal_poll_type(&s->p) & POLL_TYPE_SEMI_SOCKET) {
             /* In-flight connect — close_raw skips dispatch for SEMI_SOCKET
              * (on_close without on_open is wrong), so the Zig wrapper's
@@ -112,8 +120,8 @@ void us_socket_group_close_all_ex(struct us_socket_group_t *group, int also_list
         } else {
             us_socket_close(s, LIBUS_SOCKET_CLOSE_CODE_CLEAN_SHUTDOWN, 0);
         }
-        s = nextS;
     }
+    group->iterator = 0;
 
     /* TLS sockets may have *deferred* the close above: us_internal_ssl_close
      * with code==0 sends close_notify and, on WANT_READ, leaves the socket

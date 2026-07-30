@@ -103,6 +103,11 @@ AbortSignal::AbortSignal(ScriptExecutionContext* context, Aborted aborted, JSC::
 
 AbortSignal::~AbortSignal()
 {
+    // This dependent is going away; release the observer count taken on each
+    // source by addDependentSignal().
+    for (Ref source : m_sourceSignals)
+        source->m_timeoutObserverCount.fetch_sub(1, std::memory_order_relaxed);
+
     // Invalidate WeakPtrs to this signal before our members (notably
     // m_algorithms) are destroyed. A listener registered on this signal
     // with { signal: this } stores a WeakPtr<AbortSignal> back to us on its
@@ -149,6 +154,7 @@ void AbortSignal::addSourceSignal(AbortSignal& signal)
 void AbortSignal::addDependentSignal(AbortSignal& signal)
 {
     m_dependentSignals.add(signal);
+    m_timeoutObserverCount.fetch_add(1, std::memory_order_relaxed);
 }
 
 void AbortSignal::cancelTimer()
@@ -293,21 +299,23 @@ void AbortSignal::signalFollow(AbortSignal& signal)
 
 void AbortSignal::eventListenersDidChange()
 {
+    bool hadListeners = hasAbortEventListener();
     bool hasListeners = hasEventListeners(eventNames().abortEvent) or !m_native_callbacks.isEmpty();
     setHasAbortEventListener(hasListeners);
+    if (hasListeners != hadListeners) {
+        if (hasListeners)
+            m_timeoutObserverCount.fetch_add(1, std::memory_order_relaxed);
+        else
+            m_timeoutObserverCount.fetch_sub(1, std::memory_order_relaxed);
+    }
 
     // When a timeout signal loses all observers there is nothing left to
     // notify when the timer fires, so cancel it eagerly.
     // JSAbortSignalOwner::isReachableFromOpaqueRoots then no longer keeps the
     // wrapper alive and ~AbortSignal() runs on collection; this just frees the
     // native timer sooner.
-    if (!hasListeners && m_timeout && !aborted()
-        && m_algorithms.isEmpty() && !hasPendingActivity()
-        && m_dependentSignals.isEmptyIgnoringNullReferences()) {
-        Locker locker { m_abortAlgorithmsLock };
-        if (m_abortAlgorithms.isEmpty())
-            cancelTimer();
-    }
+    if (m_timeout && !aborted() && !hasTimeoutObserver())
+        cancelTimer();
 }
 
 uint32_t AbortSignal::addAbortAlgorithmToSignal(AbortSignal& signal, Ref<AbortAlgorithm>&& algorithm)
@@ -320,7 +328,7 @@ uint32_t AbortSignal::addAbortAlgorithmToSignal(AbortSignal& signal, Ref<AbortAl
     auto identifier = ++signal.m_algorithmIdentifier;
     Locker locker { signal.m_abortAlgorithmsLock };
     signal.m_abortAlgorithms.append(std::make_pair(identifier, WTF::move(algorithm)));
-    signal.m_algorithmCount.fetch_add(1, std::memory_order_relaxed);
+    signal.m_timeoutObserverCount.fetch_add(1, std::memory_order_relaxed);
     return identifier;
 }
 
@@ -330,13 +338,13 @@ void AbortSignal::removeAbortAlgorithmFromSignal(AbortSignal& signal, uint32_t a
     if (signal.m_abortAlgorithms.removeFirstMatching([algorithmIdentifier](auto& pair) {
             return pair.first == algorithmIdentifier;
         }))
-        signal.m_algorithmCount.fetch_sub(1, std::memory_order_relaxed);
+        signal.m_timeoutObserverCount.fetch_sub(1, std::memory_order_relaxed);
 }
 
 uint32_t AbortSignal::addAlgorithm(Algorithm&& algorithm)
 {
     m_algorithms.append(std::make_pair(++m_algorithmIdentifier, WTF::move(algorithm)));
-    m_algorithmCount.fetch_add(1, std::memory_order_relaxed);
+    m_timeoutObserverCount.fetch_add(1, std::memory_order_relaxed);
     return m_algorithmIdentifier;
 }
 
@@ -345,7 +353,7 @@ void AbortSignal::removeAlgorithm(uint32_t algorithmIdentifier)
     if (m_algorithms.removeFirstMatching([algorithmIdentifier](auto& pair) {
             return pair.first == algorithmIdentifier;
         }))
-        m_algorithmCount.fetch_sub(1, std::memory_order_relaxed);
+        m_timeoutObserverCount.fetch_sub(1, std::memory_order_relaxed);
 }
 
 void AbortSignal::throwIfAborted(JSC::JSGlobalObject& lexicalGlobalObject)

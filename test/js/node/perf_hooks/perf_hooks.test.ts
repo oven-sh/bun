@@ -169,6 +169,45 @@ test("timerify and AsyncResource.bind survive Object.prototype.get pollution", a
   expect(exitCode).toBe(0);
 });
 
+// Node defines these on Performance.prototype from process start. Bun used to
+// install them as a side-effect of the first `require("node:perf_hooks")`, so
+// `performance.eventLoopUtilization()` on a pristine global threw.
+test("eventLoopUtilization/timerify/nodeTiming exist on globalThis.performance without importing perf_hooks", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const p = globalThis.performance;
+       const before = {
+         elu: typeof p.eventLoopUtilization,
+         timerify: typeof p.timerify,
+         nodeTiming: typeof p.nodeTiming,
+       };
+       const desc = Object.getOwnPropertyDescriptor(Performance.prototype, "eventLoopUtilization");
+       const elu = p.eventLoopUtilization();
+       const ph = require("node:perf_hooks");
+       console.log(JSON.stringify({
+         before,
+         desc: { writable: desc.writable, enumerable: desc.enumerable, configurable: desc.configurable, hasValue: typeof desc.value },
+         eluKeys: Object.keys(elu).sort(),
+         same: ph.performance === p,
+       }));`,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(JSON.parse(stdout)).toEqual({
+    before: { elu: "function", timerify: "function", nodeTiming: "object" },
+    desc: { writable: true, enumerable: false, configurable: true, hasValue: "function" },
+    eluKeys: ["active", "idle", "utilization"],
+    same: true,
+  });
+  expect(exitCode).toBe(0);
+});
+
 test("net entries are instanceof PerformanceEntry", async () => {
   const { promise, resolve } = Promise.withResolvers();
   const observer = new PerformanceObserver(list => resolve(list.getEntries()[0]));

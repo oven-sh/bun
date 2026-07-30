@@ -189,16 +189,19 @@ describe("--print for cjs/esm", () => {
     expect(exitCode).toBe(1);
   });
 
-  test("-p on a fulfilled promise still prints the value", async () => {
-    const { stdout, stderr, exitCode } = Bun.spawnSync({
-      cmd: [bunExe(), "-p", "Promise.resolve(41)"],
-      env: bunEnv,
-      stderr: "pipe",
-    });
-    expect(stderr.toString("utf8")).toBe("");
-    expect(stdout.toString("utf8")).toBe("41\n");
-    expect(exitCode).toBe(0);
-  });
+  test.each(["Promise.resolve(41)", "new Promise(res => setTimeout(() => res(41), 1))"])(
+    "-p on a fulfilled promise still prints the value: %s",
+    async expr => {
+      const { stdout, stderr, exitCode } = Bun.spawnSync({
+        cmd: [bunExe(), "-p", expr],
+        env: bunEnv,
+        stderr: "pipe",
+      });
+      expect(stderr.toString("utf8")).toBe("");
+      expect(stdout.toString("utf8")).toBe("41\n");
+      expect(exitCode).toBe(0);
+    },
+  );
 });
 
 function group(run: (code: string) => SyncSubprocess<"pipe", "inherit">) {

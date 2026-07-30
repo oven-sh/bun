@@ -39,32 +39,17 @@ const testDir = tempDirWithFiles("watch", {
 });
 
 describe("fs.watch", () => {
-  test("non-persistent watcher should not block the event loop", done => {
-    try {
-      // https://github.com/joyent/node/issues/2293 - non-persistent watcher should not block the event loop
-      bunRun(path.join(import.meta.dir, "fixtures", "persistent.js"));
-      done();
-    } catch (e: any) {
-      done(e);
-    }
+  test.concurrent("non-persistent watcher should not block the event loop", async () => {
+    // https://github.com/joyent/node/issues/2293 - non-persistent watcher should not block the event loop
+    expect(await bunRun(path.join(import.meta.dir, "fixtures", "persistent.js"))).toSpawn();
   });
 
-  test("watcher should close and not block the event loop", done => {
-    try {
-      bunRun(path.join(import.meta.dir, "fixtures", "close.js"));
-      done();
-    } catch (e: any) {
-      done(e);
-    }
+  test.concurrent("watcher should close and not block the event loop", async () => {
+    expect(await bunRun(path.join(import.meta.dir, "fixtures", "close.js"))).toSpawn();
   });
 
-  test("unref watcher should not block the event loop", done => {
-    try {
-      bunRun(path.join(import.meta.dir, "fixtures", "unref.js"));
-      done();
-    } catch (e: any) {
-      done(e);
-    }
+  test.concurrent("unref watcher should not block the event loop", async () => {
+    expect(await bunRun(path.join(import.meta.dir, "fixtures", "unref.js"))).toSpawn();
   });
 
   test("should work with relative files", done => {

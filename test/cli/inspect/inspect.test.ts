@@ -603,3 +603,69 @@ test("error.stack doesnt lose frames", () => {
   // We allow it to differ by the existence of <anonymous> as a string. But that's it.
   expect(no.split("\n").slice(0, -2).join("\n").trim()).toBe(yes.split("\n").slice(0, -2).join("\n").trim());
 });
+
+test("--inspect inline sourcemap sources[0] is a valid path under cwd", async () => {
+  using dir = tempDir("inspect-sourcemap", {
+    "sub/target.mjs": "// comment line\nsetInterval(() => {}, 200);\n",
+  });
+  const cwd = fs.realpathSync(String(dir));
+
+  await using proc = spawn({
+    cmd: [bunExe(), "--inspect=127.0.0.1:0", join("sub", "target.mjs")],
+    env: bunEnv,
+    cwd,
+    stdout: "ignore",
+    stderr: "pipe",
+  });
+
+  let url: URL | undefined;
+  let stderr = "";
+  const decoder = new TextDecoder();
+  for await (const chunk of proc.stderr as ReadableStream) {
+    stderr += decoder.decode(chunk);
+    for (const line of stderr.split("\n")) {
+      try {
+        url = new URL(line);
+      } catch {}
+      if (url?.protocol.includes("ws")) break;
+    }
+    if (stderr.includes("Listening:")) break;
+  }
+  if (!url) {
+    process.stderr.write(stderr);
+    throw new Error("Unable to find listening URL");
+  }
+
+  const ws = new WebSocket(url);
+  try {
+    await new Promise<void>((resolve, reject) => {
+      ws.addEventListener("open", () => resolve());
+      ws.addEventListener("error", cause => reject(new Error("WebSocket error", { cause })));
+    });
+
+    const scriptParsed = new Promise<any>(resolve => {
+      ws.addEventListener("message", ({ data }) => {
+        const msg = JSON.parse(data.toString());
+        if (msg.method === "Debugger.scriptParsed" && String(msg.params?.url ?? "").endsWith("target.mjs")) {
+          resolve(msg.params);
+        }
+      });
+    });
+    ws.send(JSON.stringify({ id: 1, method: "Inspector.enable" }));
+    ws.send(JSON.stringify({ id: 2, method: "Debugger.enable" }));
+    const params = await scriptParsed;
+
+    const m = String(params.sourceMapURL ?? "").match(/base64,([A-Za-z0-9+/=]+)/);
+    expect(m).not.toBeNull();
+    const map = JSON.parse(Buffer.from(m![1], "base64").toString());
+
+    // The inline map's sources[0] must name the script by a path that resolves
+    // to the real file. Before the fix it was "<last char of cwd>/sub/target.mjs".
+    const bogusPrefix = cwd.slice(-1) + "/";
+    expect(map.sources[0].startsWith(bogusPrefix)).toBe(false);
+    expect(map.sources[0]).toBe("/" + join("sub", "target.mjs").replaceAll("\\", "/"));
+  } finally {
+    ws.close();
+    proc.kill();
+  }
+});

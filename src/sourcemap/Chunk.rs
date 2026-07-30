@@ -82,9 +82,17 @@ fn print_source_map_contents_json<const ASCII_ONLY: bool>(
 ) -> Result<(), crate::Error> {
     let mut filename_buf = PathBuffer::uninit();
     let mut filename: &[u8] = source.path.text;
-    let top_level_dir: &[u8] = FileSystem::instance().top_level_dir();
-    if strings::has_prefix(filename, top_level_dir) {
-        filename = &filename[top_level_dir.len() - 1..];
+    // `top_level_dir` may or may not carry a trailing separator depending on
+    // how it was seeded (raw `getcwd()` vs. a later `chdir`). Normalize it
+    // away and require the next byte to be the separator so `/foo` does not
+    // match `/foobar/...` and the sliced result always begins with `/`.
+    let top_level_dir: &[u8] =
+        strings::without_trailing_slash(FileSystem::instance().top_level_dir());
+    if filename.len() > top_level_dir.len()
+        && strings::has_prefix(filename, top_level_dir)
+        && filename[top_level_dir.len()] == b'/'
+    {
+        filename = &filename[top_level_dir.len()..];
     } else if !filename.is_empty() && filename[0] != b'/' {
         filename_buf[0] = b'/';
         filename_buf[1..][..filename.len()].copy_from_slice(filename);

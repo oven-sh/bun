@@ -958,6 +958,119 @@ test("FormData.toJSON merges duplicate numeric field names into an array", async
   expect(exitCode).toBe(0);
 });
 
+describe("FormData entry value identity", () => {
+  it("get() returns the same File object that was appended", () => {
+    const file = new File(["abc"], "f.txt", { type: "text/plain" });
+    const fd = new FormData();
+    fd.append("f", file);
+    expect(fd.get("f")).toBe(file);
+    expect(fd.get("f") === fd.get("f")).toBe(true);
+  });
+
+  it("get() returns the same File object that was set", () => {
+    const file = new File(["abc"], "f.txt");
+    const fd = new FormData();
+    fd.set("f", file);
+    expect(fd.get("f")).toBe(file);
+  });
+
+  it("getAll() returns the same File object that was appended", () => {
+    const a = new File(["a"], "a.txt");
+    const b = new File(["b"], "b.txt");
+    const fd = new FormData();
+    fd.append("f", a);
+    fd.append("f", b);
+    const all = fd.getAll("f");
+    expect(all[0]).toBe(a);
+    expect(all[1]).toBe(b);
+    expect(fd.getAll("f")[0]).toBe(a);
+  });
+
+  it("values()/entries()/forEach return the same File object that was appended", () => {
+    const file = new File(["abc"], "f.txt");
+    const fd = new FormData();
+    fd.append("f", file);
+
+    expect([...fd.values()][0]).toBe(file);
+    expect([...fd.entries()][0][1]).toBe(file);
+
+    let seen: unknown;
+    fd.forEach(v => {
+      seen = v;
+    });
+    expect(seen).toBe(file);
+  });
+
+  it("preserves expando properties on the stored File", () => {
+    const file = new File(["abc"], "f.txt");
+    const fd = new FormData();
+    fd.append("f", file);
+    (fd.get("f") as any).expando = 123;
+    expect((fd.get("f") as any).expando).toBe(123);
+    expect((file as any).expando).toBe(123);
+  });
+
+  it("returns a stable object across repeated get() for a non-File Blob entry", async () => {
+    const blob = new Blob(["abc"], { type: "text/plain" });
+    const fd = new FormData();
+    fd.append("b", blob);
+    const first = fd.get("b");
+    // A plain Blob is wrapped in a new File per spec, so it is not the same object...
+    expect(first === blob).toBe(false);
+    // ...but the entry's value is stable across accesses.
+    expect(fd.get("b")).toBe(first);
+    expect(fd.getAll("b")[0]).toBe(first);
+    expect([...fd.values()][0]).toBe(first);
+    expect(await (first as Blob).text()).toBe("abc");
+  });
+
+  it("returns a stable object across repeated get() when a filename override is given", () => {
+    const file = new File(["abc"], "orig.txt");
+    const fd = new FormData();
+    fd.append("f", file, "other.txt");
+    const first = fd.get("f") as File;
+    // A filename override creates a new File per spec.
+    expect(first === file).toBe(false);
+    // The entry's value is stable across accesses.
+    expect(fd.get("f")).toBe(first);
+    expect(fd.getAll("f")[0]).toBe(first);
+  });
+
+  it("returns a stable object across repeated get() for multipart-parsed file parts", async () => {
+    const body =
+      '--x\r\nContent-Disposition: form-data; name="f"; filename="a.txt"\r\nContent-Type: text/plain\r\n\r\nhello\r\n--x--\r\n';
+    const fd = await new Response(body, {
+      headers: { "Content-Type": "multipart/form-data; boundary=x" },
+    }).formData();
+    const first = fd.get("f");
+    expect(first).toBeInstanceOf(Blob);
+    expect(fd.get("f")).toBe(first);
+    expect(fd.getAll("f")[0]).toBe(first);
+  });
+
+  it("keeps the entry value alive while the FormData is alive", () => {
+    const fd = new FormData();
+    {
+      const file = new File(["abc"], "f.txt");
+      fd.append("f", file);
+    }
+    Bun.gc(true);
+    const got = fd.get("f") as File;
+    expect(got.name).toBe("f.txt");
+    Bun.gc(true);
+    expect(fd.get("f")).toBe(got);
+  });
+
+  it("can be used as a WeakMap key", () => {
+    const file = new File(["abc"], "f.txt");
+    const fd = new FormData();
+    fd.append("f", file);
+    const wm = new WeakMap();
+    wm.set(file, "hello");
+    expect(wm.get(fd.get("f") as object)).toBe("hello");
+  });
+});
+
 describe("USVString conversion of lone surrogates", () => {
   const loneHigh = "a\uD800b";
   const loneLow = "a\uDC00b";

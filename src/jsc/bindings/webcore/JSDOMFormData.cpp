@@ -289,6 +289,7 @@ static inline JSC::EncodedJSValue jsDOMFormDataPrototypeFunction_append1Body(JSC
 }
 
 extern "C" BunString Blob__getFileNameString(void* impl);
+extern "C" bool Blob__isJSDOMFile(void* impl);
 
 static inline JSC::EncodedJSValue jsDOMFormDataPrototypeFunction_append2Body(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSDOMFormData>::ClassParameter castedThis)
 {
@@ -315,6 +316,11 @@ static inline JSC::EncodedJSValue jsDOMFormDataPrototypeFunction_append2Body(JSC
     EnsureStillAliveScope argument2 = callFrame->argument(2);
     auto filename = argument2.value().isUndefined() ? Blob__getFileNameString(blobValue->impl()).toWTFString(BunString::ZeroCopy) : convert<IDLUSVString>(*lexicalGlobalObject, argument2.value());
     RETURN_IF_EXCEPTION(throwScope, {});
+
+    // https://xhr.spec.whatwg.org/#create-an-entry
+    // If value is a File and filename was not given, the entry's value is the File itself.
+    if (argument2.value().isUndefined() && Blob__isJSDOMFile(blobValue->impl()))
+        blobValue->setWrapper(vm, asObject(argument1.value()));
 
     RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return impl.append(WTF::move(name), WTF::move(blobValue), WTF::move(filename)); })));
 }
@@ -478,6 +484,11 @@ static inline JSC::EncodedJSValue jsDOMFormDataPrototypeFunction_set2Body(JSC::J
 
     auto filename = argument2.value().isUndefined() ? Blob__getFileNameString(blobValue->impl()).toWTFString(BunString::ZeroCopy) : convert<IDLUSVString>(*lexicalGlobalObject, argument2.value());
     RETURN_IF_EXCEPTION(throwScope, {});
+
+    // https://xhr.spec.whatwg.org/#create-an-entry
+    // If value is a File and filename was not given, the entry's value is the File itself.
+    if (argument2.value().isUndefined() && Blob__isJSDOMFile(blobValue->impl()))
+        blobValue->setWrapper(vm, asObject(argument1.value()));
 
     RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return impl.set(WTF::move(name), WTF::move(blobValue), WTF::move(filename)); })));
 }

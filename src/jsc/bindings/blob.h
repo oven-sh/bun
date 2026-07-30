@@ -3,6 +3,7 @@
 #include "root.h"
 #include "JSDOMGlobalObject.h"
 #include "BunClientData.h"
+#include <JavaScriptCore/Strong.h>
 
 namespace WebCore {
 
@@ -74,6 +75,16 @@ public:
         m_fileName = fileName;
     }
 
+    JSC::JSObject* wrapper() const
+    {
+        return m_wrapper.get();
+    }
+
+    void setWrapper(JSC::VM& vm, JSC::JSObject* wrapper)
+    {
+        m_wrapper.set(vm, wrapper);
+    }
+
     size_t memoryCost() const;
 
 private:
@@ -93,6 +104,11 @@ private:
 
     BlobRefPtr m_impl;
     String m_fileName;
+    // Caches the JS wrapper returned by toJS so that FormData get/getAll/iteration
+    // return the same JS object each time. For a File appended without a filename
+    // override this is the user's original File; otherwise it is created lazily on
+    // first access.
+    JSC::Strong<JSC::JSObject> m_wrapper;
 };
 
 JSC::JSValue toJS(JSC::JSGlobalObject*, JSDOMGlobalObject*, Blob&);

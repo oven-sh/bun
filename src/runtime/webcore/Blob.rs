@@ -4349,6 +4349,11 @@ pub(crate) extern "C" fn Blob__dupe(this: &Blob) -> *mut Blob {
 }
 
 #[unsafe(no_mangle)]
+pub(crate) extern "C" fn Blob__isJSDOMFile(this: &Blob) -> bool {
+    this.is_jsdom_file.get()
+}
+
+#[unsafe(no_mangle)]
 pub(crate) extern "C" fn Blob__getFileNameString(this: &Blob) -> BunString {
     if let Some(filename) = this.get_file_name() {
         return BunString::from_bytes(filename);

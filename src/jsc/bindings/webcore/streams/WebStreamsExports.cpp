@@ -334,21 +334,3 @@ extern "C" JSC::EncodedJSValue ZigGlobalObject__readableStreamToFormData(Zig::Gl
     RETURN_IF_EXCEPTION(scope, {});
     RELEASE_AND_RETURN(scope, JSValue::encode(readableStreamToFormData(globalObject, stream, JSValue::decode(contentType))));
 }
-
-extern "C" JSC::EncodedJSValue Bun__assignStreamIntoResumableSink(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue streamValue, JSC::EncodedJSValue sinkValue)
-{
-    auto& vm = JSC::getVM(globalObject);
-    auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-    auto* stream = dynamicDowncast<JSReadableStream>(JSValue::decode(streamValue));
-    JSObject* sink = JSValue::decode(sinkValue).getObject();
-    if (!stream || !sink) [[unlikely]]
-        return JSValue::encode(jsUndefined());
-    JSValue result = assignStreamIntoResumableSink(globalObject, stream, sink);
-    if (auto* exception = catchScope.exception()) [[unlikely]] {
-        // The native caller cannot observe VM exception state: hand back the Exception
-        // cell and leave nothing pending (a termination stays pending by design).
-        catchScope.clearExceptionExceptTermination();
-        return JSValue::encode(exception);
-    }
-    return JSValue::encode(result);
-}

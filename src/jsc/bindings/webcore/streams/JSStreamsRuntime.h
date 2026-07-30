@@ -23,8 +23,7 @@
 //   NEVER called directly; it is wrapped per use-site in
 //   `JSC::JSBoundFunction::create(vm, global, target, jsUndefined(), {contextCell}, ...)`
 //   and STORED ON an object we do not control (the native source handle, the JSSink
-//   controller, the ResumableSink). `boundFunctionCall` PREPENDS the bound args, so the
-//   target receives
+//   controller). `boundFunctionCall` PREPENDS the bound args, so the target receives
 //        handler(contextCell, ...callArgs)              // context at argument(0)
 //   — the OPPOSITE position. A function may belong to EXACTLY ONE of the two lists.
 //
@@ -158,7 +157,6 @@ namespace WebCore {
 //   onNativeSourceCallCloseMicrotask: the native source's `queueMicrotask(callClose)` job;
 //     context = the adapter.
 //   onReadStreamIntoSink*: context = the JSReadStreamIntoSinkOperation.
-//   onResumableSink*: context = the JSResumableSinkPumpOperation.
 #define FOR_EACH_WEB_STREAMS_REACTION_HANDLER_BUN_SOURCE(V) \
     V(onNativePullFulfilled)                                \
     V(onNativePullRejected)                                 \
@@ -167,11 +165,7 @@ namespace WebCore {
     V(onReadStreamIntoSinkChunk)                            \
     V(onReadStreamIntoSinkClose)                            \
     V(onReadStreamIntoSinkFlushFulfilled)                   \
-    V(onReadStreamIntoSinkRejected)                         \
-    V(onResumableSinkChunk)                                 \
-    V(onResumableSinkClose)                                 \
-    V(onResumableSinkReadRejected)                          \
-    V(onResumableSinkEndMicrotask)
+    V(onReadStreamIntoSinkRejected)
 
 // owner: JSDirectStreamController.cpp. context = the JSDirectStreamController.
 //   onDirectEndOfTickFlush: the end-of-tick auto-flush job, scheduled via
@@ -249,15 +243,11 @@ namespace WebCore {
 //   boundReadDirectStreamOnClose(state, streamOrUndefined, reason): readDirectStream's
 //     JSSink onClose.
 //   boundReadStreamIntoSinkOnClose(op, stream, reason): readStreamIntoSink's JSSink onClose.
-//   boundResumableSinkDrain(op) / boundResumableSinkCancel(op, unused, reason): stored on
-//     the native ResumableSink via setHandlers.
 #define FOR_EACH_WEB_STREAMS_BOUND_HANDLER_TARGET_BUN_SOURCE(V) \
     V(boundOnNativeSourceClose)                                 \
     V(boundOnNativeSourceDrain)                                 \
     V(boundReadDirectStreamOnClose)                             \
-    V(boundReadStreamIntoSinkOnClose)                           \
-    V(boundResumableSinkDrain)                                  \
-    V(boundResumableSinkCancel)
+    V(boundReadStreamIntoSinkOnClose)
 
 // owner: JSDirectStreamController.cpp — the FIVE detachable own methods of the direct
 // controller: `end` and `close` are two bound cells over the ONE boundDirectClose target.
@@ -327,7 +317,6 @@ JSC_DECLARE_HOST_FUNCTION(jsWebStreamsCountQueuingStrategySize);
     V(directSinkCloseStateStructure, JSDirectSinkCloseState)                 \
     V(asyncIteratorSourceOperationStructure, JSAsyncIteratorSourceOperation) \
     V(readStreamIntoSinkOperationStructure, JSReadStreamIntoSinkOperation)   \
-    V(resumableSinkPumpOperationStructure, JSResumableSinkPumpOperation)     \
     V(standaloneTextSinkStructure, JSBunStandaloneTextSink)                  \
     V(oneShotDirectSinkStructure, JSOneShotDirectSink)                       \
     V(intoArrayOperationStructure, JSReadableStreamIntoArrayOperation)

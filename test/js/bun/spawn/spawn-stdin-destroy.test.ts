@@ -12,9 +12,18 @@ test("stdin destroy after exit crash", async () => {
     });
 
     await Bun.sleep(80);
-    await child.stdin.write("dylan\n");
-    await child.stdin.write("999\n");
-    await child.stdin.flush();
+    // The child throws on startup, so by the time we write the stdin pipe is
+    // already closed; write() now throws ERR_STREAM_WRITE_AFTER_END instead of
+    // silently dropping the data. The assertion below is that child.exited
+    // resolves (the original bug rejected it with code "TODO") and nothing
+    // crashes under GC.
+    try {
+      await child.stdin.write("dylan\n");
+      await child.stdin.write("999\n");
+      await child.stdin.flush();
+    } catch (e: any) {
+      expect(e.code).toBe("ERR_STREAM_WRITE_AFTER_END");
+    }
     await child.stdin.end();
 
     async function read() {

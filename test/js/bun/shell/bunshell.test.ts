@@ -1560,7 +1560,11 @@ describe("deno_task", () => {
       ];
       const bytes = (b: ArrayBufferLike | ArrayBufferView) =>
         b instanceof ArrayBuffer || b instanceof SharedArrayBuffer ? new Uint8Array(b) : new Uint8Array(b.buffer);
-      const expectRejected = (buf: ArrayBufferLike | ArrayBufferView, before: Uint8Array, result: Bun.$.ShellOutput) => {
+      const expectRejected = (
+        buf: ArrayBufferLike | ArrayBufferView,
+        before: Uint8Array,
+        result: Bun.$.ShellOutput,
+      ) => {
         expect({ stderr: result.stderr.toString(), bytes: bytes(buf), exitCode: result.exitCode }).toEqual({
           stderr: msg,
           bytes: before,

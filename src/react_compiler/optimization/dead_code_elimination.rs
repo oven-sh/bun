@@ -26,7 +26,7 @@ use crate::hir::{
 /// Note that unreachable blocks are already pruned during HIR construction.
 ///
 /// Corresponds to TS `deadCodeElimination(fn: HIRFunction): void`.
-pub fn dead_code_elimination(func: &mut HirFunction, env: &Environment) {
+pub(crate) fn dead_code_elimination(func: &mut HirFunction, env: &Environment) {
     // Phase 1: Find/mark all referenced identifiers
     let state = find_referenced_identifiers(func, env);
 

@@ -159,6 +159,7 @@ using namespace JSC;
     macro(processBindingConstants) \
     macro(props) \
     macro(pull) \
+    macro(rawHeaders) \
     macro(read) \
     macro(readable) \
     macro(readableType) \
@@ -182,6 +183,8 @@ using namespace JSC;
     macro(started) \
     macro(state) \
     macro(status) \
+    macro(statusCode) \
+    macro(statusMessage) \
     macro(statusText) \
     macro(stream) \
     macro(structuredCloneForStream) \

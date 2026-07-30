@@ -509,40 +509,8 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
     linkerMapOutput: cfg.linux && cfg.release && !cfg.asan && !cfg.valgrind ? linkerMapPath(cfg) : undefined,
   });
 
-  // ─── Step 8: post-link (strip + dsymutil) ───
-  // Plain release only: produce stripped `bun` alongside `bun-profile`.
-  // Debug/asan/etc. keep symbols (you want them for debugging).
-  let strippedExe: string | undefined;
-  let dsym: string | undefined;
-  if (shouldStrip(cfg)) {
-    strippedExe = emitStrip(n, cfg, exe, flags.stripflags);
-    // darwin: extract debug symbols from the UNSTRIPPED exe into a .dSYM
-    // bundle. dsymutil reads DWARF from bun-profile, writes bun-profile.dSYM.
-    // Must run BEFORE stripping could discard sections it needs (we don't
-    // strip bun-profile itself, only copy → bun, so this is safe).
-    if (cfg.darwin) {
-      dsym = emitDsymutil(n, cfg, exe, exeName);
-    }
-  }
-
-  // Phony `bun` target for convenience — only when strip DIDN'T produce a
-  // literal file named `bun` (which would collide with the phony). When
-  // strip runs, `ninja bun` builds the actual stripped file; no phony needed.
-  if (strippedExe === undefined) {
-    n.phony("bun", [exe]);
-  }
-
-  // ─── Step 9: smoke test ───
-  // Run `<exe> --revision`. If it exits non-zero or crashes, something
-  // broke at load time (missing symbol, static initializer blowup, ABI
-  // mismatch). Catching this HERE is much better than "CI passes, user
-  // runs bun, it segfaults".
-  //
-  // Linux+ASAN quirk: some systems need ASLR disabled (`setarch -R`) for
-  // ASAN binaries to run from subprocesses (shadow memory layout conflict
-  // with ELF_ET_DYN_BASE, see sanitizers/856). We try with setarch first,
-  // fall back to direct invocation.
-  emitSmokeTest(n, cfg, exe, exeName);
+  // ─── Step 8: post-link (strip, dsymutil, smoke test) ───
+  const { strippedExe, dsym } = emitPostLink(n, cfg, exe, exeName, flags.stripflags);
 
   return { exe, strippedExe, dsym, deps, codegen, rustObjects, objects: allObjects };
 }
@@ -652,14 +620,7 @@ function emitLinkOnly(n: Ninja, cfg: Config): BunOutput {
   });
 
   // Strip + smoke test — same as full mode.
-  let strippedExe: string | undefined;
-  let dsym: string | undefined;
-  if (shouldStrip(cfg)) {
-    strippedExe = emitStrip(n, cfg, exe, flags.stripflags);
-    if (cfg.darwin) dsym = emitDsymutil(n, cfg, exe, exeName);
-  }
-  if (strippedExe === undefined) n.phony("bun", [exe]);
-  emitSmokeTest(n, cfg, exe, exeName);
+  const { strippedExe, dsym } = emitPostLink(n, cfg, exe, exeName, flags.stripflags);
 
   return {
     exe,
@@ -733,14 +694,7 @@ function emitRustAndLink(n: Ninja, cfg: Config, sources: Sources): BunOutput {
     linkerMapOutput: cfg.linux && cfg.release && !cfg.asan && !cfg.valgrind ? linkerMapPath(cfg) : undefined,
   });
 
-  let strippedExe: string | undefined;
-  let dsym: string | undefined;
-  if (shouldStrip(cfg)) {
-    strippedExe = emitStrip(n, cfg, exe, flags.stripflags);
-    if (cfg.darwin) dsym = emitDsymutil(n, cfg, exe, exeName);
-  }
-  if (strippedExe === undefined) n.phony("bun", [exe]);
-  emitSmokeTest(n, cfg, exe, exeName);
+  const { strippedExe, dsym } = emitPostLink(n, cfg, exe, exeName, flags.stripflags);
 
   return {
     exe,
@@ -754,12 +708,70 @@ function emitRustAndLink(n: Ninja, cfg: Config, sources: Sources): BunOutput {
 }
 
 /**
+ * Post-link steps shared by every linking mode (full, link-only,
+ * rust-and-link): strip, dsymutil, the `bun` phony, and the `--revision`
+ * smoke test.
+ *
+ * Centralized because the smoke_test and dsymutil edges must be ordered
+ * after strip — their rule commands wrap through `cfg.jsRuntime`
+ * (process.execPath), which can BE the strip output when `bun` on PATH
+ * resolves into the build directory (build/release/bun). Without the
+ * ordering, ninja runs strip and the wrapper exec concurrently (both
+ * depend only on `exe`) and the wrapper fails with "Permission denied" on
+ * the half-written file. Open-coding this in each mode already caused one
+ * call site to be missed (#30539), so the invariant lives here.
+ */
+export function emitPostLink(
+  n: Ninja,
+  cfg: Config,
+  exe: string,
+  exeName: string,
+  stripflags: string[],
+): { strippedExe: string | undefined; dsym: string | undefined } {
+  // Plain release only: produce stripped `bun` alongside `bun-profile`.
+  // Debug/asan/valgrind/assertions keep symbols (you want them for
+  // debugging).
+  let strippedExe: string | undefined;
+  let dsym: string | undefined;
+  if (shouldStrip(cfg)) {
+    strippedExe = emitStrip(n, cfg, exe, stripflags);
+    // darwin: extract debug symbols from the UNSTRIPPED exe into a .dSYM
+    // bundle. dsymutil reads DWARF from bun-profile, writes
+    // bun-profile.dSYM. The input exe is never stripped in-place (strip
+    // writes a new file via -o), so the read is safe.
+    if (cfg.darwin) dsym = emitDsymutil(n, cfg, exe, exeName, strippedExe);
+  }
+
+  // `bun` phony — only when strip didn't produce a literal file named
+  // `bun` (which would collide with the phony). When strip runs, `ninja
+  // bun` builds the stripped file; no phony needed.
+  if (strippedExe === undefined) n.phony("bun", [exe]);
+
+  // Run `<exe> --revision`. If it exits non-zero or crashes, something
+  // broke at load time (missing symbol, static initializer blowup, ABI
+  // mismatch). Catching this HERE is much better than "CI passes, user
+  // runs bun, it segfaults".
+  //
+  // Linux+ASAN quirk: some systems need ASLR disabled (`setarch -R`) for
+  // ASAN binaries to run from subprocesses (shadow memory layout conflict
+  // with ELF_ET_DYN_BASE, see sanitizers/856). We try with setarch first,
+  // fall back to direct invocation.
+  emitSmokeTest(n, cfg, exe, exeName, strippedExe);
+
+  return { strippedExe, dsym };
+}
+
+/**
  * Smoke test: run the built executable with --revision. If it crashes or
  * errors, the build failed — typically means a link-time issue that the
  * linker didn't catch (missing symbol only referenced at init, ICU ABI
  * mismatch, etc.).
+ *
+ * `strippedExe` is the strip output (release builds only), added as an
+ * order-only input so this rule never runs while strip is mid-write; see
+ * emitPostLink for why.
  */
-function emitSmokeTest(n: Ninja, cfg: Config, exe: string, exeName: string): void {
+function emitSmokeTest(n: Ninja, cfg: Config, exe: string, exeName: string, strippedExe: string | undefined): void {
   // Skip when the binary can't run on this host (different os/arch/abi) —
   // `ninja check` becomes a no-op alias for the exe.
   if (!cfg.canRunOnHost) {
@@ -804,6 +816,7 @@ function emitSmokeTest(n: Ninja, cfg: Config, exe: string, exeName: string): voi
     outputs: [stamp],
     rule: "smoke_test",
     inputs: [exe],
+    ...(strippedExe !== undefined ? { orderOnlyInputs: [strippedExe] } : {}),
   });
 
   // Phony target — `ninja check` runs the smoke test.
@@ -860,8 +873,11 @@ function emitStrip(n: Ninja, cfg: Config, inputExe: string, stripflags: string[]
  * Runs dsymutil on bun-profile (which has full DWARF). The .dSYM lets you
  * symbolicate crash logs from the stripped `bun` — lldb/Instruments find
  * it automatically by UUID.
+ *
+ * `strippedExe` is order-only for the same reason as emitSmokeTest: the
+ * `cfg.jsRuntime` wrapper may be the strip output itself.
  */
-function emitDsymutil(n: Ninja, cfg: Config, inputExe: string, exeName: string): string {
+function emitDsymutil(n: Ninja, cfg: Config, inputExe: string, exeName: string, strippedExe: string): string {
   assert(cfg.darwin, "dsymutil is darwin-only");
   assert(cfg.dsymutil !== undefined, "dsymutil not found in toolchain");
 
@@ -892,6 +908,7 @@ function emitDsymutil(n: Ninja, cfg: Config, inputExe: string, exeName: string):
     outputs: [out],
     rule: "dsymutil",
     inputs: [inputExe],
+    orderOnlyInputs: [strippedExe],
   });
 
   return out;

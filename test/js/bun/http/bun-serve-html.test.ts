@@ -1,6 +1,6 @@
 import type { Server, Subprocess } from "bun";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, isDebug, tempDir, tempDirWithFiles } from "harness";
 import { join } from "path";
 
 function replaceHash(html: string) {
@@ -21,7 +21,7 @@ function extractHash(html: string, file_kind: "css" | "js") {
 }
 
 test("serve html", async () => {
-  const dir = tempDirWithFiles("html-css-js", {
+  await using dir = tempDir("html-css-js", {
     "dashboard.html": /*html*/ `
       <!DOCTYPE html>
       <html>
@@ -359,7 +359,7 @@ export default p;
   });
 
   test("serve html with failing plugin", async () => {
-    const dir = tempDirWithFiles("html-css-js-failing-plugin", {
+    await using dir = tempDir("html-css-js-failing-plugin", {
       "bunfig.toml": /* toml */ `
 [serve.static]
 plugins = ["./plugin.ts"]
@@ -417,7 +417,7 @@ export default p;
   });
 
   test("empty plugin array", async () => {
-    const dir = tempDirWithFiles("html-css-js-empty-plugins", {
+    await using dir = tempDir("html-css-js-empty-plugins", {
       "index.html": /*html*/ `
       <!DOCTYPE html>
       <html>
@@ -495,7 +495,7 @@ plugins = []`,
       </html>
     `;
 
-    const dir = tempDirWithFiles("html-css-js-concurrent-plugins", {
+    await using dir = tempDir("html-css-js-concurrent-plugins", {
       "index.html": createHtmlFile("Home Page", "index.js"),
       "about.html": createHtmlFile("About Page", "about.js"),
       "contact.html": createHtmlFile("Contact Page", "contact.js"),
@@ -622,7 +622,7 @@ async function waitForServer(
 }
 
 test("serve html error handling", async () => {
-  const dir = tempDirWithFiles("bun-serve-html-error-handling", {
+  await using dir = tempDir("bun-serve-html-error-handling", {
     "index.html": /*html*/ `
       <!DOCTYPE html>
       <html>
@@ -679,7 +679,7 @@ test("serve html error handling", async () => {
 });
 
 test("wildcard static routes", async () => {
-  const dir = tempDirWithFiles("bun-serve-html-error-handling", {
+  await using dir = tempDir("bun-serve-html-error-handling", {
     "index.html": /*html*/ `
       <!DOCTYPE html>
       <html>
@@ -822,7 +822,11 @@ test("you can have HTML imports apply to only specific methods outside of the de
 });
 
 for (let development of [true, false, { hmr: false }]) {
-  test(`mixed api and html routes with non-* false routes`, async () => {
+  // `{ hmr: false }` does a full React production bundle for every route
+  // fetch; under the debug build that is slow enough to exceed the default
+  // per-test timeout. The hmr-off path is covered by the release lanes.
+  const maybeTest = isDebug && typeof development === "object" ? test.skip : test;
+  maybeTest(`mixed api and html routes with non-* false routes`, async () => {
     const dir = join(import.meta.dir, "jsx-runtime");
     const { default: html } = await import(join(dir, "index.html"));
 
@@ -865,7 +869,7 @@ for (let development of [true, false, { hmr: false }]) {
     }
   });
 
-  test(`mixed api and html routes with development: ${JSON.stringify(development)}`, async () => {
+  maybeTest(`mixed api and html routes with development: ${JSON.stringify(development)}`, async () => {
     const dir = join(import.meta.dir, "jsx-runtime");
     const { default: html } = await import(join(dir, "index.html"));
 

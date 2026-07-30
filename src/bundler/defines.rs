@@ -26,7 +26,7 @@ pub use bun_js_parser::defines::{
 };
 
 /// Alias for `Options` so `options.rs` can write `DefineData::init(DefineDataInit { .. })`.
-pub type DefineDataInit<'a> = Options<'a>;
+pub(crate) type DefineDataInit<'a> = Options<'a>;
 /// Alias for `ExprData` so `options.rs` can write `DefineValue::EUndefined(..)`.
 pub(crate) use bun_ast::ExprData as DefineValue;
 
@@ -40,8 +40,6 @@ fn defines_path() -> FsPath<'static> {
     p.namespace = b"internal";
     p
 }
-
-pub type Data = DefineData;
 
 // ══════════════════════════════════════════════════════════════════════════
 // `bun_dotenv::DefineStore` impls. dotenv (T2) calls through the link-interface
@@ -83,7 +81,7 @@ fn env_string_store_put(
 ///
 /// `to_json` is the framework-defaults `RawDefines` map; `to_string` is the
 /// per-env `UserDefinesArray`.
-pub fn copy_env_for_define(
+pub(crate) fn copy_env_for_define(
     env: &bun_dotenv::Loader,
     to_json: &mut RawDefines,
     to_string: &mut UserDefinesArray,
@@ -206,22 +204,19 @@ impl DefineExt for Define {
     ) -> Result<(), bun_alloc::AllocError> {
         let key = global[global.len() - 1];
         let parts: Vec<Box<[u8]>> = global.iter().map(|p| Box::<[u8]>::from(*p)).collect();
-        // reshaped for borrowck — getOrPut split into entry-style match.
         if let Some(existing) = self.dots.get_mut(key) {
-            let mut list: Vec<DotDefine> = Vec::with_capacity(existing.len() + 1);
-            list.extend_from_slice(existing);
-            list.push(DotDefine {
+            existing.push(DotDefine {
                 parts,
                 data: value_define.clone(),
             });
-            // The old value is freed by Vec drop on assign.
-            *existing = list;
         } else {
-            let list: Vec<DotDefine> = vec![DotDefine {
-                parts,
-                data: value_define.clone(),
-            }];
-            self.dots.put_assume_capacity(key, list);
+            self.dots.put_assume_capacity(
+                key,
+                vec![DotDefine {
+                    parts,
+                    data: value_define.clone(),
+                }],
+            );
         }
         Ok(())
     }

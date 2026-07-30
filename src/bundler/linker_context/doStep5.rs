@@ -45,7 +45,7 @@ impl LinkerContext<'_> {
     /// `source_index` row of the `graph.{ast,meta}` SoA columns via raw
     /// per-row pointers obtained from `split_raw()` (root provenance, no
     /// `&mut [T]` intermediate). Disjoint rows ⇒ no overlapping `&mut`.
-    pub unsafe fn do_step5(this: *mut LinkerContext<'_>, source_index_: Index, _: usize) {
+    pub(crate) unsafe fn do_step5(this: *mut LinkerContext<'_>, source_index_: Index, _: usize) {
         let source_index = source_index_.get();
         let _trace = perf::trace("Bundler.CreateNamespaceExports");
 
@@ -163,7 +163,7 @@ impl LinkerContext<'_> {
         // TODO: can this be u32 instead of a string?
         // if yes, we could just move all the hidden exports to the end of the array
         // and only store a count instead of an array
-        strings::sort_desc(aliases.as_mut_slice());
+        strings::sort_asc(aliases.as_mut_slice());
         let export_aliases = aliases.into_bump_slice();
         *row_mut!(
             meta.sorted_and_filtered_export_aliases,
@@ -369,7 +369,7 @@ impl LinkerContext<'_> {
     /// mutates as explicit `&mut` params, so the parallel `do_step5` dispatch
     /// never forms a concurrent `&mut LinkerContext` / whole-column `&mut [T]`.
     #[allow(clippy::too_many_arguments)]
-    pub fn create_exports_for_file(
+    pub(crate) fn create_exports_for_file(
         &self,
         arena: &Bump,
         id: u32,

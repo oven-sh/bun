@@ -90,7 +90,7 @@ fn opt_js(v: JSValue) -> Option<JSValue> {
     }
 }
 
-pub fn write_format_credentials<F, W, const ENABLE_ANSI_COLORS: bool>(
+pub(crate) fn write_format_credentials<F, W, const ENABLE_ANSI_COLORS: bool>(
     credentials: &S3Credentials,
     options: MultiPartUploadOptions,
     acl: Option<ACL>,
@@ -238,11 +238,11 @@ where
 
 #[bun_jsc::JsClass]
 pub struct S3Client {
-    pub credentials: bun_ptr::IntrusiveRc<S3Credentials>,
-    pub options: MultiPartUploadOptions,
-    pub acl: Option<ACL>,
-    pub storage_class: Option<StorageClass>,
-    pub request_payer: bool,
+    pub(crate) credentials: bun_ptr::IntrusiveRc<S3Credentials>,
+    pub(crate) options: MultiPartUploadOptions,
+    pub(crate) acl: Option<ACL>,
+    pub(crate) storage_class: Option<StorageClass>,
+    pub(crate) request_payer: bool,
 }
 
 impl Drop for S3Client {

@@ -48,7 +48,7 @@ use crate::{Chunk, CompileResult};
 /// [`pending_part_range_prologue`](crate::linker_context_mod::pending_part_range_prologue)
 /// for the full contract. Matches the `Task::callback: unsafe fn(*mut Task)`
 /// contract.
-pub unsafe fn generate_compile_result_for_html_chunk(task: *mut ThreadPoolLibTask) {
+pub(crate) unsafe fn generate_compile_result_for_html_chunk(task: *mut ThreadPoolLibTask) {
     // SAFETY: `task` is the intrusive `task` field of a `PendingPartRange`
     // scheduled by `generate_chunks_in_parallel`; see the helper's contract.
     let (part_range, _c_ptr, chunk_ptr, _worker) =

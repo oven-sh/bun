@@ -1132,6 +1132,34 @@ describe("async context passes through", () => {
     expect(stderr).not.toContain("AssertionError");
   });
 
+  // run()'s same-value short-circuit must not spread its rest args, or a
+  // tampered Array.prototype[Symbol.iterator] breaks it. The main path is
+  // already covered by test-repl-array-prototype-tempering.js.
+  test("run() short-circuit survives a deleted Array.prototype[Symbol.iterator]", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const { AsyncLocalStorage } = require("async_hooks");
+          require("node:util");
+          const als = new AsyncLocalStorage();
+          als.enterWith("v");
+          delete Array.prototype[Symbol.iterator];
+          console.log(als.run("v", (a, b) => a + "/" + b, "x", "y"));
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).not.toContain("Spread syntax");
+    expect(stderr).not.toContain("is not iterable");
+    expect(stdout.trim()).toBe("x/y");
+    expect(exitCode).toBe(0);
+  });
+
   test("Bun.build plugin", async () => {
     const s = new AsyncLocalStorage<string>();
     let a = undefined;

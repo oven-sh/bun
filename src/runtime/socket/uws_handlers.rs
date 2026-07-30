@@ -355,14 +355,14 @@ impl_ns_socket_events_forward!(js_valkey::JSValkeyClient, js_valkey::SocketHandl
 // the dispatch frame would alias that re-entrant borrow (Stacked-Borrows UB +
 // `noalias` dead-store of the re-entrant write). `RawPtrHandler` passes
 // `ThisPtr<Self>`.
-pub type BunSocket<const SSL: bool> = RawPtrHandler<api::NewSocket<SSL>, SSL>;
+pub(crate) type BunSocket<const SSL: bool> = RawPtrHandler<api::NewSocket<SSL>, SSL>;
 
 /// Listener accept path: the ext is uninitialised at on_open time (the C accept
 /// loop just calloc'd it), so we read the `*Listener` off `group->ext` and let
 /// `on_create` allocate the `NewSocket` and stash it in the ext. After that the
 /// socket is re-stamped as `.bun_socket_{tcp,tls}` and routes through
 /// `BunSocket` above.
-pub struct BunListener<const SSL: bool>;
+pub(crate) struct BunListener<const SSL: bool>;
 
 impl<const SSL: bool> VHandler for BunListener<SSL>
 where
@@ -679,22 +679,22 @@ impl<const SSL: bool> VHandler for HTTPClient<SSL> {
 }
 
 // ── WebSocket client ────────────────────────────────────────────────────────
-pub type WSUpgrade<const SSL: bool> =
+pub(crate) type WSUpgrade<const SSL: bool> =
     RawPtrHandler<websocket_upgrade_client::NewHttpUpgradeClient<SSL>, SSL>;
-pub type WSClient<const SSL: bool> = RawPtrHandler<websocket_client::WebSocket<SSL>, SSL>;
+pub(crate) type WSClient<const SSL: bool> = RawPtrHandler<websocket_client::WebSocket<SSL>, SSL>;
 
 // ── SQL drivers ─────────────────────────────────────────────────────────────
-pub type Postgres<const SSL: bool> = NsHandler<
+pub(crate) type Postgres<const SSL: bool> = NsHandler<
     postgres::PostgresSQLConnection,
     postgres::postgres_sql_connection::SocketHandler<SSL>,
     SSL,
 >;
-pub type MySQL<const SSL: bool> = NsHandler<
+pub(crate) type MySQL<const SSL: bool> = NsHandler<
     mysql::js_my_sql_connection::JSMySQLConnection,
     mysql::js_my_sql_connection::SocketHandler<SSL>,
     SSL,
 >;
-pub type Valkey<const SSL: bool> =
+pub(crate) type Valkey<const SSL: bool> =
     NsHandler<js_valkey::JSValkeyClient, js_valkey::SocketHandler<SSL>, SSL>;
 
 // ── Bun.spawn IPC / process.send() ──────────────────────────────────────────

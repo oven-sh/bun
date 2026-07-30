@@ -33,7 +33,7 @@ pub struct PosixLoop {
     pub num_ready_polls: i32,
 
     /// Current index in list of ready polls
-    pub current_ready_poll: i32,
+    pub(crate) current_ready_poll: i32,
 
     /// Loop's own file descriptor
     pub fd: i32,
@@ -50,7 +50,7 @@ pub struct PosixLoop {
     _ready_polls_align: ReadyPollsAlign,
 
     /// The list of ready polls
-    pub ready_polls: [EventType; 1024],
+    pub(crate) ready_polls: [EventType; 1024],
 }
 
 /// Zero-sized, 16-byte-aligned marker field type (see `_ready_polls_align`).
@@ -222,6 +222,11 @@ impl PosixLoop {
     /// process_conns. Early-returns when nothing wrote, so safe to call
     /// from drainMicrotasks without per-iteration cost.
     pub fn drain_quic_if_necessary(&mut self) {
+        if !self.internal_loop_data.nq_head.is_null() {
+            // Full pass with close dispatch deferred to the next loop point.
+            // SAFETY: self is a valid loop pointer
+            unsafe { c::us_nq_loop_drain(self) };
+        }
         if self.internal_loop_data.quic_head.is_null() {
             return;
         }
@@ -463,6 +468,11 @@ impl WindowsLoop {
     }
 
     pub fn drain_quic_if_necessary(&mut self) {
+        if !self.internal_loop_data.nq_head.is_null() {
+            // Full pass with close dispatch deferred to the next loop point.
+            // SAFETY: self is a valid loop pointer
+            unsafe { c::us_nq_loop_drain(self) };
+        }
         if self.internal_loop_data.quic_head.is_null() {
             return;
         }
@@ -585,9 +595,9 @@ pub type Loop = PosixLoop;
 
 // ───────────────────────────── extern "C" ─────────────────────────────
 
-pub(crate) type LoopCb = unsafe extern "C" fn(*mut Loop);
-pub(crate) type LoopCtxCb = unsafe extern "C" fn(ctx: *mut c_void, loop_: *mut Loop);
-pub(crate) type DeferCb = unsafe extern "C" fn(ctx: *mut c_void);
+type LoopCb = unsafe extern "C" fn(*mut Loop);
+type LoopCtxCb = unsafe extern "C" fn(ctx: *mut c_void, loop_: *mut Loop);
+type DeferCb = unsafe extern "C" fn(ctx: *mut c_void);
 
 #[allow(non_snake_case)]
 mod c {
@@ -609,6 +619,7 @@ mod c {
         ) -> *mut Loop;
         pub(super) fn us_loop_free(loop_: *mut Loop);
         pub(super) fn us_quic_loop_flush_if_pending(loop_: *mut Loop);
+        pub(super) fn us_nq_loop_drain(loop_: *mut Loop);
         pub fn us_loop_run(loop_: *mut Loop);
         #[cfg(windows)]
         pub(super) fn us_loop_pump(loop_: *mut Loop);

@@ -67,7 +67,7 @@ int us_udp_socket_send(struct us_udp_socket_t *s, void** payloads, size_t* lengt
                 us_poll_change((struct us_poll_t *) s, s->loop, LIBUS_SOCKET_READABLE | LIBUS_SOCKET_WRITABLE);
                 return total_sent;
             }
-            return sent;
+            return total_sent > 0 ? total_sent : sent;
         }
         total_sent += sent;
         if (sent < count) {

@@ -157,37 +157,18 @@ name = "bun_analytics"
 version = "0.0.0"
 dependencies = [
  "bitflags",
- "bstr",
  "bun_core",
- "bun_errno",
  "bun_semver",
- "bun_sys",
- "const_format",
- "enum-map",
- "enumset",
  "libc",
- "scopeguard",
- "strum",
- "thiserror",
 ]
 
 [[package]]
 name = "bun_api"
 version = "0.0.0"
 dependencies = [
- "bitflags",
- "bstr",
  "bun_alloc",
- "bun_collections",
- "bun_install_types",
  "bun_options_types",
  "bun_url",
- "const_format",
- "enum-map",
- "enumset",
- "libc",
- "scopeguard",
- "strum",
 ]
 
 [[package]]
@@ -557,11 +538,9 @@ dependencies = [
  "bstr",
  "bun_alloc",
  "bun_analytics",
- "bun_ast",
  "bun_base64",
  "bun_collections",
  "bun_core",
- "bun_dispatch",
  "bun_errno",
  "bun_io",
  "bun_options_types",
@@ -1284,6 +1263,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "bun_lsquic_sys"
+version = "0.0.0"
+
+[[package]]
 name = "bun_md"
 version = "0.0.0"
 dependencies = [
@@ -1452,17 +1435,9 @@ dependencies = [
 name = "bun_perf"
 version = "0.0.0"
 dependencies = [
- "bitflags",
- "bstr",
  "bun_core",
- "bun_paths",
  "bun_sys",
- "const_format",
- "enum-map",
- "enumset",
  "libc",
- "scopeguard",
- "strum",
 ]
 
 [[package]]
@@ -1665,6 +1640,7 @@ dependencies = [
  "bun_libarchive",
  "bun_libdeflate_sys",
  "bun_libuv_sys",
+ "bun_lsquic_sys",
  "bun_md",
  "bun_opaque",
  "bun_options_types",

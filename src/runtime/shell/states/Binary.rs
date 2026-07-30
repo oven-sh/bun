@@ -6,17 +6,17 @@ use crate::shell::states::base::Base;
 use crate::shell::yield_::Yield;
 
 pub struct Binary {
-    pub base: Base,
+    pub(crate) base: Base,
     pub node: bun_ptr::BackRef<ast::Binary>,
-    pub io: IO,
+    pub(crate) io: IO,
     /// Once `left` is done, this holds its exit code; `None` while running left.
-    pub left: Option<ExitCode>,
-    pub right: Option<ExitCode>,
-    pub currently_executing: Option<NodeId>,
+    pub(crate) left: Option<ExitCode>,
+    pub(crate) right: Option<ExitCode>,
+    pub(crate) currently_executing: Option<NodeId>,
 }
 
 impl Binary {
-    pub fn init(
+    pub(crate) fn init(
         interp: &Interpreter,
         shell: *mut ShellExecEnv,
         node: &ast::Binary,
@@ -33,12 +33,12 @@ impl Binary {
         }))
     }
 
-    pub fn start(_interp: &Interpreter, this: NodeId) -> Yield {
+    pub(crate) fn start(_interp: &Interpreter, this: NodeId) -> Yield {
         log!("Binary {} start", this);
         Yield::Next(this)
     }
 
-    pub fn next(interp: &Interpreter, this: NodeId) -> Yield {
+    pub(crate) fn next(interp: &Interpreter, this: NodeId) -> Yield {
         let (left_exit, right_exit, parent, shell, node) = {
             let me = interp.as_binary(this);
             (me.left, me.right, me.base.parent, me.base.shell, me.node)
@@ -70,7 +70,7 @@ impl Binary {
         y
     }
 
-    pub fn child_done(
+    pub(crate) fn child_done(
         interp: &Interpreter,
         this: NodeId,
         child: NodeId,
@@ -89,7 +89,7 @@ impl Binary {
         Yield::Next(this)
     }
 
-    pub fn deinit(interp: &Interpreter, this: NodeId) {
+    pub(crate) fn deinit(interp: &Interpreter, this: NodeId) {
         let exec = interp.as_binary_mut(this).currently_executing.take();
         if let Some(exec) = exec {
             interp.deinit_node(exec);

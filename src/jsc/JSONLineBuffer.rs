@@ -12,19 +12,19 @@ use bun_core::strings;
 /// Compaction only happens when head exceeds a threshold.
 #[derive(Default)]
 pub struct JSONLineBuffer {
-    pub data: Vec<u8>,
+    pub(crate) data: Vec<u8>,
     /// Offset into data where unconsumed content starts.
-    pub head: u32,
+    pub(crate) head: u32,
     /// Position of a known upcoming newline relative to head, if any.
-    pub newline_pos: Option<u32>,
+    pub(crate) newline_pos: Option<u32>,
     /// How far we've scanned for newlines relative to head.
-    pub scanned_pos: u32,
+    pub(crate) scanned_pos: u32,
 }
 
 /// Return type of [`JSONLineBuffer::next`]: a complete message slice plus its newline offset.
-pub struct Next<'a> {
-    pub data: &'a [u8],
-    pub newline_pos: u32,
+pub(crate) struct Next<'a> {
+    pub(crate) data: &'a [u8],
+    pub(crate) newline_pos: u32,
 }
 
 impl JSONLineBuffer {
@@ -67,13 +67,13 @@ impl JSONLineBuffer {
     }
 
     /// Append bytes to the buffer, scanning only new data for newline.
-    pub fn append(&mut self, bytes: &[u8]) {
+    pub(crate) fn append(&mut self, bytes: &[u8]) {
         let _ = self.data.write(bytes);
         self.scan_for_newline();
     }
 
     /// Returns the next complete message (up to and including newline) if available.
-    pub fn next(&self) -> Option<Next<'_>> {
+    pub(crate) fn next(&self) -> Option<Next<'_>> {
         let pos = self.newline_pos?;
         Some(Next {
             data: &self.active_slice()[0..(pos as usize) + 1],
@@ -83,7 +83,7 @@ impl JSONLineBuffer {
 
     /// Consume bytes from the front of the buffer after processing a message.
     /// Just advances head offset - no copying until compaction threshold is reached.
-    pub fn consume(&mut self, bytes: u32) {
+    pub(crate) fn consume(&mut self, bytes: u32) {
         self.head = self.head.saturating_add(bytes);
 
         // Adjust scanned_pos (subtract consumed bytes, but don't go negative)
@@ -120,10 +120,6 @@ impl JSONLineBuffer {
         }
     }
 
-    pub fn is_empty(&self) -> bool {
-        self.head as usize >= self.data.len()
-    }
-
     /// Notify the buffer that `nread` bytes were written directly into the
     /// tail of `data` (via `data.uv_alloc_spare_u8()`).
     ///
@@ -131,7 +127,8 @@ impl JSONLineBuffer {
     /// alias `&mut self.data` — and only the length is used here. Passing the
     /// slice through would re-introduce the Stacked-Borrows hazard the
     /// `on_read` refactor removed.
-    pub fn notify_written(&mut self, nread: usize) {
+    #[cfg(windows)]
+    pub(crate) fn notify_written(&mut self, nread: usize) {
         // SAFETY: caller (libuv on_read) wrote `nread` bytes into the uv_alloc_spare* slice.
         unsafe { self.data.uv_commit(nread) };
         self.scan_for_newline();

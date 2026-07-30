@@ -22,7 +22,7 @@ const {
 } = require("internal/validators");
 
 const { Server: NetServer, Socket: NetSocket } = net;
-const { kArmHandshakeTimeout, kVerifyError } = require("internal/net/symbols");
+const { kArmHandshakeTimeout, kSecureConnectDone, kVerifyError } = require("internal/net/symbols");
 
 const getBundledRootCertificates = $newCppFunction("NodeTLS.cpp", "getBundledRootCertificates", 1);
 const getExtraCACertificates = $newCppFunction("NodeTLS.cpp", "getExtraCACertificates", 1);
@@ -181,6 +181,20 @@ function validateCiphers(ciphers: string, name: string = "options") {
 
 const VALID_TLS_VERSIONS = new Set(["TLSv1", "TLSv1.1", "TLSv1.2", "TLSv1.3"]);
 
+const SUPPORTED_ECDH_GROUPS = new Set([
+  "P-256",
+  "prime256v1",
+  "P-384",
+  "secp384r1",
+  "P-521",
+  "secp521r1",
+  "X25519",
+  "x25519",
+  "X25519Kyber768Draft00",
+  "X25519MLKEM768",
+  "MLKEM1024",
+]);
+
 // Subset of Node's configSecureContext() validations:
 // https://github.com/nodejs/node/blob/843dc5f0d5ad/lib/internal/tls/secure-context.js#L318
 function validateSecureContextOptions(options) {
@@ -204,7 +218,20 @@ function validateSecureContextOptions(options) {
     validateString(sigalgs, "options.sigalgs");
     if (sigalgs === "") throw $ERR_INVALID_ARG_VALUE("options.sigalgs", sigalgs);
   }
-  if (ecdhCurve !== undefined) validateString(ecdhCurve, "options.ecdhCurve");
+  if (ecdhCurve !== undefined) {
+    validateString(ecdhCurve, "options.ecdhCurve");
+    if (ecdhCurve !== "auto") {
+      for (const curve of StringPrototypeSplit.$call(ecdhCurve, ":")) {
+        if (!SUPPORTED_ECDH_GROUPS.has(curve)) {
+          // Not $ERR_*: Node's THROW_ERR_CRYPTO_OPERATION_FAILED has no bracketed
+          // toString; test-tls-ecdh-multiple.js pins /Error: Failed to set ECDH curve/.
+          const err = new Error("Failed to set ECDH curve") as Error & { code: string };
+          err.code = "ERR_CRYPTO_OPERATION_FAILED";
+          throw err;
+        }
+      }
+    }
+  }
   // clientCertEngine must be a string (engine name); a provided engine then
   // fails because BoringSSL (which Bun always uses) has no OpenSSL ENGINE
   // support, matching Node's setClientCertEngine. Node:
@@ -542,6 +569,9 @@ function newNativeSecureContext(options, cached = false) {
     if (options.sessionTimeout == null) {
       options = { ...options, sessionTimeout: 0 };
     }
+    if (options.ecdhCurve === undefined) {
+      options = { ...options, ecdhCurve: DEFAULT_ECDH_CURVE };
+    }
     const rejectUnauthorized = options.rejectUnauthorized;
     if (rejectUnauthorized !== undefined && typeof rejectUnauthorized !== "boolean") {
       options = { ...options, rejectUnauthorized: true };
@@ -858,7 +888,10 @@ TLSSocket.prototype._final = function _final(callback) {
   // no-handle fast path, otherwise the deferred callback would never fire.
   if (!this._handle) return callback();
   if (this.secureConnecting) {
-    return this.once("secureConnect", NetSocket.prototype._final.bind(this, callback));
+    // kSecureConnectDone rather than 'secureConnect': server-side sockets
+    // never emit the user event (node parity), but every handshake table
+    // emits the internal signal when secureConnecting clears.
+    return this.once(kSecureConnectDone, NetSocket.prototype._final.bind(this, callback));
   }
   return NetSocket.prototype._final.$call(this, callback);
 };
@@ -956,6 +989,11 @@ TLSSocket.prototype.disableRenegotiation = function disableRenegotiation() {
 TLSSocket.prototype.getTLSTicket = function getTLSTicket() {
   return this._handle?.getTLSTicket?.();
 };
+
+// Lets net.ts's SNI dispatch recognize a raw native SecureContext returned by
+// a socket-level SNICallback (`new tls.TLSSocket(sock, { isServer: true,
+// SNICallback })`), where the handler's `this` is the socket, not a Server.
+TLSSocket.prototype[kNativeSecureContextCtor] = NativeSecureContext;
 
 TLSSocket.prototype.setKeyCert = function setKeyCert(context) {
   // Serve this connection's identity from the given context (Node calls this
@@ -1111,6 +1149,7 @@ function buildSharedCreds(server) {
       allowPartialTrustChain: server.allowPartialTrustChain,
       sessionTimeout: server.sessionTimeout,
       sigalgs: server.sigalgs,
+      ecdhCurve: server.ecdhCurve ?? DEFAULT_ECDH_CURVE,
       passphrase: server.passphrase,
       secureProtocol: server.secureProtocol,
       minVersion: server.minVersion,
@@ -1158,6 +1197,7 @@ function Server(options, secureConnectionListener): void {
   this.allowPartialTrustChain = undefined;
   this.sessionTimeout = undefined;
   this.sigalgs = undefined;
+  this.ecdhCurve = undefined;
   this.passphrase = undefined;
   this.secureOptions = undefined;
   // The Server constructor is the only writer of these: node assigns them
@@ -1301,6 +1341,10 @@ function Server(options, secureConnectionListener): void {
       }
       next.sigalgs = sigalgs;
 
+      const ecdhCurve = options.ecdhCurve;
+      if (ecdhCurve !== undefined) validateString(ecdhCurve, "options.ecdhCurve");
+      next.ecdhCurve = ecdhCurve;
+
       let passphrase = options.passphrase;
       if (passphrase && typeof passphrase !== "string") {
         throw $ERR_INVALID_ARG_TYPE("options.passphrase", "string", passphrase);
@@ -1349,6 +1393,7 @@ function Server(options, secureConnectionListener): void {
       this.allowPartialTrustChain = next.allowPartialTrustChain;
       this.sessionTimeout = next.sessionTimeout;
       this.sigalgs = next.sigalgs;
+      this.ecdhCurve = next.ecdhCurve;
       this.passphrase = next.passphrase;
       this.servername = next.servername;
       this.secureOptions = next.secureOptions;
@@ -1394,6 +1439,7 @@ function Server(options, secureConnectionListener): void {
         allowPartialTrustChain: this.allowPartialTrustChain,
         sessionTimeout: this.sessionTimeout ?? 0,
         sigalgs: this.sigalgs,
+        ecdhCurve: this.ecdhCurve ?? DEFAULT_ECDH_CURVE,
         passphrase: this.passphrase,
         secureOptions: this.secureOptions,
         rejectUnauthorized: this._rejectUnauthorized,
@@ -1434,7 +1480,12 @@ function Server(options, secureConnectionListener): void {
   this._handshakeTimeout = handshakeTimeout;
 
   this.on("connection", socket => {
-    if (!socket || socket.encrypted || socket instanceof TLSSocket) return;
+    // Skip only sockets this server's own native accept path already wrapped
+    // (those arrive as an encrypted TLSSocket with .server preassigned).
+    // Anything else - plain or TLS from another server - gets a server-side
+    // TLS layer, like Node's tls.Server wraps any injected duplex
+    // (node v26.3.0 lib/_tls_wrap.js, Server's connection listener).
+    if (!socket || (socket.encrypted && socket.server === this)) return;
     let secureContext = this._sharedCreds;
     if (!secureContext) {
       try {
@@ -1465,7 +1516,7 @@ $toClass(Server, "Server", NetServer);
 function createServer(options, connectionListener) {
   return new Server(options, connectionListener);
 }
-const DEFAULT_ECDH_CURVE = "auto";
+let DEFAULT_ECDH_CURVE = "auto";
 // https://github.com/Jarred-Sumner/uSockets/blob/fafc241e8664243fc0c51d69684d5d02b9805134/src/crypto/openssl.c#L519-L523
 let DEFAULT_MIN_VERSION = "TLSv1.2",
   DEFAULT_MAX_VERSION = "TLSv1.3";
@@ -1793,7 +1844,12 @@ export default {
     }
     setTLSDefaultCiphers(value);
   },
-  DEFAULT_ECDH_CURVE,
+  get DEFAULT_ECDH_CURVE() {
+    return DEFAULT_ECDH_CURVE;
+  },
+  set DEFAULT_ECDH_CURVE(value) {
+    DEFAULT_ECDH_CURVE = value;
+  },
   // Accessors so `tls.DEFAULT_MAX_VERSION = 'TLSv1.2'` reaches the
   // module-level variables that context construction reads (Node mutates the
   // exports object the same way).

@@ -13,6 +13,7 @@ import {
   isFlaky,
   isMacOS,
   isWindows,
+  rss,
   tls,
   tmpdirSync,
   withoutAggressiveGC,
@@ -2925,11 +2926,11 @@ it("releases interim 1xx response bytes as they are parsed while waiting for the
 
   try {
     Bun.gc(true);
-    const rssBefore = process.memoryUsage.rss();
+    const rssBefore = rss();
     const responsePromise = fetch(`http://localhost:${port}/`);
     await floodDone;
     Bun.gc(true);
-    const rssDuringFlood = process.memoryUsage.rss();
+    const rssDuringFlood = rss();
 
     // Complete the partially written interim response, then send the real response.
     const socket = sockets[0];
@@ -3067,4 +3068,78 @@ it("an explicit numeric `timeout` extends the socket idle deadline past the defa
   // the stalled request.
   expect(out.withDefault).toStartWith("ERR:");
   expect(exitCode).toBe(0);
+}, 60_000);
+
+it("the idle timer is an absolute deadline for the response header block (not re-armed by a byte drip)", async () => {
+  // A server that trickles one response-header byte at a time, each interval
+  // shorter than the request's idle timeout, must not be able to keep the
+  // request alive indefinitely. The idle timer is armed when the request is
+  // written and is not re-armed on partial header reads, so it bounds how long
+  // the header block may take to arrive in total (undici `headersTimeout`
+  // semantics). Once the header block completes the body path re-arms per
+  // chunk, so a slow-but-steady body is still accepted.
+  const BODY = "abc";
+  const HEAD = `HTTP/1.1 200 OK\r\nContent-Length: ${BODY.length}\r\n\r\n`;
+  const DRIP_MS = 2_000;
+  const DRIP_N = 10; // header drip sends this many single bytes, then the rest at once
+  const IDLE_MS = 5_000;
+
+  const sockets = new Set<net.Socket>();
+  const intervals = new Set<ReturnType<typeof setInterval>>();
+  const server = net.createServer(sock => {
+    sockets.add(sock);
+    sock.on("close", () => sockets.delete(sock));
+    sock.on("error", () => {});
+    sock.once("data", chunk => {
+      // /h drips DRIP_N header bytes then bursts the rest + body.
+      // /b bursts the header block then drips the body byte-by-byte.
+      const headerDrip = chunk.includes("/h ");
+      if (!headerDrip) sock.write(HEAD);
+      const dripped = headerDrip ? HEAD.slice(0, DRIP_N) : BODY;
+      const tail = headerDrip ? HEAD.slice(DRIP_N) + BODY : "";
+      let i = 0;
+      const iv = setInterval(() => {
+        if (sock.destroyed) {
+          clearInterval(iv);
+          intervals.delete(iv);
+          return;
+        }
+        if (i < dripped.length) {
+          sock.write(dripped[i++]);
+        } else {
+          clearInterval(iv);
+          intervals.delete(iv);
+          sock.end(tail);
+        }
+      }, DRIP_MS);
+      intervals.add(iv);
+    });
+  });
+  await new Promise<void>(r => server.listen(0, "127.0.0.1", () => r()));
+  const port = (server.address() as AddressInfo).port;
+
+  try {
+    const settle = (path: string) =>
+      fetch(`http://127.0.0.1:${port}${path}`, { timeout: IDLE_MS }).then(
+        async r => ({ ok: true as const, status: r.status, body: await r.text() }),
+        e => ({ ok: false as const, name: e?.name as string, message: String(e?.message ?? e) }),
+      );
+
+    // /h: DRIP_N bytes * DRIP_MS = ~20s of drip before the response would
+    // complete; the 5s idle deadline (uSockets 4s-tick sweep, so ~5-9s) must
+    // fire first. A build that re-arms on every partial header read resolves
+    // 200 after the full drip instead.
+    // /b: headers arrive in one write, then the 3-byte body trickles at
+    // DRIP_MS/byte (~8s). Each body chunk re-arms the idle timer, so this
+    // resolves despite taking longer than IDLE_MS overall.
+    const [hdr, bod] = await Promise.all([settle("/h"), settle("/b")]);
+    expect({ hdr, bod }).toEqual({
+      hdr: { ok: false, name: "TimeoutError", message: "The operation timed out." },
+      bod: { ok: true, status: 200, body: BODY },
+    });
+  } finally {
+    for (const iv of intervals) clearInterval(iv);
+    for (const s of sockets) s.destroy();
+    await new Promise<void>(r => server.close(() => r()));
+  }
 }, 60_000);

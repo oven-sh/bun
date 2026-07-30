@@ -34,10 +34,10 @@ pub enum Orientation {
     Rotate270 = 8,
 }
 
-pub struct Transform {
-    pub flop: bool,
-    pub flip: bool,
-    pub rotate: u16,
+pub(crate) struct Transform {
+    pub(crate) flop: bool,
+    pub(crate) flip: bool,
+    pub(crate) rotate: u16,
 }
 
 impl Orientation {
@@ -95,7 +95,7 @@ impl Orientation {
 /// IFD0 tag 0x0112. JPEG-only because phone cameras are the source of rotated
 /// images; PNG eXIf and WebP EXIF chunks exist but are rare enough to leave
 /// for a follow-up.
-pub fn read_jpeg(bytes: &[u8]) -> Orientation {
+pub(crate) fn read_jpeg(bytes: &[u8]) -> Orientation {
     if bytes.len() < 4 || bytes[0] != 0xFF || bytes[1] != 0xD8 {
         return Orientation::Normal;
     }

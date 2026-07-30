@@ -1,6 +1,6 @@
 import jsc from "bun:jsc";
 import { describe, expect, it, mock, test } from "bun:test";
-import { bunEnv, bunExe, isWindows } from "harness";
+import { bunEnv, bunExe, bunRun, isWindows } from "harness";
 import path from "node:path";
 import { clearInterval, clearTimeout, promises, setImmediate, setInterval, setTimeout } from "node:timers";
 import { promisify } from "util";
@@ -243,5 +243,5 @@ describe.each(["with", "without"])("setImmediate %s timers running", mode => {
 });
 
 it("should defer microtasks when an exception is thrown in an immediate", async () => {
-  expect(["run", path.join(import.meta.dir, "timers-immediate-exception-fixture.js")]).toRun();
+  expect(await bunRun(["run", path.join(import.meta.dir, "timers-immediate-exception-fixture.js")])).toSpawn();
 });

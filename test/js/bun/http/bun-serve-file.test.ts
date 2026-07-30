@@ -1,6 +1,6 @@
 import type { Server } from "bun";
 import { afterAll, beforeAll, describe, expect, it, mock, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isWindows, rmScope, tempDir, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, isASAN, isWindows, rmScope, rss, tempDir, tempDirWithFiles } from "harness";
 import { mkfifo } from "mkfifo";
 import { unlinkSync } from "node:fs";
 import { join } from "node:path";
@@ -619,7 +619,7 @@ describe("Bun.file in serve routes", () => {
       }
 
       Bun.gc(true);
-      const baseline = (process.memoryUsage.rss() / 1024 / 1024) | 0;
+      const baseline = (rss() / 1024 / 1024) | 0;
 
       // Make many requests to large file
       for (let i = 0; i < 50; i++) {
@@ -629,7 +629,7 @@ describe("Bun.file in serve routes", () => {
       }
 
       Bun.gc(true);
-      const final = (process.memoryUsage.rss() / 1024 / 1024) | 0;
+      const final = (rss() / 1024 / 1024) | 0;
       const delta = final - baseline;
 
       // ASAN's quarantine retains freed allocations (default 256 MB) so RSS

@@ -1,9 +1,9 @@
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 
 describe("bun update --interactive snapshots", () => {
   it("should not crash with various package name lengths", async () => {
-    const dir = tempDirWithFiles("update-interactive-snapshot-test", {
+    await using dir = tempDir("update-interactive-snapshot-test", {
       "package.json": JSON.stringify({
         name: "test-project",
         version: "1.0.0",
@@ -61,7 +61,7 @@ describe("bun update --interactive snapshots", () => {
 
   it("should handle extremely long package names without crashing", async () => {
     const veryLongName = "a".repeat(80);
-    const dir = tempDirWithFiles("update-interactive-long-names", {
+    await using dir = tempDir("update-interactive-long-names", {
       "package.json": JSON.stringify({
         name: "test-project",
         version: "1.0.0",
@@ -96,7 +96,7 @@ describe("bun update --interactive snapshots", () => {
   });
 
   it("should handle complex version strings without crashing", async () => {
-    const dir = tempDirWithFiles("update-interactive-complex-versions", {
+    await using dir = tempDir("update-interactive-complex-versions", {
       "package.json": JSON.stringify({
         name: "test-project",
         version: "1.0.0",

@@ -1750,6 +1750,74 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
       expect(await exists(join(packageDir, "build.node"))).toBeTrue();
     });
 
+    test("auto node-gyp script does not drop the package's own postinstall", async () => {
+      using ctx = await setupTest();
+      const { packageDir, packageJson, env } = ctx;
+      const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;
+
+      // Local mock node-gyp so the injected `node-gyp rebuild` succeeds without
+      // touching the registry.
+      await mkdir(join(packageDir, "node-gyp-pkg"), { recursive: true });
+      await writeFile(
+        join(packageDir, "node-gyp-pkg", "package.json"),
+        JSON.stringify({
+          name: "node-gyp",
+          version: "1.0.0",
+          bin: { "node-gyp": "./node-gyp.js" },
+        }),
+      );
+      await writeFile(
+        join(packageDir, "node-gyp-pkg", "node-gyp.js"),
+        `#!/usr/bin/env node\nrequire("fs").writeFileSync("build.node", "built");\n`,
+      );
+
+      await writeFile(
+        packageJson,
+        JSON.stringify({
+          name: "foo",
+          version: "1.0.0",
+          dependencies: {
+            "node-gyp": "file:./node-gyp-pkg",
+          },
+          scripts: {
+            postinstall: `${bunExe()} -e "require('fs').writeFileSync('postinstall.txt', 'ran')"`,
+            prepare: `${bunExe()} -e "require('fs').writeFileSync('prepare.txt', 'ran')"`,
+            postprepare: `${bunExe()} -e "require('fs').writeFileSync('postprepare.txt', 'ran')"`,
+          },
+        }),
+      );
+      await writeFile(join(packageDir, "binding.gyp"), "");
+
+      const { stdout, stderr, exited } = spawn({
+        cmd: [bunExe(), "install"],
+        cwd: packageDir,
+        stdout: "pipe",
+        stdin: "ignore",
+        stderr: "pipe",
+        env: testEnv,
+      });
+
+      const err = await stderr.text();
+      const out = await stdout.text();
+      expect(err).not.toContain("not found");
+      expect(err).not.toContain("error:");
+      expect(out).toContain("1 package installed");
+      expect({
+        // injected `node-gyp rebuild`
+        "build.node": await exists(join(packageDir, "build.node")),
+        // the package's own hooks must still run
+        "postinstall": await exists(join(packageDir, "postinstall.txt")),
+        "prepare": await exists(join(packageDir, "prepare.txt")),
+        "postprepare": await exists(join(packageDir, "postprepare.txt")),
+      }).toEqual({
+        "build.node": true,
+        "postinstall": true,
+        "prepare": true,
+        "postprepare": true,
+      });
+      expect(await exited).toBe(0);
+    });
+
     for (const script of ["install", "preinstall"]) {
       test(`does not add auto node-gyp script when ${script} script exists`, async () => {
         using ctx = await setupTest();

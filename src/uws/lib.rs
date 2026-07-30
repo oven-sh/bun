@@ -106,7 +106,7 @@ pub use bun_uws_sys::loop_::on_thread_exit;
 /// # Safety
 /// `filename` and `error_msg` must be valid NUL-terminated C strings.
 #[unsafe(no_mangle)]
-pub(crate) unsafe extern "C" fn BUN__warn__extra_ca_load_failed(
+unsafe extern "C" fn BUN__warn__extra_ca_load_failed(
     filename: *const c_char,
     error_msg: *const c_char,
 ) {
@@ -155,12 +155,13 @@ pub mod ssl_wrapper {
             BIO_ctrl_pending, BIO_free, BIO_new, BIO_read, BIO_s_mem, BIO_set_mem_eof_return,
             BIO_write, ERR_clear_error, SSL, SSL_CTX, SSL_CTX_free, SSL_CTX_get_verify_mode,
             SSL_ERROR_SSL, SSL_ERROR_SYSCALL, SSL_ERROR_WANT_READ, SSL_ERROR_WANT_RENEGOTIATE,
-            SSL_ERROR_WANT_WRITE, SSL_ERROR_ZERO_RETURN, SSL_RECEIVED_SHUTDOWN, SSL_VERIFY_NONE,
-            SSL_VERIFY_PEER, SSL_do_handshake, SSL_free, SSL_get_error, SSL_get_rbio,
-            SSL_get_shutdown, SSL_get_wbio, SSL_is_init_finished, SSL_new, SSL_pending, SSL_read,
-            SSL_renegotiate, SSL_set_accept_state, SSL_set_bio, SSL_set_connect_state,
-            SSL_set_renegotiate_mode, SSL_set_verify, SSL_set0_verify_cert_store, SSL_shutdown,
-            SSL_write, X509_STORE, X509_STORE_CTX, ssl_renegotiate_explicit, ssl_renegotiate_never,
+            SSL_ERROR_WANT_WRITE, SSL_ERROR_ZERO_RETURN, SSL_RECEIVED_SHUTDOWN,
+            SSL_VERIFY_FAIL_IF_NO_PEER_CERT, SSL_VERIFY_NONE, SSL_VERIFY_PEER, SSL_do_handshake,
+            SSL_free, SSL_get_error, SSL_get_rbio, SSL_get_shutdown, SSL_get_wbio,
+            SSL_is_init_finished, SSL_new, SSL_pending, SSL_read, SSL_renegotiate,
+            SSL_set_accept_state, SSL_set_bio, SSL_set_connect_state, SSL_set_renegotiate_mode,
+            SSL_set_verify, SSL_set0_verify_cert_store, SSL_shutdown, SSL_write, X509_STORE,
+            X509_STORE_CTX, ssl_renegotiate_explicit, ssl_renegotiate_never,
         };
     }
 
@@ -209,10 +210,10 @@ pub mod ssl_wrapper {
     pub struct SSLWrapper<T: Copy> {
         pub handlers: Handlers<T>,
         pub ssl: Option<NonNull<boring_sys::SSL>>,
-        pub ctx: Option<NonNull<boring_sys::SSL_CTX>>,
+        pub(crate) ctx: Option<NonNull<boring_sys::SSL_CTX>>,
         pub flags: Flags,
-        pub renegotiation_count: u8,
-        pub renegotiation_window_start: Option<std::time::Instant>,
+        pub(crate) renegotiation_count: u8,
+        pub(crate) renegotiation_window_start: Option<std::time::Instant>,
     }
 
     /// CamelCase alias for callers that use the alternate spelling
@@ -258,7 +259,7 @@ pub mod ssl_wrapper {
         }
 
         #[inline]
-        pub fn handshake_state(&self) -> HandshakeState {
+        pub(crate) fn handshake_state(&self) -> HandshakeState {
             // bits 0-1 are always written via set_handshake_state with a valid
             // discriminant in range 0..=2; the 4th bit-state traps rather than
             // silently folding bitfield corruption to a valid variant.
@@ -270,33 +271,37 @@ pub mod ssl_wrapper {
             }
         }
         #[inline]
-        pub fn set_handshake_state(&self, s: HandshakeState) {
+        pub(crate) fn set_handshake_state(&self, s: HandshakeState) {
             self.0
                 .set((self.bits() & !Self::HANDSHAKE_MASK) | (s as u8));
         }
 
         #[inline]
-        pub fn received_ssl_shutdown(&self) -> bool {
+        pub(crate) fn received_ssl_shutdown(&self) -> bool {
             self.bits() & Self::RECEIVED_SSL_SHUTDOWN != 0
         }
         #[inline]
-        pub fn set_received_ssl_shutdown(&self, v: bool) {
+        pub(crate) fn set_received_ssl_shutdown(&self, v: bool) {
             self.set_bit(Self::RECEIVED_SSL_SHUTDOWN, v)
         }
         #[inline]
-        pub fn sent_ssl_shutdown(&self) -> bool {
+        pub(crate) fn sent_ssl_shutdown(&self) -> bool {
             self.bits() & Self::SENT_SSL_SHUTDOWN != 0
         }
         #[inline]
-        pub fn set_sent_ssl_shutdown(&self, v: bool) {
+        pub(crate) fn set_sent_ssl_shutdown(&self, v: bool) {
             self.set_bit(Self::SENT_SSL_SHUTDOWN, v)
         }
         #[inline]
-        pub fn set_is_client(&self, v: bool) {
+        pub(crate) fn is_client(&self) -> bool {
+            self.bits() & Self::IS_CLIENT != 0
+        }
+        #[inline]
+        pub(crate) fn set_is_client(&self, v: bool) {
             self.set_bit(Self::IS_CLIENT, v)
         }
         #[inline]
-        pub fn set_authorized(&self, v: bool) {
+        pub(crate) fn set_authorized(&self, v: bool) {
             self.set_bit(Self::AUTHORIZED, v)
         }
         #[inline]
@@ -304,15 +309,15 @@ pub mod ssl_wrapper {
             self.bits() & Self::FATAL_ERROR != 0
         }
         #[inline]
-        pub fn set_fatal_error(&self, v: bool) {
+        pub(crate) fn set_fatal_error(&self, v: bool) {
             self.set_bit(Self::FATAL_ERROR, v)
         }
         #[inline]
-        pub fn closed_notified(&self) -> bool {
+        pub(crate) fn closed_notified(&self) -> bool {
             self.bits() & Self::CLOSED_NOTIFIED != 0
         }
         #[inline]
-        pub fn set_closed_notified(&self, v: bool) {
+        pub(crate) fn set_closed_notified(&self, v: bool) {
             self.set_bit(Self::CLOSED_NOTIFIED, v)
         }
     }
@@ -517,6 +522,44 @@ pub mod ssl_wrapper {
             Ok(this)
         }
 
+        /// Mirror `us_socket_adopt_tls`'s server-side `SSL_set_verify` override.
+        ///
+        /// `us_ssl_ctx_from_options` turns on `SSL_VERIFY_PEER |
+        /// SSL_VERIFY_FAIL_IF_NO_PEER_CERT` whenever the options carry a `ca`,
+        /// because for a server that flag is what decides whether a
+        /// CertificateRequest is sent. Node instead keys that off `requestCert`
+        /// alone, so a server given `ca` but no `requestCert` must not ask for
+        /// a client certificate. The real-fd upgrade path already corrects
+        /// this per-SSL; without the same correction a duplex-wrapped server
+        /// rejects every cert-less client with UNABLE_TO_GET_ISSUER_CERT.
+        ///
+        /// No-op for clients: their verify mode is set in `init_with_ctx` so
+        /// `verify_error` is populated for the JS `rejectUnauthorized`
+        /// decision.
+        pub fn set_server_verify(&mut self, request_cert: bool, reject_unauthorized: bool) {
+            if self.flags.is_client() {
+                return;
+            }
+            let Some(ssl) = self.ssl else { return };
+            let mode = if request_cert {
+                boring_sys::SSL_VERIFY_PEER
+                    | if reject_unauthorized {
+                        boring_sys::SSL_VERIFY_FAIL_IF_NO_PEER_CERT
+                    } else {
+                        0
+                    }
+            } else {
+                boring_sys::SSL_VERIFY_NONE
+            };
+            // SAFETY: `ssl` is this wrapper's live `SSL*`, before any handshake
+            // byte has been processed. The callback always returns 1 so
+            // BoringSSL never aborts mid-flight; JS reads `verify_error` and
+            // decides.
+            unsafe {
+                boring_sys::SSL_set_verify(ssl.as_ptr(), mode, Some(always_continue_verify));
+            }
+        }
+
         pub fn start(&mut self) {
             // trigger the onOpen callback so the user can configure the SSL connection before first handshake
             (self.handlers.on_open)(self.handlers.ctx);
@@ -648,6 +691,11 @@ pub mod ssl_wrapper {
                     return false;
                 }
             }
+            // SSL_shutdown only queues close_notify into the write BIO; nothing
+            // else pumps it on the memory-BIO paths (duplex / named pipe), so
+            // drain it now or the peer never sees our shutdown.
+            let mut buffer = [0u8; BUFFER_SIZE];
+            Self::r(this).handle_writing(&mut buffer);
             ret == 1 // truly closed
         }
 
@@ -1018,10 +1066,10 @@ pub mod ssl_wrapper {
                             let _ = Self::r(this).shutdown(false);
                             Self::r(this).handle_end_of_renegotiation();
                         }
-                        Self::r(this).flags.set_fatal_error(
-                            err == boring_sys::SSL_ERROR_SSL
-                                || err == boring_sys::SSL_ERROR_SYSCALL,
-                        );
+                        if err == boring_sys::SSL_ERROR_SSL || err == boring_sys::SSL_ERROR_SYSCALL
+                        {
+                            Self::r(this).flags.set_fatal_error(true);
+                        }
 
                         // flush the reading
                         if read > 0 {
@@ -1032,6 +1080,13 @@ pub mod ssl_wrapper {
                             {
                                 return false;
                             }
+                        }
+                        // A NewSessionTicket/keylog line that rode in ahead of the
+                        // peer's close_notify is still parked; deliver it before the
+                        // close tears the wrapper down (mirrors the C ZERO_RETURN path).
+                        Self::flush_pending_events(this, buffer);
+                        if Self::r(this).ssl.is_none() || Self::r(this).flags.closed_notified() {
+                            return false;
                         }
                         Self::r(this).trigger_close_callback();
                         return false;
@@ -1073,7 +1128,7 @@ pub mod ssl_wrapper {
             true
         }
 
-        fn handle_writing(&mut self, buffer: &mut [u8; BUFFER_SIZE]) {
+        fn handle_writing(&mut self, buffer: &mut [u8]) {
             // PORT_NOTES_PLAN R-2: `&mut self` carries LLVM `noalias`, but
             // `trigger_wanna_write_callback` invokes the user-supplied
             // `handlers.write` which can re-enter via a fresh

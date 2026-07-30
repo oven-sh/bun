@@ -81,7 +81,7 @@ const hasOpenSSL = (major = 0, minor = 0, patch = 0) => {
   return OPENSSL_VERSION_NUMBER >= opensslVersionNumber(major, minor, patch);
 };
 
-const hasQuic = hasCrypto && !!process.config.variables.openssl_quic;
+const hasQuic = hasCrypto && !!process.features.quic;
 
 function parseTestFlags(filename = process.argv[1]) {
   // The copyright notice is relatively big and the flags could come afterwards.
@@ -127,6 +127,9 @@ if (process.argv.length === 2 &&
     require('cluster').isPrimary &&
     fs.existsSync(process.argv[1])) {
   const flags = parseTestFlags();
+  if (process.versions.bun && process.execArgv.includes("--expose-internals")) {
+    installBunExposeInternalsRequireInterceptor();
+  }
   for (const flag of flags) {
     if (!process.execArgv.includes(flag) &&
         // If the binary is build without `intl` the inspect option is

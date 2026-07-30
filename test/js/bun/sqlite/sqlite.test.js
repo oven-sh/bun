@@ -2,7 +2,7 @@ import { spawnSync } from "bun";
 import { constants, Database, SQLiteError } from "bun:sqlite";
 import { describe, expect, it } from "bun:test";
 import { existsSync, readdirSync, readFileSync, realpathSync, statSync, writeFileSync } from "fs";
-import { bunEnv, bunExe, isMacOS, isMacOSVersionAtLeast, isWindows, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, isMacOS, isMacOSVersionAtLeast, isWindows, tempDir } from "harness";
 import { tmpdir } from "os";
 import path from "path";
 
@@ -1389,6 +1389,114 @@ it("issue#6597 with many columns", () => {
   db.close();
 });
 
+describe("empty and duplicate column names", () => {
+  it('an empty alias (AS "") keeps its column and all preceding columns', () => {
+    using db = new Database(":memory:");
+    using stmt = db.prepare('select 1 as a, 2 as "", 3 as b');
+    expect(stmt.get()).toEqual({ a: 1, "": 2, b: 3 });
+    expect(stmt.all()).toEqual([{ a: 1, "": 2, b: 3 }]);
+    expect([...stmt.iterate()]).toEqual([{ a: 1, "": 2, b: 3 }]);
+    expect(stmt.values()).toEqual([[1, 2, 3]]);
+    expect(stmt.columnNames).toEqual(["a", "", "b"]);
+  });
+
+  it("a trailing empty alias does not wipe the whole row", () => {
+    using db = new Database(":memory:");
+    using stmt = db.prepare('select 10 as first_col, 20 as second_col, 30 as ""');
+    expect(stmt.get()).toEqual({ first_col: 10, second_col: 20, "": 30 });
+    expect(stmt.columnNames).toEqual(["first_col", "second_col", ""]);
+  });
+
+  it('a trailing AS "" SELECT is still row-returning (all/values/raw return arrays, not a number)', () => {
+    using db = new Database(":memory:");
+    db.run("create table t(v)");
+    db.run("insert into t values ('r1'),('r2')");
+    using stmt = db.prepare('select v as name, 1 as "" from t');
+
+    // Previously: .all() returned the stale sqlite3_changes() count (a number),
+    // .values()/.raw() returned the column count, and .get() returned {}.
+    expect(stmt.all()).toEqual([
+      { name: "r1", "": 1 },
+      { name: "r2", "": 1 },
+    ]);
+    expect(stmt.values()).toEqual([
+      ["r1", 1],
+      ["r2", 1],
+    ]);
+    expect(Array.isArray(stmt.raw())).toBe(true);
+    expect(stmt.get()).toEqual({ name: "r1", "": 1 });
+    expect([...stmt.iterate()]).toEqual([
+      { name: "r1", "": 1 },
+      { name: "r2", "": 1 },
+    ]);
+    expect(stmt.columnNames).toEqual(["name", ""]);
+
+    using lone = db.prepare('select 9 as ""');
+    expect(lone.all()).toEqual([{ "": 9 }]);
+    expect(lone.values()).toEqual([[9]]);
+  });
+
+  it('a trailing AS "" SELECT with zero rows returns [], not null', () => {
+    using db = new Database(":memory:");
+    db.run("create table t(v)");
+    using stmt = db.prepare('select v as name, 1 as "" from t');
+    expect(stmt.all()).toEqual([]);
+    expect(stmt.values()).toEqual([]);
+    expect(stmt.raw()).toEqual([]);
+  });
+
+  it("multiple empty aliases: last value wins on the row object, columnNames keeps all", () => {
+    using db = new Database(":memory:");
+    using stmt = db.prepare('select 1 as "", 2 as x, 3 as ""');
+    expect(stmt.get()).toEqual({ "": 3, x: 2 });
+    expect(stmt.columnNames).toEqual(["", "x", ""]);
+    expect(stmt.values()).toEqual([[1, 2, 3]]);
+  });
+
+  it("columnNames preserves duplicates and order, matching columnTypes / declaredTypes / values()", () => {
+    using db = new Database(":memory:");
+    using stmt = db.prepare("select 1 as a, 2 as b, 3 as a");
+    // row object: last duplicate wins (better-sqlite3/node:sqlite semantics)
+    expect(stmt.get()).toEqual({ a: 3, b: 2 });
+    expect(stmt.columnNames).toEqual(["a", "b", "a"]);
+    expect(stmt.columnNames.length).toBe(stmt.columnTypes.length);
+    expect(stmt.columnNames.length).toBe(stmt.declaredTypes.length);
+    expect(stmt.columnNames.length).toBe(stmt.values()[0].length);
+  });
+
+  it("columnNames preserves all columns on the >64-column slow path with an empty alias", () => {
+    using db = new Database(":memory:");
+    const cols = Array.from({ length: 70 }, (_, i) => `${i} as c${i}`);
+    cols[3] = `999 as ""`;
+    using stmt = db.prepare(`select ${cols.join(", ")}`);
+    const row = stmt.get();
+    const names = stmt.columnNames;
+    expect(names.length).toBe(70);
+    expect(names[0]).toBe("c0");
+    expect(names[3]).toBe("");
+    expect(names[69]).toBe("c69");
+    expect(row.c0).toBe(0);
+    expect(row[""]).toBe(999);
+    expect(row.c69).toBe(69);
+    expect(Object.keys(row).length).toBe(70);
+  });
+
+  it("columnNames preserves duplicates on the >64-column slow path", () => {
+    using db = new Database(":memory:");
+    const cols = Array.from({ length: 70 }, (_, i) => `${i} as c${i}`);
+    cols[50] = `777 as c0`;
+    using stmt = db.prepare(`select ${cols.join(", ")}`);
+    const names = stmt.columnNames;
+    expect(names.length).toBe(70);
+    expect(names[0]).toBe("c0");
+    expect(names[50]).toBe("c0");
+    const row = stmt.get();
+    expect(row.c0).toBe(777);
+    expect(row.c49).toBe(49);
+    expect(row.c51).toBe(51);
+  });
+});
+
 it("issue#7147", () => {
   const db = new Database(":memory:");
   db.exec("CREATE TABLE foos (foo_id INTEGER NOT NULL PRIMARY KEY, foo_a TEXT, foo_b TEXT)");
@@ -1422,7 +1530,7 @@ it("issue#7147", () => {
 });
 
 it("should close with WAL enabled", () => {
-  const dir = tempDirWithFiles("sqlite-wal-test", { "empty.txt": "" });
+  using dir = tempDir("sqlite-wal-test", { "empty.txt": "" });
   const file = path.join(dir, "my.db");
   const db = new Database(file);
   db.exec("PRAGMA journal_mode = WAL");
@@ -1882,7 +1990,7 @@ it("run() reports a closed database when a bound parameter's getter closes it", 
 // must be at least 8 bytes. A 1-byte Uint8Array used to be passed through
 // as-is and overflowed.
 it("fileControl rejects result TypedArrays smaller than 8 bytes", () => {
-  const dir = tempDirWithFiles("sqlite-fcntl-bounds", { "empty.txt": "" });
+  using dir = tempDir("sqlite-fcntl-bounds", { "empty.txt": "" });
   const db = new Database(path.join(dir, "my.db"));
 
   expect(() => db.fileControl(constants.SQLITE_FCNTL_PERSIST_WAL, new Uint8Array(1))).toThrow(
@@ -2022,7 +2130,7 @@ it("decodes declared types leniently and accepts single-character declared types
 // grows. Run in a subprocess so a crash shows up as a non-zero exit code
 // instead of taking down the test runner.
 it("keeps database handles working when many Workers open databases concurrently", async () => {
-  const dir = tempDirWithFiles("sqlite-worker-registry", {
+  await using dir = tempDir("sqlite-worker-registry", {
     "main.js": `
       import { Database } from "bun:sqlite";
 
@@ -2110,7 +2218,7 @@ it("exit-time WAL checkpoint runs even with a never-finalized prepared statement
   // zombifies the connection and defers the WAL checkpoint to a finalize
   // that never comes; Bun__closeAllSQLiteDatabasesForTermination now
   // checkpoints explicitly first.
-  const dir = tempDirWithFiles("bun-sqlite-exit-zombie", {});
+  await using dir = tempDir("bun-sqlite-exit-zombie", {});
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),

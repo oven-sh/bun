@@ -43,20 +43,20 @@ use crate::api::bun_process::sync as spawn_sync;
 
 // `core::result::Result` is fully qualified throughout this file to avoid the
 // shadow.
-pub struct Result<'a> {
+pub(crate) struct Result<'a> {
     /// The filtered list of test files. Slice of the original `test_files`
     /// allocation, owned by the caller.
-    pub test_files: &'a mut [Interned],
+    pub(crate) test_files: &'a mut [Interned],
     /// Number of files git reported as changed.
-    pub changed_count: usize,
+    pub(crate) changed_count: usize,
     /// Number of test files before filtering.
-    pub total_tests: usize,
+    pub(crate) total_tests: usize,
     /// Absolute paths of every local source file that participates in the
     /// module graph (test entry points and everything they transitively
     /// import, excluding node_modules). Used by `--changed --watch` to watch
     /// files that would not otherwise be loaded when a subset of tests runs.
     /// Owned by the caller; each element is individually allocated.
-    pub module_graph_files: Vec<Box<[u8]>>,
+    pub(crate) module_graph_files: Vec<Box<[u8]>>,
 }
 
 /// Filter `test_files` in place to only the entries whose module graph

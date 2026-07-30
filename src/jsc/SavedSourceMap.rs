@@ -16,7 +16,7 @@ use bun_wyhash::hash;
 pub struct SavedSourceMap {
     /// This is a pointer to the map located on the VirtualMachine struct
     pub map: *mut HashTable,
-    pub mutex: Mutex,
+    pub(crate) mutex: Mutex,
 }
 
 impl Default for SavedSourceMap {
@@ -30,15 +30,6 @@ impl Default for SavedSourceMap {
 
 impl SavedSourceMap {
     // In-place init — `this` is a pre-allocated field on VirtualMachine; `map` is a sibling field backref.
-    pub unsafe fn init(this: &mut core::mem::MaybeUninit<Self>, map: *mut HashTable) {
-        this.write(Self {
-            map,
-            mutex: Mutex::default(),
-        });
-
-        // SAFETY: `map` is a valid pointer to the sibling HashTable on VirtualMachine.
-        unsafe { (*map).lock_pointers() };
-    }
 
     /// Mutable access to the sibling `HashTable` on `VirtualMachine`.
     ///
@@ -55,13 +46,13 @@ impl SavedSourceMap {
     }
 
     #[inline]
-    pub fn lock(&mut self) {
+    pub(crate) fn lock(&mut self) {
         self.mutex.lock();
         self.map_mut().unlock_pointers();
     }
 
     #[inline]
-    pub fn unlock(&mut self) {
+    pub(crate) fn unlock(&mut self) {
         self.map_mut().lock_pointers();
         self.mutex.unlock();
     }
@@ -72,13 +63,13 @@ impl SavedSourceMap {
 /// handle inside it borrowed) is a registered lazy external source provider.
 /// `ParsedSourceMap` is materialized lazily from such a provider for sources
 /// that ship their own external `.map`.
-pub type Value = TaggedPtrUnion<ValueTypes>;
+pub(crate) type Value = TaggedPtrUnion<ValueTypes>;
 
 /// Local type-list marker so `TypeList`/`UnionMember` impls satisfy orphan
 /// rules — `bun_ptr::impl_tagged_ptr_union!` would impl on a tuple of foreign
 /// types (all three members live in `bun_sourcemap`), which the coherence
 /// checker rejects from this crate. Tags are `1024 - i`.
-pub struct ValueTypes;
+pub(crate) struct ValueTypes;
 
 impl bun_ptr::tagged_pointer::TypeList for ValueTypes {
     const MIN_TAG: TagType = 1024 - 2;
@@ -124,7 +115,7 @@ impl SavedSourceMap {
 /// Thin forwarder to the leaf-crate state in
 /// `bun_sourcemap::SavedSourceMap::MissingSourceMapNoteInfo` so the path
 /// recorded here is the same one `run_command` prints.
-pub mod missing_source_map_note_info {
+pub(crate) mod missing_source_map_note_info {
     #[inline]
     pub(super) fn record(path: &[u8]) {
         bun_sourcemap::SavedSourceMap::MissingSourceMapNoteInfo::set_path(path);
@@ -272,7 +263,7 @@ impl SavedSourceMap {
         }
     }
 
-    pub fn put_value(&mut self, path: &[u8], value: Value) -> bun_js_printer::Result<()> {
+    pub(crate) fn put_value(&mut self, path: &[u8], value: Value) -> bun_js_printer::Result<()> {
         use bun_collections::zig_hash_map::MapEntry as Entry;
 
         self.lock();
@@ -397,7 +388,7 @@ impl SavedSourceMap {
             .map
     }
 
-    pub fn resolve_mapping(
+    pub(crate) fn resolve_mapping(
         &mut self,
         path: &[u8],
         line: Ordinal,

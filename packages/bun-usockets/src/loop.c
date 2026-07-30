@@ -430,6 +430,8 @@ void us_internal_loop_pre(struct us_loop_t *loop) {
      * before epoll blocks. loop_post handles what this iteration receives. */
     if (loop->data.quic_head) us_quic_loop_process(loop);
 #endif
+    /* Same corking as the QUIC block above, for node:quic's engines. */
+    if (loop->data.nq_head) us_nq_loop_flush_if_pending(loop);
 }
 
 void us_internal_loop_post(struct us_loop_t *loop) {
@@ -437,6 +439,7 @@ void us_internal_loop_post(struct us_loop_t *loop) {
 #ifdef LIBUS_USE_QUIC
     if (loop->data.quic_head) us_quic_loop_process(loop);
 #endif
+    if (loop->data.nq_head) us_nq_loop_flush_if_pending(loop);
     /* A poll callback may re-enter the loop (e.g. expect().toThrow() →
      * waitForPromise → us_loop_run_bun_tick). The inner tick must not free
      * closed sockets: the outer tick's dispatch is mid-iteration and may still

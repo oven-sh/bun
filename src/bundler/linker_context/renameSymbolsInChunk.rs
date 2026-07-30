@@ -35,7 +35,7 @@ use crate::{LinkerContext, StableRef, WrapKind};
 /// `c` must point to a live `LinkerContext` for the duration of the call;
 /// caller (the `each_ptr` dispatch) guarantees the link step outlives all
 /// renamer tasks.
-pub unsafe fn rename_symbols_in_chunk(
+pub(crate) unsafe fn rename_symbols_in_chunk(
     c: *mut LinkerContext,
     content: &Content,
 ) -> Result<ChunkRenamer, crate::Error> {

@@ -18,15 +18,15 @@ use crate::shell::yield_::Yield;
 use bun_collections::VecExt;
 
 pub struct Cmd {
-    pub base: Base,
+    pub(crate) base: Base,
     pub node: bun_ptr::BackRef<ast::Cmd>,
-    pub io: IO,
-    pub state: CmdState,
+    pub(crate) io: IO,
+    pub(crate) state: CmdState,
     pub args: Vec<Vec<u8>>,
-    pub redirection_file: Vec<u8>,
-    pub redirection_fd: Option<*mut CowFd>,
-    pub exec: Exec,
-    pub exit_code: Option<ExitCode>,
+    pub(crate) redirection_file: Vec<u8>,
+    pub(crate) redirection_fd: Option<*mut CowFd>,
+    pub(crate) exec: Exec,
+    pub(crate) exit_code: Option<ExitCode>,
 }
 
 #[derive(Default, strum::IntoStaticStr)]
@@ -60,22 +60,22 @@ impl Cmd {
     /// which is owned by the `Interpreter` and outlives every `Cmd` slot (the
     /// arena is dropped only in `Interpreter::deinit`).
     #[inline]
-    pub fn ast_node(&self) -> &ast::Cmd {
+    pub(crate) fn ast_node(&self) -> &ast::Cmd {
         self.node.get()
     }
 }
 
 pub struct SubprocExec {
-    pub child: *mut ShellSubprocess,
-    pub buffered_closed: BufferedIoClosed,
+    pub(crate) child: *mut ShellSubprocess,
+    pub(crate) buffered_closed: BufferedIoClosed,
     /// NodeId-arena backrefs so the legacy `&mut self` subprocess callbacks
     /// (`buffered_output_close` / `on_exit`) can hand a [`Yield`] back to the
     /// trampoline. The `Cmd` lives inside `interp.nodes`, so we stash the
     /// indices and
     /// return `Yield::Next(this_id)` for the caller (`PipeReader::run_yield`)
     /// to drive.
-    pub interp: *mut Interpreter,
-    pub this_id: NodeId,
+    pub(crate) interp: *mut Interpreter,
+    pub(crate) this_id: NodeId,
 }
 
 /// Tracks which subprocess stdio pipes are still open. Each `Option` is `None`
@@ -84,9 +84,9 @@ pub struct SubprocExec {
 /// [`Cmd::has_finished`] returns true.
 #[derive(Default)]
 pub struct BufferedIoClosed {
-    pub stdin: Option<bool>,
-    pub stdout: Option<BufferedIoState>,
-    pub stderr: Option<BufferedIoState>,
+    pub(crate) stdin: Option<bool>,
+    pub(crate) stdout: Option<BufferedIoState>,
+    pub(crate) stderr: Option<BufferedIoState>,
 }
 
 #[derive(Default)]
@@ -98,7 +98,7 @@ pub enum BufferedIoState {
 
 impl BufferedIoState {
     #[inline]
-    pub(crate) fn closed(&self) -> bool {
+    fn closed(&self) -> bool {
         matches!(self, BufferedIoState::Closed(_))
     }
 }
@@ -116,7 +116,7 @@ impl Drop for BufferedIoState {
 
 impl BufferedIoClosed {
     /// Build the per-fd closed/buffering state from the command's `Stdio` triple.
-    pub(crate) fn from_stdio(io: &[Stdio; 3]) -> Self {
+    fn from_stdio(io: &[Stdio; 3]) -> Self {
         const STDIN_NO: usize = 0;
         const STDOUT_NO: usize = 1;
         const STDERR_NO: usize = 2;
@@ -140,7 +140,7 @@ impl BufferedIoClosed {
     }
 
     /// True once stdin, stdout, and stderr have all been closed.
-    pub(crate) fn all_closed(&self) -> bool {
+    fn all_closed(&self) -> bool {
         let stdin_closed = self.stdin.unwrap_or(true);
         let stdout_closed = self.stdout.as_ref().is_none_or(BufferedIoState::closed);
         let stderr_closed = self.stderr.as_ref().is_none_or(BufferedIoState::closed);
@@ -156,7 +156,7 @@ impl BufferedIoClosed {
     }
 
     /// Mark stdin closed.
-    pub(crate) fn close_stdin(&mut self) {
+    fn close_stdin(&mut self) {
         self.stdin = Some(true);
     }
 
@@ -199,7 +199,7 @@ impl BufferedIoClosed {
 }
 
 impl Cmd {
-    pub fn init(
+    pub(crate) fn init(
         interp: &Interpreter,
         shell: *mut ShellExecEnv,
         node: &ast::Cmd,
@@ -219,11 +219,11 @@ impl Cmd {
         }))
     }
 
-    pub fn start(_interp: &Interpreter, this: NodeId) -> Yield {
+    pub(crate) fn start(_interp: &Interpreter, this: NodeId) -> Yield {
         Yield::Next(this)
     }
 
-    pub fn next(interp: &Interpreter, this: NodeId) -> Yield {
+    pub(crate) fn next(interp: &Interpreter, this: NodeId) -> Yield {
         loop {
             let (shell, node) = {
                 let me = interp.as_cmd(this);
@@ -239,9 +239,7 @@ impl Cmd {
                 CmdState::Idle => {
                     if !n.assigns.is_empty() {
                         interp.as_cmd_mut(this).state = CmdState::ExpandingAssigns;
-                        let io = interp.as_cmd(this).io.clone();
-                        let child =
-                            Assigns::init(interp, shell, n.assigns, this, AssignCtx::Cmd, io);
+                        let child = Assigns::init(interp, shell, n.assigns, this, AssignCtx::Cmd);
                         return Assigns::start(interp, child);
                     }
                     interp.as_cmd_mut(this).state = CmdState::ExpandingRedirect { idx: 0 };
@@ -255,8 +253,7 @@ impl Cmd {
                     match &n.redirect_file {
                         Some(ast::Redirect::Atom(atom)) if idx == 0 => {
                             let atom: *const ast::Atom = atom;
-                            let io = interp.as_cmd(this).io.clone();
-                            let child = Expansion::init(interp, shell, atom, this, io);
+                            let child = Expansion::init(interp, shell, atom, this);
                             return Expansion::start(interp, child);
                         }
                         // JsBuf redirects don't need expansion; nor does the
@@ -273,8 +270,7 @@ impl Cmd {
                         continue;
                     }
                     let atom: *const ast::Atom = &raw const args[idx as usize];
-                    let io = interp.as_cmd(this).io.clone();
-                    let child = Expansion::init(interp, shell, atom, this, io);
+                    let child = Expansion::init(interp, shell, atom, this);
                     return Expansion::start(interp, child);
                 }
                 CmdState::Exec => {
@@ -293,7 +289,7 @@ impl Cmd {
     /// IOWriter completion callback for the error message written in
     /// `WaitingWriteErr`: throw on write failure, otherwise finish the Cmd
     /// with exit code 1.
-    pub fn on_io_writer_chunk(
+    pub(crate) fn on_io_writer_chunk(
         interp: &Interpreter,
         this: NodeId,
         _written: usize,
@@ -311,7 +307,7 @@ impl Cmd {
         interp.child_done(parent, this, 1)
     }
 
-    pub fn child_done(
+    pub(crate) fn child_done(
         interp: &Interpreter,
         this: NodeId,
         child: NodeId,
@@ -843,7 +839,7 @@ impl Cmd {
     }
 
     /// Called by `Builtin::done` / subprocess exit handler.
-    pub fn on_exec_done(interp: &Interpreter, this: NodeId, exit_code: ExitCode) -> Yield {
+    pub(crate) fn on_exec_done(interp: &Interpreter, this: NodeId, exit_code: ExitCode) -> Yield {
         log!("Cmd {} execDone exit={}", this, exit_code);
         {
             let me = interp.as_cmd_mut(this);
@@ -856,11 +852,11 @@ impl Cmd {
     /// Main-thread re-entry for a subprocess exit posted from off-thread —
     /// equivalent to [`Self::on_exec_done`] but drives the trampoline itself
     /// since the dispatcher discards the [`Yield`].
-    pub fn on_subprocess_done(interp: &Interpreter, this: NodeId, exit_code: ExitCode) {
+    pub(crate) fn on_subprocess_done(interp: &Interpreter, this: NodeId, exit_code: ExitCode) {
         Self::on_exec_done(interp, this, exit_code).run(interp);
     }
 
-    pub fn deinit(interp: &Interpreter, this: NodeId) {
+    pub(crate) fn deinit(interp: &Interpreter, this: NodeId) {
         log!("Cmd {} deinit", this);
         let me = interp.as_cmd_mut(this);
         me.args.clear();
@@ -906,7 +902,7 @@ impl Cmd {
 
     /// True once the command has both an exit code and (for subprocesses)
     /// all buffered stdio closed.
-    pub fn has_finished(&self) -> bool {
+    pub(crate) fn has_finished(&self) -> bool {
         log!("Cmd has_finished exit_code={:?}", self.exit_code);
         if self.exit_code.is_none() {
             return false;
@@ -919,7 +915,7 @@ impl Cmd {
     }
 
     /// Mark the subprocess's buffered stdin as closed.
-    pub fn buffered_input_close(&mut self) {
+    pub(crate) fn buffered_input_close(&mut self) {
         if let Exec::Subproc(sub) = &mut self.exec {
             sub.buffered_closed.close_stdin();
         }
@@ -928,7 +924,7 @@ impl Cmd {
     /// Mark the subprocess's buffered stdout/stderr as closed (flushing the
     /// captured bytes into the shell buffers); if that makes the command
     /// finished, transition to `Done` and yield back to the trampoline.
-    pub fn buffered_output_close(
+    pub(crate) fn buffered_output_close(
         &mut self,
         kind: OutKind,
         err: Option<bun_sys::SystemError>,
@@ -1031,7 +1027,7 @@ impl Cmd {
     }
 
     /// Called by `ShellSubprocess::on_process_exit`.
-    pub fn on_exit(&mut self, exit_code: ExitCode) {
+    pub(crate) fn on_exit(&mut self, exit_code: ExitCode) {
         self.exit_code = Some(exit_code);
         let has_finished = self.has_finished();
         log!("cmd exit code={} has_finished={}", exit_code, has_finished);

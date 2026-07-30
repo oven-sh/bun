@@ -78,10 +78,10 @@ impl AsyncFormDataExt for AsyncFormData {
 pub struct Field<'a> {
     /// Borrows into the caller-owned input buffer (binary body slice).
     pub value: &'a [u8],
-    pub filename: bun_semver::String,
-    pub content_type: bun_semver::String,
-    pub is_file: bool,
-    pub zero_count: u8,
+    pub(crate) filename: bun_semver::String,
+    pub(crate) content_type: bun_semver::String,
+    pub(crate) is_file: bool,
+    pub(crate) zero_count: u8,
 }
 
 impl Default for Field<'_> {
@@ -115,7 +115,7 @@ impl FormData {
 }
 
 #[bun_jsc::host_fn(export = "FormData__jsFunctionFromMultipartData")]
-pub fn from_multipart_data(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+pub(crate) fn from_multipart_data(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     let [input_value, boundary_value] = frame.arguments_as_array::<2>();
     let boundary_slice: ZigStringSlice;
 
@@ -167,7 +167,7 @@ pub fn from_multipart_data(global: &JSGlobalObject, frame: &CallFrame) -> JsResu
     }
 }
 
-pub fn to_js_from_multipart_data(
+pub(crate) fn to_js_from_multipart_data(
     global: &JSGlobalObject,
     input: &[u8],
     boundary: &[u8],
@@ -257,7 +257,7 @@ pub fn to_js_from_multipart_data(
     Ok(form_data_value)
 }
 
-pub fn for_each_multipart_entry<C>(
+pub(crate) fn for_each_multipart_entry<C>(
     input: &[u8],
     boundary: &[u8],
     ctx: &mut C,

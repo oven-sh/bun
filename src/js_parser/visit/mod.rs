@@ -3,8 +3,8 @@
 //! classes, and declarations. This is the second pass after parsing.
 
 pub mod visit_binary;
-pub mod visit_expr;
-pub mod visit_stmt;
+pub(crate) mod visit_expr;
+pub(crate) mod visit_stmt;
 
 use crate::lexer as js_lexer;
 use crate::p::{LowerUsingDeclarationsContext, P};
@@ -44,7 +44,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.current_scope_mut()
     }
 
-    pub fn visit_stmts_and_prepend_temp_refs(
+    pub(crate) fn visit_stmts_and_prepend_temp_refs(
         &mut self,
         stmts: &mut ListManaged<'a, Stmt>,
         opts: &mut PrependTempRefsOpts,
@@ -61,7 +61,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(())
     }
 
-    pub fn record_declared_symbol(&mut self, r#ref: Ref) {
+    pub(crate) fn record_declared_symbol(&mut self, r#ref: Ref) {
         debug_assert!(r#ref.is_symbol());
         self.declared_symbols
             .append(bun_ast::DeclaredSymbol {
@@ -71,7 +71,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             .expect("oom");
     }
 
-    pub fn visit_func(&mut self, mut func: G::Fn, open_parens_loc: bun_ast::Loc) -> G::Fn {
+    pub(crate) fn visit_func(&mut self, mut func: G::Fn, open_parens_loc: bun_ast::Loc) -> G::Fn {
         debug_assert!(
             !SCAN_ONLY,
             "only_scan_imports_and_do_not_visit must not run this."
@@ -82,12 +82,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let old_fn_or_arrow_data = self.fn_or_arrow_data_visit;
         let old_fn_only_data = core::mem::take(&mut self.fn_only_data_visit);
         self.fn_or_arrow_data_visit = FnOrArrowDataVisit {
-            is_async: func.flags.contains(flags::Function::IsAsync),
             ..Default::default()
         };
         self.fn_only_data_visit = FnOnlyDataVisit {
             is_this_nested: true,
-            arguments_ref: func.arguments_ref.to_nullable(),
             ..Default::default()
         };
 
@@ -186,7 +184,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         func
     }
 
-    pub fn visit_args(&mut self, args: &mut [G::Arg], opts: &VisitArgsOpts) {
+    pub(crate) fn visit_args(&mut self, args: &mut [G::Arg], opts: &VisitArgsOpts) {
         let strict_loc = fn_body_contains_use_strict(opts.body);
         let has_simple_args = Self::is_simple_parameter_list(args, opts.has_rest_arg);
         // StringVoidMap::get returns a pool guard; Drop releases.
@@ -235,13 +233,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     }
 
     // `Vec<Expr>` is not `Copy`; mutate in place.
-    pub fn visit_ts_decorators(&mut self, decs: &mut ExprNodeList) {
+    pub(crate) fn visit_ts_decorators(&mut self, decs: &mut ExprNodeList) {
         for dec in decs.slice_mut() {
             self.visit_expr(dec);
         }
     }
 
-    pub fn visit_decls<const IS_POSSIBLY_DECL_TO_REMOVE: bool>(
+    pub(crate) fn visit_decls<const IS_POSSIBLY_DECL_TO_REMOVE: bool>(
         &mut self,
         decls: &mut [G::Decl],
         was_const: bool,
@@ -441,7 +439,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         j
     }
 
-    pub fn visit_binding_and_expr_for_macro(&mut self, binding: Binding, expr: Expr) {
+    pub(crate) fn visit_binding_and_expr_for_macro(&mut self, binding: Binding, expr: Expr) {
         match binding.data {
             BData::BObject(bound_object) => {
                 let bound_object = bound_object.get();
@@ -523,7 +521,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    pub fn visit_decl(
+    pub(crate) fn visit_decl(
         &mut self,
         decl: &mut G::Decl,
         was_anonymous_named_expr: bool,
@@ -564,7 +562,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    pub fn visit_for_loop_init(&mut self, stmt: Stmt, is_in_or_of: bool) -> Stmt {
+    pub(crate) fn visit_for_loop_init(&mut self, stmt: Stmt, is_in_or_of: bool) -> Stmt {
         match stmt.data {
             StmtData::SExpr(mut st) => {
                 let assign_target = if is_in_or_of {
@@ -598,7 +596,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         stmt
     }
 
-    pub fn visit_binding(
+    pub(crate) fn visit_binding(
         &mut self,
         binding: BindingNodeIndex,
         mut duplicate_arg_check: Option<&mut StringVoidMap>,
@@ -714,7 +712,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    pub fn visit_loop_body(&mut self, stmt: Stmt) -> Stmt {
+    pub(crate) fn visit_loop_body(&mut self, stmt: Stmt) -> Stmt {
         let old_is_inside_loop = self.fn_or_arrow_data_visit.is_inside_loop;
         self.fn_or_arrow_data_visit.is_inside_loop = true;
         self.loop_body = stmt.data;
@@ -723,7 +721,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         res
     }
 
-    pub fn visit_single_stmt_block(&mut self, stmt: Stmt, kind: StmtsKind) -> Stmt {
+    pub(crate) fn visit_single_stmt_block(&mut self, stmt: Stmt, kind: StmtsKind) -> Stmt {
         let mut new_stmt = stmt;
         self.push_scope_for_visit_pass(ScopeKind::Block, stmt.loc)
             .expect("unreachable");
@@ -748,7 +746,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         new_stmt
     }
 
-    pub fn visit_single_stmt(&mut self, stmt: Stmt, kind: StmtsKind) -> Stmt {
+    pub(crate) fn visit_single_stmt(&mut self, stmt: Stmt, kind: StmtsKind) -> Stmt {
         if matches!(stmt.data, StmtData::SBlock(_)) {
             return self.visit_single_stmt_block(stmt, kind);
         }
@@ -764,9 +762,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 .expect("unreachable");
         }
 
+        let old_is_inside_single_stmt_body = self.is_inside_single_stmt_body;
+        self.is_inside_single_stmt_body = true;
+
         let mut stmts = BumpVec::with_capacity_in(1, self.arena);
         stmts.push(stmt);
         self.visit_stmts(&mut stmts, kind).expect("unreachable");
+
+        self.is_inside_single_stmt_body = old_is_inside_single_stmt_body;
 
         if has_if_scope {
             self.pop_scope();
@@ -775,7 +778,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.stmts_to_single_stmt(stmt.loc, stmts.into_bump_slice_mut())
     }
 
-    pub fn visit_class(
+    pub(crate) fn visit_class(
         &mut self,
         name_scope_loc: bun_ast::Loc,
         class: &mut G::Class,
@@ -1178,7 +1181,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     }
 
     // Try separating the list for appending, so that it's not a pointer.
-    pub fn visit_stmts(
+    pub(crate) fn visit_stmts(
         &mut self,
         stmts: &mut ListManaged<'a, Stmt>,
         kind: StmtsKind,
@@ -1770,8 +1773,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         let prev_stmt = output[prev_idx];
                         if let StmtData::SExpr(prev_expr) = prev_stmt.data {
                             if !prev_stmt.is_super_call() {
-                                s_switch.test_ =
-                                    Expr::join_with_comma(prev_expr.value, s_switch.test_);
+                                s_switch.test =
+                                    Expr::join_with_comma(prev_expr.value, s_switch.test);
                                 output.truncate(prev_idx);
                             }
                         }
@@ -1785,7 +1788,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         let prev_stmt = output[prev_idx];
                         if let StmtData::SExpr(prev_expr) = prev_stmt.data {
                             if !prev_stmt.is_super_call() {
-                                s_if.test_ = Expr::join_with_comma(prev_expr.value, s_if.test_);
+                                s_if.test = Expr::join_with_comma(prev_expr.value, s_if.test);
                                 output.truncate(prev_idx);
                             }
                         }
@@ -1867,7 +1870,7 @@ fn scopes_for_enum_at<'a>(
         .expect("scopes_in_order_for_enum miss for enum stmt loc")
 }
 
-pub(crate) fn fn_body_contains_use_strict(body: &[Stmt]) -> Option<bun_ast::Loc> {
+fn fn_body_contains_use_strict(body: &[Stmt]) -> Option<bun_ast::Loc> {
     use bun_ast::stmt::Data as StmtData;
     for stmt in body {
         // "use strict" has to appear at the top of the function body

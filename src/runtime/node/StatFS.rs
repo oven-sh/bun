@@ -145,7 +145,7 @@ pub enum StatFS {
 
 impl StatFS {
     #[inline]
-    pub fn init(stat_: &RawStatFS, big: bool) -> StatFS {
+    pub(crate) fn init(stat_: &RawStatFS, big: bool) -> StatFS {
         if big {
             StatFS::Big(StatFSBig::init(stat_))
         } else {
@@ -153,7 +153,7 @@ impl StatFS {
         }
     }
 
-    pub fn to_js_newly_created(&self, global: &JSGlobalObject) -> JsResult<JSValue> {
+    pub(crate) fn to_js_newly_created(&self, global: &JSGlobalObject) -> JsResult<JSValue> {
         match self {
             StatFS::Big(big) => big.to_js(global),
             StatFS::Small(small) => small.to_js(global),

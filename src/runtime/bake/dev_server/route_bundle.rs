@@ -26,11 +26,11 @@ pub enum State {
 }
 
 pub struct Framework {
-    pub route_index: framework_router::RouteIndex,
-    pub cached_module_list: jsc::StrongOptional,
-    pub cached_client_bundle_url: jsc::StrongOptional,
-    pub cached_css_file_array: jsc::StrongOptional,
-    pub evaluate_failure: Option<SerializedFailure>,
+    pub(crate) route_index: framework_router::RouteIndex,
+    pub(crate) cached_module_list: jsc::StrongOptional,
+    pub(crate) cached_client_bundle_url: jsc::StrongOptional,
+    pub(crate) cached_css_file_array: jsc::StrongOptional,
+    pub(crate) evaluate_failure: Option<SerializedFailure>,
 }
 
 pub struct Html {
@@ -39,16 +39,16 @@ pub struct Html {
     /// Stored as raw ptr because `HTMLBundleRoute` does not yet impl
     /// `bun_ptr::RefCounted` (gated server-side).
     // TODO: switch to bun_ptr::RefPtr<HTMLBundleRoute> once the RefCounted impl is real.
-    pub html_bundle: *mut HTMLBundleRoute,
-    pub bundled_file: incremental_graph::ClientFileIndex,
-    pub script_injection_offset: Option<ByteOffset>,
-    pub bundled_html_text: Option<Box<[u8]>>,
+    pub(crate) html_bundle: *mut HTMLBundleRoute,
+    pub(crate) bundled_file: incremental_graph::ClientFileIndex,
+    pub(crate) script_injection_offset: Option<ByteOffset>,
+    pub(crate) bundled_html_text: Option<Box<[u8]>>,
     /// SHARED (LIFETIMES.tsv): deinit calls `cached_response.deref()`.
     /// Stored as [`BackRef`](bun_ptr::BackRef) — the slot holds an intrusive
     /// ref (bumped at store time, released in `invalidate_client_bundle`/drop),
     /// so while `Some` the pointee strictly outlives the field; readers go
     /// through safe `Option::as_deref` (no raw `NonNull::as_ref`).
-    pub cached_response: Option<bun_ptr::BackRef<StaticRoute>>,
+    pub(crate) cached_response: Option<bun_ptr::BackRef<StaticRoute>>,
 }
 
 pub enum Data {
@@ -84,7 +84,10 @@ impl RouteBundle {
     /// only `dev.source_maps` is touched, and the two keystone
     /// `DevServer` structs (`dev_server::DevServer` / `dev_server_body::DevServer`)
     /// both expose that field but cannot be named here without a cycle.
-    pub fn invalidate_client_bundle(&mut self, source_maps: &mut source_map_store::SourceMapStore) {
+    pub(crate) fn invalidate_client_bundle(
+        &mut self,
+        source_maps: &mut source_map_store::SourceMapStore,
+    ) {
         if let Some(bundle) = self.client_bundle.take() {
             source_maps.unref(self.source_map_id());
             // SAFETY: `client_bundle` was produced by `StaticRoute::init_*`
@@ -121,26 +124,26 @@ pub(crate) enum UnresolvedIndex {
 }
 
 pub struct RouteBundle {
-    pub server_state: State,
-    pub data: Data,
+    pub(crate) server_state: State,
+    pub(crate) data: Data,
     /// SHARED (LIFETIMES.tsv): deinit calls `blob.deref()`.
     /// Stored as [`BackRef`](bun_ptr::BackRef) — the slot holds an intrusive
     /// ref (bumped at store time, released in `invalidate_client_bundle`/drop),
     /// so while `Some` the pointee strictly outlives the field; readers go
     /// through safe `Option::as_deref` (no raw `NonNull::as_ref`).
-    pub client_bundle: Option<bun_ptr::BackRef<StaticRoute>>,
-    pub client_script_generation: u32,
-    pub active_viewers: u32,
+    pub(crate) client_bundle: Option<bun_ptr::BackRef<StaticRoute>>,
+    pub(crate) client_script_generation: u32,
+    pub(crate) active_viewers: u32,
 }
 
 impl RouteBundle {
     #[inline]
-    pub fn source_map_id(&self) -> source_map_store::Key {
+    pub(crate) fn source_map_id(&self) -> source_map_store::Key {
         source_map_store::Key(u64::from(self.client_script_generation) << 32)
     }
 
     /// Estimated heap bytes retained by this route bundle, for memory reporting.
-    pub fn memory_cost(&self) -> usize {
+    pub(crate) fn memory_cost(&self) -> usize {
         let mut cost: usize = core::mem::size_of::<RouteBundle>();
         if let Some(bundle) = self.client_bundle.as_deref() {
             cost += bundle.memory_cost();

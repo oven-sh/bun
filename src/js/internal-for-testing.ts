@@ -467,6 +467,12 @@ export const stringsInternals = {
   ) => string,
 };
 
+/** Seed the connect-path DNS cache for `hostname` via the real `process_results` interleave; returns family order. */
+export const dnsCacheSeed = $newRustFunction("runtime/dns_jsc/dns.rs", "internal.seedCacheForTesting", 2) as (
+  hostname: string,
+  addresses: string[],
+) => number[];
+
 export const fetchH2Internals = {
   liveCounts: $newRustFunction("http/H2Client.rs", "TestingAPIs.liveCounts", 0) as () => {
     sessions: number;

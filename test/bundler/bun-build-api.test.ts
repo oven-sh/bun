@@ -41,17 +41,23 @@ describe("Bun.build", () => {
     const release = async () => {
       if (released) return;
       released = true;
-      const w = await fsPromises.open(fifo, "w");
-      await w.write("x");
-      await w.close();
+      try {
+        const w = await fsPromises.open(fifo, "w");
+        await w.write("x");
+        await w.close();
+      } catch (e) {
+        // Let the `finally` retry and surface the failure instead of it
+        // becoming an unhandled rejection from the timer.
+        released = false;
+        throw e;
+      }
     };
 
-    // No wait is needed before building: the pool counts a task at schedule
-    // time, synchronously inside readFile(), not when the worker parks. The
-    // safety release bounds a regression -- without it a pool-wide barrier would
-    // deadlock here. It must stay under the 5s default test timeout so a
-    // regression reports the assertion below rather than a timeout.
-    const safety = setTimeout(release, isDebug || isASAN ? 3000 : 1500);
+    // The pool counts a task at schedule time, synchronously inside readFile(),
+    // so no wait is needed before building. The safety release keeps a
+    // regression from deadlocking here, and must fire before the 5s default
+    // timeout so the assertion below reports instead.
+    const safety = setTimeout(() => void release().catch(() => {}), isDebug || isASAN ? 3000 : 1500);
 
     let settledAtBuildEnd: boolean;
     try {

@@ -2909,7 +2909,8 @@ declare module "bun" {
      */
     jsx?: {
       /**
-       * - `"automatic"`: auto-import `jsx`/`jsxs` (or `jsxDEV`) from `<importSource>/jsx-runtime`.
+       * - `"automatic"`: auto-import `jsx`/`jsxs` from `<importSource>/jsx-runtime`, or `jsxDEV` from
+       *   `<importSource>/jsx-dev-runtime` when {@link development} is `true`.
        * - `"classic"`: emit `factory(type, props, ...children)` with no auto-import.
        *
        * @default "automatic"
@@ -2935,7 +2936,8 @@ declare module "bun" {
        */
       fragment?: string;
       /**
-       * Treat the auto-imported JSX runtime module as having side effects, disabling tree-shaking of the import.
+       * Treat JSX elements as having side effects. Disables the pure annotation on each emitted
+       * `jsx(...)` / `createElement(...)` call so unused JSX elements are not removed.
        *
        * @default false
        */

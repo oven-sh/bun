@@ -290,11 +290,7 @@ impl ByteStream {
 
             if is_done && !self.sink_paused.get() && self.sink.get().is_some() {
                 self.sink.set(SinkHandle::None);
-                let err = match stream {
-                    streams::Result::Err(e) => Some(e),
-                    _ => None,
-                };
-                sink.end(err);
+                sink.end(None);
             }
             return Ok(());
         }

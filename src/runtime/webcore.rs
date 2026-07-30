@@ -450,8 +450,11 @@ impl SinkHandle {
             SinkHandle::FileSink(ptr) => {
                 let _ = unsafe { (*ptr).end(Self::to_sys_error(err)) };
             }
-            // ValueBufferer's write thunk observes Done/Err itself; no separate end.
-            SinkHandle::ValueBufferer(_, _) => {}
+            SinkHandle::ValueBufferer(ctx, write) => {
+                if let Some(e) = err {
+                    let _ = write(ctx, &streams::Result::Err(e));
+                }
+            }
         }
     }
 

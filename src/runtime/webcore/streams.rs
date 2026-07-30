@@ -847,8 +847,6 @@ pub enum SourceHandle<T: crate::webcore::sink::JsSinkAbi> {
     /// `${abi}__assignToStream`. Never dereferenced as a Rust pointer.
     JSController(usize),
     ByteStream(*mut crate::webcore::ByteStream),
-    FileReader(*mut crate::webcore::FileReader),
-    BlobLoader(*mut crate::webcore::ByteBlobLoader),
     /// `*mut Subprocess<'_>` — type-erased to keep this enum lifetime-free.
     Subprocess(*mut c_void),
     /// `*mut shell::subproc::Writable` — type-erased to avoid a module cycle.
@@ -906,7 +904,6 @@ impl<T: crate::webcore::sink::JsSinkAbi> SourceHandle<T> {
                 // cleared before the ByteStream is freed.
                 unsafe { (*ptr).cancel_from_sink(err) };
             }
-            SourceHandle::FileReader(_) | SourceHandle::BlobLoader(_) => {}
             SourceHandle::Subprocess(ptr) => {
                 // SAFETY: `ptr` is the boxed `*mut Subprocess` registered at
                 // spawn time; it outlives the FileSink that holds this handle.
@@ -941,7 +938,6 @@ impl<T: crate::webcore::sink::JsSinkAbi> SourceHandle<T> {
                 // cleared before the ByteStream is freed.
                 unsafe { (*ptr).resume() };
             }
-            SourceHandle::FileReader(_) | SourceHandle::BlobLoader(_) => {}
             SourceHandle::Subprocess(_) | SourceHandle::ShellWritable(_) => {}
             SourceHandle::_Marker(_, never) => match never {},
         }
@@ -952,8 +948,6 @@ impl<T: crate::webcore::sink::JsSinkAbi> SourceHandle<T> {
             SourceHandle::None
             | SourceHandle::JSController(_)
             | SourceHandle::ByteStream(_)
-            | SourceHandle::FileReader(_)
-            | SourceHandle::BlobLoader(_)
             | SourceHandle::Subprocess(_)
             | SourceHandle::ShellWritable(_) => {}
             SourceHandle::_Marker(_, never) => match never {},

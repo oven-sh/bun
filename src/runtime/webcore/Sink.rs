@@ -330,6 +330,12 @@ pub trait JsSinkType: Sized {
     /// Mirrors `@hasField(streams.Start, abi_name)` — selects the
     /// `Start::from_js_with_tag` branch in `JSSink::js_start`.
     const START_TAG: Option<streams::StartTag> = None;
+    /// When true, `js_write` throws `ERR_STREAM_WRITE_AFTER_END` once `done()`
+    /// is true. Opt-in because not every sink's `done` bit means "user called
+    /// end()" (e.g. `HTTPServerWritable` sets it on client abort), and
+    /// `FileSink` is wrapped by `node:fs`'s `writeFast` fast-path which expects
+    /// stream-state errors to reach the callback rather than throw.
+    const THROW_ON_WRITE_AFTER_END: bool = false;
 
     fn memory_cost(&self) -> usize;
     fn finalize(&mut self);
@@ -450,7 +456,7 @@ impl<T: JsSinkType + JsSinkAbi> JSSink<T> {
             return Err(global.throw_value(err));
         }
 
-        if this.sink.done() {
+        if T::THROW_ON_WRITE_AFTER_END && this.sink.done() {
             return Err(bun_jsc::ErrorCode::ERR_STREAM_WRITE_AFTER_END
                 .throw(global, format_args!("write after end")));
         }

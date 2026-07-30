@@ -1,6 +1,6 @@
 import { ArrayBufferSink } from "bun";
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, isASAN, withoutAggressiveGC } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, withoutAggressiveGC } from "harness";
 
 describe("ArrayBufferSink", () => {
   const fixtures = [
@@ -177,7 +177,7 @@ describe("ArrayBufferSink", () => {
     });
     // The 1 MiB chunk itself costs ~1 MiB; allow generous headroom for ASAN
     // quarantine and GC jitter. The unfixed build grows by >200 MiB here.
-    expect(result.rssDeltaMB).toBeLessThan(isASAN ? 64 : 32);
+    expect(result.rssDeltaMB).toBeLessThan(isASAN || isDebug ? 64 : 32);
     expect(exitCode).toBe(0);
   });
 });

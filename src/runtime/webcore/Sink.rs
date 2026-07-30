@@ -258,25 +258,36 @@ impl<T: JsSinkAbi> JSSink<T> {
         result
     }
 
-    /// `JSSink.detach(globalThis)` — disconnect the C++ controller cell stashed
-    /// in `source` as `JSController(bits)` (a JSValue's encoded bits, written
-    /// by `assign_to_stream`). Native-source variants are left untouched —
-    /// only the JS controller is unprotected and told to drop its back-pointer.
+    /// `JSSink.detach(globalThis)` — disconnect the upstream source handle.
+    /// For `JSController` this unprotects the controller cell and tells C++ to
+    /// drop its back-pointer; for `ByteStream` this clears the stream's
+    /// `SinkHandle` so a later `on_data`/`resume` never writes through a freed
+    /// sink. Other native-source variants have no back-pointer to this sink
+    /// and are left to the caller's own teardown.
     pub fn detach(source: &mut SourceHandle<T>, _global: &crate::webcore::jsc::JSGlobalObject) {
         use crate::webcore::jsc::JSValue;
-        let SourceHandle::JSController(bits) = *source else {
-            return;
-        };
-        source.clear();
-        let value = JSValue::from_encoded(bits);
-        value.unprotect();
-        // `${abi}__detachPtr` runs the JS `onClose` callback through the bare
-        // `AsyncContextFrame::call` overload (no TopExceptionScope of its own)
-        // and RELEASE_AND_RETURNs its ThrowScope, so `m_needExceptionCheck` is
-        // left set when it returns into this scope-less thunk. Wrap in a
-        // TopExceptionScope so the verifier is satisfied; discard the result.
-        // TODO: properly propagate exception upwards.
-        let _ = ::bun_jsc::call_check_slow(_global, || T::detach_ptr_extern(value));
+        match *source {
+            SourceHandle::JSController(bits) => {
+                source.clear();
+                let value = JSValue::from_encoded(bits);
+                value.unprotect();
+                // `${abi}__detachPtr` runs the JS `onClose` callback through the bare
+                // `AsyncContextFrame::call` overload (no TopExceptionScope of its own)
+                // and RELEASE_AND_RETURNs its ThrowScope, so `m_needExceptionCheck` is
+                // left set when it returns into this scope-less thunk. Wrap in a
+                // TopExceptionScope so the verifier is satisfied; discard the result.
+                // TODO: properly propagate exception upwards.
+                let _ = ::bun_jsc::call_check_slow(_global, || T::detach_ptr_extern(value));
+            }
+            SourceHandle::ByteStream(bs) => {
+                // SAFETY: `bs` was stored as a live `*mut ByteStream` and is
+                // cleared before the ByteStream is freed (hook-in sites hold a
+                // `readable_stream::Strong` for at least as long as this handle).
+                unsafe { (*bs).unpipe_without_deref() };
+                source.clear();
+            }
+            _ => {}
+        }
     }
 }
 

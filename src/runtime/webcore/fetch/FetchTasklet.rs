@@ -1795,7 +1795,7 @@ impl FetchTasklet {
         if self.signal_store.body_receive_mode() == BodyReceiveMode::BufferAll {
             return;
         }
-        if bytes.pipe.get().ctx.is_some()
+        if bytes.sink.get().is_some()
             || bytes.buffer_action.get().is_some()
             || bytes.pending.get().state == crate::webcore::streams::PendingState::Pending
             || readable.is_locked(&self.global_this)

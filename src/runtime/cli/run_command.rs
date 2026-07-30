@@ -670,7 +670,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
                     Output::flush();
                     return Err(crate::Error::CouldntReadCurrentDirectory);
                 }
-                Ok(Some(info)) => info,
+                Ok(Some(info)) => Some(info),
             };
         // OHOS-only fallback root DirInfo for the two None cases above (only
         // reachable with `with_linker`; see the arms). Uses $HOME which is

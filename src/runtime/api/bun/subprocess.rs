@@ -1533,7 +1533,7 @@ pub(crate) fn source_from_blob(b: webcore::AnyBlob) -> Source {
 /// Synchronous spawnSync is unaffected because it writes inline.
 #[inline]
 pub(crate) fn source_from_array_buffer(ab: jsc::array_buffer::ArrayBufferStrong) -> Source {
-    Source::Any(Box::new(ArrayBufferSource(ab)))
+    Source::OwnedBytes(ab.array_buffer.byte_slice().to_vec().into_boxed_slice())
 }
 
 #[cfg(windows)]

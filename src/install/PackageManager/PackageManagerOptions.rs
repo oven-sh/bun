@@ -90,6 +90,11 @@ pub struct Options {
     pub(crate) os: Npm::OperatingSystem,
 
     pub(crate) config_version: Option<ConfigVersion>,
+
+    /// `[install.lockfile] formatVersion` from bunfig — caps the
+    /// `lockfileVersion` stamped into a written `bun.lock`, so a project
+    /// shared with older Bun versions can keep producing a lockfile they read.
+    pub(crate) lockfile_format_version: Option<crate::lockfile::bun_lock::Version>,
 }
 
 impl Default for Options {
@@ -153,6 +158,7 @@ impl Default for Options {
             cpu: Npm::Architecture::CURRENT,
             os: Npm::OperatingSystem::CURRENT,
             config_version: None,
+            lockfile_format_version: None,
         }
     }
 }
@@ -524,6 +530,12 @@ impl Options {
 
             if let Some(save_text_lockfile) = config.save_text_lockfile {
                 self.save_text_lockfile = Some(save_text_lockfile);
+            }
+
+            if let Some(n) = config.lockfile_format_version {
+                // Unknown (future) versions cap above CURRENT and are a no-op.
+                self.lockfile_format_version =
+                    crate::lockfile::bun_lock::Version::from_int(n);
             }
 
             if let Some(jobs) = config.concurrent_scripts {

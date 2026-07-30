@@ -30,6 +30,97 @@ it("a freshly written text lockfile defaults to version 2", async () => {
   expect(exitCode).toBe(0);
 });
 
+// `[install.lockfile] formatVersion = 1` caps the written lockfileVersion, so a
+// fresh install on a newer Bun still produces a lockfile an older Bun can read.
+it("bunfig [install.lockfile] formatVersion = 1 writes a v1 lockfile for a fresh install", async () => {
+  using dir = tempDir("lockfile-bunfig-format-v1", {
+    "package.json": JSON.stringify({ name: "root", dependencies: { dep: "file:./dep" } }),
+    "dep/package.json": JSON.stringify({ name: "dep", version: "1.0.0" }),
+    "bunfig.toml": `[install.lockfile]\nformatVersion = 1\n`,
+  });
+
+  await using proc = spawn({
+    cmd: [bunExe(), "install", "--save-text-lockfile"],
+    cwd: String(dir),
+    env,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  const lockfile = await file(join(String(dir), "bun.lock")).text();
+  expect(err).not.toContain("error:");
+  expect(lockfile).toContain(`"lockfileVersion": 1,`);
+  expect(lockfile).not.toContain(`"lockfileVersion": 2,`);
+  expect(exitCode).toBe(0);
+});
+
+it("bunfig [install.lockfile] formatVersion = 1 downgrades an existing v2 lockfile on re-save", async () => {
+  // Fresh install first (writes v2), then add bunfig + a new dep to force a re-save.
+  using dir = tempDir("lockfile-bunfig-downgrade", {
+    "package.json": JSON.stringify({ name: "root", dependencies: { a: "file:./a" } }),
+    "a/package.json": JSON.stringify({ name: "a", version: "1.0.0" }),
+    "b/package.json": JSON.stringify({ name: "b", version: "1.0.0" }),
+  });
+
+  await using first = spawn({
+    cmd: [bunExe(), "install", "--save-text-lockfile"],
+    cwd: String(dir),
+    env,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  await Promise.all([first.stdout.text(), first.stderr.text(), first.exited]);
+  const before = await file(join(String(dir), "bun.lock")).text();
+  expect(before).toContain(`"lockfileVersion": 2,`);
+
+  await Bun.write(join(String(dir), "bunfig.toml"), `[install.lockfile]\nformatVersion = 1\n`);
+  await Bun.write(
+    join(String(dir), "package.json"),
+    JSON.stringify({ name: "root", dependencies: { a: "file:./a", b: "file:./b" } }),
+  );
+
+  await using second = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: String(dir),
+    env,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [, err, exitCode] = await Promise.all([second.stdout.text(), second.stderr.text(), second.exited]);
+
+  const after = await file(join(String(dir), "bun.lock")).text();
+  expect(err).not.toContain("error:");
+  expect(after).toContain(`"b": ["b@file:b"`);
+  expect(after).toContain(`"lockfileVersion": 1,`);
+  expect(after).not.toContain(`"lockfileVersion": 2,`);
+  expect(exitCode).toBe(0);
+});
+
+// formatVersion equal to the current version is a no-op; values above it are
+// ignored (a cap above current has no effect).
+it.each([2, 99])("bunfig [install.lockfile] formatVersion = %d writes the current version", async n => {
+  using dir = tempDir("lockfile-bunfig-format-noop", {
+    "package.json": JSON.stringify({ name: "root", dependencies: { dep: "file:./dep" } }),
+    "dep/package.json": JSON.stringify({ name: "dep", version: "1.0.0" }),
+    "bunfig.toml": `[install.lockfile]\nformatVersion = ${n}\n`,
+  });
+
+  await using proc = spawn({
+    cmd: [bunExe(), "install", "--save-text-lockfile"],
+    cwd: String(dir),
+    env,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  const lockfile = await file(join(String(dir), "bun.lock")).text();
+  expect(err).not.toContain("error:");
+  expect(lockfile).toContain(`"lockfileVersion": 2,`);
+  expect(exitCode).toBe(0);
+});
+
 // Re-saving an existing lockfile must never bump its version. A v1 `bun.lock`
 // that is rewritten — here because a new dependency is added — keeps
 // `lockfileVersion: 1`, even though every entry would satisfy the v2 invariants.

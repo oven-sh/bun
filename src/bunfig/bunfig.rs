@@ -1402,6 +1402,11 @@ impl<'a> Parser<'a> {
             {
                 install.save_lockfile_path = Some(v.into());
             }
+            if let Some(v) = lockfile_expr.get(b"formatVersion") {
+                if let Some(n) = v.as_number() {
+                    install.lockfile_format_version = Some(num_to_u32(n));
+                }
+            }
         }
 
         if let Some(v) = install_obj.get(b"optional").and_then(|e| e.as_bool()) {

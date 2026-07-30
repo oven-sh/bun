@@ -1063,7 +1063,6 @@ describe("FormData entry value identity", () => {
 
   it("keeps the entry value alive while the FormData is alive", () => {
     const iterations = isASAN || isDebug ? 50 : 500;
-    let mismatches = 0;
     for (let i = 0; i < iterations; i++) {
       const fd = new FormData();
       (function () {
@@ -1073,13 +1072,12 @@ describe("FormData entry value identity", () => {
       Bun.gc(true);
       const f = fd.get("f") as File;
       const b = fd.get("b");
-      if (f?.name !== "f.txt") mismatches++;
+      expect(f?.name).toBe("f.txt");
       Bun.gc(true);
-      if (fd.get("f") !== f) mismatches++;
-      if (fd.get("b") !== b) mismatches++;
-      if (fd.getAll("f")[0] !== f) mismatches++;
+      expect(fd.get("f")).toBe(f);
+      expect(fd.get("b")).toBe(b);
+      expect(fd.getAll("f")[0]).toBe(f);
     }
-    expect(mismatches).toBe(0);
   });
 
   it("does not leak when an entry's value has an expando referencing the FormData", () => {

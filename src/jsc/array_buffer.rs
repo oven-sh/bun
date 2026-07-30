@@ -742,8 +742,7 @@ impl BinaryType {
         Ok(None)
     }
 
-    /// The value accepted by [`from_js_value`](Self::from_js_value) that
-    /// round-trips to this variant; used for `binaryType` getters.
+    /// Lowercase variant name, as returned by `binaryType` getters.
     pub const fn as_lowercase_str(self) -> &'static str {
         match self {
             BinaryType::Buffer => "buffer",

@@ -1000,6 +1000,12 @@ pub struct HTTPServerWritable<const SSL: bool, const HTTP3: bool> {
     pub requested_end: bool,
 
     pub has_backpressure: bool,
+    /// `write()` returned `Backpressure` to the upstream source (so it is
+    /// parked on the sink). `on_writable` fires `source.ready()` only when
+    /// this is set; a drain that merely follows `flush()`/auto-flush must not
+    /// re-invoke a direct-stream `pull`. Same pattern as
+    /// `FileSink::source_pending_pull`.
+    pub source_pending_pull: bool,
     pub end_len: usize,
     pub aborted: bool,
     /// This sink fully ended the uWS response (`res.end()` / a completed
@@ -1036,6 +1042,7 @@ impl<const SSL: bool, const HTTP3: bool> Default for HTTPServerWritable<SSL, HTT
             high_water_mark: 2048,
             requested_end: false,
             has_backpressure: false,
+            source_pending_pull: false,
             end_len: 0,
             aborted: false,
             ended_response: false,
@@ -1193,8 +1200,9 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
     /// `Backpressure` variant so the JS writer can `await flush(true)`;
     /// `on_writable` resolves that promise via `flush_promise()`.
     #[inline]
-    fn writable_result(&self, len: BlobSizeType) -> Writable {
+    fn writable_result(&mut self, len: BlobSizeType) -> Writable {
         if self.has_backpressure && !self.done && !self.requested_end {
+            self.source_pending_pull = true;
             Writable::Backpressure(len)
         } else {
             Writable::Owned(len)
@@ -1354,17 +1362,32 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
 
         // Streaming-write drain: uWS already holds the data (our buffer is
         // empty), so there is nothing to resend. Resolve any flush(true) waiter
-        // — that promise is the resume signal for both readStreamIntoSink and
-        // direct-stream callers. Handled before the try_end resend bookkeeping
-        // below, which assumes a non-empty buffer.
+        // and, if the last `write()` returned Backpressure to the source, fire
+        // `source.ready()` — `readStreamIntoSink` parks on the controller's
+        // onPull (not a flush promise), so without `ready()` the pump never
+        // resumes. A `type: "direct"` pull that awaited `flush(true)` resumes
+        // via that promise instead, so suppress `ready()` when a flush waiter
+        // was just resolved to avoid re-entering the user's pull. Handled
+        // before the try_end resend bookkeeping below, which assumes a
+        // non-empty buffer.
         if self.readable_slice().is_empty() {
             if self.done {
+                self.source_pending_pull = false;
                 self.source.close(None);
                 let _ = self.flush_promise(); // TODO: properly propagate exception upwards
                 self.finalize();
                 return true;
             }
+            let had_flush_waiter = self.pending_flush.is_some();
             let _ = self.flush_promise(); // TODO: properly propagate exception upwards
+            if core::mem::take(&mut self.source_pending_pull)
+                && !had_flush_waiter
+                && !self.done
+                && !self.requested_end
+                && !self.has_backpressure()
+            {
+                self.source.ready(None, None);
+            }
             return true;
         }
 
@@ -1421,13 +1444,16 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
         }
 
         // flush the javascript promise from calling .flush()
+        let had_flush_waiter = self.pending_flush.is_some();
         let _ = self.flush_promise(); // TODO: properly propagate exception upwards
 
         // pending_flush or callback could have caused another send()
         // so we check again if we should report readiness
+        let had_pending_pull = core::mem::take(&mut self.source_pending_pull);
         if !self.done && !self.requested_end && !self.has_backpressure() {
-            // no pending and total_written > 0
-            if total_written > 0 && self.readable_slice().is_empty() {
+            if (total_written > 0 || (had_pending_pull && !had_flush_waiter))
+                && self.readable_slice().is_empty()
+            {
                 self.source.ready(Some(total_written as BlobSizeType), None);
             }
         }

@@ -1590,7 +1590,12 @@ impl<const SSL: bool> NewSocket<SSL> {
             return;
         }
         if this.fatal_write_errno.get() != 0 {
-            // A write already saw the RST; this HUP is not a peer FIN.
+            // A write already saw the RST; this HUP is not a peer FIN. Close
+            // here so `on_close` reports the errno: with allow_half_open loop.c
+            // only re-arms WRITABLE after on_end, and sk_err was consumed by
+            // the failing send, so nothing else would close it.
+            let _keepalive = this.ref_guard();
+            this.socket.get().close(uws::CloseCode::Normal);
             return;
         }
         let handlers = this.get_handlers();

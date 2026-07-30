@@ -3417,9 +3417,18 @@ it.concurrent.skipIf(isWindows)(
     expect(negatives).toEqual([-1, -1, -1]);
     // A peer RST is not a clean FIN: `end` must not fire.
     expect(events).not.toContain("end");
-    // The close carries the write-side errno so the reset is observable.
+    // The close carries the errno so the reset is observable. Which syscall
+    // observed it is platform-dependent: on Linux send() consumes sk_err
+    // (ECONNRESET then EPIPE) and the close reports the latched write errno;
+    // on macOS send() returns EPIPE without clearing so_error, so kqueue's
+    // recv() reports ECONNRESET first.
     expect(closeErr).toBeInstanceOf(Error);
-    expect((closeErr as any).code).toBe("ECONNRESET");
-    expect((closeErr as any).syscall).toBe("write");
+    if (isLinux) {
+      expect((closeErr as any).code).toBe("ECONNRESET");
+      expect((closeErr as any).syscall).toBe("write");
+    } else {
+      expect(["ECONNRESET", "EPIPE"]).toContain((closeErr as any).code);
+      expect(["read", "write"]).toContain((closeErr as any).syscall);
+    }
   },
 );

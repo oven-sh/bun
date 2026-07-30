@@ -399,7 +399,7 @@ impl ShellSubprocess {
                 Writable::Pipe(pipe) => {
                     // DerefMut on the owning `&mut FileSinkPtr` encapsulates
                     // the access.
-                    pipe.signal.with_mut(|s| s.clear());
+                    pipe.source.with_mut(|s| s.clear());
                     // FileSinkPtr::drop derefs.
                     self.stdin = Writable::Ignore;
                 }
@@ -772,7 +772,7 @@ impl ShellSubprocess {
         {
             // Derive `stdin_ptr` from the raw heap pointer (`subprocess`), not
             // the local `subproc: &mut` reborrow — the pointer is stored
-            // long-term in `FileSink::signal` and dereferenced from
+            // long-term in `FileSink::source` and dereferenced from
             // `Writable::on_close` after this frame returns. Under Stacked
             // Borrows a child of `subproc`'s tag would be invalidated when
             // that borrow ends; rooting in the allocation's provenance keeps
@@ -780,17 +780,16 @@ impl ShellSubprocess {
             // SAFETY: `subprocess` is the live, fully-initialised heap alloc.
             let stdin_ptr: *mut Writable = unsafe { &raw mut (*subprocess).stdin };
             // SAFETY: reborrow as a child of `stdin_ptr` so it does not
-            // invalidate the sibling we store in `signal`.
+            // invalidate the sibling we store in `source`.
             if let Writable::Pipe(pipe) = unsafe { &mut *stdin_ptr } {
                 // SAFETY: shell is single-threaded; the FileSink allocation is
                 // disjoint from `*stdin_ptr`. `stdin_ptr` outlives the sink —
                 // the Subprocess owns both and `Writable::on_close` is the only
-                // path that drops the FileSinkPtr. `init_with_type` is
-                // `unsafe fn` (caller asserts the handler outlives the
-                // `Signal`).
-                pipe.signal.set(unsafe {
-                    webcore::streams::Signal::init_with_type::<Writable>(stdin_ptr)
-                });
+                // path that drops the FileSinkPtr.
+                pipe.source
+                    .set(webcore::streams::SourceHandle::ShellWritable(
+                        stdin_ptr.cast(),
+                    ));
             }
         }
 
@@ -903,18 +902,6 @@ impl Writable {
     }
     pub fn on_ready(&mut self, _: Option<blob::SizeType>, _: Option<blob::SizeType>) {}
     pub fn on_start(&mut self) {}
-}
-
-impl webcore::streams::SignalHandler for Writable {
-    fn on_close(&mut self, err: Option<bun_sys::Error>) {
-        Writable::on_close(self, err)
-    }
-    fn on_ready(&mut self, amount: Option<blob::SizeType>, offset: Option<blob::SizeType>) {
-        Writable::on_ready(self, amount, offset)
-    }
-    fn on_start(&mut self) {
-        Writable::on_start(self)
-    }
 }
 
 impl Writable {

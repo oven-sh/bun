@@ -1034,13 +1034,13 @@ impl<T: crate::webcore::sink::JsSinkAbi> SourceHandle<T> {
                 // SAFETY: `ptr` is the boxed `*mut Subprocess` registered at
                 // spawn time; it outlives the FileSink that holds this handle.
                 let p = ptr.cast::<crate::api::bun::subprocess::Subprocess<'static>>();
-                unsafe { SignalHandler::on_close(&mut *p, err) };
+                unsafe { crate::api::bun::subprocess::Writable::on_close(&*p, err) };
             }
             SourceHandle::ShellWritable(ptr) => {
                 // SAFETY: `ptr` is the `*mut shell::subproc::Writable` stdin
                 // registered at spawn time; it outlives this handle.
                 let p = ptr.cast::<crate::shell::subproc::Writable>();
-                unsafe { SignalHandler::on_close(&mut *p, err) };
+                unsafe { crate::shell::subproc::Writable::on_close(&mut *p, err) };
             }
             SourceHandle::_Marker(_, never) => match never {},
         }

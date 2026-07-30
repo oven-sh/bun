@@ -431,16 +431,18 @@ describe("spawn()", () => {
       expect(child.stdin).not.toBeNull();
       expect(child.stdout).not.toBeNull();
       expect(child.stderr).not.toBeNull();
-      const { promise, resolve } = Promise.withResolvers<string>();
+      const { promise, resolve, reject } = Promise.withResolvers<string>();
       let out = "";
+      const closed = new Promise<number | null>(r => child.on("close", r));
+      child.on("error", reject);
+      child.on("close", code => reject(new Error(`child closed (${code}) before echoing; out=${JSON.stringify(out)}`)));
       child.stdout!.on("data", d => {
         out += d;
         if (out.includes("\n")) resolve(out);
       });
       child.stdin!.end("hi\n");
       expect(await promise).toBe("out:hi\n");
-      const code = await new Promise<number | null>(r => child.on("close", r));
-      expect(code).toBe(0);
+      expect(await closed).toBe(0);
     });
     it("overlapped string shorthand works with spawnSync", () => {
       const { stdout, status } = spawnSync(bunExe(), ["-e", "console.log('ok')"], {

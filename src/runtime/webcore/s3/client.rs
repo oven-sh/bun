@@ -557,6 +557,9 @@ pub struct S3UploadStreamWrapper {
     pub callback_context: *mut c_void,
     /// this is owned by the task not by the wrapper
     pub path: bun_ptr::RawSlice<u8>,
+    /// Pins the source ReadableStream when the native ByteStream fast-path is
+    /// taken (no JS reader to lock it). Empty on the `assign_to_stream` path.
+    pub readable_stream_ref: ReadableStreamStrong,
     pub global: GlobalRef, // JSC_BORROW
 }
 
@@ -944,6 +947,7 @@ pub fn upload_stream(
             path: bun_ptr::RawSlice::new(&task.path),
             task: task_ptr,
             end_promise: bun_jsc::JSPromiseStrong::init(global_this),
+            readable_stream_ref: ReadableStreamStrong::default(),
             global: global_static,
         }));
     // SAFETY: freshly heap-allocated; exclusive access here.
@@ -982,9 +986,55 @@ pub fn upload_stream(
     // default-controller stream synchronously inside `assign_to_stream`.
     task.continue_stream();
 
-    // `assignToStream` routes through `readStreamIntoSink` which uses the default
-    // reader's `readMany()`; ByteStream-backed streams drain their buffered chunks
-    // in one batch so the native `byte_stream.pipe` fast-path is not re-implemented.
+    // Native ByteStream fast-path: wire the source/sink handles directly so
+    // bytes flow via `ByteStream::on_data` → `SinkHandle::write` without the JS
+    // `readStreamIntoSink` pump.
+    if let ReadableStreamPtr::Bytes(bs_ptr) = readable_stream.ptr {
+        // SAFETY: `Source::Bytes` stores the live `*mut ByteStream`; the JS
+        // wrapper is pinned by `ctx.readable_stream_ref` below for the upload's
+        // lifetime.
+        let byte_stream = unsafe { &*bs_ptr };
+        sink.source = crate::webcore::streams::SourceHandle::ByteStream(bs_ptr);
+        byte_stream
+            .sink
+            .set(crate::webcore::SinkHandle::S3Upload(sink_ptr));
+        byte_stream.sink_paused.set(false);
+        ctx.readable_stream_ref = ReadableStreamStrong::init(readable_stream, global_this);
+
+        let buffered = byte_stream.drain();
+        let has_last = byte_stream.has_received_last_chunk.get();
+        if !buffered.is_empty() {
+            let chunk = if has_last {
+                crate::webcore::streams::StreamResult::OwnedAndDone(buffered)
+            } else {
+                crate::webcore::streams::StreamResult::Owned(buffered)
+            };
+            // SAFETY: `ctx.sink` set above; sink live.
+            if matches!(
+                unsafe { (*sink_ptr).write(&chunk) },
+                crate::webcore::streams::Writable::Backpressure(_)
+            ) {
+                byte_stream.sink_paused.set(true);
+            }
+        }
+        if has_last {
+            byte_stream.sink.set(crate::webcore::SinkHandle::None);
+            // SAFETY: `ctx.sink` set above; sink live.
+            let sink = unsafe { &mut *sink_ptr };
+            if !sink.ended {
+                let _ = sink.end(None);
+            }
+            ctx.handle_resolve_stream();
+        } else {
+            // No pump promise `.then` to balance the stream-pump +1; release it
+            // now. `resolve` (upload-completion callback) releases the remaining
+            // ref, whose `Drop` then `detach_sink`s.
+            // SAFETY: `ctx_ptr` is the live Box allocation with ref_count == 2.
+            unsafe { S3UploadStreamWrapper::deref_(ctx_ptr) };
+        }
+        return Ok(end_promise_value);
+    }
+
     // The controller cell is installed into `sink.source` by `assign_to_stream`.
     let assignment_result: JSValue =
         NetworkSinkJSSink::assign_to_stream(global_this, readable_stream.value, sink);

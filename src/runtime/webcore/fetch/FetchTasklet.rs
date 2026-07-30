@@ -28,12 +28,12 @@ use bun_url::URL as ZigURL;
 use crate::api::bun_x509 as X509;
 use crate::webcore::blob::{Any as AnyBlob, Blob, SizeType as BlobSizeType, Store as BlobStore};
 use crate::webcore::body::{self, Body, Value as BodyValue, ValueError as BodyValueError};
-use crate::webcore::readable_stream::{ReadableStream, Strong as ReadableStreamStrong};
+use crate::webcore::readable_stream::{self, ReadableStream, Strong as ReadableStreamStrong};
 use crate::webcore::response::HeadersRef;
 use crate::webcore::fetch::fetch_request_body_sink::{FetchRequestBodySink, RequestBodyChunk};
 use crate::webcore::sink::JSSink;
-use crate::webcore::streams::{StreamError, StreamResult, Writable};
-use crate::webcore::{AbortSignal, DrainResult, FetchHeaders, InternalBlob, Response};
+use crate::webcore::streams::{SourceHandle, StreamError, StreamResult, Writable};
+use crate::webcore::{AbortSignal, DrainResult, FetchHeaders, InternalBlob, Response, SinkHandle};
 
 use bun_jsc::JsTerminatedResult;
 // `bun_event_loop::JsResult` (cycle-broken erased error) — used by
@@ -658,10 +658,45 @@ impl FetchTasklet {
         // SAFETY: just allocated; sole live mutable view (self.sink only stores the ptr).
         let sink = unsafe { &mut *sink_ptr.as_ptr() };
 
-        // ByteStream-backed streams are handled by `assignToStream` →
-        // `readStreamIntoSink` via `readMany()` (pulls all buffered chunks at
-        // once); the old native `byte_stream.pipe` fast-path is intentionally
-        // not re-implemented here.
+        // Native ByteStream fast-path: wire the source/sink handles directly so
+        // bytes flow via `ByteStream::on_data` → `SinkHandle::write` without the
+        // JS `readStreamIntoSink` pump.
+        if let readable_stream::Source::Bytes(bs_ptr) = stream.ptr {
+            // SAFETY: `Source::Bytes` stores the live `*mut ByteStream` (the
+            // `NewSource.context` field); the JS wrapper is rooted by
+            // `self.request_body`'s `Strong` for this tasklet's lifetime.
+            let byte_stream = unsafe { &*bs_ptr };
+            sink.source = SourceHandle::ByteStream(bs_ptr);
+            byte_stream
+                .sink
+                .set(SinkHandle::FetchRequestBody(sink_ptr.as_ptr()));
+            byte_stream.sink_paused.set(false);
+
+            let buffered = byte_stream.drain();
+            let has_last = byte_stream.has_received_last_chunk.get();
+            if !buffered.is_empty() {
+                let chunk = if has_last {
+                    StreamResult::OwnedAndDone(buffered)
+                } else {
+                    StreamResult::Owned(buffered)
+                };
+                // SAFETY: `self.sink` set above; sink live.
+                if matches!(
+                    unsafe { (*sink_ptr.as_ptr()).write(&chunk) },
+                    Writable::Backpressure(_)
+                ) {
+                    byte_stream.sink_paused.set(true);
+                }
+            }
+            if has_last {
+                byte_stream.sink.set(SinkHandle::None);
+                // SAFETY: `self.sink` set above and not cleared on this path.
+                unsafe { (*sink_ptr.as_ptr()).task = None };
+                self.write_end_request(None);
+            }
+            return;
+        }
+
         let assignment_result =
             JSSink::<FetchRequestBodySink>::assign_to_stream(&global_this, stream.value, sink);
         assignment_result.ensure_still_alive();

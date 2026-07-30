@@ -263,7 +263,7 @@ impl<Js: ResumableSinkJs, Context: ResumableSinkContext> ResumableSink<Js, Conte
         let ondrain = args[0];
         let oncancel = args[1];
 
-        if ondrain.is_cell() {
+        if ondrain.is_callable() {
             Self::set_drain(this_value, global_this, ondrain);
         }
         if oncancel.is_callable() {
@@ -333,55 +333,6 @@ impl<Js: ResumableSinkJs, Context: ResumableSinkContext> ResumableSink<Js, Conte
         Ok(JSValue::from(this.status != Status::Paused))
     }
 
-    /// Direct-pump write: the C++ async-iterator pump extracts bytes from the yielded
-    /// JSValue and calls this instead of dispatching `sink.write` through JS.
-    ///
-    /// # Safety
-    /// `this` is the live `m_ctx` of a JSResumable*Sink cell and `bytes`/`len` name a
-    /// readable span valid for the call.
-    pub unsafe fn native_write(this: *mut Self, bytes: *const u8, len: usize) -> i32 {
-        // SAFETY: contract above.
-        let this = unsafe { &mut *this };
-        if this.is_detached() {
-            return 2;
-        }
-        let slice = if len == 0 {
-            &[][..]
-        } else {
-            // SAFETY: contract above.
-            unsafe { core::slice::from_raw_parts(bytes, len) }
-        };
-        scoped_log!(ResumableSink, "nativeWrite {}", slice.len());
-        match Self::on_write(this.context, slice) {
-            ResumableSinkBackpressure::Backpressure => {
-                scoped_log!(ResumableSink, "paused");
-                this.status = Status::Paused;
-                1
-            }
-            ResumableSinkBackpressure::Done => 2,
-            ResumableSinkBackpressure::WantMore => {
-                this.status = Status::Started;
-                0
-            }
-        }
-    }
-
-    /// Direct-pump end: `err.is_empty()` is a clean close, otherwise abort with `err`.
-    ///
-    /// # Safety
-    /// `this` is the live `m_ctx` of a JSResumable*Sink cell.
-    pub unsafe fn native_end(this: *mut Self, err: JSValue) {
-        // SAFETY: contract above.
-        let this = unsafe { &mut *this };
-        if this.is_detached() {
-            return;
-        }
-        this.detach_js();
-        scoped_log!(ResumableSink, "nativeEnd");
-        this.status = Status::Done;
-        Self::on_end(this.context, if err.is_empty() { None } else { Some(err) });
-    }
-
     #[bun_jsc::host_fn(method)]
     pub fn js_end(
         this: &mut Self,
@@ -416,20 +367,16 @@ impl<Js: ResumableSinkJs, Context: ResumableSinkContext> ResumableSink<Js, Conte
 
             if let Some(ondrain) = Self::get_drain(js_this) {
                 self.status = Status::Started;
-                if ondrain.is_callable() {
-                    // SAFETY: `bun_vm()` returns a live `*mut VirtualMachine` owned by
-                    // the global; `event_loop()` returns its self-referential
-                    // `*mut EventLoop`. Both outlive this call.
-                    unsafe {
-                        (*global_object.bun_vm().as_mut().event_loop()).run_callback(
-                            ondrain,
-                            global_object,
-                            JSValue::UNDEFINED,
-                            &[JSValue::UNDEFINED, JSValue::UNDEFINED],
-                        );
-                    }
-                } else {
-                    Bun__AsyncIterableSource__resumeFromDrain(global_object, ondrain);
+                // SAFETY: `bun_vm()` returns a live `*mut VirtualMachine` owned by
+                // the global; `event_loop()` returns its self-referential
+                // `*mut EventLoop`. Both outlive this call.
+                unsafe {
+                    (*global_object.bun_vm().as_mut().event_loop()).run_callback(
+                        ondrain,
+                        global_object,
+                        JSValue::UNDEFINED,
+                        &[JSValue::UNDEFINED, JSValue::UNDEFINED],
+                    );
                 }
             }
         }
@@ -692,40 +639,10 @@ impl ResumableSinkContext for FetchTasklet {
 pub type ResumableFetchSink = ResumableSink<JSResumableFetchSink, FetchTasklet>;
 pub type ResumableS3UploadSink = ResumableSink<JSResumableS3UploadSink, S3UploadStreamWrapper>;
 
-macro_rules! resumable_sink_native_exports {
-    ($write:ident, $end:ident, $Alias:ident) => {
-        /// # Safety
-        /// See [`ResumableSink::native_write`].
-        #[unsafe(no_mangle)]
-        pub unsafe extern "C" fn $write(this: *mut $Alias, bytes: *const u8, len: usize) -> i32 {
-            // SAFETY: forwarded caller contract.
-            unsafe { <$Alias>::native_write(this, bytes, len) }
-        }
-        /// # Safety
-        /// See [`ResumableSink::native_end`].
-        #[unsafe(no_mangle)]
-        pub unsafe extern "C" fn $end(this: *mut $Alias, err: JSValue) {
-            // SAFETY: forwarded caller contract.
-            unsafe { <$Alias>::native_end(this, err) }
-        }
-    };
-}
-resumable_sink_native_exports!(
-    Bun__ResumableFetchSink__nativeWrite,
-    Bun__ResumableFetchSink__nativeEnd,
-    ResumableFetchSink
-);
-resumable_sink_native_exports!(
-    Bun__ResumableS3UploadSink__nativeWrite,
-    Bun__ResumableS3UploadSink__nativeEnd,
-    ResumableS3UploadSink
-);
-
 unsafe extern "C" {
     safe fn Bun__assignStreamIntoResumableSink(
         global_this: &JSGlobalObject,
         stream: JSValue,
         sink: JSValue,
     ) -> JSValue;
-    safe fn Bun__AsyncIterableSource__resumeFromDrain(global_this: &JSGlobalObject, op: JSValue);
 }

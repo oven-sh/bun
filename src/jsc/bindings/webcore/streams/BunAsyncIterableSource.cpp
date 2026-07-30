@@ -19,7 +19,6 @@
 
 #include <JavaScriptCore/InternalFieldTuple.h>
 #include <JavaScriptCore/JSBoundFunction.h>
-#include <JavaScriptCore/JSBoundFunctionInlines.h>
 #include <JavaScriptCore/JSCInlines.h>
 #include <JavaScriptCore/JSFunction.h>
 #include <JavaScriptCore/JSPromise.h>
@@ -102,19 +101,9 @@ static JSPromise* asPromise(JSValue value)
     return dynamicDowncast<JSPromise>(value);
 }
 
-static void asyncIterNativeSinkEnd(JSAsyncIteratorSourceOperation* op, JSValue err)
-{
-    auto end = std::exchange(op->m_nativeSinkEnd, nullptr);
-    auto* ctx = std::exchange(op->m_nativeSinkCtx, nullptr);
-    op->m_nativeSinkWrite = nullptr;
-    if (end && ctx)
-        end(ctx, err.isEmpty() ? JSValue::encode(JSValue()) : JSValue::encode(err));
-}
-
 static void settlePullPromiseResolved(JSGlobalObject* globalObject, JSAsyncIteratorSourceOperation* op)
 {
     auto& vm = getVM(globalObject);
-    asyncIterNativeSinkEnd(op, JSValue());
     op->m_done = true;
     op->m_running = false;
     if (auto* pullPromise = op->m_pullPromise.get()) {
@@ -126,7 +115,6 @@ static void settlePullPromiseResolved(JSGlobalObject* globalObject, JSAsyncItera
 static void settlePullPromiseRejected(JSGlobalObject* globalObject, JSAsyncIteratorSourceOperation* op, JSValue error)
 {
     auto& vm = getVM(globalObject);
-    asyncIterNativeSinkEnd(op, error);
     op->m_done = true;
     op->m_running = false;
     if (auto* pullPromise = op->m_pullPromise.get()) {
@@ -141,12 +129,6 @@ static void asyncIterFinishSuccess(JSGlobalObject* globalObject, JSAsyncIterator
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     auto* runtime = JSStreamsRuntime::from(globalObject);
-
-    if (op->m_nativeSinkCtx) {
-        asyncIterNativeSinkEnd(op, JSValue());
-        asyncIterReturnIteratorAndSettle(globalObject, op);
-        return;
-    }
 
     JSValue endResult;
     if (JSObject* controller = op->m_controller.get()) {
@@ -201,14 +183,12 @@ static void asyncIterFinishWithError(JSGlobalObject* globalObject, JSAsyncIterat
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     auto* runtime = JSStreamsRuntime::from(globalObject);
 
-    // The native sink never throws these codes: an error carrying them came from the
-    // iterator, so on that path it reaches the sink as an abort like any other error.
-    if (!op->m_nativeSinkCtx && errorCodeIs(globalObject, error, "ERR_INVALID_THIS"_s)) {
+    if (errorCodeIs(globalObject, error, "ERR_INVALID_THIS"_s)) {
         asyncIterReturnIteratorAndSettle(globalObject, op);
         return;
     }
 
-    bool swallowByCode = !op->m_nativeSinkCtx && errorCodeIs(globalObject, error, "ERR_INVALID_STATE"_s);
+    bool swallowByCode = errorCodeIs(globalObject, error, "ERR_INVALID_STATE"_s);
 
     JSObject* iterator = op->m_iterator.get();
     op->m_iterator.clear();
@@ -245,47 +225,6 @@ enum class NextStep : uint8_t {
     Finished,
 };
 
-// Native ResumableSink write: extract bytes from the yielded value and call the Rust side
-// directly. A string is encoded as UTF-8 (matching StringOrBuffer::from_js on the Rust path).
-static NextStep asyncIterNativeSinkWrite(JSGlobalObject* globalObject, JSAsyncIteratorSourceOperation* op, JSValue value)
-{
-    auto& vm = getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-
-    int32_t result;
-    if (auto* view = dynamicDowncast<JSC::JSArrayBufferView>(value)) {
-        if (view->isDetached()) [[unlikely]] {
-            throwTypeError(globalObject, scope, "Cannot write a detached ArrayBufferView"_s);
-            return NextStep::Finished;
-        }
-        auto span = view->span();
-        result = op->m_nativeSinkWrite(op->m_nativeSinkCtx, span.data(), span.size());
-    } else if (auto* buffer = dynamicDowncast<JSC::JSArrayBuffer>(value)) {
-        auto* impl = buffer->impl();
-        if (!impl || impl->isDetached()) [[unlikely]] {
-            throwTypeError(globalObject, scope, "Cannot write a detached ArrayBuffer"_s);
-            return NextStep::Finished;
-        }
-        auto span = impl->span();
-        result = op->m_nativeSinkWrite(op->m_nativeSinkCtx, span.data(), span.size());
-    } else if (value.isString()) {
-        WTF::String string = asString(value)->value(globalObject);
-        RETURN_IF_EXCEPTION(scope, NextStep::Finished);
-        auto utf8 = string.utf8();
-        result = op->m_nativeSinkWrite(op->m_nativeSinkCtx, reinterpret_cast<const uint8_t*>(utf8.data()), utf8.length());
-    } else {
-        throwTypeError(globalObject, scope, "Expected an ArrayBufferView, ArrayBuffer, or string"_s);
-        return NextStep::Finished;
-    }
-
-    if (result == 0)
-        return NextStep::ContinueLoop;
-    if (result == 1)
-        return NextStep::Suspended;
-    asyncIterNativeSinkEnd(op, JSValue());
-    return NextStep::Finished;
-}
-
 // One iteration result: write the value (a final `return v` is still written), honor the
 // sink's backpressure protocol (`wrote < 0` -> await flush(true)), then finish when done.
 static NextStep asyncIterHandleNextResult(JSGlobalObject* globalObject, JSAsyncIteratorSourceOperation* op, JSValue result)
@@ -321,18 +260,6 @@ static NextStep asyncIterHandleNextResult(JSGlobalObject* globalObject, JSAsyncI
     }
 
     if (!value.isUndefinedOrNull()) {
-        if (op->m_nativeSinkCtx) {
-            NextStep step = asyncIterNativeSinkWrite(globalObject, op, value);
-            if (scope.exception()) [[unlikely]]
-                goto abrupt;
-            if (step == NextStep::ContinueLoop && op->m_iteratorDone) {
-                asyncIterFinishSuccess(globalObject, op);
-                return NextStep::Finished;
-            }
-            if (step == NextStep::Finished && !op->m_done)
-                asyncIterFinishSuccess(globalObject, op);
-            return step;
-        }
         JSObject* controller = op->m_controller.get();
         if (!controller) {
             asyncIterFinishSuccess(globalObject, op);
@@ -666,56 +593,5 @@ JSReadableStream* readableStreamFromAsyncIterator(JSGlobalObject* globalObject, 
     return stream;
 }
 
-// Recover the op from a DirectPending stream created above: source.pull is a JSBoundFunction
-// over boundAsyncIterableSourcePull with the op bound at argument 0.
-JSAsyncIteratorSourceOperation* asyncIteratorSourceOperationOf(JSGlobalObject* globalObject, JSReadableStream* stream)
-{
-    JSObject* source = stream->m_directUnderlyingSource.get();
-    if (!source)
-        return nullptr;
-    auto& vm = getVM(globalObject);
-    JSValue pull = source->getDirect(vm, WebCore::builtinNames(vm).pullPublicName());
-    auto* bound = pull.isCell() ? dynamicDowncast<JSBoundFunction>(pull.asCell()) : nullptr;
-    if (!bound || bound->boundArgsLength() < 1)
-        return nullptr;
-    JSAsyncIteratorSourceOperation* op = nullptr;
-    bound->forEachBoundArg([&](JSValue arg) {
-        op = dynamicDowncast<JSAsyncIteratorSourceOperation>(arg);
-        return IterationStatus::Done;
-    });
-    return op;
-}
-
-// assignStreamIntoResumableSink's fast path for async-iterable bodies: the pump writes each
-// chunk into the native sink via `nativeWrite` and suspends on its backpressure flag; the
-// sink's drain() calls Bun__AsyncIterableSource__resumeFromDrain to resume.
-void driveAsyncIterableSourceIntoResumableSink(
-    JSGlobalObject* globalObject, JSAsyncIteratorSourceOperation* op, JSObject* sinkCell,
-    void* sinkCtx, JSAsyncIteratorSourceOperation::NativeSinkWriteFn write,
-    JSAsyncIteratorSourceOperation::NativeSinkEndFn end)
-{
-    auto& vm = getVM(globalObject);
-    op->m_controller.set(vm, op, sinkCell);
-    op->m_nativeSinkCtx = sinkCtx;
-    op->m_nativeSinkWrite = write;
-    op->m_nativeSinkEnd = end;
-    op->m_running = true;
-    WebCore::driveAsyncIterator(globalObject, op);
-}
-
 } // namespace WebStreams
 } // namespace Bun
-
-extern "C" void Bun__AsyncIterableSource__resumeFromDrain(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue opValue)
-{
-    auto* op = WTF::dynamicDowncast<WebCore::JSAsyncIteratorSourceOperation>(JSC::JSValue::decode(opValue));
-    if (!op || op->m_done || op->m_cancelled)
-        return;
-    auto& vm = JSC::getVM(globalObject);
-    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-    if (op->m_iteratorDone)
-        WebCore::asyncIterFinishSuccess(globalObject, op);
-    else
-        WebCore::driveAsyncIterator(globalObject, op);
-    scope.clearExceptionExceptTermination();
-}

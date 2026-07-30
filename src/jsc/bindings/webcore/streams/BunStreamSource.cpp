@@ -7,7 +7,6 @@
 #include "DOMClientIsoSubspaces.h"
 #include "DOMIsoSubspaces.h"
 #include "ErrorCode.h"
-#include "JSAsyncIteratorSourceOperation.h"
 #include "JSDOMBinding.h"
 #include "JSDOMGlobalObject.h"
 #include "JSDOMWrapperCache.h"
@@ -21,7 +20,6 @@
 #include "JSStreamsRuntime.h"
 #include "WebStreamsHeapAnalyzer.h"
 #include "WebStreamsInternals.h"
-#include "ZigGeneratedClasses.h"
 #include "ZigGlobalObject.h"
 #include <JavaScriptCore/AggregateError.h>
 #include <JavaScriptCore/ArgList.h>
@@ -1567,89 +1565,12 @@ static void resumableSetup(JSC::VM& vm, JSGlobalObject* globalObject, JSResumabl
     RELEASE_AND_RETURN(scope, resumableDrain(vm, globalObject, op));
 }
 
-extern "C" {
-int32_t Bun__ResumableFetchSink__nativeWrite(void*, const uint8_t*, size_t);
-void Bun__ResumableFetchSink__nativeEnd(void*, JSC::EncodedJSValue);
-int32_t Bun__ResumableS3UploadSink__nativeWrite(void*, const uint8_t*, size_t);
-void Bun__ResumableS3UploadSink__nativeEnd(void*, JSC::EncodedJSValue);
-}
-
-// Async-iterable body → ResumableSink without an ArrayBufferSink intermediary or per-chunk JS
-// dispatch: the pump calls the Rust side directly, suspends on its backpressure flag, and the
-// sink's native drain() resumes it via Bun__AsyncIterableSource__resumeFromDrain.
-static bool tryResumableSetupAsyncIterable(JSC::VM& vm, JSGlobalObject* globalObject, JSReadableStream* stream, JSObject* sink)
-{
-    auto* op = asyncIteratorSourceOperationOf(globalObject, stream);
-    if (!op)
-        return false;
-
-    void* ctx;
-    WebCore::JSAsyncIteratorSourceOperation::NativeSinkWriteFn write;
-    WebCore::JSAsyncIteratorSourceOperation::NativeSinkEndFn end;
-    if (auto* fetchSink = dynamicDowncast<WebCore::JSResumableFetchSink>(sink)) {
-        ctx = fetchSink->wrapped();
-        write = Bun__ResumableFetchSink__nativeWrite;
-        end = Bun__ResumableFetchSink__nativeEnd;
-    } else if (auto* s3Sink = dynamicDowncast<WebCore::JSResumableS3UploadSink>(sink)) {
-        ctx = s3Sink->wrapped();
-        write = Bun__ResumableS3UploadSink__nativeWrite;
-        end = Bun__ResumableS3UploadSink__nativeEnd;
-    } else
-        return false;
-    if (!ctx)
-        return false;
-
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    JSObject* underlyingSource = stream->m_directUnderlyingSource.get();
-    stream->m_directUnderlyingSource.clear();
-    stream->m_bunMode = BunStreamMode::Default;
-    stream->m_lockedWithoutReader = true;
-
-    // The sink's ondrain slot stores the op cell so drain() can resume the pump; oncancel
-    // reaches the iterator via the bound underlyingSource.cancel(reason).
-    JSValue cancel = underlyingSource ? underlyingSource->get(globalObject, builtinNames(vm).cancelPublicName()) : jsUndefined();
-    RETURN_IF_EXCEPTION(scope, true);
-    auto* cancelBound = createBoundHandler(globalObject, WebCore::JSStreamsRuntime::from(globalObject)->boundResumableSinkDirectCancel(), cancel.isCell() ? cancel.asCell() : nullptr);
-    RETURN_IF_EXCEPTION(scope, true);
-    MarkedArgumentBuffer handlerArgs;
-    handlerArgs.append(op);
-    handlerArgs.append(cancelBound);
-    ASSERT(!handlerArgs.hasOverflowed());
-    invokeMethod(vm, globalObject, sink, builtinNames(vm).setHandlersPublicName(), handlerArgs);
-    RETURN_IF_EXCEPTION(scope, true);
-
-    scope.release();
-    driveAsyncIterableSourceIntoResumableSink(globalObject, op, sink, ctx, write, end);
-    return true;
-}
-
 JSValue assignStreamIntoResumableSink(JSGlobalObject* globalObject, JSReadableStream* stream, JSObject* resumableSink)
 {
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* domGlobalObject = defaultGlobalObject(globalObject);
     auto* runtime = WebCore::JSStreamsRuntime::from(globalObject);
-
-    if (stream->m_bunMode == BunStreamMode::DirectPending) {
-        bool handled;
-        {
-            auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-            handled = tryResumableSetupAsyncIterable(vm, globalObject, stream, resumableSink);
-            if (catchScope.exception()) [[unlikely]] {
-                JSValue thrown = takeAbruptCompletion(globalObject, catchScope);
-                if (thrown.isEmpty())
-                    return {};
-                MarkedArgumentBuffer args;
-                args.append(thrown);
-                ASSERT(!args.hasOverflowed());
-                invokeMethod(vm, globalObject, resumableSink, builtinNames(vm).endPublicName(), args);
-            }
-        }
-        RETURN_IF_EXCEPTION(scope, {});
-        if (handled)
-            return jsUndefined();
-    }
-
     auto* op = JSResumableSinkPumpOperation::create(vm, runtime->resumableSinkPumpOperationStructure(domGlobalObject));
     op->m_stream.set(vm, op, stream);
     op->m_sink.set(vm, op, resumableSink);
@@ -1917,24 +1838,6 @@ JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_boundResumableSinkCancel, (JSGlobal
     auto* op = uncheckedDowncast<JSResumableSinkPumpOperation>(callFrame->argument(0));
     Bun::WebStreams::resumableCancelImpl(vm, globalObject, op, callFrame->argument(2));
     RETURN_IF_EXCEPTION(scope, {});
-    return JSValue::encode(jsUndefined());
-}
-
-// Native cancel on the async-iterable path: (boundAsyncIterableSourceCancel, unused, reason) ->
-// cancel(reason), which runs iterator.throw()/return() so the node Readable's eos() fires.
-JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_boundResumableSinkDirectCancel, (JSGlobalObject * globalObject, CallFrame* callFrame))
-{
-    auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));
-    JSValue cancel = callFrame->argument(0);
-    if (!cancel.isCallable())
-        return JSValue::encode(jsUndefined());
-    MarkedArgumentBuffer args;
-    args.append(callFrame->argument(2));
-    ASSERT(!args.hasOverflowed());
-    JSValue result = JSC::call(globalObject, cancel, jsUndefined(), args, "cancel is not a function"_s);
-    RETURN_IF_EXCEPTION(scope, {});
-    if (auto* promise = dynamicDowncast<JSPromise>(result))
-        markPromiseAsHandled(getVM(globalObject), promise);
     return JSValue::encode(jsUndefined());
 }
 

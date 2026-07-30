@@ -251,16 +251,13 @@ namespace WebCore {
 //   boundReadStreamIntoSinkOnClose(op, stream, reason): readStreamIntoSink's JSSink onClose.
 //   boundResumableSinkDrain(op) / boundResumableSinkCancel(op, unused, reason): stored on
 //     the native ResumableSink via setHandlers.
-//   boundResumableSinkDirectCancel(cancelFn, unused, reason): oncancel for the async-iterable
-//     body fast path.
 #define FOR_EACH_WEB_STREAMS_BOUND_HANDLER_TARGET_BUN_SOURCE(V) \
     V(boundOnNativeSourceClose)                                 \
     V(boundOnNativeSourceDrain)                                 \
     V(boundReadDirectStreamOnClose)                             \
     V(boundReadStreamIntoSinkOnClose)                           \
     V(boundResumableSinkDrain)                                  \
-    V(boundResumableSinkCancel)                                 \
-    V(boundResumableSinkDirectCancel)
+    V(boundResumableSinkCancel)
 
 // owner: JSDirectStreamController.cpp — the FIVE detachable own methods of the direct
 // controller: `end` and `close` are two bound cells over the ONE boundDirectClose target.

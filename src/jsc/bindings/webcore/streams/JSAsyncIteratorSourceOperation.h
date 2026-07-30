@@ -34,20 +34,12 @@ public:
     }
     static JSC::GCClient::IsoSubspace* subspaceForImpl(JSC::VM&);
 
-    using NativeSinkWriteFn = int32_t (*)(void*, const uint8_t*, size_t);
-    using NativeSinkEndFn = void (*)(void*, JSC::EncodedJSValue);
-
     // The async iterator; cleared when cancellation or the error path hands it off.
     JSC::WriteBarrier<JSC::JSObject> m_iterator;
     // Whatever object pull() received (the direct controller, or the HTTP sink facade).
     JSC::WriteBarrier<JSC::JSObject> m_controller;
     // The single promise returned to every pull() while the iterator runs.
     JSC::WriteBarrier<JSC::JSPromise> m_pullPromise;
-    // Native ResumableSink fast path (back-ref; the sink's JS cell is m_controller so GC sees it):
-    // write/end go straight to the Rust side instead of dispatching controller.write/.end.
-    void* m_nativeSinkCtx { nullptr };
-    NativeSinkWriteFn m_nativeSinkWrite { nullptr };
-    NativeSinkEndFn m_nativeSinkEnd { nullptr };
     bool m_cancelled : 1 { false };
     bool m_done : 1 { false };
     bool m_running : 1 { false };

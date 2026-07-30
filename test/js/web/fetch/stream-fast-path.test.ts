@@ -67,7 +67,10 @@ describe("single-chunk stream consumers return a fresh buffer", () => {
 
   describe.each([
     ["Response.arrayBuffer()", (s: ReadableStream) => new Response(s).arrayBuffer()],
-    ["Request.arrayBuffer()", (s: ReadableStream) => new Request("http://x", { method: "POST", body: s }).arrayBuffer()],
+    [
+      "Request.arrayBuffer()",
+      (s: ReadableStream) => new Request("http://x", { method: "POST", body: s }).arrayBuffer(),
+    ],
     ["Bun.readableStreamToArrayBuffer", (s: ReadableStream) => readableStreamToArrayBuffer(s)],
   ] as const)("%s", (_, consume) => {
     test("Uint8Array chunk", async () => {
@@ -113,7 +116,6 @@ describe("single-chunk stream consumers return a fresh buffer", () => {
     expect(src[0]).toBe(5);
   });
 });
-
 
 describe("ByteBlobLoader", () => {
   const blobs = [

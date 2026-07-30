@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, test } from "bun:test";
-import { ctx, expectType, isEnabled } from "../test-utils";
+import { ConnectionType, createClient, ctx, expectType, isEnabled } from "../test-utils";
 
 /**
  * Test suite covering Redis list operations
@@ -10,12 +10,18 @@ import { ctx, expectType, isEnabled } from "../test-utils";
  */
 describe.skipIf(!isEnabled)("Valkey: List Data Type Operations", () => {
   // Every test below works on its own uniquely-named key, so there is no
-  // connection-visible state to reset between them. The suite-level beforeAll
-  // in test-utils already provides a connected `ctx.redis`; we only bump the
-  // key-prefix id here instead of rebuilding a RedisClient (and re-handshaking
-  // the TCP connection) for every test.
+  // connection-visible state to reset between them and no need to rebuild a
+  // RedisClient per test. When this file runs on its own (and in CI, which
+  // spawns one process per file) test-utils' beforeAll has already connected
+  // `ctx.redis` and the guard below is a no-op. When the whole unit/ directory
+  // runs in one process, test-utils' hooks attach to whichever file imported
+  // it first and its afterAll may have already closed `ctx.redis`, so we
+  // reconnect once here rather than depending on a sibling having done it.
   beforeEach(() => {
     ctx.id++;
+    if (!ctx.redis?.connected) {
+      ctx.redis = createClient(ConnectionType.TCP);
+    }
   });
 
   describe("Basic List Operations", () => {

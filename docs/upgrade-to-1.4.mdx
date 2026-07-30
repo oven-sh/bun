@@ -99,6 +99,13 @@ cache = "C:\Users\me\.bun-cache"    # [!code --]
 cache = 'C:\Users\me\.bun-cache'    # [!code ++]
 ```
 
+A few value types are also parsed differently:
+
+- `inf` / `-inf` / `nan` are numbers (`Infinity` / `-Infinity` / `NaN`), not the strings `"inf"` / `"-inf"` / `"nan"`.
+- Integers outside `Number.MAX_SAFE_INTEGER` throw instead of silently losing precision.
+- Date and time literals parse as strings (previously rejected).
+- `Bun.TOML.parse()` throws a `SyntaxError` instead of a `BuildMessage`.
+
 See the [TOML docs](/runtime/toml) for the full supported syntax.
 
 ---

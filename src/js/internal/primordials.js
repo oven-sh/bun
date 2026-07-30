@@ -44,6 +44,10 @@ const copyProps = (src, dest) => {
   });
 };
 
+// The iterator-returning methods of Map/Set. Matched by key rather than by calling each
+// zero-argument method, which would invoke user code on a monkey-patched prototype.
+const iteratorReturningKeys = ["entries", "keys", "values", Symbol.iterator];
+
 const makeSafe = (unsafe, safe) => {
   const unsafePrototype = unsafe.prototype;
   const safePrototype = safe.prototype;
@@ -54,16 +58,17 @@ const makeSafe = (unsafe, safe) => {
     ArrayPrototypeForEach(Reflect.ownKeys(unsafePrototype), key => {
       if (!Reflect.getOwnPropertyDescriptor(safePrototype, key)) {
         const desc = Reflect.getOwnPropertyDescriptor(unsafePrototype, key);
-        if (typeof desc.value === "function" && desc.value.length === 0) {
-          const called = desc.value.$call(dummy) || {};
-          if (Symbol.iterator in (typeof called === "object" ? called : {})) {
-            const createIterator = uncurryThis(desc.value);
-            next ??= uncurryThis(createIterator(dummy).next);
-            const SafeIterator = createSafeIterator(createIterator, next);
-            desc.value = function () {
-              return new SafeIterator(this);
-            };
-          }
+        if (
+          typeof desc.value === "function" &&
+          desc.value.length === 0 &&
+          ArrayPrototypeIncludes(iteratorReturningKeys, key)
+        ) {
+          const createIterator = uncurryThis(desc.value);
+          next ??= uncurryThis(createIterator(dummy).next);
+          const SafeIterator = createSafeIterator(createIterator, next);
+          desc.value = function () {
+            return new SafeIterator(this);
+          };
         }
         Reflect.defineProperty(safePrototype, key, desc);
       }
@@ -80,6 +85,7 @@ const makeSafe = (unsafe, safe) => {
 const StringIterator = uncurryThis(String.prototype[Symbol.iterator]);
 const StringIteratorPrototype = Reflect.getPrototypeOf(StringIterator(""));
 const ArrayPrototypeForEach = uncurryThis(Array.prototype.forEach);
+const ArrayPrototypeIncludes = uncurryThis(Array.prototype.includes);
 const ArrayPrototypeSymbolIterator = uncurryThis(Array.prototype[Symbol.iterator]);
 const ArrayIteratorPrototypeNext = uncurryThis(Array.prototype[Symbol.iterator]().next);
 const SafeArrayIterator = createSafeIterator(ArrayPrototypeSymbolIterator, ArrayIteratorPrototypeNext);

@@ -230,15 +230,12 @@ A redirect target must resolve to exactly one path. If a glob or brace expansion
 import { $ } from "bun";
 
 // Two files match *.txt, so the target is ambiguous.
-await $`echo hi > *.txt`;
-// bun: ambiguous redirect: at `echo`
-
-// Brace expansion also produces multiple words.
-await $`echo hi > {a,b}.log`;
-// bun: ambiguous redirect: at `echo`
+// Exits 1, which throws a ShellError unless .nothrow() is used.
+const { stderr } = await $`echo hi > *.txt`.nothrow();
+console.log(stderr.toString()); // bun: ambiguous redirect: at `echo`
 ```
 
-A glob that matches exactly one file is fine. To write the same output to several files, run the command once per target or pipe through `tee`.
+The same applies to brace expansion in a redirect target (`> {a,b}.log`). A glob that matches exactly one file is fine. To write the same output to several files, run the command once per target or pipe through `tee`.
 
 ## Piping (`|`)
 
@@ -278,13 +275,13 @@ await $`echo {a,b,c}.txt`; // a.txt b.txt c.txt
 
 Only those three tokens are treated as pattern syntax. `?`, `[...]`, and a leading `!` are passed through as literal characters, so `ls ?.ts` looks for a file literally named `?.ts`. Use [`Bun.Glob`](/runtime/glob) when you need the full glob grammar.
 
-If a pattern matches nothing, the command fails with `no matches found`:
+If a pattern matches nothing, the command fails with `no matches found` and a non-zero exit code:
 
 ```js
 import { $ } from "bun";
 
-await $`ls *.xyz`;
-// bun: no matches found: *.xyz
+await $`echo *.xyz`;
+// Throws ShellError: bun: no matches found: *.xyz
 ```
 
 This is the zsh behavior. Bash instead passes the unexpanded pattern to the command, which usually produces a less helpful `No such file or directory` from the command itself.
@@ -298,15 +295,15 @@ import { $ } from "bun";
 
 const pattern = "*.ts";
 
-await $`ls ${pattern}`;
-// ls: *.ts: No such file or directory
-// (looks for a file literally named "*.ts")
+await $`echo ${pattern}`;
+// *.ts
+// (one literal argument; no glob expansion)
 
-await $`ls *.ts`;
-// a.ts  b.ts
+await $`echo *.ts`;
+// a.ts b.ts
 ```
 
-This is part of the same rule that makes Bun Shell safe against command injection: an interpolated value is always a single literal argument, never shell syntax.
+This is part of the same rule that makes Bun Shell safe against command injection: an interpolated string is a literal argument, never shell syntax. (Arrays become one literal argument per element; see below.)
 
 <Note>
 
@@ -316,30 +313,32 @@ Prior to Bun v1.4, glob metacharacters inside an interpolated value were treated
 
 ### Dynamic glob patterns
 
-When the pattern is only known at runtime, you have two options.
-
-Wrap the string in `{ raw: ... }` to splice it into the script as shell source. The text is parsed exactly as if you had typed it in the template, so `*` and `**` are expanded:
-
-```js
-import { $ } from "bun";
-
-const pattern = "**/*.ts";
-
-await $`ls ${{ raw: pattern }}`;
-// a.ts  b.ts  src/c.ts ...
-```
-
-Because `raw` bypasses escaping entirely, only use it with strings you control. Passing untrusted input through `raw` reintroduces command injection.
-
-Alternatively, expand the pattern yourself with [`Bun.Glob`](/runtime/glob) and pass the result as an array. Arrays are interpolated as one argument per element:
+When the pattern is only known at runtime, expand it with [`Bun.Glob`](/runtime/glob) and pass the result as an array. Arrays are interpolated as one argument per element, and `Bun.Glob` supports the full pattern grammar including `?` and `[...]`:
 
 ```js
 import { $, Glob } from "bun";
 
 const files = await Array.fromAsync(new Glob("**/*.ts").scan("."));
+if (files.length === 0) throw new Error("no matches");
 
-await $`ls ${files}`;
+await $`prettier --check ${files}`;
 ```
+
+The empty-array check matters: interpolating `[]` contributes zero arguments, so without it the command would run with no file arguments instead of failing the way a literal `*.ts` with no matches would.
+
+If the pattern is a fixed string you control (not derived from user input), you can instead wrap it in `{ raw: ... }` to splice it into the script as shell source. The text is parsed exactly as if you had typed it in the template, so `*` and `**` are expanded:
+
+```js
+import { $ } from "bun";
+
+// trusted input only
+const pattern = "**/*.ts";
+
+await $`echo ${{ raw: pattern }}`;
+// a.ts b.ts src/c.ts ...
+```
+
+Because `raw` bypasses escaping entirely, passing untrusted input through it reintroduces command injection.
 
 ## Command substitution (`$(...)`)
 

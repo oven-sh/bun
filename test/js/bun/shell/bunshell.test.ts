@@ -1551,7 +1551,8 @@ describe("deno_task", () => {
       // A fixed-size buffer has no write cursor, so `>>` cannot append. Before
       // this was rejected, `>>` silently overwrote from offset 0 (identical to
       // `>`), losing data without warning.
-      const msg = "bun: can't append (>>) output to a Buffer or ArrayBuffer";
+      const msg =
+        "bun: can't append (>>) output to a Buffer or ArrayBuffer; use > to overwrite, or redirect to a file\n";
       const targets: Array<[string, () => ArrayBufferLike | ArrayBufferView]> = [
         ["Buffer", () => Buffer.alloc(16, ".")],
         ["ArrayBuffer", () => new ArrayBuffer(16)],
@@ -1559,27 +1560,29 @@ describe("deno_task", () => {
       ];
       const bytes = (b: ArrayBufferLike | ArrayBufferView) =>
         b instanceof ArrayBuffer || b instanceof SharedArrayBuffer ? new Uint8Array(b) : new Uint8Array(b.buffer);
+      const expectRejected = (buf: ArrayBufferLike | ArrayBufferView, before: Uint8Array, result: Bun.$.ShellOutput) => {
+        expect({ stderr: result.stderr.toString(), bytes: bytes(buf), exitCode: result.exitCode }).toEqual({
+          stderr: msg,
+          bytes: before,
+          exitCode: 1,
+        });
+      };
 
       describe.each(targets)("builtin -> %s", (_name, make) => {
         test(">>", async () => {
           const buf = make();
           const before = bytes(buf).slice();
-          const { stderr, exitCode } = await $`echo AAAA >> ${buf}`.quiet();
-          expect(stderr.toString()).toContain(msg);
-          expect(bytes(buf)).toEqual(before);
-          expect(exitCode).toBe(1);
+          expectRejected(buf, before, await $`echo AAAA >> ${buf}`.quiet());
         });
         test("2>>", async () => {
           const buf = make();
-          const { stderr, exitCode } = await $`echo AAAA 2>> ${buf}`.quiet();
-          expect(stderr.toString()).toContain(msg);
-          expect(exitCode).toBe(1);
+          const before = bytes(buf).slice();
+          expectRejected(buf, before, await $`echo AAAA 2>> ${buf}`.quiet());
         });
         test("&>>", async () => {
           const buf = make();
-          const { stderr, exitCode } = await $`echo AAAA &>> ${buf}`.quiet();
-          expect(stderr.toString()).toContain(msg);
-          expect(exitCode).toBe(1);
+          const before = bytes(buf).slice();
+          expectRejected(buf, before, await $`echo AAAA &>> ${buf}`.quiet());
         });
       });
 
@@ -1587,31 +1590,28 @@ describe("deno_task", () => {
         test.concurrent(">>", async () => {
           const buf = make();
           const before = bytes(buf).slice();
-          const { stderr, exitCode } = await $`${BUN} -e 'console.log("AAAA")' >> ${buf}`.env(bunEnv).quiet();
-          expect(stderr.toString()).toContain(msg);
-          expect(bytes(buf)).toEqual(before);
-          expect(exitCode).toBe(1);
+          expectRejected(buf, before, await $`${BUN} -e 'console.log("AAAA")' >> ${buf}`.env(bunEnv).quiet());
         });
         test.concurrent("2>>", async () => {
           const buf = make();
-          const { stderr, exitCode } = await $`${BUN} -e 'console.error("AAAA")' 2>> ${buf}`.env(bunEnv).quiet();
-          expect(stderr.toString()).toContain(msg);
-          expect(exitCode).toBe(1);
+          const before = bytes(buf).slice();
+          expectRejected(buf, before, await $`${BUN} -e 'console.error("AAAA")' 2>> ${buf}`.env(bunEnv).quiet());
         });
         test.concurrent("&>>", async () => {
           const buf = make();
-          const { stderr, exitCode } = await $`${BUN} -e 'console.log("AAAA")' &>> ${buf}`.env(bunEnv).quiet();
-          expect(stderr.toString()).toContain(msg);
-          expect(exitCode).toBe(1);
+          const before = bytes(buf).slice();
+          expectRejected(buf, before, await $`${BUN} -e 'console.log("AAAA")' &>> ${buf}`.env(bunEnv).quiet());
         });
       });
 
       test("> Buffer still overwrites from offset 0", async () => {
         const buf = Buffer.alloc(16, ".");
         const { stderr, exitCode } = await $`echo AAAA > ${buf}`.quiet();
-        expect(stderr.toString()).toBe("");
-        expect(buf.subarray(0, 5).toString()).toBe("AAAA\n");
-        expect(exitCode).toBe(0);
+        expect({ stderr: stderr.toString(), head: buf.subarray(0, 5).toString(), exitCode }).toEqual({
+          stderr: "",
+          head: "AAAA\n",
+          exitCode: 0,
+        });
       });
     });
 

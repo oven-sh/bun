@@ -1011,6 +1011,137 @@ export { after };
   expect(await proc.exited).toBe(0);
 });
 
+// JSC compiles an async function that uses `await` into a wrapper and a body;
+// before the first `await` suspends both sit on the VM stack, so without the
+// adapter's collapse step Debugger.paused would list the async caller twice.
+// Node/V8 reports one frame, so assert the CDP output matches.
+test("Debugger.paused reports one frame per async caller before its first await", async () => {
+  using dir = tempDir("inspector-async-callframes", {
+    "entry.mjs": `
+import inspector from "node:inspector";
+inspector.open(0, "127.0.0.1", true);
+async function inner() {
+  globalThis.hit = 1;
+  await 0;
+}
+async function outer() {
+  await inner();
+}
+await (async () => {
+  await (async () => {
+    await outer();
+  })();
+})();
+inspector.close();
+process.exit(0);
+`,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "entry.mjs"],
+    env: injectedScriptChildEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const decoder = new TextDecoder();
+  const stderrReader = proc.stderr.getReader();
+  let stderrText = "";
+  let wsUrl: string | undefined;
+  while (!wsUrl) {
+    const { value, done } = await stderrReader.read();
+    if (done) throw new Error(`stderr closed before listening line: ${stderrText}`);
+    stderrText += decoder.decode(value);
+    wsUrl = stderrText.match(/Debugger listening on (ws:\S+)/)?.[1];
+  }
+  const stderrDrained = (async () => {
+    for (;;) {
+      const { value, done } = await stderrReader.read();
+      if (done) break;
+      stderrText += decoder.decode(value);
+    }
+  })();
+
+  const ws = new WebSocket(wsUrl);
+  await new Promise<void>((resolve, reject) => {
+    ws.onopen = () => resolve();
+    ws.onerror = err => reject(err);
+  });
+  let nextId = 1;
+  let awaiting = "";
+  const pending = new Map<number, { resolve: (v: unknown) => void; reject: (e: Error) => void }>();
+  const scripts: { scriptId: string; url: string }[] = [];
+  let callFrames: { functionName: string; location: { scriptId: string }; callFrameId: string }[] | undefined;
+  const paused = Promise.withResolvers<void>();
+  ws.onmessage = event => {
+    const msg = JSON.parse(String(event.data));
+    if (msg.id != null && pending.has(msg.id)) {
+      const p = pending.get(msg.id)!;
+      pending.delete(msg.id);
+      msg.error ? p.reject(new Error(JSON.stringify(msg.error))) : p.resolve(msg.result);
+    } else if (msg.method === "Debugger.scriptParsed") {
+      scripts.push(msg.params);
+    } else if (msg.method === "Debugger.paused") {
+      callFrames = msg.params?.callFrames;
+      paused.resolve();
+    }
+  };
+  const abandon = (why: string) => {
+    const err = new Error(`${why} while awaiting ${awaiting}; stderr: ${stderrText}`);
+    paused.reject(err);
+    for (const p of pending.values()) p.reject(err);
+    pending.clear();
+  };
+  ws.onerror = () => abandon("inspector websocket errored");
+  ws.onclose = () => abandon("inspector websocket closed");
+  proc.exited.then(code => abandon(`child exited (code ${code})`));
+  function send(method: string, params?: unknown) {
+    return new Promise((resolve, reject) => {
+      const id = nextId++;
+      awaiting = method;
+      pending.set(id, { resolve, reject });
+      ws.send(JSON.stringify({ id, method, params }));
+    });
+  }
+  await send("Runtime.enable");
+  await send("Debugger.enable");
+  const entryScript = scripts.find(s => s.url.endsWith("entry.mjs"));
+  expect(entryScript).toBeDefined();
+  // Pause inside inner(), which is reached synchronously from outer() through
+  // two nested anonymous async arrows, all before any of their awaits suspend.
+  await send("Debugger.setBreakpointByUrl", { url: entryScript!.url, lineNumber: 4, columnNumber: 2 });
+  await send("Runtime.runIfWaitingForDebugger");
+
+  awaiting = "Debugger.paused";
+  await paused.promise;
+
+  expect(callFrames).toBeDefined();
+  const names = callFrames!
+    .filter(f => f.location.scriptId === entryScript!.scriptId)
+    .map(f => f.functionName || "<anonymous>");
+  // One frame per function: inner, outer, the two anonymous async arrows, and
+  // the module body. Without the adapter's wrapper collapse this reports each
+  // async function twice (the body and the JSC async wrapper), giving 9 frames.
+  expect(names).toEqual(["inner", "outer", "<anonymous>", "<anonymous>", "module code"]);
+
+  // The kept frames carry JSC's original callFrameIds, so evaluateOnCallFrame
+  // on a frame past a dropped wrapper still addresses the right ordinal.
+  const outerFrame = callFrames!.find(f => f.functionName === "outer");
+  expect(outerFrame).toBeDefined();
+  const evaluated = (await send("Debugger.evaluateOnCallFrame", {
+    callFrameId: outerFrame!.callFrameId,
+    expression: "typeof inner",
+    returnByValue: true,
+  })) as { result: { value: unknown } };
+  expect(evaluated.result.value).toBe("function");
+
+  ws.send(JSON.stringify({ id: nextId++, method: "Debugger.resume" }));
+  expect(await proc.exited).toBe(0);
+  ws.close();
+  await stderrDrained;
+});
+
 test("disconnect does not clobber a console method reassigned by user code", () => {
   const session = new inspector.Session();
   session.connect();

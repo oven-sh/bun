@@ -54,6 +54,63 @@ function breakpointUrlRegex(url: string): string {
   return Array.from(candidates, candidate => `^${escapeRegex(candidate)}$`).join("|");
 }
 
+function scopeKey(scope: AnyObject): string {
+  const location = scope.location;
+  return `${scope.type}|${scope.name ?? ""}|${location?.scriptId ?? ""}|${location?.lineNumber ?? ""}|${location?.columnNumber ?? ""}`;
+}
+
+// JSC compiles an `async function` (or generator) that uses `await` into a
+// wrapper function and a separate body function. Before the first `await`
+// suspends, both sit on the VM stack, so the backend reports the function
+// twice in Debugger.paused callFrames: the body at its current statement and
+// the wrapper paused at the function header. `new Error().stack` already hides
+// the wrapper via ImplementationVisibility::Private (Parser.cpp), but the
+// debugger's ShadowChicken stack walk does not consult that bit. V8 reports
+// one frame, so collapse the pair in the CDP translation.
+//
+// The wrapper is the body's immediate caller and the body closes over the
+// wrapper's activation, so the wrapper's scope chain is a proper suffix of the
+// body's. A frame is dropped only when its immediate predecessor was kept, so
+// an anonymous async closure further up the stack whose scope chain happens to
+// be a suffix of a kept descendant's is not mistaken for a wrapper.
+function dropAsyncWrapperFrames(frames: AnyObject[]): AnyObject[] {
+  if (frames.length < 2) return frames;
+  const result: AnyObject[] = [frames[0]];
+  let previousDropped = false;
+  for (let i = 1; i < frames.length; i++) {
+    const frame = frames[i];
+    if (!previousDropped) {
+      const body = frames[i - 1];
+      const bodyScopes = body.scopeChain;
+      const wrapperScopes = frame.scopeChain;
+      if (
+        body.functionName === frame.functionName &&
+        body.location?.scriptId === frame.location?.scriptId &&
+        $isArray(bodyScopes) &&
+        $isArray(wrapperScopes) &&
+        wrapperScopes.length > 0 &&
+        bodyScopes.length > wrapperScopes.length
+      ) {
+        const offset = bodyScopes.length - wrapperScopes.length;
+        let isSuffix = true;
+        for (let k = 0; k < wrapperScopes.length; k++) {
+          if (scopeKey(bodyScopes[offset + k]) !== scopeKey(wrapperScopes[k])) {
+            isSuffix = false;
+            break;
+          }
+        }
+        if (isSuffix) {
+          previousDropped = true;
+          continue;
+        }
+      }
+    }
+    result.push(frame);
+    previousDropped = false;
+  }
+  return result;
+}
+
 const SCOPE_TYPE_MAP: Record<string, string> = {
   global: "global",
   with: "with",
@@ -589,7 +646,7 @@ class InspectorCDPAdapter {
       }
 
       case "Debugger.paused": {
-        const callFrames = (params.callFrames ?? []).map((frame: AnyObject) => ({
+        const callFrames = dropAsyncWrapperFrames(params.callFrames ?? []).map((frame: AnyObject) => ({
           callFrameId: frame.callFrameId,
           functionName: frame.functionName ?? "",
           location: frame.location,

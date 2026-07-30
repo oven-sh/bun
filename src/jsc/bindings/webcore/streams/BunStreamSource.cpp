@@ -1302,6 +1302,16 @@ static void readStreamIntoSinkOnCloseImpl(JSC::VM& vm, JSGlobalObject* globalObj
         }
     }
     op->m_didClose = true;
+    // end() above detached the controller (m_onPull cleared), so a pump parked on sink
+    // backpressure has lost its only resume signal. Drive it to completion now so m_result
+    // settles — rsisContinueAfterReady sees m_didClose and takes the rsisFinish path.
+    if (op->m_waitingOnSink) {
+        op->m_waitingOnSink = false;
+        scope.release();
+        rsisRunCatching(vm, globalObject, op, [&] {
+            rsisContinueAfterReady(vm, globalObject, op);
+        });
+    }
 }
 
 } // namespace WebStreams

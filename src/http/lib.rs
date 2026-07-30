@@ -1047,16 +1047,9 @@ static PRINT_EVERY_I: AtomicUsize = AtomicUsize::new(0);
 
 // we always rewrite the entire HTTP request when write() returns EAGAIN
 // so we can reuse this buffer
-const MAX_REQUEST_HEADERS_INLINE: usize = 256;
-static SHARED_REQUEST_HEADERS_BUF: bun_core::RacyCell<
-    [picohttp::Header; MAX_REQUEST_HEADERS_INLINE],
-> = bun_core::RacyCell::new([picohttp::Header::ZERO; MAX_REQUEST_HEADERS_INLINE]);
-
-// Spillover for requests with more than MAX_REQUEST_HEADERS_INLINE header
-// fields. Sized on demand in build_request() from the user header count so
-// every field is written. There is no request-side field-count cap.
-static SHARED_REQUEST_HEADERS_OVERFLOW: bun_core::RacyCell<Vec<picohttp::Header>> =
-    bun_core::RacyCell::new(Vec::new());
+const MAX_REQUEST_HEADERS: usize = 256;
+static SHARED_REQUEST_HEADERS_BUF: bun_core::RacyCell<[picohttp::Header; MAX_REQUEST_HEADERS]> =
+    bun_core::RacyCell::new([picohttp::Header::ZERO; MAX_REQUEST_HEADERS]);
 
 // this doesn't need to be stack memory because it is immediately cloned after use
 static SHARED_RESPONSE_HEADERS_BUF: bun_core::RacyCell<[picohttp::Header; 256]> =
@@ -1078,14 +1071,9 @@ static SINGLE_PACKET_SMALL_BUFFER: bun_core::RacyCell<[u8; 16 * 1024]> =
 mod scratch {
     use super::*;
     #[inline]
-    pub(super) fn request_headers() -> &'static mut [picohttp::Header; MAX_REQUEST_HEADERS_INLINE] {
+    pub(super) fn request_headers() -> &'static mut [picohttp::Header; MAX_REQUEST_HEADERS] {
         // SAFETY: see module-level INVARIANT.
         unsafe { &mut *SHARED_REQUEST_HEADERS_BUF.get() }
-    }
-    #[inline]
-    pub(super) fn request_headers_overflow() -> &'static mut Vec<picohttp::Header> {
-        // SAFETY: see module-level INVARIANT.
-        unsafe { &mut *SHARED_REQUEST_HEADERS_OVERFLOW.get() }
     }
     #[inline]
     pub(super) fn response_headers() -> &'static mut [picohttp::Header; 256] {
@@ -2369,18 +2357,7 @@ impl<'a> HTTPClient<'a> {
         let header_entries = self.header_entries.slice();
         let header_names = header_entries.items_name();
         let header_values = header_entries.items_value();
-
-        // Default headers that may be appended after user headers
-        // (Connection, User-Agent, Accept, Host, Accept-Encoding, Content-Length/Transfer-Encoding).
-        const MAX_DEFAULT_HEADERS: usize = 6;
-        let needed = header_names.len() + MAX_DEFAULT_HEADERS;
-        let request_headers_buf: &mut [picohttp::Header] = if needed <= MAX_REQUEST_HEADERS_INLINE {
-            scratch::request_headers().as_mut_slice()
-        } else {
-            let overflow = scratch::request_headers_overflow();
-            overflow.resize(needed, picohttp::Header::ZERO);
-            overflow.as_mut_slice()
-        };
+        let request_headers_buf = scratch::request_headers();
 
         let mut override_accept_encoding = false;
         let mut override_accept_header = false;
@@ -2390,31 +2367,45 @@ impl<'a> HTTPClient<'a> {
         let mut add_transfer_encoding = true;
         let mut original_content_length: Option<&[u8]> = None;
 
+        // Reserve slots for default headers that may be appended after user headers
+        // (Connection, User-Agent, Accept, Host, Accept-Encoding, Content-Length/Transfer-Encoding).
+        const MAX_DEFAULT_HEADERS: usize = 6;
+        const MAX_USER_HEADERS: usize = MAX_REQUEST_HEADERS - MAX_DEFAULT_HEADERS;
+
         for (i, head) in header_names.iter().enumerate() {
             let name = self.header_str(*head);
             // Hash it as lowercase
             let hash = hash_header_name(name);
 
+            // Whether this header will actually be written to the buffer.
+            // Override flags must only be set when the header is kept, otherwise
+            // the default header is suppressed but the user header is dropped,
+            // leaving the header entirely absent from the request.
+            let will_append = header_count < MAX_USER_HEADERS;
+
             // Skip host and connection header
             // we manage those
             match hash {
                 h if h == hash_header_const(b"Content-Length") => {
+                    // Content-Length is always consumed (never written to the buffer).
                     original_content_length = Some(self.header_str(header_values[i]));
                     continue;
                 }
                 h if h == hash_header_const(b"Connection") => {
-                    override_connection_header = true;
-                    let connection_value = self.header_str(header_values[i]);
-                    if bun_core::strings::eql_case_insensitive_ascii_check_length(
-                        connection_value,
-                        b"close",
-                    ) {
-                        self.flags.disable_keepalive = true;
-                    } else if bun_core::strings::eql_case_insensitive_ascii_check_length(
-                        connection_value,
-                        b"keep-alive",
-                    ) {
-                        self.flags.disable_keepalive = false;
+                    if will_append {
+                        override_connection_header = true;
+                        let connection_value = self.header_str(header_values[i]);
+                        if bun_core::strings::eql_case_insensitive_ascii_check_length(
+                            connection_value,
+                            b"close",
+                        ) {
+                            self.flags.disable_keepalive = true;
+                        } else if bun_core::strings::eql_case_insensitive_ascii_check_length(
+                            connection_value,
+                            b"keep-alive",
+                        ) {
+                            self.flags.disable_keepalive = false;
+                        }
                     }
                 }
                 h if h == hash_header_const(b"if-modified-since") => {
@@ -2427,21 +2418,34 @@ impl<'a> HTTPClient<'a> {
                     }
                 }
                 h if h == hash_header_const(HOST_HEADER_NAME) => {
-                    override_host_header = true;
+                    if will_append {
+                        override_host_header = true;
+                    }
                 }
                 h if h == hash_header_const(b"Accept") => {
-                    override_accept_header = true;
+                    if will_append {
+                        override_accept_header = true;
+                    }
                 }
                 h if h == hash_header_const(b"User-Agent") => {
-                    override_user_agent = true;
+                    if will_append {
+                        override_user_agent = true;
+                    }
                 }
                 h if h == hash_header_const(b"Accept-Encoding") => {
-                    override_accept_encoding = true;
+                    if will_append {
+                        override_accept_encoding = true;
+                    }
                 }
                 h if h == hash_header_const(b"Upgrade") => {
-                    let value = self.header_str(header_values[i]);
-                    if !bun_core::strings::eql_any_case_insensitive_ascii(value, &[b"h2", b"h2c"]) {
-                        self.flags.upgrade_state = HTTPUpgradeState::Pending;
+                    if will_append {
+                        let value = self.header_str(header_values[i]);
+                        if !bun_core::strings::eql_any_case_insensitive_ascii(
+                            value,
+                            &[b"h2", b"h2c"],
+                        ) {
+                            self.flags.upgrade_state = HTTPUpgradeState::Pending;
+                        }
                     }
                 }
                 h if h == hash_header_const(CHUNKED_ENCODED_HEADER.name()) => {
@@ -2449,9 +2453,16 @@ impl<'a> HTTPClient<'a> {
                         continue;
                     }
                     // We don't want to override chunked encoding header if it was set by the user
-                    add_transfer_encoding = false;
+                    if will_append {
+                        add_transfer_encoding = false;
+                    }
                 }
                 _ => {}
+            }
+
+            // Silently drop excess headers to stay within the fixed-size request header buffer.
+            if !will_append {
+                continue;
             }
 
             request_headers_buf[header_count] =
@@ -2533,17 +2544,15 @@ impl<'a> HTTPClient<'a> {
         // SAFETY: every borrowed slice points into storage that outlives the
         // returned `Request` — `Method::as_str()` is `'static`; `url.pathname`
         // borrows `self.url` (lives for the client); `request_headers_buf` is
-        // either the per-HTTP-thread `SHARED_REQUEST_HEADERS_BUF` static or the
-        // `SHARED_REQUEST_HEADERS_OVERFLOW` Vec (buffer moves on resize). Callers
-        // serialize the returned `Request` before the next `build_request()` call
-        // resizes, so the erased borrow never dangles. Return as `'static` so
-        // callers don't pin `&mut self` for the rest of their fn.
+        // the per-HTTP-thread `SHARED_REQUEST_HEADERS_BUF` static. Return as
+        // `'static` so callers don't pin `&mut self` for the rest of their fn.
         picohttp::Request {
             method: self.method.as_str().as_bytes(),
             // SAFETY: `url.pathname` borrows `self.url`, which outlives the returned `Request`.
             path: unsafe { bun_ptr::detach_lifetime(self.url.pathname) },
             minor_version: 1,
-            // SAFETY: see the block-level comment above.
+            // SAFETY: `request_headers_buf` is the per-HTTP-thread
+            // `SHARED_REQUEST_HEADERS_BUF` static, outliving the returned `Request`.
             headers: unsafe { bun_ptr::detach_lifetime(&request_headers_buf[0..header_count]) },
             bytes_read: 0,
         }

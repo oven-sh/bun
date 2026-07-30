@@ -604,6 +604,58 @@ describe("error event", () => {
     expect(err).toBeInstanceOf(Error);
     expect(err.message).toMatch(/MessagePort \[EventTarget\] \{.*\}/s);
   });
+
+  // These run the Worker directly inside the test process (not spawned) because the
+  // bug they cover only reproduces under `bun test`: the process-global isBunTest
+  // flag used to short-circuit the worker VM's uncaught-exception path too.
+  test("synchronous top-level throw exits with code 1", async () => {
+    const worker = new Worker('throw new Error("boom")', { eval: true });
+    let errMessage: unknown;
+    worker.on("error", e => (errMessage = (e as Error)?.message));
+    const { promise, resolve } = Promise.withResolvers<number>();
+    worker.on("exit", resolve);
+    const code = await promise;
+    expect({ errMessage, code }).toEqual({ errMessage: "boom", code: 1 });
+  });
+
+  test("worker's own process.on('uncaughtException') handles the error", async () => {
+    const worker = new Worker(
+      /* js */ `
+      const { parentPort } = require("node:worker_threads");
+      process.on("uncaughtException", e => parentPort.postMessage("caught:" + e.message));
+      setImmediate(() => { throw new Error("late") });`,
+      { eval: true },
+    );
+    const events: unknown[] = [];
+    worker.on("message", m => events.push({ message: m }));
+    worker.on("error", e => events.push({ error: (e as Error)?.message }));
+    const { promise, resolve } = Promise.withResolvers<number>();
+    worker.on("exit", resolve);
+    const code = await promise;
+    expect({ events, code }).toEqual({ events: [{ message: "caught:late" }], code: 0 });
+  });
+
+  test("worker's own process.on('unhandledRejection') handles the rejection", async () => {
+    const worker = new Worker(
+      /* js */ `
+      const { parentPort } = require("node:worker_threads");
+      process.on("unhandledRejection", e => {
+        parentPort.postMessage("rejected:" + e.message);
+        parentPort.close();
+      });
+      parentPort.once("message", () => { Promise.reject(new Error("nope")); });`,
+      { eval: true },
+    );
+    const events: unknown[] = [];
+    worker.on("message", m => events.push({ message: m }));
+    worker.on("error", e => events.push({ error: (e as Error)?.message }));
+    await once(worker, "online");
+    worker.postMessage("go");
+    const { promise, resolve } = Promise.withResolvers<number>();
+    worker.on("exit", resolve);
+    const code = await promise;
+    expect({ events, code }).toEqual({ events: [{ message: "rejected:nope" }], code: 0 });
+  });
 });
 
 describe("getHeapSnapshot", () => {
@@ -626,14 +678,9 @@ describe("getHeapSnapshot", () => {
     });
   });
 
-  // "entry throws" is omitted: under `bun test`, isBunTest makes a worker's
-  // uncaught_exception return handled=true so spin() continues to
-  // fireEarlyMessages (the call resolves with real data). Under `bun -e`
-  // it rejects — see the test-worker-heapdump-failure.js vendored test for
-  // subprocess coverage. The two cases below take the shutdown() path
-  // directly so they exercise the m_pendingTasks abandon drain regardless.
   test.each([
     ["entry not found", undefined],
+    ["entry throws", "throw new Error('x')"],
     ["unsettled top-level await", "await new Promise(() => {})"],
   ])("rejects ERR_WORKER_NOT_RUNNING when called before a worker that fails to start (%s)", async (_, src) => {
     const worker =

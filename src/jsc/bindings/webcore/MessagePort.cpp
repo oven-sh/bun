@@ -69,6 +69,13 @@ MessagePort::~MessagePort()
 {
     if (m_isDetached)
         return;
+    // The wrapper was swept before any pending peerClosed() could jsUnref(): balance
+    // the refEventLoop() taken by the listener so it isn't leaked.
+    if (m_listenerLoopRefActive) {
+        m_listenerLoopRefActive = false;
+        if (auto* context = scriptExecutionContext())
+            context->unrefEventLoop();
+    }
     // A waiting peer (HoldsLoopRef) must not be closed at GC timing — node never
     // destroys an entangled port — except during VM teardown, where nothing else
     // will ever notify it (markTerminating() precedes the sweep that reaches here,

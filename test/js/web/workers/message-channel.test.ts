@@ -682,6 +682,32 @@ describe("a message listener keeps the event loop alive", () => {
     );
   }
 
+  // The wrapper of a listening port whose peer was explicitly closed can be
+  // swept before the posted peerClosed() task runs; ~MessagePort must balance
+  // the listener's refEventLoop() itself or the loop ref leaks and the process
+  // hangs. Not covered by the pinned "peer .close()" case above.
+  for (const [label, attach] of [
+    [".onmessage", `port2.onmessage = () => {};`],
+    [".addEventListener('message')", `port2.addEventListener('message', () => {});`],
+  ] as const) {
+    test.concurrent(
+      `a listening port swept after its peer closed does not leak a loop ref (${label})`,
+      async () => {
+        expect(
+          await runRelease(`
+            (() => {
+              const { port1, port2 } = new MessageChannel();
+              ${attach}
+              port1.close();
+            })();
+            for (let i = 0; i < 10; i++) Bun.gc(true);
+          `),
+        ).toEqual({ kind: "exited", exitCode: 0, stdout: "", stderr: "" });
+      },
+      releaseWindowMs + 2000,
+    );
+  }
+
   // An idle channel with no listener on either side must stay collectible: the
   // new HoldsLoopRef pin is per-side and only set while a side holds a loop ref.
   test.concurrent("idle channels with no listener remain collectible", async () => {

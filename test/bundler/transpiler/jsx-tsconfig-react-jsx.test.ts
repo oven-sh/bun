@@ -33,7 +33,7 @@ const shimFiles = {
 describe.each(["NODE_ENV", "BUN_ENV"])("bun run: env %s overrides tsconfig jsx dev/prod", envVar => {
   test.concurrent.each([
     // [tsconfig jsx,   env value,      expected runtime]
-    ["react-jsx", "development", "dev jsxDEV"], // env wins (was: tsconfig won -> prod)
+    ["react-jsx", "development", "dev jsxDEV"], // env wins
     ["react-jsx", "production", "prod jsx"], // both agree
     ["react-jsxdev", "development", "dev jsxDEV"], // both agree
     ["react-jsxdev", "production", "prod jsx"], // env wins

@@ -1052,9 +1052,7 @@ static SHARED_REQUEST_HEADERS_BUF: bun_core::RacyCell<
     [picohttp::Header; MAX_REQUEST_HEADERS_INLINE],
 > = bun_core::RacyCell::new([picohttp::Header::ZERO; MAX_REQUEST_HEADERS_INLINE]);
 
-// Spillover for requests with more than MAX_REQUEST_HEADERS_INLINE header
-// fields. Sized on demand in build_request() from the user header count so
-// every field is written. There is no request-side field-count cap.
+// Spillover for requests with more than MAX_REQUEST_HEADERS_INLINE fields.
 static SHARED_REQUEST_HEADERS_OVERFLOW: bun_core::RacyCell<Vec<picohttp::Header>> =
     bun_core::RacyCell::new(Vec::new());
 

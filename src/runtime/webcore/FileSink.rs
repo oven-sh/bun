@@ -40,7 +40,7 @@ pub struct FileSink {
     pub event_loop_handle: EventLoopHandle,
     pub written: Cell<usize>,
     pub pending: JsCell<streams::WritablePending>,
-    pub signal: JsCell<streams::Signal>,
+    pub source: JsCell<streams::SourceHandle<FileSink>>,
     pub done: Cell<bool>,
     pub started: Cell<bool>,
     pub must_be_kept_alive_until_eof: Cell<bool>,
@@ -450,7 +450,7 @@ impl FileSink {
             }
 
             if status == WriteStatus::EndOfFile {
-                (*this).signal.with_mut(|s| s.close(None));
+                (*this).source.with_mut(|s| s.close(None));
                 FileSink::clear_keep_alive_ref(this);
             }
         }
@@ -462,7 +462,7 @@ impl FileSink {
     pub unsafe fn on_error(this: *mut FileSink, err: sys::Error) {
         bun_core::scoped_log!(FileSink, "onError({:?})", err);
         // The streaming writer follows every `onError` with `close()` →
-        // `onClose` (on both platforms), which fires `signal.close()` and
+        // `onClose` (on both platforms), which fires `source.close()` and
         // releases the keep-alive ref. Releasing the ref here instead could
         // drop the last reference and free `this` before that `close()` runs.
         // SAFETY: caller contract — `this` is live with write+dealloc provenance.
@@ -490,8 +490,8 @@ impl FileSink {
     /// [`on_attached_process_exit`](Self::on_attached_process_exit)).
     pub unsafe fn on_ready(this: *mut FileSink) {
         bun_core::scoped_log!(FileSink, "onReady()");
-        // SAFETY: caller contract — `this` is live; only `signal` is reborrowed.
-        unsafe { (*this).signal.with_mut(|s| s.ready(None, None)) };
+        // SAFETY: caller contract — `this` is live; only `source` is reborrowed.
+        unsafe { (*this).source.with_mut(|s| s.ready(None, None)) };
     }
 
     /// # Safety
@@ -511,7 +511,7 @@ impl FileSink {
                 }
             }
 
-            (*this).signal.with_mut(|s| s.close(None));
+            (*this).source.with_mut(|s| s.close(None));
 
             // The writer is fully closed; no further callbacks will arrive. Release
             // the ref taken when a write returned `.pending`. This must be the last
@@ -773,7 +773,7 @@ impl FileSink {
 
         self.done.set(false);
         self.started.set(true);
-        self.signal.with_mut(|s| s.start());
+        self.source.with_mut(|s| s.start());
         sys::Result::Ok(())
     }
 
@@ -1244,7 +1244,6 @@ impl FileSink {
 
 // `Sink.JSSink(@This(), "FileSink")` — generic-fn-returning-type → monomorphized type alias.
 pub type JSSink = crate::webcore::sink::JSSink<FileSink>;
-pub type SinkSignal = crate::webcore::sink::SinkSignal<FileSink>;
 
 crate::impl_js_sink_abi!(FileSink, "FileSink");
 
@@ -1295,9 +1294,9 @@ impl crate::webcore::sink::JsSinkType for FileSink {
     fn start(&mut self, config: streams::Start) -> sys::Result<()> {
         Self::start(self, &config)
     }
-    fn signal(&mut self) -> Option<&mut streams::Signal> {
-        // SAFETY: JsCell — trait receiver is `&mut self`; sole borrow of `signal`.
-        Some(unsafe { self.signal.get_mut() })
+    fn source(&mut self) -> Option<&mut streams::SourceHandle<Self>> {
+        // SAFETY: JsCell — trait receiver is `&mut self`; sole borrow of `source`.
+        Some(unsafe { self.source.get_mut() })
     }
     fn done(&self) -> bool {
         self.done.get()
@@ -1355,6 +1354,11 @@ impl FileSink {
                 streams::Writable::Done
             }
             WriteResult::Wrote(amt) => {
+                if self.writer.get().is_backed_up()
+                    && !matches!(self.source.get(), streams::SourceHandle::None)
+                {
+                    return streams::Writable::Backpressure(amt as u64);
+                }
                 if amt > 0 {
                     return streams::Writable::Owned(amt as u64);
                 }
@@ -1370,6 +1374,11 @@ impl FileSink {
                     p.consumed += accepted;
                     p.result = streams::Writable::Owned(p.consumed);
                 });
+                if self.writer.get().is_backed_up()
+                    && !matches!(self.source.get(), streams::SourceHandle::None)
+                {
+                    return streams::Writable::Backpressure(accepted);
+                }
                 streams::Writable::Pending(self.pending.as_ptr())
             }
         }
@@ -1391,7 +1400,7 @@ impl FileSink {
                 result: streams::Writable::Done,
                 ..Default::default()
             }),
-            signal: JsCell::new(streams::Signal::default()),
+            source: JsCell::new(streams::SourceHandle::default()),
             done: Cell::new(false),
             started: Cell::new(false),
             must_be_kept_alive_until_eof: Cell::new(false),
@@ -1493,31 +1502,26 @@ impl FileSink {
         stream: &mut ReadableStream,
         global_this: &JSGlobalObject,
     ) -> JSValue {
-        self.signal.set(SinkSignal::init(JSValue::ZERO));
+        self.source.set(streams::SourceHandle::None);
         // SAFETY: `&mut self` carries write+dealloc provenance over the allocation.
         let _guard = unsafe { FileSinkRef::new_ref(std::ptr::from_mut::<FileSink>(self)) };
 
-        // explicitly set it to a dead pointer
-        // we use this memory address to disable signals being sent
-        self.signal.with_mut(|s| s.clear());
-
         self.readable_stream
             .set(readable_stream::Strong::init(*stream, global_this));
-        // reshaped for borrowck — re-derive `signal_ptr` after
-        // assigning `readable_stream`. `JsCell::as_ptr` yields the stable
-        // address of the inner `Signal` (`#[repr(transparent)]` over
-        // `UnsafeCell`).
-        // SAFETY: project to `signal.ptr` without forming a reference;
-        // `Option<NonNull<c_void>>` is ABI-identical to `*mut c_void` (see
-        // const-asserts on `Signal` in streams.rs), so FFI may write the
-        // JSValue bits back through this `void**`.
+        // The C++ `${abi}__assignToStream` writes the encoded controller JSValue
+        // bits back through this `void**`; wrap into `SourceHandle::JSController`
+        // after the call so the enum tag stays in sync.
+        let mut bits: usize = 0;
         let signal_ptr: *mut *mut c_void =
-            unsafe { (&raw mut (*self.signal.as_ptr()).ptr).cast::<*mut c_void>() };
+            std::ptr::from_mut::<usize>(&mut bits).cast::<*mut c_void>();
         // No per-wrapper +1 for the controller (only the transient `_guard`
         // above): the JS builtins always call `controller.end()`/`.close()`
         // (`${controller}__end/close` → `controller->detach()` → m_sinkPtr=null)
         // before GC, so the controller's dtor never reaches `finalize`.
         let promise_result = JSSink::assign_to_stream(global_this, stream.value, self, signal_ptr);
+        if bits != 0 {
+            self.source.set(streams::SourceHandle::JSController(bits));
+        }
 
         if let Some(err) = promise_result.to_error() {
             self.readable_stream.set(readable_stream::Strong::default());

@@ -1210,13 +1210,14 @@ describe.concurrent("string body consumption does not leak", () => {
           : `b => new Response(b)`;
       const src = `
         const SZ = 2_000_000, WARM = 50, BLOCK = 40;
-        const rss = () => (process.memoryUsage().rss / 1048576) | 0;
+        const rss = process.platform === "darwin" && typeof Bun.unsafe.memoryFootprint === "function" ? Bun.unsafe.memoryFootprint : process.memoryUsage.rss;
+        const mb = () => (rss() / 1048576) | 0;
         const body = ${makeBody};
         const make = ${make};
         const run = async n => { for (let i = 0; i < n; i++) await make(body())[${JSON.stringify(method)}](); };
-        await run(WARM); Bun.gc(true); const a = rss();
-        await run(BLOCK); Bun.gc(true); const b = rss();
-        await run(BLOCK); Bun.gc(true); const c = rss();
+        await run(WARM); Bun.gc(true); const a = mb();
+        await run(BLOCK); Bun.gc(true); const b = mb();
+        await run(BLOCK); Bun.gc(true); const c = mb();
         console.log("BLOCK1:" + (b - a) + " BLOCK2:" + (c - b));
       `;
       await using proc = Bun.spawn({

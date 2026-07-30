@@ -140,12 +140,13 @@ async function spawnClient(url: string, kind: Kind, script: string) {
 }
 
 const SETTLE_RSS = /* js */ `
+  const rss = process.platform === "darwin" && typeof Bun.unsafe.memoryFootprint === "function" ? Bun.unsafe.memoryFootprint : process.memoryUsage.rss;
   async function settleRss() {
-    const before = process.memoryUsage.rss();
+    const before = rss();
     let last = before, stable = 0;
     while (stable < 3) {
       await Bun.sleep(20);
-      const now = process.memoryUsage.rss();
+      const now = rss();
       stable = Math.abs(now - last) < (1 << 20) ? stable + 1 : 0;
       last = now;
     }

@@ -2221,3 +2221,8 @@ export function compileFixture(sourcePath: string, options: { flags?: string[] }
   compiledFixtures.set(cacheKey, outPath);
   return outPath;
 }
+
+export const rss: () => number =
+  process.platform === "darwin" && typeof Bun.unsafe.memoryFootprint === "function"
+    ? (Bun.unsafe.memoryFootprint as () => number)
+    : process.memoryUsage.rss;

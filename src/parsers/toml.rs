@@ -258,20 +258,71 @@ impl<'a, 'log> Scanner<'a, 'log> {
     }
 
     /// A bare word in value position is almost always an unquoted string,
-    /// which the old parser silently accepted; name the fix directly.
+    /// which the old parser silently accepted; name the fix directly. Scans
+    /// back to the start of the `key = ` expression so the suggestion is a
+    /// drop-in replacement for the whole line.
     fn err_unquoted_string(&mut self, pos: usize) -> PErr {
         let mut end = pos;
         while end < self.src.len() && is_bare_key_char(self.peek_at(end)) && end - pos < 64 {
             end += 1;
         }
         if self.redact || end == pos {
-            return self.err(pos, b"Strings must be quoted");
+            return self.err(
+                pos,
+                b"String values must be quoted; wrap the value in double quotes",
+            );
+        }
+        // Back up to the start of the enclosing `key = ` (stopping at a line
+        // break or an array/inline-table opener) so the fix reads as the
+        // whole expression, not just the word.
+        let mut key_start = pos;
+        while key_start > 0
+            && pos - key_start < 64
+            && !matches!(self.src[key_start - 1], b'\n' | b'\r' | b'[' | b'{' | b',')
+        {
+            key_start -= 1;
+        }
+        while key_start < pos && matches!(self.src[key_start], b' ' | b'\t') {
+            key_start += 1;
+        }
+        let prefix = &self.src[key_start..pos];
+        if bun_core::strings::contains(prefix, b"=") {
+            self.err_fmt(
+                pos,
+                format_args!(
+                    "String values must be quoted; write: {}\"{}\"",
+                    bstr::BStr::new(prefix),
+                    bstr::BStr::new(&self.src[pos..end]),
+                ),
+            )
+        } else {
+            self.err_fmt(
+                pos,
+                format_args!(
+                    "String values must be quoted; write: \"{}\"",
+                    bstr::BStr::new(&self.src[pos..end]),
+                ),
+            )
+        }
+    }
+
+    /// A backslash inside a basic string that begins with a drive letter
+    /// (`C:`) almost certainly meant a Windows path separator, not an
+    /// escape; say so instead of naming the escape rule that was violated.
+    fn err_windows_path_escape(&mut self, escape_pos: usize, drive: u8) -> PErr {
+        if self.redact {
+            return self.err(
+                escape_pos,
+                b"Backslash begins an escape sequence; for a Windows path, \
+                  use a single-quoted string or double each backslash",
+            );
         }
         self.err_fmt(
-            pos,
+            escape_pos,
             format_args!(
-                "Strings must be quoted: \"{}\"",
-                bstr::BStr::new(&self.src[pos..end])
+                "Backslash begins an escape sequence; for a Windows path, \
+                 use a single-quoted string ('{}:\\...') or double each backslash (\"{}:\\\\...\")",
+                drive as char, drive as char,
             ),
         )
     }
@@ -1119,6 +1170,16 @@ impl<'a, 'log> Scanner<'a, 'log> {
         }
 
         let start = self.pos;
+        // A single-line basic string that opens with `<letter>:` is almost
+        // certainly a Windows path; escape errors then name that fix.
+        let path_drive = if !multiline
+            && self.peek_at(start).is_ascii_alphabetic()
+            && self.peek_at(start + 1) == b':'
+        {
+            self.peek_at(start)
+        } else {
+            0
+        };
         let mut buf: Option<ArenaVec<'a, u8>> = None;
         let mut is_ascii = true;
         loop {
@@ -1185,7 +1246,7 @@ impl<'a, 'log> Scanner<'a, 'log> {
                         }
                     }
                     let b = Self::materialize(self.bump, self.src, start, self.pos, &mut buf);
-                    self.scan_escape(b, &mut is_ascii)?;
+                    self.scan_escape(b, &mut is_ascii, path_drive)?;
                 }
                 b'\n' => {
                     if !multiline {
@@ -1239,7 +1300,12 @@ impl<'a, 'log> Scanner<'a, 'log> {
         }
     }
 
-    fn scan_escape(&mut self, buf: &mut ArenaVec<'a, u8>, is_ascii: &mut bool) -> PResult<()> {
+    fn scan_escape(
+        &mut self,
+        buf: &mut ArenaVec<'a, u8>,
+        is_ascii: &mut bool,
+        path_drive: u8,
+    ) -> PResult<()> {
         debug_assert_eq!(self.peek(), b'\\');
         let escape_pos = self.pos;
         self.pos += 1;
@@ -1256,15 +1322,15 @@ impl<'a, 'log> Scanner<'a, 'log> {
             // TOML 1.1
             b'e' => buf.push(0x1B),
             b'x' => {
-                let cp = self.read_hex_codepoint("hex escape", 2, escape_pos)?;
+                let cp = self.read_hex_codepoint("hex escape", 2, escape_pos, path_drive)?;
                 self.append_scalar(buf, cp, escape_pos, is_ascii)?;
             }
             b'u' => {
-                let cp = self.read_hex_codepoint("Unicode escape", 4, escape_pos)?;
+                let cp = self.read_hex_codepoint("Unicode escape", 4, escape_pos, path_drive)?;
                 self.append_scalar(buf, cp, escape_pos, is_ascii)?;
             }
             b'U' => {
-                let cp = self.read_hex_codepoint("Unicode escape", 8, escape_pos)?;
+                let cp = self.read_hex_codepoint("Unicode escape", 8, escape_pos, path_drive)?;
                 self.append_scalar(buf, cp, escape_pos, is_ascii)?;
             }
             0 if self.at_eof() => {
@@ -1272,6 +1338,9 @@ impl<'a, 'log> Scanner<'a, 'log> {
             }
             _ => {
                 self.pos -= 1;
+                if path_drive != 0 {
+                    return Err(self.err_windows_path_escape(escape_pos, path_drive));
+                }
                 return Err(self.err_char(self.pos, "Invalid escape sequence:"));
             }
         }
@@ -1283,10 +1352,14 @@ impl<'a, 'log> Scanner<'a, 'log> {
         what: &'static str,
         digits: usize,
         escape_pos: usize,
+        path_drive: u8,
     ) -> PResult<u32> {
         let mut value: u32 = 0;
         for _ in 0..digits {
             let Some(d) = bun_core::fmt::hex_digit_value_u32(u32::from(self.peek())) else {
+                if path_drive != 0 {
+                    return Err(self.err_windows_path_escape(escape_pos, path_drive));
+                }
                 return Err(self.err_fmt(
                     escape_pos,
                     format_args!(

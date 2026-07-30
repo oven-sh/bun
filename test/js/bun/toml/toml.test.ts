@@ -503,13 +503,66 @@ describe("error contract", () => {
 
   test("unquoted string values name the fix", () => {
     // The old parser silently accepted bare words as strings; this is the
-    // most common spec violation in real-world bunfig.toml files.
-    expect(syntaxError("linker = isolated").message).toBe('TOML Parse error: Strings must be quoted: "isolated"');
-    expect(syntaxError("a = tru").message).toBe('TOML Parse error: Strings must be quoted: "tru"');
-    expect(syntaxError("a = nope").message).toBe('TOML Parse error: Strings must be quoted: "nope"');
+    // most common spec violation in real-world bunfig.toml files. The fix-it
+    // includes the `key = ` portion so it can be pasted verbatim.
+    expect(syntaxError("linker = isolated").message).toBe(
+      'TOML Parse error: String values must be quoted; write: linker = "isolated"',
+    );
+    expect(syntaxError("[install]\nlinker = isolated").message).toBe(
+      'TOML Parse error: String values must be quoted; write: linker = "isolated"',
+    );
+    expect(syntaxError("install.linker = isolated").message).toBe(
+      'TOML Parse error: String values must be quoted; write: install.linker = "isolated"',
+    );
+    expect(syntaxError('"my key" = isolated').message).toBe(
+      'TOML Parse error: String values must be quoted; write: "my key" = "isolated"',
+    );
+    expect(syntaxError("a = tru").message).toBe('TOML Parse error: String values must be quoted; write: a = "tru"');
+    expect(syntaxError("a = nope").message).toBe('TOML Parse error: String values must be quoted; write: a = "nope"');
     // Bare words that merely start with inf/nan are unquoted strings too.
-    expect(syntaxError("timeout = infinity").message).toBe('TOML Parse error: Strings must be quoted: "infinity"');
-    expect(syntaxError("unit = nanoseconds").message).toBe('TOML Parse error: Strings must be quoted: "nanoseconds"');
+    expect(syntaxError("timeout = infinity").message).toBe(
+      'TOML Parse error: String values must be quoted; write: timeout = "infinity"',
+    );
+    expect(syntaxError("unit = nanoseconds").message).toBe(
+      'TOML Parse error: String values must be quoted; write: unit = "nanoseconds"',
+    );
+    // Inside an array or inline table the `key = ` part is omitted.
+    expect(syntaxError("a = [isolated]").message).toBe(
+      'TOML Parse error: String values must be quoted; write: "isolated"',
+    );
+    expect(syntaxError("a = [1, isolated]").message).toBe(
+      'TOML Parse error: String values must be quoted; write: "isolated"',
+    );
+    expect(syntaxError("a = { b = isolated }").message).toBe(
+      'TOML Parse error: String values must be quoted; write: b = "isolated"',
+    );
+  });
+
+  test("escape errors inside a drive-letter string name the Windows-path fix", () => {
+    // `"C:\Users"` is an easy mistake to carry over from .npmrc; the
+    // spec-accurate "must be followed by 8 hex digits" message does not
+    // help a user who meant a path separator.
+    const hint =
+      "TOML Parse error: Backslash begins an escape sequence; for a Windows path, " +
+      "use a single-quoted string ('C:\\...') or double each backslash (\"C:\\\\...\")";
+    expect(syntaxError('cache = "C:\\Users\\bob"').message).toBe(hint);
+    expect(syntaxError('cache = "C:\\Program Files"').message).toBe(hint);
+    expect(syntaxError('cache = "C:\\xyz"').message).toBe(hint);
+    expect(syntaxError('cache = "C:\\users"').message).toBe(hint);
+    // The drive letter is echoed back so the example matches the input.
+    expect(syntaxError('cache = "d:\\my"').message).toBe(
+      "TOML Parse error: Backslash begins an escape sequence; for a Windows path, " +
+        "use a single-quoted string ('d:\\...') or double each backslash (\"d:\\\\...\")",
+    );
+    // A string that is not drive-letter-prefixed keeps the precise escape error.
+    expect(syntaxError('a = "foo\\zbar"').message).toBe("TOML Parse error: Invalid escape sequence: 'z'");
+    expect(syntaxError('a = "\\U12345"').message).toBe(
+      "TOML Parse error: A Unicode escape must be followed by exactly 8 hex digits",
+    );
+    // Multi-line strings are not path-shaped, so they keep the precise error too.
+    expect(syntaxError('a = """C:\\my"""').message).toBe("TOML Parse error: Invalid escape sequence: 'm'");
+    // The single-quoted form the hint recommends actually parses.
+    expect(TOML.parse("cache = 'C:\\Users\\bob'")).toEqual({ cache: "C:\\Users\\bob" });
   });
 
   test("common mistakes produce specific messages", () => {

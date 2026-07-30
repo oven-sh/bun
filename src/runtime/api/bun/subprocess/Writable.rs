@@ -470,7 +470,7 @@ impl<'a> Writable<'a> {
                         subprocess.update_flags(|f| f.set(Flags::DEREF_ON_STDIN_DESTROYED, true));
                     }
                     let parent_ptr = subprocess.as_ctx_ptr().cast::<c_void>();
-                    if matches!(pipe.source.get(), SourceHandle::Subprocess(p) if p == parent_ptr)
+                    if matches!(*pipe.source.get(), SourceHandle::Subprocess(p) if p == parent_ptr)
                     {
                         pipe.source.with_mut(|s| s.clear());
                     }
@@ -506,7 +506,7 @@ impl<'a> Writable<'a> {
         match subprocess.stdin.replace(Writable::Ignore) {
             Writable::Pipe(pipe_nn) => {
                 let pipe = Self::pipe_sink_mut(&pipe_nn);
-                if matches!(pipe.source.get(), SourceHandle::Subprocess(p) if p == parent_ptr) {
+                if matches!(*pipe.source.get(), SourceHandle::Subprocess(p) if p == parent_ptr) {
                     pipe.source.with_mut(|s| s.clear());
                 }
 

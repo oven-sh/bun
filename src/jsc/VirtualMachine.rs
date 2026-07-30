@@ -4603,6 +4603,12 @@ impl VirtualMachine {
             self.wait_for_promise(jsc::AnyPromise::Internal(promise));
         }
 
+        // The entry promise has settled and the test runner continues
+        // synchronously, so pre-arm the waker: otherwise, when a ref'd handle
+        // (e.g. a pending user timer) keeps the loop active, this final
+        // `auto_tick` parks until the next timer deadline, typically JSC's
+        // incremental sweeper armed ~100ms out by the per-file GC (#36450).
+        self.wakeup();
         self.auto_tick();
         Ok(self.pending_internal_promise.unwrap())
     }

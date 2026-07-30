@@ -820,7 +820,7 @@ impl OperatingSystem {
     pub(crate) const SUNOS: u16 = 1 << 6;
     pub const WIN32: u16 = 1 << 7;
     pub(crate) const ANDROID: u16 = 1 << 8;
-    pub(crate) const OPENHARMONY: u16 = 1 << 9;
+    pub const OPENHARMONY: u16 = 1 << 9;
 
     pub const ALL_VALUE: u16 = Self::AIX
         | Self::DARWIN

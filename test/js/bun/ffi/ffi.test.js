@@ -1356,7 +1356,7 @@ describe.if(!!libPath)("can open more than 63 symbols via", () => {
 
 // `toBuffer(ptr, offset, len)` without an explicit finalizer used to adopt the
 // caller's pointer as owned and install Bun's allocator deallocator, so GC would
-// `mi_free` foreign (caller-owned) memory — an ASAN bad-free / release SIGSEGV.
+// `mi_free` caller-owned memory — an ASAN bad-free / release SIGSEGV.
 // These run in a subprocess because the bug crashes the process on unpatched Bun.
 describe("toBuffer borrowed-pointer ownership (no bad-free on GC)", () => {
   async function runsClean(script) {
@@ -1381,8 +1381,10 @@ describe("toBuffer borrowed-pointer ownership (no bad-free on GC)", () => {
   // Post-condition on the ACTUAL caller memory the bad-free targets: drop only the
   // adopted Buffer, then confirm `original[index]` (the storage `ptr(...)` pointed
   // at) is still readable and writable — proving its backing was NOT freed. Then
-  // drop `original` too, so unpatched hits the same pointer a second time. That
-  // turns "the process didn't abort" into "the foreign memory survived".
+  // drop `original` too, exercising the owner's normal disposal after the borrowed
+  // view was collected — on an unpatched build the earlier invalid free has already
+  // corrupted that ownership path. That turns "the process didn't abort" into "the
+  // caller memory survived".
   const originalSurvives = (index, expected) => `
       adopted = null;
       ${gcLoop}
@@ -1394,7 +1396,7 @@ describe("toBuffer borrowed-pointer ownership (no bad-free on GC)", () => {
   `;
 
   it(
-    "toBuffer(ptr(buffer)) does not free foreign memory on GC",
+    "toBuffer(ptr(buffer)) does not free caller-owned memory on GC",
     async () => {
       const { stdout, exitCode } = await runsClean(`
       import { ptr, toBuffer } from "bun:ffi";
@@ -1434,7 +1436,7 @@ describe("toBuffer borrowed-pointer ownership (no bad-free on GC)", () => {
   );
 
   it(
-    "toBuffer(ptr(typedArray)) does not free foreign memory on GC",
+    "toBuffer(ptr(typedArray)) does not free caller-owned memory on GC",
     async () => {
       const { stdout, exitCode } = await runsClean(`
       import { ptr, toBuffer } from "bun:ffi";
@@ -1450,7 +1452,7 @@ describe("toBuffer borrowed-pointer ownership (no bad-free on GC)", () => {
   );
 
   // Regression (the #1 risk): the bad-free fix must NOT change the explicit-finalizer
-  // path — when the caller supplies a finalizer, it still takes ownership and the
+  // path — when the caller supplies a finalizer, it still controls disposal and the
   // deallocator is invoked exactly once on GC. Self-contained via cc() (TinyCC) so the
   // deallocator's call count is isolated from the shared ffi-test fixture's counter.
   it(

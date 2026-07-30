@@ -47,6 +47,7 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
           "BUN_VALKEY_TLS": connectionType === ConnectionType.TLS ? JSON.stringify(TLS_REDIS_OPTIONS.tlsPaths) : "",
         });
         expect(result.stdout).toContain(`connected`);
+        expect(result.exitCode).toBe(0);
       });
 
       test("should set and get strings", async () => {

@@ -1,6 +1,6 @@
 import { exposedInternals } from "bun:internal-for-testing";
 import { describe, expect, it, jest } from "bun:test";
-import { bunEnv, bunExe, isGlibcVersionAtLeast, isMacOS, tmpdirSync } from "harness";
+import { bunEnv, bunExe, bunRun, isGlibcVersionAtLeast, isMacOS, tmpdirSync } from "harness";
 import { createReadStream, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { Duplex, duplexPair, finished, PassThrough, Readable, Stream, Transform, Writable } from "node:stream";
@@ -199,8 +199,8 @@ describe("createReadStream", () => {
     });
   });
 
-  it("should emit readable on end", () => {
-    expect([join(import.meta.dir, "emit-readable-on-end.js")]).toRun();
+  it("should emit readable on end", async () => {
+    expect(await bunRun(join(import.meta.dir, "emit-readable-on-end.js"))).toSpawn();
   });
 });
 

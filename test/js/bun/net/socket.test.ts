@@ -352,7 +352,9 @@ describe.concurrent("socket", () => {
   }, 60_000);
 
   it("should allow large amounts of data to be sent and received", async () => {
-    expect(await bunRun(fileURLToPath(new URL("./socket-huge-fixture.js", import.meta.url)))).toSpawn();
+    const { stderr, exitCode } = await bunRun(fileURLToPath(new URL("./socket-huge-fixture.js", import.meta.url)));
+    if (exitCode !== 0) console.error(stderr);
+    expect(exitCode).toBe(0);
   }, 60_000);
 
   it.skipIf(isWindows)("kqueue should not dispatch spurious drain events on readable", async () => {

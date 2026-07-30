@@ -157,8 +157,9 @@ require("node:cluster");
 process.send("regular message");
 `,
   });
-  const { stdout } = await bunRun(joinP(dir, "parent.ts"), bunEnv);
+  const { stdout, exitCode } = await bunRun(joinP(dir, "parent.ts"), bunEnv);
   expect(stdout).toContain("P received regular message");
+  expect(exitCode).toBe(0);
 });
 
 test("disconnect() on a cluster.Worker built around a plain object does not abort", async () => {

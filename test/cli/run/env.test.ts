@@ -651,7 +651,7 @@ describe.concurrent("--env-file", () => {
     });
   });
 
-  async function bunRun(bunArgs: string[], envOverride?: Record<string, string>) {
+  async function runEnvFile(bunArgs: string[], envOverride?: Record<string, string>) {
     const file = `${dir}/index.ts`;
     await using proc = Bun.spawn({
       cmd: [bunExe(), ...bunArgs, file],
@@ -674,30 +674,32 @@ describe.concurrent("--env-file", () => {
   }
 
   test("single arg", async () => {
-    expect((await bunRun(["--env-file", ".env.a"])).stdout).toBe("BUNTEST_A=1");
-    expect((await bunRun(["--env-file=.env.a"])).stdout).toBe("BUNTEST_A=1");
+    expect((await runEnvFile(["--env-file", ".env.a"])).stdout).toBe("BUNTEST_A=1");
+    expect((await runEnvFile(["--env-file=.env.a"])).stdout).toBe("BUNTEST_A=1");
   });
 
   test("multiple args", async () => {
-    expect((await bunRun(["--env-file", ".env.a", "--env-file=.env.b"])).stdout).toBe("BUNTEST_A=1,BUNTEST_B=1");
+    expect((await runEnvFile(["--env-file", ".env.a", "--env-file=.env.b"])).stdout).toBe("BUNTEST_A=1,BUNTEST_B=1");
   });
 
   test("single arg with multiple files", async () => {
-    expect((await bunRun(["--env-file", ".env.a,.env.b,.env.c"])).stdout).toBe("BUNTEST_A=1,BUNTEST_B=1,BUNTEST_C=1");
+    expect((await runEnvFile(["--env-file", ".env.a,.env.b,.env.c"])).stdout).toBe(
+      "BUNTEST_A=1,BUNTEST_B=1,BUNTEST_C=1",
+    );
   });
 
   test("priority on multi-file single arg", async () => {
-    expect((await bunRun(["--env-file", ".env.a,.env.a2"])).stdout).toBe("BUNTEST_A=2");
+    expect((await runEnvFile(["--env-file", ".env.a,.env.a2"])).stdout).toBe("BUNTEST_A=2");
   });
 
   test("priority on multiple args", async () => {
-    expect((await bunRun(["--env-file", ".env.a", "--env-file", ".env.a2"])).stdout).toBe("BUNTEST_A=2");
+    expect((await runEnvFile(["--env-file", ".env.a", "--env-file", ".env.a2"])).stdout).toBe("BUNTEST_A=2");
   });
 
   test("priority on process env", async () => {
     expect(
       (
-        await bunRun(["--env-file=.env.a", "--env-file=.env.b"], {
+        await runEnvFile(["--env-file=.env.a", "--env-file=.env.b"], {
           BUNTEST_PROCESS: "P",
           BUNTEST_A: "P",
         })
@@ -706,34 +708,34 @@ describe.concurrent("--env-file", () => {
   });
 
   test("absolute filepath", async () => {
-    expect((await bunRun(["--env-file", `${dir}/.env.a`])).stdout).toBe("BUNTEST_A=1");
+    expect((await runEnvFile(["--env-file", `${dir}/.env.a`])).stdout).toBe("BUNTEST_A=1");
   });
 
   test("explicit relative filepath", async () => {
-    expect((await bunRun(["--env-file", "./.env.a"])).stdout).toBe("BUNTEST_A=1");
+    expect((await runEnvFile(["--env-file", "./.env.a"])).stdout).toBe("BUNTEST_A=1");
   });
 
   test("subdirectory filepath", async () => {
-    expect((await bunRun(["--env-file", "subdir/.env.s"])).stdout).toBe("BUNTEST_S=1");
-    expect((await bunRun(["--env-file", "./subdir/.env.s"])).stdout).toBe("BUNTEST_S=1");
+    expect((await runEnvFile(["--env-file", "subdir/.env.s"])).stdout).toBe("BUNTEST_S=1");
+    expect((await runEnvFile(["--env-file", "./subdir/.env.s"])).stdout).toBe("BUNTEST_S=1");
   });
 
   test("when arg missing, fallback to default dotenv behavior", async () => {
     // if --env-file missing, it should fallback to the default builtin behavior (.env, .env.production, etc.)
-    expect((await bunRun([])).stdout).toBe("BUNTEST_DOTENV=1");
+    expect((await runEnvFile([])).stdout).toBe("BUNTEST_DOTENV=1");
   });
 
   test("empty string disables default dotenv behavior", async () => {
-    expect((await bunRun(["--env-file=''"])).stdout).toBe("");
+    expect((await runEnvFile(["--env-file=''"])).stdout).toBe("");
   });
 
   test("should correctly ignore invalid values and parse the rest", async () => {
-    const res = await bunRun(["--env-file=.env.invalid"]);
+    const res = await runEnvFile(["--env-file=.env.invalid"]);
     expect(res.stdout).toBe("BUNTEST_A=1,BUNTEST_B=1,BUNTEST_C=1,BUNTEST_D=,BUNTEST_E=1");
   });
 
   test("should ignore a file that doesn't exist", async () => {
-    const res = await bunRun(["--env-file=.env.nonexisting"]);
+    const res = await runEnvFile(["--env-file=.env.nonexisting"]);
     expect(res.stdout).toBe("");
   });
 });

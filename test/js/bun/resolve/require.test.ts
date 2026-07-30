@@ -61,8 +61,9 @@ describe("require(specifier)", () => {
 
     it.failing("is a Module object when a file is run directly", async () => {
       const file = path.join(dir, "index.js");
-      const { stdout, stderr } = await bunRun(file);
+      const { stdout, stderr, exitCode } = await bunRun(file);
       expect(stderr).toBeEmpty();
+      expect(exitCode).toBe(0);
 
       // FIXME: most of these properties exist, but are non-enumerable and are
       // not present as keys when stringified

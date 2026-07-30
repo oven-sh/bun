@@ -679,10 +679,9 @@ if (expect.extend)
     },
     toSpawn(actual: BunRunResult, expectedStdout?: string) {
       if (actual == null || typeof actual !== "object" || typeof actual.exitCode !== "number") {
-        return {
-          pass: false,
-          message: () => `expect(received).toSpawn()\n\nExpected a BunRunResult (did you forget to await bunRun()?)`,
-        };
+        throw new TypeError(
+          `expect(received).toSpawn()\n\nExpected a BunRunResult (did you forget to await bunRun()?)`,
+        );
       }
 
       if (actual.exitCode !== 0) {

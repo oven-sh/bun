@@ -37,6 +37,7 @@ describe("next-auth", () => {
       expect(result.stdout).toBeDefined();
       const lines = result.stdout?.split("\n") ?? [];
       expect(lines[lines.length - 1]).toMatch(/request sent/);
+      expect(result.exitCode).toBe(0);
     },
     90_000,
   );

@@ -440,8 +440,7 @@ describe("When CJS and ESM are mixed", () => {
 
   // https://github.com/oven-sh/bun/issues/4677
   it("loads reflect-metadata before tsyringe", async () => {
-    const { stderr } = await bunRun(fixturePath);
-    expect(stderr).toBeEmpty();
+    expect(await bunRun(fixturePath)).toSpawn();
   });
 });
 

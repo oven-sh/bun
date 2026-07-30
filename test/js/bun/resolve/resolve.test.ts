@@ -1083,7 +1083,7 @@ describe.skipIf(isWindows)("backslash in bare package specifier (POSIX)", () => 
       bs_secret: probe("pk\\\\secret.js"),
       bs_escape_app: probe("pk\\\\..\\\\..\\\\appfile.js"),
       bs_escape_outside: probe("pk\\\\..\\\\..\\\\..\\\\outside.js"),
-      bs_hostname: rprobe("pk" + "\\\\..".repeat(40) + "\\\\etc\\\\hostname"),
+      bs_resolve_outside: rprobe("pk\\\\..\\\\..\\\\..\\\\outside.js"),
       bs_no_pkg: probe("nosuch\\\\..\\\\..\\\\appfile.js"),
       // mixed: forward-slash after name, backslash in subpath (no exports map)
       bs_mixed_noexports: probe("noexp/..\\\\..\\\\appfile.js"),
@@ -1115,7 +1115,7 @@ describe.skipIf(isWindows)("backslash in bare package specifier (POSIX)", () => 
     bs_secret: "ERR:MODULE_NOT_FOUND",
     bs_escape_app: "ERR:MODULE_NOT_FOUND",
     bs_escape_outside: "ERR:MODULE_NOT_FOUND",
-    bs_hostname: "ERR:MODULE_NOT_FOUND",
+    bs_resolve_outside: "ERR:MODULE_NOT_FOUND",
     bs_no_pkg: "ERR:MODULE_NOT_FOUND",
     bs_mixed_noexports: "ERR:MODULE_NOT_FOUND",
   };

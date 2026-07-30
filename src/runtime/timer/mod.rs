@@ -1013,6 +1013,26 @@ impl All {
         }
     }
 
+    /// Cheap "is the soonest JS timer already due" probe for
+    /// `EventLoop::tick()`'s mid-tick yield check. Reads the clock only when
+    /// the regular heap is non-empty. WTF timers are ignored: taking the
+    /// `wtf_timers` lock on every inner-loop iteration of `tick()` is not
+    /// worth it, and the `drain_due_wtf_timers` call at the next
+    /// `get_timeout`/`drain_timers` is never more than one loop iteration
+    /// away once `tick()` returns.
+    pub(crate) fn has_due_regular_timer(&self) -> bool {
+        let Some(timer) = self.timers.peek() else {
+            return false;
+        };
+        // SAFETY: `peek` returns a live heap node.
+        let next = unsafe { &(*timer).next };
+        let next = Timespec {
+            sec: next.sec,
+            nsec: next.nsec,
+        };
+        !next.greater(&Timespec::now(TimespecMockMode::ForceRealTime))
+    }
+
     /// Pop the next due timer. `now` is filled lazily on first call so we
     /// don't pay for `clock_gettime` when the heap is empty.
     fn next(&mut self, has_set_now: &mut bool, now: &mut Timespec) -> Option<*mut EventLoopTimer> {

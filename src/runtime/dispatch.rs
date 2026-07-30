@@ -878,6 +878,23 @@ unsafe fn __bun_cancel_pending_immediate(
     }
 }
 
+/// `__bun_has_due_timer` body — declared `extern "Rust"` in
+/// `bun_jsc::event_loop`. `EventLoop::tick()` polls this to decide whether to
+/// keep re-draining `concurrent_tasks` mid-tick or yield so `auto_tick*` can
+/// run the timers phase (Node interleaves due timers between thread-pool
+/// completion batches; without this a self-feeding `fs.read` chain starves
+/// `setInterval`).
+#[unsafe(no_mangle)]
+fn __bun_has_due_timer() -> bool {
+    let all = crate::jsc_hooks::timer_all();
+    if all.is_null() {
+        return false;
+    }
+    // SAFETY: `all` is the live per-thread `All`; single JS thread, and
+    // `has_due_regular_timer` only peeks (no heap mutation, no JS re-entry).
+    unsafe { (*all).has_due_regular_timer() }
+}
+
 /// `__bun_run_wtf_timer` body — cast the low-tier erased `*mut ()` to the real
 /// `crate::timer::WTFTimer` and fire it.
 ///

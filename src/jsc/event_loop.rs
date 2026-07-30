@@ -191,6 +191,10 @@ unsafe extern "Rust" {
     /// `WTFTimer::run` — `timer` is an erased `*mut bun_runtime::timer::WTFTimer`.
     /// Defined in `bun_runtime::dispatch`. Link-time resolved.
     fn __bun_run_wtf_timer(timer: *mut (), vm: *mut VirtualMachine);
+    /// `timer::All::has_due_regular_timer` — peek the JS timer heap and
+    /// report whether its soonest entry is already due. Defined in
+    /// `bun_runtime::dispatch`. Link-time resolved.
+    safe fn __bun_has_due_timer() -> bool;
     /// Tag-specific shutdown release for a queued-but-never-run task. Called
     /// from `release_queued_tasks_for_shutdown` (after `shutdown_for_exit`,
     /// before `destructOnExit`) for every entry left in `self.tasks`.
@@ -455,6 +459,20 @@ impl EventLoop {
         let _ = self.tick_concurrent_with_count();
     }
 
+    /// Re-drain the concurrent queue mid-tick only when nothing is waiting on
+    /// `tick()` to return. libuv delivers thread-pool completions once per
+    /// poll and runs the timers/check phases between polls, so Node interleaves
+    /// due `setInterval`/`setTimeout` (and `setImmediate`) with a chain of
+    /// `fs.read` callbacks that each submit the next read. The unconditional
+    /// `tick_concurrent()` at the start of `tick()` is that once-per-iteration
+    /// batch boundary; re-draining here is a throughput nicety that must yield
+    /// when a timer is due or an immediate is pending.
+    fn tick_concurrent_unless_due(&mut self) {
+        if self.immediate_tasks.is_empty() && !__bun_has_due_timer() {
+            self.tick_concurrent();
+        }
+    }
+
     /// Check whether refConcurrently has been called but the change has not yet been applied to the
     /// underlying event loop's `active` counter
     pub fn has_pending_refs(&self) -> bool {
@@ -620,7 +638,7 @@ impl EventLoop {
 
         loop {
             while self.tick_with_count(ctx) > 0 {
-                self.tick_concurrent();
+                self.tick_concurrent_unless_due();
                 self.global_ref().handle_rejected_promises();
             }
             if self
@@ -631,7 +649,7 @@ impl EventLoop {
                 self.entered_event_loop_count -= 1;
                 return;
             }
-            self.tick_concurrent();
+            self.tick_concurrent_unless_due();
             if self.tasks.readable_length() > 0 {
                 continue;
             }
@@ -639,7 +657,7 @@ impl EventLoop {
         }
 
         while self.tick_with_count(ctx) > 0 {
-            self.tick_concurrent();
+            self.tick_concurrent_unless_due();
         }
 
         self.global_ref().handle_rejected_promises();

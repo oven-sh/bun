@@ -1915,7 +1915,10 @@ describe("s3 upload stream body error", () => {
       Bun.gc(true);
       const rssBefore = process.memoryUsage.rss();
       const upstream = await fetch(\`http://127.0.0.1:\${server.port}/big\`);
-      await client.write("obj", upstream.body);
+      // S3Client.write() does not accept a bare ReadableStream; passing the Response
+      // routes BodyValue::Locked -> upload_stream(), which matches the native
+      // ByteStream -> NetworkSink fast-path this test exercises.
+      await client.write("obj", upstream);
       Bun.gc(true);
       const rssAfter = process.memoryUsage.rss();
       server.stop(true);

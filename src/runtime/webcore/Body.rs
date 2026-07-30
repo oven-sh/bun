@@ -2413,22 +2413,25 @@ impl<'a> ValueBufferer<'a> {
         }
     }
 
-    fn on_stream_pipe(&mut self, stream: &streams::Result) {
+    fn write_chunk(&mut self, stream: &streams::Result) -> streams::Writable {
         if let streams::Result::Err(err) = stream {
             bun_core::scoped_log!(BodyValueBufferer, "onStreamPipe error");
             let js_err = err.to_js(self.global);
             let ref_ = jsc::strong::Optional::create(js_err, self.global);
             (self.on_finished_buffering)(self.ctx, b"", Some(ValueError::JSValue(ref_)), true);
-            return;
+            return streams::Writable::Done;
         }
         let chunk = stream.slice();
-        bun_core::scoped_log!(BodyValueBufferer, "onStreamPipe chunk {}", chunk.len());
+        let len = chunk.len();
+        bun_core::scoped_log!(BodyValueBufferer, "onStreamPipe chunk {}", len);
         let _ = self.stream_buffer.write(chunk);
         if stream.is_done() {
             let bytes = self.stream_buffer.list.as_slice();
             bun_core::scoped_log!(BodyValueBufferer, "onStreamPipe done {}", bytes.len());
             (self.on_finished_buffering)(self.ctx, bytes, None, true);
+            return streams::Writable::Done;
         }
+        streams::Writable::Owned(len as u64)
     }
 
     /// Reclaim the `*mut Self` smuggled through a `NativePromiseContext` cell
@@ -2547,7 +2550,7 @@ impl<'a> ValueBufferer<'a> {
                     // readable stream, kept alive via `self.readable_stream_ref`
                     // above. R-2: all touched fields are interior-mutable.
                     let byte_stream = stream.ptr.bytes().expect("matched Bytes");
-                    debug_assert!(byte_stream.pipe.get().ctx.is_none());
+                    debug_assert!(byte_stream.sink.get().is_none());
                     debug_assert!(self.byte_stream.is_none());
 
                     let bytes = byte_stream.buffer.get().as_slice();
@@ -2581,9 +2584,15 @@ impl<'a> ValueBufferer<'a> {
                         return Ok(());
                     }
 
-                    byte_stream
-                        .pipe
-                        .set(crate::webcore::Wrap::<Self>::init(self));
+                    byte_stream.sink.set(webcore::SinkHandle::ValueBufferer(
+                        std::ptr::from_mut::<Self>(self).cast::<c_void>(),
+                        |ctx, stream| {
+                            // SAFETY: `ctx` is the `*mut Self` stored at hook-in time;
+                            // `ValueBufferer` is heap-pinned by its owner and kept alive
+                            // via `self.readable_stream_ref` for the stream's duration.
+                            unsafe { &mut *ctx.cast::<Self>() }.write_chunk(stream)
+                        },
+                    ));
                     self.byte_stream = NonNull::new(byte_stream_ptr);
                     bun_core::scoped_log!(
                         BodyValueBufferer,
@@ -2646,13 +2655,6 @@ impl<'a> ValueBufferer<'a> {
                 (sink.on_finished_buffering)(sink.ctx, bytes, None, true);
             }
         }
-    }
-}
-
-// `webcore::Wrap<T>` requires `T: PipeHandler`.
-impl<'a> crate::webcore::PipeHandler for ValueBufferer<'a> {
-    fn on_pipe(&mut self, stream: streams::Result) {
-        self.on_stream_pipe(&stream)
     }
 }
 

@@ -729,7 +729,7 @@ impl<'a> Coordinator<'a> {
                 return None;
             }
             let mut jeli: windows::JOBOBJECT_EXTENDED_LIMIT_INFORMATION = bun_core::ffi::zeroed();
-            jeli.BasicLimitInformation.LimitFlags = windows::JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+            jeli.BasicLimitInformation.LimitFlags = windows::JOB_LIMIT_FLAGS_KILL_TREE_ON_CLOSE;
             if windows::SetInformationJobObject(
                 job,
                 windows::JobObjectExtendedLimitInformation,

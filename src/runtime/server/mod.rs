@@ -1480,16 +1480,11 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     // same crate, separate file, alongside `on_reload`/`reload_static_routes`.
 
     pub(crate) fn on_static_request_complete(&mut self) {
-        self.pending_requests -= 1;
-        self.deinit_if_we_can();
+        self.on_request_complete();
     }
 
     #[inline]
     pub(crate) fn on_request_complete(&mut self) {
-        // SAFETY: `vm_mut()` is the process-static `*mut VirtualMachine` (non-null
-        // for the server's lifetime); `.event_loop()` returns the VM-owned
-        // `*mut EventLoop`. Single-threaded JS context, no aliasing `&mut`.
-        unsafe { (*(*self.vm_mut()).event_loop()).process_gc_timer() };
         self.pending_requests -= 1;
         self.deinit_if_we_can();
     }

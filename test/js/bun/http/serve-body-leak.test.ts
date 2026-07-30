@@ -161,7 +161,10 @@ describe("request body leak", () => {
     ["should not leak memory when buffering a JSON body", callJSONBuffering, 64],
     ["should not leak memory when buffering the body and accessing req.body", callBufferingBodyGetter, 64],
     ["should not leak memory when streaming the body", callStreaming, 64],
-    ["should not leak memory when streaming the body incompletely", callIncompleteStreaming, 64],
+    // Half-read bodies linger until JSC's allocation-budgeted pacing collects them; without the
+    // old per-request collect_async the plateau sits higher on this scenario (darwin hit ~74 MB).
+    // A real per-body leak would be totalCount * 512 KB, an order of magnitude above this bound.
+    ["should not leak memory when streaming the body incompletely", callIncompleteStreaming, 128],
     ["should not leak memory when streaming the body and echoing it back", callStreamingEcho, 64],
   ] as const) {
     const [testName, fn, maxMemoryGrowth] = test_info;

@@ -1,6 +1,9 @@
 console.time("label");
 console.timeLog("label");
 console.timeLog("label", "Hello World!");
+// Node prints "a %s b c d"; Bun currently prints "a c b d" because the native
+// console.log keeps scanning later string args for % specifiers after the first
+// format string is exhausted. Revert the expected line once that is fixed.
 console.timeLog("label", "a %s b", "c", "d");
 console.timeLog("label", 0, -0, 123, -123, 123.567, -123.567, Infinity, -Infinity);
 console.timeLog("label", true, false);

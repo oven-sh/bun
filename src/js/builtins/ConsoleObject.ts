@@ -131,6 +131,7 @@ export function bindNativeConsoleMethods(console: typeof globalThis.console) {
   const StringPrototypeEndsWith = String.prototype.endsWith;
   const NumberPrototypeToFixed = Number.prototype.toFixed;
   const FunctionBind = Function.prototype.bind;
+  const ArrayPrototypeUnshift = Array.prototype.unshift;
   const MathRound = Math.round;
   const captureStackTrace = Error.captureStackTrace;
 
@@ -181,7 +182,11 @@ export function bindNativeConsoleMethods(console: typeof globalThis.console) {
     },
     assert(expression, ...args) {
       if (!expression) {
-        args[0] = `Assertion failed${args.length === 0 ? "" : `: ${args[0]}`}`;
+        if (args.length === 0 || typeof args[0] === "string") {
+          args[0] = `Assertion failed${args.length === 0 ? "" : `: ${args[0]}`}`;
+        } else {
+          ArrayPrototypeUnshift.$call(args, "Assertion failed");
+        }
         this.warn.$apply(this, args);
       }
     },
@@ -713,7 +718,11 @@ export function createConsoleConstructor(console: typeof globalThis.console) {
 
     assert(expression, ...args) {
       if (!expression) {
-        args[0] = `Assertion failed${args.length === 0 ? "" : `: ${args[0]}`}`;
+        if (args.length === 0 || typeof args[0] === "string") {
+          args[0] = `Assertion failed${args.length === 0 ? "" : `: ${args[0]}`}`;
+        } else {
+          ArrayPrototypeUnshift.$call(args, "Assertion failed");
+        }
         // The arguments will be formatted in warn() again
         this.warn.$apply(this, args);
       }

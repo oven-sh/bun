@@ -2614,7 +2614,11 @@ fn on_reject_request_stream(
     Ok(JSValue::UNDEFINED)
 }
 
+// Exported as function symbols so `Zig::GlobalObject::promiseHandlerID`'s
+// address comparison matches; see `Bun__FileSink__onResolveStream` for why a
+// `static` fn-ptr export would fail.
 bun_jsc::jsc_host_abi! {
+    #[unsafe(export_name = "Bun__FetchTasklet__onResolveRequestStream")]
     unsafe fn on_resolve_request_stream_shim(
         g: *mut JSGlobalObject,
         cf: *mut bun_jsc::CallFrame,
@@ -2626,6 +2630,7 @@ bun_jsc::jsc_host_abi! {
     }
 }
 bun_jsc::jsc_host_abi! {
+    #[unsafe(export_name = "Bun__FetchTasklet__onRejectRequestStream")]
     unsafe fn on_reject_request_stream_shim(
         g: *mut JSGlobalObject,
         cf: *mut bun_jsc::CallFrame,

@@ -539,6 +539,9 @@ describe("error contract", () => {
     expect(syntaxError("a = foo bar  # c").message).toBe(
       'TOML Parse error: String values must be quoted; write: a = "foo bar"',
     );
+    expect(syntaxError("a = foo\t# c").message).toBe(
+      'TOML Parse error: String values must be quoted; write: a = "foo"',
+    );
     // Inside an array or inline table the `key = ` part is omitted.
     expect(syntaxError("a = [isolated]").message).toBe(
       'TOML Parse error: String values must be quoted; write: "isolated"',
@@ -571,6 +574,7 @@ describe("error contract", () => {
     expect(syntaxError("a = it's").message).toBe(generic);
     expect(syntaxError("a = has\\back").message).toBe(generic);
     expect(syntaxError("a = foo\x7Fbar").message).toBe(generic);
+    expect(syntaxError(Buffer.from("a = foo\x00bar")).message).toBe(generic);
   });
 
   test("escape errors inside a drive-letter string name the Windows-path fix", () => {

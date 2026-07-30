@@ -271,9 +271,10 @@ impl<'a, 'log> Scanner<'a, 'log> {
         let mut end = pos;
         loop {
             match self.peek_at(end) {
-                0 | b'\n' | b'\r' | b'#' | b',' | b']' | b'}' => break,
+                0 if end >= self.src.len() => break,
+                b'\n' | b'\r' | b'#' | b',' | b']' | b'}' => break,
                 b'"' | b'\'' | b'\\' => return self.err(pos, GENERIC),
-                c if c < 0x20 || c == 0x7F => return self.err(pos, GENERIC),
+                c if (c < 0x20 && c != b'\t') || c == 0x7F => return self.err(pos, GENERIC),
                 _ => end += 1,
             }
             if end - pos == 64 {

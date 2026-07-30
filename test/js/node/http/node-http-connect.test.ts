@@ -826,13 +826,23 @@ test("CONNECT: process exits after the tunnel socket is re-emitted as a connecti
 // invisible until the socket was handed to 'upgrade'/'connect' on a reused
 // connection: user writes then hit the corked Duplex and buffered forever.
 describe("server socket handed to 'upgrade'/'connect' after a prior keep-alive request", () => {
-  async function readUntil(sock: import("node:net").Socket, needle: string): Promise<string> {
-    let raw = "";
-    while (!raw.includes(needle)) {
-      const [chunk] = (await once(sock, "data")) as [Buffer];
-      raw += chunk.toString("latin1");
-    }
-    return raw;
+  function readUntil(sock: import("node:net").Socket, needle: string): Promise<string> {
+    return new Promise((resolve, reject) => {
+      let raw = "";
+      const onData = (chunk: Buffer) => {
+        raw += chunk.toString("latin1");
+        if (raw.includes(needle)) {
+          cleanup();
+          resolve(raw);
+        }
+      };
+      const onClose = () =>
+        reject(new Error(`socket closed before ${JSON.stringify(needle)}; got ${JSON.stringify(raw)}`));
+      const cleanup = () => {
+        sock.off("data", onData).off("close", onClose).off("error", reject);
+      };
+      sock.on("data", onData).once("close", onClose).once("error", reject);
+    });
   }
 
   test.concurrent("'upgrade' socket writes reach the client", async () => {

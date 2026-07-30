@@ -6,6 +6,7 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { platforms } from "../../packages/bun-release/src/platform";
 
 const repo = join(import.meta.dir, "..", "..");
 
@@ -28,6 +29,31 @@ function releaseAssetSet(): Set<string> {
   return assets;
 }
 
+/**
+ * Every `target` value install.sh can reach. Base values are parsed from the
+ * literal `target=<os-arch>` assignments so a new platform case in install.sh
+ * without a matching release asset fails here; the `-musl` / `-baseline` /
+ * `-profile` suffix transforms are stable cross-cutting logic applied on top.
+ */
+function installShTargets(): Set<string> {
+  const sh = readFileSync(join(repo, "src/runtime/cli/install.sh"), "utf8");
+  const bases = new Set([...sh.matchAll(/^\s*target=([a-z][a-z0-9-]+)\s*$/gm)].map(m => m[1]));
+  expect(bases.size).toBeGreaterThanOrEqual(5);
+  expect(bases).toContain("linux-x64");
+
+  const out = new Set<string>();
+  for (const base of bases) {
+    out.add(base);
+    if (base.startsWith("linux-")) out.add(`${base}-musl`);
+  }
+  for (const t of [...out]) {
+    // The AVX2 probe appends -baseline to *-x64* only.
+    if (t.includes("-x64") && !t.startsWith("windows-")) out.add(`${t}-baseline`);
+  }
+  for (const t of [...out]) out.add(`${t}-profile`);
+  return out;
+}
+
 describe("release asset coherence", () => {
   const assets = releaseAssetSet();
 
@@ -38,30 +64,9 @@ describe("release asset coherence", () => {
   });
 
   test("install.sh targets all resolve to a release asset", () => {
-    // Every `target=...` assignment the script can reach, expanded over the
-    // platform cases plus the avx2-miss `-baseline` and `debug-info` `-profile`
-    // suffix paths. Keep this list literal so adding a case to install.sh
-    // without a matching release asset fails here.
-    const want = [
-      "darwin-x64",
-      "darwin-x64-baseline",
-      "darwin-aarch64",
-      "linux-x64",
-      "linux-x64-baseline",
-      "linux-x64-musl",
-      "linux-x64-musl-baseline",
-      "linux-aarch64",
-      "linux-aarch64-musl",
-      "windows-x64",
-      "windows-aarch64",
-    ];
-    const missing: string[] = [];
-    for (const t of want) {
-      for (const suffix of ["", "-profile"]) {
-        const name = `bun-${t}${suffix}.zip`;
-        if (!assets.has(name)) missing.push(name);
-      }
-    }
+    const targets = installShTargets();
+    expect(targets.has("linux-x64-musl-baseline-profile")).toBe(true);
+    const missing = [...targets].map(t => `bun-${t}.zip`).filter(n => !assets.has(n));
     expect(missing).toEqual([]);
   });
 
@@ -73,14 +78,13 @@ describe("release asset coherence", () => {
   test("packages/bun-release platform bins all resolve to a release asset", () => {
     // upload-npm.ts fetches `${bin}.zip` for every entry in `platforms`,
     // including `alias: true` entries, and extracts `${bin}/...` from it.
-    const src = readFileSync(join(repo, "packages/bun-release/src/platform.ts"), "utf8");
-    const bins = [...src.matchAll(/bin:\s*"(bun-[A-Za-z0-9_-]+)"/g)].map(m => m[1]);
+    const bins = platforms.map(p => p.bin);
     expect(bins.length).toBeGreaterThanOrEqual(14);
     const missing = bins.map(b => `${b}.zip`).filter(name => !assets.has(name));
     expect(missing).toEqual([]);
   });
 
-  test("docs and npm READMEs do not claim x64 requires/lacks AVX2", () => {
+  test("docs and npm READMEs do not describe baseline as a separate x64 build", () => {
     // The single x64 binary targets Nehalem (SSE4.2); AVX2 is runtime-dispatched.
     // Keeps installation/--compile docs and the npmjs.com-visible READMEs from
     // re-introducing the old "pick baseline if your CPU lacks AVX2" guidance.
@@ -92,7 +96,8 @@ describe("release asset coherence", () => {
       "packages/bun-release/npm/@oven/bun-linux-x64-baseline/README.md",
       "packages/bun-release/npm/@oven/bun-windows-x64-baseline/README.md",
     ];
-    const stale = /target the Haswell|require.{0,20}AVX2|without AVX2|do not support.{0,20}AVX2|modern is faster/i;
+    const stale =
+      /target the Haswell|require.{0,20}AVX2|without AVX2|do not support.{0,20}AVX2|modern is faster|baseline.{0,20}slower/i;
     const offenders: string[] = [];
     for (const file of files) {
       const doc = readFileSync(join(repo, file), "utf8");

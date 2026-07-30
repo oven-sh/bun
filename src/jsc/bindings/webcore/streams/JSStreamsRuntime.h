@@ -164,7 +164,6 @@ namespace WebCore {
     V(onReadStreamIntoSinkReadManyFulfilled)                \
     V(onReadStreamIntoSinkChunk)                            \
     V(onReadStreamIntoSinkClose)                            \
-    V(onReadStreamIntoSinkFlushFulfilled)                   \
     V(onReadStreamIntoSinkRejected)
 
 // owner: JSDirectStreamController.cpp. context = the JSDirectStreamController.
@@ -243,11 +242,14 @@ namespace WebCore {
 //   boundReadDirectStreamOnClose(state, streamOrUndefined, reason): readDirectStream's
 //     JSSink onClose.
 //   boundReadStreamIntoSinkOnClose(op, stream, reason): readStreamIntoSink's JSSink onClose.
+//   boundReadStreamIntoSinkOnReady(op, controller, amt, offset): readStreamIntoSink's JSSink
+//     m_onPull — resumes the pump after sink backpressure (replaces the flush(true) promise).
 #define FOR_EACH_WEB_STREAMS_BOUND_HANDLER_TARGET_BUN_SOURCE(V) \
     V(boundOnNativeSourceClose)                                 \
     V(boundOnNativeSourceDrain)                                 \
     V(boundReadDirectStreamOnClose)                             \
-    V(boundReadStreamIntoSinkOnClose)
+    V(boundReadStreamIntoSinkOnClose)                           \
+    V(boundReadStreamIntoSinkOnReady)
 
 // owner: JSDirectStreamController.cpp — the FIVE detachable own methods of the direct
 // controller: `end` and `close` are two bound cells over the ONE boundDirectClose target.

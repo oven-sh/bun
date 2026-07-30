@@ -114,16 +114,16 @@ impl FetchRequestBodySink {
             None => return Writable::Done,
         };
         match result {
-            // Data was buffered for the HTTP thread; gate backpressure on the
-            // JS-thread-only `pending_bytes` (the shared buffer's `size()` is
-            // drained concurrently and cannot be used without racing).
+            // Data was buffered for the HTTP thread. Signal backpressure on
+            // every successful write (one write per drain ack) so the event
+            // loop returns to `auto_tick()` and polls I/O between writes;
+            // batching lets the HTTP thread's `report_drain` ConcurrentTask
+            // re-arm inside `tick()` and livelock an in-process peer.
+            // `pending_bytes` remains the "drain ack owed" sentinel for
+            // `flush_from_js(wait=true)`.
             Writable::Owned(len) | Writable::Backpressure(len) if len > 0 => {
                 self.pending_bytes = self.pending_bytes.saturating_add(len);
-                if self.pending_bytes >= high_water_mark {
-                    Writable::Backpressure(len)
-                } else {
-                    Writable::Owned(len)
-                }
+                Writable::Backpressure(len)
             }
             other => other,
         }

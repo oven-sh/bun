@@ -963,8 +963,9 @@ describe("FormData entry value identity", () => {
     const file = new File(["abc"], "f.txt", { type: "text/plain" });
     const fd = new FormData();
     fd.append("f", file);
-    expect(fd.get("f")).toBe(file);
-    expect(fd.get("f") === fd.get("f")).toBe(true);
+    const first = fd.get("f");
+    expect(first).toBe(file);
+    expect(fd.get("f")).toBe(first);
   });
 
   it("get() returns the same File object that was set", () => {
@@ -1016,7 +1017,8 @@ describe("FormData entry value identity", () => {
     fd.append("b", blob);
     const first = fd.get("b");
     // A plain Blob is wrapped in a new File per spec, so it is not the same object...
-    expect(first === blob).toBe(false);
+    expect(first).toBeInstanceOf(Blob);
+    expect(first).not.toBe(blob);
     // ...but the entry's value is stable across accesses.
     expect(fd.get("b")).toBe(first);
     expect(fd.getAll("b")[0]).toBe(first);
@@ -1030,10 +1032,21 @@ describe("FormData entry value identity", () => {
     fd.append("f", file, "other.txt");
     const first = fd.get("f") as File;
     // A filename override creates a new File per spec.
-    expect(first === file).toBe(false);
+    expect(first).toBeInstanceOf(Blob);
+    expect(first).not.toBe(file);
     // The entry's value is stable across accesses.
     expect(fd.get("f")).toBe(first);
     expect(fd.getAll("f")[0]).toBe(first);
+  });
+
+  it("returns a stable object across repeated get() when set() is given a filename override", () => {
+    const file = new File(["abc"], "orig.txt");
+    const fd = new FormData();
+    fd.set("f", file, "other.txt");
+    const first = fd.get("f") as File;
+    expect(first).toBeInstanceOf(Blob);
+    expect(first).not.toBe(file);
+    expect(fd.get("f")).toBe(first);
   });
 
   it("returns a stable object across repeated get() for multipart-parsed file parts", async () => {

@@ -515,12 +515,12 @@ void MessagePort::updateListenerEventLoopRef()
         m_pipe->setHoldsLoopRef(m_side, m_listenerLoopRefActive || m_hasRef);
 }
 
-// Node's [kNewListener] hook calls this.ref() on every 'message' listener install
-// (including an onmessage replace), so .unref() before a listener is undone. Gated
-// like jsRef(): on an already-closed handle node's ref() is a no-op.
+// Node's [kNewListener] hook calls newListener(size-1), which refs only on the
+// 0→1 transition (size==1 here). Gated like jsRef(): on an already-closed handle
+// node's ref() is a no-op.
 void MessagePort::refFromMessageListener()
 {
-    if (m_isDetached || m_pipe->isOtherSideClosedByRequest(m_side))
+    if (m_messageEventCount != 1 || m_isDetached || m_pipe->isOtherSideClosedByRequest(m_side))
         return;
     m_isRefd = true;
     updateListenerEventLoopRef();

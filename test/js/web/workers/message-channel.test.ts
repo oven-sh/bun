@@ -692,6 +692,16 @@ describe("a message listener keeps the event loop alive", () => {
     ["onmessage = null", `port2.onmessage = () => {}; port2.onmessage = null;`],
     ["onmessageerror alone", `port2.onmessageerror = () => {};`],
     ["peer .close()", `port2.onmessage = () => {}; port1.close();`],
+    // Node's [kNewListener] only refs on the 0→1 transition, so a 1→2 add or a
+    // replace while count>1 must not undo an earlier .unref().
+    [
+      "a second listener after .unref() does not re-ref",
+      `port2.addEventListener('message', () => {}); port2.unref(); port2.addEventListener('message', () => {});`,
+    ],
+    [
+      "replacing onmessage while other listeners exist does not re-ref",
+      `port2.onmessage = () => {}; port2.addEventListener('message', () => {}); port2.unref(); port2.onmessage = () => {};`,
+    ],
   ] as const) {
     test.concurrent(
       `${label} releases the hold`,

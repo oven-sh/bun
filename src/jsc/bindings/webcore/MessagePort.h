@@ -112,8 +112,8 @@ public:
 
     void jsRef(JSGlobalObject*);
     void jsUnref(JSGlobalObject*);
-    // Node's [kNewListener] re-ref on every 'message' listener install, including
-    // the onmessage-replace path which never reaches onDidChangeListener.
+    // Node's [kNewListener] re-ref on the 0→1 'message' listener transition,
+    // including the onmessage-replace path which never reaches onDidChangeListener.
     void refFromMessageListener();
     // Report the actual loop-ref state (matches Node's uv_has_ref), not the intent flag.
     bool jsHasRef() { return m_hasRef || m_listenerLoopRefActive; }

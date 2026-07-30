@@ -59,26 +59,19 @@ function scopeKey(scope: AnyObject): string {
   return `${scope.type}|${scope.name ?? ""}|${location?.scriptId ?? ""}|${location?.lineNumber ?? ""}|${location?.columnNumber ?? ""}`;
 }
 
-// JSC compiles an `async function` (or generator) that uses `await` into a
-// wrapper function and a separate body function. Before the first `await`
-// suspends, both sit on the VM stack, so the backend reports the function
-// twice in Debugger.paused callFrames: the body at its current statement and
-// the wrapper paused at the function header. `new Error().stack` already hides
-// the wrapper via ImplementationVisibility::Private (Parser.cpp), but the
-// debugger's ShadowChicken stack walk does not consult that bit. V8 reports
-// one frame, so collapse the pair in the CDP translation.
-//
-// The wrapper is the body's immediate caller and the body closes over the
-// wrapper's activation, so the wrapper's scope chain is a proper suffix of the
-// body's. A frame is dropped only when its immediate predecessor was kept, so
-// an anonymous async closure further up the stack whose scope chain happens to
-// be a suffix of a kept descendant's is not mistaken for a wrapper.
+// JSC splits an `async function` that uses `await` into a wrapper and a body
+// (Parser.cpp parseAsyncFunctionSourceElements); before the first suspend both
+// are on the VM stack, so the backend lists the function twice in callFrames.
+// V8 lists it once. The body closes over the wrapper's activation, so the
+// wrapper's scope chain is a proper suffix of the body's; drop that caller.
 function dropAsyncWrapperFrames(frames: AnyObject[]): AnyObject[] {
   if (frames.length < 2) return frames;
   const result: AnyObject[] = [frames[0]];
   let previousDropped = false;
   for (let i = 1; i < frames.length; i++) {
     const frame = frames[i];
+    // A wrapper always immediately follows its body: once a frame is dropped,
+    // its caller is a distinct body and must be kept.
     if (!previousDropped) {
       const body = frames[i - 1];
       const bodyScopes = body.scopeChain;

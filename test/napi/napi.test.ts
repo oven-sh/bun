@@ -1231,19 +1231,20 @@ describe.skipIf(!canBuildNodeAddons())("napi_create_string_latin1", () => {
   it("does not leak the WTFStringImpl", async () => {
     const fixture = /* js */ `
       const nativeTests = require(${JSON.stringify(join(__dirname, "napi-app/build/Debug/napitests.node"))});
+      const rss = process.platform === "darwin" && typeof Bun.unsafe.memoryFootprint === "function" ? Bun.unsafe.memoryFootprint : process.memoryUsage.rss;
       const size = 256 * 1024;
       for (let i = 0; i < 20; i++) {
         const s = nativeTests.create_latin1_string(size);
         if (s.length !== size) throw new Error("wrong length: " + s.length);
       }
       Bun.gc(true);
-      const before = process.memoryUsage.rss();
+      const before = rss();
       for (let i = 0; i < 300; i++) {
         const s = nativeTests.create_latin1_string(size);
         if (s.length !== size) throw new Error("wrong length: " + s.length);
       }
       Bun.gc(true);
-      const growthMB = (process.memoryUsage.rss() - before) / 1024 / 1024;
+      const growthMB = (rss() - before) / 1024 / 1024;
       console.error("RSS growth: " + growthMB.toFixed(1) + " MB");
       process.exit(growthMB > Number(process.env.THRESHOLD_MB) ? 1 : 0);
     `;

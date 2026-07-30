@@ -1204,6 +1204,7 @@ test.skipIf(!isMacOS)("fs.watch(dir) on macOS does not leak the resolved FSEvent
       /* ts */ `
         const fs = require("fs");
         const dir = process.argv[1];
+        const rss = process.platform === "darwin" && typeof Bun.unsafe.memoryFootprint === "function" ? Bun.unsafe.memoryFootprint : process.memoryUsage.rss;
 
         async function cycle(count) {
           for (let i = 0; i < count; i++) fs.watch(dir, () => {}).close();
@@ -1218,14 +1219,14 @@ test.skipIf(!isMacOS)("fs.watch(dir) on macOS does not leak the resolved FSEvent
         // sizing, and the PathWatcherManager caches reach steady state
         // (one-time growth tapers off only after ~10k cycles).
         for (let i = 0; i < 3; i++) await cycle(5000);
-        const before = process.memoryUsage.rss();
+        const before = rss();
 
         // With a ~700-byte resolved path, 5000 leaked dupeZ buffers is
         // ~3.5 MB of growth on unpatched builds. Keep the iteration count
         // low enough that rapid FSEventStream recreate doesn't exhaust the
         // kernel queue (FSEventStreamCreate -> NULL).
         await cycle(5000);
-        const after = process.memoryUsage.rss();
+        const after = rss();
 
         const growthMB = (after - before) / 1024 / 1024;
         console.log("RSS growth: " + growthMB.toFixed(2) + " MB");

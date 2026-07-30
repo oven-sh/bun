@@ -1,7 +1,7 @@
 // https://github.com/oven-sh/bun/issues/28632
 import { SQL } from "bun";
 import { beforeAll, expect, test } from "bun:test";
-import { describeWithContainer, isASAN, isDebug, isDockerEnabled } from "harness";
+import { describeWithContainer, isASAN, isDebug, isDockerEnabled, rss } from "harness";
 
 if (isDockerEnabled()) {
   describeWithContainer(
@@ -52,7 +52,7 @@ if (isDockerEnabled()) {
         }
         Bun.gc(true);
         await Bun.sleep(50);
-        const rssAfterWarmup = process.memoryUsage.rss();
+        const rssAfterWarmup = rss();
 
         // Run queries — each re-decodes 50 column definitions. Collect every 500
         // so the RSS delta reflects the name_or_index leak rather than the
@@ -66,7 +66,7 @@ if (isDockerEnabled()) {
         }
         Bun.gc(true);
         await Bun.sleep(50);
-        const rssAfterQueries = process.memoryUsage.rss();
+        const rssAfterQueries = rss();
 
         const growthMB = (rssAfterQueries - rssAfterWarmup) / 1024 / 1024;
 

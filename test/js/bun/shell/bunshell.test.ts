@@ -8,13 +8,13 @@ import { $ } from "bun";
 import { afterAll, beforeAll, describe, expect, it, test } from "bun:test";
 import { chmodSync, mkdirSync } from "fs";
 import { mkdir, rm, stat } from "fs/promises";
-import { bunExe, isPosix, isWindows, runWithErrorPromise, tempDir, tempDirWithFiles, tmpdirSync } from "harness";
+import { bunExe, isPosix, isWindows, rss, runWithErrorPromise, tempDir, tempDirWithFiles, tmpdirSync } from "harness";
 import { join, sep } from "path";
 import { createTestBuilder, sortedShellOutput } from "./util";
 const TestBuilder = createTestBuilder(import.meta.path);
 
-afterAll(() => console.error("After all RSS", process.memoryUsage.rss() / 1024 / 1024));
-beforeAll(() => console.error("Before all RSS", process.memoryUsage.rss() / 1024 / 1024));
+afterAll(() => console.error("After all RSS", rss() / 1024 / 1024));
+beforeAll(() => console.error("Before all RSS", rss() / 1024 / 1024));
 
 export const bunEnv: NodeJS.ProcessEnv = {
   ...process.env,

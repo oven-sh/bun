@@ -1,23 +1,23 @@
 use core::ffi::c_void;
 
 use crate::api::bun_subprocess::Subprocess;
-use crate::webcore::streams::{self, Signal, SourceHandle};
+use crate::webcore::streams::{self, SourceHandle};
 use bun_collections::TaggedPtrUnion;
 use bun_jsc::{JSGlobalObject, JSValue};
 use bun_sys::{self as sys, Error as SysError};
 
 // Re-export the real ArrayBufferSink so `crate::webcore::sink::ArrayBufferSink`
-// resolves to the full type (with `bytes`/`signal`/`destroy`) for Body.rs.
+// resolves to the full type (with `bytes`/`source`/`destroy`) for Body.rs.
 pub use crate::webcore::array_buffer_sink::ArrayBufferSink;
 
 crate::impl_js_sink_abi!(ArrayBufferSink, "ArrayBufferSink");
 
 impl JSSink<ArrayBufferSink> {
-    /// Unprotects the controller cell stashed in `signal.ptr`
+    /// Unprotects the controller cell stashed in `source` as `JSController`
     /// and tells C++ to drop its back-pointer. Called from
     /// `Body::ValueBufferer` Drop / reject paths.
     // Renamed from `detach` to avoid colliding with the generic
-    // `JSSink<T: JsSinkAbi>::detach(signal, global)` associated fn — Rust
+    // `JSSink<T: JsSinkAbi>::detach(source, global)` associated fn — Rust
     // forbids same-name items across impl blocks for the same type even with
     // different signatures (E0592).
     pub fn detach_self(&mut self, global: &JSGlobalObject) {
@@ -265,65 +265,6 @@ impl<T: JsSinkAbi> JSSink<T> {
         // TopExceptionScope so the verifier is satisfied; discard the result.
         // TODO: properly propagate exception upwards.
         let _ = ::bun_jsc::call_check_slow(_global, || T::detach_ptr_extern(value));
-    }
-}
-
-/// `JSSink.SinkSignal` — wraps a `JSValue` (the C++ sink controller cell) as
-/// a `streams::Signal`. The pointer stored in `Signal.ptr` is the encoded
-/// JSValue bits, never dereferenced; vtable thunks bitcast back and call the
-/// generated `${abi_name}__onClose` / `__onReady` externs.
-// Inherent associated types are unstable, so this is a free generic;
-// let each caller alias via `type SinkSignal = sink::SinkSignal<Self>;`.
-#[repr(C)]
-pub struct SinkSignal<T>(core::marker::PhantomData<T>);
-
-impl<T: JsSinkAbi> SinkSignal<T> {
-    pub fn init(cpp: crate::webcore::jsc::JSValue) -> Signal {
-        use crate::webcore::jsc::JSValue;
-        // Bypass `Signal::init_with_type` (which would form a fake
-        // `&mut SinkSignal<T>` ref); build the vtable directly so `this` stays
-        // a raw bit-pattern.
-        fn close<T: JsSinkAbi>(this: *mut c_void, _err: Option<SysError>) {
-            // `this` is the JSValue bits stashed by `init`; bitcast back.
-            let cpp = JSValue::from_encoded(this as usize);
-            // `call_check_slow` satisfies the C++ ThrowScope's
-            // `simulateThrow()`.
-            // TODO: this should be got from a parameter / properly propagate exception upwards.
-            let global = ::bun_jsc::virtual_machine::VirtualMachine::get().global();
-            if global.has_exception() {
-                return;
-            }
-            let _ =
-                ::bun_jsc::call_check_slow(global, || T::on_close_extern(cpp, JSValue::UNDEFINED));
-        }
-        fn ready<T: JsSinkAbi>(
-            this: *mut c_void,
-            _a: Option<crate::webcore::BlobSizeType>,
-            _o: Option<crate::webcore::BlobSizeType>,
-        ) {
-            let cpp = JSValue::from_encoded(this as usize);
-            // `${abi}__onReady` calls m_onPull through the bare
-            // `AsyncContextFrame::call` overload (no TopExceptionScope of its
-            // own); see `close` above. Same wrapper.
-            // TODO: this should be got from a parameter / properly propagate exception upwards.
-            let global = ::bun_jsc::virtual_machine::VirtualMachine::get().global();
-            if global.has_exception() {
-                return;
-            }
-            let _ = ::bun_jsc::call_check_slow(global, || {
-                T::on_ready_extern(cpp, JSValue::UNDEFINED, JSValue::UNDEFINED)
-            });
-        }
-        fn start(_this: *mut c_void) {}
-        Signal {
-            // this one can be null
-            ptr: core::ptr::NonNull::new(cpp.encoded() as *mut c_void),
-            vtable: streams::SignalVTable {
-                close: close::<T>,
-                ready: ready::<T>,
-                start,
-            },
-        }
     }
 }
 

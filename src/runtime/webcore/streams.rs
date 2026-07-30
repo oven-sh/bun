@@ -34,9 +34,6 @@ pub mod bun_s3 {
 }
 
 /// `Blob.SizeType` is `u64` (see `webcore::blob::SizeType`).
-// alias the canonical `webcore::BlobSizeType` so `SignalVTable.ready`'s
-// fn-pointer signature is structurally identical to callers that name the public
-// re-export (e.g. `sink::SinkSignal::init`).
 type BlobSizeType = crate::webcore::BlobSizeType;
 
 /// Upper bound on a JS-supplied `highWaterMark` used as an initial capacity
@@ -52,7 +49,7 @@ fn high_water_mark_from_js(value: JSValue, min: BlobSizeType) -> BlobSizeType {
     (min as i64).max(n).min(MAX_HIGH_WATER_MARK) as BlobSizeType
 }
 
-// Compat: `webcore::Pipe` and Body refer to `streams::Result` / `streams::result::StreamError`.
+// Compat: `webcore::SinkHandle` and Body refer to `streams::Result` / `streams::result::StreamError`.
 pub use StreamResult as Result;
 pub mod result {
     pub use super::{StreamError, StreamResult, Writable};
@@ -674,7 +671,7 @@ pub enum PendingState {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// JSC-integration: Pending::run, StreamResult::to_js/fulfill_promise, Signal,
+// JSC-integration: Pending::run, StreamResult::to_js/fulfill_promise, SourceHandle,
 // HTTPServerWritable<*> impl, NetworkSink impl, BufferAction, ReadResult.
 // ──────────────────────────────────────────────────────────────────────────
 
@@ -835,133 +832,11 @@ impl StreamResult {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// Signal
-// ──────────────────────────────────────────────────────────────────────────
-
-#[repr(C)]
-#[derive(Default)]
-pub struct Signal {
-    pub ptr: Option<NonNull<c_void>>,
-    pub vtable: SignalVTable,
-}
-
-impl Signal {
-    pub fn clear(&mut self) {
-        self.ptr = None;
-    }
-
-    pub fn is_dead(&self) -> bool {
-        self.ptr.is_none()
-    }
-
-    /// # Safety
-    /// `handler` must be either null (dead signal) or a valid `*mut T` that
-    /// outlives every call routed through this `Signal`.
-    pub unsafe fn init_with_type<T: SignalHandler>(handler: *mut T) -> Signal {
-        // this is nullable when used as a JSValue
-        Signal {
-            ptr: NonNull::new(handler.cast::<c_void>()),
-            vtable: SignalVTable::wrap::<T>(),
-        }
-    }
-
-    pub fn init<T: SignalHandler>(handler: &mut T) -> Signal {
-        // SAFETY: &mut T is a valid non-null pointer
-        unsafe { Self::init_with_type(std::ptr::from_mut::<T>(handler)) }
-    }
-
-    pub fn close(&mut self, err: Option<SysError>) {
-        if self.is_dead() {
-            return;
-        }
-        (self.vtable.close)(self.ptr.unwrap().as_ptr(), err);
-    }
-
-    pub fn ready(&mut self, amount: Option<BlobSizeType>, offset: Option<BlobSizeType>) {
-        if self.is_dead() {
-            return;
-        }
-        (self.vtable.ready)(self.ptr.unwrap().as_ptr(), amount, offset);
-    }
-
-    pub fn start(&mut self) {
-        if self.is_dead() {
-            return;
-        }
-        (self.vtable.start)(self.ptr.unwrap().as_ptr());
-    }
-}
-
-pub type SignalOnCloseFn = fn(this: *mut c_void, err: Option<SysError>);
-pub type SignalOnReadyFn =
-    fn(this: *mut c_void, amount: Option<BlobSizeType>, offset: Option<BlobSizeType>);
-pub type SignalOnStartFn = fn(this: *mut c_void);
-
-#[derive(Copy, Clone)]
-pub struct SignalVTable {
-    pub close: SignalOnCloseFn,
-    pub ready: SignalOnReadyFn,
-    pub start: SignalOnStartFn,
-}
-
-impl Default for SignalVTable {
-    fn default() -> Self {
-        fn dead_close(_: *mut c_void, _: Option<SysError>) {}
-        fn dead_ready(_: *mut c_void, _: Option<BlobSizeType>, _: Option<BlobSizeType>) {}
-        fn dead_start(_: *mut c_void) {}
-        SignalVTable {
-            close: dead_close,
-            ready: dead_ready,
-            start: dead_start,
-        }
-    }
-}
-
-/// Implementors provide the `on_close`/`on_ready`/`on_start` callbacks.
-pub trait SignalHandler {
-    fn on_close(&mut self, err: Option<SysError>);
-    fn on_ready(&mut self, amount: Option<BlobSizeType>, offset: Option<BlobSizeType>);
-    fn on_start(&mut self);
-}
-
-impl SignalVTable {
-    pub fn wrap<W: SignalHandler>() -> SignalVTable {
-        fn on_close<W: SignalHandler>(this: *mut c_void, err: Option<SysError>) {
-            // SAFETY: this was stored from &mut W in Signal::init_with_type
-            unsafe { bun_ptr::callback_ctx::<W>(this) }.on_close(err);
-        }
-        fn on_ready<W: SignalHandler>(
-            this: *mut c_void,
-            amount: Option<BlobSizeType>,
-            offset: Option<BlobSizeType>,
-        ) {
-            // SAFETY: this was stored from &mut W in Signal::init_with_type
-            unsafe { bun_ptr::callback_ctx::<W>(this) }.on_ready(amount, offset);
-        }
-        fn on_start<W: SignalHandler>(this: *mut c_void) {
-            // SAFETY: this was stored from &mut W in Signal::init_with_type
-            unsafe { bun_ptr::callback_ctx::<W>(this) }.on_start();
-        }
-
-        // Rust cannot const-promote a generic-dependent struct literal to
-        // `&'static`, so the vtable is stored by-value in `Signal` instead
-        // (three fn pointers — same size as the pointed-to payload a
-        // `&'static VTable` would dereference to anyway).
-        SignalVTable {
-            close: on_close::<W>,
-            ready: on_ready::<W>,
-            start: on_start::<W>,
-        }
-    }
-}
-
-// ──────────────────────────────────────────────────────────────────────────
 // SourceHandle
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Tagged handle a sink holds to its upstream source, replacing the open
-/// fn-ptr [`Signal`] vtable with a closed set of variants so native
-/// source↔sink pairs can pump without a JS round-trip.
+/// Tagged handle a sink holds to its upstream source — a closed set of
+/// variants so native source↔sink pairs can pump without a JS round-trip.
 ///
 /// Generic over the sink's [`JsSinkAbi`] so the `JSController` arm can call
 /// the correct `${abi}__onReady` / `${abi}__onClose` externs.

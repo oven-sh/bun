@@ -117,29 +117,41 @@ async function round() {
     },
   });
 
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "-e", clientSrc],
-    env: { ...bunEnv, REPRO_PORT: String(server.port), REPRO_N: String(N), REPRO_HELLO: clientHello.toString("hex") },
-    stdout: "pipe",
-    stderr: "ignore",
-  });
+  // The finally keeps a failed round (child crashed before BURST, spawn threw)
+  // from leaking the listener and hanging the fixture until the test timeout;
+  // stop(true) on an already-stopped listener is a no-op.
+  try {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", clientSrc],
+      env: { ...bunEnv, REPRO_PORT: String(server.port), REPRO_N: String(N), REPRO_HELLO: clientHello.toString("hex") },
+      stdout: "pipe",
+      stderr: "ignore",
+    });
 
-  const reader = proc.stdout.getReader();
-  const dec = new TextDecoder();
-  let buf = "";
-  for (;;) {
-    const { value, done } = await reader.read();
-    if (done) break;
-    buf += dec.decode(value);
-    if (buf.includes("BURST")) {
-      tearing = true;
-      server.stop(true);
-      break;
+    const reader = proc.stdout.getReader();
+    const dec = new TextDecoder();
+    let buf = "";
+    let sawBurst = false;
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buf += dec.decode(value);
+      if (buf.includes("BURST")) {
+        // The stop must land HERE, while the burst holds connections
+        // mid-handshake, or the round doesn't exercise the teardown walk.
+        sawBurst = true;
+        tearing = true;
+        server.stop(true);
+        break;
+      }
     }
+    reader.cancel().catch(() => {});
+    proc.kill();
+    await proc.exited;
+    if (!sawBurst) throw new Error("flood child exited before printing BURST");
+  } finally {
+    server.stop(true);
   }
-  reader.cancel().catch(() => {});
-  proc.kill();
-  await proc.exited;
 }
 
 for (let i = 0; i < ROUNDS; i++) {

@@ -4340,6 +4340,18 @@ pub(crate) extern "C" fn Blob__setAsFile(this: &mut Blob, path_str: &mut BunStri
                 bytes.stored_name = path_str.to_owned_slice().into_boxed_slice();
             }
         }
+    } else if !path_str.is_empty() {
+        // A zero-byte `Blob` has no store; create an empty `Bytes` store to carry
+        // the name so `get_file_name()` (and thus `File.prototype.name`) works.
+        // Same shape as the `new File([], name)` path in `jsdom_file_construct`.
+        this.store.set(Some(StoreRef::from(Store::new(Store {
+            data: store::Data::Bytes(store::Bytes::init_empty_with_name(
+                path_str.to_owned_slice().into_boxed_slice(),
+            )),
+            ref_count: bun_ptr::ThreadSafeRefCount::init(),
+            mime_type: bun_http_types::MimeType::NONE,
+            is_all_ascii: None,
+        }))));
     }
 }
 

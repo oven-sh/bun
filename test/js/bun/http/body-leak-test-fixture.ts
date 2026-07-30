@@ -1,12 +1,18 @@
+// RSS on darwin keeps freed-but-mapped (MADV_FREE_REUSABLE) pages, so it only reports
+// the high-water mark; memoryFootprint() is what the process actually retains.
+async function memoryUsage() {
+  Bun.gc(true);
+  await Bun.sleep(50);
+  return Bun.unsafe.memoryFootprint() ?? process.memoryUsage.rss();
+}
+
 const server = Bun.serve({
   port: 0,
   idleTimeout: 0,
   async fetch(req: Request) {
     const url = req.url;
     if (url.endsWith("/report")) {
-      Bun.gc(true);
-      await Bun.sleep(10);
-      return new Response(JSON.stringify(process.memoryUsage.rss()), {
+      return new Response(JSON.stringify(await memoryUsage()), {
         headers: {
           "Content-Type": "application/json",
         },
@@ -16,7 +22,7 @@ const server = Bun.serve({
       await Bun.sleep(10);
       require("v8").writeHeapSnapshot("/tmp/heap.heapsnapshot");
       console.log("Wrote heap snapshot to /tmp/heap.heapsnapshot");
-      return new Response(JSON.stringify(process.memoryUsage.rss()), {
+      return new Response(JSON.stringify(await memoryUsage()), {
         headers: {
           "Content-Type": "application/json",
         },

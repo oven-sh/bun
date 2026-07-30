@@ -281,6 +281,9 @@ test("globalThis.Navigator", () => {
 });
 
 test.concurrent("globalThis.Navigator is not derived through mutable navigator state", async () => {
+  // Runs a script file rather than -e: the -e code path reifies the global lut entry for
+  // Navigator before user code runs, so the lazy PropertyCallback this test targets is
+  // only reached from the module-loading path.
   using dir = tempDir("navigator-tamper", {
     "index.js": `
       const nav = globalThis.navigator;
@@ -299,9 +302,11 @@ test.concurrent("globalThis.Navigator is not derived through mutable navigator s
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stderr).toBe("");
-  expect(JSON.parse(stdout)).toEqual({ Navigator: "function", name: "Navigator", hasProto: "object" });
-  expect(exitCode).toBe(0);
+  expect({ result: stdout.trim() && JSON.parse(stdout), stderr, exitCode }).toEqual({
+    result: { Navigator: "function", name: "Navigator", hasProto: "object" },
+    stderr: expect.any(String),
+    exitCode: 0,
+  });
 });
 
 // https://github.com/oven-sh/bun/issues/21585

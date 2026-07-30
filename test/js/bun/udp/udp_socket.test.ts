@@ -589,9 +589,20 @@ describe("udpSocket()", () => {
   // defaults and replaced the live one wholesale, so a handler-only reload
   // reset binaryType to 'buffer' and hostname to '0.0.0.0'.
   describe("reload()", () => {
+    // handle unreliable transmission in UDP
+    async function sendUntil<T>(client: any, port: number, received: Promise<T>): Promise<T> {
+      const retry = setInterval(() => client.send("x", port, "127.0.0.1"), 20);
+      client.send("x", port, "127.0.0.1");
+      try {
+        return await received;
+      } finally {
+        clearInterval(retry);
+      }
+    }
+
     test("preserves binaryType and hostname when only handlers are reloaded", async () => {
-      let pre = Promise.withResolvers<string>();
-      let post = Promise.withResolvers<string>();
+      const pre = Promise.withResolvers<string>();
+      const post = Promise.withResolvers<string>();
       await using server = await udpSocket({
         hostname: "127.0.0.1",
         port: 0,
@@ -603,12 +614,10 @@ describe("udpSocket()", () => {
       const hostnameBefore = server.hostname;
 
       await using client = await udpSocket({ hostname: "127.0.0.1", port: 0 });
-      client.send("1", server.port, "127.0.0.1");
-      const preName = await pre.promise;
+      const preName = await sendUntil(client, server.port, pre.promise);
 
       server.reload({ socket: { data: (_sk, b) => post.resolve(b.constructor.name) } });
-      client.send("2", server.port, "127.0.0.1");
-      const postName = await post.promise;
+      const postName = await sendUntil(client, server.port, post.promise);
 
       // A second socket whose getters are first read AFTER reload: previously
       // these reported the reset defaults ('buffer', '0.0.0.0').
@@ -661,8 +670,7 @@ describe("udpSocket()", () => {
       expect(server.binaryType).toBe("uint8array");
 
       await using client = await udpSocket({ hostname: "127.0.0.1", port: 0 });
-      client.send("x", server.port, "127.0.0.1");
-      expect(await got.promise).toBe("Uint8Array");
+      expect(await sendUntil(client, server.port, got.promise)).toBe("Uint8Array");
 
       // binaryType can be reloaded without a `socket` key; the existing
       // handler keeps dispatching with the new payload type.
@@ -670,12 +678,11 @@ describe("udpSocket()", () => {
       server.reload({ socket: { data: (_sk, b) => got.resolve(b.constructor.name) } });
       server.reload({ binaryType: "buffer" });
       expect(server.binaryType).toBe("buffer");
-      client.send("y", server.port, "127.0.0.1");
-      expect(await got.promise).toBe("Buffer");
+      expect(await sendUntil(client, server.port, got.promise)).toBe("Buffer");
     });
 
     test("does not partially apply when a later handler is invalid", async () => {
-      let got = Promise.withResolvers<string>();
+      const got = Promise.withResolvers<string>();
       await using server = await udpSocket({
         hostname: "127.0.0.1",
         port: 0,
@@ -697,8 +704,7 @@ describe("udpSocket()", () => {
       expect(server.binaryType).toBe("arraybuffer");
 
       await using client = await udpSocket({ hostname: "127.0.0.1", port: 0 });
-      client.send("x", server.port, "127.0.0.1");
-      expect(await got.promise).toBe("original:ArrayBuffer");
+      expect(await sendUntil(client, server.port, got.promise)).toBe("original:ArrayBuffer");
     });
   });
 });

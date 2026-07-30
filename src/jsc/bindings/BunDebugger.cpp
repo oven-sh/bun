@@ -251,22 +251,31 @@ public:
         if (!topFrame)
             return String();
         StringBuilder locations;
+        bool calleeIsBody = false;
         StackVisitor::visit(topFrame, vm, [&](StackVisitor& visitor) -> IterationStatus {
             JSC::CodeBlock* codeBlock = visitor->codeBlock();
-            if (!codeBlock)
+            if (!codeBlock) {
+                calleeIsBody = false;
                 return IterationStatus::Continue;
-            if (!isGeneratorOrAsyncFunctionWrapperParseMode(codeBlock->unlinkedCodeBlock()->parseMode()))
-                return IterationStatus::Continue;
-            JSC::LineColumn lineColumn = visitor->computeLineAndColumn();
-            if (!locations.isEmpty())
-                locations.append(',');
-            locations.append("{\"scriptId\":\""_s);
-            locations.append(String::number(codeBlock->ownerExecutable()->sourceID()));
-            locations.append("\",\"lineNumber\":"_s);
-            locations.append(String::number(lineColumn.line ? lineColumn.line - 1 : 0));
-            locations.append(",\"columnNumber\":"_s);
-            locations.append(String::number(lineColumn.column ? lineColumn.column - 1 : 0));
-            locations.append('}');
+            }
+            JSC::SourceParseMode parseMode = codeBlock->unlinkedCodeBlock()->parseMode();
+            // A no-await async function has its body inlined into the wrapper,
+            // so a lone wrapper-mode frame is the user's frame; only the
+            // wrapper half of a body/wrapper pair (callee is the body) is
+            // redundant.
+            if (calleeIsBody && isGeneratorOrAsyncFunctionWrapperParseMode(parseMode)) {
+                JSC::LineColumn lineColumn = visitor->computeLineAndColumn();
+                if (!locations.isEmpty())
+                    locations.append(',');
+                locations.append("{\"scriptId\":\""_s);
+                locations.append(String::number(codeBlock->ownerExecutable()->sourceID()));
+                locations.append("\",\"lineNumber\":"_s);
+                locations.append(String::number(lineColumn.line ? lineColumn.line - 1 : 0));
+                locations.append(",\"columnNumber\":"_s);
+                locations.append(String::number(lineColumn.column ? lineColumn.column - 1 : 0));
+                locations.append('}');
+            }
+            calleeIsBody = isGeneratorOrAsyncFunctionBodyParseMode(parseMode);
             return IterationStatus::Continue;
         });
         if (locations.isEmpty())
@@ -279,7 +288,7 @@ public:
         if (message.length() == 0)
             return;
 
-        if (message.contains("\"method\":\"Debugger.paused\""_s)) {
+        if (message.startsWith("{\"method\":\"Debugger.paused\""_s)) {
             String hint = asyncWrapperFrameLocationsEvent();
             if (!hint.isEmpty())
                 this->sendMessageToDebuggerThread(WTF::move(hint));

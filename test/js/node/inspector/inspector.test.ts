@@ -1043,6 +1043,13 @@ function f(n) {
   f(n - 1);
 }
 f(2);
+function syncLeaf() {
+  globalThis.hit = 2;
+}
+async function noAwaitOuter() {
+  syncLeaf();
+}
+noAwaitOuter();
 inspector.close();
 process.exit(0);
 `,
@@ -1129,6 +1136,7 @@ process.exit(0);
     // two nested anonymous async arrows, all before any of their awaits suspend.
     await send("Debugger.setBreakpointByUrl", { url: entryScript!.url, lineNumber: 4, columnNumber: 2 });
     await send("Debugger.setBreakpointByUrl", { url: entryScript!.url, lineNumber: 19, columnNumber: 4 });
+    await send("Debugger.setBreakpointByUrl", { url: entryScript!.url, lineNumber: 26, columnNumber: 2 });
     await send("Runtime.runIfWaitingForDebugger");
 
     awaiting = "Debugger.paused";
@@ -1165,6 +1173,15 @@ process.exit(0);
     awaiting = "Debugger.paused";
     await paused.promise;
     expect(names(callFrames!, entryScript!.scriptId)).toEqual(["f", "f", "f", "module code"]);
+
+    // Third pause: a no-await async caller. JSC inlines its body into the
+    // wrapper (parseAsyncFunctionSourceElements's !bodyUsesAwait path), so the
+    // lone wrapper-mode frame is the user's frame and must survive.
+    paused = Promise.withResolvers<void>();
+    await send("Debugger.resume");
+    awaiting = "Debugger.paused";
+    await paused.promise;
+    expect(names(callFrames!, entryScript!.scriptId)).toEqual(["syncLeaf", "noAwaitOuter", "module code"]);
 
     ws.send(JSON.stringify({ id: nextId++, method: "Debugger.resume" }));
     expect(await proc.exited).toBe(0);

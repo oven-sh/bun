@@ -605,7 +605,7 @@ class InspectorCDPAdapter {
         const wrapperLocations = this.#asyncWrapperLocations;
         this.#asyncWrapperLocations = undefined;
         const callFrames = (params.callFrames ?? [])
-          .filter((frame: AnyObject) => !wrapperLocations?.has(locationKey(frame.location)))
+          .filter((frame: AnyObject) => !wrapperLocations?.$has(locationKey(frame.location)))
           .map((frame: AnyObject) => ({
             callFrameId: frame.callFrameId,
             functionName: frame.functionName ?? "",

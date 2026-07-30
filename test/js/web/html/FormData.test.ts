@@ -71,7 +71,9 @@ describe("FormData", () => {
     for (const C of [Response, Request] as const) {
       it(`preserves filename with ${C.name}`, async () => {
         const make = (body: string) =>
-          C === Response ? new Response(body, { headers }) : new Request("http://x/", { method: "POST", headers, body });
+          C === Response
+            ? new Response(body, { headers })
+            : new Request("http://x/", { method: "POST", headers, body });
 
         const empty = (await make(part("")).formData()).get("f") as File;
         expect(empty).toBeInstanceOf(File);

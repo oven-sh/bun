@@ -236,7 +236,6 @@ async function implementation() {
 #include "JSSink.h"
 #include "AsyncContextFrame.h"
 
-#include "ActiveDOMObject.h"
 #include "ExtendedDOMClientIsoSubspaces.h"
 #include "ExtendedDOMIsoSubspaces.h"
 #include "IDLTypes.h"
@@ -1068,6 +1067,7 @@ function rustSink() {
 // Safe-body: \`m_sinkPtr\` params are typed \`&\`/\`&mut\` (every C++ caller
 // null-checks first); host fns route through \`bun_jsc::host_fn::host_fn_static\`.
 
+#[allow(dead_code, unreachable_pub, unused)]
 use bun_jsc::{self, host_fn, CallFrame, JSGlobalObject, JSValue};
 
 `;
@@ -1080,6 +1080,7 @@ use bun_jsc::{self, host_fn, CallFrame, JSGlobalObject, JSValue};
 // ════════════════════════════════════════════════════════════════════════════
 
 /// Native backing type for \`JS${name}.m_sinkPtr\`.
+#[allow(dead_code, unreachable_pub, unused)]
 pub use ${rustPath} as ${name};
 
 `;
@@ -1090,6 +1091,7 @@ pub use ${rustPath} as ${name};
       symbols.push(sym);
       // BUN_DECLARE_HOST_FUNCTION → JSC_HOST_CALL_ATTRIBUTES → SYSV ABI.
       templ += `bun_jsc::jsc_host_abi! {
+    #[allow(dead_code, unreachable_pub, unused)]
     #[unsafe(no_mangle)]
     pub unsafe fn ${sym}(global: &JSGlobalObject, callframe: &CallFrame) -> JSValue {
         host_fn::host_fn_static(global, callframe, ${JSSinkT}::js_${fn})
@@ -1102,7 +1104,8 @@ pub use ${rustPath} as ${name};
     // extern "C" JSC::EncodedJSValue ${name}__getInternalFd(void* sinkPtr)
     // C++ caller passes `sink->wrapped()` (null-checked before calling).
     symbols.push(`${name}__getInternalFd`);
-    templ += `#[unsafe(no_mangle)]
+    templ += `#[allow(dead_code, unreachable_pub, unused)]
+#[unsafe(no_mangle)]
 pub extern "C" fn ${name}__getInternalFd(this: &mut ${name}) -> JSValue {
     ${JSSinkT}::js_get_internal_fd(this)
 }
@@ -1112,7 +1115,8 @@ pub extern "C" fn ${name}__getInternalFd(this: &mut ${name}) -> JSValue {
     // extern "C" size_t ${name}__memoryCost(void* sinkPtr)
     // C++ caller null-checks `sinkPtr` before calling.
     symbols.push(`${name}__memoryCost`);
-    templ += `#[unsafe(no_mangle)]
+    templ += `#[allow(dead_code, unreachable_pub, unused)]
+#[unsafe(no_mangle)]
 pub extern "C" fn ${name}__memoryCost(this: &${name}) -> usize {
     ${JSSinkT}::js_memory_cost(this)
 }
@@ -1122,7 +1126,8 @@ pub extern "C" fn ${name}__memoryCost(this: &${name}) -> usize {
     // ZIG_DECL void ${name}__finalize(void* sinkPtr) — called from JS${name}::~JS${name}.
     // C++ caller null-checks `m_sinkPtr` before calling.
     symbols.push(`${name}__finalize`);
-    templ += `#[unsafe(no_mangle)]
+    templ += `#[allow(dead_code, unreachable_pub, unused)]
+#[unsafe(no_mangle)]
 pub extern "C" fn ${name}__finalize(this: &mut ${name}) {
     ${JSSinkT}::js_finalize(this)
 }
@@ -1133,7 +1138,8 @@ pub extern "C" fn ${name}__finalize(this: &mut ${name}) {
     // — called from JSReadable${name}Controller::detach() and its destructor.
     // C++ caller null-checks `m_sinkPtr` before calling.
     symbols.push(`${name}__controllerDetached`);
-    templ += `#[unsafe(no_mangle)]
+    templ += `#[allow(dead_code, unreachable_pub, unused)]
+#[unsafe(no_mangle)]
 pub extern "C" fn ${name}__controllerDetached(this: &mut ${name}, controller: JSValue) {
     ${JSSinkT}::js_controller_detached(this, controller)
 }
@@ -1143,7 +1149,8 @@ pub extern "C" fn ${name}__controllerDetached(this: &mut ${name}, controller: JS
     // ZIG_DECL JSC::EncodedJSValue ${name}__close(JSC::JSGlobalObject*, void* sinkPtr)
     // C++ caller null-checks `ptr` before calling.
     symbols.push(`${name}__close`);
-    templ += `#[unsafe(no_mangle)]
+    templ += `#[allow(dead_code, unreachable_pub, unused)]
+#[unsafe(no_mangle)]
 pub extern "C" fn ${name}__close(global: &JSGlobalObject, this: &mut ${name}) -> JSValue {
     ${JSSinkT}::js_close(global, this)
 }
@@ -1155,6 +1162,7 @@ pub extern "C" fn ${name}__close(global: &JSGlobalObject, this: &mut ${name}) ->
     // win-x64, "C" elsewhere. C++ caller null-checks `ptr` before calling.
     symbols.push(`${name}__endWithSink`);
     templ += `bun_jsc::jsc_host_abi! {
+    #[allow(dead_code, unreachable_pub, unused)]
     #[unsafe(no_mangle)]
     pub unsafe fn ${name}__endWithSink(this: &mut ${name}, global: &JSGlobalObject) -> JSValue {
         ${JSSinkT}::js_end_with_sink(this, global)
@@ -1166,7 +1174,8 @@ pub extern "C" fn ${name}__close(global: &JSGlobalObject, this: &mut ${name}) ->
     // ZIG_DECL void ${name}__updateRef(void* sinkPtr, bool)
     // C++ caller null-checks `m_sinkPtr` before calling.
     symbols.push(`${name}__updateRef`);
-    templ += `#[unsafe(no_mangle)]
+    templ += `#[allow(dead_code, unreachable_pub, unused)]
+#[unsafe(no_mangle)]
 pub extern "C" fn ${name}__updateRef(this: &mut ${name}, value: bool) {
     ${JSSinkT}::js_update_ref(this, value)
 }

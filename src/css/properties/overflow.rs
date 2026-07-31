@@ -5,9 +5,9 @@ use crate::{Parser, PrintErr, Printer};
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub struct Overflow {
     /// A value for the [overflow](https://www.w3.org/TR/css-overflow-3/#overflow-properties) shorthand property.
-    pub x: OverflowKeyword,
+    pub(crate) x: OverflowKeyword,
     /// The overflow mode for the y direction.
-    pub y: OverflowKeyword,
+    pub(crate) y: OverflowKeyword,
 }
 
 impl Overflow {

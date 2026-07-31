@@ -773,9 +773,8 @@ impl SocketConfig {
 // mapping. `lazy_array($get => $prop)` covers the `queries`-style getter that
 // lazily seeds the slot with an empty `JSArray` on first read.
 //
-// The emitted setter returns `()` — `host_fn_setter_this[_shared]` accepts
-// that via `IntoHostSetterReturn for ()` (≡ `true` at the ABI), so this is
-// drop-in for both `sharedThis` and `&mut`-receiver classes.
+// The emitted setter returns `()` — `host_fn_setter_this_shared` accepts
+// that via `IntoHostSetterReturn for ()` (≡ `true` at the ABI).
 // ──────────────────────────────────────────────────────────────────────────
 
 /// Stamp out trivial cached-prop getter/setter host-fns inside an `impl` block.

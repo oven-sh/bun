@@ -21,7 +21,7 @@ impl Property {
     /// an unparsed `margin-top: var(--x)` does not route into the parsed
     /// `MarginTop` arm and panic in `extract_top`.
     #[inline]
-    pub fn variant_tag(&self) -> PropertyIdTag {
+    pub(crate) fn variant_tag(&self) -> PropertyIdTag {
         match self {
             Property::Unparsed(_) => PropertyIdTag::Unparsed,
             Property::Custom(_) => PropertyIdTag::Custom,
@@ -36,7 +36,7 @@ impl Property {
 /// a `&'static [VendorPrefix]` with the same values in the same declaration
 /// order (webkit, moz, ms, o, none); kept duplicated here as a fixed-size
 /// array for the to_css loops.
-pub(super) const PREFIX_FLAGS: [VendorPrefix; 5] = [
+const PREFIX_FLAGS: [VendorPrefix; 5] = [
     VendorPrefix::WEBKIT,
     VendorPrefix::MOZ,
     VendorPrefix::MS,

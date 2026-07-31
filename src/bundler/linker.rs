@@ -37,18 +37,18 @@ pub struct Linker {
     // `&mut self` on every `transpiler.linker.link(...)` call. Use raw
     // pointers and dereference at use-site; same
     // contract as `transpiler::set_log`'s `linker.log = log as *mut _`.
-    pub options: *mut BundleOptions<'static>,
-    pub fs: *mut Fs::FileSystem,
+    pub(crate) options: *mut BundleOptions<'static>,
+    pub(crate) fs: *mut Fs::FileSystem,
     pub log: *mut Log,
-    pub resolve_queue: *mut ResolveQueue,
+    pub(crate) resolve_queue: *mut ResolveQueue,
     pub resolver: *mut Resolver<'static>,
-    pub resolve_results: *mut ResolveResults,
-    pub hashed_filenames: HashedFileNameMap,
+    pub(crate) resolve_results: *mut ResolveResults,
+    pub(crate) hashed_filenames: HashedFileNameMap,
 
     pub plugin_runner: Option<*mut dyn PluginResolver>,
 }
 
-pub(crate) const RUNTIME_SOURCE_PATH: &[u8] = b"bun:wrap";
+const RUNTIME_SOURCE_PATH: &[u8] = b"bun:wrap";
 
 // ── relative_paths_list singleton ────────────────────────────────────────
 // `bun_alloc::BSSStringList<COUNT, ITEM_LENGTH>` encodes the parameters as
@@ -59,7 +59,7 @@ pub(crate) const RUNTIME_SOURCE_PATH: &[u8] = b"bun:wrap";
 // fallback under a `LazyLock` instead — same lifetime semantics
 // (process-static, never freed), just not BSS-backed. Swap to the macro once
 // the crate-level feature flag lands.
-pub(crate) type ImportPathsList = bun_alloc::BSSStringList<{ 512 * 2 }, { 128 + 1 }>;
+type ImportPathsList = bun_alloc::BSSStringList<{ 512 * 2 }, { 128 + 1 }>;
 
 /// `Send + Sync` newtype around the leaked `BSSStringList` heap allocation so
 /// it can sit inside a `LazyLock`. The underlying list serializes its own
@@ -156,7 +156,7 @@ impl Linker {
     /// config like `target` / `preserve_extensions`). Never null once
     /// `configure_linker` has run.
     #[inline]
-    pub fn options(&self) -> &BundleOptions<'static> {
+    pub(crate) fn options(&self) -> &BundleOptions<'static> {
         debug_assert!(
             !self.options.is_null(),
             "Linker.options used before configure_linker"
@@ -173,7 +173,7 @@ impl Linker {
     /// `Transpiler::init` time and never freed. Never null. Only scalar
     /// fields (`top_level_dir`) are read.
     #[inline]
-    pub fn fs(&self) -> &Fs::FileSystem {
+    pub(crate) fn fs(&self) -> &Fs::FileSystem {
         debug_assert!(!self.fs.is_null());
         // SAFETY: `self.fs` is the process-lifetime `FileSystem::instance()`
         // singleton, set at `Transpiler::init` and never freed or mutated.
@@ -188,7 +188,7 @@ impl Linker {
     /// `Linker` method re-derives a borrow of `*self.log`, so the `&mut`
     /// returned here is exclusive for its lifetime. Never null.
     #[inline]
-    pub fn log_mut(&mut self) -> &mut Log {
+    pub(crate) fn log_mut(&mut self) -> &mut Log {
         debug_assert!(!self.log.is_null());
         // SAFETY: non-null backref to `Transpiler.log` set in `configure_linker*`;
         // callers borrow `&mut self.linker` field-disjointly so no other live
@@ -204,7 +204,7 @@ impl Linker {
     /// borrow of `self.resolve_results` across the call. Never null after
     /// `configure_linker`.
     #[inline]
-    pub fn resolve_results_mut(&mut self) -> &mut ResolveResults {
+    pub(crate) fn resolve_results_mut(&mut self) -> &mut ResolveResults {
         debug_assert!(
             !self.resolve_results.is_null(),
             "Linker.resolve_results used before configure_linker"
@@ -222,7 +222,7 @@ impl Linker {
     /// holds no other borrow of `self.resolve_queue` across the call. Never
     /// null after `configure_linker`.
     #[inline]
-    pub fn resolve_queue_mut(&mut self) -> &mut ResolveQueue {
+    pub(crate) fn resolve_queue_mut(&mut self) -> &mut ResolveQueue {
         debug_assert!(
             !self.resolve_queue.is_null(),
             "Linker.resolve_queue used before configure_linker"
@@ -233,7 +233,7 @@ impl Linker {
         unsafe { &mut *self.resolve_queue }
     }
 
-    pub fn init(
+    pub(crate) fn init(
         log: *mut Log,
         resolve_queue: *mut ResolveQueue,
         options: *mut BundleOptions<'static>,
@@ -261,7 +261,7 @@ impl Linker {
     /// pointer fields; does NOT reset
     /// `plugin_runner`. Use instead of `init` from
     /// `Transpiler::wire_after_move`.
-    pub fn reseat_self_refs(
+    pub(crate) fn reseat_self_refs(
         &mut self,
         log: *mut Log,
         resolve_queue: *mut ResolveQueue,
@@ -283,7 +283,7 @@ impl Linker {
     // alongside `RealFS`. `file_path` is typed `PFs::Path` (not `Fs::Path`)
     // so `get_hashed_filename` — whose callers all build `PFs::Path` — can
     // forward directly; only `.text` (a `&[u8]`) is read.
-    pub fn get_mod_key(
+    pub(crate) fn get_mod_key(
         &mut self,
         file_path: &PFs::Path<'_>,
         fd: Option<Fd>,
@@ -313,7 +313,7 @@ impl Linker {
         Ok(Fs::ModKey::from_file(file)?)
     }
 
-    pub fn get_hashed_filename(
+    pub(crate) fn get_hashed_filename(
         &mut self,
         file_path: &PFs::Path<'_>,
         fd: Option<Fd>,
@@ -598,7 +598,7 @@ impl Linker {
         Ok(true)
     }
 
-    pub fn generate_import_path(
+    pub(crate) fn generate_import_path(
         &mut self,
         source_dir: &[u8],
         source_path: &'static [u8],
@@ -711,7 +711,7 @@ impl Linker {
         }
     }
 
-    pub fn resolve_result_hash_key(&self, resolve_result: &resolver::Result) -> u64 {
+    pub(crate) fn resolve_result_hash_key(&self, resolve_result: &resolver::Result) -> u64 {
         let path = resolve_result.path_const().expect("unreachable");
         let fs = self.fs();
         let mut hash_key = path.text;
@@ -724,7 +724,7 @@ impl Linker {
         bun_wyhash::hash(hash_key)
     }
 
-    pub fn enqueue_resolve_result(
+    pub(crate) fn enqueue_resolve_result(
         &mut self,
         resolve_result: resolver::Result,
     ) -> crate::Result<bool> {

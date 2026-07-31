@@ -262,7 +262,7 @@ fn handle_rewrite(
 /// to fallthroughs. Given a function whose reactive scope ranges have been
 /// correctly aligned and merged, this pass rewrites blocks to introduce
 /// ReactiveScopeTerminals and their fallthrough blocks.
-pub fn build_reactive_scope_terminals_hir(func: &mut HirFunction, env: &mut Environment) {
+pub(crate) fn build_reactive_scope_terminals_hir(func: &mut HirFunction, env: &mut Environment) {
     // Step 1: Collect rewrites
     let mut queued_rewrites = collect_scope_rewrites(func, env);
 

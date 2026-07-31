@@ -243,7 +243,7 @@ pub enum E {
 
 impl E {
     #[inline]
-    pub const fn from_raw(n: u16) -> Self {
+    pub(crate) const fn from_raw(n: u16) -> Self {
         // `E` is sparse (dense 0..=137 plus isolated UV_* tags ~3000–4095), so
         // `n < MAX` is NOT a sufficient validity check. `strum::FromRepr`
         // generates a `const fn from_repr` matching every declared variant.
@@ -617,7 +617,7 @@ impl SystemErrnoInit for Win32Error {
 }
 
 impl SystemErrno {
-    pub const MAX: usize = 138;
+    pub(crate) const MAX: usize = 138;
 
     /// Windows' libuv-mapped errno set spells this `ENOTSUP`; alias the POSIX
     /// `EOPNOTSUPP` name so cross-platform `match` arms compile unchanged.
@@ -639,12 +639,12 @@ impl SystemErrno {
     }
 
     /// `init(code: u16)` — Win32/WSA error codes and negated-uv codes encoded as u16.
-    pub fn init_u16(code: u16) -> Option<SystemErrno> {
+    pub(crate) fn init_u16(code: u16) -> Option<SystemErrno> {
         Self::init_numeric(code)
     }
 
     /// `init(code: c_int)` — same as u16 path for positives; negatives are negated and retried.
-    pub fn init_c_int(code: c_int) -> Option<SystemErrno> {
+    pub(crate) fn init_c_int(code: c_int) -> Option<SystemErrno> {
         if code > 0 {
             // Any code > u16::MAX is unmapped. Avoid a truncating `as u16`
             // (which could wrap into a valid Win32/uv code) by gating here.
@@ -678,7 +678,7 @@ impl SystemErrno {
     }
 
     /// Maps a `Win32Error` code to the corresponding `SystemErrno`.
-    pub fn init_win32_error(code: Win32Error) -> Option<SystemErrno> {
+    pub(crate) fn init_win32_error(code: Win32Error) -> Option<SystemErrno> {
         use Win32Error as W;
         Some(match code {
             W::NOACCESS => SystemErrno::EACCES,

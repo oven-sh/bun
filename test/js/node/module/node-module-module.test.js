@@ -158,14 +158,15 @@ describe.concurrent("node-module-module", () => {
     // dominates RSS noise within a few thousand iterations.
     const code = /* js */ `
         const m = require("module");
+        const rss = process.platform === "darwin" && typeof Bun.unsafe.memoryFootprint === "function" ? Bun.unsafe.memoryFootprint : process.memoryUsage.rss;
         const comp = Buffer.alloc(30, "a").toString();
         const base = "/" + Array(20).fill(comp).join("/");
         for (let i = 0; i < 200; i++) m._nodeModulePaths(base + i);
         Bun.gc(true); Bun.gc(true);
-        const before = process.memoryUsage.rss();
+        const before = rss();
         for (let i = 0; i < 5000; i++) m._nodeModulePaths(base + i);
         Bun.gc(true); Bun.gc(true); Bun.gc(true);
-        process.stdout.write(String((process.memoryUsage.rss() - before) / 1024 / 1024));
+        process.stdout.write(String((rss() - before) / 1024 / 1024));
       `;
     await using proc = Bun.spawn({
       cmd: [bunExe(), "--smol", "-e", code],

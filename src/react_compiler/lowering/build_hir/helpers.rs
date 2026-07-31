@@ -1199,7 +1199,7 @@ pub(super) fn lower_optional_member_expression(
 }
 
 /// Returns (object, value_place) pair.
-pub(super) fn lower_optional_member_expression_impl(
+fn lower_optional_member_expression_impl(
     builder: &mut HirBuilder,
     expr: &Expr,
     parent_alternate: Option<BlockId>,
@@ -1319,7 +1319,7 @@ pub(super) fn lower_optional_call_expression(
     lower_optional_call_expression_impl(builder, expr, None)
 }
 
-pub(super) fn lower_optional_call_expression_impl(
+fn lower_optional_call_expression_impl(
     builder: &mut HirBuilder,
     expr: &Expr,
     parent_alternate: Option<BlockId>,

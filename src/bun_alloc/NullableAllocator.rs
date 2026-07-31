@@ -25,13 +25,6 @@ impl Default for NullableAllocator {
 }
 
 impl NullableAllocator {
-    /// A `NullableAllocator` with no backing allocator. `const` so it can be
-    /// used in `const` initializers (e.g. `ZigString.Slice::EMPTY`).
-    pub const NULL: NullableAllocator = NullableAllocator {
-        ptr: core::ptr::null_mut(),
-        vtable: None,
-    };
-
     #[inline]
     pub fn init(alloc: Option<StdAllocator>) -> NullableAllocator {
         match alloc {

@@ -16,7 +16,7 @@ use bun_jsc::virtual_machine::VirtualMachine;
 use bun_ptr::Interned;
 
 use super::frame::{self, Frame};
-use super::worker::{PipeRole, Worker, WorkerPipe};
+use super::worker::{Worker, WorkerPipe};
 use crate::test_command::CommandLineReporter;
 
 // `Status` lives in `crate::api::bun::process`
@@ -25,44 +25,44 @@ use crate::api::bun::process::Process;
 use crate::api::bun::process::Status as SpawnStatus;
 
 pub struct Coordinator<'a> {
-    pub vm: &'a VirtualMachine,
+    pub(crate) vm: &'a VirtualMachine,
     /// Typed enum mirror of `vm.event_loop()` for the io-layer FilePoll vtable
     /// (`bun_io::EventLoopHandle` wraps `*const EventLoopHandle`).
-    pub event_loop_handle: bun_jsc::EventLoopHandle,
-    pub reporter: &'a mut CommandLineReporter,
-    pub files: Vec<Interned>,
-    pub cwd: &'a [u8],
+    pub(crate) event_loop_handle: bun_jsc::EventLoopHandle,
+    pub(crate) reporter: &'a mut CommandLineReporter,
+    pub(crate) files: Vec<Interned>,
+    pub(crate) cwd: &'a [u8],
     // [:null]?[*:0]const u8 — null-sentinel-terminated slice of C strings;
     // backing storage has a null at [len] for execve-style consumers.
-    pub argv: Box<[bun_spawn::CStrPtr]>,
+    pub(crate) argv: Box<[bun_spawn::CStrPtr]>,
     /// One envp per worker slot — same base, with that slot's JEST_WORKER_ID
     /// and BUN_TEST_WORKER_ID appended.
-    pub envps: Vec<bun_dotenv::NullDelimitedEnvMap>,
+    pub(crate) envps: Vec<bun_dotenv::NullDelimitedEnvMap>,
 
-    pub workers: &'a mut [Worker],
-    pub junit_chunks: Vec<Option<Box<[u8]>>>,
-    pub junit_totals: super::aggregate::JunitTotals,
-    pub coverage_chunks: Vec<Box<[u8]>>,
+    pub(crate) workers: &'a mut [Worker],
+    pub(crate) junit_chunks: Vec<Option<Box<[u8]>>>,
+    pub(crate) junit_totals: super::aggregate::JunitTotals,
+    pub(crate) coverage_chunks: Vec<Box<[u8]>>,
     /// File index whose `path:` header was most recently written. Result lines
     /// from concurrent workers interleave; whenever the source file changes the
     /// header is re-emitted so every line has visible context. None at start.
-    pub last_header_idx: Option<u32>,
+    pub(crate) last_header_idx: Option<u32>,
     pub frame: Frame,
-    pub parallel_limit: u32,
-    pub scale_up_after_ms: i64,
-    pub bail: u32,
-    pub dots: bool,
-    pub files_done: u32,
-    pub spawned_count: u32,
-    pub live_workers: u32,
-    pub crashed_files: Vec<u32>,
-    pub aborted: Option<u32>,
-    pub bailed: bool,
-    pub last_printed_dot: bool,
+    pub(crate) parallel_limit: u32,
+    pub(crate) scale_up_after_ms: i64,
+    pub(crate) bail: u32,
+    pub(crate) dots: bool,
+    pub(crate) files_done: u32,
+    pub(crate) spawned_count: u32,
+    pub(crate) live_workers: u32,
+    pub(crate) crashed_files: Vec<u32>,
+    pub(crate) aborted: Option<u32>,
+    pub(crate) bailed: bool,
+    pub(crate) last_printed_dot: bool,
     /// Kill-on-close Job Object so the OS reaps workers if the coordinator dies
     /// without running its signal handler (e.g. SIGKILL / TerminateProcess).
     #[cfg(windows)]
-    pub windows_job: Option<*mut c_void>,
+    pub(crate) windows_job: Option<*mut c_void>,
 }
 
 impl<'a> Coordinator<'a> {
@@ -208,8 +208,8 @@ impl<'a> Coordinator<'a> {
         // Built via from_mut so the stored `*const` carries write provenance:
         // WorkerPipe::on_read_chunk later mutates the Worker through cast_mut().
         let w_ptr = std::ptr::from_mut::<Worker>(w).cast_const();
-        w.out = WorkerPipe::new(PipeRole::Stdout, w_ptr);
-        w.err = WorkerPipe::new(PipeRole::Stderr, w_ptr);
+        w.out = WorkerPipe::new(w_ptr);
+        w.err = WorkerPipe::new(w_ptr);
         match w.start() {
             Ok(()) => {}
             Err(e) => {
@@ -558,8 +558,8 @@ impl<'a> Coordinator<'a> {
             w.ipc = Default::default();
             // from_mut: keep write provenance on the stored backref (see spawn_worker).
             let w_ptr = std::ptr::from_mut::<Worker>(w).cast_const();
-            w.out = WorkerPipe::new(PipeRole::Stdout, w_ptr);
-            w.err = WorkerPipe::new(PipeRole::Stderr, w_ptr);
+            w.out = WorkerPipe::new(w_ptr);
+            w.err = WorkerPipe::new(w_ptr);
             match w.start() {
                 Ok(()) => {
                     respawned = true;
@@ -578,8 +578,8 @@ impl<'a> Coordinator<'a> {
             // Drop won't fire until Coordinator teardown. Assigning defaults
             // drops the old values now (pipe FDs, capture buffer).
             w.ipc = Default::default();
-            w.out = WorkerPipe::new(PipeRole::Stdout, core::ptr::null());
-            w.err = WorkerPipe::new(PipeRole::Stderr, core::ptr::null());
+            w.out = WorkerPipe::new(core::ptr::null());
+            w.err = WorkerPipe::new(core::ptr::null());
             let _ = core::mem::take(&mut w.captured);
         }
     }
@@ -729,7 +729,7 @@ impl<'a> Coordinator<'a> {
                 return None;
             }
             let mut jeli: windows::JOBOBJECT_EXTENDED_LIMIT_INFORMATION = bun_core::ffi::zeroed();
-            jeli.BasicLimitInformation.LimitFlags = windows::JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+            jeli.BasicLimitInformation.LimitFlags = windows::JOB_LIMIT_FLAGS_KILL_TREE_ON_CLOSE;
             if windows::SetInformationJobObject(
                 job,
                 windows::JobObjectExtendedLimitInformation,
@@ -804,7 +804,7 @@ fn describe_status<'b>(buf: &'b mut [u8; 32], status: &SpawnStatus) -> &'b [u8] 
 /// don't do non-signal-safe work in the handler. Linux PDEATHSIG and the
 /// Windows Job Object are the safety net for when the coordinator can't run
 /// this (SIGKILL).
-pub mod abort_handler {
+pub(crate) mod abort_handler {
     use super::*;
 
     pub(crate) static SHOULD_ABORT: AtomicBool = AtomicBool::new(false);

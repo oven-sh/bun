@@ -23,12 +23,12 @@ pub struct FakeTimers {
     /// - peek/takeFirst (provided by TimerHeap)
     /// - peekLast (cannot be implemented efficiently with TimerHeap)
     /// - count (cannot be implemented efficiently with TimerHeap)
-    pub timers: TimerHeap,
+    pub(crate) timers: TimerHeap,
 }
 
 // `date_now_offset` is stored as `AtomicU64` (f64 bits) so the static is `Sync`
 // without `static mut`.
-pub struct CurrentTime {
+pub(crate) struct CurrentTime {
     /// starts at 0. offset in milliseconds.
     offset_raw: RwLock<Timespec>,
     date_now_offset: AtomicU64,
@@ -36,13 +36,13 @@ pub struct CurrentTime {
 
 const MIN_TIMESPEC: Timespec = Timespec { sec: i64::MIN, nsec: i64::MIN };
 
-pub(crate) static CURRENT_TIME: CurrentTime = CurrentTime {
+static CURRENT_TIME: CurrentTime = CurrentTime {
     offset_raw: RwLock::new(MIN_TIMESPEC),
     date_now_offset: AtomicU64::new(0f64.to_bits()),
 };
 
 impl CurrentTime {
-    pub fn get_timespec_now(&self) -> Option<Timespec> {
+    pub(crate) fn get_timespec_now(&self) -> Option<Timespec> {
         let value = *self.offset_raw.read();
         if value.eql(&MIN_TIMESPEC) {
             return None;
@@ -50,7 +50,7 @@ impl CurrentTime {
         Some(value)
     }
 
-    pub fn set(&self, global: &JSGlobalObject, offset: &Timespec, js: Option<f64>) {
+    pub(crate) fn set(&self, global: &JSGlobalObject, offset: &Timespec, js: Option<f64>) {
         let vm = global.bun_vm().as_mut();
         {
             *self.offset_raw.write() = *offset;
@@ -72,7 +72,7 @@ impl CurrentTime {
         vm.overridden_performance_now = Some(offset.ns());
     }
 
-    pub fn clear(&self, global: &JSGlobalObject) {
+    pub(crate) fn clear(&self, global: &JSGlobalObject) {
         let vm = global.bun_vm().as_mut();
         {
             *self.offset_raw.write() = MIN_TIMESPEC;
@@ -93,7 +93,7 @@ impl CurrentTime {
 /// instead of the stale activation-time offset. No-op when fake timers are
 /// inactive or `ms` is NaN (the "clear override" sentinel).
 #[unsafe(no_mangle)]
-pub(crate) extern "C" fn Bun__FakeTimers__setSystemTime(ms: f64) {
+extern "C" fn Bun__FakeTimers__setSystemTime(ms: f64) {
     if ms.is_nan() {
         return;
     }
@@ -115,7 +115,7 @@ fn from_el_timespec(t: &ElTimespec) -> Timespec {
 }
 
 impl FakeTimers {
-    pub fn is_active(&self) -> bool {
+    pub(crate) fn is_active(&self) -> bool {
         self.active
     }
 
@@ -132,6 +132,16 @@ impl FakeTimers {
         CURRENT_TIME.clear(global);
         self.active = false;
         pinned
+    }
+
+    /// Restore real timers without draining the fake heap. Used by the
+    /// `--isolate` file boundary so `swap_global_for_test_isolation`'s
+    /// `cancel_all_timeout_objects` (which runs after the outgoing global's
+    /// JS has stopped) can walk the still-populated fake heap and release
+    /// `TimeoutObject` pins and unlink `AbortSignalTimeout` timers.
+    pub(crate) fn reset_for_isolation(&mut self, global: &JSGlobalObject) {
+        CURRENT_TIME.clear(global);
+        self.active = false;
     }
 
     /// Marking `state = CANCELLED` alone strands the `Box<TimeoutObject>`: its
@@ -273,12 +283,13 @@ fn use_fake_timers(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVal
     let args = frame.arguments_as_array::<1>();
     if args.len() > 0 && !args[0].is_undefined() {
         let options_value = args[0];
-        if !options_value.is_object() {
+        if options_value.is_string() {
+            // Jest 26 compat: useFakeTimers("modern" | "legacy") is a no-op.
+        } else if !options_value.is_object() {
             return Err(global.throw_invalid_arguments(format_args!(
                 "useFakeTimers() expects an options object"
             )));
-        }
-        if let Some(now) = options_value.get(global, "now")? {
+        } else if let Some(now) = options_value.get(global, "now")? {
             if now.is_number() {
                 js_now = now.as_number();
             } else if now.is_date() {

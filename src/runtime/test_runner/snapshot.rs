@@ -23,25 +23,25 @@ type FileId = super::jest::FileId;
 bun_core::declare_scope!(inline_snapshot, visible);
 
 pub struct Snapshots<'a> {
-    pub update_snapshots: bool,
-    pub total: usize,
-    pub added: usize,
-    pub passed: usize,
-    pub failed: usize,
+    pub(crate) update_snapshots: bool,
+    pub(crate) total: usize,
+    pub(crate) added: usize,
+    pub(crate) passed: usize,
+    pub(crate) failed: usize,
 
-    pub file_buf: &'a mut Vec<u8>,
+    pub(crate) file_buf: &'a mut Vec<u8>,
     // LIFETIMES.tsv said `HashMap<usize, String>`; overridden per §Strings (data is bytes) → Box<[u8]>.
     // Key is u64 to match `bun.hash`'s return type (avoids a narrowing cast).
-    pub values: &'a mut HashMap<u64, Box<[u8]>>,
-    pub counts: &'a mut StringHashMap<usize>,
-    pub _current_file: Option<File>,
+    pub(crate) values: &'a mut HashMap<u64, Box<[u8]>>,
+    pub(crate) counts: &'a mut StringHashMap<usize>,
+    pub(crate) _current_file: Option<File>,
     /// Read-only backref into `Jest::RUNNER.files[..].source.path` (not owned
     /// here, never freed): the runner is process-global and its files are
     /// never freed mid-run, so the pointee outlives `self`. Only dereferenced
     /// via `as_ref()` in `get_snapshot_file` (see the SAFETY comments there).
-    pub snapshot_dir_path: Option<core::ptr::NonNull<[u8]>>,
-    pub inline_snapshots_to_write: &'a mut IndexMap<FileId, Vec<InlineSnapshotToWrite>>,
-    pub last_error_snapshot_name: Option<Box<[u8]>>,
+    pub(crate) snapshot_dir_path: Option<core::ptr::NonNull<[u8]>>,
+    pub(crate) inline_snapshots_to_write: &'a mut IndexMap<FileId, Vec<InlineSnapshotToWrite>>,
+    pub(crate) last_error_snapshot_name: Option<Box<[u8]>>,
 }
 
 // Re-export the TSV-mandated container name so the field type matches verbatim.
@@ -59,18 +59,18 @@ impl<'a> Snapshots<'a> {
 // hoisted out of `impl Snapshots` — inherent associated types are unstable.
 
 pub struct InlineSnapshotToWrite {
-    pub line: c_ulong,
-    pub col: c_ulong,
+    pub(crate) line: c_ulong,
+    pub(crate) col: c_ulong,
     /// owned (was: owned by Snapshots.allocator)
     pub value: Box<[u8]>,
-    pub has_matchers: bool,
-    pub is_added: bool,
+    pub(crate) has_matchers: bool,
+    pub(crate) is_added: bool,
     /// static lifetime
-    pub kind: &'static [u8],
+    pub(crate) kind: &'static [u8],
     /// owned (was: owned by Snapshots.allocator)
-    pub start_indent: Option<Box<[u8]>>,
+    pub(crate) start_indent: Option<Box<[u8]>>,
     /// owned (was: owned by Snapshots.allocator)
-    pub end_indent: Option<Box<[u8]>>,
+    pub(crate) end_indent: Option<Box<[u8]>>,
 }
 
 impl InlineSnapshotToWrite {
@@ -89,20 +89,20 @@ impl InlineSnapshotToWrite {
 }
 
 pub struct File {
-    pub id: FileId,
-    pub file: bun_sys::File,
+    pub(crate) id: FileId,
+    pub(crate) file: bun_sys::File,
 }
 
 impl<'a> Snapshots<'a> {
     /// Reset per-run snapshot counters to 0. Keys stay owned by the map until
     /// `writeSnapshotFile` tears them down on file switch.
-    pub fn reset_counts(&mut self) {
+    pub(crate) fn reset_counts(&mut self) {
         for v in self.counts.values_mut() {
             *v = 0;
         }
     }
 
-    pub fn add_count(&mut self, expect: &Expect, hint: &[u8]) -> Result<(Vec<u8>, usize), Error> {
+    pub(crate) fn add_count(&mut self, expect: &Expect, hint: &[u8]) -> Result<(Vec<u8>, usize), Error> {
         self.total += 1;
         let snapshot_name = expect.get_snapshot_name(hint)?;
         // bun_collections::StringHashMap::get_or_put can't hand out `key_ptr`, so return the
@@ -120,7 +120,7 @@ impl<'a> Snapshots<'a> {
         Ok((snapshot_name, count))
     }
 
-    pub fn get_or_put(
+    pub(crate) fn get_or_put(
         &mut self,
         expect: &Expect,
         target_value: &[u8],
@@ -206,7 +206,7 @@ impl<'a> Snapshots<'a> {
         Ok(None)
     }
 
-    pub fn parse_file(&mut self, file: &File) -> Result<(), Error> {
+    pub(crate) fn parse_file(&mut self, file: &File) -> Result<(), Error> {
         if self.file_buf.is_empty() {
             return Ok(());
         }
@@ -329,7 +329,7 @@ impl<'a> Snapshots<'a> {
         Ok(())
     }
 
-    pub fn write_snapshot_file(&mut self) -> Result<(), Error> {
+    pub(crate) fn write_snapshot_file(&mut self) -> Result<(), Error> {
         if let Some(file) = self._current_file.take() {
             file.file
                 .write_all(self.file_buf)
@@ -345,7 +345,7 @@ impl<'a> Snapshots<'a> {
         Ok(())
     }
 
-    pub fn add_inline_snapshot_to_write(
+    pub(crate) fn add_inline_snapshot_to_write(
         &mut self,
         file_id: FileId,
         value: InlineSnapshotToWrite,
@@ -358,7 +358,7 @@ impl<'a> Snapshots<'a> {
         Ok(())
     }
 
-    pub fn write_inline_snapshots(&mut self) -> Result<bool, Error> {
+    pub(crate) fn write_inline_snapshots(&mut self) -> Result<bool, Error> {
         // `success` is a Cell so the per-iteration error-check guard
         // closure can flip it without holding a &mut across the loop body.
         let success = core::cell::Cell::new(true);

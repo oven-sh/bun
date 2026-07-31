@@ -39,12 +39,12 @@ pub enum CtxTag {
 
 #[derive(Copy, Clone)]
 pub struct AnyRequestContext {
-    pub tag: CtxTag,
+    pub(crate) tag: CtxTag,
     pub ptr: *mut (),
 }
 
 impl AnyRequestContext {
-    pub const NULL: Self = Self {
+    pub(crate) const NULL: Self = Self {
         tag: CtxTag::None,
         ptr: core::ptr::null_mut(),
     };
@@ -80,7 +80,7 @@ impl<ThisServer, const SSL: bool, const DBG: bool, const H3: bool> CtxKind
 }
 
 impl AnyRequestContext {
-    pub fn init<T: CtxKind>(request_ctx: *const T) -> Self {
+    pub(crate) fn init<T: CtxKind>(request_ctx: *const T) -> Self {
         Self {
             tag: T::TAG,
             ptr: request_ctx as *mut (),
@@ -124,14 +124,14 @@ macro_rules! dispatch {
 }
 
 impl AnyRequestContext {
-    pub fn set_additional_on_abort_callback(self, cb: Option<AdditionalOnAbortCallback>) {
+    pub(crate) fn set_additional_on_abort_callback(self, cb: Option<AdditionalOnAbortCallback>) {
         dispatch!(self, (), |_T, ctx| {
             debug_assert!(ctx.additional_on_abort.is_none());
             ctx.additional_on_abort = cb;
         })
     }
 
-    pub fn memory_cost(self) -> usize {
+    pub(crate) fn memory_cost(self) -> usize {
         dispatch!(self, 0, |_T, ctx| ctx.memory_cost())
     }
 
@@ -143,30 +143,30 @@ impl AnyRequestContext {
         }
     }
 
-    pub fn set_timeout(self, seconds: c_uint) -> bool {
+    pub(crate) fn set_timeout(self, seconds: c_uint) -> bool {
         dispatch!(self, false, |_T, ctx| ctx.set_timeout(seconds))
     }
 
-    pub fn set_cookies(self, cookie_map: Option<*mut CookieMap>) {
+    pub(crate) fn set_cookies(self, cookie_map: Option<*mut CookieMap>) {
         dispatch!(self, (), |_T, ctx| ctx.set_cookies(cookie_map))
     }
 
-    pub fn enable_timeout_events(self) {
+    pub(crate) fn enable_timeout_events(self) {
         dispatch!(self, (), |_T, ctx| ctx.set_timeout_handler())
     }
 
-    pub fn get_remote_socket_info(self) -> Option<uws::SocketAddress> {
+    pub(crate) fn get_remote_socket_info(self) -> Option<uws::SocketAddress> {
         dispatch!(self, None, |_T, ctx| ctx.get_remote_socket_info())
     }
 
-    pub fn detach_request(self) {
+    pub(crate) fn detach_request(self) {
         dispatch!(self, (), |_T, ctx| {
             ctx.req = None;
         })
     }
 
     /// Wont actually set anything if `self` is `.none`
-    pub fn set_request(self, req: *mut uws::Request) {
+    pub(crate) fn set_request(self, req: *mut uws::Request) {
         dispatch!(self, (), |T, ctx| {
             if T::IS_H3 {
                 // H3 populates url/headers eagerly
@@ -179,7 +179,7 @@ impl AnyRequestContext {
         })
     }
 
-    pub fn get_request(self) -> Option<*mut uws::Request> {
+    pub(crate) fn get_request(self) -> Option<*mut uws::Request> {
         dispatch!(self, None, |T, ctx| {
             if T::IS_H3 {
                 // url/headers already on the Request
@@ -193,11 +193,11 @@ impl AnyRequestContext {
         dispatch!(self, (), |_T, ctx| ctx.ref_())
     }
 
-    pub fn set_signal_aborted(self, reason: crate::server::jsc::CommonAbortReason) {
+    pub(crate) fn set_signal_aborted(self, reason: crate::server::jsc::CommonAbortReason) {
         dispatch!(self, (), |_T, ctx| ctx.set_signal_aborted(reason))
     }
 
-    pub fn dev_server(self) -> Option<&'static crate::bake::DevServer::DevServer> {
+    pub(crate) fn dev_server(self) -> Option<&'static crate::bake::DevServer::DevServer> {
         dispatch!(self, None, |_T, ctx| ctx.dev_server().map(|r| {
             // SAFETY: the server backref outlives any AnyRequestContext (held only
             // for the duration of a request callback); `self` is a by-value tagged
@@ -211,7 +211,7 @@ impl AnyRequestContext {
     /// inside `NewServer` has a stable address, so deriving `&mut` here is
     /// sound as long as the caller upholds the usual single-writer rule on the
     /// JS thread.
-    pub fn dev_server_mut(self) -> Option<*mut crate::bake::DevServer::DevServer> {
+    pub(crate) fn dev_server_mut(self) -> Option<*mut crate::bake::DevServer::DevServer> {
         dispatch!(self, None, |_T, ctx| {
             let server = ctx.server?.as_ptr();
             // SAFETY: `ctx.server` is a non-null backref that outlives this context

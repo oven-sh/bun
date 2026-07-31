@@ -5,9 +5,10 @@ let runs = initialRuns;
 // run far higher under bun-asan; widen the threshold to avoid false positives.
 const isASAN = process.execPath.includes("bun-asan");
 
-function usage() {
-  return process.memoryUsage.rss();
-}
+const usage =
+  process.platform === "darwin" && typeof Bun.unsafe.memoryFootprint === "function"
+    ? Bun.unsafe.memoryFootprint
+    : process.memoryUsage.rss;
 
 Promise.withResolvers ??= () => {
   let promise, resolve, reject;

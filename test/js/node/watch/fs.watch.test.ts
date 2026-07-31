@@ -39,32 +39,17 @@ const testDir = tempDirWithFiles("watch", {
 });
 
 describe("fs.watch", () => {
-  test("non-persistent watcher should not block the event loop", done => {
-    try {
-      // https://github.com/joyent/node/issues/2293 - non-persistent watcher should not block the event loop
-      bunRun(path.join(import.meta.dir, "fixtures", "persistent.js"));
-      done();
-    } catch (e: any) {
-      done(e);
-    }
+  test.concurrent("non-persistent watcher should not block the event loop", async () => {
+    // https://github.com/joyent/node/issues/2293 - non-persistent watcher should not block the event loop
+    expect(await bunRun(path.join(import.meta.dir, "fixtures", "persistent.js"))).toSpawn();
   });
 
-  test("watcher should close and not block the event loop", done => {
-    try {
-      bunRun(path.join(import.meta.dir, "fixtures", "close.js"));
-      done();
-    } catch (e: any) {
-      done(e);
-    }
+  test.concurrent("watcher should close and not block the event loop", async () => {
+    expect(await bunRun(path.join(import.meta.dir, "fixtures", "close.js"))).toSpawn();
   });
 
-  test("unref watcher should not block the event loop", done => {
-    try {
-      bunRun(path.join(import.meta.dir, "fixtures", "unref.js"));
-      done();
-    } catch (e: any) {
-      done(e);
-    }
+  test.concurrent("unref watcher should not block the event loop", async () => {
+    expect(await bunRun(path.join(import.meta.dir, "fixtures", "unref.js"))).toSpawn();
   });
 
   test("should work with relative files", done => {
@@ -1331,6 +1316,7 @@ test.skipIf(!isMacOS)("fs.watch(dir) on macOS does not leak the resolved FSEvent
       /* ts */ `
         const fs = require("fs");
         const dir = process.argv[1];
+        const rss = process.platform === "darwin" && typeof Bun.unsafe.memoryFootprint === "function" ? Bun.unsafe.memoryFootprint : process.memoryUsage.rss;
 
         async function cycle(count) {
           for (let i = 0; i < count; i++) fs.watch(dir, () => {}).close();
@@ -1345,14 +1331,14 @@ test.skipIf(!isMacOS)("fs.watch(dir) on macOS does not leak the resolved FSEvent
         // sizing, and the PathWatcherManager caches reach steady state
         // (one-time growth tapers off only after ~10k cycles).
         for (let i = 0; i < 3; i++) await cycle(5000);
-        const before = process.memoryUsage.rss();
+        const before = rss();
 
         // With a ~700-byte resolved path, 5000 leaked dupeZ buffers is
         // ~3.5 MB of growth on unpatched builds. Keep the iteration count
         // low enough that rapid FSEventStream recreate doesn't exhaust the
         // kernel queue (FSEventStreamCreate -> NULL).
         await cycle(5000);
-        const after = process.memoryUsage.rss();
+        const after = rss();
 
         const growthMB = (after - before) / 1024 / 1024;
         console.log("RSS growth: " + growthMB.toFixed(2) + " MB");

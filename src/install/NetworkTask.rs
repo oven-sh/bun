@@ -201,6 +201,10 @@ impl NetworkTask {
             if let Some(m) = result.metadata.take() {
                 stream.status_code = m.response.status_code;
                 this.response.metadata = Some(m);
+                // New attempt's headers arrived — drop any bytes buffered from
+                // a prior failed attempt (pre-refactor `HTTPClient::start()`
+                // did this via `body_out_str.reset()`).
+                this.response_buffer.reset();
             }
 
             let chunk = result.body;
@@ -291,6 +295,13 @@ impl NetworkTask {
         // Stash this callback's body bytes into our own accumulation buffer
         // before `detach_lifetime` clears `result.body` to `&[]`. Covers the
         // non-streaming manifest path and the tarball fall-through above.
+        if result.metadata.is_some() {
+            // First callback of a fresh attempt on the non-streaming path —
+            // clear stale bytes from a prior retry. The streaming fall-through
+            // already `.take()`d metadata and reset above, so this is a no-op
+            // there and accumulated chunks are preserved.
+            this.response_buffer.reset();
+        }
         this.response_buffer.list.extend_from_slice(result.body);
 
         // BACKREF — PackageManager owns this task and outlives it. `notify`

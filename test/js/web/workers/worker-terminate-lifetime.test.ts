@@ -299,17 +299,21 @@ test.skipIf(!isDebug)(
           "    .catch(() => setImmediate(lane));" +
           "}" +
           "for (let i = 0; i < ${LANES}; i++) lane();";
+        function ready(w) {
+          return new Promise((res, rej) => {
+            w.once("message", res);
+            w.once("error", rej);
+            w.once("exit", (c) => rej(new Error("worker exited " + c + " before ready")));
+          });
+        }
         for (let r = 0; r < ${ROUNDS}; r++) {
           const ws = [];
           for (let i = 0; i < ${WORKERS}; i++) {
             const w = new Worker(src, { eval: true, workerData: { port } });
-            w.on("error", () => {});
             ws.push(w);
           }
-          await Promise.all(ws.map((w) => new Promise((res) => {
-            w.once("message", res);
-            setTimeout(res, 3000);
-          })));
+          await Promise.all(ws.map(ready));
+          for (const w of ws) w.on("error", () => {});
           await Bun.sleep(r % 3);
           await Promise.all(ws.map((w) => w.terminate()));
         }
@@ -371,11 +375,11 @@ test.skipIf(!isDebug)(
         async function lane(offset) {
           for (let i = 0; i < 25; i++) {
             const w = new Worker("./w.mjs");
-            w.onerror = () => {};
-            await new Promise((res) => {
+            await new Promise((res, rej) => {
               w.onmessage = () => res();
-              setTimeout(res, 2000);
+              w.onerror = (e) => rej(e.error ?? e);
             });
+            w.onerror = () => {};
             await Bun.sleep(offset + (i % 10) * 5);
             await w.terminate();
           }
@@ -414,20 +418,25 @@ test.skipIf(!isDebug)(
         `
         const { Worker } = require("node:worker_threads");
         const src =
-          "process.on('uncaughtException', () => {});" +
-          "setInterval(() => { for (let i = 0; i < 50; i++) setTimeout(() => { throw new Error('e'); }, 0); }, 1);" +
-          "require('node:worker_threads').parentPort.postMessage('up');";
+          "const { parentPort } = require('node:worker_threads');" +
+          "let first = true;" +
+          "process.on('uncaughtException', () => { if (first) { first = false; parentPort.postMessage('hot'); } });" +
+          "setInterval(() => { for (let i = 0; i < 50; i++) setTimeout(() => { throw new Error('e'); }, 0); }, 1);";
+        function ready(w) {
+          return new Promise((res, rej) => {
+            w.once("message", res);
+            w.once("error", rej);
+            w.once("exit", (c) => rej(new Error("worker exited " + c + " before ready")));
+          });
+        }
         for (let r = 0; r < 15; r++) {
           const ws = [];
           for (let i = 0; i < 6; i++) {
             const w = new Worker(src, { eval: true });
-            w.on("error", () => {});
             ws.push(w);
           }
-          await Promise.race([
-            Promise.all(ws.map((w) => new Promise((res) => w.once("message", res)))),
-            Bun.sleep(1500),
-          ]);
+          await Promise.all(ws.map(ready));
+          for (const w of ws) w.on("error", () => {});
           await Bun.sleep((r * 37) % 250);
           await Promise.all(ws.map((w) => w.terminate()));
         }

@@ -750,6 +750,42 @@ describe("appendFile honors an exclusive append flag", () => {
   });
 });
 
+describe("appendFile honors an explicit 'w' flag", () => {
+  // Node: `if (!options.flag || isFd(path)) options.flag = 'a'`. An explicit
+  // 'w'/'w+' must truncate; only the unset default becomes 'a'.
+  it("appendFileSync with flag 'w' truncates instead of appending", () => {
+    const path = join(tmpdirSync(), "append-w.txt");
+    writeFileSync(path, "abc");
+    fs.appendFileSync(path, "d", { flag: "w" });
+    expect(readFileSync(path, "utf8")).toBe("d");
+  });
+
+  it("fs.appendFile with flag 'w' truncates instead of appending", async () => {
+    const path = join(tmpdirSync(), "append-w-cb.txt");
+    writeFileSync(path, "abc");
+    const { promise, resolve } = Promise.withResolvers<NodeJS.ErrnoException | null>();
+    fs.appendFile(path, "d", { flag: "w" }, resolve);
+    expect(await promise).toBeNull();
+    expect(readFileSync(path, "utf8")).toBe("d");
+  });
+
+  it("promises.appendFile with flag 'w' truncates instead of appending", async () => {
+    const path = join(tmpdirSync(), "append-w-promise.txt");
+    writeFileSync(path, "abc");
+    await promises.appendFile(path, "d", { flag: "w" });
+    expect(readFileSync(path, "utf8")).toBe("d");
+  });
+
+  it("appendFileSync without a flag still defaults to appending", () => {
+    const path = join(tmpdirSync(), "append-default.txt");
+    writeFileSync(path, "abc");
+    fs.appendFileSync(path, "d");
+    expect(readFileSync(path, "utf8")).toBe("abcd");
+    fs.appendFileSync(path, "e", {});
+    expect(readFileSync(path, "utf8")).toBe("abcde");
+  });
+});
+
 // A write that dies partway through must not leave the old tail sitting behind
 // the bytes that did land. `ulimit -f 1` gives the child a 512 byte RLIMIT_FSIZE,
 // and Linux's generic_write_checks() then clamps the write to the limit and fails

@@ -1,6 +1,6 @@
 use core::sync::atomic::Ordering;
 
-use bun_collections::{ArrayHashMap, DynamicBitSet, StringHashMap};
+use bun_collections::{DynamicBitSet, StringArrayHashMap, StringHashMap};
 use bun_core::fmt::PathSep;
 use bun_core::{Global, Output};
 use bun_core::{ZStr, strings};
@@ -35,7 +35,7 @@ use crate::postinstall_optimizer::{self, PostinstallOptimizer};
 use crate::resolution::{self, Resolution};
 use crate::{
     DependencyID, DependencyInstallContext, ExtractData, PackageID, PackageNameHash,
-    TaskCallbackContext, TruncatedPackageNameHash, invalid_package_id,
+    TaskCallbackContext, invalid_package_id,
 };
 
 bun_output::declare_scope!(PackageInstaller, hidden);
@@ -103,10 +103,9 @@ pub struct PackageInstaller<'a> {
     pub(crate) tree_ids_to_trees_the_id_depends_on: bun_collections::DynamicBitSetList,
     pub(crate) pending_lifecycle_scripts: Vec<PendingLifecycleScript>,
 
-    /// Value is the alias bytes the key hash was computed from; lookups must
-    /// compare it since truncated hashes can collide.
-    pub(crate) trusted_dependencies_from_update_requests:
-        ArrayHashMap<TruncatedPackageNameHash, Box<[u8]>>,
+    /// Keyed on the alias bytes; the string-keyed table compares names on
+    /// hash-bucket hits.
+    pub(crate) trusted_dependencies_from_update_requests: StringArrayHashMap<()>,
 
     /// uses same ids as lockfile.trees
     pub(crate) trees: Box<[TreeContext]>,
@@ -1929,13 +1928,10 @@ impl<'a> PackageInstaller<'a> {
                     let dep =
                         &self.lockfile().buffers.dependencies.as_slice()[dependency_id as usize];
                     let dep_behavior = dep.behavior;
-                    let truncated_dep_name_hash: TruncatedPackageNameHash =
-                        dep.name_hash as TruncatedPackageNameHash;
                     let (is_trusted, is_trusted_through_update_request) = 'brk: {
                         if self
                             .trusted_dependencies_from_update_requests
-                            .get(&truncated_dep_name_hash)
-                            .is_some_and(|n| **n == *alias.slice(string_buf!()))
+                            .contains(alias.slice(string_buf!()))
                         {
                             break 'brk (true, true);
                         }
@@ -2011,10 +2007,7 @@ impl<'a> PackageInstaller<'a> {
                                         .trusted_dependencies
                                         .as_mut()
                                         .unwrap()
-                                        .put(
-                                            truncated_dep_name_hash,
-                                            Box::<[u8]>::from(alias.slice(string_buf!())),
-                                        )
+                                        .insert(alias.slice(string_buf!()))
                                         .unwrap_or_oom();
                                 }
                             }
@@ -2055,7 +2048,7 @@ impl<'a> PackageInstaller<'a> {
                                     let entry = self
                                         .summary
                                         .packages_with_blocked_scripts
-                                        .get_or_put(truncated_dep_name_hash)
+                                        .get_or_put(alias.slice(string_buf!()))
                                         .unwrap_or_oom();
                                     if !entry.found_existing {
                                         *entry.value_ptr = 0;
@@ -2234,14 +2227,11 @@ impl<'a> PackageInstaller<'a> {
 
             let dep = &self.lockfile().buffers.dependencies.as_slice()[dependency_id as usize];
             let dep_behavior = dep.behavior;
-            let truncated_dep_name_hash: TruncatedPackageNameHash =
-                dep.name_hash as TruncatedPackageNameHash;
             let (is_trusted, is_trusted_through_update_request, add_to_lockfile) = 'brk: {
                 // trusted through a --trust dependency. need to enqueue scripts, write to package.json, and add to lockfile
                 if self
                     .trusted_dependencies_from_update_requests
-                    .get(&truncated_dep_name_hash)
-                    .is_some_and(|n| **n == *alias.slice(string_buf!()))
+                    .contains(alias.slice(string_buf!()))
                 {
                     break 'brk (true, true, true);
                 }
@@ -2250,16 +2240,14 @@ impl<'a> PackageInstaller<'a> {
                     .manager()
                     .summary
                     .added_trusted_dependencies
-                    .get(&truncated_dep_name_hash)
+                    .get(alias.slice(string_buf!()))
                 {
                     // is a new trusted dependency. need to enqueue scripts and maybe add to lockfile
-                    if *added.name == *alias.slice(string_buf!())
-                        && self.lockfile().has_trusted_dependency(
-                            alias.slice(string_buf!()),
-                            pkg_name.slice(string_buf!()),
-                            resolution,
-                        )
-                    {
+                    if self.lockfile().has_trusted_dependency(
+                        alias.slice(string_buf!()),
+                        pkg_name.slice(string_buf!()),
+                        resolution,
+                    ) {
                         break 'brk (true, false, added.add_to_lockfile);
                     }
                 }
@@ -2325,10 +2313,7 @@ impl<'a> PackageInstaller<'a> {
                                 .trusted_dependencies
                                 .as_mut()
                                 .unwrap()
-                                .put(
-                                    truncated_dep_name_hash,
-                                    Box::<[u8]>::from(alias.slice(string_buf!())),
-                                )
+                                .insert(alias.slice(string_buf!()))
                                 .unwrap_or_oom();
                         }
                     }

@@ -2,8 +2,8 @@ use core::sync::atomic::{AtomicU8, Ordering};
 use std::io::Write as _;
 
 use bun_ast::Log;
-use bun_collections::{ArrayHashMap, DynamicBitSet, StringHashMap};
-use bun_core::{Environment, Global, Output};
+use bun_collections::{ArrayHashMap, DynamicBitSet, StringArrayHashMap, StringHashMap};
+use bun_core::{Environment, Global, Output, UnwrapOrOom};
 use bun_core::{ZStr, strings};
 use bun_paths::{self as paths, AbsPath, AutoAbsPath, AutoRelPath};
 use bun_sys::{self as sys, Fd};
@@ -22,7 +22,7 @@ use crate::postinstall_optimizer::PostinstallOptimizer;
 use crate::resolution;
 use crate::{
     self as install, DependencyID, Lockfile, PackageID, PackageManager, PackageNameHash,
-    Resolution, TaskCallbackContext, TruncatedPackageNameHash, bin, invalid_dependency_id,
+    Resolution, TaskCallbackContext, bin, invalid_dependency_id,
 };
 // Bring `items_<field>()` column accessors into scope for
 // `MultiArrayList<Package>` / `Slice<Package>`.
@@ -96,11 +96,10 @@ pub struct Installer<'a> {
     /// round-trip via `Method::from_u8` at the load sites below.
     pub(crate) supported_backend: AtomicU8,
 
-    /// Value is the alias bytes the key hash was computed from; lookups must
-    /// compare it since truncated hashes can collide. Built before tasks
-    /// spawn and only read concurrently afterwards.
-    pub(crate) trusted_dependencies_from_update_requests:
-        ArrayHashMap<TruncatedPackageNameHash, Box<[u8]>>,
+    /// Keyed on the alias bytes; the string-keyed table compares names on
+    /// hash-bucket hits. Built before tasks spawn and only read concurrently
+    /// afterwards.
+    pub(crate) trusted_dependencies_from_update_requests: StringArrayHashMap<()>,
 
     /// Absolute path to the global virtual store (`<cache_dir>/links`). When
     /// non-null, npm/git/tarball entries are materialized once into this
@@ -1623,14 +1622,11 @@ impl Task {
                     let string_buf = lockfile.buffers.string_bytes.as_slice();
 
                     let dep = &lockfile.buffers.dependencies[dep_id as usize];
-                    let truncated_dep_name_hash: TruncatedPackageNameHash =
-                        dep.name_hash as TruncatedPackageNameHash;
 
                     let (is_trusted, is_trusted_through_update_request) = 'brk: {
                         if installer
                             .trusted_dependencies_from_update_requests
-                            .get(&truncated_dep_name_hash)
-                            .is_some_and(|n| **n == *dep.name.slice(string_buf))
+                            .contains(dep.name.slice(string_buf))
                         {
                             break 'brk (true, true);
                         }
@@ -1739,10 +1735,11 @@ impl Task {
                                 if trusted.is_none() {
                                     *trusted = Some(Default::default());
                                 }
-                                trusted.as_mut().unwrap().insert(
-                                    truncated_dep_name_hash,
-                                    Box::from(dep.name.slice(string_buf)),
-                                );
+                                trusted
+                                    .as_mut()
+                                    .unwrap()
+                                    .insert(dep.name.slice(string_buf))
+                                    .unwrap_or_oom();
                             }
 
                             if first_index != 0 {

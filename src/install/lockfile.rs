@@ -106,11 +106,99 @@ pub(crate) type StringBuffer = Vec<u8>;
 pub(crate) type ExternalStringBuffer = Vec<ExternalString>;
 
 pub(crate) type NameHashMap = ArrayHashMap<PackageNameHash, SemverString, ArrayIdentityContextU64>;
-/// Value is the exact byte string the key hash was computed from; lookups must
-/// compare it since truncated hashes can collide. An empty value is the legacy
-/// `bun.lockb` sentinel ("name unknown, hash-only match").
-pub(crate) type TrustedDependenciesSet =
-    ArrayHashMap<TruncatedPackageNameHash, Box<[u8]>, ArrayIdentityContext>;
+
+/// Set of trusted dependency names. Named entries are keyed on the name bytes
+/// (the string-keyed table compares names on hash-bucket hits, so truncated
+/// hash collisions can't produce false matches). Entries loaded from the
+/// legacy binary lockfile carry only a truncated hash and no name.
+#[derive(Default)]
+pub struct TrustedDependenciesSet {
+    names: bun_collections::StringArrayHashMap<()>,
+    legacy_hashes: ArrayHashMap<TruncatedPackageNameHash, (), ArrayIdentityContext>,
+}
+
+impl TrustedDependenciesSet {
+    #[inline]
+    pub(crate) fn truncated_hash(name: &[u8]) -> TruncatedPackageNameHash {
+        SemverStringBuilder::string_hash(name) as TruncatedPackageNameHash
+    }
+
+    pub fn insert(&mut self, name: &[u8]) -> Result<(), AllocError> {
+        self.names.put(name, ())
+    }
+
+    pub(crate) fn insert_legacy_hash(
+        &mut self,
+        hash: TruncatedPackageNameHash,
+    ) -> Result<(), AllocError> {
+        self.legacy_hashes.put(hash, ())
+    }
+
+    /// Name match, or a legacy hash-only entry matching the name's truncated
+    /// hash.
+    pub(crate) fn contains(&self, name: &[u8]) -> bool {
+        self.names.contains(name)
+            || (!self.legacy_hashes.is_empty()
+                && self.legacy_hashes.contains(&Self::truncated_hash(name)))
+    }
+
+    /// Named entries only; legacy hash-only entries never match.
+    pub(crate) fn contains_name(&self, name: &[u8]) -> bool {
+        self.names.contains(name)
+    }
+
+    /// Truncated-hash membership. Cold path (legacy lockfile diffing): scans
+    /// the names linearly.
+    pub(crate) fn contains_truncated_hash(&self, hash: TruncatedPackageNameHash) -> bool {
+        self.legacy_hashes.contains(&hash)
+            || self
+                .names
+                .keys()
+                .iter()
+                .any(|name| Self::truncated_hash(name) == hash)
+    }
+
+    /// If a legacy hash-only entry matches `name`, replace it with a named
+    /// entry. Returns whether a legacy entry matched.
+    pub(crate) fn promote_legacy(&mut self, name: &[u8]) -> Result<bool, AllocError> {
+        if !self.legacy_hashes.swap_remove(&Self::truncated_hash(name)) {
+            return Ok(false);
+        }
+        self.names.put(name, ())?;
+        Ok(true)
+    }
+
+    pub(crate) fn names(&self) -> &[Box<[u8]>] {
+        self.names.keys()
+    }
+
+    pub(crate) fn legacy_hashes(&self) -> &[TruncatedPackageNameHash] {
+        self.legacy_hashes.keys()
+    }
+
+    pub fn count(&self) -> usize {
+        self.names.count() + self.legacy_hashes.count()
+    }
+
+    pub(crate) fn ensure_unused_capacity(&mut self, additional: usize) -> Result<(), AllocError> {
+        self.names.ensure_unused_capacity(additional)
+    }
+
+    /// Truncated hashes of every entry, for the binary lockfile format.
+    pub(crate) fn truncated_hashes(&self) -> Vec<TruncatedPackageNameHash> {
+        let mut out = Vec::with_capacity(self.count());
+        out.extend(self.names.keys().iter().map(|name| Self::truncated_hash(name)));
+        out.extend_from_slice(self.legacy_hashes.keys());
+        out
+    }
+
+    pub(crate) fn clone(&self) -> Result<Self, AllocError> {
+        Ok(Self {
+            names: self.names.clone()?,
+            legacy_hashes: self.legacy_hashes.clone()?,
+        })
+    }
+}
 pub(crate) type VersionHashMap =
     ArrayHashMap<PackageNameHash, Semver::Version, ArrayIdentityContextU64>;
 pub(crate) type PatchedDependenciesMap =
@@ -3150,10 +3238,9 @@ pub mod default_trusted_dependencies {
 
 impl Lockfile {
     pub(crate) fn in_trusted_dependencies(&self, name: &[u8]) -> bool {
-        let hash = SemverStringBuilder::string_hash(name) as u32;
         self.trusted_dependencies
             .as_ref()
-            .is_some_and(|trusted| trusted.contains(&hash))
+            .is_some_and(|trusted| trusted.contains(name))
     }
 
     pub fn has_trusted_dependency(
@@ -3168,12 +3255,7 @@ impl Lockfile {
             } else {
                 alias
             };
-            let hash = SemverStringBuilder::string_hash(trusted_name) as u32;
-            let name_is_trusted = match trusted_dependencies.get(&hash) {
-                Some(name) => !name.is_empty() && **name == *trusted_name,
-                None => false,
-            };
-            if !name_is_trusted {
+            if !trusted_dependencies.contains_name(trusted_name) {
                 return false;
             }
             if resolution.tag == ResolutionTag::Npm {

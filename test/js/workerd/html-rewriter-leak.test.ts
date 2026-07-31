@@ -42,6 +42,40 @@ test("onEndTag callbacks are released after the rewrite", () => {
   expect(after - before).toBe(0);
 });
 
+// https://github.com/oven-sh/bun/issues/31804
+// The sync-throw arm of handler_callback wrote the Exception cell into the
+// capture slot and JSValue::protect()ed it, but create_lolhtml_error drains
+// that slot without a matching unprotect, so every caught handler exception
+// stayed GC-rooted.
+test("handler exceptions do not leak protected Exception roots", () => {
+  const protectedExceptions = () => {
+    Bun.gc(true);
+    return heapStats().protectedObjectTypeCounts.Exception ?? 0;
+  };
+  const run = (n: number) => {
+    for (let i = 0; i < n; i++) {
+      try {
+        new HTMLRewriter()
+          .on("div", {
+            element() {
+              throw new Error("boom");
+            },
+          })
+          .transform("<div>x</div>");
+      } catch {}
+    }
+  };
+
+  run(50);
+  const before = protectedExceptions();
+  run(200);
+  const after = protectedExceptions();
+
+  // Unfixed, each of the 200 throws after the baseline left one protected
+  // Exception behind.
+  expect(after - before).toBe(0);
+});
+
 // Each .on() / .onDocument() call heap-allocates an ElementHandler / DocumentHandler
 // struct via bun.default_allocator. When the HTMLRewriter is garbage-collected,
 // LOLHTMLContext.deinit() must destroy those allocations. Previously it only

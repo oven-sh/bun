@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { once } from "events";
 import fs from "fs";
-import { gcTick, tls, tmpdirSync } from "harness";
+import { bunEnv, bunExe, gcTick, tempDir, tls, tmpdirSync } from "harness";
 import { createServer as createTcpServer } from "net";
 import path, { join } from "path";
 import { setImmediate as setImmediatePromise } from "timers/promises";
@@ -83,6 +83,77 @@ describe("HTMLRewriter", () => {
       expect(e.message).toBe("test");
     } finally {
       expect(caught).toBeTrue();
+    }
+  });
+
+  // A handler that throws / returns a rejected promise must surface the error
+  // to the caller *and nowhere else*: no `unhandledRejection`, and the caller
+  // sees the original error (not the generic "rewriter has been stopped").
+  // Under `bun test` the VM's unhandled-rejection path short-circuits to the
+  // capture handler, so these must run in a child process to exercise the
+  // real `process.on("unhandledRejection")` dispatch.
+  describe.concurrent("handler errors propagate to the caller and not to unhandledRejection", () => {
+    const handlers = {
+      "sync throw": `element() { throw new Zed("boom"); }`,
+      "return Error from sync handler": `element() { return new Zed("boom"); }`,
+      "async throw before first await": `async element() { throw new Zed("boom"); }`,
+      "Promise.reject from sync handler": `element() { return Promise.reject(new Zed("boom")); }`,
+      "async throw after await": `async element() { await 1; throw new Zed("boom"); }`,
+    };
+    const bodies = {
+      // is_async == false in on_finished_buffering (init() still on the stack).
+      "string body": `new Response("<p>1</p>")`,
+      // is_async == true (init() has already returned when the handler runs).
+      "Bun.file body": `new Response(Bun.file("async.html"))`,
+    };
+    const run = async (handler, body, withListener) => {
+      using dir = tempDir("htmlrewriter-handler-error", { "async.html": "<p>1</p>" });
+      const listener =
+        `let unhandled = 0;` +
+        (withListener
+          ? `process.on("unhandledRejection", e => { unhandled++; console.log("UNHANDLED", e?.constructor?.name); });`
+          : ``);
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `${listener}
+           class Zed extends Error {}
+           try {
+             await new HTMLRewriter()
+               .on("p", { ${handler} })
+               .transform(${body})
+               .text();
+           } catch (e) {
+             console.log("caught", e.constructor.name, e.message);
+           }
+           await Bun.sleep(1);
+           console.log("alive", unhandled);`,
+        ],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout: stdout.trim(), stderr, exitCode };
+    };
+
+    for (const [bodyName, body] of Object.entries(bodies)) {
+      for (const [name, handler] of Object.entries(handlers)) {
+        it(`${bodyName}, ${name} (no listener)`, async () => {
+          const { stdout, stderr, exitCode } = await run(handler, body, false);
+          expect(stderr).toBe("");
+          expect(stdout).toBe("caught Zed boom\nalive 0");
+          expect(exitCode).toBe(0);
+        });
+        it(`${bodyName}, ${name} (with unhandledRejection listener)`, async () => {
+          const { stdout, stderr, exitCode } = await run(handler, body, true);
+          expect(stderr).toBe("");
+          expect(stdout).toBe("caught Zed boom\nalive 0");
+          expect(exitCode).toBe(0);
+        });
+      }
     }
   });
 

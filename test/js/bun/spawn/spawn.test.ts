@@ -1261,7 +1261,49 @@ it.skipIf(isWindows)("leaves a caller-supplied stdout fd open when stdin stream 
     stdio: ["ignore", "pipe", "pipe"],
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stdout.trim()).toMatch(/^(pull unavailable|did not throw)$/);
+  expect(stdout.trim()).toBe("pull unavailable");
+  expect(readFileSync(file, "utf8")).toContain("still-open");
+  expect(exitCode).toBe(0);
+});
+
+it.skipIf(isWindows)("leaves a Bun.file(fd) stdout open when stdin stream setup fails", async () => {
+  // Bun.file(fd) as stdout is an fd-backed Blob; extract_blob lowers it to
+  // Stdio::Fd before spawn, so the error-path cleanup must recognise it as
+  // caller-owned via the Fd variant and leave it open.
+  const file = join(tmp, "stdin-setup-failure-blob.txt");
+  const fixture = `
+    const { openSync, fstatSync, writeSync, closeSync } = require("node:fs");
+    const fd = openSync(process.env.OUT_FILE, "w");
+    let armed = false;
+    const source = {
+      type: "direct",
+      get pull() {
+        if (armed) throw new Error("pull unavailable");
+        return () => {};
+      },
+    };
+    const stream = new ReadableStream(source);
+    armed = true;
+    let message = "did not throw";
+    try {
+      Bun.spawn({ cmd: [process.execPath, "-e", "0"], stdio: [stream, Bun.file(fd), "ignore"] });
+    } catch (err) {
+      message = err.message;
+    }
+    fstatSync(fd);
+    writeSync(fd, "still-open");
+    closeSync(fd);
+    console.log(message);
+    process.exit(0);
+  `;
+  await using proc = spawn({
+    cmd: [bunExe(), "-e", fixture],
+    env: { ...bunEnv, OUT_FILE: file },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(stdout.trim()).toBe("pull unavailable");
   expect(readFileSync(file, "utf8")).toContain("still-open");
   expect(exitCode).toBe(0);
 });

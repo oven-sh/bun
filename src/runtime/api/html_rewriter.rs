@@ -1423,9 +1423,14 @@ fn create_lolhtml_error(global: &JSGlobalObject, message: &dyn core::fmt::Displa
         // SAFETY: VM-owned pointer; valid while VM lives.
         let slot = unsafe { &mut *err_ptr };
         if !slot.is_empty() {
-            // it's a promise rejection
+            // Either a protected callback exception captured by
+            // `handler_callback`, or an unprotected promise rejection reason
+            // captured by the VM rejection handler.
             let result = *slot;
             *slot = JSValue::ZERO;
+            if result.is_exception(core::ptr::from_ref(global.vm()).cast_mut()) {
+                result.unprotect();
+            }
             return result;
         }
     }

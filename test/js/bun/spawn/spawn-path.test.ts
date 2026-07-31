@@ -69,7 +69,11 @@ describe.skipIf(isWindows)("spawn resolves relative PATH entries against the cwd
 
   test.concurrent("child_process.spawn with PATH='.'", async () => {
     using dir = makeDir();
-    const { promise, resolve, reject } = Promise.withResolvers<{ stdout: string; stderr: string; code: number | null }>();
+    const { promise, resolve, reject } = Promise.withResolvers<{
+      stdout: string;
+      stderr: string;
+      code: number | null;
+    }>();
     const c = cpSpawn("tool.sh", [], {
       cwd: path.join(String(dir), "sub"),
       env: { ...bunEnv, PATH: ".:" + bunEnv.PATH },

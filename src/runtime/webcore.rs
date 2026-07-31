@@ -403,8 +403,7 @@ impl SinkHandle {
             SinkHandle::ServerResponse(any) => any.end_chunk(err.as_ref()),
             // SAFETY: live backref; ByteStream clears sink before free.
             SinkHandle::FetchRequestBody(mut p) => unsafe { p.get_mut() }.end_from_stream(err),
-            // Raw-ptr dispatch: end_from_stream may synchronously re-borrow
-            // and ultimately free the sink; see its doc comment.
+            // Raw-ptr dispatch: may re-borrow and free the sink (see its doc).
             SinkHandle::S3Upload(p) => streams::NetworkSink::end_from_stream(p.as_ptr(), err),
             SinkHandle::FileSink(p) => p.end_from_stream(err),
             SinkHandle::ValueBufferer(ctx, write) => {

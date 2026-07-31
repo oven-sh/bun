@@ -734,12 +734,9 @@ impl Value {
         match self {
             Value::InternalBlob(b) => b.memory_cost(),
             Value::WTFStringImpl(s) => wtf_impl(s).memory_cost(),
-            // A Locked body does not own its bytes: they either have not
-            // arrived yet or live in the ByteStream buffer (accounted via the
-            // stream's own memoryCost). Reporting the content-length here
-            // would tell JSC the body holds N bytes it does not, inflating the
-            // heap's live-size estimate and suppressing collection of
-            // unrelated transient allocations until real RSS catches up.
+            // Not `size_hint()`: a Locked body owns no bytes (they live in the
+            // ByteStream buffer, separately accounted), so reporting the
+            // content-length here mis-trains JSC's GC live-size estimate.
             Value::Locked(_) => 0,
             // Value::InlineBlob(b) => b.slice_const().len(),
             _ => 0,

@@ -2395,17 +2395,13 @@ impl NetworkSink {
     /// (clean EOF / commit), an upstream error on the ByteStream fast-path must
     /// abort the upload and surface the original JS error to the caller.
     ///
-    /// Raw `*mut Self` because `task.fail()`/`write_bytes(EOF)` may synchronously
-    /// fire `S3UploadStreamWrapper::resolve`, which re-borrows this sink via
-    /// `sink_mut()` and writes `ended`/`done`/`pending`/`upstream_error`; and the
-    /// terminal `deref_` drops rc→0 → `Drop::detach_sink` frees this allocation.
-    /// A `&mut self` receiver would alias the re-entry and outlive the dealloc.
+    /// Raw `*mut Self` because `task.fail()`/`write_bytes(EOF)` synchronously
+    /// fire `S3UploadStreamWrapper::resolve`, which re-borrows this sink, and
+    /// the terminal `deref_` may drop rc→0 and free `*this` via `detach_sink`.
     #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub(crate) fn end_from_stream(this: *mut Self, err: Option<StreamError>) {
-        // SAFETY: `this` is the live Box<NetworkSink> installed as the ByteStream
-        // sink; the caller (ByteStream) cleared its sink handle before calling,
-        // so the only owner is the wrapper. Short reborrows below do not span the
-        // re-entrant `fail`/`write_bytes` calls.
+        // SAFETY: `this` is the live Box<NetworkSink> the wrapper owns; short
+        // reborrows below do not span the re-entrant `fail`/`write_bytes` calls.
         let (ended, is_bytestream) = unsafe {
             (
                 (*this).ended,
@@ -2424,8 +2420,6 @@ impl NetworkSink {
             let _ = unsafe { &mut *this }.end(sys_err);
             return;
         }
-        // ByteStream fast-path: the source drove this call and already cleared
-        // its own `sink` field, so detach (not cancel).
         let (task_ref, wrapper) = {
             // SAFETY: short reborrow for field writes; no re-entry in this block.
             let this_ref = unsafe { &mut *this };
@@ -2434,9 +2428,6 @@ impl NetworkSink {
             let Some(task_ref) = this_ref.task else {
                 return;
             };
-            // `self.task` holds a counted ref on the upload; on this path
-            // `callback_context` is the `S3UploadStreamWrapper` (set in
-            // `upload_stream`).
             let wrapper = task_ref
                 .callback_context
                 .cast::<crate::webcore::s3::client::S3UploadStreamWrapper>();
@@ -2452,29 +2443,18 @@ impl NetworkSink {
             }
             (task_ref, wrapper)
         };
-        // `fail()`/`write_bytes(EOF)` may synchronously fire
-        // `S3UploadStreamWrapper::resolve`, which forms its own `&mut *this` via
-        // `sink_mut()`; so deref the task via the detached `BackRef` (separate
-        // heap allocation) instead of `self.task_mut()`, so no `&mut *this` of
-        // ours is live across the re-entry.
+        // SAFETY: `task_ref` is a separate counted allocation; `fail()` may
+        // deref it but the sink holds its own +1 until `detach_sink`.
+        let task = unsafe { &mut *task_ref.as_ptr() };
         if err.is_some() {
-            // SAFETY: `task_ref` is the counted MultiPartUpload; `fail()` derefs
-            // it once but the sink holds its own +1 until `detach_sink` (after
-            // rc→0 below), so the pointee stays live.
-            let _ = unsafe { &mut *task_ref.as_ptr() }.fail(bun_s3_signing::error::S3Error {
+            let _ = task.fail(bun_s3_signing::error::S3Error {
                 code: b"UnknownError",
                 message: b"ReadableStream ended with an error",
             });
         } else {
-            // SAFETY: as above.
-            let _ = unsafe { &mut *task_ref.as_ptr() }.write_bytes(b"", true);
+            let _ = task.write_bytes(b"", true);
         }
-        // Balance the stream-pump +1 `upload_stream` left on the wrapper so
-        // `resolve()` above saw rc 2→1 and the sink stayed allocated across
-        // the re-entry. May drop rc to 0 and free `*this` via `detach_sink`,
-        // so no access to `*this` is sound past this point.
-        // SAFETY: `wrapper` is the live Box allocation (rc ≥ 1 after the
-        // terminal action above).
+        // SAFETY: `wrapper` live with rc ≥ 1; this may free `*this`.
         unsafe { crate::webcore::s3::client::S3UploadStreamWrapper::deref_(wrapper) };
     }
 

@@ -10,13 +10,10 @@ pub(crate) type RawStatFS = libc::statfs;
 #[cfg(not(unix))]
 pub(crate) type RawStatFS = bun_sys::StatFS;
 
-// Both variants store fields as `i64` and differ only in the JS conversion
-// (Number vs BigInt). Earlier the non-bigint fields were `i32`, truncating
-// block counts above `i32::MAX` (oven-sh/bun#31510); the default JS API returns
-// Number, not `i32`, so there is no reason to narrow here. Stable Rust const
-// generics cannot select a field type from a `const BIG: bool`, so we generate
-// the two concrete instantiations with a small macro. The exported aliases
-// (`StatFSSmall`, `StatFSBig`) are the only call sites.
+// Both variants store fields as `i64`; they differ only in the JS conversion
+// (Number vs BigInt). The default JS API returns Number, so there is no reason
+// to narrow. The macro just stamps out the two aliases; the exported
+// `StatFSSmall`/`StatFSBig` are the only call sites.
 macro_rules! define_statfs_type {
     ($name:ident, $Int:ty, big = $big:expr) => {
         #[allow(non_snake_case)]

@@ -5257,12 +5257,8 @@ it("fs.statfs (callback) should work with bigint", async () => {
 // LD_PRELOAD a shim that makes `statfs(2)` report large block counts and a
 // sentinel `bsize` (proving the shim actually interposed). glibc-only: the
 // shim relies on ELF symbol interposition and a libc `struct statfs` layout.
-it.skipIf(!isGlibc)("fs.statfsSync preserves block counts above i32::MAX (#31510)", () => {
-  const cc = Bun.which("cc") || Bun.which("gcc") || Bun.which("clang");
-  if (!cc) {
-    throw new Error("No C compiler found for statfs LD_PRELOAD regression");
-  }
-
+const cc = Bun.which("cc") || Bun.which("gcc") || Bun.which("clang");
+it.skipIf(!isGlibc || !cc)("fs.statfsSync preserves block counts above i32::MAX (#31510)", () => {
   const BSIZE = 12288; // sentinel (3 * 4096): proves the shim ran
   const BLOCKS = 3747442852; // > i32::MAX
   const BFREE = 3248532185; // > i32::MAX
@@ -5292,7 +5288,7 @@ int statfs64(const char *path, struct statfs64 *buf) { (void)path; FILL(buf); re
 
   const soPath = path.join(String(dir), "shim.so");
   const compile = Bun.spawnSync({
-    cmd: [cc, "-shared", "-fPIC", "-o", soPath, path.join(String(dir), "shim.c")],
+    cmd: [cc!, "-shared", "-fPIC", "-o", soPath, path.join(String(dir), "shim.c")],
     env: bunEnv,
   });
   if (compile.exitCode !== 0) {
@@ -5304,9 +5300,10 @@ int statfs64(const char *path, struct statfs64 *buf) { (void)path; FILL(buf); re
     return { bsize: s.bsize, blocks: s.blocks, bfree: s.bfree, bavail: s.bavail };
   })()));`;
 
+  const existing = bunEnv.LD_PRELOAD;
   const proc = Bun.spawnSync({
     cmd: [bunExe(), "-e", script],
-    env: { ...bunEnv, LD_PRELOAD: soPath },
+    env: { ...bunEnv, LD_PRELOAD: existing ? `${soPath}:${existing}` : soPath },
     cwd: String(dir),
   });
 

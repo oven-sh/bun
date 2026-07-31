@@ -82,10 +82,10 @@ describe("fetch() with redirect: 'error' only rejects WHATWG redirect statuses",
   }
 
   it.concurrent.each([
-    [300, "Multiple Choices", 'Location: /elsewhere\r\n'],
+    [300, "Multiple Choices", "Location: /elsewhere\r\n"],
     [304, "Not Modified", 'ETag: "v1"\r\n'],
     [304, "Not Modified", 'ETag: "v1"\r\nLocation: /elsewhere\r\n'],
-    [305, "Use Proxy", 'Location: /elsewhere\r\n'],
+    [305, "Use Proxy", "Location: /elsewhere\r\n"],
     [306, "unused", ""],
   ])("%d %s is returned, not rejected", async (status, reason, extra) => {
     const { server, url } = await serve(status, reason, extra);

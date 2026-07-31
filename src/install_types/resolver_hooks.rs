@@ -1007,11 +1007,8 @@ impl Repository {
         if committish_order != Ordering::Equal {
             return committish_order;
         }
-        // `eql` distinguishes repositories by `resolved` when both are known,
-        // so the order must too or equal-by-committish pairs stay tied.
-        if self.resolved.is_empty() || rhs.resolved.is_empty() {
-            return Ordering::Equal;
-        }
+        // Unconditional so the order stays transitive; an empty `resolved` is
+        // an ordinary value here, not a wildcard like in `eql`.
         self.resolved.order(rhs.resolved, lhs_buf, rhs_buf)
     }
 

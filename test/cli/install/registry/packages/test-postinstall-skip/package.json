@@ -21,8 +21,8 @@
       "_hasInstallScript": true,
       "hasInstallScript": true,
       "dist": {
-        "integrity": "sha512-CzqDZuiXae38S87+FRbHVD5AXutC/Twj7HkAqqnaBa5hykpJgicbMruxd4nO7wsXvl1hx4Xgz8BYGqxdnsBlCg==",
-        "shasum": "108f2af8384ec686db33bbe489c5eb10bc68755c",
+        "integrity": "sha512-1m2Eaj8L7b4B3yc4oFr14KIyrCpFh/ANk2mKqCtVVtatehrx3hEPGFvzgnvTPbXuHut6Zh0+zKxXf0YulDQiWA==",
+        "shasum": "4f22ea2942651f49c8b305cbdcb26e024459ac52",
         "tarball": "http://localhost:4873/test-postinstall-skip/-/test-postinstall-skip-1.0.0.tgz"
       }
     },
@@ -42,8 +42,8 @@
       "_hasInstallScript": true,
       "hasInstallScript": true,
       "dist": {
-        "integrity": "sha512-Gly/v6IP8/eiGE+DHedFjyumVv2zuN921v00S98n25daLVCkM1ZSKEi/RJPE+you4psysHqx6KEN4rDSEIxmTA==",
-        "shasum": "268e9f364a6b6ee93763243512f94e39b94b651f",
+        "integrity": "sha512-5ZBKaDQMg5+AhLD/O3Lh2rKqygWJ6JjD4xS46fcXV8Xnc/IY1rh6nL07Gv9SeF2hM7PnW7Cp8Mn9ODBDXtve1g==",
+        "shasum": "11e6a95cc0fa7c180981ba800c9763a3486a5bdc",
         "tarball": "http://localhost:4873/test-postinstall-skip/-/test-postinstall-skip-2.0.0.tgz"
       }
     }

@@ -14,8 +14,7 @@
  *     depends on test-postinstall-skip@1.0.0 (forces nested copy when root has 2.0.0)
  */
 
-import { $ } from "bun";
-import { mkdir, rm, writeFile } from "fs/promises";
+import { mkdir, writeFile } from "fs/promises";
 import { join } from "path";
 
 const packagesDir = import.meta.dir;
@@ -23,21 +22,14 @@ const packagesDir = import.meta.dir;
 type Files = Record<string, string>;
 
 async function packTarball(pkgName: string, version: string, pkgJson: object, files: Files) {
-  const tmp = join(packagesDir, `${pkgName.replace(/\//g, "__")}-${version}-tmp`);
-  const pkgRoot = join(tmp, "package");
-  await rm(tmp, { recursive: true, force: true });
-  await mkdir(pkgRoot, { recursive: true });
-  await writeFile(join(pkgRoot, "package.json"), JSON.stringify(pkgJson, null, 2));
-  for (const [rel, contents] of Object.entries(files)) {
-    const abs = join(pkgRoot, rel);
-    await mkdir(join(abs, ".."), { recursive: true });
-    await writeFile(abs, contents);
-  }
   const outDir = join(packagesDir, pkgName);
   await mkdir(outDir, { recursive: true });
   const tarball = join(outDir, `${pkgName}-${version}.tgz`);
-  await $`tar -czf ${tarball} -C ${tmp} package`;
-  await rm(tmp, { recursive: true, force: true });
+  const entries: Record<string, string> = {
+    "package/package.json": JSON.stringify(pkgJson, null, 2),
+  };
+  for (const [rel, contents] of Object.entries(files)) entries[`package/${rel}`] = contents;
+  await Bun.Archive.write(tarball, entries, { compress: "gzip" });
   return tarball;
 }
 
@@ -92,13 +84,18 @@ for (const v of ["1.0.0", "2.0.0"]) {
   nativeVersions[v] = { tarball, pkgJson };
 }
 
-// test-postinstall-skip-parent@1.0.0
-const parentPkgJson = {
-  name: "test-postinstall-skip-parent",
-  version: "1.0.0",
-  dependencies: { "test-postinstall-skip": "1.0.0" },
-};
-const parentTarball = await packTarball("test-postinstall-skip-parent", "1.0.0", parentPkgJson, {});
+// test-postinstall-skip-parent@1.0.0 and @2.0.0
+// 1.0.0 depends only on skip@1.0.0 (native dep lands in the child tree under skip)
+// 2.0.0 also depends on native@1.0.0 directly so native lands as a sibling of skip
+const parentVersions: Record<string, { tarball: string; pkgJson: object }> = {};
+for (const [v, deps] of [
+  ["1.0.0", { "test-postinstall-skip": "1.0.0" }],
+  ["2.0.0", { "test-postinstall-skip": "1.0.0", "test-postinstall-skip-native": "1.0.0" }],
+] as const) {
+  const pkgJson = { name: "test-postinstall-skip-parent", version: v, dependencies: deps };
+  const tarball = await packTarball("test-postinstall-skip-parent", v, pkgJson, {});
+  parentVersions[v] = { tarball, pkgJson };
+}
 
 // registry manifests
 async function writeManifest(pkgName: string, versions: Record<string, { tarball: string; pkgJson: object }>) {
@@ -135,6 +132,6 @@ async function writeManifest(pkgName: string, versions: Record<string, { tarball
 
 await writeManifest("test-postinstall-skip", mainVersions);
 await writeManifest("test-postinstall-skip-native", nativeVersions);
-await writeManifest("test-postinstall-skip-parent", { "1.0.0": { tarball: parentTarball, pkgJson: parentPkgJson } });
+await writeManifest("test-postinstall-skip-parent", parentVersions);
 
 console.log("✅ Created postinstall-skip test packages");

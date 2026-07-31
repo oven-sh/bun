@@ -19,8 +19,8 @@
       ],
       "_id": "test-postinstall-skip-native@1.0.0",
       "dist": {
-        "integrity": "sha512-SktXp+7UTTNoqdxOQVSBT03qSXVnmiGLS60Q2ln5KOMPfUlzgyU6yKdkOce3k0Piz2Y5mMeyzhxzK0DI8YWCQA==",
-        "shasum": "6b009145d434d5652e81b276cf59438b463029dc",
+        "integrity": "sha512-MzZBv8gmNGoo7o2jMfanAHrWuYzwb++jNHaDQKwqG3eTbuwreeKWgCLjDfgMCdhdR120jioKqOdGayzcLW4HCg==",
+        "shasum": "e0b8322715f43894febbff26cfe3ce767cdc7e6f",
         "tarball": "http://localhost:4873/test-postinstall-skip-native/-/test-postinstall-skip-native-1.0.0.tgz"
       }
     },
@@ -38,8 +38,8 @@
       ],
       "_id": "test-postinstall-skip-native@2.0.0",
       "dist": {
-        "integrity": "sha512-AZnsjMqYOYJQsftdwXTpzcnt86bKD9OPYs58J/cTddSZu67v4+2IRKdJHBW3eOzMWn96CIMtlqQ3+NMGdPVXkg==",
-        "shasum": "7fb4f6b369020ed21d5d0f10a0ead1495373072c",
+        "integrity": "sha512-KrhR9CLW3wIY/BtOnffrVb82ONEWhz+TAUeSMBAYzWZ3FKz1m/aFbYaCTK1x+Plc2Qvp6arKVl3/S4vFtkDPag==",
+        "shasum": "8506303addf82dcac2c7c140f14c31f367bd58bf",
         "tarball": "http://localhost:4873/test-postinstall-skip-native/-/test-postinstall-skip-native-2.0.0.tgz"
       }
     }

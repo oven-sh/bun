@@ -912,11 +912,11 @@ static inline bool rebindValue(JSC::JSGlobalObject* lexicalGlobalObject, sqlite3
         }
 
         if (roped->is8Bit() && roped->containsOnlyASCII()) {
-            CHECK_BIND(sqlite3_bind_text(stmt, i, reinterpret_cast<const char*>(roped->span8().data()), roped->length(), SQLITE_TRANSIENT));
+            CHECK_BIND(sqlite3_bind_text64(stmt, i, reinterpret_cast<const char*>(roped->span8().data()), roped->length(), SQLITE_TRANSIENT, SQLITE_UTF8));
         } else {
             // Not sqlite3_bind_text16: SQLite's UTF-16 decoder stores lone surrogates as ill-formed UTF-8.
             auto utf8 = roped->utf8();
-            CHECK_BIND(sqlite3_bind_text(stmt, i, utf8.data(), utf8.length(), SQLITE_TRANSIENT));
+            CHECK_BIND(sqlite3_bind_text64(stmt, i, utf8.data(), utf8.length(), SQLITE_TRANSIENT, SQLITE_UTF8));
         }
 
     } else if (value.isHeapBigInt()) [[unlikely]] {

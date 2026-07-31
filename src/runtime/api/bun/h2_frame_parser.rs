@@ -9042,7 +9042,8 @@ impl H2FrameParser {
                     let signal_ = unsafe { &mut *signal_ptr };
                     if signal_.aborted() {
                         stream.state = StreamState::IDLE;
-                        let wrapped = Bun__wrapAbortError(global_object, signal_.js_reason(global_object));
+                        let wrapped =
+                            Bun__wrapAbortError(global_object, signal_.js_reason(global_object));
                         this.abort_stream(&mut stream, wrapped);
                         return Ok(JSValue::js_number(stream_id as f64));
                     }

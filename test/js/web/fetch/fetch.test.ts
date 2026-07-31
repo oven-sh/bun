@@ -531,11 +531,7 @@ describe("AbortSignal", () => {
         stderr: "pipe",
         stdout: "pipe",
       });
-      const [stdout, stderr, exitCode] = await Promise.all([
-        proc.stdout.text(),
-        proc.stderr.text(),
-        proc.exited,
-      ]);
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       expect({ stdout: stdout.trim(), stderr }).toEqual({ stdout: "bad=0", stderr: "" });
       expect(exitCode).toBe(0);
     },

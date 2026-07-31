@@ -830,6 +830,12 @@ describe("mock()", () => {
     expect(Object.getPrototypeOf(result4)).toBe(NewTarget.prototype);
     expect(result4).toBeInstanceOf(NewTarget);
     expect(fn4.mock.instances).toEqual([result4]);
+
+    const fn5 = jest.fn(() => {
+      throw new Error("boom");
+    });
+    expect(() => new fn5()).toThrow("boom");
+    expect(() => Reflect.construct(fn5, [])).toThrow("boom");
   });
 });
 

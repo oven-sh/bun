@@ -41,21 +41,28 @@ describe.concurrent("run-unicode", () => {
 }`);
   });
 
-  test("runs UTF-16BE source with a BOM", async () => {
-    using dir = tempDir("run-utf16be", {
-      "index.js": Buffer.from("\uFEFFconsole.log('utf16be')", "utf16le").swap16(),
-    });
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "index.js"],
-      cwd: String(dir),
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  describe.each([
+    ["UTF-16LE", (source: string) => Buffer.from("\uFEFF" + source, "utf16le")],
+    ["UTF-16BE", (source: string) => Buffer.from("\uFEFF" + source, "utf16le").swap16()],
+  ])("runs %s source with a BOM", (_, encode) => {
+    test.each([
+      ["ascii", `console.log("hello")`, "hello\n"],
+      ["non-ascii", `console.log("é汉字🎉".length, "é汉字🎉")`, "5 é汉字🎉\n"],
+      ["bom only", "", ""],
+    ])("%s", async (_, source, expected) => {
+      using dir = tempDir("run-utf16-bom", { "index.js": encode(source) });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "index.js"],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    expect(stdout).toBe("utf16be\n");
-    expect(stderr).toBe("");
-    expect(exitCode).toBe(0);
+      expect(stderr).toBe("");
+      expect(stdout).toBe(expected);
+      expect(exitCode).toBe(0);
+    });
   });
 });

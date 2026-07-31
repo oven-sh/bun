@@ -1,9 +1,9 @@
 import { expect, test } from "bun:test";
 import { tls as tlsCert } from "harness";
+import { once } from "node:events";
 import http from "node:http";
 import https from "node:https";
 import type { AddressInfo } from "node:net";
-import { once } from "node:events";
 
 // https://github.com/oven-sh/bun/issues/23452
 // postman-request checks `response.hasOwnProperty('socket')` and
@@ -17,23 +17,26 @@ test("HTTPS client response exposes socket as own property with authorized=true"
   await once(server, "listening");
   const { port } = server.address() as AddressInfo;
   try {
-    const result = await new Promise<{ ownSocket: boolean; ownConnection: boolean; encrypted: unknown; authorized: unknown }>(
-      (resolve, reject) => {
-        const req = https.get(
-          { port, host: "localhost", ca: tlsCert.cert, servername: "localhost", rejectUnauthorized: true },
-          res => {
-            resolve({
-              ownSocket: Object.prototype.hasOwnProperty.call(res, "socket"),
-              ownConnection: Object.prototype.hasOwnProperty.call(res, "connection"),
-              encrypted: (res.socket as any).encrypted,
-              authorized: (res.socket as any).authorized,
-            });
-            res.resume();
-          },
-        );
-        req.on("error", reject);
-      },
-    );
+    const result = await new Promise<{
+      ownSocket: boolean;
+      ownConnection: boolean;
+      encrypted: unknown;
+      authorized: unknown;
+    }>((resolve, reject) => {
+      const req = https.get(
+        { port, host: "localhost", ca: tlsCert.cert, servername: "localhost", rejectUnauthorized: true },
+        res => {
+          resolve({
+            ownSocket: Object.prototype.hasOwnProperty.call(res, "socket"),
+            ownConnection: Object.prototype.hasOwnProperty.call(res, "connection"),
+            encrypted: (res.socket as any).encrypted,
+            authorized: (res.socket as any).authorized,
+          });
+          res.resume();
+        },
+      );
+      req.on("error", reject);
+    });
     expect(result).toEqual({ ownSocket: true, ownConnection: false, encrypted: true, authorized: true });
   } finally {
     server.close();

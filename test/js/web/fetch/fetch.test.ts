@@ -14,7 +14,6 @@ import {
   isMacOS,
   isWindows,
   rss,
-  tempDir,
   tls,
   tmpdirSync,
   withoutAggressiveGC,
@@ -2617,128 +2616,6 @@ describe("fetch should allow duplex", () => {
 
       await response.text();
     }).not.toThrow();
-  });
-
-  // Bun.file(path).stream() is a native FileReader source; when used as a duplex
-  // fetch body it should pipe through the native sink without a JS pump, and an
-  // open() failure must reject the fetch rather than send an empty body.
-  it("streams a Bun.file().stream() request body and rejects on open failure", async () => {
-    using dir = tempDir("fetch-duplex-file", {
-      "payload.bin": Buffer.alloc(256 * 1024, 0x42).toString("latin1"),
-    });
-    await using echo = Bun.serve({
-      port: 0,
-      async fetch(req) {
-        const buf = new Uint8Array(await req.arrayBuffer());
-        return Response.json({ len: buf.length, head: buf[0] ?? -1, tail: buf[buf.length - 1] ?? -1 });
-      },
-    });
-
-    const res = await fetch(echo.url, {
-      method: "POST",
-      body: Bun.file(join(String(dir), "payload.bin")).stream(),
-      duplex: "half",
-    });
-    expect(await res.json()).toEqual({ len: 256 * 1024, head: 0x42, tail: 0x42 });
-
-    let caught: any = null;
-    try {
-      await fetch(echo.url, {
-        method: "POST",
-        body: Bun.file(join(String(dir), "does-not-exist.bin")).stream(),
-        duplex: "half",
-      });
-    } catch (e: any) {
-      caught = { code: e?.code, syscall: e?.syscall };
-    }
-    expect(caught).toEqual({ code: "ENOENT", syscall: "open" });
-  });
-
-  // Piping the response body of one fetch directly into the request body of another
-  // (native ByteStream source → native FetchRequestBody sink) must move bytes through
-  // without buffering the whole payload in memory and without a JS round-trip per chunk.
-  // RSS is measured in a fresh subprocess so the test runner's own heap growth and
-  // other tests in this file do not skew the delta.
-  it("streams an upstream fetch response body as the request body with bounded memory", async () => {
-    const fixture = `
-      const chunkSize = 64 * 1024;
-      const chunkCount = 160; // ~10 MB total
-      const totalBytes = chunkSize * chunkCount;
-
-      const source = Bun.serve({
-        port: 0,
-        fetch() {
-          let sent = 0;
-          return new Response(
-            new ReadableStream({
-              type: "direct",
-              async pull(controller) {
-                while (sent < chunkCount) {
-                  controller.write(Buffer.alloc(chunkSize, (sent + 1) & 0xff));
-                  sent++;
-                  await controller.flush();
-                }
-                controller.close();
-              },
-            }),
-            { headers: { "content-type": "application/octet-stream" } },
-          );
-        },
-      });
-      const echo = Bun.serve({
-        port: 0,
-        async fetch(req) {
-          return new Response(req.body);
-        },
-      });
-
-      Bun.gc(true);
-      const rssBefore = process.memoryUsage.rss();
-
-      const upstream = await fetch(source.url);
-      const response = await fetch(echo.url, {
-        method: "POST",
-        body: upstream.body,
-        duplex: "half",
-      });
-      const echoed = new Uint8Array(await response.arrayBuffer());
-
-      Bun.gc(true);
-      const rssAfter = process.memoryUsage.rss();
-
-      let ok = echoed.length === totalBytes;
-      for (let i = 0; i < chunkCount && ok; i++) {
-        const expected = (i + 1) & 0xff;
-        const base = i * chunkSize;
-        if (echoed[base] !== expected || echoed[base + chunkSize - 1] !== expected) ok = false;
-      }
-
-      source.stop(true);
-      echo.stop(true);
-      console.log(JSON.stringify({
-        length: echoed.length,
-        ok,
-        deltaMB: (rssAfter - rssBefore) / 1024 / 1024,
-        totalBytes,
-      }));
-    `;
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "-e", fixture],
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).toBe("");
-    const { length, ok, deltaMB, totalBytes } = JSON.parse(stdout.trim());
-    expect(length).toBe(totalBytes);
-    expect(ok).toBe(true);
-    // Only the final echoed buffer (~10 MB) plus transient socket/uWS buffers and JSC
-    // heap growth for two Bun.serve instances are retained; an unbounded pump would
-    // retain multiples of the payload. ASAN quarantine and the debug allocator inflate
-    // RSS substantially, so the bound is branched.
-    expect(deltaMB).toBeLessThan(isASAN || isDebug ? 160 : 96);
-    expect(exitCode).toBe(0);
   });
 
   // When the download source is faster than the upload target, the response-

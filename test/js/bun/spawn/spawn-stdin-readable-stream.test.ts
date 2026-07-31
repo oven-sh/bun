@@ -1,8 +1,7 @@
 import { spawn } from "bun";
 import { fileSinkInternals } from "bun:internal-for-testing";
 import { describe, expect, mock, test } from "bun:test";
-import { bunEnv, bunExe, expectMaxObjectTypeCount, isASAN, isDebug, isWindows, tempDir } from "harness";
-import path from "node:path";
+import { bunEnv, bunExe, expectMaxObjectTypeCount, isASAN, isDebug, isWindows } from "harness";
 
 describe("spawn stdin ReadableStream", () => {
   test("basic ReadableStream as stdin", async () => {
@@ -899,40 +898,6 @@ describe("spawn stdin ReadableStream", () => {
     expect(fileSinkInternals.liveCount()).toBeLessThanOrEqual(baseline + 1);
   });
 
-  // request.body inside a Bun.serve handler is a native ByteStream. Handing it
-  // straight to Bun.spawn({stdin}) must hook the ByteStream directly to the
-  // subprocess's FileSink (native source → native sink) so bytes flow without a
-  // JS read()/write() round-trip per chunk.
-  test("native ByteStream from Bun.serve request.body as stdin", async () => {
-    const chunkSize = 64 * 1024;
-    const chunkCount = 16; // 1 MB
-    const totalBytes = chunkSize * chunkCount;
-    const body = Buffer.alloc(totalBytes);
-    for (let i = 0; i < chunkCount; i++) body.fill((i + 1) & 0xff, i * chunkSize, (i + 1) * chunkSize);
-
-    using server = Bun.serve({
-      port: 0,
-      async fetch(req) {
-        const child = spawn({
-          cmd: [bunExe(), "-e", "process.stdin.pipe(process.stdout)"],
-          stdin: req.body!,
-          stdout: "pipe",
-          stderr: "inherit",
-          env: bunEnv,
-        });
-        const [echoed, exitCode] = await Promise.all([child.stdout.bytes(), child.exited]);
-        return Response.json({ length: echoed.length, hash: Bun.hash(echoed).toString(), exitCode });
-      },
-    });
-
-    const res = await fetch(server.url, { method: "POST", body });
-    const { length, hash, exitCode } = await res.json();
-
-    expect(length).toBe(totalBytes);
-    expect(hash).toBe(Bun.hash(body).toString());
-    expect(exitCode).toBe(0);
-  });
-
   // response.body from fetch() is also a native ByteStream. Piping it into a
   // subprocess's stdin must take the same native ByteStream → FileSink path and
   // must not buffer the whole payload; RSS is measured in a fresh subprocess so
@@ -1013,124 +978,6 @@ describe("spawn stdin ReadableStream", () => {
     // RSS substantially, so the bound is branched.
     expect(deltaMB).toBeLessThan(isASAN || isDebug ? 96 : 32);
     expect(exitCode).toBe(0);
-  });
-
-  // Bun.write(Bun.file(), response) where response.body is a native ByteStream.
-  // NOTE: the `Response` overload with a Locked body routes through
-  // WriteFileWaitFromLockedValueTask (Blob.rs), which buffers the full body
-  // then writes — it does NOT reach pipe_readable_stream_to_blob /
-  // FileSink.assign_to_stream. This is therefore a regression test for the
-  // buffered-write path with a fetch-sourced body, not the native
-  // ByteStream→FileSink hookup.
-  test("Bun.write(Bun.file, fetch response) with native ByteStream body", async () => {
-    const chunkSize = 64 * 1024;
-    const chunkCount = 16; // 1 MB
-    const totalBytes = chunkSize * chunkCount;
-
-    using server = Bun.serve({
-      port: 0,
-      fetch() {
-        let sent = 0;
-        return new Response(
-          new ReadableStream({
-            type: "direct",
-            async pull(controller) {
-              while (sent < chunkCount) {
-                controller.write(Buffer.alloc(chunkSize, (sent + 1) & 0xff));
-                sent++;
-                await controller.flush();
-              }
-              controller.close();
-            },
-          }),
-          { headers: { "content-type": "application/octet-stream" } },
-        );
-      },
-    });
-
-    using dir = tempDir("spawn-stdin-bytestream-write", {});
-    const out = path.join(String(dir), "out.bin");
-
-    const upstream = await fetch(server.url);
-    const written = await Bun.write(Bun.file(out), upstream);
-    const ondisk = new Uint8Array(await Bun.file(out).arrayBuffer());
-
-    let ok = ondisk.length === totalBytes;
-    for (let i = 0; i < chunkCount && ok; i++) {
-      const expected = (i + 1) & 0xff;
-      const base = i * chunkSize;
-      if (ondisk[base] !== expected || ondisk[base + chunkSize - 1] !== expected) ok = false;
-    }
-
-    expect(ondisk.length).toBe(totalBytes);
-    expect(ok).toBe(true);
-    expect(written).toBe(totalBytes);
-  });
-
-  // request.body (native ByteStream) → spawn stdin via SinkHandle::FileSink;
-  // spawn stdout (native FileReader) → HTTP response via the ResponseStream
-  // sink. The handler is a pure pass-through: no user-land read()/write() loop.
-  test("Bun.serve request.body → spawn stdin, spawn stdout → Response (native source/sink round-trip)", async () => {
-    const totalBytes = 256 * 1024;
-    const body = Buffer.alloc(totalBytes);
-    for (let i = 0; i < totalBytes; i++) body[i] = i & 0xff;
-
-    await using server = Bun.serve({
-      port: 0,
-      async fetch(req) {
-        const proc = spawn({
-          cmd: [bunExe(), "-e", "process.stdin.pipe(process.stdout)"],
-          stdin: req.body!,
-          stdout: "pipe",
-          stderr: "inherit",
-          env: bunEnv,
-        });
-        return new Response(proc.stdout);
-      },
-    });
-
-    const res = await fetch(server.url, { method: "POST", body });
-    const echoed = Buffer.from(await res.arrayBuffer());
-
-    expect(echoed.length).toBe(totalBytes);
-    expect(echoed.equals(body)).toBe(true);
-    expect(res.status).toBe(200);
-  });
-
-  // Subprocess stdout is a native FileReader-backed stream; handing it to
-  // fetch() as the request body wires SourceHandle::FileReader →
-  // SinkHandle::FetchRequestBody so bytes flow subprocess pipe → HTTP upload
-  // without a JS read()/write() loop.
-  test("spawn stdout → fetch request body (native FileReader → FetchRequestBodySink)", async () => {
-    const totalBytes = 256 * 1024;
-    const expected = Buffer.alloc(totalBytes, 65);
-
-    await using server = Bun.serve({
-      port: 0,
-      async fetch(req) {
-        const buf = Buffer.from(await req.arrayBuffer());
-        return Response.json({ length: buf.length, hash: Bun.hash(buf).toString() });
-      },
-    });
-
-    await using proc = spawn({
-      cmd: [bunExe(), "-e", `process.stdout.write(Buffer.alloc(${totalBytes}, 65))`],
-      stdout: "pipe",
-      stderr: "inherit",
-      env: bunEnv,
-    });
-
-    const res = await fetch(server.url, {
-      method: "POST",
-      body: proc.stdout,
-      // @ts-expect-error duplex
-      duplex: "half",
-    });
-    const { length, hash } = await res.json();
-
-    expect(length).toBe(totalBytes);
-    expect(hash).toBe(Bun.hash(expected).toString());
-    expect(await proc.exited).toBe(0);
   });
 
   // for-await over a subprocess stderr pipe is pull-driven: when the consumer

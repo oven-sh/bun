@@ -550,9 +550,9 @@ test.if(isWindows)(
       expect(stderr).toContain(server.url.toString());
       expect(exitCode).not.toBe(0);
 
-      // Await the event itself (as the auto-reporter tests above do), not a
-      // sleep race: on the no-AVX Windows agents PowerShell cold-start plus
-      // Invoke-RestMethod is ~2.1s, so a fixed 2s race loses on a coin flip.
+      // Await the event itself, same as the auto-reporter tests above:
+      // PowerShell cold-start plus Invoke-RestMethod can outlast a short
+      // fixed timeout on the slower Windows CI agents.
       await acked.promise;
       expect(sent).toBe(true);
     } finally {

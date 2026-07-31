@@ -267,6 +267,9 @@ impl JSSourceMap {
         frame: &CallFrame,
     ) -> JsResult<JSValue> {
         let [line_number, column_number] = get_line_column(global, frame)?;
+        if line_number < 0 || column_number < 0 {
+            return Ok(JSValue::create_empty_object(global, 0));
+        }
 
         let Some(mapping) = this.sourcemap.find_mapping(
             Ordinal::from_zero_based(line_number),
@@ -296,6 +299,9 @@ impl JSSourceMap {
         frame: &CallFrame,
     ) -> JsResult<JSValue> {
         let [line_number, column_number] = get_line_column(global, frame)?;
+        if line_number < 0 || column_number < 0 {
+            return Ok(JSValue::create_empty_object(global, 0));
+        }
 
         let Some(mapping) = this.sourcemap.find_mapping(
             Ordinal::from_zero_based(line_number),

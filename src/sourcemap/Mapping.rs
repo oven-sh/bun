@@ -602,7 +602,7 @@ pub fn parse(
                 ..Default::default()
             });
         }
-        source_index += source_index_delta.value;
+        source_index = source_index.wrapping_add(source_index_delta.value);
 
         if source_index < 0 || source_index >= sources_count {
             return ParseResult::Fail(ParseResultFail {
@@ -698,7 +698,7 @@ pub fn parse(
                     remain = &remain[name_index_delta.start..];
 
                     if options.allow_names {
-                        name_index += name_index_delta.value;
+                        name_index = name_index.wrapping_add(name_index_delta.value);
                         if !has_names {
                             if mapping.ensure_with_names().is_err() {
                                 return ParseResult::Fail(ParseResultFail {

@@ -61,7 +61,7 @@ describe("parseArgs default args", () => {
     ["--bun file-test.js --foo asdf", ["foo"], ["asdf"], ["--bun"]], // implicit run, with bun "--bun" arg (should not appear in argv)
     ["run --bun file-test.js --foo asdf", ["foo"], ["asdf"], ["--bun"]], // explicit run, with bun "--bun" arg (after the run)
     ["--bun run file-test.js --foo asdf", ["foo"], ["asdf"], ["--bun"]], // explicit run, with bun "--bun" arg (before the run)
-    ["--bun run --env-file='' file-test.js --foo asdf", ["foo"], ["asdf"], ["--bun", "--env-file=''"]], // explicit run, multiple bun args
+    ["--bun run --env-file= file-test.js --foo asdf", ["foo"], ["asdf"], ["--bun", "--env-file="]], // explicit run, multiple bun args
     ["run file-test.js --bun", ["bun"], [], []], // passing --bun only to the program
     ["--bun run file-test.js --foo asdf -- --foo2 -- --foo3", ["foo"], ["asdf", "--foo2", "--", "--foo3"], ["--bun"]],
     //[`--bun -e ${evalSrc} --foo asdf`, ["foo"], ["asdf"]], // eval seems to crash when triggered from tests

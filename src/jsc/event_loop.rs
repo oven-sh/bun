@@ -609,6 +609,18 @@ impl EventLoop {
         // The scope/counter cleanup is inlined at each return site below (a
         // scopeguard closure would alias `&mut self`).
 
+        // A previous tick() can leave the termination exception on the VM with
+        // tasks still queued (it was set mid-batch and `tick_with_count`
+        // returned 0). Callers like the worker run loop's
+        // `tick(); while is_event_loop_alive() { tick(); ... }` pair may call
+        // straight back in because `is_event_loop_alive()` only looks at queue
+        // lengths. Running the next batch with the exception pending re-enters
+        // `executeCallImpl` under `scope.assertNoException()`.
+        if scope.has_exception() {
+            self.entered_event_loop_count -= 1;
+            return;
+        }
+
         let ctx = self.vm();
         // One snapshot of thread-pool completions per tick, like libuv's
         // `uv__work_done`. Completions that arrive while this batch is being
@@ -639,8 +651,6 @@ impl EventLoop {
             }
             break;
         }
-
-        while self.tick_with_count(ctx) > 0 {}
 
         self.global_ref().handle_rejected_promises();
 

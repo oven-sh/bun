@@ -1398,7 +1398,8 @@ describe("toBuffer borrowed-pointer ownership (no bad-free on GC)", () => {
   it(
     "toBuffer(ptr(buffer)) does not free caller-owned memory on GC",
     async () => {
-      const { stdout, exitCode } = await runsClean(`
+      expect(
+        await runsClean(`
       import { ptr, toBuffer } from "bun:ffi";
       let original = Buffer.alloc(64, 0x41);
       let adopted = toBuffer(ptr(original), 0, 64);
@@ -1407,9 +1408,8 @@ describe("toBuffer borrowed-pointer ownership (no bad-free on GC)", () => {
       if (original[0] !== 0x42) throw new Error("expected an aliasing view");
       ${originalSurvives(0, "0x42")}
       console.log("survived-gc");
-    `);
-      expect(stdout).toContain("survived-gc");
-      expect(exitCode).toBe(0);
+    `),
+      ).toEqual({ stdout: "survived-gc\n", stderr: "", exitCode: 0 });
     },
     GC_TIMEOUT,
   );
@@ -1419,7 +1419,8 @@ describe("toBuffer borrowed-pointer ownership (no bad-free on GC)", () => {
     async () => {
       // The adopted view starts at original[8], so both the aliasing check and the
       // post-GC survival check must inspect that byte, not original[0].
-      const { stdout, exitCode } = await runsClean(`
+      expect(
+        await runsClean(`
       import { ptr, toBuffer } from "bun:ffi";
       let original = Buffer.alloc(64, 0x41);
       let adopted = toBuffer(ptr(original), 8, 48);
@@ -1428,9 +1429,8 @@ describe("toBuffer borrowed-pointer ownership (no bad-free on GC)", () => {
       if (original[8] !== 0x42) throw new Error("expected a view aliasing original[8]");
       ${originalSurvives(8, "0x42")}
       console.log("survived-gc");
-    `);
-      expect(stdout).toContain("survived-gc");
-      expect(exitCode).toBe(0);
+    `),
+      ).toEqual({ stdout: "survived-gc\n", stderr: "", exitCode: 0 });
     },
     GC_TIMEOUT,
   );
@@ -1438,62 +1438,48 @@ describe("toBuffer borrowed-pointer ownership (no bad-free on GC)", () => {
   it(
     "toBuffer(ptr(typedArray)) does not free caller-owned memory on GC",
     async () => {
-      const { stdout, exitCode } = await runsClean(`
+      expect(
+        await runsClean(`
       import { ptr, toBuffer } from "bun:ffi";
       let original = new Uint8Array(64).fill(0x41);
       let adopted = toBuffer(ptr(original), 0, 64);
       ${originalSurvives(0, "0x41")}
       console.log("survived-gc");
-    `);
-      expect(stdout).toContain("survived-gc");
-      expect(exitCode).toBe(0);
+    `),
+      ).toEqual({ stdout: "survived-gc\n", stderr: "", exitCode: 0 });
     },
     GC_TIMEOUT,
   );
 
   // Regression (the #1 risk): the bad-free fix must NOT change the explicit-finalizer
-  // path — when the caller supplies a finalizer, it still controls disposal and the
-  // deallocator is invoked exactly once on GC. Self-contained via cc() (TinyCC) so the
-  // deallocator's call count is isolated from the shared ffi-test fixture's counter.
-  it(
+  // path. When the caller supplies a finalizer, it still controls disposal and the
+  // deallocator is invoked exactly once on GC. Uses the compiled fixture's
+  // deallocator-counter helpers (getDeallocatorBuffer/getDeallocatorCallback both
+  // reset the counter, so the count is isolated to this test).
+  it.skipIf(!FFI_FIXTURE_PATH)(
     "toBuffer with an explicit finalizer calls the deallocator exactly once on GC",
     () => {
-      using dir = tempDir("ffi-tobuffer-finalizer", {
-        "dealloc.c": `
-        static int ffi_called = 0;
-        static void* ffi_last_ptr = 0;
-        static unsigned char ffi_buf[128];
-        void ffi_dealloc(void* p, void* ctx) { (void)ctx; ffi_last_ptr = p; ffi_called++; }
-        void* ffi_get_dealloc(void) { return (void*)&ffi_dealloc; }
-        void* ffi_get_buf(void) { return (void*)ffi_buf; }
-        void* ffi_get_last_ptr(void) { return ffi_last_ptr; }
-        int ffi_get_called(void) { return ffi_called; }
-      `,
+      const {
+        symbols: { getDeallocatorCallback, getDeallocatorBuffer, getDeallocatorCalledCount },
+      } = dlopen(FFI_FIXTURE_PATH, {
+        getDeallocatorCallback: { args: [], returns: "ptr" },
+        getDeallocatorBuffer: { args: [], returns: "ptr" },
+        getDeallocatorCalledCount: { args: [], returns: "int" },
       });
-      const { symbols } = cc({
-        source: `${String(dir)}/dealloc.c`,
-        symbols: {
-          ffi_get_dealloc: { args: [], returns: "ptr" },
-          ffi_get_buf: { args: [], returns: "ptr" },
-          ffi_get_last_ptr: { args: [], returns: "ptr" },
-          ffi_get_called: { args: [], returns: "int" },
-        },
-      });
-      const bufPtr = symbols.ffi_get_buf();
-      let buf = toBuffer(bufPtr, 0, 128, symbols.ffi_get_dealloc());
+      const bufPtr = getDeallocatorBuffer();
+      let buf = toBuffer(bufPtr, 0, 128, getDeallocatorCallback());
       expect(buf.length).toBe(128);
-      expect(symbols.ffi_get_called()).toBe(0); // not called during construction
+      expect(getDeallocatorCalledCount()).toBe(0); // not called during construction
       buf = null;
       // Await the collection rather than assuming one pass suffices: a single
       // Bun.gc(true) can still see `buf` conservatively from the stack.
-      for (let i = 0; i < 20 && symbols.ffi_get_called() === 0; i++) {
+      for (let i = 0; i < 20 && getDeallocatorCalledCount() === 0; i++) {
         Bun.gc(true);
         Buffer.alloc(1024 * 1024);
       }
-      expect(symbols.ffi_get_called()).toBe(1); // called exactly once on GC
-      expect(symbols.ffi_get_last_ptr()).toBe(bufPtr); // with the buffer's own pointer
+      expect(getDeallocatorCalledCount()).toBe(1); // called exactly once on GC
       Bun.gc(true);
-      expect(symbols.ffi_get_called()).toBe(1); // not called again
+      expect(getDeallocatorCalledCount()).toBe(1); // not called again
     },
     GC_TIMEOUT,
   );

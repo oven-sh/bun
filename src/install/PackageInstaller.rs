@@ -297,6 +297,73 @@ type TreeContextId = lockfile::tree::Id;
 
 // TreeContext::deinit dropped — Vec and Bin::PriorityQueue impl Drop.
 
+/// Finds the tree whose `node_modules` contains `target_pkg_id`, walked in
+/// Node resolution order from `<start_tree>/<alias>/`: the child tree at
+/// `<start_tree>/<alias>/node_modules/`, then `start_tree`, then each ancestor.
+fn find_native_binlink_target_tree(
+    trees: &[Tree],
+    hoisted_deps: &[DependencyID],
+    resolutions: &[PackageID],
+    deps: &[crate::Dependency],
+    string_buf: &[u8],
+    start_tree: lockfile::tree::Id,
+    alias: &[u8],
+    target_pkg_id: PackageID,
+) -> Option<lockfile::tree::Id> {
+    let tree_contains = |id: lockfile::tree::Id| -> bool {
+        trees[id as usize]
+            .dependencies
+            .get(hoisted_deps)
+            .iter()
+            .any(|&dep_id| resolutions[dep_id as usize] == target_pkg_id)
+    };
+
+    for t in trees {
+        if t.parent == start_tree && t.folder_name(deps, string_buf) == alias {
+            if tree_contains(t.id) {
+                return Some(t.id);
+            }
+            break;
+        }
+    }
+
+    let mut cur = start_tree;
+    loop {
+        if tree_contains(cur) {
+            return Some(cur);
+        }
+        let parent = trees[cur as usize].parent;
+        if parent == lockfile::tree::INVALID_ID {
+            return None;
+        }
+        cur = parent;
+    }
+}
+
+fn abs_node_modules_path(
+    lockfile: &Lockfile,
+    string_buf: &[u8],
+    tree_id: lockfile::tree::Id,
+) -> AbsPath {
+    let mut rel_buf = PathBuffer::uninit();
+    rel_buf[..b"node_modules".len()].copy_from_slice(b"node_modules");
+    let mut depth_buf = lockfile::tree::depth_buf_uninit();
+    let (rel, _) = lockfile::tree::relative_path_and_depth::<
+        { lockfile::tree::IteratorPathStyle::NodeModules },
+    >(
+        lockfile.buffers.trees.as_slice(),
+        lockfile.buffers.dependencies.as_slice(),
+        string_buf,
+        tree_id,
+        &mut rel_buf,
+        &mut depth_buf,
+    );
+    let top = strings::without_trailing_slash(FileSystem::instance().top_level_dir());
+    let mut abs = AbsPath::from(top).unwrap_or_oom();
+    abs.append(rel.as_bytes()).unwrap_or_oom();
+    abs
+}
+
 enum LazyPackageDestinationDir<'a> {
     /// Non-owning view of a directory handle the caller owns.
     #[allow(dead_code)]
@@ -473,6 +540,7 @@ impl<'a> PackageInstaller<'a> {
             // reshaped for borrowck — pass tree_id, re-borrow tree inside.
             self.link_tree_bins(
                 tree_id,
+                true,
                 link_target_buf.as_mut_slice(),
                 link_dest_buf.as_mut_slice(),
                 link_rel_buf.as_mut_slice(),
@@ -492,6 +560,7 @@ impl<'a> PackageInstaller<'a> {
         // Takes only `tree_id` and re-borrows `&mut self.trees[tree_id]` to
         // satisfy borrowck.
         tree_id: TreeContextId,
+        can_defer: bool,
         link_target_buf: &mut [u8],
         link_dest_buf: &mut [u8],
         link_rel_buf: &mut [u8],
@@ -511,7 +580,9 @@ impl<'a> PackageInstaller<'a> {
         let pkg_resolutions_buffer = lockfile.buffers.resolutions.as_slice();
         let pkg_names = pkgs.items_name();
 
+        let completed_trees = &self.completed_trees;
         let tree = &mut self.trees[tree_id as usize];
+        let mut deferred: Vec<DependencyID> = Vec::new();
 
         while let Some(dep_id) = tree.binaries.remove_or_null() {
             debug_assert!((dep_id as usize) < lockfile.buffers.dependencies.as_slice().len());
@@ -526,7 +597,8 @@ impl<'a> PackageInstaller<'a> {
             let package_name_ = strings::StringOrTinyString::init(alias);
             let mut target_package_name = package_name_;
             let mut can_retry_without_native_binlink_optimization = false;
-            let target_node_modules_path_opt: Option<AbsPath> = None;
+            let mut target_node_modules_path_opt: Option<AbsPath> = None;
+            let mut defer_this_bin = false;
             // `defer if (target_node_modules_path_opt) |*path| path.deinit()` — Option<AbsPath> drops.
 
             'native_binlink_optimization: {
@@ -556,11 +628,33 @@ impl<'a> PackageInstaller<'a> {
                                     target_os,
                                 )
                             {
-                                if tree_id != 0 {
-                                    // TODO: support this optimization in nested node_modules
-                                    // It's tricky to get the hoisting right.
-                                    // So we leave this out for now.
+                                let Some(target_tree_id) = find_native_binlink_target_tree(
+                                    lockfile.buffers.trees.as_slice(),
+                                    lockfile.buffers.hoisted_dependencies.as_slice(),
+                                    lockfile.buffers.resolutions.as_slice(),
+                                    lockfile.buffers.dependencies.as_slice(),
+                                    string_buf,
+                                    tree_id,
+                                    alias,
+                                    replacement_pkg_id,
+                                ) else {
                                     break 'native_binlink_optimization;
+                                };
+
+                                if target_tree_id != tree_id {
+                                    if can_defer && !completed_trees.is_set(target_tree_id as usize)
+                                    {
+                                        // Platform package's tree isn't installed
+                                        // yet: link the package's own bin now and
+                                        // re-queue for `link_remaining_bins`.
+                                        defer_this_bin = true;
+                                        break 'native_binlink_optimization;
+                                    }
+                                    target_node_modules_path_opt = Some(abs_node_modules_path(
+                                        lockfile,
+                                        string_buf,
+                                        target_tree_id,
+                                    ));
                                 }
 
                                 let replacement_name =
@@ -573,6 +667,10 @@ impl<'a> PackageInstaller<'a> {
                         PostinstallOptimizer::Ignore => {}
                     }
                 }
+            }
+
+            if defer_this_bin {
+                deferred.push(dep_id);
             }
             // globally linked packages shouls always belong to the root
             // tree (0).
@@ -636,6 +734,7 @@ impl<'a> PackageInstaller<'a> {
                         );
                     }
                     target_package_name = package_name_;
+                    target_node_modules_path_opt = None;
                     continue;
                 }
 
@@ -658,6 +757,10 @@ impl<'a> PackageInstaller<'a> {
 
                 break;
             }
+        }
+
+        for dep_id in deferred {
+            tree.binaries.add(dep_id).unwrap_or_oom();
         }
     }
 
@@ -699,6 +802,7 @@ impl<'a> PackageInstaller<'a> {
 
                 self.link_tree_bins(
                     tree_id as u32,
+                    false,
                     link_target_buf.as_mut_slice(),
                     link_dest_buf.as_mut_slice(),
                     link_rel_buf.as_mut_slice(),
@@ -1883,7 +1987,6 @@ impl<'a> PackageInstaller<'a> {
                                     self.lockfile().packages.items_meta(),
                                     self.manager().options.cpu,
                                     self.manager().options.os,
-                                    Some(self.current_tree_id),
                                 )
                             {
                                 if PackageManager::verbose_install() {
@@ -2191,7 +2294,6 @@ impl<'a> PackageInstaller<'a> {
                             self.lockfile().packages.items_meta(),
                             self.manager().options.cpu,
                             self.manager().options.os,
-                            Some(self.current_tree_id),
                         )
                     {
                         if PackageManager::verbose_install() {

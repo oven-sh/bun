@@ -1010,7 +1010,7 @@ pub fn eql_case_insensitive_asciii_check_length(a: &[u8], b: &[u8]) -> bool {
 // call shape across the tree (`eql_case_insensitive_ascii(a, b, true)`);
 // callers wanting the length-agnostic forms have the `_check_length` /
 // `_ignore_length` wrappers above.
-pub use crate::strings_impl::eql_case_insensitive_ascii;
+pub use crate::strings_impl::{contains_case_insensitive_ascii, eql_case_insensitive_ascii};
 
 pub fn eql_case_insensitive_t<T: crate::NoUninit + Into<u32>>(a: &[T], b: &[u8]) -> bool {
     if a.len() != b.len() || a.is_empty() {

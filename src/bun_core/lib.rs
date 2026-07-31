@@ -662,13 +662,6 @@ pub const unsafe fn container_of<P, F>(field: *const F, offset: usize) -> *mut P
     unsafe { field.byte_sub(offset).cast::<P>().cast_mut() }
 }
 
-/// `*const`-out variant of [`container_of`]. Same safety contract.
-#[inline(always)]
-pub const unsafe fn container_of_const<P, F>(field: *const F, offset: usize) -> *const P {
-    // SAFETY: per fn contract.
-    unsafe { field.byte_sub(offset).cast::<P>() }
-}
-
 /// Recover a typed `&mut T` from a C-callback's opaque user-data pointer.
 ///
 /// This is the canonical spelling for the ubiquitous trampoline pattern where
@@ -1318,7 +1311,7 @@ pub(crate) mod strings_impl {
     /// case-insensitive ASCII substring search (callers are cold path-lookup
     /// on macOS/Windows where the FS is case-insensitive).
     #[inline]
-    pub(crate) fn contains_case_insensitive_ascii(haystack: &[u8], needle: &[u8]) -> bool {
+    pub fn contains_case_insensitive_ascii(haystack: &[u8], needle: &[u8]) -> bool {
         if needle.len() > haystack.len() {
             return false;
         }

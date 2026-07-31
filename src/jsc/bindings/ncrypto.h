@@ -1253,6 +1253,17 @@ public:
         INVALID_NAME,
         OPERATION_FAILED,
     };
+    // OpenSSL X509_CHECK_FLAG_* values. BoringSSL defines four of these as 0,
+    // so checkHost() carries its own copy and calls the shared Rust matcher
+    // (Bun__X509__checkHost) instead of X509_check_host.
+    struct CheckFlags {
+        static constexpr uint32_t ALWAYS_CHECK_SUBJECT = 0x01;
+        static constexpr uint32_t NO_WILDCARDS = 0x02;
+        static constexpr uint32_t NO_PARTIAL_WILDCARDS = 0x04;
+        static constexpr uint32_t MULTI_LABEL_WILDCARDS = 0x08;
+        static constexpr uint32_t SINGLE_LABEL_SUBDOMAINS = 0x10;
+        static constexpr uint32_t NEVER_CHECK_SUBJECT = 0x20;
+    };
     CheckMatch checkHost(const std::span<const char> host,
         int flags,
         DataPointer* peerName = nullptr) const;

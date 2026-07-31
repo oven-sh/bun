@@ -1237,6 +1237,14 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
 
             if matches!(*body_value, BodyValue::Locked(_)) {
                 if let Some(readable) = req.get_body_readable_stream(global_this) {
+                    if readable.is_disturbed(global_this) || readable.is_locked(global_this) {
+                        return Err(global_this
+                            .err(
+                                jsc::ErrorCode::BODY_ALREADY_USED,
+                                format_args!("Request body already used"),
+                            )
+                            .throw());
+                    }
                     break 'extract_body Some(HTTPRequestBody::ReadableStream(
                         readable_stream::Strong::init(readable, global_this),
                     ));

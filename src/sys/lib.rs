@@ -9421,7 +9421,9 @@ fn fd_write_all_quiet(fd: Fd, mut bytes: &[u8]) -> bool {
                     events: posix::POLL_OUT,
                     revents: 0,
                 }];
-                let _ = posix::poll(&mut pfd, -1);
+                if posix::poll(&mut pfd, -1).is_err() {
+                    return false;
+                }
             }
             Err(_) => return false,
         }

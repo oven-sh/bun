@@ -458,6 +458,16 @@ declare module "bun" {
     pong?(ws: ServerWebSocket<T>, data: Buffer): void | Promise<void>;
 
     /**
+     * Called when a handler on this object throws or returns a promise that
+     * rejects. Rejections that settle after the socket has closed surface as
+     * `unhandledRejection` instead.
+     *
+     * @param ws The websocket whose handler errored
+     * @param error The thrown value or rejection reason
+     */
+    error?(ws: ServerWebSocket<T>, error: unknown): void | Promise<void>;
+
+    /**
      * Sets the maximum size of a message, in bytes.
      *
      * @default 1024 * 1024 * 16 // 16 MB

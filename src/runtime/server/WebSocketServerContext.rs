@@ -80,6 +80,7 @@ impl Handler {
         on_error: JSValue,
         vm: &VirtualMachine,
         global_object: &JSGlobalObject,
+        ws: JSValue,
         error_value: JSValue,
     ) {
         // Termination raised inside the preceding callback.call() cannot be
@@ -87,9 +88,10 @@ impl Handler {
         if global_object.has_exception() {
             return;
         }
+        let error_value = error_value.to_error().unwrap_or(error_value);
         if !on_error.is_empty_or_undefined_or_null() {
             let _ = on_error
-                .call(global_object, JSValue::UNDEFINED, &[error_value])
+                .call(global_object, JSValue::UNDEFINED, &[ws, error_value])
                 .map_err(|err| self.global_object.report_active_exception_as_unhandled(err));
             return;
         }

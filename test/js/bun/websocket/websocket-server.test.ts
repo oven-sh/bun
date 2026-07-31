@@ -678,6 +678,107 @@ describe("Server", () => {
         },
       );
     });
+    describe("error handler", () => {
+      const bodies = {
+        "a synchronous throw": `throw new Error('boom')`,
+        "a returned Promise.reject()": `return Promise.reject(new Error('boom'))`,
+        "a rejected async handler": `return (async () => { await 1; throw new Error('boom'); })()`,
+      } as const;
+      const matrix = [
+        ["message", "a synchronous throw", `c.onopen = () => c.send('x');`],
+        ["message", "a returned Promise.reject()", `c.onopen = () => c.send('x');`],
+        ["message", "a rejected async handler", `c.onopen = () => c.send('x');`],
+        ["open", "a synchronous throw", ``],
+        ["open", "a returned Promise.reject()", ``],
+        ["open", "a rejected async handler", ``],
+        ["close", "a synchronous throw", `c.onopen = () => c.close();`],
+      ] as const;
+      for (const [handler, mode, trigger] of matrix) {
+        it.concurrent(`is called with (ws, error) for ${mode} in ${handler}()`, async () => {
+          const body = bodies[mode];
+          const handlers =
+            handler === "open"
+              ? `open(ws) { serverWs = ws; ${body}; }, message() {},`
+              : handler === "close"
+                ? `open(ws) { serverWs = ws; }, message() {}, close(ws) { ${body}; },`
+                : `open(ws) { serverWs = ws; }, message(ws, m) { ${body}; },`;
+          const script = /* js */ `
+            const done = Promise.withResolvers();
+            process.on('unhandledRejection', e => {
+              console.log('UNHANDLED:' + (e instanceof Error ? e.message : e));
+              done.resolve();
+            });
+            let serverWs;
+            const server = Bun.serve({
+              port: 0,
+              fetch(req, s) { if (s.upgrade(req)) return; return new Response(); },
+              websocket: {
+                ${handlers}
+                error: function (ws, err) {
+                  console.log('ERROR:' + JSON.stringify([
+                    ws === serverWs,
+                    err instanceof Error ? err.message : String(err),
+                    arguments.length,
+                  ]));
+                  done.resolve();
+                },
+              },
+            });
+            const c = new WebSocket('ws://127.0.0.1:' + server.port);
+            ${trigger}
+            await done.promise;
+            await new Promise(r => setImmediate(r));
+            await new Promise(r => setImmediate(r));
+            c.close();
+            server.stop(true);
+          `;
+          await using proc = Bun.spawn({
+            cmd: [bunExe(), "-e", script],
+            env: bunEnv,
+            stderr: "pipe",
+          });
+          const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+          expect(stderr).toBe("");
+          expect(stdout.trim()).toBe(`ERROR:[true,"boom",2]`);
+          expect(exitCode).toBe(0);
+        });
+      }
+
+      for (const [when, body] of [
+        ["before returning", `ws.close(); return (async () => { await 1; throw new Error('boom'); })();`],
+        ["after the reaction is attached", `return (async () => { await 1; ws.close(); throw new Error('boom'); })();`],
+      ] as const) {
+        it.concurrent(`surfaces a post-close rejection as unhandledRejection (close ${when})`, async () => {
+          const script = /* js */ `
+            const done = Promise.withResolvers();
+            process.on('unhandledRejection', e => { console.log('UR:' + e.message); done.resolve(); });
+            process.on('uncaughtException', e => { console.log('UE:' + e.message); done.resolve(); });
+            const server = Bun.serve({
+              port: 0,
+              fetch(req, s) { if (s.upgrade(req)) return; return new Response(); },
+              websocket: {
+                message(ws) { ${body} },
+                error(ws, err) { console.log('ERROR:' + err.message); done.resolve(); },
+              },
+            });
+            const c = new WebSocket('ws://127.0.0.1:' + server.port);
+            c.onopen = () => c.send('x');
+            await done.promise;
+            await new Promise(r => setImmediate(r));
+            server.stop(true);
+          `;
+          await using proc = Bun.spawn({
+            cmd: [bunExe(), "-e", script],
+            env: bunEnv,
+            stderr: "pipe",
+          });
+          const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+          expect(stderr).toBe("");
+          expect(stdout.trim()).toBe("UR:boom");
+          expect(exitCode).toBe(0);
+        });
+      }
+    });
   });
 });
 describe("ServerWebSocket", () => {

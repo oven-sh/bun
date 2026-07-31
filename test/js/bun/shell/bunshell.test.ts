@@ -9,7 +9,7 @@ import { afterAll, beforeAll, describe, expect, it, test } from "bun:test";
 import { chmodSync, mkdirSync } from "fs";
 import { mkdir, rm, stat } from "fs/promises";
 import { bunExe, isPosix, isWindows, rss, runWithErrorPromise, tempDir, tempDirWithFiles, tmpdirSync } from "harness";
-import { join, sep } from "path";
+import { delimiter, join, sep } from "path";
 import { createTestBuilder, sortedShellOutput } from "./util";
 const TestBuilder = createTestBuilder(import.meta.path);
 
@@ -1161,6 +1161,58 @@ booga"
     const { stdout } = await $`which ${BUN} ${bogus}`;
     const bunWhich = Bun.which(BUN);
     expect(stdout.toString()).toEqual(`${bunWhich}\n${bogus} not found\n`);
+  });
+
+  // https://github.com/oven-sh/bun/issues/25885, #9747, #10865
+  describe("external command PATH resolution", () => {
+    const cmdDir = (base: string, name: string, message: string) => {
+      const dir = isWindows
+        ? tempDir(base, { [`${name}.cmd`]: `@echo ${message}\r\n` })
+        : tempDir(base, { [name]: `#!/bin/sh\necho ${message}\n` });
+      if (!isWindows) chmodSync(join(String(dir), name), 0o755);
+      return dir;
+    };
+
+    test(".env() PATH", async () => {
+      using dir = cmdDir("shell-path-env", "mytest-env", "hello from env");
+      const PATH = `${String(dir)}${delimiter}${process.env.PATH}`;
+      const { stdout, exitCode } = await $`mytest-env`.env({ ...bunEnv, PATH }).quiet();
+      expect(stdout.toString().trim()).toBe("hello from env");
+      expect(exitCode).toBe(0);
+    });
+
+    test("export PATH", async () => {
+      using dir = cmdDir("shell-path-export", "mytest-export", "hello from export");
+      const PATH = `${String(dir)}${delimiter}${process.env.PATH}`;
+      const { stdout, exitCode } = await $`export PATH=${PATH}; mytest-export`.quiet();
+      expect(stdout.toString().trim()).toBe("hello from export");
+      expect(exitCode).toBe(0);
+    });
+
+    test("PATH=... cmd prefix beats export", async () => {
+      using dir1 = cmdDir("shell-path-prefix-1", "mytest-priority", "from prefix");
+      using dir2 = cmdDir("shell-path-prefix-2", "mytest-priority", "from export");
+      const path1 = `${String(dir1)}${delimiter}${process.env.PATH}`;
+      const path2 = `${String(dir2)}${delimiter}${process.env.PATH}`;
+      const { stdout, exitCode } = await $`export PATH=${path2}; PATH=${path1} mytest-priority`.quiet();
+      expect(stdout.toString().trim()).toBe("from prefix");
+      expect(exitCode).toBe(0);
+    });
+
+    test("runtime process.env.PATH mutation", async () => {
+      using dir = cmdDir("shell-path-mutate", "mytest-mutate", "hello from mutation");
+      const code = `
+        const { $ } = require("bun");
+        process.env.PATH = ${JSON.stringify(String(dir))} + ${JSON.stringify(delimiter)} + process.env.PATH;
+        const r = await $\`mytest-mutate\`.quiet();
+        console.log(r.stdout.toString().trim());
+      `;
+      await using proc = Bun.spawn({ cmd: [BUN, "-e", code], env: bunEnv, stderr: "pipe" });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(stdout.trim()).toBe("hello from mutation");
+      expect(exitCode).toBe(0);
+    });
   });
 
   describe("rm", () => {

@@ -463,8 +463,6 @@ impl Cmd {
         // SAFETY: `shell_ptr` is the live env owned by this Cmd's scope chain.
         spawn_args.cwd = unsafe { &*shell_ptr }.cwd();
 
-        // Fill env before argv[0] resolution: `fill_env` updates
-        // `spawn_args.path` from export_env / cmd_local_env (#25885).
         {
             let env = interp.as_cmd_mut(this).base.shell_mut();
             let mut iter = env.export_env.iterator();

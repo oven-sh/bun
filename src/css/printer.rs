@@ -115,7 +115,7 @@ pub struct Printer<'a> {
     pub(crate) sources: Option<&'a Vec<Box<[u8]>>>,
     pub dest: &'a mut dyn Write,
     pub(crate) loc: Location,
-    pub(crate) indent_amt: u8,
+    pub(crate) indent_amt: u32,
     pub(crate) line: u32,
     pub(crate) col: u32,
     pub(crate) minify: bool,
@@ -833,12 +833,12 @@ impl<'a> Printer<'a> {
 
     /// Increases the current indent level.
     pub(crate) fn indent(&mut self) {
-        self.indent_amt += 2;
+        self.indent_amt = self.indent_amt.saturating_add(2);
     }
 
     /// Decreases the current indent level.
     pub(crate) fn dedent(&mut self) {
-        self.indent_amt -= 2;
+        self.indent_amt = self.indent_amt.saturating_sub(2);
     }
 
     fn write_indent(&mut self) -> PrintResult<()> {

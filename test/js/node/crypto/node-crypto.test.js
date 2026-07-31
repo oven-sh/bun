@@ -661,6 +661,34 @@ describe("DiffieHellman", () => {
     expect(() => crypto.createDiffieHellman(p, Buffer.from([0x01]))).toThrow(/bad.generator/i);
     expect(() => crypto.createDiffieHellman(p, Buffer.from([0x02]))).not.toThrow();
   });
+
+  it("throws (not returns) validation errors from the constructor", () => {
+    // toThrow() accepts a *returned* Error instance as a throw, so it cannot
+    // distinguish the two here; capture the control-flow outcome explicitly.
+    function outcome(fn) {
+      try {
+        return { threw: false, value: fn() };
+      } catch (e) {
+        return { threw: true, value: e };
+      }
+    }
+
+    // DHPointer::New rejects a 2-bit modulus; that must surface as a thrown error.
+    expect(outcome(() => crypto.createDiffieHellman(2))).toEqual({
+      threw: true,
+      value: expect.objectContaining({ code: "ERR_INVALID_ARG_VALUE", message: "Invalid DH parameters" }),
+    });
+    // Numeric sizeOrKey with a non-numeric generator reaches the int32-only guard.
+    expect(outcome(() => crypto.createDiffieHellman(1024, "abc"))).toEqual({
+      threw: true,
+      value: expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE", message: "Second argument must be an int32" }),
+    });
+    // `new DiffieHellman(...)` must behave identically to the factory.
+    expect(outcome(() => new crypto.DiffieHellman(2))).toEqual({
+      threw: true,
+      value: expect.objectContaining({ code: "ERR_INVALID_ARG_VALUE" }),
+    });
+  });
 });
 
 describe("ECDH", () => {

@@ -4854,10 +4854,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         args: core::fmt::Arguments,
         loc: Option<bun_ast::Loc>,
     ) -> ! {
-        // `Log::print` takes `IntoLogWrite` (`fmt::Write`), so write into a
-        // bump-backed `String` — one contiguous text output.
-        let mut panic_stream = bun_alloc::ArenaString::with_capacity_in(32 * 1024, self.arena);
-
         // panic during visit pass leaves the lexer at the end, which
         // would make this location absolutely useless.
         let location = loc.unwrap_or_else(|| self.lexer.loc());
@@ -4873,9 +4869,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
 
         self.log().level = bun_ast::Level::Verbose;
-        let _ = self.log().print(&mut panic_stream);
+        let _ = self.log().print(std::ptr::from_mut(Output::error_writer()));
 
-        Output::panic(format_args!("{}\n{}{}", fmt, args, panic_stream.as_str()));
+        Output::panic(format_args!("{}\n{}", fmt, args));
     }
 
     pub(crate) fn jsx_strings_to_member_expression(
@@ -5414,21 +5410,28 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 continue;
             }
 
-            if !self.expr_can_be_removed_if_unused_without_dce_check(
-                property.key.as_ref().expect("unreachable"),
-            ) {
+            // ToPropertyKey on a computed key can run user code unless it's a primitive literal.
+            if property.flags.contains(Flags::Property::IsComputed)
+                && !property
+                    .key
+                    .map(|key| key.unwrap_inlined().is_primitive_literal())
+                    .unwrap_or(false)
+            {
                 return false;
             }
 
-            if let Some(val) = &property.value {
-                if !self.expr_can_be_removed_if_unused_without_dce_check(val) {
-                    return false;
+            // Non-static values/initializers only run on construction or access, never for an unused class.
+            if property.flags.contains(Flags::Property::IsStatic) {
+                if let Some(val) = &property.value {
+                    if !self.expr_can_be_removed_if_unused_without_dce_check(val) {
+                        return false;
+                    }
                 }
-            }
 
-            if let Some(val) = &property.initializer {
-                if !self.expr_can_be_removed_if_unused_without_dce_check(val) {
-                    return false;
+                if let Some(val) = &property.initializer {
+                    if !self.expr_can_be_removed_if_unused_without_dce_check(val) {
+                        return false;
+                    }
                 }
             }
         }

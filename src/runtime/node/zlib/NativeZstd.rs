@@ -494,6 +494,10 @@ mod _impl {
             self.output.pos = 0;
         }
 
+        pub fn flush_value_is_valid(flush: u32) -> bool {
+            flush <= 2
+        }
+
         pub fn set_flush(&mut self, flush: c_int) {
             self.flush = flush;
         }

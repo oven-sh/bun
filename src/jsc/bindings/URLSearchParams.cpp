@@ -31,13 +31,6 @@
 
 namespace WebCore {
 
-extern "C" JSC::EncodedJSValue URLSearchParams__create(JSDOMGlobalObject* globalObject, const ZigString* input)
-{
-    String str = Zig::toString(*input);
-    auto result = URLSearchParams::create(str, nullptr);
-    return JSC::JSValue::encode(WebCore::toJSNewlyCreated(globalObject, globalObject, WTF::move(result)));
-}
-
 extern "C" WebCore::URLSearchParams* URLSearchParams__fromJS(JSC::EncodedJSValue value)
 {
     return WebCoreCast<WebCore::JSURLSearchParams, WebCore::URLSearchParams>(value);

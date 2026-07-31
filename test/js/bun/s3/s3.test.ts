@@ -2,7 +2,7 @@ import type { S3Options } from "bun";
 import { S3Client, s3 as defaultS3, file, randomUUIDv7 } from "bun";
 import { describe, expect, it } from "bun:test";
 import child_process from "child_process";
-import { randomUUID } from "crypto";
+import { createHash, createHmac, randomUUID } from "crypto";
 import { bunEnv, bunExe, dockerExe, getSecret, isCI, isDockerEnabled, tempDir, tempDirWithFiles } from "harness";
 import path from "path";
 const s3 = (...args) => defaultS3.file(...args);
@@ -1800,4 +1800,52 @@ describe("s3 multipart upload id validation", () => {
     expect(stdout).toContain("valid-id: resolved");
     expect(exitCode).toBe(0);
   }, 60_000);
+});
+
+describe("presigned url signature", () => {
+  function verifyPresignedUrl(presigned: string, credentials: { secretAccessKey: string; region: string }) {
+    const url = new URL(presigned);
+    const params = presigned.split("?")[1].split("&");
+    const signature = params.find(p => p.startsWith("X-Amz-Signature="))!.slice("X-Amz-Signature=".length);
+    const canonicalQuery = params.filter(p => !p.startsWith("X-Amz-Signature=")).join("&");
+    const amzDate = params.find(p => p.startsWith("X-Amz-Date="))!.slice("X-Amz-Date=".length);
+    const day = amzDate.slice(0, 8);
+    const canonicalRequest = [
+      "GET",
+      url.pathname,
+      canonicalQuery,
+      `host:${url.host}\n`,
+      "host",
+      "UNSIGNED-PAYLOAD",
+    ].join("\n");
+    const stringToSign = [
+      "AWS4-HMAC-SHA256",
+      amzDate,
+      `${day}/${credentials.region}/s3/aws4_request`,
+      createHash("sha256").update(canonicalRequest).digest("hex"),
+    ].join("\n");
+    const hmac = (key: string | Buffer, data: string) => createHmac("sha256", key).update(data).digest();
+    const signingKey = hmac(
+      hmac(hmac(hmac("AWS4" + credentials.secretAccessKey, day), credentials.region), "s3"),
+      "aws4_request",
+    );
+    const expected = createHmac("sha256", signingKey).update(stringToSign).digest("hex");
+    return { signature, expected };
+  }
+
+  it("derives the signing key from each credential's own region and secret", () => {
+    const commonOptions = {
+      accessKeyId: "test-access-key",
+      bucket: "bucket",
+      endpoint: "https://s3.example.com",
+    };
+    const credentialsA = { ...commonOptions, region: "us-east-1", secretAccessKey: "collides3keys" };
+    const credentialsB = { ...commonOptions, region: "us-east-1s3collide", secretAccessKey: "keys" };
+    for (const credentials of [credentialsA, credentialsB, credentialsA, credentialsB]) {
+      const client = new Bun.S3Client(credentials);
+      const presigned = client.presign("credentials-test");
+      const { signature, expected } = verifyPresignedUrl(presigned, credentials);
+      expect(signature).toBe(expected);
+    }
+  });
 });

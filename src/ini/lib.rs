@@ -142,6 +142,7 @@ impl ConfigItem {
                     bun_ast::AddErrorOptions {
                         source: Some(source),
                         loc: self.loc,
+                        redact_sensitive_information: true,
                         ..Default::default()
                     },
                 );

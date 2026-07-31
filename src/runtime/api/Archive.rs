@@ -1483,18 +1483,27 @@ fn extract_to_disk_filtered(
         let entry_ref = lib::Entry::opaque_ref(entry);
         // Same platform split as `FilesContext::do_run`; see `entry_pathname_utf8`.
         #[cfg(not(windows))]
-        let pathname_z = entry_ref.pathname();
+        let raw_pathname_z = entry_ref.pathname();
         #[cfg(windows)]
-        let pathname_zbox = ZBox::from_vec_with_nul(
+        let raw_pathname_zbox = ZBox::from_vec_with_nul(
             entry_pathname_utf8(entry_ref)
                 .map_err(|_| crate::Error::Alloc(bun_alloc::AllocError))?,
         );
         #[cfg(windows)]
-        let pathname_z = pathname_zbox.as_zstr();
+        let raw_pathname_z = raw_pathname_zbox.as_zstr();
+        let raw_pathname = raw_pathname_z.as_bytes();
+
+        let mut normalized_buf = bun_paths::PathBuffer::uninit();
+        if raw_pathname.len() >= normalized_buf.len() {
+            continue;
+        }
+        let pathname_z: &bun_core::ZStr = bun_paths::resolve_path::normalize_buf_z::<
+            bun_paths::platform::Posix,
+        >(raw_pathname, &mut normalized_buf[..]);
         let pathname = pathname_z.as_bytes();
 
         // Validate path safety (reject absolute paths, path traversal)
-        if !is_safe_path(pathname) {
+        if pathname == b"." || !is_safe_path(pathname) {
             continue;
         }
 

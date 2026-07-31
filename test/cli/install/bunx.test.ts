@@ -1380,3 +1380,45 @@ it.concurrent.skipIf(isWindows)(
     }
   },
 );
+
+// A non-ENOENT lstat failure while validating the cache path (e.g. EACCES on
+// a non-traversable parent component) must surface the real errno instead of
+// the misleading "not a directory owned by the current user" message: the
+// directory *is* owned by the current user, the stat just failed. Root
+// bypasses DAC permission checks, so EACCES never fires there.
+it.concurrent.skipIf(isWindows || process.getuid?.() === 0)(
+  "surfaces the real errno when validating the bunx cache directory fails",
+  async () => {
+    const { x_dir, env } = setup();
+    const scope = "bunx-cache-errno-fixture";
+    const pkg = "bunx-cache-errno-pkg";
+    const scopeDir = join(env.TMPDIR, `bunx-${process.getuid!()}-@${scope}`);
+
+    await mkdir(scopeDir, { recursive: true });
+    // Owner rw, no execute: the scope dir itself is a trusted private
+    // directory, but lstat on any child returns EACCES.
+    chmodSync(scopeDir, 0o600);
+    try {
+      const subprocess = spawn({
+        cmd: [bunExe(), "x", "--no-install", `@${scope}/${pkg}`],
+        cwd: x_dir,
+        stdout: "pipe",
+        stdin: "ignore",
+        stderr: "pipe",
+        env,
+      });
+      const [err, out, exitCode] = await Promise.all([
+        subprocess.stderr.text(),
+        subprocess.stdout.text(),
+        subprocess.exited,
+      ]);
+      expect(err).toContain("refusing to use bunx cache directory");
+      expect(err).toContain("EACCES");
+      expect(err).not.toContain("not a directory owned by the current user");
+      expect(out).toHaveLength(0);
+      expect(exitCode).toBe(1);
+    } finally {
+      chmodSync(scopeDir, 0o755);
+    }
+  },
+);

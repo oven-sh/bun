@@ -371,6 +371,45 @@ impl StringOrBuffer {
         }
     }
 
+    /// Decode an array-buffer-like `value` into `*out`.
+    ///
+    /// Pin/protect prevents GC movement and detach, but not
+    /// `ArrayBuffer.prototype.resize()`. An async worker must not keep a live
+    /// pointer/length into a non-shared resizable backing store, so those
+    /// inputs are snapshotted into owned bytes before handoff; fixed buffers
+    /// (and growable SharedArrayBuffers) keep the pinned/protected fast path.
+    #[inline]
+    fn decode_array_buffer_into(
+        out: &mut StringOrBuffer,
+        global: &JSGlobalObject,
+        value: JSValue,
+        is_async: bool,
+    ) {
+        let buffer = if is_async {
+            Buffer::from_js_pinned(global, value)
+                .unwrap_or_else(|| Buffer::from_array_buffer(global, value))
+        } else {
+            Buffer::from_array_buffer(global, value)
+        };
+
+        if is_async {
+            if buffer.buffer.resizable && !buffer.buffer.shared {
+                let owned = buffer.buffer.byte_slice().to_vec();
+                global.vm().report_extra_memory(owned.len());
+                let mut buffer = buffer;
+                if buffer.pinned {
+                    buffer.pinned = false;
+                    buffer.buffer.unpin();
+                }
+                *out = Self::EncodedSlice(ZigStringSlice::init_owned(owned));
+                return;
+            }
+            buffer.buffer.value.protect();
+        }
+
+        *out = Self::Buffer(buffer);
+    }
+
     /// Out-param core of [`from_js_maybe_async`]. Writes the decoded payload
     /// directly into `*out` and returns
     /// `Ok(true)` on success, `Ok(false)` if `value` is not a string/buffer
@@ -437,18 +476,7 @@ impl StringOrBuffer {
             | JSType::BigInt64Array
             | JSType::BigUint64Array
             | JSType::DataView => {
-                let buffer = if is_async {
-                    Buffer::from_js_pinned(global, value)
-                        .unwrap_or_else(|| Buffer::from_array_buffer(global, value))
-                } else {
-                    Buffer::from_array_buffer(global, value)
-                };
-
-                if is_async {
-                    buffer.buffer.value.protect();
-                }
-
-                *out = Self::Buffer(buffer);
+                Self::decode_array_buffer_into(out, global, value, is_async);
                 Ok(true)
             }
             _ => Ok(false),
@@ -508,16 +536,7 @@ impl StringOrBuffer {
         allow_string_object: bool,
     ) -> JsResult<bool> {
         if value.is_cell() && value.js_type().is_array_buffer_like() {
-            let buffer = if is_async {
-                Buffer::from_js_pinned(global, value)
-                    .unwrap_or_else(|| Buffer::from_array_buffer(global, value))
-            } else {
-                Buffer::from_array_buffer(global, value)
-            };
-            if is_async {
-                buffer.buffer.value.protect();
-            }
-            *out = Self::Buffer(buffer);
+            Self::decode_array_buffer_into(out, global, value, is_async);
             return Ok(true);
         }
 

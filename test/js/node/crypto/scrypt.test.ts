@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
+import crypto from "node:crypto";
 
 // When `crypto.scrypt` fails to allocate the output buffer (OOM for a huge
 // `keylen`), `CryptoJob.init` takes the error path. Previously the `errdefer`
@@ -75,4 +76,64 @@ test("scrypt async does not leak callback/buffers when output allocation fails",
   });
 
   expect(exitCode).toBe(0);
+});
+
+// Async `crypto.scrypt` snapshots its password/salt at submission time. Safe JS
+// can back either input with a resizable ArrayBuffer and resize it to zero
+// before the worker runs; the derived key must still match the originally
+// submitted bytes (matching Node) instead of reading a stale descriptor.
+const SCRYPT_OPTS = { N: 16, r: 8, p: 1 };
+
+test("scrypt async snapshots a resizable-ArrayBuffer-backed password", async () => {
+  const salt = Buffer.alloc(16, 0x42);
+  const rab = new ArrayBuffer(1024, { maxByteLength: 1024 });
+  const password = new Uint8Array(rab);
+  password.fill(0x41);
+  const original = Buffer.from(password);
+  const expected = crypto.scryptSync(original, salt, 64, SCRYPT_OPTS);
+
+  const { promise, resolve, reject } = Promise.withResolvers();
+  crypto.scrypt(password, salt, 64, SCRYPT_OPTS, (err, key) => (err ? reject(err) : resolve(key)));
+  rab.resize(0);
+
+  const key = await promise;
+  expect(rab.byteLength).toBe(0);
+  expect(key).toEqual(expected);
+});
+
+test("scrypt async snapshots the active region of a RAB-backed password view", async () => {
+  const salt = Buffer.alloc(16, 0x42);
+  const rab = new ArrayBuffer(256, { maxByteLength: 256 });
+  const full = new Uint8Array(rab);
+  for (let i = 0; i < full.length; i++) full[i] = i & 0xff;
+
+  // Non-zero byteOffset, length < backing: the snapshot must be the view's
+  // active region, not the whole ArrayBuffer.
+  const password = new Uint8Array(rab, 64, 100);
+  const original = Buffer.from(password);
+  const expected = crypto.scryptSync(original, salt, 64, SCRYPT_OPTS);
+
+  const { promise, resolve, reject } = Promise.withResolvers();
+  crypto.scrypt(password, salt, 64, SCRYPT_OPTS, (err, key) => (err ? reject(err) : resolve(key)));
+  rab.resize(0);
+
+  const key = await promise;
+  expect(key).toEqual(expected);
+});
+
+test("scrypt async snapshots a resizable-ArrayBuffer-backed salt", async () => {
+  const password = Buffer.alloc(64, 0x41);
+  const rab = new ArrayBuffer(16, { maxByteLength: 16 });
+  const salt = new Uint8Array(rab);
+  salt.fill(0x42);
+  const original = Buffer.from(salt);
+  const expected = crypto.scryptSync(password, original, 64, SCRYPT_OPTS);
+
+  const { promise, resolve, reject } = Promise.withResolvers();
+  crypto.scrypt(password, salt, 64, SCRYPT_OPTS, (err, key) => (err ? reject(err) : resolve(key)));
+  rab.resize(0);
+
+  const key = await promise;
+  expect(rab.byteLength).toBe(0);
+  expect(key).toEqual(expected);
 });

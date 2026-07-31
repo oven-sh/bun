@@ -560,22 +560,29 @@ test("Blob.slice at an odd byte offset decodes UTF-16LE (BOM) content with text(
   expect(exitCode).toBe(0);
 });
 
-test("Blob text()/json() decode UTF-16BE (BOM) content", async () => {
+test("Bun.file() text()/json() decode UTF-16BE (BOM) content", async () => {
+  using dir = tempDir("bun-file-utf16be", {
+    // UTF-16BE BOM (FE FF) followed by "hi" / "42" / "é汉字🎉".
+    "a.txt": new Uint8Array([0xfe, 0xff, 0x00, 0x68, 0x00, 0x69]),
+    "b.json": new Uint8Array([0xfe, 0xff, 0x00, 0x34, 0x00, 0x32]),
+    "c.txt": Buffer.from("\uFEFFé汉字🎉", "utf16le").swap16(),
+    // slice(1) starts the FE FF at an odd offset into the backing store.
+    "d.txt": new Uint8Array([0x41, 0xfe, 0xff, 0x00, 0x68, 0x00, 0x69]),
+  });
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),
       "-e",
       `
-        // UTF-16BE BOM (FE FF) followed by "hi" / "42" / "é汉字🎉".
-        const text = await new Blob([new Uint8Array([0xfe, 0xff, 0x00, 0x68, 0x00, 0x69])]).text();
-        const json = await new Blob([new Uint8Array([0xfe, 0xff, 0x00, 0x34, 0x00, 0x32])]).json();
-        const wide = await new Blob([Buffer.from("\\uFEFFé汉字🎉", "utf16le").swap16()]).text();
-        // slice(1) starts the FE FF at an odd offset into the backing store.
-        const odd = await new Blob([new Uint8Array([0x41, 0xfe, 0xff, 0x00, 0x68, 0x00, 0x69])]).slice(1).text();
+        const text = await Bun.file("a.txt").text();
+        const json = await Bun.file("b.json").json();
+        const wide = await Bun.file("c.txt").text();
+        const odd  = await Bun.file("d.txt").slice(1).text();
         console.log(JSON.stringify({ text, json, wide, odd }));
       `,
     ],
     env: bunEnv,
+    cwd: String(dir),
     stdout: "pipe",
     stderr: "pipe",
   });

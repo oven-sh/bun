@@ -4754,6 +4754,42 @@ impl VirtualMachine {
         // tail instead of via a drop guard (the body has no early-`?` returns
         // once the AggregateError branch is taken).
         let global_ref = self.global();
+        let exception_list_ptr = exception_list
+            .as_deref_mut()
+            .map(|l| l as *mut ExceptionList)
+            .unwrap_or(core::ptr::null_mut());
+
+        // Note: reborrow so the add-to-error-list tail can still see it after
+        // `print_error_from_maybe_private_data`.
+        let mut exception_list = exception_list;
+        let was_internal = self.print_error_from_maybe_private_data(
+            value,
+            exception_list.as_deref_mut(),
+            formatter,
+            writer,
+            allow_ansi_color,
+            allow_side_effects,
+        );
+
+        if was_internal {
+            if let Some(exception_) = exception {
+                let mut holder = crate::zig_exception::Holder::init();
+                // Note: `holder.deinit(self)` runs at the tail (for borrowck)
+                // — semantics unchanged because
+                // `need_to_clear_parser_arena_on_deinit` is false here.
+                let zig_exception: &mut ZigException = holder.zig_exception();
+                exception_.get_stack_trace(global_ref, &mut zig_exception.stack);
+                if zig_exception.stack.frames_len > 0 {
+                    let _ = Self::print_stack_trace(writer, &zig_exception.stack, allow_ansi_color);
+                }
+                if let Some(list) = exception_list {
+                    let top_level_dir = self.top_level_dir();
+                    let _ =
+                        zig_exception.add_to_error_list(list, top_level_dir, Some(&self.origin));
+                }
+                holder.deinit(self);
+            }
+        }
 
         if value.is_aggregate_error(global_ref) {
             // Note: `JSValue::for_each` takes a C-ABI fn
@@ -4804,9 +4840,7 @@ impl VirtualMachine {
             let mut ctx = AggCtx {
                 formatter: std::ptr::from_mut(formatter),
                 writer: std::ptr::from_mut(writer),
-                exception_list: exception_list
-                    .map(std::ptr::from_mut::<ExceptionList>)
-                    .unwrap_or(core::ptr::null_mut()),
+                exception_list: exception_list_ptr,
                 allow_ansi_color,
                 allow_side_effects,
             };
@@ -4815,39 +4849,6 @@ impl VirtualMachine {
             // which case the error is swallowed.
             let errors = value.get_errors_property(global_ref);
             let _ = errors.for_each(global_ref, (&raw mut ctx).cast(), agg_iter);
-            return;
-        }
-
-        // Note: reborrow so the add-to-error-list tail can still see it after
-        // `print_error_from_maybe_private_data`.
-        let mut exception_list = exception_list;
-        let was_internal = self.print_error_from_maybe_private_data(
-            value,
-            exception_list.as_deref_mut(),
-            formatter,
-            writer,
-            allow_ansi_color,
-            allow_side_effects,
-        );
-
-        if was_internal {
-            if let Some(exception_) = exception {
-                let mut holder = crate::zig_exception::Holder::init();
-                // Note: `holder.deinit(self)` runs at the tail (for borrowck)
-                // — semantics unchanged because
-                // `need_to_clear_parser_arena_on_deinit` is false here.
-                let zig_exception: &mut ZigException = holder.zig_exception();
-                exception_.get_stack_trace(global_ref, &mut zig_exception.stack);
-                if zig_exception.stack.frames_len > 0 {
-                    let _ = Self::print_stack_trace(writer, &zig_exception.stack, allow_ansi_color);
-                }
-                if let Some(list) = exception_list {
-                    let top_level_dir = self.top_level_dir();
-                    let _ =
-                        zig_exception.add_to_error_list(list, top_level_dir, Some(&self.origin));
-                }
-                holder.deinit(self);
-            }
         }
     }
 

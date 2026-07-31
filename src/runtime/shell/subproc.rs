@@ -1403,7 +1403,34 @@ impl<'a> SpawnArgs<'a> {
                 self.path = &line[b"PATH=".len()..len];
             }
 
-            self.env_array.push(line.as_ptr().cast::<c_char>());
+            // A var can arrive twice, once from `export_env` and again from
+            // `cmd_local_env` (`FOO=bar cmd` with FOO inherited or exported).
+            // POSIX tolerates duplicate environ entries but getenv returns the
+            // first match, so appending would make the child see the stale
+            // value. Replace the existing entry instead.
+            let line_ptr = line.as_ptr().cast::<c_char>();
+            let existing = self.env_array.iter().position(|&p| {
+                // SAFETY: every entry is a NUL-terminated `key=value` line
+                // pushed by `fill_env` (this call or an earlier one).
+                let e = unsafe { core::ffi::CStr::from_ptr(p).to_bytes() };
+                e.len() > key.len() && e[key.len()] == b'=' && Self::env_key_eql(&e[..key.len()], key)
+            });
+            match existing {
+                Some(i) => self.env_array[i] = line_ptr,
+                None => self.env_array.push(line_ptr),
+            }
+        }
+    }
+
+    #[inline]
+    fn env_key_eql(a: &[u8], b: &[u8]) -> bool {
+        #[cfg(windows)]
+        {
+            return bun_core::strings::eql_case_insensitive_asciii_check_length(a, b);
+        }
+        #[cfg(not(windows))]
+        {
+            a == b
         }
     }
 }

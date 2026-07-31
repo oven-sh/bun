@@ -3024,10 +3024,6 @@ void JSC__JSString__toZigString(JSC::JSString* arg0, JSC::JSGlobalObject* arg1, 
     // We don't need to assert here because ->value returns a reference to the same string as the one owned by the JSString.
 }
 
-bool JSC__JSString__eql(const JSC::JSString* arg0, JSC::JSGlobalObject* obj, JSC::JSString* arg2)
-{
-    return arg0->equal(obj, arg2);
-}
 bool JSC__JSString__is8Bit(const JSC::JSString* arg0) { return arg0->is8Bit(); };
 size_t JSC__JSString__length(const JSC::JSString* arg0) { return arg0->length(); }
 

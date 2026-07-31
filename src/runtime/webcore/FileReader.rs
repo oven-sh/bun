@@ -93,7 +93,6 @@ impl Default for FileReader {
 }
 
 pub type IOReader = BufferedReader;
-pub const TAG: readable_stream::Tag = readable_stream::Tag::File;
 
 #[derive(strum::IntoStaticStr)]
 pub enum ReadDuringJSOnPullResult {

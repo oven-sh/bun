@@ -245,3 +245,50 @@ describe.each(["with", "without"])("setImmediate %s timers running", mode => {
 it("should defer microtasks when an exception is thrown in an immediate", async () => {
   expect(await bunRun(["run", path.join(import.meta.dir, "timers-immediate-exception-fixture.js")])).toSpawn();
 });
+
+it("setImmediate fires between chained thread-pool completions (no mid-tick re-drain)", async () => {
+  // Node's event loop takes one snapshot of thread-pool completions per poll
+  // iteration and runs the check phase (setImmediate) before the next poll.
+  // So a chain of `fs.read cb -> nextTick -> fs.read -> ...` (the ReadStream
+  // pattern) observes a setImmediate fire between every pair of read
+  // callbacks. When Bun's tick() re-drained the concurrent queue mid-tick, a
+  // fast completion that landed while tasks were still being processed ran
+  // before immediates and timers, so a due setInterval (the writer in
+  // test-fs-read-stream-pos.js) could be starved for the duration of a
+  // stream's read chain.
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        const fs = require('fs');
+        const fd = fs.openSync(process.execPath, 'r');
+        let immediateTicks = 0;
+        let lastTicks = -1;
+        let reads = 0;
+        let sameTick = 0;
+        (function imm() { immediateTicks++; setImmediate(imm); })();
+        function go() {
+          fs.read(fd, Buffer.allocUnsafe(1), 0, 1, 0, () => {
+            reads++;
+            if (immediateTicks === lastTicks) sameTick++;
+            lastTicks = immediateTicks;
+            if (reads >= 200) {
+              fs.closeSync(fd);
+              console.log(JSON.stringify({ reads, sameTick }));
+              process.exit(0);
+            }
+            process.nextTick(go);
+          });
+        }
+        setImmediate(go);
+      `,
+    ],
+    env: bunEnv,
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(JSON.parse(stdout.trim())).toEqual({ reads: 200, sameTick: 0 });
+  expect(exitCode).toBe(0);
+});

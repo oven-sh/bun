@@ -610,6 +610,10 @@ impl EventLoop {
         // scopeguard closure would alias `&mut self`).
 
         let ctx = self.vm();
+        // One snapshot of thread-pool completions per tick, like libuv's
+        // `uv__work_done`. Completions that arrive while this batch is being
+        // processed are picked up by the next tick (after immediates/timers),
+        // so a self-feeding chain can't starve the check/timer phases.
         self.tick_concurrent();
         self.process_gc_timer();
 
@@ -620,7 +624,6 @@ impl EventLoop {
 
         loop {
             while self.tick_with_count(ctx) > 0 {
-                self.tick_concurrent();
                 self.global_ref().handle_rejected_promises();
             }
             if self
@@ -631,16 +634,13 @@ impl EventLoop {
                 self.entered_event_loop_count -= 1;
                 return;
             }
-            self.tick_concurrent();
             if self.tasks.readable_length() > 0 {
                 continue;
             }
             break;
         }
 
-        while self.tick_with_count(ctx) > 0 {
-            self.tick_concurrent();
-        }
+        while self.tick_with_count(ctx) > 0 {}
 
         self.global_ref().handle_rejected_promises();
 

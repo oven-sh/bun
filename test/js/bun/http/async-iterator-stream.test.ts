@@ -114,11 +114,15 @@ describe.concurrent("Streaming body via", () => {
     expect(exitCode).toBe(0);
   });
 
-  test("async generator function throws an error but continues to send the headers", async () => {
+  test("async generator function that throws before yielding is routed to error()", async () => {
+    let result: { status: number; xHey: string | null; body: string } | undefined;
     const onMessage = mock(async url => {
-      const response = await fetch(url);
-      expect(response.headers.get("X-Hey")).toBe("123");
-      subprocess?.kill();
+      try {
+        const response = await fetch(url);
+        result = { status: response.status, xHey: response.headers.get("X-Hey"), body: await response.text() };
+      } finally {
+        subprocess.kill();
+      }
     });
 
     await using subprocess = spawn({
@@ -132,7 +136,9 @@ describe.concurrent("Streaming body via", () => {
 
     let [exitCode, stderr] = await Promise.all([subprocess.exited, subprocess.stderr.text()]);
     expect(exitCode).toBeInteger();
-    expect(stderr).toContain("error: Oops");
+    // No body byte reached the wire: error() replaced the response, so the
+    // original X-Hey header is not sent and the failure is not double-reported.
+    expect({ result, stderr }).toEqual({ result: { status: 555, xHey: null, body: "E:Oops" }, stderr: "" });
     expect(onMessage).toHaveBeenCalledTimes(1);
   });
 

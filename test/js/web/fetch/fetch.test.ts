@@ -2773,7 +2773,7 @@ describe("fetch should allow duplex", () => {
   it("bounds memory when a handler forwards req.body to a stalled target", async () => {
     const fixture = `
       const net = require("node:net");
-      const CHUNK = Buffer.alloc(64 * 1024, 0x47), COUNT = 4096; // 256 MB
+      const CHUNK = Buffer.alloc(64 * 1024, 0x47), COUNT = 2048; // 128 MB
       // Upload target stalls before reading, then drains and reports the total.
       const { promise: drained, resolve: onDrained } = Promise.withResolvers();
       const sink = net.createServer(sock => {

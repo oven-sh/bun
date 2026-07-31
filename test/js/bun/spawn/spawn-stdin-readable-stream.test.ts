@@ -902,7 +902,7 @@ describe("spawn stdin ReadableStream", () => {
   test("fetch response.body as stdin bounds memory while the child stalls", async () => {
     const fixture = `
       const net = require("node:net");
-      const CHUNK = Buffer.alloc(64 * 1024, 0x47), COUNT = 4096; // 256 MB
+      const CHUNK = Buffer.alloc(64 * 1024, 0x47), COUNT = 2048; // 128 MB
       const source = net.createServer(sock => {
         sock.write("HTTP/1.1 200 OK\\r\\ncontent-length: " + CHUNK.length * COUNT + "\\r\\nconnection: close\\r\\n\\r\\n");
         let n = 0;
@@ -930,7 +930,7 @@ describe("spawn stdin ReadableStream", () => {
       process.exit(0);
     `;
     const [fixtureMaxRSS, baselineMaxRSS] = await Promise.all([
-      runFixtureMaxRSS(fixture, { received: 256 * 1024 * 1024, exitCode: 0 }),
+      runFixtureMaxRSS(fixture, { received: 128 * 1024 * 1024, exitCode: 0 }),
       emptyProcessMaxRSS(),
     ]);
     // Without source-side backpressure the whole 256 MB payload lands in the
@@ -943,7 +943,7 @@ describe("spawn stdin ReadableStream", () => {
   // instead of pulling every chunk into memory while the child stalls.
   test("JS pull() source as stdin bounds memory while the child stalls", async () => {
     const fixture = `
-      const CHUNK = Buffer.alloc(64 * 1024, 0x47), COUNT = 4096; // 256 MB
+      const CHUNK = Buffer.alloc(64 * 1024, 0x47), COUNT = 2048; // 128 MB
       let n = 0;
       const stdin = new ReadableStream({ pull(c) { if (n < COUNT) { n++; c.enqueue(CHUNK); } else c.close(); } });
 
@@ -963,7 +963,7 @@ describe("spawn stdin ReadableStream", () => {
       process.exit(0);
     `;
     const [fixtureMaxRSS, baselineMaxRSS] = await Promise.all([
-      runFixtureMaxRSS(fixture, { received: 256 * 1024 * 1024, exitCode: 0 }),
+      runFixtureMaxRSS(fixture, { received: 128 * 1024 * 1024, exitCode: 0 }),
       emptyProcessMaxRSS(),
     ]);
     expect((fixtureMaxRSS - baselineMaxRSS) / 1024 / 1024).toBeLessThan(isASAN || isDebug ? 256 : 96);

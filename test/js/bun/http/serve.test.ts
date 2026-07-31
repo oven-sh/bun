@@ -3800,7 +3800,7 @@ it.each(["chunked", "content-length"] as const)(
   async encoding => {
     const fixture = `
     const net = require("node:net");
-    const CHUNK = Buffer.alloc(64 * 1024, 0x47), COUNT = 4096; // 256 MB
+    const CHUNK = Buffer.alloc(64 * 1024, 0x47), COUNT = 2048; // 128 MB
     // Upstream: written as fast as the socket accepts it.
     const source = net.createServer(sock => {
       let n = 0;

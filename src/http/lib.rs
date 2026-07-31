@@ -329,10 +329,12 @@ pub(crate) const MAX_H2_RETRIES: u8 = 5;
 
 const PREALLOCATE_MAX: usize = 1024 * 1024 * 256;
 
-/// `state.decoded_body` is re-seated (cleared) after the progress callback
-/// only if its capacity is at or below this; larger scratch buffers are
-/// dropped so the per-connection high-water mark stays bounded.
-const DECODED_BODY_RETAIN_CAP: usize = 512 * 1024;
+/// Per-chunk scratch buffers (`InternalState::decoded_body` on the HTTP thread
+/// and `FetchTasklet::scheduled_response_buffer` on the JS thread) whose
+/// capacity has grown past this are dropped after the chunk is consumed rather
+/// than `clear()`ed-and-reused, so the per-connection high-water mark stays
+/// bounded for long-lived streaming responses.
+pub const DECODED_BODY_RETAIN_CAP: usize = 512 * 1024;
 
 /// Whether the experimental Alt-Svc-driven HTTP/3 upgrade is enabled at all
 /// (CLI flag or env var). Used on its own to gate `H3.AltSvc.record` — a
@@ -433,6 +435,14 @@ pub enum BodySize {
 #[derive(Default)]
 pub struct HTTPClientResult<'a> {
     pub body: &'a [u8],
+    /// Populated only on the terminal (`!has_more`) progress callback:
+    /// `send_progress_update_*` moves the whole `decoded_body.list` here so
+    /// one-shot consumers (`send_sync`, `NetworkTask` manifest, S3 simple,
+    /// `RemoteImageDownload`) can `mem::take` it instead of
+    /// `extend_from_slice`ing the borrowed `body`. Streaming consumers read
+    /// `body` on non-terminal callbacks and treat this as just the final
+    /// chunk's bytes.
+    pub body_owned: Vec<u8>,
     pub has_more: bool,
     pub redirected: bool,
     pub can_stream: bool,
@@ -488,6 +498,32 @@ impl<'a> HTTPClientResult<'a> {
         )
     }
 
+    /// Returns this callback's body bytes as a slice regardless of which
+    /// field carries them (`body` on non-terminal, `body_owned` on terminal).
+    #[inline]
+    pub fn body_bytes(&self) -> &[u8] {
+        if self.body.is_empty() {
+            self.body_owned.as_slice()
+        } else {
+            self.body
+        }
+    }
+
+    /// Moves this callback's body bytes into `dest`. On a terminal callback
+    /// with `dest` empty this is a `Vec` move; otherwise it appends.
+    #[inline]
+    pub fn body_into(&mut self, dest: &mut Vec<u8>) {
+        if !self.body.is_empty() {
+            dest.extend_from_slice(self.body);
+        } else if !self.body_owned.is_empty() {
+            if dest.is_empty() {
+                core::mem::swap(dest, &mut self.body_owned);
+            } else {
+                dest.extend_from_slice(&self.body_owned);
+            }
+        }
+    }
+
     /// Widen the borrow to `'static` for self-referential storage.
     ///
     /// `body` is the only lifetime-carrying field; it borrows the HTTP
@@ -500,6 +536,7 @@ impl<'a> HTTPClientResult<'a> {
     pub unsafe fn detach_lifetime(self) -> HTTPClientResult<'static> {
         HTTPClientResult {
             body: &[],
+            body_owned: self.body_owned,
             has_more: self.has_more,
             redirected: self.redirected,
             can_stream: self.can_stream,
@@ -4184,21 +4221,23 @@ impl<'a> HTTPClient<'a> {
             bun_core::scoped_log!(fetch, "done");
         }
 
-        // Move the body bytes onto this frame so the slice outlives
-        // `on_async_http_callback_raw`, which on the terminal callback drops
+        // Move the body bytes out of `self.state` before `callback.run`, since
+        // `on_async_http_callback_raw` on the terminal callback drops
         // `self.state` and deallocates the embedding `ThreadlocalAsyncHTTP`
         // (making `self` dangle) before dispatching to the user callback.
         let mut decoded_body = core::mem::take(&mut self.state.decoded_body);
         let parent = self.parent_async_http();
-        result.body = decoded_body.list.as_slice();
-        callback.run(parent, result);
-
         if has_more {
+            result.body = decoded_body.list.as_slice();
+            callback.run(parent, result);
             if decoded_body.list.capacity() <= DECODED_BODY_RETAIN_CAP {
                 decoded_body.list.clear();
                 self.state.decoded_body = decoded_body;
             }
             self.maybe_pause_receive(socket);
+        } else {
+            result.body_owned = decoded_body.list;
+            callback.run(parent, result);
         }
 
         if PRINT_EVERY != 0 {
@@ -4230,13 +4269,18 @@ impl<'a> HTTPClient<'a> {
             self.state.stage = Stage::Done;
             self.flags.proxy_tunneling = false;
         }
-        // See `send_progress_update_without_stage_check`: lift the body onto
-        // this frame so it outlives the terminal callback's `self` teardown.
+        // See `send_progress_update_without_stage_check`: move the body out of
+        // `self.state` before the terminal callback's `self` teardown.
         let mut decoded_body = core::mem::take(&mut self.state.decoded_body);
         let parent = self.parent_async_http();
+        if is_done {
+            result.body_owned = decoded_body.list;
+            callback.run(parent, result);
+            return;
+        }
         result.body = decoded_body.list.as_slice();
         callback.run(parent, result);
-        if !is_done && decoded_body.list.capacity() <= DECODED_BODY_RETAIN_CAP {
+        if decoded_body.list.capacity() <= DECODED_BODY_RETAIN_CAP {
             decoded_body.list.clear();
             self.state.decoded_body = decoded_body;
         }
@@ -4401,6 +4445,7 @@ impl<'a> HTTPClient<'a> {
                 return HTTPClientResult {
                     metadata: Some(metadata),
                     body: &[],
+                    body_owned: Vec::new(),
                     redirected: self.flags.redirected,
                     fail: self.state.fail,
                     dns_error: self.state.dns_error,
@@ -4417,6 +4462,7 @@ impl<'a> HTTPClient<'a> {
         }
         HTTPClientResult {
             body: &[],
+            body_owned: Vec::new(),
             metadata: None,
             redirected: self.flags.redirected,
             fail: self.state.fail,

@@ -207,7 +207,7 @@ impl NetworkTask {
                 this.response_buffer.reset();
             }
 
-            let chunk = result.body;
+            let chunk = result.body_bytes();
 
             // Only commit to streaming extraction once we've seen a 2xx
             // status *and* the tarball is large enough to be worth the
@@ -302,7 +302,7 @@ impl NetworkTask {
             // there and accumulated chunks are preserved.
             this.response_buffer.reset();
         }
-        this.response_buffer.list.extend_from_slice(result.body);
+        result.body_into(&mut this.response_buffer.list);
 
         // BACKREF — PackageManager owns this task and outlives it. `notify`
         // runs on the HTTP thread, so we never materialize a `&mut

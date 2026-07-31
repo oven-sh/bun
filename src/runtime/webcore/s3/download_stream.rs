@@ -260,7 +260,7 @@ impl S3HttpDownloadStreamingTask {
     fn process_http_callback(
         &mut self,
         async_http: &mut AsyncHTTP<'static>,
-        result: HTTPClientResult,
+        mut result: HTTPClientResult,
     ) -> bool {
         // lets lock and unlock to be safe we know the state is not in the middle of a callback when locked
         // The RAII guard unlocks on every
@@ -286,9 +286,7 @@ impl S3HttpDownloadStreamingTask {
             should_enqueue
         );
 
-        if !result.body.is_empty() {
-            bun_core::handle_oom(self.reported_response_buffer.write(result.body));
-        }
+        result.body_into(&mut self.reported_response_buffer.list);
         if should_enqueue {
             if self.reported_response_buffer.list.is_empty() && !is_done {
                 return false;

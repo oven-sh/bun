@@ -572,7 +572,7 @@ impl SingleHTTPChannel {
 fn send_sync_callback(
     this: *mut SingleHTTPChannel,
     async_http: *mut AsyncHTTP<'static>,
-    result: HTTPClientResult<'_>,
+    mut result: HTTPClientResult<'_>,
 ) {
     // `init_sync` leaves every streaming/progress signal unset, so the only
     // callback is the terminal one; writing on `has_more` would hand
@@ -597,12 +597,9 @@ fn send_sync_callback(
     }
     // SAFETY: `this` is the heap `SingleHTTPChannel` from `send_sync`;
     // `response_buffer` is the caller's `&mut MutableString` which outlives
-    // `read_item`. `result.body` borrows the HTTP-thread `decoded_body` which
-    // is live for the duration of this callback.
+    // `read_item`.
     unsafe {
-        (*(*this).response_buffer)
-            .list
-            .extend_from_slice(result.body);
+        result.body_into(&mut (*(*this).response_buffer).list);
         (*this).write_item(result.detach_lifetime());
     }
 }

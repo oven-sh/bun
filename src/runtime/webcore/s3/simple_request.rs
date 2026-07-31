@@ -427,7 +427,7 @@ impl S3HttpSimpleTask {
     pub(crate) fn http_callback(
         this: *mut Self,
         async_http: *mut AsyncHTTP<'static>,
-        result: HTTPClientResult<'_>,
+        mut result: HTTPClientResult<'_>,
     ) {
         // SAFETY: `this` was produced by `S3HttpSimpleTask::new` and is exclusively owned by the
         // HTTP thread until enqueued back to the JS thread below.
@@ -437,9 +437,7 @@ impl S3HttpSimpleTask {
         // A close-delimited body (no Content-Length, no Transfer-Encoding) reports progress again
         // at EOF with `metadata: None`, so carry the earlier one across the assignment below.
         let previous_metadata = this.result.metadata.take();
-        if !result.body.is_empty() {
-            this.response_buffer.list.extend_from_slice(result.body);
-        }
+        result.body_into(&mut this.response_buffer.list);
         this.result = unsafe { result.detach_lifetime() };
         if this.result.metadata.is_none() {
             this.result.metadata = previous_metadata;

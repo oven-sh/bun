@@ -3149,7 +3149,7 @@ impl RemoteImageDownload {
     fn on_done(
         this: *mut RemoteImageDownload,
         async_http: *mut bun_http::AsyncHTTP<'static>,
-        result: bun_http::HTTPClientResult<'_>,
+        mut result: bun_http::HTTPClientResult<'_>,
     ) {
         // The worker's
         // ThreadlocalAsyncHTTP is about to be freed, so copy its
@@ -3168,7 +3168,7 @@ impl RemoteImageDownload {
                 // `this.async_http` (whose state the fresh copy still aliases).
                 real.as_ptr().write(::core::ptr::read(async_http));
             }
-            this.response_buffer.list.extend_from_slice(result.body);
+            result.body_into(&mut this.response_buffer.list);
             // Channel payload is a placeholder tick — the main thread
             // walks `downloads[]` to read per-task state after N wakeups.
             let _ = (*this.done).write_item(0);

@@ -805,7 +805,7 @@ impl FetchTasklet {
                 // SAFETY: `self` outlives this defer (it's a local in this fn) and no other
                 // borrow of scheduled_response_buffer is live at scope exit / `?` unwind.
                 let list = unsafe { &mut (*scheduled_buf).list };
-                if list.capacity() > 512 * 1024 {
+                if list.capacity() > http::DECODED_BODY_RETAIN_CAP {
                     *list = Vec::new();
                 } else {
                     list.clear();
@@ -2516,7 +2516,7 @@ impl FetchTasklet {
     fn callback(
         task: *mut FetchTasklet,
         async_http: *mut AsyncHTTP<'static>,
-        result: HTTPClientResult,
+        mut result: HTTPClientResult,
     ) {
         // at this point only this thread is accessing result to is no race condition
         let is_done = !result.has_more;
@@ -2550,10 +2550,12 @@ impl FetchTasklet {
         let prev_metadata = task_ref.result.metadata.take();
         let prev_cert_info = task_ref.result.certificate_info.take();
         let prev_can_stream = task_ref.result.can_stream;
-        // `result.body` borrows the HTTP thread's scratch buffer; capture the
-        // slice before `detach_lifetime` replaces it with `&[]` in the stored
-        // copy.
+        // `result.body` borrows the HTTP thread's scratch buffer on non-terminal
+        // callbacks; the terminal callback carries the bytes in `body_owned`
+        // instead. Capture both before `detach_lifetime` clears them in the
+        // stored copy.
         let body: &[u8] = result.body;
+        let body_owned: Vec<u8> = core::mem::take(&mut result.body_owned);
         // SAFETY: lifetime erasure for non-body fields; `body` is stored as
         // `&'static []` so no borrow escapes.
         task_ref.result = unsafe { result.detach_lifetime() };
@@ -2615,6 +2617,12 @@ impl FetchTasklet {
             }
             if !body.is_empty() {
                 bun_core::handle_oom(scheduled.write(body));
+            } else if !body_owned.is_empty() {
+                if scheduled.list.is_empty() {
+                    scheduled.list = body_owned;
+                } else {
+                    bun_core::handle_oom(scheduled.write(body_owned.as_slice()));
+                }
             }
             if task_ref.result.has_more && !task_ref.scheduled_response_buffer.list.is_empty() {
                 let _ = task_ref.signal_store.try_transition_receive_mode(

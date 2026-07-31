@@ -804,7 +804,12 @@ impl FetchTasklet {
             if buffer_reset.get() {
                 // SAFETY: `self` outlives this defer (it's a local in this fn) and no other
                 // borrow of scheduled_response_buffer is live at scope exit / `?` unwind.
-                unsafe { (*scheduled_buf).reset() };
+                let list = unsafe { &mut (*scheduled_buf).list };
+                if list.capacity() > 512 * 1024 {
+                    *list = Vec::new();
+                } else {
+                    list.clear();
+                }
             }
         }
 

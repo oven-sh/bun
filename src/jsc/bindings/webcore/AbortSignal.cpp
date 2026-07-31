@@ -58,11 +58,9 @@ Ref<AbortSignal> AbortSignal::abort(JSDOMGlobalObject& globalObject, ScriptExecu
 {
     UNUSED_PARAM(globalObject);
     ASSERT(reason);
-    // The default DOMException is deferred to jsReason(): m_reason is a
-    // JSC::Weak with no owner until the JSAbortSignal wrapper is created by
-    // the caller's toJSNewlyCreated(), so an eager allocation here could be
-    // collected by a GC triggered during that wrapper allocation. The explicit
-    // argument is rooted by the binding's EnsureStillAliveScope on argument0.
+    // Defer the default DOMException to jsReason(): m_reason is a JSC::Weak
+    // with no owner until toJSNewlyCreated() creates the wrapper, so an eager
+    // allocation here could be collected by a GC during that allocation.
     auto signal = adoptRef(*new AbortSignal(&context, Aborted::Yes, reason));
     if (reason.isUndefined())
         signal->m_commonReason = CommonAbortReason::UserAbort;

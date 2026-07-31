@@ -23,19 +23,12 @@ unsafe fn deallocator_from_addr(addr: usize) -> jsc::JSTypedArrayBytesDeallocato
     unsafe { core::mem::transmute::<usize, jsc::JSTypedArrayBytesDeallocator>(addr) }
 }
 
-/// Bytes deallocator that frees nothing, for a borrowed FFI pointer.
-/// `toBuffer(ptr, offset, len)` without an explicit finalizer views caller-owned
-/// memory it must NOT free, but the underlying
-/// `JSBuffer__bufferFromPointerAndLengthAndDeinit` requires a non-null deallocator
-/// for non-empty storage. A deallocator that does nothing satisfies that while
-/// leaving the storage caller-owned: GC releases only JSC's view, so no bad-free.
-/// Disposal is delegated only when the caller supplies a finalizer.
+/// Frees nothing. `JSBuffer__bufferFromPointerAndLengthAndDeinit` asserts a non-null
+/// deallocator for `len > 0`, so a borrowed view supplies this instead of `None`.
 unsafe extern "C" fn noop_bytes_deallocator(_ptr: *mut c_void, _ctx: *mut c_void) {}
 
 /// Unlike `JSValue::create_buffer` (which hard-codes `MarkedArrayBuffer_deallocator`),
-/// this variant passes the selected deallocator through: `to_buffer` supplies either
-/// the caller's finalizer or `noop_bytes_deallocator` for borrowed storage, so the
-/// bytes are only freed when the caller asked for that.
+/// this passes the caller's deallocator through so FFI bytes are only freed when asked.
 #[allow(non_snake_case)]
 #[inline]
 fn create_buffer_with_ctx(
@@ -53,9 +46,8 @@ fn create_buffer_with_ctx(
             deallocator: jsc::JSTypedArrayBytesDeallocator,
         ) -> JSValue;
     }
-    // SAFETY: `global` is live; `slice` describes caller-provided memory that stays
-    // valid for the Buffer's lifetime. `callback` controls disposal, and may be a
-    // no-op when the storage remains caller-owned (JSC then owns only the view).
+    // SAFETY: `global` is live; `slice` stays valid for the Buffer's lifetime.
+    // `callback` controls disposal (a no-op when the storage stays caller-owned).
     unsafe {
         JSBuffer__bufferFromPointerAndLengthAndDeinit(
             global,
@@ -513,12 +505,8 @@ fn ptr_(global_this: &JSGlobalObject, value: JSValue, byte_offset: Option<JSValu
     JSValue::from_ptr_address(addr)
 }
 
-/// `union(enum)` → Rust enum.
-/// `Slice` carries a raw (ptr, len) because it points at caller-owned FFI memory
-/// of unknown lifetime.
-// Consumer audit: `new_cstring` copies the bytes into a JS string; `to_array_buffer`
-// and `to_buffer` both borrow the pointer when no finalizer is supplied and never
-// free it from Rust. A supplied finalizer controls disposal.
+/// `Slice` carries a raw (ptr, len) pointing at caller-owned FFI memory; consumers
+/// borrow it (or delegate disposal to a supplied finalizer), never free it from Rust.
 enum ValueOrError {
     Err(JSValue),
     Slice(*mut u8, usize),
@@ -748,15 +736,10 @@ fn to_buffer(
                 }
             }
 
-            // SAFETY: ptr/len came from get_ptr_slice; a caller-supplied finalizer
-            // controls disposal, otherwise the storage stays caller-owned and borrowed.
+            // SAFETY: ptr/len came from get_ptr_slice; caller-owned FFI memory.
             let slice = unsafe { core::slice::from_raw_parts_mut(ptr, len) };
-            // Without an explicit finalizer the pointer stays caller-owned (e.g. it
-            // came from `ptr(buffer)`), so this must not install Bun's allocator
-            // deallocator: freeing it on GC frees storage this Buffer does not own
-            // (ASAN bad-free / SIGSEGV in `mi_free`), which is what the previous
-            // `JSValue::create_buffer` fall-back did. The no-op deallocator makes the
-            // Buffer a borrowed zero-copy view instead.
+            // No finalizer means borrow: the noop deallocator keeps GC from freeing
+            // caller-owned storage (oven-sh/bun#35405).
             Ok(create_buffer_with_ctx(
                 global_this,
                 slice,

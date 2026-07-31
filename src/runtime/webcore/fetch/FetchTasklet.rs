@@ -1744,6 +1744,10 @@ impl FetchTasklet {
         }
 
         this.mutex.lock();
+        // A ByteStream is attaching; clear the buffered-consumer reserve gate
+        // under the mutex so the HTTP thread cannot observe the stale `true`
+        // in `callback()` between this unlock and `on_readable_stream_available`.
+        this.is_buffering_body.store(false, Ordering::Release);
         // explicit unlock at each return
         // (no `?` paths between lock and unlock, so a guard is unnecessary).
         let size_hint = this.get_size_hint();

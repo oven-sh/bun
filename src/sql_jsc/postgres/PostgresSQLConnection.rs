@@ -2436,12 +2436,8 @@ impl PostgresSQLConnection {
                 } else {
                     &mut stack_buf[..statement.fields.len().min(max_inline)]
                 };
-                // Seed every cell as null *and* tag it with its column's
-                // classification so a short DataRow (fewer values than the
-                // RowDescription declared) still hands `toJS` a cells array
-                // whose named/indexed/duplicate flags match the Structure that
-                // was built from the same fields. `put_impl` overwrites the
-                // cells the DataRow does supply.
+                // Seed with the field's column kind so a short DataRow still
+                // matches the Structure built from these fields.
                 for (i, c) in cells.iter_mut().enumerate() {
                     *c = DataCell::SQLDataCell::null_for_column(
                         i as u32,

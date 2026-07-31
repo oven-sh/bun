@@ -264,11 +264,9 @@ impl SQLDataCell {
         SQLDataCell::default()
     }
 
-    /// A `Null`-tagged cell pre-classified for `column` at ordinal `position`.
-    /// Used to seed the per-row cell buffer so a DataRow that supplies fewer
-    /// values than the RowDescription declared still carries each field's
-    /// duplicate/indexed/named flag into `JSC__constructObjectFromDataCell`,
-    /// keeping the "one Structure offset per named cell" invariant intact.
+    /// A `Null`-tagged cell pre-classified for `column` at ordinal `position`,
+    /// seeding the row buffer so cells a short DataRow never fills still carry
+    /// the right named/indexed/duplicate flag into `toJS`.
     #[inline]
     pub(crate) fn null_for_column(position: u32, column: &ColumnIdentifier) -> SQLDataCell {
         SQLDataCell {

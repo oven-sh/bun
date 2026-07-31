@@ -817,11 +817,8 @@ impl JSMySQLConnection {
         // the `ParentRef` liveness invariant.
         let cached_structure: Option<ParentRef<CachedStructure>> = match result_mode {
             ResultMode::Objects => {
-                // Always build the Structure for object-mode rows so
-                // `JSC__constructObjectFromDataCell` never sees neither a
-                // Structure nor a names array (which would trip its
-                // RELEASE_ASSERT). Matches the postgres path: a missing
-                // js_value just means no write-barrier owner.
+                // Build unconditionally (matches postgres) so toJS always has
+                // either a Structure or a names array.
                 let owner = self.js_value.get().try_get().unwrap_or(JSValue::ZERO);
                 let cs = statement.structure(owner, &self.global_object);
                 structure = cs.js_value().unwrap_or(JSValue::UNDEFINED);

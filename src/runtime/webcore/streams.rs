@@ -2407,7 +2407,10 @@ impl NetworkSink {
         // so the only owner is the wrapper. Short reborrows below do not span the
         // re-entrant `fail`/`write_bytes` calls.
         let (ended, is_bytestream) = unsafe {
-            ((*this).ended, matches!((*this).source, SourceHandle::ByteStream(_)))
+            (
+                (*this).ended,
+                matches!((*this).source, SourceHandle::ByteStream(_)),
+            )
         };
         if ended {
             return;

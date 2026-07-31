@@ -199,11 +199,8 @@ fn call_as_function(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVa
             let mut formatter = bun_jsc::ConsoleObject::Formatter::new(global);
             return Err(global.throw(format_args!("Expected array, got {}", this.each.to_fmt(&mut formatter))));
         }
-        // Compute the widest array row once. `done` arity is derived from this width
-        // (not each row's own length) so an omitted optional trailing tuple element
-        // binds as `undefined` instead of receiving `done`. Jest derives `done` per
-        // row and so exhibits oven-sh/bun#24347; this intentionally diverges so the
-        // callback parameter's inferred `T | undefined` type holds at runtime.
+        // `done` arity uses the widest array row so an omitted optional tuple slot
+        // binds as `undefined`, not `done` (#24347; intentionally diverges from Jest).
         let max_row_width: usize = {
             let mut width: usize = 0;
             let mut width_iter = this.each.array_iterator(global)?;
@@ -250,11 +247,8 @@ fn call_as_function(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVa
                     None
                 };
 
-                // `done` arity is computed from the table's widest row so it lands in
-                // the same slot for every array row (#24347). When a `done` follows,
-                // pad the short row's bound args so `done` ends up past the omitted
-                // optional slots; otherwise bind the row as-is so `arguments.length`
-                // and rest parameters still reflect the row's own length.
+                // Pad to the table's width only when a `done` slot follows, so it lands
+                // past omitted optional elements without inflating `arguments.length`.
                 let bound_width =
                     if item.is_array() { args_list.len().max(max_row_width) } else { args_list.len() };
                 let residual_length = callback_length.saturating_sub(bound_width);

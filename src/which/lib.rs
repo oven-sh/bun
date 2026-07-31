@@ -24,21 +24,29 @@ use scope::which as which_log;
 /// Writes `[cwd/]segment/bin\0` into `buf` and stats it as an executable.
 #[cfg(not(windows))]
 fn is_valid(buf: &mut PathBuffer, cwd: &[u8], segment: &[u8], bin: &[u8]) -> Option<u16> {
-    let cwd_prefix_len = if cwd.is_empty() { 0 } else { cwd.len() + 1 };
-    let segment_end = cwd_prefix_len + segment.len();
-    let prefix_len = segment_end + 1; // includes trailing path separator
+    fn len_with_sep(part: &[u8]) -> usize {
+        match part.last() {
+            None => 0,
+            Some(&SEP) => part.len(),
+            Some(_) => part.len() + 1,
+        }
+    }
+    let cwd_prefix_len = len_with_sep(cwd);
+    let prefix_len = cwd_prefix_len + len_with_sep(segment);
     let len = prefix_len + bin.len();
     let len_z = len + 1; // includes null terminator
     if len_z > MAX_PATH_BYTES {
         return None;
     }
 
-    if !cwd.is_empty() {
-        buf[..cwd.len()].copy_from_slice(cwd);
+    buf[..cwd.len()].copy_from_slice(cwd);
+    if cwd_prefix_len > cwd.len() {
         buf[cwd.len()] = SEP;
     }
-    buf[cwd_prefix_len..segment_end].copy_from_slice(segment);
-    buf[segment_end] = SEP;
+    buf[cwd_prefix_len..cwd_prefix_len + segment.len()].copy_from_slice(segment);
+    if prefix_len > cwd_prefix_len + segment.len() {
+        buf[cwd_prefix_len + segment.len()] = SEP;
+    }
     buf[prefix_len..prefix_len + bin.len()].copy_from_slice(bin);
     buf[len] = 0;
     // SAFETY: buf[len] == 0 written above

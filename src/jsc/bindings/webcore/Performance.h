@@ -117,6 +117,8 @@ public:
     void registerPerformanceObserver(PerformanceObserver&);
     void unregisterPerformanceObserver(PerformanceObserver&);
 
+    uint64_t nextEntrySequence() { return ++m_nextEntrySequence; }
+
     static void allowHighPrecisionTime();
     static Seconds timeResolution();
     static Seconds reduceTimeResolution(Seconds);
@@ -169,6 +171,7 @@ private:
     bool m_hasScheduledTimingBufferDeliveryTask { false };
 
     MonotonicTime m_timeOrigin;
+    uint64_t m_nextEntrySequence { 0 };
 
     // RefPtr<PerformanceNavigationTiming> m_navigationTiming;
     // RefPtr<PerformancePaintTiming> m_firstContentfulPaint;

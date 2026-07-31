@@ -48,6 +48,9 @@ public:
     const double startTime() const { return m_startTime; }
     const double duration() const { return m_duration; }
 
+    uint64_t bufferIndex() const { return m_bufferIndex; }
+    void setBufferIndex(uint64_t bufferIndex) { m_bufferIndex = bufferIndex; }
+
     enum class Type : uint8_t {
         Navigation = 1 << 0,
         Mark = 1 << 1,
@@ -65,7 +68,9 @@ public:
 
     static bool startTimeCompareLessThan(const RefPtr<PerformanceEntry>& a, const RefPtr<PerformanceEntry>& b)
     {
-        return a->startTime() < b->startTime();
+        if (a->startTime() != b->startTime())
+            return a->startTime() < b->startTime();
+        return a->bufferIndex() < b->bufferIndex();
     }
 
 protected:
@@ -75,6 +80,7 @@ private:
     const String m_name;
     const double m_startTime;
     const double m_duration;
+    uint64_t m_bufferIndex { 0 };
 };
 
 } // namespace WebCore

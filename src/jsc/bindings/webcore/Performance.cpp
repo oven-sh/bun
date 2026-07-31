@@ -289,6 +289,7 @@ void Performance::addResourceTiming(ResourceTiming&& resourceTiming)
     ASSERT(scriptExecutionContext());
 
     auto entry = PerformanceResourceTiming::create(m_timeOrigin, WTF::move(resourceTiming));
+    entry->setBufferIndex(nextEntrySequence());
 
     if (m_waitingForBackupBufferToBeProcessed) {
         m_backupResourceTimingBuffer.append(WTF::move(entry));

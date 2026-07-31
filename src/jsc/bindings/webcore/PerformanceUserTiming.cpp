@@ -108,8 +108,9 @@ static void clearPerformanceEntries(PerformanceEntryMap& map, const String& name
         map.remove(name);
 }
 
-static void addPerformanceEntry(PerformanceEntryMap& map, const String& name, PerformanceEntry& entry)
+static void addPerformanceEntry(Performance& performance, PerformanceEntryMap& map, const String& name, PerformanceEntry& entry)
 {
+    entry.setBufferIndex(performance.nextEntrySequence());
     auto& performanceEntryList = map.ensure(name, [] { return Vector<RefPtr<PerformanceEntry>>(); }).iterator->value;
     performanceEntryList.append(&entry);
 }
@@ -128,7 +129,7 @@ ExceptionOr<Ref<PerformanceMark>> PerformanceUserTiming::mark(JSC::JSGlobalObjec
     if (mark.hasException())
         return mark.releaseException();
 
-    addPerformanceEntry(m_marksMap, markName, mark.returnValue().get());
+    addPerformanceEntry(m_performance, m_marksMap, markName, mark.returnValue().get());
     m_markCounter += 1;
     return mark.releaseReturnValue();
 }
@@ -206,7 +207,7 @@ ExceptionOr<Ref<PerformanceMeasure>> PerformanceUserTiming::measure(const String
     if (measure.hasException())
         return measure.releaseException();
 
-    addPerformanceEntry(m_measuresMap, measureName, measure.returnValue().get());
+    addPerformanceEntry(m_performance, m_measuresMap, measureName, measure.returnValue().get());
     m_measureCounter += 1;
     return measure.releaseReturnValue();
 }
@@ -261,7 +262,7 @@ ExceptionOr<Ref<PerformanceMeasure>> PerformanceUserTiming::measure(JSC::JSGloba
         if (measure.hasException())
             return measure.releaseException();
 
-        addPerformanceEntry(m_measuresMap, measureName, measure.returnValue().get());
+        addPerformanceEntry(m_performance, m_measuresMap, measureName, measure.returnValue().get());
         m_measureCounter += 1;
         return measure.releaseReturnValue();
     } else {
@@ -269,7 +270,7 @@ ExceptionOr<Ref<PerformanceMeasure>> PerformanceUserTiming::measure(JSC::JSGloba
         if (measure.hasException())
             return measure.releaseException();
 
-        addPerformanceEntry(m_measuresMap, measureName, measure.returnValue().get());
+        addPerformanceEntry(m_performance, m_measuresMap, measureName, measure.returnValue().get());
         m_measureCounter += 1;
         return measure.releaseReturnValue();
     }

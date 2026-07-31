@@ -189,3 +189,43 @@ test("net entries are instanceof PerformanceEntry", async () => {
   expect(entry.constructor.name).toBe("PerformanceNodeEntry");
   expect(entry.entryType).toBe("net");
 });
+
+// The Performance Timeline startTime sort is spec'd as a stable Infra list-sort,
+// so entries with equal startTime keep insertion order. Verified against Node v26.3.0.
+test("getEntries()/getEntriesByType() keep insertion order for equal startTime", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const { performance } = require("node:perf_hooks");
+       const names = ["a","b","c","d","e","f","g","h"];
+       for (const n of names) performance.mark(n, { startTime: 100 });
+       for (const n of names) performance.measure(n, { start: 50, end: 50 });
+       const marks = performance.getEntriesByType("mark").map(e => e.name).join(",");
+       const measures = performance.getEntriesByType("measure").map(e => e.name).join(",");
+       // getEntries() mixes types: all measures (startTime 50) sort before all marks (100),
+       // and within each tied group insertion order is preserved.
+       const all = performance.getEntries().map(e => e.entryType[1] + e.name).join(",");
+       // Entries with distinct startTimes are still ordered by startTime, and
+       // interleaving with the tied group keeps the tied group's insertion order.
+       performance.clearMarks();
+       performance.mark("lo", { startTime: 10 });
+       for (const n of names) performance.mark(n, { startTime: 100 });
+       performance.mark("hi", { startTime: 200 });
+       const mixed = performance.getEntriesByType("mark").map(e => e.name).join(",");
+       console.log(JSON.stringify({ marks, measures, all, mixed }));`,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(JSON.parse(stdout)).toEqual({
+    marks: "a,b,c,d,e,f,g,h",
+    measures: "a,b,c,d,e,f,g,h",
+    all: "ea,eb,ec,ed,ee,ef,eg,eh,aa,ab,ac,ad,ae,af,ag,ah",
+    mixed: "lo,a,b,c,d,e,f,g,h,hi",
+  });
+  expect(exitCode).toBe(0);
+});

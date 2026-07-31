@@ -130,4 +130,109 @@ describe("body-mixin-errors", () => {
       });
     },
   );
+
+  it.concurrent(
+    "fetch: re-fetching a Request whose stream body was consumed rejects before any network I/O",
+    async () => {
+      let connections = 0;
+      const sockets: net.Socket[] = [];
+      const server = net.createServer(socket => {
+        connections++;
+        sockets.push(socket);
+        let buf = Buffer.alloc(0);
+        socket.on("data", d => {
+          buf = Buffer.concat([buf, d]);
+          if (buf.toString("latin1").endsWith("\r\n0\r\n\r\n")) {
+            socket.end("HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok");
+          }
+        });
+        socket.on("error", () => {});
+      });
+      server.listen(0, "127.0.0.1");
+      await once(server, "listening");
+      const { port } = server.address() as net.AddressInfo;
+      const url = `http://127.0.0.1:${port}/up`;
+
+      try {
+        const makeBody = () =>
+          new ReadableStream({
+            start(c) {
+              c.enqueue(new TextEncoder().encode("hello"));
+              c.close();
+            },
+          });
+        const req = new Request(url, { method: "POST", body: makeBody(), duplex: "half" } as RequestInit);
+
+        const first = await fetch(req);
+        expect(first.status).toBe(200);
+        expect(req.bodyUsed).toBe(true);
+
+        const errors: unknown[] = [];
+        for (let i = 0; i < 3; i++) {
+          await fetch(req).then(
+            () => errors.push(null),
+            e => errors.push(e),
+          );
+        }
+
+        // Probe with a fresh body so every accept queued before this one has
+        // been delivered by the time the response arrives.
+        const probe = await fetch(url, { method: "POST", body: makeBody(), duplex: "half" } as RequestInit);
+        expect(probe.status).toBe(200);
+
+        // First fetch + probe only. The three re-fetches must not have opened
+        // connections or written request heads to the origin.
+        expect(connections).toBe(2);
+
+        expect(errors).toHaveLength(3);
+        for (const e of errors) {
+          expect(e).toBeInstanceOf(TypeError);
+          expect((e as any).code).toBe("ERR_BODY_ALREADY_USED");
+        }
+      } finally {
+        for (const s of sockets) s.destroy();
+        server.close();
+      }
+    },
+  );
+
+  it.concurrent("fetch: Request with a locked stream body rejects before any network I/O", async () => {
+    let connections = 0;
+    const sockets: net.Socket[] = [];
+    const server = net.createServer(socket => {
+      connections++;
+      sockets.push(socket);
+      socket.resume();
+      socket.on("error", () => {});
+    });
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const { port } = server.address() as net.AddressInfo;
+    const url = `http://127.0.0.1:${port}/up`;
+
+    try {
+      const rs = new ReadableStream({
+        start(c) {
+          c.enqueue(new TextEncoder().encode("hello"));
+          c.close();
+        },
+      });
+      const req = new Request(url, { method: "POST", body: rs, duplex: "half" } as RequestInit);
+      // Lock the stream without disturbing it.
+      req.body!.getReader();
+      expect(req.bodyUsed).toBe(false);
+
+      let err: unknown;
+      await fetch(req).then(
+        () => expect.unreachable("fetch should reject for a locked body"),
+        e => (err = e),
+      );
+      expect(err).toBeInstanceOf(TypeError);
+      expect((err as any).code).toBe("ERR_BODY_ALREADY_USED");
+      expect(connections).toBe(0);
+    } finally {
+      for (const s of sockets) s.destroy();
+      server.close();
+    }
+  });
 });

@@ -83,8 +83,10 @@
   Zig::GlobalObject *globalObject =                                            \
       static_cast<Zig::GlobalObject *>(lexicalGlobalObject);                   \
   JSC::VM &vm = globalObject->vm();                                            \
-  JSC::JSObject *defaultObject = JSC::constructEmptyObject(                    \
-      globalObject, globalObject->objectPrototype(), numberOfExportNames);     \
+  JSC::JSObject *defaultObject = (numberOfExportNames)                         \
+      ? JSC::constructEmptyObject(globalObject,                                \
+            globalObject->objectPrototype(), numberOfExportNames)              \
+      : JSC::constructEmptyObject(globalObject);                               \
   __NATIVE_MODULE_ASSERT_DECL(numberOfExportNames);                            \
   [[maybe_unused]] const auto put = [&](JSC::Identifier name, JSC::JSValue value) {                   \
     defaultObject->putDirect(vm, name, value);                                 \

@@ -192,9 +192,15 @@ describe("Bun.connect TLS hostname verification", () => {
   // A client that trusts ca1 and connects to "localhost" passes chain
   // validation, but the certificate is not valid for "localhost", so the
   // socket must not be reported as authorized.
+  //
+  // Bind the listener to 127.0.0.1 rather than "localhost": Bun.listen
+  // resolves the bind host without AI_ADDRCONFIG while Bun.connect resolves
+  // with it, so on a host whose only IPv6 address is loopback the listener
+  // can end up on ::1 while the client dials 127.0.0.1 and gets ECONNREFUSED
+  // (Node's net.connect behaves the same way).
   test("reports authorized=false when a CA-trusted cert does not match the connected hostname", async () => {
     const listener = Bun.listen({
-      hostname: "localhost",
+      hostname: "127.0.0.1",
       port: 0,
       tls: { key: serverKey, cert: serverCert },
       socket: {

@@ -329,6 +329,7 @@ static inline JSC::EncodedJSValue jsAbortSignalConstructorFunction_anyBody(JSC::
         }
         i++;
     });
+    RETURN_IF_EXCEPTION(throwScope, {});
 
     RELEASE_AND_RETURN(throwScope, JSValue::encode(toJSNewlyCreated<IDLInterface<AbortSignal>>(*lexicalGlobalObject, *uncheckedDowncast<JSDOMGlobalObject>(lexicalGlobalObject), throwScope, AbortSignal::any(*context, WTF::move(signals)))));
 }

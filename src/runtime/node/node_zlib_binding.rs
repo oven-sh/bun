@@ -355,7 +355,9 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
                         .throw());
                 }
             };
-            if in_buf.resizable {
+            // Growable SharedArrayBuffer only grows in place; the captured
+            // (ptr, len) stays valid. Only non-shared resizable can shrink.
+            if in_buf.resizable && !in_buf.shared {
                 return Err(global_this
                     .err(
                         ErrorCode::INVALID_ARG_VALUE,
@@ -403,7 +405,7 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
                 )
                 .throw());
         }
-        if out_buf.resizable {
+        if out_buf.resizable && !out_buf.shared {
             return Err(global_this
                 .err(
                     ErrorCode::INVALID_ARG_VALUE,

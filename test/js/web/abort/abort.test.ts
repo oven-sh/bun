@@ -33,6 +33,42 @@ describe("AbortSignal", () => {
     expect(await server.exited).toBe(0);
   });
 
+  // The per-element TypeError is thrown inside forEachInIterable's callback.
+  // Without a RETURN_IF_EXCEPTION after the loop, AbortSignal::any(...) still
+  // runs: a dependent signal is created and wired to any valid sources that
+  // appeared before the bad element, and the wrapper is returned with the
+  // TypeError still pending. Under GC pressure that pending exception was seen
+  // to be consumed so the caller received a live signal instead of a throw.
+  test("AbortSignal.any() rejects a non-AbortSignal element without allocating a dependent signal", async () => {
+    const src = `
+      const { heapStats } = require("bun:jsc");
+      const c = new AbortController();
+      Bun.gc(true);
+      const before = heapStats().objectTypeCounts.AbortSignal ?? 0;
+      let threw = 0;
+      let returned = 0;
+      const N = 256;
+      for (let i = 0; i < N; i++) {
+        try {
+          const r = AbortSignal.any([c.signal, 1]);
+          returned += r instanceof AbortSignal ? 1 : 0;
+        } catch (e) {
+          threw += e?.code === "ERR_INVALID_ARG_TYPE" ? 1 : 0;
+        }
+      }
+      const ghosts = (heapStats().objectTypeCounts.AbortSignal ?? 0) - before;
+      process.stdout.write(JSON.stringify({ threw, returned, ghosts, N }));
+    `;
+    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", src], env: bunEnv, stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    const out = JSON.parse(stdout);
+    expect({ threw: out.threw, returned: out.returned }).toEqual({ threw: out.N, returned: 0 });
+    // Without the exception check the count here is exactly N.
+    expect(out.ghosts).toBeLessThan(out.N / 4);
+    expect(exitCode).toBe(0);
+  });
+
   test("AbortSignal.any() should fire abort event", async () => {
     async function testAny(signalToAbort: number) {
       const { promise, resolve } = Promise.withResolvers();

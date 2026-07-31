@@ -16,7 +16,7 @@ use bun_collections::{ArrayHashMap, StringHashMap};
 use bun_core::strings;
 use bun_paths::{self, PathBuffer, SEP, SEP_STR};
 
-use bun_http_types::URLPath::URLPath;
+use bun_http_types::URLPath::{LiteralSlashes, URLPath};
 
 // ──────────────────────────────────────────────────────────────────────────
 // Cross-crate name aliases. These are pure re-exports of real lower-tier types
@@ -226,11 +226,12 @@ impl Routes {
     ) -> Option<Match<'p>> {
         // Trim trailing slash
         let mut path = url_path.path;
+        let sep = &url_path.literal_slashes;
         let mut redirect = false;
 
         // Normalize trailing slash
         // "/foo/bar/index/" => "/foo/bar/index"
-        if !path.is_empty() && path[path.len() - 1] == b'/' {
+        if !path.is_empty() && sep.is_separator(&path[path.len() - 1]) {
             path = &path[0..path.len() - 1];
             redirect = true;
         }
@@ -238,7 +239,7 @@ impl Routes {
         // Normal case: "/foo/bar/index" => "/foo/bar"
         // Pathological: "/foo/bar/index/index/index/index/index/index" => "/foo/bar"
         // Extremely pathological: "/index/index/index/index/index/index/index" => "index"
-        while path.ends_with(b"/index") {
+        while path.ends_with(b"/index") && sep.is_separator(&path[path.len() - b"/index".len()]) {
             path = &path[0..path.len() - b"/index".len()];
             redirect = true;
         }
@@ -249,7 +250,7 @@ impl Routes {
         }
 
         // one final time, trim trailing slash
-        while !path.is_empty() && path[path.len() - 1] == b'/' {
+        while !path.is_empty() && sep.is_separator(&path[path.len() - 1]) {
             path = &path[0..path.len() - 1];
             redirect = true;
         }
@@ -270,13 +271,14 @@ impl Routes {
                     pathname: url_path.pathname,
                     file_path: index.abs_path.as_bytes(),
                     query_string: url_path.query_string,
+                    literal_slashes: url_path.literal_slashes.clone(),
                 });
             }
 
             return None;
         }
 
-        if let Some(route_ptr) = self.match_(path, params) {
+        if let Some(route_ptr) = self.match_(path, params, sep) {
             // SAFETY: pointers from static_/dynamic alias Box<Route> stored in
             // self.list, which outlives self.
             let route = unsafe { &*route_ptr };
@@ -286,6 +288,7 @@ impl Routes {
                 pathname: url_path.pathname,
                 file_path: route.abs_path.as_bytes(),
                 query_string: url_path.query_string,
+                literal_slashes: url_path.literal_slashes.clone(),
             });
         }
 
@@ -296,6 +299,7 @@ impl Routes {
         &self,
         path: &'p [u8],
         params: &mut route_param::List<'p>,
+        sep: &LiteralSlashes,
     ) -> Option<*const Route> {
         // its cleaned, so now we search the big list of strings
         let start = self.dynamic_start?;
@@ -308,7 +312,7 @@ impl Routes {
             .zip(dynamic_match_names.iter())
             .zip(dynamic.iter())
         {
-            if Pattern::match_::<true>(path, &case_sensitive_name[1..], name, params) {
+            if Pattern::match_::<true>(path, &case_sensitive_name[1..], name, params, sep) {
                 return Some(&raw const **route);
             }
         }
@@ -320,17 +324,25 @@ impl Routes {
         &self,
         pathname_: &'p [u8],
         params: &mut route_param::List<'p>,
+        sep: &LiteralSlashes,
     ) -> Option<*const Route> {
-        let pathname = strings::trim_left(pathname_, b"/");
+        let mut pathname = pathname_;
+        while !pathname.is_empty() && sep.is_separator(&pathname[0]) {
+            pathname = &pathname[1..];
+        }
 
         if pathname.is_empty() {
             return self.index.map(|p| p.as_ptr().cast_const());
         }
 
+        if sep.contains_any(pathname) {
+            return self.match_dynamic(pathname, params, sep);
+        }
+
         self.static_
             .get(pathname)
             .copied()
-            .or_else(|| self.match_dynamic(pathname, params))
+            .or_else(|| self.match_dynamic(pathname, params, sep))
     }
 }
 
@@ -1076,6 +1088,12 @@ pub struct Match<'a> {
     // moment any `&mut MatchedRoute` is taken.
     pub params: *mut route_param::List<'a>,
     pub query_string: &'a [u8],
+    /// Which `/` bytes in `pathname` are literal (percent-decoded) rather
+    /// than separators. Owned: the `URLPath` that produced it does not
+    /// outlive the match, but the byte addresses it records stay valid
+    /// because the decode buffer is moved, not copied, into the match's
+    /// backing allocation.
+    pub literal_slashes: LiteralSlashes,
 }
 
 impl<'a> Match<'a> {
@@ -1109,11 +1127,21 @@ impl<'a> Match<'a> {
             // pointer value itself.
             params: self.params.cast::<route_param::List<'static>>(),
             query_string: d(self.query_string),
+            literal_slashes: self.literal_slashes,
         }
     }
 
+    /// Strips leading separator slashes only; a leading `/` that was
+    /// percent-decoded from the input is param content and is kept.
     pub fn pathname_without_leading_slash(&self) -> &[u8] {
-        strings::trim_left(self.pathname, b"/")
+        let mut s = self.pathname;
+        while let [first, rest @ ..] = s {
+            if !self.literal_slashes.is_separator(first) {
+                break;
+            }
+            s = rest;
+        }
+        s
     }
 }
 
@@ -1161,6 +1189,7 @@ pub mod pattern {
             // case-insensitive, must not have a leading slash
             match_name: &[u8],
             params: &mut route_param::List<'a>,
+            sep: &LiteralSlashes,
         ) -> bool {
             let mut offset: RoutePathInt = 0;
             let mut path_ = path;
@@ -1170,8 +1199,7 @@ pub mod pattern {
 
                 match pattern.value {
                     Value::Static(str_) => {
-                        let segment =
-                            &path_[0..path_.iter().position(|&b| b == b'/').unwrap_or(path_.len())];
+                        let segment = &path_[0..sep.find_separator(path_).unwrap_or(path_.len())];
                         if !str_.eql_bytes(segment) {
                             params.clear(); // shrinkRetainingCapacity(0)
                             return false;
@@ -1188,7 +1216,7 @@ pub mod pattern {
                         }
                     }
                     Value::Dynamic(dynamic) => {
-                        if let Some(i) = path_.iter().position(|&b| b == b'/') {
+                        if let Some(i) = sep.find_separator(path_) {
                             params.push(Param {
                                 name: dynamic.str(name),
                                 value: &path_[0..i],
@@ -1215,15 +1243,19 @@ pub mod pattern {
                                     name: dynamic.str(name),
                                     value: path_,
                                 });
-                                path_ = b"";
-                                let _ = path_;
+                                return true;
                             }
-
-                            return true;
+                            // A required segment follows but no separator is left in
+                            // the path: this route cannot match.
+                            params.clear(); // shrinkRetainingCapacity(0)
+                            return false;
                         }
 
                         if !ALLOW_OPTIONAL_CATCH_ALL {
-                            return true;
+                            // No separator left in the path, but required segments
+                            // remain in the pattern: this route cannot match.
+                            params.clear(); // shrinkRetainingCapacity(0)
+                            return false;
                         }
                     }
                     Value::CatchAll(dynamic) => {
@@ -1720,7 +1752,13 @@ mod tests {
                 parameters.clear();
 
                 'fail: {
-                    if !Pattern::match_::<true>(pathname, pattern, pattern, &mut parameters) {
+                    if !Pattern::match_::<true>(
+                        pathname,
+                        pattern,
+                        pattern,
+                        &mut parameters,
+                        &LiteralSlashes::default(),
+                    ) {
                         eprintln!(
                             "Expected pattern \"{}\" to match \"{}\"",
                             bstr::BStr::new(pattern),

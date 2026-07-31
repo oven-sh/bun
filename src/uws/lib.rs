@@ -876,10 +876,9 @@ pub mod ssl_wrapper {
             unsafe { us_ssl_socket_verify_error_from_ssl(ssl.as_ptr()) }
         }
 
-        /// Capture the last fatal SSL-library error as an EPROTO verify error
-        /// (same shape the C path's parked-reason mechanism dispatches from
-        /// `ssl_dispatch_parked_reason`). `buf` backs the returned `reason`
-        /// pointer and must outlive the callback that consumes it.
+        /// Snapshot the last queued OpenSSL reason as an `EPROTO` verify error
+        /// (matches `ssl_dispatch_parked_reason` in openssl.c). `buf` backs the
+        /// returned `reason` pointer for the synchronous handshake callback.
         fn peek_fatal_ssl_error(buf: &mut [u8; 256]) -> Option<us_bun_verify_error_t> {
             let packed = boring_sys::ERR_peek_last_error();
             if packed == 0 {
@@ -950,12 +949,8 @@ pub mod ssl_wrapper {
                 let err = unsafe { boring_sys::SSL_get_error(ssl.as_ptr(), result) };
                 let is_fatal =
                     err == boring_sys::SSL_ERROR_SSL || err == boring_sys::SSL_ERROR_SYSCALL;
-                // A fatal TLS alert (no_application_protocol, protocol_version,
-                // handshake_failure, ...) leaves its reason on the OpenSSL
-                // error queue. Capture it before the clear so the handshake
-                // callback receives the real reason instead of the unrelated
-                // X509 verify result; mirrors the C path's parked-reason
-                // dispatch in `ssl_update_handshake`.
+                // Capture the queued alert reason before the clear; otherwise the
+                // handshake callback gets the unrelated X509 verify result.
                 let mut reason_buf = [0u8; 256];
                 let fatal_reason = if is_fatal {
                     Self::peek_fatal_ssl_error(&mut reason_buf)

@@ -5448,11 +5448,8 @@ pub mod formatter {
                 return self.print_object_depth_exceeded::<C>(writer_, value);
             }
             let ordered_properties = self.ordered_properties;
-            // `for_each_property` walks up to five prototype levels, which for
-            // a generator dumps the shared iterator-helper method table
-            // (`next`/`return`/`map`/...). Use the own-only enumerator so we
-            // print `Generator {}` (fresh) / `Generator { foo: 1 }` (user
-            // props) like Node, without the prototype noise.
+            // `for_each_property` walks the prototype chain and would dump the
+            // shared iterator-helper method table for every generator.
             let own_only = matches!(
                 js_type,
                 jsc::JSType::Generator

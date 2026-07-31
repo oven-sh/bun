@@ -554,8 +554,10 @@ pub fn parse(
 
         needs_sort = needs_sort || generated_column_delta.value < 0;
 
-        let generated_column =
-            generated.columns.zero_based().wrapping_add(generated_column_delta.value);
+        let generated_column = generated
+            .columns
+            .zero_based()
+            .wrapping_add(generated_column_delta.value);
         if generated_column < 0 {
             return ParseResult::Fail(ParseResultFail {
                 msg: b"Invalid generated column value",
@@ -626,7 +628,10 @@ pub fn parse(
             });
         }
 
-        let original_line = original.lines.zero_based().wrapping_add(original_line_delta.value);
+        let original_line = original
+            .lines
+            .zero_based()
+            .wrapping_add(original_line_delta.value);
         if original_line < 0 {
             return ParseResult::Fail(ParseResultFail {
                 msg: b"Invalid original line value",
@@ -651,8 +656,10 @@ pub fn parse(
             });
         }
 
-        let original_column =
-            original.columns.zero_based().wrapping_add(original_column_delta.value);
+        let original_column = original
+            .columns
+            .zero_based()
+            .wrapping_add(original_column_delta.value);
         if original_column < 0 {
             return ParseResult::Fail(ParseResultFail {
                 msg: b"Invalid original column value",

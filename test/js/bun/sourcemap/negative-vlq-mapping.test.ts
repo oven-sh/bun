@@ -43,11 +43,7 @@ describe.concurrent("sourcemap: negative VLQ delta in mappings is rejected, not 
         stdout: "pipe",
         stderr: "pipe",
       });
-      const [stdout, stderr, exitCode] = await Promise.all([
-        proc.stdout.text(),
-        proc.stderr.text(),
-        proc.exited,
-      ]);
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       expect(stderr).toContain(errName);
       expect(stdout).toContain("at t (");
       expect(stdout).toContain(join(String(dir), "entry.js"));
@@ -66,11 +62,7 @@ describe.concurrent("sourcemap: negative VLQ delta in mappings is rejected, not 
         stdout: "pipe",
         stderr: "pipe",
       });
-      const [stdout, stderr, exitCode] = await Promise.all([
-        proc.stdout.text(),
-        proc.stderr.text(),
-        proc.exited,
-      ]);
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       expect(stderr).toContain(errName);
       expect(stdout).toContain("at t (");
       expect(exitCode).toBe(0);
@@ -94,11 +86,7 @@ describe.concurrent("sourcemap: negative VLQ delta in mappings is rejected, not 
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [stdout, stderr, exitCode] = await Promise.all([
-      proc.stdout.text(),
-      proc.stderr.text(),
-      proc.exited,
-    ]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect({ stderr, stdout: stdout.trim() }).toEqual({
       stderr: "",
       stdout: expect.stringMatching(/^threw:.*generated column/i),

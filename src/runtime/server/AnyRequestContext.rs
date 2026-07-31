@@ -121,6 +121,28 @@ macro_rules! dispatch {
             CtxTag::DebugHttpsH3 => arm!(DebugHttpsH3Ctx),
         }
     }};
+    // Raw-pointer variant: hands the typed `*mut T` to `$body` without forming
+    // a `&mut` reborrow. Use when the callee may re-enter while an outer frame
+    // already holds `&mut Self` (borrow = ptr).
+    ($self:expr, $default:expr, ptr |$T:ident, $ptr:ident| $body:expr) => {{
+        let this = $self;
+        macro_rules! arm {
+            ($Ty:ty) => {{
+                type $T = $Ty;
+                let $ptr = this.ptr.cast::<$T>();
+                $body
+            }};
+        }
+        match this.tag {
+            CtxTag::None => $default,
+            CtxTag::Http => arm!(HttpCtx),
+            CtxTag::Https => arm!(HttpsCtx),
+            CtxTag::DebugHttp => arm!(DebugHttpCtx),
+            CtxTag::DebugHttps => arm!(DebugHttpsCtx),
+            CtxTag::HttpsH3 => arm!(HttpsH3Ctx),
+            CtxTag::DebugHttpsH3 => arm!(DebugHttpsH3Ctx),
+        }
+    }};
 }
 
 impl AnyRequestContext {
@@ -227,18 +249,27 @@ impl AnyRequestContext {
     }
 
     pub fn on_request_body_stream_drained(self) {
-        dispatch!(self, (), |_T, ctx| ctx.on_request_body_stream_drained())
+        dispatch!(
+            self,
+            (),
+            ptr | T,
+            ptr | T::on_request_body_stream_drained(ptr)
+        )
     }
 
     pub fn write_chunk(
         self,
         data: &crate::webcore::streams::Result,
     ) -> crate::webcore::streams::Writable {
-        dispatch!(self, crate::webcore::streams::Writable::Done, |_T, ctx| ctx
-            .write_chunk(data))
+        dispatch!(
+            self,
+            crate::webcore::streams::Writable::Done,
+            ptr | T,
+            ptr | T::write_chunk(ptr, data)
+        )
     }
 
     pub fn end_chunk(self, err: Option<&crate::webcore::streams::StreamError>) {
-        dispatch!(self, (), |_T, ctx| ctx.end_chunk(err))
+        dispatch!(self, (), ptr | T, ptr | T::end_chunk(ptr, err))
     }
 }

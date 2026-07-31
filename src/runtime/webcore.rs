@@ -357,35 +357,6 @@ pub enum PathOrFileDescriptor {
 
 pub type SinkWriteFn = fn(ctx: *mut core::ffi::c_void, data: &streams::Result) -> streams::Writable;
 
-/// Static-dispatch write/end pair for a [`SinkHandle`] pointee. The match arms
-/// dispatch via [`bun_ptr::BackRef`] and call these.
-pub trait DownstreamSink {
-    fn write(&mut self, data: &streams::Result) -> streams::Writable;
-    fn end_from_stream(&mut self, err: Option<streams::StreamError>);
-}
-
-impl DownstreamSink for fetch::FetchRequestBodySink {
-    #[inline]
-    fn write(&mut self, data: &streams::Result) -> streams::Writable {
-        self.write(data)
-    }
-    #[inline]
-    fn end_from_stream(&mut self, err: Option<streams::StreamError>) {
-        self.end_from_stream(err)
-    }
-}
-
-impl DownstreamSink for streams::NetworkSink {
-    #[inline]
-    fn write(&mut self, data: &streams::Result) -> streams::Writable {
-        self.write(data)
-    }
-    #[inline]
-    fn end_from_stream(&mut self, err: Option<streams::StreamError>) {
-        self.end_from_stream(err)
-    }
-}
-
 #[derive(Copy, Clone, Default)]
 pub enum SinkHandle {
     #[default]

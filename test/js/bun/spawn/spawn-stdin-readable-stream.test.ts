@@ -207,6 +207,7 @@ describe("spawn stdin ReadableStream", () => {
   });
 
   test("ReadableStream cancellation when process exits early", async () => {
+    const { promise: cancelledPromise, resolve: onCancelled } = Promise.withResolvers<void>();
     let cancelled = false;
     let chunksEnqueued = 0;
 
@@ -219,6 +220,7 @@ describe("spawn stdin ReadableStream", () => {
       },
       cancel(_reason) {
         cancelled = true;
+        onCancelled();
       },
     });
 
@@ -247,10 +249,8 @@ describe("spawn stdin ReadableStream", () => {
     const text = await proc.stdout.text();
     await proc.exited;
 
-    // Wait for the sink to propagate cancellation back to the source; poll the
-    // flag itself rather than sleeping a fixed interval.
-    const deadline = Date.now() + 5_000;
-    while (!cancelled && Date.now() < deadline) await Bun.sleep(10);
+    // Wait for the sink to propagate cancellation back to the source.
+    await cancelledPromise;
 
     expect(cancelled).toBe(true);
     expect(chunksEnqueued).toBeGreaterThanOrEqual(2);

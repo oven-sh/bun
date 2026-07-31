@@ -355,24 +355,11 @@ impl Debugger {
         }
     }
 
-    /// Block (briefly, with a cap) until the debugger thread has written any
-    /// inspector protocol messages queued for it to the frontend socket, and
-    /// give it a further short grace period to flush anything still sitting
-    /// in the WebSocket layer's own send buffer to a still-reading consumer.
-    ///
-    /// Call this from the main thread immediately before process exit (see
-    /// [`VirtualMachine::global_exit`](crate::virtual_machine::VirtualMachine::global_exit))
-    /// so the detached debugger thread isn't killed mid-delivery. Without
-    /// this, `exit()` can tear down the debugger thread while the final
-    /// events of a run (e.g. `bun test`'s last `TestReporter.end` events)
-    /// are still queued or buffered, and the frontend never sees them.
-    ///
-    /// Both waits inside are capped, so a wedged debugger thread -- or a
-    /// frontend that has stopped reading entirely -- cannot block process
-    /// exit indefinitely. See `Bun__debugger__drain` in `BunDebugger.cpp`
-    /// for the full design (it covers two distinct loss layers: the
-    /// main-to-debugger-thread message handoff, and WebSocket-level
-    /// backpressure buffering).
+    /// Block (briefly, capped) until the debugger thread has delivered queued
+    /// inspector messages to the frontend socket. Call from the main thread
+    /// immediately before process exit so `exit()` doesn't kill the detached
+    /// debugger thread mid-delivery (e.g. `bun test`'s final `TestReporter.end`
+    /// events). See `Bun__debugger__drain` in `BunDebugger.cpp`.
     pub fn drain() {
         Bun__debugger__drain();
     }

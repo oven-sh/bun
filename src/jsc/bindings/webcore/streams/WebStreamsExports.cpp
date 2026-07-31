@@ -100,7 +100,10 @@ extern "C" bool ReadableStream__tee(JSC::EncodedJSValue possibleReadableStream, 
 
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    auto branches = readableStreamTee(globalObject, stream, /* cloneForBranch2 */ true);
+    // Body clone tees with cloneForBranch2 = false (share chunk refs) like Node/Chrome/Firefox;
+    // the spec's per-chunk StructuredClone makes an N-deep clone chain retain N copies of the body
+    // (whatwg/streams#1156).
+    auto branches = readableStreamTee(globalObject, stream);
     RETURN_IF_EXCEPTION(scope, false);
 
     *possibleReadableStream1 = JSValue::encode(branches.first);

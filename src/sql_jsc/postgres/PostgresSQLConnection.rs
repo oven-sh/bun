@@ -2519,6 +2519,13 @@ impl PostgresSQLConnection {
             MessageType::ReadyForQuery => {
                 let _ready_for_query = protocol::ReadyForQuery::decode_internal(reader.reborrow())?;
 
+                if self.status.get() != Status::Connected
+                    && !matches!(self.authentication_state.get(), AuthenticationState::Ok)
+                {
+                    debug!("ReadyForQuery before authentication completed");
+                    return Err(AnyPostgresError::UnexpectedMessage);
+                }
+
                 self.set_status(Status::Connected);
                 self.update_flags(|f| {
                     f.remove(ConnectionFlags::WAITING_TO_PREPARE);

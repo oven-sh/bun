@@ -4836,8 +4836,11 @@ impl<'a> HTTPClient<'a> {
                     // Content-Length is an unrecoverable framing error —
                     // falling back to 0 would release a desynchronized socket
                     // into the keep-alive pool.
-                    let Ok(content_length) = bun_core::parse_unsigned::<usize>(header.value(), 10)
-                    else {
+                    let value = header.value();
+                    if value.is_empty() || !value.iter().all(u8::is_ascii_digit) {
+                        return Err(crate::Error::InvalidContentLength);
+                    }
+                    let Ok(content_length) = bun_core::parse_unsigned::<usize>(value, 10) else {
                         return Err(crate::Error::InvalidContentLength);
                     };
                     if self.method.has_body() {
@@ -4954,6 +4957,7 @@ impl<'a> HTTPClient<'a> {
                     // one was pinned/proxied/sendfile.
                     if self.is_https()
                         && self.unix_socket_path.slice().len() == 0
+                        && !(self.flags.proxy_tunneling && self.proxy_tunnel.is_none())
                         && h3_alt_svc_enabled()
                     {
                         h3::alt_svc::record(

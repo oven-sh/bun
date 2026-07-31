@@ -1,6 +1,6 @@
 import { spawn, spawnSync } from "bun";
 import { beforeEach, describe, expect, it } from "bun:test";
-import { chmodSync } from "fs";
+import { chmodSync, mkdirSync } from "fs";
 import { exists, stat } from "fs/promises";
 import { bunExe, bunEnv as env, isPosix, tempDir, tls, tmpdirSync } from "harness";
 import { once } from "node:events";
@@ -171,6 +171,115 @@ it("handles a close-delimited GitHub tarball body split across packets", async (
     for (const s of sockets) s.destroy();
     await new Promise<void>(r => server.close(() => r()));
   }
+});
+
+it("keeps tarball entry paths within the destination when checking for conflicting files", async () => {
+  const tarEntry = (name: string, body: Buffer) => {
+    const buf = Buffer.alloc(512 + ((body.length + 511) & ~511));
+    const header = buf.subarray(0, 512);
+    header.write(name);
+    header.write("0000644", 100);
+    header.write("0000000", 108);
+    header.write("0000000", 116);
+    header.write(body.length.toString(8).padStart(11, "0"), 124);
+    header.write("00000000000", 136);
+    header.write("        ", 148);
+    header.write("0", 156);
+    header.write("ustar\0", 257);
+    header.write("00", 263);
+    let sum = 0;
+    for (const b of header) sum += b;
+    header.write(sum.toString(8).padStart(6, "0") + "\0 ", 148);
+    body.copy(buf, 512);
+    return buf;
+  };
+  const pkg = Buffer.from(
+    JSON.stringify({
+      name: "conflict-check-template",
+      "bun-create": { start: "bun run ok" },
+    }),
+  );
+  const gz = gzipSync(
+    Buffer.concat([
+      tarEntry("pkg/../outside.txt", Buffer.from("from-tarball")),
+      tarEntry("pkg/package.json", pkg),
+      Buffer.alloc(1024),
+    ]),
+  );
+
+  mkdirSync(join(x_dir, "dest"));
+  await Bun.write(join(x_dir, "outside.txt"), "keep me");
+
+  using server = Bun.serve({
+    tls,
+    port: 0,
+    fetch() {
+      return new Response(gz, { headers: { "content-type": "application/x-gzip" } });
+    },
+  });
+
+  await using proc = spawn({
+    cmd: [bunExe(), "create", "github.com/owner/conflict-check-template", "dest", "--no-install", "--no-git"],
+    cwd: x_dir,
+    stdout: "pipe",
+    stderr: "pipe",
+    env: {
+      ...env,
+      NODE_TLS_REJECT_UNAUTHORIZED: "0",
+      GITHUB_API_DOMAIN: `${server.hostname}:${server.port}`,
+    },
+  });
+
+  const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(err).not.toContain("could conflict");
+  expect(out).toContain("Success! owner/conflict-check-template loaded into dest");
+  expect(await Bun.file(join(x_dir, "outside.txt")).text()).toBe("keep me");
+  expect(exitCode).toBe(0);
+});
+
+it("reports an error and exits when the template's package.json entry body is truncated", async () => {
+  const header = Buffer.alloc(512);
+  header.write("pkg/package.json");
+  header.write("0000644", 100);
+  header.write("0000000", 108);
+  header.write("0000000", 116);
+  header.write((4096).toString(8).padStart(11, "0"), 124);
+  header.write("00000000000", 136);
+  header.write("        ", 148);
+  header.write("0", 156);
+  header.write("ustar\0", 257);
+  header.write("00", 263);
+  let sum = 0;
+  for (const b of header) sum += b;
+  header.write(sum.toString(8).padStart(6, "0") + "\0 ", 148);
+  const gz = gzipSync(header);
+
+  using server = Bun.serve({
+    tls,
+    port: 0,
+    fetch() {
+      return new Response(gz, { headers: { "content-type": "application/x-gzip" } });
+    },
+  });
+
+  await using proc = spawn({
+    cmd: [bunExe(), "create", "github.com/owner/truncated-template", "dest", "--force", "--no-install", "--no-git"],
+    cwd: x_dir,
+    stdout: "pipe",
+    stderr: "pipe",
+    env: {
+      ...env,
+      NODE_TLS_REJECT_UNAUTHORIZED: "0",
+      GITHUB_API_DOMAIN: `${server.hostname}:${server.port}`,
+    },
+  });
+
+  const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(err).toContain("Unexpected");
+  expect(out).not.toContain("Success!");
+  expect(proc.signalCode).toBeNull();
+  expect(exitCode).toBe(1);
 });
 
 // GitHandler::wait() used Futex::wait(.., Some(1000)) (1us timeout) in a loop,

@@ -21,7 +21,7 @@ beforeAll(() => {
   setDefaultTimeout(1000 * 60 * 5);
 });
 
-const BUN = process.argv0;
+const BUN = bunExe();
 const DEV_NULL = process.platform === "win32" ? "NUL" : "/dev/null";
 
 describe.concurrent("bunshell rm", () => {
@@ -287,5 +287,45 @@ test.skipIf(process.platform === "win32")(
       expect(existsSync(victimFile)).toBeTrue();
       expect(existsSync(victimDir)).toBeTrue();
     }
+  },
+);
+
+test.skipIf(process.platform === "win32")(
+  "relative operands are resolved against the shell cwd, not the process cwd",
+  async () => {
+    using dir = tempDir("rm-shell-cwd", {
+      "work/file.txt": "content",
+      "work/sub/inner.txt": "content",
+      "keep.txt": "keep",
+    });
+    const base = String(dir);
+    const shellCwd = path.join(base, "work");
+
+    const fixture = /* ts */ `
+      import { $ } from "bun";
+      const shellCwd = process.env.SHELL_CWD!;
+      const { exitCode, stderr } = await $\`rm -rf .\`.cwd(shellCwd).quiet().nothrow();
+      console.log(JSON.stringify({ exitCode, stderr: stderr.toString() }));
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: { ...bunEnv, SHELL_CWD: shellCwd },
+      cwd: "/",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const result = JSON.parse(stdout.trim());
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toMatch(/^rm: \.: /);
+    if (process.platform === "linux") {
+      // Only Linux permits unlinking "." out from under itself; macOS returns
+      // before iterating, so its children survive there.
+      expect(existsSync(path.join(base, "work", "file.txt"))).toBeFalse();
+      expect(existsSync(path.join(base, "work", "sub"))).toBeFalse();
+    }
+    expect(existsSync(path.join(base, "work"))).toBeTrue();
+    expect(existsSync(path.join(base, "keep.txt"))).toBeTrue();
+    expect(exitCode).toBe(0);
   },
 );

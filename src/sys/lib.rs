@@ -6093,12 +6093,13 @@ pub mod macho {
         }
 
         pub fn next(&mut self) -> Option<LoadCommand> {
-            if self.index >= self.ncmds {
+            if self.index >= self.ncmds || self.buf_len < core::mem::size_of::<load_command>() {
+                self.index = self.ncmds;
                 return None;
             }
             // SAFETY: `buf_ptr` was derived from a slice of `buf_len` bytes
-            // which the caller promised stays live; a well-formed Mach-O has
-            // `ncmds` load_command headers fitting within `sizeofcmds`.
+            // which the caller promised stays live, and at least
+            // `size_of::<load_command>()` bytes remain (checked above).
             let hdr: load_command =
                 unsafe { core::ptr::read_unaligned(self.buf_ptr.cast::<load_command>()) };
             let cmdsize = hdr.cmdsize as usize;

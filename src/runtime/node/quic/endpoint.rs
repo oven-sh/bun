@@ -482,15 +482,12 @@ extern "C" fn on_data(
         }
         this.add_stat(IDX_STATS_PACKETS_RECEIVED, 1);
         this.add_stat(IDX_STATS_BYTES_RECEIVED, payload.len() as u64);
-        if let Some(bl) = this.block_list.get() {
-            // SAFETY: the Strong in `block_list_js` keeps the wrapper (and
-            // native object) alive for the endpoint's lifetime; `peer` is
-            // the live sockaddr for this packet.
-            let listed = unsafe { (*bl).check_sockaddr(&*core::ptr::from_ref(peer).cast()) };
-            if listed != this.block_list_allow.get() {
-                this.add_stat(IDX_STATS_PACKETS_BLOCKED, 1);
-                continue;
-            }
+        // SAFETY: `peer` is the live sockaddr for this packet.
+        let peer_sa = unsafe {
+            &*core::ptr::from_ref(peer).cast::<crate::socket::socket_address::sockaddr>()
+        };
+        if this.peer_blocked(peer_sa) {
+            continue;
         }
         // Which of our engines already hashes this DCID, if either. Feeding the
         // other one a packet it cannot match makes it answer with a stateless
@@ -539,6 +536,9 @@ extern "C" fn on_data(
                     // SAFETY: as above; the packet is fed with OUR local
                     // address (the migration target).
                     let other = unsafe { &*owner };
+                    if other.peer_blocked(peer_sa) {
+                        continue;
+                    }
                     // SAFETY: as in the direct feed below.
                     unsafe {
                         lsquic::lsquic_engine_packet_in(
@@ -573,6 +573,9 @@ extern "C" fn on_data(
                         // SAFETY: registered as of the check above, so its
                         // backing storage is live.
                         let other = unsafe { &*other_ptr };
+                        if other.peer_blocked(peer_sa) {
+                            continue;
+                        }
                         for engine in [other.server_engine.get(), other.client_engine.get()] {
                             if engine.is_null() {
                                 continue;
@@ -1339,6 +1342,19 @@ impl QuicEndpoint {
             // SAFETY: as above.
             unsafe { *self.stats.add(idx) = (*self.stats.add(idx)).wrapping_add(value) };
         }
+    }
+
+    fn peer_blocked(&self, peer: &crate::socket::socket_address::sockaddr) -> bool {
+        let Some(bl) = self.block_list.get() else {
+            return false;
+        };
+        // SAFETY: the Strong in `block_list_js` keeps the wrapper (and
+        // native object) alive for the endpoint's lifetime.
+        let blocked = unsafe { (*bl).check_sockaddr(peer) } != self.block_list_allow.get();
+        if blocked {
+            self.add_stat(IDX_STATS_PACKETS_BLOCKED, 1);
+        }
+        blocked
     }
 
     /// Returns `Ok(false)` when the bind fails: Node does not throw here.

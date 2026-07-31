@@ -145,7 +145,14 @@ pub(crate) fn copy_env_for_define(
                     } else {
                         let hash = bun_wyhash::hash(k);
                         debug_assert!(hash != INVALID_HASH);
-                        if let Some(key_i) = string_map_hashes.iter().position(|&h| h == hash) {
+                        if let Some(key_i) =
+                            string_map_hashes.iter().enumerate().position(|(i, &h)| {
+                                h == hash
+                                    && h != INVALID_HASH
+                                    && framework_defaults_keys[i].get(PROCESS_ENV.len()..)
+                                        == Some(&k[..])
+                            })
+                        {
                             env_string_store_put(
                                 to_string,
                                 bump,

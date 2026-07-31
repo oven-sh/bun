@@ -74,7 +74,7 @@ impl FontFaceProperty {
                 write_property_multi!(dest, "unicode-range", value.as_slice())
             }
             FontFaceProperty::Custom(custom) => {
-                dest.write_str(custom.name.as_str())?;
+                custom.name.to_css(dest)?;
                 dest.delim(b':', false)?;
                 custom.value.to_css(dest, true)
             }
@@ -439,7 +439,7 @@ impl FontFormat {
             FontFormat::EmbeddedOpentype => dest.write_str("embedded-opentype"),
             FontFormat::Collection => dest.write_str("collection"),
             FontFormat::Svg => dest.write_str("svg"),
-            FontFormat::String(s) => dest.write_str(*s),
+            FontFormat::String(s) => dest.serialize_string(*s),
         }
     }
 

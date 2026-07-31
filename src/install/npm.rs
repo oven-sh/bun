@@ -966,9 +966,9 @@ pub mod package_manifest {
             Ok(())
         }
 
-        pub(crate) fn read_array<'a, T: Copy>(
+        fn read_array_bytes<'a, T: Copy>(
             stream: &mut bun_io::FixedBufferStream<&'a [u8]>,
-        ) -> Result<&'a [T], Error> {
+        ) -> Result<&'a [u8], Error> {
             let byte_len = stream.read_int_le::<u64>()?;
             if byte_len == 0 {
                 return Ok(&[]);
@@ -980,15 +980,29 @@ pub mod package_manifest {
                 return Err(crate::Error::BufferTooSmall);
             }
             let result_bytes = &remaining[..byte_len as usize];
+            stream.pos += result_bytes.len();
+            Ok(result_bytes)
+        }
+
+        fn array_from_bytes<T: Copy>(result_bytes: &[u8]) -> &[T] {
+            if result_bytes.is_empty() {
+                return &[];
+            }
             // SAFETY: alignment was advanced by Aligner::skip_amount; T is POD
-            let result = unsafe {
+            unsafe {
                 bun_core::ffi::slice(
                     result_bytes.as_ptr().cast::<T>(),
                     result_bytes.len() / core::mem::size_of::<T>(),
                 )
-            };
-            stream.pos += result_bytes.len();
-            Ok(result)
+            }
+        }
+
+        pub fn read_array<'a, T: Copy>(
+            stream: &mut bun_io::FixedBufferStream<&'a [u8]>,
+        ) -> Result<&'a [T], Error> {
+            Ok(Self::array_from_bytes::<T>(Self::read_array_bytes::<T>(
+                stream,
+            )?))
         }
 
         pub(crate) fn write<W: bun_io::Write>(
@@ -1432,6 +1446,11 @@ pub mod package_manifest {
                 pkg_stream.pos = pkg_stream
                     .pos
                     .next_multiple_of(core::mem::align_of::<NpmPackage>());
+                let flag_at =
+                    pkg_stream.pos + core::mem::offset_of!(NpmPackage, has_extended_manifest);
+                if !matches!(bytes.get(flag_at).copied(), Some(0 | 1)) {
+                    return Ok(None);
+                }
                 package_manifest.pkg = pkg_stream.read_struct::<NpmPackage>()?;
             }
             package_manifest.string_buf = Self::read_array::<u8>(&mut pkg_stream)?.into();
@@ -1441,8 +1460,23 @@ pub mod package_manifest {
                 Self::read_array::<ExternalString>(&mut pkg_stream)?.into();
             package_manifest.external_strings_for_versions =
                 Self::read_array::<ExternalString>(&mut pkg_stream)?.into();
-            package_manifest.package_versions =
-                Self::read_array::<PackageVersion>(&mut pkg_stream)?.into();
+            package_manifest.package_versions = {
+                let raw = Self::read_array_bytes::<PackageVersion>(&mut pkg_stream)?;
+                let bin_tag_at =
+                    core::mem::offset_of!(PackageVersion, bin) + core::mem::offset_of!(Bin, tag);
+                let install_script_at = core::mem::offset_of!(PackageVersion, has_install_script);
+                for raw_pkg in raw
+                    .as_chunks::<{ core::mem::size_of::<PackageVersion>() }>()
+                    .0
+                {
+                    if !matches!(raw_pkg[bin_tag_at], 0..=4)
+                        || !matches!(raw_pkg[install_script_at], 0 | 1)
+                    {
+                        return Ok(None);
+                    }
+                }
+                Self::array_from_bytes::<PackageVersion>(raw).into()
+            };
             package_manifest.extern_strings_bin_entries =
                 Self::read_array::<ExternalString>(&mut pkg_stream)?.into();
             package_manifest.bundled_deps_buf =

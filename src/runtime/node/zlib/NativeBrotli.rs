@@ -539,6 +539,10 @@ mod _impl {
             }
         }
 
+        pub fn flush_value_is_valid(flush: u32) -> bool {
+            flush <= 3
+        }
+
         pub fn set_flush(&mut self, flush: c_int) {
             // Caller passes a valid BrotliEncoderOperation discriminant (Node
             // zlib constants 0..=3). Exhaustive match — `Op` is `#[repr(u32)]`

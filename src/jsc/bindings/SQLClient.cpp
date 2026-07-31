@@ -329,7 +329,7 @@ static JSC::JSValue toJS(JSC::Structure* structure, DataCell* cells, uint32_t co
                     auto name = names.value()[i];
                     object->putDirect(vm, Identifier::fromString(vm, name.name.toWTFString()), value);
 
-                } else {
+                } else if (structure && structure->isValidOffset(i)) {
                     object->putDirectOffset(vm, i, value);
                 }
             }

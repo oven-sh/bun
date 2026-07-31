@@ -40,7 +40,6 @@ WEBCORE_EXPORT JSC::Structure* getCachedDOMStructure(const JSDOMGlobalObject&, c
 WEBCORE_EXPORT JSC::Structure* cacheDOMStructure(JSDOMGlobalObject&, JSC::Structure*, const JSC::ClassInfo*);
 
 template<typename WrapperClass> JSC::Structure* getDOMStructure(JSC::VM&, JSDOMGlobalObject&);
-template<typename WrapperClass> JSC::Structure* deprecatedGetDOMStructure(JSC::JSGlobalObject*);
 template<typename WrapperClass> JSC::JSObject* getDOMPrototype(JSC::VM&, JSC::JSGlobalObject*);
 
 JSC::WeakHandleOwner* wrapperOwner(DOMWrapperWorld&, JSC::ArrayBuffer*);
@@ -57,8 +56,6 @@ bool setInlineCachedWrapper(DOMWrapperWorld&, JSC::ArrayBuffer*, JSC::JSArrayBuf
 bool clearInlineCachedWrapper(DOMWrapperWorld&, void*, JSDOMObject*);
 bool clearInlineCachedWrapper(DOMWrapperWorld&, ScriptWrappable*, JSDOMObject* wrapper);
 bool clearInlineCachedWrapper(DOMWrapperWorld&, JSC::ArrayBuffer*, JSC::JSArrayBuffer* wrapper);
-
-template<typename DOMClass> JSC::JSObject* getOrCreateWrapper(DOMWrapperWorld&, DOMClass&);
 
 template<typename DOMClass> JSC::JSObject* getCachedWrapper(DOMWrapperWorld&, DOMClass&);
 template<typename DOMClass> inline JSC::JSObject* getCachedWrapper(DOMWrapperWorld& world, Ref<DOMClass>& object) { return getCachedWrapper(world, object.get()); }
@@ -85,12 +82,6 @@ template<typename WrapperClass> inline JSC::Structure* getDOMStructure(JSC::VM& 
     if (JSC::Structure* structure = getCachedDOMStructure(globalObject, WrapperClass::info()))
         return structure;
     return cacheDOMStructure(globalObject, WrapperClass::createStructure(vm, &globalObject, WrapperClass::createPrototype(vm, globalObject)), WrapperClass::info());
-}
-
-template<typename WrapperClass> inline JSC::Structure* deprecatedGetDOMStructure(JSC::JSGlobalObject* lexicalGlobalObject)
-{
-    // FIXME: This function is wrong. It uses the wrong global object for creating the prototype structure.
-    return getDOMStructure<WrapperClass>(JSC::getVM(lexicalGlobalObject), *deprecatedGlobalObjectForPrototype(lexicalGlobalObject));
 }
 
 template<typename WrapperClass> inline JSC::JSObject* getDOMPrototype(JSC::VM& vm, JSDOMGlobalObject& globalObject)

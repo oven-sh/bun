@@ -16,7 +16,6 @@ public:
 
     JS_EXPORT_PRIVATE static JSNextTickQueue* create(VM&, Structure*);
     static JSNextTickQueue* create(JSC::JSGlobalObject* globalObject);
-    static JSNextTickQueue* createWithInitialValues(VM&, Structure*);
     static Structure* createStructure(VM&, JSGlobalObject*, JSValue);
 
     static std::array<JSValue, numberOfInternalFields> initialValues()

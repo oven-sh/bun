@@ -662,13 +662,6 @@ pub const unsafe fn container_of<P, F>(field: *const F, offset: usize) -> *mut P
     unsafe { field.byte_sub(offset).cast::<P>().cast_mut() }
 }
 
-/// `*const`-out variant of [`container_of`]. Same safety contract.
-#[inline(always)]
-pub const unsafe fn container_of_const<P, F>(field: *const F, offset: usize) -> *const P {
-    // SAFETY: per fn contract.
-    unsafe { field.byte_sub(offset).cast::<P>() }
-}
-
 /// Recover a typed `&mut T` from a C-callback's opaque user-data pointer.
 ///
 /// This is the canonical spelling for the ubiquitous trampoline pattern where

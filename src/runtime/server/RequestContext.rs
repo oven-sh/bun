@@ -4183,12 +4183,10 @@ where
     }
 
     /// # Safety
-    /// `ctx` must be a `*mut RequestContext` previously registered as the body
-    /// `on_stream_drained` context.
-    pub(crate) fn on_request_body_stream_drained_callback(ctx: Option<*mut c_void>) {
-        let Some(ctx) = ctx else { return };
-        let this = ctx.cast::<Self>();
-        // SAFETY: `ctx` is the registered `*mut RequestContext`. `ByteStream::
+    /// `this` must be the live `*mut RequestContext` previously registered as the
+    /// body stream's drain producer.
+    pub(crate) fn on_request_body_stream_drained(this: *mut Self) {
+        // SAFETY: `this` is the registered `*mut RequestContext`. `ByteStream::
         // on_data` can re-enter here while `on_buffered_body_chunk` already
         // holds `&mut Self` (borrow = ptr), so dispatch via the raw pointer.
         unsafe {

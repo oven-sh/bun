@@ -438,6 +438,8 @@ impl S3HttpSimpleTask {
         // at EOF with `metadata: None`, so carry the earlier one across the assignment below.
         let previous_metadata = this.result.metadata.take();
         result.body_into(&mut this.response_buffer.list);
+        // SAFETY: `body` is the only lifetime-carrying field and `body_into`
+        // just consumed it; the stored `&'static []` is never read.
         this.result = unsafe { result.detach_lifetime() };
         if this.result.metadata.is_none() {
             this.result.metadata = previous_metadata;

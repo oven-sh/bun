@@ -143,6 +143,12 @@ const kAttach = Symbol("kAttach");
 const kCloseRawConnection = Symbol("kCloseRawConnection");
 const kpendingRead = Symbol("kpendingRead");
 const kupgraded = Symbol("kupgraded");
+// Holds the TLS data feeder when a net.Socket takes the upgradeDuplexToTLS path
+// (Windows named pipe, or a TCP socket with unflushed plain writes). Its native
+// handle keeps delivering post-upgrade bytes, so the raw data handlers route
+// them straight to the TLS engine instead of pushing onto the connection and
+// re-emitting ciphertext as `data` on any pre-existing user listener. #32242
+const kDuplexTLSFeeder = Symbol("kDuplexTLSFeeder");
 const kAdoptedTLSRaw = Symbol("kAdoptedTLSRaw");
 const ksocket = Symbol("ksocket");
 const khandlers = Symbol("khandlers");
@@ -410,6 +416,11 @@ const SocketHandlers: SocketHandler = {
 
     self._unrefTimer();
     self.bytesRead += buffer.length;
+    const feeder = self[kDuplexTLSFeeder];
+    if (feeder !== undefined) {
+      feeder(buffer);
+      return;
+    }
     if (!self.push(buffer)) {
       socket.pause();
     }
@@ -727,6 +738,11 @@ const ServerHandlers: SocketHandler<NetSocket> = {
 
     self._unrefTimer();
     self.bytesRead += buffer.length;
+    const feeder = self[kDuplexTLSFeeder];
+    if (feeder !== undefined) {
+      feeder(buffer);
+      return;
+    }
     if (!self.push(buffer)) {
       socket.pause();
     }
@@ -1249,6 +1265,11 @@ const SocketHandlers2: SocketHandler<NonNullable<import("node:net").Socket["_han
     const { self } = socket.data;
     self._unrefTimer();
     self.bytesRead += buffer.length;
+    const feeder = self[kDuplexTLSFeeder];
+    if (feeder !== undefined) {
+      feeder(buffer);
+      return;
+    }
     if (!self.push(buffer)) socket.pause();
   },
   drain(socket) {
@@ -1558,6 +1579,7 @@ function Socket(options?) {
   this._parentWrap = null;
   this[kpendingRead] = undefined;
   this[kupgraded] = null;
+  this[kDuplexTLSFeeder] = undefined;
 
   this[kSetNoDelay] = Boolean(noDelay);
   this[kSetKeepAlive] = Boolean(keepAlive);
@@ -1738,6 +1760,11 @@ function Socket(options?) {
         const { self } = socket.data;
         if (!self) return;
         self._unrefTimer();
+        const feeder = self[kDuplexTLSFeeder];
+        if (feeder !== undefined) {
+          feeder(buffer);
+          return;
+        }
         const tail = self[kOnreadTail];
         if (tail !== undefined) {
           self[kOnreadTail] = Buffer.concat([tail, buffer]);
@@ -1870,6 +1897,26 @@ Socket.prototype[kCloseRawConnection] = function () {
   connection.destroy();
 };
 
+// Wires the TLS data feeder for a duplex-upgraded connection. A net.Socket keeps
+// its native handle after upgradeDuplexToTLS, so its raw data handler routes
+// post-upgrade bytes straight to the TLS engine instead of through the public
+// `data` event (which would re-emit ciphertext on pre-existing user listeners;
+// #32242). A plain Duplex has no such handler and is fed via its `data` event.
+function attachDuplexTLSFeeder(connection, onData) {
+  if (connection instanceof Socket) {
+    connection[kDuplexTLSFeeder] = onData;
+    // Bytes that arrived before the feeder was installed are sitting in the
+    // readable buffer; the `on("data")` wiring this replaces would have drained
+    // them on the next tick. Deliver them here so the handshake doesn't stall.
+    if (connection.readableLength > 0) {
+      const buffered = connection.read();
+      if (buffered !== null) onData(buffered);
+    }
+  } else {
+    connection.on("data", onData);
+  }
+}
+
 Socket.prototype.connect = function connect(...args) {
   $debug("Socket.prototype.connect");
   {
@@ -1994,7 +2041,7 @@ Socket.prototype.connect = function connect(...args) {
             tls,
             socket: this[khandlers],
           });
-          connection.on("data", events[0]);
+          attachDuplexTLSFeeder(connection, events[0]);
           connection.on("end", events[1]);
           connection.on("drain", events[2]);
           connection.on("close", events[3]);
@@ -2045,7 +2092,7 @@ Socket.prototype.connect = function connect(...args) {
                   tls,
                   socket: this[khandlers],
                 });
-                connection.on("data", events[0]);
+                attachDuplexTLSFeeder(connection, events[0]);
                 connection.on("end", events[1]);
                 connection.on("drain", events[2]);
                 connection.on("close", events[3]);
@@ -2360,7 +2407,7 @@ Socket.prototype[Symbol.for("::bunUpgradeServerTLS::")] = function (connection, 
       socket: serverHandlersFor(this),
       isServer: true,
     });
-    connection.on("data", events[0]);
+    attachDuplexTLSFeeder(connection, events[0]);
     connection.on("end", events[1]);
     connection.on("drain", events[2]);
     connection.on("close", events[3]);
@@ -2389,7 +2436,7 @@ Socket.prototype[Symbol.for("::bunUpgradeServerTLS::")] = function (connection, 
         socket: serverHandlersFor(this),
         isServer: true,
       });
-      connection.on("data", events[0]);
+      attachDuplexTLSFeeder(connection, events[0]);
       connection.on("end", events[1]);
       connection.on("drain", events[2]);
       connection.on("close", events[3]);
@@ -4084,6 +4131,7 @@ function initSocketHandle(self) {
   self._sockname = null;
   self[kclosed] = false;
   self[kended] = false;
+  self[kDuplexTLSFeeder] = undefined;
 
   // Handle creation may be deferred to bind() or connect() time.
   const handle = self._handle;

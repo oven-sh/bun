@@ -24,8 +24,7 @@ test("can clone a request", async () => {
     body: "bun",
   });
   expect(request.method).toBe("PUT");
-  // @ts-ignore
-  const clone = new Request(request);
+  const clone = request.clone();
   expect(clone.method).toBe("PUT");
   expect(clone.headers.get("content-type")).toBe("text/bun;charset=utf-8");
   expect(await request.text()).toBe("bun");

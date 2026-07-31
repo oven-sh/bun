@@ -220,6 +220,16 @@ impl Request {
         unsafe { &mut (*self.body.as_ptr()).value }
     }
 
+    /// Request ctor step 40: input becomes unusable. Clears the cached
+    /// `body`/`stream` JS slots so `.body` reaches `get_body`'s `Used` path.
+    fn mark_body_consumed(&self, global_this: &JSGlobalObject) {
+        *self.get_body_value() = BodyValue::Used;
+        if let Some(js_ref) = <Self as crate::webcore::body::BodyOwnerJs>::js_ref(self) {
+            js_gen::body_set_cached(js_ref, global_this, JSValue::ZERO);
+            js_gen::stream_set_cached(js_ref, global_this, JSValue::ZERO);
+        }
+    }
+
     /// R-2: short-hand for `unsafe { self.headers.get_mut() }`. The
     /// single-JS-thread invariant (see `JsCell` docs) means no other
     /// `&mut Option<HeadersRef>` is live for the duration of the borrow.
@@ -1131,6 +1141,16 @@ impl Request {
                     // SAFETY: as_direct returns a live *mut Request payload (m_ctx)
                     let request = unsafe { &*request };
                     if values_to_try.len() == 1 {
+                        // fetch.spec.whatwg.org/#dom-request step 40: input body is
+                        // consumed. Only applies when the Request is arguments[0];
+                        // `new Request(url, template)` leaves the template readable.
+                        let consume_input = !is_first_argument_a_url
+                            && !matches!(request.body_value(), BodyValue::Null | BodyValue::Empty);
+                        if consume_input {
+                            if let Err(e) = request.throw_if_body_unusable(global_this) {
+                                bail!(Err(e));
+                            }
+                        }
                         match Request::clone_into(
                             request,
                             &mut req,
@@ -1139,6 +1159,9 @@ impl Request {
                         ) {
                             Ok(()) => {}
                             Err(e) => bail!(Err(e)),
+                        }
+                        if consume_input {
+                            request.mark_body_consumed(global_this);
                         }
                         success = true;
                         cleanup(&mut req, body_seed_ptr, success);
@@ -1181,12 +1204,22 @@ impl Request {
                     }
 
                     if !fields.contains(Fields::Body) {
+                        let is_input = value == url_or_object;
                         match request.body_value() {
-                            BodyValue::Null | BodyValue::Empty | BodyValue::Used => {}
+                            BodyValue::Null | BodyValue::Empty => {}
+                            BodyValue::Used if !is_input => {}
                             _ => {
+                                if is_input {
+                                    if let Err(e) = request.throw_if_body_unusable(global_this) {
+                                        bail!(Err(e));
+                                    }
+                                }
                                 match request.clone_body_value_via_cached_stream(global_this) {
                                     Ok(v) => {
                                         *req.body_value_mut() = v;
+                                        if is_input {
+                                            request.mark_body_consumed(global_this);
+                                        }
                                     }
                                     Err(e) => bail!(Err(e)),
                                 }
@@ -1255,7 +1288,8 @@ impl Request {
 
             if !fields.contains(Fields::Body) {
                 match value.fast_get(global_this, bun_jsc::BuiltinName::Body) {
-                    Ok(Some(body_)) => {
+                    // Step 36: init.body is only extracted when non-null.
+                    Ok(Some(body_)) if !body_.is_null() => {
                         fields.insert(Fields::Body);
                         // fetch spec Request(init): `keepalive: true` with a ReadableStream
                         // body throws before body extraction (Node's message is "keepalive").
@@ -1277,7 +1311,7 @@ impl Request {
                             Err(e) => bail!(Err(e)),
                         }
                     }
-                    Ok(None) => {}
+                    Ok(_) => {}
                     Err(e) => bail!(Err(e)),
                 }
 

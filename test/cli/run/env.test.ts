@@ -747,8 +747,8 @@ describe.concurrent("--env-file", () => {
       // Hold a read+write handle so the loader's O_RDONLY open doesn't block,
       // and stage data so a future reads-FIFOs implementation would be caught.
       const fd = fs.openSync(fifoPath, "r+");
-      fs.writeSync(fd, "BUNTEST_FIFO=from_fifo\n");
       try {
+        fs.writeSync(fd, "BUNTEST_FIFO=from_fifo\n");
         await using proc = Bun.spawn({
           cmd: [bunExe(), `--env-file=${fifoPath}`, "-e", "console.log(process.env.BUNTEST_FIFO ?? 'unset')"],
           cwd: dir,

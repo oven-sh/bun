@@ -5701,7 +5701,8 @@ extern "C" void WebCore__AbortSignal__cleanNativeBindings(WebCore::AbortSignal* 
 extern "C" WebCore::AbortSignal* WebCore__AbortSignal__addListener(WebCore::AbortSignal* abortSignal, void* ctx, void (*callback)(void* ctx, JSC::EncodedJSValue reason))
 {
     if (abortSignal->aborted()) {
-        callback(ctx, JSC::JSValue::encode(abortSignal->reason().getValue(jsNull())));
+        auto* globalObject = abortSignal->scriptExecutionContext()->jsGlobalObject();
+        callback(ctx, JSC::JSValue::encode(abortSignal->jsReason(*globalObject)));
         return abortSignal;
     }
     abortSignal->addNativeCallback(std::make_tuple(ctx, callback));

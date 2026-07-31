@@ -518,10 +518,16 @@ describe("AbortSignal", () => {
           else if (err !== sig.reason) bad.push("fetch rejection !== signal.reason");
         }
         for (let i = 0; i < 10000; i++) {
-          try { AbortSignal.abort().throwIfAborted(); bad.push("throwIfAborted did not throw"); }
-          catch (e) { if (e?.name !== "AbortError") bad.push("throwIfAborted " + Bun.inspect(e)); }
-          const anyReason = AbortSignal.any([AbortSignal.abort()]).reason;
-          if (anyReason?.name !== "AbortError") bad.push("any.reason " + Bun.inspect(anyReason));
+          const signal = AbortSignal.abort();
+          try { signal.throwIfAborted(); bad.push("throwIfAborted did not throw"); }
+          catch (e) {
+            if (e?.name !== "AbortError") bad.push("throwIfAborted " + Bun.inspect(e));
+            else if (e !== signal.reason) bad.push("throwIfAborted !== signal.reason");
+          }
+          const source = AbortSignal.abort();
+          const any = AbortSignal.any([source]);
+          if (any.reason?.name !== "AbortError") bad.push("any.reason " + Bun.inspect(any.reason));
+          else if (any.reason !== source.reason) bad.push("any.reason !== source.reason");
         }
         console.log(bad.length ? "bad=" + bad.length + " first=" + bad[0] : "bad=0");
       `;

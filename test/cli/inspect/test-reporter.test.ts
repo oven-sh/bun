@@ -430,7 +430,8 @@ afterAll(async () => {
     // can exit.
     await write(doneGatePath, "go");
 
-    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    void stdout;
 
     // Core assertion: every `found` id across both paths is unique.
     expect(rawFoundIds.length).toBe(5);

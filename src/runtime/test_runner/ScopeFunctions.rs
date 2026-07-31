@@ -351,11 +351,8 @@ impl ScopeFunctions {
         let mut test_id_for_debugger: i32 = 0;
         if let Some(debugger) = (*vm).debugger.as_mut() {
             if debugger.test_reporter_agent.is_enabled() {
-                // Shared with `retroactively_report_discovered_tests` via
-                // `Debugger::next_test_id_for_debugger` so IDs never collide
-                // when `TestReporter.enable` lands mid-collection.
-                debugger.next_test_id_for_debugger += 1;
-                let id = debugger.next_test_id_for_debugger;
+                debugger.test_reporter_agent.next_test_id += 1;
+                let id = debugger.test_reporter_agent.next_test_id;
                 let mut name = BunString::init(description.unwrap_or(b"(unnamed)"));
                 let parent: &DescribeScope = bun_test.collection.active_scope();
                 let parent_id = if parent.base.test_id_for_debugger != 0 {

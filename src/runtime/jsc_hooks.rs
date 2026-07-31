@@ -1679,12 +1679,8 @@ pub(crate) fn close_isolation_handles(vm: &mut VirtualMachine) {
 /// When `TestReporter.enable` arrives after test
 /// collection has started, walk the already-discovered scope tree, assign
 /// debugger test IDs, and emit `reportTestFoundWithLocation` for each.
-///
-/// `next_test_id` is the caller's `Debugger::next_test_id_for_debugger`
-/// passed by value; the return is that counter advanced past every ID this
-/// call assigned. The caller writes the return back so the live-collection
-/// path in `ScopeFunctions::call` (which increments the same field) continues
-/// from where this left off.
+/// Returns `next_test_id` advanced past every ID assigned (the caller writes
+/// it back into `TestReporterAgent::next_test_id`).
 ///
 /// # Safety
 /// `agent` is a live C++ `Inspector::TestReporterAgent::Handle*` (just stored
@@ -1721,8 +1717,6 @@ unsafe fn retroactively_report_discovered_tests(
         .text();
     let mut source_url = bun_core::String::init(file_path);
 
-    // Seed from the shared counter so IDs here never collide with IDs the
-    // live path already handed out (or will hand out after we return).
     let mut max_id: i32 = next_test_id;
 
     // Recursively report all discovered tests starting from root scope.

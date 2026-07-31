@@ -1809,14 +1809,9 @@ pub struct RuntimeHooks {
     /// discovered before the inspector connected. `Jest` / `DescribeScope`
     /// live in `bun_runtime::test_runner` (forward-dep cycle), so the body is
     /// hoisted to the high tier; low-tier `Bun__TestReporterAgentEnable`
-    /// dispatches here. No-op (returns `next_test_id` unchanged) when
-    /// `bun test` isn't running.
-    ///
-    /// `next_test_id` is `Debugger::next_test_id_for_debugger` passed by
-    /// value; the return is the advanced counter, which the caller writes
-    /// back. Sharing this counter with the live-collection path in
-    /// `ScopeFunctions::call` prevents ID collisions when `TestReporter.enable`
-    /// lands mid-collection.
+    /// dispatches here. `next_test_id` / the return value thread
+    /// `TestReporterAgent::next_test_id` through by value; no-op returns it
+    /// unchanged.
     pub retroactively_report_discovered_tests:
         unsafe fn(agent: *mut crate::debugger::TestReporterHandle, next_test_id: i32) -> i32,
     /// Cancel every `TimeoutObject` / `ImmediateObject` still in the calling

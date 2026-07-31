@@ -126,12 +126,6 @@ pub struct Debugger {
     pub protocol: Protocol,
 
     pub test_reporter_agent: TestReporterAgent,
-    /// Next `describe`/`test` ID to hand out to the TestReporter frontend.
-    /// Shared between the live-collection path (`ScopeFunctions::call`) and
-    /// the retroactive path (`retroactively_report_discovered_tests`) so the
-    /// two cannot assign colliding IDs when `TestReporter.enable` arrives
-    /// mid-collection. JS-thread only.
-    pub next_test_id_for_debugger: i32,
     pub lifecycle_reporter_agent: LifecycleAgent,
     /// Reached through a shared `&Debugger` borrow; the slot's `Cell` fields
     /// provide the interior mutability. JS-thread only.
@@ -153,7 +147,6 @@ impl Default for Debugger {
             mode: Mode::Listen,
             protocol: Protocol::Jsc,
             test_reporter_agent: TestReporterAgent::default(),
-            next_test_id_for_debugger: 0,
             lifecycle_reporter_agent: LifecycleAgent::default(),
             extension_agent: ErasedAgentSlot::default(),
             http_server_agent: HTTPServerAgent::default(),
@@ -816,6 +809,9 @@ pub fn will_dispatch_async_call(global_object: &JSGlobalObject, call: AsyncCallT
 #[derive(Default)]
 pub struct TestReporterAgent {
     pub(crate) handle: *mut TestReporterHandle,
+    /// Shared `describe`/`test` ID counter for both the live
+    /// (`ScopeFunctions::call`) and retroactive reporting paths.
+    pub next_test_id: i32,
 }
 
 /// this enum is kept in sync with c++ InspectorTestReporterAgent.cpp `enum class BunTestStatus`
@@ -928,12 +924,10 @@ pub fn test_reporter_agent_enable(agent: *mut TestReporterHandle) {
         // — a forward-dep cycle. Dispatched through [`RuntimeHooks`].
         if let Some(hooks) = runtime_hooks() {
             // SAFETY: `handle` is the live C++ agent just stored above.
-            // The counter is threaded through by value so the retroactive
-            // walk resumes from wherever live collection left off.
-            dbg.next_test_id_for_debugger = unsafe {
+            dbg.test_reporter_agent.next_test_id = unsafe {
                 (hooks.retroactively_report_discovered_tests)(
                     dbg.test_reporter_agent.handle,
-                    dbg.next_test_id_for_debugger,
+                    dbg.test_reporter_agent.next_test_id,
                 )
             };
         }

@@ -200,11 +200,9 @@ fn call_as_function(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVa
             return Err(global.throw(format_args!("Expected array, got {}", this.each.to_fmt(&mut formatter))));
         }
 
-        // Jest's `jest-each` normalises the table once up front: rows are spread
-        // only when *every* row is already an array (`table.every(Array.isArray)`);
-        // otherwise each row is passed through as a single argument. Deciding per
-        // row meant a mixed table containing `[]` spread to zero bound args, and
-        // the callback's one declared parameter was then miscounted as `done`.
+        // Match Jest's `jest-each`: rows are spread only when *every* row is an
+        // array (`table.every(Array.isArray)`); a mixed table passes each row as
+        // a single argument.
         let spread_rows = {
             let mut scan = this.each.array_iterator(global)?;
             let mut all_arrays = true;

@@ -153,7 +153,7 @@ pub mod ssl_wrapper {
     mod boring_sys {
         pub(super) use bun_boringssl::c::{
             BIO_ctrl_pending, BIO_free, BIO_new, BIO_read, BIO_s_mem, BIO_set_mem_eof_return,
-            BIO_write, ERR_clear_error, ERR_error_string_n, ERR_peek_last_error, SSL, SSL_CTX,
+            BIO_write, ERR_clear_error, ERR_error_string_n, ERR_peek_error, SSL, SSL_CTX,
             SSL_CTX_free, SSL_CTX_get_verify_mode, SSL_ERROR_SSL, SSL_ERROR_SYSCALL,
             SSL_ERROR_WANT_READ, SSL_ERROR_WANT_RENEGOTIATE, SSL_ERROR_WANT_WRITE,
             SSL_ERROR_ZERO_RETURN, SSL_RECEIVED_SHUTDOWN, SSL_VERIFY_FAIL_IF_NO_PEER_CERT,
@@ -876,9 +876,9 @@ pub mod ssl_wrapper {
             unsafe { us_ssl_socket_verify_error_from_ssl(ssl.as_ptr()) }
         }
 
-        /// Mirrors `ssl_dispatch_parked_reason` in openssl.c.
+        /// Mirrors `ssl_park_fatal_reason` in openssl.c.
         fn peek_fatal_ssl_error(buf: &mut [u8; 256]) -> Option<us_bun_verify_error_t> {
-            let packed = boring_sys::ERR_peek_last_error();
+            let packed = boring_sys::ERR_peek_error();
             if packed == 0 {
                 return None;
             }

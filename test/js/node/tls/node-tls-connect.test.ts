@@ -309,10 +309,7 @@ for (const { name, connect } of tests) {
 
       expect(result).toEqual({
         kind: "error",
-        // The native-socket and duplex paths derive the reason from different
-        // OpenSSL error stack positions (sslv3_alert_handshake_failure vs.
-        // handshake_failure_on_client_hello); both describe the same alert.
-        code: expect.stringMatching(/^ERR_SSL_.*HANDSHAKE_FAILURE/),
+        code: "ERR_SSL_SSLV3_ALERT_HANDSHAKE_FAILURE",
       });
     });
 

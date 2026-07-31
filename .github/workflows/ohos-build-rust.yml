@@ -164,11 +164,18 @@ jobs:
             cp -a --link "$LOCAL_WK" bun/vendor/WebKit
             cd bun/vendor/WebKit
             git remote set-url origin "https://github.com/$WK_REPO.git"
-            git fetch origin "$WK_REF" --depth=1 2>/dev/null || true
-            # Must use FETCH_HEAD — local branch from the initial clone
-            # still points to the old ref and `git checkout "$WK_REF"` would
-            # skip the just-fetched HEAD.
-            git checkout -f FETCH_HEAD
+            # Fetch via gh-proxy — direct github.com is unreliable on this
+            # runner. On failure, keep the local-reference checkout above
+            # (already fork main, e.g. 8172ab94) instead of failing the job.
+            git fetch "https://gh-proxy.com/https://github.com/$WK_REPO.git" "$WK_REF" --depth=1 2>/dev/null || true
+            if git rev-parse --verify FETCH_HEAD >/dev/null 2>&1; then
+              # Must use FETCH_HEAD — local branch from the initial clone
+              # still points to the old ref and `git checkout "$WK_REF"` would
+              # skip the just-fetched HEAD.
+              git checkout -f FETCH_HEAD
+            else
+              echo "⚠️  WebKit fetch failed — using local reference checkout ($(git rev-parse --short HEAD))"
+            fi
             echo "✅ WebKit cloned from local reference"
           else
             git clone --depth 1 --branch "$WK_REF" \

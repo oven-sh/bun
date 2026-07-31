@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tls as COMMON_CERT, gc, isASAN, isCI, isDebug } from "harness";
 import { once } from "node:events";
 import { createServer } from "node:http";
+import net from "node:net";
 import { join } from "node:path";
 
 describe("fetch doesn't leak", () => {
@@ -976,7 +977,6 @@ test("fetch().arrayBuffer() of a large Content-Length body peaks at ~1x the payl
   // the 128 -> 256 step, making the unfixed peak reliably > 2x body.
   const bodyBytes = 129 * 1024 * 1024;
   const chunk = Buffer.alloc(256 * 1024, "abcdefghij");
-  const net = require("node:net");
   const server = net.createServer(socket => {
     socket.once("data", () => {
       socket.write(`HTTP/1.1 200 OK\r\nContent-Length: ${bodyBytes}\r\nConnection: close\r\n\r\n`);

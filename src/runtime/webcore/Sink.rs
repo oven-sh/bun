@@ -1,7 +1,7 @@
 use core::ffi::c_void;
 
 use crate::api::bun_subprocess::Subprocess;
-use crate::webcore::streams::{self, SinkKind, SourceHandle};
+use crate::webcore::streams::{self, SourceHandle};
 use bun_collections::TaggedPtrUnion;
 use bun_jsc::{JSGlobalObject, JSValue};
 use bun_sys::{self as sys, Error as SysError};
@@ -130,19 +130,6 @@ macro_rules! impl_js_sink_abi {
                 ) -> ::bun_jsc::JSValue {
                     __abi::assign_to_stream(global, stream, ptr, jsvalue_ptr)
                 }
-                fn on_close_extern(ptr: ::bun_jsc::JSValue, reason: ::bun_jsc::JSValue) {
-                    __abi::on_close(ptr, reason)
-                }
-                fn on_ready_extern(
-                    ptr: ::bun_jsc::JSValue,
-                    amount: ::bun_jsc::JSValue,
-                    offset: ::bun_jsc::JSValue,
-                ) {
-                    __abi::on_ready(ptr, amount, offset)
-                }
-                fn detach_ptr_extern(ptr: ::bun_jsc::JSValue) {
-                    __abi::detach_ptr(ptr)
-                }
             }
         };
     };
@@ -176,16 +163,6 @@ pub trait JsSinkAbi {
         ptr: *mut c_void,
         jsvalue_ptr: *mut *mut c_void,
     ) -> crate::webcore::jsc::JSValue;
-    /// `${abi_name}__onClose`.
-    fn on_close_extern(ptr: crate::webcore::jsc::JSValue, reason: crate::webcore::jsc::JSValue);
-    /// `${abi_name}__onReady`.
-    fn on_ready_extern(
-        ptr: crate::webcore::jsc::JSValue,
-        amount: crate::webcore::jsc::JSValue,
-        offset: crate::webcore::jsc::JSValue,
-    );
-    /// `${abi_name}__detachPtr`.
-    fn detach_ptr_extern(ptr: crate::webcore::jsc::JSValue);
 }
 
 /// `from_js_extern` encodes two distinct failure types using 0 and 1. Any other
@@ -265,14 +242,8 @@ impl<T: JsSinkAbi> JSSink<T> {
                 let value = JSValue::from_encoded(bits);
                 value.unprotect();
                 // detachPtr leaves m_needExceptionCheck set; wrap to satisfy the verifier.
-                let _ = ::bun_jsc::call_check_slow(_global, || match kind {
-                    SinkKind::ArrayBuffer => detach_abi::array_buffer::detach_ptr(value),
-                    SinkKind::FileSink => detach_abi::file::detach_ptr(value),
-                    SinkKind::HttpResponse => detach_abi::http::detach_ptr(value),
-                    SinkKind::HttpsResponse => detach_abi::https::detach_ptr(value),
-                    SinkKind::H3Response => detach_abi::h3::detach_ptr(value),
-                    SinkKind::NetworkSink => detach_abi::network::detach_ptr(value),
-                    SinkKind::FetchRequestBody => detach_abi::fetch_req::detach_ptr(value),
+                let _ = ::bun_jsc::call_check_slow(_global, || {
+                    SourceHandle::js_controller_detach_ptr(kind, value)
                 });
             }
             SourceHandle::ByteStream(bs) => {
@@ -292,19 +263,6 @@ impl<T: JsSinkAbi> JSSink<T> {
             _ => {}
         }
     }
-}
-
-// Extern sets for `JSSink::detach`'s `JSController { kind }` dispatch — one per
-// `SinkKind` variant. Duplicate `decl_js_sink_externs!` instantiations resolve
-// to the same C symbols as the per-type `impl_js_sink_abi!` invocations.
-mod detach_abi {
-    crate::decl_js_sink_externs!("ArrayBufferSink" as array_buffer);
-    crate::decl_js_sink_externs!("FileSink" as file);
-    crate::decl_js_sink_externs!("HTTPResponseSink" as http);
-    crate::decl_js_sink_externs!("HTTPSResponseSink" as https);
-    crate::decl_js_sink_externs!("H3ResponseSink" as h3);
-    crate::decl_js_sink_externs!("NetworkSink" as network);
-    crate::decl_js_sink_externs!("FetchRequestBodySink" as fetch_req);
 }
 
 /// Trait collecting every method `JSSink` may call on the wrapped `SinkType`.
@@ -385,7 +343,7 @@ pub trait JsSinkType: Sized + JsSinkAbi {
 // no lut entry and no C++ caller.
 // ──────────────────────────────────────────────────────────────────────────
 
-impl<T: JsSinkType + JsSinkAbi> JSSink<T> {
+impl<T: JsSinkType> JSSink<T> {
     /// `JSSink.getThis` — recover `&mut JSSink<T>` from `callframe.this()` or
     /// throw the appropriate detached/cast-failed error.
     ///

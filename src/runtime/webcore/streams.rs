@@ -1252,15 +1252,6 @@ impl<const SSL: bool, const HTTP3: bool> crate::webcore::sink::JsSinkAbi
     ) -> JSValue {
         http_sink_dispatch!(assign_to_stream(global, stream, ptr, jsvalue_ptr))
     }
-    fn on_close_extern(ptr: JSValue, reason: JSValue) {
-        http_sink_dispatch!(on_close(ptr, reason))
-    }
-    fn on_ready_extern(ptr: JSValue, amount: JSValue, offset: JSValue) {
-        http_sink_dispatch!(on_ready(ptr, amount, offset))
-    }
-    fn detach_ptr_extern(ptr: JSValue) {
-        http_sink_dispatch!(detach_ptr(ptr))
-    }
 }
 
 impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {

@@ -1389,21 +1389,6 @@ impl S3DownloadStreamWrapper {
         Ok(())
     }
 
-    /// Clear the producer handle on the ByteStream.Source to prevent use-after-free.
-    /// Must be called before releasing readable_stream_ref.
-    fn clear_stream_cancel_handler(&mut self) {
-        if let Some(readable) = self.readable_stream_ref.get(&self.global) {
-            // BACKREF: see `Source::bytes()` — payload live while the
-            // readable stream is rooted. R-2: shared deref + `Cell::set`.
-            if let Some(bytes) = readable.ptr.bytes() {
-                let source = bytes.parent_const();
-                source
-                    .producer
-                    .set(crate::webcore::streams::SourceHandle::None);
-            }
-        }
-    }
-
     pub(crate) fn on_stream_cancelled(this: *mut Self) {
         // SAFETY: `this` points to a S3DownloadStreamWrapper allocated in readable_stream
         let self_: &mut Self = unsafe { &mut *this };
@@ -1448,7 +1433,16 @@ impl S3DownloadStreamWrapper {
 impl Drop for S3DownloadStreamWrapper {
     /// readable_stream_ref / path are freed by their own field Drop.
     fn drop(&mut self) {
-        self.clear_stream_cancel_handler();
+        // Clear the ByteStream's producer handle before `readable_stream_ref`
+        // drops so the stream never calls back into a freed wrapper.
+        if let Some(readable) = self.readable_stream_ref.get(&self.global) {
+            if let Some(bytes) = readable.ptr.bytes() {
+                bytes
+                    .parent_const()
+                    .producer
+                    .set(crate::webcore::streams::SourceHandle::None);
+            }
+        }
     }
 }
 

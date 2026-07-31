@@ -889,9 +889,7 @@ describe("spawn stdin ReadableStream", () => {
     const baseline = fileSinkInternals.liveCount();
     const iterations = 8;
 
-    for (let i = 0; i < iterations; i++) {
-      await once(i);
-    }
+    await Promise.all(Array.from({ length: iterations }, (_, i) => once(i)));
 
     // Allow controller/sink JS wrappers to be collected so their finalizers
     // release the refs they legitimately hold.
@@ -939,6 +937,7 @@ describe("spawn stdin ReadableStream", () => {
         stderr: "inherit",
       });
       const [received, exitCode] = await Promise.all([child.stdout.text(), child.exited]);
+      source.close();
       console.log(JSON.stringify({ received: Number(received), exitCode }));
       process.exit(0);
     `;

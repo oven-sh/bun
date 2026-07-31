@@ -61,13 +61,19 @@ test("Bun.write(path, typedArray) writes the correct bytes for borrowed ArrayBuf
       ["DataView", new DataView(buf.buffer, buf.byteOffset, buf.byteLength)],
       ["offset view", new Uint8Array(buf.buffer, buf.byteOffset + 1024, 512 * 1024)],
     ];
+    const writers = {
+      "Bun.write": (p, i) => Bun.write(p, i),
+      "BunFile.write": (p, i) => Bun.file(p).write(i),
+    };
     const results = {};
-    for (const [name, input] of cases) {
-      const wrote = await Bun.write(out, input);
-      const expectedBytes =
-        input instanceof ArrayBuffer ? new Uint8Array(input) : new Uint8Array(input.buffer, input.byteOffset, input.byteLength);
-      const got = fs.readFileSync(out);
-      results[name] = { wrote, len: got.length, ok: Buffer.compare(got, expectedBytes) === 0 };
+    for (const [how, write] of Object.entries(writers)) {
+      for (const [name, input] of cases) {
+        const wrote = await write(out, input);
+        const expectedBytes =
+          input instanceof ArrayBuffer ? new Uint8Array(input) : new Uint8Array(input.buffer, input.byteOffset, input.byteLength);
+        const got = fs.readFileSync(out);
+        results[how + " " + name] = { wrote, len: got.length, ok: Buffer.compare(got, expectedBytes) === 0 };
+      }
     }
     console.log(JSON.stringify(results));
   `;
@@ -79,12 +85,14 @@ test("Bun.write(path, typedArray) writes the correct bytes for borrowed ArrayBuf
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(stderr).toBe("");
-  expect(JSON.parse(stdout)).toEqual({
-    "Uint8Array": { wrote: 1 << 20, len: 1 << 20, ok: true },
-    "ArrayBuffer": { wrote: 1 << 20, len: 1 << 20, ok: true },
-    "DataView": { wrote: 1 << 20, len: 1 << 20, ok: true },
-    "offset view": { wrote: 512 * 1024, len: 512 * 1024, ok: true },
-  });
+  const expected: Record<string, unknown> = {};
+  for (const how of ["Bun.write", "BunFile.write"]) {
+    expected[`${how} Uint8Array`] = { wrote: 1 << 20, len: 1 << 20, ok: true };
+    expected[`${how} ArrayBuffer`] = { wrote: 1 << 20, len: 1 << 20, ok: true };
+    expected[`${how} DataView`] = { wrote: 1 << 20, len: 1 << 20, ok: true };
+    expected[`${how} offset view`] = { wrote: 512 * 1024, len: 512 * 1024, ok: true };
+  }
+  expect(JSON.parse(stdout)).toEqual(expected);
   expect(exitCode).toBe(0);
 });
 

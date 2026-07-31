@@ -350,7 +350,6 @@ pub(crate) fn list_objects(
         url,
         task.headers.entries.clone().expect("OOM"),
         headers_buf,
-        &raw mut task.response_buffer,
         b"",
         bun_http::HTTPClientResultCallback::new::<S3HttpSimpleTask>(
             task_ptr,
@@ -1233,7 +1232,6 @@ fn download_stream(
             signal_store: Default::default(),
             signals: Default::default(),
             poll_ref: bun_io::KeepAlive::init(),
-            response_buffer: MutableString::default(),
             mutex: Default::default(),
             request_error: None,
             reported_response_buffer: MutableString::default(),
@@ -1283,7 +1281,6 @@ fn download_stream(
         url,
         task.headers.entries.clone().expect("OOM"),
         headers_buf,
-        &raw mut task.response_buffer,
         b"",
         bun_http::HTTPClientResultCallback::new::<S3HttpDownloadStreamingTask>(
             task_ptr,

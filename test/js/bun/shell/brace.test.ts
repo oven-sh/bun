@@ -145,21 +145,26 @@ describe("$.braces is quote-aware (bash 5.2)", () => {
     ["{a,''}", ["a", ""]],
     ["'a'\"b\"{c,d}", ["abc", "abd"]],
     ["'a\\b'", ["a\\b"]],
-    // Double-quoted span: literal content, `\` escapes only `"`/`\`/`$`/`` ` ``.
+    // Double-quoted span: literal content, `\` escapes only `"`/`\`/`$`/`` ` ``/LF.
     ['a"{b,c}"', ["a{b,c}"]],
     ['{a,"x,y"}', ["a", "x,y"]],
     ['"a\\"b"', ['a"b']],
     ['"a\\\\b"', ["a\\b"]],
     ['"a\\nb"', ["a\\nb"]],
     ['"a\\{b,c\\}"', ["a\\{b,c\\}"]],
+    ['"a\\\nb"', ["ab"]],
     // `$'…'`: literal content for brace purposes, `$` consumed along with the
-    // quotes (C-style escape sequences inside are not processed here).
+    // quotes. `\'` does not terminate the span.
     ["$'{a,b}'", ["{a,b}"]],
     ["{x,$'a,b'}", ["x", "a,b"]],
-    // Backslash outside quotes removes itself and makes the next char literal.
+    ["$'\\'{a,b}'", ["'{a,b}"]],
+    ["$'{a,\\'b}'", ["{a,'b}"]],
+    // Backslash outside quotes removes itself and makes the next char literal,
+    // or both characters for `\<newline>` (line continuation).
     ["a\\{b,c\\}", ["a{b,c}"]],
     ["\\'{a,b}\\'", ["'a'", "'b'"]],
     ['\\"{a,b}\\"', ['"a"', '"b"']],
+    ["a\\\nb", ["ab"]],
     // Unicode content inside a quoted span.
     ["{😂,'🫵,🤣'}", ["😂", "🫵,🤣"]],
     // No brace group: the quote-stripped text is returned, not the raw input.

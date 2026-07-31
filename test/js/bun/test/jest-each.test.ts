@@ -57,3 +57,26 @@ describe.each(["some", "cool", "strings"])("works with describe: %s", s => {
 describe("does not return zero", () => {
   expect(it.each([1, 2])("wat", () => {})).toBeUndefined();
 });
+
+describe("mixed table containing an empty array row", () => {
+  // In Jest, a table whose rows are not all arrays is normalised so that each
+  // row is passed as a single argument. Bun previously decided per row, so the
+  // `[]` row spread to zero arguments and the callback's sole parameter was
+  // misread as a `done` callback, leaving the test waiting on a timeout.
+  const seen: unknown[] = [];
+  it.each([undefined, null, "", [], {}])("does not wait on done() for %p", v => {
+    expect(typeof v).not.toBe("function");
+    seen.push(v);
+  });
+  it("passes each row value through unchanged", () => {
+    expect(seen).toEqual([undefined, null, "", [], {}]);
+  });
+
+  const mixedSeen: unknown[][] = [];
+  it.each([["a", "b"], "c"])("wraps array rows in a mixed table: row %#", (...row) => {
+    mixedSeen.push(row);
+  });
+  it("did not spread array rows in a mixed table", () => {
+    expect(mixedSeen).toEqual([[["a", "b"]], ["c"]]);
+  });
+});

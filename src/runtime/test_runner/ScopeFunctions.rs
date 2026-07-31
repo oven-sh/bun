@@ -199,6 +199,27 @@ fn call_as_function(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVa
             let mut formatter = bun_jsc::ConsoleObject::Formatter::new(global);
             return Err(global.throw(format_args!("Expected array, got {}", this.each.to_fmt(&mut formatter))));
         }
+
+        // Jest's `jest-each` normalises the table once up front: rows are spread
+        // only when *every* row is already an array (`table.every(Array.isArray)`);
+        // otherwise each row is passed through as a single argument. Deciding per
+        // row meant a mixed table containing `[]` spread to zero bound args, and
+        // the callback's one declared parameter was then miscounted as `done`.
+        let spread_rows = {
+            let mut scan = this.each.array_iterator(global)?;
+            let mut all_arrays = true;
+            while let Some(item) = scan.next()? {
+                if item.is_empty() {
+                    break;
+                }
+                if !item.is_array() {
+                    all_arrays = false;
+                    break;
+                }
+            }
+            all_arrays
+        };
+
         let mut iter = this.each.array_iterator(global)?;
         let mut test_idx: usize = 0;
         while let Some(item) = iter.next()? {
@@ -215,7 +236,7 @@ fn call_as_function(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVa
                 rooted.append(item);
                 let mut args_list: Vec<JSValue> = Vec::new();
 
-                if item.is_array() {
+                if spread_rows && item.is_array() {
                     // Spread array as args_list (matching Jest & Vitest)
                     let mut item_iter = item.array_iterator(global)?;
                     while let Some(array_item) = item_iter.next()? {

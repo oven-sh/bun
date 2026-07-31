@@ -3212,6 +3212,29 @@ bool JSC__JSValue__asArrayBuffer(
     return true;
 }
 
+// Re-read the current vector()/byteLength() from a buffer-type cell without an
+// exception scope. Caller guarantees `encodedValue` is a live
+// JSArrayBuffer/JSArrayBufferView cell (type-checked at the point the
+// Bun::ArrayBuffer descriptor was constructed). A detached buffer yields
+// (nullptr, 0). Used by `MarkedArrayBuffer::slice()` to compute the byte view
+// lazily so a later argument's toString()/valueOf() that transfers or resizes
+// the buffer is observed instead of leaving a stale (ptr, len).
+CPP_DECL void JSC__JSValue__arrayBufferLiveBytes(
+    JSC::EncodedJSValue encodedValue, uint8_t** out_ptr, size_t* out_byte_len)
+{
+    JSC::JSValue value = JSC::JSValue::decode(encodedValue);
+    auto* cell = value.asCell();
+    if (cell->type() == JSC::JSType::ArrayBufferType) {
+        auto* buffer = uncheckedDowncast<JSC::JSArrayBuffer>(cell)->impl();
+        *out_ptr = static_cast<uint8_t*>(buffer->data());
+        *out_byte_len = buffer->byteLength();
+        return;
+    }
+    auto* view = uncheckedDowncast<JSC::JSArrayBufferView>(cell);
+    *out_ptr = static_cast<uint8_t*>(view->vector());
+    *out_byte_len = view->byteLength();
+}
+
 // Pin/unpin the backing ArrayBuffer of a JSArrayBuffer or JSArrayBufferView so
 // its storage cannot move or be freed while a native borrower holds a slice
 // into it. SharedArrayBuffer is never detachable and never moves, so it is left

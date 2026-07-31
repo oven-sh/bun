@@ -79,7 +79,7 @@ impl PinnedView {
         let Some(b) = buffer.buffer() else {
             return Ok(None);
         };
-        match b.buffer.value.as_pinned_arraybuffer(global) {
+        match b.value().as_pinned_arraybuffer(global) {
             Some(pinned) => Ok(Some(Self(pinned))),
             None => Err(global.throw_out_of_memory()),
         }

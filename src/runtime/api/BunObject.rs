@@ -170,7 +170,7 @@ mod static_adapters {
         // re-enters the VM).
         let _a0_guard = a0.protected();
         let _a1_guard = a1.protected();
-        let mut output = if a1.is_undefined_or_null() {
+        let output = if a1.is_undefined_or_null() {
             None
         } else {
             StringOrBuffer::from_js(g, a1)?
@@ -180,9 +180,6 @@ mod static_adapters {
                 "expected string, buffer, TypedArray, or Blob",
             )));
         };
-        if let Some(StringOrBuffer::Buffer(buffer)) = &mut output {
-            buffer.buffer = ArrayBuffer::from_typed_array(g, buffer.buffer.value);
-        }
         Crypto::SHA512_256::hash_(g, &input, output)
     }
 }

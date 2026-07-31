@@ -3550,11 +3550,7 @@ pub mod args {
     impl Default for MkdirTemp {
         fn default() -> Self {
             Self {
-                prefix: PathLike::Buffer(Buffer {
-                    buffer: bun_jsc::ArrayBuffer::EMPTY,
-                    owns_buffer: false,
-                    pinned: false,
-                }),
+                prefix: PathLike::Buffer(Buffer::EMPTY),
                 encoding: Encoding::Utf8,
             }
         }
@@ -3904,15 +3900,6 @@ pub mod args {
                     }
                 }
             }
-            if arguments.will_be_async && matches!(args.buffer, StringOrBuffer::Buffer(_)) {
-                if let Some(pinned) = bv.as_pinned_arraybuffer(ctx) {
-                    args.buffer = StringOrBuffer::Buffer(Buffer {
-                        buffer: pinned,
-                        owns_buffer: false,
-                        pinned: true,
-                    });
-                }
-            }
             Ok(args)
         }
     }
@@ -3923,22 +3910,18 @@ pub mod args {
         pub offset: u64,
         pub(crate) length: u64,
         pub(crate) position: Option<ReadPosition>,
-        /// True when `from_js` pinned `buffer` for the async path; balanced in
-        /// `unprotect()` (the JS-thread release hook).
-        pub(crate) pinned: bool,
     }
     impl Read {
         pub(crate) fn to_thread_safe(&self) {
-            self.buffer.buffer.value.protect();
+            self.buffer.bytes();
+            self.buffer.value().protect();
         }
     }
     impl Unprotect for Read {
         #[inline]
         fn unprotect(&mut self) {
-            if self.pinned {
-                self.buffer.buffer.unpin();
-            }
-            self.buffer.buffer.value.unprotect();
+            self.buffer.unpin();
+            self.buffer.value().unprotect();
         }
     }
     impl Read {
@@ -3995,7 +3978,6 @@ pub mod args {
                     length: 0,
                     offset: 0,
                     position: None,
-                    pinned: false,
                 });
             }
 
@@ -4107,21 +4089,7 @@ pub mod args {
                 None
             };
 
-            let (buffer, pinned) = if arguments.will_be_async {
-                match buffer_value.as_pinned_arraybuffer(ctx) {
-                    Some(pinned) => (
-                        Buffer {
-                            buffer: pinned,
-                            owns_buffer: false,
-                            pinned: true,
-                        },
-                        true,
-                    ),
-                    None => (buffer, false),
-                }
-            } else {
-                (buffer, false)
-            };
+            let _ = buffer_value;
 
             Ok(Read {
                 fd,
@@ -4129,7 +4097,6 @@ pub mod args {
                 offset,
                 length,
                 position,
-                pinned,
             })
         }
     }
@@ -6116,11 +6083,10 @@ impl NodeFS {
 
     fn read_inner(&mut self, args: &args::Read) -> Maybe<ret::Read> {
         debug_assert!(args.position.is_none());
-        // `ArrayBuffer` is a `Copy` descriptor over JSC-owned heap bytes; copy the
-        // descriptor locally and use the existing safe `byte_slice_mut` accessor
-        // instead of rebuilding a `&mut [u8]` from a `&[u8]` borrow by hand.
-        let mut view = args.buffer.buffer;
-        let mut buf = view.byte_slice_mut();
+        let (ptr, len) = args.buffer.bytes();
+        // SAFETY: `ptr`/`len` describe the pinned JSC-owned backing store
+        // (pinned in `Read::from_js`/`to_thread_safe`), writable for this I/O.
+        let mut buf = unsafe { bun_core::ffi::slice_mut(ptr, len) };
         let off = (args.offset as usize).min(buf.len());
         buf = &mut buf[off..];
         let l = (args.length as usize).min(buf.len());
@@ -6134,9 +6100,9 @@ impl NodeFS {
     }
 
     fn pread_inner(&mut self, args: &args::Read) -> Maybe<ret::Read> {
-        // See `read_inner` — copy the `ArrayBuffer` descriptor and use its safe accessor.
-        let mut view = args.buffer.buffer;
-        let mut buf = view.byte_slice_mut();
+        let (ptr, len) = args.buffer.bytes();
+        // SAFETY: see `read_inner`.
+        let mut buf = unsafe { bun_core::ffi::slice_mut(ptr, len) };
         let off = (args.offset as usize).min(buf.len());
         buf = &mut buf[off..];
         let l = (args.length as usize).min(buf.len());
@@ -7289,11 +7255,7 @@ impl NodeFS {
                             array_buffer.ensure_still_alive();
                             return match array_buffer.as_array_buffer(global) {
                                 Some(buffer) => Ok(ret::ReadFileWithOptions::Buffer(
-                                    bun_jsc::MarkedArrayBuffer {
-                                        buffer,
-                                        owns_buffer: false,
-                                        pinned: false,
-                                    },
+                                    bun_jsc::MarkedArrayBuffer::from_unpinned(buffer),
                                 )),
                                 // This case shouldn't really happen.
                                 None => Err(with_path_like(

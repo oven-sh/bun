@@ -5,8 +5,7 @@ use std::io::Write as _;
 use bun_core::ZigString;
 use bun_io::KeepAlive;
 use bun_jsc::{
-    self as jsc, ArrayBuffer, CallFrame, JSFunction, JSGlobalObject, JSValue, JsError, JsResult,
-    WorkPoolTask,
+    self as jsc, CallFrame, JSFunction, JSGlobalObject, JSValue, JsError, JsResult, WorkPoolTask,
 };
 // `bun_jsc::{AnyTask, ConcurrentTask, EventLoop}` are *modules* (re-exported from
 // `bun_event_loop`); pull the concrete types out by name.
@@ -909,7 +908,7 @@ fn js_password_object_verify_sync(
         };
     }
 
-    let Some(mut password) = StringOrBuffer::from_js(global_object, arguments[0])? else {
+    let Some(password) = StringOrBuffer::from_js(global_object, arguments[0])? else {
         return Err(global_object.throw_invalid_argument_type(
             "verify",
             "password",
@@ -925,10 +924,6 @@ fn js_password_object_verify_sync(
             "string or TypedArray",
         ));
     };
-
-    if let StringOrBuffer::Buffer(buffer) = &mut password {
-        buffer.buffer = ArrayBuffer::from_typed_array(global_object, buffer.buffer.value);
-    }
 
     // defer password.deinit() / hash_.deinit() — Drop at scope exit.
 

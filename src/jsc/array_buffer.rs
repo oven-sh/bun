@@ -1,3 +1,4 @@
+use core::cell::Cell;
 use core::ffi::{c_uint, c_void};
 use core::ptr;
 
@@ -135,6 +136,14 @@ unsafe extern "C" {
     safe fn JSC__ArrayBuffer__deref(self_: &JSCArrayBuffer);
     // safe: by-value `JSValue`; no-op for non-buffer values.
     safe fn JSC__JSValue__unpinArrayBuffer(v: JSValue);
+    // safe: by-value `JSValue` known (by caller) to be a buffer-type cell;
+    // `&mut *mut u8` / `&mut usize` are ABI-identical to non-null out-params
+    // the callee fills unconditionally.
+    safe fn JSC__JSValue__arrayBufferLiveBytes(
+        v: JSValue,
+        out_ptr: &mut *mut u8,
+        out_byte_len: &mut usize,
+    );
 }
 
 impl JSValue {
@@ -815,28 +824,73 @@ impl TypedArrayType {
 // MarkedArrayBuffer
 // ──────────────────────────────────────────────────────────────────────────
 
+/// A byte-slice view over either a JS `ArrayBuffer`/typed array or a
+/// Rust-owned allocation.
+///
+/// For a JS-backed buffer the `(ptr, byte_len)` snapshot is taken lazily on
+/// the first [`slice`]/[`bytes`] call: the backing `JSC::ArrayBuffer` is
+/// pinned, its `vector()`/`byteLength()` is read once, and the result is
+/// cached. Until then only the `JSValue` is meaningful, so user JS that runs
+/// between construction and first use (argument coercion on a later
+/// parameter) may freely `transfer()`/`resize()` the backing store and the
+/// first `slice()` observes the post-coercion state.
+///
+/// `Drop` releases the pin on the JS thread. A `MarkedArrayBuffer` that will
+/// be dropped off the JS thread must be routed through the
+/// [`crate::Unprotect`] hook (see `StringOrBuffer::unprotect`) which clears
+/// the pin first so `Drop` becomes a no-op.
 #[derive(Default)]
 pub struct MarkedArrayBuffer {
-    pub buffer: ArrayBuffer,
-    pub owns_buffer: bool,
-    pub pinned: bool,
+    buffer: Cell<ArrayBuffer>,
+    owns_buffer: Cell<bool>,
+    pinned: Cell<bool>,
 }
 
 impl MarkedArrayBuffer {
-    pub fn from_typed_array(ctx: &JSGlobalObject, value: JSValue) -> MarkedArrayBuffer {
-        MarkedArrayBuffer {
-            owns_buffer: false,
-            pinned: false,
-            buffer: ArrayBuffer::from_typed_array(ctx, value),
+    #[inline]
+    const fn new(buffer: ArrayBuffer, owns_buffer: bool, pinned: bool) -> Self {
+        Self {
+            buffer: Cell::new(buffer),
+            owns_buffer: Cell::new(owns_buffer),
+            pinned: Cell::new(pinned),
         }
     }
 
+    pub fn from_typed_array(ctx: &JSGlobalObject, value: JSValue) -> MarkedArrayBuffer {
+        Self::new(ArrayBuffer::from_typed_array(ctx, value), false, false)
+    }
+
     pub fn from_array_buffer(ctx: &JSGlobalObject, value: JSValue) -> MarkedArrayBuffer {
-        MarkedArrayBuffer {
-            owns_buffer: false,
-            pinned: false,
-            buffer: ArrayBuffer::from_array_buffer(ctx, value),
-        }
+        Self::new(ArrayBuffer::from_array_buffer(ctx, value), false, false)
+    }
+
+    /// Wrap an already-pinned descriptor. Used by callers that pinned via
+    /// [`JSValue::as_pinned_arraybuffer`] themselves.
+    #[inline]
+    pub fn from_pinned(buffer: ArrayBuffer) -> MarkedArrayBuffer {
+        Self::new(buffer, false, true)
+    }
+
+    /// A non-owning view that neither owns the allocation nor the original's
+    /// pin. [`bytes`] on the borrow takes its own pin (pin count is a
+    /// counter), released by its own `Drop`.
+    #[inline]
+    pub fn borrow(&self) -> MarkedArrayBuffer {
+        Self::new(self.buffer.get(), false, false)
+    }
+
+    /// Adopt a Rust-owned byte descriptor (freed by [`destroy`] /
+    /// [`to_js`], not by `Drop`).
+    #[inline]
+    pub fn from_owned(buffer: ArrayBuffer) -> MarkedArrayBuffer {
+        Self::new(buffer, true, false)
+    }
+
+    /// Wrap a JS-backed descriptor (its `value` must be set). [`bytes`] pins
+    /// on first access.
+    #[inline]
+    pub fn from_unpinned(buffer: ArrayBuffer) -> MarkedArrayBuffer {
+        Self::new(buffer, false, false)
     }
 
     pub fn from_string(str: &[u8]) -> Result<MarkedArrayBuffer, bun_alloc::AllocError> {
@@ -852,50 +906,95 @@ impl MarkedArrayBuffer {
     }
 
     pub fn from_js(global: &JSGlobalObject, value: JSValue) -> Option<MarkedArrayBuffer> {
-        let array_buffer = value.as_array_buffer(global)?;
-        Some(MarkedArrayBuffer {
-            buffer: array_buffer,
-            owns_buffer: false,
-            pinned: false,
-        })
+        Some(Self::new(value.as_array_buffer(global)?, false, false))
     }
 
     pub fn from_js_pinned(global: &JSGlobalObject, value: JSValue) -> Option<MarkedArrayBuffer> {
-        let buffer = value.as_pinned_arraybuffer(global)?;
-        Some(MarkedArrayBuffer {
-            buffer,
-            owns_buffer: false,
-            pinned: true,
-        })
+        Some(Self::new(value.as_pinned_arraybuffer(global)?, false, true))
     }
 
     pub fn from_bytes(bytes: &mut [u8], typed_array_type: JSType) -> MarkedArrayBuffer {
-        MarkedArrayBuffer {
-            buffer: ArrayBuffer::from_bytes(bytes, typed_array_type),
-            owns_buffer: true,
-            pinned: false,
+        Self::new(ArrayBuffer::from_bytes(bytes, typed_array_type), true, false)
+    }
+
+    pub const EMPTY: MarkedArrayBuffer = Self::new(ArrayBuffer::EMPTY, false, false);
+
+    /// Copy of the inner descriptor. `ptr`/`byte_len` reflect whatever the
+    /// most recent [`bytes`] call cached (or the construction-time snapshot
+    /// if [`bytes`] has not run yet).
+    #[inline]
+    pub fn buffer(&self) -> ArrayBuffer {
+        self.buffer.get()
+    }
+
+    #[inline]
+    pub fn value(&self) -> JSValue {
+        self.buffer.get().value
+    }
+
+    #[inline]
+    pub fn is_pinned(&self) -> bool {
+        self.pinned.get()
+    }
+
+    #[inline]
+    pub fn owns_buffer(&self) -> bool {
+        self.owns_buffer.get()
+    }
+
+    /// Release the pin taken by [`bytes`]/[`from_js_pinned`] and clear the
+    /// flag so `Drop` is a no-op. JS-thread only.
+    #[inline]
+    pub fn unpin(&self) {
+        if self.pinned.replace(false) {
+            self.buffer.get().unpin();
         }
     }
 
-    pub const EMPTY: MarkedArrayBuffer = MarkedArrayBuffer {
-        owns_buffer: false,
-        pinned: false,
-        buffer: ArrayBuffer::EMPTY,
-    };
+    /// Pin the backing `JSC::ArrayBuffer`, read its `vector()`/`byteLength()`
+    /// once, and cache the result; subsequent calls return the cache. For a
+    /// Rust-owned or already-pinned buffer this returns the existing
+    /// snapshot. A detached buffer pins nothing and yields `(null, 0)`.
+    ///
+    /// Must run on the JS thread for the first call on a JS-backed buffer;
+    /// callers that hand the buffer to a threadpool must call this (directly
+    /// or via [`slice`]) before the hand-off.
+    pub fn bytes(&self) -> (*mut u8, usize) {
+        let mut ab = self.buffer.get();
+        if self.pinned.get() || self.owns_buffer.get() || ab.value.is_empty() {
+            return (ab.ptr, ab.byte_len);
+        }
+        if ab.value.pin_array_buffer() {
+            self.pinned.set(true);
+        }
+        let mut ptr: *mut u8 = core::ptr::null_mut();
+        let mut len: usize = 0;
+        JSC__JSValue__arrayBufferLiveBytes(ab.value, &mut ptr, &mut len);
+        ab.ptr = ptr;
+        ab.byte_len = len;
+        self.buffer.set(ab);
+        (ptr, len)
+    }
 
     #[inline]
     pub fn slice(&self) -> &[u8] {
-        self.buffer.byte_slice()
+        let (ptr, len) = self.bytes();
+        if ptr.is_null() {
+            return &[];
+        }
+        // SAFETY: `ptr`/`len` describe the pinned JSC-owned backing store (or
+        // the Rust-owned allocation for `owns_buffer`), valid while `self`
+        // keeps the JSValue rooted / the allocation alive.
+        unsafe { core::slice::from_raw_parts(ptr, len) }
     }
 
     /// Releases the owned byte buffer if this `MarkedArrayBuffer` was created with an
     /// allocator (e.g. via `from_string`/`from_bytes`). Does not free the struct itself;
     /// `MarkedArrayBuffer` is passed and stored by value, so callers own its storage.
     pub fn destroy(&mut self) {
-        if self.owns_buffer {
-            self.owns_buffer = false;
+        if self.owns_buffer.replace(false) {
             // SAFETY: buffer.ptr was allocated by the global allocator (heap::alloc / allocator.dupe).
-            unsafe { bun_alloc::default_alloc::free(self.buffer.ptr.cast()) };
+            unsafe { bun_alloc::default_alloc::free(self.buffer.get().ptr.cast()) };
         }
     }
 
@@ -903,21 +1002,22 @@ impl MarkedArrayBuffer {
         // `JSValue::create_buffer` takes `&mut [u8]` (ownership transfers to JSC
         // via the deallocator). `ArrayBuffer` is `Copy` over a raw pointer, so
         // copy the descriptor and project a mutable slice.
-        let mut buf = self.buffer;
+        let mut buf = self.buffer.get();
         JSValue::create_buffer(global, buf.byte_slice_mut())
     }
 
     pub fn to_js(&self, global: &JSGlobalObject) -> JsResult<JSValue> {
-        if !self.buffer.value.is_empty_or_undefined_or_null() {
-            return Ok(self.buffer.value);
+        let buffer = self.buffer.get();
+        if !buffer.value.is_empty_or_undefined_or_null() {
+            return Ok(buffer.value);
         }
-        if self.buffer.byte_len == 0 {
+        if buffer.byte_len == 0 {
             // SAFETY: null `ptr` with `len == 0` and no deallocator — every
             // obligation of the callee's contract holds trivially.
             return unsafe {
                 make_typed_array_with_bytes_no_copy(
                     global,
-                    self.buffer.typed_array_type.to_typed_array_type(),
+                    buffer.typed_array_type.to_typed_array_type(),
                     ptr::null_mut(),
                     0,
                     None,
@@ -932,13 +1032,20 @@ impl MarkedArrayBuffer {
         unsafe {
             make_typed_array_with_bytes_no_copy(
                 global,
-                self.buffer.typed_array_type.to_typed_array_type(),
-                self.buffer.ptr.cast(),
-                self.buffer.byte_len,
+                buffer.typed_array_type.to_typed_array_type(),
+                buffer.ptr.cast(),
+                buffer.byte_len,
                 Some(MarkedArrayBuffer_deallocator),
-                self.buffer.ptr.cast(),
+                buffer.ptr.cast(),
             )
         }
+    }
+}
+
+impl Drop for MarkedArrayBuffer {
+    #[inline]
+    fn drop(&mut self) {
+        self.unpin();
     }
 }
 

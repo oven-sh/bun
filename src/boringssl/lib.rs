@@ -575,6 +575,15 @@ pub unsafe extern "C" fn Bun__X509__checkHost(
     0
 }
 
+/// Node's `IsSafeAltName` for IA5/Latin-1 entries: true when `name` contains
+/// only printable ASCII with no `"`, `\\`, `,`, or `'`, so it can be rendered
+/// in a subjectAltName list without JSON-style quoting.
+#[inline]
+fn is_safe_alt_name(name: &[u8]) -> bool {
+    name.iter()
+        .all(|&c| matches!(c, b' '..=b'~') && !matches!(c, b'"' | b'\\' | b',' | b'\''))
+}
+
 /// Certificate name bytes (IA5 / Latin-1) for error messages.
 struct NameBytes<'a>(&'a [u8]);
 
@@ -736,4 +745,35 @@ pub fn check_server_identity(ssl_ptr: &mut boring::SSL, hostname: &[u8]) -> bool
     ssl_ptr
         .peer_leaf_certificate()
         .is_some_and(|x509| check_x509_server_identity(x509, hostname))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{NameBytes, is_safe_alt_name};
+
+    #[test]
+    fn safe_alt_name_matches_node() {
+        assert!(is_safe_alt_name(b"good.example.com"));
+        assert!(is_safe_alt_name(b"http://example.com/a%2Cb"));
+        assert!(is_safe_alt_name(b" ~"));
+        for &c in b"\"\\,'" {
+            assert!(!is_safe_alt_name(&[c]));
+        }
+        assert!(!is_safe_alt_name(b"ab\x1f"));
+        assert!(!is_safe_alt_name(b"ab\x7f"));
+        assert!(!is_safe_alt_name(b"ex\xe4mple.com"));
+    }
+
+    #[test]
+    fn name_bytes_quoting() {
+        let fmt = |s: &[u8]| NameBytes(s).to_string();
+        assert_eq!(fmt(b"good.example.com"), "good.example.com");
+        assert_eq!(
+            fmt(b"good.example.com, DNS:evil.example.com"),
+            r#""good.example.com\u002c DNS:evil.example.com""#
+        );
+        assert_eq!(fmt(b"\"quoted\""), r#""\"quoted\"""#);
+        assert_eq!(fmt(b"ex\xe4mple.com"), r#""ex\u00e4mple.com""#);
+        assert_eq!(fmt(b"a\\b"), r#""a\\b""#);
+    }
 }

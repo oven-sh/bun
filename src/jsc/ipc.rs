@@ -7,12 +7,12 @@ use crate::JsCell;
 use crate as jsc;
 use crate::js_value::Protected;
 use crate::json_line_buffer::JSONLineBuffer;
+#[cfg(windows)]
 use crate::virtual_machine::VirtualMachine;
 use crate::{JSGlobalObject, JSValue, JsError, JsResult, SerializedFlags, Task};
 use bun_collections::{ByteVecExt, VecExt};
 use bun_core::{Output, handle_oom};
 use bun_core::{String as BunString, strings};
-use bun_event_loop::ManagedTask::ManagedTask;
 use bun_io::KeepAlive;
 use bun_io::StreamBuffer;
 use bun_sys::Fd;
@@ -835,19 +835,24 @@ enum ContinueSendReason {
     OnWritable,
 }
 
-/// Every method takes `&self`: the socket handlers, `ManagedTask` callbacks
-/// and JS entry points all re-enter this object on the JS thread, so
+/// Every method takes `&self`: the socket handlers, the deferred task and
+/// JS entry points all re-enter this object on the JS thread, so
 /// mutable state lives in `Cell`/[`JsCell`] and no `&mut SendQueue` ever
 /// exists to be aliased.
 ///
 /// Heap-allocated and intrusively refcounted: the owner holds one ref (from
-/// [`SendQueue::new`]) and every queued `ManagedTask` holds one for its
-/// duration, so a task can never point at freed storage. Owner teardown is
+/// [`SendQueue::new`]) and the embedded deferred task holds one while
+/// scheduled, so it can never point at freed storage. Owner teardown is
 /// [`SendQueue::detach`] + [`CellRefCounted::deref`], never task
 /// cancellation.
 #[derive(bun_ptr::CellRefCounted)]
 pub struct SendQueue {
     ref_count: Cell<u32>,
+    /// The allocation root written by [`SendQueue::new`]: the pointer that
+    /// carries write provenance, so queued tasks (whose final `deref` may
+    /// destroy the allocation) and the socket/uv backrefs never derive from
+    /// a `&self`.
+    root: Cell<Option<core::ptr::NonNull<SendQueue>>>,
     pub(crate) queue: JsCell<Vec<SendHandle>>,
     pub(crate) waiting_for_ack: JsCell<Option<SendHandle>>,
 
@@ -866,12 +871,12 @@ pub struct SendQueue {
     /// `None`.
     pub(crate) owner: Cell<Option<SendQueueOwner>>,
 
-    pub(crate) close_next_tick: Cell<Option<Task>>,
-    /// Set while an `_onAfterIPCClosed` task is queued. Cleared when the task
-    /// runs. Tracked so `deinit` can cancel it; the task captures a raw
-    /// `*SendQueue` into the owner's inline storage, which is freed right
-    /// after `deinit` returns.
-    pub(crate) after_close_task: Cell<Option<Task>>,
+    /// One embedded deferred task (`task_tag::SendQueueDeferred`): `scheduled`
+    /// says whether it is on the event loop's queue (holding a ref), and the
+    /// two `pending_*` flags are the work it drains when it runs.
+    pub(crate) deferred_scheduled: Cell<bool>,
+    pub(crate) pending_close: Cell<bool>,
+    pub(crate) pending_after_close: Cell<bool>,
     pub(crate) write_in_progress: Cell<bool>,
     pub close_event_sent: Cell<bool>,
 
@@ -919,7 +924,7 @@ impl SendQueueOwner {
             // SAFETY: an attached owner is live (it holds a ref on the SendQueue).
             SendQueueOwner::Subprocess(p) => unsafe { __bun_subprocess_ipc_global_this(p) },
             // SAFETY: as above — an attached owner is live.
-            SendQueueOwner::Instance(i) => unsafe { (*i.as_ptr()).global_this },
+            SendQueueOwner::Instance(i) => unsafe { i.as_ref().global_this.get() },
         }
     }
 
@@ -928,7 +933,7 @@ impl SendQueueOwner {
             // SAFETY: an attached owner is live (it holds a ref on the SendQueue).
             SendQueueOwner::Subprocess(p) => unsafe { __bun_subprocess_ipc_handle_close(p) },
             // SAFETY: as above — an attached owner is live.
-            SendQueueOwner::Instance(i) => unsafe { (*i.as_ptr()).handle_ipc_close() },
+            SendQueueOwner::Instance(i) => unsafe { i.as_ref().handle_ipc_close() },
         }
     }
 
@@ -939,7 +944,7 @@ impl SendQueueOwner {
                 __bun_subprocess_ipc_handle_message(p, msg, handle)
             },
             // SAFETY: as above — an attached owner is live.
-            SendQueueOwner::Instance(i) => unsafe { (*i.as_ptr()).handle_ipc_message(msg, handle) },
+            SendQueueOwner::Instance(i) => unsafe { i.as_ref().handle_ipc_message(msg, handle) },
         }
     }
 
@@ -997,8 +1002,9 @@ impl SendQueue {
     /// Heap-allocate a SendQueue with one ref held by the caller (the owner).
     pub fn new(mode: Mode, owner: Option<SendQueueOwner>, socket: SocketUnion) -> *mut SendQueue {
         log!("SendQueue#init");
-        bun_core::heap::into_raw(Box::new(Self {
+        let this = bun_core::heap::into_raw(Box::new(Self {
             ref_count: Cell::new(1),
+            root: Cell::new(None),
             queue: JsCell::new(Vec::new()),
             waiting_for_ack: JsCell::new(None),
             retry_count: Cell::new(0),
@@ -1011,12 +1017,24 @@ impl SendQueue {
             incoming_fd: Cell::new(None),
             socket: JsCell::new(socket),
             owner: Cell::new(owner),
-            close_next_tick: Cell::new(None),
-            after_close_task: Cell::new(None),
+            deferred_scheduled: Cell::new(false),
+            pending_close: Cell::new(false),
+            pending_after_close: Cell::new(false),
             write_in_progress: Cell::new(false),
             close_event_sent: Cell::new(false),
             windows: JsCell::new(WindowsState::default()),
-        }))
+        }));
+        // SAFETY: `this` is the fresh, non-null allocation root.
+        unsafe { (*this).root.set(core::ptr::NonNull::new(this)) };
+        this
+    }
+
+    /// The allocation-root pointer (write provenance). Every task ctx,
+    /// backref, and release goes through this, never a pointer re-derived
+    /// from `&self`.
+    #[inline]
+    fn root_ptr(&self) -> *mut SendQueue {
+        self.root.get().expect("SendQueue::new sets root").as_ptr()
     }
 
     #[inline]
@@ -1029,7 +1047,7 @@ impl SendQueue {
         if self.windows.get().try_close_after_write {
             return false;
         }
-        self.socket_is_open() && self.close_next_tick.get().is_none()
+        self.socket_is_open() && !self.pending_close.get()
     }
 
     fn close_socket(&self, reason: CloseReason, from: CloseFrom) {
@@ -1111,19 +1129,64 @@ impl SendQueue {
         // can reach this path again with the socket already `.closed`; the
         // owner is about to free the memory that backs `this`, so scheduling
         // a task that points back into it would use-after-free.
-        if notify && was_open && self.after_close_task.get().is_none() {
-            // The queued task owns a ref, released in `on_after_ipc_closed`.
-            self.ref_();
-            let task = ManagedTask::new(std::ptr::from_ref(self).cast_mut(), |p| {
-                let _ = Self::on_after_ipc_closed(p);
-                Ok(())
-            });
-            self.after_close_task.set(Some(task));
-            self.get_global_this()
-                .bun_vm()
-                .event_loop_mut()
-                .enqueue_task(task);
+        if notify && was_open && !self.pending_after_close.get() {
+            self.pending_after_close.set(true);
+            self.schedule_deferred();
         }
+    }
+
+    /// Put the embedded deferred task on the event loop (once). It owns a ref
+    /// while queued, released as the tail of [`Self::run_deferred`] or by
+    /// `__bun_release_task_at_shutdown` if it never runs.
+    fn schedule_deferred(&self) {
+        if self.deferred_scheduled.replace(true) {
+            return;
+        }
+        self.ref_();
+        self.get_global_this()
+            .bun_vm()
+            .event_loop_mut()
+            .enqueue_task(Task::init(self.root_ptr()));
+    }
+
+    /// `task_tag::SendQueueDeferred` dispatch: drain the pending flags, then
+    /// release the task's ref as the tail (nothing touches `*this` after).
+    ///
+    /// # Safety
+    /// `this` is the queued root pointer, live via the ref taken at schedule.
+    pub unsafe fn run_deferred(this: *mut SendQueue) {
+        {
+            // SAFETY: caller contract — the queued task owns a ref on `this`.
+            let sq = unsafe { &*this };
+            sq.deferred_scheduled.set(false);
+            if sq.pending_close.replace(false) {
+                log!("SendQueue#closeSocketTask");
+                sq.close_socket(CloseReason::Normal, CloseFrom::User);
+            }
+            if sq.pending_after_close.replace(false) {
+                log!("SendQueue#_onAfterIPCClosed");
+                if !sq.close_event_sent.replace(true) {
+                    if let Some(owner) = sq.owner.get() {
+                        // Runs the JS `disconnect` handler, which may reach this
+                        // SendQueue again through `&self`.
+                        owner.handle_ipc_close();
+                    }
+                }
+            }
+        }
+        // Release the task's ref; the SendQueue may be freed here.
+        // SAFETY: `this` is live and owns the ref taken at schedule.
+        unsafe { <SendQueue as bun_ptr::CellRefCounted>::deref(this) };
+    }
+
+    /// `__bun_release_task_at_shutdown` hook: a scheduled deferred task that
+    /// will never run still owns a ref; drop it (skipping the JS callbacks).
+    ///
+    /// # Safety
+    /// `this` is the queued root pointer, live via the ref taken at schedule.
+    pub unsafe fn release_deferred_unrun(this: *mut SendQueue) {
+        // SAFETY: caller contract.
+        unsafe { <SendQueue as bun_ptr::CellRefCounted>::deref(this) };
     }
 
     #[cfg(windows)]
@@ -1153,62 +1216,15 @@ impl SendQueue {
             self.socket.set(SocketUnion::Closed);
             return;
         }
-        if self.close_next_tick.get().is_some() {
+        if self.pending_close.get() {
             return; // close already requested
         }
         if !next_tick {
             self.close_socket(CloseReason::Normal, CloseFrom::User);
             return;
         }
-        // The queued task owns a ref, released in `close_socket_task`.
-        self.ref_();
-        let task = ManagedTask::new(std::ptr::from_ref(self).cast_mut(), |p| {
-            let _ = Self::close_socket_task(p);
-            Ok(())
-        });
-        self.close_next_tick.set(Some(task));
-        VirtualMachine::get().as_mut().enqueue_task(task);
-    }
-
-    fn close_socket_task(this_ptr: *mut SendQueue) -> JsResult<()> {
-        log!("SendQueue#closeSocketTask");
-        {
-            // SAFETY: the queued task holds a ref (taken in
-            // `close_socket_next_tick`), so `this_ptr` is live.
-            let this = unsafe { &*this_ptr };
-            debug_assert!(this.close_next_tick.get().is_some());
-            this.close_next_tick.set(None);
-            this.close_socket(CloseReason::Normal, CloseFrom::User);
-        }
-        // Release the task's ref; the SendQueue may be freed here.
-        // SAFETY: `this_ptr` is live and owns the ref taken at enqueue.
-        unsafe { <SendQueue as bun_ptr::CellRefCounted>::deref(this_ptr) };
-        Ok(())
-    }
-
-    fn on_after_ipc_closed(this_ptr: *mut SendQueue) -> JsResult<()> {
-        log!("SendQueue#_onAfterIPCClosed");
-        let owner = {
-            // SAFETY: the queued task holds a ref (taken in
-            // `socket_closed_notify`), so `this_ptr` is live.
-            let this = unsafe { &*this_ptr };
-            this.after_close_task.set(None);
-            if this.close_event_sent.get() {
-                None
-            } else {
-                this.close_event_sent.set(true);
-                this.owner.get()
-            }
-        };
-        if let Some(owner) = owner {
-            // `handle_ipc_close` runs the JS `disconnect` handler, which may
-            // reach this SendQueue again through `&self`.
-            owner.handle_ipc_close();
-        }
-        // Release the task's ref; the SendQueue may be freed here.
-        // SAFETY: `this_ptr` is live and owns the ref taken at enqueue.
-        unsafe { <SendQueue as bun_ptr::CellRefCounted>::deref(this_ptr) };
-        Ok(())
+        self.pending_close.set(true);
+        self.schedule_deferred();
     }
 
     /// Append `payload` as a new message (or onto the last plain message when
@@ -1613,7 +1629,7 @@ impl SendQueue {
 
             // create write request
             let mut write_req = Box::new(WindowsWrite {
-                owner: Some(std::ptr::from_ref(self).cast_mut()),
+                owner: Some(self.root_ptr()),
                 write_slice: write_req_slice,
                 write_req: bun_core::ffi::zeroed(),
                 write_buffer: uv::uv_buf_t::init(b""), // re-init below after slice address is stable
@@ -1850,6 +1866,12 @@ impl uv::StreamReader for SendQueue {
     }
 }
 
+// Taskable: the embedded deferred task queues the SendQueue's own root
+// pointer under this tag; see `schedule_deferred` / `run_deferred`.
+impl bun_event_loop::Taskable for SendQueue {
+    const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::SendQueueDeferred;
+}
+
 impl Drop for SendQueue {
     fn drop(&mut self) {
         log!("SendQueue#deinit");
@@ -1865,8 +1887,6 @@ impl Drop for SendQueue {
         if let Some(fd) = self.incoming_fd.take() {
             FdExt::close(fd);
         }
-        debug_assert!(self.close_next_tick.get().is_none());
-        debug_assert!(self.after_close_task.get().is_none());
     }
 }
 

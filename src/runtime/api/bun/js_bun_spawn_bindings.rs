@@ -97,7 +97,7 @@ fn __bun_subprocess_ipc_global_this(
 #[unsafe(no_mangle)]
 fn __bun_subprocess_ipc_handle_close(subprocess: core::ptr::NonNull<core::ffi::c_void>) {
     // SAFETY: see block comment.
-    SubprocessT::handle_ipc_close(unsafe { subprocess.cast::<SubprocessT<'static>>().as_mut() });
+    SubprocessT::handle_ipc_close(unsafe { subprocess.cast::<SubprocessT<'static>>().as_ref() });
 }
 #[unsafe(no_mangle)]
 fn __bun_subprocess_ipc_handle_message(
@@ -107,7 +107,7 @@ fn __bun_subprocess_ipc_handle_message(
 ) {
     // SAFETY: see block comment.
     SubprocessT::handle_ipc_message(
-        unsafe { subprocess.cast::<SubprocessT<'static>>().as_mut() },
+        unsafe { subprocess.cast::<SubprocessT<'static>>().as_ref() },
         msg,
         handle,
     );

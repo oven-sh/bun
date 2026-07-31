@@ -257,6 +257,11 @@ pub(crate) fn run_task(
                 report_error_or_terminate(global, err)?;
             }
         }
+        task_tag::SendQueueDeferred => {
+            // SAFETY: §Dispatch — the queued pointer is the SendQueue root and
+            // the task owns a ref for its duration; `run_deferred` releases it.
+            unsafe { bun_jsc::ipc::SendQueue::run_deferred(cast_ptr!(bun_jsc::ipc::SendQueue)) };
+        }
         task_tag::AsyncModule => {
             // SAFETY: `AsyncModule::done` boxed it; the arm consumes the box.
             bun_jsc::async_module::AsyncModule::on_done(unsafe {
@@ -683,7 +688,7 @@ fn run_task_cold(task: Task) {
 /// Compile-time guard that the arm count above tracks
 /// `bun_event_loop::task_tag::COUNT`. Bump when adding a variant.
 const _: () = assert!(
-    task_tag::COUNT == 109,
+    task_tag::COUNT == 110,
     "dispatch::run_task arm count out of sync with bun_event_loop::task_tag",
 );
 
@@ -1271,6 +1276,18 @@ fn __bun_release_task_at_shutdown(task: bun_event_loop::Task) -> bool {
             // SAFETY: `task.ptr` is the live heap `FetchTasklet`; HTTP daemon is
             // already parked so we hold the sole reference.
             FetchTasklet::deref(task.ptr.cast::<FetchTasklet>());
+            true
+        }
+        // A queued deferred SendQueue task owns a ref (taken in
+        // `schedule_deferred`); it will never run, so drop that ref here
+        // rather than leak the SendQueue. The JS callbacks are skipped.
+        task_tag::SendQueueDeferred => {
+            // SAFETY: `task.ptr` is the SendQueue root queued with a held ref.
+            unsafe {
+                bun_jsc::ipc::SendQueue::release_deferred_unrun(
+                    task.ptr.cast::<bun_jsc::ipc::SendQueue>(),
+                )
+            };
             true
         }
         // `AsyncFSTask`s are `Box::leak`'d in `create()` and freed by

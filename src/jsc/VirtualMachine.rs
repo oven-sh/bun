@@ -2805,7 +2805,7 @@ pub enum IPCInstanceUnion {
 
 /// Child-side IPC channel: the send queue plus the global object it dispatches incoming messages into.
 pub struct IPCInstance {
-    pub global_this: *mut JSGlobalObject,
+    pub global_this: core::cell::Cell<*mut JSGlobalObject>,
     /// Embedded per-VM group on `RareData.spawn_ipc_group`; this is just a
     /// borrowed handle so the isolation swap can skip it.
     #[cfg(unix)]
@@ -2843,9 +2843,9 @@ impl IPCInstance {
     }
 
     /// Dispatches a decoded IPC message (and optional handle) to the JS `process` listeners.
-    pub fn handle_ipc_message(&mut self, message: &crate::ipc::DecodedIPCMessage, handle: JSValue) {
+    pub fn handle_ipc_message(&self, message: &crate::ipc::DecodedIPCMessage, handle: JSValue) {
         crate::mark_binding!();
-        let global_this = self.global_this;
+        let global_this = self.global_this.get();
         // SAFETY: VM singleton + its event loop are process-lifetime.
         let event_loop = VirtualMachine::get().event_loop_mut();
 
@@ -2878,7 +2878,7 @@ impl IPCInstance {
     }
 
     /// Tears down the IPC channel and emits the disconnect events on `process`.
-    pub(crate) fn handle_ipc_close(&mut self) {
+    pub(crate) fn handle_ipc_close(&self) {
         bun_core::scoped_log!(IPC, "IPCInstance#handleIPCClose");
         // SAFETY: VM singleton is process-lifetime.
         let vm = VirtualMachine::get().as_mut();
@@ -4819,7 +4819,7 @@ impl VirtualMachine {
             // SAFETY: `inst` was produced by `IPCInstance::new` and stays live
             // until `IPCInstance::deinit`; repoint at the new global so
             // `Process__emitMessageEvent` doesn't dispatch on a freed cell.
-            unsafe { (*inst).global_this = new_global };
+            unsafe { (*inst).global_this.set(new_global) };
         }
         if let Some(rare) = self.rare_data.as_deref_mut() {
             for hook in rare.cleanup_hooks.iter_mut() {
@@ -6500,7 +6500,7 @@ impl VirtualMachine {
                 crate::ipc::SocketUnion::Uninitialized,
             );
             let instance = IPCInstance::new(IPCInstance {
-                global_this: self.global,
+                global_this: core::cell::Cell::new(self.global),
                 group,
                 // SAFETY: `SendQueue::new` returns a non-null owned ref.
                 data: unsafe { core::ptr::NonNull::new_unchecked(send_queue) },
@@ -6558,7 +6558,7 @@ impl VirtualMachine {
                 crate::ipc::SocketUnion::Uninitialized,
             );
             let instance = IPCInstance::new(IPCInstance {
-                global_this: self.global,
+                global_this: core::cell::Cell::new(self.global),
                 // SAFETY: `SendQueue::new` returns a non-null owned ref.
                 data: unsafe { core::ptr::NonNull::new_unchecked(send_queue) },
             });

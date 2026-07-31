@@ -739,7 +739,7 @@ impl VHandler for SpawnIPC {
         IpcH::on_timeout(this, IpcS::from(s));
     }
     fn on_end(ext: &mut Self::Ext, s: *mut us_socket_t) {
-        let Some(this) = ext.owner_mut() else { return };
+        let Some(this) = ext.owner_ref() else { return };
         IpcH::on_end(this, IpcS::from(s));
     }
 }

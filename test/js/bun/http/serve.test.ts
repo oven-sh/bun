@@ -3571,11 +3571,11 @@ it("type: direct stream awaiting flush(true) under backpressure does not re-ente
         async pull(controller) {
           pullEntries++;
           for (let i = 0; i < TOTAL_CHUNKS; i++) {
-            // write() returns a negative number when the socket is backed up;
+            // write() returns a pending Promise when the socket is backed up;
             // await flush(true) (the pending-flush promise) to pause until the
             // drain.
             const n = controller.write(CHUNK);
-            if (typeof n === "number" && n < 0) {
+            if (n instanceof Promise) {
               await controller.flush(true);
             }
             writes++;
@@ -3652,7 +3652,7 @@ it("type: direct stream that ignores backpressure is not re-entered on drain", a
           async pull(controller) {
             pullEntries++;
             for (let i = 0; i < TOTAL_CHUNKS; i++) {
-              if ((controller.write(CHUNK) as number) < 0) sawBackpressure = true;
+              if (controller.write(CHUNK) instanceof Promise) sawBackpressure = true;
               await controller.flush();
             }
             parked = true;
@@ -3775,7 +3775,7 @@ it("type: direct stream — small write queued under backpressure is delivered i
           // pending_flush is already parked.
           for (let i = 0; i < 256 && !hitBackpressure; i++) {
             const n = controller.write(BIG);
-            if (typeof n === "number" && n < 0) hitBackpressure = true;
+            if (n instanceof Promise) hitBackpressure = true;
           }
           controller.write(SMALL);
           await controller.flush(true);

@@ -991,6 +991,10 @@ pub struct HTTPServerWritable<const SSL: bool, const HTTP3: bool> {
     pub done: bool,
     pub source: SourceHandle<HTTPServerWritable<SSL, HTTP3>>,
     pub pending_flush: Option<*mut JSPromise>,
+    /// Backpressure promise returned from `write()` to a JS controller (direct
+    /// stream `pull` or `readStreamIntoSink`). Resolved on drain via
+    /// `flush_promise()` → `pending.run()`.
+    pub pending: WritablePending,
     pub wrote_at_start_of_flush: BlobSizeType,
     // JSC_BORROW: process-lifetime VM global; `None` until `flush_from_js`/
     // `end_from_js` install it. Safe `Deref` via `BackRef`.
@@ -1037,6 +1041,7 @@ impl<const SSL: bool, const HTTP3: bool> Default for HTTPServerWritable<SSL, HTT
             done: false,
             source: SourceHandle::default(),
             pending_flush: None,
+            pending: WritablePending::default(),
             wrote_at_start_of_flush: 0,
             global_this: None,
             high_water_mark: 2048,
@@ -1196,17 +1201,27 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
     }
 
     /// `len` bytes were accepted by `send`/`send_readable`. When uWS reports
-    /// the socket is now backed up, surface that via the negative-sentinel
-    /// `Backpressure` variant so the JS writer can `await flush(true)`;
-    /// `on_writable` resolves that promise via `flush_promise()`.
+    /// the socket is now backed up, return a pending Promise for JS-controller
+    /// sources (direct-stream `pull` can `await controller.write()`; the
+    /// `readStreamIntoSink` pump treats a pending promise the same as the
+    /// negative sentinel). Native ByteStream/FileReader pumps match on
+    /// `Backpressure` directly, so keep that variant for them. `on_writable`
+    /// drains via `flush_promise()` → `pending.run()` and `source.ready()`.
     #[inline]
     fn writable_result(&mut self, len: BlobSizeType) -> Writable {
         if self.has_backpressure && !self.done && !self.requested_end {
             self.source_pending_pull = true;
-            Writable::Backpressure(len)
-        } else {
-            Writable::Owned(len)
+            if matches!(
+                self.source,
+                SourceHandle::ByteStream(_) | SourceHandle::FileReader(_)
+            ) {
+                return Writable::Backpressure(len);
+            }
+            self.pending.consumed = len;
+            self.pending.result = Writable::Owned(len);
+            return Writable::Pending(core::ptr::from_mut(&mut self.pending));
         }
+        Writable::Owned(len)
     }
 
     fn send_without_auto_flusher(&mut self, buf: &[u8]) -> bool {
@@ -1923,6 +1938,8 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
         // Callers may tear this sink down without routing through
         // flushPromise() (e.g. handleResolveStream / handleRejectStream).
         // Drop the GC root so the promise can be collected.
+        this.pending.result = Writable::Done;
+        this.pending.run();
         if let Some(prom) = this.pending_flush.take() {
             // S008: `JSPromise` is an `opaque_ffi!` ZST — safe `*const → &` deref.
             JSPromise::opaque_ref(prom).to_js().unprotect();
@@ -1990,6 +2007,9 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
     /// Only VM termination
     /// escapes; promise resolution cannot raise an ordinary JS exception here.
     pub fn flush_promise(&mut self) -> core::result::Result<(), jsc::JsTerminated> {
+        // Settle any `write()` → `Pending` promise first so a parked JS writer
+        // wakes on every drain/teardown path that reaches here.
+        self.pending.run();
         if let Some(prom) = self.pending_flush.take() {
             bun_core::scoped_log!(HTTPServerWritableLog, "flushPromise()");
 
@@ -2100,6 +2120,9 @@ pub struct NetworkSink {
     /// `flush()` — it resumes via `source.ready()` → `m_onPull` — so no promise
     /// is allocated on that path.
     pub flush_promise: JSPromiseStrong,
+    /// Backpressure promise returned from `write()` to a JS controller;
+    /// resolved by `on_writable` → `pending.run()`.
+    pub pending: WritablePending,
     pub end_promise: JSPromiseStrong,
     /// Upstream ByteStream error stashed by `end_from_stream` so the upload
     /// failure callback can reject with the original JS error (e.g. S3
@@ -2118,6 +2141,7 @@ impl Default for NetworkSink {
             global_this: None,
             high_water_mark: 2048,
             flush_promise: JSPromiseStrong::default(),
+            pending: WritablePending::default(),
             end_promise: JSPromiseStrong::default(),
             upstream_error: jsc::strong::Optional::empty(),
             ended: false,
@@ -2216,6 +2240,7 @@ impl NetworkSink {
             this.flush_promise
                 .resolve(&global, JSValue::js_number(flushed as f64))?;
         }
+        this.pending.run();
         // Wake the upstream source (JS controller onPull or native ByteStream
         // resume). No-op when `source` is `None` (the `writer()` path).
         this.source.ready(None, None);
@@ -2253,9 +2278,26 @@ impl NetworkSink {
     pub fn abort(&mut self) {
         self.ended = true;
         self.done = true;
+        self.pending.result = Writable::Done;
+        self.pending.run();
         self.source.close(None);
         self.cancel = true;
         self.finalize();
+    }
+
+    /// The upload queue is full. Native ByteStream/FileReader pumps match on
+    /// `Backpressure` directly; a JS controller gets a pending Promise so
+    /// `await controller.write()` parks until `on_writable` → `pending.run()`.
+    fn backpressure_result(&mut self, len: BlobSizeType) -> Writable {
+        if matches!(
+            self.source,
+            SourceHandle::ByteStream(_) | SourceHandle::FileReader(_)
+        ) {
+            return Writable::Backpressure(len);
+        }
+        self.pending.consumed = len;
+        self.pending.result = Writable::Owned(len);
+        Writable::Pending(core::ptr::from_mut(&mut self.pending))
     }
 
     pub fn write(&mut self, data: &StreamResult) -> Writable {
@@ -2268,17 +2310,18 @@ impl NetworkSink {
         // the pump paths consume `Backpressure`/`Done`.
         let has_source = !matches!(self.source, SourceHandle::None);
 
-        if let Some(task) = self.task_mut() {
-            return match task.write_bytes(bytes, false) {
-                Ok(bun_s3::UploadBackpressure::Backpressure) if has_source => {
-                    Writable::Backpressure(len)
-                }
-                Ok(bun_s3::UploadBackpressure::Done) if has_source => Writable::Done,
-                Ok(_) => Writable::Owned(len),
-                Err(_) => Writable::Err(SysError::from_code(sys::E::ENOMEM, sys::Tag::write)),
-            };
+        let result = match self.task_mut() {
+            Some(task) => task.write_bytes(bytes, false),
+            None => return Writable::Owned(len),
+        };
+        match result {
+            Ok(bun_s3::UploadBackpressure::Backpressure) if has_source => {
+                self.backpressure_result(len)
+            }
+            Ok(bun_s3::UploadBackpressure::Done) if has_source => Writable::Done,
+            Ok(_) => Writable::Owned(len),
+            Err(_) => Writable::Err(SysError::from_code(sys::E::ENOMEM, sys::Tag::write)),
         }
-        Writable::Owned(len)
     }
 
     pub fn write_bytes(&mut self, data: &StreamResult) -> Writable {
@@ -2294,17 +2337,18 @@ impl NetworkSink {
         let len = bytes.len() as BlobSizeType;
         let has_source = !matches!(self.source, SourceHandle::None);
 
-        if let Some(task) = self.task_mut() {
-            return match task.write_latin1(bytes, false) {
-                Ok(bun_s3::UploadBackpressure::Backpressure) if has_source => {
-                    Writable::Backpressure(len)
-                }
-                Ok(bun_s3::UploadBackpressure::Done) if has_source => Writable::Done,
-                Ok(_) => Writable::Owned(len),
-                Err(_) => Writable::Err(SysError::from_code(sys::E::ENOMEM, sys::Tag::write)),
-            };
+        let result = match self.task_mut() {
+            Some(task) => task.write_latin1(bytes, false),
+            None => return Writable::Owned(len),
+        };
+        match result {
+            Ok(bun_s3::UploadBackpressure::Backpressure) if has_source => {
+                self.backpressure_result(len)
+            }
+            Ok(bun_s3::UploadBackpressure::Done) if has_source => Writable::Done,
+            Ok(_) => Writable::Owned(len),
+            Err(_) => Writable::Err(SysError::from_code(sys::E::ENOMEM, sys::Tag::write)),
         }
-        Writable::Owned(len)
     }
 
     pub fn write_utf16(&mut self, data: &StreamResult) -> Writable {
@@ -2314,20 +2358,20 @@ impl NetworkSink {
         let bytes = data.slice();
         let len = bytes.len() as BlobSizeType;
         let has_source = !matches!(self.source, SourceHandle::None);
-        if let Some(task) = self.task_mut() {
-            // we must always buffer UTF-16
-            // we assume the case of all-ascii UTF-16 string is pretty uncommon
-            return match task.write_utf16(bytes, false) {
-                Ok(bun_s3::UploadBackpressure::Backpressure) if has_source => {
-                    Writable::Backpressure(len)
-                }
-                Ok(bun_s3::UploadBackpressure::Done) if has_source => Writable::Done,
-                Ok(_) => Writable::Owned(len),
-                Err(_) => Writable::Err(SysError::from_code(sys::E::ENOMEM, sys::Tag::write)),
-            };
+        // we must always buffer UTF-16
+        // we assume the case of all-ascii UTF-16 string is pretty uncommon
+        let result = match self.task_mut() {
+            Some(task) => task.write_utf16(bytes, false),
+            None => return Writable::Owned(len),
+        };
+        match result {
+            Ok(bun_s3::UploadBackpressure::Backpressure) if has_source => {
+                self.backpressure_result(len)
+            }
+            Ok(bun_s3::UploadBackpressure::Done) if has_source => Writable::Done,
+            Ok(_) => Writable::Owned(len),
+            Err(_) => Writable::Err(SysError::from_code(sys::E::ENOMEM, sys::Tag::write)),
         }
-
-        Writable::Owned(len)
     }
 
     pub fn end(&mut self, err: Option<SysError>) -> bun_sys::Result<()> {
@@ -2337,6 +2381,8 @@ impl NetworkSink {
 
         // send EOF
         self.ended = true;
+        self.pending.result = Writable::Done;
+        self.pending.run();
         // flush everything and send EOF
         if let Some(task) = self.task_mut() {
             let _ = task.write_bytes(b"", true);

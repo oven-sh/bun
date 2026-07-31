@@ -199,6 +199,24 @@ fn call_as_function(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVa
             let mut formatter = bun_jsc::ConsoleObject::Formatter::new(global);
             return Err(global.throw(format_args!("Expected array, got {}", this.each.to_fmt(&mut formatter))));
         }
+        // Compute the widest array row once. Short array rows are padded to this width
+        // (below) so an omitted optional trailing tuple element binds as `undefined`
+        // instead of receiving the `done` callback in that slot. Jest does not pad and
+        // so exhibits oven-sh/bun#24347; this intentionally matches Vitest instead so
+        // TypeScript's inferred tuple type for the callback parameter holds at runtime.
+        let max_row_width: usize = {
+            let mut width: usize = 0;
+            let mut width_iter = this.each.array_iterator(global)?;
+            while let Some(item) = width_iter.next()? {
+                if item.is_empty() {
+                    break;
+                }
+                if item.is_array() {
+                    width = width.max(item.get_length(global)? as usize);
+                }
+            }
+            width
+        };
         let mut iter = this.each.array_iterator(global)?;
         let mut test_idx: usize = 0;
         while let Some(item) = iter.next()? {
@@ -221,6 +239,11 @@ fn call_as_function(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVa
                     while let Some(array_item) = item_iter.next()? {
                         rooted.append(array_item);
                         args_list.push(array_item);
+                    }
+                    // Pad a short row to the table's widest row so omitted trailing
+                    // tuple elements land as `undefined` and `done` stays past them.
+                    while args_list.len() < max_row_width {
+                        args_list.push(JSValue::UNDEFINED);
                     }
                 } else {
                     args_list.push(item);

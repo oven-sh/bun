@@ -57,3 +57,41 @@ describe.each(["some", "cool", "strings"])("works with describe: %s", s => {
 describe("does not return zero", () => {
   expect(it.each([1, 2])("wat", () => {})).toBeUndefined();
 });
+
+// #24347: an array row that omits a trailing optional tuple element used to be
+// spread as-is, so `done` filled the omitted slot. Jest has the same behaviour;
+// Bun intentionally follows Vitest here and pads short rows to the table's
+// widest row so the callback parameter's inferred `T | undefined` type holds.
+describe("ragged array rows pad optional trailing tuple elements (#24347)", () => {
+  const cases: [number, number, number?][] = [
+    [1, 2],
+    [1, 2, undefined],
+    [10, 0, 10],
+  ];
+
+  const seen: unknown[] = [];
+  it.each(cases)("omitted optional element is undefined, not done [row %#]", (a, b, c) => {
+    seen.push([a, b, c]);
+    expect(typeof c).not.toBe("function");
+  });
+  it("bound every row with the omitted slot as undefined", () => {
+    expect(seen).toEqual([
+      [1, 2, undefined],
+      [1, 2, undefined],
+      [10, 0, 10],
+    ]);
+  });
+
+  it.each(cases)("done still binds after the padded slot [row %#]", (_a, _b, c, done) => {
+    expect(typeof c).not.toBe("function");
+    expect(["number", "undefined"]).toContain(typeof c);
+    expect(typeof done).toBe("function");
+    (done as (err?: unknown) => void)();
+  });
+
+  it.each([[1], [2]])("uniformly short table still receives a real done [row %#]", (n, done) => {
+    expect(typeof n).toBe("number");
+    expect(typeof done).toBe("function");
+    (done as (err?: unknown) => void)();
+  });
+});

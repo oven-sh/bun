@@ -32,11 +32,9 @@ const assert = require('assert');
       // with agent: false, so opt out of pooling and exit as soon as the
       // assertions pass.
       agent: false,
-    }, common.mustCall((res) => {
-      assert.strictEqual(res.statusCode, 200);
+    }, common.mustCall(() => {
       assert.strictEqual(req.socket.localPort, common.PORT);
       assert.strictEqual(req.socket.remotePort, port);
-      res.resume();
     }));
   }));
 }

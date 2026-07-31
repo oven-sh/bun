@@ -2622,7 +2622,7 @@ impl BlobExt for Blob {
             return Ok(ZigString::EMPTY.to_js(global));
         }
 
-        if bom == Some(strings::BOM::Utf16Le) {
+        if let Some(bom @ (strings::BOM::Utf16Le | strings::BOM::Utf16Be)) = bom {
             let _free = (LIFETIME == Lifetime::Temporary).then(|| TemporaryBytes(raw_bytes));
             // Reinterpret as u16: drop a trailing odd byte.
             // +1 WTF ref; `OwnedString` releases it on scope exit.
@@ -2630,14 +2630,19 @@ impl BlobExt for Blob {
             // This branch intentionally does NOT `self.detach()` for
             // `Lifetime::Transfer`, unlike the toJSON path.
             let buf = &buf[..buf.len() & !1];
-            let out = match bytemuck::try_cast_slice::<u8, u16>(buf) {
-                Ok(units) => OwnedString::new(BunString::clone_utf16(units)),
-                Err(_) => {
+            let out = match (bom, bytemuck::try_cast_slice::<u8, u16>(buf)) {
+                (strings::BOM::Utf16Le, Ok(units)) => {
+                    OwnedString::new(BunString::clone_utf16(units))
+                }
+                _ => {
                     let units: Vec<u16> = buf
                         .as_chunks::<2>()
                         .0
                         .iter()
-                        .map(|pair| u16::from_le_bytes(*pair))
+                        .map(|pair| match bom {
+                            strings::BOM::Utf16Be => u16::from_be_bytes(*pair),
+                            _ => u16::from_le_bytes(*pair),
+                        })
                         .collect();
                     OwnedString::new(BunString::clone_utf16(&units))
                 }
@@ -2860,18 +2865,23 @@ impl BlobExt for Blob {
             );
         }
 
-        if bom == Some(strings::BOM::Utf16Le) {
+        if let Some(bom @ (strings::BOM::Utf16Le | strings::BOM::Utf16Be)) = bom {
             // Reinterpret as u16: drop a trailing odd byte.
             // +1 WTF ref; `OwnedString` releases it on scope exit.
             let buf = &buf[..buf.len() & !1];
-            let mut out = match bytemuck::try_cast_slice::<u8, u16>(buf) {
-                Ok(units) => OwnedString::new(BunString::clone_utf16(units)),
-                Err(_) => {
+            let mut out = match (bom, bytemuck::try_cast_slice::<u8, u16>(buf)) {
+                (strings::BOM::Utf16Le, Ok(units)) => {
+                    OwnedString::new(BunString::clone_utf16(units))
+                }
+                _ => {
                     let units: Vec<u16> = buf
                         .as_chunks::<2>()
                         .0
                         .iter()
-                        .map(|pair| u16::from_le_bytes(*pair))
+                        .map(|pair| match bom {
+                            strings::BOM::Utf16Be => u16::from_be_bytes(*pair),
+                            _ => u16::from_le_bytes(*pair),
+                        })
                         .collect();
                     OwnedString::new(BunString::clone_utf16(&units))
                 }

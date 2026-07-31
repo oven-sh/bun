@@ -1693,6 +1693,31 @@ pub(crate) mod strings_impl {
         to_utf8_alloc(&aligned)
     }
 
+    /// Transcode raw UTF-16-BE *bytes* (no alignment requirement) to a fresh
+    /// UTF-8 `Vec`. See `to_utf8_alloc_from_le_bytes` for the alignment rationale;
+    /// this variant additionally byte-swaps each `u16` after the aligned copy so
+    /// the existing host-endian (`LE`) transcode path can be reused.
+    pub fn to_utf8_alloc_from_be_bytes(be_bytes: &[u8]) -> Vec<u8> {
+        let n_u16 = be_bytes.len() / 2;
+        if n_u16 == 0 {
+            return Vec::new();
+        }
+        let mut aligned: Vec<u16> = Vec::with_capacity(n_u16);
+        // SAFETY: identical to `to_utf8_alloc_from_le_bytes` above.
+        unsafe {
+            core::ptr::copy_nonoverlapping(
+                be_bytes.as_ptr(),
+                aligned.as_mut_ptr().cast::<u8>(),
+                n_u16 * 2,
+            );
+            aligned.set_len(n_u16);
+        }
+        for unit in aligned.iter_mut() {
+            *unit = unit.swap_bytes();
+        }
+        to_utf8_alloc(&aligned)
+    }
+
     pub fn to_utf8_append_to_list(list: &mut Vec<u8>, utf16: &[u16]) {
         let need = simdutf::length::utf8::from::utf16::le(utf16);
         list.reserve(need + 16);

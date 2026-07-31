@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { mkdirSync, realpathSync } from "fs";
-import { bunEnv, bunExe, bunRun } from "harness";
+import { bunEnv, bunExe, bunRun, tempDir } from "harness";
 import { tmpdir } from "os";
 import { join } from "path";
 
@@ -39,5 +39,28 @@ describe.concurrent("run-unicode", () => {
   "Fran\u00E7ais": 123,
   bbb: 123,
 }`);
+  });
+
+  describe.each([
+    ["UTF-16LE", (s: string) => Buffer.from("\uFEFF" + s, "utf16le")],
+    ["UTF-16BE", (s: string) => Buffer.from("\uFEFF" + s, "utf16le").swap16()],
+  ])("runs %s source with a BOM", (_, encode) => {
+    test.each([
+      ["ascii", `console.log("hello")`, "hello\n"],
+      ["non-ascii", `console.log("é汉字🎉".length, "é汉字🎉")`, "5 é汉字🎉\n"],
+    ])("%s", async (_, source, expected) => {
+      using dir = tempDir("run-utf16-bom", { "index.js": encode(source) });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "index.js"],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(stdout).toBe(expected);
+      expect(exitCode).toBe(0);
+    });
   });
 });

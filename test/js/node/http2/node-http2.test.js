@@ -3076,6 +3076,60 @@ it("http2 pushStream reports header values containing CR, LF, or NUL through the
   }
 });
 
+it("http2 pushStream failure reports only via callback, never via stream 'error'", async () => {
+  // node creates the ServerHttp2Stream only after pushPromise succeeds, so a validation
+  // failure never reaches a stream 'error' event. bun must create the stream first, but the
+  // teardown must stay silent: the callback is the sole error channel. The diagnostics_channel
+  // publish is the only way user code can observe the pushed stream before the callback, so use
+  // it to attach a listener and prove nothing is emitted.
+  const dc = require("node:diagnostics_channel");
+  const pushedStreams = [];
+  const onCreated = ({ stream, headers }) => {
+    if (headers[":path"] !== "/pushed") return;
+    stream.on("error", err => pushedStreams.push({ event: "error", code: err?.code }));
+    stream.on("close", () => pushedStreams.push({ event: "close", destroyed: stream.destroyed }));
+  };
+  dc.subscribe("http2.server.stream.created", onCreated);
+
+  let uncaught;
+  const onUncaught = err => (uncaught = err);
+  process.on("uncaughtException", onUncaught);
+
+  const server = http2.createServer();
+  const { promise: callbackResult, resolve: onCallback } = Promise.withResolvers();
+  server.on("stream", stream => {
+    stream.pushStream({ ":path": "/pushed", "x-bad": "a\nb" }, (err, pushed) => {
+      onCallback({ code: err?.code, pushed });
+      stream.respond({ ":status": 200 });
+      stream.end("ok");
+    });
+  });
+  await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+
+  try {
+    const client = http2.connect(`http://127.0.0.1:${server.address().port}`);
+    client.on("error", () => {});
+    const { promise: done, resolve: onEnd, reject: onError } = Promise.withResolvers();
+    const req = client.request({ ":path": "/" });
+    req.on("error", onError);
+    req.resume();
+    req.on("end", onEnd);
+    await done;
+
+    const result = await callbackResult;
+    expect(result).toEqual({ code: "ERR_HTTP2_INVALID_HEADER_VALUE", pushed: undefined });
+    // Let any scheduled 'error'/'close' emissions from destroy() run.
+    await new Promise(resolve => setImmediate(resolve));
+    expect(pushedStreams).toEqual([{ event: "close", destroyed: true }]);
+    expect(uncaught).toBeUndefined();
+    client.close();
+  } finally {
+    dc.unsubscribe("http2.server.stream.created", onCreated);
+    process.removeListener("uncaughtException", onUncaught);
+    server.close();
+  }
+});
+
 it("http2 option range error messages use the options. prefix", () => {
   for (const opt of ["maxSessionInvalidFrames", "maxSessionRejectedStreams", "unknownProtocolTimeout"]) {
     let error;

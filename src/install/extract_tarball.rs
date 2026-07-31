@@ -181,6 +181,35 @@ pub(crate) fn uses_streaming_extraction() -> bool {
         .unwrap_or(false)
 }
 
+/// RAII owner of a temporary extraction directory under `parent`. Removes
+/// `parent/name` on drop unless [`commit`](Self::commit) is called after the
+/// directory has been renamed into the cache. This keeps failed extractions
+/// (decompression errors, truncated tarballs, rename failures) from leaking an
+/// extraction directory per attempt in `$TMPDIR`.
+struct TempExtractionDir<'a> {
+    parent: Fd,
+    name: &'a ZStr,
+}
+
+impl<'a> TempExtractionDir<'a> {
+    #[inline]
+    fn new(parent: Fd, name: &'a ZStr) -> Self {
+        Self { parent, name }
+    }
+
+    /// Disarm the drop guard after the directory has been renamed away.
+    #[inline]
+    fn commit(self) {
+        core::mem::forget(self);
+    }
+}
+
+impl Drop for TempExtractionDir<'_> {
+    fn drop(&mut self) {
+        let _ = Dir::borrow(&self.parent).delete_tree(self.name.as_bytes());
+    }
+}
+
 impl ExtractTarball {
     /// Derive the display name and a filesystem-safe basename for this
     /// package. Shared by the buffered `extract()` path below and the
@@ -256,6 +285,7 @@ impl ExtractTarball {
         let mut resolved: &'static [u8] = b"";
         let tmpname =
             FileSystem::tmpname(tmpname_suffix, &mut tmpname_buf.0, bun_core::fast_random())?;
+        let tmpdir_guard = TempExtractionDir::new(self.temp_dir, tmpname);
         {
             let extract_destination = match bun_sys::make_path::make_open_path(
                 tmpdir,
@@ -439,7 +469,9 @@ impl ExtractTarball {
             }
         }
 
-        self.move_to_cache_directory(log, tmpname, name, basename, resolved)
+        let result = self.move_to_cache_directory(log, tmpname, name, basename, resolved)?;
+        tmpdir_guard.commit();
+        Ok(result)
     }
 
     /// Rename the freshly-extracted temp directory into the cache, read

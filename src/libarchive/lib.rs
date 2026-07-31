@@ -1886,11 +1886,17 @@ impl Archiver {
                                 // #define    MAX_WRITE    (1024 * 1024)
                                 #[cfg(any(target_os = "linux", target_os = "android"))]
                                 {
-                                    if size > 1_000_000 {
+                                    // The header's size field is attacker-controlled; a
+                                    // malicious tarball can claim 8 GiB for a 100-byte body
+                                    // and fallocate that much real disk before the short body
+                                    // is detected. A tar entry's body is stored inline in the
+                                    // archive stream, so it cannot exceed `file_buffer.len()`.
+                                    let prealloc = size.min(file_buffer.len());
+                                    if prealloc > 1_000_000 {
                                         let _ = bun_sys::preallocate_file(
                                             file_handle.native(),
                                             0,
-                                            i64::try_from(size).expect("int cast"),
+                                            i64::try_from(prealloc).expect("int cast"),
                                         );
                                     }
                                 }

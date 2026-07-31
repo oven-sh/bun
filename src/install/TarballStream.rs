@@ -893,13 +893,15 @@ impl TarballStream {
 
                 #[cfg(any(target_os = "linux", target_os = "android"))]
                 {
-                    let size: usize = usize::try_from(entry.size().max(0)).expect("int cast");
+                    // The header's size field is attacker-controlled; cap so a
+                    // size lie can't fallocate more than one entry's worth of
+                    // real disk before the truncated body is detected. The
+                    // buffered path bounds this by the decompressed tar length;
+                    // here the stream is incomplete, so use a fixed ceiling.
+                    const PREALLOCATE_CEILING: i64 = 64 * 1024 * 1024;
+                    let size = entry.size().max(0).min(PREALLOCATE_CEILING);
                     if size > 1_000_000 {
-                        let _ = bun_sys::preallocate_file(
-                            fd.native(),
-                            0,
-                            i64::try_from(size).expect("int cast"),
-                        );
+                        let _ = bun_sys::preallocate_file(fd.native(), 0, size);
                     }
                 }
 

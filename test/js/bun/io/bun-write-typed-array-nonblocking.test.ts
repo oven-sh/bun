@@ -87,3 +87,54 @@ test("Bun.write(path, typedArray) writes the correct bytes for borrowed ArrayBuf
   });
   expect(exitCode).toBe(0);
 });
+
+test("Bun.write(path, typedArray) releases its pin+protect on the source ArrayBuffer", async () => {
+  using dir = tempDir("bun-write-large-buffer-gcstress", {});
+  const script = `
+    const { heapStats } = require("bun:jsc");
+    const path = require("path");
+    const out = path.join(process.cwd(), "out.bin");
+    function protectedBufferCount() {
+      const c = heapStats().protectedObjectTypeCounts;
+      return (c.Uint8Array ?? 0) + (c.Buffer ?? 0) + (c.ArrayBuffer ?? 0) + (c.JSArrayBuffer ?? 0);
+    }
+    await Bun.write(out, new Uint8Array(1));
+    Bun.gc(true);
+    const base = protectedBufferCount();
+
+    for (let i = 0; i < 64; i++) {
+      await Bun.write(out, new Uint8Array(300 * 1024).fill(i & 0xff));
+      Bun.gc(true);
+    }
+    const afterSuccess = protectedBufferCount();
+
+    let rejected = 0;
+    for (let i = 0; i < 16; i++) {
+      try {
+        await Bun.write(process.cwd(), new Uint8Array(300 * 1024));
+      } catch {
+        rejected++;
+      }
+      Bun.gc(true);
+    }
+    const afterError = protectedBufferCount();
+
+    console.log(JSON.stringify({ base, afterSuccess, afterError, rejected }));
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: bunEnv,
+    cwd: String(dir),
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  const { base, afterSuccess, afterError, rejected } = JSON.parse(stdout);
+  // every Bun.write call protects the source while the pool-thread write runs
+  // and releases it on completion; a missed release would leave these counts
+  // climbing by one per iteration.
+  expect(afterSuccess).toBeLessThanOrEqual(base + 2);
+  expect(afterError).toBeLessThanOrEqual(base + 2);
+  expect(rejected).toBe(16);
+  expect(exitCode).toBe(0);
+});

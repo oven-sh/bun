@@ -303,7 +303,7 @@ static JSC::JSValue toJS(JSC::Structure* structure, DataCell* cells, uint32_t co
     case BunResultMode::Objects: // objects
 
     {
-        auto* object = structure ? JSC::constructEmptyObject(vm, structure) : JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 0);
+        auto* object = structure ? JSC::constructEmptyObject(vm, structure) : JSC::constructEmptyObject(globalObject);
 
         // TODO: once we have more tests for this, let's add another branch for
         // "only mixed names and mixed indexed columns, no duplicates"

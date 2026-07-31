@@ -12,7 +12,6 @@ use bun_paths::resolve_path::{join_abs_string_z, platform};
 use bun_paths::{AutoAbsPath, EnvPath};
 use bun_semver::string::Builder as SemverStringBuilder;
 use bun_sys as Syscall;
-use bun_threading::Mutex;
 
 use crate::bun_fs::FileSystem;
 
@@ -27,22 +26,6 @@ use bun_install::lockfile::{self, Lockfile, Package};
 use bun_install::{
     PackageID, PackageManager, PreinstallState, TruncatedPackageNameHash, invalid_package_id,
 };
-
-#[derive(Default)]
-pub struct LifecycleScriptTimeLog {
-    mutex: Mutex,
-    list: Vec<LifecycleScriptTimeLogEntry>,
-}
-
-pub struct LifecycleScriptTimeLogEntry {}
-
-impl LifecycleScriptTimeLog {
-    pub(crate) fn append_concurrent(&mut self, entry: LifecycleScriptTimeLogEntry) {
-        self.mutex.lock();
-        self.list.push(entry);
-        self.mutex.unlock();
-    }
-}
 
 impl PackageManager {
     pub(crate) fn ensure_preinstall_state_list_capacity(&mut self, count: usize) {

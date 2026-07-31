@@ -157,11 +157,7 @@ pub fn which<'a>(buf: &'a mut PathBuffer, path: &[u8], cwd: &[u8], bin: &[u8]) -
             return None;
         }
 
-        let cwd_for_relative_segment: &[u8] = if is_absolute(cwd) {
-            cwd_trimmed
-        } else {
-            b""
-        };
+        let cwd_for_relative_segment: &[u8] = if is_absolute(cwd) { cwd_trimmed } else { b"" };
         for segment in path.split(|b| *b == DELIMITER).filter(|s| !s.is_empty()) {
             // execvp resolves relative $PATH entries after the child's chdir.
             let cwd_prefix: &[u8] = if is_absolute(segment) {

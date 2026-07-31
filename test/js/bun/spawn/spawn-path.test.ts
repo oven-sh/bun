@@ -82,5 +82,4 @@ describe.skipIf(isWindows)("spawn resolves relative PATH entries against the cwd
     expect(result.stdout.trim()).toBe("RAN");
     expect(result.code).toBe(0);
   });
-
 });

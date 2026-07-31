@@ -271,11 +271,7 @@ impl FetchRequestBodySink {
     }
 }
 
-crate::impl_js_sink_abi!(
-    FetchRequestBodySink,
-    "FetchRequestBodySink",
-    FetchRequestBody
-);
+crate::impl_js_sink_abi!(FetchRequestBodySink, "FetchRequestBodySink");
 
 impl crate::webcore::sink::JsSinkType for FetchRequestBodySink {
     const NAME: &'static str = Self::NAME;

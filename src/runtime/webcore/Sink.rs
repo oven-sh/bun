@@ -10,7 +10,7 @@ use bun_sys::{self as sys, Error as SysError};
 // resolves to the full type (with `bytes`/`source`/`destroy`) for Body.rs.
 pub use crate::webcore::array_buffer_sink::ArrayBufferSink;
 
-crate::impl_js_sink_abi!(ArrayBufferSink, "ArrayBufferSink", ArrayBuffer);
+crate::impl_js_sink_abi!(ArrayBufferSink, "ArrayBufferSink");
 
 impl JSSink<ArrayBufferSink> {
     /// Unprotects the controller cell stashed in `source` as `JSController`
@@ -52,60 +52,41 @@ pub struct JSSink<T> {
 // taken as a macro literal and `concat!`-ed.
 //
 // `decl_js_sink_externs!` emits the codegen `${abi}__*` externs into a named
-// submodule; `impl_js_sink_abi!` wraps the `@abi` subset in a 1:1-forwarding
-// `JsSinkAbi` impl. The extern-only form is exposed separately so
+// submodule; `impl_js_sink_abi!` wraps them in a 1:1-forwarding `JsSinkAbi`
+// impl. The extern-only form is exposed separately so
 // `HTTPServerWritable<SSL,HTTP3>` can declare three sets and keep its
 // const-generic 3-way dispatch impl.
 
-/// Declare the codegen-emitted `${abi}__*` C externs. The `@abi` / `@signals`
-/// arms expand to bare foreign items (invoke inside `unsafe extern "C" { }`);
-/// the `[$sel] $abi as $m` / `$abi as $m` arms wrap them in `pub(crate) mod $m`.
-/// Split so each caller emits only the subset it uses — no `dead_code` escape.
+/// Declare the codegen-emitted `${abi}__*` C externs into `pub(crate) mod $m`.
 ///
 /// `safe fn`: `&JSGlobalObject` discharges the only deref'd-param precondition;
 /// `*mut c_void` args are stored opaquely in the JS wrapper — module-private,
 /// sole callers are the `JsSinkAbi` forwards which pass live pointers.
 #[macro_export]
 macro_rules! decl_js_sink_externs {
-    (@abi $abi:literal) => {
-        #[link_name = concat!($abi, "__fromJS")]
-        pub(crate) safe fn from_js(value: ::bun_jsc::JSValue) -> usize;
-        #[link_name = concat!($abi, "__createObject")]
-        pub(crate) safe fn create_object(
-            g: &::bun_jsc::JSGlobalObject,
-            o: *mut ::core::ffi::c_void,
-            d: usize,
-        ) -> ::bun_jsc::JSValue;
-        #[link_name = concat!($abi, "__setDestroyCallback")]
-        pub(crate) safe fn set_destroy_callback(v: ::bun_jsc::JSValue, cb: usize);
-        #[link_name = concat!($abi, "__assignToStream")]
-        pub(crate) safe fn assign_to_stream(
-            g: &::bun_jsc::JSGlobalObject,
-            s: ::bun_jsc::JSValue,
-            p: *mut ::core::ffi::c_void,
-            jp: *mut *mut ::core::ffi::c_void,
-        ) -> ::bun_jsc::JSValue;
-    };
-    (@signals $abi:literal) => {
-        #[link_name = concat!($abi, "__onClose")]
-        pub(crate) safe fn on_close(p: ::bun_jsc::JSValue, r: ::bun_jsc::JSValue);
-        #[link_name = concat!($abi, "__onReady")]
-        pub(crate) safe fn on_ready(
-            p: ::bun_jsc::JSValue,
-            a: ::bun_jsc::JSValue,
-            o: ::bun_jsc::JSValue,
-        );
-        #[link_name = concat!($abi, "__detachPtr")]
-        pub(crate) safe fn detach_ptr(p: ::bun_jsc::JSValue);
-    };
-    ([$($sel:tt)+] $abi:literal as $m:ident) => {
+    ($abi:literal as $m:ident) => {
         #[allow(non_snake_case)]
         pub(crate) mod $m {
-            unsafe extern "C" { $( $crate::decl_js_sink_externs!(@$sel $abi); )+ }
+            unsafe extern "C" {
+                #[link_name = concat!($abi, "__fromJS")]
+                pub(crate) safe fn from_js(value: ::bun_jsc::JSValue) -> usize;
+                #[link_name = concat!($abi, "__createObject")]
+                pub(crate) safe fn create_object(
+                    g: &::bun_jsc::JSGlobalObject,
+                    o: *mut ::core::ffi::c_void,
+                    d: usize,
+                ) -> ::bun_jsc::JSValue;
+                #[link_name = concat!($abi, "__setDestroyCallback")]
+                pub(crate) safe fn set_destroy_callback(v: ::bun_jsc::JSValue, cb: usize);
+                #[link_name = concat!($abi, "__assignToStream")]
+                pub(crate) safe fn assign_to_stream(
+                    g: &::bun_jsc::JSGlobalObject,
+                    s: ::bun_jsc::JSValue,
+                    p: *mut ::core::ffi::c_void,
+                    jp: *mut *mut ::core::ffi::c_void,
+                ) -> ::bun_jsc::JSValue;
+            }
         }
-    };
-    ($abi:literal as $m:ident) => {
-        $crate::decl_js_sink_externs!([abi signals] $abi as $m);
     };
 }
 
@@ -114,12 +95,10 @@ macro_rules! decl_js_sink_externs {
 /// the extern submodule does not leak into the caller's namespace.
 #[macro_export]
 macro_rules! impl_js_sink_abi {
-    ($Ty:ty, $abi:literal, $kind:ident) => {
+    ($Ty:ty, $abi:literal) => {
         const _: () = {
-    $crate::decl_js_sink_externs!([abi] $abi as __abi);
+            $crate::decl_js_sink_externs!($abi as __abi);
             impl $crate::webcore::sink::JsSinkAbi for $Ty {
-                const SINK_KIND: $crate::webcore::streams::SinkKind =
-                    $crate::webcore::streams::SinkKind::$kind;
                 fn from_js_extern(value: ::bun_jsc::JSValue) -> usize {
                     __abi::from_js(value)
                 }
@@ -150,9 +129,6 @@ macro_rules! impl_js_sink_abi {
 /// so each `SinkType` provides the resolved `${abi}__*` externs here (normally
 /// via `impl_js_sink_abi!`) for the generic `JSSink<T>` host-fn bodies to call.
 pub trait JsSinkAbi {
-    /// Discriminant stamped into `SourceHandle::JSController { kind }` so the
-    /// non-generic `SourceHandle` can pick the right `${abi}__*` externs.
-    const SINK_KIND: crate::webcore::streams::SinkKind;
     /// `${abi_name}__fromJS` — encodes `*ThisSink` (or 0/1 sentinel) as `usize`.
     fn from_js_extern(value: crate::webcore::jsc::JSValue) -> usize;
     /// `${abi_name}__createObject`. Safe wrapper: takes `&JSGlobalObject` and
@@ -220,13 +196,11 @@ impl<T: JsSinkAbi> JSSink<T> {
     where
         T: JsSinkType,
     {
-        // Pre-seed JSController{bits:0} so a sync drain's __controllerDetached can match-and-clear;
-        // only install real bits if the placeholder survived.
+        use crate::webcore::jsc::JSValue;
+        // Pre-seed JSController(ZERO) so a sync drain's __controllerDetached can match-and-clear;
+        // only install the real controller value if the placeholder survived.
         if let Some(src) = ptr.source() {
-            *src = streams::SourceHandle::JSController {
-                bits: 0,
-                kind: T::SINK_KIND,
-            };
+            *src = streams::SourceHandle::JSController(JSValue::ZERO);
         }
         let mut bits: usize = 0;
         let result = T::assign_to_stream_extern(
@@ -236,12 +210,9 @@ impl<T: JsSinkAbi> JSSink<T> {
             (&raw mut bits).cast::<*mut c_void>(),
         );
         if let Some(src) = ptr.source() {
-            if matches!(*src, streams::SourceHandle::JSController { .. }) {
+            if matches!(*src, streams::SourceHandle::JSController(_)) {
                 *src = if bits != 0 {
-                    streams::SourceHandle::JSController {
-                        bits,
-                        kind: T::SINK_KIND,
-                    }
+                    streams::SourceHandle::JSController(JSValue::from_encoded(bits))
                 } else {
                     streams::SourceHandle::None
                 };
@@ -252,15 +223,13 @@ impl<T: JsSinkAbi> JSSink<T> {
 
     /// Disconnect the upstream source: JSController → unprotect + detachPtr; ByteStream → clear its SinkHandle.
     pub(crate) fn detach(source: &mut SourceHandle, _global: &crate::webcore::jsc::JSGlobalObject) {
-        use crate::webcore::jsc::JSValue;
         match *source {
-            SourceHandle::JSController { bits, kind } => {
+            SourceHandle::JSController(value) => {
                 source.clear();
-                let value = JSValue::from_encoded(bits);
                 value.unprotect();
                 // detachPtr leaves m_needExceptionCheck set; wrap to satisfy the verifier.
                 let _ = ::bun_jsc::call_check_slow(_global, || {
-                    SourceHandle::js_controller_detach_ptr(kind, value)
+                    streams::controller_abi::detach_ptr(value)
                 });
             }
             SourceHandle::ByteStream(bs) => {
@@ -593,10 +562,11 @@ impl<T: JsSinkType> JSSink<T> {
     /// but only when it still holds this controller's bits — a sink
     /// re-assigned to a new stream holds the newer controller's bits.
     pub(crate) fn js_controller_detached(this: &mut T, controller: crate::webcore::jsc::JSValue) {
+        use crate::webcore::jsc::JSValue;
         if let Some(src) = this.source() {
-            if let SourceHandle::JSController { bits, .. } = *src {
-                // bits==0 = assign_to_stream placeholder; clear it too.
-                if bits == controller.encoded() || bits == 0 {
+            if let SourceHandle::JSController(held) = *src {
+                // ZERO = assign_to_stream placeholder; clear it too.
+                if held == controller || held == JSValue::ZERO {
                     src.clear();
                 }
             }

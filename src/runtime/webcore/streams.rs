@@ -803,26 +803,22 @@ impl StreamResult {
 // SourceHandle
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Which JS-side sink ABI a `JSController` cell belongs to. One entry per
-/// `generate-jssink.ts` sink class; used by the non-generic `SourceHandle` to
-/// pick the correct `${abi}__onReady` / `${abi}__onClose` / `${abi}__detachPtr`
-/// extern at dispatch time.
-#[derive(Copy, Clone, PartialEq, Eq, Debug)]
-pub enum SinkKind {
-    ArrayBuffer,
-    HttpResponse,
-    HttpsResponse,
-    H3Response,
-    NetworkSink,
-    FileSink,
-    FetchRequestBody,
-}
-
-mod sink_abi {
-    crate::decl_js_sink_externs!([signals] "ArrayBufferSink" as array_buffer);
-    crate::decl_js_sink_externs!([signals] "FileSink" as file);
-    crate::decl_js_sink_externs!([signals] "NetworkSink" as network);
-    crate::decl_js_sink_externs!([signals] "FetchRequestBodySink" as fetch_request_body);
+/// Generic controller externs (defined in the generated `JSSink.cpp`). Every
+/// `JSReadable*SinkController` shares the `JSReadableSinkControllerBase`
+/// layout, so one symbol per signal suffices for all sink kinds.
+pub(crate) mod controller_abi {
+    unsafe extern "C" {
+        #[link_name = "JSSinkController__onReady"]
+        pub(crate) safe fn on_ready(
+            c: ::bun_jsc::JSValue,
+            amt: ::bun_jsc::JSValue,
+            off: ::bun_jsc::JSValue,
+        );
+        #[link_name = "JSSinkController__onClose"]
+        pub(crate) safe fn on_close(c: ::bun_jsc::JSValue, reason: ::bun_jsc::JSValue);
+        #[link_name = "JSSinkController__detachPtr"]
+        pub(crate) safe fn detach_ptr(c: ::bun_jsc::JSValue);
+    }
 }
 
 /// Static-dispatch signal set for a [`SourceHandle`] pointee. The match arms
@@ -885,13 +881,9 @@ pub enum SourceHandle {
     /// No source attached.
     #[default]
     None,
-    /// Encoded `JSValue` bits of the C++ controller cell written by
-    /// `${abi}__assignToStream`, plus the sink's ABI kind. `bits` is never
-    /// dereferenced as a Rust pointer; `bits == 0` is the pre-seed sentinel.
-    JSController {
-        bits: usize,
-        kind: SinkKind,
-    },
+    /// Encoded `JSValue` of the C++ controller cell written by
+    /// `${abi}__assignToStream`. `JSValue::ZERO` is the pre-seed sentinel.
+    JSController(JSValue),
     ByteStream(BackRef<crate::webcore::ByteStream>),
     FileReader(BackRef<crate::webcore::FileReader>),
     /// The `'static` bound erases the `&JSGlobalObject` borrow carried in
@@ -914,61 +906,22 @@ impl SourceHandle {
         *self = SourceHandle::None;
     }
 
-    #[inline]
-    fn js_controller_on_close(kind: SinkKind, cpp: JSValue, reason: JSValue) {
-        match kind {
-            SinkKind::ArrayBuffer => sink_abi::array_buffer::on_close(cpp, reason),
-            SinkKind::HttpResponse => http_sink_abi::http::on_close(cpp, reason),
-            SinkKind::HttpsResponse => http_sink_abi::https::on_close(cpp, reason),
-            SinkKind::H3Response => http_sink_abi::h3::on_close(cpp, reason),
-            SinkKind::NetworkSink => sink_abi::network::on_close(cpp, reason),
-            SinkKind::FileSink => sink_abi::file::on_close(cpp, reason),
-            SinkKind::FetchRequestBody => sink_abi::fetch_request_body::on_close(cpp, reason),
-        }
-    }
-
-    #[inline]
-    fn js_controller_on_ready(kind: SinkKind, cpp: JSValue, amount: JSValue, offset: JSValue) {
-        match kind {
-            SinkKind::ArrayBuffer => sink_abi::array_buffer::on_ready(cpp, amount, offset),
-            SinkKind::HttpResponse => http_sink_abi::http::on_ready(cpp, amount, offset),
-            SinkKind::HttpsResponse => http_sink_abi::https::on_ready(cpp, amount, offset),
-            SinkKind::H3Response => http_sink_abi::h3::on_ready(cpp, amount, offset),
-            SinkKind::NetworkSink => sink_abi::network::on_ready(cpp, amount, offset),
-            SinkKind::FileSink => sink_abi::file::on_ready(cpp, amount, offset),
-            SinkKind::FetchRequestBody => {
-                sink_abi::fetch_request_body::on_ready(cpp, amount, offset)
-            }
-        }
-    }
-
-    #[inline]
-    pub fn js_controller_detach_ptr(kind: SinkKind, cpp: JSValue) {
-        match kind {
-            SinkKind::ArrayBuffer => sink_abi::array_buffer::detach_ptr(cpp),
-            SinkKind::HttpResponse => http_sink_abi::http::detach_ptr(cpp),
-            SinkKind::HttpsResponse => http_sink_abi::https::detach_ptr(cpp),
-            SinkKind::H3Response => http_sink_abi::h3::detach_ptr(cpp),
-            SinkKind::NetworkSink => sink_abi::network::detach_ptr(cpp),
-            SinkKind::FileSink => sink_abi::file::detach_ptr(cpp),
-            SinkKind::FetchRequestBody => sink_abi::fetch_request_body::detach_ptr(cpp),
-        }
-    }
-
     pub fn close(&mut self, err: Option<SysError>) {
         match *self {
-            // `JSController { bits: 0, .. }` is the `assign_to_stream` pre-seed
-            // placeholder; the real controller bits haven't been installed yet,
+            SourceHandle::None => {}
+            // `JSController(ZERO)` is the `assign_to_stream` pre-seed
+            // placeholder; the real controller value hasn't been installed yet,
             // so there is no cell to notify.
-            SourceHandle::None | SourceHandle::JSController { bits: 0, .. } => {}
-            SourceHandle::JSController { bits, kind } => {
-                let cpp = JSValue::from_encoded(bits);
+            SourceHandle::JSController(cpp) => {
+                if cpp == JSValue::ZERO {
+                    return;
+                }
                 let global = VirtualMachine::get().global();
                 if global.has_exception() {
                     return;
                 }
                 let _ = ::bun_jsc::call_check_slow(global, || {
-                    Self::js_controller_on_close(kind, cpp, JSValue::UNDEFINED)
+                    controller_abi::on_close(cpp, JSValue::UNDEFINED)
                 });
             }
             SourceHandle::ByteStream(p) => p.on_close(err),
@@ -986,15 +939,17 @@ impl SourceHandle {
 
     pub fn ready(&mut self, _amount: Option<BlobSizeType>, _offset: Option<BlobSizeType>) {
         match *self {
-            SourceHandle::None | SourceHandle::JSController { bits: 0, .. } => {}
-            SourceHandle::JSController { bits, kind } => {
-                let cpp = JSValue::from_encoded(bits);
+            SourceHandle::None => {}
+            SourceHandle::JSController(cpp) => {
+                if cpp == JSValue::ZERO {
+                    return;
+                }
                 let global = VirtualMachine::get().global();
                 if global.has_exception() {
                     return;
                 }
                 let _ = ::bun_jsc::call_check_slow(global, || {
-                    Self::js_controller_on_ready(kind, cpp, JSValue::UNDEFINED, JSValue::UNDEFINED)
+                    controller_abi::on_ready(cpp, JSValue::UNDEFINED, JSValue::UNDEFINED)
                 });
             }
             SourceHandle::ByteStream(p) => p.on_ready(),
@@ -1013,7 +968,7 @@ impl SourceHandle {
             SourceHandle::FetchResponseBody(p) => p.on_start(),
             // Remaining variants leave `on_start` at the trait default (no-op).
             SourceHandle::None
-            | SourceHandle::JSController { .. }
+            | SourceHandle::JSController(_)
             | SourceHandle::ServerRequestBody(_)
             | SourceHandle::ByteStream(_)
             | SourceHandle::FileReader(_)
@@ -1175,13 +1130,6 @@ macro_rules! http_sink_dispatch {
 impl<const SSL: bool, const HTTP3: bool> crate::webcore::sink::JsSinkAbi
     for HTTPServerWritable<SSL, HTTP3>
 {
-    const SINK_KIND: SinkKind = if HTTP3 {
-        SinkKind::H3Response
-    } else if SSL {
-        SinkKind::HttpsResponse
-    } else {
-        SinkKind::HttpResponse
-    };
     fn from_js_extern(value: JSValue) -> usize {
         http_sink_dispatch!(from_js(value))
     }
@@ -2546,7 +2494,7 @@ impl NetworkSink {
     pub(crate) const NAME: &'static str = "NetworkSink";
 }
 
-crate::impl_js_sink_abi!(NetworkSink, "NetworkSink", NetworkSink);
+crate::impl_js_sink_abi!(NetworkSink, "NetworkSink");
 
 impl crate::webcore::sink::JsSinkType for NetworkSink {
     const NAME: &'static str = Self::NAME;

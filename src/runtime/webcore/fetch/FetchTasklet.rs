@@ -118,6 +118,12 @@ pub struct FetchTasklet {
     // Custom Hostname
     pub(crate) hostname: Option<Box<[u8]>>,
     pub(crate) is_waiting_body: bool,
+    /// Set by `on_start_buffering_callback` (JS thread) and read by
+    /// `callback()` (HTTP thread, under `mutex`): the body is being
+    /// accumulated in `scheduled_response_buffer` for a buffered consumer.
+    /// Distinguishes that path from `drop_backpressure_if_unobserved`, which
+    /// also sets `BufferAll` but still delivers per chunk.
+    pub(crate) is_buffering_body: AtomicBool,
     pub(crate) is_waiting_abort: bool,
     pub(crate) is_waiting_request_stream_start: bool,
     pub(crate) mutex: Mutex,
@@ -1808,6 +1814,7 @@ impl FetchTasklet {
     fn on_start_buffering_callback(ctx: *mut c_void) {
         let this = Self::from_ctx(ctx);
         this.poll_ref.ref_(bun_io::js_vm_ctx());
+        this.is_buffering_body.store(true, Ordering::Release);
         if this
             .signal_store
             .set_receive_mode_terminal(BodyReceiveMode::BufferAll)
@@ -2035,6 +2042,7 @@ impl FetchTasklet {
             upgraded_connection: fetch_options.upgraded_connection,
             hostname: fetch_options.hostname,
             is_waiting_body: false,
+            is_buffering_body: AtomicBool::new(false),
             is_waiting_abort: false,
             is_waiting_request_stream_start: false,
             mutex: Mutex::new(),
@@ -2581,8 +2589,7 @@ impl FetchTasklet {
         // above before the lifetime-erasing assignment; the bytes are already in place, so
         // no copy is needed and the `reset()` calls below operate on the right allocation.
 
-        let receive_mode = task_ref.signal_store.body_receive_mode();
-        if receive_mode == BodyReceiveMode::Ignore {
+        if task_ref.signal_store.body_receive_mode() == BodyReceiveMode::Ignore {
             task_ref.response_buffer.reset();
 
             if task_ref.scheduled_response_buffer.list.capacity() > 0 {
@@ -2609,10 +2616,11 @@ impl FetchTasklet {
                 }
                 // Grow to Content-Length once so the per-packet append below
                 // doesn't leave the ~2x doubling over-capacity that the
-                // ArrayBuffer would adopt. Streaming consumers drain per
-                // chunk, so only the BufferAll path reserves. Capped to bound
-                // a hostile header.
-                if receive_mode == BodyReceiveMode::BufferAll {
+                // ArrayBuffer would adopt. Gated on `is_buffering_body`
+                // (set by `on_start_buffering_callback`), not the raw
+                // `BufferAll` mode: `drop_backpressure_if_unobserved` also
+                // sets `BufferAll` while still draining per chunk.
+                if task_ref.is_buffering_body.load(Ordering::Acquire) {
                     if let http::BodySize::ContentLength(n) = task_ref.body_size {
                         if n > scheduled.list.capacity() {
                             let additional = n

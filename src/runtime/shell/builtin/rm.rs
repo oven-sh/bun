@@ -14,8 +14,8 @@ use crate::shell::yield_::Yield;
 
 #[derive(Default)]
 pub struct Rm {
-    pub opts: Opts,
-    pub state: RmState,
+    pub(crate) opts: Opts,
+    pub(crate) state: RmState,
 }
 
 #[derive(Default)]
@@ -30,20 +30,19 @@ pub enum RmState {
     Done {
         exit_code: ExitCode,
     },
-    WaitingWriteErr,
     Err(ExitCode),
 }
 
 pub struct ExecState {
     /// Index into argv where filepath args start.
-    pub args_start: usize,
-    pub total_tasks: usize,
-    pub err: Option<bun_sys::Error>,
-    pub error_signal: AtomicBool,
-    pub output_done: AtomicUsize,
-    pub output_count: AtomicUsize,
-    pub tasks_done: usize,
-    pub started: bool,
+    pub(crate) args_start: usize,
+    pub(crate) total_tasks: usize,
+    pub(crate) err: Option<bun_sys::Error>,
+    pub(crate) error_signal: AtomicBool,
+    pub(crate) output_done: AtomicUsize,
+    pub(crate) output_count: AtomicUsize,
+    pub(crate) tasks_done: usize,
+    pub(crate) started: bool,
 }
 
 impl ExecState {
@@ -56,15 +55,15 @@ impl ExecState {
 #[derive(Clone, Copy)]
 pub struct Opts {
     /// `-f`, `--force` — ignore nonexistent files and arguments, never prompt.
-    pub force: bool,
+    pub(crate) force: bool,
     /// Configures how the user should be prompted on removal of files.
-    pub prompt_behaviour: PromptBehaviour,
+    pub(crate) prompt_behaviour: PromptBehaviour,
     /// `-r`, `-R`, `--recursive`
-    pub recursive: bool,
+    pub(crate) recursive: bool,
     /// `-v`, `--verbose`
-    pub verbose: bool,
+    pub(crate) verbose: bool,
     /// `-d`, `--dir` — remove empty directories without `-r`.
-    pub remove_empty_dirs: bool,
+    pub(crate) remove_empty_dirs: bool,
 }
 
 impl Default for Opts {
@@ -102,7 +101,7 @@ impl Rm {
         Self::next(interp, cmd)
     }
 
-    pub(crate) fn next(interp: &Interpreter, cmd: NodeId) -> Yield {
+    fn next(interp: &Interpreter, cmd: NodeId) -> Yield {
         loop {
             // Read the tag, drop the borrow, then act.
             enum Tag {
@@ -111,7 +110,6 @@ impl Rm {
                 Exec,
                 Done(ExitCode),
                 Err(ExitCode),
-                WaitErr,
             }
             let tag = match &Self::state_mut(interp, cmd).state {
                 RmState::Idle => Tag::Idle,
@@ -122,10 +120,8 @@ impl Rm {
                 RmState::Exec(_) => Tag::Exec,
                 RmState::Done { exit_code } => Tag::Done(*exit_code),
                 RmState::Err(c) => Tag::Err(*c),
-                RmState::WaitingWriteErr => Tag::WaitErr,
             };
             match tag {
-                Tag::WaitErr => return Yield::suspended(),
                 Tag::Idle => {
                     Self::state_mut(interp, cmd).state = RmState::ParseOpts {
                         idx: 0,
@@ -174,24 +170,7 @@ impl Rm {
 
                             // Check that none of the paths will delete the root.
                             {
-                                let mut buf = bun_paths::PathBuffer::uninit();
-                                let cwd = match bun_sys::getcwd_z(&mut buf) {
-                                    Ok(c) => c.as_bytes().to_vec(),
-                                    Err(err) => {
-                                        let msg =
-                                            err.msg().map(bstr::BStr::new).unwrap_or_else(|| {
-                                                bstr::BStr::new(b"failed to get cwd")
-                                            });
-                                        let buf = Builtin::fmt_error_arena(
-                                            interp,
-                                            cmd,
-                                            Some(Kind::Rm),
-                                            format_args!("getcwd: {}", msg),
-                                        )
-                                        .to_vec();
-                                        return Self::write_failing_error(interp, cmd, &buf, 1);
-                                    }
-                                };
+                                let cwd = Builtin::shell(interp, cmd).cwd().to_vec();
 
                                 for i in args_start..argc {
                                     let path = Builtin::of(interp, cmd).arg_bytes(i);
@@ -355,23 +334,6 @@ impl Rm {
         Builtin::done(interp, cmd, 1)
     }
 
-    fn write_failing_error(
-        interp: &Interpreter,
-        cmd: NodeId,
-        buf: &[u8],
-        exit_code: ExitCode,
-    ) -> Yield {
-        if let Some(safeguard) = Builtin::of(interp, cmd).stderr.needs_io() {
-            Self::state_mut(interp, cmd).state = RmState::WaitingWriteErr;
-            let child = ChildPtr::new(cmd, WriterTag::Builtin);
-            return Builtin::of_mut(interp, cmd)
-                .stderr
-                .enqueue(child, buf, safeguard);
-        }
-        let _ = Builtin::write_no_io(interp, cmd, IoKind::Stderr, buf);
-        Builtin::done(interp, cmd, exit_code)
-    }
-
     pub(crate) fn on_io_writer_chunk(
         interp: &Interpreter,
         cmd: NodeId,
@@ -406,7 +368,7 @@ impl Rm {
 
     /// # Safety
     /// `task` must be a live `heap::alloc`'d [`ShellRmTask`]; main thread.
-    pub(crate) fn on_shell_rm_task_done(interp: &Interpreter, cmd: NodeId, task: *mut ShellRmTask) {
+    fn on_shell_rm_task_done(interp: &Interpreter, cmd: NodeId, task: *mut ShellRmTask) {
         // In verbose mode the root DirTask may also be queued for write_verbose;
         // both callbacks hold a pending count and the last one to run frees the
         // ShellRmTask.
@@ -624,20 +586,19 @@ pub enum EntryKindHint {
 /// One per filepath argument; owns the root
 /// [`DirTask`] and tracks the cross-thread error state.
 pub struct ShellRmTask {
-    pub cmd: NodeId,
-    pub opts: Opts,
-    pub cwd: bun_sys::Fd,
+    pub(crate) cmd: NodeId,
+    pub(crate) opts: Opts,
+    pub(crate) cwd: bun_sys::Fd,
     /// The root DirTask lives in
     /// its own `heap::alloc`'d allocation so that `&ShellRmTask` (held as
     /// the `&self` receiver throughout `remove_entry*`) never overlaps the
     /// `&mut DirTask` borrows those methods take on the root — embedding it
     /// would make every `verbose_deleted` call on the root UB under Stacked
     /// Borrows. Freed in `Drop`.
-    pub root_task: *mut DirTask,
-    pub root_path: ZBox,
+    pub(crate) root_task: *mut DirTask,
     /// Backref into `Rm::ExecState.error_signal`; the boxed `Rm` ExecState
     /// outlives every in-flight `ShellRmTask`.
-    pub error_signal: bun_ptr::BackRef<AtomicBool>,
+    pub(crate) error_signal: bun_ptr::BackRef<AtomicBool>,
     /// Backref into `Rm::ExecState.output_count` so [`verbose_deleted`] can
     /// bump it from worker threads.
     output_count: bun_ptr::BackRef<AtomicUsize>,
@@ -645,12 +606,12 @@ pub struct ShellRmTask {
     /// always one for `on_shell_rm_task_done` (via `finish_concurrently`), plus
     /// one per DirTask whose verbose output was queued. Decremented by
     /// [`decr_pending_and_maybe_deinit`].
-    pub pending_main_callbacks: AtomicU32,
+    pub(crate) pending_main_callbacks: AtomicU32,
     /// First error hit by any worker thread. Mutex-wrapped so [`handle_err`]
     /// can take `&self` without an interior `&mut` cast.
-    pub err: bun_threading::Guarded<Option<bun_sys::Error>>,
-    pub join_style: JoinStyle,
-    pub event_loop: EventLoopHandle,
+    pub(crate) err: bun_threading::Guarded<Option<bun_sys::Error>>,
+    pub(crate) join_style: JoinStyle,
+    pub(crate) event_loop: EventLoopHandle,
     pub task: ShellTask,
 }
 
@@ -658,19 +619,19 @@ pub struct ShellRmTask {
 /// walk; root and children alike are heap-allocated (see the comment on
 /// [`ShellRmTask::root_task`]).
 pub struct DirTask {
-    pub task_manager: *mut ShellRmTask,
-    pub parent_task: *mut DirTask,
+    pub(crate) task_manager: *mut ShellRmTask,
+    pub(crate) parent_task: *mut DirTask,
     pub path: ZBox,
-    pub is_absolute: bool,
-    pub subtask_count: AtomicUsize,
-    pub need_to_wait: AtomicBool,
-    pub deleting_after_waiting_for_children: AtomicBool,
-    pub kind_hint: EntryKindHint,
-    pub deleted_entries: Vec<u8>,
+    pub(crate) is_absolute: bool,
+    pub(crate) subtask_count: AtomicUsize,
+    pub(crate) need_to_wait: AtomicBool,
+    pub(crate) deleting_after_waiting_for_children: AtomicBool,
+    pub(crate) kind_hint: EntryKindHint,
+    pub(crate) deleted_entries: Vec<u8>,
     /// Intrusive node for the verbose-write bounce-back to the main thread.
-    pub concurrent_task: bun_event_loop::EventLoopTask,
+    pub(crate) concurrent_task: bun_event_loop::EventLoopTask,
     /// Intrusive node for the thread-pool dispatch.
-    pub work_task: WorkPoolTask,
+    pub(crate) work_task: WorkPoolTask,
 }
 
 // SAFETY: raw-pointer fields are only dereferenced on the threads that own
@@ -685,7 +646,7 @@ unsafe impl Send for DirTask {}
 
 impl ShellRmTask {
     #[allow(clippy::too_many_arguments)]
-    pub fn create(
+    pub(crate) fn create(
         cmd: NodeId,
         opts: Opts,
         root_path: &[u8],
@@ -695,7 +656,6 @@ impl ShellRmTask {
         evtloop: EventLoopHandle,
         interp: *mut Interpreter,
     ) -> *mut ShellRmTask {
-        let root_path_z = ZBox::from_bytes(root_path);
         let join_style = JoinStyle::from_path(root_path);
         // Separate allocation — see the comment on `root_task`.
         let root_task = bun_core::heap::into_raw(Box::new(DirTask {
@@ -720,7 +680,6 @@ impl ShellRmTask {
             opts,
             cwd,
             root_task,
-            root_path: root_path_z,
             error_signal,
             output_count,
             pending_main_callbacks: AtomicU32::new(1),
@@ -743,7 +702,7 @@ impl ShellRmTask {
     ///
     /// # Safety
     /// `this` must be a fresh `heap::alloc`'d task (see [`create`]).
-    pub unsafe fn schedule(this: *mut ShellRmTask) {
+    pub(crate) unsafe fn schedule(this: *mut ShellRmTask) {
         use bun_threading::work_pool::WorkPool;
         // SAFETY: `this` is live; `task` is the embedded `ShellTask`. Stay on
         // raw pointers — once `WorkPool::schedule` returns the worker thread
@@ -783,7 +742,7 @@ impl ShellRmTask {
     /// # Safety
     /// `this` must be a live `heap::alloc`'d [`ShellRmTask`] posted via
     /// [`finish_concurrently`]; main thread.
-    pub(crate) fn run_from_main_thread(this: *mut ShellRmTask, interp: &Interpreter) {
+    fn run_from_main_thread(this: *mut ShellRmTask, interp: &Interpreter) {
         // SAFETY: caller contract.
         unsafe {
             let cmd = (*this).cmd;
@@ -793,7 +752,7 @@ impl ShellRmTask {
 
     /// # Safety
     /// `this` is a live `heap::alloc`'d task; main thread.
-    pub unsafe fn decr_pending_and_maybe_deinit(this: *mut ShellRmTask) {
+    pub(crate) unsafe fn decr_pending_and_maybe_deinit(this: *mut ShellRmTask) {
         // SAFETY: caller contract; paired with `heap::alloc` in `create`.
         unsafe {
             if (*this)

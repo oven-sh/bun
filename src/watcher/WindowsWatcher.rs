@@ -17,10 +17,10 @@ bun_core::declare_scope!(watcher, visible);
 pub(crate) type Platform = WindowsWatcher;
 
 pub struct WindowsWatcher {
-    pub iocp: HANDLE,
-    pub watcher: DirWatcher,
-    pub buf: PathBuffer,
-    pub base_idx: usize,
+    pub(crate) iocp: HANDLE,
+    pub(crate) watcher: DirWatcher,
+    pub(crate) buf: PathBuffer,
+    pub(crate) base_idx: usize,
 }
 
 impl Default for WindowsWatcher {
@@ -56,7 +56,7 @@ pub enum Action {
     RenamedNew = w::FILE_ACTION_RENAMED_NEW_NAME,
 }
 
-pub(crate) struct FileEvent {
+struct FileEvent {
     pub action: Action,
     // [`RawSlice`] (not a lifetime-carrying `&'a [u16]`) so `FileEvent` carries no lifetime param;
     // the buffer is live until the next `prepare()` — encapsulated by the
@@ -68,14 +68,14 @@ pub(crate) struct FileEvent {
 pub struct DirWatcher {
     /// must be initialized to zero (even though it's never read or written in our code),
     /// otherwise ReadDirectoryChangesW will fail with INVALID_HANDLE
-    pub overlapped: w::OVERLAPPED,
+    pub(crate) overlapped: w::OVERLAPPED,
     /// `FILE_NOTIFY_INFORMATION` is DWORD-aligned (4); the preceding
     /// `OVERLAPPED` (32 bytes, align 8) guarantees `buf` lands at offset 32,
     /// which the `assert_ffi_layout!` below locks in (and `32 % 4 == 0` is the
     /// alignment proof for the `FILE_NOTIFY_INFORMATION` cast in
     /// `EventIterator::next`).
-    pub buf: [u8; 64 * 1024],
-    pub dir_handle: HANDLE,
+    pub(crate) buf: [u8; 64 * 1024],
+    pub(crate) dir_handle: HANDLE,
 }
 
 // `OVERLAPPED` = 32 bytes / align 8 on Win64; `buf` must be ≥ 4-aligned for
@@ -141,14 +141,14 @@ impl DirWatcher {
 /// because the iterator is only advanced while the owning `DirWatcher` is
 /// alive and `prepare()` has not been re-called; safe `Deref` replaces the
 /// previously open-coded raw `(*self.watcher).buf` projection.
-pub(crate) struct EventIterator {
+struct EventIterator {
     pub watcher: BackRef<DirWatcher>,
     pub offset: usize,
     pub has_next: bool,
 }
 
 impl EventIterator {
-    pub(crate) fn next(&mut self) -> Option<FileEvent> {
+    fn next(&mut self) -> Option<FileEvent> {
         if !self.has_next {
             return None;
         }
@@ -299,7 +299,7 @@ impl WindowsWatcher {
     }
 
     /// wait until new events are available
-    pub(crate) fn next(&mut self, timeout: Timeout) -> bun_sys::Result<Option<EventIterator>> {
+    fn next(&mut self, timeout: Timeout) -> bun_sys::Result<Option<EventIterator>> {
         if let Err(err) = self.watcher.prepare() {
             bun_core::scoped_log!(watcher, "prepare() returned error");
             return Err(err);
@@ -540,7 +540,7 @@ fn process_watch_event_batch(this: &mut Watcher, event_count: usize) -> bun_sys:
     Ok(())
 }
 
-pub(crate) fn create_watch_event(event: &FileEvent, index: WatchItemIndex) -> WatchEvent {
+fn create_watch_event(event: &FileEvent, index: WatchItemIndex) -> WatchEvent {
     let mut op = Op::empty();
     if event.action == Action::Removed {
         op |= Op::DELETE;

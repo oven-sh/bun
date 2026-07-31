@@ -31,20 +31,20 @@ pub struct StaticRoute {
     // not ensure it is alive while sending a large blob.
     // `pub(super)` so sibling route modules (HTMLBundle) can construct directly.
     pub(super) ref_count: Cell<u32>,
-    pub server: Cell<Option<AnyServer>>,
-    pub status_code: u16,
-    pub blob: AnyBlob,
-    pub cached_blob_size: u64,
-    pub has_date: bool,
-    pub headers: Headers,
+    pub(crate) server: Cell<Option<AnyServer>>,
+    pub(crate) status_code: u16,
+    pub(crate) blob: AnyBlob,
+    pub(crate) cached_blob_size: u64,
+    pub(crate) has_date: bool,
+    pub(crate) headers: Headers,
 }
 
 #[derive(Clone, Copy)]
 pub struct InitFromBytesOptions<'a> {
-    pub server: Option<AnyServer>,
-    pub mime_type: Option<&'a MimeType>,
-    pub status_code: u16,
-    pub headers: Option<&'a FetchHeaders>,
+    pub(crate) server: Option<AnyServer>,
+    pub(crate) mime_type: Option<&'a MimeType>,
+    pub(crate) status_code: u16,
+    pub(crate) headers: Option<&'a FetchHeaders>,
 }
 
 impl<'a> Default for InitFromBytesOptions<'a> {
@@ -69,7 +69,7 @@ impl StaticRoute {
     /// round-trips). Caller must not hold any live `&`/`&mut` to `*this` across
     /// this call when the refcount may reach zero.
     #[inline]
-    pub unsafe fn deref_(this: *mut Self) {
+    pub(crate) unsafe fn deref_(this: *mut Self) {
         // SAFETY: forwarded caller contract — see `CellRefCounted::deref`.
         unsafe { <Self as bun_ptr::CellRefCounted>::deref(this) }
     }
@@ -78,7 +78,7 @@ impl StaticRoute {
     // `AnyBlob` has drop glue (e.g.
     // `InternalBlob.bytes: Vec<u8>`), so a `&AnyBlob` + `ptr::read` would alias
     // and double-free when the caller's value drops. Take by value instead.
-    pub fn init_from_any_blob(
+    pub(crate) fn init_from_any_blob(
         blob: AnyBlob,
         options: InitFromBytesOptions<'_>,
     ) -> *mut StaticRoute {
@@ -115,7 +115,7 @@ impl StaticRoute {
     }
 
     /// Create a static route to be used on a single response, freeing the bytes once sent.
-    pub fn send_blob_then_deinit(
+    pub(crate) fn send_blob_then_deinit(
         resp: AnyResponse,
         blob: AnyBlob,
         options: InitFromBytesOptions<'_>,
@@ -129,7 +129,10 @@ impl StaticRoute {
         }
     }
 
-    pub fn clone(&mut self, global_this: &JSGlobalObject) -> Result<*mut StaticRoute, Error> {
+    pub(crate) fn clone(
+        &mut self,
+        global_this: &JSGlobalObject,
+    ) -> Result<*mut StaticRoute, Error> {
         let blob = self.blob.to_blob(global_this);
         let duped = blob.dupe();
         self.blob = AnyBlob::Blob(blob);
@@ -145,7 +148,7 @@ impl StaticRoute {
         })))
     }
 
-    pub fn memory_cost(&self) -> usize {
+    pub(crate) fn memory_cost(&self) -> usize {
         size_of::<StaticRoute>() + self.blob.memory_cost() + self.headers.memory_cost()
     }
 
@@ -263,7 +266,7 @@ impl StaticRoute {
     /// # Safety
     /// `this` must point to a live heap-allocated `StaticRoute` produced by one of
     /// the constructors (write provenance intact).
-    pub unsafe fn on_head_request(this: *mut Self, mut req: AnyRequest, resp: AnyResponse) {
+    pub(crate) unsafe fn on_head_request(this: *mut Self, mut req: AnyRequest, resp: AnyResponse) {
         // SAFETY: caller contract.
         unsafe {
             // Evaluate conditional request preconditions for HEAD with 200 status
@@ -281,7 +284,7 @@ impl StaticRoute {
 
     /// # Safety
     /// See [`on_head_request`].
-    pub unsafe fn on_head(this: *mut Self, resp: AnyResponse) {
+    pub(crate) unsafe fn on_head(this: *mut Self, resp: AnyResponse) {
         // SAFETY: caller contract.
         unsafe {
             debug_assert!((*this).server.get().is_some());
@@ -299,19 +302,22 @@ impl StaticRoute {
         self.render_metadata(resp);
         // `do_render_blob_corked` drops the body for a null-body status, so
         // HEAD reports the zero bytes GET actually sends (RFC 9110 §9.3.2).
-        // (For 1xx/204 uWS suppresses the Content-Length header entirely.)
-        let size = if HTTPStatusText::is_null_body(self.status_code) {
-            0
-        } else {
-            self.cached_blob_size
-        };
-        resp.write_header_int(b"Content-Length", size);
+        // 304: no synthesized Content-Length (RFC 9110 §8.6 only allows the
+        // 200's length; `from_js` already stripped the handler's).
+        if self.status_code != 304 {
+            let size = if HTTPStatusText::is_null_body(self.status_code) {
+                0
+            } else {
+                self.cached_blob_size
+            };
+            resp.write_header_int(b"Content-Length", size);
+        }
         resp.end_without_body(resp.should_close_connection());
     }
 
     /// # Safety
     /// See [`on_head_request`].
-    pub unsafe fn on_request(this: *mut Self, req: AnyRequest, resp: AnyResponse) {
+    pub(crate) unsafe fn on_request(this: *mut Self, req: AnyRequest, resp: AnyResponse) {
         // SAFETY: caller contract.
         unsafe {
             let method = Method::find(req.method()).unwrap_or(Method::GET);
@@ -330,7 +336,7 @@ impl StaticRoute {
 
     /// # Safety
     /// See [`on_head_request`].
-    pub unsafe fn on_get(this: *mut Self, mut req: AnyRequest, resp: AnyResponse) {
+    pub(crate) unsafe fn on_get(this: *mut Self, mut req: AnyRequest, resp: AnyResponse) {
         // SAFETY: caller contract.
         unsafe {
             // Evaluate conditional request preconditions for GET with 200 status
@@ -348,7 +354,7 @@ impl StaticRoute {
 
     /// # Safety
     /// See [`on_head_request`].
-    pub unsafe fn on(this: *mut Self, resp: AnyResponse) {
+    pub(crate) unsafe fn on(this: *mut Self, resp: AnyResponse) {
         // SAFETY: caller contract.
         unsafe {
             debug_assert!((*this).server.get().is_some());
@@ -433,7 +439,15 @@ impl StaticRoute {
         // `render` and `FileRoute` already do. Writing them here with no
         // Content-Length (uWS suppresses it for 1xx/204) desyncs keep-alive.
         if HTTPStatusText::is_null_body(self.status_code) {
-            *did_finish = resp.try_end(b"", 0, resp.should_close_connection());
+            // 304: try_end would write Content-Length: 0 (RFC 9110 §8.6 forbids
+            // any but the 200's length); write_mark keeps Date.
+            if self.status_code == 304 {
+                resp.write_mark();
+                resp.end_without_body(resp.should_close_connection());
+                *did_finish = true;
+            } else {
+                *did_finish = resp.try_end(b"", 0, resp.should_close_connection());
+            }
             return;
         }
         self.render_bytes(resp, did_finish);
@@ -519,7 +533,7 @@ impl StaticRoute {
 
     /// # Safety
     /// See [`on_head_request`].
-    pub unsafe fn on_with_method(this: *mut Self, method: Method, resp: AnyResponse) {
+    pub(crate) unsafe fn on_with_method(this: *mut Self, method: Method, resp: AnyResponse) {
         // SAFETY: caller contract.
         unsafe {
             match method {

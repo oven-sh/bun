@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { withoutAggressiveGC } from "harness";
+import { bunEnv, bunExe, withoutAggressiveGC } from "harness";
 import { createHash } from "node:crypto";
 
 test("Bun.file in CryptoHasher is not supported yet", () => {
@@ -61,6 +61,129 @@ test("CryptoHasher throws on non-latin1 algorithm names instead of crashing", ()
   expect(() => new Bun.CryptoHasher("🚀")).toThrow(/Unsupported algorithm/);
   // @ts-expect-error
   expect(() => new Bun.CryptoHasher("ünïcode")).toThrow(/Unsupported algorithm/);
+});
+
+test("static hash reads the input buffer only after every argument has been coerced", async () => {
+  const source = /* js */ `
+    const emptyDigest = Bun.CryptoHasher.hash("sha256", new Uint8Array(0), "hex");
+    const results = {};
+    {
+      const buf = new Uint8Array(1024 * 1024).fill(7);
+      const enc = new String("hex");
+      enc.toString = () => {
+        structuredClone(buf.buffer, { transfer: [buf.buffer] });
+        Bun.gc(true);
+        return "hex";
+      };
+      const digest = Bun.CryptoHasher.hash("sha256", buf, enc);
+      results.hashEncoding = { digest, detached: buf.byteLength === 0 };
+    }
+    {
+      const buf = new Uint8Array(1024 * 1024).fill(7);
+      const enc = new String("hex");
+      enc.toString = () => {
+        structuredClone(buf.buffer, { transfer: [buf.buffer] });
+        Bun.gc(true);
+        return "hex";
+      };
+      const digest = Bun.SHA256.hash(buf, enc);
+      results.staticHashEncoding = { digest, detached: buf.byteLength === 0 };
+    }
+    {
+      const out = new Uint8Array(32);
+      const input = new String("hello");
+      input.toString = () => {
+        structuredClone(out.buffer, { transfer: [out.buffer] });
+        Bun.gc(true);
+        return "hello";
+      };
+      try {
+        Bun.CryptoHasher.hash("sha256", input, out);
+        results.hashOutput = "no throw";
+      } catch (e) {
+        results.hashOutput = e.message;
+      }
+    }
+    {
+      const out = new Uint8Array(32);
+      const input = new String("hello");
+      input.toString = () => {
+        structuredClone(out.buffer, { transfer: [out.buffer] });
+        Bun.gc(true);
+        return "hello";
+      };
+      try {
+        Bun.SHA256.hash(input, out);
+        results.staticHashOutput = "no throw";
+      } catch (e) {
+        results.staticHashOutput = e.message;
+      }
+    }
+    console.log(JSON.stringify({ emptyDigest, results }));
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", source],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const { emptyDigest, results } = JSON.parse(stdout.trim());
+  expect(emptyDigest).toBe("e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855");
+  expect(results).toEqual({
+    hashEncoding: { digest: emptyDigest, detached: true },
+    staticHashEncoding: { digest: emptyDigest, detached: true },
+    hashOutput: "TypedArray must be at least 32 bytes",
+    staticHashOutput: "TypedArray must be at least 32 bytes",
+  });
+  expect(exitCode).toBe(0);
+});
+
+test("Bun.sha reads its buffers only after every argument has been coerced", async () => {
+  const source = /* js */ `
+    const emptyDigest = Buffer.from(Bun.sha(new Uint8Array(0))).toString("hex");
+    const results = {};
+    {
+      const buf = new Uint8Array(1024 * 1024).fill(7);
+      const enc = new String("hex");
+      enc.toString = () => {
+        structuredClone(buf.buffer, { transfer: [buf.buffer] });
+        Bun.gc(true);
+        return "hex";
+      };
+      const digest = Bun.sha(buf, enc);
+      results.encoding = { digest, detached: buf.byteLength === 0 };
+    }
+    {
+      const out = new Uint8Array(32);
+      const input = new String("hello");
+      input.toString = () => {
+        structuredClone(out.buffer, { transfer: [out.buffer] });
+        Bun.gc(true);
+        return "hello";
+      };
+      try {
+        Bun.sha(input, out);
+        results.output = "no throw";
+      } catch (e) {
+        results.output = e.message;
+      }
+    }
+    console.log(JSON.stringify({ emptyDigest, results }));
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", source],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const { emptyDigest, results } = JSON.parse(stdout.trim());
+  expect(results).toEqual({
+    encoding: { digest: emptyDigest, detached: true },
+    output: "TypedArray must be at least 32 bytes",
+  });
+  expect(exitCode).toBe(0);
 });
 
 describe("HMAC", () => {

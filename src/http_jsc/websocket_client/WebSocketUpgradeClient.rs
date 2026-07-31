@@ -211,7 +211,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
     /// On error, this returns null.
     /// Returning null signals to the parent function that the connection failed.
     #[allow(clippy::too_many_arguments)]
-    pub unsafe fn connect(
+    pub(crate) unsafe fn connect(
         global: &JSGlobalObject,
         websocket: *mut CppWebSocket,
         host: &BunString,
@@ -572,12 +572,12 @@ impl<const SSL: bool> HTTPClient<SSL> {
         }
     }
 
-    pub fn clear_input(&mut self) {
+    pub(crate) fn clear_input(&mut self) {
         self.input_body_buf = Vec::new();
         self.to_send_len = 0;
     }
 
-    pub fn clear_data(&mut self) {
+    pub(crate) fn clear_data(&mut self) {
         // SAFETY: `get_mut_ptr()` is the live per-thread VM singleton.
         self.poll_ref
             .unref(unsafe { vm_loop_ctx(VirtualMachineRef::get_mut_ptr()) });
@@ -612,7 +612,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
     /// socket userdata pointer, which would alias a `&mut self` argument; and
     /// the trailing `deref` may free `this`, which would violate a `&mut self`
     /// argument protector.
-    pub unsafe fn cancel(this: *mut Self) {
+    pub(crate) unsafe fn cancel(this: *mut Self) {
         // SAFETY: caller (C++ / uWS) holds a live ref; `this` carries root
         // (userdata) provenance from `heap::alloc`.
         let this = unsafe { ThisPtr::new(this) };
@@ -669,7 +669,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
     /// `did_abrupt_close` may run JS that re-enters via `cancel()`, and
     /// `tcp.close()` synchronously dispatches `handle_close`; both would alias
     /// a `&mut self` argument.
-    pub unsafe fn fail(this: *mut Self, code: ErrorCode) {
+    pub(crate) unsafe fn fail(this: *mut Self, code: ErrorCode) {
         log!("onFail: {}", <&'static str>::from(code));
         bun_jsc::mark_binding!();
         // SAFETY: caller contract — `this` is a live `heap::alloc` pointer.
@@ -722,7 +722,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
 
     /// # Safety
     /// `this` must point to a live `Self`. See `fail`.
-    pub unsafe fn terminate(this: *mut Self, code: ErrorCode) {
+    pub(crate) unsafe fn terminate(this: *mut Self, code: ErrorCode) {
         // SAFETY: forwards `this` with root provenance.
         unsafe { Self::fail(this, code) };
         // We cannot access the pointer after fail is called.
@@ -856,7 +856,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
         me.to_send_len = me.input_body_buf.len() - usize::try_from(wrote).expect("int cast");
     }
 
-    pub fn is_same_socket(&self, socket: Socket<SSL>) -> bool {
+    pub(crate) fn is_same_socket(&self, socket: Socket<SSL>) -> bool {
         // `InternalSocket` has no `PartialEq`; compare native handles.
         socket.get_native_handle() == self.tcp.get_native_handle()
     }
@@ -929,19 +929,8 @@ impl<const SSL: bool> HTTPClient<SSL> {
             body = &me.body;
         }
 
-        let is_first = me.body.is_empty();
-        const HTTP_101: &[u8] = b"HTTP/1.1 101 ";
-        if is_first && body.len() > HTTP_101.len() {
-            // fail early if we receive a non-101 status code
-            if !body.starts_with(HTTP_101) {
-                // SAFETY: `me`'s last use is above; no `&mut Self` spans this call.
-                unsafe { Self::terminate(this.as_ptr(), ErrorCode::Expected101StatusCode) };
-                return;
-            }
-        }
-
-        let response = match picohttp::Response::parse(body, &mut me.headers_buf) {
-            Ok(r) => r,
+        match picohttp::Response::parse(body, &mut me.headers_buf) {
+            Ok(_) => {}
             Err(picohttp::ParseResponseError::MalformedHttpResponse) => {
                 // SAFETY: `me`'s last use is above; no `&mut Self` spans this call.
                 unsafe { Self::terminate(this.as_ptr(), ErrorCode::InvalidResponse) };
@@ -963,13 +952,54 @@ impl<const SSL: bool> HTTPClient<SSL> {
             }
         };
 
-        let bytes_read = usize::try_from(response.bytes_read).expect("int cast");
-        // Reshaped for borrowck — copy remain_buf out before mutating self.
-        let remain_buf: Vec<u8> = body[bytes_read..].to_vec();
-        // SAFETY: `me`'s last use is the `body` slice above (now copied out);
-        // no `&mut Self` spans this call.
-        unsafe { Self::process_response(this.as_ptr(), response, &remain_buf) };
+        let full = body.to_vec();
+        Self::process_websocket_upgrade_response(this, &full);
         // `_guard` drops here, balancing the ref above. May free `this`.
+    }
+
+    /// Forward the handshake response to C++ as a `'handshake'` event.
+    fn dispatch_handshake(ws: *mut CppWebSocket, response: &picohttp::Response, body: &[u8]) {
+        let raw_headers: Vec<super::cpp_websocket::RawHeader> = response
+            .headers
+            .list
+            .iter()
+            .map(|h| super::cpp_websocket::RawHeader {
+                name_ptr: h.name().as_ptr(),
+                name_len: h.name().len(),
+                value_ptr: h.value().as_ptr(),
+                value_len: h.value().len(),
+            })
+            .collect();
+        CppWebSocket::opaque_ref(ws).did_receive_handshake_response(
+            u16::try_from(response.status_code).unwrap_or(0),
+            response.status,
+            &raw_headers,
+            body,
+        );
+    }
+
+    /// Caller holds a `ref_guard` and owns `full` (must not borrow `self`).
+    fn process_websocket_upgrade_response(this: ThisPtr<Self>, full: &[u8]) {
+        let mut scratch = [picohttp::Header::ZERO; 128];
+        let Ok(response) = picohttp::Response::parse(full, &mut scratch) else {
+            // SAFETY: forwards to the existing teardown path.
+            return unsafe { Self::terminate(this.as_ptr(), ErrorCode::InvalidResponse) };
+        };
+        let head_len = usize::try_from(response.bytes_read).expect("int cast");
+        let is_101 = response.status_code == 101;
+
+        // 101: one scope across 'upgrade'+'open' so microtasks drain after open.
+        let _scope = is_101
+            .then(|| bun_jsc::virtual_machine::VirtualMachine::get().enter_event_loop_scope());
+
+        if let Some(ws) = this.outgoing_websocket {
+            Self::dispatch_handshake(ws, &response, if is_101 { &[] } else { &full[head_len..] });
+            if this.outgoing_websocket.is_none() {
+                return;
+            }
+        }
+        // SAFETY: forwards to the existing handoff path.
+        unsafe { Self::process_response(this.as_ptr(), response, &full[head_len..]) };
     }
 
     /// Takes `ThisPtr<Self>` because `terminate`/`handle_data` may free `this`.
@@ -1161,7 +1191,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
     /// # Safety
     /// `this` must point to a live `Self`. Takes `*mut Self` because
     /// `terminate` may free `this`; see `fail`.
-    pub unsafe fn on_proxy_tls_handshake_complete(this: *mut Self) {
+    pub(crate) unsafe fn on_proxy_tls_handshake_complete(this: *mut Self) {
         log!("onProxyTLSHandshakeComplete");
 
         // SAFETY: short-lived `&mut`; no reentrant calls until `terminate` below.
@@ -1215,12 +1245,15 @@ impl<const SSL: bool> HTTPClient<SSL> {
     /// # Safety
     /// `this` must point to a live `Self`. Takes `*mut Self` because
     /// `terminate`/`process_response` may free `this`; see `fail`.
-    pub unsafe fn handle_decrypted_data(this: *mut Self, data: &[u8]) {
+    pub(crate) unsafe fn handle_decrypted_data(this: *mut Self, data: &[u8]) {
         log!("handleDecryptedData: {} bytes", data.len());
+        // SAFETY: caller (proxy tunnel) holds a live ref on `this`.
+        let this = unsafe { ThisPtr::new(this) };
+        let _guard = this.ref_guard();
 
         // SAFETY: short-lived `&mut` for body buffering; no reentrant calls in
         // this region until `terminate`/`process_response` below.
-        let me = unsafe { &mut *this };
+        let me = unsafe { &mut *this.as_ptr() };
 
         // Process as if it came directly from the socket
         let mut body = data;
@@ -1229,22 +1262,11 @@ impl<const SSL: bool> HTTPClient<SSL> {
             body = &me.body;
         }
 
-        let is_first = me.body.is_empty();
-        const HTTP_101: &[u8] = b"HTTP/1.1 101 ";
-        if is_first && body.len() > HTTP_101.len() {
-            // fail early if we receive a non-101 status code
-            if !body.starts_with(HTTP_101) {
-                // SAFETY: `me`'s last use is above; no `&mut Self` spans this call.
-                unsafe { Self::terminate(this, ErrorCode::Expected101StatusCode) };
-                return;
-            }
-        }
-
-        let response = match picohttp::Response::parse(body, &mut me.headers_buf) {
-            Ok(r) => r,
+        match picohttp::Response::parse(body, &mut me.headers_buf) {
+            Ok(_) => {}
             Err(picohttp::ParseResponseError::MalformedHttpResponse) => {
                 // SAFETY: `me`'s last use is above; no `&mut Self` spans this call.
-                unsafe { Self::terminate(this, ErrorCode::InvalidResponse) };
+                unsafe { Self::terminate(this.as_ptr(), ErrorCode::InvalidResponse) };
                 return;
             }
             Err(picohttp::ParseResponseError::ShortRead) => {
@@ -1257,18 +1279,14 @@ impl<const SSL: bool> HTTPClient<SSL> {
                 // WebSocket frames once the header does complete).
                 if me.body.len() > bun_http::max_http_header_size() {
                     // SAFETY: `me`'s last use is above; no `&mut Self` spans this call.
-                    unsafe { Self::terminate(this, ErrorCode::InvalidResponse) };
+                    unsafe { Self::terminate(this.as_ptr(), ErrorCode::InvalidResponse) };
                 }
                 return;
             }
         };
 
-        let bytes_read = usize::try_from(response.bytes_read).expect("int cast");
-        // Reshaped for borrowck — copy remain_buf out before mutating self.
-        let remain_buf: Vec<u8> = body[bytes_read..].to_vec();
-        // SAFETY: `me`'s last use is the `body` slice above (now copied out);
-        // no `&mut Self` spans this call.
-        unsafe { Self::process_response(this, response, &remain_buf) };
+        let full = body.to_vec();
+        Self::process_websocket_upgrade_response(this, &full);
     }
 
     /// Takes `ThisPtr<Self>` because `terminate` may free `this`; see `fail`.
@@ -1283,7 +1301,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
     /// `terminate`/`tcp.close()` may synchronously dispatch `handle_close`
     /// (aliased `&mut`), and the success path's double `deref` may free
     /// `this` (argument-protector UB on `&mut self`).
-    pub unsafe fn process_response(
+    pub(crate) unsafe fn process_response(
         this: *mut Self,
         response: picohttp::Response,
         remain_buf: &[u8],
@@ -1707,7 +1725,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
         drop(saved_secure);
     }
 
-    pub fn memory_cost(&self) -> usize {
+    pub(crate) fn memory_cost(&self) -> usize {
         let mut cost: usize = core::mem::size_of::<Self>();
         cost += self.body.capacity();
         cost += self.to_send_len;
@@ -1993,31 +2011,17 @@ fn build_request_body(
     let mut encoded_buf = [0u8; 24];
     let key: &[u8] = 'blk: {
         if let Some(k_slice) = user_key {
-            // Validate that it's a valid base64-encoded 16-byte value
-            let mut decoded_buf = [0u8; 24]; // Max possible decoded size
-            let Ok(decoded_len) = B64_STD.decoder.calc_size_for_slice(k_slice) else {
-                // Invalid base64, fall through to generate
-                break 'blk B64_STD
-                    .encoder
-                    .encode(&mut encoded_buf, &vm.rare_data().next_uuid().bytes);
-            };
-
-            if decoded_len == 16 {
-                // Try to decode to verify it's valid base64
-                if B64_STD.decoder.decode(&mut decoded_buf, k_slice).is_err() {
-                    // Invalid base64, fall through to generate
-                    break 'blk B64_STD
-                        .encoder
-                        .encode(&mut encoded_buf, &vm.rare_data().next_uuid().bytes);
-                }
-                // Valid 16-byte key, use it as-is
+            let mut decoded_buf = [0u8; 24];
+            if B64_STD.decoder.calc_size_for_slice(k_slice) == Ok(16)
+                && B64_STD.decoder.decode(&mut decoded_buf, k_slice).is_ok()
+            {
                 break 'blk k_slice;
             }
         }
-        // Generate a new key if user key is invalid or not provided
+        // RFC 6455 §4.1: base64 of a randomly selected 16-byte value.
         B64_STD
             .encoder
-            .encode(&mut encoded_buf, &vm.rare_data().next_uuid().bytes)
+            .encode(&mut encoded_buf, vm.rare_data().entropy_slice(16))
     };
 
     // Compute the expected Sec-WebSocket-Accept value per RFC 6455 §4.2.2:

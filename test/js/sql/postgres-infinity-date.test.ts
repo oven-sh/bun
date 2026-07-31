@@ -291,3 +291,70 @@ test.each(["timestamp", "timestamptz"] as const)("binding ±Infinity to %s write
   expect(sent).toBeDefined();
   expect(sent!.map(b => b.readBigInt64BE(0))).toEqual([PG_INT64_MAX, PG_INT64_MIN, 86_400_000_000n]);
 });
+
+test.each(["timestamp", "timestamptz"] as const)(
+  "binding a number beyond the %s range clamps to DT_NOEND / DT_NOBEGIN",
+  async t => {
+    let sent: Buffer[] | undefined;
+    const { port, server } = await listeningServer(socket => {
+      let pending = Buffer.alloc(0);
+      let sawStartup = false;
+      socket.on("data", chunk => {
+        pending = Buffer.concat([pending, chunk]);
+        if (!sawStartup) {
+          if (pending.length < 4) return;
+          const len = pending.readInt32BE(0);
+          if (pending.length < len) return;
+          pending = pending.subarray(len);
+          sawStartup = true;
+          socket.write(Buffer.concat([pgAuthenticationOk(), pgReadyForQuery()]));
+        }
+        pending = pgReadFrontendMessages(pending, (type, body) => {
+          if (type === 0x50 /* Parse */) {
+            socket.write(
+              Buffer.concat([
+                pgParseComplete(),
+                pgParameterDescription([OID[t], OID[t], OID[t]]),
+                pgRowDescription([{ name: "x", typeOid: 25 }]),
+                pgReadyForQuery(),
+              ]),
+            );
+          } else if (type === 0x42 /* Bind */) {
+            sent = readBindParameters(body);
+            socket.write(
+              Buffer.concat([
+                pgBindComplete(),
+                pgDataRow([Buffer.from("ok")]),
+                pgCommandComplete("SELECT 1"),
+                pgReadyForQuery(),
+              ]),
+            );
+          }
+        });
+      });
+      socket.on("error", () => {});
+    });
+    try {
+      const sql = new SQL({
+        adapter: "postgres",
+        hostname: "127.0.0.1",
+        port,
+        username: "u",
+        database: "db",
+        tls: false,
+        max: 1,
+        prepare: true,
+        connectionTimeout: 2,
+      });
+      try {
+        await sql`select ${1e18}, ${-1e18}, ${new Date(Date.UTC(2000, 0, 2))}`;
+      } finally {
+        await sql.close({ timeout: 0 }).catch(() => {});
+      }
+    } finally {
+      await new Promise<void>(r => server.close(() => r()));
+    }
+    expect(sent).toBeDefined();
+    expect(sent!.map(b => b.readBigInt64BE(0))).toEqual([PG_INT64_MAX, PG_INT64_MIN, 86_400_000_000n]);
+  },
+);

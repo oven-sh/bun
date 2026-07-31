@@ -3,7 +3,7 @@ use core::fmt;
 use bun_core::ZigString;
 use bun_jsc::{self as jsc, JSGlobalObject, JSValue, JsError, JsResult};
 
-pub(crate) fn get_type_name(global_object: &JSGlobalObject, value: JSValue) -> ZigString {
+fn get_type_name(global_object: &JSGlobalObject, value: JSValue) -> ZigString {
     let js_type = value.js_type();
     if js_type.is_array() {
         return ZigString::static_("array");
@@ -54,7 +54,7 @@ pub(crate) fn throw_err_invalid_arg_type(
 }
 
 #[cold]
-pub(crate) fn throw_range_error(global_this: &JSGlobalObject, args: fmt::Arguments<'_>) -> JsError {
+fn throw_range_error(global_this: &JSGlobalObject, args: fmt::Arguments<'_>) -> JsError {
     global_this.err(jsc::ErrorCode::OUT_OF_RANGE, args).throw()
 }
 
@@ -320,15 +320,15 @@ bitflags::bitflags! {
 
 impl ValidateObjectOptions {
     #[inline]
-    pub(crate) fn allow_nullable(self) -> bool {
+    fn allow_nullable(self) -> bool {
         self.contains(Self::ALLOW_NULLABLE)
     }
     #[inline]
-    pub(crate) fn allow_array(self) -> bool {
+    fn allow_array(self) -> bool {
         self.contains(Self::ALLOW_ARRAY)
     }
     #[inline]
-    pub(crate) fn allow_function(self) -> bool {
+    fn allow_function(self) -> bool {
         self.contains(Self::ALLOW_FUNCTION)
     }
 }

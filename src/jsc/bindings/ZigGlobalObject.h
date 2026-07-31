@@ -29,7 +29,6 @@ class SubtleCrypto;
 class EventTarget;
 class Performance;
 class JSBuiltinInternalFunctions;
-class JSStreamsRuntime;
 } // namespace WebCore
 
 namespace Bun {
@@ -69,6 +68,7 @@ struct node_module;
 #include <node_api.h>
 #include "BakeAdditionsToGlobalObject.h"
 #include "WriteBarrierList.h"
+#include "streams/JSStreamsRuntime.h"
 
 namespace Bun {
 class JSCommonJSExtensions;
@@ -261,6 +261,8 @@ public:
     JSC::JSObject* JSStringDecoder() const { return m_JSStringDecoderClassStructure.constructorInitializedOnMainThread(this); }
     JSC::JSValue JSStringDecoderPrototype() const { return m_JSStringDecoderClassStructure.prototypeInitializedOnMainThread(this); }
 
+    JSC::JSObject* JSFFICStringConstructor() const { return m_JSFFICStringConstructor.getInitializedOnMainThread(this); }
+
     JSC::Structure* NodeVMScriptStructure() const { return m_NodeVMScriptClassStructure.getInitializedOnMainThread(this); }
     JSC::JSObject* NodeVMScript() const { return m_NodeVMScriptClassStructure.constructorInitializedOnMainThread(this); }
     JSC::JSValue NodeVMScriptPrototype() const { return m_NodeVMScriptClassStructure.prototypeInitializedOnMainThread(this); }
@@ -273,7 +275,7 @@ public:
     JSC::JSObject* NodeVMSyntheticModule() const { return m_NodeVMSyntheticModuleClassStructure.constructorInitializedOnMainThread(this); }
     JSC::JSValue NodeVMSyntheticModulePrototype() const { return m_NodeVMSyntheticModuleClassStructure.prototypeInitializedOnMainThread(this); }
 
-    WebCore::JSStreamsRuntime* streamsRuntime() const { return m_streamsRuntime.getInitializedOnMainThread(this); }
+    WebCore::JSStreamsRuntime* streamsRuntime() { return &m_streamsRuntime; }
     JSC::JSMap* requireMap() const { return m_requireMap.getInitializedOnMainThread(this); }
     // The JSC module loader registry is no longer a JS Map. Use
     // moduleLoader()->registryEntry(key) / moduleMap() / removeEntry(key) /
@@ -559,6 +561,7 @@ public:
     V(private, LazyClassStructure, m_JSH3ResponseSinkClassStructure)                                         \
                                                                                                              \
     V(private, LazyClassStructure, m_JSStringDecoderClassStructure)                                          \
+    V(private, LazyPropertyOfGlobalObject<JSObject>, m_JSFFICStringConstructor)                              \
     V(public, LazyClassStructure, m_JSDatabaseSyncClassStructure)                                            \
     V(public, LazyClassStructure, m_JSStatementSyncClassStructure)                                           \
     V(public, LazyClassStructure, m_JSStatementSyncIteratorClassStructure)                                   \
@@ -604,7 +607,7 @@ public:
     V(private, LazyPropertyOfGlobalObject<JSFunction>, m_utilInspectStylizeColorFunction)                    \
     V(private, LazyPropertyOfGlobalObject<JSFunction>, m_utilInspectStylizeNoColorFunction)                  \
     V(private, LazyPropertyOfGlobalObject<JSFunction>, m_wasmStreamingConsumeStreamFunction)                 \
-    V(private, LazyPropertyOfGlobalObject<WebCore::JSStreamsRuntime>, m_streamsRuntime)                      \
+    V(private, WebCore::JSStreamsRuntime, m_streamsRuntime)                                                  \
     V(private, LazyPropertyOfGlobalObject<JSMap>, m_requireMap)                                              \
     V(private, LazyPropertyOfGlobalObject<JSObject>, m_JSArrayBufferControllerPrototype)                     \
     V(private, LazyPropertyOfGlobalObject<JSObject>, m_JSHTTPSResponseControllerPrototype)                   \

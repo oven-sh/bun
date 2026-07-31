@@ -31,7 +31,7 @@ pub enum Raw {
 }
 
 impl Raw {
-    pub fn resolve(self, total: u64) -> Result {
+    pub(crate) fn resolve(self, total: u64) -> Result {
         match self {
             Raw::None => Result::None,
             Raw::Suffix(n) => {
@@ -65,9 +65,9 @@ impl Raw {
     }
 }
 
-/// Match WebKit's parseRange (HTTPParsers.cpp): case-insensitive "bytes",
-/// optional whitespace before "=". https://fetch.spec.whatwg.org/#simple-range-header-value
-pub fn parse_raw(header: &[u8]) -> Raw {
+/// https://fetch.spec.whatwg.org/#simple-range-header-value: case-insensitive
+/// "bytes", optional whitespace before "=".
+pub(crate) fn parse_raw(header: &[u8]) -> Raw {
     let mut rest = header;
     if !strings::starts_with_case_insensitive_ascii(rest, b"bytes") {
         return Raw::None;
@@ -111,7 +111,7 @@ pub fn parse_raw(header: &[u8]) -> Raw {
     Raw::Bounded { start, end }
 }
 
-pub fn parse(header: &[u8], total: u64) -> Result {
+pub(crate) fn parse(header: &[u8], total: u64) -> Result {
     parse_raw(header).resolve(total)
 }
 

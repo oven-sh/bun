@@ -32,7 +32,7 @@ pub mod lib {
     use core::ffi::{c_char, c_int, c_long, c_uint, c_void};
 
     pub type la_ssize_t = isize;
-    pub type la_int64_t = i64;
+    pub(crate) type la_int64_t = i64;
     type time_t = isize;
 
     bun_opaque::opaque_ffi! {
@@ -258,7 +258,7 @@ pub mod lib {
         /// - Falls back to lseek + write if pwrite is not available
         /// - Falls back to writing zeros if lseek is not available
         /// - Truncates the file to the final size to handle trailing sparse holes
-        pub fn read_data_into_fd(
+        pub(crate) fn read_data_into_fd(
             &self,
             fd: Fd,
             can_use_pwrite: &mut bool,
@@ -458,7 +458,7 @@ pub mod lib {
         }
 
         // ── write side ─────────────────────────────────────────────────────
-        pub fn new() -> *mut Entry {
+        pub(crate) fn new() -> *mut Entry {
             // SAFETY: FFI call with no preconditions.
             unsafe { archive_entry_new() }
         }
@@ -623,14 +623,14 @@ pub mod lib {
 
     impl<T> IteratorResult<T> {
         #[inline]
-        pub fn init_err(arch: *mut Archive, msg: &'static [u8]) -> Self {
+        pub(crate) fn init_err(arch: *mut Archive, msg: &'static [u8]) -> Self {
             Self::Err {
                 message: msg,
                 archive: arch,
             }
         }
         #[inline]
-        pub fn init_res(value: T) -> Self {
+        pub(crate) fn init_res(value: T) -> Self {
             Self::Result(value)
         }
     }
@@ -641,7 +641,7 @@ pub mod lib {
         pub archive: *mut Archive,
         // A u16 bitmask over
         // `bun_sys::FileKind` variants.
-        pub filter: u16,
+        pub(crate) filter: u16,
     }
 
     /// One entry returned from [`ArchiveIterator::next`].
@@ -812,8 +812,8 @@ pub mod lib {
 
     /// Growing memory buffer for archive writes with libarchive callbacks.
     pub struct GrowingBuffer {
-        pub list: Vec<u8>,
-        pub had_error: bool,
+        pub(crate) list: Vec<u8>,
+        pub(crate) had_error: bool,
     }
 
     impl GrowingBuffer {
@@ -896,7 +896,7 @@ impl BufferReadStream {
     /// unmoved for the entire lifetime of the returned `BufferReadStream`
     /// (including its `Drop`). Violating this makes [`buf()`], [`buf_left()`],
     /// and [`open_read()`] dereference a dangling pointer (UB).
-    pub unsafe fn init(buf: &[u8]) -> Self {
+    pub(crate) unsafe fn init(buf: &[u8]) -> Self {
         // was an out-param constructor (`this.* = ...`)
         Self {
             buf: std::ptr::from_ref::<[u8]>(buf),
@@ -928,7 +928,7 @@ impl BufferReadStream {
         unsafe { &*self.buf }
     }
 
-    pub fn open_read(&mut self) -> lib::Result {
+    pub(crate) fn open_read(&mut self) -> lib::Result {
         // lib.archive_read_set_open_callback(this.archive, this.);
         // _ = lib.archive_read_set_read_callback(this.archive, archive_read_callback);
         // _ = lib.archive_read_set_seek_callback(this.archive, archive_seek_callback);
@@ -1167,7 +1167,7 @@ pub mod archiver {
 
     pub struct Plucker {
         pub contents: MutableString,
-        pub filename_hash: u64,
+        pub(crate) filename_hash: u64,
         pub found: bool,
         pub fd: Fd,
     }
@@ -1263,6 +1263,8 @@ impl Archiver {
         // a directory HANDLE on Windows. Mirrors the guard pattern in extract_to_disk.
         let _close_dir_guard = scopeguard::guard(dir, |d| d.close());
 
+        let mut normalized_buf = bun_paths::PathBuffer::uninit();
+
         'loop_: loop {
             // SAFETY: archive valid for stream lifetime
             let r = unsafe { (*archive).read_next_header(&mut entry) };
@@ -1315,6 +1317,22 @@ impl Archiver {
 
                     // pathname = sliceTo(remaining[..len :0], 0)
                     let pathname = slice_to_nul(remaining);
+                    if pathname.is_empty() || pathname.len() >= normalized_buf.len() {
+                        continue 'loop_;
+                    }
+                    let normalized = bun_paths::resolve_path::normalize_buf_t::<
+                        u8,
+                        bun_paths::platform::Auto,
+                    >(pathname, &mut normalized_buf[..]);
+                    let normalized_len = normalized.len();
+                    let pathname: &[u8] = &normalized_buf[..normalized_len];
+                    if pathname.is_empty() || pathname == b"." {
+                        continue 'loop_;
+                    }
+                    #[cfg(windows)]
+                    if bun_paths::is_absolute_windows(pathname) {
+                        continue 'loop_;
+                    }
                     let dirname =
                         strings::trim(bun_paths::dirname_simple(pathname), SEP_STR.as_bytes());
 
@@ -1832,6 +1850,28 @@ impl Archiver {
                                                     plucker_.contents.list.as_mut_slice(),
                                                 )
                                             };
+                                            if read < 0 {
+                                                if options.log {
+                                                    // SAFETY: `archive` is the live
+                                                    // `read_new()` handle this
+                                                    // extraction loop is iterating.
+                                                    let archive_error = slice_to_nul(
+                                                        unsafe { &*archive }.error_string(),
+                                                    );
+                                                    Output::err(
+                                                        "libarchive error",
+                                                        "extracting {}: {}",
+                                                        (
+                                                            bun_core::fmt::fmt_os_path(
+                                                                path_slice,
+                                                                Default::default(),
+                                                            ),
+                                                            bstr::BStr::new(archive_error),
+                                                        ),
+                                                    );
+                                                }
+                                                return Err(crate::Error::Fail);
+                                            }
                                             plucker_.contents.inflate(
                                                 usize::try_from(read).expect("int cast"),
                                             )?;

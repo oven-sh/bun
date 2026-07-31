@@ -24,15 +24,16 @@ describe.skipIf(isDebug)("does not leak", () => {
 
   test("hashSync", async () => {
     await run(/* js */ `
+        const rss = process.platform === "darwin" && typeof Bun.unsafe.memoryFootprint === "function" ? Bun.unsafe.memoryFootprint : process.memoryUsage.rss;
         const opts = { algorithm: "argon2id", memoryCost: 8, timeCost: 1 };
         // Large warm-up so the JSC heap and allocator arenas reach steady state
         // before we start measuring (debug/ASAN builds especially need this).
         for (let i = 0; i < 60000; i++) Bun.password.hashSync("hey", opts);
         Bun.gc(true);
-        const before = process.memoryUsage.rss();
+        const before = rss();
         for (let i = 0; i < 60000; i++) Bun.password.hashSync("hey", opts);
         Bun.gc(true);
-        const growthMB = (process.memoryUsage.rss() - before) / 1024 / 1024;
+        const growthMB = (rss() - before) / 1024 / 1024;
         // ASAN's free quarantine (default 256 MB) plus redzones and glibc page
         // retention inflate RSS even when nothing is leaking.
         const limit = ${isASAN ? 400 : 4};
@@ -42,6 +43,7 @@ describe.skipIf(isDebug)("does not leak", () => {
 
   test("hash", async () => {
     await run(/* js */ `
+        const rss = process.platform === "darwin" && typeof Bun.unsafe.memoryFootprint === "function" ? Bun.unsafe.memoryFootprint : process.memoryUsage.rss;
         const opts = { algorithm: "argon2id", memoryCost: 8, timeCost: 1 };
         async function batch(n) {
           const promises = [];
@@ -50,10 +52,10 @@ describe.skipIf(isDebug)("does not leak", () => {
         }
         for (let i = 0; i < 500; i++) await batch(100);
         Bun.gc(true);
-        const before = process.memoryUsage.rss();
+        const before = rss();
         for (let i = 0; i < 2000; i++) await batch(100);
         Bun.gc(true);
-        const growthMB = (process.memoryUsage.rss() - before) / 1024 / 1024;
+        const growthMB = (rss() - before) / 1024 / 1024;
         // ASAN's free quarantine (default 256 MB) plus redzones and glibc page
         // retention inflate RSS even when nothing is leaking.
         const limit = ${isASAN ? 400 : 20};
@@ -423,4 +425,17 @@ test("verify rejects encoded argon2 hashes with cost parameters above the suppor
   expect(hugeParallelism).not.toBe(hashed);
   expect(() => password.verifySync("correct horse", hugeParallelism)).toThrow("WeakParameters");
   await expect(password.verify("correct horse", hugeParallelism)).rejects.toThrow("WeakParameters");
+});
+
+test("verifySync reads the password buffer only after every argument has been coerced", () => {
+  const hashed = password.hashSync("correct horse", { algorithm: "argon2id", memoryCost: 8, timeCost: 1 });
+  const passwordBytes = new TextEncoder().encode("correct horse");
+  const hashObject = new String(hashed);
+  hashObject.toString = () => {
+    structuredClone(passwordBytes.buffer, { transfer: [passwordBytes.buffer] });
+    Bun.gc(true);
+    return hashed;
+  };
+  expect(password.verifySync(passwordBytes, hashObject as any)).toBeFalse();
+  expect(passwordBytes.byteLength).toBe(0);
 });

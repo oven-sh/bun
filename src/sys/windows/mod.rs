@@ -194,7 +194,7 @@ pub use bun_core::windows_sys::{
 };
 
 /// 1601-01-01 → 1970-01-01 offset in 100-ns ticks.
-pub const EPOCH_DIFFERENCE_100NS: i64 = 11_644_473_600 * 10_000_000;
+pub(crate) const EPOCH_DIFFERENCE_100NS: i64 = 11_644_473_600 * 10_000_000;
 
 /// Convert a 64-bit Windows `FILETIME`
 /// (100-ns intervals since 1601-01-01 UTC, as projected in
@@ -210,7 +210,7 @@ pub const fn from_sys_time(nt_time: i64) -> i128 {
 /// into a libuv `uv_timespec_t` (seconds + nanoseconds since the Unix epoch).
 /// Matches libuv's `uv__filetime_to_timespec`.
 #[inline]
-pub fn filetime_to_timespec(filetime: i64) -> bun_libuv_sys::uv_timespec_t {
+pub(crate) fn filetime_to_timespec(filetime: i64) -> bun_libuv_sys::uv_timespec_t {
     let t = filetime - EPOCH_DIFFERENCE_100NS;
     let mut sec = t / 10_000_000;
     let mut nsec = (t - sec * 10_000_000) * 100;
@@ -248,9 +248,10 @@ pub const NT_UNC_OBJECT_PREFIX: [u16; 8] = [
     b'C' as u16,
     b'\\' as u16,
 ];
-pub const LONG_PATH_PREFIX: [u16; 4] = [b'\\' as u16, b'\\' as u16, b'?' as u16, b'\\' as u16];
+pub(crate) const LONG_PATH_PREFIX: [u16; 4] =
+    [b'\\' as u16, b'\\' as u16, b'?' as u16, b'\\' as u16];
 
-pub const NT_OBJECT_PREFIX_U8: [u8; 4] = *b"\\??\\";
+pub(crate) const NT_OBJECT_PREFIX_U8: [u8; 4] = *b"\\??\\";
 pub const NT_UNC_OBJECT_PREFIX_U8: [u8; 8] = *b"\\??\\UNC\\";
 pub const LONG_PATH_PREFIX_U8: [u8; 4] = *b"\\\\?\\";
 
@@ -414,11 +415,11 @@ pub fn GetFileType(hFile: HANDLE) -> DWORD {
 }
 
 /// https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-getfiletype#return-value
-pub const FILE_TYPE_UNKNOWN: DWORD = 0x0000;
-pub const FILE_TYPE_DISK: DWORD = 0x0001;
+pub(crate) const FILE_TYPE_UNKNOWN: DWORD = 0x0000;
+pub(crate) const FILE_TYPE_DISK: DWORD = 0x0001;
 pub const FILE_TYPE_CHAR: DWORD = 0x0002;
 pub const FILE_TYPE_PIPE: DWORD = 0x0003;
-pub const FILE_TYPE_REMOTE: DWORD = 0x8000;
+pub(crate) const FILE_TYPE_REMOTE: DWORD = 0x8000;
 
 pub use SetCurrentDirectoryW as SetCurrentDirectory;
 /// Each process has a single current directory made up of two parts:
@@ -567,7 +568,7 @@ pub fn get_last_error() -> SystemErrno {
 /// `DWORD` error truncated to the documented 16-bit code space. Callers that
 /// want the POSIX-style `SystemErrno` should use [`get_last_error`].
 #[inline]
-pub fn get_last_win32_error() -> Win32Error {
+pub(crate) fn get_last_win32_error() -> Win32Error {
     Win32Error(kernel32::GetLastError() as u16)
 }
 
@@ -916,7 +917,7 @@ pub unsafe fn GetFinalPathNameByHandleW(
     (PFX.len() + rest_len) as u32
 }
 
-pub fn GetFinalPathNameByHandle(
+pub(crate) fn GetFinalPathNameByHandle(
     hFile: HANDLE,
     fmt: win32::GetFinalPathNameByHandleFormat,
     out_buffer: &mut [u16],
@@ -1036,8 +1037,8 @@ pub use bun_windows_sys::externs::SetConsoleCP;
 pub use bun_windows_sys::externs::SetStdHandle;
 
 pub struct DeleteFileOptions {
-    pub dir: Option<HANDLE>,
-    pub remove_dir: bool,
+    pub(crate) dir: Option<HANDLE>,
+    pub(crate) remove_dir: bool,
 }
 
 impl Default for DeleteFileOptions {
@@ -1307,8 +1308,8 @@ pub use bun_windows_sys::externs::UpdateProcThreadAttribute;
 
 pub use bun_windows_sys::externs::IsProcessInJob;
 
-pub const EXTENDED_STARTUPINFO_PRESENT: DWORD = 0x80000;
-pub const PROC_THREAD_ATTRIBUTE_JOB_LIST: DWORD = 0x2000D;
+pub(crate) const EXTENDED_STARTUPINFO_PRESENT: DWORD = 0x80000;
+pub(crate) const PROC_THREAD_ATTRIBUTE_JOB_LIST: DWORD = 0x2000D;
 
 /// Handle to a Windows pseudoconsole (ConPTY).
 pub use bun_windows_sys::externs::HPCON;
@@ -1320,9 +1321,17 @@ pub use bun_windows_sys::externs::ResizePseudoConsole;
 pub use bun_windows_sys::externs::ClosePseudoConsole;
 
 pub const JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE: DWORD = 0x2000;
-pub const JOB_OBJECT_LIMIT_DIE_ON_UNHANDLED_EXCEPTION: DWORD = 0x400;
-pub const JOB_OBJECT_LIMIT_BREAKAWAY_OK: DWORD = 0x800;
-pub const JOB_OBJECT_LIMIT_SILENT_BREAKAWAY_OK: DWORD = 0x00001000;
+pub(crate) const JOB_OBJECT_LIMIT_DIE_ON_UNHANDLED_EXCEPTION: DWORD = 0x400;
+pub(crate) const JOB_OBJECT_LIMIT_BREAKAWAY_OK: DWORD = 0x800;
+pub(crate) const JOB_OBJECT_LIMIT_SILENT_BREAKAWAY_OK: DWORD = 0x00001000;
+
+/// `LimitFlags` for a kill-on-close Job whose members are added by
+/// inheritance (`--no-orphans`, the parallel-test coordinator). Omits
+/// `SILENT_BREAKAWAY_OK` on purpose: that would make every child escape the
+/// Job. libuv's global job sets it because libuv assigns each child itself.
+pub const JOB_LIMIT_FLAGS_KILL_TREE_ON_CLOSE: DWORD = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
+    | JOB_OBJECT_LIMIT_DIE_ON_UNHANDLED_EXCEPTION
+    | JOB_OBJECT_LIMIT_BREAKAWAY_OK;
 
 pub mod rescle {
     use super::*;
@@ -1484,16 +1493,16 @@ pub use bun_windows_sys::externs::SetEndOfFile;
 #[repr(C)]
 #[derive(Clone, Copy, Default)]
 pub struct PROCESS_MEMORY_COUNTERS {
-    pub cb: DWORD,
-    pub PageFaultCount: DWORD,
+    pub(crate) cb: DWORD,
+    pub(crate) PageFaultCount: DWORD,
     pub PeakWorkingSetSize: usize,
-    pub WorkingSetSize: usize,
-    pub QuotaPeakPagedPoolUsage: usize,
-    pub QuotaPagedPoolUsage: usize,
-    pub QuotaPeakNonPagedPoolUsage: usize,
-    pub QuotaNonPagedPoolUsage: usize,
-    pub PagefileUsage: usize,
-    pub PeakPagefileUsage: usize,
+    pub(crate) WorkingSetSize: usize,
+    pub(crate) QuotaPeakPagedPoolUsage: usize,
+    pub(crate) QuotaPagedPoolUsage: usize,
+    pub(crate) QuotaPeakNonPagedPoolUsage: usize,
+    pub(crate) QuotaNonPagedPoolUsage: usize,
+    pub(crate) PagefileUsage: usize,
+    pub(crate) PeakPagefileUsage: usize,
 }
 
 /// psapi `K32GetProcessMemoryInfo`
@@ -1578,7 +1587,7 @@ const WATCHER_CHILD_ENV_Z: &[u16] = bun_core::w!("_BUN_WATCHER_CHILD\0");
 
 // magic exit code to indicate to the watcher manager that the child process should be re-spawned
 // this was randomly generated - we need to avoid using a common exit code that might be used by the script itself
-pub const WATCHER_RELOAD_EXIT: DWORD = 3224497970;
+pub(crate) const WATCHER_RELOAD_EXIT: DWORD = 3224497970;
 
 pub fn is_watcher_child() -> bool {
     let mut buf: [u16; 1] = [0];
@@ -1677,7 +1686,7 @@ pub fn become_watcher_manager() -> ! {
     }
 }
 
-pub fn spawn_watcher_child(
+pub(crate) fn spawn_watcher_child(
     procinfo: &mut PROCESS_INFORMATION,
     job: HANDLE,
 ) -> Result<(), bun_errno::SystemErrno> {
@@ -1819,7 +1828,7 @@ pub fn spawn_watcher_child(
 /// Using characters16() does not seem to always have the sentinel. or something else
 /// broke when I just used it. Not sure. ... but this works!
 #[unsafe(no_mangle)]
-pub extern "C" fn Bun__LoadLibraryBunString(str_: &bun_core::String) -> *mut c_void {
+pub(crate) extern "C" fn Bun__LoadLibraryBunString(str_: &bun_core::String) -> *mut c_void {
     #[cfg(not(windows))]
     {
         compile_error!("unreachable");
@@ -1962,7 +1971,7 @@ pub fn move_opened_file_at(
 /// Rename `old_path_w` (relative to `old_dir_fd`) to `new_path_w` (relative to
 /// `new_dir_fd`) via NT file-information rename. Surfaces more error cases
 /// than typical rename wrappers.
-pub fn rename_at_w(
+pub(crate) fn rename_at_w(
     old_dir_fd: Fd,
     old_path_w: &[u16],
     new_dir_fd: Fd,
@@ -2041,9 +2050,9 @@ mod kernel32_2 {
     }
 }
 
-pub type GetEnvironmentStringsError = bun_alloc::AllocError;
+pub(crate) type GetEnvironmentStringsError = bun_alloc::AllocError;
 
-pub fn GetEnvironmentStringsW() -> Result<*mut u16, GetEnvironmentStringsError> {
+pub(crate) fn GetEnvironmentStringsW() -> Result<*mut u16, GetEnvironmentStringsError> {
     let p = kernel32_2::GetEnvironmentStringsW();
     if p.is_null() {
         return Err(bun_alloc::AllocError);
@@ -2051,7 +2060,7 @@ pub fn GetEnvironmentStringsW() -> Result<*mut u16, GetEnvironmentStringsError> 
     Ok(p)
 }
 
-pub fn FreeEnvironmentStringsW(penv: *mut u16) {
+pub(crate) fn FreeEnvironmentStringsW(penv: *mut u16) {
     // SAFETY: penv from GetEnvironmentStringsW
     let rc = unsafe { kernel32_2::FreeEnvironmentStringsW(penv) };
     debug_assert!(rc != 0);

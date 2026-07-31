@@ -4,6 +4,21 @@ import { promises as fs } from "fs";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "path";
 
+// PE optional-header Subsystem values
+const IMAGE_SUBSYSTEM_WINDOWS_GUI = 2;
+const IMAGE_SUBSYSTEM_WINDOWS_CUI = 3;
+
+// Read the Subsystem field from a PE32+ optional header.
+// Layout: e_lfanew at DOS+0x3C points to "PE\0\0" (4 bytes), followed by the
+// 20-byte COFF header, then the optional header whose Subsystem is at +68.
+// The whole header fits in the first page, so read 4 KiB instead of the full exe.
+async function readPESubsystem(path: string): Promise<number> {
+  const data = await Bun.file(path).slice(0, 4096).bytes();
+  const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
+  const peOffset = view.getUint32(0x3c, true);
+  return view.getUint16(peOffset + 24 + 68, true);
+}
+
 // Helper to ensure executable cleanup
 function cleanup(outfile: string) {
   return {
@@ -24,6 +39,110 @@ async function expectBuildOk(proc: Bun.Subprocess<"ignore", "pipe", "pipe">) {
   expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
   return { stdout, stderr, exitCode };
 }
+
+// https://github.com/oven-sh/bun/issues/19916
+describe.skipIf(!isWindows).concurrent("--windows-hide-console", () => {
+  test("default build is a console subsystem", async () => {
+    using dir = tempDir("windows-subsystem-default", {
+      "app.js": `console.log("cui");`,
+    });
+    const outfile = join(String(dir), "cui.exe");
+    await using _cleanup = cleanup(outfile);
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "--compile", join(String(dir), "app.js"), "--outfile", outfile],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    await expectBuildOk(proc);
+
+    expect(await readPESubsystem(outfile)).toBe(IMAGE_SUBSYSTEM_WINDOWS_CUI);
+  });
+
+  test("CLI flag sets GUI subsystem", async () => {
+    using dir = tempDir("windows-subsystem-gui-cli", {
+      "app.js": `require("fs").writeFileSync(process.argv[2], "ran");`,
+    });
+    const outfile = join(String(dir), "gui.exe");
+    await using _cleanup = cleanup(outfile);
+
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "build",
+        "--compile",
+        "--windows-hide-console",
+        join(String(dir), "app.js"),
+        "--outfile",
+        outfile,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    await expectBuildOk(proc);
+
+    expect(await readPESubsystem(outfile)).toBe(IMAGE_SUBSYSTEM_WINDOWS_GUI);
+
+    // The resulting GUI-subsystem exe still has to be a valid, runnable PE.
+    // A GUI process has no console, so assert via a file side effect + exit code.
+    const marker = join(String(dir), "marker.txt");
+    await using run = Bun.spawn({ cmd: [outfile, marker], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    const [, , runExit] = await Promise.all([run.stdout.text(), run.stderr.text(), run.exited]);
+    expect(await Bun.file(marker).text()).toBe("ran");
+    expect(runExit).toBe(0);
+  });
+
+  test("Bun.build() hideConsole sets GUI subsystem", async () => {
+    using dir = tempDir("windows-subsystem-gui-api", {
+      "app.js": `console.log("gui");`,
+    });
+
+    const result = await Bun.build({
+      entrypoints: [join(String(dir), "app.js")],
+      outdir: String(dir),
+      compile: {
+        target: process.arch === "arm64" ? "bun-windows-aarch64" : "bun-windows-x64",
+        outfile: "gui-api.exe",
+        windows: { hideConsole: true },
+      },
+    });
+    expect(result.success).toBe(true);
+
+    const outfile = result.outputs[0].path;
+    await using _cleanup = cleanup(outfile);
+    expect(await readPESubsystem(outfile)).toBe(IMAGE_SUBSYSTEM_WINDOWS_GUI);
+  });
+
+  test("GUI subsystem survives the rescle metadata pass", async () => {
+    using dir = tempDir("windows-subsystem-gui-rescle", {
+      "app.js": `console.log("gui+metadata");`,
+    });
+    const outfile = join(String(dir), "gui-rescle.exe");
+    await using _cleanup = cleanup(outfile);
+
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "build",
+        "--compile",
+        "--windows-hide-console",
+        "--windows-title",
+        "Hidden Console App",
+        join(String(dir), "app.js"),
+        "--outfile",
+        outfile,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    await expectBuildOk(proc);
+
+    expect(await readPESubsystem(outfile)).toBe(IMAGE_SUBSYSTEM_WINDOWS_GUI);
+  });
+});
 
 describe.skipIf(!isWindows).concurrent("Windows compile metadata", () => {
   describe("CLI flags", () => {
@@ -731,4 +850,145 @@ describe.skipIf(!isWindows).concurrent("Windows compile metadata", () => {
   });
 });
 
-// Test for non-Windows platforms
+// Build a minimal PE32+ image with one .text section and an optional Authenticode
+// overlay past it. Large enough that the correct CheckSum exceeds 0xffff.
+function minimalPE64Template(certSize = 0): Buffer {
+  const fileAlign = 512;
+  const sectAlign = 4096;
+  const peOff = 64;
+  const optOff = peOff + 24;
+  const optSize = 240;
+  const shOff = optOff + optSize;
+  const textRaw = 512;
+  const textRawSize = 128 * 1024;
+  const textVA = sectAlign;
+  const lastRawEnd = textRaw + textRawSize;
+
+  const tmpl = Buffer.alloc(lastRawEnd + certSize);
+  // DOS header
+  tmpl.writeUInt16LE(0x5a4d, 0); // "MZ"
+  tmpl.writeUInt32LE(peOff, 0x3c); // e_lfanew
+  // COFF header
+  tmpl.writeUInt32LE(0x00004550, peOff); // "PE\0\0"
+  tmpl.writeUInt16LE(0x8664, peOff + 4); // machine = AMD64
+  tmpl.writeUInt16LE(1, peOff + 6); // NumberOfSections
+  tmpl.writeUInt16LE(optSize, peOff + 20); // SizeOfOptionalHeader
+  tmpl.writeUInt16LE(0x0022, peOff + 22); // Characteristics
+  // Optional header (PE32+)
+  tmpl.writeUInt16LE(0x020b, optOff); // Magic
+  tmpl.writeUInt32LE(textVA, optOff + 16); // AddressOfEntryPoint
+  tmpl.writeUInt32LE(textVA, optOff + 20); // BaseOfCode
+  tmpl.writeBigUInt64LE(0x140000000n, optOff + 24); // ImageBase
+  tmpl.writeUInt32LE(sectAlign, optOff + 32); // SectionAlignment
+  tmpl.writeUInt32LE(fileAlign, optOff + 36); // FileAlignment
+  tmpl.writeUInt16LE(6, optOff + 40); // MajorOSVersion
+  tmpl.writeUInt16LE(6, optOff + 48); // MajorSubsystemVersion
+  tmpl.writeUInt32LE(textVA + sectAlign, optOff + 56); // SizeOfImage
+  tmpl.writeUInt32LE(512, optOff + 60); // SizeOfHeaders
+  tmpl.writeUInt16LE(3, optOff + 68); // Subsystem = CUI
+  tmpl.writeUInt32LE(16, optOff + 108); // NumberOfRvaAndSizes
+  if (certSize > 0) {
+    // Security directory (index 4): VirtualAddress is a file offset for this entry.
+    const secDir = optOff + 112 + 4 * 8;
+    tmpl.writeUInt32LE(lastRawEnd, secDir);
+    tmpl.writeUInt32LE(certSize, secDir + 4);
+  }
+  // Section header: .text
+  tmpl.write(".text\0\0\0", shOff, 8, "latin1");
+  tmpl.writeUInt32LE(textRawSize, shOff + 8); // VirtualSize
+  tmpl.writeUInt32LE(textVA, shOff + 12); // VirtualAddress
+  tmpl.writeUInt32LE(textRawSize, shOff + 16); // SizeOfRawData
+  tmpl.writeUInt32LE(textRaw, shOff + 20); // PointerToRawData
+  tmpl.writeUInt32LE(0x60000020, shOff + 36); // Characteristics
+  tmpl.fill(0xcc, textRaw, lastRawEnd); // .text body
+  if (certSize > 0) tmpl.fill(0xab, lastRawEnd); // cert overlay marker
+  return tmpl;
+}
+
+// Recompute the reference PE CheckSum over `bytes` with the CheckSum field zeroed.
+function peChecksum(bytes: Buffer): { stored: number; expected: number } {
+  const peOff = bytes.readUInt32LE(0x3c);
+  const ckOff = peOff + 24 + 64;
+  const stored = bytes.readUInt32LE(ckOff);
+  const copy = Buffer.from(bytes);
+  copy.writeUInt32LE(0, ckOff);
+  let sum = 0;
+  for (let i = 0; i + 1 < copy.length; i += 2) {
+    sum += copy[i] | (copy[i + 1] << 8);
+    sum = (sum & 0xffff) + (sum >>> 16);
+  }
+  if (copy.length & 1) sum += copy[copy.length - 1];
+  sum = (sum & 0xffff) + (sum >>> 16);
+  sum = (sum & 0xffff) + (sum >>> 16);
+  return { stored, expected: (sum + copy.length) >>> 0 };
+}
+
+function lastSectionEnd(bytes: Buffer): number {
+  const peOff = bytes.readUInt32LE(0x3c);
+  const nSect = bytes.readUInt16LE(peOff + 6);
+  const shOff = peOff + 24 + bytes.readUInt16LE(peOff + 20);
+  let end = 0;
+  for (let i = 0; i < nSect; i++) {
+    const o = shOff + i * 40;
+    const rawEnd = bytes.readUInt32LE(o + 20) + bytes.readUInt32LE(o + 16);
+    if (rawEnd > end) end = rawEnd;
+  }
+  return end;
+}
+
+async function compileWindowsTemplate(dir: string, tmpl: Buffer): Promise<Buffer> {
+  const tmplPath = join(dir, "template.exe");
+  const outPath = join(dir, "out.exe");
+  await Bun.write(tmplPath, tmpl);
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "build",
+      "--compile",
+      "--target=bun-windows-x64",
+      "--compile-executable-path",
+      tmplPath,
+      join(dir, "entry.js"),
+      "--outfile",
+      outPath,
+    ],
+    env: bunEnv,
+    cwd: dir,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  await expectBuildOk(proc);
+  return Buffer.from(await Bun.file(outPath).arrayBuffer());
+}
+
+// The PE OptionalHeader.CheckSum field is defined as `fold16(word_sum) + file_length`
+// (the same algorithm Windows' MapFileAndCheckSum uses).
+//
+// These tests craft a minimal PE64 template and cross-compile via
+// `--compile-executable-path`, so they run on every platform without downloading
+// a real bun.exe.
+test.concurrent("bun build --compile writes a valid PE OptionalHeader.CheckSum", async () => {
+  using dir = tempDir("pe-checksum", { "entry.js": `console.log("hi");` });
+  const out = await compileWindowsTemplate(String(dir), minimalPE64Template());
+  const { stored, expected } = peChecksum(out);
+  // Guard against the template shrinking to where the checksum fits in 16 bits
+  // and the assertion below becomes vacuous.
+  expect(expected).toBeGreaterThan(0xffff);
+  expect(stored).toBe(expected);
+});
+
+test.concurrent("bun build --compile truncates the PE output when Authenticode strip shrinks it", async () => {
+  // 16 KiB cert overlay: larger than the .bun section a trivial entry produces, so
+  // strip_authenticode makes the in-memory PE shorter than the cloned base file.
+  const certSize = 16 * 1024;
+  const tmpl = minimalPE64Template(certSize);
+  using dir = tempDir("pe-truncate", { "entry.js": `console.log("hi");` });
+  const out = await compileWindowsTemplate(String(dir), tmpl);
+
+  const lastEnd = lastSectionEnd(out);
+  expect({ fileSize: out.length, lastEnd }).toEqual({ fileSize: lastEnd, lastEnd });
+  expect(out.length).toBeLessThan(tmpl.length);
+
+  const { stored, expected } = peChecksum(out);
+  expect(stored).toBe(expected);
+});

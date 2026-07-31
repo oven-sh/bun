@@ -29,7 +29,7 @@ bun_output::declare_scope!(PathWatcherManager, visible);
 // tag string, keeping `BUN_DEBUG_fs.watch` env matching and the
 // `[fs.watch]` log prefix.
 #[allow(non_upper_case_globals)]
-pub static fs_watch: bun_output::ScopedLogger =
+pub(crate) static fs_watch: bun_output::ScopedLogger =
     bun_output::ScopedLogger::new("fs.watch", bun_output::Visibility::Visible);
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -67,7 +67,7 @@ pub(crate) struct PathWatcherManager {
 }
 
 impl PathWatcherManager {
-    pub(crate) fn init(vm: &'static jsc::VirtualMachineRef) -> *mut PathWatcherManager {
+    fn init(vm: &'static jsc::VirtualMachineRef) -> *mut PathWatcherManager {
         bun_core::heap::into_raw(Box::new(PathWatcherManager {
             watchers: StringArrayHashMap::default(),
             vm,
@@ -168,7 +168,7 @@ impl Default for ChangeEvent {
 }
 
 impl ChangeEvent {
-    pub(crate) fn emit(
+    fn emit(
         &mut self,
         hash: bun_watcher::HashType,
         timestamp: u64,
@@ -189,8 +189,6 @@ impl ChangeEvent {
         false
     }
 }
-
-pub type Callback = fn(ctx: Option<*mut c_void>, event: Event, is_file: bool);
 
 impl PathWatcher {
     extern "C" fn uv_event_callback(
@@ -224,7 +222,14 @@ impl PathWatcher {
             this.emit_in_progress = true;
 
             for &ctx in this.handlers.keys() {
-                on_path_update_fn(Some(ctx), Event::Error(err.clone()), false);
+                on_path_update_fn(
+                    Some(ctx),
+                    Event::Error {
+                        err: err.clone(),
+                        close: true,
+                    },
+                    false,
+                );
                 on_update_end_fn(Some(ctx));
             }
 
@@ -262,7 +267,7 @@ impl PathWatcher {
         this.emit(path.as_bytes(), hash, timestamp, is_file, event_type);
     }
 
-    pub(crate) fn emit(
+    fn emit(
         &mut self,
         path: &[u8],
         hash: bun_watcher::HashType,
@@ -311,7 +316,7 @@ impl PathWatcher {
         self.maybe_deinit();
     }
 
-    pub(crate) fn init(
+    fn init(
         manager: &mut PathWatcherManager,
         path: &ZStr,
         recursive: bool,
@@ -469,7 +474,7 @@ impl PathWatcher {
 
 // ──────────────────────────────────────────────────────────────────────────
 
-pub fn watch(
+pub(crate) fn watch(
     vm: &'static jsc::VirtualMachineRef,
     path: &ZStr,
     recursive: bool,

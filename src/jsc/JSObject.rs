@@ -128,17 +128,6 @@ impl JSObject {
         self.to_js().get(global, prop.as_ref())
     }
 
-    #[inline]
-    pub fn put(
-        &self,
-        global: &JSGlobalObject,
-        key: impl AsRef<[u8]>,
-        value: JSValue,
-    ) -> JsResult<()> {
-        self.to_js().put(global, key.as_ref(), value);
-        Ok(())
-    }
-
     /// # Safety
     /// `owner` must be a cell-tagged `JSValue` (its payload is a live
     /// `JSCell*`) that remains valid for the duration of the call.
@@ -212,7 +201,10 @@ impl JSObject {
     }
 
     /// This will not call getters or be observable from JavaScript.
-    pub fn get_code_property_vm_inquiry(&mut self, global: &JSGlobalObject) -> Option<JSValue> {
+    pub(crate) fn get_code_property_vm_inquiry(
+        &mut self,
+        global: &JSGlobalObject,
+    ) -> Option<JSValue> {
         let v = Bun__JSObject__getCodePropertyVMInquiry(global, self);
         if v.is_empty() {
             return None;
@@ -243,7 +235,7 @@ impl Default for ExternColumnIdentifier {
 }
 
 impl ExternColumnIdentifier {
-    pub fn string(&mut self) -> Option<&mut BunString> {
+    pub(crate) fn string(&mut self) -> Option<&mut BunString> {
         match self.tag {
             // SAFETY: tag == 2 means `value.name` is the active union field.
             2 => Some(unsafe { &mut *self.value.name }),
@@ -260,7 +252,7 @@ impl Drop for ExternColumnIdentifier {
     }
 }
 
-pub(crate) type InitializeCallback =
+type InitializeCallback =
     extern "C" fn(ctx: *mut c_void, obj: *mut JSObject, global: &JSGlobalObject);
 
 /// Object-initializer contract: implement `create` on your context type and

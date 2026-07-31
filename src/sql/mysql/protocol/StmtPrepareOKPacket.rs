@@ -12,7 +12,7 @@ pub struct StmtPrepareOKPacket {
 }
 
 impl StmtPrepareOKPacket {
-    pub fn decode_internal<Context: ReaderContext>(
+    pub(crate) fn decode_internal<Context: ReaderContext>(
         &mut self,
         reader: NewReader<Context>,
     ) -> Result<(), AnyMySQLError> {

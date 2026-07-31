@@ -26,7 +26,7 @@ use crate::hir::{
     is_use_insertion_effect_hook_type, is_use_layout_effect_hook_type, is_use_ref_type, visitors,
 };
 
-pub fn validate_no_set_state_in_effects(
+pub(crate) fn validate_no_set_state_in_effects(
     func: &HirFunction,
     env: &Environment,
 ) -> Result<CompilerError, CompilerDiagnostic> {

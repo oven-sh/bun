@@ -5,7 +5,8 @@ use std::io::Write as _;
 use bun_core::ZigString;
 use bun_io::KeepAlive;
 use bun_jsc::{
-    self as jsc, CallFrame, JSFunction, JSGlobalObject, JSValue, JsError, JsResult, WorkPoolTask,
+    self as jsc, ArrayBuffer, CallFrame, JSFunction, JSGlobalObject, JSValue, JsError, JsResult,
+    WorkPoolTask,
 };
 // `bun_jsc::{AnyTask, ConcurrentTask, EventLoop}` are *modules* (re-exported from
 // `bun_event_loop`); pull the concrete types out by name.
@@ -30,7 +31,7 @@ use bun_sha_hmac::SHA512;
 // PasswordObject
 // ───────────────────────────────────────────────────────────────────────────
 
-pub struct PasswordObject;
+pub(crate) struct PasswordObject;
 
 #[derive(Copy, Clone, PartialEq, Eq, strum::IntoStaticStr)]
 #[repr(u8)]
@@ -55,9 +56,9 @@ pub enum AlgorithmValue {
 }
 
 impl AlgorithmValue {
-    pub const BCRYPT_DEFAULT: u8 = 10;
+    pub(crate) const BCRYPT_DEFAULT: u8 = 10;
 
-    pub const DEFAULT: AlgorithmValue = AlgorithmValue::Argon2id(Argon2Params::DEFAULT);
+    pub(crate) const DEFAULT: AlgorithmValue = AlgorithmValue::Argon2id(Argon2Params::DEFAULT);
 
     pub fn from_js(global_object: &JSGlobalObject, value: JSValue) -> JsResult<AlgorithmValue> {
         if value.is_object() {
@@ -214,17 +215,17 @@ fn algorithm_from_zig_string(s: &ZigString) -> Option<Algorithm> {
 #[derive(Copy, Clone)]
 pub struct Argon2Params {
     // we don't support the other options right now, but can add them later if someone asks
-    pub memory_cost: u32,
-    pub time_cost: u32,
+    pub(crate) memory_cost: u32,
+    pub(crate) time_cost: u32,
 }
 
 impl Argon2Params {
-    pub(crate) const DEFAULT: Argon2Params = Argon2Params {
+    const DEFAULT: Argon2Params = Argon2Params {
         memory_cost: pwhash::argon2::Params::INTERACTIVE_2ID_M,
         time_cost: pwhash::argon2::Params::INTERACTIVE_2ID_T,
     };
 
-    pub(crate) fn to_params(self) -> pwhash::argon2::Params {
+    fn to_params(self) -> pwhash::argon2::Params {
         pwhash::argon2::Params {
             t: self.time_cost,
             m: self.memory_cost,
@@ -275,7 +276,7 @@ pub(crate) type HashError = crate::Error;
 
 impl PasswordObject {
     // This is purposely simple because nobody asked to make it more complicated
-    pub fn hash(password: &[u8], algorithm: AlgorithmValue) -> Result<Box<[u8]>, HashError> {
+    pub(crate) fn hash(password: &[u8], algorithm: AlgorithmValue) -> Result<Box<[u8]>, HashError> {
         match algorithm {
             AlgorithmValue::Argon2i(argon)
             | AlgorithmValue::Argon2d(argon)
@@ -333,7 +334,7 @@ impl PasswordObject {
         }
     }
 
-    pub fn verify(
+    pub(crate) fn verify(
         password: &[u8],
         previous_hash: &[u8],
         algorithm: Option<Algorithm>,
@@ -350,7 +351,7 @@ impl PasswordObject {
         Self::verify_with_algorithm(password, previous_hash, algo)
     }
 
-    pub fn verify_with_algorithm(
+    pub(crate) fn verify_with_algorithm(
         password: &[u8],
         previous_hash: &[u8],
         algorithm: Algorithm,
@@ -395,7 +396,7 @@ impl PasswordObject {
 // JSPasswordObject
 // ───────────────────────────────────────────────────────────────────────────
 
-pub struct JSPasswordObject;
+pub(crate) struct JSPasswordObject;
 
 struct PascalToUpperUnderscoreCaseFormatter<'a> {
     input: &'a [u8],
@@ -418,7 +419,7 @@ impl fmt::Display for PascalToUpperUnderscoreCaseFormatter<'_> {
 }
 
 #[unsafe(no_mangle)]
-pub(crate) extern "C" fn JSPasswordObject__create(global_object: &JSGlobalObject) -> JSValue {
+extern "C" fn JSPasswordObject__create(global_object: &JSGlobalObject) -> JSValue {
     let object = JSValue::create_empty_object(global_object, 4);
     // `#[bun_jsc::host_fn]` emits an `extern "C"` shim named
     // `__jsc_host_<fn>`; pass that (not the safe Rust fn) to JSFunction.
@@ -682,7 +683,7 @@ impl JSPasswordObject {
         Ok(promise_value)
     }
 
-    pub fn hash<const SYNC: bool>(
+    pub(crate) fn hash<const SYNC: bool>(
         global_object: &JSGlobalObject,
         password: Box<[u8]>,
         algorithm: AlgorithmValue,
@@ -690,7 +691,7 @@ impl JSPasswordObject {
         Self::run::<HashOp, SYNC>(global_object, password, HashOp { algorithm })
     }
 
-    pub fn verify<const SYNC: bool>(
+    pub(crate) fn verify<const SYNC: bool>(
         global_object: &JSGlobalObject,
         password: Box<[u8]>,
         prev_hash: Box<[u8]>,
@@ -711,7 +712,7 @@ impl JSPasswordObject {
 
 // Once we have bindings generator, this should be replaced with a generated function
 #[bun_jsc::host_fn]
-pub(crate) fn js_password_object_hash(
+fn js_password_object_hash(
     global_object: &JSGlobalObject,
     callframe: &CallFrame,
 ) -> JsResult<JSValue> {
@@ -750,7 +751,7 @@ pub(crate) fn js_password_object_hash(
 
 // Once we have bindings generator, this should be replaced with a generated function
 #[bun_jsc::host_fn]
-pub(crate) fn js_password_object_hash_sync(
+fn js_password_object_hash_sync(
     global_object: &JSGlobalObject,
     callframe: &CallFrame,
 ) -> JsResult<JSValue> {
@@ -794,7 +795,7 @@ pub(crate) fn js_password_object_hash_sync(
 
 // Once we have bindings generator, this should be replaced with a generated function
 #[bun_jsc::host_fn]
-pub(crate) fn js_password_object_verify(
+fn js_password_object_verify(
     global_object: &JSGlobalObject,
     callframe: &CallFrame,
 ) -> JsResult<JSValue> {
@@ -874,7 +875,7 @@ pub(crate) fn js_password_object_verify(
 
 // Once we have bindings generator, this should be replaced with a generated function
 #[bun_jsc::host_fn]
-pub(crate) fn js_password_object_verify_sync(
+fn js_password_object_verify_sync(
     global_object: &JSGlobalObject,
     callframe: &CallFrame,
 ) -> JsResult<JSValue> {
@@ -908,7 +909,7 @@ pub(crate) fn js_password_object_verify_sync(
         };
     }
 
-    let Some(password) = StringOrBuffer::from_js(global_object, arguments[0])? else {
+    let Some(mut password) = StringOrBuffer::from_js(global_object, arguments[0])? else {
         return Err(global_object.throw_invalid_argument_type(
             "verify",
             "password",
@@ -924,6 +925,10 @@ pub(crate) fn js_password_object_verify_sync(
             "string or TypedArray",
         ));
     };
+
+    if let StringOrBuffer::Buffer(buffer) = &mut password {
+        buffer.buffer = ArrayBuffer::from_typed_array(global_object, buffer.buffer.value);
+    }
 
     // defer password.deinit() / hash_.deinit() — Drop at scope exit.
 

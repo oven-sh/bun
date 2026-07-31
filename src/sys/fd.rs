@@ -313,7 +313,7 @@ unsafe extern "C" {
 }
 
 #[cfg(windows)]
-pub(crate) fn uv_open_osfhandle(in_: *mut c_void) -> Result<c_int, MakeLibUvOwnedError> {
+fn uv_open_osfhandle(in_: *mut c_void) -> Result<c_int, MakeLibUvOwnedError> {
     let out = bun_core::fd::uv_open_osfhandle(in_);
     debug_assert!(out >= -1);
     if out == -1 {

@@ -39,32 +39,17 @@ const testDir = tempDirWithFiles("watch", {
 });
 
 describe("fs.watch", () => {
-  test("non-persistent watcher should not block the event loop", done => {
-    try {
-      // https://github.com/joyent/node/issues/2293 - non-persistent watcher should not block the event loop
-      bunRun(path.join(import.meta.dir, "fixtures", "persistent.js"));
-      done();
-    } catch (e: any) {
-      done(e);
-    }
+  test.concurrent("non-persistent watcher should not block the event loop", async () => {
+    // https://github.com/joyent/node/issues/2293 - non-persistent watcher should not block the event loop
+    expect(await bunRun(path.join(import.meta.dir, "fixtures", "persistent.js"))).toSpawn();
   });
 
-  test("watcher should close and not block the event loop", done => {
-    try {
-      bunRun(path.join(import.meta.dir, "fixtures", "close.js"));
-      done();
-    } catch (e: any) {
-      done(e);
-    }
+  test.concurrent("watcher should close and not block the event loop", async () => {
+    expect(await bunRun(path.join(import.meta.dir, "fixtures", "close.js"))).toSpawn();
   });
 
-  test("unref watcher should not block the event loop", done => {
-    try {
-      bunRun(path.join(import.meta.dir, "fixtures", "unref.js"));
-      done();
-    } catch (e: any) {
-      done(e);
-    }
+  test.concurrent("unref watcher should not block the event loop", async () => {
+    expect(await bunRun(path.join(import.meta.dir, "fixtures", "unref.js"))).toSpawn();
   });
 
   test("should work with relative files", done => {
@@ -673,6 +658,145 @@ describe("fs.watch", () => {
     },
     90_000,
   );
+
+  // When inotify_add_watch fails for a subdirectory during the recursive walk
+  // (ENOSPC at the watch limit, EACCES on an unreadable subdir), bun used to
+  // swallow the failure so the watcher looked healthy while whole subtrees
+  // were silently unwatched. Now the first such failure is delivered as an
+  // `'error'` event and the watcher keeps covering whatever did register,
+  // matching node's recursive watcher.
+  //
+  // ENOSPC (the motivating case) needs the per-user inotify limit lowered,
+  // which requires a private user namespace; CI containers disallow that via
+  // seccomp. The same `add_one` error branch is reachable with EACCES by
+  // watching a tree that contains one unreadable subdirectory as an
+  // unprivileged user, so this test drops privileges to trigger it.
+  test.skipIf(!isLinux || process.getuid?.() !== 0)(
+    "recursive watch surfaces inotify_add_watch failure on a subdirectory as an 'error' event",
+    async () => {
+      const NOBODY = 65534;
+      using dir = tempDir("fs-watch-subtree-error", {
+        "open/.keep": "",
+        "locked/.keep": "",
+      });
+      const root = fs.realpathSync(String(dir));
+      // The de-privileged child must be able to traverse into `root`, read it,
+      // and write inside `open/`, while `locked/` denies read so
+      // inotify_add_watch on it returns EACCES. CI's runner.node.mjs points
+      // TMPDIR at a mode-0700 mkdtemp dir, so every ancestor of `root` needs
+      // +x for uid 65534 or the child fails at path resolution on the root
+      // itself before the recursive walk ever reaches `locked/`.
+      const ancestors: [string, number][] = [];
+      for (let p = path.dirname(root); p !== path.dirname(p); p = path.dirname(p)) {
+        const mode = fs.statSync(p).mode;
+        if ((mode & 0o011) !== 0o011) {
+          ancestors.push([p, mode & 0o7777]);
+          fs.chmodSync(p, (mode & 0o7777) | 0o011);
+        }
+      }
+      fs.chownSync(root, NOBODY, NOBODY);
+      fs.chownSync(path.join(root, "open"), NOBODY, NOBODY);
+      fs.chmodSync(root, 0o755);
+      fs.chmodSync(path.join(root, "open"), 0o755);
+      fs.chmodSync(path.join(root, "locked"), 0o000);
+
+      const fixture = `
+        const fs = require("fs"), path = require("path");
+        const root = process.env.WATCH_ROOT;
+        const seen = new Set();
+        let errorEvent = null, closed = false;
+        const w = fs.watch(root, { recursive: true }, (t, f) => seen.add(String(f)));
+        w.on("error", e => {
+          errorEvent = { code: e.code, syscall: e.syscall, path: e.path };
+          // Prove the watcher survives the error: a change under the readable
+          // subtree must still arrive.
+          fs.writeFileSync(path.join(root, "open", "p.txt"), "x");
+        });
+        w.on("close", () => { closed = true; });
+        const done = () => {
+          console.log(JSON.stringify({
+            errorEvent,
+            closed,
+            openDelivered: seen.has("open/p.txt") || seen.has(path.join("open", "p.txt")),
+          }));
+          try { w.close(); } catch {}
+          clearInterval(poll);
+          clearTimeout(deadline);
+        };
+        const poll = setInterval(() => {
+          if (errorEvent && (seen.has("open/p.txt") || seen.has(path.join("open", "p.txt")))) done();
+        }, 20);
+        const deadline = setTimeout(done, 4000);
+      `;
+      try {
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "-e", fixture],
+          env: { ...bunEnv, WATCH_ROOT: root },
+          cwd: "/",
+          uid: NOBODY,
+          gid: NOBODY,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect(stderr).toBe("");
+        const result = JSON.parse(stdout.trim());
+        expect(result.errorEvent).not.toBeNull();
+        // internal/fs/watch.ts rewrites EACCES to EPERM for watchpack compat.
+        expect(result.errorEvent.code).toBe("EPERM");
+        expect(result.errorEvent.syscall).toBe("watch");
+        expect(result.errorEvent.path).toContain("locked");
+        expect(result.closed).toBe(false);
+        expect(result.openDelivered).toBe(true);
+        expect(exitCode).toBe(0);
+
+        // fs.promises.watch wraps the native watcher in an async iterator with
+        // no user-accessible handle. A subtree-registration error that keeps
+        // the native watcher open must not leave it refing the event loop
+        // after the iterator throws, or the process hangs at exit.
+        const promisesFixture = `
+          const fs = require("fs");
+          const root = process.env.WATCH_ROOT;
+          (async () => {
+            let caught = null;
+            try {
+              for await (const e of fs.promises.watch(root, { recursive: true })) break;
+            } catch (e) {
+              caught = { code: e.code, syscall: e.syscall, path: e.path };
+            }
+            console.log(JSON.stringify({ caught }));
+          })();
+          setTimeout(() => { console.log(JSON.stringify({ hung: true })); process.exit(1); }, 4000).unref();
+        `;
+        await using proc2 = Bun.spawn({
+          cmd: [bunExe(), "-e", promisesFixture],
+          env: { ...bunEnv, WATCH_ROOT: root },
+          cwd: "/",
+          uid: NOBODY,
+          gid: NOBODY,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout2, stderr2, exitCode2] = await Promise.all([
+          proc2.stdout.text(),
+          proc2.stderr.text(),
+          proc2.exited,
+        ]);
+        expect(stderr2).toBe("");
+        const result2 = JSON.parse(stdout2.trim());
+        expect(result2.hung).toBeUndefined();
+        expect(result2.caught).toEqual({
+          code: "EACCES",
+          syscall: "watch",
+          path: path.join(root, "locked"),
+        });
+        expect(exitCode2).toBe(0);
+      } finally {
+        fs.chmodSync(path.join(root, "locked"), 0o755);
+        for (const [p, mode] of ancestors) fs.chmodSync(p, mode);
+      }
+    },
+  );
 });
 
 describe("fs.promises.watch", () => {
@@ -1204,6 +1328,7 @@ test.skipIf(!isMacOS)("fs.watch(dir) on macOS does not leak the resolved FSEvent
       /* ts */ `
         const fs = require("fs");
         const dir = process.argv[1];
+        const rss = process.platform === "darwin" && typeof Bun.unsafe.memoryFootprint === "function" ? Bun.unsafe.memoryFootprint : process.memoryUsage.rss;
 
         async function cycle(count) {
           for (let i = 0; i < count; i++) fs.watch(dir, () => {}).close();
@@ -1218,14 +1343,14 @@ test.skipIf(!isMacOS)("fs.watch(dir) on macOS does not leak the resolved FSEvent
         // sizing, and the PathWatcherManager caches reach steady state
         // (one-time growth tapers off only after ~10k cycles).
         for (let i = 0; i < 3; i++) await cycle(5000);
-        const before = process.memoryUsage.rss();
+        const before = rss();
 
         // With a ~700-byte resolved path, 5000 leaked dupeZ buffers is
         // ~3.5 MB of growth on unpatched builds. Keep the iteration count
         // low enough that rapid FSEventStream recreate doesn't exhaust the
         // kernel queue (FSEventStreamCreate -> NULL).
         await cycle(5000);
-        const after = process.memoryUsage.rss();
+        const after = rss();
 
         const growthMB = (after - before) / 1024 / 1024;
         console.log("RSS growth: " + growthMB.toFixed(2) + " MB");

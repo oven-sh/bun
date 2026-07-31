@@ -839,48 +839,47 @@ If you're using `@mapbox/node-pre-gyp` or similar tools, the `.node` file must b
 
 ### Embed directories
 
-To embed a directory with `bun build --compile`, include file patterns in your build:
+Use `--asset` (or `compile.assets` in the JavaScript API) to embed a file or directory tree into the executable under its original relative path. The embedded files live under `import.meta.dir` at runtime and are reachable via `node:fs` (`existsSync`, `statSync`, `readdirSync`, `readFileSync`) and `Bun.file()`.
 
 <Tabs>
   <Tab title="CLI">
     ```bash terminal icon="terminal"
-    bun build --compile ./index.ts ./public/**/*.png
+    bun build --compile ./index.ts --asset ./public --outfile myapp
     ```
   </Tab>
   <Tab title="JavaScript">
     ```ts build.ts icon="/icons/typescript.svg"
-    import { Glob } from "bun";
-
-    // Expand glob pattern to file list
-    const glob = new Glob("./public/**/*.png");
-    const pngFiles = Array.from(glob.scanSync("."));
-
     await Bun.build({
-      entrypoints: ["./index.ts", ...pngFiles],
+      entrypoints: ["./index.ts"],
       compile: {
         outfile: "./myapp",
+        assets: ["./public"],
       },
     });
     ```
-
   </Tab>
 </Tabs>
 
-Then, you can reference the files in your code:
-
 ```ts index.ts icon="/icons/typescript.svg"
-import icon from "./public/assets/icon.png" with { type: "file" };
-import { file } from "bun";
+import fs from "node:fs";
+import path from "node:path";
 
-export default {
-  fetch(req) {
-    // Embedded files can be streamed from Response objects
-    return new Response(file(icon));
-  },
-};
+const publicDir = path.join(import.meta.dir, "public");
+
+for (const entry of fs.readdirSync(publicDir, { withFileTypes: true })) {
+  console.log(entry.name, entry.isDirectory() ? "(dir)" : fs.statSync(path.join(publicDir, entry.name)).size);
+}
+
+const html = await Bun.file(path.join(publicDir, "index.html")).text();
 ```
 
-This is a workaround, and we expect to replace it with a more direct API.
+Pass `--asset` multiple times to embed several directories (for example `--asset ./client --asset ./prerendered` for a SvelteKit build). Only regular files are embedded; symlinks and empty subdirectories inside the tree are skipped.
+
+You can also embed individual files the old way, by adding them as extra entry points; imported assets are renamed according to `--asset-naming` (default `[name]-[hash].[ext]`):
+
+```ts
+import icon from "./public/assets/icon.png" with { type: "file" };
+```
 
 ### Detecting standalone mode at runtime
 
@@ -1065,7 +1064,10 @@ Available Windows options:
 - `description` - Description in file properties
 - `copyright` - Copyright notice in file properties
 
-<Warning>These flags cannot be used when cross-compiling because they depend on Windows APIs.</Warning>
+<Warning>
+  With the exception of `hideConsole`, these flags cannot be used when cross-compiling because they depend on Windows
+  APIs.
+</Warning>
 
 ---
 
@@ -1235,6 +1237,7 @@ interface BuildConfig {
 interface CompileBuildOptions {
   target?: Bun.Build.CompileTarget; // Cross-compilation target
   outfile?: string; // Output executable path
+  assets?: string[]; // Files/directories to embed under import.meta.dir
   execArgv?: string[]; // Runtime arguments (process.execArgv)
   autoloadTsconfig?: boolean; // Load tsconfig.json (default: false)
   autoloadPackageJson?: boolean; // Load package.json (default: false)

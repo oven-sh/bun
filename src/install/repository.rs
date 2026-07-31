@@ -112,7 +112,7 @@ struct SloppyGlobalGitConfig {
 static SLOPPY_HOLDER: OnceLock<SloppyGlobalGitConfig> = OnceLock::new();
 
 impl SloppyGlobalGitConfig {
-    pub(crate) fn get() -> SloppyGlobalGitConfig {
+    fn get() -> SloppyGlobalGitConfig {
         *SLOPPY_HOLDER.get_or_init(Self::load_and_parse)
     }
 
@@ -237,8 +237,7 @@ pub(crate) struct SharedEnv {
 // Lazy-init on the install main thread, then `&'static`-read from worker
 // threads. RacyCell — the install enqueue path is single-threaded at the
 // write point.
-pub(crate) static SHARED_ENV: bun_core::RacyCell<SharedEnv> =
-    bun_core::RacyCell::new(SharedEnv { env: None });
+static SHARED_ENV: bun_core::RacyCell<SharedEnv> = bun_core::RacyCell::new(SharedEnv { env: None });
 
 impl SharedEnv {
     pub(crate) fn get(other: &mut bun_dotenv::Loader) -> &'static bun_dotenv::Map {
@@ -293,7 +292,7 @@ bun_core::comptime_string_map! {
 }
 
 #[inline]
-pub(crate) fn host_tld(host: &[u8]) -> Option<&'static [u8]> {
+fn host_tld(host: &[u8]) -> Option<&'static [u8]> {
     HOST_TLDS.get(host).copied()
 }
 
@@ -449,30 +448,23 @@ impl RepositoryExt for Repository {
         if remain.starts_with(b"github:") {
             remain = &remain[b"github:".len()..];
         }
-        let mut hash: usize = 0;
-        let mut slash: usize = 0;
-        for (i, &c) in remain.iter().enumerate() {
-            match c {
-                b'/' => slash = i,
-                b'#' => hash = i,
-                _ => {}
-            }
-        }
-
-        let repo = if hash == 0 {
-            &remain[slash + 1..]
-        } else {
-            &remain[slash + 1..hash]
+        let (before_hash, committish) = match strings::last_index_of_char(remain, b'#') {
+            Some(hash) => (&remain[..hash], Some(&remain[hash + 1..])),
+            None => (remain, None),
+        };
+        let (owner, repo) = match strings::last_index_of_char(before_hash, b'/') {
+            Some(slash) => (&before_hash[..slash], &before_hash[slash + 1..]),
+            None => (&remain[..0], before_hash),
         };
 
         let mut result = Repository {
-            owner: buf.append(&remain[..slash])?,
+            owner: buf.append(owner)?,
             repo: buf.append(repo)?,
             ..Default::default()
         };
 
-        if hash != 0 {
-            result.committish = buf.append(&remain[hash + 1..])?;
+        if let Some(committish) = committish {
+            result.committish = buf.append(committish)?;
         }
 
         Ok(result)
@@ -561,6 +553,10 @@ impl RepositoryExt for Repository {
             return Some(url);
         }
 
+        if url.len() + b"ssh://git@".len() + b".org".len() > ssh_path_buf.len() {
+            return None;
+        }
+
         if url.starts_with(b"ssh://") {
             // TODO(markovejnovic): This is a stop-gap. One of the problems with the implementation
             // here is that we should integrate hosted_git_info more thoroughly into the codebase
@@ -582,6 +578,9 @@ impl RepositoryExt for Repository {
 
             // Copy corrected URL to thread-local buffer
             let corrected_str = corrected.url_slice();
+            if corrected_str.len() > ssh_path_buf.len() {
+                return Some(url);
+            }
             let result = &mut ssh_path_buf[..corrected_str.len()];
             result.copy_from_slice(corrected_str);
             return Some(&ssh_path_buf[..corrected_str.len()]);
@@ -589,6 +588,9 @@ impl RepositoryExt for Repository {
 
         if Dependency::is_scp_like_path(url) {
             const PREFIX: &[u8] = b"ssh://git@";
+            if PREFIX.len() + url.len() > ssh_path_buf.len() {
+                return None;
+            }
             ssh_path_buf[..PREFIX.len()].copy_from_slice(PREFIX);
             let rest = &mut ssh_path_buf[PREFIX.len()..];
 
@@ -597,7 +599,9 @@ impl RepositoryExt for Repository {
             if let Some(colon) = colon_index {
                 let colon = colon as usize;
                 // make sure known hosts have `.com` or `.org`
-                if let Some(tld) = host_tld(&url[..colon]) {
+                if let Some(tld) = host_tld(&url[..colon])
+                    && url.len() + tld.len() <= rest.len()
+                {
                     rest[..colon].copy_from_slice(&url[..colon]);
                     rest[colon..colon + tld.len()].copy_from_slice(tld);
                     rest[colon + tld.len()] = b'/';
@@ -628,7 +632,14 @@ impl RepositoryExt for Repository {
             return Some(url);
         }
 
+        if url.len() + b"https://".len() + b".org".len() > final_path_buf.len() {
+            return None;
+        }
+
         if url.starts_with(b"ssh://") {
+            if url.len() - b"ssh".len() + b"https".len() > final_path_buf.len() {
+                return None;
+            }
             final_path_buf[..b"https".len()].copy_from_slice(b"https");
             let tail = &url[b"ssh".len()..];
             final_path_buf[b"https".len()..b"https".len() + tail.len()].copy_from_slice(tail);
@@ -638,6 +649,9 @@ impl RepositoryExt for Repository {
 
         if Dependency::is_scp_like_path(url) {
             const PREFIX: &[u8] = b"https://";
+            if PREFIX.len() + url.len() > final_path_buf.len() {
+                return None;
+            }
             final_path_buf[..PREFIX.len()].copy_from_slice(PREFIX);
             let rest = &mut final_path_buf[PREFIX.len()..];
 
@@ -646,7 +660,9 @@ impl RepositoryExt for Repository {
             if let Some(colon) = colon_index {
                 let colon = colon as usize;
                 // make sure known hosts have `.com` or `.org`
-                if let Some(tld) = host_tld(&url[..colon]) {
+                if let Some(tld) = host_tld(&url[..colon])
+                    && url.len() + tld.len() <= rest.len()
+                {
                     rest[..colon].copy_from_slice(&url[..colon]);
                     rest[colon..colon + tld.len()].copy_from_slice(tld);
                     rest[colon + tld.len()] = b'/';

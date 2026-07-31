@@ -133,6 +133,25 @@ describe("spawn()", () => {
     expect(!!child).toBe(true);
   });
 
+  // Node's spawn() has no encoding option and ignores unknown option keys.
+  // execa passes its own { encoding: "buffer" } option straight to spawn().
+  // https://github.com/oven-sh/bun/issues/36049
+  it.concurrent.each(["buffer", "utf8", "not-a-real-encoding"])(
+    "should ignore options.encoding %j like Node does",
+    async encoding => {
+      const child = spawn(bunExe(), ["-e", "console.log('hi')"], { env: bunEnv, encoding } as any);
+      const chunks: Buffer[] = [];
+      child.stdout!.on("data", chunk => chunks.push(chunk));
+      await once(child, "close");
+      expect(chunks.length).toBeGreaterThan(0);
+      for (const chunk of chunks) {
+        expect(chunk).toBeInstanceOf(Buffer);
+      }
+      expect(Buffer.concat(chunks).toString()).toBe("hi\n");
+      expect(child.exitCode).toBe(0);
+    },
+  );
+
   it("should use cwd from options to search for executables", async () => {
     const tmpdir = tmpdirSync();
     await Promise.all([
@@ -398,11 +417,42 @@ describe("spawn()", () => {
       expect(child.stdout).not.toBeNull();
       expect(child.stderr).not.toBeNull();
     });
-    it.todo("overlapped", () => {
+    it("overlapped", () => {
       const child = spawn(bunExe(), ["-v"], { stdio: "overlapped" });
       expect(!!child).toBe(true);
       expect(child.stdout).not.toBeNull();
       expect(child.stderr).not.toBeNull();
+    });
+    it("overlapped string shorthand behaves like pipe", async () => {
+      const child = spawn(bunExe(), ["-e", "process.stdin.on('data', d => process.stdout.write('out:' + d))"], {
+        env: bunEnv,
+        stdio: "overlapped",
+      });
+      expect(child.stdin).not.toBeNull();
+      expect(child.stdout).not.toBeNull();
+      expect(child.stderr).not.toBeNull();
+      child.stderr!.resume();
+      const { promise, resolve, reject } = Promise.withResolvers<string>();
+      let out = "";
+      const closed = new Promise<number | null>(r => child.on("close", r));
+      child.on("error", reject);
+      child.on("close", code => reject(new Error(`child closed (${code}) before echoing; out=${JSON.stringify(out)}`)));
+      child.stdout!.on("data", d => {
+        out += d;
+        if (out.includes("\n")) resolve(out);
+      });
+      child.stdin!.end("hi\n");
+      expect(await promise).toBe("out:hi\n");
+      expect(await closed).toBe(0);
+    });
+    it("overlapped string shorthand works with spawnSync", () => {
+      const { stdout, status } = spawnSync(bunExe(), ["-e", "console.log('ok')"], {
+        env: bunEnv,
+        stdio: "overlapped",
+        encoding: "utf8",
+      });
+      expect(stdout).toBe("ok\n");
+      expect(status).toBe(0);
     });
   });
 
@@ -971,6 +1021,68 @@ describe.skipIf(!isPosix)("stdout pipe backpressure", () => {
     await once(c, "close");
     expect(c.exitCode).toBe(0);
   });
+});
+
+// child.stdout.pause() must stop the native reader so the kernel pipe fills
+// and the child blocks on write. Previously, once the stream had flowed even
+// once the native FileReader kept the poll armed (or uv_read_start active on
+// Windows) regardless of JS state, so the child wrote its entire output into
+// the parent's heap and 'data' kept firing after #handleOnExit resumed it.
+it("child.stdout.pause() after flowing stops native reads and blocks the child", async () => {
+  // 20 MB: well above any kernel socket buffer, small enough to drain fast
+  // once resumed on ASAN.
+  const SIZE = 20 * 1024 * 1024;
+  const writer = `const c=Buffer.alloc(1<<20,97);let w=0;(function f(){while(w<${SIZE}){const n=Math.min(c.length,${SIZE}-w);w+=n;if(!process.stdout.write(c.subarray(0,n))){process.stdout.once('drain',f);return}}})()`;
+  const c = spawn(bunExe(), ["-e", writer], {
+    stdio: ["ignore", "pipe", "ignore"],
+    env: bunEnv,
+  });
+  try {
+    let events = 0;
+    let bytes = 0;
+    let eventsAfterPause = 0;
+    const { promise: firstData, resolve: gotFirst, reject: failFirst } = Promise.withResolvers<void>();
+    c.on("error", failFirst);
+    c.on("close", () => failFirst(new Error("child closed before first 'data'")));
+    c.stdout!.on("data", (d: Buffer) => {
+      events++;
+      bytes += d.length;
+      if (events === 1) {
+        c.stdout!.pause();
+        gotFirst();
+      } else {
+        eventsAfterPause++;
+      }
+    });
+    await firstData;
+
+    expect(c.stdout!.isPaused()).toBe(true);
+
+    // Give the eager-read path every chance to over-buffer: without the fix
+    // the native reader has already drained most of SIZE and the child is
+    // racing to exit. Deadline-polled; breaks early if the bug is present.
+    const deadline = Date.now() + 1000;
+    while (c.exitCode === null && Date.now() < deadline) {
+      await new Promise(r => setImmediate(r));
+    }
+
+    // Core assertion: pause() applied backpressure, so the child cannot have
+    // finished writing SIZE bytes and is blocked on a full pipe.
+    expect(c.exitCode).toBeNull();
+    expect(eventsAfterPause).toBe(0);
+    expect(c.stdout!.isPaused()).toBe(true);
+    // At most a few pipe-buffer-sized chunks were delivered before pause took
+    // effect, never the whole output.
+    expect(bytes).toBeLessThan(SIZE);
+
+    // Resuming delivers every byte and the child exits cleanly.
+    c.stdout!.resume();
+    await once(c, "close");
+    expect(bytes).toBe(SIZE);
+    expect(c.exitCode).toBe(0);
+  } finally {
+    c.kill();
+  }
 });
 
 // When spawn fails (ENOENT, bad cwd, etc.) the ChildProcess emits 'error' and

@@ -11,11 +11,6 @@ use bun_paths::fs;
 use bun_paths::resolve_path::{self, platform};
 use bun_sys::Fd;
 
-// Instead of keeping files in-memory, we:
-// 1. Write directly to disk
-// 2. (Optional) move the file to the destination
-// This saves us from allocating a buffer
-
 pub struct OutputFile {
     pub loader: Loader,
     pub input_loader: Loader,
@@ -109,7 +104,7 @@ impl Clone for OutputFile {
 
 #[derive(Default, Clone, Copy)]
 pub struct BakeExtra {
-    pub is_route: bool,
+    pub(crate) is_route: bool,
     pub fully_static: bool,
     pub bake_is_runtime: bool,
 }
@@ -117,86 +112,18 @@ pub struct BakeExtra {
 pub type Index = bun_core::GenericIndex<u32, OutputFile>;
 pub type IndexOptional = bun_core::GenericIndexOptional<u32, OutputFile>;
 
-// Depending on:
-// - The target
-// - The number of open file handles
-// - Whether or not a file of the same name exists
-// We may use a different system call
 #[derive(Clone)]
 pub struct FileOperation {
     // Owned copy so the field has a single, obvious lifetime.
     pub pathname: Box<[u8]>,
-    pub fd: Fd,
-    pub dir: Fd,
 }
 
-impl Default for FileOperation {
-    fn default() -> Self {
-        Self {
-            pathname: Box::default(),
-            fd: Fd::INVALID,
-            dir: Fd::INVALID,
-        }
-    }
-}
-
-impl FileOperation {
-    pub fn from_file(fd: Fd, pathname: &[u8]) -> FileOperation {
-        FileOperation {
-            fd,
-            pathname: Box::from(pathname),
-            ..Default::default()
-        }
-    }
-
-    pub fn get_pathname(&self) -> &[u8] {
-        &self.pathname
-    }
-}
-
-#[repr(u8)]
-#[derive(Clone, Copy, PartialEq, Eq, strum::IntoStaticStr)]
-pub enum Kind {
-    Move,
-    Copy,
-    Noop,
-    Buffer,
-    Pending,
-    Saved,
-}
-
-// TODO: document how and why all variants of this union(enum) are used,
-// specifically .move and .copy; the new bundler has to load files in memory
-// in order to hash them, so i think it uses .buffer for those
+#[derive(Clone)]
 pub enum Value {
-    Move(FileOperation),
     Copy(FileOperation),
     Noop,
     Buffer { bytes: Box<[u8]> },
-    // Note: boxed to avoid blowing up `Value`'s inline size (`resolver::Result`
-    // is several hundred bytes).
-    Pending(Box<bun_resolver::Result>),
     Saved(SavedFile),
-}
-
-// Cloning is only used to splice finished output files into the final list.
-// The `Pending` arm is never present
-// at that stage (only `buffer`/`copy`/`saved` are produced by `init`), so its
-// clone is intentionally unreachable rather than forcing `resolver::Result` to
-// be `Clone`.
-impl Clone for Value {
-    fn clone(&self) -> Self {
-        match self {
-            Value::Move(op) => Value::Move(op.clone()),
-            Value::Copy(op) => Value::Copy(op.clone()),
-            Value::Noop => Value::Noop,
-            Value::Buffer { bytes } => Value::Buffer {
-                bytes: bytes.clone(),
-            },
-            Value::Pending(_) => unreachable!("OutputFile.Value::Pending is never cloned"),
-            Value::Saved(s) => Value::Saved(*s),
-        }
-    }
 }
 
 impl Value {
@@ -231,19 +158,9 @@ impl Value {
                     noop,
                 )
             }
-            Value::Pending(_) => unreachable!(),
-            other => bun_core::todo_panic!("handle .{}", <&'static str>::from(other.kind())),
-        }
-    }
-
-    pub fn kind(&self) -> Kind {
-        match self {
-            Value::Move(_) => Kind::Move,
-            Value::Copy(_) => Kind::Copy,
-            Value::Noop => Kind::Noop,
-            Value::Buffer { .. } => Kind::Buffer,
-            Value::Pending(_) => Kind::Pending,
-            Value::Saved(_) => Kind::Saved,
+            Value::Copy(_) | Value::Saved(_) => {
+                bun_core::todo_panic!("to_bun_string_ref: Copy/Saved")
+            }
         }
     }
 }
@@ -256,40 +173,34 @@ pub enum OptionsData {
         // arena dropped — global mimalloc.
         data: Box<[u8]>,
     },
-    File {
-        file: Fd,
-        size: usize,
-        dir: Fd,
-    },
     Saved(usize),
 }
 
 pub struct Options {
-    pub loader: Loader,
-    pub input_loader: Loader,
-    pub hash: Option<u64>,
-    pub source_map_index: Option<u32>,
-    pub bytecode_index: Option<u32>,
-    pub module_info_index: Option<u32>,
-    pub output_path: Box<[u8]>,
-    pub source_index: IndexOptional,
-    pub size: Option<usize>,
-    pub input_path: Box<[u8]>,
-    pub display_size: u32,
-    pub output_kind: OutputKind,
-    pub is_executable: bool,
-    pub data: OptionsData,
-    pub side: Option<Side>,
-    pub entry_point_index: Option<u32>,
-    pub referenced_css_chunks: Box<[Index]>,
-    pub bake_extra: BakeExtra,
+    pub(crate) loader: Loader,
+    pub(crate) input_loader: Loader,
+    pub(crate) hash: Option<u64>,
+    pub(crate) source_map_index: Option<u32>,
+    pub(crate) bytecode_index: Option<u32>,
+    pub(crate) module_info_index: Option<u32>,
+    pub(crate) output_path: Box<[u8]>,
+    pub(crate) source_index: IndexOptional,
+    pub(crate) size: Option<usize>,
+    pub(crate) input_path: Box<[u8]>,
+    pub(crate) display_size: u32,
+    pub(crate) output_kind: OutputKind,
+    pub(crate) is_executable: bool,
+    pub(crate) data: OptionsData,
+    pub(crate) side: Option<Side>,
+    pub(crate) entry_point_index: Option<u32>,
+    pub(crate) referenced_css_chunks: Box<[Index]>,
+    pub(crate) bake_extra: BakeExtra,
 }
 
 impl OutputFile {
-    pub fn init(options: Options) -> OutputFile {
+    pub(crate) fn init(options: Options) -> OutputFile {
         let size = options.size.unwrap_or(match &options.data {
             OptionsData::Buffer { data } => data.len(),
-            OptionsData::File { size, .. } => *size,
             OptionsData::Saved(_) => 0,
         });
         let owned_src_path_text: Box<[u8]> = options.input_path;
@@ -301,7 +212,7 @@ impl OutputFile {
             input_loader: options.input_loader,
             src_path: fs::Path::init(input_path),
             owned_src_path_text,
-            dest_path: options.output_path.clone(),
+            dest_path: options.output_path,
             source_index: options.source_index,
             size,
             size_without_sourcemap: options.display_size as usize,
@@ -313,11 +224,6 @@ impl OutputFile {
             is_executable: options.is_executable,
             value: match options.data {
                 OptionsData::Buffer { data } => Value::Buffer { bytes: data },
-                OptionsData::File { file, dir, .. } => Value::Copy('brk: {
-                    let mut op = FileOperation::from_file(file, &options.output_path);
-                    op.dir = dir;
-                    break 'brk op;
-                }),
                 OptionsData::Saved(_) => Value::Saved(SavedFile::default()),
             },
             side: options.side,
@@ -356,31 +262,14 @@ impl OutputFile {
                     },
                 )?;
             }
-            Value::Move(value) => {
-                self.move_to(root_dir_path, &value.pathname, root_dir)?;
-            }
             Value::Copy(value) => {
                 self.copy_to(root_dir_path, &value.pathname, root_dir)?;
             }
-            Value::Pending(_) => unreachable!(),
         }
         Ok(())
     }
 
-    pub fn move_to(&self, _: &[u8], rel_path: &[u8], dir: Fd) -> Result<(), Error> {
-        let Value::Move(mv) = &self.value else {
-            unreachable!()
-        };
-        // NUL-terminate both paths into stack buffers via `resolve_path::z`.
-        let mut src_buf = PathBuffer::uninit();
-        let mut dst_buf = PathBuffer::uninit();
-        let src = resolve_path::z(mv.get_pathname(), &mut src_buf);
-        let dst = resolve_path::z(rel_path, &mut dst_buf);
-        bun_sys::move_file_z(mv.dir, src, dir, dst)?;
-        Ok(())
-    }
-
-    pub fn copy_to(&self, _: &[u8], rel_path: &[u8], dir: Fd) -> Result<(), Error> {
+    pub(crate) fn copy_to(&self, _: &[u8], rel_path: &[u8], dir: Fd) -> Result<(), Error> {
         let mut out_buf = PathBuffer::uninit();
         let fd_out = bun_sys::openat(
             dir,

@@ -64,6 +64,67 @@ describe("fetch() follows a redirect on headers without waiting for the 3xx body
   });
 });
 
+// https://fetch.spec.whatwg.org/#redirect-status
+// A redirect status is 301, 302, 303, 307, or 308. Other 3xx statuses
+// (300, 304, 305, 306) are not redirects: they are returned as-is under
+// every redirect mode, including "error".
+describe("fetch() only treats WHATWG redirect statuses as redirects", () => {
+  async function serve(status: number, reason: string, extra = "") {
+    const server = net.createServer(socket => {
+      socket.on("error", () => {});
+      socket.once("data", () => {
+        socket.end(`HTTP/1.1 ${status} ${reason}\r\n${extra}Content-Length: 0\r\nConnection: close\r\n\r\n`);
+      });
+    });
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const { port } = server.address() as net.AddressInfo;
+    return { server, url: `http://127.0.0.1:${port}/` };
+  }
+
+  const nonRedirect3xx = [
+    ["300 Multiple Choices", 300, "Multiple Choices", "Location: /elsewhere\r\n"],
+    ["304 Not Modified", 304, "Not Modified", 'ETag: "v1"\r\n'],
+    ["304 Not Modified with Location", 304, "Not Modified", 'ETag: "v1"\r\nLocation: /elsewhere\r\n'],
+    ["305 Use Proxy", 305, "Use Proxy", "Location: /elsewhere\r\n"],
+    ["306 unused", 306, "unused", ""],
+  ] as const;
+
+  describe.each(["error", "follow"] as const)("redirect: %p", redirect => {
+    it.concurrent.each(nonRedirect3xx)("%s is returned as-is", async (_label, status, reason, extra) => {
+      const { server, url } = await serve(status, reason, extra);
+      try {
+        const res = await fetch(url, { redirect, headers: { "if-none-match": '"v1"' } });
+        expect({ status: res.status, redirected: res.redirected, body: await res.text() }).toEqual({
+          status,
+          redirected: false,
+          body: "",
+        });
+      } finally {
+        server.close();
+      }
+    });
+  });
+
+  it.concurrent.each([
+    [301, "Moved Permanently"],
+    [302, "Found"],
+    [303, "See Other"],
+    [307, "Temporary Redirect"],
+    [308, "Permanent Redirect"],
+  ])("redirect: 'error' rejects %d %s with UnexpectedRedirect", async (status, reason) => {
+    const { server, url } = await serve(status, reason, "Location: /elsewhere\r\n");
+    try {
+      const outcome = await fetch(url, { redirect: "error" }).then(
+        res => ({ rejected: false as const, status: res.status }),
+        e => ({ rejected: true as const, code: e.code }),
+      );
+      expect(outcome).toEqual({ rejected: true, code: "UnexpectedRedirect" });
+    } finally {
+      server.close();
+    }
+  });
+});
+
 it("fetch() with redirect: 'manual' still exposes the 3xx response body", async () => {
   const server = net.createServer(socket => {
     socket.on("error", () => {});
@@ -246,12 +307,13 @@ it("fetch() does not leak intermediate redirect URLs in multi-hop chains", async
   // pollute the RSS we measure. The child samples RSS after warmup and
   // again after two equal batches so we can assert on steady-state growth.
   const script = `
+    const rss = process.platform === "darwin" && typeof Bun.unsafe.memoryFootprint === "function" ? Bun.unsafe.memoryFootprint : process.memoryUsage.rss;
     const url = "${server.url.origin}/hop/0";
     async function once() {
       const res = await fetch(url, { redirect: "follow" });
       if (await res.text() !== "ok") throw new Error("unexpected body: " + res.status);
     }
-    function sample() { Bun.gc(true); return process.memoryUsage.rss(); }
+    function sample() { Bun.gc(true); return rss(); }
     for (let i = 0; i < 15; i++) await once();
     const rss0 = sample();
     for (let i = 0; i < 25; i++) await once();

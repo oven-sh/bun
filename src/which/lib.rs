@@ -7,10 +7,13 @@ use bun_core::{ZStr, strings};
 use bun_paths::DELIMITER;
 #[cfg(windows)]
 use bun_paths::resolve_path::PosixToWinNormalizer;
+#[cfg(windows)]
 use bun_paths::resolve_path::posix_to_platform_in_place;
 #[cfg(windows)]
 use bun_paths::w_path_buffer_pool;
-use bun_paths::{MAX_PATH_BYTES, PathBuffer, SEP, WPathBuffer, is_absolute, path_buffer_pool};
+use bun_paths::{MAX_PATH_BYTES, PathBuffer, SEP, is_absolute};
+#[cfg(windows)]
+use bun_paths::{WPathBuffer, path_buffer_pool};
 
 #[allow(non_upper_case_globals)]
 mod scope {
@@ -80,7 +83,7 @@ pub fn which_for_spawn<'a>(
 // Like /usr/bin/which but without needing to exec a child process
 // Remember to resolve the symlink if necessary
 pub fn which<'a>(buf: &'a mut PathBuffer, path: &[u8], cwd: &[u8], bin: &[u8]) -> Option<&'a ZStr> {
-    if bin.len() > MAX_PATH_BYTES {
+    if bin.len() >= MAX_PATH_BYTES {
         return None;
     }
     bun_core::scoped_log!(
@@ -158,9 +161,11 @@ pub fn which<'a>(buf: &'a mut PathBuffer, path: &[u8], cwd: &[u8], bin: &[u8]) -
 
 #[cfg(windows)]
 static WIN_EXTENSIONS_W: [&[u16]; 3] = [w!("exe"), w!("cmd"), w!("bat")];
+#[cfg(windows)]
 const WIN_EXTENSIONS: [&[u8]; 3] = [b"exe", b"cmd", b"bat"];
 
-pub fn ends_with_extension(str: &[u8]) -> bool {
+#[cfg(windows)]
+pub(crate) fn ends_with_extension(str: &[u8]) -> bool {
     if str.len() < 4 {
         return false;
     }
@@ -215,14 +220,12 @@ pub fn batch_arg_has_cmd_metachars(arg: &[u8]) -> bool {
 }
 
 /// Check if the WPathBuffer holds a existing file path, checking also for windows extensions variants like .exe, .cmd and .bat (internally used by which_win)
+#[cfg(windows)]
 fn search_bin(
     buf: &mut WPathBuffer,
     path_size: usize,
     check_windows_extensions: bool,
 ) -> Option<&mut [u16]> {
-    // `search_bin` only ever runs on Windows; the POSIX arm here exists solely
-    // so the public `which_win` symbol type-checks on all targets.
-    #[cfg(windows)]
     {
         if !check_windows_extensions {
             // On Windows, files without extensions are not executable
@@ -249,14 +252,10 @@ fn search_bin(
         }
         None
     }
-    #[cfg(not(windows))]
-    {
-        let _ = (buf, path_size, check_windows_extensions);
-        None
-    }
 }
 
 /// Check if bin file exists in this path (internally used by which_win)
+#[cfg(windows)]
 fn search_bin_in_path<'a>(
     buf: &'a mut WPathBuffer,
     path_buf: &mut PathBuffer,
@@ -267,20 +266,12 @@ fn search_bin_in_path<'a>(
     if path.is_empty() {
         return None;
     }
-    #[cfg(windows)]
     let segment: &[u8] = if is_absolute(path) {
         match PosixToWinNormalizer::resolve_cwd_with_external_buf(path_buf, path) {
             Ok(s) => s,
             Err(_) => return None,
         }
     } else {
-        path
-    };
-    // PosixToWinNormalizer is a no-op on posix; resolve_cwd_with_external_buf
-    // takes `&mut ()` there, so just pass through.
-    #[cfg(not(windows))]
-    let segment: &[u8] = {
-        let _ = path_buf;
         path
     };
     let tail_units = if check_windows_extensions { 5 } else { 1 };
@@ -313,7 +304,8 @@ fn search_bin_in_path<'a>(
 /// This is the windows version of `which`.
 /// It operates on wide strings.
 /// It is similar to Get-Command in powershell.
-pub fn which_win<'a>(
+#[cfg(windows)]
+pub(crate) fn which_win<'a>(
     buf: &'a mut WPathBuffer,
     path: &[u8],
     cwd: &[u8],
@@ -328,14 +320,11 @@ pub fn which_win<'a>(
 
     // handle absolute paths
     if is_absolute(bin) {
-        #[cfg(windows)]
         let normalized_bin =
             match PosixToWinNormalizer::resolve_cwd_with_external_buf(&mut *path_buf, bin) {
                 Ok(s) => s,
                 Err(_) => return None,
             };
-        #[cfg(not(windows))]
-        let normalized_bin = bin;
         let bin_utf16 =
             bun_core::strings::convert_utf8_to_utf16_in_buffer(&mut buf[..], normalized_bin);
         // Capture len before re-borrowing buf (borrowck).

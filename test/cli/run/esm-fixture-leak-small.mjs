@@ -4,6 +4,10 @@ const dest = require.resolve("./leak-fixture-small-ast.js");
 // ASAN's quarantine retains freed allocations (default 256 MB) so RSS deltas
 // run far higher under bun-asan; widen the threshold to avoid false positives.
 const isASAN = process.execPath.includes("bun-asan");
+const rss =
+  process.platform === "darwin" && typeof Bun !== "undefined" && typeof Bun.unsafe.memoryFootprint === "function"
+    ? Bun.unsafe.memoryFootprint
+    : process.memoryUsage.rss;
 
 if (typeof Bun !== "undefined") Bun.gc(true);
 for (let i = 0; i < 5; i++) {
@@ -11,7 +15,7 @@ for (let i = 0; i < 5; i++) {
   await import(dest);
 }
 if (typeof Bun !== "undefined") Bun.gc(true);
-const baseline = process.memoryUsage.rss();
+const baseline = rss();
 
 for (let i = 0; i < 100000; i++) {
   delete require.cache[dest];
@@ -20,7 +24,7 @@ for (let i = 0; i < 100000; i++) {
 if (typeof Bun !== "undefined") Bun.gc(true);
 
 setTimeout(() => {
-  let diff = process.memoryUsage.rss() - baseline;
+  let diff = rss() - baseline;
   diff = (diff / 1024 / 1024) | 0;
   console.log({ leaked: diff + " MB" });
   // This test seems to be more flaky on slow filesystems.

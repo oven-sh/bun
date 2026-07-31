@@ -305,16 +305,9 @@ static JSC::JSValue toJS(JSC::Structure* structure, DataCell* cells, uint32_t co
     {
         auto* object = structure ? JSC::constructEmptyObject(vm, structure) : JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 0);
 
-        // TODO: once we have more tests for this, let's add another branch for
-        // "only mixed names and mixed indexed columns, no duplicates"
-        // then we cna remove this sort and instead do two passes.
-        if (flags.hasIndexedColumns() && flags.hasNamedColumns()) {
-            // sort the cells by if they're named or indexed, put named first.
-            // this is to conform to the Structure offsets from earlier.
-            std::sort(cells, cells + count, [](DataCell& a, DataCell& b) {
-                return a.isNamedColumn() && !b.isNamedColumn();
-            });
-        }
+        // cells[i] corresponds to fields[i]: the slow path below advances
+        // structureOffsetIndex only on named cells, so it visits them in the
+        // same order JSC__createStructure assigned the offsets. No sort needed.
 
         // Fast path: named columns only, no duplicate columns
         if (flags.hasNamedColumns() && !flags.hasDuplicateColumns() && !flags.hasIndexedColumns()) {
@@ -328,8 +321,11 @@ static JSC::JSValue toJS(JSC::Structure* structure, DataCell* cells, uint32_t co
                 if (names.has_value()) {
                     auto name = names.value()[i];
                     object->putDirect(vm, Identifier::fromString(vm, name.name.toWTFString()), value);
-
                 } else {
+                    // CachedStructure::build_from_columns guarantees one offset
+                    // per column on this path; never drop a value silently.
+                    RELEASE_ASSERT_WITH_MESSAGE(structure && structure->isValidOffset(i),
+                        "SQL row column %u has no matching Structure offset", i);
                     object->putDirectOffset(vm, i, value);
                 }
             }
@@ -380,7 +376,11 @@ static JSC::JSValue toJS(JSC::Structure* structure, DataCell* cells, uint32_t co
                             auto name = names.value()[structureOffsetIndex++];
                             object->putDirect(vm, Identifier::fromString(vm, name.name.toWTFString()), value);
                         }
-                    } else if (structure && structure->isValidOffset(structureOffsetIndex)) {
+                    } else {
+                        // JSC__createStructure added one offset per named
+                        // column; never drop a value silently.
+                        RELEASE_ASSERT_WITH_MESSAGE(structure && structure->isValidOffset(structureOffsetIndex),
+                            "SQL row named column has no matching Structure offset (index %u)", structureOffsetIndex);
                         object->putDirectOffset(vm, structureOffsetIndex++, value);
                     }
                 } else if (cell.isDuplicateColumn()) {

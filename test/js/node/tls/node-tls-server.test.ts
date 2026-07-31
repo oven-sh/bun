@@ -1,6 +1,7 @@
 import crypto from "crypto";
 import { readFileSync, realpathSync } from "fs";
 import { bunEnv, bunExe, tls as cert1, isDebug } from "harness";
+import https from "https";
 import net, { AddressInfo } from "net";
 import { createTest } from "node-harness";
 import { once } from "node:events";
@@ -808,6 +809,32 @@ it("leaves socket.authorized false unless a client certificate was requested and
       client.end();
       server.close();
     }
+  }
+});
+
+it("keeps req.socket.authorized false for an unverified client after the server socket shuts down", async () => {
+  type Verdict = [boolean | undefined, string | null | undefined];
+  const { promise, resolve, reject } = Promise.withResolvers<{ before: Verdict; after: Verdict }>();
+  const server = https.createServer({ ...COMMON_CERT, requestCert: true, rejectUnauthorized: false }, req => {
+    const socket = req.socket as TLSSocket;
+    const before: Verdict = [socket.authorized, socket.authorizationError as string | null];
+    socket.end(() => {
+      resolve({ before, after: [socket.authorized, socket.authorizationError as string | null] });
+    });
+  });
+  server.on("error", reject);
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  const { port } = server.address() as AddressInfo;
+  const clientRequest = https.get({ port, host: "127.0.0.1", rejectUnauthorized: false });
+  clientRequest.on("error", () => {});
+  try {
+    const { before, after } = await promise;
+    expect(before).toEqual([false, "UNABLE_TO_GET_ISSUER_CERT"]);
+    expect(after).toEqual([false, "UNABLE_TO_GET_ISSUER_CERT"]);
+  } finally {
+    clientRequest.destroy();
+    server.close();
   }
 });
 

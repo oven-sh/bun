@@ -2,7 +2,6 @@ use core::fmt;
 
 use bun_alloc::Arena;
 use bun_ast::ImportRecord;
-use bun_collections::ArrayHashMap;
 
 use crate as css;
 use crate::css_rules::{CssRuleList, Location};
@@ -22,7 +21,6 @@ pub struct LayerName {
 // The inline hash/eql context is replaced by `Hash`/`PartialEq` impls on `LayerName` below.
 // Iteration order is insertion order (collections/array_hash_map.rs)
 // regardless of hash function.
-pub type LayerNameHashMap<V> = ArrayHashMap<LayerName, V>;
 
 impl core::hash::Hash for LayerName {
     fn hash<H: core::hash::Hasher>(&self, state: &mut H) {
@@ -51,7 +49,11 @@ impl Clone for LayerName {
 }
 
 impl LayerName {
-    pub fn clone_with_import_records(&self, bump: &Arena, _: &mut Vec<ImportRecord>) -> Self {
+    pub(crate) fn clone_with_import_records(
+        &self,
+        bump: &Arena,
+        _: &mut Vec<ImportRecord>,
+    ) -> Self {
         // Segments are arena-borrowed, not owned, so this is a shallow
         // `SmallList` copy. No import records to rewrite — layer names
         // contain no URLs.
@@ -115,7 +117,7 @@ impl LayerName {
         )
     }
 
-    pub fn deep_clone(&self, _bump: &Arena) -> Self {
+    pub(crate) fn deep_clone(&self, _bump: &Arena) -> Self {
         // Segments are arena-owned (identity copy). Same body as
         // `clone_with_import_records` above.
         LayerName { v: self.v.clone() }
@@ -157,7 +159,7 @@ pub struct LayerBlockRule<R> {
 }
 
 impl<R> LayerBlockRule<R> {
-    pub fn deep_clone<'bump>(&self, bump: &'bump Arena) -> Self
+    pub(crate) fn deep_clone<'bump>(&self, bump: &'bump Arena) -> Self
     where
         R: css::generics::DeepClone<'bump>,
     {
@@ -197,7 +199,7 @@ pub struct LayerStatementRule {
 }
 
 impl LayerStatementRule {
-    pub fn deep_clone(&self, bump: &Arena) -> Self {
+    pub(crate) fn deep_clone(&self, bump: &Arena) -> Self {
         // `css.implementDeepClone` field-walk.
         let mut names = SmallList::<LayerName, 1>::default();
         for n in self.names.slice() {

@@ -28,7 +28,7 @@ use crate::reactive_scopes::visitors::{
 
 /// Propagate early return semantics through reactive scopes.
 /// TS: `propagateEarlyReturns`
-pub fn propagate_early_returns(func: &mut ReactiveFunction, env: &mut Environment) {
+pub(crate) fn propagate_early_returns(func: &mut ReactiveFunction, env: &mut Environment) {
     let mut transform = Transform { env };
     let mut state = State {
         within_reactive_scope: false,

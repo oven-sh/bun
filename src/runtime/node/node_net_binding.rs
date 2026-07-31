@@ -11,7 +11,7 @@ use bun_uws as uws;
 use crate::node::util::validators;
 use crate::socket::{Listener, NativeCallbacks, NewSocket, SocketFlags, TCPSocket, TLSSocket};
 
-pub(crate) static AUTO_SELECT_FAMILY_DEFAULT: AtomicBool = AtomicBool::new(true);
+static AUTO_SELECT_FAMILY_DEFAULT: AtomicBool = AtomicBool::new(true);
 
 // This is only used to provide the getDefaultAutoSelectFamilyAttemptTimeout and
 // setDefaultAutoSelectFamilyAttemptTimeout functions, not currently read by any other code. It's
@@ -47,11 +47,10 @@ pub(crate) fn get_default_auto_select_family(global: &JSGlobalObject) -> JSValue
 pub(crate) fn set_default_auto_select_family(global: &JSGlobalObject) -> JSValue {
     #[bun_jsc::host_fn(export = "Bun__NodeNet__setDefaultAutoSelectFamily")]
     fn setter(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-        let arguments = frame.arguments_old::<1>();
-        if arguments.len < 1 {
+        let [arg] = frame.arguments_as_array::<1>();
+        if frame.arguments_count() < 1 {
             return Err(global.throw(format_args!("missing argument")));
         }
-        let arg = arguments.slice()[0];
         if !arg.is_boolean() {
             return Err(global.throw_invalid_arguments(format_args!("autoSelectFamilyDefault")));
         }
@@ -87,11 +86,10 @@ pub(crate) fn get_default_auto_select_family_attempt_timeout(global: &JSGlobalOb
 pub(crate) fn set_default_auto_select_family_attempt_timeout(global: &JSGlobalObject) -> JSValue {
     #[bun_jsc::host_fn(export = "Bun__NodeNet__setDefaultAutoSelectFamilyAttemptTimeout")]
     fn setter(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-        let arguments = frame.arguments_old::<1>();
-        if arguments.len < 1 {
+        let [arg] = frame.arguments_as_array::<1>();
+        if frame.arguments_count() < 1 {
             return Err(global.throw(format_args!("missing argument")));
         }
-        let arg = arguments.slice()[0];
         let mut value =
             validators::validate_int32(global, arg, format_args!("value"), Some(1), None)?;
         if value < 10 {
@@ -112,19 +110,19 @@ pub(crate) fn set_default_auto_select_family_attempt_timeout(global: &JSGlobalOb
 
 // codegen (`generated_js2native.rs`) snake-cases the symbol; alias the
 // PascalCase fns so both spellings resolve.
-pub use self::{BlockList as block_list, SocketAddress as socket_address};
+pub(crate) use self::{BlockList as block_list, SocketAddress as socket_address};
 
 // Forward to the codegen'd `js_${Type}::get_constructor` wrappers — they go through
 // `jsc_abi_extern!` so the extern uses `extern "sysv64"` on win-x64 (matching
 // C++ `JSC_CALLCONV`). A bare `extern "C"` redecl here would be the wrong ABI on
 // Windows and trips `clashing_extern_declarations`.
 #[allow(non_snake_case)]
-pub fn SocketAddress(global: &JSGlobalObject) -> JSValue {
+pub(crate) fn SocketAddress(global: &JSGlobalObject) -> JSValue {
     crate::generated_classes::js_SocketAddress::get_constructor(global)
 }
 
 #[allow(non_snake_case)]
-pub fn BlockList(global: &JSGlobalObject) -> JSValue {
+pub(crate) fn BlockList(global: &JSGlobalObject) -> JSValue {
     crate::generated_classes::js_BlockList::get_constructor(global)
 }
 

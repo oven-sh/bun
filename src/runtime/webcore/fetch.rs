@@ -4,9 +4,8 @@
 
 pub(crate) const FETCH_ERROR_NO_ARGS: &str = "fetch() expects a string but received no arguments.";
 pub(crate) const FETCH_ERROR_BLANK_URL: &str = "fetch() URL must not be a blank string.";
-pub(crate) const FETCH_ERROR_UNEXPECTED_BODY: &str =
-    "fetch() request with GET/HEAD/OPTIONS method cannot have body.";
-pub(crate) const FETCH_ERROR_PROXY_UNIX: &str = "fetch() cannot use a proxy with a unix socket.";
+const FETCH_ERROR_UNEXPECTED_BODY: &str = "fetch() request with GET/HEAD method cannot have body.";
+const FETCH_ERROR_PROXY_UNIX: &str = "fetch() cannot use a proxy with a unix socket.";
 
 pub(crate) fn fetch_type_error_string(value: bun_jsc::JSValue) -> &'static str {
     if value.is_undefined() {
@@ -226,12 +225,11 @@ fn data_url_response(data_url_: DataURL, global_this: &JSGlobalObject) -> JSValu
 // ──────────────────────────────────────────────────────────────────────────
 
 #[bun_jsc::host_fn(export = "Bun__fetchPreconnect")]
-pub(crate) fn bun_fetch_preconnect(
+fn bun_fetch_preconnect(
     global_object: &JSGlobalObject,
     callframe: &CallFrame,
 ) -> JsResult<JSValue> {
-    let arguments = callframe.arguments_old::<1>();
-    let arguments = arguments.slice();
+    let arguments = callframe.arguments();
 
     if arguments.len() < 1 {
         return Err(global_object.throw_not_enough_arguments(
@@ -316,10 +314,7 @@ pub(crate) fn bun_fetch_preconnect(
 struct StringOrURL;
 
 impl StringOrURL {
-    pub(crate) fn from_js(
-        value: JSValue,
-        global_this: &JSGlobalObject,
-    ) -> JsResult<Option<BunString>> {
+    fn from_js(value: JSValue, global_this: &JSGlobalObject) -> JsResult<Option<BunString>> {
         if value.is_string() {
             return Ok(Some(BunString::from_js(value, global_this)?));
         }
@@ -333,19 +328,13 @@ impl StringOrURL {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// Bun__fetch / nodeHttpClient entry points
+// Bun__fetch entry point
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Public entry point for `Bun.fetch` - validates body on GET/HEAD/OPTIONS
+/// Public entry point for `Bun.fetch` - validates body on GET/HEAD
 #[bun_jsc::host_fn(export = "Bun__fetch")]
-pub(crate) fn bun_fetch(ctx: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+fn bun_fetch(ctx: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
     reject_on_exception(ctx, fetch_impl::<false>(ctx, callframe))
-}
-
-/// Internal entry point for Node.js HTTP client - allows body on GET/HEAD/OPTIONS
-#[bun_jsc::host_fn]
-pub(crate) fn node_http_client(ctx: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-    reject_on_exception(ctx, fetch_impl::<true>(ctx, callframe))
 }
 
 /// WHATWG fetch step 3: an exception thrown while processing `input`/`init`
@@ -397,7 +386,6 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
 ) -> JsResult<JSValue> {
     jsc::mark_binding();
     let global_this = ctx;
-    let arguments = callframe.arguments_old::<2>();
     bun_core::analytics::Features::FETCH.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
     // SAFETY: `VirtualMachine::get()` returns the live thread-local VM pointer; it
     // outlives this call frame.
@@ -408,7 +396,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     let mut force_http3 = false;
     let mut force_http1 = false;
 
-    if arguments.len == 0 {
+    if callframe.arguments_count() == 0 {
         let err = ctx.to_type_error(
             jsc::ErrorCode::MISSING_ARGS,
             format_args!("{FETCH_ERROR_NO_ARGS}"),
@@ -427,7 +415,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     // immutable borrow of `vm` for the rest of the function.
     let vm_verbose_fetch = vm.get_verbose_fetch();
 
-    let mut args = jsc::ArgumentsSlice::init(vm, arguments.slice());
+    let mut args = jsc::ArgumentsSlice::init(vm, callframe.arguments());
 
     let first_arg = args.next_eat().unwrap();
 
@@ -785,7 +773,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                                 return Ok(JSValue::ZERO);
                             }
                             Ok(Some(config)) => {
-                                // Intern via GlobalRegistry for deduplication and pointer equality
+                                // Intern via `ssl_config::global_registry` for dedup and pointer equality
                                 break 'extract_ssl_config Some(ssl_config_intern_for_http(config));
                             }
                             Ok(None) => {}
@@ -1607,6 +1595,9 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         }
     }
 
+    // WHATWG Fetch step 36 forbids a body for GET/HEAD; Bun additionally
+    // rejects TRACE (RFC 9110 §9.3.8 "MUST NOT send content") since it does
+    // not enforce forbidden methods. has_request_body() encodes exactly that.
     if !ALLOW_GET_BODY && !method.has_request_body() && body.has_body() && !upgraded_connection {
         let err = global_this.to_type_error(
             jsc::ErrorCode::INVALID_ARG_VALUE,
@@ -2134,10 +2125,7 @@ struct S3StreamWrapper<'a> {
 }
 
 impl<'a> S3StreamWrapper<'a> {
-    pub(crate) fn resolve(
-        result: s3::S3UploadResult,
-        self_: *mut Self,
-    ) -> Result<(), bun_jsc::JsTerminated> {
+    fn resolve(result: s3::S3UploadResult, self_: *mut Self) -> Result<(), bun_jsc::JsTerminated> {
         // SAFETY: self_ was created via heap::alloc in fetch_impl; we reclaim
         // ownership here exactly once on the resolve callback.
         let mut self_ = unsafe { bun_core::heap::take(self_) };

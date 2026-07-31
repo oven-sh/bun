@@ -5,7 +5,7 @@
 // - We should not be creating JSFunction's in process.nextTick.
 
 use bun_core::String as BunString;
-use bun_jsc::ipc::{IsInternal, SerializeAndSendResult};
+use bun_jsc::ipc::{Handle, IsInternal, SerializeAndSendResult};
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, StringJsc as _, StrongOptional};
 
 use crate::api::bun::subprocess::Subprocess;
@@ -53,10 +53,7 @@ fn child_singleton<'a>() -> &'a mut InternalMsgHolder {
 pub(crate) fn send_helper_child(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     bun_output::scoped_log!(IPC, "sendHelperChild");
 
-    let arguments = frame.arguments_old::<3>().ptr;
-    let message = arguments[0];
-    let handle = arguments[1];
-    let callback = arguments[2];
+    let [message, handle, callback] = frame.arguments_as_array::<3>();
 
     let vm = global.bun_vm().as_mut();
     // SAFETY: `bun_vm()` never returns null for a Bun-owned global; sole &mut on JS thread.
@@ -103,8 +100,7 @@ pub(crate) fn send_helper_child(global: &JSGlobalObject, frame: &CallFrame) -> J
 
     #[bun_jsc::host_fn]
     fn impl_(global_: &JSGlobalObject, frame_: &CallFrame) -> JsResult<JSValue> {
-        let arguments_ = frame_.arguments_old::<1>();
-        let arguments_ = arguments_.slice();
+        let arguments_ = frame_.arguments();
         let ex = arguments_[0];
         Process__emitErrorEvent(global_, ex.to_error().unwrap_or(ex));
         Ok(JSValue::UNDEFINED)
@@ -144,7 +140,7 @@ pub(crate) fn on_internal_message_child(
     frame: &CallFrame,
 ) -> JsResult<JSValue> {
     bun_output::scoped_log!(IPC, "onInternalMessageChild");
-    let arguments = frame.arguments_old::<2>().ptr;
+    let arguments = frame.arguments_as_array::<2>();
     let singleton = child_singleton();
     // TODO: we should not create two jsc.Strong.Optional here. If absolutely necessary, a single Array. should be all we use.
     singleton.worker = StrongOptional::create(arguments[0], global);
@@ -156,17 +152,18 @@ pub(crate) fn on_internal_message_child(
 pub(crate) fn handle_internal_message_child(
     global: &JSGlobalObject,
     message: JSValue,
+    handle: JSValue,
 ) -> JsResult<()> {
     bun_output::scoped_log!(IPC, "handleInternalMessageChild");
 
-    child_singleton().dispatch(message, global)
+    child_singleton().dispatch(message, handle, global)
 }
 
 #[bun_jsc::host_fn]
 pub(crate) fn send_helper_primary(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     bun_output::scoped_log!(IPC, "sendHelperPrimary");
 
-    let arguments = frame.arguments_old::<4>().ptr;
+    let arguments = frame.arguments_as_array::<4>();
     // `as_class_ref` is the safe shared-borrow downcast (centralised deref
     // proof in `JSValue`); `Subprocess::ipc(&self)` projects the `JsCell`.
     // `cluster.Worker({ process })` accepts any object, so `process[kHandle]`
@@ -189,6 +186,48 @@ pub(crate) fn send_helper_primary(global: &JSGlobalObject, frame: &CallFrame) ->
     if !message.is_object() {
         return Err(global.throw_invalid_argument_type_value("message", "object", message));
     }
+    // Only NODE_HANDLE envelopes (built by cluster/primary.ts's send()) carry
+    // a descriptor: the non-reading UDP wrap of a cluster-shared dgram socket.
+    // Any other handle argument (e.g. round-robin newconn) keeps the internal,
+    // handle-less form the worker's decoder expects. Converted before the ack
+    // callback is registered so a failure here cannot strand a never-acked
+    // entry in the callback table.
+    let carries_descriptor = if handle.is_undefined_or_null() {
+        false
+    } else if let Some(cmd) = message.get(global, "cmd")? {
+        cmd.is_string()
+            && bun_core::OwnedString::new(cmd.to_bun_string(global)?).eql_comptime(b"NODE_HANDLE")
+    } else {
+        false
+    };
+    let (zig_handle, is_internal): (Option<Handle>, IsInternal) = if !carries_descriptor {
+        (None, IsInternal::Internal)
+    } else {
+        #[cfg(windows)]
+        {
+            // Sending descriptors over IPC is not implemented on Windows;
+            // Node reports the same for cluster-shared dgram handles.
+            return Err(global.throw(format_args!(
+                "passing a dgram handle over IPC is not supported on Windows"
+            )));
+        }
+        #[cfg(not(windows))]
+        {
+            let fd = match handle.get(global, "fd")? {
+                Some(value) => value.coerce_to_i32(global)?,
+                None => -1,
+            };
+            if fd < 0 {
+                return Err(global
+                    .throw_invalid_arguments(format_args!("Expected handle to have a valid fd")));
+            }
+            (
+                Some(Handle::init(bun_sys::Fd::from_native(fd), handle)),
+                IsInternal::External,
+            )
+        }
+    };
+
     if callback.is_function() {
         let _ = ipc_data.internal_msg_queue.callbacks.put(
             ipc_data.internal_msg_queue.seq,
@@ -215,9 +254,8 @@ pub(crate) fn send_helper_primary(global: &JSGlobalObject, frame: &CallFrame) ->
         );
     }
 
-    let _ = handle;
     let success =
-        ipc_data.serialize_and_send(global, message, IsInternal::Internal, JSValue::NULL, None);
+        ipc_data.serialize_and_send(global, message, is_internal, JSValue::NULL, zig_handle);
     Ok(if success == SerializeAndSendResult::Success {
         JSValue::TRUE
     } else {
@@ -230,7 +268,7 @@ pub(crate) fn on_internal_message_primary(
     global: &JSGlobalObject,
     frame: &CallFrame,
 ) -> JsResult<JSValue> {
-    let arguments = frame.arguments_old::<3>().ptr;
+    let arguments = frame.arguments_as_array::<3>();
     // `as_class_ref` is the safe shared-borrow downcast; `ipc()` takes `&self`.
     // Same guard as `send_helper_primary`: nothing to subscribe to when the
     // worker's process has no native child handle.
@@ -307,7 +345,7 @@ pub(crate) fn handle_internal_message_primary(
 
 #[bun_jsc::host_fn]
 pub(crate) fn set_ref(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    let arguments = frame.arguments_old::<1>().ptr;
+    let arguments = frame.arguments_as_array::<1>();
 
     if arguments.len() == 0 {
         return Err(global.throw_missing_arguments_value(&["enabled"]));

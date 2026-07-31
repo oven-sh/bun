@@ -20,6 +20,7 @@ if (isDockerEnabled()) {
       using dir = tempDir("mysql-query-string-leak", {
         "fixture.js": /* js */ `
         const { SQL } = require("bun");
+        const rss = process.platform === "darwin" && typeof Bun.unsafe.memoryFootprint === "function" ? Bun.unsafe.memoryFootprint : process.memoryUsage.rss;
 
         const sql = new SQL({ url: process.env.MYSQL_URL, max: 1 });
 
@@ -33,7 +34,7 @@ if (isDockerEnabled()) {
         const CHUNK = 512 * 1024;
 
         Bun.gc(true);
-        const rssBefore = process.memoryUsage.rss();
+        const rssBefore = rss();
 
         for (let i = 0; i < ITERATIONS; i++) {
           const pad = Buffer.alloc(CHUNK, 0x61 + (i % 26)).toString("latin1");
@@ -53,7 +54,7 @@ if (isDockerEnabled()) {
           Bun.gc(true);
         }
 
-        const rssAfter = process.memoryUsage.rss();
+        const rssAfter = rss();
         const deltaMiB = (rssAfter - rssBefore) / 1024 / 1024;
         console.log(JSON.stringify({ rssBefore, rssAfter, deltaMiB }));
       `,

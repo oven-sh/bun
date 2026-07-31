@@ -80,7 +80,7 @@ pub mod protocol {
     pub mod any_mysql_error_jsc;
 
     #[path = "DecodeBinaryValue.rs"]
-    pub mod decode_binary_value;
+    pub(crate) mod decode_binary_value;
 
     #[path = "ResultSet.rs"]
     pub mod result_set;

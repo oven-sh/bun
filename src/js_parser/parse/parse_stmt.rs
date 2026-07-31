@@ -135,7 +135,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         loc: bun_ast::Loc,
     ) -> Result<Stmt> {
         if opts.lexical_decl != LexicalDecl::AllowAll {
-            p.forbid_lexical_decl(loc)?;
+            p.forbid_lexical_decl(loc);
         }
 
         p.parse_class_stmt(loc, opts)
@@ -168,7 +168,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         loc: bun_ast::Loc,
     ) -> Result<Stmt> {
         if opts.lexical_decl != LexicalDecl::AllowAll {
-            p.forbid_lexical_decl(loc)?;
+            p.forbid_lexical_decl(loc);
         }
         // p.markSyntaxFeature(compat.Const, p.lexer.Range())
 
@@ -209,7 +209,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         loop {
             p.lexer.next()?;
             p.lexer.expect(T::TOpenParen)?;
-            let test_ = p.parse_expr(Level::Lowest)?;
+            let test = p.parse_expr(Level::Lowest)?;
             p.lexer.expect(T::TCloseParen)?;
             let mut stmt_opts = ParseStatementOptions {
                 lexical_decl: LexicalDecl::AllowFnInsideIf,
@@ -220,7 +220,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // Create the if node
             let if_stmt = p.s(
                 S::If {
-                    test_,
+                    test,
                     yes,
                     no: None,
                 },
@@ -277,7 +277,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let body = p.parse_stmt(&mut stmt_opts)?;
         p.lexer.expect(T::TWhile)?;
         p.lexer.expect(T::TOpenParen)?;
-        let test_ = p.parse_expr(Level::Lowest)?;
+        let test = p.parse_expr(Level::Lowest)?;
         p.lexer.expect(T::TCloseParen)?;
 
         // This is a weird corner case where automatic semicolon insertion applies
@@ -285,7 +285,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if p.lexer.token == T::TSemicolon {
             p.lexer.next()?;
         }
-        Ok(p.s(S::DoWhile { body, test_ }, loc))
+        Ok(p.s(S::DoWhile { body, test }, loc))
     }
 
     #[inline(never)]
@@ -293,13 +293,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         p.lexer.next()?;
 
         p.lexer.expect(T::TOpenParen)?;
-        let test_ = p.parse_expr(Level::Lowest)?;
+        let test = p.parse_expr(Level::Lowest)?;
         p.lexer.expect(T::TCloseParen)?;
 
         let mut stmt_opts = ParseStatementOptions::default();
         let body = p.parse_stmt(&mut stmt_opts)?;
 
-        Ok(p.s(S::While { body, test_ }, loc))
+        Ok(p.s(S::While { body, test }, loc))
     }
 
     #[cold]
@@ -307,7 +307,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     fn t_with(p: &mut Self, _: &mut ParseStatementOptions, loc: bun_ast::Loc) -> Result<Stmt> {
         p.lexer.next()?;
         p.lexer.expect(T::TOpenParen)?;
-        let test_ = p.parse_expr(Level::Lowest)?;
+        let test = p.parse_expr(Level::Lowest)?;
         let body_loc = p.lexer.loc();
         p.lexer.expect(T::TCloseParen)?;
 
@@ -323,7 +323,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             S::With {
                 body,
                 body_loc,
-                value: test_,
+                value: test,
             },
             loc,
         ))
@@ -334,7 +334,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         p.lexer.next()?;
 
         p.lexer.expect(T::TOpenParen)?;
-        let test_ = p.parse_expr(Level::Lowest)?;
+        let test = p.parse_expr(Level::Lowest)?;
         p.lexer.expect(T::TCloseParen)?;
 
         let body_loc = p.lexer.loc();
@@ -392,7 +392,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             p.lexer.expect(T::TCloseBrace)?;
             Ok(p.s(
                 S::Switch {
-                    test_,
+                    test,
                     body_loc,
                     cases: bun_ast::StoreSlice::from_bump(cases),
                 },
@@ -414,7 +414,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         p.pop_scope();
         p.lexer.next()?;
 
-        let mut catch_: Option<js_ast::Catch> = None;
+        let mut catch: Option<js_ast::Catch> = None;
         let mut finally: Option<js_ast::Finally> = None;
 
         if p.lexer.token == T::TCatch {
@@ -452,7 +452,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             let stmts = p.parse_stmts_up_to(T::TCloseBrace, &mut stmt_opts)?;
             p.pop_scope();
             p.lexer.next()?;
-            catch_ = Some(js_ast::Catch {
+            catch = Some(js_ast::Catch {
                 loc: catch_loc,
                 binding,
                 body: bun_ast::StoreSlice::from_bump(stmts),
@@ -461,7 +461,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             p.pop_scope();
         }
 
-        if p.lexer.token == T::TFinally || catch_.is_none() {
+        if p.lexer.token == T::TFinally || catch.is_none() {
             let finally_loc = p.lexer.loc();
             let _ = p.push_scope_for_parse_pass(js_ast::scope::Kind::Block, finally_loc)?;
             p.lexer.expect(T::TFinally)?;
@@ -479,7 +479,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             S::Try {
                 body_loc,
                 body: bun_ast::StoreSlice::from_bump(body),
-                catch_,
+                catch,
                 finally,
             },
             loc,
@@ -519,7 +519,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             p.lexer.expect(T::TOpenParen)?;
 
             let mut init_: Option<Stmt> = None;
-            let mut test_: Option<Expr> = None;
+            let mut test: Option<Expr> = None;
             let mut update: Option<Expr> = None;
 
             // "in" expressions aren't allowed here
@@ -701,7 +701,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
             p.lexer.expect(T::TSemicolon)?;
             if p.lexer.token != T::TSemicolon {
-                test_ = Some(p.parse_expr(Level::Lowest)?);
+                test = Some(p.parse_expr(Level::Lowest)?);
             }
 
             p.lexer.expect(T::TSemicolon)?;
@@ -716,7 +716,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             Ok(p.s(
                 S::For {
                     init: init_,
-                    test_,
+                    test,
                     update,
                     body,
                 },
@@ -1007,10 +1007,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                     ref_: name.ref_,
                                 }
                             } else {
-                                p.create_default_name(default_loc)?
+                                p.create_default_name(default_loc)
                             }
                         } else {
-                            p.create_default_name(default_loc)?
+                            p.create_default_name(default_loc)
                         };
 
                         let value = js_ast::StmtOrExpr::Stmt(stmt);
@@ -1023,13 +1023,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         ));
                     }
 
-                    let default_name = p.create_default_name(loc)?;
+                    let default_name = p.create_default_name(loc);
 
                     let mut expr = p.parse_async_prefix_expr(async_range, Level::Comma)?;
                     p.parse_suffix(&mut expr, Level::Comma, None, EFlags::None)?;
                     p.lexer.expect_or_insert_semicolon()?;
                     let value = js_ast::StmtOrExpr::Expr(expr);
-                    p.has_export_default = true;
                     return Ok(p.s(
                         S::ExportDefault {
                             default_name,
@@ -1096,9 +1095,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             }
                         }
 
-                        p.create_default_name(default_loc).expect("unreachable")
+                        p.create_default_name(default_loc)
                     };
-                    p.has_export_default = true;
                     p.has_es_module_syntax = true;
                     return Ok(p.s(
                         S::ExportDefault {
@@ -1155,9 +1153,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             _ => {}
                         }
 
-                        p.create_default_name(default_loc).expect("unreachable")
+                        p.create_default_name(default_loc)
                     };
-                    p.has_export_default = true;
                     return Ok(p.s(
                         S::ExportDefault {
                             default_name,
@@ -1186,7 +1183,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 p.lexer.expect_or_insert_semicolon()?;
 
                 // Use the expression name if present, since it's a better name
-                p.has_export_default = true;
                 let default_name = p.default_name_for_expr(expr, default_loc);
                 Ok(p.s(
                     S::ExportDefault {
@@ -1214,7 +1210,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     // "export * as ns from 'path'"
                     p.lexer.next()?;
                     let name = p.parse_clause_alias(b"export")?;
-                    namespace_ref = p.store_name_in_ref(name)?;
+                    namespace_ref = p.store_name_in_ref(name);
                     alias = Some(G::ExportStarAlias {
                         loc: p.lexer.loc(),
                         original_name: bun_ast::StoreStr::new(name),
@@ -1235,7 +1231,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             .expect("unreachable");
                         p.arena.alloc_slice_copy(&buf)
                     };
-                    namespace_ref = p.store_name_in_ref(name)?;
+                    namespace_ref = p.store_name_in_ref(name);
                 }
 
                 let import_record_index = p.add_import_record(
@@ -1329,7 +1325,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             bun_core::fmt::fmt_identifier(path_name.non_unique_name_string_base())
                         )
                         .expect("unreachable");
-                        p.store_name_in_ref(p.arena.alloc_slice_copy(&buf))?
+                        p.store_name_in_ref(p.arena.alloc_slice_copy(&buf))
                     };
 
                     if Self::TRACK_SYMBOL_USAGE_DURING_PARSE_PASS {
@@ -1455,7 +1451,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 p.lexer.next()?;
                 p.lexer.expect_contextual_keyword(b"as")?;
                 stmt = S::Import {
-                    namespace_ref: p.store_name_in_ref(p.lexer.identifier)?,
+                    namespace_ref: p.store_name_in_ref(p.lexer.identifier),
                     star_name_loc: p.lexer.loc(),
                     import_record_index: u32::MAX,
                     ..Default::default()
@@ -1507,7 +1503,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     import_record_index: u32::MAX,
                     default_name: Some(LocRef {
                         loc: p.lexer.loc(),
-                        ref_: p.store_name_in_ref(default_name)?,
+                        ref_: p.store_name_in_ref(default_name),
                     }),
                     ..Default::default()
                 };
@@ -1541,7 +1537,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     p.lexer.next()?;
                     p.lexer.expect_contextual_keyword(b"as")?;
                     stmt = S::Import {
-                        namespace_ref: p.store_name_in_ref(p.lexer.identifier)?,
+                        namespace_ref: p.store_name_in_ref(p.lexer.identifier),
                         star_name_loc: p.lexer.loc(),
                         import_record_index: u32::MAX,
                         phase_defer: true,
@@ -1630,7 +1626,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         T::TAsterisk => {
                             p.lexer.next()?;
                             p.lexer.expect_contextual_keyword(b"as")?;
-                            stmt.namespace_ref = p.store_name_in_ref(p.lexer.identifier)?;
+                            stmt.namespace_ref = p.store_name_in_ref(p.lexer.identifier);
                             stmt.star_name_loc = p.lexer.loc();
                             p.lexer.expect(T::TIdentifier)?;
                         }
@@ -1973,7 +1969,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(None)
     }
 
-    pub fn parse_stmt(&mut self, opts: &mut ParseStatementOptions<'a>) -> Result<Stmt> {
+    pub(crate) fn parse_stmt(&mut self, opts: &mut ParseStatementOptions<'a>) -> Result<Stmt> {
         if !self.stack_check.is_safe_to_recurse() {
             // Sentinel error; mapped to a "Maximum call stack size exceeded"
             // syntax error at the catch site in parse_entry.rs.

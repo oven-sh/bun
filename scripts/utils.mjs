@@ -2,7 +2,7 @@
 // CI, running tests, and code generation.
 
 import { spawn as nodeSpawn, spawnSync as nodeSpawnSync } from "node:child_process";
-import { createHash } from "node:crypto";
+import { createHash, createHmac } from "node:crypto";
 import {
   appendFileSync,
   chmodSync,
@@ -2267,6 +2267,165 @@ export async function getCloudMetadataTag(tag, cloud) {
 }
 
 /**
+ * @typedef {Object} AwsCredentials
+ * @property {string} AccessKeyId
+ * @property {string} SecretAccessKey
+ * @property {string} [Token]
+ */
+
+/**
+ * Instance-role credentials from IMDS.
+ * @returns {Promise<AwsCredentials | undefined>}
+ */
+async function getAwsInstanceCredentials() {
+  const role = await getCloudMetadata("iam/security-credentials/", "aws");
+  if (!role) {
+    return;
+  }
+  const body = await getCloudMetadata(`iam/security-credentials/${role.trim()}`, "aws");
+  if (!body) {
+    return;
+  }
+  try {
+    return JSON.parse(body);
+  } catch {
+    return;
+  }
+}
+
+/**
+ * Signs an AWS API request (SigV4). agent.mjs ships to the AMI as a single
+ * bundled file, so this avoids pulling in the SDK.
+ * @param {Object} request
+ * @param {string} request.method
+ * @param {string} request.host
+ * @param {string} request.path
+ * @param {string} request.body
+ * @param {string} request.service
+ * @param {string} request.region
+ * @param {Record<string, string>} request.headers
+ * @param {AwsCredentials} request.credentials
+ * @param {Date} [request.date]
+ * @returns {Record<string, string>} headers, including Authorization
+ */
+export function signAwsRequest({ method, host, path, body, service, region, headers, credentials, date }) {
+  const { AccessKeyId, SecretAccessKey, Token } = credentials;
+  const amzDate = (date ?? new Date()).toISOString().replace(/[:-]|\.\d{3}/g, "");
+  const day = amzDate.slice(0, 8);
+  const bodyHash = sha256(body);
+
+  const signed = {
+    ...headers,
+    "host": host,
+    "x-amz-date": amzDate,
+    "x-amz-content-sha256": bodyHash,
+  };
+  if (Token) {
+    signed["x-amz-security-token"] = Token;
+  }
+
+  const canonical = Object.entries(signed)
+    .map(([key, value]) => [key.toLowerCase(), `${value}`.trim()])
+    .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
+  const canonicalHeaders = canonical.map(([key, value]) => `${key}:${value}\n`).join("");
+  const signedHeaders = canonical.map(([key]) => key).join(";");
+  const canonicalRequest = [method, path, "", canonicalHeaders, signedHeaders, bodyHash].join("\n");
+
+  const scope = `${day}/${region}/${service}/aws4_request`;
+  const stringToSign = ["AWS4-HMAC-SHA256", amzDate, scope, sha256(canonicalRequest)].join("\n");
+
+  const hmac = (key, data) => createHmac("sha256", key).update(data).digest();
+  const signingKey = hmac(hmac(hmac(hmac(`AWS4${SecretAccessKey}`, day), region), service), "aws4_request");
+  const signature = createHmac("sha256", signingKey).update(stringToSign).digest("hex");
+
+  return {
+    ...signed,
+    "Authorization": `AWS4-HMAC-SHA256 Credential=${AccessKeyId}/${scope}, SignedHeaders=${signedHeaders}, Signature=${signature}`,
+  };
+}
+
+/**
+ * Reads a secret from AWS Secrets Manager using the instance role.
+ * @param {string} secretId
+ * @param {Object} [options]
+ * @param {string} [options.region] defaults to the instance's region
+ * @param {AwsCredentials} [options.credentials] defaults to IMDS credentials
+ * @returns {Promise<string | undefined>}
+ */
+export async function getAwsSecret(secretId, options = {}) {
+  const region = options["region"] || (await getCloudMetadata("placement/region", "aws")) || "us-east-1";
+  const credentials = options["credentials"] || (await getAwsInstanceCredentials());
+  if (!credentials) {
+    console.warn("Failed to get AWS secret: no instance credentials");
+    return;
+  }
+
+  const host = `secretsmanager.${region}.amazonaws.com`;
+  const body = JSON.stringify({ SecretId: secretId });
+  const headers = signAwsRequest({
+    method: "POST",
+    host,
+    path: "/",
+    body,
+    service: "secretsmanager",
+    region,
+    credentials,
+    headers: {
+      "Content-Type": "application/x-amz-json-1.1",
+      "X-Amz-Target": "secretsmanager.GetSecretValue",
+    },
+  });
+
+  const { error, body: response } = await curl(`https://${host}/`, {
+    method: "POST",
+    headers,
+    body,
+    json: true,
+    retries: 5,
+  });
+  if (error) {
+    console.warn("Failed to get AWS secret:", error);
+    return;
+  }
+
+  return response?.["SecretString"];
+}
+
+/**
+ * Reads a secret from Azure Key Vault using the VM's managed identity.
+ * @param {string} vaultName
+ * @param {string} secretName
+ * @returns {Promise<string | undefined>}
+ */
+export async function getAzureSecret(vaultName, secretName) {
+  const identityUrl =
+    "http://169.254.169.254/metadata/identity/oauth2/token?api-version=2018-02-01&resource=https%3A%2F%2Fvault.azure.net";
+  const { error: identityError, body: identity } = await curl(identityUrl, {
+    headers: { "Metadata": "true" },
+    json: true,
+    retries: 10,
+  });
+  const accessToken = identity?.["access_token"];
+  if (identityError || !accessToken) {
+    console.warn("Failed to get Azure managed identity token:", identityError);
+    return;
+  }
+
+  const secretUrl = `https://${vaultName}.vault.azure.net/secrets/${secretName}?api-version=7.4`;
+  const { error, body } = await curl(secretUrl, {
+    headers: { "Authorization": `Bearer ${accessToken}` },
+    json: true,
+    retries: 5,
+  });
+  if (error) {
+    console.warn("Failed to get Azure secret:", error);
+    return;
+  }
+
+  return body?.["value"];
+}
+
+/**
  * @param {string} name
  * @returns {Promise<string | undefined>}
  */
@@ -2784,6 +2943,31 @@ export function reportAnnotationToBuildKite({ context, label, content, style = "
   // would abort the test runner mid-suite over a cosmetic failure.
   console.error(`buildkite-agent annotate failed for '${label}' after retry (${cause}), giving up`);
   if (stderr) console.error(stderr);
+}
+
+/**
+ * Mark this Buildkite job as having handled its own failure reporting.
+ *
+ * The repository `.buildkite/hooks/pre-exit` hook posts a generic fallback
+ * annotation for any step that exits non-zero without this marker set, so
+ * infra failures that happen before (or crash) the runner/build scripts are
+ * still surfaced in the build's annotation list instead of being visible only
+ * in the raw job log. Call this from every controlled exit path that has
+ * already posted (or had nothing to post) so the fallback stays quiet. The
+ * marker is build meta-data, which is server-side and so remains visible to
+ * the host pre-exit hook even when the reporter ran inside an ephemeral VM.
+ */
+export function markBuildkiteStepReported() {
+  if (!isBuildkite) return;
+  const jobId = getEnv("BUILDKITE_JOB_ID", false);
+  if (!jobId) return;
+  const { status } = nodeSpawnSync("buildkite-agent", ["meta-data", "set", `reported-${jobId}`, "1"], {
+    stdio: "ignore",
+    timeout: 30_000,
+  });
+  if (status !== 0) {
+    console.error(`buildkite-agent meta-data set reported-${jobId} failed (non-fatal)`);
+  }
 }
 
 /**

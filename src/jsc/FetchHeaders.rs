@@ -21,14 +21,7 @@ bun_opaque::opaque_ffi! {
 // that take raw `*mut c_void` / unsized `*mut StringPointer` arrays / `deref`
 // (which may free) keep their `unsafe fn` body.
 unsafe extern "C" {
-    safe fn WebCore__FetchHeaders__append(
-        arg0: &FetchHeaders,
-        arg1: &ZigString,
-        arg2: &ZigString,
-        arg3: &JSGlobalObject,
-    );
     safe fn WebCore__FetchHeaders__cast_(value0: JSValue, arg1: &VM) -> *mut FetchHeaders;
-    safe fn WebCore__FetchHeaders__clone(arg0: &FetchHeaders, arg1: &JSGlobalObject) -> JSValue;
     safe fn WebCore__FetchHeaders__cloneThis(
         arg0: &FetchHeaders,
         arg1: &JSGlobalObject,
@@ -73,17 +66,7 @@ unsafe extern "C" {
         arg2: &mut ZigString,
         arg3: &JSGlobalObject,
     );
-    safe fn WebCore__FetchHeaders__has(
-        arg0: &FetchHeaders,
-        arg1: &ZigString,
-        arg2: &JSGlobalObject,
-    ) -> bool;
     safe fn WebCore__FetchHeaders__isEmpty(arg0: &FetchHeaders) -> bool;
-    safe fn WebCore__FetchHeaders__remove(
-        arg0: &FetchHeaders,
-        arg1: &ZigString,
-        arg2: &JSGlobalObject,
-    );
     safe fn WebCore__FetchHeaders__toJS(arg0: &FetchHeaders, arg1: &JSGlobalObject) -> JSValue;
     // safe: `FetchHeaders` is an opaque ZST handle (`&mut` ≡ non-null `*mut`);
     // `arg2` is an opaque handle to a C++-owned uWS response (never dereferenced
@@ -119,18 +102,6 @@ struct PicoHeaders {
 // positive on opaque-token forwarding through an unsafe extern call.
 #[allow(clippy::not_unsafe_ptr_arg_deref)]
 impl FetchHeaders {
-    pub fn create_value(
-        global: &JSGlobalObject,
-        names: *mut StringPointer,
-        values: *mut StringPointer,
-        buf: &ZigString,
-        count_: u32,
-    ) -> JSValue {
-        // SAFETY: forwarding caller-provided buffers to C++; `global` is an opaque ZST handle
-        // passed by address only — C++ never dereferences it as Rust data.
-        unsafe { WebCore__FetchHeaders__createValue(global, names, values, buf, count_) }
-    }
-
     /// Construct a `Headers` object from a JSValue.
     ///
     /// This can be:
@@ -223,15 +194,6 @@ impl FetchHeaders {
         .expect("WebCore__FetchHeaders__createFromPicoHeaders_ returned null")
     }
 
-    pub fn create_from_pico_headers_(pico_headers: *const c_void) -> NonNull<FetchHeaders> {
-        NonNull::new(WebCore__FetchHeaders__createFromPicoHeaders_(pico_headers))
-            .expect("WebCore__FetchHeaders__createFromPicoHeaders_ returned null")
-    }
-
-    pub fn append(&mut self, name_: &ZigString, value: &ZigString, global: &JSGlobalObject) {
-        WebCore__FetchHeaders__append(self, name_, value, global)
-    }
-
     /// `value`'s tag carries its encoding, and a `WTFStringImpl`-tagged value
     /// is ref'd by the C++ side instead of copied character-by-character.
     pub fn put(
@@ -245,7 +207,7 @@ impl FetchHeaders {
         })
     }
 
-    pub fn get_(&mut self, name_: &ZigString, out: &mut ZigString, global: &JSGlobalObject) {
+    pub(crate) fn get_(&mut self, name_: &ZigString, out: &mut ZigString, global: &JSGlobalObject) {
         WebCore__FetchHeaders__get_(self, name_, out, global)
     }
 
@@ -260,10 +222,6 @@ impl FetchHeaders {
         }
 
         None
-    }
-
-    pub fn has(&mut self, name_: &ZigString, global: &JSGlobalObject) -> bool {
-        WebCore__FetchHeaders__has(self, name_, global)
     }
 
     pub fn fast_has(&mut self, name_: HTTPHeaderName) -> bool {
@@ -284,7 +242,7 @@ impl FetchHeaders {
         WebCore__FetchHeaders__fastHas_(self, name_)
     }
 
-    pub fn fast_get_(&mut self, name_: u8, str: &mut ZigString) {
+    pub(crate) fn fast_get_(&mut self, name_: u8, str: &mut ZigString) {
         WebCore__FetchHeaders__fastGet_(self, name_, str)
     }
 
@@ -292,12 +250,8 @@ impl FetchHeaders {
         self.fast_remove_(header as u8)
     }
 
-    pub fn fast_remove_(&mut self, header: u8) {
+    pub(crate) fn fast_remove_(&mut self, header: u8) {
         WebCore__FetchHeaders__fastRemove_(self, header)
-    }
-
-    pub fn remove(&mut self, name_: &ZigString, global: &JSGlobalObject) {
-        WebCore__FetchHeaders__remove(self, name_, global)
     }
 
     pub fn cast_(value: JSValue, vm: &VM) -> Option<NonNull<FetchHeaders>> {
@@ -317,10 +271,6 @@ impl FetchHeaders {
 
     pub fn count(&mut self, names: &mut u32, buf_len: &mut u32) {
         WebCore__FetchHeaders__count(self, names, buf_len)
-    }
-
-    pub fn clone(&mut self, global: &JSGlobalObject) -> JSValue {
-        WebCore__FetchHeaders__clone(self, global)
     }
 
     pub fn clone_this(

@@ -341,10 +341,63 @@ describe("util", () => {
     );
   });
 
+  // styleText hex support, added in Node v26. Expectations verified against the
+  // node v26.3.0 binary.
+  describe("styleText hex colors", () => {
+    const noValidate = { validateStream: false };
+
+    it("parses 6-digit hex", () => {
+      expect(util.styleText("#ffcc00", "test", noValidate)).toBe("\u001b[38;2;255;204;0mtest\u001b[39m");
+      expect(util.styleText("#000000", "test", noValidate)).toBe("\u001b[38;2;0;0;0mtest\u001b[39m");
+      expect(util.styleText("#ffffff", "test", noValidate)).toBe("\u001b[38;2;255;255;255mtest\u001b[39m");
+    });
+
+    it("is case-insensitive", () => {
+      expect(util.styleText("#AABBCC", "test", noValidate)).toBe("\u001b[38;2;170;187;204mtest\u001b[39m");
+      expect(util.styleText("#aAbBcC", "test", noValidate)).toBe("\u001b[38;2;170;187;204mtest\u001b[39m");
+    });
+
+    it("expands 3-digit shorthand", () => {
+      expect(util.styleText("#fc0", "test", noValidate)).toBe("\u001b[38;2;255;204;0mtest\u001b[39m");
+      expect(util.styleText("#000", "test", noValidate)).toBe("\u001b[38;2;0;0;0mtest\u001b[39m");
+      expect(util.styleText("#FFF", "test", noValidate)).toBe("\u001b[38;2;255;255;255mtest\u001b[39m");
+      expect(util.styleText("#abc", "test", noValidate)).toBe("\u001b[38;2;170;187;204mtest\u001b[39m");
+    });
+
+    it("combines hex with named formats", () => {
+      expect(util.styleText(["bold", "#fc0"], "x", noValidate)).toBe(
+        "\u001b[1m\u001b[38;2;255;204;0mx\u001b[39m\u001b[22m",
+      );
+      expect(util.styleText(["#fc0", "underline"], "x", noValidate)).toBe(
+        "\u001b[38;2;255;204;0m\u001b[4mx\u001b[24m\u001b[39m",
+      );
+    });
+
+    it("nests hex colors by reopening the outer color", () => {
+      const inner = util.styleText("#0000ff", "inner", noValidate);
+      expect(util.styleText("#ff0000", `before${inner}after`, noValidate)).toBe(
+        "\u001b[38;2;255;0;0mbefore\u001b[38;2;0;0;255minner\u001b[38;2;255;0;0mafter\u001b[39m",
+      );
+    });
+
+    it("treats `none` as a passthrough", () => {
+      expect(util.styleText("none", "test", noValidate)).toBe("test");
+      expect(util.styleText(["none", "#fc0"], "x", noValidate)).toBe("\u001b[38;2;255;204;0mx\u001b[39m");
+    });
+
+    for (const invalid of ["#gggggg", "#ff", "#ffff", "#fffff", "#fffffff", "#", "ffcc00"]) {
+      it(`rejects ${invalid}`, () => {
+        expect(() => util.styleText(invalid, "t", noValidate)).toThrowWithCode(TypeError, "ERR_INVALID_ARG_VALUE");
+        expect(() => util.styleText([invalid], "t", noValidate)).toThrowWithCode(TypeError, "ERR_INVALID_ARG_VALUE");
+      });
+    }
+  });
+
   it("multiplecolors", () => {
-    expect(util.styleText(["bold", "red"], "test")).toBe("\u001b[1m\u001b[31mtest\u001b[39m\u001b[22m");
-    expect(util.styleText("bold", "test")).toBe("\u001b[1mtest\u001b[22m");
-    expect(util.styleText("red", "test")).toBe("\u001b[31mtest\u001b[39m");
+    const noValidate = { validateStream: false };
+    expect(util.styleText(["bold", "red"], "test", noValidate)).toBe("\u001b[1m\u001b[31mtest\u001b[39m\u001b[22m");
+    expect(util.styleText("bold", "test", noValidate)).toBe("\u001b[1mtest\u001b[22m");
+    expect(util.styleText("red", "test", noValidate)).toBe("\u001b[31mtest\u001b[39m");
   });
 
   it("styleText", () => {
@@ -376,7 +429,37 @@ describe("util", () => {
       },
     );
 
-    assert.strictEqual(util.styleText("red", "test"), "\u001b[31mtest\u001b[39m");
+    assert.strictEqual(util.styleText("red", "test", { validateStream: false }), "\u001b[31mtest\u001b[39m");
+  });
+
+  describe("getCallSites", () => {
+    it("restores Error state when stackTraceLimit is non-writable", () => {
+      const desc = Object.getOwnPropertyDescriptor(Error, "stackTraceLimit");
+      const savedPrepare = Error.prepareStackTrace;
+      try {
+        Object.defineProperty(Error, "stackTraceLimit", { value: 10, writable: false, configurable: true });
+        const sites = util.getCallSites(5);
+        expect(Array.isArray(sites)).toBe(true);
+        // Critical invariant: a user-installed prepareStackTrace must not be leaked.
+        expect(Error.prepareStackTrace).toBe(savedPrepare);
+      } finally {
+        Object.defineProperty(Error, "stackTraceLimit", desc);
+        Error.prepareStackTrace = savedPrepare;
+      }
+    });
+
+    it("each frame has the node v26 shape", () => {
+      const sites = util.getCallSites(3);
+      expect(sites.length).toBeGreaterThan(0);
+      expect(sites[0]).toEqual({
+        functionName: expect.any(String),
+        scriptId: expect.any(String),
+        scriptName: expect.stringContaining("util.test.js"),
+        lineNumber: expect.any(Number),
+        columnNumber: expect.any(Number),
+        column: sites[0].columnNumber,
+      });
+    });
   });
 
   describe("getSystemErrorName", () => {

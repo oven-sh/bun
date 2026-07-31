@@ -653,6 +653,7 @@ describe("Bun.Archive", () => {
       // iterations would leak ~190MB. A 64MB threshold comfortably separates
       // "fixed" (stable RSS) from "leaking".
       const code = /* ts */ `
+          const rss = process.platform === "darwin" && typeof Bun.unsafe.memoryFootprint === "function" ? Bun.unsafe.memoryFootprint : process.memoryUsage.rss;
           function ustarHeader(name, size) {
             const h = Buffer.alloc(512);
             h.write(name, 0, 100, "utf8");
@@ -691,10 +692,10 @@ describe("Bun.Archive", () => {
 
           for (let i = 0; i < 100; i++) await once();
           Bun.gc(true);
-          const before = process.memoryUsage.rss();
+          const before = rss();
           for (let i = 0; i < 1500; i++) await once();
           Bun.gc(true);
-          const growthMB = (process.memoryUsage.rss() - before) / 1024 / 1024;
+          const growthMB = (rss() - before) / 1024 / 1024;
           console.log("RSS growth: " + growthMB.toFixed(1) + " MB");
           if (growthMB > 64) throw new Error("leaked " + growthMB.toFixed(1) + " MB");
         `;

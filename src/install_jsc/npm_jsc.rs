@@ -5,9 +5,9 @@ use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 
 pub fn operating_system_is_match(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     use bun_install::npm;
-    let args = frame.arguments_old::<1>();
+    let [arg] = frame.arguments_as_array::<1>();
     let mut operating_system = npm::OperatingSystem::NONE.negatable();
-    let mut iter = args.ptr[0].array_iterator(global)?;
+    let mut iter = arg.array_iterator(global)?;
     while let Some(item) = iter.next()? {
         let slice = item.to_slice(global)?;
         operating_system.apply(slice.slice());
@@ -27,9 +27,9 @@ pub fn operating_system_is_match(global: &JSGlobalObject, frame: &CallFrame) -> 
 
 pub fn architecture_is_match(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     use bun_install::npm;
-    let args = frame.arguments_old::<1>();
+    let [arg] = frame.arguments_as_array::<1>();
     let mut architecture = npm::Architecture::NONE.negatable();
-    let mut iter = args.ptr[0].array_iterator(global)?;
+    let mut iter = arg.array_iterator(global)?;
     while let Some(item) = iter.next()? {
         let slice = item.to_slice(global)?;
         architecture.apply(slice.slice());
@@ -53,10 +53,10 @@ pub fn package_manifest_bindings_generate(global: &JSGlobalObject) -> JSValue {
 }
 
 /// Formerly `npm.PackageManifest.bindings` — testing-only (`internal-for-testing.ts`).
-pub struct ManifestBindings;
+pub(crate) struct ManifestBindings;
 
 impl ManifestBindings {
-    pub fn generate(global: &JSGlobalObject) -> JSValue {
+    pub(crate) fn generate(global: &JSGlobalObject) -> JSValue {
         use bun_jsc::JSFunction;
         let obj = JSValue::create_empty_object(global, 1);
         obj.put(
@@ -80,15 +80,14 @@ impl ManifestBindings {
 // `#[bun_jsc::host_fn]` Free-kind shim body emits `#fn_name(__g, __f)` without
 // a `Self::` qualifier, so the wrapped fn must resolve unqualified.
 #[bun_jsc::host_fn]
-pub(crate) fn js_parse_manifest(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+fn js_parse_manifest(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     use bstr::BStr;
     use bun_core::{String as BunString, strings};
     use bun_install::npm;
     use bun_jsc::JsError;
     use std::io::Write as _;
 
-    let args = frame.arguments_old::<2>();
-    let args = args.slice();
+    let args = frame.arguments();
     if args.len() < 2 || !args[0].is_string() || !args[1].is_string() {
         return Err(global.throw(format_args!(
             "expected manifest filename and registry string arguments"

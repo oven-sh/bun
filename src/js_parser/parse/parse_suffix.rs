@@ -79,7 +79,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             let name = p.lexer.identifier;
             let name_loc = p.lexer.loc();
             p.lexer.next()?;
-            let ref_ = p.store_name_in_ref(name).expect("unreachable");
+            let ref_ = p.store_name_in_ref(name);
             let loc = left.loc;
             let index = p.new_expr(E::PrivateIdentifier { ref_ }, name_loc);
             *left = p.new_expr(
@@ -218,7 +218,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     let name = p.lexer.identifier;
                     let name_loc = p.lexer.loc();
                     p.lexer.next()?;
-                    let ref_ = p.store_name_in_ref(name).expect("unreachable");
+                    let ref_ = p.store_name_in_ref(name);
                     let loc = left.loc;
                     let target = *left;
                     let index = p.new_expr(E::PrivateIdentifier { ref_ }, name_loc);
@@ -432,7 +432,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // boxed arena slot: allocate first, then fill via DerefMut on StoreRef.
         let ternary = p.new_expr(
             E::If {
-                test_: prev,
+                test: prev,
                 yes: Expr::EMPTY,
                 no: Expr::EMPTY,
             },
@@ -1428,7 +1428,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(Continuation::Next)
     }
 
-    pub fn parse_suffix(
+    pub(crate) fn parse_suffix(
         &mut self,
         left: &mut Expr,
         level: Level,

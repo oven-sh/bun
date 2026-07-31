@@ -1,12 +1,12 @@
 import { expect, test } from "bun:test";
-import { tempDirWithFiles } from "harness";
+import { tempDir } from "harness";
 
 test("HTMLRewriter should not crash when element handler throws an exception - issue #21680", () => {
   // The most important test: ensure the original crashing case from the GitHub issue doesn't crash
   // This was the exact case from the issue that caused "ASSERTION FAILED: Unexpected exception observed"
 
   // Create a minimal HTML file for testing
-  const dir = tempDirWithFiles("htmlrewriter-crash-test", {
+  using dir = tempDir("htmlrewriter-crash-test", {
     "min.html": "<script></script>",
   });
 

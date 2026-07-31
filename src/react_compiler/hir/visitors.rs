@@ -8,10 +8,9 @@ use std::collections::HashMap;
 
 use crate::hir::environment::Environment;
 use crate::hir::{
-    ArrayElement, ArrayPatternElement, AstAlloc, BasicBlock, BlockId, HirFunction, HirVec,
-    IdentifierId, Instruction, InstructionKind, InstructionValue, JsxAttribute, JsxTag,
-    ManualMemoDependencyRoot, ObjectPropertyKey, ObjectPropertyOrSpread, Pattern, Place,
-    PlaceOrSpread, ScopeId, Terminal,
+    ArrayElement, ArrayPatternElement, AstAlloc, BasicBlock, BlockId, HirFunction, IdentifierId,
+    Instruction, InstructionValue, JsxAttribute, JsxTag, ManualMemoDependencyRoot,
+    ObjectPropertyKey, ObjectPropertyOrSpread, Pattern, Place, PlaceOrSpread, ScopeId, Terminal,
 };
 
 // =============================================================================
@@ -86,83 +85,10 @@ pub fn each_instruction_value_lvalue(value: &InstructionValue) -> Vec<Place> {
     result
 }
 
-/// Yields lvalues with their InstructionKind.
-/// Equivalent to TS `eachInstructionLValueWithKind`.
-pub fn each_instruction_lvalue_with_kind(
-    value: &InstructionValue,
-) -> Vec<(Place, InstructionKind)> {
-    let mut result = Vec::new();
-    match value {
-        InstructionValue::DeclareContext { lvalue, .. }
-        | InstructionValue::StoreContext { lvalue, .. }
-        | InstructionValue::DeclareLocal { lvalue, .. }
-        | InstructionValue::StoreLocal { lvalue, .. } => {
-            result.push((lvalue.place.clone(), lvalue.kind));
-        }
-        InstructionValue::Destructure { lvalue, .. } => {
-            let kind = lvalue.kind;
-            for place in each_pattern_operand(&lvalue.pattern) {
-                result.push((place, kind));
-            }
-        }
-        InstructionValue::PostfixUpdate { lvalue, .. }
-        | InstructionValue::PrefixUpdate { lvalue, .. } => {
-            result.push((lvalue.clone(), InstructionKind::Reassign));
-        }
-        // All other variants have no lvalues with kind
-        InstructionValue::LoadLocal { .. }
-        | InstructionValue::LoadContext { .. }
-        | InstructionValue::Primitive { .. }
-        | InstructionValue::JSXText { .. }
-        | InstructionValue::BinaryExpression { .. }
-        | InstructionValue::NewExpression { .. }
-        | InstructionValue::CallExpression { .. }
-        | InstructionValue::MethodCall { .. }
-        | InstructionValue::UnaryExpression { .. }
-        | InstructionValue::TypeCastExpression { .. }
-        | InstructionValue::JsxExpression { .. }
-        | InstructionValue::ObjectExpression { .. }
-        | InstructionValue::ObjectMethod { .. }
-        | InstructionValue::ArrayExpression { .. }
-        | InstructionValue::JsxFragment { .. }
-        | InstructionValue::RegExpLiteral { .. }
-        | InstructionValue::MetaProperty { .. }
-        | InstructionValue::PropertyStore { .. }
-        | InstructionValue::PropertyLoad { .. }
-        | InstructionValue::PropertyDelete { .. }
-        | InstructionValue::ComputedStore { .. }
-        | InstructionValue::ComputedLoad { .. }
-        | InstructionValue::ComputedDelete { .. }
-        | InstructionValue::LoadGlobal { .. }
-        | InstructionValue::StoreGlobal { .. }
-        | InstructionValue::FunctionExpression { .. }
-        | InstructionValue::TaggedTemplateExpression { .. }
-        | InstructionValue::TemplateLiteral { .. }
-        | InstructionValue::Await { .. }
-        | InstructionValue::GetIterator { .. }
-        | InstructionValue::IteratorNext { .. }
-        | InstructionValue::NextPropertyOf { .. }
-        | InstructionValue::Debugger { .. }
-        | InstructionValue::StartMemoize { .. }
-        | InstructionValue::FinishMemoize { .. }
-        | InstructionValue::UnsupportedNode { .. } => {}
-    }
-    result
-}
-
 /// Delegates to each_instruction_value_operand.
 /// Equivalent to TS `eachInstructionOperand`.
 pub fn each_instruction_operand(instr: &Instruction, env: &Environment) -> Vec<Place> {
     each_instruction_value_operand(&instr.value, env)
-}
-
-/// Like `each_instruction_operand` but takes `functions` directly instead of `env`.
-/// Useful when borrow splitting prevents passing the full `Environment`.
-pub fn each_instruction_operand_with_functions(
-    instr: &Instruction,
-    functions: &[HirFunction],
-) -> Vec<Place> {
-    each_instruction_value_operand_with_functions(&instr.value, functions)
 }
 
 /// Yields operand places from an InstructionValue.
@@ -584,249 +510,6 @@ pub fn each_terminal_operand(terminal: &Terminal) -> Vec<Place> {
 // Mapping functions (mutate in place)
 // =============================================================================
 
-/// Maps the instruction's lvalue and value's lvalues.
-/// Equivalent to TS `mapInstructionLValues`.
-pub fn map_instruction_lvalues(instr: &mut Instruction, f: &mut impl FnMut(Place) -> Place) {
-    match &mut instr.value {
-        InstructionValue::DeclareLocal { lvalue, .. }
-        | InstructionValue::StoreLocal { lvalue, .. }
-        | InstructionValue::DeclareContext { lvalue, .. }
-        | InstructionValue::StoreContext { lvalue, .. } => {
-            lvalue.place = f(lvalue.place.clone());
-        }
-        InstructionValue::Destructure { lvalue, .. } => {
-            map_pattern_operands(&mut lvalue.pattern, f);
-        }
-        InstructionValue::PostfixUpdate { lvalue, .. }
-        | InstructionValue::PrefixUpdate { lvalue, .. } => {
-            *lvalue = f(lvalue.clone());
-        }
-        _ => {}
-    }
-    instr.lvalue = f(instr.lvalue.clone());
-}
-
-/// Maps operands of an instruction.
-/// Equivalent to TS `mapInstructionOperands`.
-pub fn map_instruction_operands(
-    instr: &mut Instruction,
-    env: &mut Environment,
-    f: &mut impl FnMut(Place) -> Place,
-) {
-    map_instruction_value_operands(&mut instr.value, env, f);
-}
-
-/// Maps operand places in an InstructionValue.
-/// Equivalent to TS `mapInstructionValueOperands`.
-pub fn map_instruction_value_operands(
-    value: &mut InstructionValue,
-    env: &mut Environment,
-    f: &mut impl FnMut(Place) -> Place,
-) {
-    match value {
-        InstructionValue::BinaryExpression { left, right, .. } => {
-            *left = f(left.clone());
-            *right = f(right.clone());
-        }
-        InstructionValue::PropertyLoad { object, .. } => {
-            *object = f(object.clone());
-        }
-        InstructionValue::PropertyDelete { object, .. } => {
-            *object = f(object.clone());
-        }
-        InstructionValue::PropertyStore {
-            object, value: val, ..
-        } => {
-            *object = f(object.clone());
-            *val = f(val.clone());
-        }
-        InstructionValue::ComputedLoad {
-            object, property, ..
-        } => {
-            *object = f(object.clone());
-            *property = f(property.clone());
-        }
-        InstructionValue::ComputedDelete {
-            object, property, ..
-        } => {
-            *object = f(object.clone());
-            *property = f(property.clone());
-        }
-        InstructionValue::ComputedStore {
-            object,
-            property,
-            value: val,
-            ..
-        } => {
-            *object = f(object.clone());
-            *property = f(property.clone());
-            *val = f(val.clone());
-        }
-        InstructionValue::DeclareContext { .. } | InstructionValue::DeclareLocal { .. } => {
-            // no operands
-        }
-        InstructionValue::LoadLocal { place, .. } | InstructionValue::LoadContext { place, .. } => {
-            *place = f(place.clone());
-        }
-        InstructionValue::StoreLocal { value: val, .. } => {
-            *val = f(val.clone());
-        }
-        InstructionValue::StoreContext {
-            lvalue, value: val, ..
-        } => {
-            lvalue.place = f(lvalue.place.clone());
-            *val = f(val.clone());
-        }
-        InstructionValue::StoreGlobal { value: val, .. } => {
-            *val = f(val.clone());
-        }
-        InstructionValue::Destructure { value: val, .. } => {
-            *val = f(val.clone());
-        }
-        InstructionValue::NewExpression { callee, args, .. }
-        | InstructionValue::CallExpression { callee, args, .. } => {
-            *callee = f(callee.clone());
-            map_call_arguments(args, f);
-        }
-        InstructionValue::MethodCall {
-            receiver,
-            property,
-            args,
-            ..
-        } => {
-            *receiver = f(receiver.clone());
-            *property = f(property.clone());
-            map_call_arguments(args, f);
-        }
-        InstructionValue::UnaryExpression { value: val, .. } => {
-            *val = f(val.clone());
-        }
-        InstructionValue::JsxExpression {
-            tag,
-            props,
-            children,
-            ..
-        } => {
-            if let JsxTag::Place(place) = tag {
-                *place = f(place.clone());
-            }
-            for attribute in props.iter_mut() {
-                match attribute {
-                    JsxAttribute::Attribute { place, .. } => {
-                        *place = f(place.clone());
-                    }
-                    JsxAttribute::SpreadAttribute { argument, .. } => {
-                        *argument = f(argument.clone());
-                    }
-                }
-            }
-            if let Some(children) = children {
-                *children = AstAlloc::vec_from_iter(children.iter().map(|p| f(p.clone())));
-            }
-        }
-        InstructionValue::ObjectExpression { properties, .. } => {
-            for property in properties.iter_mut() {
-                match property {
-                    ObjectPropertyOrSpread::Property(prop) => {
-                        if let ObjectPropertyKey::Computed { name } = &mut prop.key {
-                            *name = f(name.clone());
-                        }
-                        prop.place = f(prop.place.clone());
-                    }
-                    ObjectPropertyOrSpread::Spread(spread) => {
-                        spread.place = f(spread.place.clone());
-                    }
-                }
-            }
-        }
-        InstructionValue::ArrayExpression { elements, .. } => {
-            *elements = AstAlloc::vec_from_iter(elements.iter().map(|element| match element {
-                ArrayElement::Place(place) => ArrayElement::Place(f(place.clone())),
-                ArrayElement::Spread(spread) => {
-                    let mut spread = spread.clone();
-                    spread.place = f(spread.place.clone());
-                    ArrayElement::Spread(spread)
-                }
-                ArrayElement::Hole => ArrayElement::Hole,
-            }));
-        }
-        InstructionValue::JsxFragment { children, .. } => {
-            *children = AstAlloc::vec_from_iter(children.iter().map(|e| f(e.clone())));
-        }
-        InstructionValue::ObjectMethod { lowered_func, .. }
-        | InstructionValue::FunctionExpression { lowered_func, .. } => {
-            let func = &mut env.functions[lowered_func.func.0 as usize];
-            func.context = AstAlloc::vec_from_iter(func.context.iter().map(|d| f(d.clone())));
-        }
-        InstructionValue::TaggedTemplateExpression { tag, .. } => {
-            *tag = f(tag.clone());
-        }
-        InstructionValue::TypeCastExpression { value: val, .. } => {
-            *val = f(val.clone());
-        }
-        InstructionValue::TemplateLiteral { subexprs, .. } => {
-            *subexprs = AstAlloc::vec_from_iter(subexprs.iter().map(|s| f(s.clone())));
-        }
-        InstructionValue::Await { value: val, .. } => {
-            *val = f(val.clone());
-        }
-        InstructionValue::GetIterator { collection, .. } => {
-            *collection = f(collection.clone());
-        }
-        InstructionValue::IteratorNext {
-            iterator,
-            collection,
-            ..
-        } => {
-            *iterator = f(iterator.clone());
-            *collection = f(collection.clone());
-        }
-        InstructionValue::NextPropertyOf { value: val, .. } => {
-            *val = f(val.clone());
-        }
-        InstructionValue::PostfixUpdate { value: val, .. }
-        | InstructionValue::PrefixUpdate { value: val, .. } => {
-            *val = f(val.clone());
-        }
-        InstructionValue::StartMemoize { deps, .. } => {
-            if let Some(deps) = deps {
-                for dep in deps.iter_mut() {
-                    if let ManualMemoDependencyRoot::NamedLocal { value, .. } = &mut dep.root {
-                        *value = f(value.clone());
-                    }
-                }
-            }
-        }
-        InstructionValue::FinishMemoize { decl, .. } => {
-            *decl = f(decl.clone());
-        }
-        InstructionValue::Debugger { .. }
-        | InstructionValue::RegExpLiteral { .. }
-        | InstructionValue::MetaProperty { .. }
-        | InstructionValue::LoadGlobal { .. }
-        | InstructionValue::UnsupportedNode { .. }
-        | InstructionValue::Primitive { .. }
-        | InstructionValue::JSXText { .. } => {
-            // no operands
-        }
-    }
-}
-
-/// Maps call arguments in place.
-/// Equivalent to TS `mapCallArguments`.
-pub fn map_call_arguments(args: &mut HirVec<PlaceOrSpread>, f: &mut impl FnMut(Place) -> Place) {
-    for arg in args.iter_mut() {
-        match arg {
-            PlaceOrSpread::Place(place) => {
-                *place = f(place.clone());
-            }
-            PlaceOrSpread::Spread(spread) => {
-                spread.place = f(spread.place.clone());
-            }
-        }
-    }
-}
-
 /// Maps pattern operands in place.
 /// Equivalent to TS `mapPatternOperands`.
 pub fn map_pattern_operands(pattern: &mut Pattern, f: &mut impl FnMut(Place) -> Place) {
@@ -1012,55 +695,6 @@ pub fn map_terminal_successors(terminal: &mut Terminal, f: &mut impl FnMut(Block
             *fallthrough = f(*fallthrough);
         }
         Terminal::Unreachable { .. } | Terminal::Unsupported { .. } => {}
-    }
-}
-
-/// Maps a terminal node's operand places in place.
-/// Equivalent to TS `mapTerminalOperands`.
-pub fn map_terminal_operands(terminal: &mut Terminal, f: &mut impl FnMut(Place) -> Place) {
-    match terminal {
-        Terminal::If { test, .. } => {
-            *test = f(test.clone());
-        }
-        Terminal::Branch { test, .. } => {
-            *test = f(test.clone());
-        }
-        Terminal::Switch { test, cases, .. } => {
-            *test = f(test.clone());
-            for case in cases.iter_mut() {
-                if let Some(t) = &mut case.test {
-                    *t = f(t.clone());
-                }
-            }
-        }
-        Terminal::Return { value, .. } | Terminal::Throw { value, .. } => {
-            *value = f(value.clone());
-        }
-        Terminal::Try {
-            handler_binding, ..
-        } => {
-            if let Some(binding) = handler_binding {
-                *binding = f(binding.clone());
-            }
-        }
-        Terminal::MaybeThrow { .. }
-        | Terminal::Sequence { .. }
-        | Terminal::Label { .. }
-        | Terminal::Optional { .. }
-        | Terminal::Ternary { .. }
-        | Terminal::Logical { .. }
-        | Terminal::DoWhile { .. }
-        | Terminal::While { .. }
-        | Terminal::For { .. }
-        | Terminal::ForOf { .. }
-        | Terminal::ForIn { .. }
-        | Terminal::Goto { .. }
-        | Terminal::Unreachable { .. }
-        | Terminal::Unsupported { .. }
-        | Terminal::Scope { .. }
-        | Terminal::PrunedScope { .. } => {
-            // no-op
-        }
     }
 }
 
@@ -1251,12 +885,6 @@ pub fn terminal_fallthrough(terminal: &Terminal) -> Option<BlockId> {
     }
 }
 
-/// Returns true if the terminal has a fallthrough block.
-/// Equivalent to TS `terminalHasFallthrough`.
-pub fn terminal_has_fallthrough(terminal: &Terminal) -> bool {
-    terminal_fallthrough(terminal).is_some()
-}
-
 // =============================================================================
 // ScopeBlockTraversal
 // =============================================================================
@@ -1427,15 +1055,6 @@ pub fn each_instruction_value_operand_ids(
 /// Convenience wrapper around `each_terminal_operand` that maps to ids.
 pub fn each_terminal_operand_ids(terminal: &Terminal) -> Vec<IdentifierId> {
     each_terminal_operand(terminal)
-        .into_iter()
-        .map(|p| p.identifier)
-        .collect()
-}
-
-/// Collect all IdentifierIds from a pattern.
-/// Convenience wrapper around `each_pattern_operand` that maps to ids.
-pub fn each_pattern_operand_ids(pattern: &Pattern) -> Vec<IdentifierId> {
-    each_pattern_operand(pattern)
         .into_iter()
         .map(|p| p.identifier)
         .collect()
@@ -1954,13 +1573,6 @@ pub fn each_operand(v: &InstructionValue, mut f: impl FnMut(&Place)) {
         | InstructionValue::Primitive { .. }
         | InstructionValue::JSXText { .. } => {}
     }
-}
-
-/// Calls `f` on every operand `Place` in an `InstructionValue`, mutably.
-/// Alias of [`for_each_instruction_value_operand_mut`].
-#[inline(never)]
-pub fn each_operand_mut(v: &mut InstructionValue, mut f: impl FnMut(&mut Place)) {
-    for_each_instruction_value_operand_mut(v, &mut f);
 }
 
 /// Calls `f` on every lvalue `Place` in an `InstructionValue`.

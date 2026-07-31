@@ -3,7 +3,7 @@ use core::marker::PhantomData;
 use core::mem::{ManuallyDrop, align_of, size_of};
 use core::ptr::NonNull;
 
-use crate::{self as jsc, JSValue, Strong};
+use crate::{self as jsc, Strong};
 use bun_core::{WTFString, WTFStringImplStruct};
 use bun_ptr::{ExternalShared, ExternalSharedDescriptor, ExternalSharedOptional};
 
@@ -57,18 +57,6 @@ impl<T> Bindgen for BindgenTrivial<T> {
         extern_value
     }
 }
-
-pub type BindgenBool = BindgenTrivial<bool>;
-pub type BindgenU8 = BindgenTrivial<u8>;
-pub type BindgenI8 = BindgenTrivial<i8>;
-pub type BindgenU16 = BindgenTrivial<u16>;
-pub type BindgenI16 = BindgenTrivial<i16>;
-pub type BindgenU32 = BindgenTrivial<u32>;
-pub type BindgenI32 = BindgenTrivial<i32>;
-pub type BindgenU64 = BindgenTrivial<u64>;
-pub type BindgenI64 = BindgenTrivial<i64>;
-pub type BindgenF64 = BindgenTrivial<f64>;
-pub type BindgenRawAny = BindgenTrivial<JSValue>;
 
 // ──────────────────────────────────────────────────────────────────────────
 
@@ -192,7 +180,6 @@ impl BindgenOptionalRepr for BindgenString {
 // The bindgen TS codegen emits a concrete `enum` + `#[repr(C)]` union pair
 // per call site rather than a generic Rust combinator (see
 // `src/jsc/generated.rs`). This marker type exists for documentation parity.
-pub struct BindgenUnion;
 
 /// `extern struct { data: ExternUnion(field_types), tag: u8 }`
 ///
@@ -201,8 +188,8 @@ pub struct BindgenUnion;
 /// emitted by codegen alongside their consumers.
 #[repr(C)]
 pub struct ExternTaggedUnion2<T0, T1> {
-    pub data: ExternUnion2<T0, T1>,
-    pub tag: u8,
+    pub(crate) data: ExternUnion2<T0, T1>,
+    pub(crate) tag: u8,
 }
 
 /// Union fields are wrapped in `ManuallyDrop` so non-`Copy` payloads
@@ -212,7 +199,7 @@ pub struct ExternTaggedUnion2<T0, T1> {
 #[repr(C)]
 pub union ExternUnion2<T0, T1> {
     pub _0: ManuallyDrop<T0>,
-    pub _1: ManuallyDrop<T1>,
+    pub(crate) _1: ManuallyDrop<T1>,
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -359,9 +346,9 @@ impl<Child: Bindgen> Bindgen for BindgenArray<Child> {
 pub struct ExternArrayList<Child> {
     // Single-word nullable pointer. `Option<*mut T>` has no niche
     // (two words) and would break the C ABI; use raw `*mut T` and check `.is_null()`.
-    pub data: *mut Child,
-    pub length: c_uint,
-    pub capacity: c_uint,
+    pub(crate) data: *mut Child,
+    pub(crate) length: c_uint,
+    pub(crate) capacity: c_uint,
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -394,6 +381,3 @@ impl<T: ExternalSharedDescriptor> BindgenOptionalRepr for BindgenExternalShared<
         }
     }
 }
-
-pub type BindgenArrayBuffer = BindgenExternalShared<jsc::JSCArrayBuffer>;
-pub type BindgenBlob = BindgenExternalShared<crate::webcore::Blob>;

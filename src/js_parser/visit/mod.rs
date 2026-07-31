@@ -317,6 +317,25 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     self.react_compiler_candidate_name = Some(id.r#ref);
                     self.react_compiler_in_react_hoc = in_hoc;
                 }
+                // The visit may inline `import.meta.url` to a string (CJS output
+                // format, Bake), so the argument shape is captured before
+                // visiting. The callee ref is only resolved by the visit, so it
+                // is checked afterwards.
+                let arg_was_import_meta_url = was_const
+                    && self.create_require_ref.is_valid()
+                    && matches!(decl.binding.data, BData::BIdentifier(_))
+                    && match val.data.e_call() {
+                        Some(call) if call.args.len_u32() == 1 => {
+                            match &call.args.slice()[0].data {
+                                ExprData::EDot(dot) => {
+                                    matches!(dot.target.data, ExprData::EImportMeta(_))
+                                        && (dot.name == b"url" || dot.name == b"filename")
+                                }
+                                _ => false,
+                            }
+                        }
+                        _ => false,
+                    };
                 self.visit_expr_in_out(
                     &mut val,
                     ExprIn {
@@ -355,28 +374,17 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 // Track `const req = createRequire(import.meta.url)` so e_call can
                 // bundle `req("...")` like a regular `require("...")`. Restricted
                 // to `const` so the binding can never be reassigned.
-                if was_const
-                    && self.create_require_ref.is_valid()
+                if arg_was_import_meta_url
                     && let BData::BIdentifier(id) = decl.binding.data
                     && let Some(value) = decl.value
                     && let Some(call) = value.data.e_call()
-                    && call.args.len_u32() == 1
                 {
                     let target_ref = match &call.target.data {
                         ExprData::EIdentifier(ident) => Some(ident.ref_),
                         ExprData::EImportIdentifier(ident) => Some(ident.ref_),
                         _ => None,
                     };
-                    let arg_is_import_meta_url = match &call.args.slice()[0].data {
-                        ExprData::EDot(dot) => {
-                            matches!(dot.target.data, ExprData::EImportMeta(_))
-                                && (dot.name == b"url" || dot.name == b"filename")
-                        }
-                        _ => false,
-                    };
-                    if arg_is_import_meta_url
-                        && target_ref.is_some_and(|r| r.eql(self.create_require_ref))
-                    {
+                    if target_ref.is_some_and(|r| r.eql(self.create_require_ref)) {
                         self.create_require_target_refs.insert(id.r#ref, ());
                     }
                 }

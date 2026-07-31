@@ -2880,6 +2880,21 @@ describe("bundler", () => {
     target: "bun",
     run: { stdout: `{"hello":"world"} 3` },
   });
+  itBundled("edgecase/CreateRequireImportMetaUrlCjsFormat", {
+    // With CJS output format the visit pass inlines import.meta.url to a
+    // string, which must not defeat the createRequire detection.
+    files: {
+      "/src/entry.js": /* js */ `
+        import { createRequire } from "module";
+        const require2 = createRequire(import.meta.url);
+        console.log(require2("./data.json").value);
+      `,
+      "/src/data.json": `{ "value": "cjs-ok" }`,
+    },
+    target: "node",
+    format: "cjs",
+    run: { stdout: "cjs-ok" },
+  });
   itBundled("edgecase/CreateRequireNodeModuleAliased", {
     files: {
       "/src/entry.js": /* js */ `

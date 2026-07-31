@@ -245,9 +245,9 @@ pub struct PendingValue {
     pub on_start_streaming: Option<fn(ctx: *mut c_void) -> DrainResult>,
     pub on_readable_stream_available:
         Option<fn(ctx: *mut c_void, global_this: &JSGlobalObject, readable: ReadableStream)>,
-    pub on_stream_cancelled: Option<fn(ctx: Option<*mut c_void>)>,
-    pub on_stream_drained: Option<fn(ctx: Option<*mut c_void>)>,
-    pub on_reengage_backpressure: Option<fn(ctx: Option<*mut c_void>)>,
+    /// Upstream producer to notify on cancel/drain/consumer-attach; forwarded
+    /// to the `NewSource` when the locked body is realised as a native stream.
+    pub producer: streams::SourceHandle,
     pub size_hint: blob::SizeType,
 
     pub deinit: bool,
@@ -276,9 +276,7 @@ impl Default for PendingValue {
             on_start_buffering: None,
             on_start_streaming: None,
             on_readable_stream_available: None,
-            on_stream_cancelled: None,
-            on_stream_drained: None,
-            on_reengage_backpressure: None,
+            producer: streams::SourceHandle::None,
             size_hint: 0,
             deinit: false,
             action: Action::None,
@@ -879,19 +877,7 @@ impl Value {
             },
         );
 
-        if let Some(task) = locked.task {
-            if let Some(on_cancelled) = locked.on_stream_cancelled {
-                reader.cancel_handler.set(Some(on_cancelled));
-                reader.cancel_ctx.set(Some(task));
-            }
-            if let Some(on_drained) = locked.on_stream_drained {
-                reader.drain_handler.set(Some(on_drained));
-                reader.drain_ctx.set(Some(task));
-            }
-            if let Some(on_reengage) = locked.on_reengage_backpressure {
-                reader.reengage_handler.set(Some(on_reengage));
-            }
-        }
+        reader.producer.set(locked.producer);
 
         reader.context.setup();
 
@@ -1557,19 +1543,7 @@ impl Value {
             unreachable!()
         };
 
-        if let Some(task) = locked.task {
-            if let Some(on_cancelled) = locked.on_stream_cancelled {
-                reader.cancel_handler.set(Some(on_cancelled));
-                reader.cancel_ctx.set(Some(task));
-            }
-            if let Some(on_drained) = locked.on_stream_drained {
-                reader.drain_handler.set(Some(on_drained));
-                reader.drain_ctx.set(Some(task));
-            }
-            if let Some(on_reengage) = locked.on_reengage_backpressure {
-                reader.reengage_handler.set(Some(on_reengage));
-            }
-        }
+        reader.producer.set(locked.producer);
 
         let context_ptr: *mut ByteStream = &raw mut reader.context;
         locked.readable = webcore::readable_stream::Strong::init(

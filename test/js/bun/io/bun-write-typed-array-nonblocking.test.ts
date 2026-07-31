@@ -26,8 +26,8 @@ test("Bun.write(path, largeTypedArray) does not block the JS thread copying the 
     // best of a few runs to filter out scheduler noise.
     function bestOf(arr) { return Math.min(...arr); }
     const small = [], large = [];
-    for (let i = 0; i < 2; i++) small.push(await sample(1 << 20));
-    for (let i = 0; i < 2; i++) large.push(await sample(64 << 20));
+    for (let i = 0; i < 3; i++) small.push(await sample(1 << 20));
+    for (let i = 0; i < 3; i++) large.push(await sample(128 << 20));
     console.log(JSON.stringify({ small_ms: bestOf(small), large_ms: bestOf(large) }));
   `;
   await using proc = Bun.spawn({
@@ -39,10 +39,11 @@ test("Bun.write(path, largeTypedArray) does not block the JS thread copying the 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(stderr).toBe("");
   const { small_ms, large_ms } = JSON.parse(stdout);
-  // With the O(n) snapshot, 64MB took roughly 64x the 1MB sample. With the
+  // With the O(n) snapshot, 128MB took roughly 128x the 1MB sample. With the
   // buffer borrowed in place, the synchronous portion is constant regardless
-  // of size.
-  expect(large_ms).toBeLessThan(Math.max(small_ms, 1) * 8);
+  // of size. The 0.05ms floor keeps the threshold meaningful on fast release
+  // builds where the 1MB sample completes in a few microseconds.
+  expect(large_ms).toBeLessThan(Math.max(small_ms, 0.05) * 16);
   expect(exitCode).toBe(0);
 });
 

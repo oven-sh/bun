@@ -53,9 +53,8 @@ static PausedWait& pausedWait()
     return instance;
 }
 
-// See Bun__debugger__drain: entry-gate counter (process-global, not per-connection), and a sticky "ever queued" flag for its flush-grace wait.
+// Entry gate for Bun__debugger__drain (process-global, not per-connection).
 static std::atomic<uint64_t> totalPendingDebuggerMessages { 0 };
-static std::atomic<bool> hasQueuedAnyDebuggerMessage { false };
 
 static bool waitingForConnection = false;
 static bool bunControllerInstalled = false;
@@ -483,7 +482,6 @@ public:
             debuggerThreadMessages.append(inputMessage);
             // Inside the lock so receiveMessagesOnDebuggerThread's swap+decrement can't undercount.
             totalPendingDebuggerMessages.fetch_add(1, std::memory_order_release);
-            hasQueuedAnyDebuggerMessage.store(true, std::memory_order_release);
         }
 
         if (this->debuggerThreadMessageScheduledCount++ == 0) {
@@ -705,7 +703,6 @@ private:
 };
 
 static constexpr double kDrainHandoffTimeoutMs = 250;
-static constexpr double kDrainFlushGraceMs = 150;
 
 // Called from VirtualMachine::global_exit so exit() doesn't kill the detached debugger thread mid-delivery of queued inspector messages (e.g. `bun test`'s final TestReporter events).
 extern "C" void Bun__debugger__drain()
@@ -713,20 +710,15 @@ extern "C" void Bun__debugger__drain()
     if (debuggerScriptExecutionContext == nullptr)
         return;
 
-    // Layer (a): FIFO sentinel. Tasks on this context are FIFO, so once it runs every earlier receiveMessagesOnDebuggerThread has already called write().
-    if (totalPendingDebuggerMessages.load(std::memory_order_acquire) != 0) {
-        auto signal = DebuggerDrainSignal::create();
-        debuggerScriptExecutionContext->postTaskConcurrently([signal](ScriptExecutionContext&) {
-            signal->semaphore.signal();
-        });
-        signal->semaphore.waitFor(WTF::Seconds::fromMilliseconds(kDrainHandoffTimeoutMs));
-    }
+    if (totalPendingDebuggerMessages.load(std::memory_order_acquire) == 0)
+        return;
 
-    // Layer (b): brief grace for the debugger thread's event loop to flush the socket send buffer. Gated on hasQueuedAnyDebuggerMessage (the pending counter can be zero while bytes are still buffered below write()); BinarySemaphore used purely for its timeout.
-    if (hasQueuedAnyDebuggerMessage.load(std::memory_order_acquire)) {
-        WTF::BinarySemaphore topUp;
-        topUp.waitFor(WTF::Seconds::fromMilliseconds(kDrainFlushGraceMs));
-    }
+    // FIFO sentinel: tasks on this context are FIFO, so once it runs every earlier receiveMessagesOnDebuggerThread has already called write() on the socket.
+    auto signal = DebuggerDrainSignal::create();
+    debuggerScriptExecutionContext->postTaskConcurrently([signal](ScriptExecutionContext&) {
+        signal->semaphore.signal();
+    });
+    signal->semaphore.waitFor(WTF::Seconds::fromMilliseconds(kDrainHandoffTimeoutMs));
 }
 
 extern "C" void BunDebugger__willHotReload()

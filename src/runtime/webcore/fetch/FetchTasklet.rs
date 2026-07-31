@@ -1799,17 +1799,13 @@ impl FetchTasklet {
         if let Some(readable) = self.readable_stream_ref.get(&self.global_this) {
             if let Some(bytes) = readable.ptr.bytes() {
                 let source = bytes.parent_const();
-                source.cancel_handler.set(None);
-                source.cancel_ctx.set(None);
-                source.drain_handler.set(None);
-                source.drain_ctx.set(None);
-                source.reengage_handler.set(None);
+                source.producer.set(SourceHandle::None);
             }
         }
     }
 
-    fn on_stream_cancelled_callback(ctx: Option<*mut c_void>) {
-        let this = Self::from_ctx(ctx.expect("ctx"));
+    pub(crate) fn on_stream_cancelled(this: *mut Self) {
+        let this = unsafe { &mut *this };
         if this.signal_store.body_receive_mode() == BodyReceiveMode::Ignore {
             return;
         }
@@ -1819,8 +1815,8 @@ impl FetchTasklet {
         this.ignore_remaining_response_body(false);
     }
 
-    fn on_stream_drained_callback(ctx: Option<*mut c_void>) {
-        let this = Self::from_ctx(ctx.expect("ctx"));
+    pub(crate) fn on_stream_drained(this: *mut Self) {
+        let this = unsafe { &mut *this };
         if this
             .signal_store
             .try_transition_receive_mode(BodyReceiveMode::Paused, BodyReceiveMode::AutoPause)
@@ -1832,9 +1828,9 @@ impl FetchTasklet {
     /// A native sink attached after `drop_backpressure_if_unobserved` had
     /// already flipped to `BufferAll`. Move to `Paused`: the socket is still
     /// reading, so the next `maybe_pause_receive` stops it; the sink's drain
-    /// then resumes via `on_stream_drained_callback`.
-    fn on_stream_reengage_backpressure_callback(ctx: Option<*mut c_void>) {
-        let this = Self::from_ctx(ctx.expect("ctx"));
+    /// then resumes via `on_stream_drained`.
+    pub(crate) fn on_consumer_attached(this: *mut Self) {
+        let this = unsafe { &mut *this };
         let _ = this
             .signal_store
             .try_transition_receive_mode(BodyReceiveMode::BufferAll, BodyReceiveMode::Paused);
@@ -1899,10 +1895,7 @@ impl FetchTasklet {
                 Some(FetchTasklet::on_start_streaming_http_response_body_callback);
             pending.on_readable_stream_available = Some(FetchTasklet::on_readable_stream_available);
             pending.on_start_buffering = Some(FetchTasklet::on_start_buffering_callback);
-            pending.on_stream_cancelled = Some(FetchTasklet::on_stream_cancelled_callback);
-            pending.on_stream_drained = Some(FetchTasklet::on_stream_drained_callback);
-            pending.on_reengage_backpressure =
-                Some(FetchTasklet::on_stream_reengage_backpressure_callback);
+            pending.producer = SourceHandle::FetchResponseBody(std::ptr::from_mut(self));
             return BodyValue::Locked(pending);
         }
 

@@ -2394,60 +2394,67 @@ impl NetworkSink {
     /// Native-path terminator called from `SinkHandle::end`. Unlike `end()`
     /// (clean EOF / commit), an upstream error on the ByteStream fast-path must
     /// abort the upload and surface the original JS error to the caller.
-    pub(crate) fn end_from_stream(&mut self, err: Option<StreamError>) {
-        if self.ended {
+    ///
+    /// Raw `*mut Self` because `task.fail()`/`write_bytes(EOF)` synchronously
+    /// fire `S3UploadStreamWrapper::resolve`, which re-borrows this sink, and
+    /// the terminal `deref_` may drop rc→0 and free `*this` via `detach_sink`.
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
+    pub(crate) fn end_from_stream(this: *mut Self, err: Option<StreamError>) {
+        // SAFETY: `this` is the live Box<NetworkSink> the wrapper owns; short
+        // reborrows below do not span the re-entrant `fail`/`write_bytes` calls.
+        let (ended, is_bytestream) = unsafe {
+            (
+                (*this).ended,
+                matches!((*this).source, SourceHandle::ByteStream(_)),
+            )
+        };
+        if ended {
             return;
         }
-        if !matches!(self.source, SourceHandle::ByteStream(_)) {
+        if !is_bytestream {
             let sys_err = match err {
                 Some(StreamError::Error(e)) => Some(e),
                 _ => None,
             };
-            let _ = self.end(sys_err);
+            // SAFETY: `end()` does not free `*this` or re-enter the sink.
+            let _ = unsafe { &mut *this }.end(sys_err);
             return;
         }
-        // ByteStream fast-path: the source drove this call and already cleared
-        // its own `sink` field, so detach (not cancel).
-        self.ended = true;
-        self.source.clear();
-        let Some(task_ref) = self.task else {
-            return;
+        let (task_ref, wrapper) = {
+            // SAFETY: short reborrow for field writes; no re-entry in this block.
+            let this_ref = unsafe { &mut *this };
+            this_ref.ended = true;
+            this_ref.source.clear();
+            let Some(task_ref) = this_ref.task else {
+                return;
+            };
+            let wrapper = task_ref
+                .callback_context
+                .cast::<crate::webcore::s3::client::S3UploadStreamWrapper>();
+            if let Some(err) = &err {
+                this_ref.done = true;
+                let global = this_ref
+                    .global_this
+                    .expect("NetworkSink.global_this set at construction");
+                let js_err = err.to_js(&global);
+                if !js_err.is_empty_or_undefined_or_null() {
+                    this_ref.upstream_error.set(&global, js_err);
+                }
+            }
+            (task_ref, wrapper)
         };
-        // Captured before the terminal action: `fail()`/`write_bytes(EOF)` may
-        // synchronously fire `S3UploadStreamWrapper::resolve`, which re-borrows
-        // this sink and derefs the wrapper; `fail()` also derefs `task`.
-        // `self.task` holds a counted ref on the upload; on this path
-        // `callback_context` is the `S3UploadStreamWrapper` (set in
-        // `upload_stream`).
-        let wrapper = task_ref
-            .callback_context
-            .cast::<crate::webcore::s3::client::S3UploadStreamWrapper>();
-        if let Some(err) = &err {
-            self.done = true;
-            let global = self
-                .global_this
-                .expect("NetworkSink.global_this set at construction");
-            let js_err = err.to_js(&global);
-            if !js_err.is_empty_or_undefined_or_null() {
-                self.upstream_error.set(&global, js_err);
-            }
-        }
+        // SAFETY: `task_ref` is a separate counted allocation; `fail()` may
+        // deref it but the sink holds its own +1 until `detach_sink`.
+        let task = unsafe { &mut *task_ref.as_ptr() };
         if err.is_some() {
-            if let Some(task) = self.task_mut() {
-                let _ = task.fail(bun_s3_signing::error::S3Error {
-                    code: b"UnknownError",
-                    message: b"ReadableStream ended with an error",
-                });
-            }
-        } else if let Some(task) = self.task_mut() {
+            let _ = task.fail(bun_s3_signing::error::S3Error {
+                code: b"UnknownError",
+                message: b"ReadableStream ended with an error",
+            });
+        } else {
             let _ = task.write_bytes(b"", true);
         }
-        // Balance the stream-pump +1 `upload_stream` left on the wrapper so
-        // `resolve()` above saw rc 2→1 and the sink stayed allocated across
-        // the re-entry. May drop rc to 0 and free `*self` via `detach_sink`;
-        // must be the last action here.
-        // SAFETY: `wrapper` is the live Box allocation (rc ≥ 1 after the
-        // terminal action).
+        // SAFETY: `wrapper` live with rc ≥ 1; this may free `*this`.
         unsafe { crate::webcore::s3::client::S3UploadStreamWrapper::deref_(wrapper) };
     }
 

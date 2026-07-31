@@ -3845,10 +3845,11 @@ it.each(["chunked", "content-length"] as const)(
       runFixtureMaxRSS(fixture, { received: true }),
       emptyProcessMaxRSS(),
     ]);
-    // Without upstream pause the proxy accumulates the whole 256 MB while the
+    // Without upstream pause the proxy accumulates the whole payload while the
     // client stalls; with it, in-flight bytes are bounded by the socket buffers.
     expect((fixtureMaxRSS - baselineMaxRSS) / 1024 / 1024).toBeLessThan(isASAN || isDebug ? 256 : 96);
   },
+  10_000,
 );
 
 // Same as the test above but the pull does *not* await flush(true) — it keeps

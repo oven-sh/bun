@@ -325,7 +325,12 @@ export async function runFixtureMaxRSS(fixture: string, expected: unknown) {
   expect(stderr).toBe("");
   expect(JSON.parse(stdout.trim())).toEqual(expected);
   expect(exitCode).toBe(0);
-  return proc.resourceUsage()!.maxRSS;
+  const maxRSS = proc.resourceUsage()!.maxRSS;
+  // Guard the unit: any bun process peaks well above 1 MiB in bytes but under
+  // 1_048_576 in kB; a failure here means maxRSS regressed to kB and every
+  // bounded-memory assertion below is vacuous.
+  expect(maxRSS).toBeGreaterThan(1024 * 1024);
+  return maxRSS;
 }
 let emptyBunMaxRSS: Promise<number> | undefined;
 export function emptyProcessMaxRSS() {

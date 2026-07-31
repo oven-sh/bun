@@ -3227,7 +3227,7 @@ where
                                 AnyRequestContext::init(std::ptr::from_mut::<Self>(this)),
                             ));
                             stream.lock_native(global_this);
-                            byte_stream.signal_native_sink_attached();
+                            byte_stream.signal_consumer_attached();
                             // Deinit the old Strong reference before creating a new one
                             // to avoid leaking the Strong.Impl memory
                             this.response_body_readable_stream_ref.deinit();
@@ -3961,8 +3961,7 @@ where
                 readable.value.ensure_still_alive();
                 if let Some(bytes) = readable.ptr.bytes() {
                     let source = bytes.parent_const();
-                    source.drain_handler.set(None);
-                    source.drain_ctx.set(None);
+                    source.producer.set(WebCore::streams::SourceHandle::None);
                     let mut err = Body::ValueError::Message(BunString::static_(
                         "Request body exceeded maxRequestBodySize",
                     ));

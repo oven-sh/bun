@@ -218,26 +218,19 @@ impl ByteStream {
         self.has_received_last_chunk.set(true);
         self.on_cancel();
         let source = self.parent_const();
-        if let Some(handler) = source.cancel_handler.take() {
-            handler(source.cancel_ctx.get());
-        }
+        let mut p = source.producer.replace(streams::SourceHandle::None);
+        p.close(None);
     }
 
     #[inline]
     fn signal_drained(&self) {
-        let source = self.parent_const();
-        if let Some(handler) = source.drain_handler.get() {
-            handler(source.drain_ctx.get());
-        }
+        self.parent_const().producer.get().ready(None, None);
     }
 
     /// Called by native fast-paths after wiring `self.sink`. Restores
     /// producer-side backpressure if it was already dropped (BufferAll).
-    pub fn signal_native_sink_attached(&self) {
-        let source = self.parent_const();
-        if let Some(handler) = source.reengage_handler.get() {
-            handler(source.drain_ctx.get());
-        }
+    pub fn signal_consumer_attached(&self) {
+        self.parent_const().producer.get().start();
     }
 
     pub(crate) fn on_data(&self, mut stream: streams::Result) -> Result<(), bun_jsc::JsTerminated> {

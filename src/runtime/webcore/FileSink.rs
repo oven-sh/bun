@@ -1566,7 +1566,7 @@ impl FileSink {
                 byte_stream.sink.set(webcore::SinkHandle::FileSink(self_ptr));
                 byte_stream.sink_paused.set(false);
                 stream.lock_native(global_this);
-                byte_stream.signal_native_sink_attached();
+                byte_stream.signal_consumer_attached();
 
                 if let Some(err) = byte_stream.take_pending_error() {
                     byte_stream.sink.set(webcore::SinkHandle::None);

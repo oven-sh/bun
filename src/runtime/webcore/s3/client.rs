@@ -1042,7 +1042,7 @@ pub fn upload_stream(
             byte_stream.sink_paused.set(false);
             ctx.readable_stream_ref = ReadableStreamStrong::init(readable_stream, global_this);
             readable_stream.lock_native(global_this);
-            byte_stream.signal_native_sink_attached();
+            byte_stream.signal_consumer_attached();
 
             if let Some(err) = byte_stream.take_pending_error() {
                 let err_js = err.to_js(global_this);

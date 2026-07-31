@@ -132,9 +132,8 @@ describe("console.trace", () => {
       `console.group("G"); console.trace("x"); console.trace(); console.groupEnd(); console.trace("top");`,
     );
     // The group indent precedes the label, and the bare header is indented too.
-    expect(stderr).toStartWith("  Trace: x\n");
-    expect(stderr).toContain("\n  Trace\n");
-    expect(stderr).toContain("\nTrace: top\n");
+    const headers = stderr.match(/^(?:  Trace: x|  Trace|Trace: top)$/gm);
+    expect(headers).toEqual(["  Trace: x", "  Trace", "Trace: top"]);
     expect(stdout).toBe("G\n");
     expect(exitCode).toBe(0);
   });

@@ -82,7 +82,7 @@ test("reading .stdin does not leak a native FileSink per spawn", async () => {
   Bun.gc(true);
   const baseline = fileSinkInternals.liveCount();
 
-  for (let i = 0; i < N; i++) await once();
+  await Promise.all(Array.from({ length: N }, once));
 
   // Let JS wrappers finalize (their deref is what drops liveCount).
   for (let i = 0; i < 50; i++) {
@@ -95,7 +95,7 @@ test("reading .stdin does not leak a native FileSink per spawn", async () => {
   // A couple of stragglers whose JS wrappers haven't finalized yet are fine;
   // a +1-per-iteration native leak would leave `leaked` ≈ N here.
   expect(leaked).toBeLessThan(N / 4);
-}, 30_000);
+});
 
 // Reading `.stdin` after the child has already exited should still return
 // the FileSink (not `undefined`) — the fix must not regress this.

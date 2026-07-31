@@ -953,9 +953,8 @@ impl Loader {
 enum ReadEnvFile {
     /// Zero-length — caller marks the slot and returns.
     Empty,
-    /// FIFO/socket/device — caller warns (unless `quiet`), marks the slot, and
-    /// returns. `read_to_end` reads with `pread(2)` on Unix, which would fail
-    /// with ESPIPE on these.
+    /// FIFO/socket/device — caller warns (unless `quiet`), marks the slot,
+    /// and returns.
     #[cfg_attr(windows, allow(dead_code))]
     NotRegular,
     /// Recoverable read errno (ENOMEM/EPIPE/EACCES/EISDIR) — caller prints

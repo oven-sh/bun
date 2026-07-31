@@ -941,6 +941,75 @@ describe("spawn stdin ReadableStream", () => {
     expect(exitCode).toBe(0);
   });
 
+  // Same pipe-fills-and-child-never-reads shape as above, but the source is a
+  // JS pull() stream. The readStreamIntoSink pump must suspend on the sink's
+  // backpressure instead of pulling in a loop and buffering every chunk.
+  test("JS pull() source as stdin bounds memory when the child does not read", async () => {
+    const fixture = `
+      const chunk = Buffer.alloc(64 * 1024, 0x47);
+      let pulls = 0;
+      const stdin = new ReadableStream({ pull(c) { pulls++; c.enqueue(chunk); } });
+
+      Bun.gc(true);
+      const rssBefore = process.memoryUsage.rss();
+      const child = Bun.spawn({
+        cmd: [${JSON.stringify(bunExe())}, "-e", "await Bun.sleep(60000)"],
+        env: process.env,
+        stdin,
+        stdout: "ignore",
+        stderr: "ignore",
+      });
+
+      let peak = rssBefore;
+      for (let i = 0; i < 20; i++) {
+        await Bun.sleep(100);
+        peak = Math.max(peak, process.memoryUsage.rss());
+      }
+      child.kill();
+      console.log(JSON.stringify({ deltaMB: (peak - rssBefore) / 1024 / 1024, pulls }));
+      process.exit(0);
+    `;
+    await using proc = spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    const { deltaMB, pulls } = JSON.parse(stdout.trim());
+    // Without pump suspension the loop pulls (and buffers) chunks at CPU
+    // speed and starves the event loop; with it, pulls stop once the pipe and
+    // sink buffers are full.
+    expect(deltaMB).toBeLessThan(isASAN || isDebug ? 160 : 64);
+    expect(pulls).toBeLessThan(1024);
+    expect(exitCode).toBe(0);
+  });
+
+  // Handing a ReadableStream to a native sink (spawn stdin) must mark it
+  // locked + disturbed so a second consumer errors instead of hanging.
+  test("using a fetch response.body as stdin locks the stream", async () => {
+    await using source = Bun.serve({
+      port: 0,
+      fetch: () => new Response(new ReadableStream({ pull: c => c.enqueue(new Uint8Array(64 * 1024)) })),
+    });
+    const res = await fetch(source.url);
+    await using child = spawn({
+      cmd: [bunExe(), "-e", "await Bun.sleep(60000)"],
+      env: bunEnv,
+      stdin: res.body!,
+      stdout: "ignore",
+      stderr: "ignore",
+    });
+
+    expect(res.body!.locked).toBe(true);
+    expect(res.bodyUsed).toBe(true);
+    expect(() => res.body!.getReader()).toThrow(expect.objectContaining({ code: "ERR_INVALID_STATE" }));
+
+    child.kill();
+    await child.exited;
+  });
+
   // for-await over a subprocess stderr pipe is pull-driven: when the consumer
   // stalls, the OS pipe fills and the child's write() blocks on drain, so the
   // child cannot race to completion while the reader is slow. The child reports

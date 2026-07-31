@@ -2721,6 +2721,99 @@ describe("fetch should allow duplex", () => {
     expect(writes).toBeLessThan(256);
     expect(exitCode).toBe(0);
   });
+
+  // Passing a response body as a request body attaches it to a native sink;
+  // the source stream must be marked locked + disturbed so a second consumer
+  // errors instead of hanging on data that will never be delivered to it.
+  it("locks the response body when it is used as a request body", async () => {
+    await using source = Bun.serve({
+      port: 0,
+      fetch: () => new Response(new ReadableStream({ pull: c => c.enqueue(new Uint8Array(64 * 1024)) })),
+    });
+    const arrived = Promise.withResolvers<void>();
+    const gate = Promise.withResolvers<void>();
+    await using sink = Bun.serve({
+      port: 0,
+      fetch: async () => {
+        arrived.resolve();
+        await gate.promise;
+        return new Response("ok");
+      },
+    });
+
+    const up = await fetch(source.url);
+    const controller = new AbortController();
+    const upload = fetch(sink.url, {
+      method: "POST",
+      body: up.body,
+      duplex: "half",
+      signal: controller.signal,
+    } as RequestInit).catch(() => {});
+
+    // The stream is handed to the request-body sink once the upload starts.
+    await arrived.promise;
+    expect(up.body!.locked).toBe(true);
+    expect(up.bodyUsed).toBe(true);
+    expect(() => up.body!.getReader()).toThrow(expect.objectContaining({ code: "ERR_INVALID_STATE" }));
+
+    gate.resolve();
+    controller.abort();
+    await upload;
+  });
+
+  // A Bun.serve handler forwarding req.body to a slower upload target must
+  // back-pressure the uploading client rather than buffering the difference:
+  // the request-body ByteStream stops reading from the inbound socket while
+  // the outbound sink is over its high-water mark.
+  it("bounds memory when a handler forwards req.body to a target that never reads", async () => {
+    const fixture = `
+      const net = require("node:net");
+      const chunk = Buffer.alloc(64 * 1024, 0x47);
+      // Upload target accepts the connection but never reads it.
+      const sink = net.createServer(sock => sock.pause());
+      await new Promise(r => sink.listen(0, "127.0.0.1", r));
+
+      const proxy = Bun.serve({
+        port: 0,
+        async fetch(req) {
+          await fetch(\`http://127.0.0.1:\${sink.address().port}/\`, { method: "POST", body: req.body, duplex: "half" }).catch(() => {});
+          return new Response("ok");
+        },
+      });
+
+      Bun.gc(true);
+      const rssBefore = process.memoryUsage.rss();
+      // Client uploads an endless chunked body as fast as the socket accepts it.
+      const client = net.connect(proxy.port, "127.0.0.1", () => {
+        client.write("POST / HTTP/1.1\\r\\nHost: x\\r\\nTransfer-Encoding: chunked\\r\\n\\r\\n");
+        const framed = Buffer.concat([Buffer.from("10000\\r\\n"), chunk, Buffer.from("\\r\\n")]);
+        const pump = () => { while (client.write(framed)); client.once("drain", pump); }; pump();
+      });
+      client.on("error", () => {});
+
+      let peak = rssBefore;
+      for (let i = 0; i < 20; i++) {
+        await Bun.sleep(100);
+        peak = Math.max(peak, process.memoryUsage.rss());
+      }
+      client.destroy();
+      console.log(JSON.stringify({ deltaMB: (peak - rssBefore) / 1024 / 1024 }));
+      process.exit(0);
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    const { deltaMB } = JSON.parse(stdout.trim());
+    // Without inbound back-pressure the uploader's bytes accumulate in-process
+    // at line rate; with it the client's socket fills and it stops writing.
+    expect(deltaMB).toBeLessThan(isASAN || isDebug ? 160 : 64);
+    expect(exitCode).toBe(0);
+  });
 });
 
 it("should allow to follow redirect if connection is closed, abort should work even if the socket was closed before the redirect", async () => {

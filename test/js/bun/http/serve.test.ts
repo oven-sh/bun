@@ -5,7 +5,9 @@ import {
   bunEnv,
   bunExe,
   dumpStats,
+  isASAN,
   isBroken,
+  isDebug,
   isIntelMacOS,
   isIPv4,
   isIPv6,
@@ -3727,6 +3729,121 @@ it("type: direct stream awaiting flush(true) under backpressure does not re-ente
   } finally {
     socket.destroy();
   }
+});
+
+// Under backpressure a type:"direct" controller.write() returns a Promise that
+// settles once the client drains; awaiting it must suspend pull and resume it
+// exactly there, with every chunk delivered once and in order.
+it("type: direct controller.write() Promise resolves on drain and resumes pull", async () => {
+  const CHUNK = Buffer.alloc(256 * 1024, 71);
+  const TOTAL_CHUNKS = 128; // 32 MiB
+  let awaited = 0;
+
+  using server = serve({
+    port: 0,
+    fetch() {
+      return new Response(
+        new ReadableStream({
+          type: "direct",
+          async pull(controller) {
+            for (let i = 0; i < TOTAL_CHUNKS; i++) {
+              const wrote = controller.write(CHUNK);
+              if (wrote instanceof Promise) {
+                awaited++;
+                await wrote;
+              }
+            }
+            await controller.flush();
+            controller.close();
+          },
+        }),
+      );
+    },
+  });
+
+  const socket = net.connect(server.port, "127.0.0.1");
+  const { promise: closed, resolve: onClosed, reject: onSocketError } = Promise.withResolvers<void>();
+  socket.on("error", onSocketError);
+  socket.on("close", () => onClosed());
+  let received = 0;
+  socket.on("data", d => (received += d.length));
+  socket.on("connect", () => {
+    socket.pause();
+    socket.write("GET / HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n");
+  });
+
+  try {
+    {
+      const t0 = Date.now();
+      while (awaited === 0 && Date.now() - t0 < 30000) await Bun.sleep(1);
+      expect(awaited).toBeGreaterThan(0);
+    }
+    // pull is suspended on the drain Promise; releasing the client must
+    // resume it and deliver the full body without duplication.
+    socket.resume();
+    await closed;
+    // headers + chunked framing on top; duplication would add >= one CHUNK.
+    expect(received).toBeGreaterThanOrEqual(TOTAL_CHUNKS * CHUNK.length);
+    expect(received).toBeLessThan(TOTAL_CHUNKS * CHUNK.length + 16 * 1024);
+  } finally {
+    socket.destroy();
+  }
+});
+
+// A handler that proxies an upstream response body to a slow client must
+// pause the upstream socket instead of buffering the rate difference:
+// ByteStream (fetch response) → HttpResponse sink with backpressure.
+it("bounds memory when proxying a fetch response body to a client that never reads", async () => {
+  const fixture = `
+    const net = require("node:net");
+    const chunk = Buffer.alloc(64 * 1024, 0x47);
+    // Upstream: endless chunked response, as fast as the socket accepts it.
+    const source = net.createServer(sock => {
+      sock.write("HTTP/1.1 200 OK\\r\\ntransfer-encoding: chunked\\r\\nconnection: close\\r\\n\\r\\n");
+      const framed = Buffer.concat([Buffer.from("10000\\r\\n"), chunk, Buffer.from("\\r\\n")]);
+      const pump = () => { while (sock.write(framed)); sock.once("drain", pump); }; pump();
+    });
+    await new Promise(r => source.listen(0, "127.0.0.1", r));
+
+    const proxy = Bun.serve({
+      port: 0,
+      async fetch() {
+        const up = await fetch(\`http://127.0.0.1:\${source.address().port}/\`);
+        return new Response(up.body);
+      },
+    });
+
+    Bun.gc(true);
+    const rssBefore = process.memoryUsage.rss();
+    // Downstream client requests the proxied body and never reads it.
+    const client = net.connect(proxy.port, "127.0.0.1", () => {
+      client.pause();
+      client.write("GET / HTTP/1.1\\r\\nHost: x\\r\\n\\r\\n");
+    });
+    client.on("error", () => {});
+
+    let peak = rssBefore;
+    for (let i = 0; i < 20; i++) {
+      await Bun.sleep(100);
+      peak = Math.max(peak, process.memoryUsage.rss());
+    }
+    client.destroy();
+    console.log(JSON.stringify({ deltaMB: (peak - rssBefore) / 1024 / 1024 }));
+    process.exit(0);
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", fixture],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  const { deltaMB } = JSON.parse(stdout.trim());
+  // Without upstream pause the proxy accumulates the response body at line
+  // rate; with it, in-flight bytes are bounded by the two sockets' buffers.
+  expect(deltaMB).toBeLessThan(isASAN || isDebug ? 160 : 64);
+  expect(exitCode).toBe(0);
 });
 
 // Same as the test above but the pull does *not* await flush(true) — it keeps

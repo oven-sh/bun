@@ -1261,10 +1261,8 @@ where
                 let exc_value = JSValue::from_cell(exc.as_ptr());
                 // Store the exception in the VM's unhandled rejection capture
                 // mechanism if it's available (this is the same mechanism used
-                // by BufferOutputSink). The slot is `sink_error` on
-                // `BufferOutputSink::init`'s stack; the conservative scanner
-                // roots it, so no `.protect()` is needed (matching
-                // `on_quiet_unhandled_rejection_handler_capture_value`).
+                // by BufferOutputSink). The slot is stack-rooted in
+                // `BufferOutputSink::init`; no `.protect()` needed.
                 if let Some(err_ptr) = vm().unhandled_pending_rejection_to_capture {
                     // SAFETY: VM-owned pointer set by BufferOutputSink::init.
                     unsafe { *err_ptr = exc_value };
@@ -1424,8 +1422,6 @@ fn create_lolhtml_error(global: &JSGlobalObject, message: &dyn core::fmt::Displa
         // SAFETY: VM-owned pointer; valid while VM lives.
         let slot = unsafe { &mut *err_ptr };
         if !slot.is_empty() {
-            // Either a callback exception captured by `handler_callback`, or a
-            // promise-rejection reason captured by the VM rejection handler.
             let result = *slot;
             *slot = JSValue::ZERO;
             return result;

@@ -175,7 +175,7 @@ describe("otp", async () => {
     const { packageDir, packageJson } = await registry.createTestDir();
     const token = await registry.generateUser("otp-classic-fallback", "otp");
 
-    let doneHits = 0;
+    const doneAuthHeaders: (string | null)[] = [];
     using mockRegistry = Bun.serve({
       port: 0,
       fetch(req: Request) {
@@ -192,7 +192,7 @@ describe("otp", async () => {
           );
         }
         if (req.url.endsWith("done")) {
-          doneHits++;
+          doneAuthHeaders.push(req.headers.get("authorization"));
           return new Response(JSON.stringify({ token }), { status: 200 });
         }
         return new Response("unexpected url", { status: 500 });
@@ -234,29 +234,36 @@ describe("otp", async () => {
     expect(out).toContain("customapp://login");
     expect(out).not.toContain("open in browser");
     expect(out).not.toContain("Enter OTP: ");
-    expect(doneHits).toBeGreaterThan(0);
+    // same-origin done url polling keeps the registry's credentials attached
+    expect(doneAuthHeaders).toEqual([`Bearer ${token}`]);
     expect(out).toContain(" + otp-pkg-5@5.5.5");
     expect(exitCode).toBe(0);
   });
 
-  test("done url on a different origin is not polled and login falls back to the OTP prompt", async () => {
+  test("done url on a different origin is polled without credentials", async () => {
     const packageDir = tmpdirSync();
     const otpCode = "424242";
+    const registryToken = "registry-secret-token";
 
-    let foreignDoneHits = 0;
+    const foreignDoneRequests: { authorization: string | null; host: string | null }[] = [];
     using foreign = Bun.serve({
       port: 0,
-      fetch() {
-        foreignDoneHits++;
+      fetch(req: Request) {
+        foreignDoneRequests.push({
+          authorization: req.headers.get("authorization"),
+          host: req.headers.get("host"),
+        });
         return new Response(JSON.stringify({ token: otpCode }), { status: 200 });
       },
     });
 
     let localDoneHits = 0;
+    const registryAuthHeaders: (string | null)[] = [];
     using mockRegistry = Bun.serve({
       port: 0,
       fetch(req: Request) {
         if (req.method === "PUT") {
+          registryAuthHeaders.push(req.headers.get("authorization"));
           if (req.headers.get("npm-otp") === otpCode) {
             return new Response("OK", { status: 200 });
           }
@@ -279,7 +286,7 @@ describe("otp", async () => {
     await Promise.all([
       write(
         join(packageDir, "bunfig.toml"),
-        `[install]\ncache = false\nregistry = { url = "http://localhost:${mockRegistry.port}", token = "unused" }\n`,
+        `[install]\ncache = false\nregistry = { url = "http://localhost:${mockRegistry.port}", token = "${registryToken}" }\n`,
       ),
       write(join(packageDir, "package.json"), JSON.stringify({ name: "otp-pkg-6", version: "6.6.6" })),
     ]);
@@ -289,15 +296,18 @@ describe("otp", async () => {
       cwd: packageDir,
       stdout: "pipe",
       stderr: "pipe",
-      stdin: Buffer.from(otpCode + "\n"),
+      stdin: "ignore",
       env,
     });
 
     const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    expect(out).toContain("Enter OTP: ");
-    expect(out).not.toContain("Authenticate your account at");
-    expect(foreignDoneHits).toBe(0);
+    expect(out).toContain("Authenticate your account at");
+    expect(out).not.toContain("Enter OTP: ");
+    // the cross-origin done url must be polled, without the registry's credentials
+    expect(foreignDoneRequests).toEqual([{ authorization: null, host: `127.0.0.1:${foreign.port}` }]);
+    // the registry itself still receives credentials on both PUTs
+    expect(registryAuthHeaders).toEqual([`Bearer ${registryToken}`, `Bearer ${registryToken}`]);
     expect(localDoneHits).toBe(0);
     expect(out).toContain(" + otp-pkg-6@6.6.6");
     expect(exitCode).toBe(0);

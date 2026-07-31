@@ -127,16 +127,11 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_isMemoryPressureWatcherInstalled, (JSC::JSGl
     return JSValue::encode(jsBoolean(Bun__MemoryPressure__isInstalled(defaultGlobalObject(globalObject))));
 }
 
-// Whether the installed watcher registered a real OS signal source (PSI
-// trigger, kqueue filter, notification thread) rather than the silent
-// no-backend fallback.
 JSC_DEFINE_HOST_FUNCTION(jsFunction_memoryPressureWatcherHasOsBackend, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     return JSValue::encode(jsBoolean(Bun__MemoryPressure__hasOsBackend(defaultGlobalObject(globalObject))));
 }
 
-// The exact bytes open_psi_fd() writes to arm the Linux PSI trigger. Returned
-// as a Buffer so the test can verify the trailing NUL. Null on non-Linux.
 JSC_DEFINE_HOST_FUNCTION(jsFunction_memoryPressurePsiTrigger, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     size_t len = 0;

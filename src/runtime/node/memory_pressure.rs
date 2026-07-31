@@ -138,13 +138,17 @@ mod posix {
     /// in place over the last byte written, so the NUL must be included.
     #[cfg(any(target_os = "linux", target_os = "android"))]
     pub(super) const PSI_TRIGGER: &[u8] = b"some 150000 2000000\0";
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    const _: () = assert!(
+        PSI_TRIGGER[PSI_TRIGGER.len() - 1] == 0,
+        "psi_write() overwrites the last byte with NUL; trigger must include it"
+    );
 
     /// Open a PSI memory file and write a trigger. Tries the system-wide
     /// `/proc/pressure/memory` first, then the current cgroup's file.
     #[cfg(any(target_os = "linux", target_os = "android"))]
     fn open_psi_fd() -> Option<Fd> {
         use bun_sys::O;
-
         let mut cgroup_buf = [0u8; 320];
         let paths = [
             Some(bun_core::zstr!("/proc/pressure/memory")),
@@ -416,9 +420,7 @@ pub(crate) extern "C" fn Bun__MemoryPressure__emit(global: &JSGlobalObject, lvl:
     emit(global, lvl);
 }
 
-/// Whether the installed watcher actually registered an OS-level signal
-/// source (PSI trigger / kqueue filter / notification thread), as opposed to
-/// the silent no-backend fallback. Windows installs are all-or-nothing.
+/// Test hook: watcher registered a real OS source (vs. silent fallback).
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn Bun__MemoryPressure__hasOsBackend(global: &JSGlobalObject) -> bool {
     #[cfg(not(windows))]
@@ -431,9 +433,7 @@ pub(crate) extern "C" fn Bun__MemoryPressure__hasOsBackend(global: &JSGlobalObje
     }
 }
 
-/// The exact bytes `open_psi_fd()` writes to arm the Linux PSI trigger, for
-/// test environments that can't open `/proc/pressure/memory` (containers
-/// without `CAP_SYS_RESOURCE`, AppArmor `docker-default`). Null on non-Linux.
+/// Test hook: exact bytes `open_psi_fd()` writes (null on non-Linux).
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn Bun__MemoryPressure__psiTrigger(len: &mut usize) -> *const u8 {
     #[cfg(any(target_os = "linux", target_os = "android"))]

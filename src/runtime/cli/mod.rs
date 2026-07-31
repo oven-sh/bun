@@ -1852,8 +1852,23 @@ To create a project with the official Next.js scaffolding tool, run\n\
             && example_tag != ExampleTag::LocalFolder;
 
         if use_bunx {
+            // The positional scan above stops once it finds the template name,
+            // so a `--bun` after it was never seen. The first bare `--` is the
+            // npm/yarn arg separator and is dropped; a later `--`, or a `--bun`
+            // after the separator, is a literal arg for the create script.
+            let forwarded = &args[template_name_start..];
+            let mut seen_separator = false;
+            for arg in forwarded {
+                let slice = arg.as_bytes();
+                if !seen_separator && slice == b"--" {
+                    seen_separator = true;
+                } else if !seen_separator && slice == b"--bun" {
+                    dash_dash_bun = true;
+                }
+            }
+
             let mut bunx_args: Vec<&ZStr> =
-                Vec::with_capacity(2 + args.len() - template_name_start + (dash_dash_bun as usize));
+                Vec::with_capacity(2 + forwarded.len() + (dash_dash_bun as usize));
             bunx_args.push(bun_core::zstr!("bunx"));
             if dash_dash_bun {
                 bunx_args.push(bun_core::zstr!("--bun"));
@@ -1866,8 +1881,18 @@ To create a project with the official Next.js scaffolding tool, run\n\
             static CREATE_PREFIX: std::sync::OnceLock<bun_core::ZBox> = std::sync::OnceLock::new();
             let prefixed = BunxCommand::add_create_prefix(template_name)?;
             bunx_args.push(CREATE_PREFIX.get_or_init(|| prefixed).as_zstr());
-            for src in &args[template_name_start..] {
-                bunx_args.push(*src);
+
+            seen_separator = false;
+            for arg in forwarded {
+                let slice = arg.as_bytes();
+                if !seen_separator && slice == b"--" {
+                    seen_separator = true;
+                    continue;
+                }
+                if !seen_separator && slice == b"--bun" {
+                    continue;
+                }
+                bunx_args.push(*arg);
             }
             return BunxCommand::exec(ctx, &bunx_args);
         }

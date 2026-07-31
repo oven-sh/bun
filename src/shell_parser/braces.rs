@@ -1135,13 +1135,19 @@ impl<const ENCODING: Encoding> NewLexer<ENCODING> {
                         self.eat_double_quoted()?;
                         continue;
                     }
-                    c if c == u32::from(b'$')
-                        && self.chars.peek_raw() == Some(u32::from(b'\'')) =>
-                    {
-                        let _ = self.chars.eat_raw();
-                        self.eat_ansi_c_quoted()?;
-                        continue;
-                    }
+                    c if c == u32::from(b'$') => match self.chars.peek_raw() {
+                        Some(q) if q == u32::from(b'\'') => {
+                            let _ = self.chars.eat_raw();
+                            self.eat_ansi_c_quoted()?;
+                            continue;
+                        }
+                        Some(q) if q == u32::from(b'"') => {
+                            let _ = self.chars.eat_raw();
+                            self.eat_double_quoted()?;
+                            continue;
+                        }
+                        _ => {}
+                    },
                     c if c == u32::from(b'{') => {
                         brace_stack.push(OpenBrace {
                             tok_idx: u32::try_from(self.tokens.len()).expect("int cast"),

@@ -156,6 +156,9 @@ describe("$.braces is quote-aware (bash 5.2)", () => {
     ["{x,$'a,b'}", ["x", "a,b"]],
     ["$'\\'{a,b}'", ["'{a,b}"]],
     ["$'{a,\\'b}'", ["{a,'b}"]],
+    // `$"…"`: treated like `"…"` with the `$` consumed.
+    ['$"{a,b}"', ["{a,b}"]],
+    ['a$"{b,c}"d', ["a{b,c}d"]],
     // Backslash outside quotes removes itself and makes the next char literal,
     // or both characters for `\<newline>` (line continuation).
     ["a\\{b,c\\}", ["a{b,c}"]],

@@ -2811,7 +2811,7 @@ describe("fetch should allow duplex", () => {
       runFixtureMaxRSS(fixture, { drained: true }),
       emptyProcessMaxRSS(),
     ]);
-    // Without inbound back-pressure the proxy absorbs the whole 256 MB while
+    // Without inbound back-pressure the proxy absorbs the whole payload while
     // the target stalls; with it the uploader's socket fills instead.
     expect((fixtureMaxRSS - baselineMaxRSS) / 1024 / 1024).toBeLessThan(isASAN || isDebug ? 256 : 96);
   });

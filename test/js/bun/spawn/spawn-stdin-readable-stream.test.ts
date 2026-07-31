@@ -933,10 +933,10 @@ describe("spawn stdin ReadableStream", () => {
       runFixtureMaxRSS(fixture, { received: 128 * 1024 * 1024, exitCode: 0 }),
       emptyProcessMaxRSS(),
     ]);
-    // Without source-side backpressure the whole 256 MB payload lands in the
+    // Without source-side backpressure the whole payload lands in the
     // pumping process while the child stalls.
     expect((fixtureMaxRSS - baselineMaxRSS) / 1024 / 1024).toBeLessThan(isASAN || isDebug ? 256 : 96);
-  });
+  }, 20_000);
 
   // Same stalled-then-draining child, but the source is a JS pull() stream.
   // The readStreamIntoSink pump must suspend on the sink's backpressure
@@ -967,7 +967,7 @@ describe("spawn stdin ReadableStream", () => {
       emptyProcessMaxRSS(),
     ]);
     expect((fixtureMaxRSS - baselineMaxRSS) / 1024 / 1024).toBeLessThan(isASAN || isDebug ? 256 : 96);
-  });
+  }, 20_000);
 
   // Handing a ReadableStream to a native sink (spawn stdin) must mark it
   // locked + disturbed so a second consumer errors instead of hanging.

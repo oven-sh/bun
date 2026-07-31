@@ -381,10 +381,12 @@ test("direct-stream pull() that throws after controller.end() still surfaces the
   expect(exitCode).toBe(0);
 });
 
-test("direct-stream pull() that rejects still releases the request", async () => {
+test("direct-stream pull() that rejects reaches handleRejectStream (force-close)", async () => {
   // pull() rejecting goes through onReadDirectPullRejected, which rejects the
-  // consumer's promise so handleRejectStream runs and force-closes the connection.
-  // This is a release-path guard: the request must not hang.
+  // consumer's promise so handleRejectStream runs and force-closes the
+  // connection. The fulfill path would instead write the terminating chunk and
+  // the body would read as "partial", so the rejection of text() below is what
+  // pins this to the reject handler.
   const { promise: pullRejected, resolve: markRejected } = Promise.withResolvers<void>();
   using server = Bun.serve({
     port: 0,
@@ -405,11 +407,16 @@ test("direct-stream pull() that rejects still releases the request", async () =>
     },
   });
 
-  // handleRejectStream force-closes mid-response; whether the reset arrives
-  // before or after the status line is a timing detail, so consume both.
-  await fetch(server.url)
+  const outcome = await fetch(server.url)
     .then(r => r.text())
-    .catch(() => {});
+    .then(
+      body => ({ ok: true as const, body }),
+      err => ({ ok: false as const, err: String(err) }),
+    );
+  // handleRejectStream force-closes mid-response; the reset may arrive before
+  // or after the status line depending on timing, but either way the body
+  // read fails. A fulfill-path mutation would produce { ok: true, body: "partial" }.
+  expect(outcome.ok).toBe(false);
   await pullRejected;
   await waitForPendingRequests(server, 0);
 });

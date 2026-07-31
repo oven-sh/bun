@@ -1555,9 +1555,7 @@ impl FileSink {
                     .set(streams::SourceHandle::ByteStream(byte_stream));
                 byte_stream
                     .sink
-                    .set(webcore::SinkHandle::FileSink(bun_ptr::BackRef::new_mut(
-                        self,
-                    )));
+                    .set(webcore::SinkHandle::FileSink(bun_ptr::BackRef::new(&*self)));
                 byte_stream.sink_paused.set(false);
                 stream.lock_native(global_this);
                 byte_stream.signal_consumer_attached();

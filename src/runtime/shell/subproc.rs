@@ -786,9 +786,14 @@ impl ShellSubprocess {
                 // path that drops the FileSinkPtr.
                 pipe.source
                     .set(webcore::streams::SourceHandle::ShellWritable(
-                        bun_ptr::BackRef::from(
-                            core::ptr::NonNull::new(stdin_ptr).expect("&raw mut"),
-                        ),
+                        // SAFETY: `stdin_ptr` is the live `&raw mut` writable (write provenance).
+                        unsafe {
+                            bun_ptr::BackRef::from_raw_mut(
+                                core::ptr::NonNull::new(stdin_ptr)
+                                    .expect("&raw mut")
+                                    .as_ptr(),
+                            )
+                        },
                     ));
             }
         }

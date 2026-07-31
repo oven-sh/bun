@@ -128,7 +128,11 @@ test("scripts/buildkite-slow-tests.js does not fold batch phases into the preced
 
   using dir = tempDir("bk-slow-tests", { "job.log": fixture });
   await using proc = Bun.spawn({
-    cmd: [bunExe(), join(import.meta.dir, "..", "..", "scripts", "buildkite-slow-tests.js"), join(String(dir), "job.log")],
+    cmd: [
+      bunExe(),
+      join(import.meta.dir, "..", "..", "scripts", "buildkite-slow-tests.js"),
+      join(String(dir), "job.log"),
+    ],
     env: bunEnv,
     stderr: "pipe",
   });

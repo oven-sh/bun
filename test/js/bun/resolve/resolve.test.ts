@@ -454,18 +454,34 @@ describe("NODE_PATH test", () => {
           legacySub:    probe("legacy-only/sub.js"),
         }));
       `,
+      // Bun consults NODE_PATH for ESM imports too (Node does not). That
+      // channel shares the same resolver path as require, so the exports map
+      // must apply to `import` as well.
+      "app/probe.mjs": `
+        const probe = async (s) => { try { return String((await import(s)).default); } catch (e) { return "ERR"; } };
+        console.log(JSON.stringify({
+          root:   await probe("npkg"),
+          mapped: await probe("npkg/mapped"),
+          hidden: await probe("npkg/hidden.js"),
+          priv:   await probe("npkg/priv/secret.js"),
+        }));
+      `,
     });
 
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "--no-install", "probe.cjs"],
-      env: { ...bunEnv, NODE_PATH: joinP(String(dir), "gp") },
-      cwd: joinP(String(dir), "app"),
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const run = async (script: string) => {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "--no-install", script],
+        env: { ...bunEnv, NODE_PATH: joinP(String(dir), "gp") },
+        cwd: joinP(String(dir), "app"),
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout, stderr, exitCode };
+    };
 
-    expect(stderr).toBe("");
-    expect(JSON.parse(stdout)).toEqual({
+    const cjs = await run("probe.cjs");
+    expect(cjs.stderr).toBe("");
+    expect(JSON.parse(cjs.stdout)).toEqual({
       root: "EXPORTS-DOT-MAIN",
       mapped: "REAL-TARGET",
       hidden: "ERR",
@@ -475,7 +491,17 @@ describe("NODE_PATH test", () => {
       legacyRoot: "LEGACY-ONLY-MAIN",
       legacySub: "LEGACY-ONLY-SUB",
     });
-    expect(exitCode).toBe(0);
+    expect(cjs.exitCode).toBe(0);
+
+    const esm = await run("probe.mjs");
+    expect(esm.stderr).toBe("");
+    expect(JSON.parse(esm.stdout)).toEqual({
+      root: "EXPORTS-DOT-MAIN",
+      mapped: "REAL-TARGET",
+      hidden: "ERR",
+      priv: "ERR",
+    });
+    expect(esm.exitCode).toBe(0);
   });
 });
 

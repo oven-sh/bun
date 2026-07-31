@@ -44,8 +44,9 @@ function getBlob() {
 function getBuffer() {
   return Buffer.alloc(BODY_SIZE, "abcdefghijklmnopqrstuvwxyz");
 }
+let cachedString;
 function getString() {
-  return getBuffer().toString();
+  return (cachedString ??= getBuffer().toString());
 }
 function getURLSearchParams() {
   const urlSearchParams = new URLSearchParams();

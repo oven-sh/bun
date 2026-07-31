@@ -1489,7 +1489,7 @@ where
         }
         self.response_weakref.deref();
 
-        self.clear_request_body_stream_drain_handler(global_this);
+        self.detach_request_body_producer(global_this);
         self.request_body_readable_stream_ref.deinit();
 
         // Releases the ref taken in `set_cookies` (via `CookieMapRef::drop`).
@@ -2854,7 +2854,7 @@ where
                 // before `detach()` below re-enters JS so any drain callback /
                 // `on_start_buffering` reached from there early-returns.
                 req.flags.set_request_body_paused(false);
-                req.clear_request_body_stream_drain_handler(req.server().global_this());
+                req.detach_request_body_producer(req.server().global_this());
             }
 
             wrapper.sink.finalize();
@@ -2943,7 +2943,7 @@ where
             if ended_response {
                 // `resp` may be freed; the sink already resumed it. Clear before JS below.
                 req.flags.set_request_body_paused(false);
-                req.clear_request_body_stream_drain_handler(global_this);
+                req.detach_request_body_producer(global_this);
             }
             if let Some(prom) = wrapper.sink.pending_flush.take() {
                 // The promise value was protected when pending_flush was
@@ -4168,8 +4168,8 @@ where
         false
     }
 
-    /// Detach the body ByteStream's drain producer (the stream can outlive this ctx in JS).
-    fn clear_request_body_stream_drain_handler(&self, global_this: &JSGlobalObject) {
+    /// Detach the body ByteStream's producer back-pointer (the stream can outlive this ctx in JS).
+    fn detach_request_body_producer(&self, global_this: &JSGlobalObject) {
         let Some(readable) = self.request_body_readable_stream_ref.get(global_this) else {
             return;
         };

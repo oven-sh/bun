@@ -1601,30 +1601,13 @@ impl BlobExt for Blob {
             }
         };
 
-        // SAFETY: file_sink is a live +1 *mut FileSink for the rest of this fn.
-        let signal = unsafe { &(*file_sink).signal };
-        signal.set(webcore::file_sink::SinkSignal::init(JSValue::ZERO));
-
-        // explicitly set it to a dead pointer
-        // we use this memory address to disable signals being sent
-        signal.with_mut(|s| s.clear());
-        debug_assert!(signal.get().is_dead());
-
-        // SAFETY: `file_sink` is a live +1 `*mut FileSink`; `JsCell::as_ptr`
-        // yields the stable `*mut Signal` inside the `UnsafeCell`, and
-        // `&raw mut (*_).ptr` projects to the `Option<NonNull<c_void>>` field
-        // without forming an intermediate reference. `Option<NonNull<_>>` is
-        // guaranteed ABI-identical to `*mut c_void` (see const-asserts on
-        // `Signal` in streams.rs), so C++ (`JSSink::assignToStream`) may write
-        // the controller cell through this as `void**`.
-        let signal_ptr: *mut *mut c_void =
-            unsafe { (&raw mut (*(*file_sink).signal.as_ptr()).ptr).cast::<*mut c_void>() };
+        // Stay on the JS pump here: the native ByteStream path returns UNDEFINED before
+        // completion, which would resolve-0 early.
         let assignment_result: JSValue = webcore::file_sink::JSSink::assign_to_stream(
             global_this,
             readable_stream.value,
             // SAFETY: file_sink is a live +1 *mut FileSink.
             unsafe { &mut *file_sink },
-            signal_ptr,
         );
 
         assignment_result.ensure_still_alive();

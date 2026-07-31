@@ -69,7 +69,6 @@ using WebCore::JSReadableStreamReaderBase;
 using WebCore::JSReadIntoRequest;
 using WebCore::JSReadRequest;
 using WebCore::JSReadStreamIntoSinkOperation;
-using WebCore::JSResumableSinkPumpOperation;
 using WebCore::JSStreamFromIterableContext;
 using WebCore::JSStreamPipeToOperation;
 using WebCore::JSStreamsRuntime;
@@ -530,8 +529,6 @@ JSC::JSValue assignToStream(JSC::JSGlobalObject*, JSReadableStream*, JSC::JSValu
 JSC::JSValue readDirectStream(JSC::JSGlobalObject*, JSReadableStream*, JSC::JSObject* sinkController, JSC::JSObject* underlyingSource); // userJS: yes — BunStreamSource.cpp
 // The generic pump into a native JSSink controller.
 JSC::JSPromise* readStreamIntoSink(JSC::JSGlobalObject*, JSReadableStream*, JSC::JSObject* sink); // userJS: yes — BunStreamSource.cpp
-// The ResumableSink protocol. Returns undefined (encoded).
-JSC::JSValue assignStreamIntoResumableSink(JSC::JSGlobalObject*, JSReadableStream*, JSC::JSObject* resumableSink); // userJS: yes — BunStreamSource.cpp
 
 // JSDirectStreamController.cpp — direct-stream materialization + the direct controller.
 
@@ -624,7 +621,5 @@ JSC::EncodedJSValue ZigGlobalObject__readableStreamToText(Zig::GlobalObject*, JS
 JSC::EncodedJSValue ZigGlobalObject__readableStreamToJSON(Zig::GlobalObject*, JSC::EncodedJSValue stream); // userJS: yes
 JSC::EncodedJSValue ZigGlobalObject__readableStreamToBlob(Zig::GlobalObject*, JSC::EncodedJSValue stream); // userJS: yes
 JSC::EncodedJSValue ZigGlobalObject__readableStreamToFormData(Zig::GlobalObject*, JSC::EncodedJSValue stream, JSC::EncodedJSValue contentType); // userJS: yes
-// Caller: ResumableSink.rs; returns encoded undefined.
-JSC::EncodedJSValue Bun__assignStreamIntoResumableSink(JSC::JSGlobalObject*, JSC::EncodedJSValue stream, JSC::EncodedJSValue sink); // userJS: yes
 
 } // extern "C"

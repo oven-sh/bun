@@ -135,7 +135,7 @@ pub fn uv_getrusage(process: &mut bun_libuv_sys::uv_process_t) -> WinRusage {
     let Ok(memory) = bun_sys::windows::GetProcessMemoryInfo(process_pid) else {
         return usage_info;
     };
-    usage_info.maxrss = (memory.PeakWorkingSetSize / 1024) as u64;
+    usage_info.maxrss = memory.PeakWorkingSetSize as u64;
 
     usage_info
 }
@@ -194,9 +194,15 @@ impl RusageFields for libc::rusage {
     fn stime_usec(&self) -> i64 {
         self.ru_stime.tv_usec as i64
     }
+    /// Bytes. `ru_maxrss` is bytes on Apple platforms but kilobytes on
+    /// Linux/BSD.
     #[inline]
     fn maxrss(&self) -> f64 {
-        self.ru_maxrss as f64
+        if cfg!(target_vendor = "apple") {
+            self.ru_maxrss as f64
+        } else {
+            (self.ru_maxrss as f64) * 1024.0
+        }
     }
     #[inline]
     fn ixrss(&self) -> f64 {

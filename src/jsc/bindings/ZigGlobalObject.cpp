@@ -2677,6 +2677,16 @@ void GlobalObject::finishCreation(VM& vm)
             init.setConstructor(constructor);
         });
 
+    m_JSFetchRequestBodySinkClassStructure.initLater(
+        [](LazyClassStructure::Initializer& init) {
+            auto* prototype = createJSSinkPrototype(init.vm, init.global, WebCore::SinkID::FetchRequestBodySink);
+            auto* structure = JSFetchRequestBodySink::createStructure(init.vm, init.global, prototype);
+            auto* constructor = JSFetchRequestBodySinkConstructor::create(init.vm, init.global, JSFetchRequestBodySinkConstructor::createStructure(init.vm, init.global, init.global->functionPrototype()), prototype);
+            init.setPrototype(prototype);
+            init.setStructure(structure);
+            init.setConstructor(constructor);
+        });
+
     m_JSBufferClassStructure.initLater(
         [](LazyClassStructure::Initializer& init) {
             auto* prototype = WebCore::createBufferPrototype(init.vm, init.global);
@@ -4083,6 +4093,14 @@ GlobalObject::PromiseFunctions GlobalObject::promiseHandlerID(Zig::FFIFunction h
         return GlobalObject::PromiseFunctions::Bun__HTTPRequestContextDebugH3__onResolve;
     } else if (handler == Bun__HTTPRequestContextDebugH3__onResolveStream) {
         return GlobalObject::PromiseFunctions::Bun__HTTPRequestContextDebugH3__onResolveStream;
+    } else if (handler == Bun__FetchTasklet__onResolveRequestStream) {
+        return GlobalObject::PromiseFunctions::Bun__FetchTasklet__onResolveRequestStream;
+    } else if (handler == Bun__FetchTasklet__onRejectRequestStream) {
+        return GlobalObject::PromiseFunctions::Bun__FetchTasklet__onRejectRequestStream;
+    } else if (handler == Bun__S3UploadStream__onResolveStream) {
+        return GlobalObject::PromiseFunctions::Bun__S3UploadStream__onResolveStream;
+    } else if (handler == Bun__S3UploadStream__onRejectStream) {
+        return GlobalObject::PromiseFunctions::Bun__S3UploadStream__onRejectStream;
     } else {
         RELEASE_ASSERT_NOT_REACHED();
     }

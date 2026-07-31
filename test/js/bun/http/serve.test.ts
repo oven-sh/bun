@@ -5,11 +5,15 @@ import {
   bunEnv,
   bunExe,
   dumpStats,
+  emptyProcessMaxRSS,
+  isASAN,
   isBroken,
+  isDebug,
   isIntelMacOS,
   isIPv4,
   isIPv6,
   isPosix,
+  runFixtureMaxRSS,
   tempDir,
   tls,
   tmpdirSync,
@@ -3669,11 +3673,11 @@ it("type: direct stream awaiting flush(true) under backpressure does not re-ente
         async pull(controller) {
           pullEntries++;
           for (let i = 0; i < TOTAL_CHUNKS; i++) {
-            // write() returns a negative number when the socket is backed up;
+            // write() returns a pending Promise when the socket is backed up;
             // await flush(true) (the pending-flush promise) to pause until the
             // drain.
             const n = controller.write(CHUNK);
-            if (typeof n === "number" && n < 0) {
+            if (n instanceof Promise) {
               await controller.flush(true);
             }
             writes++;
@@ -3725,6 +3729,199 @@ it("type: direct stream awaiting flush(true) under backpressure does not re-ente
     expect(writes).toBe(TOTAL_CHUNKS);
     expect(received).toBeGreaterThanOrEqual(TOTAL_CHUNKS * CHUNK.length);
   } finally {
+    socket.destroy();
+  }
+});
+
+// Under backpressure a type:"direct" controller.write() returns a Promise that
+// settles once the client drains; awaiting it must suspend pull and resume it
+// exactly there, with every chunk delivered once and in order.
+it("type: direct controller.write() Promise resolves on drain and resumes pull", async () => {
+  const CHUNK = Buffer.alloc(256 * 1024, 71);
+  const TOTAL_CHUNKS = 128; // 32 MiB
+  let awaited = 0;
+
+  using server = serve({
+    port: 0,
+    fetch() {
+      return new Response(
+        new ReadableStream({
+          type: "direct",
+          async pull(controller) {
+            for (let i = 0; i < TOTAL_CHUNKS; i++) {
+              const wrote = controller.write(CHUNK);
+              if (wrote instanceof Promise) {
+                awaited++;
+                await wrote;
+              }
+            }
+            await controller.flush();
+            controller.close();
+          },
+        }),
+      );
+    },
+  });
+
+  const socket = net.connect(server.port, "127.0.0.1");
+  const { promise: closed, resolve: onClosed, reject: onSocketError } = Promise.withResolvers<void>();
+  socket.on("error", onSocketError);
+  socket.on("close", () => onClosed());
+  let received = 0;
+  socket.on("data", d => (received += d.length));
+  socket.on("connect", () => {
+    socket.pause();
+    socket.write("GET / HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n");
+  });
+
+  try {
+    {
+      const t0 = Date.now();
+      while (awaited === 0 && Date.now() - t0 < 30000) await Bun.sleep(1);
+      expect(awaited).toBeGreaterThan(0);
+    }
+    // pull is suspended on the drain Promise; releasing the client must
+    // resume it and deliver the full body without duplication.
+    socket.resume();
+    await closed;
+    // headers + chunked framing on top; duplication would add >= one CHUNK.
+    expect(received).toBeGreaterThanOrEqual(TOTAL_CHUNKS * CHUNK.length);
+    expect(received).toBeLessThan(TOTAL_CHUNKS * CHUNK.length + 16 * 1024);
+  } finally {
+    socket.destroy();
+  }
+});
+
+// A handler that proxies an upstream response body to a slow client must
+// pause the upstream socket instead of buffering the rate difference:
+// ByteStream (fetch response) → HttpResponse sink with backpressure.
+it.each(["chunked", "content-length"] as const)(
+  "bounds memory when proxying a %s fetch response body to a stalled client",
+  async encoding => {
+    const fixture = `
+    const net = require("node:net");
+    const CHUNK = Buffer.alloc(64 * 1024, 0x47), COUNT = 2048; // 128 MB
+    // Upstream: written as fast as the socket accepts it.
+    const source = net.createServer(sock => {
+      let n = 0;
+      if (${JSON.stringify(encoding)} === "chunked") {
+        sock.write("HTTP/1.1 200 OK\\r\\ntransfer-encoding: chunked\\r\\nconnection: close\\r\\n\\r\\n");
+        const framed = Buffer.concat([Buffer.from("10000\\r\\n"), CHUNK, Buffer.from("\\r\\n")]);
+        const pump = () => { while (n < COUNT) { n++; if (!sock.write(framed)) return sock.once("drain", pump); } sock.end("0\\r\\n\\r\\n"); };
+        pump();
+      } else {
+        sock.write("HTTP/1.1 200 OK\\r\\ncontent-length: " + CHUNK.length * COUNT + "\\r\\nconnection: close\\r\\n\\r\\n");
+        const pump = () => { while (n < COUNT) { n++; if (!sock.write(CHUNK)) return sock.once("drain", pump); } sock.end(); };
+        pump();
+      }
+    });
+    await new Promise(r => source.listen(0, "127.0.0.1", r));
+
+    const proxy = Bun.serve({
+      port: 0,
+      idleTimeout: 0,
+      async fetch() {
+        const up = await fetch(\`http://127.0.0.1:\${source.address().port}/\`);
+        return new Response(up.body);
+      },
+    });
+
+    // Downstream client stalls before reading, then drains the whole body.
+    let received = 0;
+    const { promise: done, resolve } = Promise.withResolvers();
+    const client = net.connect(proxy.port, "127.0.0.1", () => {
+      client.pause();
+      setTimeout(() => client.resume(), 500);
+      client.write("GET / HTTP/1.1\\r\\nHost: x\\r\\nConnection: close\\r\\n\\r\\n");
+    });
+    client.on("data", d => { received += d.length; if (received >= CHUNK.length * COUNT) resolve(); });
+    client.on("error", () => {});
+    await done;
+    client.destroy();
+    console.log(JSON.stringify({ received: received >= CHUNK.length * COUNT }));
+    process.exit(0);
+  `;
+    const [fixtureMaxRSS, baselineMaxRSS] = await Promise.all([
+      runFixtureMaxRSS(fixture, { received: true }),
+      emptyProcessMaxRSS(),
+    ]);
+    // Without upstream pause the proxy accumulates the whole payload while the
+    // client stalls; with it, in-flight bytes are bounded by the socket buffers.
+    expect((fixtureMaxRSS - baselineMaxRSS) / 1024 / 1024).toBeLessThan(isASAN || isDebug ? 256 : 96);
+  },
+  10_000,
+);
+
+// Same as the test above but the pull does *not* await flush(true) — it keeps
+// writing through backpressure and then parks on an unrelated promise. The
+// sink's onWritable drain must not re-invoke pull; a second entry would
+// duplicate the already-written bytes into the response body.
+it("type: direct stream that ignores backpressure is not re-entered on drain", async () => {
+  const CHUNK = Buffer.alloc(256 * 1024, 69);
+  const TOTAL_CHUNKS = 128; // 32 MiB — well past any localhost send buffer
+  let pullEntries = 0;
+  let sawBackpressure = false;
+  let parked = false;
+  const gate = Promise.withResolvers<void>();
+
+  using server = serve({
+    port: 0,
+    fetch() {
+      return new Response(
+        new ReadableStream({
+          type: "direct",
+          async pull(controller) {
+            pullEntries++;
+            for (let i = 0; i < TOTAL_CHUNKS; i++) {
+              if (controller.write(CHUNK) instanceof Promise) sawBackpressure = true;
+              await controller.flush();
+            }
+            parked = true;
+            await gate.promise;
+            controller.close();
+          },
+        }),
+      );
+    },
+  });
+
+  const socket = net.connect(server.port, "127.0.0.1");
+  const { promise: bodyDone, resolve: onBodyDone, reject: onSocketError } = Promise.withResolvers<void>();
+  socket.on("error", onSocketError);
+  socket.on("close", () => onBodyDone());
+  socket.on("connect", () => {
+    socket.pause();
+    socket.write("GET / HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n");
+  });
+
+  try {
+    // Hold the client paused while pull pushes 32 MiB and parks on `gate`,
+    // then drain: onWritable fires while pull is still suspended.
+    {
+      const t0 = Date.now();
+      while (!sawBackpressure && Date.now() - t0 < 30000) await Bun.sleep(1);
+      expect(sawBackpressure).toBe(true);
+    }
+    {
+      const t0 = Date.now();
+      while (!parked && Date.now() - t0 < 30000) await Bun.sleep(1);
+      expect(parked).toBe(true);
+    }
+    let received = 0;
+    socket.on("data", d => (received += d.length));
+    socket.resume();
+    {
+      const t0 = Date.now();
+      while (received < TOTAL_CHUNKS * CHUNK.length && Date.now() - t0 < 30000) await Bun.sleep(10);
+      expect(received).toBeGreaterThanOrEqual(TOTAL_CHUNKS * CHUNK.length);
+    }
+
+    expect(pullEntries).toBe(1);
+    gate.resolve();
+    await bodyDone;
+    expect(pullEntries).toBe(1);
+  } finally {
+    gate.resolve();
     socket.destroy();
   }
 });
@@ -3799,7 +3996,7 @@ it("type: direct stream — small write queued under backpressure is delivered i
           // pending_flush is already parked.
           for (let i = 0; i < 256 && !hitBackpressure; i++) {
             const n = controller.write(BIG);
-            if (typeof n === "number" && n < 0) hitBackpressure = true;
+            if (n instanceof Promise) hitBackpressure = true;
           }
           controller.write(SMALL);
           await controller.flush(true);
@@ -4061,4 +4258,51 @@ it.each([
   socket.destroy();
 
   expect(statusLine).toBe("HTTP/1.1 400 Bad Request");
+});
+
+// HTTPServerWritable must stop dequeuing from a JS ReadableStream once uWS reports
+// socket backpressure. We observe this by snapshotting how many chunks the server has
+// enqueued once the client has consumed only a small prefix: with backpressure the
+// producer tracks the consumer + kernel send-buffer; without it the producer drains
+// the whole stream into uWS's internal buffer before the client reads anything.
+it("applies backpressure to a ReadableStream response while the client drains", async () => {
+  const chunk = Buffer.alloc(256 * 1024, 0x61);
+  const chunkCount = 64; // 16 MB — well above loopback socket-buffer capacity
+  let sent = 0;
+
+  using server = serve({
+    port: 0,
+    idleTimeout: 0,
+    fetch() {
+      return new Response(
+        new ReadableStream({
+          pull(controller) {
+            controller.enqueue(chunk);
+            sent++;
+            if (sent === chunkCount) controller.close();
+          },
+        }),
+      );
+    },
+  });
+
+  const response = await fetch(server.url);
+  const reader = response.body!.getReader();
+  let received = 0;
+  let sentAtPartialDrain = -1;
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    received += value.byteLength;
+    if (sentAtPartialDrain < 0 && received >= chunk.byteLength * 4) {
+      // Client has consumed 1 MB of 16 MB. Sample the producer's progress.
+      sentAtPartialDrain = sent;
+    }
+  }
+
+  expect(received).toBe(chunk.byteLength * chunkCount);
+  expect(sentAtPartialDrain).toBeGreaterThan(0);
+  // If the sink ignored backpressure it would have already drained all chunkCount
+  // chunks into uWS's buffer by the time the client read 1 MB.
+  expect(sentAtPartialDrain).toBeLessThan(chunkCount);
 });

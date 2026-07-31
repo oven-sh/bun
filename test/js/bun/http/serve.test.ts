@@ -27,6 +27,27 @@ import { networkInterfaces } from "node:os";
 import nodeTls from "node:tls";
 import { tmpdir } from "os";
 
+// Peak RSS of a bun process that runs `fixture`, whose only stdout line is
+// the JSON `expected` (the transfer's completion result), and the peak RSS of
+// an empty bun process to subtract as the baseline. Compared as a delta so
+// the assertion is about the payload, not the runtime's fixed footprint.
+async function runFixtureMaxRSS(fixture: string, expected: unknown) {
+  await using proc = Bun.spawn({ cmd: [bunExe(), "-e", fixture], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(JSON.parse(stdout.trim())).toEqual(expected);
+  expect(exitCode).toBe(0);
+  return proc.resourceUsage()!.maxRSS;
+}
+let emptyBunMaxRSS: Promise<number> | undefined;
+function emptyProcessMaxRSS() {
+  return (emptyBunMaxRSS ??= (async () => {
+    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", ""], env: bunEnv });
+    await proc.exited;
+    return proc.resourceUsage()!.maxRSS;
+  })());
+}
+
 let renderToReadableStream: any = null;
 let app_jsx: any = null;
 
@@ -3793,58 +3814,61 @@ it("type: direct controller.write() Promise resolves on drain and resumes pull",
 // A handler that proxies an upstream response body to a slow client must
 // pause the upstream socket instead of buffering the rate difference:
 // ByteStream (fetch response) → HttpResponse sink with backpressure.
-it("bounds memory when proxying a fetch response body to a client that never reads", async () => {
-  const fixture = `
+it.each(["chunked", "content-length"] as const)(
+  "bounds memory when proxying a %s fetch response body to a stalled client",
+  async encoding => {
+    const fixture = `
     const net = require("node:net");
-    const chunk = Buffer.alloc(64 * 1024, 0x47);
-    // Upstream: endless chunked response, as fast as the socket accepts it.
+    const CHUNK = Buffer.alloc(64 * 1024, 0x47), COUNT = 4096; // 256 MB
+    // Upstream: written as fast as the socket accepts it.
     const source = net.createServer(sock => {
-      sock.write("HTTP/1.1 200 OK\\r\\ntransfer-encoding: chunked\\r\\nconnection: close\\r\\n\\r\\n");
-      const framed = Buffer.concat([Buffer.from("10000\\r\\n"), chunk, Buffer.from("\\r\\n")]);
-      const pump = () => { while (sock.write(framed)); sock.once("drain", pump); }; pump();
+      let n = 0;
+      if (${JSON.stringify(encoding)} === "chunked") {
+        sock.write("HTTP/1.1 200 OK\\r\\ntransfer-encoding: chunked\\r\\nconnection: close\\r\\n\\r\\n");
+        const framed = Buffer.concat([Buffer.from("10000\\r\\n"), CHUNK, Buffer.from("\\r\\n")]);
+        const pump = () => { while (n < COUNT) { n++; if (!sock.write(framed)) return sock.once("drain", pump); } sock.end("0\\r\\n\\r\\n"); };
+        pump();
+      } else {
+        sock.write("HTTP/1.1 200 OK\\r\\ncontent-length: " + CHUNK.length * COUNT + "\\r\\nconnection: close\\r\\n\\r\\n");
+        const pump = () => { while (n < COUNT) { n++; if (!sock.write(CHUNK)) return sock.once("drain", pump); } sock.end(); };
+        pump();
+      }
     });
     await new Promise(r => source.listen(0, "127.0.0.1", r));
 
     const proxy = Bun.serve({
       port: 0,
+      idleTimeout: 0,
       async fetch() {
         const up = await fetch(\`http://127.0.0.1:\${source.address().port}/\`);
         return new Response(up.body);
       },
     });
 
-    Bun.gc(true);
-    const rssBefore = process.memoryUsage.rss();
-    // Downstream client requests the proxied body and never reads it.
+    // Downstream client stalls before reading, then drains the whole body.
+    let received = 0;
+    const { promise: done, resolve } = Promise.withResolvers();
     const client = net.connect(proxy.port, "127.0.0.1", () => {
       client.pause();
-      client.write("GET / HTTP/1.1\\r\\nHost: x\\r\\n\\r\\n");
+      setTimeout(() => client.resume(), 500);
+      client.write("GET / HTTP/1.1\\r\\nHost: x\\r\\nConnection: close\\r\\n\\r\\n");
     });
+    client.on("data", d => { received += d.length; if (received >= CHUNK.length * COUNT) resolve(); });
     client.on("error", () => {});
-
-    let peak = rssBefore;
-    for (let i = 0; i < 20; i++) {
-      await Bun.sleep(100);
-      peak = Math.max(peak, process.memoryUsage.rss());
-    }
+    await done;
     client.destroy();
-    console.log(JSON.stringify({ deltaMB: (peak - rssBefore) / 1024 / 1024 }));
+    console.log(JSON.stringify({ received: received >= CHUNK.length * COUNT }));
     process.exit(0);
   `;
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "-e", fixture],
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stderr).toBe("");
-  const { deltaMB } = JSON.parse(stdout.trim());
-  // Without upstream pause the proxy accumulates the response body at line
-  // rate; with it, in-flight bytes are bounded by the two sockets' buffers.
-  expect(deltaMB).toBeLessThan(isASAN || isDebug ? 160 : 64);
-  expect(exitCode).toBe(0);
-});
+    const [fixtureMaxRSS, baselineMaxRSS] = await Promise.all([
+      runFixtureMaxRSS(fixture, { received: true }),
+      emptyProcessMaxRSS(),
+    ]);
+    // Without upstream pause the proxy accumulates the whole 256 MB while the
+    // client stalls; with it, in-flight bytes are bounded by the socket buffers.
+    expect((fixtureMaxRSS - baselineMaxRSS) / 1024 / 1024).toBeLessThan(isASAN || isDebug ? 256 : 96);
+  },
+);
 
 // Same as the test above but the pull does *not* await flush(true) — it keeps
 // writing through backpressure and then parks on an unrelated promise. The

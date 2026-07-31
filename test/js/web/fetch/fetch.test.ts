@@ -26,6 +26,27 @@ import net from "net";
 import { join } from "path";
 import { Readable } from "stream";
 import { gzipSync } from "zlib";
+
+// Peak RSS of a bun process that runs `fixture`, whose only stdout line is
+// the JSON `expected` (the transfer's completion result), and the peak RSS of
+// an empty bun process to subtract as the baseline. Compared as a delta so
+// the assertion is about the payload, not the runtime's fixed footprint.
+async function runFixtureMaxRSS(fixture: string, expected: unknown) {
+  await using proc = Bun.spawn({ cmd: [bunExe(), "-e", fixture], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(JSON.parse(stdout.trim())).toEqual(expected);
+  expect(exitCode).toBe(0);
+  return proc.resourceUsage()!.maxRSS;
+}
+let emptyBunMaxRSS: Promise<number> | undefined;
+function emptyProcessMaxRSS() {
+  return (emptyBunMaxRSS ??= (async () => {
+    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", ""], env: bunEnv });
+    await proc.exited;
+    return proc.resourceUsage()!.maxRSS;
+  })());
+}
 const tmp_dir = tmpdirSync();
 const fetchFixture3 = join(import.meta.dir, "fetch-leak-test-fixture-3.js");
 const fetchFixture4 = join(import.meta.dir, "fetch-leak-test-fixture-4.js");
@@ -2765,54 +2786,50 @@ describe("fetch should allow duplex", () => {
   // back-pressure the uploading client rather than buffering the difference:
   // the request-body ByteStream stops reading from the inbound socket while
   // the outbound sink is over its high-water mark.
-  it("bounds memory when a handler forwards req.body to a target that never reads", async () => {
+  it("bounds memory when a handler forwards req.body to a stalled target", async () => {
     const fixture = `
       const net = require("node:net");
-      const chunk = Buffer.alloc(64 * 1024, 0x47);
-      // Upload target accepts the connection but never reads it.
-      const sink = net.createServer(sock => sock.pause());
+      const CHUNK = Buffer.alloc(64 * 1024, 0x47), COUNT = 4096; // 256 MB
+      // Upload target stalls before reading, then drains and reports the total.
+      const { promise: drained, resolve: onDrained } = Promise.withResolvers();
+      const sink = net.createServer(sock => {
+        let got = 0;
+        sock.pause();
+        setTimeout(() => sock.resume(), 500);
+        sock.on("data", d => { got += d.length; if (got >= CHUNK.length * COUNT) onDrained(got); });
+      });
       await new Promise(r => sink.listen(0, "127.0.0.1", r));
 
       const proxy = Bun.serve({
         port: 0,
+        idleTimeout: 0,
+        maxRequestBodySize: 512 * 1024 * 1024,
         async fetch(req) {
           await fetch(\`http://127.0.0.1:\${sink.address().port}/\`, { method: "POST", body: req.body, duplex: "half" }).catch(() => {});
           return new Response("ok");
         },
       });
 
-      Bun.gc(true);
-      const rssBefore = process.memoryUsage.rss();
-      // Client uploads an endless chunked body as fast as the socket accepts it.
+      // Client uploads exactly COUNT chunks as fast as its socket accepts.
       const client = net.connect(proxy.port, "127.0.0.1", () => {
         client.write("POST / HTTP/1.1\\r\\nHost: x\\r\\nTransfer-Encoding: chunked\\r\\n\\r\\n");
-        const framed = Buffer.concat([Buffer.from("10000\\r\\n"), chunk, Buffer.from("\\r\\n")]);
-        const pump = () => { while (client.write(framed)); client.once("drain", pump); }; pump();
+        const framed = Buffer.concat([Buffer.from("10000\\r\\n"), CHUNK, Buffer.from("\\r\\n")]);
+        let n = 0;
+        const pump = () => { while (n < COUNT) { n++; if (!client.write(framed)) return client.once("drain", pump); } client.write("0\\r\\n\\r\\n"); };
+        pump();
       });
       client.on("error", () => {});
 
-      let peak = rssBefore;
-      for (let i = 0; i < 20; i++) {
-        await Bun.sleep(100);
-        peak = Math.max(peak, process.memoryUsage.rss());
-      }
-      client.destroy();
-      console.log(JSON.stringify({ deltaMB: (peak - rssBefore) / 1024 / 1024 }));
+      console.log(JSON.stringify({ drained: (await drained) >= CHUNK.length * COUNT }));
       process.exit(0);
     `;
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "-e", fixture],
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).toBe("");
-    const { deltaMB } = JSON.parse(stdout.trim());
-    // Without inbound back-pressure the uploader's bytes accumulate in-process
-    // at line rate; with it the client's socket fills and it stops writing.
-    expect(deltaMB).toBeLessThan(isASAN || isDebug ? 160 : 64);
-    expect(exitCode).toBe(0);
+    const [fixtureMaxRSS, baselineMaxRSS] = await Promise.all([
+      runFixtureMaxRSS(fixture, { drained: true }),
+      emptyProcessMaxRSS(),
+    ]);
+    // Without inbound back-pressure the proxy absorbs the whole 256 MB while
+    // the target stalls; with it the uploader's socket fills instead.
+    expect((fixtureMaxRSS - baselineMaxRSS) / 1024 / 1024).toBeLessThan(isASAN || isDebug ? 256 : 96);
   });
 });
 

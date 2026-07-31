@@ -3,6 +3,27 @@ import { fileSinkInternals } from "bun:internal-for-testing";
 import { describe, expect, mock, test } from "bun:test";
 import { bunEnv, bunExe, expectMaxObjectTypeCount, isASAN, isDebug, isWindows } from "harness";
 
+// Peak RSS of a bun process that runs `fixture`, whose only stdout line is
+// the JSON `expected` (the transfer's completion result), and the peak RSS of
+// an empty bun process to subtract as the baseline. Compared as a delta so
+// the assertion is about the payload, not the runtime's fixed footprint.
+async function runFixtureMaxRSS(fixture: string, expected: unknown) {
+  await using proc = spawn({ cmd: [bunExe(), "-e", fixture], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(JSON.parse(stdout.trim())).toEqual(expected);
+  expect(exitCode).toBe(0);
+  return proc.resourceUsage()!.maxRSS;
+}
+let emptyBunMaxRSS: Promise<number> | undefined;
+function emptyProcessMaxRSS() {
+  return (emptyBunMaxRSS ??= (async () => {
+    await using proc = spawn({ cmd: [bunExe(), "-e", ""], env: bunEnv });
+    await proc.exited;
+    return proc.resourceUsage()!.maxRSS;
+  })());
+}
+
 describe("spawn stdin ReadableStream", () => {
   test("basic ReadableStream as stdin", async () => {
     const stream = new ReadableStream({
@@ -888,102 +909,77 @@ describe("spawn stdin ReadableStream", () => {
   });
 
   // A fetch response body piped into a child's stdin is a native ByteStream →
-  // FileSink pump. When the child does not read, the OS pipe fills and the
-  // FileSink backpressures; that must pause the upstream response socket
-  // instead of buffering the rate difference in-process. RSS is measured in a
-  // fresh subprocess so the test runner's heap does not skew the delta.
-  test("fetch response.body as stdin bounds memory when the child does not read", async () => {
+  // FileSink pump. While the child stalls before reading, the pipe fills and
+  // the FileSink backpressures; that must pause the upstream response socket
+  // instead of buffering the payload in-process. The child then drains all
+  // of it, so the awaited condition is completion of the whole transfer.
+  test("fetch response.body as stdin bounds memory while the child stalls", async () => {
     const fixture = `
       const net = require("node:net");
-      const chunk = Buffer.alloc(64 * 1024, 0x47);
-      // Endless chunked response, written as fast as the socket accepts it.
+      const CHUNK = Buffer.alloc(64 * 1024, 0x47), COUNT = 4096; // 256 MB
       const source = net.createServer(sock => {
-        sock.write("HTTP/1.1 200 OK\\r\\ntransfer-encoding: chunked\\r\\nconnection: close\\r\\n\\r\\n");
-        const framed = Buffer.concat([Buffer.from("10000\\r\\n"), chunk, Buffer.from("\\r\\n")]);
-        const pump = () => { while (sock.write(framed)); sock.once("drain", pump); }; pump();
+        sock.write("HTTP/1.1 200 OK\\r\\ncontent-length: " + CHUNK.length * COUNT + "\\r\\nconnection: close\\r\\n\\r\\n");
+        let n = 0;
+        const pump = () => { while (n < COUNT) { n++; if (!sock.write(CHUNK)) return sock.once("drain", pump); } sock.end(); };
+        pump();
       });
       await new Promise(r => source.listen(0, "127.0.0.1", r));
 
-      Bun.gc(true);
-      const rssBefore = process.memoryUsage.rss();
       const up = await fetch(\`http://127.0.0.1:\${source.address().port}/\`);
-      // Child never reads stdin, so the pipe fills after one buffer's worth.
+      // Child stalls before reading, then drains stdin to EOF.
       const child = Bun.spawn({
-        cmd: [${JSON.stringify(bunExe())}, "-e", "await Bun.sleep(60000)"],
+        cmd: [
+          ${JSON.stringify(bunExe())},
+          "-e",
+          "await Bun.sleep(500); let total = 0; for await (const c of process.stdin) total += c.length; console.log(total);",
+        ],
         env: process.env,
         stdin: up.body,
-        stdout: "ignore",
-        stderr: "ignore",
+        stdout: "pipe",
+        stderr: "inherit",
       });
-
-      let peak = rssBefore;
-      for (let i = 0; i < 20; i++) {
-        await Bun.sleep(100);
-        peak = Math.max(peak, process.memoryUsage.rss());
-      }
-      child.kill();
-      console.log(JSON.stringify({ deltaMB: (peak - rssBefore) / 1024 / 1024 }));
+      const [received, exitCode] = await Promise.all([child.stdout.text(), child.exited]);
+      console.log(JSON.stringify({ received: Number(received), exitCode }));
       process.exit(0);
     `;
-    await using proc = spawn({
-      cmd: [bunExe(), "-e", fixture],
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).toBe("");
-    const { deltaMB } = JSON.parse(stdout.trim());
-    // Without source-side backpressure RSS grows by GBs within a second on
-    // loopback; with it, in-flight bytes are bounded by the pipe + socket
-    // buffers plus one chunk.
-    expect(deltaMB).toBeLessThan(isASAN || isDebug ? 160 : 64);
-    expect(exitCode).toBe(0);
+    const [fixtureMaxRSS, baselineMaxRSS] = await Promise.all([
+      runFixtureMaxRSS(fixture, { received: 256 * 1024 * 1024, exitCode: 0 }),
+      emptyProcessMaxRSS(),
+    ]);
+    // Without source-side backpressure the whole 256 MB payload lands in the
+    // pumping process while the child stalls.
+    expect((fixtureMaxRSS - baselineMaxRSS) / 1024 / 1024).toBeLessThan(isASAN || isDebug ? 256 : 96);
   });
 
-  // Same pipe-fills-and-child-never-reads shape as above, but the source is a
-  // JS pull() stream. The readStreamIntoSink pump must suspend on the sink's
-  // backpressure instead of pulling in a loop and buffering every chunk.
-  test("JS pull() source as stdin bounds memory when the child does not read", async () => {
+  // Same stalled-then-draining child, but the source is a JS pull() stream.
+  // The readStreamIntoSink pump must suspend on the sink's backpressure
+  // instead of pulling every chunk into memory while the child stalls.
+  test("JS pull() source as stdin bounds memory while the child stalls", async () => {
     const fixture = `
-      const chunk = Buffer.alloc(64 * 1024, 0x47);
-      let pulls = 0;
-      const stdin = new ReadableStream({ pull(c) { pulls++; c.enqueue(chunk); } });
+      const CHUNK = Buffer.alloc(64 * 1024, 0x47), COUNT = 4096; // 256 MB
+      let n = 0;
+      const stdin = new ReadableStream({ pull(c) { if (n < COUNT) { n++; c.enqueue(CHUNK); } else c.close(); } });
 
-      Bun.gc(true);
-      const rssBefore = process.memoryUsage.rss();
       const child = Bun.spawn({
-        cmd: [${JSON.stringify(bunExe())}, "-e", "await Bun.sleep(60000)"],
+        cmd: [
+          ${JSON.stringify(bunExe())},
+          "-e",
+          "await Bun.sleep(500); let total = 0; for await (const c of process.stdin) total += c.length; console.log(total);",
+        ],
         env: process.env,
         stdin,
-        stdout: "ignore",
-        stderr: "ignore",
+        stdout: "pipe",
+        stderr: "inherit",
       });
-
-      let peak = rssBefore;
-      for (let i = 0; i < 20; i++) {
-        await Bun.sleep(100);
-        peak = Math.max(peak, process.memoryUsage.rss());
-      }
-      child.kill();
-      console.log(JSON.stringify({ deltaMB: (peak - rssBefore) / 1024 / 1024, pulls }));
+      const [received, exitCode] = await Promise.all([child.stdout.text(), child.exited]);
+      console.log(JSON.stringify({ received: Number(received), exitCode }));
       process.exit(0);
     `;
-    await using proc = spawn({
-      cmd: [bunExe(), "-e", fixture],
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).toBe("");
-    const { deltaMB, pulls } = JSON.parse(stdout.trim());
-    // Without pump suspension the loop pulls (and buffers) chunks at CPU
-    // speed and starves the event loop; with it, pulls stop once the pipe and
-    // sink buffers are full.
-    expect(deltaMB).toBeLessThan(isASAN || isDebug ? 160 : 64);
-    expect(pulls).toBeLessThan(1024);
-    expect(exitCode).toBe(0);
+    const [fixtureMaxRSS, baselineMaxRSS] = await Promise.all([
+      runFixtureMaxRSS(fixture, { received: 256 * 1024 * 1024, exitCode: 0 }),
+      emptyProcessMaxRSS(),
+    ]);
+    expect((fixtureMaxRSS - baselineMaxRSS) / 1024 / 1024).toBeLessThan(isASAN || isDebug ? 256 : 96);
   });
 
   // Handing a ReadableStream to a native sink (spawn stdin) must mark it

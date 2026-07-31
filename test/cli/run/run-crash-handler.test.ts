@@ -547,12 +547,14 @@ test.if(isWindows)(
       });
       const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
 
-      /// Wait two seconds for a slow http request, or continue immediately once the request is heard.
-      await Promise.race([acked.promise, Bun.sleep(2000)]);
-
       expect(stderr).toContain(server.url.toString());
-      expect(sent).toBe(true);
       expect(exitCode).not.toBe(0);
+
+      // Await the event itself (as the auto-reporter tests above do), not a
+      // sleep race: on the no-AVX Windows agents PowerShell cold-start plus
+      // Invoke-RestMethod is ~2.1s, so a fixed 2s race loses on a coin flip.
+      await acked.promise;
+      expect(sent).toBe(true);
     } finally {
       try {
         rmSync(String(dir), { recursive: true, force: true, maxRetries: 20, retryDelay: 250 });

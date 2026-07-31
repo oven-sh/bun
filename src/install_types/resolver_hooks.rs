@@ -1003,7 +1003,16 @@ impl Repository {
         if repo_order != Ordering::Equal {
             return repo_order;
         }
-        self.committish.order(rhs.committish, lhs_buf, rhs_buf)
+        let committish_order = self.committish.order(rhs.committish, lhs_buf, rhs_buf);
+        if committish_order != Ordering::Equal {
+            return committish_order;
+        }
+        // `eql` distinguishes repositories by `resolved` when both are known,
+        // so the order must too or equal-by-committish pairs stay tied.
+        if self.resolved.is_empty() || rhs.resolved.is_empty() {
+            return Ordering::Equal;
+        }
+        self.resolved.order(rhs.resolved, lhs_buf, rhs_buf)
     }
 
     pub fn count<B: bun_semver::StringBuilder>(&self, buf: &[u8], builder: &mut B) {

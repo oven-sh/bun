@@ -1,22 +1,14 @@
 // https://github.com/oven-sh/bun/issues/36577
 //
-// `bun install --frozen-lockfile` rejected a lockfile that `bun install` had just
-// written. The frozen check (`Lockfile::eql`) sorts hoisted placements by
-// (tree path, package name) only, but npm: aliases can put several packages with
-// the same real name into the same tree node. Those entries tie, and the unstable
-// sort paired them differently between the freshly loaded lockfile and the
-// re-hoisted one (whose optional-peer slots are re-derived in a different walk
-// order), so identical trees compared as different.
-//
-// The graph below recreates that shape: a package name (`lib`) placed at the root
-// three times via two npm: aliases plus a direct dependency, a satisfied optional
-// peer (`carrier` -> `pdep`, held by `zz-late`) whose subtree is enqueued at a
-// different time on the two sides, and enough filler packages that the sort does
-// not fall back to a stable insertion sort.
+// The graph recreates the shape the frozen-lockfile comparison mis-paired: a
+// package name (`lib`) placed at the root three times via two npm: aliases plus
+// a direct dependency, a satisfied optional peer (`carrier` -> `pdep`, held by
+// `zz-late`) whose subtree is enqueued at a different time when the tree is
+// rebuilt from the lockfile, and enough filler packages that the comparison's
+// sort does not fall back to a stable insertion sort.
 import { expect, test } from "bun:test";
 import { mkdirSync, rmSync } from "fs";
 import { bunEnv, bunExe, tempDir } from "harness";
-import { tmpdir } from "os";
 import { join } from "path";
 
 type Ver = {
@@ -52,27 +44,33 @@ function makeGraph(fillerCount: number, shiftPrefix: string): { pkgs: Graph; roo
   return { pkgs, root };
 }
 
-async function serveGraph(pkgs: Graph) {
-  const tarballs = new Map<string, Uint8Array>();
-  const makeTarball = async (name: string, version: string) => {
+async function serveGraph(pkgs: Graph, tarballDir: string) {
+  const tarballs = new Map<string, Promise<Uint8Array>>();
+  const makeTarball = (name: string, version: string) => {
     const key = `${name}@${version}`;
-    const cached = tarballs.get(key);
-    if (cached) return cached;
-    const spec = pkgs[name][version];
-    const pkgJson: any = { name, version };
-    if (spec.dependencies) pkgJson.dependencies = spec.dependencies;
-    if (spec.peerDependencies) {
-      pkgJson.peerDependencies = spec.peerDependencies;
-      if (spec.optionalPeers?.length) {
-        pkgJson.peerDependenciesMeta = Object.fromEntries(spec.optionalPeers.map(p => [p, { optional: true }]));
-      }
+    let pending = tarballs.get(key);
+    if (!pending) {
+      pending = (async () => {
+        const spec = pkgs[name][version];
+        const pkgJson: any = { name, version };
+        if (spec.dependencies) pkgJson.dependencies = spec.dependencies;
+        if (spec.peerDependencies) {
+          pkgJson.peerDependencies = spec.peerDependencies;
+          if (spec.optionalPeers?.length) {
+            pkgJson.peerDependenciesMeta = Object.fromEntries(spec.optionalPeers.map(p => [p, { optional: true }]));
+          }
+        }
+        const tmp = join(tarballDir, `${name}-${version}.tgz`);
+        try {
+          await Bun.Archive.write(tmp, { "package/package.json": JSON.stringify(pkgJson) }, { compress: "gzip" });
+          return new Uint8Array(await Bun.file(tmp).arrayBuffer());
+        } finally {
+          rmSync(tmp, { force: true });
+        }
+      })();
+      tarballs.set(key, pending);
     }
-    const tmp = join(tmpdir(), `i36577-${name}-${version}.tgz`);
-    await Bun.Archive.write(tmp, { "package/package.json": JSON.stringify(pkgJson) }, { compress: "gzip" });
-    const bytes = new Uint8Array(await Bun.file(tmp).arrayBuffer());
-    rmSync(tmp, { force: true });
-    tarballs.set(key, bytes);
-    return bytes;
+    return pending;
   };
 
   const server = Bun.serve({
@@ -123,7 +121,8 @@ for (const [fillerCount, shiftPrefix] of [
 ] as const) {
   test.concurrent(`frozen lockfile accepts a freshly generated lockfile (${fillerCount} fillers)`, async () => {
     const { pkgs, root } = makeGraph(fillerCount, shiftPrefix);
-    await using server = await serveGraph(pkgs);
+    using tarballDir = tempDir(`i36577-tarballs-${fillerCount}`, {});
+    await using server = await serveGraph(pkgs, String(tarballDir));
 
     using dir = tempDir(`i36577-${fillerCount}`, {
       "package.json": JSON.stringify({ name: "root", version: "1.0.0", dependencies: root }),

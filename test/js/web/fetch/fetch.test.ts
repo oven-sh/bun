@@ -2751,12 +2751,15 @@ describe("fetch should allow duplex", () => {
       port: 0,
       fetch: () => new Response(new ReadableStream({ pull: c => c.enqueue(new Uint8Array(64 * 1024)) })),
     });
-    const arrived = Promise.withResolvers<void>();
+    const streaming = Promise.withResolvers<void>();
     const gate = Promise.withResolvers<void>();
     await using sink = Bun.serve({
       port: 0,
-      fetch: async () => {
-        arrived.resolve();
+      fetch: async req => {
+        // Body bytes arriving here proves the client has attached the
+        // source stream to its request-body sink (headers alone do not).
+        await req.body!.getReader().read();
+        streaming.resolve();
         await gate.promise;
         return new Response("ok");
       },
@@ -2771,8 +2774,7 @@ describe("fetch should allow duplex", () => {
       signal: controller.signal,
     } as RequestInit).catch(() => {});
 
-    // The stream is handed to the request-body sink once the upload starts.
-    await arrived.promise;
+    await streaming.promise;
     expect(up.body!.locked).toBe(true);
     expect(up.bodyUsed).toBe(true);
     expect(() => up.body!.getReader()).toThrow(expect.objectContaining({ code: "ERR_INVALID_STATE" }));

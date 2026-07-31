@@ -25,6 +25,19 @@ async function emitCompletions(shell: "zsh" | "bash" | "fish"): Promise<string> 
   return stdout;
 }
 
+// completions/bun.bash uses `declare -A` (associative arrays, bash >= 4.0).
+// macOS ships /bin/bash 3.2, so the functional probe can only run where a
+// modern bash is on PATH.
+const bashMajor = (() => {
+  if (isWindows) return 0;
+  try {
+    const { stdout } = Bun.spawnSync({ cmd: ["bash", "-c", "echo ${BASH_VERSINFO[0]}"], env: bunEnv });
+    return parseInt(stdout.toString().trim(), 10) || 0;
+  } catch {
+    return 0;
+  }
+})();
+
 // `bun completions` is a no-op on Windows (PowerShell completions are not
 // implemented), so these tests can only run on POSIX.
 describe.skipIf(isWindows)("shell completion scripts", () => {
@@ -67,12 +80,14 @@ describe.skipIf(isWindows)("shell completion scripts", () => {
     expect(exitCode).toBe(0);
   });
 
-  test.concurrent("bash: `bun <entrypoint> <TAB>` still offers global flags", async () => {
-    // Regression guard for the #24847 fix: the removed `=~ ${re_comp_word_script}`
-    // guard was always-true under GNU regex, so the `replaced_script` assignment
-    // it protected has always run. Dropping the arm outright would leave
-    // `bun somefile.js <TAB>` with zero completions instead of the global flag
-    // list, so the fix makes the block unconditional instead.
+  // Drives _bun_completions directly. Skipped when PATH bash is < 4 (macOS
+  // stock /bin/bash is 3.2 and rejects the script's `declare -A`).
+  test.concurrent.skipIf(bashMajor < 4)("bash: `bun <entrypoint> <TAB>` still offers global flags", async () => {
+    // Regression guard for the #24847 fix: the removed guard was always-true
+    // under GNU regex, so the `replaced_script` assignment it protected has
+    // always run. Dropping the arm outright would leave `bun somefile.js <TAB>`
+    // with zero completions instead of the global flag list, so the fix makes
+    // the block unconditional instead.
     const script = await emitCompletions("bash");
     using dir = tempDir("bun-bash-completion-run", {
       "bun.bash": script,
@@ -111,12 +126,16 @@ describe.skipIf(isWindows)("shell completion scripts", () => {
     expect(descLine).toBeDefined();
 
     const flags = flagsLine!.replace("set -l bun_install_boolean_flags ", "").trim().split(/\s+/);
-    // Descriptions are quoted with "..." and separated by a single space.
-    const descs = [...descLine!.matchAll(/"[^"]*"/g)].map(m => m[0]);
+    // Descriptions are a flat sequence of "..." literals separated by spaces.
+    const descs = [...descLine!.matchAll(/"([^"]*)"/g)].map(m => m[1]);
 
-    expect(flags).toContain("frozen-lockfile");
-    // The two parallel lists must stay in lockstep or every flag after the
-    // first mismatch gets the wrong help text.
+    // The two parallel lists are zipped by index at runtime; length equality
+    // alone cannot catch an insertion at the wrong position, so spot-check
+    // the pairings this change touched as well.
     expect(descs.length).toBe(flags.length);
+    expect(flags).toContain("frozen-lockfile");
+    expect(descs[flags.indexOf("frozen-lockfile")]).toContain("lockfile");
+    expect(descs[flags.indexOf("dry-run")]).toMatch(/dry run/i);
+    expect(descs[flags.indexOf("global")]).toMatch(/global/i);
   });
 });

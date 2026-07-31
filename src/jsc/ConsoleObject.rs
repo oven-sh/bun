@@ -5415,34 +5415,6 @@ pub mod formatter {
             self.quote_strings = true;
             let _qs = defer_restore!(self.quote_strings, prev_quote_strings);
 
-            // Generator objects have no own state to show and their prototype
-            // chain is the shared iterator-helper method table; walking it via
-            // `for_each_property` would dump `next`/`return`/`map`/... for
-            // every generator. Print the empty named-object shape (Node prints
-            // `Object [Generator] {}`).
-            if matches!(
-                js_type,
-                jsc::JSType::Generator
-                    | jsc::JSType::AsyncGenerator
-                    | jsc::JSType::AsyncFunctionGenerator
-            ) {
-                let mut writer = WrappedWriter {
-                    ctx: writer_,
-                    failed: false,
-                    estimated_line_length: &mut self.estimated_line_length,
-                };
-                if let Some(name_str) = get_object_name(self.global_this, value)? {
-                    writer.add_for_new_line(name_str.len + 1);
-                    writer.print(format_args!("{name_str} "));
-                }
-                writer.add_for_new_line(2);
-                writer.write_all(b"{}");
-                if writer.failed {
-                    self.failed = true;
-                }
-                return Ok(());
-            }
-
             // We want to figure out if we should print this object on one line
             // or multiple lines.
             //
@@ -5476,6 +5448,17 @@ pub mod formatter {
                 return self.print_object_depth_exceeded::<C>(writer_, value);
             }
             let ordered_properties = self.ordered_properties;
+            // `for_each_property` walks up to five prototype levels, which for
+            // a generator dumps the shared iterator-helper method table
+            // (`next`/`return`/`map`/...). Use the own-only enumerator so we
+            // print `Generator {}` (fresh) / `Generator { foo: 1 }` (user
+            // props) like Node, without the prototype noise.
+            let own_only = matches!(
+                js_type,
+                jsc::JSType::Generator
+                    | jsc::JSType::AsyncGenerator
+                    | jsc::JSType::AsyncFunctionGenerator
+            );
             let global_this = self.global_this;
             let mut iter = PropertyIteratorCtx::<C> {
                 formatter: self,
@@ -5486,7 +5469,7 @@ pub mod formatter {
                 i: 0,
             };
 
-            if ordered_properties {
+            if ordered_properties || own_only {
                 value.for_each_property_ordered(
                     global_this,
                     (&raw mut iter).cast::<c_void>(),

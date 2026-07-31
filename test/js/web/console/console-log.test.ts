@@ -163,6 +163,12 @@ async function* asyncGen() { yield 1; }
 console.log(syncGen());
 console.log(asyncGen());
 console.log(Bun.inspect(syncGen()), "|", Bun.inspect(asyncGen()));
+const gen = syncGen();
+gen.foo = 1;
+process.stdout.write(Bun.inspect(gen) + "\\n");
+const agen = asyncGen();
+agen.x = "hi";
+process.stdout.write(Bun.inspect(agen) + "\\n");
 `,
     ],
     env: bunEnv,
@@ -172,7 +178,16 @@ console.log(Bun.inspect(syncGen()), "|", Bun.inspect(asyncGen()));
 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  expect(stdout.replaceAll("\r\n", "\n")).toBe("Generator {}\nAsyncGenerator {}\nGenerator {} | AsyncGenerator {}\n");
+  expect(stdout.replaceAll("\r\n", "\n")).toBe(
+    [
+      "Generator {}",
+      "AsyncGenerator {}",
+      "Generator {} | AsyncGenerator {}",
+      "Generator {\n  foo: 1,\n}",
+      'AsyncGenerator {\n  x: "hi",\n}',
+      "",
+    ].join("\n"),
+  );
   expect(stderr).toBe("");
   expect(exitCode).toBe(0);
 });

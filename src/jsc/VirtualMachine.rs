@@ -4659,10 +4659,7 @@ impl VirtualMachine {
         Ok(())
     }
 
-    /// Intern `cwd` into `DirnameStore` so the published `top_level_dir` slice
-    /// is immutable (Worker resolvers read it concurrently), deduplicated by
-    /// content so repeated `process.chdir()` between the same directories does
-    /// not grow the never-freed store.
+    /// Deduplicated `DirnameStore` intern so `top_level_dir` is immutable and bounded.
     fn intern_cwd(fs: &bun_resolver::fs::FileSystem, cwd: &[u8]) -> &'static [u8] {
         static CACHE: bun_core::Mutex<Vec<&'static [u8]>> = bun_core::Mutex::new(Vec::new());
         let mut cache = CACHE.lock();

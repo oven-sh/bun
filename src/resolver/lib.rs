@@ -163,9 +163,7 @@ pub mod fs {
 
     // ── FileSystem ───────────────────────────────────────────────────────
 
-    /// Process-global filesystem facade for the resolver: the real-FS backend
-    /// and the dirname/filename interning stores. The cwd lives in
-    /// `bun_core::TOP_LEVEL_DIR`; read it via [`FileSystem::top_level_dir`].
+    /// Process-global resolver filesystem facade. cwd: [`FileSystem::top_level_dir`].
     pub struct FileSystem {
         pub fs: Implementation,
         pub dirname_store: &'static DirnameStore,
@@ -398,9 +396,7 @@ pub mod fs {
             bun_core::top_level_dir()
         }
 
-        /// `dir` must borrow immutable process-lifetime storage (interned in
-        /// `DirnameStore` or similar): concurrent Worker resolvers may hold
-        /// the previously published slice after this returns.
+        /// `dir` must borrow immutable process-lifetime storage (e.g. `DirnameStore`).
         #[inline]
         pub fn set_top_level_dir(&self, dir: &'static [u8]) {
             bun_core::set_top_level_dir(dir);

@@ -1354,10 +1354,8 @@ describe.if(!!libPath)("can open more than 63 symbols via", () => {
   }
 });
 
-// `toBuffer(ptr, offset, len)` without an explicit finalizer used to adopt the
-// caller's pointer as owned and install Bun's allocator deallocator, so GC would
-// `mi_free` caller-owned memory — an ASAN bad-free / release SIGSEGV.
-// These run in a subprocess because the bug crashes the process on unpatched Bun.
+// oven-sh/bun#35405: toBuffer without a finalizer used to mi_free caller-owned
+// memory on GC. Subprocess because unpatched builds crash.
 describe("toBuffer borrowed-pointer ownership (no bad-free on GC)", () => {
   async function runsClean(script) {
     await using proc = Bun.spawn({
@@ -1372,17 +1370,8 @@ describe("toBuffer borrowed-pointer ownership (no bad-free on GC)", () => {
 
   const gcLoop = `for (let i = 0; i < 20; i++) { Bun.gc(true); Buffer.alloc(1024 * 1024); }`;
 
-  // Forcing GC repeatedly in a subprocess costs a few seconds on a debug build, so
-  // the default 5s budget is too tight to be reliable.
-  const GC_TIMEOUT = 20_000;
-
-  // Post-condition on the ACTUAL caller memory the bad-free targets: drop only the
-  // adopted Buffer, then confirm `original[index]` (the storage `ptr(...)` pointed
-  // at) is still readable and writable — proving its backing was NOT freed. Then
-  // drop `original` too, exercising the owner's normal disposal after the borrowed
-  // view was collected — on an unpatched build the earlier invalid free has already
-  // corrupted that ownership path. That turns "the process didn't abort" into "the
-  // caller memory survived".
+  // Drops the borrowed view first, then the owner, so an invalid free shows up as
+  // corrupted caller memory rather than only as a crash.
   const originalSurvives = (index, expected) => `
       adopted = null;
       ${gcLoop}
@@ -1393,11 +1382,9 @@ describe("toBuffer borrowed-pointer ownership (no bad-free on GC)", () => {
       ${gcLoop}
   `;
 
-  it.concurrent(
-    "toBuffer(ptr(buffer)) does not free caller-owned memory on GC",
-    async () => {
-      expect(
-        await runsClean(`
+  it.concurrent("toBuffer(ptr(buffer)) does not free caller-owned memory on GC", async () => {
+    expect(
+      await runsClean(`
       import { ptr, toBuffer } from "bun:ffi";
       let original = Buffer.alloc(64, 0x41);
       let adopted = toBuffer(ptr(original), 0, 64);
@@ -1407,18 +1394,12 @@ describe("toBuffer borrowed-pointer ownership (no bad-free on GC)", () => {
       ${originalSurvives(0, "0x42")}
       console.log("survived-gc");
     `),
-      ).toEqual({ stdout: "survived-gc\n", stderr: "", exitCode: 0 });
-    },
-    GC_TIMEOUT,
-  );
+    ).toEqual({ stdout: "survived-gc\n", stderr: "", exitCode: 0 });
+  });
 
-  it.concurrent(
-    "toBuffer(ptr(buffer), offset) does not free an interior pointer on GC",
-    async () => {
-      // The adopted view starts at original[8], so both the aliasing check and the
-      // post-GC survival check must inspect that byte, not original[0].
-      expect(
-        await runsClean(`
+  it.concurrent("toBuffer(ptr(buffer), offset) does not free an interior pointer on GC", async () => {
+    expect(
+      await runsClean(`
       import { ptr, toBuffer } from "bun:ffi";
       let original = Buffer.alloc(64, 0x41);
       let adopted = toBuffer(ptr(original), 8, 48);
@@ -1428,32 +1409,26 @@ describe("toBuffer borrowed-pointer ownership (no bad-free on GC)", () => {
       ${originalSurvives(8, "0x42")}
       console.log("survived-gc");
     `),
-      ).toEqual({ stdout: "survived-gc\n", stderr: "", exitCode: 0 });
-    },
-    GC_TIMEOUT,
-  );
+    ).toEqual({ stdout: "survived-gc\n", stderr: "", exitCode: 0 });
+  });
 
-  it.concurrent(
-    "toBuffer(ptr(typedArray)) does not free caller-owned memory on GC",
-    async () => {
-      expect(
-        await runsClean(`
+  it.concurrent("toBuffer(ptr(typedArray)) does not free caller-owned memory on GC", async () => {
+    expect(
+      await runsClean(`
       import { ptr, toBuffer } from "bun:ffi";
       let original = new Uint8Array(64).fill(0x41);
       let adopted = toBuffer(ptr(original), 0, 64);
-      ${originalSurvives(0, "0x41")}
+      if (adopted[0] !== 0x41) throw new Error("expected a zero-copy view");
+      adopted[0] = 0x42;
+      if (original[0] !== 0x42) throw new Error("expected an aliasing view");
+      ${originalSurvives(0, "0x42")}
       console.log("survived-gc");
     `),
-      ).toEqual({ stdout: "survived-gc\n", stderr: "", exitCode: 0 });
-    },
-    GC_TIMEOUT,
-  );
+    ).toEqual({ stdout: "survived-gc\n", stderr: "", exitCode: 0 });
+  });
 
-  // Regression (the #1 risk): the bad-free fix must NOT change the explicit-finalizer
-  // path. When the caller supplies a finalizer, it still controls disposal and the
-  // deallocator is invoked exactly once on GC. Uses the compiled fixture's
-  // deallocator-counter helpers (getDeallocatorBuffer/getDeallocatorCallback both
-  // reset the counter, so the count is isolated to this test).
+  // Regression guard: an explicit finalizer still controls disposal and runs exactly
+  // once on GC. getDeallocatorBuffer/getDeallocatorCallback each reset the counter.
   it.skipIf(!FFI_FIXTURE_PATH)(
     "toBuffer with an explicit finalizer calls the deallocator exactly once on GC",
     async () => {
@@ -1468,21 +1443,18 @@ describe("toBuffer borrowed-pointer ownership (no bad-free on GC)", () => {
         const bufPtr = getDeallocatorBuffer();
         let buf = toBuffer(bufPtr, 0, 128, getDeallocatorCallback());
         expect(buf.length).toBe(128);
-        expect(getDeallocatorCalledCount()).toBe(0); // not called during construction
+        expect(getDeallocatorCalledCount()).toBe(0);
         buf = null;
       })();
-      // Yield between collections so the frame that held `buf` is popped before the
-      // conservative scan; a synchronous loop can keep a single cell pinned.
       for (let i = 0; i < 100 && getDeallocatorCalledCount() === 0; i++) {
         Bun.gc(true);
         Buffer.alloc(1024 * 1024);
         await Bun.sleep(0);
       }
-      expect(getDeallocatorCalledCount()).toBe(1); // called exactly once on GC
+      expect(getDeallocatorCalledCount()).toBe(1);
       Bun.gc(true);
-      expect(getDeallocatorCalledCount()).toBe(1); // not called again
+      expect(getDeallocatorCalledCount()).toBe(1);
     },
-    GC_TIMEOUT,
   );
 });
 

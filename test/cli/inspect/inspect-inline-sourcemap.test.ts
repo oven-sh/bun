@@ -12,7 +12,7 @@ test("--inspect inline sourcemap sources[0] is a valid path under cwd", async ()
   const cwd = fs.realpathSync(String(dir));
 
   await using proc = spawn({
-    cmd: [bunExe(), "--inspect=127.0.0.1:0", join("sub", "target.mjs")],
+    cmd: [bunExe(), "--inspect-wait=127.0.0.1:0", join("sub", "target.mjs")],
     env: bunEnv,
     cwd,
     stdout: "ignore",
@@ -48,16 +48,31 @@ test("--inspect inline sourcemap sources[0] is a valid path under cwd", async ()
 
     await Promise.race([new Promise<void>(resolve => ws.addEventListener("open", () => resolve())), failed]);
 
+    const pending = new Map<number, (v: any) => void>();
     const scriptParsed = new Promise<any>(resolve => {
       ws.addEventListener("message", ({ data }) => {
         const msg = JSON.parse(data.toString());
-        if (msg.method === "Debugger.scriptParsed" && String(msg.params?.url ?? "").endsWith("target.mjs")) {
+        if (typeof msg.id === "number" && pending.has(msg.id)) {
+          pending.get(msg.id)!(msg);
+          pending.delete(msg.id);
+        } else if (msg.method === "Debugger.scriptParsed" && String(msg.params?.url ?? "").endsWith("target.mjs")) {
           resolve(msg.params);
         }
       });
     });
-    ws.send(JSON.stringify({ id: 1, method: "Inspector.enable" }));
-    ws.send(JSON.stringify({ id: 2, method: "Debugger.enable" }));
+    let nextId = 0;
+    const send = (method: string, params: Record<string, unknown> = {}) =>
+      Promise.race([
+        new Promise<any>(resolve => {
+          const id = ++nextId;
+          pending.set(id, resolve);
+          ws.send(JSON.stringify({ id, method, params }));
+        }),
+        failed,
+      ]);
+
+    await Promise.all([send("Inspector.enable"), send("Debugger.enable")]);
+    send("Inspector.initialized").catch(() => {});
     const params = await Promise.race([scriptParsed, failed]);
 
     const m = String(params.sourceMapURL ?? "").match(/base64,([A-Za-z0-9+/=]+)/);

@@ -1407,7 +1407,10 @@ impl FileSink {
                     return streams::Writable::Owned(accepted);
                 }
                 self.source_pending_pull.set(true);
-                if matches!(self.source.get(), streams::SourceHandle::ByteStream(_)) {
+                if matches!(
+                    self.source.get(),
+                    streams::SourceHandle::ByteStream(_) | streams::SourceHandle::FileReader(_)
+                ) {
                     return streams::Writable::Backpressure(accepted);
                 }
                 self.pending.with_mut(|p| {

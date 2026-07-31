@@ -59,7 +59,7 @@ test("Bun.write(path, typedArray) writes the correct bytes for borrowed ArrayBuf
       ["Uint8Array", buf],
       ["ArrayBuffer", buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength)],
       ["DataView", new DataView(buf.buffer, buf.byteOffset, buf.byteLength)],
-      ["offset view", new Uint8Array(buf.buffer, buf.byteOffset + 1024, 4096)],
+      ["offset view", new Uint8Array(buf.buffer, buf.byteOffset + 1024, 512 * 1024)],
     ];
     const results = {};
     for (const [name, input] of cases) {
@@ -83,7 +83,7 @@ test("Bun.write(path, typedArray) writes the correct bytes for borrowed ArrayBuf
     "Uint8Array": { wrote: 1 << 20, len: 1 << 20, ok: true },
     "ArrayBuffer": { wrote: 1 << 20, len: 1 << 20, ok: true },
     "DataView": { wrote: 1 << 20, len: 1 << 20, ok: true },
-    "offset view": { wrote: 4096, len: 4096, ok: true },
+    "offset view": { wrote: 512 * 1024, len: 512 * 1024, ok: true },
   });
   expect(exitCode).toBe(0);
 });

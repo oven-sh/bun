@@ -43,3 +43,11 @@ test.skipIf(isWindows)("prefix assignment of a fresh var stays a single entry", 
   const lines = await envLines($`BUN_32202_FRESH=only env`.quiet(), "BUN_32202_FRESH");
   expect(lines).toEqual(["BUN_32202_FRESH=only"]);
 });
+
+test.skipIf(isWindows)("prefix assignment does not leak to the next command", async () => {
+  const lines = await envLines(
+    $`export BUN_32202_SCOPE=first; BUN_32202_SCOPE=second env; env`.quiet(),
+    "BUN_32202_SCOPE",
+  );
+  expect(lines).toEqual(["BUN_32202_SCOPE=second", "BUN_32202_SCOPE=first"]);
+});

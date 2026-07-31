@@ -237,6 +237,9 @@ impl Cmd {
             );
             match interp.as_cmd(this).state {
                 CmdState::Idle => {
+                    // `FOO=bar cmd` is scoped to one command; drop whatever a
+                    // previous sibling left so only this command's assigns are seen.
+                    interp.as_cmd_mut(this).base.shell_mut().cmd_local_env.clear();
                     if !n.assigns.is_empty() {
                         interp.as_cmd_mut(this).state = CmdState::ExpandingAssigns;
                         let child = Assigns::init(interp, shell, n.assigns, this, AssignCtx::Cmd);

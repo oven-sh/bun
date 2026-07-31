@@ -9,8 +9,6 @@
 //! Merged into `bun_core` to break the `bun_core ↔ bun_string` dep edge;
 //! the `bun_string` crate is now a thin re-export shim over this module.
 
-// `#[macro_export]` macros defined in submodules (`w!`) land at the *crate*
-// root (`bun_core::`). Re-export here so `crate::string::w` resolves.
 pub use crate::w;
 
 #[path = "escapeRegExp.rs"]

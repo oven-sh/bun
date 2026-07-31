@@ -6761,9 +6761,11 @@ pub mod bv2_impl {
             let _ = self.graph.ast.append(ast_for_html_entrypoint); // OOM/capacity: fire-and-forget
 
             import_record.source_index = Index::init(fake_source_index.0);
-            let _ = self
-                .path_to_source_index_map(target)
-                .put(path.namespace, path_text, fake_source_index.0); // OOM-only Result
+            let _ = self.path_to_source_index_map(target).put(
+                path.namespace,
+                path_text,
+                fake_source_index.0,
+            ); // OOM-only Result
             self.graph
                 .html_imports
                 .server_source_indices

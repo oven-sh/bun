@@ -170,16 +170,19 @@ mod static_adapters {
         // re-enters the VM).
         let _a0_guard = a0.protected();
         let _a1_guard = a1.protected();
+        let mut output = if a1.is_undefined_or_null() {
+            None
+        } else {
+            StringOrBuffer::from_js(g, a1)?
+        };
         let Some(input) = BlobOrStringOrBuffer::from_js(g, a0)? else {
             return Err(g.throw_invalid_arguments(format_args!(
                 "expected string, buffer, TypedArray, or Blob",
             )));
         };
-        let output = if a1.is_undefined_or_null() {
-            None
-        } else {
-            StringOrBuffer::from_js(g, a1)?
-        };
+        if let Some(StringOrBuffer::Buffer(buffer)) = &mut output {
+            buffer.buffer = ArrayBuffer::from_typed_array(g, buffer.buffer.value);
+        }
         Crypto::SHA512_256::hash_(g, &input, output)
     }
 }
@@ -1427,15 +1430,15 @@ fn index_of_line(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResul
         return Ok(JSValue::js_number_from_int32(-1));
     }
 
-    let Some(buffer) = arguments[0].as_array_buffer(global_this) else {
-        return Ok(JSValue::js_number_from_int32(-1));
-    };
-
     let mut offset: usize = 0;
     if arguments.len() > 1 {
         let offset_value = arguments[1].coerce_to_int64(global_this)?;
         offset = offset_value.max(0) as usize;
     }
+
+    let Some(buffer) = arguments[0].as_array_buffer(global_this) else {
+        return Ok(JSValue::js_number_from_int32(-1));
+    };
 
     let bytes = buffer.byte_slice();
     let mut current_offset = offset;
@@ -1704,13 +1707,19 @@ fn mmap_file(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JS
                         );
                     }
                     let paths = &[path_str.slice()];
-                    break 'brk bun_paths::resolve_path::join_abs_string_buf::<
+                    let buf_len = buf.len();
+                    let Some(joined) = bun_paths::resolve_path::join_abs_string_buf_checked::<
                         bun_paths::resolve_path::platform::Auto,
                     >(
                         bun_paths::fs::FileSystem::instance().top_level_dir(),
-                        &mut buf,
+                        &mut buf[..buf_len - 1],
                         paths,
-                    );
+                    ) else {
+                        return Err(
+                            global_this.throw_invalid_arguments(format_args!("Path too long"))
+                        );
+                    };
+                    break 'brk joined;
                 }
             }
             return Err(global_this.throw_invalid_arguments(format_args!("Expected a path")));

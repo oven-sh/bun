@@ -1669,11 +1669,11 @@ impl Task {
                                         },
                                         version_buf: lockfile.buffers.string_bytes.as_slice(),
                                     },
-                                    lockfile.buffers.resolutions.as_slice(),
+                                    pkg_resolutions_lists[pkg_id as usize]
+                                        .get(lockfile.buffers.resolutions.as_slice()),
                                     pkg_metas,
                                     manager.options.cpu,
                                     manager.options.os,
-                                    None,
                                 )
                         {
                             break 'enqueue_lifecycle_scripts;

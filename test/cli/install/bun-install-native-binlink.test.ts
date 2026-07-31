@@ -344,6 +344,210 @@ linker = "${linker}"
       expect(binExitCode2).toBe(0);
     });
   }
+
+  // The postinstall skip must apply to every copy of a nativeDependencies
+  // package in the tree, not just the hoisted one. Previously a second,
+  // differently-versioned esbuild nested under a transitive dependent would
+  // still run `node install.js`.
+  describe("nested nativeDependencies", () => {
+    async function setup(opts: { linker: "hoisted" | "isolated"; deps: Record<string, string>; extraEnv?: object }) {
+      let env: Record<string, string> = { ...bunEnv, ...(opts.extraEnv ?? {}) };
+      const { packageDir, packageJson } = await verdaccio.createTestDir();
+      env.BUN_INSTALL_CACHE_DIR = join(packageDir, ".bun-cache");
+      env.BUN_TMPDIR = env.TMPDIR = env.TEMP = join(packageDir, ".bun-tmp");
+
+      await writeFile(
+        join(packageDir, "bunfig.toml"),
+        `
+[install]
+cache = "${join(packageDir, ".bun-cache").replaceAll("\\", "\\\\")}"
+registry = "${verdaccio.registryUrl()}"
+linker = "${opts.linker}"
+`,
+      );
+
+      await writeFile(
+        packageJson,
+        JSON.stringify({
+          name: "test-app",
+          version: "1.0.0",
+          dependencies: opts.deps,
+          nativeDependencies: ["test-postinstall-skip"],
+          trustedDependencies: ["test-postinstall-skip"],
+        }),
+      );
+
+      async function install() {
+        const proc = spawn({
+          cmd: [bunExe(), "install"],
+          cwd: packageDir,
+          stdout: "pipe",
+          stdin: "ignore",
+          stderr: "pipe",
+          env,
+        });
+        const [, stderr, exit] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect(stderr).not.toContain("error:");
+        expect(exit).toBe(0);
+      }
+
+      async function runBin(binPath: string) {
+        const proc = spawn({ cmd: [binPath], cwd: packageDir, stdout: "pipe", stdin: "ignore", stderr: "pipe", env });
+        const [out, err, code] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        return { out: out.trim(), err, code };
+      }
+
+      return { packageDir, env, install, runBin };
+    }
+
+    function postinstallRanMarkers(dirs: Record<string, string>) {
+      return Object.fromEntries(Object.entries(dirs).map(([k, d]) => [k, existsSync(join(d, "postinstall-ran"))]));
+    }
+
+    for (const linker of ["hoisted", "isolated"] as const) {
+      test(`skips postinstall for nested copies (${linker}, platform dep in child tree)`, async () => {
+        const { packageDir, install, runBin } = await setup({
+          linker,
+          deps: { "test-postinstall-skip": "2.0.0", "test-postinstall-skip-parent": "1.0.0" },
+        });
+        await install();
+
+        const nm = join(packageDir, "node_modules");
+        const nestedScope =
+          linker === "hoisted"
+            ? join(nm, "test-postinstall-skip-parent", "node_modules")
+            : join(nm, ".bun", "test-postinstall-skip-parent@1.0.0", "node_modules");
+        const hoisted = realpathSync(join(nm, "test-postinstall-skip"));
+        const nested = realpathSync(join(nestedScope, "test-postinstall-skip"));
+        expect({
+          hoisted: JSON.parse(readFileSync(join(hoisted, "package.json"), "utf8")).version,
+          nested: JSON.parse(readFileSync(join(nested, "package.json"), "utf8")).version,
+        }).toEqual({ hoisted: "2.0.0", nested: "1.0.0" });
+
+        expect(postinstallRanMarkers({ hoisted, nested })).toEqual({ hoisted: false, nested: false });
+
+        const hoistedBin = join(nm, ".bin", "skip-test-cmd");
+        const nestedBin = join(nestedScope, ".bin", "skip-test-cmd");
+        expect(realpathSync(hoistedBin)).toContain("test-postinstall-skip-native");
+        expect(realpathSync(nestedBin)).toContain("test-postinstall-skip-native");
+        if (linker === "hoisted") {
+          // The platform dep lands in the child tree under
+          // `test-postinstall-skip/node_modules/`, so the redirect has to cross
+          // trees (covers the `target_tree_id != tree_id` defer-and-relink path).
+          expect(realpathSync(nestedBin)).toContain(
+            join("test-postinstall-skip", "node_modules", "test-postinstall-skip-native"),
+          );
+        }
+        expect(await runBin(hoistedBin)).toEqual({ out: "native v2.0.0", err: "", code: 0 });
+        expect(await runBin(nestedBin)).toEqual({ out: "native v1.0.0", err: "", code: 0 });
+
+        // Lockfile-only reinstall.
+        await rm(nm, { recursive: true, force: true });
+        await install();
+        expect(postinstallRanMarkers({ hoisted, nested })).toEqual({ hoisted: false, nested: false });
+        expect(realpathSync(nestedBin)).toContain("test-postinstall-skip-native");
+        expect(await runBin(hoistedBin)).toEqual({ out: "native v2.0.0", err: "", code: 0 });
+        expect(await runBin(nestedBin)).toEqual({ out: "native v1.0.0", err: "", code: 0 });
+
+        // No-op reinstall keeps the redirect intact.
+        await install();
+        expect(postinstallRanMarkers({ hoisted, nested })).toEqual({ hoisted: false, nested: false });
+        expect(await runBin(nestedBin)).toEqual({ out: "native v1.0.0", err: "", code: 0 });
+
+        if (linker === "hoisted") {
+          // Removing only the nested `.bin` folder and reinstalling recreates the redirect.
+          await rm(join(nestedScope, ".bin"), { recursive: true, force: true });
+          await install();
+          expect(realpathSync(nestedBin)).toContain("test-postinstall-skip-native");
+          expect(await runBin(nestedBin)).toEqual({ out: "native v1.0.0", err: "", code: 0 });
+        }
+      });
+    }
+
+    test("skips postinstall for nested copies (hoisted, platform dep as sibling)", async () => {
+      // parent@2.0.0 also depends on test-postinstall-skip-native@1.0.0 directly,
+      // so the platform package lands in the same tree as the nested main package.
+      const { packageDir, install, runBin } = await setup({
+        linker: "hoisted",
+        deps: { "test-postinstall-skip": "2.0.0", "test-postinstall-skip-parent": "2.0.0" },
+      });
+      await install();
+
+      const nested = join(packageDir, "node_modules", "test-postinstall-skip-parent", "node_modules");
+      expect(existsSync(join(nested, "test-postinstall-skip-native"))).toBeTrue();
+      expect(existsSync(join(nested, "test-postinstall-skip", "node_modules"))).toBeFalse();
+
+      expect(
+        postinstallRanMarkers({
+          hoisted: join(packageDir, "node_modules", "test-postinstall-skip"),
+          nested: join(nested, "test-postinstall-skip"),
+        }),
+      ).toEqual({ hoisted: false, nested: false });
+
+      const nestedBin = join(nested, ".bin", "skip-test-cmd");
+      expect(realpathSync(nestedBin)).toBe(realpathSync(join(nested, "test-postinstall-skip-native", "bin", "cmd.js")));
+      expect(await runBin(nestedBin)).toEqual({ out: "native v1.0.0", err: "", code: 0 });
+    });
+
+    test("skips postinstall for nested copies (hoisted, platform dep in ancestor tree)", async () => {
+      // Root depends on native@1.0.0 directly and on skip@2.0.0. The nested
+      // skip@1.0.0's optional native@1.0.0 dedupes into root, so the redirect
+      // crosses upward into tree 0.
+      const { packageDir, install, runBin } = await setup({
+        linker: "hoisted",
+        deps: {
+          "test-postinstall-skip": "2.0.0",
+          "test-postinstall-skip-native": "1.0.0",
+          "test-postinstall-skip-parent": "1.0.0",
+        },
+      });
+      await install();
+
+      const nested = join(packageDir, "node_modules", "test-postinstall-skip-parent", "node_modules");
+      // native@1.0.0 is at root; nothing under the nested tree.
+      expect(
+        JSON.parse(
+          readFileSync(join(packageDir, "node_modules", "test-postinstall-skip-native", "package.json"), "utf8"),
+        ).version,
+      ).toBe("1.0.0");
+      expect(existsSync(join(nested, "test-postinstall-skip-native"))).toBeFalse();
+      expect(existsSync(join(nested, "test-postinstall-skip", "node_modules"))).toBeFalse();
+
+      expect(
+        postinstallRanMarkers({
+          nested: join(nested, "test-postinstall-skip"),
+        }),
+      ).toEqual({ nested: false });
+
+      const nestedBin = join(nested, ".bin", "skip-test-cmd");
+      expect(realpathSync(nestedBin)).toBe(
+        realpathSync(join(packageDir, "node_modules", "test-postinstall-skip-native", "bin", "cmd.js")),
+      );
+      expect(await runBin(nestedBin)).toEqual({ out: "native v1.0.0", err: "", code: 0 });
+    });
+
+    test("BUN_FEATURE_FLAG_DISABLE_IGNORE_SCRIPTS runs nested postinstall", async () => {
+      const { packageDir, install } = await setup({
+        linker: "hoisted",
+        deps: { "test-postinstall-skip": "2.0.0", "test-postinstall-skip-parent": "1.0.0" },
+        extraEnv: { BUN_FEATURE_FLAG_DISABLE_IGNORE_SCRIPTS: "1" },
+      });
+      await install();
+
+      expect(
+        postinstallRanMarkers({
+          hoisted: join(packageDir, "node_modules", "test-postinstall-skip"),
+          nested: join(
+            packageDir,
+            "node_modules",
+            "test-postinstall-skip-parent",
+            "node_modules",
+            "test-postinstall-skip",
+          ),
+        }),
+      ).toEqual({ hoisted: true, nested: true });
+    });
+  });
 });
 
 // The bin linker must not create a `node_modules/.bin` entry (nor chmod or rewrite the

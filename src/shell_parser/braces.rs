@@ -1193,7 +1193,7 @@ impl<const ENCODING: Encoding> NewLexer<ENCODING> {
             debug_assert!(matches!(first, Token::Open(_)));
         }
 
-        let mut braces: u8 = 0;
+        let mut braces: u32 = 0;
 
         self.replace_token_with_string(starting_idx);
         let mut i: u32 = starting_idx + 1;

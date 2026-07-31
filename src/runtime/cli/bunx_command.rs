@@ -567,20 +567,102 @@ impl BunxCommand {
     }
 
     #[cfg(unix)]
-    fn is_trusted_cache_root(cache_root: &ZStr, uid: libc::uid_t) -> bool {
-        match bun_sys::lstat(cache_root) {
-            Ok(st) => {
-                (st.st_mode & libc::S_IFMT) == libc::S_IFDIR
-                    && st.st_uid == uid
-                    && (st.st_mode & (libc::S_IWGRP | libc::S_IWOTH)) == 0
+    fn is_trusted_cache_root(cache_root: &[u8], temp_dir_len: usize, uid: libc::uid_t) -> bool {
+        let mut buf = PathBuffer::uninit();
+        if cache_root.len() >= buf.len() || temp_dir_len >= cache_root.len() {
+            return false;
+        }
+        buf[..cache_root.len()].copy_from_slice(cache_root);
+        let is_trusted_dir = |st: &bun_sys::Stat| {
+            (st.st_mode & libc::S_IFMT) == libc::S_IFDIR
+                && st.st_uid == uid
+                && (st.st_mode & (libc::S_IWGRP | libc::S_IWOTH)) == 0
+        };
+        let mut start = temp_dir_len + 1;
+        loop {
+            let end = match cache_root[start..]
+                .iter()
+                .position(|b| *b == bun_paths::SEP)
+            {
+                Some(i) => start + i,
+                None => cache_root.len(),
+            };
+            if end == start {
+                if end == cache_root.len() {
+                    return true;
+                }
+                start = end + 1;
+                continue;
             }
-            Err(_) => true,
+            buf[end] = 0;
+            match bun_sys::lstat(ZStr::from_buf(&buf[..], end)) {
+                Ok(st) if is_trusted_dir(&st) => {}
+                Ok(_) => return false,
+                Err(err) => return err.get_errno() == bun_sys::E::ENOENT,
+            }
+            if end == cache_root.len() {
+                return true;
+            }
+            buf[end] = bun_paths::SEP;
+            start = end + 1;
         }
     }
 
     #[cfg(not(unix))]
     #[inline(always)]
-    fn is_trusted_cache_root(_cache_root: &ZStr, _uid: u32) -> bool {
+    fn is_trusted_cache_root(_cache_root: &[u8], _temp_dir_len: usize, _uid: u32) -> bool {
+        true
+    }
+
+    #[cfg(unix)]
+    fn is_trusted_opened_cache_dir(
+        dir: Fd,
+        cache_dir: &[u8],
+        temp_dir_len: usize,
+        uid: libc::uid_t,
+    ) -> bool {
+        let dir_ok = |st: &bun_sys::Stat| {
+            (st.st_mode & libc::S_IFMT) == libc::S_IFDIR
+                && st.st_uid == uid
+                && (st.st_mode & (libc::S_IWGRP | libc::S_IWOTH)) == 0
+        };
+        let opened = match bun_sys::fstat(dir) {
+            Ok(st) if dir_ok(&st) => st,
+            _ => return false,
+        };
+        let mut buf = PathBuffer::uninit();
+        if cache_dir.len() >= buf.len() {
+            return false;
+        }
+        buf[..cache_dir.len()].copy_from_slice(cache_dir);
+        let mut end = cache_dir.len();
+        let mut is_leaf = true;
+        loop {
+            buf[end] = 0;
+            match bun_sys::lstat(ZStr::from_buf(&buf[..], end)) {
+                Ok(st) if dir_ok(&st) => {
+                    if is_leaf && (st.st_dev != opened.st_dev || st.st_ino != opened.st_ino) {
+                        return false;
+                    }
+                }
+                _ => return false,
+            }
+            is_leaf = false;
+            match cache_dir[..end].iter().rposition(|b| *b == bun_paths::SEP) {
+                Some(idx) if idx > temp_dir_len => end = idx,
+                _ => return true,
+            }
+        }
+    }
+
+    #[cfg(not(unix))]
+    #[inline(always)]
+    fn is_trusted_opened_cache_dir(
+        _dir: Fd,
+        _cache_dir: &[u8],
+        _temp_dir_len: usize,
+        _uid: u32,
+    ) -> bool {
         true
     }
 
@@ -918,20 +1000,12 @@ impl BunxCommand {
             unsafe { core::slice::from_raw_parts(absolute_in_cache_dir_buf.as_ptr(), written) }
         };
 
-        {
-            let mut cache_root_buf = PathBuffer::uninit();
-            cache_root_buf[..bunx_cache_dir.len()].copy_from_slice(bunx_cache_dir);
-            cache_root_buf[bunx_cache_dir.len()] = 0;
-            if !Self::is_trusted_cache_root(
-                ZStr::from_buf(&cache_root_buf[..], bunx_cache_dir.len()),
-                uid,
-            ) {
-                Output::err_generic(
-                    "refusing to use bunx cache directory <b>{}<r> because it is not a directory owned by the current user. Remove it and try again.",
-                    format_args!("{}", BStr::new(bunx_cache_dir)),
-                );
-                Global::exit(1);
-            }
+        if !Self::is_trusted_cache_root(bunx_cache_dir, temp_dir.len(), uid) {
+            Output::err_generic(
+                "refusing to use bunx cache directory <b>{}<r> because it or a parent directory is not a directory owned by the current user. Remove it and try again.",
+                format_args!("{}", BStr::new(bunx_cache_dir)),
+            );
+            Global::exit(1);
         }
 
         let passthrough: &[Box<[u8]>] = opts.passthrough_list.as_slice();
@@ -1221,6 +1295,18 @@ impl BunxCommand {
         }
 
         let bunx_install_dir = Fd::cwd().make_open_path(bunx_cache_dir)?;
+        if !Self::is_trusted_opened_cache_dir(
+            bunx_install_dir.fd,
+            bunx_cache_dir,
+            temp_dir.len(),
+            uid,
+        ) {
+            Output::err_generic(
+                "refusing to use bunx cache directory <b>{}<r> because it is not a directory owned by the current user. Remove it and try again.",
+                format_args!("{}", BStr::new(bunx_cache_dir)),
+            );
+            Global::exit(1);
+        }
 
         'create_package_json: {
             // create package.json, but only if it doesn't exist

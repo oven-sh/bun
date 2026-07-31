@@ -913,10 +913,15 @@ impl ValkeyClient {
                     .get()
                     .channels_subscribed_to_count(&global_this)?;
 
+                let is_pattern_or_sharded =
+                    protocol::SubscriptionPushMessage::is_reply_kind(&push.kind);
                 if let Some(msg_type) = protocol::SubscriptionPushMessage::from_bytes(&push.kind) {
                     match msg_type {
                         protocol::SubscriptionPushMessage::Message => {
                             self.on_valkey_message(&mut push.data);
+                            Ok(SubscribeHandled::Handled)
+                        }
+                        protocol::SubscriptionPushMessage::PatternMessage => {
                             Ok(SubscribeHandled::Handled)
                         }
                         protocol::SubscriptionPushMessage::Subscribe => {
@@ -926,10 +931,15 @@ impl ValkeyClient {
                             // For SUBSCRIBE responses, only resolve the promise for the first channel confirmation
                             // Additional channel confirmations from multi-channel SUBSCRIBE commands don't need promise pairs
                             if let Some(req_pair) = pair {
-                                req_pair.promise.promise.resolve(
-                                    &global_this,
-                                    JSValue::js_number(f64::from(sub_count)),
-                                )?;
+                                let resolve_value = if is_pattern_or_sharded {
+                                    resp_value_to_js(value, &global_this)?
+                                } else {
+                                    JSValue::js_number(f64::from(sub_count))
+                                };
+                                req_pair
+                                    .promise
+                                    .promise
+                                    .resolve(&global_this, resolve_value)?;
                             }
                             Ok(SubscribeHandled::Handled)
                         }
@@ -940,10 +950,15 @@ impl ValkeyClient {
                             // For UNSUBSCRIBE responses, only resolve the promise if we have one
                             // Additional channel confirmations from multi-channel UNSUBSCRIBE commands don't need promise pairs
                             if let Some(req_pair) = pair {
+                                let resolve_value = if is_pattern_or_sharded {
+                                    resp_value_to_js(value, &global_this)?
+                                } else {
+                                    JSValue::UNDEFINED
+                                };
                                 req_pair
                                     .promise
                                     .promise
-                                    .resolve(&global_this, JSValue::UNDEFINED)?;
+                                    .resolve(&global_this, resolve_value)?;
                             }
                             Ok(SubscribeHandled::Handled)
                         }
@@ -1087,7 +1102,10 @@ impl ValkeyClient {
         // For subscription clients, check if this is a push message that doesn't need a promise pair
         if let RESPValue::Push(push) = value {
             match protocol::SubscriptionPushMessage::from_bytes(&push.kind) {
-                Some(protocol::SubscriptionPushMessage::Message) => {
+                Some(
+                    protocol::SubscriptionPushMessage::Message
+                    | protocol::SubscriptionPushMessage::PatternMessage,
+                ) => {
                     // Message pushes never need promise pairs
                     should_consume_promise_pair = false;
                 }
@@ -1096,7 +1114,13 @@ impl ValkeyClient {
                     | protocol::SubscriptionPushMessage::Unsubscribe,
                 ) => {
                     // Subscribe/unsubscribe pushes only need promise pairs if we have pending commands
-                    if self.in_flight.readable_length() == 0 {
+                    if self.in_flight.readable_length() == 0
+                        || !self
+                            .in_flight
+                            .peek_item_mut(0)
+                            .meta
+                            .contains(command::Meta::SUBSCRIPTION_REQUEST)
+                    {
                         should_consume_promise_pair = false;
                     }
                 }
@@ -1127,8 +1151,13 @@ impl ValkeyClient {
 
             match value {
                 RESPValue::Error(err) => {
-                    self.fail(err, RedisError::InvalidResponse)?;
-                    return Ok(());
+                    if self.parent().is_subscriber() {
+                        self.fail(err, RedisError::InvalidResponse)?;
+                        return Ok(());
+                    }
+                    // A raw subscription request from a client that is not (yet) a
+                    // subscriber failed on the server; fall through so only this
+                    // promise is rejected.
                 }
                 RESPValue::Push(push) => {
                     if protocol::SubscriptionPushMessage::from_bytes(&push.kind).is_some() {

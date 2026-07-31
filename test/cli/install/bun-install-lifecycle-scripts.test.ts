@@ -211,6 +211,95 @@ test.concurrent("trustedDependencies matches the resolved package name, not the 
   expect(await exited).toBe(0);
 });
 
+test.concurrent(
+  "trustedDependencies added on a later install still matches the resolved package name, not the dependency alias",
+  async () => {
+    using ctx = await setupTest();
+    const { packageDir, packageJson, env } = ctx;
+
+    const dependencies = { "esbuild": "npm:uses-what-bin@1.0.0" };
+    await writeFile(packageJson, JSON.stringify({ name: "foo", version: "1.0.0", dependencies }));
+
+    let { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: packageDir,
+      stdout: "pipe",
+      stdin: "ignore",
+      stderr: "pipe",
+      env,
+    });
+
+    let err = await stderr.text();
+    let out = await stdout.text();
+    expect(err).toContain("Saved lockfile");
+    expect(err).not.toContain("error:");
+    expect(out).toContain("Blocked 1 postinstall");
+    expect(await exists(join(packageDir, "node_modules", "esbuild", "package.json"))).toBeTrue();
+    expect(await exists(join(packageDir, "node_modules", "esbuild", "what-bin.txt"))).toBeFalse();
+    expect(await exited).toBe(0);
+
+    await writeFile(
+      packageJson,
+      JSON.stringify({ name: "foo", version: "1.0.0", dependencies, trustedDependencies: ["esbuild"] }),
+    );
+
+    ({ stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: packageDir,
+      stdout: "pipe",
+      stdin: "ignore",
+      stderr: "pipe",
+      env,
+    }));
+
+    err = await stderr.text();
+    out = await stdout.text();
+    expect(err).not.toContain("error:");
+    expect(await exists(join(packageDir, "node_modules", "esbuild", "what-bin.txt"))).toBeFalse();
+    expect(await exited).toBe(0);
+  },
+);
+
+test.concurrent("node-gyp shim directory added to lifecycle script PATH gets a randomized name", async () => {
+  using ctx = await setupTest();
+  const { packageDir, packageJson, env } = ctx;
+
+  await writeFile(
+    packageJson,
+    JSON.stringify({
+      name: "foo",
+      version: "1.0.0",
+      dependencies: {
+        "no-deps": "1.0.0",
+      },
+      scripts: {
+        postinstall: `${bunExe()} -e 'await Bun.write("path.txt", String(process.env.PATH))'`,
+      },
+    }),
+  );
+
+  const { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: packageDir,
+    stdout: "pipe",
+    stdin: "ignore",
+    stderr: "pipe",
+    env,
+  });
+
+  const [out, err, exitCode] = await Promise.all([stdout.text(), stderr.text(), exited]);
+  expect(err).not.toContain("error:");
+  expect(exitCode).toBe(0);
+
+  const pathVar = await file(join(packageDir, "path.txt")).text();
+  const match = pathVar.match(/\.([0-9a-f]{1,16})-[0-9A-F]{1,16}\.node-gyp/);
+  expect(match).not.toBeNull();
+  const derived = BigInt("0x" + match![1]) ^ 12345n;
+  const nowNs = BigInt(Date.now()) * 1_000_000n;
+  const distance = derived > nowNs ? derived - nowNs : nowNs - derived;
+  expect(distance > 21_600_000_000_000n).toBe(true);
+});
+
 test.concurrent("default trusted dependencies require the canonical registry tarball URL", async () => {
   using ctx = await setupTest();
   const { packageDir, packageJson, env } = ctx;

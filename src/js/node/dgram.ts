@@ -1498,48 +1498,7 @@ Socket.prototype._stopReceiving = deprecate(
   "DEP0112",
 );
 
-/*
-function _createSocketHandle(address, port, addressType, fd, flags) {
-  const handle = newHandle(addressType);
-  let err;
-
-  if (isInt32(fd) && fd > 0) {
-    const type = guessHandleType(fd);
-    if (type !== 'UDP') {
-      err = UV_EINVAL;
-    } else {
-      err = handle.open(fd);
-    }
-  } else if (port || address) {
-    err = handle.bind(address, port || 0, flags);
-  }
-
-  if (err) {
-    handle.close();
-    return err;
-  }
-
-  return handle;
-}
-
-
-// Legacy alias on the C++ wrapper object. This is not public API, so we may
-// want to runtime-deprecate it at some point. There's no hurry, though.
-ObjectDefineProperty(UDP.prototype, 'owner', {
-  __proto__: null,
-  get() { return this[kOwnerSymbol]; },
-  set(v) { return this[kOwnerSymbol] = v; },
-});
-*/
-
 export default {
-  /*
-  _createSocketHandle: deprecate(
-    _createSocketHandle,
-    'dgram._createSocketHandle() is deprecated',
-    'DEP0112',
-  ),
-  */
   createSocket,
   Socket,
 };

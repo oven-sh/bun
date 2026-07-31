@@ -88,5 +88,7 @@ pub(crate) fn from_js(global_object: &JSGlobalObject, value: JSValue) -> JsResul
         return Ok(i64::MIN);
     }
     let unix_timestamp: i64 = double_value as i64;
-    Ok((unix_timestamp - POSTGRES_EPOCH_DATE) * US_PER_MS)
+    Ok(unix_timestamp
+        .saturating_sub(POSTGRES_EPOCH_DATE)
+        .saturating_mul(US_PER_MS))
 }

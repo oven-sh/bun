@@ -170,10 +170,8 @@ static uint32_t getFlags(JSC::VM& vm, JSGlobalObject* globalObject, JSC::ThrowSc
     RETURN_IF_EXCEPTION(scope, {});
 
     uint32_t flags = 0;
-    bool any = false;
 
     if (!subject.isUndefined()) {
-        any = true;
         if (!subject.isString()) {
             Bun::throwError(globalObject, scope, ErrorCode::ERR_INVALID_ARG_TYPE, "subject must be a string"_s);
             return 0;
@@ -184,9 +182,9 @@ static uint32_t getFlags(JSC::VM& vm, JSGlobalObject* globalObject, JSC::ThrowSc
         auto view = subjectString->view(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
         if (view == "always"_s) {
-            flags |= X509_CHECK_FLAG_ALWAYS_CHECK_SUBJECT;
+            flags |= ncrypto::X509View::CheckFlags::ALWAYS_CHECK_SUBJECT;
         } else if (view == "never"_s) {
-            flags |= X509_CHECK_FLAG_NEVER_CHECK_SUBJECT;
+            flags |= ncrypto::X509View::CheckFlags::NEVER_CHECK_SUBJECT;
         } else if (view == "default"_s) {
             // Matches OpenSSL's default, no flags.
         } else {
@@ -196,51 +194,42 @@ static uint32_t getFlags(JSC::VM& vm, JSGlobalObject* globalObject, JSC::ThrowSc
     }
 
     if (!wildcards.isUndefined()) {
-        any = true;
         if (!wildcards.isBoolean()) {
             Bun::throwError(globalObject, scope, ErrorCode::ERR_INVALID_ARG_TYPE, "wildcards must be a boolean"_s);
             return 0;
         }
 
         if (!wildcards.asBoolean())
-            flags |= X509_CHECK_FLAG_NO_WILDCARDS;
+            flags |= ncrypto::X509View::CheckFlags::NO_WILDCARDS;
     }
 
     if (!partialWildcards.isUndefined()) {
-        any = true;
         if (!partialWildcards.isBoolean()) {
             Bun::throwError(globalObject, scope, ErrorCode::ERR_INVALID_ARG_TYPE, "partialWildcards must be a boolean"_s);
             return 0;
         }
 
         if (!partialWildcards.asBoolean())
-            flags |= X509_CHECK_FLAG_NO_PARTIAL_WILDCARDS;
+            flags |= ncrypto::X509View::CheckFlags::NO_PARTIAL_WILDCARDS;
     }
 
     if (!multiLabelWildcards.isUndefined()) {
-        any = true;
         if (!multiLabelWildcards.isBoolean()) {
             Bun::throwError(globalObject, scope, ErrorCode::ERR_INVALID_ARG_TYPE, "multiLabelWildcards must be a boolean"_s);
             return 0;
         }
 
         if (multiLabelWildcards.asBoolean())
-            flags |= X509_CHECK_FLAG_MULTI_LABEL_WILDCARDS;
+            flags |= ncrypto::X509View::CheckFlags::MULTI_LABEL_WILDCARDS;
     }
 
     if (!singleLabelSubdomains.isUndefined()) {
-        any = true;
         if (!singleLabelSubdomains.isBoolean()) {
             Bun::throwError(globalObject, scope, ErrorCode::ERR_INVALID_ARG_TYPE, "singleLabelSubdomains must be a boolean"_s);
             return 0;
         }
         if (singleLabelSubdomains.asBoolean())
-            flags |= X509_CHECK_FLAG_SINGLE_LABEL_SUBDOMAINS;
-    }
-
-    if (!any) {
-        Bun::throwError(globalObject, scope, ErrorCode::ERR_INVALID_ARG_TYPE, "options must have at least one property"_s);
-        return 0;
+            flags |= ncrypto::X509View::CheckFlags::SINGLE_LABEL_SUBDOMAINS;
     }
 
     return flags;
@@ -587,7 +576,8 @@ JSC_DEFINE_CUSTOM_GETTER(jsX509CertificateGetter_subjectAltName, (JSGlobalObject
         return {};
     }
 
-    RELEASE_AND_RETURN(scope, JSValue::encode(undefinedIfEmpty(thisObject->subjectAltName())));
+    JSString* san = thisObject->subjectAltName();
+    RELEASE_AND_RETURN(scope, JSValue::encode(san ? JSValue(san) : jsUndefined()));
 }
 
 JSC_DEFINE_CUSTOM_GETTER(jsX509CertificateGetter_infoAccess, (JSGlobalObject * globalObject, EncodedJSValue thisValue, PropertyName))

@@ -1263,6 +1263,8 @@ impl Archiver {
         // a directory HANDLE on Windows. Mirrors the guard pattern in extract_to_disk.
         let _close_dir_guard = scopeguard::guard(dir, |d| d.close());
 
+        let mut normalized_buf = bun_paths::PathBuffer::uninit();
+
         'loop_: loop {
             // SAFETY: archive valid for stream lifetime
             let r = unsafe { (*archive).read_next_header(&mut entry) };
@@ -1315,6 +1317,22 @@ impl Archiver {
 
                     // pathname = sliceTo(remaining[..len :0], 0)
                     let pathname = slice_to_nul(remaining);
+                    if pathname.is_empty() || pathname.len() >= normalized_buf.len() {
+                        continue 'loop_;
+                    }
+                    let normalized = bun_paths::resolve_path::normalize_buf_t::<
+                        u8,
+                        bun_paths::platform::Auto,
+                    >(pathname, &mut normalized_buf[..]);
+                    let normalized_len = normalized.len();
+                    let pathname: &[u8] = &normalized_buf[..normalized_len];
+                    if pathname.is_empty() || pathname == b"." {
+                        continue 'loop_;
+                    }
+                    #[cfg(windows)]
+                    if bun_paths::is_absolute_windows(pathname) {
+                        continue 'loop_;
+                    }
                     let dirname =
                         strings::trim(bun_paths::dirname_simple(pathname), SEP_STR.as_bytes());
 
@@ -1832,6 +1850,28 @@ impl Archiver {
                                                     plucker_.contents.list.as_mut_slice(),
                                                 )
                                             };
+                                            if read < 0 {
+                                                if options.log {
+                                                    // SAFETY: `archive` is the live
+                                                    // `read_new()` handle this
+                                                    // extraction loop is iterating.
+                                                    let archive_error = slice_to_nul(
+                                                        unsafe { &*archive }.error_string(),
+                                                    );
+                                                    Output::err(
+                                                        "libarchive error",
+                                                        "extracting {}: {}",
+                                                        (
+                                                            bun_core::fmt::fmt_os_path(
+                                                                path_slice,
+                                                                Default::default(),
+                                                            ),
+                                                            bstr::BStr::new(archive_error),
+                                                        ),
+                                                    );
+                                                }
+                                                return Err(crate::Error::Fail);
+                                            }
                                             plucker_.contents.inflate(
                                                 usize::try_from(read).expect("int cast"),
                                             )?;

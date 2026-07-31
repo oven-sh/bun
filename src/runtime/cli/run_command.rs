@@ -3486,14 +3486,17 @@ impl RunCommand {
                 continue;
             }
 
-            let fd = match sys::open_a(&path, sys::O::WRONLY | sys::O::CREAT | sys::O::TRUNC, 0o600)
-            {
+            let fd = match sys::open_a(
+                &path,
+                sys::O::WRONLY | sys::O::CREAT | sys::O::EXCL | sys::O::CLOEXEC | sys::O::NOFOLLOW,
+                0o600,
+            ) {
                 Ok(f) => f,
                 Err(_) => continue,
             };
             let ok = sys::File::from_fd(fd).write_all(bytes).is_ok();
             if !ok {
-                // openA + TRUNC leaves an orphan even on zero-byte
+                // openA + CREAT leaves an orphan even on zero-byte
                 // write failure. Unlink via stack buffer so cleanup
                 // can't fail for OOM reasons.
                 Self::unlink_staged_path(&path);

@@ -26,7 +26,6 @@
 #include "config.h"
 #include "DOMURL.h"
 
-#include "ActiveDOMObject.h"
 // #include "Blob.h"
 // #include "BlobURL.h"
 // #include "MemoryCache.h"

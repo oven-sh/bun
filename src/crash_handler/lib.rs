@@ -2842,10 +2842,25 @@ mod draft {
                 // .hStdOutput = bun.FD.stdout().native(),
                 // .hStdError = bun.FD.stderr().native(),
             };
+            let mut sysdir = [0u16; 300];
+            // SAFETY: `sysdir` is valid for `sysdir.len()` u16 writes.
+            let sysdir_len = unsafe {
+                windows::kernel32::GetSystemDirectoryW(sysdir.as_mut_ptr(), sysdir.len() as u32)
+            } as usize;
+            if sysdir_len == 0 || sysdir_len >= sysdir.len() {
+                return;
+            }
             let mut cmd_line = BoundedArray::<u16, 4096>::default();
-            cmd_line.append_slice_assume_capacity(bun_core::w!(
-                "powershell -ExecutionPolicy Bypass -Command \"try{Invoke-RestMethod -Uri '"
-            ));
+            if cmd_line.append(u16::from(b'"')).is_err()
+                || cmd_line.append_slice(&sysdir[..sysdir_len]).is_err()
+                || cmd_line
+                    .append_slice(bun_core::w!(
+                        "\\WindowsPowerShell\\v1.0\\powershell.exe\" -NoProfile -ExecutionPolicy Bypass -Command \"try{Invoke-RestMethod -Uri '"
+                    ))
+                    .is_err()
+            {
+                return;
+            }
             {
                 // `unused_capacity_slice` is `&mut [MaybeUninit<u16>]`;
                 // `from_raw_parts_mut::<u16>` over that storage would assert the

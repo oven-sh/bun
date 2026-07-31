@@ -1,5 +1,6 @@
 import { JSCallback, viewSource } from "bun:ffi";
 import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe } from "harness";
 
 // Captures what a call throws, or undefined if it returned normally. Written
 // explicitly so the assertions below distinguish a thrown Error from a
@@ -74,5 +75,25 @@ describe("FFI JSCallback", () => {
     using cb = new JSCallback(() => {}, { args: ["i32"], returns: "void" });
     expect(typeof cb.ptr).toBe("number");
     expect(cb.ptr).not.toBe(0);
+  });
+});
+
+describe("FFI read", () => {
+  test("accepts a negative byteOffset relative to the address", async () => {
+    const source = `
+      const { ptr, read } = require("bun:ffi");
+      const bytes = new Uint8Array([11, 22, 33, 44, 55, 66, 77, 88]);
+      const p = ptr(bytes);
+      console.log(JSON.stringify([read.u8(p + 3, -3), read.u8(p + 3, -1), read.u16(p + 2, -1), read.i32(p + 4, -4)]));
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", source],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout.trim()).toBe(JSON.stringify([11, 33, 8470, 740365835]));
+    expect(exitCode).toBe(0);
   });
 });

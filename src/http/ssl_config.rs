@@ -92,13 +92,6 @@ impl core::ops::Deref for SharedPtr {
     }
 }
 
-impl From<Arc<SSLConfig>> for SharedPtr {
-    #[inline]
-    fn from(a: Arc<SSLConfig>) -> Self {
-        Self(a)
-    }
-}
-
 impl SSLConfig {
     pub(crate) const ZERO: SSLConfig = SSLConfig {
         server_name: core::ptr::null(),

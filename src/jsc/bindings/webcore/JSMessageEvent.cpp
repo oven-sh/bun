@@ -21,7 +21,6 @@
 #include "config.h"
 #include "JSMessageEvent.h"
 #include <JavaScriptCore/ObjectConstructor.h>
-#include "ActiveDOMObject.h"
 #include "ExtendedDOMClientIsoSubspaces.h"
 #include "ExtendedDOMIsoSubspaces.h"
 #include "IDLTypes.h"

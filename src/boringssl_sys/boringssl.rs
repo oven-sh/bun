@@ -438,23 +438,48 @@ impl X509 {
     }
 }
 
-/// Borrowing iterator over a certificate's Subject Common Names.
+/// An `ASN1_STRING_to_UTF8`-transcoded name. `OPENSSL_free`s on drop.
+pub struct Utf8Name {
+    ptr: core::ptr::NonNull<u8>,
+    len: usize,
+}
+
+impl core::ops::Deref for Utf8Name {
+    type Target = [u8];
+    fn deref(&self) -> &[u8] {
+        // SAFETY: `ASN1_STRING_to_UTF8` allocated `len` readable bytes at `ptr`
+        // and this struct owns them until `Drop`.
+        unsafe { core::slice::from_raw_parts(self.ptr.as_ptr(), self.len) }
+    }
+}
+
+impl Drop for Utf8Name {
+    fn drop(&mut self) {
+        // SAFETY: `ptr` was returned by `ASN1_STRING_to_UTF8` (OPENSSL_malloc).
+        unsafe { OPENSSL_free(self.ptr.as_ptr().cast()) }
+    }
+}
+
+/// Iterator over a certificate's Subject Common Names, transcoded to UTF-8 via
+/// `ASN1_STRING_to_UTF8` (so BMPString / UniversalString CNs compare like
+/// OpenSSL `X509_check_host`'s `do_check_string`).
 pub struct CommonNames<'a> {
     subject: *mut X509_NAME,
     last: c_int,
     _cert: core::marker::PhantomData<&'a mut X509>,
 }
 
-impl<'a> Iterator for CommonNames<'a> {
-    type Item = &'a [u8];
+impl Iterator for CommonNames<'_> {
+    type Item = Utf8Name;
 
-    fn next(&mut self) -> Option<&'a [u8]> {
+    fn next(&mut self) -> Option<Utf8Name> {
         if self.subject.is_null() {
             return None;
         }
         // SAFETY: the subject and its entries are owned by the certificate
         // borrowed for `'a`; every accessor is guarded against null returns
-        // and non-positive lengths.
+        // and non-positive lengths. `ASN1_STRING_to_UTF8` allocates a fresh
+        // buffer that `Utf8Name` owns.
         unsafe {
             loop {
                 let entry_idx = X509_NAME_get_index_by_NID(self.subject, NID_commonName, self.last);
@@ -470,15 +495,16 @@ impl<'a> Iterator for CommonNames<'a> {
                 if data.is_null() {
                     continue;
                 }
-                let cn_ptr = ASN1_STRING_get0_data(data);
-                let cn_len = ASN1_STRING_length(data);
-                if cn_ptr.is_null() || cn_len <= 0 {
+                let mut out: *mut u8 = core::ptr::null_mut();
+                let len = ASN1_STRING_to_UTF8(&raw mut out, data);
+                let Some(ptr) = core::ptr::NonNull::new(out) else {
                     continue;
-                }
-                return Some(core::slice::from_raw_parts(
-                    cn_ptr,
-                    usize::try_from(cn_len).expect("int cast"),
-                ));
+                };
+                let Ok(len) = usize::try_from(len) else {
+                    OPENSSL_free(ptr.as_ptr().cast());
+                    continue;
+                };
+                return Some(Utf8Name { ptr, len });
             }
         }
     }
@@ -552,6 +578,7 @@ unsafe extern "C" {
     // ── ASN1 ──────────────────────────────────────────────────────────────
     pub fn ASN1_STRING_get0_data(str: *const ASN1_STRING) -> *const u8;
     pub fn ASN1_STRING_length(str: *const ASN1_STRING) -> c_int;
+    pub fn ASN1_STRING_to_UTF8(out: *mut *mut u8, in_: *const ASN1_STRING) -> c_int;
 
     // ── EVP digest getters (infallible, return static singletons) ────────
     pub safe fn EVP_md4() -> *const EVP_MD;

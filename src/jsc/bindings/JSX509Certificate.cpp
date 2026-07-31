@@ -46,6 +46,9 @@ WTF::String toWTFString(ncrypto::BIOPointer& bio)
 {
     BUF_MEM* bptr;
     BIO_get_mem_ptr(bio.get(), &bptr);
+    if (bptr->length == 0) {
+        return emptyString();
+    }
     std::span<const char> span(bptr->data, bptr->length);
     if (simdutf::validate_ascii(span.data(), span.size())) {
         return toExternalStringImpl(bio, span);
@@ -753,7 +756,10 @@ JSC::JSObject* JSX509Certificate::toLegacyObject(ncrypto::X509View view, JSGloba
     RETURN_IF_EXCEPTION(scope, nullptr);
 
     // Set subjectaltname
-    object->putDirect(vm, Identifier::fromString(vm, "subjectaltname"_s), valueOrUndefined(computeSubjectAltName(view, globalObject)));
+    {
+        JSString* san = computeSubjectAltName(view, globalObject);
+        object->putDirect(vm, Identifier::fromString(vm, "subjectaltname"_s), san ? JSValue(san) : jsUndefined());
+    }
     RETURN_IF_EXCEPTION(scope, nullptr);
 
     // Set infoAccess
@@ -927,7 +933,10 @@ JSC::JSObject* JSX509Certificate::toLegacyObject(JSGlobalObject* globalObject)
     RETURN_IF_EXCEPTION(scope, nullptr);
 
     // Set subjectaltname
-    object->putDirect(vm, Identifier::fromString(vm, "subjectaltname"_s), valueOrUndefined(subjectAltName()));
+    {
+        JSString* san = subjectAltName();
+        object->putDirect(vm, Identifier::fromString(vm, "subjectaltname"_s), san ? JSValue(san) : jsUndefined());
+    }
     RETURN_IF_EXCEPTION(scope, nullptr);
 
     // Set infoAccess
@@ -1147,7 +1156,7 @@ JSString* JSX509Certificate::computeSubjectAltName(ncrypto::X509View view, JSGlo
 
     auto bio = view.getSubjectAltName();
     if (!bio) {
-        return jsEmptyString(vm);
+        return nullptr;
     }
 
     return jsString(vm, toWTFString(bio));

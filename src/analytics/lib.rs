@@ -48,7 +48,7 @@ pub fn set_enabled(v: TriState) {
 
 pub fn is_enabled() -> bool {
     match enabled() {
-        TriState::Yes => true,
+        TriState::Yes => !env_var::DO_NOT_TRACK.get().unwrap_or(false),
         TriState::No => false,
         TriState::Unknown => {
             let detected = 'detect: {

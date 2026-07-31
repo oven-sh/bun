@@ -1050,7 +1050,7 @@ where
         }
 
         let mut message: Vec<u8> = Vec::new();
-        let _ = write!(&mut message, "{}", Output::pretty_fmt::<false>(fmt));
+        let _ = write!(&mut message, "{}", fmt);
         let cwd = bun_resolver::fs::FileSystem::get().top_level_dir;
         let fallback_container = Box::new(Api::FallbackMessageContainer {
             message: Some(message.into_boxed_slice()),
@@ -1073,12 +1073,6 @@ where
             }),
         });
 
-        // `fmt::Arguments` has no const len, but an empty format string is
-        // detectable at runtime via `as_str() == Some("")`.
-        if fmt.as_str() != Some("") {
-            #[allow(clippy::disallowed_methods)] // fmt is a caller-provided Arguments parameter
-            Output::pretty_errorln(fmt);
-        }
         Output::flush();
 
         if self.method == Method::HEAD {
@@ -3494,11 +3488,12 @@ where
             let log = vm.log_mut().unwrap();
             // NOTE: format eagerly so `format_args!` doesn't hold an
             // immutable borrow of `self` across the `&mut self` call.
-            let msg = format!(
+            bun_core::pretty_errorln!(
                 "<r><red>{:?}<r> - <b>{}<r> failed",
                 self.method,
                 self.ensure_pathname()
             );
+            let msg = format!("{:?} - {} failed", self.method, self.ensure_pathname());
             self.render_default_error(
                 log,
                 &crate::Error::ExceptionOcurred,

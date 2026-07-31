@@ -20,7 +20,7 @@ async function emitCompletions(shell: "zsh" | "bash" | "fish"): Promise<string> 
 // `bun completions` is a no-op on Windows (PowerShell completions are not
 // implemented), so these tests can only run on POSIX.
 describe.skipIf(isWindows)("shell completion scripts", () => {
-  test("zsh: -i optspec has closing bracket inside the quote", async () => {
+  test.concurrent("zsh: -i optspec has closing bracket inside the quote", async () => {
     // #31665: the line was `...=fallback'] \` (bracket outside the quote),
     // which zsh _arguments sees as a stray literal `]` argument.
     const script = await emitCompletions("zsh");
@@ -28,7 +28,7 @@ describe.skipIf(isWindows)("shell completion scripts", () => {
     expect(script).not.toContain("--install=fallback'] \\");
   });
 
-  test("zsh: _bun_add_param_package_completion prints history instead of executing it", async () => {
+  test.concurrent("zsh: _bun_add_param_package_completion prints history instead of executing it", async () => {
     // #34062: `$($inexact | grep ...)` runs the first history entry as a
     // command. It should be `$(print -l -- $inexact | grep ...)`.
     const script = await emitCompletions("zsh");
@@ -36,14 +36,14 @@ describe.skipIf(isWindows)("shell completion scripts", () => {
     expect(script).not.toContain("($($inexact | grep");
   });
 
-  test("bash: no reference to undeclared re_comp_word_script", async () => {
-    // #28744: ${re_comp_word_script} was never defined; the OR arm expanded
-    // to `=~ ` which is an empty pattern.
+  test.concurrent("bash: no reference to undeclared re_comp_word_script", async () => {
+    // #28744 / #24847: ${re_comp_word_script} was never defined; under BSD
+    // regex (macOS bash) `=~ <empty>` is rejected as "empty (sub)expression".
     const script = await emitCompletions("bash");
-    expect(script).not.toContain("re_comp_word_script");
+    expect(script).not.toContain("${re_comp_word_script}");
   });
 
-  test("bash: script passes bash -n", async () => {
+  test.concurrent("bash: script passes bash -n", async () => {
     const script = await emitCompletions("bash");
     using dir = tempDir("bun-bash-completion", { "bun.bash": script });
     await using proc = Bun.spawn({
@@ -59,7 +59,42 @@ describe.skipIf(isWindows)("shell completion scripts", () => {
     expect(exitCode).toBe(0);
   });
 
-  test("fish: install boolean flags include frozen-lockfile and descriptions line up", async () => {
+  test.concurrent("bash: `bun <entrypoint> <TAB>` still offers global flags", async () => {
+    // Regression guard for the #24847 fix: the removed `=~ ${re_comp_word_script}`
+    // guard was always-true under GNU regex, so the `replaced_script` assignment
+    // it protected has always run. Dropping the arm outright would leave
+    // `bun somefile.js <TAB>` with zero completions instead of the global flag
+    // list, so the fix makes the block unconditional instead.
+    const script = await emitCompletions("bash");
+    using dir = tempDir("bun-bash-completion-run", {
+      "bun.bash": script,
+      "probe.sh":
+        "source ./bun.bash\n" +
+        'COMP_WORDS=(bun somefile.js "")\n' +
+        "COMP_CWORD=2\n" +
+        "COMPREPLY=()\n" +
+        "_bun_completions\n" +
+        'echo "count=${#COMPREPLY[@]}"\n' +
+        'printf \'%s\\n\' "${COMPREPLY[@]}"\n',
+    });
+    await using proc = Bun.spawn({
+      cmd: ["bash", "probe.sh"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    const lines = stdout.trim().split("\n");
+    expect(lines[0]).toMatch(/^count=\d+$/);
+    expect(Number(lines[0].slice("count=".length))).toBeGreaterThan(0);
+    expect(lines).toContain("--help");
+    expect(lines).toContain("--version");
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("fish: install boolean flags include frozen-lockfile and descriptions line up", async () => {
     // #29364: frozen-lockfile was missing and dry-run's description was wrong.
     const script = await emitCompletions("fish");
     const flagsLine = script.split("\n").find(l => l.startsWith("set -l bun_install_boolean_flags "));

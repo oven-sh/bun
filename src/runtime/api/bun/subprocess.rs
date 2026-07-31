@@ -1077,7 +1077,7 @@ impl Subprocess<'_> {
 
             // Detach the source first so onAttachedProcessExit's sync FileSink.onClose cannot
             // re-enter Writable.onClose → pipe.deref() on the still-running pipe.
-            let self_ptr = self.as_ctx_ptr().cast::<c_void>();
+            let self_ptr = self.as_ctx_ptr().cast::<Subprocess<'static>>();
             if matches!(
                 *pipe.source.get(),
                 crate::webcore::streams::SourceHandle::Subprocess(p) if p == self_ptr

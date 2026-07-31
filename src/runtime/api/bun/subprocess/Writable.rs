@@ -466,7 +466,7 @@ impl<'a> Writable<'a> {
                         subprocess.ref_();
                         subprocess.update_flags(|f| f.set(Flags::DEREF_ON_STDIN_DESTROYED, true));
                     }
-                    let parent_ptr = subprocess.as_ctx_ptr().cast::<c_void>();
+                    let parent_ptr = subprocess.as_ctx_ptr().cast::<Subprocess<'static>>();
                     if matches!(*pipe.source.get(), SourceHandle::Subprocess(p) if p == parent_ptr)
                     {
                         pipe.source.with_mut(|s| s.clear());
@@ -497,7 +497,7 @@ impl<'a> Writable<'a> {
         }
 
         // Source back-pointer is the `*mut Subprocess`, not the `stdin` address.
-        let parent_ptr = subprocess.as_ctx_ptr().cast::<c_void>();
+        let parent_ptr = subprocess.as_ctx_ptr().cast::<Subprocess<'static>>();
         match subprocess.stdin.replace(Writable::Ignore) {
             Writable::Pipe(pipe_nn) => {
                 let pipe = Self::pipe_sink_mut(&pipe_nn);

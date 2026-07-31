@@ -1618,7 +1618,7 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
                 (*pipe.as_ptr())
                     .source
                     .set(WebCore::streams::SourceHandle::Subprocess(
-                        subprocess_ptr.cast(),
+                        subprocess_ptr.cast::<SubprocessT<'static>>(),
                     ));
             }
         }

@@ -505,6 +505,8 @@ test("unref: an in-flight request keeps the process alive on its own", async () 
     stdout: "pipe",
     stderr: "pipe",
   });
+  const stderrPromise = proc.stderr.text();
+  const exitedPromise = proc.exited;
 
   // Read the port line while the subprocess keeps running.
   const reader = proc.stdout.getReader();
@@ -520,11 +522,9 @@ test("unref: an in-flight request keeps the process alive on its own", async () 
   expect(port).toBeGreaterThan(0);
 
   const res = await fetch(`http://127.0.0.1:${port}/`);
-  expect(await res.text()).toBe("ok");
-
-  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
-  expect(stderr).toBe("");
-  expect(exitCode).toBe(0);
+  const body = await res.text();
+  const [stderr, exitCode] = await Promise.all([stderrPromise, exitedPromise]);
+  expect({ body, stderr, exitCode }).toEqual({ body: "ok", stderr: "", exitCode: 0 });
 });
 
 test("Bun does not crash when given invalid config", async () => {

@@ -776,6 +776,48 @@ describe("Bun.build", () => {
       expect(await html?.text()).toContain("<meta name='injected-by-plugin' content='true'>");
     },
   );
+
+  test.concurrent("HTML entrypoint with rooted <script src> near/over MAX_PATH_BYTES does not abort", async () => {
+    // Rooted `/...` script src values are re-based onto the project root via the
+    // path-join primitive, whose output buffer is a fixed 4096-byte threadlocal.
+    // With an attacker-authored path >= 4096 bytes this used to panic and abort
+    // the process instead of surfacing a ResolveMessage.
+    using dir = tempDir("bun-build-html-long-rooted-src", {
+      "build.mjs": `
+        import { writeFileSync } from "node:fs";
+        // Sweep the MAX_PATH_BYTES boundary so that at least one resolved path
+        // lands in the window where the load_as_file copy fits but the
+        // extension-probe append would overflow, plus one well past it.
+        const max = process.platform === "darwin" ? 1024 : process.platform === "win32" ? 32767 * 3 + 1 : 4096;
+        const lens = [...Array.from({ length: 16 }, (_, i) => max - 8 + i), max + 1000];
+        const pad = n => Buffer.alloc(Math.max(1, n - import.meta.dir.length), "a");
+        const tags = lens
+          .flatMap(n => [
+            \`<script src="/\${pad(n - 4)}.js"></script>\`,
+            \`<script src="/foo..\${pad(n - 7)}/"></script>\`,
+          ])
+          .join("");
+        writeFileSync("./index.html", \`<html><body>\${tags}</body></html>\`);
+        const r = await Bun.build({ entrypoints: ["./index.html"], throw: false });
+        console.log(JSON.stringify({ success: r.success, logs: r.logs.map(l => l.name) }));
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build.mjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({
+      success: false,
+      logs: expect.arrayContaining(["ResolveMessage"]),
+    });
+    expect(exitCode).toBe(0);
+  });
 });
 
 test.concurrent("macro with nested object", async () => {

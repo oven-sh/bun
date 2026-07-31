@@ -6197,11 +6197,13 @@ pub mod bv2_impl {
                                             let specifier_to_use = &import_record.path.text
                                                 [Fs::FileSystem::instance().top_level_dir.len()..];
                                             #[cfg(windows)]
-                                            {
+                                            if specifier_to_use.len() <= buf.len() {
                                                 &*bun_paths::resolve_path::path_to_posix_buf::<u8>(
                                                     specifier_to_use,
                                                     &mut *buf,
                                                 )
+                                            } else {
+                                                specifier_to_use
                                             }
                                             #[cfg(not(windows))]
                                             {

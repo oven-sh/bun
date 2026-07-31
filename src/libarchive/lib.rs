@@ -1889,8 +1889,13 @@ impl Archiver {
                                     // The header's size field is attacker-controlled; a
                                     // malicious tarball can claim 8 GiB for a 100-byte body
                                     // and fallocate that much real disk before the short body
-                                    // is detected. A tar entry's body is stored inline in the
-                                    // archive stream, so it cannot exceed `file_buffer.len()`.
+                                    // is detected. Bound by the input buffer: for callers
+                                    // that pre-decompress (package extraction, `bun create`)
+                                    // a tar entry's body is stored inline in `file_buffer`
+                                    // so this is exact; callers that hand a compressed
+                                    // buffer to libarchive's gzip filter (`Bun.Archive`)
+                                    // under-preallocate here, which is acceptable since
+                                    // preallocation is best-effort.
                                     let prealloc = size.min(file_buffer.len());
                                     if prealloc > 1_000_000 {
                                         let _ = bun_sys::preallocate_file(

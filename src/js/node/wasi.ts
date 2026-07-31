@@ -860,26 +860,32 @@ var require_wasi = __commonJS({
           const { buffer } = memory;
           const { byteLength } = buffer;
 
+          // Validate iovs pointer is within bounds
+          if (iovs >= byteLength || iovs < 0) {
+            throw new types_1.WASIError(constants_1.WASI_EOVERFLOW);
+          }
+
+          // Validate total size needed for all iovecs
+          const total_size = iovs + iovsLen * 8;
+          if (total_size > byteLength || total_size < iovs) {
+            throw new types_1.WASIError(constants_1.WASI_EOVERFLOW);
+          }
+
           if (iovsLen === 1) {
             const ptr = iovs;
-            const buf = view.getUint32(ptr, true);
-            let bufLen = view.getUint32(ptr + 4, true);
-
-            if (bufLen > byteLength - buf) {
-              console.log({
-                buf,
-                bufLen,
-                total_memory: byteLength,
-              });
-              log("getiovs: warning -- truncating buffer to fit in memory");
-              bufLen = Math.min(bufLen, Math.max(0, byteLength - buf));
-            }
+            let buf;
+            let bufLen;
             try {
-              return [new Uint8Array(buffer, buf, bufLen)];
+              buf = view.getUint32(ptr, true);
+              bufLen = view.getUint32(ptr + 4, true);
             } catch (err) {
-              console.warn("WASI.getiovs -- invalid buffer", err);
-              throw new types_1.WASIError(constants_1.WASI_EINVAL);
+              throw new types_1.WASIError(constants_1.WASI_EOVERFLOW);
             }
+
+            if (buf > byteLength || bufLen > byteLength - buf) {
+              throw new types_1.WASIError(constants_1.WASI_EOVERFLOW);
+            }
+            return [new Uint8Array(buffer, buf, bufLen)];
           }
 
           // Avoid referencing Array because materializing the Array constructor can show up in profiling
@@ -887,28 +893,23 @@ var require_wasi = __commonJS({
           buffers.length = iovsLen;
 
           for (let i = 0, ptr = iovs; i < iovsLen; i++, ptr += 8) {
-            const buf = view.getUint32(ptr, true);
-            let bufLen = view.getUint32(ptr + 4, true);
-
-            if (bufLen > byteLength - buf) {
-              console.log({
-                buf,
-                bufLen,
-                total_memory: byteLength,
-              });
-              log("getiovs: warning -- truncating buffer to fit in memory");
-              bufLen = Math.min(bufLen, Math.max(0, byteLength - buf));
-            }
+            let buf;
+            let bufLen;
             try {
-              buffers[i] = new Uint8Array(buffer, buf, bufLen);
+              buf = view.getUint32(ptr, true);
+              bufLen = view.getUint32(ptr + 4, true);
             } catch (err) {
-              console.warn("WASI.getiovs -- invalid buffer", err);
-              throw new types_1.WASIError(constants_1.WASI_EINVAL);
+              throw new types_1.WASIError(constants_1.WASI_EOVERFLOW);
             }
+
+            if (buf > byteLength || bufLen > byteLength - buf) {
+              throw new types_1.WASIError(constants_1.WASI_EOVERFLOW);
+            }
+            buffers[i] = new Uint8Array(buffer, buf, bufLen);
           }
           return buffers;
         };
-        const CHECK_FD = (fd, rights) => {
+const CHECK_FD = (fd, rights) => {
           const stats = stat(this, fd);
           if (rights !== BigInt(0) && (stats.rights.base & rights) === BigInt(0)) {
             throw new types_1.WASIError(constants_1.WASI_EPERM);

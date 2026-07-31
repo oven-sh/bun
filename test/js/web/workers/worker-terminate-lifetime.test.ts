@@ -397,3 +397,52 @@ test.skipIf(!isDebug)(
   },
   120_000,
 );
+
+// Regression: Bun__handleUncaughtException probed process._fatalException (a
+// JS get(), where the worker's termination trap fires) and then called
+// wrapped.emit("uncaughtException") with the sticky TerminationException
+// still pending after tryClearException(), tripping
+// Interpreter::executeCallImpl's scope.assertNoException(). The sibling
+// rejectionHandled / unhandledRejection emit paths share the guard.
+test.skipIf(!isDebug)(
+  "terminate() while a worker is emitting process 'uncaughtException' does not trip assertNoException()",
+  async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const { Worker } = require("node:worker_threads");
+        const src =
+          "process.on('uncaughtException', () => {});" +
+          "setInterval(() => { for (let i = 0; i < 50; i++) setTimeout(() => { throw new Error('e'); }, 0); }, 1);" +
+          "require('node:worker_threads').parentPort.postMessage('up');";
+        for (let r = 0; r < 15; r++) {
+          const ws = [];
+          for (let i = 0; i < 6; i++) {
+            const w = new Worker(src, { eval: true });
+            w.on("error", () => {});
+            ws.push(w);
+          }
+          await Promise.race([
+            Promise.all(ws.map((w) => new Promise((res) => w.once("message", res)))),
+            Bun.sleep(1500),
+          ]);
+          await Bun.sleep((r * 37) % 250);
+          await Promise.all(ws.map((w) => w.terminate()));
+        }
+        console.log("PASS");
+      `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("PASS\n");
+    expect(exitCode).toBe(0);
+  },
+  120_000,
+);

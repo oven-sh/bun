@@ -284,9 +284,7 @@ fn use_fake_timers(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVal
     if args.len() > 0 && !args[0].is_undefined() {
         let options_value = args[0];
         if options_value.is_string() {
-            // Jest 26 accepted jest.useFakeTimers("modern" | "legacy") to select the
-            // implementation. Accept a string argument as a no-op so suites migrating
-            // from older Jest versions don't need to rewrite these calls.
+            // Jest 26 compat: useFakeTimers("modern" | "legacy") is a no-op.
         } else if !options_value.is_object() {
             return Err(global.throw_invalid_arguments(format_args!(
                 "useFakeTimers() expects an options object"

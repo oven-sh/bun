@@ -1,4 +1,4 @@
-import { expect, test, describe } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { randomBytes } from "crypto";
 import fsPromises from "fs/promises";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";

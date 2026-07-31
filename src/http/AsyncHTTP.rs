@@ -617,10 +617,9 @@ impl<'a> AsyncHTTP<'a> {
         // Note: `Box::leak` is forbidden (PORTING.md §Forbidden);
         // allocate via `heap::alloc` and reclaim once
         // the single sync callback has fired and we've read the result.
-        let ctx = bun_core::heap::into_raw_nn(Box::new(SingleHTTPChannel::init()));
-        // SAFETY: `ctx` is uniquely owned here; no other reference exists until
-        // `schedule` below hands the callback to the HTTP thread.
-        unsafe { (*ctx.as_ptr()).response_buffer = &raw mut *response_buffer };
+        let mut ch = SingleHTTPChannel::init();
+        ch.response_buffer = &raw mut *response_buffer;
+        let ctx = bun_core::heap::into_raw_nn(Box::new(ch));
         self.result_callback =
             HTTPClientResultCallback::new::<SingleHTTPChannel>(ctx.as_ptr(), send_sync_callback);
 

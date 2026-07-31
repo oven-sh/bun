@@ -2684,10 +2684,6 @@ impl<'a> Resolver<'a> {
         if !node_path.is_empty() {
             let delim = if cfg!(windows) { b';' } else { b':' };
             for path in node_path.split(|&b| b == delim).filter(|s| !s.is_empty()) {
-                // Node treats each NODE_PATH entry as a "node_modules"-like
-                // search root: a package with an "exports" field found here is
-                // subject to the same encapsulation as one found in
-                // node_modules.
                 if let Some(ref esm) = esm_ {
                     let abs_package_path: &[u8] = self
                         .fs_ref()
@@ -3503,17 +3499,10 @@ impl<'a> Resolver<'a> {
         unreachable!("TODO: implement enqueueDependencyToResolve for non-root packages")
     }
 
-    /// If the package rooted at `abs_package_path` has a `package.json` with an
-    /// `"exports"` field, resolve `esm.subpath` against it (Node's
-    /// PACKAGE_EXPORTS_RESOLVE). A package with `"exports"` is fully
-    /// encapsulated, so an unexported subpath is `NotFound`, not a
-    /// fall-through.
-    ///
-    /// Returns `None` when the directory has no `package.json` or that
-    /// `package.json` has no `"exports"` field, telling the caller to fall
-    /// through to the legacy `main`/index lookup. Returns `Some(Success)` with
-    /// `out` filled on a match, or `Some(NotFound)` when the subpath is not
-    /// exported.
+    /// Resolve `esm.subpath` against the `"exports"` map of the package at
+    /// `abs_package_path`. `None` means no `"exports"` field: the caller falls
+    /// through to the legacy `main`/index lookup. `Some(NotFound)` means the
+    /// package has `"exports"` and the subpath is not exported.
     fn resolve_from_package_exports(
         &mut self,
         esm: &crate::package_json::Package<'_>,
@@ -3527,16 +3516,8 @@ impl<'a> Resolver<'a> {
 
         let mut module_type = package_json.module_type;
 
-        // Resolve against the path "/", then join it with the absolute directory
-        // path. ESM package resolution uses URLs while our path resolution uses
-        // file system paths, and we don't want Windows paths or literal "%"
-        // characters in the absolute directory path to be interpreted as URL
-        // escapes.
-        //
-        // Keeping a single `ESModule` (which holds `&mut self.debug_logs`) alive
-        // across a `&mut self` call is aliased-&mut UB. Build a fresh
-        // short-lived `ESModule` per `resolve` call so its borrow ends before
-        // `self.handle_esm_resolution` re-borrows `self`.
+        // Resolve against "/" so Windows paths / literal "%" in the absolute
+        // directory path are not treated as URL components.
         {
             let esm_resolution = ESModule {
                 conditions: match kind {
@@ -3570,22 +3551,9 @@ impl<'a> Resolver<'a> {
             }
         }
 
-        // Some popular packages forget to include the extension in their
-        // exports map, so we try again without the extension.
-        //
-        // This is useful for browser-like environments
-        // where you want a file extension in the URL
-        // pathname by convention. Vite does this.
-        //
-        // React is an example of a package that doesn't include file extensions.
-        // {
-        //     "exports": {
-        //         ".": "./index.js",
-        //         "./jsx-runtime": "./jsx-runtime.js",
-        //     }
-        // }
-        //
-        // We limit this behavior just to ".js" files.
+        // Some packages (e.g. React) key `"exports"` without an extension; retry
+        // a `.js` subpath without it so `require("react/jsx-runtime.js")` still
+        // maps to the `"./jsx-runtime"` entry.
         let extname = bun_paths::extension(esm.subpath);
         if extname == b".js" && esm.subpath.len() > 3 {
             let esm_resolution = ESModule {

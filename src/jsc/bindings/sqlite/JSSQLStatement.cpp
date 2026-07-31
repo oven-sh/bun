@@ -506,8 +506,6 @@ public:
 
     bool need_update() { return version_db->version.load() != version; }
     void update_version() { version = version_db->version.load(); }
-    // Must be called right after sqlite3_step(), which is where SQLite
-    // transparently re-prepares an expired statement. `stmt` must be non-null.
     void updateColumnNamesIfNeeded(JSC::JSGlobalObject*);
 
     ~JSSQLStatement();
@@ -856,9 +854,7 @@ static void initializeColumnNames(JSC::JSGlobalObject* lexicalGlobalObject, JSSQ
 
 void JSSQLStatement::updateColumnNamesIfNeeded(JSC::JSGlobalObject* lexicalGlobalObject)
 {
-    // When the schema changes, sqlite3_step() re-prepares the statement behind our
-    // back, so the cached column names, validColumns, and result Structure can all
-    // describe a stale result shape (or the same value count under the old names).
+    // sqlite3_step() may transparently re-prepare under a changed result shape.
     const bool reprepared = sqlite3_stmt_status(stmt, SQLITE_STMTSTATUS_REPREPARE, 1) > 0;
     if (!hasExecuted || reprepared || need_update()) {
         initializeColumnNames(lexicalGlobalObject, this);
@@ -918,16 +914,12 @@ static inline bool rebindValue(JSC::JSGlobalObject* lexicalGlobalObject, sqlite3
         if (roped->is8Bit() && roped->containsOnlyASCII()) {
             CHECK_BIND(sqlite3_bind_text(stmt, i, reinterpret_cast<const char*>(roped->span8().data()), roped->length(), SQLITE_TRANSIENT));
         } else {
-            // StringView::utf8() replaces lone surrogates with U+FFFD. sqlite3_bind_text16
-            // must not be used here: SQLite's UTF-16 decoder pairs a lone high surrogate with
-            // the next code unit (consuming it) and stores trailing ones as ill-formed UTF-8.
+            // Not sqlite3_bind_text16: SQLite's UTF-16 decoder stores lone surrogates as ill-formed UTF-8.
             auto utf8 = roped->utf8();
             CHECK_BIND(sqlite3_bind_text(stmt, i, utf8.data(), utf8.length(), SQLITE_TRANSIENT));
         }
 
     } else if (value.isHeapBigInt()) [[unlikely]] {
-        // SQLite integers are signed 64-bit. Reject anything that does not fit
-        // instead of letting JSBigInt::toBigInt64 silently wrap it modulo 2^64.
         JSBigInt* bigInt = value.asHeapBigInt();
         const auto min = JSBigInt::compare(bigInt, std::numeric_limits<int64_t>::min());
         const auto max = JSBigInt::compare(bigInt, std::numeric_limits<int64_t>::max());
@@ -2692,8 +2684,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsSqlStatementGetColumnTypes, (JSGlobalObject * lexical
     // Step once to get to the first row (safe for read-only statements)
     int stepStatus = sqlite3_step(castedThis->stmt);
 
-    // Read the column count after the step: sqlite3_step() transparently
-    // re-prepares an expired statement, which can change the result shape.
+    // After the step: sqlite3_step() can re-prepare under a changed column count.
     int count = sqlite3_column_count(castedThis->stmt);
 
     // If we got a row, get types from it

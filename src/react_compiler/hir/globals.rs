@@ -237,19 +237,8 @@ pub fn lookup_base_global(name: &str) -> Option<&'static Global> {
 
 /// Convert a user-provided TypeConfig into an internal Type, registering shapes
 /// as needed. Ported from TS `installTypeConfig` in Globals.ts.
-/// If `errors` is provided, hook-name vs hook-type consistency validation
-/// errors are collected there.
-pub fn install_type_config(
-    _globals: &mut GlobalRegistry,
-    shapes: &mut ShapeRegistry,
-    type_config: &TypeConfig,
-    module_name: &str,
-    _loc: (),
-) -> Global {
-    install_type_config_inner(_globals, shapes, type_config, module_name, _loc, &mut None)
-}
-
-/// Like `install_type_config` but collects validation errors.
+/// Hook-name vs hook-type consistency validation errors are collected into
+/// `errors`.
 pub fn install_type_config_with_errors(
     _globals: &mut GlobalRegistry,
     shapes: &mut ShapeRegistry,
@@ -258,14 +247,7 @@ pub fn install_type_config_with_errors(
     _loc: (),
     errors: &mut Vec<String>,
 ) -> Global {
-    install_type_config_inner(
-        _globals,
-        shapes,
-        type_config,
-        module_name,
-        _loc,
-        &mut Some(errors),
-    )
+    install_type_config_inner(_globals, shapes, type_config, module_name, _loc, errors)
 }
 
 fn install_type_config_inner(
@@ -274,7 +256,7 @@ fn install_type_config_inner(
     type_config: &TypeConfig,
     module_name: &str,
     _loc: (),
-    errors: &mut Option<&mut Vec<String>>,
+    errors: &mut Vec<String>,
 ) -> Global {
     match type_config {
         TypeConfig::TypeReference(TypeReferenceConfig { name }) => match name {
@@ -367,25 +349,23 @@ fn install_type_config_inner(
                                 errors,
                             );
                             // Validate hook-name vs hook-type consistency (matching TS installTypeConfig)
-                            if let Some(errs) = errors {
-                                let expect_hook = crate::hir::environment::is_hook_name(key.as_bytes());
-                                let is_hook = match &ty {
-                                    Type::Function { shape_id: Some(id), .. } => {
-                                        shapes.get(id)
-                                            .and_then(|shape| shape.function_type.as_ref())
-                                            .and_then(|ft| ft.hook_kind.as_ref())
-                                            .is_some()
-                                    }
-                                    _ => false,
-                                };
-                                if expect_hook != is_hook {
-                                    errs.push(format!(
-                                        "Expected type for object property '{}' from module '{}' {} based on the property name",
-                                        key,
-                                        module_name,
-                                        if expect_hook { "to be a hook" } else { "not to be a hook" }
-                                    ));
+                            let expect_hook = crate::hir::environment::is_hook_name(key.as_bytes());
+                            let is_hook = match &ty {
+                                Type::Function { shape_id: Some(id), .. } => {
+                                    shapes.get(id)
+                                        .and_then(|shape| shape.function_type.as_ref())
+                                        .and_then(|ft| ft.hook_kind.as_ref())
+                                        .is_some()
                                 }
+                                _ => false,
+                            };
+                            if expect_hook != is_hook {
+                                errors.push(format!(
+                                    "Expected type for object property '{}' from module '{}' {} based on the property name",
+                                    key,
+                                    module_name,
+                                    if expect_hook { "to be a hook" } else { "not to be a hook" }
+                                ));
                             }
                             (*key, ty)
                         })

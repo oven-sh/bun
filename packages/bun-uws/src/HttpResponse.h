@@ -191,7 +191,7 @@ public:
             if (!Super::isCorked()) {
                 if (httpResponseData->shouldCloseConnection()) {
                     if ((httpResponseData->state & HttpResponseData<SSL>::HTTP_RESPONSE_PENDING) == 0) {
-                        if (((AsyncSocket<SSL> *) this)->getBufferedAmount() == 0) {
+                        if (((AsyncSocket<SSL> *) this)->hasFullyDrained()) {
                             ((AsyncSocket<SSL> *) this)->shutdown();
                             /* We need to force close after sending FIN since we want to hinder
                                 * clients from keeping to send their huge data */
@@ -257,7 +257,7 @@ public:
                 if (!Super::isCorked()) {
                     if (httpResponseData->shouldCloseConnection()) {
                         if ((httpResponseData->state & HttpResponseData<SSL>::HTTP_RESPONSE_PENDING) == 0) {
-                            if (((AsyncSocket<SSL> *) this)->getBufferedAmount() == 0) {
+                            if (((AsyncSocket<SSL> *) this)->hasFullyDrained()) {
                                 ((AsyncSocket<SSL> *) this)->shutdown();
                                 /* We need to force close after sending FIN since we want to hinder
                                 * clients from keeping to send their huge data */
@@ -743,6 +743,72 @@ public:
         return !has_failed;
     }
 
+    /* Like write(), but the body payload is written with optionally=true so the
+     * unwritten tail is NOT copied into the backpressure buffer. The caller keeps
+     * the bytes alive and retries the remainder on onWritable. Framing (chunk-size
+     * line, trailing CRLF) is still written non-optionally.
+     * isFirst=false skips framing and is used for continuation writes.
+     * Returns the number of body bytes accepted. */
+    size_t tryWriteBody(std::string_view data, bool isFirst) {
+        HttpResponseData<SSL> *httpResponseData = getHttpResponseData();
+        bool chunked = !(httpResponseData->state & (HttpResponseData<SSL>::HTTP_WROTE_CONTENT_LENGTH_HEADER | HttpResponseData<SSL>::HTTP_ANCIENT_REQUEST | HttpResponseData<SSL>::HTTP_CLOSE_DELIMITED));
+
+        if (isFirst) {
+            writeStatus(HTTP_200_OK);
+            if (chunked) {
+                if (!(httpResponseData->state & HttpResponseData<SSL>::HTTP_WRITE_CALLED)) {
+                    writeMark();
+                    if (!(httpResponseData->state & HttpResponseData<SSL>::HTTP_WROTE_TRANSFER_ENCODING_HEADER)) {
+                        writeHeader("Transfer-Encoding", "chunked");
+                    }
+                    Super::write("\r\n", 2);
+                    httpResponseData->state |= HttpResponseData<SSL>::HTTP_WRITE_CALLED;
+                }
+                writeUnsignedHex((unsigned int) data.length());
+                Super::write("\r\n", 2);
+            } else if (!(httpResponseData->state & HttpResponseData<SSL>::HTTP_WRITE_CALLED)) {
+                writeMark();
+                Super::write("\r\n", 2);
+                httpResponseData->state |= HttpResponseData<SSL>::HTTP_WRITE_CALLED;
+            }
+        }
+
+        size_t consumed = 0;
+        size_t length = data.length();
+        while (consumed < length) {
+            int chunk = (int) std::min(length - consumed, (size_t) INT_MAX);
+            auto [written, failed] = Super::write(data.data() + consumed, chunk, true);
+            consumed += (size_t) written;
+            if (written < chunk || failed) break;
+        }
+
+        if (consumed == length && chunked) {
+            Super::write("\r\n", 2);
+        }
+
+        this->resetTimeout();
+        return consumed;
+    }
+
+    /* Copy the remaining body tail into the backpressure buffer (non-optional),
+     * then the trailing chunk CRLF. Used when a new write arrives while a
+     * tryWriteBody() tail is still held externally. */
+    void spillBodyTail(std::string_view data) {
+        HttpResponseData<SSL> *httpResponseData = getHttpResponseData();
+        bool chunked = !(httpResponseData->state & (HttpResponseData<SSL>::HTTP_WROTE_CONTENT_LENGTH_HEADER | HttpResponseData<SSL>::HTTP_ANCIENT_REQUEST | HttpResponseData<SSL>::HTTP_CLOSE_DELIMITED));
+
+        size_t length = data.length();
+        size_t done = 0;
+        while (done < length) {
+            int chunk = (int) std::min(length - done, (size_t) INT_MAX);
+            Super::write(data.data() + done, chunk);
+            done += (size_t) chunk;
+        }
+        if (chunked) {
+            Super::write("\r\n", 2);
+        }
+    }
+
     /* Get the current byte write offset for this Http response */
     uint64_t getWriteOffset() {
         HttpResponseData<SSL> *httpResponseData = getHttpResponseData();
@@ -795,7 +861,7 @@ public:
             HttpResponseData<SSL> *httpResponseData = getHttpResponseData();
             if (httpResponseData->shouldCloseConnection()) {
                 if ((httpResponseData->state & HttpResponseData<SSL>::HTTP_RESPONSE_PENDING) == 0) {
-                    if (((AsyncSocket<SSL> *) this)->getBufferedAmount() == 0) {
+                    if (((AsyncSocket<SSL> *) this)->hasFullyDrained()) {
                         ((AsyncSocket<SSL> *) this)->shutdown();
                         /* We need to force close after sending FIN since we want to hinder
                         * clients from keeping to send their huge data */

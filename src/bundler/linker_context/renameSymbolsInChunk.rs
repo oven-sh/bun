@@ -35,7 +35,7 @@ use crate::{Chunk, LinkerContext, StableRef, WrapKind};
 /// `c` must point to a live `LinkerContext` for the duration of the call;
 /// caller (the `each_ptr` dispatch) guarantees the link step outlives all
 /// renamer tasks.
-pub unsafe fn rename_symbols_in_chunk(
+pub(crate) unsafe fn rename_symbols_in_chunk(
     c: *mut LinkerContext,
     chunk: &mut Chunk,
     files_in_order: &[u32],
@@ -416,7 +416,3 @@ pub unsafe fn rename_symbols_in_chunk(
 
     Ok(ChunkRenamer::Number(r))
 }
-
-pub use crate::DeferredBatchTask;
-pub use crate::ParseTask;
-pub use crate::ThreadPool;

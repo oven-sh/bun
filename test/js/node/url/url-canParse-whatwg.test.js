@@ -3,8 +3,7 @@ import assert from "node:assert";
 import { URL } from "node:url";
 
 describe("URL.canParse", () => {
-  // TODO: Support error code.
-  test.todo("invalid input", () => {
+  test("invalid input", () => {
     // One argument is required
     assert.throws(
       () => {

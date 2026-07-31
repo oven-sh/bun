@@ -27,7 +27,6 @@
 #include <memory>
 #include <utility>
 #include <span>
-#include <iostream>
 
 #include "MoveOnlyFunction.h"
 

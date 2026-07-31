@@ -97,7 +97,7 @@ use bstr::BStr;
 
 use bun_alloc::AllocError;
 use bun_collections::IntegerBitSet;
-use bun_core::{MutableString, strings};
+use bun_core::strings;
 use bun_core::{declare_scope, scoped_log};
 use bun_io::KeepAlive;
 use bun_io::StreamBuffer;
@@ -124,43 +124,40 @@ declare_scope!(S3MultiPartUpload, hidden);
 
 #[derive(bun_ptr::CellRefCounted)]
 pub struct MultiPartUpload {
-    pub queue: Option<Box<[UploadPart]>>,
-    pub available: IntegerBitSet<{ Self::MAX_QUEUE_SIZE }>,
+    pub(crate) queue: Option<Box<[UploadPart]>>,
+    pub(crate) available: IntegerBitSet<{ Self::MAX_QUEUE_SIZE }>,
 
-    pub current_part_number: u16,
-    pub ref_count: Cell<u32>, // intrusive refcount — see bun_ptr::IntrusiveRc
-    pub ended: bool,
+    pub(crate) current_part_number: u16,
+    pub(crate) ref_count: Cell<u32>, // intrusive refcount — see bun_ptr::IntrusiveRc
+    pub(crate) ended: bool,
 
-    pub options: MultiPartUploadOptions,
-    pub acl: Option<ACL>,
-    pub storage_class: Option<StorageClass>,
-    pub request_payer: bool,
-    pub credentials: bun_ptr::IntrusiveRc<S3Credentials>,
+    pub(crate) options: MultiPartUploadOptions,
+    pub(crate) acl: Option<ACL>,
+    pub(crate) storage_class: Option<StorageClass>,
+    pub(crate) request_payer: bool,
+    pub(crate) credentials: bun_ptr::IntrusiveRc<S3Credentials>,
     pub poll_ref: KeepAlive,
-    pub vm: &'static VirtualMachine,
+    pub(crate) vm: &'static VirtualMachine,
     // JSC_BORROW per LIFETIMES.tsv row 1886 — rust_type `&JSGlobalObject` used verbatim
     pub global_this: GlobalRef,
 
-    pub buffered: StreamBuffer,
+    pub(crate) buffered: StreamBuffer,
 
     pub path: Box<[u8]>,
-    pub proxy: Box<[u8]>,
-    pub content_type: Option<Box<[u8]>>,
-    pub content_disposition: Option<Box<[u8]>>,
-    pub content_encoding: Option<Box<[u8]>>,
-    // Duped into an owned Box here to avoid a self-referential struct
-    // (a slice into `uploadid_buffer`).
-    pub upload_id: Box<[u8]>,
-    pub uploadid_buffer: MutableString,
+    pub(crate) proxy: Box<[u8]>,
+    pub(crate) content_type: Option<Box<[u8]>>,
+    pub(crate) content_disposition: Option<Box<[u8]>>,
+    pub(crate) content_encoding: Option<Box<[u8]>>,
+    pub(crate) upload_id: Box<[u8]>,
 
-    pub multipart_etags: Vec<UploadPartResult>,
-    pub multipart_upload_list: Vec<u8>, // was bun.Vec<u8>
+    pub(crate) multipart_etags: Vec<UploadPartResult>,
+    pub(crate) multipart_upload_list: Vec<u8>, // was bun.Vec<u8>
 
-    pub state: State,
+    pub(crate) state: State,
 
     pub callback: fn(S3UploadResult, *mut c_void) -> JsTerminatedResult<()>,
-    pub on_writable: Option<fn(*mut MultiPartUpload, *mut c_void, u64)>,
-    pub callback_context: *mut c_void,
+    pub(crate) on_writable: Option<fn(*mut MultiPartUpload, *mut c_void, u64)>,
+    pub(crate) callback_context: *mut c_void,
 }
 
 #[repr(u8)]
@@ -190,7 +187,7 @@ impl MultiPartUpload {
     // Forwards `this` to the derived intrusive-rc decrement without dereferencing it here;
     // not_unsafe_ptr_arg_deref is a false positive on opaque-token forwarding.
     #[allow(clippy::not_unsafe_ptr_arg_deref)]
-    pub fn deref_(this: *mut Self) {
+    pub(crate) fn deref_(this: *mut Self) {
         // SAFETY: per fn contract — forwarded to the derived intrusive-rc decrement.
         unsafe { <Self as bun_ptr::CellRefCounted>::deref(this) }
     }
@@ -209,18 +206,18 @@ pub enum PartState {
 pub struct UploadPart {
     /// Raw owned slice; backing allocation length is `allocated_size` (may exceed `data.len()`).
     /// Freed via `free_allocated_slice`. Default is a static empty slice.
-    pub data: *const [u8],
+    pub(crate) data: *const [u8],
     pub ctx: bun_ptr::BackRef<MultiPartUpload>, // BACKREF (LIFETIMES.tsv)
-    pub allocated_size: usize,
-    pub state: PartState,
-    pub part_number: u16, // max is 10,000
-    pub retry: u8,        // auto retry, decrement until 0 and fail after this
-    pub index: u8,
+    pub(crate) allocated_size: usize,
+    pub(crate) state: PartState,
+    pub(crate) part_number: u16, // max is 10,000
+    pub(crate) retry: u8,        // auto retry, decrement until 0 and fail after this
+    pub(crate) index: u8,
 }
 
 pub struct UploadPartResult {
-    pub number: u16,
-    pub etag: Box<[u8]>,
+    pub(crate) number: u16,
+    pub(crate) etag: Box<[u8]>,
 }
 
 impl UploadPart {
@@ -248,10 +245,7 @@ impl UploadPart {
         unsafe { &*self.data }
     }
 
-    pub(crate) fn on_part_response(
-        result: S3PartResult,
-        this: *mut c_void,
-    ) -> JsTerminatedResult<()> {
+    fn on_part_response(result: S3PartResult, this: *mut c_void) -> JsTerminatedResult<()> {
         let this = this.cast::<Self>();
         // SAFETY: callback context — `this` is the `*mut UploadPart` passed in `perform()`
         let this = unsafe { &mut *this };
@@ -368,7 +362,7 @@ impl UploadPart {
         )
     }
 
-    pub(crate) fn start(&mut self) -> JsTerminatedResult<()> {
+    fn start(&mut self) -> JsTerminatedResult<()> {
         let ctx = self.ctx.get();
         if self.state != PartState::Pending || ctx.state != State::MultipartCompleted {
             return Ok(());
@@ -378,7 +372,7 @@ impl UploadPart {
         self.perform()
     }
 
-    pub(crate) fn cancel(&mut self) {
+    fn cancel(&mut self) {
         let state = self.state;
         self.state = PartState::Canceled;
 
@@ -406,7 +400,6 @@ impl Drop for MultiPartUpload {
         // `IntrusiveRc<T>` (= `RefPtr<T>`) has no `Drop` — release the +1 the
         // constructing `writable_stream`/`upload_stream` adopted.
         self.credentials.deref();
-        // uploadid_buffer: MutableString — Drop
         // multipart_etags: Vec<UploadPartResult> — Drop (each etag Box<[u8]> freed)
         // multipart_upload_list: Vec<u8> — Drop
         // bun.destroy(this) — handled by deref_() via heap::take
@@ -414,7 +407,7 @@ impl Drop for MultiPartUpload {
 }
 
 impl MultiPartUpload {
-    pub fn single_send_upload_response(
+    pub(crate) fn single_send_upload_response(
         result: S3UploadResult,
         this: *mut c_void,
     ) -> JsTerminatedResult<()> {
@@ -573,7 +566,7 @@ impl MultiPartUpload {
     }
 
     /// Finalize the upload with a failure
-    pub fn fail(&mut self, err: S3Error) -> JsTerminatedResult<()> {
+    pub(crate) fn fail(&mut self, err: S3Error) -> JsTerminatedResult<()> {
         scoped_log!(
             S3MultiPartUpload,
             "fail {}:{}",
@@ -658,7 +651,7 @@ impl MultiPartUpload {
     }
 
     /// Result of the Multipart request, after this we can start draining the parts
-    pub fn start_multi_part_request_result(
+    pub(crate) fn start_multi_part_request_result(
         result: S3DownloadResult,
         this: *mut c_void,
     ) -> JsTerminatedResult<()> {
@@ -694,7 +687,6 @@ impl MultiPartUpload {
                         }
                     }
                 }
-                this.uploadid_buffer = response.body;
                 if this.upload_id.is_empty()
                     || this.upload_id.len() > Self::MAX_UPLOAD_ID_LEN
                     || this
@@ -733,7 +725,7 @@ impl MultiPartUpload {
     }
 
     /// We do a best effort to commit the multipart upload, if it fails we will retry, if it still fails we will fail the upload
-    pub fn on_commit_multi_part_request(
+    pub(crate) fn on_commit_multi_part_request(
         result: S3CommitResult,
         this: *mut c_void,
     ) -> JsTerminatedResult<()> {
@@ -774,7 +766,7 @@ impl MultiPartUpload {
     }
 
     /// We do a best effort to rollback the multipart upload, if it fails we will retry, if it still we just deinit the upload
-    pub fn on_rollback_multi_part_request(
+    pub(crate) fn on_rollback_multi_part_request(
         result: S3UploadResult,
         this: *mut c_void,
     ) -> JsTerminatedResult<()> {
@@ -1009,7 +1001,7 @@ impl MultiPartUpload {
         Ok(())
     }
 
-    pub fn proxy_url(&self) -> Option<&[u8]> {
+    pub(crate) fn proxy_url(&self) -> Option<&[u8]> {
         Some(&self.proxy)
     }
 
@@ -1050,11 +1042,11 @@ impl MultiPartUpload {
         }
     }
 
-    pub fn part_size_in_bytes(&self) -> usize {
+    pub(crate) fn part_size_in_bytes(&self) -> usize {
         self.options.part_size as usize
     }
 
-    pub fn continue_stream(&mut self) {
+    pub(crate) fn continue_stream(&mut self) {
         if self.state == State::WaitStreamCheck {
             self.state = State::NotStarted;
             if self.ended {
@@ -1063,7 +1055,7 @@ impl MultiPartUpload {
         }
     }
 
-    pub fn has_backpressure(&self) -> bool {
+    pub(crate) fn has_backpressure(&self) -> bool {
         // if we dont have any space in the queue, we have backpressure
         // since we are not allowed to send more data
         let Some(index) = self.available.find_first_set() else {
@@ -1072,7 +1064,7 @@ impl MultiPartUpload {
         index >= self.options.queue_size as usize
     }
 
-    pub fn is_queue_empty(&self) -> bool {
+    pub(crate) fn is_queue_empty(&self) -> bool {
         self.available.mask == IntegerBitSet::<{ Self::MAX_QUEUE_SIZE }>::init_full().mask
     }
 
@@ -1151,7 +1143,7 @@ impl MultiPartUpload {
         })
     }
 
-    pub fn write_latin1(
+    pub(crate) fn write_latin1(
         &mut self,
         chunk: &[u8],
         is_last: bool,
@@ -1159,7 +1151,7 @@ impl MultiPartUpload {
         self.write(WriteEncoding::Latin1, chunk, is_last)
     }
 
-    pub fn write_utf16(
+    pub(crate) fn write_utf16(
         &mut self,
         chunk: &[u8],
         is_last: bool,
@@ -1167,7 +1159,7 @@ impl MultiPartUpload {
         self.write(WriteEncoding::Utf16, chunk, is_last)
     }
 
-    pub fn write_bytes(
+    pub(crate) fn write_bytes(
         &mut self,
         chunk: &[u8],
         is_last: bool,

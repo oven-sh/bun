@@ -701,7 +701,7 @@ it(
       bundleIn,
       `// ${long_comment}
 //
-console.error("RSS: %s", process.memoryUsage().rss);
+console.error("RSS: %s", process.platform === "darwin" && typeof Bun.unsafe.memoryFootprint === "function" ? Bun.unsafe.memoryFootprint() : process.memoryUsage.rss());
 throw new Error('0');`,
     );
     await using bundler = spawn({
@@ -745,7 +745,7 @@ throw new Error('0');`,
           writeHotFileAtomicSync(
             bundleIn,
             `// ${long_comment}
-console.error("RSS: %s", process.memoryUsage().rss);
+console.error("RSS: %s", process.platform === "darwin" && typeof Bun.unsafe.memoryFootprint === "function" ? Bun.unsafe.memoryFootprint() : process.memoryUsage.rss());
 //
 ${Buffer.alloc(counter * 2, " ").toString()}throw new Error(${counter});`,
           );

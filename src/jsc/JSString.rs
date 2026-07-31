@@ -1,6 +1,6 @@
 use core::ffi::c_void;
 
-use crate::{JSGlobalObject, JSObject, JSValue, JsResult};
+use crate::{JSGlobalObject, JSValue, JsResult};
 use bun_core::ZigString;
 use bun_core::zig_string::Slice as ZigStringSlice;
 
@@ -18,13 +18,11 @@ bun_opaque::opaque_ffi! {
 // covers zero bytes and C++ mutating the underlying GC cell does not violate
 // Rust's aliasing rules.
 unsafe extern "C" {
-    safe fn JSC__JSString__toObject(this: &JSString, global: &JSGlobalObject) -> *mut JSObject;
     safe fn JSC__JSString__toZigString(
         this: &JSString,
         global: &JSGlobalObject,
         zig_str: &mut ZigString,
     );
-    safe fn JSC__JSString__eql(this: &JSString, global: &JSGlobalObject, other: &JSString) -> bool;
     fn JSC__JSString__iterator(this: &JSString, global_object: &JSGlobalObject, iter: *mut c_void);
     safe fn JSC__JSString__length(this: &JSString) -> usize;
     safe fn JSC__JSString__is8Bit(this: &JSString) -> bool;
@@ -35,14 +33,7 @@ impl JSString {
         JSValue::from_cell(self)
     }
 
-    pub fn to_object<'a>(&self, global: &'a JSGlobalObject) -> Option<&'a JSObject> {
-        // Returns either null or a valid GC-owned JSObject*; `JSObject` is an
-        // opaque ZST handle so the deref is the centralised `opaque_ref` proof.
-        let p = JSC__JSString__toObject(self, global);
-        (!p.is_null()).then(|| JSObject::opaque_ref(p))
-    }
-
-    pub fn to_zig_string(&self, global: &JSGlobalObject, zig_str: &mut ZigString) {
+    pub(crate) fn to_zig_string(&self, global: &JSGlobalObject, zig_str: &mut ZigString) {
         JSC__JSString__toZigString(self, global, zig_str)
     }
 
@@ -83,16 +74,6 @@ impl JSString {
     // `to_slice_z` guarantees a trailing NUL
     // sentinel. `to_slice()` is not NUL-terminated; passing it to a C API that
     // expects one reads past the buffer end.
-
-    pub fn to_slice_z(&self, global: &JSGlobalObject) -> ZigStringSlice {
-        let mut str = ZigString::init(b"");
-        self.to_zig_string(global, &mut str);
-        str.to_slice_z()
-    }
-
-    pub fn eql(&self, global: &JSGlobalObject, other: &JSString) -> bool {
-        JSC__JSString__eql(self, global, other)
-    }
 
     pub fn iterator(&self, global_object: &JSGlobalObject, iter: &mut Iterator) {
         // SAFETY: `self`/`global_object` are valid opaque GC-cell handles; `iter`

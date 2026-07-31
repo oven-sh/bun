@@ -22,8 +22,9 @@
 
 import { Glob, GlobScanOptions } from "bun";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { execSync } from "child_process";
 import fg from "fast-glob";
-import { bunEnv, bunExe, tempDir, tempDirWithFiles, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir, tempDirWithFiles, tmpdirSync } from "harness";
 import * as fs from "node:fs";
 import * as path from "path";
 import { createTempDirectoryWithBrokenSymlinks, prepareEntries, tempFixturesDir } from "./util";
@@ -698,7 +699,7 @@ describe("absolute path pattern", async () => {
 describe("glob scan should not escape cwd boundary", () => {
   test("pattern .*/* should not match parent directory via ..", async () => {
     // Create a directory structure where we can verify paths don't escape cwd
-    const tempdir = tempDirWithFiles("glob-cwd-escape", {
+    await using tempdir = tempDir("glob-cwd-escape", {
       ".hidden": {
         "file.txt": "hidden file content",
       },
@@ -730,7 +731,7 @@ describe("glob scan should not escape cwd boundary", () => {
   });
 
   test("pattern .*/**/*.ts should not escape cwd", async () => {
-    const tempdir = tempDirWithFiles("glob-cwd-escape-ts", {
+    await using tempdir = tempDir("glob-cwd-escape-ts", {
       ".config": {
         "settings.ts": "export default {}",
         "nested": {
@@ -768,14 +769,14 @@ describe("glob scan should not escape cwd boundary", () => {
 
 describe("glob.scan wildcard fast path", async () => {
   test("works", async () => {
-    const tempdir = tempDirWithFiles("glob-scan-wildcard-fast-path", {
+    await using tempdir = tempDir("glob-scan-wildcard-fast-path", {
       "lol.md": "",
       "lol2.md": "",
       "shouldnt-show.md23243": "",
       "shouldnt-show.ts": "",
     });
     const glob = new Glob("*.md");
-    const entries = await Array.fromAsync(glob.scan(tempdir));
+    const entries = await Array.fromAsync(glob.scan(String(tempdir)));
     // bun root dir
     expect(entries.sort()).toEqual(["lol.md", "lol2.md"].sort());
   });
@@ -784,9 +785,9 @@ describe("glob.scan wildcard fast path", async () => {
   describe("fast-path detection edgecase", async () => {
     function runTest(pattern: string, files: Record<string, string>, expected: string[]) {
       test(`pattern: ${pattern}`, async () => {
-        const tempdir = tempDirWithFiles("glob-scan-wildcard-fast-path", files);
+        await using tempdir = tempDir("glob-scan-wildcard-fast-path", files);
         const glob = new Glob(pattern);
-        const entries = await Array.fromAsync(glob.scan(tempdir));
+        const entries = await Array.fromAsync(glob.scan(String(tempdir)));
         expect(entries.sort()).toEqual(expected.sort());
       });
     }
@@ -855,7 +856,7 @@ test.skipIf(process.platform === "win32")("patterns with many components", () =>
   files[parts.join("/") + "/hit.txt"] = "";
   files[parts.slice(0, depth - 1).join("/") + "/miss.txt"] = "";
 
-  const dir = tempDirWithFiles("glob-deep", files);
+  using dir = tempDir("glob-deep", files);
 
   // Exact-depth pattern: depth `*` components + literal tail
   const star = Array(depth).fill("*").join("/") + "/hit.txt";
@@ -1124,4 +1125,58 @@ describe.skipIf(!canCreateDirSymlink)("literal path segment through a symlinked 
     );
     expect(norm(result)).toEqual(["linkdir/file.txt"]);
   });
+});
+
+// A directory the user can read but not write (RX-only grant) must still be
+// descended by the scanner: directory opens used to request FILE_ADD_FILE and
+// fail ACCESS_DENIED there. Elevated tokens bypass the ACL; the precondition
+// is probed and the test skips visibly then.
+let roDirRoot = "";
+let roDirA = "";
+let roDirEnforced = false;
+if (isWindows) {
+  try {
+    roDirRoot = tempDirWithFiles("glob-scan-readonly-dir", {
+      "a/b/file.txt": "under a read-only directory",
+    });
+    roDirA = path.join(roDirRoot, "a");
+    execSync(`icacls "${roDirA}" /inheritance:r /grant:r "${process.env.USERNAME}:(OI)(CI)(RX)" /Q`);
+    try {
+      fs.mkdirSync(path.join(roDirA, "probe"));
+      // Creation succeeded: ACL not enforced under this token — restore and skip.
+      execSync(`icacls "${roDirA}" /reset /T /Q`);
+    } catch {
+      roDirEnforced = true;
+    }
+  } catch {}
+}
+
+afterAll(() => {
+  if (!roDirA) return;
+  try {
+    execSync(`icacls "${roDirA}" /reset /T /Q`);
+  } catch {}
+  try {
+    fs.rmSync(roDirRoot, { recursive: true, force: true });
+  } catch {}
+});
+
+describe.skipIf(!isWindows)("glob scan descends read-only directories", () => {
+  test.skipIf(!roDirEnforced)(
+    `RX-only directory is descended, creates still fail${roDirEnforced ? "" : " (skipped: ACL not enforced under this token)"}`,
+    () => {
+      const entries = Array.from(new Glob("**/*.txt").scanSync({ cwd: roDirRoot }))
+        .map(p => p.replaceAll("\\", "/"))
+        .sort();
+      expect(entries).toEqual(["a/b/file.txt"]);
+
+      let err: any;
+      try {
+        fs.mkdirSync(path.join(roDirA, "x"));
+      } catch (e) {
+        err = e;
+      }
+      expect(err?.code).toBe("EPERM");
+    },
+  );
 });

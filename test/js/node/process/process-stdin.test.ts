@@ -1,5 +1,5 @@
-import { expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, isASAN, isDebug, isWindows } from "harness";
 
 test.concurrent("pipe does the right thing", async () => {
   // Note: Bun.spawnSync uses memfd_create on Linux for pipe, which means we see
@@ -417,4 +417,117 @@ test.concurrent("pause() and resume() churn while data is in flight never destro
   const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
   expect(stdout.trim()).toBe(`TOTAL ${20 * 1024}`);
   expect(exitCode).toBe(0);
+});
+
+// The native FileReader source over a pollable pipe used to drain the fd to
+// EAGAIN regardless of JS demand, so an idle consumer still ingested the whole
+// pipe into an internal buffer. The kernel pipe buffer filling up is the
+// backpressure signal; these tests feed far more than that and check the
+// child's resident set does not grow to match.
+describe.skipIf(isWindows)("pipe backpressure", () => {
+  const feedMB = 40;
+  // With no backpressure the child buffers the whole feed (Vec growth roughly
+  // doubles that in RSS). With backpressure only the highwater mark plus the
+  // kernel pipe buffer are resident in the child.
+  const maxDeltaMB = isASAN || isDebug ? 24 : 16;
+
+  async function run(consumer: string) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", consumer],
+      stdin: "pipe",
+      stdout: "pipe",
+      stderr: "pipe",
+      env: bunEnv,
+    });
+    // The child exits under backpressure having accepted only a few KB, so
+    // the queued writes here fail with EPIPE; that is the expected outcome.
+    const chunk = Buffer.alloc(1024 * 1024, 0x78);
+    const ignoreEpipe = (e: any) => {
+      if (e?.code !== "EPIPE") throw e;
+    };
+    for (let i = 0; i < feedMB; i++) {
+      const r = proc.stdin.write(chunk);
+      if (r && typeof (r as any).then === "function") (r as Promise<number>).catch(ignoreEpipe);
+    }
+    Promise.resolve(proc.stdin.flush()).catch(ignoreEpipe);
+    Promise.resolve(proc.stdin.end()).catch(ignoreEpipe);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    const result = JSON.parse(stdout.trim());
+    expect(exitCode).toBe(0);
+    return result;
+  }
+
+  test.concurrent("Bun.stdin.stream(): a single read does not ingest the whole pipe", async () => {
+    const { first, deltaMB } = await run(`
+      const rss = process.platform === "darwin" && typeof Bun.unsafe.memoryFootprint === "function" ? Bun.unsafe.memoryFootprint : process.memoryUsage.rss;
+      const rd = Bun.stdin.stream().getReader();
+      const c = await rd.read();
+      const base = rss();
+      // Give the event loop time to (incorrectly) drain the pipe. The loop is
+      // native (no JS on the no-pending path), so debug/ASAN overhead is small.
+      await new Promise(r => setTimeout(r, 1500));
+      const deltaMB = Math.round((rss() - base) / 1048576);
+      process.stdout.write(JSON.stringify({ first: c.value?.length ?? 0, deltaMB }));
+      process.exit(0);
+    `);
+    expect(first).toBeGreaterThan(0);
+    expect(deltaMB).toBeLessThan(maxDeltaMB);
+  });
+
+  test.concurrent("process.stdin.pause() stops the fd from being read", async () => {
+    const { bytesAfter, deltaMB } = await run(`
+      const rss = process.platform === "darwin" && typeof Bun.unsafe.memoryFootprint === "function" ? Bun.unsafe.memoryFootprint : process.memoryUsage.rss;
+      let bytes = 0, pausedAt = 0;
+      process.stdin.on("data", chunk => {
+        bytes += chunk.length;
+        if (!pausedAt && bytes >= 1 << 20) {
+          pausedAt = bytes;
+          process.stdin.pause();
+          const base = rss();
+          setTimeout(() => {
+            const deltaMB = Math.round((rss() - base) / 1048576);
+            process.stdout.write(JSON.stringify({ bytesAtPause: pausedAt, bytesAfter: bytes, deltaMB }));
+            process.exit(0);
+          }, 1500);
+        }
+      });
+    `);
+    expect(bytesAfter).toBeLessThan(feedMB * 1024 * 1024);
+    expect(deltaMB).toBeLessThan(maxDeltaMB);
+  });
+
+  test.concurrent("reading resumes after the highwater backstop", async () => {
+    // Stop reading long enough for the backstop to engage, then drain to EOF
+    // and make sure every byte written by the parent is delivered.
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const rd = Bun.stdin.stream().getReader();
+        await rd.read().then(c => { globalThis.total = c.value?.length ?? 0; });
+        await new Promise(r => setTimeout(r, 200));
+        while (true) {
+          const { value, done } = await rd.read();
+          if (value) total += value.length;
+          if (done) break;
+        }
+        process.stdout.write(String(total));
+        `,
+      ],
+      stdin: "pipe",
+      stdout: "pipe",
+      stderr: "pipe",
+      env: bunEnv,
+    });
+    const chunk = Buffer.alloc(64 * 1024, 0x79);
+    const n = 64;
+    for (let i = 0; i < n; i++) proc.stdin.write(chunk);
+    await proc.stdin.end();
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe(String(n * chunk.length));
+    expect(exitCode).toBe(0);
+  });
 });

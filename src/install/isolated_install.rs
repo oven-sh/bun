@@ -3,11 +3,11 @@
 // machine drives.
 // ───────────────────────────────────────────────────────────────────────────
 #[path = "isolated_install/FileCloner.rs"]
-pub mod file_cloner;
+pub(crate) mod file_cloner;
 #[path = "isolated_install/FileCopier.rs"]
 pub mod file_copier;
 #[path = "isolated_install/Hardlinker.rs"]
-pub mod hardlinker;
+pub(crate) mod hardlinker;
 #[path = "isolated_install/Installer.rs"]
 pub mod installer;
 #[path = "isolated_install/Store.rs"]
@@ -15,7 +15,7 @@ pub mod store;
 #[path = "isolated_install/Symlinker.rs"]
 pub mod symlinker;
 
-pub use file_copier::FileCopier;
+pub(crate) use file_copier::FileCopier;
 pub use store::Store;
 /// Alias so `crate::isolated_install::store::EntryId` (used by
 /// `TaskCallbackContext` in lib.rs) resolves to the real `entry::Id` newtype.
@@ -173,7 +173,7 @@ struct Wait<'a, 'b> {
 }
 
 impl<'a, 'b> Wait<'a, 'b> {
-    pub(crate) fn is_done(&mut self) -> bool {
+    fn is_done(&mut self) -> bool {
         // `Installer.manager` is a BACKREF raw pointer; `manager_mut()`
         // materializes the unique `&mut PackageManager` for this main-thread
         // tick without aliasing `&mut Installer`.
@@ -2009,11 +2009,6 @@ pub(crate) fn install_isolated_packages(
         let installed = DynamicBitSet::init_empty(lockfile.packages.len())?;
         let trusted_dependencies_from_update_requests =
             manager.find_trusted_dependencies_from_update_requests();
-        // Reuse the `NonNull` already stored in `manager.scripts_node` rather
-        // than taking a fresh `&mut scripts_node` below — a second `&mut` from
-        // the local would pop the stored raw's Stacked Borrows tag, and the
-        // run-tasks tick callback dereferences that raw via `scripts_node_mut()`.
-        let scripts_node_ptr = manager.scripts_node;
         // `Installer.manager` is a BACKREF raw pointer; copying `manager_ptr`
         // does not move `manager`, so the body keeps using `manager` via the
         // shadow-reborrow below.
@@ -2025,11 +2020,6 @@ pub(crate) fn install_isolated_packages(
             installed,
             install_node: if show_progress {
                 Some(&mut install_node)
-            } else {
-                None
-            },
-            scripts_node: if show_progress {
-                scripts_node_ptr
             } else {
                 None
             },

@@ -1,6 +1,7 @@
 #include "quic.h"
 
 #include "internal/internal.h"
+#include "internal/fault_inject.h"
 #if defined(_WIN32) && !defined(WIN32)
 /* lsquic.h gates on WIN32 (not _WIN32) to pick <vc_compat.h> over <sys/uio.h>. */
 #define WIN32 1
@@ -236,8 +237,11 @@ static int us_quic_send_one(LIBUS_SOCKET_DESCRIPTOR fd, const struct lsquic_out_
     msg.msg_namelen = sa_len(spec->dest_sa);
     msg.msg_iov = spec->iov;
     msg.msg_iovlen = spec->iovlen;
-    ssize_t r;
-    do { r = sendmsg(fd, &msg, 0); } while (r < 0 && errno == EINTR);
+    ssize_t r = 0; int unused = 0;
+    if (!US_FAULT_CHECK(US_FAULT_SENDMSG, fd, r, unused)) {
+        do { r = sendmsg(fd, &msg, 0); } while (r < 0 && errno == EINTR);
+    }
+    (void) unused;
     return r < 0 ? -1 : 1;
 #endif
 }
@@ -269,9 +273,15 @@ static int us_quic_packets_out(void *out_ctx, const struct lsquic_out_spec *spec
             k++;
         }
         int r;
-        do { r = sendmmsg(fd, mm, k, 0); } while (r < 0 && errno == EINTR);
-        if (r < 0) break;
-        sent += (unsigned) r;
+        {
+            ssize_t injected = 0; int unused = 0;
+            if (US_FAULT_CHECK(US_FAULT_SENDMSG, fd, injected, unused)) {
+                r = (int) injected;
+            } else {
+                do { r = sendmmsg(fd, mm, k, 0); } while (r < 0 && errno == EINTR);
+            }
+            (void) injected; (void) unused;
+        }
         /* sendmmsg(2) BUGS: on a short return the error code is lost and the
          * caller is expected to retry starting at the first failed message.
          * udp(7): an unconnected socket surfaces async ICMP from an earlier
@@ -279,13 +289,25 @@ static int us_quic_packets_out(void *out_ctx, const struct lsquic_out_spec *spec
          * a packet to a live peer can fail mid-batch with an error that
          * belongs to a prior dead peer. So loop instead of breaking; r >= 1
          * here so `sent` advances and the retry's first message either
-         * consumes the stale error (returns -1, handled below) or succeeds. */
+         * consumes the stale error (returns -1, handled below) or succeeds.
+         * The r < 0 path gets one retry for the same reason: the failing
+         * read cleared sk_err, so the retry sends cleanly unless this is
+         * real backpressure. EAGAIN/ENOBUFS (send buffer full) stays a
+         * break — that's the backpressure lsquic's pause is for. */
+        if (r < 0 && !(errno == EAGAIN || errno == EWOULDBLOCK || errno == ENOBUFS)) {
+            do { r = sendmmsg(fd, mm, k, 0); } while (r < 0 && errno == EINTR);
+        }
+        if (r < 0) break;
+        sent += (unsigned) r;
     }
 #else
     for (; sent < n; sent++) {
         us_quic_listen_socket_t *ls = (us_quic_listen_socket_t *) specs[sent].peer_ctx;
         if (!ls->udp) { errno = EBADF; break; }
-        if (us_quic_send_one(us_poll_fd((struct us_poll_t *) ls->udp), &specs[sent]) < 0) break;
+        if (us_quic_send_one(us_poll_fd((struct us_poll_t *) ls->udp), &specs[sent]) < 0) {
+            if (errno == EAGAIN || errno == EWOULDBLOCK || errno == ENOBUFS) break;
+            if (us_quic_send_one(us_poll_fd((struct us_poll_t *) ls->udp), &specs[sent]) < 0) break;
+        }
     }
 #endif
 
@@ -402,7 +424,7 @@ static int us_quic_alpn_select(SSL *ssl, const unsigned char **out, unsigned cha
 
 static void *us_quic_hsi_create(void *hsi_ctx, lsquic_stream_t *s, int is_push) {
     (void) hsi_ctx; (void) s; (void) is_push;
-    return calloc(1, sizeof(struct us_quic_hset));
+    return us_calloc(1, sizeof(struct us_quic_hset));
 }
 
 static struct lsxpack_header *us_quic_hsi_prepare(void *hset_p, struct lsxpack_header *hdr, size_t space) {
@@ -412,7 +434,7 @@ static struct lsxpack_header *us_quic_hsi_prepare(void *hset_p, struct lsxpack_h
     if (need > h->cap) {
         unsigned int ncap = h->cap ? h->cap : 512;
         while (ncap < need) ncap *= 2;
-        char *nb = (char *) realloc(h->buf, ncap);
+        char *nb = (char *) us_realloc(h->buf, ncap);
         if (!nb) return NULL;
         h->buf = nb;
         h->cap = ncap;
@@ -436,7 +458,7 @@ static int us_quic_hsi_process(void *hset_p, struct lsxpack_header *hdr) {
     if (h->count == h->hcap) {
         unsigned int ncap = h->hcap ? h->hcap * 2 : 16;
         struct us_quic_header_t *nh = (struct us_quic_header_t *)
-            realloc(h->headers, ncap * sizeof(*nh));
+            us_realloc(h->headers, ncap * sizeof(*nh));
         if (!nh) return -1;
         h->headers = nh;
         h->hcap = ncap;
@@ -463,9 +485,9 @@ static void us_quic_hset_finalize(struct us_quic_hset *h) {
 
 static void us_quic_hset_free(struct us_quic_hset *h) {
     if (!h) return;
-    free(h->buf);
-    free(h->headers);
-    free(h);
+    us_free(h->buf);
+    us_free(h->headers);
+    us_free(h);
 }
 
 static void us_quic_hsi_discard(void *hset_p) {
@@ -481,7 +503,7 @@ static lsquic_conn_ctx_t *us_quic_on_new_conn(void *if_ctx, lsquic_conn_t *conn)
         return NULL;
     }
     us_quic_socket_t *qs = (us_quic_socket_t *)
-        calloc(1, sizeof(us_quic_socket_t) + ctx->conn_ext_size);
+        us_calloc(1, sizeof(us_quic_socket_t) + ctx->conn_ext_size);
     if (!qs) return NULL;
     qs->conn = conn;
     qs->ctx = ctx;
@@ -495,6 +517,9 @@ static lsquic_conn_ctx_t *us_quic_on_new_conn(void *if_ctx, lsquic_conn_t *conn)
     ctx->loop->num_polls++;
 #endif
     ctx->conn_count++;
+    /* Arm the sweep-timer refcount so DateHeaderTimer runs for h3-only
+     * servers; the TCP path does this per-socket in context.c. */
+    us_internal_enable_sweep_timer(ctx->loop);
     qs->next = ctx->conns;
     ctx->conns = qs;
     if (ctx->on_open) ctx->on_open(qs);
@@ -510,12 +535,13 @@ static void us_quic_on_conn_closed(lsquic_conn_t *conn) {
     for (us_quic_socket_t **pp = &ctx->conns; *pp; pp = &(*pp)->next) {
         if (*pp == qs) { *pp = qs->next; break; }
     }
-    free(qs->hostname);
-    free(qs);
+    us_free(qs->hostname);
+    us_free(qs);
 #ifndef LIBUS_USE_LIBUV
     ctx->loop->num_polls--;
 #endif
     ctx->conn_count--;
+    us_internal_disable_sweep_timer(ctx->loop);
     /* During graceful drain the UDP fd is the only thing left holding the
      * loop; release it when the last conn closes so the process can exit. */
     if (ctx->closing && ctx->conn_count == 0) {
@@ -540,7 +566,7 @@ static lsquic_stream_ctx_t *us_quic_on_new_stream(void *if_ctx, lsquic_stream_t 
     us_quic_socket_context_t *ctx = (us_quic_socket_context_t *) if_ctx;
     if (stream == NULL) return NULL; /* going-away */
     us_quic_stream_t *s = (us_quic_stream_t *)
-        calloc(1, sizeof(us_quic_stream_t) + ctx->stream_ext_size);
+        us_calloc(1, sizeof(us_quic_stream_t) + ctx->stream_ext_size);
     if (!s) { lsquic_stream_close(stream); return NULL; }
     s->stream = stream;
     s->ctx = ctx;
@@ -598,7 +624,7 @@ static void us_quic_on_close(lsquic_stream_t *stream, lsquic_stream_ctx_t *h) {
     if (s->ctx->on_stream_close) s->ctx->on_stream_close(s);
     s->stream = NULL;
     us_quic_hset_free(s->hset);
-    free(s);
+    us_free(s);
 }
 
 static void us_quic_on_reset(lsquic_stream_t *stream, lsquic_stream_ctx_t *h, int how) {
@@ -674,7 +700,7 @@ us_quic_socket_context_t *us_create_quic_socket_context(
     us_quic_prepare_ssl_ctx(ssl);
 
     us_quic_socket_context_t *ctx = (us_quic_socket_context_t *)
-        calloc(1, sizeof(us_quic_socket_context_t) + ext_size);
+        us_calloc(1, sizeof(us_quic_socket_context_t) + ext_size);
     if (!ctx) { SSL_CTX_free(ssl); return NULL; }
     ctx->loop = loop;
     ctx->ssl_ctx = ssl;
@@ -715,7 +741,7 @@ us_quic_socket_context_t *us_create_quic_socket_context(
     ctx->engine = lsquic_engine_new(LSENG_HTTP_SERVER, &api);
     if (!ctx->engine) {
         SSL_CTX_free(ssl);
-        free(ctx);
+        us_free(ctx);
         return NULL;
     }
 
@@ -734,11 +760,11 @@ int us_quic_socket_context_add_server_name(us_quic_socket_context_t *ctx,
     us_quic_prepare_ssl_ctx(ssl);
     if (ctx->sni_count == ctx->sni_cap) {
         unsigned ncap = ctx->sni_cap ? ctx->sni_cap * 2 : 4;
-        struct us_quic_sni *n = (struct us_quic_sni *) realloc(ctx->sni, ncap * sizeof(*n));
+        struct us_quic_sni *n = (struct us_quic_sni *) us_realloc(ctx->sni, ncap * sizeof(*n));
         if (!n) { SSL_CTX_free(ssl); return -1; }
         ctx->sni = n; ctx->sni_cap = ncap;
     }
-    char *name = strdup(hostname);
+    char *name = us_strdup(hostname);
     if (!name) { SSL_CTX_free(ssl); return -1; }
     ctx->sni[ctx->sni_count].name = name;
     ctx->sni[ctx->sni_count].ctx = ssl;
@@ -774,16 +800,16 @@ void us_quic_socket_context_free(us_quic_socket_context_t *ctx) {
     if (ctx->engine) { lsquic_engine_destroy(ctx->engine); ctx->engine = NULL; }
     if (ctx->ssl_ctx) { SSL_CTX_free(ctx->ssl_ctx); ctx->ssl_ctx = NULL; }
     for (unsigned i = 0; i < ctx->sni_count; i++) {
-        free(ctx->sni[i].name);
+        us_free(ctx->sni[i].name);
         SSL_CTX_free(ctx->sni[i].ctx);
     }
-    free(ctx->sni);
+    us_free(ctx->sni);
     for (us_quic_listen_socket_t *ls = ctx->closed_listeners; ls; ) {
         us_quic_listen_socket_t *next = ls->next;
-        free(ls);
+        us_free(ls);
         ls = next;
     }
-    free(ctx);
+    us_free(ctx);
 }
 
 void *us_quic_socket_context_ext(us_quic_socket_context_t *ctx) { return ctx + 1; }
@@ -829,7 +855,7 @@ us_quic_listen_socket_t *us_quic_socket_context_listen(
 {
     ctx->stream_ext_size = stream_ext_size;
 
-    us_quic_listen_socket_t *ls = (us_quic_listen_socket_t *) calloc(1, sizeof(*ls));
+    us_quic_listen_socket_t *ls = (us_quic_listen_socket_t *) us_calloc(1, sizeof(*ls));
     if (!ls) return NULL;
     ls->ctx = ctx;
 
@@ -837,7 +863,7 @@ us_quic_listen_socket_t *us_quic_socket_context_listen(
     ls->udp = us_create_udp_socket(ctx->loop,
         us_quic_udp_on_data, us_quic_udp_on_drain, us_quic_udp_on_close, NULL,
         host, (unsigned short) port, flags, &err, ls);
-    if (!ls->udp) { free(ls); return NULL; }
+    if (!ls->udp) { us_free(ls); return NULL; }
     us_quic_set_dontfrag(ls->udp);
 
     /* Record actual bound address — packet_in needs sa_local. */
@@ -957,13 +983,13 @@ int us_quic_stream_send_headers(us_quic_stream_t *s,
         total += headers[i].name_len + headers[i].value_len;
 
     char stackbuf[1024];
-    char *buf = total <= sizeof(stackbuf) ? stackbuf : (char *) malloc(total);
+    char *buf = total <= sizeof(stackbuf) ? stackbuf : (char *) us_malloc(total);
     struct lsxpack_header stackh[32];
     struct lsxpack_header *xh = count <= 32 ? stackh
-        : (struct lsxpack_header *) calloc(count, sizeof(*xh));
+        : (struct lsxpack_header *) us_calloc(count, sizeof(*xh));
     if (!buf || !xh) {
-        if (buf != stackbuf) free(buf);
-        if (xh != stackh) free(xh);
+        if (buf != stackbuf) us_free(buf);
+        if (xh != stackh) us_free(xh);
         return -1;
     }
 
@@ -983,8 +1009,8 @@ int us_quic_stream_send_headers(us_quic_stream_t *s,
 
     lsquic_http_headers_t lh = { .count = (int) count, .headers = xh };
     int r = lsquic_stream_send_headers(s->stream, &lh, end_stream);
-    if (buf != stackbuf) free(buf);
-    if (xh != stackh) free(xh);
+    if (buf != stackbuf) us_free(buf);
+    if (xh != stackh) us_free(xh);
     if (end_stream && r == 0) lsquic_stream_shutdown(s->stream, 1);
     /* Mark the context dirty so drainQuicIfNecessary picks up header-only
      * responses (204/304) that never call us_quic_stream_write. */
@@ -1135,7 +1161,7 @@ us_quic_socket_context_t *us_create_quic_client_context(
     SSL_CTX_set_custom_verify(ssl, SSL_VERIFY_PEER, us_quic_client_verify);
 
     us_quic_socket_context_t *ctx = (us_quic_socket_context_t *)
-        calloc(1, sizeof(us_quic_socket_context_t) + ext_size);
+        us_calloc(1, sizeof(us_quic_socket_context_t) + ext_size);
     if (!ctx) { SSL_CTX_free(ssl); return NULL; }
     ctx->loop = loop;
     ctx->ssl_ctx = ssl;
@@ -1163,7 +1189,7 @@ us_quic_socket_context_t *us_create_quic_client_context(
     ctx->engine = lsquic_engine_new(LSENG_HTTP, &api);
     if (!ctx->engine) {
         SSL_CTX_free(ssl);
-        free(ctx);
+        us_free(ctx);
         return NULL;
     }
 
@@ -1198,7 +1224,7 @@ static int us_quic_resolve(const char *host, int port, struct sockaddr_storage *
  * (closed in context_free via the `listeners` list). */
 static us_quic_listen_socket_t *us_quic_client_endpoint(us_quic_socket_context_t *ctx) {
     if (ctx->client_udp) return ctx->client_udp;
-    us_quic_listen_socket_t *ls = (us_quic_listen_socket_t *) calloc(1, sizeof(*ls));
+    us_quic_listen_socket_t *ls = (us_quic_listen_socket_t *) us_calloc(1, sizeof(*ls));
     if (!ls) return NULL;
     ls->ctx = ctx;
     int err = 0;
@@ -1211,7 +1237,7 @@ static us_quic_listen_socket_t *us_quic_client_endpoint(us_quic_socket_context_t
             us_quic_udp_on_data, us_quic_udp_on_drain, us_quic_udp_on_close, NULL,
             "0.0.0.0", 0, 0, &err, ls);
     }
-    if (!ls->udp) { free(ls); return NULL; }
+    if (!ls->udp) { us_free(ls); return NULL; }
     us_quic_set_dontfrag(ls->udp);
     socklen_t sl = sizeof(ls->local);
     getsockname(us_poll_fd((struct us_poll_t *) ls->udp), (struct sockaddr *) &ls->local, &sl);
@@ -1251,7 +1277,7 @@ static us_quic_socket_t *us_quic_connect_addr(us_quic_socket_context_t *ctx,
     if (qs) {
         qs->reject_unauthorized = reject_unauthorized;
         if (sni) {
-            qs->hostname = strdup(sni);
+            qs->hostname = us_strdup(sni);
             if (!qs->hostname) {
                 lsquic_conn_close(conn);
                 return NULL;
@@ -1354,13 +1380,13 @@ int us_quic_socket_context_connect(
         return *out_qs ? 1 : -1;
     }
 
-    struct us_quic_pending_connect_s *pc = calloc(1, sizeof(*pc));
+    struct us_quic_pending_connect_s *pc = us_calloc(1, sizeof(*pc));
     if (!pc) { Bun__addrinfo_freeRequest(ai_req, 1); return -1; }
     pc->ctx = ctx;
-    pc->sni = sni ? strdup(sni) : NULL;
+    pc->sni = sni ? us_strdup(sni) : NULL;
     if (sni && !pc->sni) {
         Bun__addrinfo_freeRequest(ai_req, 1);
-        free(pc);
+        us_free(pc);
         return -1;
     }
     pc->port = port;
@@ -1388,15 +1414,15 @@ us_quic_socket_t *us_quic_pending_connect_resolved(
             pc->reject_unauthorized);
     }
     Bun__addrinfo_freeRequest(pc->ai_req, qs == NULL);
-    free(pc->sni);
-    free(pc);
+    us_free(pc->sni);
+    us_free(pc);
     return qs;
 }
 
 void us_quic_pending_connect_cancel(struct us_quic_pending_connect_s *pc) {
     Bun__addrinfo_freeRequest(pc->ai_req, 1);
-    free(pc->sni);
-    free(pc);
+    us_free(pc->sni);
+    us_free(pc);
 }
 
 void us_quic_socket_make_stream(us_quic_socket_t *s) {

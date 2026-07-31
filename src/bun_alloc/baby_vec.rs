@@ -56,35 +56,6 @@ impl<'a, T> BabyVec<'a, T> {
         v
     }
 
-    /// # Safety
-    /// `(ptr, len, cap)` must describe a valid allocation owned by `alloc`
-    /// (i.e. obtainable from a prior `BabyVec::into_raw_parts` or
-    /// `<&MimallocArena as Allocator>::allocate` with `Layout::array::<T>(cap)`),
-    /// with `len <= cap` initialized elements.
-    #[inline]
-    pub unsafe fn from_raw_parts_in(
-        ptr: *mut T,
-        len: usize,
-        cap: usize,
-        alloc: &'a MimallocArena,
-    ) -> Self {
-        debug_assert!(len <= cap && cap <= u32::MAX as usize);
-        BabyVec {
-            // SAFETY: caller contract — `ptr` is a valid (or dangling-for-empty)
-            // allocation pointer; `Vec` uses the same dangling-NonNull encoding.
-            ptr: unsafe { NonNull::new_unchecked(ptr) },
-            len: len as u32,
-            cap: if Self::T_IS_ZST { u32::MAX } else { cap as u32 },
-            alloc,
-        }
-    }
-
-    #[inline]
-    pub fn into_raw_parts(self) -> (*mut T, usize, usize, &'a MimallocArena) {
-        let me = ManuallyDrop::new(self);
-        (me.ptr.as_ptr(), me.len as usize, me.cap as usize, me.alloc)
-    }
-
     #[inline]
     pub fn allocator(&self) -> &&'a MimallocArena {
         &self.alloc
@@ -142,14 +113,6 @@ impl<'a, T> BabyVec<'a, T> {
         let need = self.len as usize + additional;
         if need > self.cap as usize {
             self.grow_to(need);
-        }
-    }
-
-    #[inline]
-    pub fn reserve_exact(&mut self, additional: usize) {
-        let need = self.len as usize + additional;
-        if need > self.cap as usize {
-            self.grow_exact(need);
         }
     }
 
@@ -253,20 +216,6 @@ impl<'a, T> BabyVec<'a, T> {
         }
     }
 
-    pub fn remove(&mut self, index: usize) -> T {
-        let len = self.len as usize;
-        assert!(index < len, "BabyVec::remove index {index} >= len {len}");
-        // SAFETY: `index < len`; read moves out the element, then shift the
-        // `len-1-index` initialized tail down by one. `len` decremented after.
-        unsafe {
-            let p = self.ptr.as_ptr().add(index);
-            let v = p.read();
-            ptr::copy(p.add(1), p, len - index - 1);
-            self.len -= 1;
-            v
-        }
-    }
-
     #[inline]
     pub fn truncate(&mut self, new_len: usize) {
         if new_len >= self.len as usize {
@@ -293,7 +242,7 @@ impl<'a, T> BabyVec<'a, T> {
     /// `Vec::leak` parity — forget the `BabyVec`, return the buffer as an
     /// arena-lifetime slice. Reclaimed when the arena resets/drops.
     #[inline]
-    pub fn leak(self) -> &'a mut [T] {
+    pub(crate) fn leak(self) -> &'a mut [T] {
         let me = ManuallyDrop::new(self);
         // SAFETY: `[ptr, ptr+len)` are `len` initialized `T` valid for `'a`
         // (the buffer is owned by `me.alloc`, which outlives `'a`).

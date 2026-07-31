@@ -54,6 +54,18 @@ use bun_http::ssl_config::SSLConfig;
 bun_core::define_scoped_log!(log, WebSocketUpgradeClient, visible);
 bun_core::declare_scope!(alloc, hidden);
 
+/// Opening-handshake timeout in seconds, normalised for uSockets' timer
+/// wheel (short-timeout counter wraps at 240 ticks; `set_timeout` routes
+/// larger values onto the minute-granularity long timer). 0 disables.
+#[inline]
+fn handshake_timeout_seconds() -> core::ffi::c_uint {
+    bun_http::normalize_idle_timeout_seconds(
+        bun_core::env_var::BUN_CONFIG_WS_HANDSHAKE_TIMEOUT
+            .get()
+            .unwrap_or(120),
+    )
+}
+
 /// Local `VirtualMachine → EventLoopCtx` adapter for `KeepAlive::{ref,unref}`.
 /// Forwards to the canonical fully-populated vtable in `bun_jsc`.
 ///
@@ -199,7 +211,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
     /// On error, this returns null.
     /// Returning null signals to the parent function that the connection failed.
     #[allow(clippy::too_many_arguments)]
-    pub unsafe fn connect(
+    pub(crate) unsafe fn connect(
         global: &JSGlobalObject,
         websocket: *mut CppWebSocket,
         host: &BunString,
@@ -391,13 +403,12 @@ impl<const SSL: bool> HTTPClient<SSL> {
             using_proxy
         );
 
-        // Reshaped for borrowck — `rare_data()` borrows `vm` mutably and
-        // `ws_upgrade_group` also wants a `vm` reference. See websocket_client.rs.
-        let group = {
-            // SAFETY: `rare_data()` returns `&mut RareData` reached through a
-            // separate Box; the `&*vm_ptr` argument does not overlap.
-            unsafe { (*vm_ptr).rare_data().ws_upgrade_group::<SSL>(&*vm_ptr) }
-        };
+        let loop_ = global.bun_vm().uws_loop();
+        let group = global
+            .bun_vm()
+            .as_mut()
+            .rare_data()
+            .ws_upgrade_group::<SSL>(loop_);
         let kind: SocketKind = if SSL {
             SocketKind::WsClientUpgradeTls
         } else {
@@ -498,7 +509,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
                         }
                     }
 
-                    client_ref.tcp.timeout(120);
+                    client_ref.tcp.set_timeout(handshake_timeout_seconds());
                     client_ref.state = State::Reading;
                     // +1 for cpp_websocket
                     client_ref.ref_();
@@ -546,7 +557,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
                     }
                 }
 
-                out.tcp.timeout(120);
+                out.tcp.set_timeout(handshake_timeout_seconds());
                 out.state = State::Reading;
                 // +1 for cpp_websocket
                 out.ref_();
@@ -561,12 +572,12 @@ impl<const SSL: bool> HTTPClient<SSL> {
         }
     }
 
-    pub fn clear_input(&mut self) {
+    pub(crate) fn clear_input(&mut self) {
         self.input_body_buf = Vec::new();
         self.to_send_len = 0;
     }
 
-    pub fn clear_data(&mut self) {
+    pub(crate) fn clear_data(&mut self) {
         // SAFETY: `get_mut_ptr()` is the live per-thread VM singleton.
         self.poll_ref
             .unref(unsafe { vm_loop_ctx(VirtualMachineRef::get_mut_ptr()) });
@@ -601,7 +612,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
     /// socket userdata pointer, which would alias a `&mut self` argument; and
     /// the trailing `deref` may free `this`, which would violate a `&mut self`
     /// argument protector.
-    pub unsafe fn cancel(this: *mut Self) {
+    pub(crate) unsafe fn cancel(this: *mut Self) {
         // SAFETY: caller (C++ / uWS) holds a live ref; `this` carries root
         // (userdata) provenance from `heap::alloc`.
         let this = unsafe { ThisPtr::new(this) };
@@ -658,7 +669,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
     /// `did_abrupt_close` may run JS that re-enters via `cancel()`, and
     /// `tcp.close()` synchronously dispatches `handle_close`; both would alias
     /// a `&mut self` argument.
-    pub unsafe fn fail(this: *mut Self, code: ErrorCode) {
+    pub(crate) unsafe fn fail(this: *mut Self, code: ErrorCode) {
         log!("onFail: {}", <&'static str>::from(code));
         bun_jsc::mark_binding!();
         // SAFETY: caller contract — `this` is a live `heap::alloc` pointer.
@@ -711,7 +722,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
 
     /// # Safety
     /// `this` must point to a live `Self`. See `fail`.
-    pub unsafe fn terminate(this: *mut Self, code: ErrorCode) {
+    pub(crate) unsafe fn terminate(this: *mut Self, code: ErrorCode) {
         // SAFETY: forwards `this` with root provenance.
         unsafe { Self::fail(this, code) };
         // We cannot access the pointer after fail is called.
@@ -798,6 +809,10 @@ impl<const SSL: bool> HTTPClient<SSL> {
         // SAFETY: short-lived `&mut` for setup; ends before any reentrant call.
         let me = unsafe { &mut *this.as_ptr() };
         me.tcp = socket;
+        // `us_internal_socket_after_open` zeroes the socket timeout when the
+        // SEMI_SOCKET opens, so the value `connect()` armed only covered the
+        // TCP connect. Re-arm so an accept-but-never-answer peer times out.
+        socket.set_timeout(handshake_timeout_seconds());
 
         debug_assert!(!me.input_body_buf.is_empty());
         debug_assert!(me.to_send_len == 0);
@@ -841,7 +856,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
         me.to_send_len = me.input_body_buf.len() - usize::try_from(wrote).expect("int cast");
     }
 
-    pub fn is_same_socket(&self, socket: Socket<SSL>) -> bool {
+    pub(crate) fn is_same_socket(&self, socket: Socket<SSL>) -> bool {
         // `InternalSocket` has no `PartialEq`; compare native handles.
         socket.get_native_handle() == self.tcp.get_native_handle()
     }
@@ -885,7 +900,6 @@ impl<const SSL: bool> HTTPClient<SSL> {
 
         debug_assert!(this.is_same_socket(socket));
 
-        #[cfg(debug_assertions)]
         debug_assert!(!socket.is_shutdown());
 
         // Handle proxy handshake response
@@ -915,19 +929,8 @@ impl<const SSL: bool> HTTPClient<SSL> {
             body = &me.body;
         }
 
-        let is_first = me.body.is_empty();
-        const HTTP_101: &[u8] = b"HTTP/1.1 101 ";
-        if is_first && body.len() > HTTP_101.len() {
-            // fail early if we receive a non-101 status code
-            if !body.starts_with(HTTP_101) {
-                // SAFETY: `me`'s last use is above; no `&mut Self` spans this call.
-                unsafe { Self::terminate(this.as_ptr(), ErrorCode::Expected101StatusCode) };
-                return;
-            }
-        }
-
-        let response = match picohttp::Response::parse(body, &mut me.headers_buf) {
-            Ok(r) => r,
+        match picohttp::Response::parse(body, &mut me.headers_buf) {
+            Ok(_) => {}
             Err(picohttp::ParseResponseError::MalformedHttpResponse) => {
                 // SAFETY: `me`'s last use is above; no `&mut Self` spans this call.
                 unsafe { Self::terminate(this.as_ptr(), ErrorCode::InvalidResponse) };
@@ -949,13 +952,54 @@ impl<const SSL: bool> HTTPClient<SSL> {
             }
         };
 
-        let bytes_read = usize::try_from(response.bytes_read).expect("int cast");
-        // Reshaped for borrowck — copy remain_buf out before mutating self.
-        let remain_buf: Vec<u8> = body[bytes_read..].to_vec();
-        // SAFETY: `me`'s last use is the `body` slice above (now copied out);
-        // no `&mut Self` spans this call.
-        unsafe { Self::process_response(this.as_ptr(), response, &remain_buf) };
+        let full = body.to_vec();
+        Self::process_websocket_upgrade_response(this, &full);
         // `_guard` drops here, balancing the ref above. May free `this`.
+    }
+
+    /// Forward the handshake response to C++ as a `'handshake'` event.
+    fn dispatch_handshake(ws: *mut CppWebSocket, response: &picohttp::Response, body: &[u8]) {
+        let raw_headers: Vec<super::cpp_websocket::RawHeader> = response
+            .headers
+            .list
+            .iter()
+            .map(|h| super::cpp_websocket::RawHeader {
+                name_ptr: h.name().as_ptr(),
+                name_len: h.name().len(),
+                value_ptr: h.value().as_ptr(),
+                value_len: h.value().len(),
+            })
+            .collect();
+        CppWebSocket::opaque_ref(ws).did_receive_handshake_response(
+            u16::try_from(response.status_code).unwrap_or(0),
+            response.status,
+            &raw_headers,
+            body,
+        );
+    }
+
+    /// Caller holds a `ref_guard` and owns `full` (must not borrow `self`).
+    fn process_websocket_upgrade_response(this: ThisPtr<Self>, full: &[u8]) {
+        let mut scratch = [picohttp::Header::ZERO; 128];
+        let Ok(response) = picohttp::Response::parse(full, &mut scratch) else {
+            // SAFETY: forwards to the existing teardown path.
+            return unsafe { Self::terminate(this.as_ptr(), ErrorCode::InvalidResponse) };
+        };
+        let head_len = usize::try_from(response.bytes_read).expect("int cast");
+        let is_101 = response.status_code == 101;
+
+        // 101: one scope across 'upgrade'+'open' so microtasks drain after open.
+        let _scope = is_101
+            .then(|| bun_jsc::virtual_machine::VirtualMachine::get().enter_event_loop_scope());
+
+        if let Some(ws) = this.outgoing_websocket {
+            Self::dispatch_handshake(ws, &response, if is_101 { &[] } else { &full[head_len..] });
+            if this.outgoing_websocket.is_none() {
+                return;
+            }
+        }
+        // SAFETY: forwards to the existing handoff path.
+        unsafe { Self::process_response(this.as_ptr(), response, &full[head_len..]) };
     }
 
     /// Takes `ThisPtr<Self>` because `terminate`/`handle_data` may free `this`.
@@ -1147,7 +1191,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
     /// # Safety
     /// `this` must point to a live `Self`. Takes `*mut Self` because
     /// `terminate` may free `this`; see `fail`.
-    pub unsafe fn on_proxy_tls_handshake_complete(this: *mut Self) {
+    pub(crate) unsafe fn on_proxy_tls_handshake_complete(this: *mut Self) {
         log!("onProxyTLSHandshakeComplete");
 
         // SAFETY: short-lived `&mut`; no reentrant calls until `terminate` below.
@@ -1201,12 +1245,15 @@ impl<const SSL: bool> HTTPClient<SSL> {
     /// # Safety
     /// `this` must point to a live `Self`. Takes `*mut Self` because
     /// `terminate`/`process_response` may free `this`; see `fail`.
-    pub unsafe fn handle_decrypted_data(this: *mut Self, data: &[u8]) {
+    pub(crate) unsafe fn handle_decrypted_data(this: *mut Self, data: &[u8]) {
         log!("handleDecryptedData: {} bytes", data.len());
+        // SAFETY: caller (proxy tunnel) holds a live ref on `this`.
+        let this = unsafe { ThisPtr::new(this) };
+        let _guard = this.ref_guard();
 
         // SAFETY: short-lived `&mut` for body buffering; no reentrant calls in
         // this region until `terminate`/`process_response` below.
-        let me = unsafe { &mut *this };
+        let me = unsafe { &mut *this.as_ptr() };
 
         // Process as if it came directly from the socket
         let mut body = data;
@@ -1215,22 +1262,11 @@ impl<const SSL: bool> HTTPClient<SSL> {
             body = &me.body;
         }
 
-        let is_first = me.body.is_empty();
-        const HTTP_101: &[u8] = b"HTTP/1.1 101 ";
-        if is_first && body.len() > HTTP_101.len() {
-            // fail early if we receive a non-101 status code
-            if !body.starts_with(HTTP_101) {
-                // SAFETY: `me`'s last use is above; no `&mut Self` spans this call.
-                unsafe { Self::terminate(this, ErrorCode::Expected101StatusCode) };
-                return;
-            }
-        }
-
-        let response = match picohttp::Response::parse(body, &mut me.headers_buf) {
-            Ok(r) => r,
+        match picohttp::Response::parse(body, &mut me.headers_buf) {
+            Ok(_) => {}
             Err(picohttp::ParseResponseError::MalformedHttpResponse) => {
                 // SAFETY: `me`'s last use is above; no `&mut Self` spans this call.
-                unsafe { Self::terminate(this, ErrorCode::InvalidResponse) };
+                unsafe { Self::terminate(this.as_ptr(), ErrorCode::InvalidResponse) };
                 return;
             }
             Err(picohttp::ParseResponseError::ShortRead) => {
@@ -1243,18 +1279,14 @@ impl<const SSL: bool> HTTPClient<SSL> {
                 // WebSocket frames once the header does complete).
                 if me.body.len() > bun_http::max_http_header_size() {
                     // SAFETY: `me`'s last use is above; no `&mut Self` spans this call.
-                    unsafe { Self::terminate(this, ErrorCode::InvalidResponse) };
+                    unsafe { Self::terminate(this.as_ptr(), ErrorCode::InvalidResponse) };
                 }
                 return;
             }
         };
 
-        let bytes_read = usize::try_from(response.bytes_read).expect("int cast");
-        // Reshaped for borrowck — copy remain_buf out before mutating self.
-        let remain_buf: Vec<u8> = body[bytes_read..].to_vec();
-        // SAFETY: `me`'s last use is the `body` slice above (now copied out);
-        // no `&mut Self` spans this call.
-        unsafe { Self::process_response(this, response, &remain_buf) };
+        let full = body.to_vec();
+        Self::process_websocket_upgrade_response(this, &full);
     }
 
     /// Takes `ThisPtr<Self>` because `terminate` may free `this`; see `fail`.
@@ -1269,7 +1301,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
     /// `terminate`/`tcp.close()` may synchronously dispatch `handle_close`
     /// (aliased `&mut`), and the success path's double `deref` may free
     /// `this` (argument-protector UB on `&mut self`).
-    pub unsafe fn process_response(
+    pub(crate) unsafe fn process_response(
         this: *mut Self,
         response: picohttp::Response,
         remain_buf: &[u8],
@@ -1582,7 +1614,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
                 // SAFETY: short-lived read; `this` is live per caller contract.
                 let has_ws = unsafe { (*this).outgoing_websocket.is_some() };
                 if !tcp.is_closed() && has_ws {
-                    tcp.timeout(0);
+                    tcp.set_timeout(0);
                     log!("onDidConnect (tunnel mode)");
 
                     // Release the ref that paired with C++'s m_upgradeClient: C++
@@ -1640,7 +1672,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
         // SAFETY: short-lived read; `this` is live per caller contract.
         let has_ws = unsafe { (*this).outgoing_websocket.is_some() };
         if !tcp.is_closed() && has_ws {
-            tcp.timeout(0);
+            tcp.set_timeout(0);
             log!("onDidConnect");
 
             // SAFETY: short-lived `&mut` for the field take/detach; ends before
@@ -1693,7 +1725,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
         drop(saved_secure);
     }
 
-    pub fn memory_cost(&self) -> usize {
+    pub(crate) fn memory_cost(&self) -> usize {
         let mut cost: usize = core::mem::size_of::<Self>();
         cost += self.body.capacity();
         cost += self.to_send_len;
@@ -1843,7 +1875,9 @@ impl<'a> Headers8Bit<'a> {
 
     fn iter(&self) -> impl Iterator<Item = (&[u8], &[u8])> + '_ {
         self.slices
-            .chunks_exact(2)
+            .as_chunks::<2>()
+            .0
+            .iter()
             .map(|pair| (pair[0].slice(), pair[1].slice()))
     }
 

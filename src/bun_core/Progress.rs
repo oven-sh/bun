@@ -71,7 +71,7 @@ impl File {
     /// `Output.Source.init`). We route through the sink so the platform check
     /// lives in `bun_sys`.
     #[inline]
-    pub fn supports_ansi_escape_codes(self) -> bool {
+    pub(crate) fn supports_ansi_escape_codes(self) -> bool {
         #[cfg(windows)]
         {
             // Query the live console
@@ -92,13 +92,14 @@ impl File {
         }
     }
     #[inline]
-    pub fn is_tty(self) -> bool {
+    #[cfg(windows)]
+    pub(crate) fn is_tty(self) -> bool {
         output_sink().is_terminal(self.fd())
     }
     /// Windows console HANDLE for the legacy `SetConsoleCursorPosition` path.
     #[cfg(windows)]
     #[inline]
-    pub fn console_handle(&self) -> *mut core::ffi::c_void {
+    pub(crate) fn console_handle(&self) -> *mut core::ffi::c_void {
         self.fd().native()
     }
     #[inline]
@@ -191,8 +192,8 @@ pub enum Unit {
 /// Represents one unit of progress. Each node can have children nodes, or
 /// one can use integers with `update`.
 pub struct Node {
-    pub context: *mut Progress,
-    pub parent: *mut Node,
+    pub(crate) context: *mut Progress,
+    pub(crate) parent: *mut Node,
     // The non-allocating design means `Node` cannot own the bytes. `'static`
     // is the chosen simplification because all current callers (install/,
     // cli/) pass string literals; the alternative would be threading a
@@ -200,7 +201,7 @@ pub struct Node {
     pub name: &'static [u8],
     pub unit: Unit,
     /// Must be handled atomically to be thread-safe.
-    pub recently_updated_child: AtomicPtr<Node>,
+    pub(crate) recently_updated_child: AtomicPtr<Node>,
     /// Must be handled atomically to be thread-safe. 0 means null.
     pub unprotected_estimated_total_items: AtomicUsize,
     /// Must be handled atomically to be thread-safe.
@@ -240,7 +241,7 @@ impl Node {
     /// For paths that must call `&mut self` methods on the parent (e.g.
     /// `complete_one`), use [`parent_ptr`](Self::parent_ptr) instead.
     #[inline]
-    pub fn parent(&self) -> Option<&Node> {
+    pub(crate) fn parent(&self) -> Option<&Node> {
         // SAFETY: parent backref points into caller-provided storage that
         // outlives this node per the non-allocating API contract (see module
         // docs); null only for the root node.
@@ -251,7 +252,7 @@ impl Node {
     /// (e.g. `end` → `parent.complete_one`, which re-enters `maybe_refresh`).
     /// See [`context_ptr`](Self::context_ptr) for the aliasing rationale.
     #[inline]
-    pub fn parent_ptr(&self) -> *mut Node {
+    pub(crate) fn parent_ptr(&self) -> *mut Node {
         self.parent
     }
 
@@ -326,62 +327,6 @@ impl Node {
                 .store(self_ptr, Ordering::Release);
             // SAFETY: see `context_ptr` — `&mut Progress` would alias the node tree.
             unsafe { (*ctx_ptr).maybe_refresh() };
-        }
-    }
-
-    /// Thread-safe.
-    pub fn set_name(&mut self, name: &'static [u8]) {
-        let ctx_ptr = self.context_ptr();
-        // SAFETY: see `context_ptr` — `&mut Progress` would alias the node tree.
-        let progress = unsafe { &mut *ctx_ptr };
-        // `timer` is `Copy` and write-once (set in `Progress::start` before any
-        // child node exists); read it through the live `&mut Progress` instead
-        // of a second raw `(*ctx_ptr).timer` deref later.
-        let timer = progress.timer;
-        let _g = progress.update_mutex.lock();
-        self.name = name;
-        let self_ptr: *mut Node = self;
-        let parent_ptr = self.parent_ptr();
-        if let Some(parent) = self.parent() {
-            parent
-                .recently_updated_child
-                .store(self_ptr, Ordering::Release);
-            if let Some(grand_parent) = parent.parent() {
-                grand_parent
-                    .recently_updated_child
-                    .store(parent_ptr, Ordering::Release);
-            }
-            if let Some(timer) = timer {
-                // SAFETY: ctx_ptr from &mut; guard borrows only the mutex field.
-                unsafe { (*ctx_ptr).maybe_refresh_with_held_lock(timer) };
-            }
-        }
-    }
-
-    /// Thread-safe.
-    pub fn set_unit(&mut self, unit: Unit) {
-        let ctx_ptr = self.context_ptr();
-        // SAFETY: see `context_ptr` — `&mut Progress` would alias the node tree.
-        let progress = unsafe { &mut *ctx_ptr };
-        // See `set_name` — `timer` is write-once `Copy`; hoist the read.
-        let timer = progress.timer;
-        let _g = progress.update_mutex.lock();
-        self.unit = unit;
-        let self_ptr: *mut Node = self;
-        let parent_ptr = self.parent_ptr();
-        if let Some(parent) = self.parent() {
-            parent
-                .recently_updated_child
-                .store(self_ptr, Ordering::Release);
-            if let Some(grand_parent) = parent.parent() {
-                grand_parent
-                    .recently_updated_child
-                    .store(parent_ptr, Ordering::Release);
-            }
-            if let Some(timer) = timer {
-                // SAFETY: ctx_ptr from &mut; guard borrows only the mutex field.
-                unsafe { (*ctx_ptr).maybe_refresh_with_held_lock(timer) };
-            }
         }
     }
 
@@ -679,39 +624,6 @@ impl Progress {
             return;
         }
         self.columns_written = 0;
-    }
-
-    /// Allows the caller to freely write to stderr until `unlock_stderr()` is
-    /// called. During the lock, the progress information is cleared from the
-    /// terminal.
-    ///
-    /// `crate::Mutex` (std::sync wrapper) has no
-    /// raw `unlock()`, and storing a guard on `self` is self-referential. There
-    /// are currently **no callers** of `lock_stderr`/`unlock_stderr`,
-    /// so this clears the terminal under a scoped lock
-    /// and `unlock_stderr` is a no-op. If a caller materializes, refactor to
-    /// return the guard (or move `update_mutex` to a raw `bun_threading::Mutex`
-    /// once layering allows) and route stderr through a shared global mutex.
-    pub fn lock_stderr(&mut self) {
-        let ctx_ptr = std::ptr::from_mut::<Self>(self);
-        let _g = self.update_mutex.lock();
-        // SAFETY: ctx_ptr from &mut self; guard only references the mutex field
-        // (same disjoint-field pattern as `refresh`/`maybe_refresh` above).
-        let this = unsafe { &mut *ctx_ptr };
-        if let Some(file) = this.terminal {
-            let mut end: usize = 0;
-            this.clear_with_held_lock(&mut end);
-            if file.write(&this.output_buffer[0..end]).is_err() {
-                // stop trying to write to this file
-                this.terminal = None;
-            }
-        }
-        // `_g` drops here; lock is NOT held past return — see the doc comment above.
-    }
-
-    pub fn unlock_stderr(&mut self) {
-        // No-op; see the doc comment on `lock_stderr`.
-        let _ = self;
     }
 
     fn buf_write(&mut self, end: &mut usize, args: fmt::Arguments<'_>) {

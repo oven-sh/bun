@@ -18,12 +18,12 @@ pub(crate) fn create(global: &JSGlobalObject) -> JSValue {
 }
 
 #[bun_jsc::host_fn]
-pub(crate) fn gc_aggression_level(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+fn gc_aggression_level(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     // SAFETY: `bun_vm()` returns a non-null `*mut VirtualMachine` for a Bun-owned global;
     // we hold no other Rust borrow of the VM across these accesses.
     let vm = global.bun_vm().as_mut();
     let ret = JSValue::js_number(vm.aggressive_garbage_collection as i32 as f64);
-    let value = frame.arguments_old::<1>().ptr[0];
+    let [value] = frame.arguments_as_array::<1>();
 
     if !value.is_empty_or_undefined_or_null() {
         match value.coerce::<i32>(global)? {
@@ -37,12 +37,8 @@ pub(crate) fn gc_aggression_level(global: &JSGlobalObject, frame: &CallFrame) ->
 }
 
 #[bun_jsc::host_fn]
-pub(crate) fn array_buffer_to_string(
-    global: &JSGlobalObject,
-    frame: &CallFrame,
-) -> JsResult<JSValue> {
-    let args_buf = frame.arguments_old::<2>();
-    let args = args_buf.slice();
+fn array_buffer_to_string(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    let args = frame.arguments();
     if args.len() < 1 || !args[0].is_cell() || !args[0].js_type().is_typed_array_or_array_buffer() {
         return Err(global.throw_invalid_arguments(format_args!("Expected an ArrayBuffer")));
     }

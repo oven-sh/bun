@@ -92,7 +92,7 @@ pub mod builtins {
     #[path = "export.rs"]
     pub mod export;
     #[path = "false_.rs"]
-    pub mod false_;
+    pub(crate) mod false_;
     #[path = "ls.rs"]
     pub mod ls;
     #[path = "mkdir.rs"]
@@ -108,7 +108,7 @@ pub mod builtins {
     #[path = "touch.rs"]
     pub mod touch;
     #[path = "true_.rs"]
-    pub mod true_;
+    pub(crate) mod true_;
     #[path = "which.rs"]
     pub mod which;
     #[path = "yes.rs"]
@@ -116,12 +116,8 @@ pub mod builtins {
 }
 
 // ─── re-exports ──────────────────────────────────────────────────────────────
-pub use env_map::EnvMap;
 pub use env_str::EnvStr;
-pub use interpreter::{ExitCode, Interpreter, Node, NodeId, ShellExecEnv};
-pub use io::IO;
-pub use io_writer as IOWriter;
-pub use ref_counted_str::RefCountedStr;
+pub use interpreter::{ExitCode, Interpreter};
 pub use yield_::Yield;
 
 /// Forward-decl task payloads for `runtime::dispatch::run_task` arms whose
@@ -136,10 +132,7 @@ pub mod subproc;
 
 // ─── shell escaping (canonical impl lives in bun_shell_parser) ───────────────
 // Re-export so `crate::shell::*` callers resolve without duplicating the table.
-pub use bun_shell_parser::{
-    BACKSLASHABLE_CHARS, SPECIAL_CHARS, SPECIAL_CHARS_TABLE, assert_special_char, escape_8bit,
-    needs_escape_utf8_ascii_latin1, needs_escape_utf16,
-};
+pub use bun_shell_parser::{escape_8bit, needs_escape_utf8_ascii_latin1};
 
 // ─── AST surface (lifetime-erased aliases over `bun_shell_parser::ast`) ──────
 // State nodes hold `*const ast::*` raw pointers into the bumpalo-allocated AST
@@ -153,31 +146,29 @@ pub use bun_shell_parser::{
 pub mod ast {
     pub use bun_shell_parser::parse::SmolList;
     use bun_shell_parser::parse::ast as p;
-    pub use p::{BinaryOp, CondExprOp, IoKind, JSBuf, RedirectFlags};
+    pub use p::{BinaryOp, CondExprOp, IoKind, RedirectFlags};
 
     pub type Script = p::Script<'static>;
     pub type Stmt = p::Stmt<'static>;
     pub type Expr = p::Expr<'static>;
     pub(crate) type Binary = p::Binary<'static>;
     pub type Pipeline = p::Pipeline<'static>;
-    pub type PipelineItem = p::PipelineItem<'static>;
+    pub(crate) type PipelineItem = p::PipelineItem<'static>;
     pub type Cmd = p::Cmd<'static>;
-    pub type Redirect = p::Redirect<'static>;
+    pub(crate) type Redirect = p::Redirect<'static>;
     pub(crate) type If = p::If<'static>;
     pub type Subshell = p::Subshell<'static>;
     pub type CondExpr = p::CondExpr<'static>;
     pub type Assign = p::Assign<'static>;
     pub type Atom = p::Atom<'static>;
-    pub type SimpleAtom = p::SimpleAtom<'static>;
-    pub type CompoundAtom = p::CompoundAtom<'static>;
-    pub type CmdOrAssigns = p::CmdOrAssigns<'static>;
+    pub(crate) type SimpleAtom = p::SimpleAtom<'static>;
 }
 
 // Canonical 4-variant shell error enum. Defined in
 // `shell_body.rs` and re-exported so subproc/state nodes use the same type.
 pub use shell_body::ShellErr;
 
-pub type Result<T, E = ShellErr> = core::result::Result<T, E>;
+pub(crate) type Result<T, E = ShellErr> = core::result::Result<T, E>;
 
 pub use parsed_shell_script::ParsedShellScript;
 

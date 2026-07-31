@@ -635,15 +635,12 @@ pub struct WriteStreamOptions {
     /// would be `.minified`; the binding always passes `2`.
     pub indent: usize,
     pub emit_nonportable_numbers_as_strings: bool,
-    // `emit_null_optional_fields` is a no-op here: the stringifier is
-    // hand-rolled and emits `write_null()` explicitly.
-    pub emit_null_optional_fields: bool,
 }
 
 /// JSON write stream over an in-memory `Vec<u8>`, sufficient for
 /// `bun_install_js_bindings::jsParseLockfile`.
 pub struct WriteStream {
-    pub out: Vec<u8>,
+    pub(crate) out: Vec<u8>,
     opts: WriteStreamOptions,
     depth: usize,
     /// Per open container: have we emitted ≥1 element yet (i.e. does the next

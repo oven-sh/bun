@@ -127,9 +127,8 @@ describe.concurrent("Valkey reply torn across socket reads", () => {
 });
 
 describe("Valkey incremental reply scanning", () => {
-  // Sizes chosen so the reply line stays under the protocol's 512 KiB line
-  // limit while still being large enough that re-scanning the accumulated
-  // partial line on every socket read would dominate the runtime.
+  // Sizes chosen large enough that re-scanning the accumulated partial line on
+  // every socket read would dominate the runtime.
   const HEAD_BYTES = 410_000;
   const CHUNK_BYTES = 2;
   const CHUNK_COUNT = 25_000;

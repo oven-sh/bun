@@ -1,8 +1,8 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 
 test("bun run --workspaces runs script in all workspace packages", async () => {
-  const dir = tempDirWithFiles("workspaces-test", {
+  await using dir = tempDir("workspaces-test", {
     "package.json": JSON.stringify({
       name: "root",
       workspaces: ["packages/*"],
@@ -42,7 +42,7 @@ test("bun run --workspaces runs script in all workspace packages", async () => {
 });
 
 test("bun run --workspaces --if-present succeeds when script is missing", async () => {
-  const dir = tempDirWithFiles("workspaces-if-present", {
+  await using dir = tempDir("workspaces-if-present", {
     "package.json": JSON.stringify({
       name: "root",
       workspaces: ["packages/*"],
@@ -75,7 +75,7 @@ test("bun run --workspaces --if-present succeeds when script is missing", async 
 });
 
 test("bun run --workspaces fails when no packages have the script", async () => {
-  const dir = tempDirWithFiles("workspaces-no-script", {
+  await using dir = tempDir("workspaces-no-script", {
     "package.json": JSON.stringify({
       name: "root",
       workspaces: ["packages/*"],

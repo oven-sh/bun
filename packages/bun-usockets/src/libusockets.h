@@ -551,6 +551,9 @@ int us_ssl_ctx_add_ca_cert(struct ssl_ctx_st *ctx, const char *content);
 void us_ssl_enable_pending_events(struct ssl_st *ssl);
 int us_ssl_pop_pending_session(struct ssl_st *ssl, unsigned char *out, int out_cap);
 int us_ssl_pop_pending_keylog(struct ssl_st *ssl, unsigned char *out, int out_cap);
+/* The resumable session most recently delivered via the new-session callback,
+ * or NULL if none. Borrowed; valid until the next NewSessionTicket or SSL_free. */
+struct ssl_session_st *us_ssl_get_new_session(struct ssl_st *ssl);
 
 /* Public interfaces for loops */
 

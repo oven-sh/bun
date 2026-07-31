@@ -5448,8 +5448,7 @@ pub mod formatter {
                 return self.print_object_depth_exceeded::<C>(writer_, value);
             }
             let ordered_properties = self.ordered_properties;
-            // `for_each_property` walks the prototype chain and would dump the
-            // shared iterator-helper method table for every generator.
+            // Own-only: skip the prototype walk that dumps iterator-helper methods.
             let own_only = matches!(
                 js_type,
                 jsc::JSType::Generator

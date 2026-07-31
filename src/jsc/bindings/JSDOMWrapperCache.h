@@ -40,7 +40,7 @@ WEBCORE_EXPORT JSC::Structure* getCachedDOMStructure(const JSDOMGlobalObject&, c
 WEBCORE_EXPORT JSC::Structure* cacheDOMStructure(JSDOMGlobalObject&, JSC::Structure*, const JSC::ClassInfo*);
 
 template<typename WrapperClass> JSC::Structure* getDOMStructure(JSC::VM&, JSDOMGlobalObject&);
-template<typename WrapperClass> JSC::JSObject* getDOMPrototype(JSC::VM&, JSC::JSGlobalObject*);
+template<typename WrapperClass> JSC::JSObject* getDOMPrototype(JSC::VM&, JSDOMGlobalObject&);
 
 JSC::WeakHandleOwner* wrapperOwner(DOMWrapperWorld&, JSC::ArrayBuffer*);
 void* wrapperKey(JSC::ArrayBuffer*);
@@ -64,7 +64,6 @@ template<typename DOMClass, typename WrapperClass> void uncacheWrapper(DOMWrappe
 template<typename DOMClass, typename T> auto createWrapper(JSDOMGlobalObject*, Ref<T>&&) -> typename std::enable_if<std::is_same<DOMClass, T>::value, typename JSDOMWrapperConverterTraits<DOMClass>::WrapperClass*>::type;
 template<typename DOMClass, typename T> auto createWrapper(JSDOMGlobalObject*, Ref<T>&&) -> typename std::enable_if<!std::is_same<DOMClass, T>::value, typename JSDOMWrapperConverterTraits<DOMClass>::WrapperClass*>::type;
 
-template<typename DOMClass> JSC::JSValue wrap(JSC::JSGlobalObject*, DOMWrapperWorld&, DOMClass&);
 template<typename DOMClass> JSC::JSValue wrap(JSC::JSGlobalObject*, JSDOMGlobalObject*, DOMClass&);
 
 // Inline functions and template definitions.

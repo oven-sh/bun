@@ -3499,10 +3499,7 @@ impl<'a> Resolver<'a> {
         unreachable!("TODO: implement enqueueDependencyToResolve for non-root packages")
     }
 
-    /// Resolve `esm.subpath` against the `"exports"` map of the package at
-    /// `abs_package_path`. `None` means no `"exports"` field: the caller falls
-    /// through to the legacy `main`/index lookup. `Some(NotFound)` means the
-    /// package has `"exports"` and the subpath is not exported.
+    /// `None` = no `"exports"` field (caller falls through to the legacy lookup); `Some(NotFound)` = subpath not exported.
     fn resolve_from_package_exports(
         &mut self,
         esm: &crate::package_json::Package<'_>,
@@ -3516,8 +3513,6 @@ impl<'a> Resolver<'a> {
 
         let mut module_type = package_json.module_type;
 
-        // Resolve against "/" so Windows paths / literal "%" in the absolute
-        // directory path are not treated as URL components.
         {
             let esm_resolution = ESModule {
                 conditions: match kind {
@@ -3551,9 +3546,7 @@ impl<'a> Resolver<'a> {
             }
         }
 
-        // Some packages (e.g. React) key `"exports"` without an extension; retry
-        // a `.js` subpath without it so `require("react/jsx-runtime.js")` still
-        // maps to the `"./jsx-runtime"` entry.
+        // Retry without a trailing ".js": e.g. React maps "./jsx-runtime", not "./jsx-runtime.js".
         let extname = bun_paths::extension(esm.subpath);
         if extname == b".js" && esm.subpath.len() > 3 {
             let esm_resolution = ESModule {

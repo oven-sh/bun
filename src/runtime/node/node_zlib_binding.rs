@@ -355,10 +355,8 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
                         .throw());
                 }
             };
-            // A growable SharedArrayBuffer (resizable && shared) grows in place
-            // and never shrinks, so the captured pointer/length remains a valid
-            // prefix for the duration of the threadpool write. Only a non-shared
-            // resizable ArrayBuffer can shrink out from under it.
+            // Growable SharedArrayBuffer only grows in place; the captured
+            // (ptr, len) stays valid. Only non-shared resizable can shrink.
             if in_buf.resizable && !in_buf.shared {
                 return Err(global_this
                     .err(

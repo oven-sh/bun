@@ -3474,7 +3474,10 @@ where
     pub(crate) fn do_render_null_body_status(&self) {
         if self.flags.has_abort_handler() {
             if let Some(resp) = self.resp.get() {
-                resp.run_corked_with_type(Self::do_render_null_body_status_corked, self.as_ctx_ptr());
+                resp.run_corked_with_type(
+                    Self::do_render_null_body_status_corked,
+                    self.as_ctx_ptr(),
+                );
             }
         } else {
             Self::do_render_null_body_status_corked(self.as_ctx_ptr());

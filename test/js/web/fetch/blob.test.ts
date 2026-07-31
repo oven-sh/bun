@@ -568,6 +568,9 @@ test("Bun.file() text()/json() decode UTF-16BE (BOM) content", async () => {
     "c.txt": Buffer.from("\uFEFFé汉字🎉", "utf16le").swap16(),
     // slice(1) starts the FE FF at an odd offset into the backing store.
     "d.txt": new Uint8Array([0x41, 0xfe, 0xff, 0x00, 0x68, 0x00, 0x69]),
+    // BOM with no payload decodes to the empty string.
+    "e.txt": new Uint8Array([0xfe, 0xff]),
+    "f.txt": new Uint8Array([0xff, 0xfe]),
   });
   await using proc = Bun.spawn({
     cmd: [
@@ -578,7 +581,9 @@ test("Bun.file() text()/json() decode UTF-16BE (BOM) content", async () => {
         const json = await Bun.file("b.json").json();
         const wide = await Bun.file("c.txt").text();
         const odd  = await Bun.file("d.txt").slice(1).text();
-        console.log(JSON.stringify({ text, json, wide, odd }));
+        const beEmpty = await Bun.file("e.txt").text();
+        const leEmpty = await Bun.file("f.txt").text();
+        console.log(JSON.stringify({ text, json, wide, odd, beEmpty, leEmpty }));
       `,
     ],
     env: bunEnv,
@@ -588,7 +593,9 @@ test("Bun.file() text()/json() decode UTF-16BE (BOM) content", async () => {
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(stderr).toBe("");
-  expect(stdout.trim()).toBe(JSON.stringify({ text: "hi", json: 42, wide: "é汉字🎉", odd: "hi" }));
+  expect(stdout.trim()).toBe(
+    JSON.stringify({ text: "hi", json: 42, wide: "é汉字🎉", odd: "hi", beEmpty: "", leEmpty: "" }),
+  );
   expect(exitCode).toBe(0);
 });
 

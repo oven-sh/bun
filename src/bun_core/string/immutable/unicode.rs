@@ -560,11 +560,13 @@ impl BOM {
     pub(crate) const UTF32_BE_BYTES: [u8; 4] = [0x00, 0x00, 0xfe, 0xff];
 
     pub fn detect(bytes: &[u8]) -> Option<BOM> {
-        if bytes.len() < 3 {
-            return None;
-        }
-        if eql_ignore_len(bytes, &Self::UTF8_BYTES) {
+        // `eql_ignore_len` reads `needle.len()` bytes unchecked, so each
+        // comparison needs a length guard; a BOM-only UTF-16 input is 2 bytes.
+        if bytes.len() >= Self::UTF8_BYTES.len() && eql_ignore_len(bytes, &Self::UTF8_BYTES) {
             return Some(BOM::Utf8);
+        }
+        if bytes.len() < Self::UTF16_LE_BYTES.len() {
+            return None;
         }
         if eql_ignore_len(bytes, &Self::UTF16_LE_BYTES) {
             // if (bytes.len > 4 and eqlComptimeIgnoreLen(bytes[2..], utf32_le_bytes[2..]))

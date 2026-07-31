@@ -48,6 +48,7 @@ describe.concurrent("run-unicode", () => {
     test.each([
       ["ascii", `console.log("hello")`, "hello\n"],
       ["non-ascii", `console.log("é汉字🎉".length, "é汉字🎉")`, "5 é汉字🎉\n"],
+      ["bom only", ``, ""],
     ])("%s", async (_, source, expected) => {
       using dir = tempDir("run-utf16-bom", { "index.js": encode(source) });
       await using proc = Bun.spawn({

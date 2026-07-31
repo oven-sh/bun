@@ -7,6 +7,7 @@
 #include "BunClientData.h"
 #include "DOMClientIsoSubspaces.h"
 #include "DOMIsoSubspaces.h"
+#include "JSDirectStreamController.h"
 #include "JSDOMBinding.h"
 #include "JSDOMGlobalObject.h"
 #include "JSDOMWrapperCache.h"
@@ -92,6 +93,9 @@ static void driveAsyncIterator(JSGlobalObject*, JSAsyncIteratorSourceOperation*)
 static void asyncIterReturnIteratorAndSettle(JSGlobalObject*, JSAsyncIteratorSourceOperation*);
 static void asyncIterFinishWithError(JSGlobalObject*, JSAsyncIteratorSourceOperation*, JSValue error);
 
+// Written bytes after which the pump yields to the pulling consumer (ArrayBuffer direct sink).
+static constexpr uint64_t asyncIterSyncDriveYieldThreshold = 64 * 1024;
+
 // invokeOptionalMethod returns the EMPTY value when the method is not callable; the empty
 // value reports isCell(), so it must never reach a downcast.
 static JSPromise* asPromise(JSValue value)
@@ -99,6 +103,18 @@ static JSPromise* asPromise(JSValue value)
     if (!value || !value.isCell())
         return nullptr;
     return dynamicDowncast<JSPromise>(value);
+}
+
+// Backpressure yield: resolve the pull promise without setting m_done so the next pull() resumes.
+static void asyncIterYieldForBackpressure(JSGlobalObject* globalObject, JSAsyncIteratorSourceOperation* op)
+{
+    auto& vm = getVM(globalObject);
+    op->m_running = false;
+    op->m_syncDriveBytes = 0;
+    if (auto* pullPromise = op->m_pullPromise.get()) {
+        op->m_pullPromise.clear();
+        pullPromise->fulfill(vm, jsUndefined());
+    }
 }
 
 static void settlePullPromiseResolved(JSGlobalObject* globalObject, JSAsyncIteratorSourceOperation* op)
@@ -223,7 +239,14 @@ enum class NextStep : uint8_t {
     ContinueLoop,
     Suspended,
     Finished,
+    Yield,
 };
+
+static bool asyncIterControllerIsYieldable(JSObject* controller)
+{
+    auto* direct = dynamicDowncast<JSDirectStreamController>(controller);
+    return direct && direct->m_sinkKind == DirectSinkKind::ArrayBuffer;
+}
 
 // One iteration result: write the value (a final `return v` is still written), honor the
 // sink's backpressure protocol (`wrote < 0` -> await flush(true)), then finish when done.
@@ -270,24 +293,35 @@ static NextStep asyncIterHandleNextResult(JSGlobalObject* globalObject, JSAsyncI
         JSValue wrote = invokeOptionalMethod(globalObject, controller, WebCore::builtinNames(vm).writePublicName(), writeArgs);
         if (scope.exception()) [[unlikely]]
             goto abrupt;
-        if (wrote && wrote.isNumber() && wrote.asNumber() < 0) {
-            // The HTTP sink reports backpressure with a negative return: wait for the drain.
-            MarkedArgumentBuffer flushArgs;
-            flushArgs.append(jsBoolean(true));
-            JSValue flushed = invokeOptionalMethod(globalObject, controller, builtinNames(vm).flushPublicName(), flushArgs);
-            if (scope.exception()) [[unlikely]]
-                goto abrupt;
-            JSPromise* flushPromise = asPromise(flushed);
-            if (!flushPromise) {
-                flushPromise = promiseResolvedWith(globalObject, flushed ? flushed : jsUndefined());
+        if (wrote && wrote.isNumber()) {
+            double wroteNumber = wrote.asNumber();
+            if (wroteNumber < 0) {
+                // The HTTP sink reports backpressure with a negative return: wait for the drain.
+                MarkedArgumentBuffer flushArgs;
+                flushArgs.append(jsBoolean(true));
+                JSValue flushed = invokeOptionalMethod(globalObject, controller, builtinNames(vm).flushPublicName(), flushArgs);
                 if (scope.exception()) [[unlikely]]
                     goto abrupt;
+                JSPromise* flushPromise = asPromise(flushed);
+                if (!flushPromise) {
+                    flushPromise = promiseResolvedWith(globalObject, flushed ? flushed : jsUndefined());
+                    if (scope.exception()) [[unlikely]]
+                        goto abrupt;
+                }
+                flushPromise->performPromiseThenWithContext(vm, globalObject, runtime->onAsyncIterableSourceFlushFulfilled(), runtime->onAsyncIterableSourceErrored(), jsUndefined(), op);
+                return NextStep::Suspended;
             }
-            flushPromise->performPromiseThenWithContext(vm, globalObject, runtime->onAsyncIterableSourceFlushFulfilled(), runtime->onAsyncIterableSourceErrored(), jsUndefined(), op);
+            // write() is user-reachable, so clamp the double before casting.
+            if (std::isfinite(wroteNumber) && wroteNumber > 0)
+                op->m_syncDriveBytes += static_cast<uint64_t>(std::min(wroteNumber, static_cast<double>(asyncIterSyncDriveYieldThreshold)));
+            if (op->m_syncDriveBytes >= asyncIterSyncDriveYieldThreshold && !op->m_iteratorDone && asyncIterControllerIsYieldable(controller))
+                return NextStep::Yield;
+        } else if (auto* wrotePromise = asPromise(wrote)) {
+            // FileSink/NetworkSink backpressure: write() returned its pending promise.
+            markPromiseAsHandled(vm, wrotePromise);
+            wrotePromise->performPromiseThenWithContext(vm, globalObject, runtime->onAsyncIterableSourceFlushFulfilled(), runtime->onAsyncIterableSourceErrored(), jsUndefined(), op);
             return NextStep::Suspended;
         }
-        if (auto* wrotePromise = asPromise(wrote))
-            markPromiseAsHandled(vm, wrotePromise);
     }
 
     if (op->m_iteratorDone) {
@@ -360,9 +394,12 @@ static void driveAsyncIterator(JSGlobalObject* globalObject, JSAsyncIteratorSour
         }
         auto status = nextPromise->status();
         if (status == JSPromise::Status::Fulfilled) {
-            if (asyncIterHandleNextResult(globalObject, op, nextPromise->result()) != NextStep::ContinueLoop)
-                return;
-            continue;
+            auto step = asyncIterHandleNextResult(globalObject, op, nextPromise->result());
+            if (step == NextStep::ContinueLoop)
+                continue;
+            if (step == NextStep::Yield)
+                asyncIterYieldForBackpressure(globalObject, op);
+            return;
         }
         if (status == JSPromise::Status::Rejected) {
             markPromiseAsHandled(vm, nextPromise);
@@ -387,14 +424,18 @@ JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onAsyncIterableSourceNextFulfilled,
         asyncIterReturnIteratorAndSettle(globalObject, op);
         return JSValue::encode(jsUndefined());
     }
-    if (asyncIterHandleNextResult(globalObject, op, callFrame->argument(0)) == NextStep::ContinueLoop)
+    auto step = asyncIterHandleNextResult(globalObject, op, callFrame->argument(0));
+    if (step == NextStep::ContinueLoop)
         driveAsyncIterator(globalObject, op);
+    else if (step == NextStep::Yield)
+        asyncIterYieldForBackpressure(globalObject, op);
     return JSValue::encode(jsUndefined());
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onAsyncIterableSourceFlushFulfilled, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     auto* op = uncheckedDowncast<JSAsyncIteratorSourceOperation>(callFrame->uncheckedArgument(1));
+    op->m_syncDriveBytes = 0;
     if (op->m_done)
         return JSValue::encode(jsUndefined());
     if (op->m_cancelled) {
@@ -476,6 +517,7 @@ JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_boundAsyncIterableSourcePull, (JSGl
     auto* pullPromise = JSPromise::create(vm, globalObject->promiseStructure());
     op->m_pullPromise.set(vm, op, pullPromise);
     op->m_running = true;
+    op->m_syncDriveBytes = 0;
     driveAsyncIterator(globalObject, op);
     RETURN_IF_EXCEPTION(scope, {});
     return JSValue::encode(pullPromise);

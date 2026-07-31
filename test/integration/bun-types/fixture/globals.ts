@@ -226,13 +226,17 @@ const writableStream = new WritableStream();
   a.forEach((value, key) => {
     console.log(value, key);
   });
-  a.entries();
+  a.entries() satisfies IterableIterator<[string, string | File]>;
   a.get("asdf");
   a.getAll("asdf");
   a.has("asdf");
-  a.keys();
-  a.values();
+  a.keys() satisfies IterableIterator<string>;
+  a.values() satisfies IterableIterator<string | File>;
   a.toString();
+  for (const [key, value] of a) {
+    key satisfies string;
+    value satisfies string | File;
+  }
 }
 {
   const a = new Headers();

@@ -982,7 +982,7 @@ declare module "bun" {
      *              Without this parameter, outputs flow-style (single-line) YAML.
      *              With this parameter, outputs block-style (multi-line) YAML.
      *              The number is clamped between 0 and 10, and the first 10 characters of the string are used.
-     * @returns A string containing the YAML document.
+     * @returns A YAML string, or `undefined` if the input is `undefined`, a function, or a symbol.
      *
      * @example
      * ```ts
@@ -1009,7 +1009,7 @@ declare module "bun" {
      * // obj: *1
      * ```
      */
-    export function stringify(input: unknown, replacer?: undefined | null, space?: string | number): string;
+    export function stringify(input: unknown, replacer?: undefined | null, space?: string | number): string | undefined;
   }
 
   /**

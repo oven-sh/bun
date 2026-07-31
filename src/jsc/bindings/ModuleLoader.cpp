@@ -301,7 +301,10 @@ OnLoadResult handleOnLoadResultNotPromise(Zig::GlobalObject* globalObject, JSC::
                 result.value.sourceText.value = contentsValue;
             }
         } else if (JSC::JSArrayBufferView* view = dynamicDowncast<JSC::JSArrayBufferView>(contentsValue)) {
-            result.value.sourceText.string = ZigString { reinterpret_cast<const unsigned char*>(view->vector()), view->byteLength() };
+            // Raw bytes from a typed array are opaque to us: tag as UTF-8 so the
+            // Rust side's ZigString::to_slice() does not Latin-1 -> UTF-8 transcode
+            // bytes >= 0x80 (which would corrupt UTF-8 source and binary payloads).
+            result.value.sourceText.string = ZigString { Zig::taggedUTF8Ptr(reinterpret_cast<const unsigned char*>(view->vector())), view->byteLength() };
             result.value.sourceText.value = contentsValue;
         }
     }

@@ -2473,12 +2473,8 @@ JSC::EncodedJSValue JSC__JSValue__createEmptyObjectWithNullPrototype(JSC::JSGlob
 JSC::EncodedJSValue JSC__JSValue__createEmptyObject(JSC::JSGlobalObject* globalObject,
     size_t initialCapacity)
 {
-    // A zero hint means the caller did not size the object, not that it wants
-    // zero inline slots. An inline capacity of 0 produces a JSFinalObject for
-    // which hasInlineStorage() is false, which JSC's object-spread fast path in
-    // tryCreateObjectViaCloning() does not expect (it calls inlineStorage()
-    // unconditionally and asserts in debug builds). Route 0 through the
-    // defaultInlineCapacity path so the object has the same shape as `{}`.
+    // 0 means "unsized", not "zero inline slots": JSC's spread fast path
+    // (tryCreateObjectViaCloning) asserts hasInlineStorage() on the source.
     if (!initialCapacity)
         return JSC::JSValue::encode(JSC::constructEmptyObject(globalObject));
     return JSC::JSValue::encode(

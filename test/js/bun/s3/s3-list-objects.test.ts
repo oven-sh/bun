@@ -1127,17 +1127,18 @@ describe.concurrent("S3 - List Objects", () => {
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    expect({ stdout: stdout.trim(), stderr }).toEqual({
-      stdout: JSON.stringify({
+    expect(stdout.trim()).toBe(
+      JSON.stringify({
         top: { name: "bkt", contents: 1, commonPrefixes: 1 },
         entry: { key: "k", checksumAlgorithme: "SHA256", owner: { id: "oid", displayName: "dn" } },
         owner: { id: "oid", displayName: "dn" },
         common: { prefix: "p/" },
         assign: { key: "k", checksumAlgorithme: "SHA256", owner: { id: "oid", displayName: "dn" } },
       }),
-      stderr: "",
-    });
-    expect(exitCode).toBe(0);
+    );
+    // stderr is reported for context on failure but not asserted exactly; a
+    // regressing debug assert shows up as empty stdout above.
+    expect({ stderr, exitCode }).toEqual({ stderr, exitCode: 0 });
   });
 });
 

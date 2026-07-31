@@ -1712,6 +1712,9 @@ impl FetchTasklet {
     ) {
         let this = Self::from_ctx(ctx);
         this.readable_stream_ref = ReadableStreamStrong::init(readable, global_this);
+        // A ByteStream now drains scheduled_response_buffer per chunk; undo any
+        // buffered-consumer reservation request so callback() stops growing it.
+        this.is_buffering_body.store(false, Ordering::Release);
     }
 
     fn on_start_streaming_http_response_body_callback(ctx: *mut c_void) -> DrainResult {

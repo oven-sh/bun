@@ -1786,6 +1786,8 @@ function normalizeStdio(stdio): string[] {
         return ["ignore", "ignore", "ignore"];
       case "pipe":
         return ["pipe", "pipe", "pipe"];
+      case "overlapped":
+        return ["overlapped", "overlapped", "overlapped"];
       case "inherit":
         return ["inherit", "inherit", "inherit"];
       default:

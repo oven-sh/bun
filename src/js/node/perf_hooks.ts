@@ -108,10 +108,7 @@ if (PerformanceEntry) {
   Object.setPrototypeOf(PerformanceNodeTiming, PerformanceEntry);
 }
 
-// Node exposes name/entryType/startTime as own enumerable data properties of
-// the nodeTiming object (writable:false), and duration as an own enumerable
-// getter. Null-prototype descriptors so prototype pollution before this module
-// loads cannot inject extra keys.
+// Own-property shape taken from Node's lib/internal/perf/nodetiming.js.
 const performanceNodeTimingEntryDescriptors = {
   __proto__: null,
   name: { __proto__: null, value: "node", enumerable: true, configurable: true },
@@ -124,9 +121,7 @@ function createPerformanceNodeTiming() {
   const object = Object.create(PerformanceNodeTiming.prototype);
   Object.defineProperties(object, performanceNodeTimingEntryDescriptors);
 
-  // Milestones are offsets in milliseconds from performance.timeOrigin, not
-  // absolute epoch timestamps. Bun does not record the individual startup
-  // milestones, so report them relative to the process start (0).
+  // Milestones are ms offsets from timeOrigin; Bun doesn't record them yet.
   object.nodeStart = object.v8Start = object.environment = object.bootstrapComplete = 0;
   object.loopStart = object.idleTime = 0;
   object.loopExit = -1;

@@ -13,6 +13,7 @@ import {
   tempDir,
   tempDirWithFiles,
 } from "harness";
+import { mkfifo } from "mkfifo";
 import { parseEnv } from "node:util";
 import path from "path";
 
@@ -737,6 +738,28 @@ describe.concurrent("--env-file", () => {
   test("should ignore a file that doesn't exist", async () => {
     const res = await runEnvFile(["--env-file=.env.nonexisting"]);
     expect(res.stdout).toBe("");
+  });
+
+  test.skipIf(isWindows)("should ignore a FIFO", async () => {
+    const fifoPath = path.join(dir, ".env.fifo");
+    mkfifo(fifoPath);
+    // Hold a read+write handle so the loader's O_RDONLY open doesn't block.
+    const fd = fs.openSync(fifoPath, "r+");
+    try {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), `--env-file=${fifoPath}`, "-e", "console.log('ok')"],
+        cwd: dir,
+        env: { ...bunEnv, NODE_ENV: undefined },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+      expect(stdout).toBe("ok\n");
+      expect(exitCode).toBe(0);
+    } finally {
+      fs.closeSync(fd);
+      fs.rmSync(fifoPath, { force: true });
+    }
   });
 });
 

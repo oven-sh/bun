@@ -26,6 +26,13 @@ const mixedRowDescription = pgRowDescription([
   { name: "a", typeOid: 25, format: 0 as const },
   { name: "7", typeOid: 25, format: 0 as const },
 ]);
+// Multiple named columns interleaved with an indexed one: the slow path must
+// write each named value to its own Structure offset without reordering.
+const interleavedRowDescription = pgRowDescription([
+  { name: "foo", typeOid: 25, format: 0 as const },
+  { name: "5", typeOid: 25, format: 0 as const },
+  { name: "bar", typeOid: 25, format: 0 as const },
+]);
 
 async function run(label: string, rowDescription: Buffer, rowValues: string[]) {
   const { server, port } = await listeningServer(socket => {
@@ -80,4 +87,7 @@ await run(
 await run("MIXED_EMPTY", mixedRowDescription, []);
 // And the full row keeps both values at their respective keys.
 await run("MIXED_FULL", mixedRowDescription, ["va", "v7"]);
+// Two named columns with an indexed one between them: each named value must
+// land on its own key (Structure offsets are assigned in RowDescription order).
+await run("INTERLEAVED", interleavedRowDescription, ["vfoo", "v5", "vbar"]);
 console.log("FIXTURE_DONE");

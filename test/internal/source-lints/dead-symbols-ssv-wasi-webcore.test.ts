@@ -1,5 +1,5 @@
 // Guards against reintroduction of symbols removed as dead code from
-// SerializedScriptValue, WebSocket, Performance, EventTarget, AbortSignal,
+// SerializedScriptValue, WebSocket, Performance, EventTarget,
 // the JSDOMConvert* template headers, windows/rescle, node:wasi, and a few
 // small Rust crates. Each entry was verified to have zero callers across
 // src/ and build/debug/codegen/ before deletion, and a full `bun bd` plus
@@ -67,7 +67,7 @@ test("dead WebSocket create/connect overloads and commented-out WebKit blocks do
   expect(resurrected(checks)).toEqual([]);
 });
 
-test("dead Performance/PerformanceObserver/EventTarget/AbortSignal members do not reappear", () => {
+test("dead Performance/PerformanceObserver/EventTarget members do not reappear", () => {
   const checks: Array<[string, RegExp]> = [
     // addResourceTiming had no callers; Bun's fetch produces PerformanceResourceTiming
     // via Performance::appendBufferedEntry / queueEntry directly.
@@ -84,11 +84,6 @@ test("dead Performance/PerformanceObserver/EventTarget/AbortSignal members do no
     ["src/jsc/bindings/webcore/EventTarget.cpp", /EventTarget::isPaymentRequest/],
     ["src/jsc/bindings/webcore/EventTarget.h", /hasCapturingEventListeners/],
     ["src/jsc/bindings/webcore/EventTarget.h", /void invalidateJSEventListeners\(JSC::JSObject\*\)/],
-    // signalFollow was unreferenced and the only writer of m_followingSignal;
-    // JSAbortSignalCustom's isFollowingSignal() check was therefore always false.
-    ["src/jsc/bindings/webcore/AbortSignal.cpp", /AbortSignal::signalFollow/],
-    ["src/jsc/bindings/webcore/AbortSignal.h", /void signalFollow\(AbortSignal&\)/],
-    ["src/jsc/bindings/webcore/AbortSignal.h", /m_followingSignal/],
   ];
   expect(resurrected(checks)).toEqual([]);
 });

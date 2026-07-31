@@ -85,6 +85,7 @@ public:
 
     void signalAbort(JSC::JSGlobalObject* globalObject, CommonAbortReason reason);
     void signalAbort(JSC::JSValue reason);
+    void signalFollow(AbortSignal&);
 
     bool aborted() const { return m_flags & static_cast<uint8_t>(AbortSignalFlags::Aborted); }
     void markAborted(JSC::JSValue reason);
@@ -113,6 +114,8 @@ public:
     void removeAlgorithm(uint32_t);
 
     template<typename Visitor> void visitAbortAlgorithms(Visitor&);
+
+    bool isFollowingSignal() const { return !!m_followingSignal; }
 
     void throwIfAborted(JSC::JSGlobalObject&);
 
@@ -212,6 +215,7 @@ private:
     // Strong-ref cycle leak.
     Vector<std::pair<uint32_t, Ref<AbortAlgorithm>>> m_abortAlgorithms WTF_GUARDED_BY_LOCK(m_abortAlgorithmsLock);
     Lock m_abortAlgorithmsLock;
+    WeakPtr<AbortSignal, WeakPtrImplWithEventTargetData> m_followingSignal;
     AbortSignalSet m_sourceSignals;
     AbortSignalSet m_dependentSignals;
     JSValueInWrappedObject m_reason;

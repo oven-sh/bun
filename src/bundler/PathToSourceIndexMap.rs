@@ -39,13 +39,13 @@ pub type Map = StringHashMap<IndexInt>;
 pub(crate) type GetOrPutResult<'a> = bun_collections::string_hash_map::GetOrPutResult<'a, IndexInt>;
 
 /// Module identity is `(namespace, text)`. File-namespace entries key on bare
-/// `text`; other namespaces key on `namespace ++ '\0' ++ text`.
+/// `text`; other namespaces key on `len(namespace) as u32 LE ++ namespace ++ text`.
 impl PathToSourceIndexMap {
     #[inline]
     fn composite_key(namespace: &[u8], text: &[u8]) -> Vec<u8> {
-        let mut v = Vec::with_capacity(namespace.len() + 1 + text.len());
+        let mut v = Vec::with_capacity(4 + namespace.len() + text.len());
+        v.extend_from_slice(&(namespace.len() as u32).to_le_bytes());
         v.extend_from_slice(namespace);
-        v.push(0);
         v.extend_from_slice(text);
         v
     }

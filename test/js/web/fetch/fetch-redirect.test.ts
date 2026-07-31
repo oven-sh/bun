@@ -66,9 +66,9 @@ describe("fetch() follows a redirect on headers without waiting for the 3xx body
 
 // https://fetch.spec.whatwg.org/#redirect-status
 // A redirect status is 301, 302, 303, 307, or 308. Other 3xx statuses
-// (300, 304, 305, 306) are not redirects and must be returned as-is even
-// under redirect: "error".
-describe("fetch() with redirect: 'error' only rejects WHATWG redirect statuses", () => {
+// (300, 304, 305, 306) are not redirects: they are returned as-is under
+// every redirect mode, including "error".
+describe("fetch() only treats WHATWG redirect statuses as redirects", () => {
   async function serve(status: number, reason: string, extra = "") {
     const server = net.createServer(socket => {
       socket.on("error", () => {});
@@ -81,24 +81,28 @@ describe("fetch() with redirect: 'error' only rejects WHATWG redirect statuses",
     return { server, url: `http://127.0.0.1:${port}/` };
   }
 
-  it.concurrent.each([
+  const nonRedirect3xx = [
     [300, "Multiple Choices", "Location: /elsewhere\r\n"],
     [304, "Not Modified", 'ETag: "v1"\r\n'],
     [304, "Not Modified", 'ETag: "v1"\r\nLocation: /elsewhere\r\n'],
     [305, "Use Proxy", "Location: /elsewhere\r\n"],
     [306, "unused", ""],
-  ])("%d %s is returned, not rejected", async (status, reason, extra) => {
-    const { server, url } = await serve(status, reason, extra);
-    try {
-      const res = await fetch(url, { redirect: "error", headers: { "if-none-match": '"v1"' } });
-      expect({ status: res.status, redirected: res.redirected, body: await res.text() }).toEqual({
-        status,
-        redirected: false,
-        body: "",
-      });
-    } finally {
-      server.close();
-    }
+  ] as const;
+
+  describe.each(["error", "follow"] as const)("redirect: %p", redirect => {
+    it.concurrent.each(nonRedirect3xx)("%d %s is returned as-is", async (status, reason, extra) => {
+      const { server, url } = await serve(status, reason, extra);
+      try {
+        const res = await fetch(url, { redirect, headers: { "if-none-match": '"v1"' } });
+        expect({ status: res.status, redirected: res.redirected, body: await res.text() }).toEqual({
+          status,
+          redirected: false,
+          body: "",
+        });
+      } finally {
+        server.close();
+      }
+    });
   });
 
   it.concurrent.each([
@@ -107,7 +111,7 @@ describe("fetch() with redirect: 'error' only rejects WHATWG redirect statuses",
     [303, "See Other"],
     [307, "Temporary Redirect"],
     [308, "Permanent Redirect"],
-  ])("%d %s rejects with UnexpectedRedirect", async (status, reason) => {
+  ])("redirect: 'error' rejects %d %s with UnexpectedRedirect", async (status, reason) => {
     const { server, url } = await serve(status, reason, "Location: /elsewhere\r\n");
     try {
       const outcome = await fetch(url, { redirect: "error" }).then(

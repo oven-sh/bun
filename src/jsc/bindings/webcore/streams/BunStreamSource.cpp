@@ -976,11 +976,8 @@ JSValue readDirectStream(JSGlobalObject* globalObject, JSReadableStream* stream,
 
     if (auto* pullPromise = dynamicDowncast<JSPromise>(maybePromise)) {
         auto* result = JSPromise::create(vm, globalObject->promiseStructure());
-        // The sink's close path (readDirectStreamCloseImpl, reached from both controller.end()
-        // and the native abort's signal.close) and pull()'s own settlement both settle `result`
-        // by taking it from m_closePromise, so whichever fires first wins and the other no-ops.
-        // `result` is not passed as a capability because PromiseReactionJob would then call
-        // JSPromise::resolvePromise on it unconditionally (ASSERT(Pending)).
+        // Settled by whichever of readDirectStreamCloseImpl / onReadDirectPull* takes it first.
+        // Not a capability: PromiseReactionJob's resolvePromise ASSERTs Pending, and close can win.
         state->m_closePromise.set(vm, state, result);
         pullPromise->performPromiseThenWithContext(vm, globalObject, runtime->onReadDirectPullFulfilled(), runtime->onReadDirectPullRejected(), jsUndefined(), state);
         return result;

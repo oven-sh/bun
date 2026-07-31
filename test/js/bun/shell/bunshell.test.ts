@@ -1181,6 +1181,16 @@ booga"
       expect(exitCode).toBe(0);
     });
 
+    if (isWindows) {
+      test(".env() Path (Windows casing)", async () => {
+        using dir = cmdDir("shell-path-case", "mytest-case", "hello from Path");
+        const Path = `${String(dir)}${delimiter}${process.env.PATH}`;
+        const { stdout, exitCode } = await $`mytest-case`.env({ ...bunEnv, Path }).quiet();
+        expect(stdout.toString().trim()).toBe("hello from Path");
+        expect(exitCode).toBe(0);
+      });
+    }
+
     test("export PATH", async () => {
       using dir = cmdDir("shell-path-export", "mytest-export", "hello from export");
       const PATH = `${String(dir)}${delimiter}${process.env.PATH}`;

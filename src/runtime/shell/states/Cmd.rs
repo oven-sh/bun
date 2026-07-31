@@ -463,6 +463,7 @@ impl Cmd {
         // SAFETY: `shell_ptr` is the live env owned by this Cmd's scope chain.
         spawn_args.cwd = unsafe { &*shell_ptr }.cwd();
 
+        // `fill_env` sets `spawn_args.path`; must run before the `which()` below.
         {
             let env = interp.as_cmd_mut(this).base.shell_mut();
             let mut iter = env.export_env.iterator();

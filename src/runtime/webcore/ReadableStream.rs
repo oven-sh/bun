@@ -694,13 +694,9 @@ pub struct NewSource<C: SourceContext> {
     /// owned/freed here). The JS path stores
     /// `on_js_close` and leaves this `None` — see [`Self::on_close`].
     pub close_ctx: Option<NonNull<c_void>>,
-    pub cancel_handler: Cell<Option<fn(Option<*mut c_void>)>>,
-    pub cancel_ctx: Cell<Option<*mut c_void>>,
-    pub drain_handler: Cell<Option<fn(Option<*mut c_void>)>>,
-    pub drain_ctx: Cell<Option<*mut c_void>>,
-    /// A native sink has attached after the producer already dropped
-    /// backpressure (`BufferAll`); restore it. Reuses `drain_ctx`.
-    pub reengage_handler: Cell<Option<fn(Option<*mut c_void>)>>,
+    /// Upstream producer to notify on cancel/drain/consumer-attach. Replaces
+    /// the per-signal fn-ptr + ctx-ptr pairs with one typed handle.
+    pub producer: Cell<streams::SourceHandle>,
     // JSC_BORROW: process-lifetime VM global. Heap m_ctx field reassigned in
     // `start()` from a fresh `&JSGlobalObject`; `BackRef` gives a safe `Deref`
     // projection without propagating a lifetime parameter into FFI codegen.
@@ -728,11 +724,7 @@ impl<C: SourceContext + Default> Default for NewSource<C> {
             pending_err: None,
             close_handler: None,
             close_ctx: None,
-            cancel_handler: Cell::new(None),
-            cancel_ctx: Cell::new(None),
-            drain_handler: Cell::new(None),
-            drain_ctx: Cell::new(None),
-            reengage_handler: Cell::new(None),
+            producer: Cell::new(streams::SourceHandle::None),
             global_this: None,
             this_jsvalue: jsc::JsRef::empty(),
             is_closed: Cell::new(false),
@@ -913,9 +905,8 @@ impl<C: SourceContext> NewSource<C> {
         }
         self.cancelled = true;
         self.context.on_cancel();
-        if let Some(handler) = self.cancel_handler.take() {
-            handler(self.cancel_ctx.get());
-        }
+        let mut p = self.producer.replace(streams::SourceHandle::None);
+        p.close(None);
     }
 
     pub fn on_close(&mut self) {

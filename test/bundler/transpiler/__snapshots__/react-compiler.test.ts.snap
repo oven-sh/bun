@@ -143,13 +143,13 @@ var $jsxDEV = () => null;
 var $c = () => [];
 
 // entry.tsx
-var Ctx = import_react.createContext(0);
+var Ctx = (0, import_react.createContext)(0);
 var sub = () => () => {};
 var get = () => 1;
 function Comp() {
   let $ = $c(3);
-  let v = import_react.useSyncExternalStore(sub, get);
-  let c = import_react.useContext(Ctx);
+  let v = (0, import_react.useSyncExternalStore)(sub, get);
+  let c = (0, import_react.useContext)(Ctx);
   let t0;
   if ($[0] !== c || $[1] !== v)
     t0 = /* @__PURE__ */ $jsxDEV("div", {

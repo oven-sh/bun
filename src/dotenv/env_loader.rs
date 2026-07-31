@@ -945,8 +945,7 @@ impl Loader {
 enum ReadEnvFile {
     /// Zero-length — caller marks the slot and returns.
     Empty,
-    /// FIFO/socket/device — caller warns (unless `quiet`), marks the slot,
-    /// and returns.
+    /// FIFO/socket/device — skipped without reading.
     NotRegular,
     /// Recoverable read errno (ENOMEM/EPIPE/EACCES/EISDIR) — caller prints
     /// (unless `quiet`), marks the slot, and returns.

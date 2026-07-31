@@ -447,15 +447,12 @@ describe("useFakeTimers with options", () => {
     expect(Date.now()).toBe(targetTime + 500);
   });
 
-  test.each(["modern", "legacy"] as const)(
-    "useFakeTimers(%j) accepts legacy Jest string argument",
-    implementation => {
-      expect(() => vi.useFakeTimers(implementation)).not.toThrow();
-      expect(vi.isFakeTimers()).toBe(true);
-      vi.useRealTimers();
-      expect(vi.isFakeTimers()).toBe(false);
-    },
-  );
+  test.each(["modern", "legacy"] as const)("useFakeTimers(%j) accepts legacy Jest string argument", implementation => {
+    expect(() => vi.useFakeTimers(implementation)).not.toThrow();
+    expect(vi.isFakeTimers()).toBe(true);
+    vi.useRealTimers();
+    expect(vi.isFakeTimers()).toBe(false);
+  });
 
   test("useFakeTimers still rejects non-string non-object arguments", () => {
     expect(() => vi.useFakeTimers(123 as any)).toThrow("useFakeTimers() expects an options object");

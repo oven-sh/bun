@@ -693,7 +693,6 @@ test.concurrent("subdirectory routes use forward slashes on Windows", async () =
     env: { ...bunEnv, NODE_ENV: "production", NO_COLOR: "1" },
     cwd: String(dir),
     stdout: "pipe",
-    stderr: "pipe",
   });
 
   const decoder = new TextDecoder();

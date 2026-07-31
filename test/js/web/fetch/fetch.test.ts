@@ -4,6 +4,7 @@ import { chmodSync, rmSync, writeFileSync } from "fs";
 import {
   bunEnv,
   bunExe,
+  emptyProcessMaxRSS,
   exampleSite,
   exampleHtml as fixture,
   gc,
@@ -14,6 +15,7 @@ import {
   isMacOS,
   isWindows,
   rss,
+  runFixtureMaxRSS,
   tls,
   tmpdirSync,
   withoutAggressiveGC,
@@ -27,26 +29,6 @@ import { join } from "path";
 import { Readable } from "stream";
 import { gzipSync } from "zlib";
 
-// Peak RSS of a bun process that runs `fixture`, whose only stdout line is
-// the JSON `expected` (the transfer's completion result), and the peak RSS of
-// an empty bun process to subtract as the baseline. Compared as a delta so
-// the assertion is about the payload, not the runtime's fixed footprint.
-async function runFixtureMaxRSS(fixture: string, expected: unknown) {
-  await using proc = Bun.spawn({ cmd: [bunExe(), "-e", fixture], env: bunEnv, stdout: "pipe", stderr: "pipe" });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stderr).toBe("");
-  expect(JSON.parse(stdout.trim())).toEqual(expected);
-  expect(exitCode).toBe(0);
-  return proc.resourceUsage()!.maxRSS;
-}
-let emptyBunMaxRSS: Promise<number> | undefined;
-function emptyProcessMaxRSS() {
-  return (emptyBunMaxRSS ??= (async () => {
-    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", ""], env: bunEnv });
-    await proc.exited;
-    return proc.resourceUsage()!.maxRSS;
-  })());
-}
 const tmp_dir = tmpdirSync();
 const fetchFixture3 = join(import.meta.dir, "fetch-leak-test-fixture-3.js");
 const fetchFixture4 = join(import.meta.dir, "fetch-leak-test-fixture-4.js");

@@ -3846,40 +3846,27 @@ it.each(["chunked", "content-length"] as const)(
     });
 
     // Downstream client stalls before reading, then drains the whole body.
-    // The backpressure proof is the RSS delta while stalled; the drain-phase
-    // peak depends on how fast the client catches up and is not what is tested.
-    Bun.gc(true);
-    const rssBefore = process.memoryUsage.rss();
-    let received = 0, peakWhileStalled = rssBefore;
+    let received = 0;
     const { promise: done, resolve } = Promise.withResolvers();
     const client = net.connect(proxy.port, "127.0.0.1", () => {
       client.pause();
+      setTimeout(() => client.resume(), 500);
       client.write("GET / HTTP/1.1\\r\\nHost: x\\r\\nConnection: close\\r\\n\\r\\n");
     });
-    client.on("data", d => { received += d.length; if (received >= 1024 * 1024) resolve(); });
-    client.on("close", resolve);
+    client.on("data", d => { received += d.length; if (received >= CHUNK.length * COUNT) resolve(); });
     client.on("error", () => {});
-    for (let i = 0; i < 10; i++) {
-      await Bun.sleep(100);
-      peakWhileStalled = Math.max(peakWhileStalled, process.memoryUsage.rss());
-    }
-    // Drain just enough to prove bytes flow after resume; the stall-phase peak
-    // is the backpressure proof so the rest of the 256 MB is not needed.
-    client.resume();
     await done;
     client.destroy();
-    console.log(JSON.stringify({ deltaMB: (peakWhileStalled - rssBefore) / 1024 / 1024, received: received >= 1024 * 1024 }));
+    console.log(JSON.stringify({ received: received >= CHUNK.length * COUNT }));
     process.exit(0);
   `;
-    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", fixture], env: bunEnv, stdout: "pipe", stderr: "pipe" });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).toBe("");
-    const { deltaMB, received } = JSON.parse(stdout.trim());
-    expect(received).toBe(true);
+    const [fixtureMaxRSS, baselineMaxRSS] = await Promise.all([
+      runFixtureMaxRSS(fixture, { received: true }),
+      emptyProcessMaxRSS(),
+    ]);
     // Without upstream pause the proxy accumulates the whole 256 MB while the
     // client stalls; with it, in-flight bytes are bounded by the socket buffers.
-    expect(deltaMB).toBeLessThan(isASAN || isDebug ? 160 : 64);
-    expect(exitCode).toBe(0);
+    expect((fixtureMaxRSS - baselineMaxRSS) / 1024 / 1024).toBeLessThan(isASAN || isDebug ? 256 : 96);
   },
 );
 

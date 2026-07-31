@@ -140,6 +140,11 @@ describe.each(["FormData", "Blob", "Buffer", "String", "URLSearchParams", "strea
         stderr: "inherit",
         env: {
           ...bunEnv,
+          // URLSearchParams URL-encodes the 2MB body on every request; 50×10
+          // of those under debug+ASAN overruns any reasonable timeout (~2.6s
+          // per batch ≈ 130s). 20 batches still gives 21 RSS samples, plenty
+          // to catch the 10x growth this test asserts on.
+          ...((isDebug || isASAN) && { ITERATIONS: "20" }),
         },
         ipc(message) {
           rss.push(message.rss);
@@ -155,10 +160,9 @@ describe.each(["FormData", "Blob", "Buffer", "String", "URLSearchParams", "strea
       }
       expect(last).toBeLessThan(first * 10);
     },
-    // The URLSearchParams variant URL-encodes the 2MB body on each of the 500
-    // requests - pure throughput that a debug build cannot fit in 20s, and
-    // ASAN instrumentation overruns the 20s release deadline the same way
-    // (observed 20000.61ms on the x64-asan lane).
+    // The URLSearchParams variant URL-encodes the 2MB body on every request —
+    // pure throughput that a debug/ASAN build cannot fit in 20s even at the
+    // reduced 20-batch count above.
     isDebug || isASAN ? 120 * 1000 : 20 * 1000,
   );
 });

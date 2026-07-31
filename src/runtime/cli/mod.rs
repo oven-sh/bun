@@ -1852,8 +1852,7 @@ To create a project with the official Next.js scaffolding tool, run\n\
             && example_tag != ExampleTag::LocalFolder;
 
         if use_bunx {
-            // First `--` is the npm/yarn arg separator (dropped); `--bun` before
-            // it is a wrapper flag the positional scan above may not have reached.
+            // First `--` is the arg separator; hoist any `--bun` the scan above missed.
             let forwarded = &args[template_name_start..];
             let mut seen_separator = false;
             for arg in forwarded {

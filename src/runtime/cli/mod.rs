@@ -1852,10 +1852,8 @@ To create a project with the official Next.js scaffolding tool, run\n\
             && example_tag != ExampleTag::LocalFolder;
 
         if use_bunx {
-            // The positional scan above stops once it finds the template name,
-            // so a `--bun` after it was never seen. The first bare `--` is the
-            // npm/yarn arg separator and is dropped; a later `--`, or a `--bun`
-            // after the separator, is a literal arg for the create script.
+            // First `--` is the npm/yarn arg separator (dropped); `--bun` before
+            // it is a wrapper flag the positional scan above may not have reached.
             let forwarded = &args[template_name_start..];
             let mut seen_separator = false;
             for arg in forwarded {

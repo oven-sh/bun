@@ -197,6 +197,19 @@ impl<T> ExtSlot<T> {
         }
     }
 
+    /// Shared-borrow variant of [`Self::owner_mut`] for owners whose handlers
+    /// take `&T` because dispatch on the socket *can* re-enter the owner
+    /// (e.g. IPC's `on_data` runs user JS which sends on the same channel).
+    #[inline(always)]
+    pub fn owner_ref(&self) -> Option<&T> {
+        match self.0 {
+            // SAFETY: same liveness invariant as `owner_mut`; only `&T` is
+            // formed, so re-entrant dispatch cannot alias an exclusive borrow.
+            Some(p) => Some(unsafe { &*p.as_ptr() }),
+            None => None,
+        }
+    }
+
     /// Snapshot the raw pointer word without forming a borrow. Used by
     /// `on_connect_error` paths that must read the owner *before* closing the
     /// socket (which may invalidate the ext storage `self` points into).

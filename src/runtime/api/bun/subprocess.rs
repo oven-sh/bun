@@ -141,8 +141,10 @@ pub struct Subprocess<'a> {
     pub closed: Cell<EnumSet<StdioKind>>,
     pub this_value: JsCell<JsRef>,
 
-    /// `None` indicates all of the IPC data is uninitialized.
-    pub(crate) ipc_data: JsCell<Option<IPC::SendQueue>>,
+    /// `None` indicates all of the IPC data is uninitialized. `Some` holds an
+    /// owned ref (from `SendQueue::new`), released in `finalize` after
+    /// `detach`.
+    pub(crate) ipc_data: Cell<Option<core::ptr::NonNull<IPC::SendQueue>>>,
     pub(crate) flags: Cell<Flags>,
 
     /// Weak observer of the stdin `FileSink` — holds no ownership/ref. `onStdinDestroyed`
@@ -425,8 +427,8 @@ impl Subprocess<'_> {
         // (rather than `socket != .closed`) keeps the wrapper Strong across the
         // window where the socket is already `.closed` but the task holding a
         // raw `*SendQueue` into `ipc_data` is still queued.
-        if let Some(ipc) = self.ipc_data.get() {
-            if !ipc.close_event_sent {
+        if let Some(ipc) = self.ipc() {
+            if !ipc.close_event_sent.get() {
                 return true;
             }
         }
@@ -856,12 +858,7 @@ impl Subprocess<'_> {
 
     #[bun_jsc::host_fn(getter)]
     pub(crate) fn get_connected(this: &Self, _global_this: &JSGlobalObject) -> JSValue {
-        let connected = this
-            .ipc_data
-            .get()
-            .as_ref()
-            .map(|d| d.is_connected())
-            .unwrap_or(false);
+        let connected = this.ipc().map(|d| d.is_connected()).unwrap_or(false);
         JSValue::from(connected)
     }
 
@@ -1348,14 +1345,17 @@ impl Subprocess<'_> {
         MaxBuf::MaxBuf::remove_from_subprocess(&mut mb);
         this.stderr_maxbuf.set(mb);
 
-        if let Some(ipc_data) = this.ipc_data.replace(None) {
+        if let Some(ipc_data) = this.ipc_data.take() {
             // In normal operation the socket is already `.closed` by the time we
             // get here (that is what allowed `computeHasPendingActivity` to drop
-            // to false and let GC collect us). `disconnectIPC` would be a no-op
-            // in that state and would leak the SendQueue's buffers; deinit it
-            // instead. `SendQueue.deinit` handles the VM-shutdown case where the
-            // socket is still open.
-            drop(ipc_data);
+            // to false and let GC collect us). Detach and release our ref; any
+            // still-queued close task holds its own ref and frees the SendQueue
+            // when it runs.
+            // SAFETY: `ipc_data` is the owned ref stored at spawn time.
+            unsafe {
+                (*ipc_data.as_ptr()).detach();
+                <IPC::SendQueue as bun_ptr::CellRefCounted>::deref(ipc_data.as_ptr());
+            }
         }
 
         this.update_flags(|f| f.insert(Flags::FINALIZED));
@@ -1490,12 +1490,9 @@ impl Subprocess<'_> {
         }
     }
 
-    #[allow(clippy::mut_from_ref)]
-    pub(crate) fn ipc(&self) -> Option<&mut IPC::SendQueue> {
-        // SAFETY: single JS-mutator thread; the SendQueue is inline in the
-        // `JsCell` and callers do not hold the borrow across JS re-entry that
-        // touches `ipc_data` itself.
-        unsafe { self.ipc_data.get_mut() }.as_mut()
+    pub(crate) fn ipc(&self) -> Option<&IPC::SendQueue> {
+        // SAFETY: `ipc_data` is our owned ref; live until `finalize`.
+        self.ipc_data.get().map(|p| unsafe { &*p.as_ptr() })
     }
 }
 

@@ -78,31 +78,53 @@ impl TerminalCreateResult {
 // Mirrors the `IPCInstance` impl in `bun_jsc::VirtualMachine`; lives here
 // because `Subprocess` is a `bun_runtime` type and `bun_jsc::ipc` (tier-5)
 // sees only the `dyn SendQueueOwner` trait object.
-impl IPC::SendQueueOwner for SubprocessT<'static> {
-    fn global_this(&self) -> *const JSGlobalObject {
-        self.global_this.as_ptr()
-    }
-    fn handle_ipc_close(&mut self) {
-        SubprocessT::handle_ipc_close(self)
-    }
-    fn handle_ipc_message(&mut self, msg: IPC::DecodedIPCMessage, handle: JSValue) {
-        SubprocessT::handle_ipc_message(self, &msg, handle)
-    }
-    fn this_jsvalue(&self) -> JSValue {
-        self.this_value.get().try_get().unwrap_or(JSValue::ZERO)
-    }
-    fn kind(&self) -> IPC::SendQueueOwnerKind {
-        IPC::SendQueueOwnerKind::Subprocess
-    }
+// `SendQueue.owner` — the `Subprocess` arm of `SendQueueOwner`. The SendQueue
+// lives in `bun_jsc` and cannot name `Subprocess`, so these hooks (declared
+// `extern "Rust"` in `bun_jsc::ipc`) supply the dispatch. `subprocess` is the
+// BACKREF stored by `subprocess_ipc_owner`; the Subprocess holds a ref on its
+// SendQueue and detaches before it is freed, so the pointer is live whenever
+// these run.
+
+#[unsafe(no_mangle)]
+fn __bun_subprocess_ipc_global_this(
+    subprocess: core::ptr::NonNull<core::ffi::c_void>,
+) -> *const JSGlobalObject {
+    // SAFETY: see block comment.
+    unsafe { subprocess.cast::<SubprocessT<'static>>().as_ref() }
+        .global_this
+        .as_ptr()
+}
+#[unsafe(no_mangle)]
+fn __bun_subprocess_ipc_handle_close(subprocess: core::ptr::NonNull<core::ffi::c_void>) {
+    // SAFETY: see block comment.
+    SubprocessT::handle_ipc_close(unsafe { subprocess.cast::<SubprocessT<'static>>().as_mut() });
+}
+#[unsafe(no_mangle)]
+fn __bun_subprocess_ipc_handle_message(
+    subprocess: core::ptr::NonNull<core::ffi::c_void>,
+    msg: &IPC::DecodedIPCMessage,
+    handle: JSValue,
+) {
+    // SAFETY: see block comment.
+    SubprocessT::handle_ipc_message(
+        unsafe { subprocess.cast::<SubprocessT<'static>>().as_mut() },
+        msg,
+        handle,
+    );
+}
+#[unsafe(no_mangle)]
+fn __bun_subprocess_ipc_this_jsvalue(subprocess: core::ptr::NonNull<core::ffi::c_void>) -> JSValue {
+    // SAFETY: see block comment.
+    unsafe { subprocess.cast::<SubprocessT<'static>>().as_ref() }
+        .this_value
+        .get()
+        .try_get()
+        .unwrap_or(JSValue::ZERO)
 }
 
 #[inline]
-fn subprocess_ipc_owner(ptr: *mut SubprocessT<'_>) -> *mut dyn IPC::SendQueueOwner {
-    // `SendQueue.owner` is a BACKREF — the SendQueue is stored inline in
-    // `Subprocess.ipc_data` and dropped before the Subprocess is freed.
-    // Erase the borrowed `'a` (raw-pointer lifetimes are not enforced) so the
-    // unsizing coercion to `dyn SendQueueOwner + 'static` is well-formed.
-    ptr.cast::<SubprocessT<'static>>() as *mut dyn IPC::SendQueueOwner
+fn subprocess_ipc_owner(ptr: *mut SubprocessT<'_>) -> Option<IPC::SendQueueOwner> {
+    core::ptr::NonNull::new(ptr.cast::<core::ffi::c_void>()).map(IPC::SendQueueOwner::Subprocess)
 }
 
 bun_output::declare_scope!(Subprocess, hidden);
@@ -1316,7 +1338,7 @@ fn spawn_maybe_sync<const IS_SYNC: bool>(
         // (released in Subprocess::on_process_exit; stranded if child outlives VM teardown).
         ref_count: bun_ptr::RefCount::init_exact_refs(2),
         stdio_pipes: JsCell::new(core::mem::take(&mut spawned_extra_pipes)),
-        ipc_data: JsCell::new(None),
+        ipc_data: Cell::new(None),
         flags: Cell::new(if IS_SYNC {
             Subprocess::Flags::IS_SYNC
         } else {
@@ -1366,11 +1388,13 @@ fn spawn_maybe_sync<const IS_SYNC: bool>(
     #[cfg(windows)]
     if !IS_SYNC {
         if let Some(ipc_mode) = maybe_ipc_mode {
-            subprocess.ipc_data.set(Some(IPC::SendQueue::init(
-                ipc_mode,
-                subprocess_ipc_owner(subprocess_ptr),
-                IPC::SocketUnion::Uninitialized,
-            )));
+            subprocess
+                .ipc_data
+                .set(core::ptr::NonNull::new(IPC::SendQueue::new(
+                    ipc_mode,
+                    subprocess_ipc_owner(subprocess_ptr),
+                    IPC::SocketUnion::Uninitialized,
+                )));
         }
     }
 
@@ -1540,11 +1564,13 @@ fn spawn_maybe_sync<const IS_SYNC: bool>(
             );
             if !raw_socket.is_null() {
                 let socket = raw_socket;
-                subprocess.ipc_data.set(Some(IPC::SendQueue::init(
-                    mode,
-                    subprocess_ipc_owner(subprocess_ptr),
-                    IPC::SocketUnion::Uninitialized,
-                )));
+                subprocess
+                    .ipc_data
+                    .set(core::ptr::NonNull::new(IPC::SendQueue::new(
+                        mode,
+                        subprocess_ipc_owner(subprocess_ptr),
+                        IPC::SocketUnion::Uninitialized,
+                    )));
                 posix_ipc_info = Some(IPC::Socket::from(socket));
             }
         }
@@ -1560,8 +1586,8 @@ fn spawn_maybe_sync<const IS_SYNC: bool>(
                 if let Some(ctx) = posix_ipc_info.ext::<*mut IPC::SendQueue>() {
                     // SAFETY: `ctx` is the live ext-slot pointer returned by uSockets;
                     // it stays valid for the socket's lifetime.
-                    unsafe { *ctx = std::ptr::from_mut(ipc_data) };
-                    ipc_data.socket = IPC::SocketUnion::Open(posix_ipc_info);
+                    unsafe { *ctx = std::ptr::from_ref(ipc_data).cast_mut() };
+                    ipc_data.socket.set(IPC::SocketUnion::Open(posix_ipc_info));
                 }
             }
             // uws owns the fd now (owns_fd=1); neutralize the slot so finalizeStreams doesn't double-close.
@@ -1602,7 +1628,10 @@ fn spawn_maybe_sync<const IS_SYNC: bool>(
             // SAFETY: `ipc_data` points at the live SendQueue inline in
             // `*subprocess_ptr`; no other `&mut` to it is live in this scope.
             if let Some(err) = unsafe {
-                IPC::SendQueue::windows_configure_server(core::ptr::from_mut(ipc_data), ipc_pipe)
+                IPC::SendQueue::windows_configure_server(
+                    core::ptr::from_ref(ipc_data).cast_mut(),
+                    ipc_pipe,
+                )
             }
             .as_err()
             {

@@ -2810,21 +2810,36 @@ pub struct IPCInstance {
     /// borrowed handle so the isolation swap can skip it.
     #[cfg(unix)]
     pub(crate) group: *mut uws::SocketGroup,
-    pub data: crate::ipc::SendQueue,
+    /// Owned ref (from `SendQueue::new`); released by `deinit` after `detach`.
+    pub data: core::ptr::NonNull<crate::ipc::SendQueue>,
 }
 
 impl IPCInstance {
     pub fn new(v: IPCInstance) -> *mut IPCInstance {
         bun_core::heap::into_raw(Box::new(v))
     }
+
+    /// Shared access to the owned SendQueue.
+    #[inline]
+    pub fn data(&self) -> &crate::ipc::SendQueue {
+        // SAFETY: `data` is an owned ref; live until `deinit`.
+        unsafe { self.data.as_ref() }
+    }
+
     /// Only reached from the `get_ipc_instance` error path.
     ///
     /// # Safety
     /// `this` must have been produced by `IPCInstance::new` (heap::alloc) and
     /// not yet freed or aliased.
     pub(crate) unsafe fn deinit(this: *mut IPCInstance) {
-        // SAFETY: caller contract — `this` is a live heap::alloc'd box.
-        drop(unsafe { bun_core::heap::take(this) });
+        // SAFETY: caller contract — `this` is a live heap::alloc'd box; the
+        // SendQueue ref is owned by it and released here after detaching.
+        unsafe {
+            let sq = (*this).data.as_ptr();
+            (*sq).detach();
+            <crate::ipc::SendQueue as bun_ptr::CellRefCounted>::deref(sq);
+            drop(bun_core::heap::take(this));
+        }
     }
 
     /// Dispatches a decoded IPC message (and optional handle) to the JS `process` listeners.
@@ -2886,28 +2901,6 @@ impl IPCInstance {
 unsafe extern "C" {
     safe fn Process__emitMessageEvent(global: &JSGlobalObject, value: JSValue, handle: JSValue);
     safe fn Process__emitDisconnectEvent(global: &JSGlobalObject);
-}
-
-/// `IPC.SendQueue` owner dispatch for the child-side `IPCInstance`. Mirrors
-/// the `Subprocess` impl in `bun_runtime`; lives here because `IPCInstance`
-/// itself is defined in this crate.
-impl crate::ipc::SendQueueOwner for IPCInstance {
-    fn global_this(&self) -> *const JSGlobalObject {
-        self.global_this
-    }
-    fn handle_ipc_close(&mut self) {
-        IPCInstance::handle_ipc_close(self)
-    }
-    fn handle_ipc_message(&mut self, msg: crate::ipc::DecodedIPCMessage, handle: JSValue) {
-        IPCInstance::handle_ipc_message(self, &msg, handle)
-    }
-    /// VM-side owner has no JS-visible `this`.
-    fn this_jsvalue(&self) -> JSValue {
-        JSValue::ZERO
-    }
-    fn kind(&self) -> crate::ipc::SendQueueOwnerKind {
-        crate::ipc::SendQueueOwnerKind::VirtualMachine
-    }
 }
 
 /// Caller intent for runtime module resolution.
@@ -5705,7 +5698,7 @@ impl VirtualMachine {
             }
         }
         let _restore_had_errors = RestoreHadErrors {
-            vm: bun_ptr::BackRef::new_mut(self),
+            vm: bun_ptr::BackRef::new(&*self),
             prev: prev_had_errors,
         };
 
@@ -5735,7 +5728,7 @@ impl VirtualMachine {
         }
         let _defer_gh = DeferGhAnnotation {
             run: allow_side_effects && bun_core::Output::is_github_action(),
-            exception: bun_ptr::BackRef::new_mut(exception),
+            exception: bun_ptr::BackRef::new(&*exception),
         };
 
         // `pretty_fmt!` takes a `const` color parameter, so route the runtime
@@ -6498,36 +6491,39 @@ impl VirtualMachine {
 
             // Box the instance first so `data.owner` can name its final
             // address.
+            // Allocate the SendQueue first; its owner backref is patched once
+            // the IPCInstance box address is fixed.
+            let send_queue = crate::ipc::SendQueue::new(
+                mode,
+                // Patched below once the IPCInstance box address is fixed.
+                None,
+                crate::ipc::SocketUnion::Uninitialized,
+            );
             let instance = IPCInstance::new(IPCInstance {
                 global_this: self.global,
                 group,
-                data: crate::ipc::SendQueue::init(
-                    mode,
-                    // Patched below once the box address is fixed.
-                    core::ptr::null_mut::<IPCInstance>() as *mut dyn crate::ipc::SendQueueOwner,
-                    crate::ipc::SocketUnion::Uninitialized,
-                ),
+                // SAFETY: `SendQueue::new` returns a non-null owned ref.
+                data: unsafe { core::ptr::NonNull::new_unchecked(send_queue) },
             });
-            // PROVENANCE: `from_fd` STORES the `*mut SendQueue` in the socket
-            // ext slot for the socket's lifetime, so that pointer must derive
-            // from the root raw `instance` (SharedReadWrite tag, never popped),
-            // NOT from a `&mut IPCInstance` reborrow whose Unique tag would be
-            // invalidated by later writes through `instance`. Per-use raw deref
-            // also avoids holding a live `&mut` across `deinit` on the failure
-            // branch.
-            // SAFETY: `instance` was just boxed by `IPCInstance::new`.
-            unsafe { (*instance).data.owner = instance as *mut dyn crate::ipc::SendQueueOwner };
+            // SAFETY: `send_queue` is the live SendQueue just allocated;
+            // `instance` was just boxed.
+            unsafe {
+                (*send_queue).set_owner(crate::ipc::SendQueueOwner::Instance(
+                    core::ptr::NonNull::new_unchecked(instance),
+                ))
+            };
 
             self.ipc = Some(IPCInstanceUnion::Initialized(instance));
 
-            // SAFETY: `group` is the live per-VM SocketGroup; `instance.data`
-            // is the freshly-initialized SendQueue stored inline in `*instance`.
+            // SAFETY: `group` is the live per-VM SocketGroup; `send_queue` is
+            // the freshly-allocated SendQueue (root raw pointer, stored in the
+            // socket ext slot for the socket's lifetime).
             let socket = unsafe {
                 crate::ipc::Socket::from_fd::<crate::ipc::SendQueue>(
                     &mut *group,
                     uws::SocketKind::SpawnIpc,
                     fd,
-                    core::ptr::addr_of_mut!((*instance).data),
+                    send_queue,
                     true,
                 )
             };
@@ -6541,45 +6537,47 @@ impl VirtualMachine {
             };
             socket.set_timeout(0);
 
-            // SAFETY: `instance` is the live boxed IPCInstance.
-            unsafe { (*instance).data.socket = crate::ipc::SocketUnion::Open(socket) };
+            // SAFETY: `send_queue` is live (owned by `instance`).
+            unsafe {
+                (*send_queue)
+                    .socket
+                    .set(crate::ipc::SocketUnion::Open(socket))
+            };
 
             instance
         };
 
         #[cfg(windows)]
         let instance: *mut IPCInstance = {
+            // Allocate the SendQueue first; its owner backref is patched once
+            // the IPCInstance box address is fixed.
+            let send_queue = crate::ipc::SendQueue::new(
+                mode,
+                // Patched below once the IPCInstance box address is fixed.
+                None,
+                crate::ipc::SocketUnion::Uninitialized,
+            );
             let instance = IPCInstance::new(IPCInstance {
                 global_this: self.global,
-                data: crate::ipc::SendQueue::init(
-                    mode,
-                    // Patched below once the box address is fixed.
-                    core::ptr::null_mut::<IPCInstance>() as *mut dyn crate::ipc::SendQueueOwner,
-                    crate::ipc::SocketUnion::Uninitialized,
-                ),
+                // SAFETY: `SendQueue::new` returns a non-null owned ref.
+                data: unsafe { core::ptr::NonNull::new_unchecked(send_queue) },
             });
-            // Per-use raw deref — do NOT bind a `&mut IPCInstance` here: it
-            // would remain live across `deinit(instance)` on the failure
-            // branch (live `&mut T` to freed memory violates the validity
-            // invariant even if never dereferenced).
-            // SAFETY: `instance` was just boxed by `IPCInstance::new`.
-            unsafe { (*instance).data.owner = instance as *mut dyn crate::ipc::SendQueueOwner };
+            // SAFETY: `send_queue` is the live SendQueue just allocated;
+            // `instance` was just boxed.
+            unsafe {
+                (*send_queue).set_owner(crate::ipc::SendQueueOwner::Instance(
+                    core::ptr::NonNull::new_unchecked(instance),
+                ))
+            };
 
             self.ipc = Some(IPCInstanceUnion::Initialized(instance));
 
-            // PROVENANCE: `windows_configure_client` STORES the `*mut SendQueue`
-            // in `uv_handle_t.data` for the pipe's lifetime, so that pointer
-            // must derive from the root raw `instance` (SharedReadWrite tag,
-            // never popped), NOT from a `&mut SendQueue` auto-ref whose Unique
-            // tag would be invalidated by `(*instance).data.write_version_packet`
-            // below — every later libuv read callback would then deref a popped
-            // pointer (UB under Stacked Borrows). Mirror the POSIX branch's
-            // `addr_of_mut!` treatment.
-            // SAFETY: `instance` is the live boxed IPCInstance.
-            let data_ptr = unsafe { core::ptr::addr_of_mut!((*instance).data) };
-            // SAFETY: `data_ptr` points at the freshly-initialized SendQueue
-            // stored inline in `*instance`; no other live `&mut` aliases it.
-            if let Err(_) = unsafe { crate::ipc::SendQueue::windows_configure_client(data_ptr, fd) }
+            // `windows_configure_client` STORES the `*mut SendQueue` in
+            // `uv_handle_t.data` for the pipe's lifetime; `send_queue` is the
+            // allocation's root raw pointer.
+            // SAFETY: `send_queue` is the live SendQueue owned by `instance`.
+            if let Err(_) =
+                unsafe { crate::ipc::SendQueue::windows_configure_client(send_queue, fd) }
             {
                 // SAFETY: `instance` was produced by `IPCInstance::new`
                 // (heap::alloc) above and is not yet aliased.
@@ -6593,7 +6591,7 @@ impl VirtualMachine {
         };
 
         // SAFETY: `instance` is the live boxed IPCInstance.
-        unsafe { (*instance).data.write_version_packet(self.global()) };
+        unsafe { (*instance).data().write_version_packet(self.global()) };
 
         Some(instance)
     }

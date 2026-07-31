@@ -719,23 +719,23 @@ impl VHandler for SpawnIPC {
 
     fn on_open(_ext: &mut Self::Ext, _s: *mut us_socket_t, _is_client: bool, _ip: &[u8]) {}
     fn on_data(ext: &mut Self::Ext, s: *mut us_socket_t, data: &[u8]) {
-        let Some(this) = ext.owner_mut() else { return };
+        let Some(this) = ext.owner_ref() else { return };
         IpcH::on_data(this, IpcS::from(s), data);
     }
     fn on_fd(ext: &mut Self::Ext, s: *mut us_socket_t, fd: c_int) {
-        let Some(this) = ext.owner_mut() else { return };
+        let Some(this) = ext.owner_ref() else { return };
         IpcH::on_fd(this, IpcS::from(s), fd);
     }
     fn on_writable(ext: &mut Self::Ext, s: *mut us_socket_t) {
-        let Some(this) = ext.owner_mut() else { return };
+        let Some(this) = ext.owner_ref() else { return };
         IpcH::on_writable(this, IpcS::from(s));
     }
     fn on_close(ext: &mut Self::Ext, s: *mut us_socket_t, code: i32, reason: Option<*mut c_void>) {
-        let Some(this) = ext.owner_mut() else { return };
+        let Some(this) = ext.owner_ref() else { return };
         IpcH::on_close(this, IpcS::from(s), code, reason);
     }
     fn on_timeout(ext: &mut Self::Ext, s: *mut us_socket_t) {
-        let Some(this) = ext.owner_mut() else { return };
+        let Some(this) = ext.owner_ref() else { return };
         IpcH::on_timeout(this, IpcS::from(s));
     }
     fn on_end(ext: &mut Self::Ext, s: *mut us_socket_t) {

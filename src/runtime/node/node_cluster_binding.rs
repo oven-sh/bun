@@ -106,7 +106,7 @@ pub(crate) fn send_helper_child(global: &JSGlobalObject, frame: &CallFrame) -> J
         Ok(JSValue::UNDEFINED)
     }
 
-    let good = ipc_instance.data.serialize_and_send(
+    let good = ipc_instance.data().serialize_and_send(
         global,
         message,
         IsInternal::Internal,
@@ -228,20 +228,19 @@ pub(crate) fn send_helper_primary(global: &JSGlobalObject, frame: &CallFrame) ->
         }
     };
 
-    if callback.is_function() {
-        let _ = ipc_data.internal_msg_queue.callbacks.put(
-            ipc_data.internal_msg_queue.seq,
-            StrongOptional::create(callback, global),
-        );
-    }
+    let seq = ipc_data.internal_msg_queue.with_mut(|q| {
+        if callback.is_function() {
+            let _ = q
+                .callbacks
+                .put(q.seq, StrongOptional::create(callback, global));
+        }
+        let seq = q.seq;
+        q.seq = q.seq.wrapping_add(1);
+        seq
+    });
 
     // sequence number for InternalMsgHolder
-    message.put(
-        global,
-        b"seq",
-        JSValue::js_number(ipc_data.internal_msg_queue.seq as f64),
-    );
-    ipc_data.internal_msg_queue.seq = ipc_data.internal_msg_queue.seq.wrapping_add(1);
+    message.put(global, b"seq", JSValue::js_number(seq as f64));
 
     // similar code as bun.jsc.Subprocess.doSend
     #[cfg(debug_assertions)]
@@ -279,8 +278,10 @@ pub(crate) fn on_internal_message_primary(
         return Ok(JSValue::UNDEFINED);
     };
     // TODO: remove these strongs.
-    ipc_data.internal_msg_queue.worker = StrongOptional::create(arguments[1], global);
-    ipc_data.internal_msg_queue.cb = StrongOptional::create(arguments[2], global);
+    ipc_data.internal_msg_queue.with_mut(|q| {
+        q.worker = StrongOptional::create(arguments[1], global);
+        q.cb = StrongOptional::create(arguments[2], global);
+    });
     Ok(JSValue::UNDEFINED)
 }
 
@@ -293,7 +294,7 @@ pub(crate) fn handle_internal_message_primary(
         return Ok(());
     };
 
-    if !ipc_data.internal_msg_queue.is_ready() {
+    if !ipc_data.internal_msg_queue.get().is_ready() {
         return Ok(());
     }
 
@@ -303,20 +304,21 @@ pub(crate) fn handle_internal_message_primary(
     if let Some(p) = message.get(global, "ack")? {
         if !p.is_undefined() {
             let ack = p.to_int32();
-            // Peek the JSValue first (ending the immutable borrow), then
-            // swap_remove (which drops the Strong).
-            let entry = ipc_data
-                .internal_msg_queue
-                .callbacks
-                .get(&ack)
-                .map(|s| s.get());
-            if let Some(callback_opt) = entry {
-                ipc_data.internal_msg_queue.callbacks.swap_remove(&ack);
+            // Take the acked callback out of the holder (dropping the Strong)
+            // before running JS.
+            let entry = ipc_data.internal_msg_queue.with_mut(|q| {
+                let entry = q.callbacks.get(&ack).map(|s| s.get());
+                if entry.is_some() {
+                    q.callbacks.swap_remove(&ack);
+                }
+                entry.map(|cb| (cb, q.worker.get().unwrap()))
+            });
+            if let Some((callback_opt, worker)) = entry {
                 let cb = callback_opt.unwrap();
                 event_loop.run_callback(
                     cb,
                     global,
-                    ipc_data.internal_msg_queue.worker.get().unwrap(),
+                    worker,
                     &[
                         message,
                         JSValue::NULL, // handle
@@ -326,11 +328,14 @@ pub(crate) fn handle_internal_message_primary(
             }
         }
     }
-    let cb = ipc_data.internal_msg_queue.cb.get().unwrap();
+    let (cb, worker) = {
+        let q = ipc_data.internal_msg_queue.get();
+        (q.cb.get().unwrap(), q.worker.get().unwrap())
+    };
     event_loop.run_callback(
         cb,
         global,
-        ipc_data.internal_msg_queue.worker.get().unwrap(),
+        worker,
         &[
             message,
             JSValue::NULL, // handle

@@ -665,6 +665,16 @@ pub struct UpdateTargetWorkspace {
     pub name: Box<[u8]>,
 }
 
+impl UpdateTargetWorkspace {
+    /// Root is unique, so `is_root` alone identifies it; members match by hash then name.
+    pub fn matches(&self, is_root: bool, name_hash: PackageNameHash, name: &[u8]) -> bool {
+        if self.is_root || is_root {
+            return self.is_root && is_root;
+        }
+        self.name_hash == name_hash && &*self.name == name
+    }
+}
+
 #[derive(Default)]
 pub enum TrackInstalledBin {
     #[default]

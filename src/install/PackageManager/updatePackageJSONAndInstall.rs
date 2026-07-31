@@ -975,10 +975,7 @@ fn write_resolved_versions_to_targets(
         };
         let hash = pkg_name_hashes[pkg_id];
         let name = pkg_names[pkg_id].slice(manager.lockfile.buffers.string_bytes.as_slice());
-        if !targets
-            .iter()
-            .any(|t| t.is_root == is_root && t.name_hash == hash && &*t.name == name)
-        {
+        if !targets.iter().any(|t| t.matches(is_root, hash, name)) {
             continue;
         }
         let mut path_buf = PathBuffer::uninit();

@@ -878,9 +878,7 @@ impl Lockfile {
         let hash = self.packages.items_name_hash()[pkg_id as usize];
         let name =
             self.packages.items_name()[pkg_id as usize].slice(self.buffers.string_bytes.as_slice());
-        targets
-            .iter()
-            .any(|t| t.is_root == is_root && t.name_hash == hash && &*t.name == name)
+        targets.iter().any(|t| t.matches(is_root, hash, name))
     }
 
     /// Is this a direct dependency of any workspace (including workspace root)?

@@ -329,6 +329,11 @@ pub(crate) const MAX_H2_RETRIES: u8 = 5;
 
 const PREALLOCATE_MAX: usize = 1024 * 1024 * 256;
 
+/// `state.decoded_body` is re-seated (cleared) after the progress callback
+/// only if its capacity is at or below this; larger scratch buffers are
+/// dropped so the per-connection high-water mark stays bounded.
+const DECODED_BODY_RETAIN_CAP: usize = 512 * 1024;
+
 /// Whether the experimental Alt-Svc-driven HTTP/3 upgrade is enabled at all
 /// (CLI flag or env var). Used on its own to gate `H3.AltSvc.record` — a
 /// response that arrived over a request shape h3 can't serve (proxy, sendfile,
@@ -4189,7 +4194,7 @@ impl<'a> HTTPClient<'a> {
         callback.run(parent, result);
 
         if has_more {
-            if decoded_body.list.capacity() <= 512 * 1024 {
+            if decoded_body.list.capacity() <= DECODED_BODY_RETAIN_CAP {
                 decoded_body.list.clear();
                 self.state.decoded_body = decoded_body;
             }
@@ -4231,7 +4236,7 @@ impl<'a> HTTPClient<'a> {
         let parent = self.parent_async_http();
         result.body = decoded_body.list.as_slice();
         callback.run(parent, result);
-        if !is_done && decoded_body.list.capacity() <= 512 * 1024 {
+        if !is_done && decoded_body.list.capacity() <= DECODED_BODY_RETAIN_CAP {
             decoded_body.list.clear();
             self.state.decoded_body = decoded_body;
         }

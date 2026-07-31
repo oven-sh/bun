@@ -5,6 +5,7 @@ import {
   bunEnv,
   bunExe,
   dumpStats,
+  emptyProcessMaxRSS,
   isASAN,
   isBroken,
   isDebug,
@@ -12,6 +13,7 @@ import {
   isIPv4,
   isIPv6,
   isPosix,
+  runFixtureMaxRSS,
   tempDir,
   tls,
   tmpdirSync,
@@ -26,27 +28,6 @@ import net from "node:net";
 import { networkInterfaces } from "node:os";
 import nodeTls from "node:tls";
 import { tmpdir } from "os";
-
-// Peak RSS of a bun process that runs `fixture`, whose only stdout line is
-// the JSON `expected` (the transfer's completion result), and the peak RSS of
-// an empty bun process to subtract as the baseline. Compared as a delta so
-// the assertion is about the payload, not the runtime's fixed footprint.
-async function runFixtureMaxRSS(fixture: string, expected: unknown) {
-  await using proc = Bun.spawn({ cmd: [bunExe(), "-e", fixture], env: bunEnv, stdout: "pipe", stderr: "pipe" });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stderr).toBe("");
-  expect(JSON.parse(stdout.trim())).toEqual(expected);
-  expect(exitCode).toBe(0);
-  return proc.resourceUsage()!.maxRSS;
-}
-let emptyBunMaxRSS: Promise<number> | undefined;
-function emptyProcessMaxRSS() {
-  return (emptyBunMaxRSS ??= (async () => {
-    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", ""], env: bunEnv });
-    await proc.exited;
-    return proc.resourceUsage()!.maxRSS;
-  })());
-}
 
 let renderToReadableStream: any = null;
 let app_jsx: any = null;

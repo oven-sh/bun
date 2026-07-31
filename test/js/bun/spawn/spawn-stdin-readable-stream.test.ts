@@ -1,28 +1,16 @@
 import { spawn } from "bun";
 import { fileSinkInternals } from "bun:internal-for-testing";
 import { describe, expect, mock, test } from "bun:test";
-import { bunEnv, bunExe, expectMaxObjectTypeCount, isASAN, isDebug, isWindows } from "harness";
-
-// Peak RSS of a bun process that runs `fixture`, whose only stdout line is
-// the JSON `expected` (the transfer's completion result), and the peak RSS of
-// an empty bun process to subtract as the baseline. Compared as a delta so
-// the assertion is about the payload, not the runtime's fixed footprint.
-async function runFixtureMaxRSS(fixture: string, expected: unknown) {
-  await using proc = spawn({ cmd: [bunExe(), "-e", fixture], env: bunEnv, stdout: "pipe", stderr: "pipe" });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stderr).toBe("");
-  expect(JSON.parse(stdout.trim())).toEqual(expected);
-  expect(exitCode).toBe(0);
-  return proc.resourceUsage()!.maxRSS;
-}
-let emptyBunMaxRSS: Promise<number> | undefined;
-function emptyProcessMaxRSS() {
-  return (emptyBunMaxRSS ??= (async () => {
-    await using proc = spawn({ cmd: [bunExe(), "-e", ""], env: bunEnv });
-    await proc.exited;
-    return proc.resourceUsage()!.maxRSS;
-  })());
-}
+import {
+  bunEnv,
+  bunExe,
+  emptyProcessMaxRSS,
+  expectMaxObjectTypeCount,
+  isASAN,
+  isDebug,
+  isWindows,
+  runFixtureMaxRSS,
+} from "harness";
 
 describe("spawn stdin ReadableStream", () => {
   test("basic ReadableStream as stdin", async () => {

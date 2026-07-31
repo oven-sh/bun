@@ -675,5 +675,6 @@ test.concurrent("redis.set reads a Buffer key only after every later argument ha
 
   expect(stderr).toBe("");
   expect(JSON.parse(stdout.trim())).toEqual({ detached: true, keyLen: 0 });
+  expect(proc.signalCode).toBeNull();
   expect(exitCode).toBe(0);
 });

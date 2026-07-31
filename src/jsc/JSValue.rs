@@ -930,14 +930,6 @@ impl JSValue {
         }
         self.as_array_buffer(global)
     }
-    /// Pin the backing `JSC::ArrayBuffer` of this value so it cannot be
-    /// detached; see [`as_pinned_arraybuffer`]. Returns `false` if the value
-    /// has no backing `ArrayBuffer` impl. Release with
-    /// [`JSValue::unpin_array_buffer`].
-    #[inline]
-    pub fn pin_array_buffer(self) -> bool {
-        JSC__JSValue__pinArrayBuffer(self)
-    }
     /// Generic downcast. Dispatches via [`JsClass::from_js`].
     #[inline]
     pub fn as_<T: JsClass>(self) -> Option<*mut T> {

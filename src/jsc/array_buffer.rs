@@ -136,14 +136,14 @@ unsafe extern "C" {
     safe fn JSC__ArrayBuffer__deref(self_: &JSCArrayBuffer);
     // safe: by-value `JSValue`; no-op for non-buffer values.
     safe fn JSC__JSValue__unpinArrayBuffer(v: JSValue);
-    // safe: by-value `JSValue` known (by caller) to be a buffer-type cell;
-    // `&mut *mut u8` / `&mut usize` are ABI-identical to non-null out-params
-    // the callee fills unconditionally.
-    safe fn JSC__JSValue__arrayBufferLiveBytes(
+    // safe: by-value `JSValue`; `&mut *mut u8` / `&mut usize` are
+    // ABI-identical to non-null out-params the callee fills unconditionally.
+    safe fn JSC__JSValue__pinAndReadArrayBufferBytes(
         v: JSValue,
+        force_pin: bool,
         out_ptr: &mut *mut u8,
         out_byte_len: &mut usize,
-    );
+    ) -> bool;
 }
 
 impl JSValue {
@@ -834,6 +834,8 @@ pub struct MarkedArrayBuffer {
     buffer: Cell<ArrayBuffer>,
     owns_buffer: Cell<bool>,
     pinned: Cell<bool>,
+    /// [`bytes`] has run; `buffer.ptr`/`byte_len` hold the post-coercion read.
+    settled: Cell<bool>,
 }
 
 impl MarkedArrayBuffer {
@@ -843,6 +845,7 @@ impl MarkedArrayBuffer {
             buffer: Cell::new(buffer),
             owns_buffer: Cell::new(owns_buffer),
             pinned: Cell::new(pinned),
+            settled: Cell::new(owns_buffer || pinned),
         }
     }
 
@@ -896,11 +899,11 @@ impl MarkedArrayBuffer {
     }
 
     pub fn from_js(global: &JSGlobalObject, value: JSValue) -> Option<MarkedArrayBuffer> {
-        Some(Self::new(value.as_array_buffer(global)?, false, false))
+        Some(Self::from_unpinned(value.as_array_buffer(global)?))
     }
 
     pub fn from_js_pinned(global: &JSGlobalObject, value: JSValue) -> Option<MarkedArrayBuffer> {
-        Some(Self::new(value.as_pinned_arraybuffer(global)?, false, true))
+        Some(Self::from_pinned(value.as_pinned_arraybuffer(global)?))
     }
 
     pub fn from_bytes(bytes: &mut [u8], typed_array_type: JSType) -> MarkedArrayBuffer {
@@ -945,11 +948,13 @@ impl MarkedArrayBuffer {
         }
     }
 
-    /// Pin-and-snapshot via [`bytes`] then `protect()` the JS value for a
-    /// threadpool hand-off. Paired with [`unprotect`].
+    /// Pin-and-snapshot then `protect()` the JS value for a threadpool
+    /// hand-off. A FastTypedArray (which [`bytes`] leaves unpinned) is
+    /// promoted to a real `ArrayBuffer` here so its storage cannot move under
+    /// a worker thread. Paired with [`unprotect`].
     #[inline]
     pub fn to_thread_safe(&self) {
-        self.bytes();
+        self.bytes_::<true>();
         self.value().protect();
     }
 
@@ -963,22 +968,27 @@ impl MarkedArrayBuffer {
     /// Pin the backing `JSC::ArrayBuffer`, read its `vector()`/`byteLength()`
     /// once, and cache the result; subsequent calls return the cache. For a
     /// Rust-owned or already-pinned buffer this returns the existing
-    /// snapshot. A detached buffer pins nothing and yields `(null, 0)`.
+    /// snapshot. A FastTypedArray has no backing `ArrayBuffer` to detach so it
+    /// is not pinned; a detached buffer yields `(null, 0)`.
     ///
     /// Must run on the JS thread for the first call on a JS-backed buffer;
     /// callers that hand the buffer to a threadpool must call this (directly
     /// or via [`slice`]) before the hand-off.
     pub fn bytes(&self) -> (*mut u8, usize) {
+        self.bytes_::<false>()
+    }
+
+    fn bytes_<const FORCE_PIN: bool>(&self) -> (*mut u8, usize) {
         let mut ab = self.buffer.get();
-        if self.pinned.get() || self.owns_buffer.get() || ab.value.is_empty() {
+        if (self.settled.get() && (!FORCE_PIN || self.pinned.get())) || ab.value.is_empty() {
             return (ab.ptr, ab.byte_len);
-        }
-        if ab.value.pin_array_buffer() {
-            self.pinned.set(true);
         }
         let mut ptr: *mut u8 = core::ptr::null_mut();
         let mut len: usize = 0;
-        JSC__JSValue__arrayBufferLiveBytes(ab.value, &mut ptr, &mut len);
+        self.pinned.set(JSC__JSValue__pinAndReadArrayBufferBytes(
+            ab.value, FORCE_PIN, &mut ptr, &mut len,
+        ));
+        self.settled.set(true);
         ab.ptr = ptr;
         ab.byte_len = len;
         self.buffer.set(ab);

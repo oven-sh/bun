@@ -1381,6 +1381,13 @@ impl<'a> SpawnArgs<'a> {
             self.path = b"";
         }
 
+        // `export_env` then `cmd_local_env` can both carry the same key
+        // (`FOO=bar cmd` with FOO already exported); getenv returns the first
+        // match, so replace an existing entry instead of appending. A single
+        // `EnvMap` iterator yields unique keys, so only entries from an
+        // earlier `fill_env` call need scanning.
+        let scan_end = self.env_array.len();
+
         while let Some(entry) = env_iter.next() {
             let key = entry.key_ptr.slice();
             let value = entry.value_ptr.slice();
@@ -1403,15 +1410,10 @@ impl<'a> SpawnArgs<'a> {
                 self.path = &line[b"PATH=".len()..len];
             }
 
-            // A var can arrive twice, once from `export_env` and again from
-            // `cmd_local_env` (`FOO=bar cmd` with FOO inherited or exported).
-            // POSIX tolerates duplicate environ entries but getenv returns the
-            // first match, so appending would make the child see the stale
-            // value. Replace the existing entry instead.
             let line_ptr = line.as_ptr().cast::<c_char>();
-            let existing = self.env_array.iter().position(|&p| {
+            let existing = self.env_array[..scan_end].iter().position(|&p| {
                 // SAFETY: every entry is a NUL-terminated `key=value` line
-                // pushed by `fill_env` (this call or an earlier one).
+                // pushed by an earlier `fill_env` call.
                 let e = unsafe { core::ffi::CStr::from_ptr(p).to_bytes() };
                 e.len() > key.len()
                     && e[key.len()] == b'='

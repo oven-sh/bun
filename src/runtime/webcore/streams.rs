@@ -857,6 +857,81 @@ mod sink_abi {
     crate::decl_js_sink_externs!("FetchRequestBodySink" as fetch_request_body);
 }
 
+/// Static-dispatch signal set for a [`SourceHandle`] pointee. `SourceHandle`'s
+/// match arms call these as `UpstreamSource::on_*(ptr)`; defaults are no-ops so
+/// implementors override only the signals they actually handle. Methods take
+/// `*mut Self` because the callee may free the allocation (e.g. `Subprocess` on
+/// close), so forming `&mut` at the boundary would violate provenance.
+pub trait UpstreamSource {
+    #[inline]
+    fn on_ready(_this: *mut Self) {}
+    #[inline]
+    fn on_close(_this: *mut Self, _err: Option<SysError>) {}
+    #[inline]
+    fn on_start(_this: *mut Self) {}
+}
+
+impl UpstreamSource for crate::webcore::ByteStream {
+    #[inline]
+    fn on_ready(this: *mut Self) {
+        unsafe { (*this).resume() };
+    }
+    #[inline]
+    fn on_close(this: *mut Self, err: Option<SysError>) {
+        unsafe { (*this).cancel_from_sink(err) };
+    }
+}
+
+impl UpstreamSource for crate::webcore::FileReader {
+    #[inline]
+    fn on_ready(this: *mut Self) {
+        unsafe { (*this).pull_into_sink() };
+    }
+    #[inline]
+    fn on_close(this: *mut Self, _err: Option<SysError>) {
+        unsafe {
+            (*this).unpipe_without_deref();
+            (*this).on_cancel();
+        }
+    }
+}
+
+impl UpstreamSource for crate::api::bun::subprocess::Subprocess<'static> {
+    #[inline]
+    fn on_close(this: *mut Self, err: Option<SysError>) {
+        unsafe { crate::api::bun::subprocess::Writable::on_close(&*this, err) };
+    }
+}
+
+impl UpstreamSource for crate::shell::subproc::Writable {
+    #[inline]
+    fn on_close(this: *mut Self, err: Option<SysError>) {
+        unsafe { (*this).on_close(err) };
+    }
+}
+
+impl UpstreamSource for crate::webcore::fetch::fetch_tasklet::FetchTasklet {
+    #[inline]
+    fn on_ready(this: *mut Self) {
+        Self::on_stream_drained(this);
+    }
+    #[inline]
+    fn on_close(this: *mut Self, _err: Option<SysError>) {
+        Self::on_stream_cancelled(this);
+    }
+    #[inline]
+    fn on_start(this: *mut Self) {
+        Self::on_consumer_attached(this);
+    }
+}
+
+impl UpstreamSource for crate::webcore::s3::client::S3DownloadStreamWrapper {
+    #[inline]
+    fn on_close(this: *mut Self, _err: Option<SysError>) {
+        Self::on_stream_cancelled(this);
+    }
+}
+
 /// Tagged handle a sink holds to its upstream source — a closed set of
 /// variants so native source↔sink pairs can pump without a JS round-trip.
 #[derive(Copy, Clone, Default)]
@@ -950,36 +1025,13 @@ impl SourceHandle {
                     Self::js_controller_on_close(kind, cpp, JSValue::UNDEFINED)
                 });
             }
-            SourceHandle::ByteStream(ptr) => {
-                // SAFETY: `ptr` was stored as a live `*mut ByteStream` and is
-                // cleared before the ByteStream is freed.
-                unsafe { (*ptr).cancel_from_sink(err) };
-            }
-            SourceHandle::FileReader(ptr) => {
-                // SAFETY: `ptr` was stored as a live `*mut FileReader` and is
-                // cleared before the FileReader is freed.
-                unsafe {
-                    (*ptr).unpipe_without_deref();
-                    (*ptr).on_cancel();
-                }
-            }
-            SourceHandle::Subprocess(ptr) => {
-                // SAFETY: `ptr` is the boxed `*mut Subprocess` registered at
-                // spawn time; it outlives the FileSink that holds this handle.
-                unsafe { crate::api::bun::subprocess::Writable::on_close(&*ptr, err) };
-            }
-            SourceHandle::ShellWritable(ptr) => {
-                // SAFETY: `ptr` is the `*mut shell::subproc::Writable` stdin
-                // registered at spawn time; it outlives this handle.
-                unsafe { crate::shell::subproc::Writable::on_close(&mut *ptr, err) };
-            }
-            SourceHandle::FetchResponseBody(ptr) => {
-                crate::webcore::fetch::fetch_tasklet::FetchTasklet::on_stream_cancelled(ptr);
-            }
+            SourceHandle::ByteStream(p) => UpstreamSource::on_close(p, err),
+            SourceHandle::FileReader(p) => UpstreamSource::on_close(p, err),
+            SourceHandle::Subprocess(p) => UpstreamSource::on_close(p, err),
+            SourceHandle::ShellWritable(p) => UpstreamSource::on_close(p, err),
+            SourceHandle::FetchResponseBody(p) => UpstreamSource::on_close(p, err),
+            SourceHandle::S3DownloadBody(p) => UpstreamSource::on_close(p, err),
             SourceHandle::ServerRequestBody(_) => {}
-            SourceHandle::S3DownloadBody(ptr) => {
-                crate::webcore::s3::client::S3DownloadStreamWrapper::on_stream_cancelled(ptr);
-            }
         }
     }
 
@@ -996,40 +1048,27 @@ impl SourceHandle {
                     Self::js_controller_on_ready(kind, cpp, JSValue::UNDEFINED, JSValue::UNDEFINED)
                 });
             }
-            SourceHandle::ByteStream(ptr) => {
-                // SAFETY: `ptr` was stored as a live `*mut ByteStream` and is
-                // cleared before the ByteStream is freed.
-                unsafe { (*ptr).resume() };
-            }
-            SourceHandle::FileReader(ptr) => {
-                // SAFETY: `ptr` was stored as a live `*mut FileReader` and is
-                // cleared before the FileReader is freed.
-                unsafe { (*ptr).pull_into_sink() };
-            }
-            SourceHandle::Subprocess(_) | SourceHandle::ShellWritable(_) => {}
-            SourceHandle::FetchResponseBody(ptr) => {
-                crate::webcore::fetch::fetch_tasklet::FetchTasklet::on_stream_drained(ptr);
-            }
-            SourceHandle::ServerRequestBody(any) => {
-                any.on_request_body_stream_drained();
-            }
-            SourceHandle::S3DownloadBody(_) => {}
+            SourceHandle::ByteStream(p) => UpstreamSource::on_ready(p),
+            SourceHandle::FileReader(p) => UpstreamSource::on_ready(p),
+            SourceHandle::Subprocess(p) => UpstreamSource::on_ready(p),
+            SourceHandle::ShellWritable(p) => UpstreamSource::on_ready(p),
+            SourceHandle::FetchResponseBody(p) => UpstreamSource::on_ready(p),
+            SourceHandle::S3DownloadBody(p) => UpstreamSource::on_ready(p),
+            SourceHandle::ServerRequestBody(any) => any.on_request_body_stream_drained(),
         }
     }
 
     pub fn start(&mut self) {
         match *self {
-            SourceHandle::FetchResponseBody(ptr) => {
-                crate::webcore::fetch::fetch_tasklet::FetchTasklet::on_consumer_attached(ptr);
-            }
             SourceHandle::None
             | SourceHandle::JSController { .. }
-            | SourceHandle::ByteStream(_)
-            | SourceHandle::FileReader(_)
-            | SourceHandle::Subprocess(_)
-            | SourceHandle::ShellWritable(_)
-            | SourceHandle::ServerRequestBody(_)
-            | SourceHandle::S3DownloadBody(_) => {}
+            | SourceHandle::ServerRequestBody(_) => {}
+            SourceHandle::ByteStream(p) => UpstreamSource::on_start(p),
+            SourceHandle::FileReader(p) => UpstreamSource::on_start(p),
+            SourceHandle::Subprocess(p) => UpstreamSource::on_start(p),
+            SourceHandle::ShellWritable(p) => UpstreamSource::on_start(p),
+            SourceHandle::FetchResponseBody(p) => UpstreamSource::on_start(p),
+            SourceHandle::S3DownloadBody(p) => UpstreamSource::on_start(p),
         }
     }
 }

@@ -222,7 +222,14 @@ impl PathWatcher {
             this.emit_in_progress = true;
 
             for &ctx in this.handlers.keys() {
-                on_path_update_fn(Some(ctx), Event::Error(err.clone()), false);
+                on_path_update_fn(
+                    Some(ctx),
+                    Event::Error {
+                        err: err.clone(),
+                        close: true,
+                    },
+                    false,
+                );
                 on_update_end_fn(Some(ctx));
             }
 

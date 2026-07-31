@@ -421,6 +421,18 @@ export const isMemoryPressureWatcherInstalled: () => boolean = $newCppFunction(
   0,
 );
 
+export const memoryPressureWatcherHasOsBackend: () => boolean = $newCppFunction(
+  "InternalForTesting.cpp",
+  "jsFunction_memoryPressureWatcherHasOsBackend",
+  0,
+);
+
+export const memoryPressurePsiTrigger: () => Buffer | null = $newCppFunction(
+  "InternalForTesting.cpp",
+  "jsFunction_memoryPressurePsiTrigger",
+  0,
+);
+
 export const getEventLoopStats: () => { activeTasks: number; concurrentRef: number; numPolls: number } =
   $newRustFunction("event_loop.rs", "getActiveTasks", 0);
 

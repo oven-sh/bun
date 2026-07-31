@@ -133,15 +133,17 @@ mod posix {
         None
     }
 
+    /// 150 ms of "some"-stall in any 2 s window (the minimum for
+    /// unprivileged PSI triggers, kernel 6.6+). `psi_write()` NUL-terminates
+    /// in place over the last byte written, so the NUL must be included.
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    pub(super) const PSI_TRIGGER: &[u8] = b"some 150000 2000000\0";
+
     /// Open a PSI memory file and write a trigger. Tries the system-wide
     /// `/proc/pressure/memory` first, then the current cgroup's file.
     #[cfg(any(target_os = "linux", target_os = "android"))]
     fn open_psi_fd() -> Option<Fd> {
         use bun_sys::O;
-
-        /// 150 ms of "some"-stall in any 2 s window. 2 s is the minimum
-        /// window for unprivileged PSI triggers (kernel 6.6+).
-        const TRIGGER: &[u8] = b"some 150000 2000000";
 
         let mut cgroup_buf = [0u8; 320];
         let paths = [
@@ -152,7 +154,7 @@ mod posix {
             let Ok(fd) = bun_sys::open(path, O::RDWR | O::NONBLOCK | O::CLOEXEC, 0) else {
                 continue;
             };
-            if bun_sys::write(fd, TRIGGER).is_ok() {
+            if bun_sys::write(fd, PSI_TRIGGER).is_ok() {
                 return Some(fd);
             }
             let _ = bun_sys::close(fd);
@@ -204,6 +206,16 @@ mod posix {
             poll: register_os_watch(global),
         });
         *slot(global.bun_vm().as_mut()) = NonNull::new(bun_core::heap::into_raw(watcher).cast());
+    }
+
+    pub(super) fn has_os_backend(global: &JSGlobalObject) -> bool {
+        match slot(global.bun_vm().as_mut()) {
+            // SAFETY: slot is populated only by `install` with a `Box<MemoryPressureWatcher>`.
+            Some(raw) => unsafe { raw.cast::<MemoryPressureWatcher>().as_ref() }
+                .poll
+                .is_some(),
+            None => false,
+        }
     }
 
     pub(super) fn uninstall(global: &JSGlobalObject) {
@@ -402,6 +414,38 @@ pub(crate) extern "C" fn Bun__MemoryPressure__uninstall(global: &JSGlobalObject)
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn Bun__MemoryPressure__emit(global: &JSGlobalObject, lvl: i32) {
     emit(global, lvl);
+}
+
+/// Whether the installed watcher actually registered an OS-level signal
+/// source (PSI trigger / kqueue filter / notification thread), as opposed to
+/// the silent no-backend fallback. Windows installs are all-or-nothing.
+#[unsafe(no_mangle)]
+pub(crate) extern "C" fn Bun__MemoryPressure__hasOsBackend(global: &JSGlobalObject) -> bool {
+    #[cfg(not(windows))]
+    {
+        posix::has_os_backend(global)
+    }
+    #[cfg(windows)]
+    {
+        Bun__MemoryPressure__isInstalled(global)
+    }
+}
+
+/// The exact bytes `open_psi_fd()` writes to arm the Linux PSI trigger, for
+/// test environments that can't open `/proc/pressure/memory` (containers
+/// without `CAP_SYS_RESOURCE`, AppArmor `docker-default`). Null on non-Linux.
+#[unsafe(no_mangle)]
+pub(crate) extern "C" fn Bun__MemoryPressure__psiTrigger(len: &mut usize) -> *const u8 {
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    {
+        *len = posix::PSI_TRIGGER.len();
+        posix::PSI_TRIGGER.as_ptr()
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "android")))]
+    {
+        *len = 0;
+        core::ptr::null()
+    }
 }
 
 #[unsafe(no_mangle)]

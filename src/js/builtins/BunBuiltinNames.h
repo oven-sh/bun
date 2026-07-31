@@ -174,7 +174,6 @@ using namespace JSC;
     macro(sameSite) \
     macro(secure) \
     macro(self) \
-    macro(setHandlers) \
     macro(signal) \
     macro(size) \
     macro(specifier) \

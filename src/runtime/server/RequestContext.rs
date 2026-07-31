@@ -375,7 +375,7 @@ mod shim {
         // `self.byte_stream`; the allocation is kept alive by
         // `response_body_readable_stream_ref` (BackRef invariant: pointee
         // outlives this temporary). R-2: `unpipe_without_deref` takes `&self`
-        // (interior-mutable `JsCell<Pipe>`), so shared deref is sufficient.
+        // (interior-mutable `JsCell<SinkHandle>`), so shared deref is sufficient.
         bun_ptr::BackRef::from(s).unpipe_without_deref()
     }
 }
@@ -839,7 +839,7 @@ where
             wrapper.sink.finalize();
             if let Some(sink_global) = wrapper.sink.global_this {
                 ResponseStreamJSSink::<SSL_ENABLED, HTTP3>::detach(
-                    &mut wrapper.sink.signal,
+                    &mut wrapper.sink.source,
                     &sink_global,
                 );
             }
@@ -1227,25 +1227,6 @@ where
 
     /// # Safety
     /// `this` must be the live `RequestContext` user-data pointer registered with uWS.
-    fn on_writable_response_buffer(
-        this: *mut Self,
-        _write_offset: u64,
-        _resp: uws::AnyResponse,
-    ) -> bool {
-        ctx_log!("onWritableResponseBuffer");
-        // SAFETY: caller upholds the fn-level contract — `this` is the live
-        // `RequestContext` user-data pointer registered with uWS.
-        let this = unsafe { &mut *this };
-        debug_assert!(this.resp.is_some());
-        if this.is_aborted_or_ended() {
-            return false;
-        }
-        this.end(b"", this.should_close_connection());
-        false
-    }
-
-    /// # Safety
-    /// `this` must be the live `RequestContext` user-data pointer registered with uWS.
     fn on_writable_complete_response_buffer(
         this: *mut Self,
         write_offset: u64,
@@ -1502,7 +1483,7 @@ where
         }
         self.response_weakref.deref();
 
-        self.clear_request_body_stream_drain_handler(global_this);
+        self.detach_request_body_producer(global_this);
         self.request_body_readable_stream_ref.deinit();
 
         // Releases the ref taken in `set_cookies` (via `CookieMapRef::drop`).
@@ -2034,14 +2015,6 @@ where
         // SAFETY: just allocated; sole live mutable view (this.sink only stores the ptr).
         let response_stream = unsafe { &mut *response_stream_ptr.as_ptr() };
 
-        response_stream.sink.signal = crate::webcore::sink::SinkSignal::<
-            ResponseStream<SSL_ENABLED, HTTP3>,
-        >::init(JSValue::ZERO);
-
-        // explicitly set it to a dead pointer
-        // we use this memory address to disable signals being sent
-        response_stream.sink.signal.clear();
-        debug_assert!(response_stream.sink.signal.is_dead());
         // we need to render metadata before assignToStream because the stream can call res.end
         // and this would auto write an 200 status
         if !this.flags.has_written_status() {
@@ -2049,24 +2022,17 @@ where
         }
 
         // We are already corked!
-        // `Option<NonNull<c_void>>` is layout-compatible with `*mut c_void` (niche).
-        let signal_ptr_slot = (&raw mut response_stream.sink.signal.ptr).cast::<*mut c_void>();
         let assignment_result: JSValue =
             ResponseStreamJSSink::<SSL_ENABLED, HTTP3>::assign_to_stream(
                 global_this,
                 stream.value,
                 &mut response_stream.sink,
-                signal_ptr_slot,
             );
 
         assignment_result.ensure_still_alive();
 
-        // assignToStream stored the controller's encoded JSValue in
-        // signal.ptr. If the stream already finished synchronously inside the
-        // call, controller.end()/.close() detached the controller and cleared
-        // the signal again (`__controllerDetached`), so the signal may be
-        // legitimately dead here; the has_responded()/promise-status branches
-        // below handle that state.
+        // assignToStream stored the controller in `sink.source`; a sync-finished stream's
+        // `__controllerDetached` may already have cleared it again (handled below).
 
         #[cfg(debug_assertions)]
         if resp.has_responded() {
@@ -2079,7 +2045,7 @@ where
         if let Some(err_value) = assignment_result.to_error() {
             stream_log!("returned an error");
             ResponseStreamJSSink::<SSL_ENABLED, HTTP3>::detach(
-                &mut response_stream.sink.signal,
+                &mut response_stream.sink.source,
                 global_this,
             );
             this.sink = None;
@@ -2090,7 +2056,7 @@ where
         if resp.has_responded() {
             stream_log!("done");
             ResponseStreamJSSink::<SSL_ENABLED, HTTP3>::detach(
-                &mut response_stream.sink.signal,
+                &mut response_stream.sink.source,
                 global_this,
             );
             this.sink = None;
@@ -2205,7 +2171,7 @@ where
                 // if is not a promise we treat it as Error
                 stream_log!("returned an error");
                 ResponseStreamJSSink::<SSL_ENABLED, HTTP3>::detach(
-                    &mut response_stream.sink.signal,
+                    &mut response_stream.sink.source,
                     global_this,
                 );
                 this.sink = None;
@@ -2216,7 +2182,7 @@ where
 
         if this.is_aborted_or_ended() {
             ResponseStreamJSSink::<SSL_ENABLED, HTTP3>::detach(
-                &mut response_stream.sink.signal,
+                &mut response_stream.sink.source,
                 global_this,
             );
             stream.cancel(global_this);
@@ -2247,7 +2213,7 @@ where
                     response_stream.sink.on_first_write = None;
                     response_stream.sink.ctx = None;
                     ResponseStreamJSSink::<SSL_ENABLED, HTTP3>::detach(
-                        &mut response_stream.sink.signal,
+                        &mut response_stream.sink.source,
                         global_this,
                     );
                     response_stream.sink.mark_done();
@@ -2265,7 +2231,7 @@ where
         response_stream.sink.on_first_write = None;
         response_stream.sink.ctx = None;
         ResponseStreamJSSink::<SSL_ENABLED, HTTP3>::detach(
-            &mut response_stream.sink.signal,
+            &mut response_stream.sink.source,
             global_this,
         );
         stream.cancel(global_this);
@@ -2885,7 +2851,7 @@ where
                 // before `detach()` below re-enters JS so any drain callback /
                 // `on_start_buffering` reached from there early-returns.
                 req.flags.set_request_body_paused(false);
-                req.clear_request_body_stream_drain_handler(req.server().global_this());
+                req.detach_request_body_producer(req.server().global_this());
             }
 
             wrapper.sink.finalize();
@@ -2894,7 +2860,7 @@ where
                 .global_this
                 .expect("sink.global_this set in do_render_stream");
             ResponseStreamJSSink::<SSL_ENABLED, HTTP3>::detach(
-                &mut wrapper.sink.signal,
+                &mut wrapper.sink.source,
                 &sink_global,
             );
             Self::destroy_sink(wrapper_ptr);
@@ -2977,7 +2943,7 @@ where
             if ended_response {
                 // `resp` may be freed; the sink already resumed it. Clear before JS below.
                 req.flags.set_request_body_paused(false);
-                req.clear_request_body_stream_drain_handler(global_this);
+                req.detach_request_body_producer(global_this);
             }
             if let Some(prom) = wrapper.sink.pending_flush.take() {
                 // The promise value was protected when pending_flush was
@@ -2996,7 +2962,7 @@ where
                 .global_this
                 .expect("sink.global_this set in do_render_stream");
             ResponseStreamJSSink::<SSL_ENABLED, HTTP3>::detach(
-                &mut wrapper.sink.signal,
+                &mut wrapper.sink.source,
                 &sink_global,
             );
             Self::destroy_sink(wrapper_ptr);
@@ -3232,7 +3198,7 @@ where
                             let byte_stream_nn = NonNull::new(byte_stream_ptr)
                                 .expect("Source::Bytes payload is non-null");
                             let byte_stream = bun_ptr::BackRef::from(byte_stream_nn);
-                            debug_assert!(byte_stream.pipe.get().ctx.is_none());
+                            debug_assert!(byte_stream.sink.get().is_none());
                             debug_assert!(this.byte_stream.is_none());
                             if this.resp.is_none() {
                                 // we don't have a response, so we can discard the stream
@@ -3257,7 +3223,11 @@ where
                             // body is in flight, so `handle_reject` must not
                             // fall through to render_missing() and end it.
                             this.flags.set_has_marked_pending(true);
-                            byte_stream.pipe.set(WebCore::Wrap::<Self>::init(this));
+                            byte_stream.sink.set(WebCore::SinkHandle::ServerResponse(
+                                AnyRequestContext::init(std::ptr::from_mut::<Self>(this)),
+                            ));
+                            stream.lock_native(global_this);
+                            byte_stream.signal_consumer_attached();
                             // Deinit the old Strong reference before creating a new one
                             // to avoid leaking the Strong.Impl memory
                             this.response_body_readable_stream_ref.deinit();
@@ -3310,13 +3280,15 @@ where
         this.do_render_blob();
     }
 
-    pub(crate) fn on_pipe(this: &mut Self, stream: &WebCore::streams::Result) {
-        let is_done = stream.is_done();
-        // Drop one ref only when the stream signals completion.
-        let _ref = is_done.then(|| RequestContextRef(std::ptr::from_mut::<Self>(this)));
-
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
+    pub(crate) fn write_chunk(
+        this: *mut Self,
+        stream: &WebCore::streams::Result,
+    ) -> WebCore::streams::Writable {
+        // SAFETY: caller passes the live `*mut RequestContext` stored as the sink ctx.
+        let this = unsafe { &mut *this };
         if this.is_aborted_or_ended() {
-            return;
+            return WebCore::streams::Writable::Done;
         }
         let resp = this.resp.expect("infallible: resp bound");
 
@@ -3326,21 +3298,61 @@ where
         // uSockets will append and manage the buffer
         // so any write will buffer if the write fails
         // SAFETY: FFI handle
-        if matches!(resp.write(chunk), uws::WriteResult::WantMore(_)) {
-            if is_done {
-                this.end_stream(this.should_close_connection());
-            }
-        } else {
-            // when it's the last one, we just want to know if it's done
-            if is_done {
+        match resp.write(chunk) {
+            uws::WriteResult::WantMore(n) => WebCore::streams::Writable::Owned(n as BlobSizeType),
+            uws::WriteResult::Backpressure(n) => {
                 this.flags.set_has_marked_pending(true);
                 // SAFETY: FFI handle
                 resp.on_writable(
-                    |this, off, resp| Self::on_writable_response_buffer(this, off, resp),
+                    |this, off, resp| Self::on_writable_byte_stream(this, off, resp),
                     this,
                 );
+                WebCore::streams::Writable::Backpressure(n as BlobSizeType)
             }
         }
+    }
+
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
+    pub(crate) fn end_chunk(this: *mut Self, err: Option<&WebCore::streams::StreamError>) {
+        // Drop the ref taken when the ByteStream sink was installed.
+        let _ref = RequestContextRef(this);
+        // SAFETY: caller passes the live `*mut RequestContext` stored as the sink ctx.
+        let this = unsafe { &mut *this };
+
+        if this.is_aborted_or_ended() {
+            return;
+        }
+        if err.is_some()
+            && let Some(resp) = this.resp
+        {
+            let state = resp.state();
+            if state.is_http_write_called() && state.is_response_pending() {
+                this.force_close();
+                return;
+            }
+        }
+        this.end_stream(this.should_close_connection());
+    }
+
+    /// # Safety
+    /// `this` must be the live `RequestContext` user-data pointer registered with uWS.
+    pub(crate) fn on_writable_byte_stream(
+        this: *mut Self,
+        _write_offset: u64,
+        _resp: uws::AnyResponse,
+    ) -> bool {
+        ctx_log!("onWritableByteStream");
+        // SAFETY: fn-level contract; resume() re-enters write_chunk, so dispatch off raw ptr.
+        unsafe {
+            debug_assert!((*this).resp.is_some());
+            if (*this).is_aborted_or_ended() {
+                return false;
+            }
+            if let Some(bs) = (*this).byte_stream {
+                bun_ptr::BackRef::from(bs).resume();
+            }
+        }
+        true
     }
 
     pub(crate) fn do_render_blob(&mut self) {
@@ -4008,8 +4020,7 @@ where
                 readable.value.ensure_still_alive();
                 if let Some(bytes) = readable.ptr.bytes() {
                     let source = bytes.parent_const();
-                    source.drain_handler.set(None);
-                    source.drain_ctx.set(None);
+                    source.producer.set(WebCore::streams::SourceHandle::None);
                     let mut err = Body::ValueError::Message(BunString::static_(
                         "Request body exceeded maxRequestBodySize",
                     ));
@@ -4053,8 +4064,10 @@ where
 
                 // What `on_data` buffered; `on_stream_drained` resumes once it empties.
                 let buffered = bytes.buffer.get().len().saturating_sub(bytes.offset.get());
-                if bytes.buffer_action.get().is_some() || bytes.pipe.get().ctx.is_some() {
-                    // `.text()`-after-`.body` / native pipe want it all; no `on_pull` will fire.
+                if bytes.buffer_action.get().is_some()
+                    || (bytes.sink.get().is_some() && !bytes.sink_paused.get())
+                {
+                    // buffer-action / draining sink: no `on_pull`; keep reading.
                     this.resume_request_body_socket();
                 } else if buffered >= REQUEST_BODY_HIGH_WATER_MARK {
                     this.pause_request_body_socket();
@@ -4076,8 +4089,7 @@ where
                     NonNull::new(bytes_ptr).expect("Source::Bytes payload is non-null"),
                 );
                 let source = bytes.parent_const();
-                source.drain_handler.set(None);
-                source.drain_ctx.set(None);
+                source.producer.set(WebCore::streams::SourceHandle::None);
                 // TODO: properly propagate exception upwards
                 let _ = bytes.on_data(WebCore::streams::Result::TemporaryAndDone(borrowed));
             }
@@ -4215,25 +4227,23 @@ where
         false
     }
 
-    /// Detach the body ByteStream's `drain_handler` (the stream can outlive this ctx in JS).
-    fn clear_request_body_stream_drain_handler(&self, global_this: &JSGlobalObject) {
+    /// Detach the body ByteStream's producer back-pointer (the stream can outlive this ctx in JS).
+    fn detach_request_body_producer(&self, global_this: &JSGlobalObject) {
         let Some(readable) = self.request_body_readable_stream_ref.get(global_this) else {
             return;
         };
         if let Some(bytes) = readable.ptr.bytes() {
             let source = bytes.parent_const();
-            source.drain_handler.set(None);
-            source.drain_ctx.set(None);
+            source.producer.set(WebCore::streams::SourceHandle::None);
         }
     }
 
     /// # Safety
-    /// `ctx` must be a `*mut RequestContext` previously registered as the body
-    /// `on_stream_drained` context.
-    pub(crate) fn on_request_body_stream_drained_callback(ctx: Option<*mut c_void>) {
-        let Some(ctx) = ctx else { return };
-        let this = ctx.cast::<Self>();
-        // SAFETY: `ctx` is the registered `*mut RequestContext`. `ByteStream::
+    /// `this` must be the live `*mut RequestContext` previously registered as the
+    /// body stream's drain producer.
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
+    pub(crate) fn on_request_body_stream_drained(this: *mut Self) {
+        // SAFETY: `this` is the registered `*mut RequestContext`. `ByteStream::
         // on_data` can re-enter here while `on_buffered_body_chunk` already
         // holds `&mut Self` (borrow = ptr), so dispatch via the raw pointer.
         unsafe {
@@ -4571,19 +4581,6 @@ where
         }
 
         writer.write_str("/")
-    }
-}
-
-// `WebCore::Wrap<Self>::init(this)` requires `Self: PipeHandler`.
-impl<ThisServer, const SSL_ENABLED: bool, const DEBUG_MODE: bool, const HTTP3: bool>
-    WebCore::PipeHandler for RequestContext<ThisServer, SSL_ENABLED, DEBUG_MODE, HTTP3>
-where
-    ThisServer: ServerLike + 'static,
-{
-    fn on_pipe(&mut self, stream: WebCore::streams::Result) {
-        // Forward to the inherent associated fn (not method-dispatched to avoid
-        // recursing into this trait impl).
-        RequestContext::on_pipe(self, &stream)
     }
 }
 

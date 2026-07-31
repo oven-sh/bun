@@ -111,7 +111,6 @@ use bun_s3_signing::storage_class::StorageClass;
 // File-level mods are declared flat in `webcore.rs` via `#[path]`, so `super`
 // here is `crate::webcore`, not the `s3` directory. Route through the `s3`
 // re-export hub instead.
-use crate::webcore::ResumableSinkBackpressure;
 use crate::webcore::s3::multipart_options::MultiPartUploadOptions;
 use crate::webcore::s3::simple_request::{
     self as s3_simple_request, S3CommitResult, S3DownloadResult, S3PartResult, S3UploadResult,
@@ -412,7 +411,10 @@ impl MultiPartUpload {
         this: *mut c_void,
     ) -> JsTerminatedResult<()> {
         let this = this.cast::<Self>();
-        // SAFETY: callback context — `this` was passed as opaque ctx and is live (holds final ref)
+        // `adopt` consumes the ref `process_buffered` took for this request.
+        // SAFETY: callback context — `this` is the live allocation ref'd before dispatch.
+        let _deref_guard = unsafe { bun_ptr::ScopedRef::<Self>::adopt(this) };
+        // SAFETY: live under the adopted ref.
         let this = unsafe { &mut *this };
         if this.state == State::Finished {
             return Ok(());
@@ -426,6 +428,7 @@ impl MultiPartUpload {
                         this.options.retry
                     );
                     this.options.retry -= 1;
+                    this.ref_();
                     let callback_context: *mut c_void =
                         std::ptr::from_mut::<Self>(this).cast::<c_void>();
                     execute_simple_s3_request(
@@ -552,8 +555,8 @@ impl MultiPartUpload {
             if let Some(callback) = self.on_writable {
                 callback(self, self.callback_context, flushed);
             }
-            if self.ended {
-                // we are done and no more parts are running
+            // `on_writable` may re-enter and enqueue a final part; re-check.
+            if self.ended && self.is_queue_empty() {
                 self.done()?;
             }
         } else if !self.has_backpressure() && flushed > 0 {
@@ -613,7 +616,7 @@ impl MultiPartUpload {
 
     /// Finalize successful the upload
     fn done(&mut self) -> JsTerminatedResult<()> {
-        if self.state == State::MultipartCompleted {
+        if self.state == State::MultipartCompleted && self.is_queue_empty() {
             // we are a multipart upload so we need to send the etags and commit
             self.state = State::Finished;
             // sort the etags
@@ -1017,6 +1020,7 @@ impl MultiPartUpload {
             );
             self.state = State::SinglefileStarted;
             // we can do only 1 request
+            self.ref_();
             let callback_context: *mut c_void = std::ptr::from_mut::<Self>(self).cast::<c_void>();
             let _ = execute_simple_s3_request(
                 &*self.credentials,
@@ -1075,9 +1079,9 @@ impl MultiPartUpload {
         encoding: WriteEncoding,
         chunk: &[u8],
         is_last: bool,
-    ) -> Result<ResumableSinkBackpressure, AllocError> {
+    ) -> Result<UploadBackpressure, AllocError> {
         if self.ended {
-            return Ok(ResumableSinkBackpressure::Done); // no backpressure since we are done
+            return Ok(UploadBackpressure::Done); // no backpressure since we are done
         }
         // we may call done inside processBuffered so we ensure that we keep a ref until we are done
         // SAFETY: `self` is the live IntrusiveRc allocation; `ScopedRef` bumps the count
@@ -1091,9 +1095,9 @@ impl MultiPartUpload {
                 self.process_buffered(self.part_size_in_bytes());
             }
             return Ok(if self.has_backpressure() {
-                ResumableSinkBackpressure::Backpressure
+                UploadBackpressure::Backpressure
             } else {
-                ResumableSinkBackpressure::WantMore
+                UploadBackpressure::WantMore
             });
         }
         if is_last {
@@ -1114,9 +1118,9 @@ impl MultiPartUpload {
             // still have more data and receive empty, nothing todo here
             if chunk.is_empty() {
                 return Ok(if self.has_backpressure() {
-                    ResumableSinkBackpressure::Backpressure
+                    UploadBackpressure::Backpressure
                 } else {
-                    ResumableSinkBackpressure::WantMore
+                    UploadBackpressure::WantMore
                 });
             }
             match encoding {
@@ -1137,9 +1141,9 @@ impl MultiPartUpload {
             // wait for more
         }
         Ok(if self.has_backpressure() {
-            ResumableSinkBackpressure::Backpressure
+            UploadBackpressure::Backpressure
         } else {
-            ResumableSinkBackpressure::WantMore
+            UploadBackpressure::WantMore
         })
     }
 
@@ -1147,7 +1151,7 @@ impl MultiPartUpload {
         &mut self,
         chunk: &[u8],
         is_last: bool,
-    ) -> Result<ResumableSinkBackpressure, AllocError> {
+    ) -> Result<UploadBackpressure, AllocError> {
         self.write(WriteEncoding::Latin1, chunk, is_last)
     }
 
@@ -1155,7 +1159,7 @@ impl MultiPartUpload {
         &mut self,
         chunk: &[u8],
         is_last: bool,
-    ) -> Result<ResumableSinkBackpressure, AllocError> {
+    ) -> Result<UploadBackpressure, AllocError> {
         self.write(WriteEncoding::Utf16, chunk, is_last)
     }
 
@@ -1163,9 +1167,16 @@ impl MultiPartUpload {
         &mut self,
         chunk: &[u8],
         is_last: bool,
-    ) -> Result<ResumableSinkBackpressure, AllocError> {
+    ) -> Result<UploadBackpressure, AllocError> {
         self.write(WriteEncoding::Bytes, chunk, is_last)
     }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum UploadBackpressure {
+    WantMore,
+    Backpressure,
+    Done,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]

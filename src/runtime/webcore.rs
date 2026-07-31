@@ -17,8 +17,6 @@ pub mod byte_stream;
 pub mod cookie_map;
 #[path = "webcore/Crypto.rs"]
 pub mod crypto;
-#[path = "webcore/ResumableSink.rs"]
-pub mod resumable_sink;
 #[path = "webcore/S3Client.rs"]
 pub mod s3_client;
 #[path = "webcore/S3File.rs"]
@@ -33,13 +31,9 @@ pub mod text_encoder_stream_encoder;
 // ─── flat re-exports ─────────────────────────────────────────────────────────
 pub use bun_jsc::js_error_code::DOMExceptionCode;
 pub use bun_jsc::web_worker;
-pub use s3_stat::S3Stat;
-// `ResumableSink` is the `m_ctx` payload of a JS wrapper; it stores its
-// `JSGlobalObject` as a raw pointer (the FFI boundary cannot carry a Rust
-// lifetime), so the type aliases are lifetime-free and re-exported directly.
 pub use cookie_map::{CookieMap, CookieMapRef};
-pub use resumable_sink::{ResumableFetchSink, ResumableS3UploadSink, ResumableSinkBackpressure};
 pub use s3_client::S3Client;
+pub use s3_stat::S3Stat;
 pub use streams::{
     H3ResponseSink, HTTPResponseSink, HTTPSResponseSink, HTTPServerWritable, NetworkSink,
 };
@@ -358,41 +352,65 @@ pub enum PathOrFileDescriptor {
     Fd(bun_sys::Fd),
 }
 
-#[derive(Default)]
-pub struct Pipe {
-    pub ctx: Option<NonNull<()>>,
-    pub(crate) on_pipe: Option<Function>,
+// ─── SinkHandle ──────────────────────────────────────────────────────────────
+// Held by ByteStream; dispatches write()/end() to the native sink.
+
+pub type SinkWriteFn = fn(ctx: *mut core::ffi::c_void, data: &streams::Result) -> streams::Writable;
+
+#[derive(Copy, Clone, Default)]
+pub enum SinkHandle {
+    #[default]
+    None,
+    ServerResponse(crate::server::AnyRequestContext),
+    FetchRequestBody(bun_ptr::BackRef<fetch::FetchRequestBodySink>),
+    S3Upload(bun_ptr::BackRef<streams::NetworkSink>),
+    FileSink(bun_ptr::BackRef<file_sink::FileSink>),
+    ValueBufferer(*mut core::ffi::c_void, SinkWriteFn),
 }
 
-impl Pipe {
+impl SinkHandle {
     #[inline]
-    fn is_empty(&self) -> bool {
-        self.ctx.is_none() && self.on_pipe.is_none()
-    }
-}
-
-pub type Function = fn(ctx: NonNull<()>, stream: streams::Result);
-
-// Callers implement `PipeHandler` for their type instead of passing a free fn
-// (`Wrap::<Foo>::init(self)`).
-pub(crate) trait PipeHandler {
-    fn on_pipe(&mut self, stream: streams::Result);
-}
-
-pub(crate) struct Wrap<T: PipeHandler>(core::marker::PhantomData<T>);
-
-impl<T: PipeHandler> Wrap<T> {
-    fn pipe(self_: NonNull<()>, stream: streams::Result) {
-        // SAFETY: `self_` was produced from `NonNull::from(&mut T)` in `init` below; caller
-        // guarantees the pointee outlives the Pipe and is exclusively borrowed here.
-        let this = unsafe { self_.cast::<T>().as_mut() };
-        this.on_pipe(stream);
+    pub fn is_none(&self) -> bool {
+        matches!(self, SinkHandle::None)
     }
 
-    pub(crate) fn init(self_: &mut T) -> Pipe {
-        Pipe {
-            ctx: Some(NonNull::from(self_).cast::<()>()),
-            on_pipe: Some(Self::pipe),
+    #[inline]
+    pub fn is_some(&self) -> bool {
+        !self.is_none()
+    }
+
+    /// SAFETY: every non-None variant's pointee is kept alive by the hook-in site for as long
+    /// as this handle is installed.
+    pub fn write(&self, data: &streams::Result) -> streams::Writable {
+        match *self {
+            SinkHandle::None => streams::Writable::Done,
+            SinkHandle::ServerResponse(any) => any.write_chunk(data),
+            // SAFETY: live backref; ByteStream clears sink before free.
+            SinkHandle::FetchRequestBody(mut p) => unsafe { p.get_mut() }.write(data),
+            // SAFETY: live backref; ByteStream clears sink before free.
+            SinkHandle::S3Upload(mut p) => unsafe { p.get_mut() }.write(data),
+            SinkHandle::FileSink(p) => p.write(data),
+            SinkHandle::ValueBufferer(ctx, write) => write(ctx, data),
+        }
+    }
+
+    /// Signal end-of-stream (or terminal error) to the attached sink.
+    ///
+    /// SAFETY: same pointee-liveness invariant as [`Self::write`].
+    pub fn end(&self, err: Option<streams::StreamError>) {
+        match *self {
+            SinkHandle::None => {}
+            SinkHandle::ServerResponse(any) => any.end_chunk(err.as_ref()),
+            // SAFETY: live backref; ByteStream clears sink before free.
+            SinkHandle::FetchRequestBody(mut p) => unsafe { p.get_mut() }.end_from_stream(err),
+            // Raw-ptr dispatch: may re-borrow and free the sink (see its doc).
+            SinkHandle::S3Upload(p) => streams::NetworkSink::end_from_stream(p.as_ptr(), err),
+            SinkHandle::FileSink(p) => p.end_from_stream(err),
+            SinkHandle::ValueBufferer(ctx, write) => {
+                if let Some(e) = err {
+                    let _ = write(ctx, &streams::Result::Err(e));
+                }
+            }
         }
     }
 }

@@ -1,5 +1,4 @@
 use core::cell::Cell;
-use core::ffi::c_void;
 use core::sync::atomic::{AtomicI32, Ordering};
 
 #[cfg(windows)]
@@ -11,7 +10,7 @@ use bun_sys::{self as sys, Fd, FdExt as _};
 use crate::api::bun::process::Status as SpawnStatus;
 use crate::webcore::jsc::{CallFrame, EventLoopHandle, JSGlobalObject, JSValue, JsResult};
 use crate::webcore::readable_stream::{self, ReadableStream};
-use crate::webcore::{AutoFlusher, PathOrFileDescriptor, streams};
+use crate::webcore::{self, AutoFlusher, PathOrFileDescriptor, streams};
 #[cfg(windows)]
 use bun_sys::windows::libuv as uv;
 #[cfg(windows)]
@@ -40,10 +39,12 @@ pub struct FileSink {
     pub(crate) event_loop_handle: EventLoopHandle,
     pub(crate) written: Cell<usize>,
     pub(crate) pending: JsCell<streams::WritablePending>,
-    pub(crate) signal: JsCell<streams::Signal>,
+    pub(crate) source: JsCell<streams::SourceHandle>,
     pub(crate) done: Cell<bool>,
     pub(crate) started: Cell<bool>,
     pub(crate) must_be_kept_alive_until_eof: Cell<bool>,
+    /// `to_result` returned `Backpressure` to a ByteStream; drain callbacks resume it.
+    pub(crate) source_pending_pull: Cell<bool>,
 
     // TODO: these fields are duplicated on writer()
     // we should not duplicate these fields...
@@ -421,7 +422,8 @@ impl FileSink {
                 return;
             }
 
-            if (*this).pending.get().state == streams::PendingState::Pending {
+            let was_pending = (*this).pending.get().state == streams::PendingState::Pending;
+            if was_pending {
                 // `consumed` was credited when the pending operation accepted its
                 // bytes; `amount` is only what this drain pushed to the fd.
                 let consumed = (*this).pending.get().consumed;
@@ -437,20 +439,26 @@ impl FileSink {
                 }
 
                 FileSink::run_pending(this);
+            }
 
-                // this.done == true means ended was called
-                let ended_and_done = (*this).done.get() && status == WriteStatus::EndOfFile;
+            if (was_pending || (status == WriteStatus::Drained && !has_pending_data))
+                && (*this).source_pending_pull.replace(false)
+            {
+                let mut src = *(*this).source.get();
+                src.ready(None, None);
+            }
 
-                if (*this).done.get() && status == WriteStatus::Drained {
-                    // if we call end/endFromJS and we have some pending returned from .flush() we should call writer.end()
-                    (*this).writer.with_mut(|w| w.end());
-                } else if ended_and_done && !has_pending_data {
-                    (*this).writer.with_mut(|w| w.close());
-                }
+            // `end()`'s Pending flush branch leaves the writer running; finish the
+            // teardown here regardless of `pending.state` (native path has no promise).
+            if (*this).done.get() && status == WriteStatus::Drained {
+                (*this).writer.with_mut(|w| w.end());
+            } else if (*this).done.get() && status == WriteStatus::EndOfFile && !has_pending_data {
+                (*this).writer.with_mut(|w| w.close());
             }
 
             if status == WriteStatus::EndOfFile {
-                (*this).signal.with_mut(|s| s.close(None));
+                let mut src = *(*this).source.get();
+                src.close(None);
                 FileSink::clear_keep_alive_ref(this);
             }
         }
@@ -462,7 +470,7 @@ impl FileSink {
     pub(crate) unsafe fn on_error(this: *mut FileSink, err: sys::Error) {
         bun_core::scoped_log!(FileSink, "onError({:?})", err);
         // The streaming writer follows every `onError` with `close()` →
-        // `onClose` (on both platforms), which fires `signal.close()` and
+        // `onClose` (on both platforms), which fires `source.close()` and
         // releases the keep-alive ref. Releasing the ref here instead could
         // drop the last reference and free `this` before that `close()` runs.
         // SAFETY: caller contract — `this` is live with write+dealloc provenance.
@@ -490,8 +498,13 @@ impl FileSink {
     /// [`on_attached_process_exit`](Self::on_attached_process_exit)).
     pub unsafe fn on_ready(this: *mut FileSink) {
         bun_core::scoped_log!(FileSink, "onReady()");
-        // SAFETY: caller contract — `this` is live; only `signal` is reborrowed.
-        unsafe { (*this).signal.with_mut(|s| s.ready(None, None)) };
+        // SAFETY: caller contract — `this` is live; only `source` is reborrowed.
+        unsafe {
+            if (*this).source_pending_pull.replace(false) {
+                let mut src = *(*this).source.get();
+                src.ready(None, None);
+            }
+        }
     }
 
     /// # Safety
@@ -511,7 +524,8 @@ impl FileSink {
                 }
             }
 
-            (*this).signal.with_mut(|s| s.close(None));
+            let mut src = *(*this).source.get();
+            src.close(None);
 
             // The writer is fully closed; no further callbacks will arrive. Release
             // the ref taken when a write returned `.pending`. This must be the last
@@ -764,7 +778,7 @@ impl FileSink {
 
         self.done.set(false);
         self.started.set(true);
-        self.signal.with_mut(|s| s.start());
+        self.source.with_mut(|s| s.start());
         sys::Result::Ok(())
     }
 
@@ -847,6 +861,11 @@ impl FileSink {
                     if amount_drained == amount_buffered {
                         (*this).update_ref(false);
                         (*this).run_pending_later();
+                        // `flush()`'s drain bypasses `on_write(Drained)`; resume the parked ByteStream here.
+                        if (*this).source_pending_pull.replace(false) {
+                            let mut src = *(*this).source.get();
+                            src.ready(None, None);
+                        }
                     }
                 }
                 _ => {
@@ -1027,6 +1046,33 @@ impl FileSink {
         let rc = self.writer.with_mut(|w| w.write_utf16(data.slice16()));
         let accepted = self.bytes_accepted(buffered_before, &rc);
         self.to_result(rc, accepted)
+    }
+
+    /// Native-path terminator called from `SinkHandle::end`. On upstream error
+    /// (ByteStream source), close the writer without flushing — mirrors
+    /// `handle_reject_stream` — so a truncated write is not committed as EOF.
+    pub(crate) fn end_from_stream(&self, err: Option<streams::StreamError>) {
+        let is_byte_stream = matches!(self.source.get(), streams::SourceHandle::ByteStream(_));
+        if is_byte_stream {
+            // Source drove this call and already cleared its own `sink` field;
+            // detach so the writer's `on_close` → `source.close()` is a no-op.
+            self.source.with_mut(|s| s.clear());
+        }
+        if err.is_none() || !is_byte_stream {
+            let sys_err = match err {
+                Some(streams::StreamError::Error(e)) => Some(e),
+                _ => None,
+            };
+            let _ = self.end(sys_err);
+            return;
+        }
+        if self.done.get() {
+            return;
+        }
+        self.done.set(true);
+        self.readable_stream
+            .with_mut(|rs| *rs = readable_stream::Strong::default());
+        self.writer.with_mut(|w| w.close());
     }
 
     pub(crate) fn end(&self, _err: Option<sys::Error>) -> sys::Result<()> {
@@ -1234,7 +1280,6 @@ impl FileSink {
 
 // `Sink.JSSink(@This(), "FileSink")` — generic-fn-returning-type → monomorphized type alias.
 pub(crate) type JSSink = crate::webcore::sink::JSSink<FileSink>;
-pub(crate) type SinkSignal = crate::webcore::sink::SinkSignal<FileSink>;
 
 crate::impl_js_sink_abi!(FileSink, "FileSink");
 
@@ -1285,9 +1330,9 @@ impl crate::webcore::sink::JsSinkType for FileSink {
     fn start(&mut self, config: streams::Start) -> sys::Result<()> {
         Self::start(self, &config)
     }
-    fn signal(&mut self) -> Option<&mut streams::Signal> {
-        // SAFETY: JsCell — trait receiver is `&mut self`; sole borrow of `signal`.
-        Some(unsafe { self.signal.get_mut() })
+    fn source(&mut self) -> Option<&mut streams::SourceHandle> {
+        // SAFETY: JsCell — trait receiver is `&mut self`; sole borrow of `source`.
+        Some(unsafe { self.source.get_mut() })
     }
     fn done(&self) -> bool {
         self.done.get()
@@ -1356,6 +1401,18 @@ impl FileSink {
                     self.must_be_kept_alive_until_eof.set(true);
                     self.ref_();
                 }
+                // A Windows uv_write is always async: Pending with an empty
+                // outgoing buffer is not backpressure, so keep the source flowing.
+                if !self.writer.get().is_backed_up() {
+                    return streams::Writable::Owned(accepted);
+                }
+                self.source_pending_pull.set(true);
+                if matches!(
+                    self.source.get(),
+                    streams::SourceHandle::ByteStream(_) | streams::SourceHandle::FileReader(_)
+                ) {
+                    return streams::Writable::Backpressure(accepted);
+                }
                 self.pending.with_mut(|p| {
                     p.consumed += accepted;
                     p.result = streams::Writable::Owned(p.consumed);
@@ -1381,10 +1438,11 @@ impl FileSink {
                 result: streams::Writable::Done,
                 ..Default::default()
             }),
-            signal: JsCell::new(streams::Signal::default()),
+            source: JsCell::new(streams::SourceHandle::default()),
             done: Cell::new(false),
             started: Cell::new(false),
             must_be_kept_alive_until_eof: Cell::new(false),
+            source_pending_pull: Cell::new(false),
             pollable: Cell::new(false),
             nonblocking: Cell::new(false),
             force_sync: Cell::new(false),
@@ -1483,31 +1541,73 @@ impl FileSink {
         stream: &mut ReadableStream,
         global_this: &JSGlobalObject,
     ) -> JSValue {
-        self.signal.set(SinkSignal::init(JSValue::ZERO));
         // SAFETY: `&mut self` carries write+dealloc provenance over the allocation.
         let _guard = unsafe { FileSinkRef::new_ref(std::ptr::from_mut::<FileSink>(self)) };
 
-        // explicitly set it to a dead pointer
-        // we use this memory address to disable signals being sent
-        self.signal.with_mut(|s| s.clear());
-
         self.readable_stream
             .set(readable_stream::Strong::init(*stream, global_this));
-        // reshaped for borrowck — re-derive `signal_ptr` after
-        // assigning `readable_stream`. `JsCell::as_ptr` yields the stable
-        // address of the inner `Signal` (`#[repr(transparent)]` over
-        // `UnsafeCell`).
-        // SAFETY: project to `signal.ptr` without forming a reference;
-        // `Option<NonNull<c_void>>` is ABI-identical to `*mut c_void` (see
-        // const-asserts on `Signal` in streams.rs), so FFI may write the
-        // JSValue bits back through this `void**`.
-        let signal_ptr: *mut *mut c_void =
-            unsafe { (&raw mut (*self.signal.as_ptr()).ptr).cast::<*mut c_void>() };
+
+        // Native ByteStream fast-path: wire SinkHandle directly, skip the JS pump.
+        if let Some(byte_stream) = stream.ptr.bytes() {
+            if byte_stream.sink.get().is_none() {
+                self.source
+                    .set(streams::SourceHandle::ByteStream(byte_stream));
+                byte_stream
+                    .sink
+                    .set(webcore::SinkHandle::FileSink(bun_ptr::BackRef::new_mut(
+                        self,
+                    )));
+                byte_stream.sink_paused.set(false);
+                stream.lock_native(global_this);
+                byte_stream.signal_consumer_attached();
+
+                if let Some(err) = byte_stream.take_pending_error() {
+                    byte_stream.sink.set(webcore::SinkHandle::None);
+                    self.end_from_stream(Some(err));
+                    return JSValue::UNDEFINED;
+                }
+
+                let buffered = byte_stream.drain();
+                let has_last = byte_stream.has_received_last_chunk.get();
+                if !buffered.is_empty() {
+                    let chunk = if has_last {
+                        streams::Result::OwnedAndDone(buffered)
+                    } else {
+                        streams::Result::Owned(buffered)
+                    };
+                    match self.write(&chunk) {
+                        streams::Writable::Backpressure(_) => byte_stream.sink_paused.set(true),
+                        streams::Writable::Done | streams::Writable::Err(_) => {
+                            byte_stream.sink.set(webcore::SinkHandle::None);
+                            self.source.set(streams::SourceHandle::None);
+                            let _ = self.end(None);
+                            return JSValue::UNDEFINED;
+                        }
+                        _ => {}
+                    }
+                }
+                if has_last {
+                    byte_stream.sink.set(webcore::SinkHandle::None);
+                    self.source.set(streams::SourceHandle::None);
+                    let _ = self.end(None);
+                } else {
+                    self.writer
+                        .with_mut(|w| w.enable_keeping_process_alive(self.io_evtloop()));
+                    if !self.must_be_kept_alive_until_eof.get() {
+                        self.must_be_kept_alive_until_eof.set(true);
+                        self.ref_();
+                    }
+                }
+                return JSValue::UNDEFINED;
+            }
+            // sink already attached: fall through to the JS pump.
+        }
+
         // No per-wrapper +1 for the controller (only the transient `_guard`
         // above): the JS builtins always call `controller.end()`/`.close()`
         // (`${controller}__end/close` → `controller->detach()` → m_sinkPtr=null)
         // before GC, so the controller's dtor never reaches `finalize`.
-        let promise_result = JSSink::assign_to_stream(global_this, stream.value, self, signal_ptr);
+        let promise_result = JSSink::assign_to_stream(global_this, stream.value, self);
 
         if let Some(err) = promise_result.to_error() {
             self.readable_stream.set(readable_stream::Strong::default());

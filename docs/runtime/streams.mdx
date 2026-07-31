@@ -72,25 +72,21 @@ When using a direct `ReadableStream`, the destination handles all chunk queueing
 
 ### Handling backpressure
 
-`controller.write()` returns the number of bytes written. When the destination's internal buffer is full (for example, a slow HTTP client), it returns a **negative number** instead. The chunk is still accepted — the negative return is a signal to pause and wait for the destination to drain.
-
-To wait for the drain, `await controller.flush(true)`:
+`controller.write()` returns the number of bytes written, or a **pending `Promise<number>`** when the destination's internal buffer is full (for example, a slow HTTP client). The chunk is accepted either way; the promise resolves once the destination has drained, so `await`ing the result is enough:
 
 ```ts
 const stream = new ReadableStream({
   type: "direct",
   async pull(controller) {
     for (const chunk of chunks) {
-      const n = controller.write(chunk);
-      if (typeof n === "number" && n < 0) {
-        // destination is backed up; wait for it to drain before writing more
-        await controller.flush(true);
-      }
+      await controller.write(chunk);
     }
     controller.close();
   },
 });
 ```
+
+`await controller.flush(true)` is equivalent and can be used after a write returns a `Promise`.
 
 For default (non-`direct`) `ReadableStream`s and async-generator response bodies, Bun applies this backpressure automatically — the producer is paused while the destination is backed up.
 

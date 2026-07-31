@@ -1596,14 +1596,27 @@ impl<'a> PackageInstaller<'a> {
         self.summary.skipped += (!needs_install) as u32;
 
         if needs_install {
+            // `--force` re-fetches on the first pass only; the post-download
+            // re-entry has NEEDS_VERIFY=false and links the fresh entry.
+            let force_cache_refetch = NEEDS_VERIFY
+                && self.force_install
+                && self.manager().get_preinstall_state(package_id) != crate::PreinstallState::Done;
             if resolution.tag.can_enqueue_install_task()
-                && installer.package_missing_from_cache(
-                    self.manager_mut(),
-                    package_id,
-                    resolution.tag,
-                )
+                && (force_cache_refetch
+                    || installer.package_missing_from_cache(
+                        self.manager_mut(),
+                        package_id,
+                        resolution.tag,
+                    ))
             {
                 debug_assert!(resolution.can_enqueue_install_task());
+
+                // Drop the derived `_patch_hash=` entry so the re-entry
+                // enqueues `ApplyPatch` against the fresh base.
+                if force_cache_refetch && installer.patch.is_some() {
+                    let _ = bun_sys::Dir::borrow(&installer.cache_dir)
+                        .delete_tree(installer.cache_dir_subpath.as_bytes());
+                }
 
                 let context =
                     TaskCallbackContext::DependencyInstallContext(DependencyInstallContext {

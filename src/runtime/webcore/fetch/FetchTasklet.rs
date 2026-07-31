@@ -50,9 +50,7 @@ impl Taskable for FetchTasklet {
 
 bun_output::declare_scope!(FetchTasklet, visible);
 
-/// Cap on the one-time `reserve_exact` for `scheduled_response_buffer` when
-/// Content-Length is known. Bodies above this still benefit from a single
-/// exact growth up to the cap; the remainder grows by amortized doubling.
+/// Upper bound on the Content-Length-driven `reserve_exact` in `callback()`.
 const SCHEDULED_PRERESERVE_MAX: usize = 256 * 1024 * 1024;
 
 use http::signals::BodyReceiveMode;
@@ -2603,19 +2601,14 @@ impl FetchTasklet {
                 let scheduled = &mut task_ref.scheduled_response_buffer;
                 let incoming = &mut task_ref.response_buffer;
                 if scheduled.list.capacity() == 0 {
-                    // Move instead of copy. The HTTP client holds
-                    // `&raw mut task_ref.response_buffer` (the field address; see
-                    // the aliasing assert above), not the Vec's heap pointer, so
-                    // swapping the Vec underneath is invisible to it.
+                    // `body_out_str` aliases the field, not the Vec's heap
+                    // pointer (asserted above), so swapping here is invisible
+                    // to the HTTP client.
                     core::mem::swap(scheduled, incoming);
                 }
-                // Size scheduled_response_buffer to the known body length once,
-                // instead of letting extend_from_slice's amortized doubling leave
-                // up to ~2x overcapacity (which is what .arrayBuffer()/.bytes()
-                // ultimately adopts). For compressed responses Content-Length is
-                // the compressed size, so this under-reserves and the excess
-                // grows as before. Capped so a hostile Content-Length can't
-                // allocate ahead of bytes actually arriving.
+                // Grow to Content-Length once so the per-packet append below
+                // doesn't leave the ~2x doubling over-capacity that the
+                // ArrayBuffer would adopt. Capped to bound a hostile header.
                 if let http::BodySize::ContentLength(n) = task_ref.body_size {
                     if n > scheduled.list.capacity() {
                         let additional = n

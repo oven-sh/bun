@@ -578,8 +578,7 @@ pub unsafe extern "C" fn Bun__X509__checkHost(
 /// Certificate name bytes (IA5 / Latin-1) for error messages.
 struct NameBytes<'a>(&'a [u8]);
 
-/// Returns `true` iff `name` contains no characters that would require
-/// escaping in a subjectAltName entry (Node's `IsSafeAltName`, non-UTF-8 path).
+/// Node's `IsSafeAltName` (see `src/jsc/bindings/ncrypto.cpp`).
 #[inline]
 fn is_safe_alt_name(name: &[u8]) -> bool {
     name.iter()

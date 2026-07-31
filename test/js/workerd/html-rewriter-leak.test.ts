@@ -2,13 +2,13 @@ import { heapStats } from "bun:jsc";
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, isDebug } from "harness";
 
-// When a handler throws, handler_callback() .protect()s the JSC Exception cell
-// and parks it in the VM's rejection-capture slot so create_lolhtml_error()
-// can hand it to the caller. create_lolhtml_error() must drop that protection
-// when it takes the value; the caller re-protects before storing it in
-// tmp_sync_error, and BufferOutputSink::init() unprotects once when it throws.
-// Without the drop, every caught handler exception leaked one protected
-// Exception (and the Error it wraps) for the life of the process.
+// When a handler throws, handler_callback() parks the JSC Exception cell in the
+// VM's rejection-capture slot (a stack local in BufferOutputSink::init(),
+// conservatively scanned) so create_lolhtml_error() can hand it to the caller.
+// handler_callback() used to .protect() the stored cell, but nothing on the
+// consuming path dropped that protection, so every caught handler exception
+// leaked one protected Exception (and the Error it wraps) for the life of the
+// process.
 //
 // https://github.com/oven-sh/bun/issues/31804
 test("exceptions thrown from handlers do not leak protected Exception roots", async () => {

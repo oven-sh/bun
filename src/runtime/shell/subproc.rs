@@ -1381,11 +1381,9 @@ impl<'a> SpawnArgs<'a> {
             self.path = b"";
         }
 
-        // `export_env` then `cmd_local_env` can both carry the same key
-        // (`FOO=bar cmd` with FOO already exported); getenv returns the first
-        // match, so replace an existing entry instead of appending. A single
-        // `EnvMap` iterator yields unique keys, so only entries from an
-        // earlier `fill_env` call need scanning.
+        // `export_env` then `cmd_local_env` can both carry the same key; replace
+        // an earlier call's entry instead of appending a getenv-shadowed
+        // duplicate. Each `EnvMap` is internally uniqued, hence the bounded scan.
         let scan_end = self.env_array.len();
 
         while let Some(entry) = env_iter.next() {

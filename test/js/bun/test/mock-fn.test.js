@@ -961,7 +961,7 @@ describe("spyOn", () => {
       expect(fn).not.toHaveBeenCalled();
     });
 
-    test("spyOn on object doens't crash if object GC'd", () => {
+    test("spyOn retains its target and restores after GC pressure", () => {
       const spies = new Array(1000);
       (() => {
         for (let i = 0; i < 1000; i++) {

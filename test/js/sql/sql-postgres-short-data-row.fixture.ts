@@ -89,5 +89,6 @@ await run("MIXED_EMPTY", mixedRowDescription, []);
 await run("MIXED_FULL", mixedRowDescription, ["va", "v7"]);
 // Two named columns with an indexed one between them: each named value must
 // land on its own key (Structure offsets are assigned in RowDescription order).
+await run("INTERLEAVED_SHORT", interleavedRowDescription, ["vfoo"]);
 await run("INTERLEAVED", interleavedRowDescription, ["vfoo", "v5", "vbar"]);
 console.log("FIXTURE_DONE");

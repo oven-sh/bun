@@ -355,11 +355,7 @@ impl Debugger {
         }
     }
 
-    /// Block (briefly, capped) until the debugger thread has delivered queued
-    /// inspector messages to the frontend socket. Call from the main thread
-    /// immediately before process exit so `exit()` doesn't kill the detached
-    /// debugger thread mid-delivery (e.g. `bun test`'s final `TestReporter.end`
-    /// events). See `Bun__debugger__drain` in `BunDebugger.cpp`.
+    /// Bounded wait for the debugger thread to deliver queued inspector messages before `exit()` kills it mid-delivery; see `Bun__debugger__drain` in `BunDebugger.cpp`.
     pub fn drain() {
         Bun__debugger__drain();
     }

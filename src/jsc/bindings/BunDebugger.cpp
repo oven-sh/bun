@@ -53,16 +53,8 @@ static PausedWait& pausedWait()
     return instance;
 }
 
-// Messages queued via sendMessageToDebuggerThread() that haven't yet reached
-// onMessageFn on the debugger thread. Bun__debugger__drain() reads this only
-// as an entry gate; the FIFO sentinel's ordering is the actual guarantee.
-// Process-global (like debuggerScriptExecutionContext), not per-connection.
+// See Bun__debugger__drain: entry-gate counter (process-global, not per-connection), and a sticky "ever queued" flag for its flush-grace wait.
 static std::atomic<uint64_t> totalPendingDebuggerMessages { 0 };
-
-// Set once (never cleared) the first time anything is queued for the debugger
-// thread. Gates Bun__debugger__drain()'s socket-flush grace wait: the pending
-// counter above is zero once write() returns even if bytes are still buffered
-// below write(), so that counter can't gate the flush wait.
 static std::atomic<bool> hasQueuedAnyDebuggerMessage { false };
 
 static bool waitingForConnection = false;
@@ -453,8 +445,7 @@ public:
         size_t messageCount = messages.size();
 
         if (!jsBunDebuggerOnMessageFunction) {
-            // Disconnected: batch is dropped, so account for it here or
-            // Bun__debugger__drain()'s entry gate would count it pending forever.
+            // Disconnected: batch dropped, account for it so Bun__debugger__drain's gate doesn't count it pending forever.
             if (messageCount > 0)
                 totalPendingDebuggerMessages.fetch_sub(messageCount, std::memory_order_release);
             return;
@@ -474,9 +465,7 @@ public:
 
         JSC::call(debuggerGlobalObject, onMessageFn, arguments, "BunInspectorConnection::receiveMessagesOnDebuggerThread - onMessageFn"_s);
 
-        // If onMessageFn threw partway through, we can't know how many reached
-        // write(), so leave the count pending (costs at most one capped wait in
-        // Bun__debugger__drain, never a stall).
+        // On throw, leave the batch's count pending (can't know how many reached write(); costs at most one capped wait at exit).
         bool delivered = true;
         if (auto* exception = scope.exception()) [[unlikely]] {
             delivered = false;
@@ -492,8 +481,7 @@ public:
         {
             Locker<Lock> locker(debuggerThreadMessagesLock);
             debuggerThreadMessages.append(inputMessage);
-            // Inside the lock: incrementing after unlock could race the swap+
-            // decrement in receiveMessagesOnDebuggerThread and undercount.
+            // Inside the lock so receiveMessagesOnDebuggerThread's swap+decrement can't undercount.
             totalPendingDebuggerMessages.fetch_add(1, std::memory_order_release);
             hasQueuedAnyDebuggerMessage.store(true, std::memory_order_release);
         }
@@ -706,8 +694,7 @@ extern "C" void Bun__ensureDebugger(ScriptExecutionContextIdentifier scriptId, b
     }
 }
 
-// Ref-counted so a timed-out wait doesn't leave a dangling pointer for the
-// already-posted task: both sides hold a Ref, last one out frees it.
+// Ref-counted so a timed-out wait doesn't leave a dangling pointer for the already-posted task.
 struct DebuggerDrainSignal : public ThreadSafeRefCounted<DebuggerDrainSignal> {
 public:
     static Ref<DebuggerDrainSignal> create() { return adoptRef(*new DebuggerDrainSignal()); }
@@ -717,25 +704,16 @@ private:
     DebuggerDrainSignal() = default;
 };
 
-// Caps, not targets: a wedged debugger thread must never block exit forever.
 static constexpr double kDrainHandoffTimeoutMs = 250;
 static constexpr double kDrainFlushGraceMs = 150;
 
-// Called from VirtualMachine::global_exit immediately before process exit so
-// exit() doesn't kill the detached debugger thread mid-delivery of queued
-// inspector messages (most visibly `bun test`'s final TestReporter events).
-//
-// Two layers: (a) the main->debugger-thread handoff itself, drained by posting
-// a FIFO sentinel task and waiting for it (tasks on this context are FIFO, so
-// once the sentinel runs every earlier receiveMessagesOnDebuggerThread has
-// already called write()); and (b) a short further grace for the debugger
-// thread's own event loop to flush the socket send buffer. Both waits are
-// capped; on timeout we degrade to pre-fix behavior.
+// Called from VirtualMachine::global_exit so exit() doesn't kill the detached debugger thread mid-delivery of queued inspector messages (e.g. `bun test`'s final TestReporter events).
 extern "C" void Bun__debugger__drain()
 {
     if (debuggerScriptExecutionContext == nullptr)
         return;
 
+    // Layer (a): FIFO sentinel. Tasks on this context are FIFO, so once it runs every earlier receiveMessagesOnDebuggerThread has already called write().
     if (totalPendingDebuggerMessages.load(std::memory_order_acquire) != 0) {
         auto signal = DebuggerDrainSignal::create();
         debuggerScriptExecutionContext->postTaskConcurrently([signal](ScriptExecutionContext&) {
@@ -744,9 +722,7 @@ extern "C" void Bun__debugger__drain()
         signal->semaphore.waitFor(WTF::Seconds::fromMilliseconds(kDrainHandoffTimeoutMs));
     }
 
-    // Gated on hasQueuedAnyDebuggerMessage, not totalPendingDebuggerMessages:
-    // the latter can be zero while bytes are still buffered below write().
-    // BinarySemaphore is used purely for its timeout (nothing signals it).
+    // Layer (b): brief grace for the debugger thread's event loop to flush the socket send buffer. Gated on hasQueuedAnyDebuggerMessage (the pending counter can be zero while bytes are still buffered below write()); BinarySemaphore used purely for its timeout.
     if (hasQueuedAnyDebuggerMessage.load(std::memory_order_acquire)) {
         WTF::BinarySemaphore topUp;
         topUp.waitFor(WTF::Seconds::fromMilliseconds(kDrainFlushGraceMs));

@@ -1516,10 +1516,8 @@ impl VirtualMachine {
         // doing it causes like 50+ tests to break
         // self.event_loop().tick();
 
-        // Flush queued inspector messages so exit() doesn't kill the detached
-        // debugger thread mid-delivery. The debugger thread runs its own VM,
-        // so this wait never contends with the main VM's API lock.
         if self.debugger.is_some() {
+            // Flush queued inspector messages so exit() doesn't kill the detached debugger thread mid-delivery; that thread runs its own VM so this never contends with the main VM's API lock.
             crate::debugger::Debugger::drain();
         }
 

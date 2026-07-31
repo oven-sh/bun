@@ -59,7 +59,7 @@ test("non-string workspaces entry prints the error without literal markup", asyn
   expect(exitCode).toBe(1);
 });
 
-// https://github.com/oven-sh/bun/pull/34275 — `*` is not a valid filename character on Windows.
+// https://github.com/oven-sh/bun/pull/34275 (`*` is not a valid filename character on Windows)
 test.skipIf(isWindows)("workspace glob with an escaped token followed by an unescaped one is expanded", async () => {
   using dir = tempDir("workspace-escaped-glob", {
     "package.json": JSON.stringify({ name: "root", workspaces: ["\\*x*"] }),

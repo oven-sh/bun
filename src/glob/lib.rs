@@ -32,8 +32,7 @@ pub fn detect_glob_syntax(potential_pattern: &[u8]) -> bool {
         while !slice.is_empty() {
             if let Some(idx) = slice.iter().position(|&b| b == token) {
                 // Check for even number of backslashes preceding the
-                // token to know that it's not escaped. `idx` is relative to
-                // `slice`, so rebase it onto `potential_pattern` before counting.
+                // token to know that it's not escaped
                 let mut i = potential_pattern.len() - slice.len() + idx;
                 let mut backslash_count: u16 = 0;
 

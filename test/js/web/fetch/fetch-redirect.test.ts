@@ -246,12 +246,13 @@ it("fetch() does not leak intermediate redirect URLs in multi-hop chains", async
   // pollute the RSS we measure. The child samples RSS after warmup and
   // again after two equal batches so we can assert on steady-state growth.
   const script = `
+    const rss = process.platform === "darwin" && typeof Bun.unsafe.memoryFootprint === "function" ? Bun.unsafe.memoryFootprint : process.memoryUsage.rss;
     const url = "${server.url.origin}/hop/0";
     async function once() {
       const res = await fetch(url, { redirect: "follow" });
       if (await res.text() !== "ok") throw new Error("unexpected body: " + res.status);
     }
-    function sample() { Bun.gc(true); return process.memoryUsage.rss(); }
+    function sample() { Bun.gc(true); return rss(); }
     for (let i = 0; i < 15; i++) await once();
     const rss0 = sample();
     for (let i = 0; i < 25; i++) await once();
@@ -282,3 +283,49 @@ it("fetch() does not leak intermediate redirect URLs in multi-hop chains", async
   // page retention inflate RSS even with no leak, so widen the threshold.
   expect(secondHalfMiB).toBeLessThan(isASAN ? 400 : 12);
 }, 60_000);
+
+// RFC 3986 §3.1: the URL scheme is case-insensitive. The Location header is
+// taken from the response verbatim and its scheme sliced out before WHATWG
+// normalization runs, so the http/https check has to compare case-insensitively
+// or `Location: HTTPS://host/...` is rejected with UnsupportedRedirectProtocol.
+describe("fetch() follows a redirect whose Location scheme is not lowercase", () => {
+  it.concurrent.each(["HTTP", "Http", "hTtP"])("Location: %s://...", async scheme => {
+    await using final = Bun.serve({
+      port: 0,
+      fetch: () => new Response("FINAL"),
+    });
+
+    const sockets = new Set<net.Socket>();
+    const server = net.createServer(socket => {
+      sockets.add(socket);
+      socket.on("close", () => sockets.delete(socket));
+      socket.on("error", () => {});
+      socket.once("data", () => {
+        socket.end(
+          `HTTP/1.1 302 Found\r\nLocation: ${scheme}://127.0.0.1:${final.port}/final\r\nContent-Length: 0\r\nConnection: close\r\n\r\n`,
+        );
+      });
+    });
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const { port } = server.address() as net.AddressInfo;
+
+    try {
+      const res = await fetch(`http://127.0.0.1:${port}/start`);
+      expect({
+        status: res.status,
+        redirected: res.redirected,
+        url: res.url,
+        body: await res.text(),
+      }).toEqual({
+        status: 200,
+        redirected: true,
+        url: `http://127.0.0.1:${final.port}/final`,
+        body: "FINAL",
+      });
+    } finally {
+      for (const s of sockets) s.destroy();
+      server.close();
+      await once(server, "close");
+    }
+  });
+});

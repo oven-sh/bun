@@ -50,13 +50,13 @@ pub struct ZigException {
 }
 
 impl ZigException {
-    pub fn collect_source_lines(&mut self, value: JSValue, global: &JSGlobalObject) {
+    pub(crate) fn collect_source_lines(&mut self, value: JSValue, global: &JSGlobalObject) {
         ZigException__collectSourceLines(value, global, self);
     }
 
     // Kept as explicit `deinit` (not `Drop`) — this is a #[repr(C)] FFI
     // payload whose lifetime is gated by `Holder.loaded`; C++ constructs/populates it.
-    pub fn deinit(&mut self) {
+    pub(crate) fn deinit(&mut self) {
         self.syscall.deref();
         self.system_code.deref();
         self.path.deref();
@@ -84,7 +84,7 @@ impl ZigException {
     // `JSC__JSValue__toZigException` which writes through an out-param), so
     // there is intentionally no `from_exception` here.
 
-    pub fn add_to_error_list(
+    pub(crate) fn add_to_error_list(
         &mut self,
         error_list: &mut Vec<api::JsException>,
         root_path: &[u8],
@@ -130,21 +130,21 @@ impl ZigException {
 
 #[repr(C)]
 pub struct Holder {
-    pub source_line_numbers: [i32; Self::SOURCE_LINES_COUNT],
-    pub source_lines: [String; Self::SOURCE_LINES_COUNT],
-    pub frames: [ZigStackFrame; Self::FRAME_COUNT],
-    pub loaded: bool,
+    pub(crate) source_line_numbers: [i32; Self::SOURCE_LINES_COUNT],
+    pub(crate) source_lines: [String; Self::SOURCE_LINES_COUNT],
+    pub(crate) frames: [ZigStackFrame; Self::FRAME_COUNT],
+    pub(crate) loaded: bool,
     // Never read until `loaded` flips and `zig_exception()` writes it;
     // all access must be gated on `loaded`.
-    pub zig_exception: MaybeUninit<ZigException>,
-    pub need_to_clear_parser_arena_on_deinit: bool,
+    pub(crate) zig_exception: MaybeUninit<ZigException>,
+    pub(crate) need_to_clear_parser_arena_on_deinit: bool,
 }
 
 impl Holder {
     const FRAME_COUNT: usize = 32;
-    pub const SOURCE_LINES_COUNT: usize = 6;
+    pub(crate) const SOURCE_LINES_COUNT: usize = 6;
 
-    pub fn zero() -> Self {
+    pub(crate) fn zero() -> Self {
         Self {
             frames: core::array::from_fn(|_| ZigStackFrame::ZERO),
             source_line_numbers: [-1; Self::SOURCE_LINES_COUNT],
@@ -164,7 +164,7 @@ impl Holder {
     // `Drop` cannot), but the string-ref release half is also covered by
     // `Drop` below so an early `?`/return between population and the tail
     // call won't leak WTF string refs.
-    pub fn deinit(&mut self, vm: &mut VirtualMachine) {
+    pub(crate) fn deinit(&mut self, vm: &mut VirtualMachine) {
         if self.loaded {
             // SAFETY: `loaded == true` ⇔ `zig_exception()` has written this slot.
             unsafe { self.zig_exception.assume_init_mut() }.deinit();

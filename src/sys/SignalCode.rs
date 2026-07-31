@@ -29,10 +29,6 @@ impl SignalCode {
         }
     }
 
-    pub fn valid(self) -> bool {
-        self.0 <= Self::SIGSYS.0 && self.0 >= Self::SIGHUP.0
-    }
-
     /// Shell scripts use exit codes 128 + signal number
     /// https://tldp.org/LDP/abs/html/exitcodes.html
     pub fn to_exit_code(self) -> Option<u8> {
@@ -42,7 +38,7 @@ impl SignalCode {
         }
     }
 
-    pub fn description(self) -> Option<&'static str> {
+    pub(crate) fn description(self) -> Option<&'static str> {
         // Description names copied from fish
         // https://github.com/fish-shell/fish-shell/blob/00ffc397b493f67e28f18640d3de808af29b1434/fish-rust/src/signal.rs#L420
         match self {

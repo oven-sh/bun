@@ -23,7 +23,7 @@
 //!
 //! // ── in bun_event_loop (high tier) ──
 //! bun_io::link_impl_EventLoopOps! {
-//!     Mini for MiniEventLoop<'static> => |this| {
+//!     Mini for MiniEventLoop => |this| {
 //!         platform_loop()        => (*this).loop_ptr(),
 //!         set_after_cb(cb, ctx)  => { (*this).cb = cb; (*this).ctx = ctx; },
 //!     }

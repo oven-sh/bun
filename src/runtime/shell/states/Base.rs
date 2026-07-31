@@ -4,13 +4,12 @@
 //! `parent: NodeId` and the `*mut ShellExecEnv` (which may be owned or
 //! borrowed — see field doc) are stored here.
 
-use crate::shell::interpreter::{NodeId, ShellExecEnv, StateKind};
+use crate::shell::interpreter::{NodeId, ShellExecEnv};
 
 pub struct Base {
-    pub kind: StateKind,
     /// Index of the parent node in `Interpreter::nodes`, or
     /// `NodeId::INTERPRETER` if the parent is the interpreter itself.
-    pub parent: NodeId,
+    pub(crate) parent: NodeId,
     /// Borrowed or owned in specific cases — affects whether this node must
     /// `deinit` it. Owned when created via `dupe_for_subshell` (Script,
     /// pipeline children, subshells, command substitutions); otherwise
@@ -22,17 +21,13 @@ pub struct Base {
 }
 
 impl Base {
-    pub fn new(kind: StateKind, parent: NodeId, shell: *mut ShellExecEnv) -> Self {
-        Self {
-            kind,
-            parent,
-            shell,
-        }
+    pub(crate) fn new(parent: NodeId, shell: *mut ShellExecEnv) -> Self {
+        Self { parent, shell }
     }
 
     /// No-op kept for call-site parity.
     #[inline]
-    pub fn end_scope(&mut self) {}
+    pub(crate) fn end_scope(&mut self) {}
 
     #[inline]
     pub fn shell(&self) -> &ShellExecEnv {
@@ -43,17 +38,10 @@ impl Base {
     }
 
     #[inline]
-    pub fn shell_mut(&mut self) -> &mut ShellExecEnv {
+    pub(crate) fn shell_mut(&mut self) -> &mut ShellExecEnv {
         // SAFETY: see `shell()`. Mutation is single-threaded (interpreter
         // runs on one thread) and the trampoline only holds one `&mut` at a
         // time.
         unsafe { &mut *self.shell }
     }
-}
-
-/// `error{Sys}` — see `Interpreter::try_`.
-#[derive(thiserror::Error, strum::IntoStaticStr, Debug)]
-pub enum TryError {
-    #[error("Sys")]
-    Sys,
 }

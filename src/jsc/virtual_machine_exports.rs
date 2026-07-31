@@ -215,7 +215,7 @@ pub fn on_did_append_plugin(jsc_vm: &mut VirtualMachine, global: &JSGlobalObject
 
 #[cfg(windows)]
 #[unsafe(no_mangle)]
-pub(crate) extern "C" fn Bun__ZigGlobalObject__uvLoop(jsc_vm: &mut VirtualMachine) -> *mut c_void {
+extern "C" fn Bun__ZigGlobalObject__uvLoop(jsc_vm: &mut VirtualMachine) -> *mut c_void {
     jsc_vm.uv_loop().cast()
 }
 
@@ -323,23 +323,23 @@ pub fn Bun__setSyntheticAllocationLimitForTesting(
     global: &JSGlobalObject,
     frame: &CallFrame,
 ) -> JsResult<JSValue> {
-    let args = frame.arguments_old::<1>();
-    if args.len < 1 {
+    let [arg] = frame.arguments_as_array::<1>();
+    if frame.arguments_count() < 1 {
         return Err(global.throw_not_enough_arguments(
             "setSyntheticAllocationLimitForTesting",
             1,
-            args.len,
+            frame.arguments_count() as usize,
         ));
     }
 
-    if !args.ptr[0].is_number() {
+    if !arg.is_number() {
         return Err(global.throw_invalid_arguments(format_args!(
             "setSyntheticAllocationLimitForTesting expects a number"
         )));
     }
 
     let limit: usize =
-        usize::try_from(args.ptr[0].coerce_to_int64(global)?.max(1024 * 1024)).expect("int cast");
+        usize::try_from(arg.coerce_to_int64(global)?.max(1024 * 1024)).expect("int cast");
     let prev = crate::virtual_machine::SYNTHETIC_ALLOCATION_LIMIT
         .swap(limit, core::sync::atomic::Ordering::Relaxed);
     crate::virtual_machine::STRING_ALLOCATION_LIMIT

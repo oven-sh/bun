@@ -71,6 +71,8 @@ std::optional<NidKeyPairJobCtx> NidKeyPairJobCtx::fromJS(JSGlobalObject* globalO
         id = EVP_PKEY_X25519;
     } else if (typeView == "x448"_s) {
         id = EVP_PKEY_X448;
+    } else if (int pqcNid = pqcKeyTypeToNid(typeView)) {
+        id = pqcNid;
     } else {
         UNREACHABLE();
     }

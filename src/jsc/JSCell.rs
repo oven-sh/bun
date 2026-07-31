@@ -1,6 +1,6 @@
 use crate::custom_getter_setter::CustomGetterSetter;
 use crate::getter_setter::GetterSetter;
-use crate::{JSGlobalObject, JSObject, JSType, JSValue};
+use crate::{JSType, JSValue};
 
 bun_opaque::opaque_ffi! {
     /// Opaque FFI handle for `JSC::JSCell`.
@@ -8,35 +8,8 @@ bun_opaque::opaque_ffi! {
 }
 
 impl JSCell {
-    /// Statically cast a cell to a JSObject. Returns null for non-objects.
-    /// Use `to_object` to mutate non-objects into objects.
     #[track_caller]
-    pub fn get_object(&self) -> Option<&JSObject> {
-        crate::mark_member_binding("JSCell", core::panic::Location::caller());
-        // `JSObject` is an `opaque_ffi!` ZST handle; `opaque_ref` is the
-        // centralised non-null-ZST deref proof. Nullable per the C++ contract
-        // (non-object cells return null).
-        let p = JSC__JSCell__getObject(self);
-        (!p.is_null()).then(|| JSObject::opaque_ref(p))
-    }
-
-    /// Convert a cell to a JSObject.
-    ///
-    /// Statically casts cells that are already objects, otherwise mutates them
-    /// into objects.
-    ///
-    /// ## References
-    /// - [ECMA-262 §7.1.18 ToObject](https://tc39.es/ecma262/#sec-toobject)
-    #[track_caller]
-    pub fn to_object<'a>(&'a self, global: &'a JSGlobalObject) -> &'a JSObject {
-        crate::mark_member_binding("JSCell", core::panic::Location::caller());
-        // `JSObject` is an `opaque_ffi!` ZST handle; `opaque_ref` is the
-        // centralised non-null deref proof (ToObject on a cell never returns null).
-        JSObject::opaque_ref(JSC__JSCell__toObject(self, global))
-    }
-
-    #[track_caller]
-    pub fn get_type(&self) -> JSType {
+    pub(crate) fn get_type(&self) -> JSType {
         crate::mark_member_binding("JSCell", core::panic::Location::caller());
         // `JSType` is a `#[repr(transparent)]` newtype over `u8`, so any byte
         // returned by the extern is a valid value (see the extern's NOTE).
@@ -47,7 +20,7 @@ impl JSCell {
         JSValue::from_cell(std::ptr::from_ref::<JSCell>(self))
     }
 
-    pub fn get_getter_setter(&self) -> &GetterSetter {
+    pub(crate) fn get_getter_setter(&self) -> &GetterSetter {
         debug_assert!(self.get_type() == JSType::GetterSetter);
         // Caller-asserted invariant — this cell's JSType is GetterSetter.
         // `GetterSetter` is an `opaque_ffi!` ZST handle; `opaque_ref` is the
@@ -55,7 +28,7 @@ impl JSCell {
         GetterSetter::opaque_ref(std::ptr::from_ref::<JSCell>(self).cast::<GetterSetter>())
     }
 
-    pub fn get_custom_getter_setter(&self) -> &CustomGetterSetter {
+    pub(crate) fn get_custom_getter_setter(&self) -> &CustomGetterSetter {
         debug_assert!(self.get_type() == JSType::CustomGetterSetter);
         // Caller-asserted invariant — this cell's JSType is CustomGetterSetter.
         // `CustomGetterSetter` is an `opaque_ffi!` ZST handle; see `get_getter_setter`.
@@ -63,18 +36,12 @@ impl JSCell {
             std::ptr::from_ref::<JSCell>(self).cast::<CustomGetterSetter>(),
         )
     }
-
-    pub fn ensure_still_alive(&self) {
-        core::hint::black_box(std::ptr::from_ref::<JSCell>(self));
-    }
 }
 
 // `JSCell`/`JSGlobalObject` are opaque `UnsafeCell`-backed ZST handles, so
 // `&T` is ABI-identical to a non-null `*const T` and C++ mutating cell state
 // through it is interior mutation invisible to Rust.
 unsafe extern "C" {
-    safe fn JSC__JSCell__getObject(this: &JSCell) -> *mut JSObject;
-    safe fn JSC__JSCell__toObject(this: &JSCell, global: &JSGlobalObject) -> *mut JSObject;
     // NOTE: this function always returns a JSType, but by using `u8` then
     // casting it via `@enumFromInt` we can ensure our `JSType` enum matches
     // WebKit's. This protects us from possible future breaking changes made
@@ -195,12 +162,6 @@ impl<T> JsCell<T> {
     #[inline(always)]
     pub const fn as_ptr(&self) -> *mut T {
         self.0.get()
-    }
-
-    /// Consume the cell and return the inner value.
-    #[inline(always)]
-    pub fn into_inner(self) -> T {
-        self.0.into_inner()
     }
 }
 

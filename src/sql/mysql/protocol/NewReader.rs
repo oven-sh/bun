@@ -21,8 +21,6 @@ pub struct NewReader<C: ReaderContext> {
 }
 
 impl<C: ReaderContext> NewReader<C> {
-    pub const IS_WRAPPED: bool = true;
-
     pub fn mark_message_start(self) {
         self.wrapped.mark_message_start();
     }
@@ -44,7 +42,7 @@ impl<C: ReaderContext> NewReader<C> {
         self.wrapped.peek()
     }
 
-    pub fn read_z(self) -> Result<Data, AnyMySQLError> {
+    pub(crate) fn read_z(self) -> Result<Data, AnyMySQLError> {
         self.wrapped.read_z()
     }
 
@@ -98,7 +96,7 @@ impl<C: ReaderContext> NewReader<C> {
         Err(AnyMySQLError::InvalidEncodedLength)
     }
 
-    pub fn encoded_len_int(self) -> Result<u64, AnyMySQLError> {
+    pub(crate) fn encoded_len_int(self) -> Result<u64, AnyMySQLError> {
         if let Some(result) = decode_length_int(self.peek()) {
             self.skip(result.bytes_read);
             return Ok(result.value);
@@ -106,7 +104,7 @@ impl<C: ReaderContext> NewReader<C> {
         Err(AnyMySQLError::InvalidEncodedInteger)
     }
 
-    pub fn encoded_len_int_with_size(self, size: &mut usize) -> Result<u64, AnyMySQLError> {
+    pub(crate) fn encoded_len_int_with_size(self, size: &mut usize) -> Result<u64, AnyMySQLError> {
         if let Some(result) = decode_length_int(self.peek()) {
             self.skip(result.bytes_read);
             *size += result.bytes_read;
@@ -121,23 +119,3 @@ impl<C: ReaderContext> NewReader<C> {
 /// `bun_sql::ReadableInt`) keep their paths.
 /// MySQL's u24/i24 are NOT routed through this trait — see `int_u24`/`int_i24`.
 pub use bun_core::NativeEndianInt as ReadableInt;
-
-impl<C: ReaderContext> From<C> for NewReader<C> {
-    fn from(wrapped: C) -> Self {
-        Self { wrapped }
-    }
-}
-
-pub trait Decode: Sized {
-    fn decode_internal<C: ReaderContext>(
-        &mut self,
-        reader: NewReader<C>,
-    ) -> Result<(), AnyMySQLError>;
-
-    fn decode<C: ReaderContext>(
-        &mut self,
-        context: impl Into<NewReader<C>>,
-    ) -> Result<(), AnyMySQLError> {
-        self.decode_internal(context.into())
-    }
-}

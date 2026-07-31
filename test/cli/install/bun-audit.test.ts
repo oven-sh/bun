@@ -1,6 +1,6 @@
 import { spawn } from "bun";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, DirectoryTree, gunzipJsonRequest, lazyPromiseLike, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, DirectoryTree, gunzipJsonRequest, lazyPromiseLike, tempDir } from "harness";
 import { join } from "node:path";
 import { resolveBulkAdvisoryFixture } from "./registry/fixtures/audit/audit-fixtures";
 
@@ -18,6 +18,7 @@ let server: Bun.Server;
 
 beforeAll(() => {
   server = Bun.serve({
+    port: 0,
     fetch: async req => {
       const body = await gunzipJsonRequest(req);
 
@@ -34,7 +35,7 @@ beforeAll(() => {
 });
 
 afterAll(() => {
-  server.stop();
+  server?.stop();
 });
 
 function doAuditTest(
@@ -47,7 +48,7 @@ function doAuditTest(
   },
 ) {
   test(label, async () => {
-    const dir = tempDirWithFiles("bun-test-audit-" + label.replace(/[^a-zA-Z0-9]/g, "-"), options.files);
+    await using dir = tempDir("bun-test-audit-" + label.replace(/[^a-zA-Z0-9]/g, "-"), options.files);
 
     const cmd = [bunExe(), "audit", ...(options.args ?? [])];
 

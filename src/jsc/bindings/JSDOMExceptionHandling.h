@@ -52,6 +52,7 @@ WEBCORE_EXPORT JSC::EncodedJSValue throwArgumentMustBeFunctionError(JSC::JSGloba
 WEBCORE_EXPORT JSC::EncodedJSValue throwArgumentMustBeObjectError(JSC::JSGlobalObject&, JSC::ThrowScope&, unsigned argumentIndex, ASCIILiteral argumentName, ASCIILiteral functionInterfaceName, ASCIILiteral functionName);
 WEBCORE_EXPORT JSC::EncodedJSValue throwArgumentTypeError(JSC::JSGlobalObject&, JSC::ThrowScope&, unsigned argumentIndex, ASCIILiteral argumentName, ASCIILiteral functionInterfaceName, ASCIILiteral functionName, ASCIILiteral expectedType);
 WEBCORE_EXPORT JSC::EncodedJSValue throwRequiredMemberTypeError(JSC::JSGlobalObject&, JSC::ThrowScope&, ASCIILiteral memberName, ASCIILiteral dictionaryName, ASCIILiteral expectedType);
+WEBCORE_EXPORT JSC::EncodedJSValue throwDictionaryMemberTypeError(JSC::JSGlobalObject&, JSC::ThrowScope&, ASCIILiteral memberName, ASCIILiteral dictionaryName, ASCIILiteral expectedType);
 JSC::EncodedJSValue throwConstructorScriptExecutionContextUnavailableError(JSC::JSGlobalObject&, JSC::ThrowScope&, ASCIILiteral interfaceName);
 
 String makeThisTypeErrorMessage(ASCIILiteral interfaceName, ASCIILiteral functionName);

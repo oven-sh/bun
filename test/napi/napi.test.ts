@@ -11,7 +11,7 @@ import {
   isMusl,
   isWindows,
   nodeExeMatchingAbi,
-  tempDirWithFiles,
+  tempDir,
 } from "harness";
 import { join } from "path";
 
@@ -73,7 +73,7 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
   describe.each(["esm", "cjs"])("bundle .node files to %s via", format => {
     describe.each(["node", "bun"])("target %s", target => {
       it("Bun.build", async () => {
-        const dir = tempDirWithFiles("node-file-cli", {
+        await using dir = tempDir("node-file-cli", {
           "package.json": JSON.stringify({
             name: "napi-app",
             version: "1.0.0",
@@ -116,7 +116,7 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
         it(
           "should work with --compile",
           async () => {
-            const dir = tempDirWithFiles("napi-app-compile-" + format, {
+            await using dir = tempDir("napi-app-compile-" + format, {
               "package.json": JSON.stringify({
                 name: "napi-app",
                 version: "1.0.0",
@@ -140,7 +140,7 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
               stderr: "inherit",
             });
             expect(build.success).toBeTrue();
-            const tmpdir = tempDirWithFiles("should-be-empty-except", {});
+            await using tmpdir = tempDir("should-be-empty-except", {});
             const result = spawnSync({
               cmd: [exe, "self"],
               env: { ...bunEnv, BUN_TMPDIR: tmpdir },
@@ -158,12 +158,15 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
               // Not clear how to test for that.
             }
           },
-          10 * 1000,
+          // CI runs tests under bun-profile (~700 MB on linux with ThinLTO
+          // DWARF); --compile copies+reads+rewrites the whole thing to /tmp,
+          // which on debian/ubuntu is disk-backed gp3.
+          30 * 1000,
         );
       }
 
       it("`bun build`", async () => {
-        const dir = tempDirWithFiles("node-file-build", {
+        await using dir = tempDir("node-file-build", {
           "package.json": JSON.stringify({
             name: "napi-app",
             version: "1.0.0",
@@ -706,6 +709,19 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
     it("handles accessor properties when filtering by napi_key_writable", async () => {
       await checkSameOutput("test_get_all_property_names_accessor", []);
     });
+    it("matches Node for Proxy and String wrapper with napi_key_writable/napi_key_configurable", async () => {
+      const output = await checkSameOutput("test_get_all_property_names_proxy_and_string_wrapper", []);
+      expect(output).toContain(`proxy own_only writable: status=0 keys=["x","y"]`);
+      expect(output).toContain(`proxy own_only configurable: status=0 keys=["x","y"]`);
+      expect(output).toContain(`proxy(no traps) writable: status=0 keys=["ro","rw"]`);
+      expect(output).toContain(`string own_only writable: status=0 keys=[0,1]`);
+      expect(output).toContain(`string own_only configurable: status=0 keys=[0,1]`);
+      expect(output).toContain(`derived string writable: status=0 keys=[0,1]`);
+      expect(output).toContain(`proxy-proto include_prototypes writable: status=0 keys=["x","y"]`);
+      expect(output).toContain(`string-proto include_prototypes configurable: status=0 keys=[0,1]`);
+      expect(output).toContain(`plain writable: status=0 keys=["w","nc"]`);
+      expect(output).toContain(`frozen writable: status=0 keys=[]`);
+    });
   });
 
   describe("napi_value <=> integer conversion", () => {
@@ -1215,19 +1231,20 @@ describe.skipIf(!canBuildNodeAddons())("napi_create_string_latin1", () => {
   it("does not leak the WTFStringImpl", async () => {
     const fixture = /* js */ `
       const nativeTests = require(${JSON.stringify(join(__dirname, "napi-app/build/Debug/napitests.node"))});
+      const rss = process.platform === "darwin" && typeof Bun.unsafe.memoryFootprint === "function" ? Bun.unsafe.memoryFootprint : process.memoryUsage.rss;
       const size = 256 * 1024;
       for (let i = 0; i < 20; i++) {
         const s = nativeTests.create_latin1_string(size);
         if (s.length !== size) throw new Error("wrong length: " + s.length);
       }
       Bun.gc(true);
-      const before = process.memoryUsage.rss();
+      const before = rss();
       for (let i = 0; i < 300; i++) {
         const s = nativeTests.create_latin1_string(size);
         if (s.length !== size) throw new Error("wrong length: " + s.length);
       }
       Bun.gc(true);
-      const growthMB = (process.memoryUsage.rss() - before) / 1024 / 1024;
+      const growthMB = (rss() - before) / 1024 / 1024;
       console.error("RSS growth: " + growthMB.toFixed(1) + " MB");
       process.exit(growthMB > Number(process.env.THRESHOLD_MB) ? 1 : 0);
     `;
@@ -1450,6 +1467,19 @@ describe.skipIf(!canBuildNodeAddons())("cleanup hooks", () => {
       // as js_callback and passes it to napi_make_callback, it should succeed.
       const output = await checkSameOutput("test_make_callback_with_async_context", []);
       expect(output).toContain("PASS: napi_make_callback succeeded");
+    });
+
+    it("derives napi_make_callback status from pending exception, not return value", async () => {
+      // Returning an Error is napi_ok; throwing (any value) is napi_pending_exception
+      // and leaves the exception observable to napi_is_exception_pending.
+      const output = await checkSameOutput(
+        "test_napi_make_callback_status",
+        "[() => 42, () => new Error('returned'), () => { throw new Error('thrown'); }, () => { throw 'string'; }]",
+      );
+      expect(output).toContain("cb 1: status=0 pending=0 wrote_result=1 result_is_error=0");
+      expect(output).toContain("cb 2: status=0 pending=0 wrote_result=1 result_is_error=1");
+      expect(output).toContain("cb 3: status=10 pending=1 wrote_result=0 result_is_error=0");
+      expect(output).toContain("cb 4: status=10 pending=1 wrote_result=0 result_is_error=0");
     });
 
     it("should accept AsyncContextFrame in napi_create_threadsafe_function with null call_js_cb", async () => {

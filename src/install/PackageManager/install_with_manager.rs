@@ -682,9 +682,7 @@ pub fn install_with_manager(
             let (first_index, _, entries) =
                 scripts.get_script_entries(string_bytes, ResolutionTag::Workspace, add_node_gyp);
 
-            if cfg!(debug_assertions) {
-                debug_assert!(first_index != -1);
-            }
+            debug_assert!(first_index != -1);
 
             // In the `add_node_gyp` arm the assert already guarantees
             // `first_index != -1`, so a single guarded loop covers
@@ -1233,12 +1231,10 @@ fn print_blocked_packages_info(summary: &PackageInstallSummary, global: bool) {
         scripts_count += *count;
     }
 
-    if cfg!(debug_assertions) {
-        // if packages_count is greater than 0, scripts_count must also be greater than 0.
-        debug_assert!(packages_count == 0 || scripts_count > 0);
-        // if scripts_count is 1, it's only possible for packages_count to be 1.
-        debug_assert!(scripts_count != 1 || packages_count == 1);
-    }
+    // if packages_count is greater than 0, scripts_count must also be greater than 0.
+    debug_assert!(packages_count == 0 || scripts_count > 0);
+    // if scripts_count is 1, it's only possible for packages_count to be 1.
+    debug_assert!(scripts_count != 1 || packages_count == 1);
 
     if packages_count > 0 {
         bun_core::prettyln!(
@@ -1305,18 +1301,13 @@ pub(crate) fn get_workspace_filters(
                 }
             };
 
-            match glob::r#match(pattern, path_or_name) {
-                glob::MatchResult::Match | glob::MatchResult::NegateMatch => {
-                    install_root_dependencies = true;
-                }
-
-                glob::MatchResult::NegateNoMatch => {
-                    // always skip if a pattern specifically says "!<name>"
-                    install_root_dependencies = false;
-                    break;
-                }
-
-                glob::MatchResult::NoMatch => {}
+            let result = glob::r#match(pattern, path_or_name);
+            if result.matches() {
+                install_root_dependencies = true;
+            } else if result.is_negated() {
+                // always skip if a pattern specifically says "!<name>"
+                install_root_dependencies = false;
+                break;
             }
         }
     }
@@ -1822,9 +1813,7 @@ fn run_root_lifecycle_scripts(
     log_level: Options::LogLevel,
 ) -> crate::Result<()> {
     if let Some(scripts) = manager.root_lifecycle_scripts.take() {
-        if cfg!(debug_assertions) {
-            debug_assert!(scripts.total > 0);
-        }
+        debug_assert!(scripts.total > 0);
 
         if log_level != Options::LogLevel::Silent {
             Output::print_error(format_args!("\n"));

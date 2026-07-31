@@ -32,6 +32,7 @@ pub mod codec_bmp;
 #[path = "codec_gif.rs"]
 pub mod codec_gif;
 
+#[cfg(target_os = "macos")]
 #[path = "backend_coregraphics.rs"]
 pub mod backend_coregraphics;
 

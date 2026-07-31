@@ -1,8 +1,8 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 
 test("lifecycle script should handle directory deletion gracefully", async () => {
-  const dir = tempDirWithFiles("lifecycle-crash-test", {
+  await using dir = tempDir("lifecycle-crash-test", {
     "package.json": JSON.stringify({
       name: "test-package",
       version: "1.0.0",
@@ -46,7 +46,7 @@ test("lifecycle script should handle directory deletion gracefully", async () =>
 });
 
 test("lifecycle script with optional dependency should handle directory deletion", async () => {
-  const depDir = tempDirWithFiles("optional-dep", {
+  await using depDir = tempDir("optional-dep", {
     "package.json": JSON.stringify({
       name: "optional-dep",
       version: "1.0.0",
@@ -57,7 +57,7 @@ test("lifecycle script with optional dependency should handle directory deletion
     }),
   });
 
-  const mainDir = tempDirWithFiles("main-package", {
+  await using mainDir = tempDir("main-package", {
     "package.json": JSON.stringify({
       name: "main-package",
       version: "1.0.0",

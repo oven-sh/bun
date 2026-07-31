@@ -58,6 +58,51 @@ test("tls.connect({ socket }) via the stream-level engine does not re-emit post-
   }
 });
 
+// https://github.com/oven-sh/bun/issues/32242
+test("tls.connect({ socket }) drains every buffered chunk into the stream-level engine", async () => {
+  // A paused socket can have multiple chunks in its readable buffer when the
+  // upgrade runs. The install-time drain must feed all of them to the TLS
+  // engine (read() returns one chunk at a time); leaving any behind would
+  // stall the handshake once the raw data handler stops pushing.
+  const { promise: done, resolve, reject } = Promise.withResolvers<void>();
+  const alert = Buffer.from([0x15, 0x03, 0x03, 0x00, 0x02, 0x02, 0x28]);
+
+  const server = net.createServer(s => {
+    s.on("error", () => {});
+    s.write(alert);
+  });
+  server.on("error", reject);
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+
+  const raw = net.connect((server.address() as net.AddressInfo).port, "127.0.0.1");
+  raw.on("error", () => {});
+  try {
+    raw.pause();
+    await once(raw, "connect");
+    await once(raw, "readable");
+    // Stage a second chunk so the readable buffer holds more than one.
+    raw.unshift(Buffer.from(alert));
+    expect(raw.readableLength).toBe(alert.length * 2);
+
+    raw.cork();
+    raw.write("S");
+    const tlsSocket = tls.connect({ socket: raw, rejectUnauthorized: false });
+    raw.uncork();
+
+    // Every pre-buffered chunk was handed to the feeder; nothing is stranded.
+    expect(raw.readableLength).toBe(0);
+
+    tlsSocket.on("error", () => resolve());
+    tlsSocket.on("secureConnect", () => resolve());
+    tlsSocket.on("close", () => resolve());
+    await done;
+  } finally {
+    raw.destroy();
+    server.close();
+  }
+});
+
 test("should be able to upgrade a paused socket and also have backpressure on it #15438", async () => {
   // enought to trigger backpressure
   const payload = Buffer.alloc(16 * 1024 * 4, "b").toString("utf8");

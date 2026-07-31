@@ -148,7 +148,8 @@ const kupgraded = Symbol("kupgraded");
 // handle keeps delivering post-upgrade bytes, so the raw data handlers route
 // them straight to the TLS engine instead of pushing onto the connection and
 // re-emitting ciphertext as `data` on any pre-existing user listener. #32242
-const kDuplexTLSFeeder = Symbol("kDuplexTLSFeeder");
+// Shared with _http2_upgrade.ts (it calls upgradeDuplexToTLS directly).
+const kDuplexTLSFeeder = Symbol.for("::bunDuplexTLSFeeder::");
 const kAdoptedTLSRaw = Symbol("kAdoptedTLSRaw");
 const ksocket = Symbol("ksocket");
 const khandlers = Symbol("khandlers");
@@ -1897,21 +1898,21 @@ Socket.prototype[kCloseRawConnection] = function () {
   connection.destroy();
 };
 
-// Wires the TLS data feeder for a duplex-upgraded connection. A net.Socket keeps
-// its native handle after upgradeDuplexToTLS, so its raw data handler routes
-// post-upgrade bytes straight to the TLS engine instead of through the public
-// `data` event (which would re-emit ciphertext on pre-existing user listeners;
-// #32242). A plain Duplex has no such handler and is fed via its `data` event.
+// Wires the TLS data feeder for a duplex-upgraded connection. A net.Socket with
+// a native handle keeps that handle after upgradeDuplexToTLS, so its raw data
+// handler routes post-upgrade bytes straight to the TLS engine instead of
+// through the public `data` event (which would re-emit ciphertext on any
+// pre-existing user listener; #32242). A plain Duplex, or a Socket subclass
+// whose bytes arrive via push() rather than a native handler, is fed via its
+// `data` event.
 function attachDuplexTLSFeeder(connection, onData) {
-  if (connection instanceof Socket) {
+  if (connection instanceof Socket && connection._handle) {
     connection[kDuplexTLSFeeder] = onData;
     // Bytes that arrived before the feeder was installed are sitting in the
     // readable buffer; the `on("data")` wiring this replaces would have drained
-    // them on the next tick. Deliver them here so the handshake doesn't stall.
-    if (connection.readableLength > 0) {
-      const buffered = connection.read();
-      if (buffered !== null) onData(buffered);
-    }
+    // them on the next tick. read() returns one chunk at a time, so loop.
+    let chunk;
+    while ((chunk = connection.read()) !== null) onData(chunk);
   } else {
     connection.on("data", onData);
   }

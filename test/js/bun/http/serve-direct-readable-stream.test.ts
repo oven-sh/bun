@@ -119,10 +119,12 @@ test.skipIf(!isASAN)(
 
 // Once controller.end() fully ends the response, uWS markDone() drops its
 // onAborted handler, so a peer that closes the plain-TCP socket afterwards
-// never reaches RequestContext::on_abort. uSockets frees the socket at the
-// end of that loop tick (us_internal_free_closed_sockets), but resp was never
-// detached; the stream-resolution microtask for the still parked pull() then
-// dereferenced the freed us_socket_t:
+// never reaches RequestContext::on_abort. The sink's onClose now settles the
+// native consumer's promise at end() time, so handle_resolve_stream (and its
+// end_already_responded_stream() tail) runs before the socket is freed. This
+// test stays as a guard that the ended_response short-circuit still detaches
+// `resp` instead of dereferencing it; before the short-circuit existed the
+// stream-resolution microtask dereferenced the freed us_socket_t:
 //   AddressSanitizer: heap-use-after-free (READ of size 1)
 //     uws_res_state <- AnyResponse::should_close_connection
 //     <- RequestContext::should_close_connection
@@ -209,9 +211,10 @@ test.skipIf(!isASAN)(
   60_000,
 );
 
-// Same setup, but the parked pull() rejects after controller.end(). The
-// rejection goes through handle_reject_stream, which had the same stale
-// `resp` dereference on its tail (`end_stream(should_close_connection())`).
+// Same setup, but the parked pull() rejects after controller.end(). The sink
+// onClose now settles the native consumer's promise at end() time, so the
+// RequestContext tears down before the socket is freed; the late rejection is
+// surfaced via Bun__printErrorValue instead of handle_reject_stream.
 test.skipIf(!isASAN)(
   "client disconnect after controller.end() with a parked rejecting pull() does not use the socket after free",
   async () => {
@@ -226,8 +229,6 @@ test.skipIf(!isASAN)(
     const server = Bun.serve({
       port: 0,
       idleTimeout: 0,
-      // development:false keeps the late rejection out of stderr; the dev
-      // reporter is irrelevant to the lifetime bug under test.
       development: false,
       fetch(req) {
         if (new URL(req.url).pathname === "/probe") return new Response("probe");
@@ -280,11 +281,12 @@ test.skipIf(!isASAN)(
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    expect({ stdout, stderr, exitCode }).toEqual({
-      stdout: "ok\n",
-      stderr: "",
-      exitCode: 0,
-    });
+    expect(stdout).toBe("ok\n");
+    // The late rejection is printed: onReadDirectPullRejected surfaces it once
+    // the sink's close has already taken and settled the consumer promise.
+    expect(stderr).toContain("late stream failure");
+    expect(stderr).not.toContain("AddressSanitizer");
+    expect(exitCode).toBe(0);
   },
   60_000,
 );

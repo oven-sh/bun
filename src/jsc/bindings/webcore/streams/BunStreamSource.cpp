@@ -1673,11 +1673,17 @@ JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onReadDirectPullRejected, (JSGlobal
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* state = uncheckedDowncast<JSDirectSinkCloseState>(callFrame->argument(1));
+    JSValue reason = callFrame->argument(0);
     if (auto* closePromise = state->m_closePromise.get()) {
         state->m_closePromise.clear();
-        rejectPromise(globalObject, closePromise, callFrame->argument(0));
+        rejectPromise(globalObject, closePromise, reason);
         RETURN_IF_EXCEPTION(scope, {});
+        return JSValue::encode(jsUndefined());
     }
+    // The sink already closed (controller.end() or the native abort took the slot and
+    // resolved it). Surface the late rejection so it is not silently swallowed now that
+    // this handler marks pullPromise handled; print-only matches handle_reject_stream.
+    Bun__printErrorValue(globalObject, JSValue::encode(reason));
     return JSValue::encode(jsUndefined());
 }
 

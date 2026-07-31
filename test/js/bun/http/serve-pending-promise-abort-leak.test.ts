@@ -339,6 +339,48 @@ test("direct-stream pull() that resolves normally still releases the request", a
   await waitForPendingRequests(server, 0);
 });
 
+test("direct-stream pull() that throws after controller.end() still surfaces the error", async () => {
+  // controller.end()'s onClose takes and resolves m_closePromise, so the later
+  // pull() rejection finds the slot empty; onReadDirectPullRejected then
+  // routes the reason through the VM's error printer instead of dropping it.
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+      const server = Bun.serve({
+        port: 0,
+        development: false,
+        async fetch() {
+          return new Response(new ReadableStream({
+            type: "direct",
+            async pull(c) {
+              c.write("hi");
+              await c.flush();
+              c.end();
+              throw new Error("boom after end");
+            },
+          }));
+        },
+      });
+      const res = await fetch(server.url);
+      await res.text().catch(() => {});
+      await Bun.sleep(10);
+      console.log("pending:" + server.pendingRequests);
+      server.stop(true);
+    `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toContain("boom after end");
+  expect(stdout.trim()).toBe("pending:0");
+  expect(exitCode).toBe(0);
+});
+
 test("direct-stream pull() that rejects still releases the request", async () => {
   // pull() rejecting goes through onReadDirectPullRejected, which rejects the
   // consumer's promise so handleRejectStream runs and force-closes the connection.

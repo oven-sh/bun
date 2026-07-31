@@ -2,7 +2,7 @@
 // These tests fail by timing out.
 
 import { expect, test } from "bun:test";
-import { getMaxFD, isASAN, isCI, isDebug, isMacOS } from "harness";
+import { getMaxFD, isCI, isMacOS } from "harness";
 
 // Since we bumped MAX_CONNECTIONS to 4, we should halve the threshold on macOS.
 const PORT_EXHAUSTION_THRESHOLD = isMacOS ? 8 * 1024 : 16 * 1024;
@@ -14,9 +14,7 @@ async function runStressTest({
   onServerWritten: (socket) => void;
   onFetchWritten: (socket) => void;
 }) {
-  // Debug+ASAN builds run ~30x slower; trim to keep under the 30s budget while
-  // still running enough batches for the FD-stability assertion to bite.
-  const total = isDebug || isASAN ? 48 * 24 : PORT_EXHAUSTION_THRESHOLD * 2;
+  const total = PORT_EXHAUSTION_THRESHOLD * 2;
   let sockets = [];
   const batch = 48;
   let toClose = 0;

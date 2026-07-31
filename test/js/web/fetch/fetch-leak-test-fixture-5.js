@@ -10,7 +10,7 @@ function getHeapStats() {
 
 const server = process.argv[2];
 const batch = 10;
-const iterations = parseInt(process.env.ITERATIONS || "50", 10);
+const iterations = 50;
 const threshold = batch * 2 + batch / 2;
 // JSC's C++ module loader keeps a handful of pipeline JSPromises live in the
 // module map (fetch/module/load per registry entry) for the life of the
@@ -44,9 +44,8 @@ function getBlob() {
 function getBuffer() {
   return Buffer.alloc(BODY_SIZE, "abcdefghijklmnopqrstuvwxyz");
 }
-let cachedString;
 function getString() {
-  return (cachedString ??= getBuffer().toString());
+  return getBuffer().toString();
 }
 function getURLSearchParams() {
   const urlSearchParams = new URLSearchParams();

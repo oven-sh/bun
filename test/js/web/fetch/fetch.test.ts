@@ -2121,9 +2121,7 @@ it.concurrent("should allow very long redirect URLS", async () => {
     },
   });
   // run it more times to check Malformed_HTTP_Response errors
-  // (gc() in the handler makes debug+ASAN builds ~25x slower; trim the loop there)
-  const iterations = isDebug || isASAN ? 20 : 100;
-  for (let i = 0; i < iterations; i++) {
+  for (let i = 0; i < 100; i++) {
     const { url, status } = await fetch(`${server.url.origin}/redirect`);
     expect(url).toBe(`${server.url.origin}${Location}`);
     expect(status).toBe(404);

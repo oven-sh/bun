@@ -1,12 +1,6 @@
 import { heapStats } from "bun:jsc";
 import { expect } from "bun:test";
-import { isDebug, rss } from "harness";
-
-// Debug+ASAN runs 10-100x slower than release; 51 batches x 50 fetches (with a
-// Bun.gc() per batch) busts the default 5s test timeout there. A real leak
-// retains ~batchSize*2 AbortSignals per batch, so even a handful of iterations
-// trips the `< batchSize*2` check in checkForLeaks().
-const ITERATIONS = isDebug ? 8 : 50;
+import { rss } from "harness";
 
 let abortEventCount = 0;
 let onAbortHandler = () => {};
@@ -54,7 +48,7 @@ function checkForLeaks(batchSize) {
 export async function testReqSignalGetter() {
   const url = `${server.url}/req-signal-aborted`;
   const batchSize = 50;
-  const iterations = ITERATIONS;
+  const iterations = 50;
 
   async function batch() {
     onRequestContinuePromise = Promise.withResolvers();
@@ -98,7 +92,7 @@ export async function testReqSignalGetter() {
 export async function testReqSignalAbortEvent() {
   const url = `${server.url}/req-signal-aborted`;
   const batchSize = 50;
-  const iterations = ITERATIONS;
+  const iterations = 50;
 
   async function batch() {
     onRequestContinuePromise = Promise.withResolvers();
@@ -156,7 +150,7 @@ export async function testReqSignalAbortEvent() {
 export async function testReqSignalAbortEventNeverResolves() {
   const url = `${server.url}/req-signal-aborted`;
   const batchSize = 50;
-  const iterations = ITERATIONS;
+  const iterations = 50;
 
   async function batch() {
     onRequestContinuePromise = Promise.withResolvers();

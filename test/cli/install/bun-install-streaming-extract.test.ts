@@ -686,13 +686,13 @@ test("buffered extract does not hold the decompressed local tarball in memory", 
     });
   }
 
-  // Sanity: the .tgz itself stays tiny; this is exactly the case that
-  // used to fail with `ZlibError` once the decompressed size crossed 2 GiB.
+  // Sanity: the .tgz itself stays tiny, so holding the compressed bytes
+  // in memory is negligible relative to PAYLOAD_SIZE.
   expect(statSync(tgzPath).size).toBeLessThan(8 * 1024 * 1024);
 
   const { stderr, exitCode, resourceUsage } = await runInstall(String(dir));
 
-  expect(stderr).not.toContain("ZlibError");
+  expect(stderr).not.toContain("error:");
   const big = statSync(join(String(dir), "node_modules", "oversized-pkg", "data.bin"));
   expect(big.size).toBe(PAYLOAD_SIZE);
   expect(exitCode).toBe(0);

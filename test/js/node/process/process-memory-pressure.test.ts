@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { closeSync, constants, openSync, readFileSync, writeSync } from "node:fs";
 import { bunEnv, bunExe } from "harness";
+import { closeSync, constants, openSync, readFileSync, writeSync } from "node:fs";
 
 // process.on("memoryPressure") is a Bun extension. These tests drive the
 // emit path synthetically via bun:internal-for-testing since real OS memory

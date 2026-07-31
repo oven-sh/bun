@@ -238,4 +238,23 @@ describe.skipIf(isWindows)("console.log after process.stdout is materialized on 
     const stdout = (await proc.stdout.text()).trim();
     expect(Number(stdout)).toBe(20000);
   });
+
+  test("console.log survives a raw O_NONBLOCK on fd 1 (isolates the writer)", async () => {
+    // Bun.file(1).writer() goes through FileSink.setup (dup + O_NONBLOCK) but is
+    // NOT the process.stdout getter path, so ForceFileSinkToBeSynchronous never
+    // clears the flag. This isolates fd_write_all_quiet's EAGAIN handling.
+    await using proc = Bun.spawn({
+      cmd: [
+        "/bin/sh",
+        "-c",
+        'exec "$0" -e "void Bun.file(1).writer(); console.log(Buffer.alloc(1<<20, 65).toString())" | wc -c',
+        bunExe(),
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    const stdout = (await proc.stdout.text()).trim();
+    expect(Number(stdout)).toBe((1 << 20) + 1);
+  });
 });
